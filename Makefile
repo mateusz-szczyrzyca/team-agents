@@ -1,5 +1,16 @@
-# Developer tasks. `make test` runs everything that needs no agent accounts.
-.PHONY: test unit-go unit-bats lint integration build generate check-generated
+# Developer tasks. Before every commit: `make lint test` (see AGENTS.md).
+#   make tools   installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
+#   make lint    every static check; fails when a linter is missing (run make tools)
+#   make test    unit tests: Go (agentbus, agentlive) and bats (the agent script)
+.PHONY: test unit-go unit-bats lint lint-go lint-shell lint-docs tools integration build generate check-generated
+
+# Go modules of this repository (each has its own go.mod).
+GO_MODULES := agentbus live tools/doccheck tools/errgen
+# Bash scripts checked with shellcheck (bats files included: shellcheck understands @test blocks).
+SHELL_SCRIPTS := bin/agent install.sh tools/install-linters.sh tests/integration/run.sh examples/notify/*.sh \
+	tests/unit/helpers.bash tests/unit/agent.bats tests/unit/stubs/systemd-run tests/unit/stubs/systemctl tests/unit/stubs/gh
+# Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
+export PATH := $(HOME)/.local/bin:$(PATH)
 
 test: unit-go unit-bats
 
@@ -10,11 +21,25 @@ unit-go:
 unit-bats:
 	bats tests/unit
 
-lint: check-generated
-	bash -n bin/agent install.sh tests/integration/run.sh
-	@if command -v shellcheck >/dev/null; then shellcheck -S warning bin/agent install.sh tests/integration/run.sh examples/notify/*.sh; else echo "shellcheck not installed — skipped"; fi
-	cd agentbus && test -z "$$(gofmt -l .)"
-	cd live && test -z "$$(gofmt -l .)"
+tools:
+	tools/install-linters.sh
+
+lint: check-generated lint-shell lint-go lint-docs
+
+lint-shell:
+	@command -v shellcheck >/dev/null || { echo "shellcheck is missing: run make tools"; exit 1; }
+	bash -n bin/agent install.sh tools/install-linters.sh tests/integration/run.sh
+	shellcheck -S warning $(SHELL_SCRIPTS)
+
+lint-go:
+	@for t in golangci-lint staticcheck; do command -v $$t >/dev/null || { echo "$$t is missing: run make tools"; exit 1; }; done
+	@for m in $(GO_MODULES); do \
+		echo "== $$m"; \
+		(cd $$m && test -z "$$(gofmt -l .)" && golangci-lint run --config $(CURDIR)/.golangci.yml ./... && staticcheck ./...) || exit 1; \
+	done
+
+# Every constant, variable, type and struct field has a comment (see AGENTS.md, "Go").
+lint-docs:
 	cd tools/doccheck && go build -o ../../build/doccheck .
 	build/doccheck agentbus/*.go live/*.go
 

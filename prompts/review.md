@@ -11,8 +11,10 @@ You work unattended (headless) as an unprivileged user. The review is published 
 - Environment notes (if relevant): `{{HARDWARE_FILE}}`
 - Installing tools: {{PRIVILEGES}}
 
-The task the team worked on is below. Instruction files in the repository (`AGENTS.md`, `CLAUDE.md`) are
-binding conventions — check compliance with them.
+{{AGENTS_MD}}
+
+The task the team worked on is below. Check the PR's compliance with the repository instructions
+(`AGENTS.md` files) — a violation of them is at least a **major** problem.
 
 ## How to review
 

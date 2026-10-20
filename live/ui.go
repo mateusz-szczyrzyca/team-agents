@@ -458,7 +458,7 @@ func (m *model) detail(t *Task) string {
 	case 3: // investigations
 		var b strings.Builder
 		for _, inv := range m.snap.Invs {
-			if inv.FromTask != t.ID && !(t.Kind == "investigation" && fmt.Sprint(inv.ID) == t.InvID) {
+			if inv.FromTask != t.ID && (t.Kind != "investigation" || fmt.Sprint(inv.ID) != t.InvID) {
 				continue
 			}
 			b.WriteString(stSection.Render(fmt.Sprintf("#%d [%s]", inv.ID, inv.Status)) + " " + inv.Question + "\n")
@@ -486,7 +486,7 @@ func (m *model) detail(t *Task) string {
 			sort.Strings(names)
 			for _, n := range names {
 				a := q.Answers[n]
-				b.WriteString(fmt.Sprintf("  %s: %q after %d s\n", n, a.Answer, a.Secs))
+				fmt.Fprintf(&b, "  %s: %q after %d s\n", n, a.Answer, a.Secs)
 			}
 			b.WriteString("\n")
 		}
@@ -503,7 +503,7 @@ func (m *model) detail(t *Task) string {
 				if n == ti.Lead {
 					lead = " ★ coordinator"
 				}
-				b.WriteString(fmt.Sprintf("  %s [%s] %s%s\n", n, mm.Tier, mm.State, lead))
+				fmt.Fprintf(&b, "  %s [%s] %s%s\n", n, mm.Tier, mm.State, lead)
 			}
 			b.WriteString("\n")
 		}

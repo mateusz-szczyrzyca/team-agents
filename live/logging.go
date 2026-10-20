@@ -14,6 +14,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -216,10 +217,9 @@ func (j *journalHandler) Handle(ctx context.Context, r slog.Record) error {
 	entry.WriteString("PRIORITY=" + strconv.Itoa(journalPriority(r.Level)) + "\n")
 	// MESSAGE in the binary-safe form: name, newline, 64-bit little-endian length, data, newline
 	entry.WriteString("MESSAGE\n")
-	n := uint64(len(msg))
-	for i := 0; i < 8; i++ {
-		entry.WriteByte(byte(n >> (8 * i)))
-	}
+	var size [8]byte
+	binary.LittleEndian.PutUint64(size[:], uint64(len(msg)))
+	entry.Write(size[:])
 	entry.Write(msg)
 	entry.WriteByte('\n')
 	if _, err := j.conn.Write(entry.Bytes()); err != nil {

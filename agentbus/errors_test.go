@@ -149,7 +149,7 @@ func TestQuizStartCauses(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(b.dir, "state.json"), []byte("{broken"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	e := failsWith(t, QuizStartStorage)(lead.quizStart("q"))
+	e := failure(t, QuizStartStorage)(lead.quizStart("q"))
 	var syntax *json.SyntaxError
 	if !errors.As(e, &syntax) {
 		t.Fatalf("the JSON syntax error must stay reachable: %v", e)
@@ -159,13 +159,13 @@ func TestQuizStartCauses(t *testing.T) {
 func TestDispatcherErrors(t *testing.T) {
 	s := server(newBus(t), "solo")
 	_, err := s.call("board_claim", map[string]any{"id": "B1"})
-	if e := expectToolError(t, err, BoardClaimNotInTeam); !strings.HasPrefix(e.Error(), "board_claim: ") {
+	if e := toolFailure(t, err, BoardClaimNotInTeam); !strings.HasPrefix(e.Error(), "board_claim: ") {
 		t.Fatalf("Error() = %q", e.Error())
 	}
 	_, err = s.call("no_such_tool", nil)
 	expectToolError(t, err, ToolCallUnknownTool)
 	_, err = s.call("board_add", map[string]any{"details": "x"})
-	if e := expectToolError(t, err, BoardAddMissingTitle); e.Message != "missing required argument: title" {
+	if e := toolFailure(t, err, BoardAddMissingTitle); e.Message != "missing required argument: title" {
 		t.Fatalf("message = %q", e.Message)
 	}
 }

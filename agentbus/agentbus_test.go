@@ -86,15 +86,24 @@ func (c check) ok(out string, err error) string {
 
 // failsWith returns a function asserting that a call failed with exactly the cause want. It also checks
 // that the class sentinel matches with errors.Is and that errors.As finds the same error in a plain error value.
-func failsWith[C opCause](t *testing.T, want C) func(string, *OpError[C]) *OpError[C] {
+func failsWith[C opCause](t *testing.T, want C) func(string, *OpError[C]) {
+	return func(_ string, err *OpError[C]) {
+		t.Helper()
+		expectCause(t, err, want)
+	}
+}
+
+// failure is failsWith for tests that examine the error further: it returns the checked error.
+func failure[C opCause](t *testing.T, want C) func(string, *OpError[C]) *OpError[C] {
 	return func(_ string, err *OpError[C]) *OpError[C] {
 		t.Helper()
-		return expectCause(t, err, want)
+		expectCause(t, err, want)
+		return err
 	}
 }
 
 // expectCause asserts that err is an *OpError[C] with the cause want (see failsWith).
-func expectCause[C opCause](t *testing.T, err *OpError[C], want C) *OpError[C] {
+func expectCause[C opCause](t *testing.T, err *OpError[C], want C) {
 	t.Helper()
 	if err == nil {
 		t.Fatalf("expected %s: %s, got no error", want.op(), want.info().name)
@@ -112,18 +121,31 @@ func expectCause[C opCause](t *testing.T, err *OpError[C], want C) *OpError[C] {
 	if err.Message == "" {
 		t.Fatalf("error without a message: %#v", err)
 	}
-	return err
 }
 
 // expectToolError asserts that a plain error from the dispatcher (Server.call) is an *OpError[C] with the
 // cause want.
-func expectToolError[C opCause](t *testing.T, err error, want C) *OpError[C] {
+func expectToolError[C opCause](t *testing.T, err error, want C) {
+	t.Helper()
+	expectCause(t, opErrorOf[C](t, err), want)
+}
+
+// toolFailure is expectToolError for tests that examine the error further: it returns the checked error.
+func toolFailure[C opCause](t *testing.T, err error, want C) *OpError[C] {
+	t.Helper()
+	e := opErrorOf[C](t, err)
+	expectCause(t, e, want)
+	return e
+}
+
+// opErrorOf extracts the *OpError[C] from a plain error value (the test fails when there is none).
+func opErrorOf[C opCause](t *testing.T, err error) *OpError[C] {
 	t.Helper()
 	var e *OpError[C]
 	if !errors.As(err, &e) {
 		t.Fatalf("errors.As(%v) found no %T", err, e)
 	}
-	return expectCause(t, e, want)
+	return e
 }
 
 func allMessages(t *testing.T, b *Bus) string {

@@ -24,6 +24,8 @@ End every commit message with exactly these trailers, after a blank line:
   any of those resources.
 - Installing tools: {{PRIVILEGES}}
 
+{{AGENTS_MD}}
+
 ## Teammates
 
 You are not alone. Configured agents: {{PEERS}}. They may be working on other tasks right now, also in the

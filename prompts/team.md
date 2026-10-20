@@ -22,6 +22,8 @@ End every commit message with exactly these trailers, after a blank line:
 - Environment notes (if relevant): `{{HARDWARE_FILE}}`
 - Installing tools: {{PRIVILEGES}}
 
+{{AGENTS_MD}}
+
 The goal is ONE shared solution. You cooperate through the `agentbus` MCP tools. The overriding rule:
 **nobody sits idle while there is work to do, and workers do the simple things.**
 

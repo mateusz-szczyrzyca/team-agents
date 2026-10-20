@@ -290,8 +290,12 @@ func pidAlive(dir string) (bool, time.Time) {
 		warnOnce(p, LogPIDFileUnreadable, storageErr(err, "cannot read %s", p), "file", p)
 		return false, time.Time{}
 	}
-	pid := strings.TrimSpace(string(data))
-	cmd, err := os.ReadFile("/proc/" + pid + "/cmdline")
+	pid, perr := strconv.Atoi(strings.TrimSpace(string(data)))
+	if perr != nil || pid <= 0 {
+		warnOnce("pid:"+p, LogPIDFileUnreadable, valueWrap(fmt.Errorf("%q", data), "runner.pid does not hold a PID"), "file", p)
+		return false, time.Time{}
+	}
+	cmd, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
 	return err == nil && bytes.Contains(cmd, []byte("_runner")), st.ModTime()
 }
 

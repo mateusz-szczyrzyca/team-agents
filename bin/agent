@@ -543,6 +543,26 @@ commit_trailers() {
   return 0
 }
 
+# agents_md_text — what the prompt says about the repository instructions (AGENTS.md) in this run's worktree
+agents_md_text() {
+  if [[ -f $WORKTREE/AGENTS.md ]]; then
+    cat <<'TXT'
+**Repository instructions.** Before you start, read `AGENTS.md` in the repository root and every `AGENTS.md`
+in the directories you work in (the nearest one applies to its directory). They describe the repository, its
+conventions and how to build, lint and test it; they are binding. Where they conflict with these instructions,
+these instructions decide how you communicate with the human and the other agents, and `AGENTS.md` decides how
+the code is written and checked; if unsure, ask. Do not change any `AGENTS.md` (or `CLAUDE.md`, `GEMINI.md`)
+unless the task explicitly asks for it — record what you learned in the repository notebook (`notebook_append`).
+TXT
+  else
+    cat <<'TXT'
+**Repository instructions.** This repository has no `AGENTS.md`. Follow the conventions you see in the existing
+code, its build files and CI configuration, and say in your report that an `AGENTS.md` would help. Do not
+create one unless the task asks for it.
+TXT
+  fi
+}
+
 # privileges_text — what the prompt tells the agent about installing missing tools; decided on every run,
 # because sudo rights can change between runs
 privileges_text() {
@@ -568,7 +588,7 @@ build_prompt() { # id mode qfile next_round
     [HARDWARE_FILE]="$ENV_NOTES_FILE" [PEERS]="$(peers_list)" [LANGUAGE]="$AGENT_LANGUAGE"
     [REPO_LANGUAGE]="$REPO_LANGUAGE" [COMMIT_TRAILERS]="$(commit_trailers "$id")"
     [GIT_NAME]="${GIT_NAME_FORMAT//%a/$AGENT}" [ATTRIBUTION]="\`$AGENT\` ($TYPE${MODEL:+, model $MODEL})"
-    [PRIVILEGES]="$(privileges_text)"
+    [PRIVILEGES]="$(privileges_text)" [AGENTS_MD]="$(agents_md_text)"
     [QUESTIONS_FILE]=$qfile [ROUND]=$next_round
     [REPORT_FILE]=".agents/reports/$id.md"
     [RESULT_FILE]="$TASKS/$id/result.md"
@@ -913,6 +933,7 @@ notify() { # id status final note
     printf 'Task: %s\n' "$id"
     printf 'Status: %s\n' "$label"
     if [[ -n $note ]]; then printf 'Note: %s\n' "$note"; fi
+    if [[ ${AGENTS_MD:-} == missing ]]; then printf 'Note: the repository has no AGENTS.md\n'; fi
     if [[ $status == waiting ]]; then
       printf 'Questions: %s — answer with: agent answer %s\n' \
         "$(count_questions "$TASKS/$id/questions-$ROUND.md")" "$id"
@@ -1502,6 +1523,8 @@ create_task() { # name text root main_root base ts [team] — sets NEW_ID
   mkdir -p "$dir" "$(dirname "$wt")"
   git -C "$root" worktree add --quiet -b "$branch" "$wt" HEAD
   printf '%s\n' "$task" > "$dir/task.md"
+  local agents_md=missing
+  [[ -f $wt/AGENTS.md ]] && agents_md=present
   : > "$dir/meta.env"
   local sid=""
   [[ ${AGENT_TYPE[$name]} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
@@ -1509,10 +1532,11 @@ create_task() { # name text root main_root base ts [team] — sets NEW_ID
   for kv in "ID=$id" "AGENT=$name" "KIND=worker" "TEAM=$team" "TIER=$(agent_tier "$name")" "TYPE=${AGENT_TYPE[$name]}" "MODEL=${AGENT_MODEL[$name]:-}" \
             "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$name]:-}" \
             "REPO_NAME=$repo_name" "REPO_ROOT=$main_root" "WORKTREE=$wt" "BRANCH=$branch" \
-            "BASE=$base" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)"; do
+            "BASE=$base" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" \
+            "AGENTS_MD=$agents_md"; do
     meta_set "$id" "${kv%%=*}" "${kv#*=}"
   done
-  log_info task_created "task=$id" "agent=$name" "repo=$repo_name" "branch=$branch" "team=$team"
+  log_info task_created "task=$id" "agent=$name" "repo=$repo_name" "branch=$branch" "team=$team" "agents_md=$agents_md"
   NEW_ID=$id
 }
 
@@ -1737,6 +1761,11 @@ cmd_run() {
     echo "  branch:   $(task_field "${ids[0]}" BRANCH) (from $base)"
     echo "  worktree: $(task_field "${ids[0]}" WORKTREE)"
     echo "  watch:    agent log ${ids[0]}"
+  fi
+  if [[ $(task_field "${ids[0]}" AGENTS_MD) == missing ]]; then
+    echo "WARNING: $(task_field "${ids[0]}" REPO_NAME) has no AGENTS.md (at $base) — the agents do not know its"
+    echo "  conventions, build, lint and test commands (see README, \"Repository instructions\")."
+    log_warn agents_md_missing "repo=$(task_field "${ids[0]}" REPO_NAME)" "base=$base"
   fi
 }
 

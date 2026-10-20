@@ -43,7 +43,7 @@ CONF
 
   git init -q --bare "$HOME/remote.git"
   git init -q -b main "$HOME/repo"
-  cd "$HOME/repo"
+  cd "$HOME/repo" || return 1
   git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
   git remote add origin "$HOME/remote.git"
   git push -q origin main
@@ -61,7 +61,12 @@ teardown() {
 scenario() { echo "$1" > "$HOME/scenario.json"; }
 
 # task_of <agent> — the newest task ID of an agent
-task_of() { ls -t "$AGENTS_HOME/tasks" | grep -- "-$1\$" | head -1; }
+# task_of agent — the newest task of an agent (task IDs start with their creation time, so the glob order is
+# chronological)
+task_of() {
+  local all=("$AGENTS_HOME"/tasks/*-"$1")
+  [[ -d ${all[-1]} ]] && basename "${all[-1]}"
+}
 
 # status_of <task id>
 status_of() { sed -n 's/^STATUS=//p' "$AGENTS_HOME/tasks/$1/meta.env"; }

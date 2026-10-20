@@ -77,7 +77,11 @@ func TestPostStoresKindDataAndText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	sc := bufio.NewScanner(f)
 	if !sc.Scan() {
 		t.Fatal("no message written")

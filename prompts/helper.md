@@ -17,6 +17,8 @@ End every commit message with exactly these trailers, after a blank line:
 - Repository: `{{REPO}}`
 - Installing tools: {{PRIVILEGES}}
 
+{{AGENTS_MD}}
+
 ## Rules
 
 1. Do **exactly** what was asked — nothing more. No refactoring, nothing "while I'm at it".

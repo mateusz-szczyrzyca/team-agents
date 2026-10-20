@@ -352,8 +352,29 @@ would not). OpenRouter presets (`openrouter/@preset/<slug>`) are registered auto
 worker's model and provider routing in the OpenRouter dashboard without touching the configuration. The model
 must support tool calling.
 
-**Project instructions.** Put repository-specific knowledge into `AGENTS.md` (and a `CLAUDE.md` symlink) in the
-repository; the CLIs read it in addition to the prompts.
+### Repository instructions (AGENTS.md)
+
+The prompts describe how agents work *with team-agents*; what they need to know about *a repository* — what it
+is, its architecture, its conventions, how to build, lint and test it, what must never be done — belongs in an
+`AGENTS.md` file in that repository. team-agents makes it part of every run:
+
+- **Every prompt** (tasks, teams, investigations, worker requests, PR reviews) tells the agent to read `AGENTS.md`
+  in the repository root and every `AGENTS.md` in the directories it works in (the nearest one applies to its
+  directory), and treats them as binding: the prompts decide how agents communicate, `AGENTS.md` decides how the
+  code is written and checked.
+- **Agents do not change `AGENTS.md`** (nor `CLAUDE.md`, `GEMINI.md`) unless the task explicitly asks for it;
+  what they learn goes to the repository notebook, and suggestions to the report.
+- **PR reviews** (`--verify`) check compliance with `AGENTS.md`; a violation is at least a major problem.
+- **A repository without `AGENTS.md`** still works, but `agent run` prints a warning, logs `agents_md_missing`,
+  and every notification of the task notes it; the agents are told to follow the conventions they see in the
+  code and to say in their report that an `AGENTS.md` would help.
+
+What to put in it: a short description of the repository and its components; the commands to set up, build,
+lint and test (and how to install missing linters); coding conventions (error handling, types, comments,
+logging, style); test rules (for example "never modify existing tests without the human's request"); what must
+never be done (deploys, production hosts, generated files, secrets); compatibility constraints; the definition
+of done. Add a `CLAUDE.md` symlink to it for interactive Claude Code sessions. This repository's own
+[`AGENTS.md`](AGENTS.md) is a complete example.
 
 ### Commit identity
 
@@ -567,17 +588,27 @@ Add the toolchains (`~/.cargo/bin`, `probe-rs`, `picotool`) to `RUN_PATH`. If yo
 
 ## Development and tests
 
+This repository is developed mostly by its own agents; [`AGENTS.md`](AGENTS.md) holds the rules for them (and
+for human contributors): architecture, conventions, checks, and what must never be done.
+
 ```bash
+make tools         # installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
+make lint          # shellcheck, gofmt, golangci-lint, staticcheck, doccheck, generated-code check
 make test          # Go unit tests (agentbus, agentlive) + bats tests of the agent script
-make lint          # bash -n, shellcheck, gofmt
 make integration   # real agent CLIs and accounts (costs usage)
 ```
+
+- **Linters.** `tools/install-linters.sh` downloads pinned release binaries of `golangci-lint`, `staticcheck` and
+  `shellcheck` from GitHub, verifies their SHA-256 checksums and installs them without sudo. `golangci-lint`
+  runs the standard linters plus `errorlint`, `gosec`, `misspell`, `revive` and `unparam` (`.golangci.yml`);
+  every Go module and every Bash script (bats files included) must pass with zero findings. CI runs the same.
 
 - **Unit tests** need no accounts: `agentbus` is tested in-process (queue capacity, quiz privacy, board rules,
   provider balancing, checkpoints, event normalization), and the `agent` script is tested with
   [bats](https://github.com/bats-core/bats-core) against stub CLIs, a stub `systemd-run`/`systemctl` and a stub
   `gh` (`tests/unit/stubs/`): status handling, questions, the watchdog, teams, `--resume`, `stop --running`,
-  transcripts, archives, the structured logs, typed bus notices and logged failures. They run in CI
+  transcripts, archives, the structured logs, typed bus notices, logged failures, commit identity and signing,
+  and `AGENTS.md` handling. They run in CI
   (`.github/workflows/test.yml`).
 - **Errors.** Every operation of `agentbus` — each MCP tool and each CLI subcommand — returns its own error type,
   so the signature says what can go wrong:

@@ -91,16 +91,6 @@ func (b *Bus) wakeFor(st *State, m Message) {
 	}
 }
 
-// teamOf finds the team that has agent working on task.
-func teamOf(st *State, agent, task string) *Team {
-	for _, t := range st.Teams {
-		if m := t.Members[agent]; m != nil && m.Task == task {
-			return t
-		}
-	}
-	return nil
-}
-
 // isForAgent reports whether a message is for the agent (direct, to its team, or — optionally — to all).
 func isForAgent(st *State, m Message, agent string, broadcast bool) bool {
 	if m.From == agent {

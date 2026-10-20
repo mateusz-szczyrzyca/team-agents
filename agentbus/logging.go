@@ -20,6 +20,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -233,10 +234,9 @@ func (j *journalHandler) Handle(ctx context.Context, r slog.Record) error {
 	entry.WriteString("PRIORITY=" + strconv.Itoa(journalPriority(r.Level)) + "\n")
 	// MESSAGE in the binary-safe form: name, newline, 64-bit little-endian length, data, newline
 	entry.WriteString("MESSAGE\n")
-	n := uint64(len(msg))
-	for i := 0; i < 8; i++ {
-		entry.WriteByte(byte(n >> (8 * i)))
-	}
+	var size [8]byte
+	binary.LittleEndian.PutUint64(size[:], uint64(len(msg)))
+	entry.Write(size[:])
 	entry.Write(msg)
 	entry.WriteByte('\n')
 	if _, err := j.conn.Write(entry.Bytes()); err != nil {
@@ -274,9 +274,9 @@ var warnedOnce sync.Map
 
 // warnOnce logs a warning only the first time a key is seen in this process (for problems found while
 // polling, e.g. a corrupt line read every few seconds).
-func warnOnce(key string, ev LogEvent, err classified, attrs ...any) {
+func warnOnce(key string, ev LogEvent, err classified) {
 	if _, seen := warnedOnce.LoadOrStore(key, true); seen {
 		return
 	}
-	logWarn(ev, append([]any{"key", key, "error", err.Error(), "class", err.Class().String(), "cause", err.CauseName()}, attrs...)...)
+	logWarn(ev, "key", key, "error", err.Error(), "class", err.Class().String(), "cause", err.CauseName())
 }

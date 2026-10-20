@@ -90,7 +90,8 @@ func main() {
 	if err != nil {
 		fail("generated code does not compile: %v\n%s", err, b.String())
 	}
-	if err := os.WriteFile(*outPath, out, 0o644); err != nil {
+	// generated Go source is read by the toolchain and humans like every other source file
+	if err := os.WriteFile(*outPath, out, 0o644); err != nil { //nolint:gosec // G306: source files are world-readable
 		fail("cannot write %s: %v", *outPath, err)
 	}
 }

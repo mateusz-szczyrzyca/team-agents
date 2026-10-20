@@ -21,6 +21,8 @@ End every commit message with exactly these trailers, after a blank line:
 - Environment notes: `{{HARDWARE_FILE}}` — read them before using shared resources.
 - Installing tools: {{PRIVILEGES}}
 
+{{AGENTS_MD}}
+
 ## Your job
 
 Investigate the problem described below in the INVESTIGATION REQUEST section and give the agent a reliable

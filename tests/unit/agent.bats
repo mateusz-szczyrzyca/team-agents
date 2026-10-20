@@ -1,4 +1,6 @@
 #!/usr/bin/env bats
+# "done" is a status name passed as an argument (wait_status "$t" done), not the end of a loop.
+# shellcheck disable=SC1010
 # Unit tests of the `agent` script with stub CLIs (no real agents, systemd or GitHub).
 
 load helpers
@@ -232,4 +234,32 @@ CONF
   # the test user has no git e-mail configured: the documented fallback applies
   [ "$output" = "solo (team-agents)|solo@team-agents.invalid" ]
   ! git -C "$HOME/repo" cat-file commit "$branch" | grep -q '^gpgsig'
+}
+
+@test "a repository without AGENTS.md: warning at start, log record, note in the notification, prompt text" {
+  scenario '{"solo": {"new": "done"}}'
+  run agent run solo "task"
+  [ "$status" -eq 0 ]
+  [[ $output == *"WARNING: repo has no AGENTS.md"* ]]
+  t=$(task_of solo)
+  wait_status "$t" done
+  jq -e 'select(.event == "agents_md_missing" and .level == "warn")' "$AGENTS_HOME/logs/agent.jsonl" >/dev/null
+  wait_grep "Note: the repository has no AGENTS.md" "$HOME/notifications.log"
+  grep -q 'This repository has no `AGENTS.md`' "$HOME/prompt-solo-new.txt"
+}
+
+@test "a repository with AGENTS.md: the prompt makes it binding and forbids changing it" {
+  printf '# Test repository\n\nRun make test before committing.\n' > "$HOME/repo/AGENTS.md"
+  git -C "$HOME/repo" add AGENTS.md
+  git -C "$HOME/repo" -c user.name=t -c user.email=t@example.com commit -qm "Add AGENTS.md"
+  scenario '{"solo": {"new": "done"}}'
+  run agent run solo "task"
+  [ "$status" -eq 0 ]
+  [[ $output != *"has no AGENTS.md"* ]]
+  t=$(task_of solo)
+  wait_status "$t" done
+  prompt="$HOME/prompt-solo-new.txt"
+  grep -q 'read `AGENTS.md` in the repository root' "$prompt"
+  grep -q 'Do not change any `AGENTS.md`' "$prompt"
+  ! grep -q "no AGENTS.md" "$HOME/notifications.log"
 }

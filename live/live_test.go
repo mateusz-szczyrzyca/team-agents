@@ -15,7 +15,7 @@ func TestReadMetaUnquotesBashValues(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "meta.env")
 	content := "ID=20261020-120000-claude-1\nAGENT=claude-1\nSTATUS=running\nEXTRA_ARGS=-c\\ model_reasoning_effort=\\\"high\\\"\nNOTE=$'line1\\nline2'\nEMPTY=''\n"
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m := readMeta(p)
