@@ -144,7 +144,17 @@ const (
 func (t Tier) Valid() bool { return t == TierNormal || t == TierWorker }
 
 // UnmarshalJSON (json.Unmarshaler, hence the plain error type) rejects unknown tiers with a *ValueError.
-func (t *Tier) UnmarshalJSON(data []byte) error { return unmarshalEnum(data, t, "tier").asError() }
+//
+// Compatibility: versions before tiers were stored for every team member wrote an empty tier and treated it as a
+// normal model (only "worker" was special). An empty tier is therefore read as TierNormal and saved as "normal"
+// from then on (see testdata/state-legacy.json).
+func (t *Tier) UnmarshalJSON(data []byte) error {
+	if string(data) == `""` {
+		*t = TierNormal
+		return nil
+	}
+	return unmarshalEnum(data, t, "tier").asError()
+}
 
 // MemberState is the state of a team member.
 type MemberState string

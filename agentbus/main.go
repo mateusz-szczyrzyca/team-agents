@@ -143,6 +143,11 @@ func (b *Bus) load() (*State, *StorageError) {
 	}
 	if len(data) > 0 {
 		if err := json.Unmarshal(data, st); err != nil {
+			var verr *ValueError
+			if errors.As(err, &verr) {
+				return nil, storageErr(err, "cannot decode %s: it contains a value this version does not know "+
+					"(written by a newer version or edited by hand; see README, Troubleshooting)", b.path("state.json"))
+			}
 			return nil, storageErr(err, "cannot decode %s", b.path("state.json"))
 		}
 	}

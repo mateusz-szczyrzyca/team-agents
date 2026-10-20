@@ -263,3 +263,44 @@ CONF
   grep -q 'Do not change any `AGENTS.md`' "$prompt"
   ! grep -q "no AGENTS.md" "$HOME/notifications.log"
 }
+
+@test "a team starts on a bus state written by the previous version (empty tiers)" {
+  mkdir -p "$AGENTS_HOME/bus"
+  cp "$BATS_TEST_DIRNAME/../../agentbus/testdata/state-legacy.json" "$AGENTS_HOME/bus/state.json"
+  scenario '{"lead": {"new": "team-lead-done"}, "member": {"new": "sleep:1"}}'
+  run agent run --team lead,member "team task"
+  [ "$status" -eq 0 ]
+  wait_status "$(task_of lead)" done 30
+  ! grep -q '"tier": ""' "$AGENTS_HOME/bus/state.json"
+}
+
+@test "a team that cannot be created on the bus leaves no tasks, branches or worktrees behind" {
+  mkdir -p "$AGENTS_HOME/bus"
+  echo '{"teams":{"X":{"id":"X","members":{"a":{"agent":"a","state":"active","tier":"boss"}}}}}' > "$AGENTS_HOME/bus/state.json"
+  scenario '{"lead": {"new": "done"}, "member": {"new": "done"}}'
+  run agent run --team lead,member "team task"
+  [ "$status" -ne 0 ]
+  [[ $output == *"could not create the team on the bus"*"were removed"* ]]
+  [ -z "$(ls "$AGENTS_HOME/tasks")" ]
+  [ -z "$(git -C "$HOME/repo" branch --list 'agents/*')" ]
+  [ "$(git -C "$HOME/repo" worktree list | wc -l)" -eq 1 ]
+  jq -e 'select(.event == "run_abandoned")' "$AGENTS_HOME/logs/agent.jsonl" >/dev/null
+}
+
+@test "agent discard removes a task that never started and refuses one that ran" {
+  scenario '{"solo": {"new": "done"}}'
+  agent run solo "task"
+  t=$(task_of solo)
+  wait_status "$t" done
+  run agent discard "$t"
+  [ "$status" -ne 0 ]
+  [[ $output == *"has already run"* ]]
+  [ -d "$AGENTS_HOME/tasks/$t" ]
+  # a task that was created but never started (as after an interrupted agent run)
+  branch=$(sed -n 's/^BRANCH=//p' "$AGENTS_HOME/tasks/$t/meta.env")
+  sed -i 's/^STATUS=.*/STATUS=new/' "$AGENTS_HOME/tasks/$t/meta.env"
+  run agent discard "$t"
+  [ "$status" -eq 0 ]
+  [ ! -d "$AGENTS_HOME/tasks/$t" ]
+  [ -z "$(git -C "$HOME/repo" branch --list "$branch")" ]
+}

@@ -65,7 +65,10 @@ These rules have no exceptions unless the human explicitly asks for it in the ta
    notebooks), the output and exit codes of `agentbus` subcommands that `bin/agent` parses, the `agent` CLI,
    the configuration variables in `agents.conf`, the MCP tool names and arguments, the log event names. A change
    to any of them needs backward compatibility (old data still readable) or a migration, tests for both, and a
-   README update. Say it in the PR description.
+   README update. Say it in the PR description. `agentbus/testdata/state-legacy.json` is a bus state written
+   by an earlier version: it must keep loading (`TestLegacyStateLoads`). When you change a persisted type, add a
+   fixture of the format before your change and a test that loads it. Remember that stricter validation of an
+   old value is a breaking change too: one rejected value makes the whole bus state unreadable.
 
 ## Setup
 

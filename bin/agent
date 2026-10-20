@@ -1540,6 +1540,35 @@ create_task() { # name text root main_root base ts [team] — sets NEW_ID
   NEW_ID=$id
 }
 
+# discard_task id — removes a task that never ran: its worktree, its branch and its task directory. Nothing of
+# value exists yet (no run, no commits), so nothing is archived.
+discard_task() {
+  local id=$1 root wt branch
+  root=$(task_field "$id" REPO_ROOT)
+  wt=$(task_field "$id" WORKTREE)
+  branch=$(task_field "$id" BRANCH)
+  if [[ -d $wt ]]; then
+    try discard_worktree_failed git -C "$root" worktree remove --force "$wt"
+  fi
+  # show-ref exits 1 when the branch does not exist — then there is nothing to delete
+  if git -C "$root" show-ref --verify --quiet "refs/heads/$branch"; then
+    try discard_branch_failed git -C "$root" branch -D "$branch" >/dev/null
+  fi
+  rm -rf "${TASKS:?}/$id"
+  log_info task_discarded "task=$id" "branch=$branch"
+}
+
+# abandon_run message id... — a run could not start after its tasks were created: removes them and exits
+abandon_run() {
+  local msg=$1 id
+  shift
+  for id in "$@"; do
+    discard_task "$id"
+  done
+  log_error run_abandoned "message=$msg" "tasks=$*"
+  die "$msg — the tasks it had created were removed"
+}
+
 resume_history() { # task → the human's answers from this task and its predecessors (the --resume chain)
   local t=$1 f
   while [[ -n $t && -d $TASKS/$t ]]; do
@@ -1738,7 +1767,8 @@ cmd_run() {
     done
     jq -n --arg id "$team" --arg repo "$(basename "$main_root")" --arg wake "$SELF" --arg home "$AGENTS_HOME" \
       --argjson members "$json" '{id:$id, repo:$repo, wake_cmd:$wake, home:$home, members:$members}' \
-      | bus team-create --dir "$BUS_DIR" || die "could not create the team on the bus"
+      | bus team-create --dir "$BUS_DIR" ||
+      abandon_run "could not create the team on the bus (see ~/agents/logs/agentbus.jsonl)" "${ids[@]}"
   fi
 
   if [[ -n $(git -C "$root" status --porcelain) ]]; then
@@ -2322,6 +2352,18 @@ archive_one() { # start-task — packs the whole group into tasks-archived/<name
   printf '%s  (%s, tasks: %d, worktrees removed: %d)\n' "$archive_file" "$(du -h "$archive_file" | cut -f1)" "${#ids[@]}" "$n_wt"
 }
 
+cmd_discard() { # <id>... — removes tasks that never started (status new): worktree, branch, task directory
+  (($#)) || die "usage: agent discard <id>..."
+  local ref id st
+  for ref in "$@"; do
+    id=$(resolve_id "$ref")
+    st=$(task_field "$id" STATUS)
+    [[ $st == new ]] || die "$id has already run (status $st): use agent archive for finished tasks"
+    discard_task "$id"
+    echo "discarded $id"
+  done
+}
+
 cmd_archive() { # <task|team> | --finished
   local q=${1:?usage: agent archive <task|team> | --finished}
   archive_index
@@ -2379,6 +2421,7 @@ agent team [id | --all]                   teams and their members
 agent helpers [--all]                     worker requests made by normal models
 agent transcript <id|team> [--raw]        full chronological log of a task/team (bus + activity)
 agent archive <id|team> | --finished      pack a finished task (with its resume chain) into tasks-archived/*.7z
+agent discard <id>...                     remove tasks that never started (worktree, branch, task directory)
 agent notes [repo] [--section S] [--search Q] [-n N]   persistent repository notebook
 agent authenticated                       are the Anthropic / OpenAI / Gemini / OpenRouter / DeepInfra accounts authenticated
 agent bus [N]                             bus state and the last N agent messages
@@ -2408,6 +2451,7 @@ main() {
     helpers) cmd_helpers "$@" ;;
     transcript) cmd_transcript "$@" ;;
     archive) cmd_archive "$@" ;;
+    discard) cmd_discard "$@" ;;
     _dispatch-helpers) dispatch_helpers ;;
     notes)   cmd_notes "$@" ;;
     _wake)   cmd__wake "$@" ;;

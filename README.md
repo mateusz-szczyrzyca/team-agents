@@ -421,6 +421,7 @@ agent transcript <id|team> [--raw]            chronological log: bus messages + 
 agent stop <id> | --running                   stop one task / EVERYTHING that is active
 agent ack <id|all> | clean <id>               acknowledge finished tasks / remove a worktree
 agent archive <id|team> | --finished          pack finished work into ~/agents/tasks-archived/*.7z
+agent discard <id>...                         remove tasks that never started (worktree, branch, task directory)
 agent authenticated                           check every provider account
 ```
 
@@ -579,6 +580,12 @@ Add the toolchains (`~/.cargo/bin`, `probe-rs`, `picotool`) to `RUN_PATH`. If yo
   `secrets.env` or rejected (HTTP 401). Keys must be `NAME=value` without spaces around `=`.
 - **OpenCode: `provider.no-route: Model unavailable`** — the shared OpenCode 2 server did not get the keys or the
   configuration; make sure you run the current `agent` (it uses `--standalone`).
+- **`cannot decode …/state.json: it contains a value this version does not know`** — the bus state holds a value
+  no version of team-agents writes (a downgrade after a newer version ran, or a manual edit); every bus operation
+  fails until it is fixed. Find it with `jq` (for example `jq '.. | .tier? // empty' ~/agents/bus/state.json`), fix
+  the value, or stop all tasks and move `state.json` aside (queues, teams and boards are then forgotten). Values
+  written by earlier versions are always accepted.
+- **Tasks left with status `new`** after an interrupted `agent run` — remove them with `agent discard <id>...`.
 - **A task finished as `failed` without a message** — look at `agent log <id>`, `~/agents/tasks/<id>/err-N.log` and
   the warnings in `~/agents/logs/*.jsonl` (`jq 'select(.level == "warn" or .level == "error")' ~/agents/logs/*.jsonl`).
 - **Deleting `~/agents/tasks` by hand** makes tasks disappear from the lists but leaves worktrees and branches;
