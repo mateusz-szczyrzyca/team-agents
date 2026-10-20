@@ -1,0 +1,570 @@
+# team-agents
+
+Run a crew of headless LLM coding agents on your own Linux machine and let them work on your repositories
+in parallel — alone or as teams — while you watch, answer their questions and review their pull requests.
+
+team-agents does not implement an agent loop itself. It orchestrates existing agent CLIs —
+**Claude Code**, **Codex CLI**, **Antigravity CLI (`agy`)** and **OpenCode** (for any API provider such as
+OpenRouter or DeepInfra) — and adds what they lack when several of them work unattended on one host:
+
+- **Isolation:** every task runs in its own git worktree and branch, as a background `systemd --user` unit.
+- **Communication:** a small MCP server (`agentbus`, Go standard library only) gives all agents a shared message bus,
+  resource reservations (debug probes, serial ports, test hosts), a persistent per-repository notebook and
+  checkpoints.
+- **Human in the loop:** agents never guess; they write questions to a Markdown file, the task pauses, you answer
+  with `agent answer <id>` and the agent resumes in the same session.
+- **Model tiers:** cheap "worker" models do mechanical work (searching, listing, summarising output) on behalf of
+  stronger "normal" models; expensive "investigator" models are queued for hard problems and PR reviews.
+- **Load spread across providers:** because agents of different CLI types (Claude Code, Codex, Antigravity,
+  OpenCode with OpenRouter or DeepInfra) and different tiers work side by side, the load and the token usage are
+  distributed over several providers and accounts instead of exhausting one subscription's limits or one API
+  budget.
+- **Teams:** several agents share one task; they elect a coordinator, run a qualification quiz, split work on a
+  shared board, merge into one draft PR and finish together.
+- **Robustness:** a hang watchdog, automatic resume, checkpoints and `agent run --resume`, provider load
+  balancing, a kill switch (`agent stop --running`).
+- **Observability:** a live terminal panel (`agent live`), unified activity logs across all CLIs, full transcripts
+  and 7z archives of finished work.
+
+It was built for embedded development on a Raspberry Pi 5 (agents flash and debug real boards), but nothing in
+it is specific to that: it works for any repository on any Linux host with `systemd --user`.
+
+> **Security warning.** Agents run with their CLIs' permission prompts and sandboxes **disabled**
+> (`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`, `--auto`). They can run any
+> command as the user they run under, push to your repositories and use every credential that user can read.
+> Read the [Security](#security) section before installing.
+
+## Contents
+
+- [How it works](#how-it-works)
+- [Concepts](#concepts)
+- [Security](#security)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [The live panel](#the-live-panel)
+- [MCP tools available to agents](#mcp-tools-available-to-agents)
+- [Files and state](#files-and-state)
+- [Notifications](#notifications)
+- [Logs](#logs)
+- [Example: embedded development on a Raspberry Pi](#example-embedded-development-on-a-raspberry-pi)
+- [Troubleshooting](#troubleshooting)
+- [Development and tests](#development-and-tests)
+- [License](#license)
+
+## How it works
+
+```
+you ── agent run claude-1 "task" ──► systemd --user unit  agent-<task>-r<n>
+                                       │  runner: worktree + branch, prompt, secrets
+                                       ▼
+                         claude -p | codex exec | agy -p | opencode run   (JSON event stream)
+                                       │ MCP (stdio)                  │ events
+                                       ▼                              ▼
+                               agentbus serve  ◄──────►  ~/agents/bus   activity.jsonl ─► agent live
+                                   (one per run)          state.json, messages.jsonl,
+                                                          notebooks/, checkpoints/
+```
+
+- `agent` (bash) is the command you use. It creates tasks, starts runners as `systemd --user` units, builds
+  prompts, classifies how each run ended, resumes sessions, wakes sleeping team members, dispatches
+  investigators and workers, and sends notifications.
+- `agentbus` (Go) is started by every agent CLI as an MCP server over stdio. All instances share state through
+  files guarded by `flock`. It also provides helper subcommands for the script (queue handling, teams, the
+  event normalizer that turns each CLI's JSON stream into one activity format).
+- `agentlive` (Go, Bubble Tea) is the live panel behind `agent live`.
+
+## Concepts
+
+### Tasks and runs
+
+`agent run <agent> "task"` (inside a git repository) creates a task: a worktree under `~/agents/worktrees`, a
+branch `agents/<agent>/<timestamp>` and a directory `~/agents/tasks/<task id>` with the prompt, the raw event
+stream, the activity log and the final message. A task can have several **runs** (after answers, after an
+investigation, after being woken up); the agent CLI resumes the same session each time.
+
+Every turn of an agent must end with a `STATUS:` line. The runner maps it to the task status:
+
+| Agent says | Task status | What happens |
+|---|---|---|
+| `STATUS: DONE` | `done` | notification; in a team the coordinator's DONE finishes the whole team |
+| `STATUS: QUESTIONS` | `waiting` | questions file `questions-N.md` → notification → you answer |
+| `STATUS: INVESTIGATING` | `investigating` | waits for an investigator; resumes automatically with the result |
+| `STATUS: SLEEPING` | `sleeping` | team members only; woken by messages and board items |
+| `STATUS: FAILED` | `failed` | notification |
+| no `STATUS` line | `waiting` | the last message is passed to you as a question ("what should the agent do next?") |
+
+### Questions and answers
+
+The prompts include a set of clarification rules (`prompts/clarification.md`): agents must not guess; if
+anything that affects the result is unclear they write numbered questions to a file and stop. You answer under
+each `**Answer:**` line and run `agent answer <id>` (opens `$EDITOR`, validates, resumes). Agents that ask only in
+their final message get their questions moved into a file automatically.
+
+### Model tiers and providers
+
+- **Normal agents** (`NORMAL_AGENTS`) do the real work and may coordinate teams.
+- **Workers** (`WORKER_AGENTS`) are cheap models. They never coordinate. They take `easy` items from a team's
+  board and handle `delegate` requests: a normal agent hands over a mechanical job, the script starts a free
+  worker as a helper task on a copy of the requester's branch, and the result comes back as a message.
+  Requests are balanced across providers (the provider with the fewest working workers wins).
+- **Investigators** (`INVESTIGATORS_TYPE`) are expensive models in a shared queue. An agent stuck on a hard
+  problem calls `request_investigation`; it ends its turn, an investigator works on a copy of its branch, and
+  the agent resumes with the result and must record a decision before acting on it. The queue holds one
+  request in progress per investigator plus `INVESTIGATION_QUEUE_MAX` waiting ones.
+
+**Why mix tiers and providers.** Every subscription has usage limits (per few hours and per week) and every API
+key has a budget. Splitting the agents into CLI types and tiers spreads the load and the token usage across
+providers and accounts:
+
+- normal agents of different types (for example `claude-1`, `codex-1`, `gemini-1`) draw on three separate
+  subscriptions, so a team can work in parallel without one account hitting its limit;
+- the token-hungry mechanical work (reading many files, long command output) goes to workers on pay-per-token
+  providers (OpenRouter, DeepInfra) at a fraction of the price, instead of eating the subscriptions' limits;
+- worker requests and board items are assigned to the provider with the fewest working agents, so the work is
+  balanced across providers, not only across agents;
+- the most expensive models (investigators) are used only for the problems that need them, through a queue.
+
+### Teams
+
+`agent run --team a,b,c "task"` gives one task to several agents, each on its own branch:
+
+1. A normal member becomes the **coordinator** with `claim_lead` (the first one wins).
+2. The coordinator runs a **qualification quiz**: one precise question from the task's domain with a 60 s
+   limit. Answers are private; members who fail are excluded for this task and you are asked whether to
+   continue.
+3. The coordinator splits the work on a **board** (`easy` items for workers, `normal` items for normal models),
+   opens a **draft PR** from its branch and merges every finished part into it, saving **checkpoints** along the
+   way. Members push their branches after every commit. Idle members sleep and are woken by messages or new
+   board items.
+4. Only the coordinator asks you questions; members ask the coordinator.
+5. The coordinator's `STATUS: DONE` (after `gh pr ready`) finishes the team.
+
+With `--verify` the coordinator's DONE is checked first (PR exists and is not a draft, everything is pushed,
+members' branches are merged); if something is missing the coordinator is sent back once with the list. Then an
+investigator reviews the PR and publishes a GitHub review (as a comment — GitHub does not let an author approve
+their own PR), and you get a notification with the recommendation.
+
+### Checkpoints and resuming
+
+Agents commit and push in small steps and call `checkpoint(summary, next_steps)` after every stage. If you stop
+work — typically to extend the task — `agent run --resume <team|task> "addition"` starts the same agents on the
+same branches (and the same draft PR), with the checkpoints, the earlier answers and your addition in the
+prompt. A resumed team keeps its coordinator and board and skips the quiz.
+
+### The hang watchdog
+
+If a run shows no activity for `AGENT_HANG_MIN` minutes (default 30), it is killed. Normal agents,
+coordinators and investigators are resumed in the same session and told not to repeat the hanging command; after
+`AGENT_HANG_STRIKES` consecutive hangs without progress the agent is marked `hung`. Workers are not resumed —
+the normal agents are told instead. A team fails only if the coordinator and all normal members are hung.
+
+### Repository notebook
+
+A persistent notebook per repository (an append-only log plus overwritable sections) carries knowledge between
+tasks: device quirks, toolchain pitfalls, conventions. Agents read it at the start of every task.
+
+## Security
+
+team-agents gives AI models a shell without supervision. Treat the agents' user as untrusted: anything it can
+read, the agents can read — and possibly leak, if a prompt injection (instructions hidden in a web page, an issue,
+a dependency's README, a file in the repository) convinces an agent to do so. Design the setup so that a
+compromised or confused agent can do as little damage as possible.
+
+### Where to run it
+
+- **Linux only for now** (it relies on `systemd --user`); macOS support is planned.
+- **A dedicated machine or VM** — a small server, a Raspberry Pi, a VPS or a local VM — with nothing else of value
+  on it: no personal files, no production credentials, no browser sessions, no password manager.
+- **A dedicated, unprivileged user** for the agents, never your own login user. `~/agents` is created with mode
+  `700`; keep it that way.
+- **No sudo by default.** Passwordless sudo lets the agents install missing tools on their own, but it also lets
+  them run anything as root: give it **at your own risk**, and preferably only on a disposable VM.
+- **Nothing irreplaceable on the host.** Back up `~/agents/agents.conf`, `secrets.env` and `hardware.md`; be ready to
+  rebuild the machine from scratch.
+
+### Repositories and GitHub
+
+- Use a **fine-grained personal access token** limited to the repositories the agents work on, with the smallest
+  permissions that work (Contents: read/write, Pull requests: read/write, Metadata: read) and an expiry date.
+  Never a classic token with full `repo` scope, never your main account's token if you can avoid it — a separate
+  GitHub account for the agents ("machine user") makes their actions easy to tell apart and to revoke.
+- **Leave out the Workflows permission**, so the agents cannot change `.github/workflows/`. A modified workflow
+  runs with your CI secrets; a PR that changes it must be reviewed by a human.
+- For git over SSH, give each repository a **deploy key** (write access to that repository only) instead of your
+  personal SSH key.
+- **Protect the main branch**: require a pull request with your review before merging, block force pushes and
+  deletions. The agents open PRs; merging stays with you. Consider CODEOWNERS for sensitive paths.
+- Do not give agents repositories with secrets in their history or committed `.env` files; treat everything an
+  agent can read as potentially public.
+
+### Other hosts (Ansible, test servers, devices)
+
+- When agents work on infrastructure (for example an Ansible repository tested against a VPS), generate a
+  **separate SSH key for them**, used for nothing else, and authorise it **only on test hosts** — never on
+  production. Restrict it in `authorized_keys` where you can (`from="<agent host>"`, `restrict`), and remove it when
+  the work is done.
+- Prefer **disposable test hosts** (VMs or VPS instances you can rebuild from a snapshot) over long-lived servers.
+- Devices attached to the host (debug probes, serial ports) can be flashed and reconfigured by the agents: connect
+  only development boards, never devices in production use.
+
+### Network
+
+- Keep the agents' host **off the public internet**: no open inbound ports. A mesh VPN such as **Tailscale** (or
+  WireGuard) is a good fit — and use its **ACLs** to limit what the agents' host may reach: the test hosts it needs,
+  not your NAS, your laptop or the rest of your network (for example a `tag:agents` that can only reach
+  `tag:test-hosts`).
+- Optionally restrict outbound traffic with an egress firewall (nftables, OpenSnitch) to the providers, GitHub,
+  package registries and the test hosts.
+
+### Secrets and providers
+
+- Create **separate API keys and tokens for the agents** in every service — Anthropic, OpenAI, Google, OpenRouter,
+  DeepInfra, GitHub, the notification service — never reuse your personal or production keys. Separate keys can be
+  revoked without collateral damage and show the agents' usage on their own.
+- Set **spending limits and usage alerts** at the pay-per-token providers (OpenRouter lets you set a credit limit
+  per key; check what budget or limit settings your other providers offer) so a runaway loop cannot run up a
+  large bill.
+- Remember that `secrets.env` and the CLIs' login files are **readable by the agents** — they run as the same user.
+  Keep the scopes small and **rotate** the keys regularly, and immediately after anything suspicious.
+- Notification hooks (`NOTIFY_CMD`) get their tokens from `secrets.env` too: use a token that can only send
+  notifications.
+
+### Security testing
+
+Be careful with tasks such as "find vulnerabilities", "test the security of X" or penetration tests. An agent
+looking for weaknesses may find them **on the machine it runs on** — a readable credential, a misconfigured
+service, a local privilege escalation — and use them, because that is what the task asked for. Run such tasks only
+against isolated, disposable targets, state the scope explicitly in the task ("only host X, nothing else"), and
+never on the orchestrator's host or a network with anything you care about.
+
+### Code, dependencies and review
+
+- Agents install packages (pip, npm, cargo, go) — **malicious or typo-squatted packages** are a real risk. Use lock
+  files, review dependency changes in the PRs, and prefer well-known packages.
+- **Review every PR** before merging, especially changes to build scripts, CI configuration, install scripts and
+  anything that runs with privileges. `--verify` adds an investigator's review, not a replacement for yours.
+- Be wary of tasks that feed agents **untrusted input** (issues written by strangers, scraped web pages) while they
+  hold write access: that is the classic prompt-injection path.
+
+### Monitoring and response
+
+- Ship the structured logs (`~/agents/logs/*.jsonl`, the journal) somewhere you look at, and alert on warnings and
+  errors (see [Logs](#logs)). `agent transcript <task|team>` shows everything a task did, message by message.
+- Logs and transcripts can contain secrets printed by commands: restrict who can read your log storage.
+- The kill switch is `agent stop --running`: it stops every task, investigation and worker request at once.
+- After an incident: stop everything, revoke the agents' keys and tokens (GitHub, providers, SSH), check the
+  transcripts and the git history of the affected repositories, and rebuild the host if in doubt.
+
+## Requirements
+
+- Linux (macOS support is planned) with `systemd --user` and lingering enabled for the agents' user:
+  `sudo loginctl enable-linger <user>`
+  (otherwise units stop when you log out).
+- `git`, `jq`, `flock` (util-linux), `curl`, Go ≥ 1.22 (to build), `gh` (GitHub CLI) for pull requests,
+  `7z` (p7zip) for `agent archive`.
+- At least one agent CLI, logged in as the agents' user:
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude setup-token` for a subscription token),
+  - [Codex CLI](https://github.com/openai/codex) (`codex login --device-auth`),
+  - Antigravity CLI `agy` (interactive login once),
+  - [OpenCode](https://opencode.ai) for API providers (OpenRouter, DeepInfra, …) — API keys in `secrets.env`.
+- A git remote the agents may push to, and an SSH key without a passphrase (units do not see `ssh-agent`).
+- Tools the agents use while working on code: `rg` (ripgrep), `grep`, `sed`, `awk`, `find`, `xargs`, `diff`, `patch`,
+  `file`, `tar`, `gzip`, `unzip`, `make`, `python3`, `curl`, plus your project's toolchains. `install.sh` checks for
+  them and prints the command that installs the missing ones (apt, dnf, pacman, apk, zypper).
+
+**Installing tools: sudo or not.** If the agents' user has passwordless sudo, the prompts allow an agent to install
+a missing tool with the system package manager (and only that; it must list what it installed in its report).
+Without sudo, an agent reports what was missing instead. Passwordless sudo is convenient, but it also lets the
+agents run anything as root — it is given at your own risk (see [Security](#security)).
+
+## Installation
+
+```bash
+git clone <this repository> && cd team-agents
+./install.sh
+```
+
+`install.sh` checks the required and recommended tools (see Requirements), builds `agentbus` and `agentlive` into
+`~/.local/bin`, installs the `agent` script and the prompts
+into `~/agents/prompts`, and creates `~/agents/agents.conf`, `~/agents/hardware.md` (environment notes) and
+`~/agents/secrets.env` from templates if they do not exist. Re-running it updates everything except your
+configuration (a new template is saved as `agents.conf.new`).
+
+Then:
+
+1. Log in to the agent CLIs you want to use (see Requirements).
+2. Put tokens and API keys into `~/agents/secrets.env` (`chmod 600`).
+3. Edit `~/agents/agents.conf`: agents, models, tiers, investigators, language, notifications.
+4. Describe shared resources (devices, test hosts) in `~/agents/hardware.md`.
+5. Authenticate GitHub for the agents' user with a fine-grained token limited to the repositories (Contents and
+   Pull requests: read/write, no Workflows; see [Security](#security)), then `gh auth login --with-token`.
+6. Check the accounts: `agent authenticated` — every configured provider should report `OK`.
+7. Try it: `cd <your repo> && agent run claude-1 "List the toolchain versions you find. Do not change anything."`
+   and watch with `agent live`.
+
+## Configuration
+
+`~/agents/agents.conf` is a bash file. The most important settings:
+
+| Setting | Meaning |
+|---|---|
+| `AGENT_TYPE[name]` | `claude`, `codex`, `gemini` (agy) or `opencode` |
+| `AGENT_MODEL[name]` | model name; for opencode `provider/model`, e.g. `openrouter/@preset/my-worker`, `deepinfra/<model>` |
+| `AGENT_EXTRA_ARGS[name]` | extra CLI arguments (e.g. reasoning effort) |
+| `NORMAL_AGENTS`, `WORKER_AGENTS` | tiers (an agent in neither list is normal); worker order = delegation preference |
+| `INVESTIGATORS_TYPE/_MODEL/_EXTRA_ARGS[name]` | investigators (the legacy single `INVESTIGATOR_*` settings still work) |
+| `INVESTIGATION_QUEUE_MAX` | waiting investigation requests (default 3) |
+| `AGENT_HANG_MIN`, `AGENT_HANG_STRIKES` | watchdog (default 30 min, 3 strikes) |
+| `AGENT_LANGUAGE` | language of questions, reports and PR texts (default English) |
+| `ENV_NOTES_FILE` | environment notes shown to the agents (default `~/agents/hardware.md`) |
+| `RUN_PATH` | `PATH` inside agent runs (add your toolchains) |
+| `NOTIFY_CMD`, `NOTIFY_DIR`, `NOTIFY_MAX_CHARS` | notifications (see below) |
+| `CLAUDE_BIN`, `CODEX_BIN`, `AGY_BIN`, `OPENCODE_BIN` | CLI paths |
+| `AUTH_MODEL_*` | cheap models used by `agent authenticated` |
+| `BRANCH_PREFIX`, `CLAUDE_MAX_TURNS`, `AGY_PRINT_TIMEOUT`, `OPENCODE_BASH_TIMEOUT_MS` | misc |
+
+`~/agents/secrets.env` is loaded before every run: `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`,
+`CODEX_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY` and anything your notification hook
+needs.
+
+**OpenCode notes.** Each run uses `opencode run --standalone` (a private server per run, so it sees the keys and
+the generated per-run configuration with the agentbus MCP server; the shared background server of OpenCode 2
+would not). OpenRouter presets (`openrouter/@preset/<slug>`) are registered automatically, so you can change a
+worker's model and provider routing in the OpenRouter dashboard without touching the configuration. The model
+must support tool calling.
+
+**Project instructions.** Put repository-specific knowledge into `AGENTS.md` (and a `CLAUDE.md` symlink) in the
+repository; the CLIs read it in addition to the prompts.
+
+## Usage
+
+```
+agent run <agent> "task" | -f task.md         start a task (inside the repository)
+agent run --team a,b[,c] [--verify] "task"    start a team (optionally with a final PR review)
+agent run --resume <team|task> ["addition"]   resume from the last checkpoint (same branches)
+agent status | agents | show <id>            overview, agents, task details
+agent log <id> [--raw]                        follow the runner log (structured records rendered; --raw: JSON)
+agent answer <id>                             answer the questions in $EDITOR and resume
+agent resume <id> ["note"]                    resume after editing the answers yourself
+agent live [--feed] [--remind MIN] [--light]  live panel (or an event stream)
+agent say <agent|all|team:ID> "text"          message agents through the bus
+agent inv [N|--all] | helpers [--all]         investigation queue / worker requests
+agent team [id|--all] | notes [repo]          teams / repository notebooks
+agent transcript <id|team> [--raw]            chronological log: bus messages + activity of every agent
+agent stop <id> | --running                   stop one task / EVERYTHING that is active
+agent ack <id|all> | clean <id>               acknowledge finished tasks / remove a worktree
+agent archive <id|team> | --finished          pack finished work into ~/agents/tasks-archived/*.7z
+agent authenticated                           check every provider account
+```
+
+`<id>` can be any unambiguous fragment of a task ID. `agent run --resume` and `agent transcript` also accept a
+team ID (`<timestamp>-team`) or any member's task ID.
+
+## The live panel
+
+`agent live` shows all active and unacknowledged tasks (status, duration, repository, stage, last activity), a
+detail view with tabs (1 Activity, 2 Prompt, 3 Questions, 4 Investigations, 5 Result, 6 Notebook, 7 Board) and an
+event stream with bus messages, status changes and periodic reminders.
+
+| Key | Action |
+|---|---|
+| `↑↓` / `j k` | select a task |
+| `1`–`7`, `Tab` | tab |
+| `PgUp` `PgDn` `End` | scroll |
+| `a` | answer the selected task's questions |
+| `s` | stop the selected task |
+| `m` / `M` | message the selected agent / everyone |
+| `x` / `X` | acknowledge the selected / all finished tasks |
+| `f` | full-screen event stream |
+| `q` | quit (tasks keep running) |
+
+## MCP tools available to agents
+
+| Tool | Purpose |
+|---|---|
+| `list_agents`, `send_message`, `read_messages`, `wait_for_message`, `set_status` | communication |
+| `reserve`, `release`, `list_reservations` | shared resources |
+| `notebook_read`, `notebook_append`, `notebook_write_section` | the repository notebook |
+| `checkpoint` | save a resumable work state |
+| `request_investigation`, `investigation_status`, `record_decision` | investigators (not for investigators themselves) |
+| `delegate`, `delegation_status` | worker requests (normal tier) |
+| `team_status`, `claim_lead`, `handover_lead` | teams |
+| `quiz_start`, `quiz_answer`, `quiz_results`, `team_exclude` | the qualification quiz |
+| `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board |
+
+## Files and state
+
+```
+~/agents/
+  agents.conf  secrets.env  hardware.md      configuration
+  prompts/                                   prompt templates ({{PLACEHOLDERS}})
+  tasks/<task id>/                           meta.env, task.md, prompt-N.md, out-N.jsonl / events-N.jsonl,
+                                             activity.jsonl, activity-full.jsonl, questions-N.md, final.md,
+                                             result.md (investigations), investigations/
+  worktrees/<repo>/<task id>/                git worktrees
+  bus/state.json  bus/messages.jsonl         agentbus state and message log
+  bus/notebooks/<repo>/                      repository notebooks
+  bus/checkpoints/                           checkpoints (team-<id>.md, task-<id>.md)
+  tasks-archived/*.7z                        archives (agent archive)
+  notifications/                             notification files
+  logs/agent.jsonl                           structured log of the agent script (JSON lines)
+  logs/agentbus.jsonl  logs/agentlive.jsonl  structured logs of the bus servers/commands and the live panel
+```
+
+## Notifications
+
+After every run (and on a few team events) the script writes a notification file — the first line is a title
+(the repository), the rest is the body — and calls `NOTIFY_CMD <file>`. Ready-made hooks are in
+`examples/notify/`:
+
+```bash
+# agents.conf
+NOTIFY_CMD="$HOME/agents/notify/ntfy.sh"        # needs NTFY_URL (and optionally NTFY_TOKEN) in secrets.env
+NOTIFY_CMD="$HOME/agents/notify/pushsafer.sh"   # needs PUSHSAFER_KEY in secrets.env
+```
+
+With `NOTIFY_CMD` empty the files are only written to `NOTIFY_DIR`. Older configurations that set
+`NOTIFY_SCRIPT` (a script run inside `NOTIFY_DIR` with the file name) keep working.
+
+## Logs
+
+Every component writes structured logs as one JSON object per line, ready for Promtail, Vector, vmagent or any
+other shipper to Loki or VictoriaLogs, and sends the same records to the systemd journal:
+
+| Component | File | Journal identifier |
+|---|---|---|
+| `agent` (script, runners and interactive commands) | `~/agents/logs/agent.jsonl` | `agent` |
+| `agentbus` (MCP servers and CLI subcommands) | `~/agents/logs/agentbus.jsonl` | `agentbus` |
+| `agentlive` (the live panel) | `~/agents/logs/agentlive.jsonl` | `agentlive` |
+
+Every record has a timestamp, a level, the component and an event name, plus the context of the event:
+
+```json
+{"ts":"2026-10-20T14:05:11Z","level":"info","component":"agent","event":"run_finished","pid":4121,
+ "subcommand":"_runner","task":"20261020-140312-claude-1","run":"2","status":"done","note":""}
+{"ts":"2026-10-20T14:05:09Z","level":"warn","event":"side_effect_failed","component":"agentbus","role":"serve",
+ "agent":"claude-1","task":"20261020-140312-claude-1","effect":"write investigation record",
+ "error":"cannot open …/inv-3.md: permission denied","class":"Storage","cause":"Storage","investigation":3}
+{"ts":"2026-10-20T14:06:30Z","level":"warn","event":"tool_call_failed","component":"agentbus","tool":"quiz_start",
+ "error":"quiz_start: only the coordinator (claude-1) can do this","class":"Permission","cause":"NotCoordinator"}
+```
+
+All three components use the same schema — `ts` (RFC 3339, UTC), `level` (`debug`, `info`, `warn`, `error`),
+`component` and `event` — so one query covers all of them. The event names of the Go programs are typed
+constants (`LogEvent` in `agentbus/logging.go` and `live/logging.go`).
+
+Errors are never swallowed. A failure of the main operation fails it (the agent gets a tool error, a command
+exits with a non-zero status). A failure of a side effect — an investigation record file, a bus notice, a
+cleanup step — is logged as a warning and the operation continues. Problems found while polling (a corrupt
+line in a file read every few seconds) are logged once per process.
+
+Useful queries:
+
+```
+# Loki
+{job="team-agents"} | json | level=~"warn|error"
+{job="team-agents"} | json | component="agentbus" | event="tool_call_failed"
+{job="team-agents"} | json | event="run_finished" | status="failed"
+# VictoriaLogs
+component:agentbus AND class:Storage
+event:tool_call_failed AND cause:NotCoordinator
+event:notification_failed
+```
+
+`agent log <id>` follows a task's `runner.log` and renders the records readably
+(`14:05:11 INFO run_finished run=2 status=done`); output of tools such as `git` passes through unchanged and
+`--raw` shows the JSON as written.
+
+**Bus messages are structured too.** Every message in `bus/messages.jsonl` has a `kind` (for example
+`investigation_finished`, `board_item_added`, `coordinator_claimed`; `chat` for messages written by agents and
+humans; `script` for events of the `agent` script, with a `notice` such as `member_finished` or `worker_hung`)
+and the event's fields in `data`, next to the `text` the agents read:
+
+```json
+{"id":42,"ts":"2026-10-20 14:05:11","from":"agentbus","to":"all","kind":"investigation_finished",
+ "data":{"id":3,"status":"done","summary":"the DMA channel is reused by the UART driver"},
+ "text":"INVESTIGATION #3 finished [done]: the DMA channel is reused by the UART driver"}
+```
+
+The kinds are defined in `agentbus/events.go`.
+
+## Example: embedded development on a Raspberry Pi
+
+The project grew out of this setup: a Raspberry Pi 5 with two Raspberry Pi Debug Probes connected to RP2040 and
+RP2350 boards, agents building Rust/Embassy firmware and flashing it with `probe-rs`.
+
+```bash
+# USB access for the agents' user (udev rules for VID 2e8a, serial ports)
+sudo install -m644 examples/raspberry-pi/60-rpi-debug-probe.rules /etc/udev/rules.d/
+sudo udevadm control --reload && sudo udevadm trigger
+sudo usermod -aG dialout,plugdev <user>
+```
+
+In `~/agents/hardware.md` give every probe a name (e.g. `probe-rp2350`), its serial number (`probe-rs list`), the
+`probe-rs` selector, the chip and the board's UART path; agents then `reserve probe-rp2350` before flashing.
+Add the toolchains (`~/.cargo/bin`, `probe-rs`, `picotool`) to `RUN_PATH`. If you run an application firewall
+(e.g. OpenSnitch), allow the agent CLIs and `go` (module downloads during `install.sh`).
+
+## Troubleshooting
+
+- **Units stop when you log out** — enable lingering: `sudo loginctl enable-linger <user>`.
+- **`agent authenticated` says "needs authentication" for OpenRouter/DeepInfra** — the key is missing from
+  `secrets.env` or rejected (HTTP 401). Keys must be `NAME=value` without spaces around `=`.
+- **OpenCode: `provider.no-route: Model unavailable`** — the shared OpenCode 2 server did not get the keys or the
+  configuration; make sure you run the current `agent` (it uses `--standalone`).
+- **A task finished as `failed` without a message** — look at `agent log <id>`, `~/agents/tasks/<id>/err-N.log` and
+  the warnings in `~/agents/logs/*.jsonl` (`jq 'select(.level == "warn" or .level == "error")' ~/agents/logs/*.jsonl`).
+- **Deleting `~/agents/tasks` by hand** makes tasks disappear from the lists but leaves worktrees and branches;
+  prefer `agent clean <id>` or `agent archive`, then `git worktree prune`.
+- **Commands that legitimately run longer than `AGENT_HANG_MIN` without output** are treated as hangs; raise the
+  limit or have agents run such commands in the background.
+
+## Development and tests
+
+```bash
+make test          # Go unit tests (agentbus, agentlive) + bats tests of the agent script
+make lint          # bash -n, shellcheck, gofmt
+make integration   # real agent CLIs and accounts (costs usage)
+```
+
+- **Unit tests** need no accounts: `agentbus` is tested in-process (queue capacity, quiz privacy, board rules,
+  provider balancing, checkpoints, event normalization), and the `agent` script is tested with
+  [bats](https://github.com/bats-core/bats-core) against stub CLIs, a stub `systemd-run`/`systemctl` and a stub
+  `gh` (`tests/unit/stubs/`): status handling, questions, the watchdog, teams, `--resume`, `stop --running`,
+  transcripts, archives, the structured logs, typed bus notices and logged failures. They run in CI
+  (`.github/workflows/test.yml`).
+- **Errors.** Every operation of `agentbus` — each MCP tool and each CLI subcommand — returns its own error type,
+  so the signature says what can go wrong:
+
+  ```go
+  func (s *Server) quizStart(question string) (string, *QuizStartError)
+  ```
+
+  `QuizStartError` is `OpError[QuizStartCause]`, and `QuizStartCause` is an enum of exactly the failures of
+  `quiz_start` (`QuizStartMissingQuestion`, `QuizStartNotInTeam`, `QuizStartNotCoordinator`,
+  `QuizStartAlreadyHeld`, `QuizStartResumedTeam`, `QuizStartStorage`); the compiler rejects any other cause.
+  The enums are generated from `agentbus/errors.json` by `tools/errgen` (`make generate`; `make lint` fails when
+  the generated file is stale). Each cause has a class (`InvalidArgument`, `NotFound`, `NotInTeam`,
+  `Permission`, `Conflict`, `InvalidState`, `Storage`, `UnknownTool`, `Process`) that gives the sentinel for
+  `errors.Is` and the exit status of CLI subcommands (2 … 10), so the `agent` script can tell "no such team"
+  (3) from a storage failure (8). Lower layers return concrete types too: `*StorageError` (state and log files,
+  stdout), `*ValueError` (invalid enum values, timestamps) and `*ProcessError` (helper processes); operations
+  convert them into their own causes explicitly. The plain `error` interface appears only where an interface
+  requires it (`slog.Handler`, `json.Unmarshaler`, `flag.Value`) and at the MCP dispatcher. Tests check exact
+  causes (`failsWith(t, QuizStartNotCoordinator)(m.quizStart("q"))`), plus `errors.Is` / `errors.As`.
+- **Types.** Statuses, states, tiers, levels and message kinds are typed constants (`agentbus/types.go`,
+  `agentbus/events.go`); unknown values are rejected when `state.json` is read. Timestamps are a `Timestamp`
+  whose zero value means "has not happened yet". Every bus message is built from an event type that renders
+  its own text.
+- **Documentation rule.** `make lint` runs `tools/doccheck`, which fails on any constant, variable, type or struct
+  field without a comment.
+- **Integration tests** (`tests/integration/run.sh`, enabled with `AGENT_IT=1`) run one trivial task per
+  configured CLI type (or `IT_AGENTS=...`, optionally a team with `IT_TEAM=a,b`) with the real CLIs in a
+  separate `AGENTS_HOME` and a throw-away repository, and check that the agent used the bus, committed the
+  expected file and finished with `STATUS: DONE`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
