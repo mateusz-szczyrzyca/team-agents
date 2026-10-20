@@ -1,1 +1,2 @@
 openrouter-haiku
+claude-sonnet
