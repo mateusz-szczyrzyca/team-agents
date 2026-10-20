@@ -1,1 +1,2 @@
 openrouter-haiku
+deepinfra-nemotron
