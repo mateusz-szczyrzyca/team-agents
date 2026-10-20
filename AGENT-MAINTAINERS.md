@@ -5,3 +5,4 @@ deepinfra-nemotron
 deepinfra-qwen
 openrouter-deepseek
 openrouter-deepseek41
+openrouter-luna
