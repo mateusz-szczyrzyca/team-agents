@@ -7,3 +7,4 @@ openrouter-deepseek
 openrouter-deepseek41
 openrouter-luna
 openrouter-qwen
+gemini-1
