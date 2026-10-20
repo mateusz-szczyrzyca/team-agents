@@ -6,3 +6,4 @@ deepinfra-qwen
 openrouter-deepseek
 openrouter-deepseek41
 openrouter-luna
+openrouter-qwen
