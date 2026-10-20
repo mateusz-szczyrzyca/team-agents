@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Test stub for `systemctl --user is-active|stop <unit>...` backed by the PIDs recorded by the systemd-run stub.
+[[ ${1:-} == --user ]] && shift
+cmd=$1; shift
+for u in "$@"; do
+  [[ $u == --quiet ]] && continue
+  f=$STUB_UNITS/$u; [[ $u == *.service ]] || f=$STUB_UNITS/$u.service
+  p=$(cat "$f.pid" 2>/dev/null || true)
+  case $cmd in
+    is-active) [[ -n $p ]] && kill -0 "$p" 2>/dev/null && exit 0 || exit 3 ;;
+    stop)
+      if [[ -n $p ]]; then
+        kill -TERM -- -"$p" 2>/dev/null || true
+        for _ in $(seq 1 50); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done
+      fi ;;
+  esac
+done
+exit 0

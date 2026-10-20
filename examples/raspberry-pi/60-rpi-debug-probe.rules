@@ -1,0 +1,5 @@
+# /etc/udev/rules.d/60-rpi-debug-probe.rules
+# Access to Raspberry Pi USB devices (VID 2e8a: Debug Probe, RP2040/RP2350 BOOTSEL) for the plugdev group.
+# The "uaccess" tag does not apply to SSH sessions or systemd --user services, hence GROUP+MODE.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="2e8a", MODE="0660", GROUP="plugdev"
+KERNEL=="hidraw*", ATTRS{idVendor}=="2e8a", MODE="0660", GROUP="plugdev"

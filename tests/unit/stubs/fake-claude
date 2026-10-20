@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Fake Claude Code CLI for tests.
+
+Behaviour is selected by the scenario file $STUB_HOME/scenario.json, keyed by agent name, e.g.
+  {"solo": {"new": "done"}, "lead": {"new": "team-lead-done"}}
+Actions:
+  done            final message "STATUS: DONE"
+  tool-done       calls list_agents (an agentbus tool), then STATUS: DONE
+  questions-file  writes the questions file, STATUS: QUESTIONS
+  questions-text  asks questions only in the final message
+  no-status       a final message without a STATUS line
+  hang            sleeps without output (the watchdog must kill it)
+  sleep:N         works silently for N seconds, then DONE
+  team-lead-done  claim_lead, checkpoint, tell the team, STATUS: DONE
+  team-sleep      claim_lead (fails for non-leads), STATUS: SLEEPING
+  team-lead-slow  claim_lead, work for 5 s, close the team, STATUS: DONE
+The agent's MCP config (--mcp-config) is used to call agentbus tools.
+"""
+import json, os, re, subprocess, sys, time
+
+args = sys.argv[1:]
+prompt = args[-1]
+mode = "resume" if "--resume" in args else "new"
+cfg = json.load(open(args[args.index("--mcp-config") + 1]))["mcpServers"]["agentbus"]
+me = cfg["args"][cfg["args"].index("--agent") + 1]
+home = os.environ["STUB_HOME"]
+scenario = json.load(open(os.path.join(home, "scenario.json"))).get(me, {})
+action = scenario.get(mode, scenario.get("new", "done"))
+with open(os.path.join(home, "calls.log"), "a") as f:
+    f.write(f"{me} {mode} {action}\n")
+with open(os.path.join(home, f"prompt-{me}-{mode}.txt"), "w") as f:
+    f.write(prompt)
+
+
+def call(tool, **a):
+    req = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}) + "\n" + \
+          json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": tool, "arguments": a}}) + "\n"
+    out = subprocess.run([cfg["command"]] + cfg["args"], input=req, capture_output=True, text=True).stdout
+    return json.loads(out.strip().split("\n")[-1])["result"]["content"][0]["text"]
+
+
+def finish(text):
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "working"}]}}), flush=True)
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": text}))
+    sys.exit(0)
+
+
+if action == "questions-file":
+    q = re.search(r"(/\S*questions-\d+\.md)", prompt).group(1)
+    open(q, "w").write("# Questions\n\n## 1. Which board?\na) A\nb) B\n\n**Answer:**\n")
+    finish("STATUS: QUESTIONS")
+if action == "questions-text":
+    finish("Before I start:\n\n1. **Format?** a) x b) y\n\n2. **Location?**\n\nSTATUS: QUESTIONS")
+if action == "no-status":
+    finish("I checked the file. Shall I continue?")
+if action == "hang":
+    time.sleep(600)
+if action.startswith("sleep:"):
+    time.sleep(int(action.split(":")[1]))
+    finish("STATUS: DONE")
+if action == "team-lead-done":
+    call("claim_lead")
+    call("checkpoint", summary="stage 1 done", next_steps="stage 2")
+    call("send_message", to="team", text="TEAM DONE")
+    finish("STATUS: DONE\nRole: coordinator")
+if action == "tool-done":
+    call("list_agents")
+    finish("STATUS: DONE")
+if action == "team-lead-slow":
+    call("claim_lead")
+    time.sleep(5)
+    call("send_message", to="team", text="TEAM DONE")
+    finish("STATUS: DONE\nRole: coordinator")
+if action == "team-sleep":
+    time.sleep(1)
+    call("claim_lead")
+    finish("STATUS: SLEEPING")
+finish("STATUS: DONE\nDone: everything")

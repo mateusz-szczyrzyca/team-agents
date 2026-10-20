@@ -1,0 +1,2344 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC1010  # "status=done" assigns the word "done"; it is not a loop keyword
+# agent — runs and coordinates LLM coding agents (Claude Code, Codex CLI, Antigravity, OpenCode) on this host.
+# Every task gets its own git worktree + branch and runs in the background as a systemd --user unit;
+# questions/answers live in .md files, and a notification is sent after every run.
+set -euo pipefail
+shopt -u patsub_replacement 2>/dev/null || :   # bash < 5.2 has no such option (nothing to disable)
+
+AGENTS_HOME="${AGENTS_HOME:-$HOME/agents}"
+CONF="$AGENTS_HOME/agents.conf"
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+TASKS="$AGENTS_HOME/tasks"
+PROMPTS="$AGENTS_HOME/prompts"
+BUS_DIR="$AGENTS_HOME/bus"
+
+# ------------------------------------------------------------------ structured logging
+#
+# Every event of the script is one JSON object per line in $AGENTS_HOME/logs/agent.jsonl (for Promtail,
+# Vector, vmagent ...) and in the systemd journal (`logger`, SYSLOG_IDENTIFIER=agent). Inside a runner the
+# record also goes to the task's runner.log, which `agent log` renders readably. Human-facing output of
+# interactive commands stays plain text.
+
+LOG_DIR="$AGENTS_HOME/logs"
+AGENT_SUBCOMMAND="${1:-}"   # the subcommand being run (recorded in every log record)
+RUNNER_ID=""                # task ID while running as a runner (set by cmd__runner)
+
+# log_event level event [key=value ...] — writes one structured log record
+log_event() {
+  local level=$1 event=$2; shift 2
+  local args=(--arg level "$level" --arg event "$event" --arg sub "$AGENT_SUBCOMMAND" --arg task "$RUNNER_ID")
+  local prog='{ts: (now | todate), level: $level, component: "agent", event: $event,
+               pid: '"$$"', subcommand: $sub} + (if $task != "" then {task: $task} else {} end)'
+  local kv i=0
+  for kv in "$@"; do
+    args+=(--arg "k$i" "${kv%%=*}" --arg "v$i" "${kv#*=}")
+    prog+=" + {(\$k$i): \$v$i}"
+    i=$((i + 1))
+  done
+  local line
+  if ! line=$(jq -nc "${args[@]}" "$prog" 2>&1); then
+    echo "agent: cannot encode the log record '$event': $line" >&2
+    return 0
+  fi
+  if ! { mkdir -p "$LOG_DIR" && printf '%s\n' "$line" >> "$LOG_DIR/agent.jsonl"; } 2>/dev/null; then
+    echo "agent: cannot write $LOG_DIR/agent.jsonl" >&2
+  fi
+  if command -v logger >/dev/null; then
+    local prio=info
+    case $level in warn) prio=warning ;; error) prio=err ;; debug) prio=debug ;; esac
+    logger -t agent -p "user.$prio" -- "$line" 2>/dev/null || echo "agent: cannot write to the system journal" >&2
+  fi
+  if [[ -n $RUNNER_ID ]]; then
+    printf '%s\n' "$line" >&3   # fd 3 is the task's runner.log (opened by cmd__runner)
+  elif [[ -z ${LOG_QUIET:-} && ( $level == warn || $level == error ) ]] && [[ -t 2 ]]; then
+    echo "agent: $level: $event${*:+ ($*)}" >&2
+  fi
+}
+log_info()  { log_event info "$@"; }
+log_warn()  { log_event warn "$@"; }
+log_error() { log_event error "$@"; }
+
+# try event command [args...] — runs a command whose failure must not stop the caller (a side effect such as
+# a bus notice or a cleanup step). A failure is logged as a warning with its exit code and stderr; stdout is
+# passed through. Commands whose failure must stop the caller are not run through try.
+try() {
+  local event=$1; shift
+  local errf rc=0
+  errf=$(mktemp)
+  "$@" 2>"$errf" || rc=$?
+  if ((rc != 0)); then
+    log_warn "$event" "exit_code=$rc" "command=$*" "stderr=$(head -c 2000 "$errf")"
+  fi
+  rm -f "$errf"
+  return 0
+}
+
+# jq_soft event jq-args... — jq for data that may legitimately lack a field (CLI outputs): a missing field yields
+# empty output, but input that is not valid JSON is logged as a warning instead of being silently ignored.
+jq_soft() {
+  local event=$1; shift
+  local errf rc=0 out
+  errf=$(mktemp)
+  out=$(jq "$@" 2>"$errf") || rc=$?
+  if ((rc != 0)); then
+    log_warn "$event" "exit_code=$rc" "stderr=$(head -c 2000 "$errf")"
+  fi
+  rm -f "$errf"
+  printf '%s' "$out"
+}
+
+die() { LOG_QUIET=1 log_error command_failed "message=$*"; echo "agent: $*" >&2; exit 1; }
+
+[[ -f $CONF ]] || die "missing configuration: $CONF"
+# shellcheck source=/dev/null
+source "$CONF"
+declare -p AGENT_EXTRA_ARGS &>/dev/null || declare -A AGENT_EXTRA_ARGS=()
+declare -p AGENT_MODEL &>/dev/null || declare -A AGENT_MODEL=()
+declare -p NORMAL_AGENTS &>/dev/null || NORMAL_AGENTS=()
+declare -p WORKER_AGENTS &>/dev/null || WORKER_AGENTS=()
+
+agent_provider() { # agent name → provider (for load balancing)
+  case ${AGENT_TYPE[$1]:-${INVESTIGATORS_TYPE[$1]:-}} in
+    claude) echo anthropic ;;
+    codex) echo openai ;;
+    gemini) echo google ;;
+    opencode) local m=${AGENT_MODEL[$1]:-}; echo "${m%%/*}" ;;
+    *) echo other ;;
+  esac
+}
+
+agent_tier() { # agent name → normal | worker (cheap model)
+  local a
+  for a in "${WORKER_AGENTS[@]}"; do [[ $a == "$1" ]] && { echo worker; return; }; done
+  echo normal
+}
+CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
+CODEX_BIN="${CODEX_BIN:-$HOME/.local/bin/codex}"
+AGENTBUS_BIN="${AGENTBUS_BIN:-$HOME/.local/bin/agentbus}"
+RUN_PATH="${RUN_PATH:-$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin}"
+# Notifications: NOTIFY_CMD is called with the path of a notification file (first line = title/thread,
+# the rest = body). Empty = notifications are only written to NOTIFY_DIR. Legacy configs that set
+# NOTIFY_SCRIPT (run inside NOTIFY_DIR with the file name) keep working.
+NOTIFY_CMD="${NOTIFY_CMD:-}"
+NOTIFY_DIR="${NOTIFY_DIR:-$AGENTS_HOME/notifications}"
+NOTIFY_SCRIPT="${NOTIFY_SCRIPT:-}"
+NOTIFY_MAX_CHARS="${NOTIFY_MAX_CHARS:-1500}"
+# Language the agents use for messages to the human (questions, reports, PR texts), e.g. "Polish".
+AGENT_LANGUAGE="${AGENT_LANGUAGE:-English}"
+# Environment notes for the agents: shared resources (probes, serial ports, test hosts), how to use them.
+ENV_NOTES_FILE="${ENV_NOTES_FILE:-$AGENTS_HOME/hardware.md}"
+BRANCH_PREFIX="${BRANCH_PREFIX:-agents}"
+CLAUDE_MAX_TURNS="${CLAUDE_MAX_TURNS:-300}"
+AGY_BIN="${AGY_BIN:-$HOME/.local/bin/agy}"
+OPENCODE_BIN="${OPENCODE_BIN:-$HOME/.opencode/bin/opencode}"
+OPENCODE_BASH_TIMEOUT_MS="${OPENCODE_BASH_TIMEOUT_MS:-600000}"
+AGY_PRINT_TIMEOUT="${AGY_PRINT_TIMEOUT:-8h}"
+INVESTIGATOR_NAME="${INVESTIGATOR_NAME:-investigator}"
+INVESTIGATOR_TYPE="${INVESTIGATOR_TYPE:-claude}"
+INVESTIGATOR_MODEL="${INVESTIGATOR_MODEL:-}"
+INVESTIGATOR_EXTRA_ARGS="${INVESTIGATOR_EXTRA_ARGS:-}"
+INVESTIGATION_QUEUE_MAX="${INVESTIGATION_QUEUE_MAX:-3}"
+AGENT_HANG_MIN="${AGENT_HANG_MIN:-30}"          # watchdog: this many minutes without any activity = hang
+AGENT_HANG_STRIKES="${AGENT_HANG_STRIKES:-3}"    # this many consecutive hangs without progress = agent is hung
+# Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
+declare -p INVESTIGATORS_TYPE &>/dev/null || declare -A INVESTIGATORS_TYPE=()
+declare -p INVESTIGATORS_MODEL &>/dev/null || declare -A INVESTIGATORS_MODEL=()
+declare -p INVESTIGATORS_EXTRA_ARGS &>/dev/null || declare -A INVESTIGATORS_EXTRA_ARGS=()
+if ((${#INVESTIGATORS_TYPE[@]} == 0)); then
+  INVESTIGATORS_TYPE[$INVESTIGATOR_NAME]=$INVESTIGATOR_TYPE
+  INVESTIGATORS_MODEL[$INVESTIGATOR_NAME]=$INVESTIGATOR_MODEL
+  INVESTIGATORS_EXTRA_ARGS[$INVESTIGATOR_NAME]=$INVESTIGATOR_EXTRA_ARGS
+fi
+INV_SLOTS=${#INVESTIGATORS_TYPE[@]}
+investigator_names() { printf '%s\n' "${!INVESTIGATORS_TYPE[@]}" | sort; }
+is_investigator() { [[ -n ${INVESTIGATORS_TYPE[$1]:-} ]]; }
+AGENTLIVE_BIN="${AGENTLIVE_BIN:-$HOME/.local/bin/agentlive}"
+LIVE_REMIND_MIN="${LIVE_REMIND_MIN:-1}"
+AUTH_MODEL_ANTHROPIC="${AUTH_MODEL_ANTHROPIC:-haiku}"
+AUTH_MODEL_OPENAI="${AUTH_MODEL_OPENAI:-gpt-6-luna}"
+AUTH_MODEL_GEMINI="${AUTH_MODEL_GEMINI:-}"
+AUTH_MODEL_OPENROUTER="${AUTH_MODEL_OPENROUTER:-}"   # empty = model of the first openrouter/... agent in agents.conf
+AUTH_MODEL_DEEPINFRA="${AUTH_MODEL_DEEPINFRA:-}"     # empty = model of the first deepinfra/... agent in agents.conf
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+bus() { "$AGENTBUS_BIN" "$@"; }
+
+# `agent stop --running` in progress: blocks waking, queues and notifications (flag valid for 2 min)
+stopping() {
+  local f="$AGENTS_HOME/.stop-all"
+  [[ -f $f ]] && (( $(date +%s) - $(stat -c %Y "$f") < 120 ))
+}
+
+# ------------------------------------------------------------------ task metadata (meta.env)
+
+meta_file() { printf '%s/%s/meta.env' "$TASKS" "$1"; }
+
+meta_set() { # id key value — sets one KEY=value (printf %q) line
+  local f; f=$(meta_file "$1")
+  # grep exits 1 when no other line remains — that is not an error
+  { grep -v "^$2=" "$f" || (($? == 1)); printf '%s=%q\n' "$2" "$3"; } > "$f.tmp"
+  mv "$f.tmp" "$f"
+}
+
+meta_load() { # loads the task's meta.env variables into the current shell
+  local f; f=$(meta_file "$1")
+  [[ -f $f ]] || die "no such task: $1"
+  # shellcheck source=/dev/null
+  # shellcheck source=/dev/null
+  source "$f"
+}
+
+# shellcheck source=/dev/null
+task_field() { ( source "$(meta_file "$1")"; printf '%s' "${!2:-}" ) }
+
+resolve_id() { # exact task ID or an unambiguous fragment → task ID
+  local q=$1 m=()
+  [[ -d $TASKS/$q ]] && { printf '%s' "$q"; return; }
+  local d
+  for d in "$TASKS"/*/; do
+    d=${d%/}; d=${d##*/}
+    [[ $d == *"$q"* ]] && m+=("$d")
+  done
+  ((${#m[@]} == 1)) || die "no unique task matches '$q' (${#m[@]} matches)"
+  printf '%s' "${m[0]}"
+}
+
+unit_name() { printf 'agent-%s-r%s' "$1" "$2"; }
+
+unit_active() { # id run
+  # a query: "inactive" and "no such unit" both mean the run is not active
+  systemctl --user is-active --quiet "$(unit_name "$1" "$2").service" 2>/dev/null
+}
+
+agent_running_task() { # agent name → ID of the task it is running (or nothing)
+  local d
+  for d in "$TASKS"/*/; do
+    [[ -f $d/meta.env ]] || continue
+    local id st run ag
+    id=${d%/}; id=${id##*/}
+    ag=$(task_field "$id" AGENT); st=$(task_field "$id" STATUS); run=$(task_field "$id" RUN)
+    if [[ $ag == "$1" && ($st == running || $st == starting) ]] && unit_active "$id" "$run"; then
+      printf '%s' "$id"; return 0
+    fi
+    if [[ $ag == "$1" && $st == sleeping ]]; then   # a sleeping team member keeps its agent reserved
+      printf '%s' "$id"; return 0
+    fi
+  done
+  return 1
+}
+
+# ------------------------------------------------------------------ questions
+
+count_questions() { # file → number of "## N." questions (0 for a missing file)
+  [[ -f $1 ]] || { echo 0; return; }
+  grep -cE '^## [0-9]+\.' "$1" || (($? == 1))   # grep -c exits 1 when it counts 0
+}
+
+validate_answers() { # file → 0 when every question has a non-empty answer
+  [[ -s $1 ]] || { echo "questions file missing: $1" >&2; return 1; }
+  awk '
+    function check() {
+      if (!inq) return
+      if (!mark) { bad++; printf "  question %s: missing **Answer:** line\n", num > "/dev/stderr" }
+      else if (ans ~ /^[[:space:]]*$/) { bad++; printf "  question %s: no answer\n", num > "/dev/stderr" }
+    }
+    /^## [0-9]+\./ {
+      check(); inq = 1; mark = 0; ans = ""; q++
+      num = $2; sub(/\.$/, "", num); next
+    }
+    /^\*\*(Answer|Odpowiedź):\*\*/ {   # "Odpowiedź" = the Polish marker used by older versions
+      if (inq) { mark = 1; line = $0; sub(/^\*\*(Answer|Odpowiedź):\*\*/, "", line); ans = ans line }
+      next
+    }
+    { if (inq && mark) ans = ans $0 }
+    END {
+      check()
+      if (q == 0) { print "  no questions in the \"## N. ...\" format" > "/dev/stderr"; exit 1 }
+      exit (bad > 0)
+    }
+  ' "$1"
+}
+
+# ------------------------------------------------------------------ prompts
+
+render() { # template file → stdout, with {{KEY}} placeholders substituted from R
+  local t; t=$(<"$1")
+  local k
+  for k in "${!R[@]}"; do t=${t//"{{$k}}"/${R[$k]}}; done
+  printf '%s\n' "$t"
+}
+
+team_members_list() {
+  [[ -n ${TEAM:-} ]] || return 0
+  local a out=()
+  while read -r a; do
+    [[ -n $a ]] && out+=("$a (${AGENT_TYPE[$a]:-?})")
+  done < <(try peers_unavailable bus team-get --dir "$BUS_DIR" --team "$TEAM" | jq_soft peers_parse -r '.members[] | .agent')
+  local IFS=,; printf '%s' "${out[*]}" | sed 's/,/, /g'
+}
+
+# ------------------------------------------------------------------ teams
+
+# Exit codes of agentbus subcommands per error cause (ErrorCause.ExitCode in agentbus/errors.go).
+BUS_NOT_FOUND=3
+
+# team_json team — the team's JSON; nothing when the team does not exist (exit code BUS_NOT_FOUND), any
+# other failure is logged.
+team_json() {
+  local errf rc=0 out
+  errf=$(mktemp)
+  out=$(bus team-get --dir "$BUS_DIR" --team "$1" 2>"$errf") || rc=$?
+  if ((rc != 0 && rc != BUS_NOT_FOUND)); then
+    log_warn team_read_failed "team=$1" "exit_code=$rc" "stderr=$(head -c 2000 "$errf")"
+  fi
+  rm -f "$errf"
+  printf '%s' "$out"
+}
+team_lead() { team_json "$1" | jq -r '.lead // empty'; }
+team_done_flag() { team_json "$1" | jq -r '.done // false'; }
+team_tasks() { team_json "$1" | jq -r '.members[]? | .task'; }
+
+notify_send() { # file — delivers a notification file (first line = title/thread, rest = body)
+  local f=$1
+  if [[ -n $NOTIFY_CMD ]]; then
+    try notification_failed $NOTIFY_CMD "$f"
+  elif [[ -n $NOTIFY_SCRIPT ]]; then   # legacy: script run inside NOTIFY_DIR with the file name
+    (cd "$NOTIFY_DIR" && try notification_failed "$NOTIFY_SCRIPT" "${f##*/}")
+  fi
+  return 0
+}
+
+# notice kind from to text [field=value ...] — publishes an event of this script on the bus (kinds: ScriptNotice in
+# agentbus/events.go). Delivering it is a side effect of the calling step, so a failure is logged, not fatal.
+notice() {
+  local kind=$1 from=$2 to=$3 text=$4; shift 4
+  local args=(--dir "$BUS_DIR" --from "$from" --to "$to" --notice "$kind") kv
+  for kv in "$@"; do args+=(--field "$kv"); done
+  try "notice_failed" bus send "${args[@]}" "$text" >/dev/null
+  log_info notice_sent "notice=$kind" "to=$to"
+}
+
+push_text() { # repo line... — a notification outside the normal task cycle
+  local repo=$1; shift
+  mkdir -p "$NOTIFY_DIR"
+  local f
+  f="$NOTIFY_DIR/$(date +%Y%m%d-%H%M%S)-$RANDOM-summary.md"
+  { printf '%s\n' "$repo"; printf '%s\n' "$@"; } > "$f"
+  notify_send "$f"
+}
+
+team_summary() { # team — lines "agent: status (branch)"
+  local t
+  for t in $(team_tasks "$1"); do
+    printf '  %s: %s (%s)\n' "$(task_field "$t" AGENT)" "$(task_field "$t" STATUS)" "$(task_field "$t" BRANCH)"
+  done
+}
+
+finish_team() { # team reason — closes the team; sleeping members finish as done
+  local team=$1 why=$2 t
+  [[ $(team_done_flag "$team") == true ]] && return 0
+  log_info team_finished "team=$team" "reason=$why"
+  bus team-done --dir "$BUS_DIR" --team "$team"
+  for t in $(team_tasks "$team"); do
+    if [[ $(task_field "$t" STATUS) == sleeping ]]; then
+      meta_set "$t" STATUS done
+      meta_set "$t" FINISHED "$(date -Is)"
+      act "$t" info "■ $why"
+    fi
+    case $(task_field "$t" STATUS) in
+      done|failed|stopped) bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state done >/dev/null ;;
+      excluded) bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state excluded >/dev/null ;;
+    esac
+  done
+}
+
+request_review() { # coordinator task id — --verify: queue a PR review by an investigator
+  local id=$1 root branch pr url num inv
+  root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH)
+  pr=$(cd "$root" && try pr_lookup_failed gh pr list --head "$branch" --state all --json number,url --limit 1)
+  url=$(jq_soft pr_lookup_parse -r '.[0].url // empty' <<< "${pr:-[]}")
+  num=$(jq_soft pr_lookup_parse -r '.[0].number // empty' <<< "${pr:-[]}")
+  if [[ -z $url ]]; then
+    act "$id" err "--verify: no PR found for branch $branch — review skipped"
+    push_text "$(task_field "$id" REPO_NAME)" "Team $(task_field "$id" TEAM): --verify — no PR found for branch $branch, investigator review skipped."
+    return 0
+  fi
+  inv=$(bus inv-add --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" --kind review \
+          --from-agent "$(task_field "$id" AGENT)" --from-task "$id" --repo "$(task_field "$id" REPO_NAME)" \
+          --branch "$branch" --tasks-dir "$TASKS" --question "Recenzja PR #$num ($url)" \
+          --pr-url "$url" --pr-number "$num") || return 0
+  meta_set "$id" REVIEW_INV "$inv"
+  act "$id" info "--verify: review of PR #$num queued for an investigator (#$inv)"
+}
+
+team_after_run() { # id status final note — team logic after a member's run ends
+  local id=$1 status=$2 final=$3 note=$4
+  local team=$TEAM lead state
+  lead=$(team_lead "$team")
+  case $status in
+    sleeping) state=sleeping ;;
+    excluded) state=excluded ;;
+    hung) state=hung ;;
+    done|failed|stopped) state=done ;;
+    *) state=active ;;
+  esac
+  try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$AGENT" --state "$state" >/dev/null
+
+  if [[ $status == hung ]]; then
+    local released tj nm
+    released=$(try board_release_failed bus board-release-agent --dir "$BUS_DIR" --team "$team" --agent "$AGENT" | paste -sd,)
+    tj=$(bus team-get --dir "$BUS_DIR" --team "$team")
+    if [[ $(jq -r '[.members[] | select(.tier != "worker" and .state != "excluded")] | all(.state == "hung")' <<< "$tj") == true ]]; then
+      finish_team "$team" "the coordinator and all normal models are hung"
+      push_text "$REPO_NAME" "❌ Team $team aborted: the coordinator and all normal models are hung ($AGENT_HANG_STRIKES times in a row without progress)." \
+        "Work state: pushed branches and checkpoints — to resume: agent run --resume $team" "$(team_summary "$team")"
+      return 0
+    fi
+    for nm in $(jq -r '.members[] | select(.tier != "worker" and (.state == "active" or .state == "sleeping" or .state == "waking")) | .agent' <<< "$tj"); do
+      if [[ $AGENT == "$lead" ]]; then
+        notice coordinator_hung agentbus "$nm" "COORDINATOR $AGENT IS HUNG ($AGENT_HANG_STRIKES times without progress) and was switched off. Normal model: take over coordination (claim_lead), check the last checkpoint and the board, continue.${released:+ Its items ($released) are back on the board.}" \
+          "agent=$AGENT" "team=$team" "released=$released"
+      else
+        notice agent_hung agentbus "$nm" "$AGENT IS HUNG ($AGENT_HANG_STRIKES times without progress) and was switched off.${released:+ Its items ($released) are back on the board.} Take over its work." \
+          "agent=$AGENT" "team=$team" "released=$released"
+      fi
+    done
+    return 0
+  fi
+
+  if [[ $AGENT == "$lead" ]]; then
+    case $status in
+      waiting) notify "$id" waiting "$final" "questions from the coordinator of team $team (members sleep until answered)" ;;
+      done|failed)
+        finish_team "$team" "team task finished by the coordinator ($AGENT)"
+        if [[ $status == done && $(task_field "$id" VERIFY) == 1 ]]; then
+          request_review "$id"
+          [[ -n $(task_field "$id" REVIEW_INV) ]] && note="${note:+$note; }PR review queued for an investigator (#$(task_field "$id" REVIEW_INV))"
+        fi
+        notify "$id" "$status" "$final" "${note:+$note; }team $team:
+$(team_summary "$team")" ;;
+    esac
+  else
+    case $status in
+      waiting) notify "$id" waiting "$final" "a member of team $team asked you directly (should have asked the coordinator)" ;;
+      failed)
+        if [[ -n $lead ]]; then
+          notice member_failed agentbus "$lead" "TEAM: member $AGENT failed${note:+ ($note)}. Last message: ${final:0:300}" \
+            "agent=$AGENT" "team=$team" "note=$note"
+        fi ;;
+      done)
+        if [[ -n $lead && $(team_done_flag "$team") != true ]]; then
+          notice member_finished agentbus "$lead" "TEAM: member $AGENT finished (STATUS: DONE)." "agent=$AGENT" "team=$team"
+        fi ;;
+    esac
+  fi
+
+  # everyone finished without the coordinator closing the team / everyone sleeps = the team is stuck
+  [[ $(team_done_flag "$team") == true ]] && return 0
+  local stuck_file="$TASKS/.team-$team.stuck"
+  team_all() { # done|sleep — are all members in the given set of states
+    local t st
+    for t in $(team_tasks "$team"); do
+      st=$(task_field "$t" STATUS)
+      case $1:$st in
+        done:done|done:failed|done:stopped|done:excluded|done:hung) ;;
+        sleep:sleeping|sleep:done|sleep:failed|sleep:stopped|sleep:excluded|sleep:hung) ;;
+        *) return 1 ;;
+      esac
+    done
+  }
+  if team_all done; then
+    finish_team "$team" "all members finished"
+    push_text "$REPO_NAME" "Team $team finished without being closed by its coordinator:" "$(team_summary "$team")"
+  elif team_all sleep && { sleep 3   # give a pending wake-up a moment; re-check after the pause
+         [[ $(team_done_flag "$team") != true ]] && team_all sleep && ! team_all done; }; then
+    local n=1
+    [[ -f $stuck_file ]] && n=$(( $(<"$stuck_file") + 1 ))
+    echo "$n" > "$stuck_file"
+    if ((n == 1)) && [[ -n $lead ]]; then
+      notice team_stuck agentbus "$lead" \
+        "TEAM STUCK: all members are asleep. As the coordinator, check the state (team_status, read_messages) and either assign work or finish the team task (STATUS: DONE)." \
+        "team=$team"
+    elif ((n == 2)); then
+      push_text "$REPO_NAME" "Team $team is stuck: all members are asleep and waking the coordinator did not help." \
+        "See: agent live. Nudge them with a message (m / agent say) or stop: agent stop <coordinator task id>." \
+        "$(team_summary "$team")"
+    fi
+  else
+    rm -f "$stuck_file"
+  fi
+}
+
+cmd__wake() { # id — called by agentbus when a sleeping member receives a message
+  stopping && return 0
+  local id; id=$(resolve_id "${1:?}")
+  exec 8>"$TASKS/$id/wake.lock"
+  flock -w 30 8 || exit 0
+  meta_load "$id"
+  [[ -n ${TEAM:-} ]] || exit 0
+  log_info wake_requested "task=$id" "agent=$AGENT" "team=$TEAM"
+  local mstate
+  mstate=$(team_json "$TEAM" | jq -r --arg a "$AGENT" '.members[$a].state // empty')
+  if [[ $mstate == excluded && $STATUS == sleeping ]]; then
+    meta_set "$id" STATUS excluded
+    meta_set "$id" FINISHED "$(date -Is)"
+    act "$id" info "■ excluded from the team by the coordinator"
+    exit 0
+  fi
+  if [[ $STATUS == sleeping && $(team_done_flag "$TEAM") != true ]]; then
+    meta_set "$id" WAKE_PENDING 1
+    start_runner "$id" resume || bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state sleeping >/dev/null
+  else
+    local state=active
+    case $STATUS in done|failed|stopped) state=done ;; sleeping) state=done ;; esac
+    try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state "$state" >/dev/null
+  fi
+}
+
+# privileges_text — what the prompt tells the agent about installing missing tools; decided on every run,
+# because sudo rights can change between runs
+privileges_text() {
+  # "sudo -n true" asks without a password prompt; its "a password is required" message is the expected answer
+  if command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
+    echo "you have passwordless sudo. Use it only to install a tool you need that is missing (with the system package manager), and list every package you installed in your report. Do not use sudo for anything else."
+  else
+    echo "you have no sudo. If a tool you need is missing, do not work around it silently: use what is available and say in your report (or in your questions, if it blocks you) what was missing."
+  fi
+}
+
+peers_list() {
+  local a out=()
+  for a in "${!AGENT_TYPE[@]}"; do out+=("$a (${AGENT_TYPE[$a]})"); done
+  local IFS=,; printf '%s' "${out[*]}" | sed 's/,/, /g'
+}
+
+build_prompt() { # id mode qfile next_round
+  local id=$1 mode=$2 qfile=$3 next_round=$4
+  declare -gA R=(
+    [AGENT]=$AGENT [AGENT_TYPE]=$TYPE [TASK_ID]=$id [REPO]=$REPO_NAME
+    [WORKTREE]=$WORKTREE [BRANCH]=$BRANCH [BASE]=$BASE
+    [HARDWARE_FILE]="$ENV_NOTES_FILE" [PEERS]="$(peers_list)" [LANGUAGE]="$AGENT_LANGUAGE"
+    [PRIVILEGES]="$(privileges_text)"
+    [QUESTIONS_FILE]=$qfile [ROUND]=$next_round
+    [REPORT_FILE]=".agents/reports/$id.md"
+    [RESULT_FILE]="$TASKS/$id/result.md"
+    [INV_ID]=${INV_ID:-} [PARENT_TASK]=${PARENT_TASK:-} [PARENT_WORKTREE]=${PARENT_WORKTREE:-}
+    [FROM_AGENT]=${FROM_AGENT:-}
+    [TEAM_ID]=${TEAM:-} [TEAM_MEMBERS]="$(team_members_list)"
+    [TIER]=$( [[ ${TIER:-normal} == worker ]] && echo "worker (a cheap model for simple tasks)" || echo "normal model" )
+    [WORKERS]="$( ((${#WORKER_AGENTS[@]})) && (IFS=,; printf '%s' "${WORKER_AGENTS[*]}" | sed 's/,/, /g') || echo "(none configured)")"
+    [HELPER_ID]=${HELPER_ID:-}
+    [PR_URL]=${PR_URL:-} [PR_NUMBER]=${PR_NUMBER:-}
+    [RESUMED_FROM]=${RESUMED_FROM:-} [HANG_MIN]=$AGENT_HANG_MIN
+  )
+  if [[ $mode == new ]]; then
+    if [[ ${KIND:-worker} == investigation && ${REVIEW:-} == 1 ]]; then
+      render "$PROMPTS/review.md"
+      printf '\n# PR REVIEW REQUEST #%s\n\n' "$PR_NUMBER"
+    elif [[ ${KIND:-worker} == investigation ]]; then
+      render "$PROMPTS/investigator.md"
+      printf '\n# INVESTIGATION REQUEST #%s\n\n' "$INV_ID"
+    elif [[ ${KIND:-worker} == helper ]]; then
+      render "$PROMPTS/helper.md"
+      printf '\n# REQUEST H%s\n\n' "$HELPER_ID"
+    elif [[ -n ${TEAM:-} ]]; then
+      render "$PROMPTS/team.md"
+      printf '\n# TEAM TASK\n\n'
+    else
+      render "$PROMPTS/protocol.md"
+      printf '\n# TASK\n\n'
+    fi
+    cat "$TASKS/$id/task.md"
+    if [[ -n ${RESUMED_FROM:-} ]]; then
+      printf '\n\n'
+      render "$PROMPTS/resume-checkpoint.md"
+      printf '\n## Checkpoints (oldest first)\n'
+      local ck="task-$id"; [[ -n ${TEAM:-} ]] && ck="team-$TEAM"
+      try checkpoint_read_failed bus checkpoint-get --dir "$BUS_DIR" --key "$ck"
+      if [[ -s $TASKS/$id/history.md ]]; then
+        printf '\n## Earlier questions and answers from the human (settled — do not ask again)\n'
+        cat "$TASKS/$id/history.md"
+      fi
+    fi
+    printf '\n\n'
+    cat "$PROMPTS/clarification.md"
+    # what "asking a question" means in this system — depends on the role (optional files)
+    if [[ -n ${TEAM:-} && -f $PROMPTS/ask-team.md ]]; then
+      render "$PROMPTS/ask-team.md"
+    elif [[ ${KIND:-worker} != helper && -f $PROMPTS/ask-solo.md ]]; then
+      render "$PROMPTS/ask-solo.md"
+    fi
+    return
+  fi
+
+  local any=0
+  if [[ -n ${BOUNCE_PENDING:-} ]]; then
+    R[BOUNCE]=$BOUNCE_PENDING
+    render "$PROMPTS/verify-bounce.md"
+    printf '\n'
+    any=1
+  fi
+  if [[ -n ${WAKE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    render "$PROMPTS/team-wake.md"
+    printf '\n'
+    any=1
+  fi
+  if [[ -n ${ANSWERS_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+
+    R[ANSWERED_ROUND]=$ANSWERS_PENDING
+    R[ANSWERED_FILE]="$TASKS/$id/questions-$ANSWERS_PENDING.md"
+    render "$PROMPTS/resume.md"
+    printf '\n---\n\n'
+    cat "$TASKS/$id/questions-$ANSWERS_PENDING.md"
+    printf '\n'
+    any=1
+  fi
+  if [[ -n ${INV_PENDING_DELIVERY:-} ]]; then
+    local j inv_task
+    j=$(bus inv-get --dir "$BUS_DIR" --id "$INV_PENDING_DELIVERY")
+    inv_task=$(jq -r '.inv_task // empty' <<< "$j")
+    R[INV_ID]=$INV_PENDING_DELIVERY
+    R[INV_STATUS]=$(jq -r .status <<< "$j")
+    R[INV_FILE]=$(jq -r .file <<< "$j")
+    R[INV_BRANCH]=$( [[ -n $inv_task ]] && task_field "$inv_task" BRANCH || echo "none")
+    ((any)) && printf '\n---\n\n'
+    render "$PROMPTS/inv-result.md"
+    printf '\n'
+    if [[ -n $inv_task && -s $TASKS/$inv_task/result.md ]]; then
+      cat "$TASKS/$inv_task/result.md"
+    elif [[ -n $inv_task && -s $TASKS/$inv_task/final.md ]]; then
+      cat "$TASKS/$inv_task/final.md"
+    else
+      echo "(the investigator delivered no result — details in ${R[INV_FILE]})"
+    fi
+    any=1
+  fi
+  if [[ -s $TASKS/$id/note-$RUN.md ]]; then
+    printf '\n---\n\n## Additional note from the human\n\n'
+    cat "$TASKS/$id/note-$RUN.md"
+    any=1
+  fi
+  if ((any == 0)); then
+    printf 'Continue task %s following the rules from the first message of this session.\n' "$id"
+  fi
+}
+
+bus_args_json() { # id → JSON (also valid TOML) array of `agentbus serve` arguments
+  local peers
+  peers=$(IFS=,; printf '%s' "${!AGENT_TYPE[*]}")
+  local role=worker
+  [[ ${KIND:-worker} == investigation ]] && role=investigator
+  printf '%s\n' serve --dir "$BUS_DIR" --agent "$AGENT" --task "$1" \
+    --repo "$REPO_NAME" --branch "$BRANCH" --worktree "$WORKTREE" --peers "$peers,$(investigator_names | paste -sd,)" \
+    --role "$role" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" --tasks-dir "$TASKS" \
+    ${TEAM:+--team "$TEAM"} --tier "${TIER:-normal}" --agent-cmd "$SELF" --home "$AGENTS_HOME" \
+    | jq -R . | jq -sc .
+}
+
+# ------------------------------------------------------------------ running agent CLIs
+
+act() { # id kind text — activity log entry (read by `agent live` and `agent transcript`)
+  local line
+  line=$(jq -nc --arg ts "$(date '+%F %T')" --arg k "$2" --arg t "$3" '{ts:$ts,k:$k,t:$t}')
+  printf '%s\n' "$line" >> "$TASKS/$1/activity.jsonl"
+  printf '%s\n' "$line" >> "$TASKS/$1/activity-full.jsonl"
+}
+
+last_event() { # jsonl-file jq-filter — the last event matching the filter
+  [[ -f $1 ]] || return 0   # no events yet
+  jq_soft event_scan_failed -ncR "last(inputs | fromjson? | select($2))" < "$1"
+}
+
+killtree() { # pid — kills a process and all its descendants
+  local c
+  local c
+  for c in $(pgrep -P "$1" || (($? == 1))); do killtree "$c"; done   # pgrep exits 1 when there are no children
+  kill -TERM "$1" 2>/dev/null || :   # the process may already have exited — nothing to kill
+}
+
+watch_run() { # pid dir n — waits for a CLI run; kills it after AGENT_HANG_MIN min without any event (sets HUNG=1)
+  local pid=$1 dir=$2 n=$3 last now f m
+  local limit=${AGENT_HANG_SECS:-$((AGENT_HANG_MIN * 60))} poll=${AGENT_HANG_POLL:-15}
+  HUNG=0
+  while kill -0 "$pid" 2>/dev/null; do   # kill -0 only asks whether the process still exists
+    sleep "$poll"
+    last=$(date +%s)
+    [[ -f $dir/prompt-$n.md ]] && last=$(stat -c %Y "$dir/prompt-$n.md")
+    for f in "$dir/activity.jsonl" "$dir/out-$n.jsonl" "$dir/events-$n.jsonl" "$dir/err-$n.log"; do
+      [[ -f $f ]] || continue
+      m=$(stat -c %Y "$f"); (( m > last )) && last=$m
+    done
+    now=$(date +%s)
+    if (( now - last > limit )) && kill -0 "$pid" 2>/dev/null; then
+      HUNG=1
+      act "$RUNNER_ID" err "■ watchdog: no activity at all for $AGENT_HANG_MIN min — killing the run"
+      killtree "$pid"
+      sleep 2
+      killtree "$pid"
+      break
+    fi
+  done
+  wait "$pid"
+}
+
+activity_progress() { # id — number of the agent's own activity entries (excluding entries written by this script)
+  [[ -f $TASKS/$1/activity.jsonl ]] || { echo 0; return; }
+  jq_soft activity_parse -c 'select(.k != "info" and .k != "err")' "$TASKS/$1/activity.jsonl" | wc -l
+}
+
+run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
+  local id=$1 mode=$2 n=$3 pf=$4 dir=$5
+  jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
+    '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$dir/mcp.json"
+  local args=(-p --output-format stream-json --verbose --dangerously-skip-permissions
+              --mcp-config "$dir/mcp.json" --max-turns "$CLAUDE_MAX_TURNS")
+  if [[ -n ${MODEL:-} ]]; then args+=(--model "$MODEL"); fi
+  if [[ $mode == new ]]; then args+=(--session-id "$SESSION_ID"); else args+=(--resume "$SESSION_ID"); fi
+  local extra=(); read -ra extra <<< "${EXTRA_ARGS:-}"
+  args+=("${extra[@]}")
+  RC=0
+  ( cd "$WORKTREE" || exit 1
+    "$CLAUDE_BIN" "${args[@]}" "$(<"$pf")" </dev/null 2>"$dir/err-$n.log" \
+      | tee "$dir/out-$n.jsonl" | "$AGENTBUS_BIN" normalize --type claude --full "$dir/activity-full.jsonl" >> "$dir/activity.jsonl"
+    exit "${PIPESTATUS[0]}" ) &
+  watch_run $! "$dir" "$n" || RC=$?
+  local res; res=$(last_event "$dir/out-$n.jsonl" '.type == "result"')
+  FINAL=$(jq_soft cli_result_parse -r '.result // empty' <<< "${res:-null}")
+  if [[ $(jq_soft cli_result_parse -r '.is_error // false' <<< "${res:-null}") == true ]] && ((RC == 0)); then
+    RC=1
+  fi
+}
+
+run_codex() { # id mode n prompt_file dir ; sets RC, FINAL
+  local id=$1 mode=$2 n=$3 pf=$4 dir=$5
+  local args=(exec --json --dangerously-bypass-approvals-and-sandbox
+              -C "$WORKTREE" -o "$dir/last-$n.md"
+              -c "mcp_servers.agentbus.command=\"$AGENTBUS_BIN\""
+              -c "mcp_servers.agentbus.args=$(bus_args_json "$id")"
+              -c "mcp_servers.agentbus.tool_timeout_sec=900")
+  if [[ -n ${MODEL:-} ]]; then args+=(-m "$MODEL"); fi
+  local extra=(); read -ra extra <<< "${EXTRA_ARGS:-}"
+  args+=("${extra[@]}")
+  if [[ $mode == resume ]]; then args+=(resume "$SESSION_ID"); fi
+  args+=("$(<"$pf")")
+  RC=0
+  ( cd "$WORKTREE" || exit 1
+    "$CODEX_BIN" "${args[@]}" </dev/null 2>"$dir/err-$n.log" \
+      | tee "$dir/events-$n.jsonl" | "$AGENTBUS_BIN" normalize --type codex --full "$dir/activity-full.jsonl" >> "$dir/activity.jsonl"
+    exit "${PIPESTATUS[0]}" ) &
+  watch_run $! "$dir" "$n" || RC=$?
+  FINAL=""
+  [[ -f $dir/last-$n.md ]] && FINAL=$(<"$dir/last-$n.md")   # codex writes it only when the turn produced a message
+  if [[ $mode == new ]]; then
+    SESSION_ID=""
+    [[ -f $dir/events-$n.jsonl ]] && SESSION_ID=$(jq_soft cli_result_parse -nrR \
+      'first(inputs | fromjson? | select(.type == "thread.started") | .thread_id) // empty' < "$dir/events-$n.jsonl")
+    meta_set "$id" SESSION_ID "$SESSION_ID"
+    [[ -n $SESSION_ID ]] || log_warn session_id_missing "cli=codex" "effect=resume will not work"
+  fi
+}
+
+run_gemini() { # id mode n prompt_file dir ; sets RC, FINAL  (Antigravity CLI: agy)
+  local id=$1 mode=$2 n=$3 pf=$4 dir=$5
+  # agentbus MCP: workspace config (.agents/mcp_config.json), excluded from git locally
+  mkdir -p "$WORKTREE/.agents"
+  jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
+    '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$WORKTREE/.agents/mcp_config.json"
+  local excl
+  excl="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+  mkdir -p "$(dirname "$excl")"
+  if [[ ! -f $excl ]] || ! grep -qxF '.agents/mcp_config.json' "$excl"; then
+    echo '.agents/mcp_config.json' >> "$excl"
+  fi
+
+  local args=(--output-format stream-json --dangerously-skip-permissions --print-timeout "$AGY_PRINT_TIMEOUT")
+  if [[ -n ${MODEL:-} ]]; then args+=(--model "$MODEL"); fi
+  local extra=(); read -ra extra <<< "${EXTRA_ARGS:-}"
+  args+=("${extra[@]}")
+  if [[ $mode != new ]]; then args+=(--conversation "$SESSION_ID"); fi
+  RC=0
+  ( cd "$WORKTREE" || exit 1
+    "$AGY_BIN" "${args[@]}" -p "$(<"$pf")" </dev/null 2>"$dir/err-$n.log" \
+      | tee "$dir/out-$n.jsonl" | "$AGENTBUS_BIN" normalize --type gemini --full "$dir/activity-full.jsonl" >> "$dir/activity.jsonl"
+    exit "${PIPESTATUS[0]}" ) &
+  watch_run $! "$dir" "$n" || RC=$?
+  local res; res=$(last_event "$dir/out-$n.jsonl" '.event == "result"')
+  FINAL=$(jq_soft cli_result_parse -r '.result.response // empty' <<< "${res:-null}")
+  if [[ $(jq_soft cli_result_parse -r '.result.status // empty' <<< "${res:-null}") != SUCCESS ]] && ((RC == 0)); then
+    RC=1
+  fi
+  if [[ $mode == new ]]; then
+    SESSION_ID=$(jq_soft cli_result_parse -r '.result.conversation_id // empty' <<< "${res:-null}")
+    [[ -n $SESSION_ID ]] || SESSION_ID=$(jq_soft cli_result_parse -nrR \
+      'first(inputs | fromjson? | select(.event == "init") | .conversation_id) // empty' < "$dir/out-$n.jsonl")
+    meta_set "$id" SESSION_ID "$SESSION_ID"
+    [[ -n $SESSION_ID ]] || log_warn session_id_missing "cli=agy" "effect=resume will not work"
+  fi
+}
+
+opencode_config() { # id — per-run configuration (agentbus MCP + providers)
+  jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$1")" --arg model "${MODEL:-}" '
+    {
+      "$schema": "https://opencode.ai/config.json",
+      autoupdate: false,
+      mcp: { agentbus: { type: "local", command: ([$cmd] + $args), enabled: true } },
+      provider: {
+        openrouter: { options: { apiKey: "{env:OPENROUTER_API_KEY}" } },
+        deepinfra: {
+          npm: "@ai-sdk/openai-compatible", name: "DeepInfra",
+          options: { baseURL: "https://api.deepinfra.com/v1/openai", apiKey: "{env:DEEPINFRA_API_KEY}" }
+        }
+      }
+    }
+    # a model outside the models.dev catalog (e.g. an OpenRouter preset) must be registered with the provider
+    | ($model | split("/")) as $p
+    | if ($p | length) > 1 and (.provider[$p[0]] != null)
+      then .provider[$p[0]].models[($p[1:] | join("/"))] = { name: ($p[1:] | join("/")) }
+      else . end'
+}
+
+run_opencode() { # id mode n prompt_file dir ; sets RC, FINAL  (OpenRouter, DeepInfra and other API providers)
+  local id=$1 mode=$2 n=$3 pf=$4 dir=$5
+  local cfg; cfg=$(opencode_config "$id")
+  printf '%s\n' "$cfg" > "$dir/opencode-config.json"
+  local args=(run --standalone --format json --auto)
+  if [[ -n ${MODEL:-} ]]; then args+=(-m "$MODEL"); fi
+  local extra=(); read -ra extra <<< "${EXTRA_ARGS:-}"
+  args+=("${extra[@]}")
+  if [[ $mode != new ]]; then args+=(--session "$SESSION_ID"); fi
+  RC=0
+  ( cd "$WORKTREE" || exit 1
+    OPENCODE_CONFIG_CONTENT="$cfg" OPENCODE_DISABLE_AUTOUPDATE=1 \
+    OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS="$OPENCODE_BASH_TIMEOUT_MS" \
+      "$OPENCODE_BIN" "${args[@]}" -- "$(<"$pf")" </dev/null 2>"$dir/err-$n.log" \
+      | tee "$dir/out-$n.jsonl" | "$AGENTBUS_BIN" normalize --type opencode --full "$dir/activity-full.jsonl" >> "$dir/activity.jsonl"
+    exit "${PIPESTATUS[0]}" ) &
+  watch_run $! "$dir" "$n" || RC=$?
+  if [[ $mode == new ]]; then
+    SESSION_ID=$(jq_soft cli_result_parse -nrR 'first(inputs | fromjson? | .sessionID // empty)' < "$dir/out-$n.jsonl")
+    meta_set "$id" SESSION_ID "$SESSION_ID"
+    [[ -n $SESSION_ID ]] || log_warn session_id_missing "cli=opencode" "effect=resume will not work"
+  fi
+  FINAL=$(jq_soft cli_result_parse -nrR 'last(inputs | fromjson? | select(.type == "text") | .part.text) // empty' < "$dir/out-$n.jsonl")
+  if [[ -z $FINAL && -n ${SESSION_ID:-} ]]; then
+    # known opencode issue: in resumed sessions the result is sometimes stored but not printed to stdout
+    # older opencode versions have no --standalone (an expected failure); a failure of the fallback is logged
+    FINAL=$( (cd "$WORKTREE" && { "$OPENCODE_BIN" session export --standalone "$SESSION_ID" 2>/dev/null \
+                                  || try opencode_export_failed "$OPENCODE_BIN" session export "$SESSION_ID"; }) \
+      | jq_soft opencode_export_parse -r '[.messages[]? | select(.info.role == "assistant") | .parts[]? | select(.type == "text") | .text] | last // empty')
+    [[ -n $FINAL ]] && act "$id" info "result read via opencode session export (stdout was empty)"
+  fi
+  if [[ -z $FINAL && -f $dir/out-$n.jsonl ]] && grep -q '"type":"error"' "$dir/out-$n.jsonl" && ((RC == 0)); then
+    RC=1
+  fi
+}
+
+notify() { # id status final note
+  local id=$1 status=$2 final=$3 note=${4:-}
+  stopping && return 0
+  meta_load "$id"
+  log_info notification "task=$id" "status=$status" "note=$note"
+  local label
+  case $status in
+    done)    label="✅ done" ;;
+    waiting) label="❓ waiting for answers" ;;
+    failed)  label="❌ failed" ;;
+    hung)    label="⚠ hung (watchdog)" ;;
+    *)       label=$status ;;
+  esac
+  [[ -n $final ]] || final="(no final message from the agent — see: agent log $id)"
+  mkdir -p "$NOTIFY_DIR"
+  local f="$NOTIFY_DIR/${id}-r${RUN}-summary.md"
+  {
+    printf '%s\n' "$REPO_NAME"                      # first line = title/thread
+    printf 'Repo: %s\n' "$REPO_NAME"
+    if [[ ${KIND:-worker} == investigation ]]; then
+      printf 'Agent: %s (%s%s) — investigation #%s for %s\n' "$AGENT" "$TYPE" "${MODEL:+, $MODEL}" "$INV_ID" "$FROM_AGENT"
+    else
+      printf 'Agent: %s (%s%s)\n' "$AGENT" "$TYPE" "${MODEL:+, $MODEL}"
+    fi
+    printf 'Time: %s\n' "$(date '+%Y-%m-%d %H:%M')"
+    printf 'Task: %s\n' "$id"
+    printf 'Status: %s\n' "$label"
+    if [[ -n $note ]]; then printf 'Note: %s\n' "$note"; fi
+    if [[ $status == waiting ]]; then
+      printf 'Questions: %s — answer with: agent answer %s\n' \
+        "$(count_questions "$TASKS/$id/questions-$ROUND.md")" "$id"
+    fi
+    if [[ -f $WORKTREE/.agents/reports/$id.md ]]; then
+      printf 'Report: .agents/reports/%s.md (branch %s)\n' "$id" "$BRANCH"
+    fi
+    if [[ ${KIND:-worker} == worker && $status != waiting ]]; then
+      local invs
+      invs=$(try inv_list_failed bus inv-list --dir "$BUS_DIR" --task "$id")
+      if [[ -n $invs ]]; then printf 'Investigations:\n%s\n' "$invs"; fi
+    fi
+    printf '\n%s\n' "${final:0:$NOTIFY_MAX_CHARS}"
+  } > "$f"
+  notify_send "$f"
+}
+
+# ------------------------------------------------------------------ investigations
+
+free_investigator() { # first free investigator (not working and not waiting for the human's answers)
+  local inv d busy
+  while read -r inv; do
+    busy=0
+    for d in "$TASKS"/*/; do
+      [[ -f $d/meta.env ]] || continue
+      d=${d%/}; d=${d##*/}
+      [[ $(task_field "$d" AGENT) == "$inv" && $(task_field "$d" KIND) == investigation ]] || continue
+      case $(task_field "$d" STATUS) in new|starting|running|waiting) busy=1; break ;; esac
+    done
+    ((busy)) || { printf '%s' "$inv"; return 0; }
+  done < <(investigator_names)
+  return 1
+}
+
+dispatch() { # starts queued requests on free investigators
+  stopping && return 0
+  (
+    exec 9>"$AGENTS_HOME/dispatch.lock"
+    flock -w 120 9 || { log_warn dispatch_lock_timeout "lock=$AGENTS_HOME/dispatch.lock" "effect=queued investigations wait for the next dispatch"; exit 0; }
+    local inv j
+    while inv=$(free_investigator); do
+      j=$(bus inv-next --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS") || break
+      [[ -n $j ]] || break
+      start_investigation "$j" "$inv" || log_error investigation_start_failed "investigation=$(jq -r .id <<< "$j")" "investigator=$inv"
+    done
+  )
+}
+
+start_investigation() { # request-json (status "starting") investigator-name
+  local j=$1 iname=$2 inv_id from_task from_agent
+  inv_id=$(jq -r .id <<< "$j"); from_task=$(jq -r .from_task <<< "$j"); from_agent=$(jq -r .from_agent <<< "$j")
+  log_info investigation_starting "investigation=$inv_id" "investigator=$iname" "requester=$from_agent" "requesting_task=$from_task"
+  local p_root p_repo p_branch p_wt
+  p_root=$(task_field "$from_task" REPO_ROOT); p_repo=$(task_field "$from_task" REPO_NAME)
+  p_branch=$(task_field "$from_task" BRANCH);  p_wt=$(task_field "$from_task" WORKTREE)
+  local ts id branch wt dir
+  ts=$(date +%Y%m%d-%H%M%S)
+  id="$ts-inv$inv_id"
+  branch="$BRANCH_PREFIX/$iname/inv$inv_id-$ts"
+  wt="$AGENTS_HOME/worktrees/$p_repo/$id"
+  dir="$TASKS/$id"
+  mkdir -p "$dir" "$(dirname "$wt")"
+  if ! git -C "$p_root" worktree add --quiet -b "$branch" "$wt" "$p_branch"; then
+    bus inv-set --dir "$BUS_DIR" --id "$inv_id" --status failed --summary "could not create the investigator worktree"
+    meta_set "$from_task" INV_PENDING_DELIVERY "$inv_id"
+    maybe_resume_worker "$from_task"
+    return 1
+  fi
+  local kind pr_url pr_num
+  kind=$(jq -r '.kind // empty' <<< "$j"); pr_url=$(jq -r '.pr_url // empty' <<< "$j"); pr_num=$(jq -r '.pr_number // empty' <<< "$j")
+  if [[ $kind == review ]]; then
+    {
+      printf '## Recenzja PR #%s\n\n%s\n\n' "$pr_num" "$pr_url"
+      printf '## The task the team worked on\n\n'
+      if [[ -f $TASKS/$from_task/task.md ]]; then cat "$TASKS/$from_task/task.md"; else echo "—"; fi
+    } > "$dir/task.md"
+  else
+    {
+      printf '## Question from %s\n\n%s\n\n' "$from_agent" "$(jq -r .question <<< "$j")"
+      printf '## Context from the agent\n\n%s\n' "$(jq -r '.context // "—"' <<< "$j")"
+    } > "$dir/task.md"
+  fi
+  : > "$dir/meta.env"
+  local sid=""
+  [[ ${INVESTIGATORS_TYPE[$iname]} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
+  local kv
+  for kv in "ID=$id" "AGENT=$iname" "KIND=investigation" "INV_ID=$inv_id" \
+            "PARENT_TASK=$from_task" "FROM_AGENT=$from_agent" "PARENT_WORKTREE=$p_wt" \
+            "TYPE=${INVESTIGATORS_TYPE[$iname]}" "MODEL=${INVESTIGATORS_MODEL[$iname]:-}" "EXTRA_ARGS=${INVESTIGATORS_EXTRA_ARGS[$iname]:-}" \
+            "REPO_NAME=$p_repo" "REPO_ROOT=$p_root" "WORKTREE=$wt" "BRANCH=$branch" \
+            "BASE=$p_branch" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)"; do
+    meta_set "$id" "${kv%%=*}" "${kv#*=}"
+  done
+  if [[ $kind == review ]]; then
+    meta_set "$id" REVIEW 1; meta_set "$id" PR_URL "$pr_url"; meta_set "$id" PR_NUMBER "$pr_num"
+  fi
+  bus inv-set --dir "$BUS_DIR" --id "$inv_id" --status running --inv-task "$id"
+  if ! start_runner "$id" new; then
+    inv_finish "$id" failed "STATUS: FAILED
+Answer: the investigator could not be started"
+    return 1
+  fi
+}
+
+inv_finish() { # investigator-task-id status result-text
+  local id=$1 status=$2 text=$3
+  local inv_id parent j file summary
+  inv_id=$(task_field "$id" INV_ID); parent=$(task_field "$id" PARENT_TASK)
+  j=$(bus inv-get --dir "$BUS_DIR" --id "$inv_id")
+  file=$(jq -r .file <<< "$j")
+  # the investigator's answer line; absent in a malformed result (then the fallbacks below apply)
+  summary=$(grep -m1 -E '^(Answer|Odpowiedź):' <<< "$text" | sed -E 's/^(Answer|Odpowiedź):[[:space:]]*//') || summary=""
+  if [[ -z $summary ]]; then
+    [[ -f $TASKS/$id/result.md ]] && summary=$(awk '/^## (Answer|Odpowiedź)/{f=1;next} /^## /{f=0} f&&NF{print;exit}' "$TASKS/$id/result.md")
+  fi
+  [[ -n $summary ]] || summary=$(printf '%s' "$text" | grep -m1 -v '^STATUS:') || summary="(no answer line in the result)"
+  {
+    printf '\n## Investigator result (%s, %s)\n\n' "$status" "$(date '+%Y-%m-%d %H:%M')"
+    printf -- '- Investigator task: %s, branch: %s\n\n' "$id" "$(task_field "$id" BRANCH)"
+    if [[ -s $TASKS/$id/result.md ]]; then cat "$TASKS/$id/result.md"; else printf '%s\n' "$text"; fi
+  } >> "$file"
+  bus inv-set --dir "$BUS_DIR" --id "$inv_id" --status "$status" --summary "${summary:0:300}"
+  meta_set "$parent" INV_PENDING_DELIVERY "$inv_id"
+  maybe_resume_worker "$parent"
+}
+
+maybe_resume_worker() { # resumes the requesting agent if the investigation was the only thing it waited for
+  stopping && return 0
+  local t=$1
+  [[ $(task_field "$t" STATUS) == investigating ]] || return 0
+  [[ -z $(bus inv-pending --dir "$BUS_DIR" --task "$t") ]] || return 0
+  local ag busy
+  ag=$(task_field "$t" AGENT)
+  if busy=$(agent_running_task "$ag"); then
+    log_warn resume_postponed "task=$t" "agent=$ag" "busy_with=$busy" "action=resume manually: agent resume $t"
+    return 0
+  fi
+  start_runner "$t" resume || log_error resume_failed "task=$t" "reason=after investigation"
+}
+
+# ------------------------------------------------------------------ worker requests (delegate)
+
+free_worker() { # a free worker; balances providers: picks the provider with the fewest working workers
+  local w d p best="" bestp=""
+  declare -A busy=()
+  for d in "$TASKS"/*/; do
+    [[ -f $d/meta.env ]] || continue
+    d=${d%/}; d=${d##*/}
+    case $(task_field "$d" STATUS) in running|starting) ;; *) continue ;; esac
+    [[ $(task_field "$d" TIER) == worker ]] || continue
+    p=$(agent_provider "$(task_field "$d" AGENT)"); busy[$p]=$(( ${busy[$p]:-0} + 1 ))
+  done
+  for w in "${WORKER_AGENTS[@]}"; do   # within a provider the list order decides
+    [[ -n ${AGENT_TYPE[$w]:-} ]] || continue
+    agent_running_task "$w" >/dev/null && continue
+    p=$(agent_provider "$w")
+    if [[ -z $best ]] || (( ${busy[$p]:-0} < ${busy[$bestp]:-0} )); then best=$w; bestp=$p; fi
+  done
+  [[ -n $best ]] && { printf '%s' "$best"; return 0; }
+  return 1
+}
+
+dispatch_helpers() { # assigns queued requests to free workers
+  stopping && return 0
+  ((${#WORKER_AGENTS[@]})) || return 0
+  (
+    exec 7>"$AGENTS_HOME/helpers.lock"
+    flock -w 60 7 || exit 0
+    local w j
+    while w=$(free_worker); do
+      j=$(bus helper-next --dir "$BUS_DIR" --worker "$w") || break
+      [[ -n $j ]] || break
+      start_helper "$j" "$w" || log_error helper_start_failed "request=$(jq -r .id <<< "$j")" "worker=$w"
+    done
+  )
+}
+
+start_helper() { # request-json worker
+  local j=$1 w=$2 hid from from_task
+  hid=$(jq -r .id <<< "$j"); from=$(jq -r .from <<< "$j"); from_task=$(jq -r .from_task <<< "$j")
+  log_info helper_starting "request=H$hid" "worker=$w" "requester=$from" "requesting_task=$from_task"
+  local p_root p_repo p_branch p_wt
+  p_root=$(task_field "$from_task" REPO_ROOT); p_repo=$(task_field "$from_task" REPO_NAME)
+  p_branch=$(task_field "$from_task" BRANCH);  p_wt=$(task_field "$from_task" WORKTREE)
+  local ts id branch wt dir
+  ts=$(date +%Y%m%d-%H%M%S)
+  id="$ts-$w-h$hid"
+  branch="$BRANCH_PREFIX/$w/h$hid-$ts"
+  wt="$AGENTS_HOME/worktrees/$p_repo/$id"
+  dir="$TASKS/$id"
+  mkdir -p "$dir" "$(dirname "$wt")"
+  if [[ -z $p_root ]] || ! git -C "$p_root" worktree add --quiet -b "$branch" "$wt" "$p_branch"; then
+    try helper_state_failed bus helper-set --dir "$BUS_DIR" --id "$hid" --status failed --summary "could not create the worktree"
+    notice helper_start_failed agentbus "$from" "RESULT H$hid: failed — the worker could not be started (worktree)." "request=H$hid" "worker=$w"
+    rm -rf "$dir"
+    return 1
+  fi
+  {
+    printf '## Request H%s from %s\n\n%s\n\n' "$hid" "$from" "$(jq -r .request <<< "$j")"
+    printf '## Kontekst\n\n%s\n' "$(jq -r '.context // "—"' <<< "$j")"
+  } > "$dir/task.md"
+  : > "$dir/meta.env"
+  local sid=""
+  [[ ${AGENT_TYPE[$w]} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
+  local kv
+  for kv in "ID=$id" "AGENT=$w" "KIND=helper" "TIER=worker" "HELPER_ID=$hid" "PARENT_TASK=$from_task" \
+            "FROM_AGENT=$from" "PARENT_WORKTREE=$p_wt" "TYPE=${AGENT_TYPE[$w]}" "MODEL=${AGENT_MODEL[$w]:-}" \
+            "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$w]:-}" "REPO_NAME=$p_repo" "REPO_ROOT=$p_root" "WORKTREE=$wt" \
+            "BRANCH=$branch" "BASE=$p_branch" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)"; do
+    meta_set "$id" "${kv%%=*}" "${kv#*=}"
+  done
+  bus helper-set --dir "$BUS_DIR" --id "$hid" --status running --task "$id"
+  if ! start_runner "$id" new; then
+    helper_finish "$id" failed "the worker could not be started"
+    return 1
+  fi
+}
+
+helper_finish() { # worker-task-id status text — the result goes back to the requester as a message
+  local id=$1 status=$2 text=$3
+  local hid from
+  hid=$(task_field "$id" HELPER_ID); from=$(task_field "$id" FROM_AGENT)
+  [[ -n $text ]] || text="(no result — see: agent log $id)"
+  local st=done
+  [[ $status == done ]] || st=failed
+  try helper_state_failed bus helper-set --dir "$BUS_DIR" --id "$hid" --status "$st" --summary "${text:0:2000}"
+  notice helper_result "$(task_field "$id" AGENT)" "$from" "RESULT H$hid [$st]: ${text:0:3500}" "request=H$hid" "status=$st"
+  act "$id" info "■ result H$hid sent to $from ($st)"
+}
+
+pl_commits() { # number → "1 commit" / "N commits"
+  local n=$1
+  if ((n == 1)); then echo "1 commit"; else echo "$n commits"; fi
+}
+
+verify_gaps() { # coordinator-id — gaps before closing a --verify team (empty = all good)
+  local br=$BRANCH wt=$WORKTREE pr cnt m mb
+  local errf; errf=$(mktemp)
+  if pr=$(cd "$wt" && gh pr list --head "$br" --state all --json number,isDraft,state --limit 1 2>"$errf"); then
+    if [[ $(jq_soft pr_lookup_parse 'length' <<< "$pr") == 0 ]]; then
+      echo "- no PR from your branch $br — open it (gh pr create --base $BASE --head $br)"
+    elif [[ $(jq -r '.[0].isDraft' <<< "$pr") == true ]]; then
+      echo "- PR #$(jq -r '.[0].number' <<< "$pr") is still a draft — when the work is complete: gh pr ready"
+    fi
+  else
+    # without GitHub access the PR check cannot run; the other checks still apply
+    log_warn verify_pr_check_failed "branch=$br" "stderr=$(head -c 2000 "$errf")"
+  fi
+  rm -f "$errf"
+  if git -C "$wt" rev-parse --verify -q "origin/$br" >/dev/null; then
+    cnt=$(git -C "$wt" rev-list --count "origin/$br..$br")
+    ((cnt > 0)) && echo "- unpushed changes on $br ($(pl_commits "$cnt")) — git push"
+  fi
+  while IFS=$'\t' read -r m mb; do
+    [[ -n $mb && $m != "$AGENT" ]] || continue
+    if ! git -C "$wt" rev-parse --verify -q "$mb" >/dev/null; then
+      log_warn verify_member_branch_missing "member=$m" "branch=$mb"
+      continue
+    fi
+    cnt=$(git -C "$wt" rev-list --count "$br..$mb")
+    ((cnt > 0)) && echo "- member $m's branch ($mb) has unmerged changes ($(pl_commits "$cnt")) relative to $br — merge them or explain in the report why they are not needed"
+  done < <(team_json "$TEAM" | jq -r '.members[]? | select(.state != "excluded") | "\(.agent)\t\(.branch)"')
+  return 0
+}
+
+final_status() { # last message → DONE|FAILED|QUESTIONS|INVESTIGATING|SLEEPING|EXCLUDED or nothing
+  # no STATUS line → empty output (grep exits 1, which is the expected "not found")
+  sed 's/[*`]//g' <<< "$1" | { grep -oE '^[[:space:]]*STATUS:[[:space:]]*[A-Z]+' || (($? == 1)); } | head -1 | sed -E 's/.*STATUS:[[:space:]]*//'
+}
+
+questions_from_nostatus() { # message id round — questions file used when the agent ended its turn without a STATUS line
+  printf '# Questions — %s (round %s)\n\n' "$2" "$3"
+  printf '_The agent ended its turn without a STATUS line — most likely it stopped halfway or is waiting for permission. Its last message is below._\n\n'
+  printf '## 1. What should the agent do next? (e.g. "continue as planned", "finish", or a specific instruction)\n\n'
+  sed 's/^/> /' <<< "$1"
+  printf '\n**Answer:**\n'
+}
+
+questions_from_final() { # last-message-text id round → questions file on stdout (when the agent did not write the file)
+  printf '%s\n' "$1" | awk -v id="$2" -v round="$3" '
+    /^[[:space:]]*STATUS:/ { stop = 1 }
+    stop { next }
+    {
+      line = $0
+      if (match(line, /^[[:space:]]*(\*\*)?[0-9]+[.)][[:space:]]+/)) {
+        n++; head = substr(line, RLENGTH + 1); gsub(/\*\*/, "", head)
+        q[n] = head; body[n] = ""; next
+      }
+      if (n == 0) { pre = pre line "\n"; next }
+      body[n] = body[n] line "\n"
+    }
+    END {
+      printf "# Questions — %s (round %s)\n\n", id, round
+      printf "_The agent asked these in its last message instead of the file — the script moved them here._\n\n"
+      if (n == 0) {
+        gsub(/\n+$/, "", pre)
+        printf "## 1. Answer the questions from the agent\n\n%s\n\n**Answer:**\n", pre
+        exit
+      }
+      for (i = 1; i <= n; i++) {
+        b = body[i]; gsub(/\n+$/, "", b)
+        printf "## %d. %s\n", i, q[i]
+        if (b != "") printf "%s\n", b
+        printf "\n**Answer:**\n\n"
+      }
+    }'
+}
+
+# ------------------------------------------------------------------ runner (background)
+
+# runner_exit rc — the EXIT trap of a runner that did not finish normally (killed, stopped or crashed).
+# Every step runs through try: one failing step must not prevent the others (status, queues, notification).
+runner_exit() {
+  local rc=$1
+  ((RUNNER_DONE)) && return
+  RUNNER_DONE=1
+  if stopping; then   # agent stop --running: no notifications, queues or messages
+    try meta_write_failed meta_set "$RUNNER_ID" STATUS stopped
+    try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
+    try activity_write_failed act "$RUNNER_ID" info "■ stopped (agent stop --running)"
+    log_info run_stopped "reason=agent stop --running"
+    return
+  fi
+  local why="runner interrupted (exit code $rc) — see: agent log $RUNNER_ID"
+  [[ -f $TASKS/$RUNNER_ID/stop-requested ]] && why="stopped by the user"
+  log_warn run_interrupted "exit_code=$rc" "reason=$why"
+  try meta_write_failed meta_set "$RUNNER_ID" STATUS failed
+  try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
+  try activity_write_failed act "$RUNNER_ID" err "■ $why"
+  if [[ ${KIND:-worker} == investigation ]]; then
+    try investigation_finish_failed inv_finish "$RUNNER_ID" failed "STATUS: FAILED
+Answer: investigation interrupted ($why)"
+  fi
+  if [[ ${KIND:-worker} == helper ]]; then
+    try helper_finish_failed helper_finish "$RUNNER_ID" failed "interrupted: $why"
+  elif [[ -n ${TEAM:-} ]]; then
+    try team_update_failed team_after_run "$RUNNER_ID" failed "" "$why"
+  else
+    try notification_failed notify "$RUNNER_ID" failed "" "$why"
+  fi
+  try dispatch_failed dispatch
+  try dispatch_failed dispatch_helpers
+}
+
+cmd__runner() {
+  local id=$1 mode=$2
+  local dir="$TASKS/$id"
+  exec >>"$dir/runner.log" 2>&1 3>&1   # fd 3: structured log records (log_event)
+  export LC_ALL=C.UTF-8 MCP_TOOL_TIMEOUT=900000
+  RUNNER_ID=$id
+  meta_load "$id"
+  local n=$RUN
+  log_info run_started "run=$n" "mode=$mode" "agent=$AGENT" "cli=$TYPE" "kind=${KIND:-worker}" "model=${MODEL:-}"
+
+  if [[ -f $AGENTS_HOME/secrets.env ]]; then
+    set -a; source "$AGENTS_HOME/secrets.env"; set +a
+  fi
+  local v
+  for v in CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY CODEX_API_KEY OPENAI_API_KEY GEMINI_API_KEY OPENROUTER_API_KEY DEEPINFRA_API_KEY; do
+    if [[ -z ${!v:-} ]]; then unset "$v"; fi
+  done
+
+  RUNNER_ID=$id RUNNER_DONE=0
+  echo $$ > "$dir/runner.pid"
+  rm -f "$dir/acked"
+  act "$id" info "▶ run $n ($mode)"
+  trap 'runner_exit $?' EXIT
+  trap 'exit 143' TERM INT HUP
+  rm -f "$dir/stop-requested"
+  meta_set "$id" STATUS running
+
+  if [[ $mode == new && -f $WORKTREE/.gitmodules ]]; then
+    try submodule_update_failed git -C "$WORKTREE" submodule update --init --recursive
+  fi
+
+  local next_round=$((ROUND + 1))
+  local qfile="$dir/questions-$next_round.md"
+  local pf="$dir/prompt-$n.md"
+  build_prompt "$id" "$mode" "$qfile" "$next_round" > "$pf"
+  meta_set "$id" ANSWERS_PENDING ""
+  meta_set "$id" INV_PENDING_DELIVERY ""
+  meta_set "$id" WAKE_PENDING ""
+  meta_set "$id" BOUNCE_PENDING ""
+  if [[ -n ${TEAM:-} ]]; then
+    try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state active >/dev/null
+  fi
+
+  # Watchdog: a hang (no activity for AGENT_HANG_MIN min) kills the run. Normal models,
+  # coordinators, investigators and solo tasks are resumed in the same session (up to AGENT_HANG_STRIKES
+  # consecutive hangs without progress). Workers in a team or on a delegate request are not auto-resumed.
+  local nrun=$n attempt=0 hangs=${HANGS:-0} prog hang_final=0
+  local auto_resume=1
+  [[ ${TIER:-normal} == worker && ( ${KIND:-worker} == helper || -n ${TEAM:-} ) ]] && auto_resume=0
+  while :; do
+    prog=$(activity_progress "$id")
+    RC=0 FINAL="" HUNG=0
+    case $TYPE in
+      claude) run_claude "$id" "$mode" "$nrun" "$pf" "$dir" ;;
+      codex)  run_codex  "$id" "$mode" "$nrun" "$pf" "$dir" ;;
+      gemini) run_gemini "$id" "$mode" "$nrun" "$pf" "$dir" ;;
+      opencode) run_opencode "$id" "$mode" "$nrun" "$pf" "$dir" ;;
+      *)      echo "unknown agent type: $TYPE"; RC=2 ;;
+    esac
+    log_info cli_finished "run=$nrun" "exit_code=$RC" "hung=$HUNG"
+    if ((HUNG == 0)); then
+      meta_set "$id" HANGS 0
+      break
+    fi
+    if (( $(activity_progress "$id") > prog )); then hangs=1; else hangs=$((hangs + 1)); fi
+    meta_set "$id" HANGS "$hangs"
+    if ((auto_resume == 0)); then break; fi
+    if (( hangs >= AGENT_HANG_STRIKES )) || [[ -z ${SESSION_ID:-} ]]; then hang_final=1; break; fi
+    attempt=$((attempt + 1)); nrun="$n.h$attempt"; mode=resume
+    pf="$dir/prompt-$nrun.md"
+    R[HANG_MIN]=$AGENT_HANG_MIN
+    render "$PROMPTS/hang-resume.md" > "$pf"
+    act "$id" info "↻ resumed after a hang ($hangs/$AGENT_HANG_STRIKES)"
+  done
+  printf '%s\n' "$FINAL" > "$dir/final.md"
+
+  local status note="" pending="" member_q=0 member_ns=0 fst
+  [[ ${KIND:-worker} == worker ]] && pending=$(bus inv-pending --dir "$BUS_DIR" --task "$id")
+  fst=$(final_status "$FINAL")
+  local is_member=0
+  [[ -n ${TEAM:-} && ${KIND:-worker} == worker && $AGENT != "$(team_lead "$TEAM")" ]] && is_member=1
+
+  # A turn without STATUS (e.g. "may I continue?") does not mean the work is done: the human decides
+  # (a team member asks the coordinator instead; a worker's text is returned as its result).
+  if [[ ! -s $qfile && -z $fst && -n ${FINAL//[[:space:]]/} && $RC == 0 && $HUNG == 0 && -z $pending ]]; then
+    if ((is_member)); then
+      member_ns=1
+    elif [[ ${KIND:-worker} != helper ]]; then
+      questions_from_nostatus "$FINAL" "$id" "$next_round" > "$qfile"
+      act "$id" info "turn without STATUS — the last message was passed to you as a question ($qfile)"
+    fi
+  fi
+
+  # The agent asked its questions only in its last message (no file): do not lose them.
+  if [[ ! -s $qfile && $fst == QUESTIONS ]]; then
+    if ((is_member)); then
+      member_q=1   # team member → questions go to the coordinator (below)
+    elif [[ ${KIND:-worker} != helper ]]; then
+      questions_from_final "$FINAL" "$id" "$next_round" > "$qfile"
+      act "$id" info "questions from the last message moved to $qfile"
+    fi
+  fi
+
+  if ((HUNG)) && ((auto_resume == 0)); then
+    # hung worker: stopped; normal models are told and can start it again
+    if [[ ${KIND:-worker} == helper ]]; then
+      status=failed; note="the worker hung"
+      FINAL="STATUS: FAILED
+Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it was stopped. Delegate the task again — it goes to a free worker; if possible split it into smaller steps."
+    else
+      status=sleeping; note="the worker hung — stopped"
+      local released lead nm
+      released=$(try board_release_failed bus board-release-agent --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" | paste -sd,)
+      lead=$(team_lead "$TEAM")
+      for nm in $(bus team-get --dir "$BUS_DIR" --team "$TEAM" | jq -r '.members[] | select(.tier != "worker" and (.state == "active" or .state == "sleeping" or .state == "waking")) | .agent'); do
+        notice worker_hung agentbus "$nm" "WORKER $AGENT HUNG (no activity for $AGENT_HANG_MIN min) and was stopped.${released:+ Its items ($released) are back on the board.} Try starting it again — a message to it or a new board item wakes it — or give the work to someone else.${lead:+ Coordinator: $lead.}" \
+          "agent=$AGENT" "team=$TEAM" "released=$released"
+      done
+    fi
+  elif ((hang_final)); then
+    status=hung; note="the agent hung $hangs times in a row without progress"
+  elif [[ -s $qfile ]]; then
+    meta_set "$id" ROUND "$next_round"
+    status=waiting
+  elif [[ -n $pending ]]; then
+    status=investigating
+  elif [[ -n ${TEAM:-} ]] && { [[ $fst == EXCLUDED ]] || \
+       [[ $(team_json "$TEAM" | jq -r --arg a "$AGENT" '.members[$a].state // empty') == excluded ]]; }; then
+    status=excluded
+  elif [[ -n ${TEAM:-} && $fst == SLEEPING ]]; then
+    if [[ $(team_done_flag "$TEAM") == true ]]; then
+      status=done; note="team already finished"
+    else
+      status=sleeping
+    fi
+  elif ((member_q || member_ns)); then
+    # a team member asks the coordinator (or the whole team when there is no coordinator yet) and sleeps until answered
+    local to head kind=member_questions; to=$(team_lead "$TEAM"); to=${to:-team:$TEAM}
+    head="QUESTIONS from $AGENT (forwarded by the script; members ask the coordinator, not the human)"
+    if ((member_ns)); then
+      kind=member_no_status
+      head="$AGENT ended its turn without STATUS (waiting for a decision — reply with an instruction)"
+    fi
+    notice "$kind" "$AGENT" "$to" "$head: $(sed '/^[[:space:]]*STATUS:/,$d' <<< "$FINAL" | head -c 3500)" "agent=$AGENT" "team=$TEAM"
+    if [[ $(team_done_flag "$TEAM") == true ]]; then status=done; else status=sleeping; fi
+    note="forwarded to ${to}"
+  elif [[ $fst == QUESTIONS ]]; then
+    if [[ ${KIND:-worker} == helper ]]; then
+      status=done; note="the worker returned questions instead of a result"
+    else
+      status=failed; note="the agent reported questions but they could not be saved ($qfile)"
+    fi
+  elif [[ $fst == INVESTIGATING ]]; then
+    status=failed; note="the agent reported INVESTIGATING but no investigation was accepted"
+  elif ((RC != 0)) || [[ $fst == FAILED || -z ${FINAL//[[:space:]]/} ]]; then
+    status=failed
+    ((RC != 0)) && note="CLI exit code: $RC"
+  elif [[ $fst == DONE ]]; then
+    status=done
+  elif [[ ${KIND:-worker} == helper ]]; then
+    status=done; note="the worker gave no STATUS — its text was returned as the result"
+  else
+    status=failed; note="unrecognised STATUS: ${fst:-none}"
+  fi
+  # --verify: the coordinator may not close a team with gaps — send it back once with the list of gaps
+  if [[ $status == done && -n ${TEAM:-} && ${VERIFY:-} == 1 && ${VERIFY_BOUNCED:-} != 1 \
+        && ${KIND:-worker} == worker && $AGENT == "$(team_lead "$TEAM")" ]]; then
+    local gaps; gaps=$(verify_gaps "$id")
+    if [[ -n $gaps ]]; then
+      meta_set "$id" VERIFY_BOUNCED 1
+      meta_set "$id" BOUNCE_PENDING "$gaps"
+      RUNNER_DONE=1
+      act "$id" info "↩ closing the team held back (--verify), gaps: $(tr '\n' ' ' <<< "$gaps")"
+      start_runner "$id" resume || log_error resume_failed "task=$id" "reason=--verify bounce"
+      dispatch; dispatch_helpers
+      return 0
+    fi
+  fi
+
+  meta_set "$id" STATUS "$status"
+  meta_set "$id" FINISHED "$(date -Is)"
+  RUNNER_DONE=1
+  act "$id" info "■ end of run $n: $status${note:+ ($note)}"
+  log_info run_finished "run=$n" "status=$status" "note=$note"
+
+  if [[ ${KIND:-worker} == investigation ]]; then
+    case $status in
+      waiting)
+        bus inv-set --dir "$BUS_DIR" --id "$INV_ID" --status waiting_human
+        notify "$id" waiting "$FINAL" "investigation #$INV_ID paused — its investigator waits for your answers" ;;
+      hung)
+        inv_finish "$id" failed "STATUS: FAILED
+Answer: the investigator hung ($AGENT_HANG_STRIKES times without progress) — no result"
+        notify "$id" hung "$FINAL" "$note" ;;
+      *)
+        inv_finish "$id" "$status" "$FINAL"      # no push notification (the result goes to the requesting agent)…
+        if [[ ${REVIEW:-} == 1 ]]; then          # …except PR reviews (--verify): those go to the human
+          notify "$id" "$status" "$FINAL" "review of PR #$PR_NUMBER: $PR_URL"
+        fi ;;
+    esac
+  elif [[ ${KIND:-worker} == helper && $status != waiting && $status != investigating ]]; then
+    helper_finish "$id" "$status" "$FINAL"
+  elif [[ -n ${TEAM:-} ]]; then
+    team_after_run "$id" "$status" "$FINAL" "$note"
+  elif [[ $status == investigating ]]; then
+    log_info waiting_for_investigation "investigation=$pending"
+  else
+    notify "$id" "$status" "$FINAL" "$note"
+  fi
+  dispatch
+  dispatch_helpers
+}
+
+start_runner() { # id mode
+  local id=$1 mode=$2 run
+  run=$(( $(task_field "$id" RUN) + 1 ))
+  meta_set "$id" RUN "$run"
+  meta_set "$id" STATUS starting
+  log_info runner_starting "task=$id" "run=$run" "mode=$mode" "unit=$(unit_name "$id" "$run")"
+  systemd-run --user --quiet --collect \
+    --unit="$(unit_name "$id" "$run")" \
+    --working-directory="$(task_field "$id" WORKTREE)" \
+    --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" \
+    --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+    "$SELF" _runner "$id" "$mode" 3>&- 7>&- 8>&- 9>&- && return 0
+  meta_set "$id" STATUS failed
+  log_error runner_start_failed "task=$id" "run=$run"
+  echo "agent: systemd-run could not start $id (is lingering enabled? sudo loginctl enable-linger $(id -un))" >&2
+  return 1
+}
+
+# ------------------------------------------------------------------ commands
+
+create_task() { # name text root main_root base ts [team] — sets NEW_ID
+  local name=$1 task=$2 root=$3 main_root=$4 base=$5 ts=$6 team=${7:-}
+  local id repo_name branch wt dir
+  id="$ts-$name"
+  repo_name=$(basename "$main_root")
+  branch="$BRANCH_PREFIX/$name/$ts"
+  wt="$AGENTS_HOME/worktrees/$repo_name/$id"
+  dir="$TASKS/$id"
+  mkdir -p "$dir" "$(dirname "$wt")"
+  git -C "$root" worktree add --quiet -b "$branch" "$wt" HEAD
+  printf '%s\n' "$task" > "$dir/task.md"
+  : > "$dir/meta.env"
+  local sid=""
+  [[ ${AGENT_TYPE[$name]} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
+  local kv
+  for kv in "ID=$id" "AGENT=$name" "KIND=worker" "TEAM=$team" "TIER=$(agent_tier "$name")" "TYPE=${AGENT_TYPE[$name]}" "MODEL=${AGENT_MODEL[$name]:-}" \
+            "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$name]:-}" \
+            "REPO_NAME=$repo_name" "REPO_ROOT=$main_root" "WORKTREE=$wt" "BRANCH=$branch" \
+            "BASE=$base" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)"; do
+    meta_set "$id" "${kv%%=*}" "${kv#*=}"
+  done
+  log_info task_created "task=$id" "agent=$name" "repo=$repo_name" "branch=$branch" "team=$team"
+  NEW_ID=$id
+}
+
+resume_history() { # task → the human's answers from this task and its predecessors (the --resume chain)
+  local t=$1 f
+  while [[ -n $t && -d $TASKS/$t ]]; do
+    for f in "$TASKS/$t"/questions-*.md; do
+      [[ -f $f ]] || continue
+      printf '\n### %s (%s)\n\n' "${f##*/}" "$t"; cat "$f"
+    done
+    t=$(task_field "$t" RESUMED_FROM)
+  done
+}
+
+resume_run() { # ref verify [addition...] — resumes an interrupted team or task from its last checkpoint
+  local ref=$1 verify=$2; shift 2
+  local add=""
+  if [[ ${1:-} == -f ]]; then [[ -r ${2:-} ]] || die "file not found: ${2:-}"; add=$(<"$2")
+  elif (($#)); then add="$*"
+  elif [[ ! -t 0 ]]; then add=$(cat); fi
+
+  # find the interrupted team (by team ID or a member's task ID) or a single task
+  local d first="" old_team=""
+  for d in "$TASKS"/*/; do
+    d=${d%/}; d=${d##*/}
+    [[ -f $TASKS/$d/meta.env ]] || continue
+    [[ $(task_field "$d" KIND) == worker ]] || continue
+    if [[ $(task_field "$d" TEAM) == *"$ref"* || $d == *"$ref"* ]]; then first=$d; old_team=$(task_field "$d" TEAM); fi
+  done
+  [[ -n $first ]] || die "no team or task matches: $ref"
+
+  local olds=() t
+  if [[ -n $old_team ]]; then
+    local tj; tj=$(bus team-get --dir "$BUS_DIR" --team "$old_team") || die "team $old_team not found on the bus"
+    while read -r t; do olds+=("$t"); done < <(jq -r '.members[] | select(.state != "excluded") | .task' <<< "$tj")
+  else
+    olds=("$first")
+  fi
+  for t in "${olds[@]}"; do
+    case $(task_field "$t" STATUS) in
+      new|starting|running|waiting|investigating|sleeping)
+        die "task $t is still active ($(task_field "$t" STATUS)) — first: agent stop --running" ;;
+    esac
+    agent_running_task "$(task_field "$t" AGENT)" >/dev/null && die "agent $(task_field "$t" AGENT) is busy with another task"
+  done
+
+  local ts new_team="" ids=() id old root wt name
+  ts=$(date +%Y%m%d-%H%M%S)
+  [[ -n $old_team ]] && new_team="$ts-team"
+  for old in "${olds[@]}"; do
+    name=$(task_field "$old" AGENT); root=$(task_field "$old" REPO_ROOT)
+    id="$ts-$name"; wt="$AGENTS_HOME/worktrees/$(task_field "$old" REPO_NAME)/$id"
+    mkdir -p "$TASKS/$id" "$(dirname "$wt")"
+    # the same branch (with its commits and draft PR) — the old worktree releases it
+    if [[ -d $(task_field "$old" WORKTREE) ]]; then
+      try worktree_remove_failed git -C "$root" worktree remove --force "$(task_field "$old" WORKTREE)"
+    fi
+    git -C "$root" worktree prune
+    git -C "$root" worktree add --quiet "$wt" "$(task_field "$old" BRANCH)" || die "could not recreate the worktree of branch $(task_field "$old" BRANCH)"
+    { cat "$TASKS/$old/task.md"
+      if [[ -n ${add//[[:space:]]/} ]]; then
+        printf '\n\n## Addition from the human (resumed %s)\n\n%s\n' "$(date '+%Y-%m-%d %H:%M')" "$add"
+      fi; } > "$TASKS/$id/task.md"
+    for t in "${olds[@]}"; do resume_history "$t"; done > "$TASKS/$id/history.md"   # every member sees all answers
+    : > "$TASKS/$id/meta.env"
+    local sid="" kv
+    [[ ${AGENT_TYPE[$name]:-} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
+    for kv in "ID=$id" "AGENT=$name" "KIND=worker" "TEAM=$new_team" "TIER=$(agent_tier "$name")" \
+              "TYPE=${AGENT_TYPE[$name]}" "MODEL=${AGENT_MODEL[$name]:-}" "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$name]:-}" \
+              "REPO_NAME=$(task_field "$old" REPO_NAME)" "REPO_ROOT=$root" "WORKTREE=$wt" \
+              "BRANCH=$(task_field "$old" BRANCH)" "BASE=$(task_field "$old" BASE)" "SESSION_ID=$sid" \
+              "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" "RESUMED_FROM=$old" \
+              "VERIFY=$( ((verify)) && echo 1 || task_field "$old" VERIFY)"; do
+      meta_set "$id" "${kv%%=*}" "${kv#*=}"
+    done
+    ids+=("$id")
+  done
+
+  mkdir -p "$BUS_DIR/checkpoints"
+  if [[ -n $old_team ]]; then
+    local json='{}' lead
+    lead=$(jq -r '.lead // empty' <<< "$tj")
+    [[ $(jq -r --arg l "$lead" '.members[$l].state // empty' <<< "$tj") == hung ]] && lead=""
+    for id in "${ids[@]}"; do
+      name=$(task_field "$id" AGENT)
+      json=$(jq --arg a "$name" --arg t "$id" --arg b "$(task_field "$id" BRANCH)" --arg w "$(task_field "$id" WORKTREE)" \
+               --arg tier "$(agent_tier "$name")" --arg prov "$(agent_provider "$name")" \
+               '.[$a] = {agent:$a, task:$t, branch:$b, worktree:$w, state:"active", tier:$tier, provider:$prov}' <<< "$json")
+    done
+    jq -n --arg id "$new_team" --arg repo "$(task_field "${ids[0]}" REPO_NAME)" --arg wake "$SELF" --arg home "$AGENTS_HOME" \
+      --argjson members "$json" --arg lead "$lead" --arg from "$old_team" --argjson old "$tj" '
+      {id:$id, repo:$repo, wake_cmd:$wake, home:$home, members:$members, lead:$lead, resumed_from:$from,
+       next_board_id: ($old.next_board_id // 0),
+       board: (($old.board // {}) | map_values(if .status == "claimed" then .status = "todo" | .assignee = "" else . end))}' \
+      | bus team-create --dir "$BUS_DIR" || die "could not create the resumed team"
+    try team_close_failed bus team-done --dir "$BUS_DIR" --team "$old_team"
+    if [[ -f $BUS_DIR/checkpoints/team-$old_team.md ]]; then
+      try checkpoint_copy_failed cp "$BUS_DIR/checkpoints/team-$old_team.md" "$BUS_DIR/checkpoints/team-$new_team.md"
+    fi
+  else
+    if [[ -f $BUS_DIR/checkpoints/task-$first.md ]]; then
+      try checkpoint_copy_failed cp "$BUS_DIR/checkpoints/task-$first.md" "$BUS_DIR/checkpoints/task-${ids[0]}.md"
+    fi
+  fi
+
+  for id in "${ids[@]}"; do start_runner "$id" new || exit 1; done
+  log_info resumed "from=${old_team:-$first}" "new_team=$new_team" "tasks=${ids[*]}"
+  echo "Resumed ${old_team:-$first} from the last checkpoint:"
+  for id in "${ids[@]}"; do echo "  $id  →  $(task_field "$id" BRANCH)"; done
+  [[ -n $new_team ]] && echo "  new team: $new_team${lead:+, coordinator: $lead}"
+  [[ -n ${add//[[:space:]]/} ]] && echo "  addition appended to the task"
+  return 0
+}
+
+cmd_run() {
+  local members=() verify=0 team_list="" resume_ref=""
+  while [[ ${1:-} == --team || ${1:-} == --verify || ${1:-} == --resume ]]; do
+    case $1 in
+      --verify) verify=1; shift ;;
+      --resume)
+        [[ -n ${2:-} ]] || die "usage: agent run --resume <team|task> [\"addition\" | -f file.md]"
+        resume_ref=$2; shift 2 ;;
+      --team)
+        [[ -n ${2:-} && ${2:-} != --* ]] || die "usage: agent run --team agent1,agent2[,...] [--verify] [-f file.md | \"task text\"]"
+        team_list=$2; shift 2 ;;
+    esac
+  done
+  if [[ -n $resume_ref ]]; then
+    [[ -z $team_list ]] || die "--resume takes the members from the interrupted task — do not combine it with --team"
+    resume_run "$resume_ref" "$verify" "$@"
+    return
+  fi
+  if ((verify)) && [[ -z $team_list ]]; then
+    die "--verify only works with --team (PR review of the team's work by an investigator)"
+  fi
+  if [[ -n $team_list ]]; then
+    IFS=, read -ra members <<< "$team_list"
+    ((${#members[@]} >= 2)) || die "a team needs at least two agents"
+  else
+    local name=${1:-}
+    [[ -n $name ]] || die "usage: agent run <agent> | --team a,b [-f file.md | \"task text\"]"
+    shift
+    members=("$name")
+  fi
+  local m seen=" "
+  for m in "${members[@]}"; do
+    ! is_investigator "$m" || die "investigators are not started directly — agents request them (request_investigation)"
+    [[ -n ${AGENT_TYPE[$m]:-} ]] || die "unknown agent '$m'. Configured: ${!AGENT_TYPE[*]}"
+    [[ $seen != *" $m "* ]] || die "agent $m is listed twice"
+    seen+="$m "
+  done
+
+  local task
+  if [[ ${1:-} == -f ]]; then
+    [[ -r ${2:-} ]] || die "file not found: ${2:-}"
+    task=$(<"$2")
+  elif (($#)); then
+    task="$*"
+  elif [[ ! -t 0 ]]; then
+    task=$(cat)
+  else
+    die "give the task text (argument, -f file or stdin)"
+  fi
+  [[ -n ${task//[[:space:]]/} ]] || die "empty task"
+
+  local root common main_root
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "run this inside a git repository"
+  common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)
+  main_root=$(dirname "$common")
+
+  if ((${#members[@]} > 1)); then
+    local has_normal=0
+    for m in "${members[@]}"; do [[ $(agent_tier "$m") == normal ]] && has_normal=1; done
+    ((has_normal)) || die "a team needs at least one agent outside WORKER_AGENTS (workers cannot coordinate)"
+  fi
+  local busy
+  for m in "${members[@]}"; do
+    if busy=$(agent_running_task "$m"); then
+      die "agent $m is busy (task $busy). Wait, or add another agent in $CONF."
+    fi
+  done
+
+  local ts base team="" ids=()
+  ts=$(date +%Y%m%d-%H%M%S)
+  base=$(git -C "$root" symbolic-ref --quiet --short HEAD || git -C "$root" rev-parse --short HEAD)
+  ((${#members[@]} > 1)) && team="$ts-team"
+  for m in "${members[@]}"; do
+    create_task "$m" "$task" "$root" "$main_root" "$base" "$ts" "$team"
+    ids+=("$NEW_ID")
+  done
+
+  if [[ -n $team ]]; then
+    local json='{}' i
+    for i in "${ids[@]}"; do
+      json=$(jq --arg a "$(task_field "$i" AGENT)" --arg t "$i" --arg b "$(task_field "$i" BRANCH)" \
+               --arg w "$(task_field "$i" WORKTREE)" \
+               --arg tier "$(agent_tier "$(task_field "$i" AGENT)")" --arg prov "$(agent_provider "$(task_field "$i" AGENT)")" \
+               '.[$a] = {agent:$a, task:$t, branch:$b, worktree:$w, state:"active", tier:$tier, provider:$prov}' <<< "$json")
+    done
+    jq -n --arg id "$team" --arg repo "$(basename "$main_root")" --arg wake "$SELF" --arg home "$AGENTS_HOME" \
+      --argjson members "$json" '{id:$id, repo:$repo, wake_cmd:$wake, home:$home, members:$members}' \
+      | bus team-create --dir "$BUS_DIR" || die "could not create the team on the bus"
+  fi
+
+  if [[ -n $(git -C "$root" status --porcelain) ]]; then
+    echo "Note: uncommitted changes in $root were NOT copied to the agents' worktrees (they start from HEAD)."
+  fi
+  if ((verify)); then
+    for i in "${ids[@]}"; do meta_set "$i" VERIFY 1; done
+  fi
+  for i in "${ids[@]}"; do
+    start_runner "$i" new || exit 1
+  done
+  if [[ -n $team ]]; then
+    echo "Started team $team: ${members[*]} (from $base)"
+    for i in "${ids[@]}"; do echo "  $i  →  $(task_field "$i" BRANCH)"; done
+    echo "  watch: agent live   |   team: agent team $team"
+    if ((verify)); then echo "  --verify: once the PR is ready an investigator reviews it on GitHub"; fi
+  else
+    echo "Started: ${ids[0]}"
+    echo "  agent:    ${members[0]} (${AGENT_TYPE[${members[0]}]})"
+    echo "  branch:   $(task_field "${ids[0]}" BRANCH) (from $base)"
+    echo "  worktree: $(task_field "${ids[0]}" WORKTREE)"
+    echo "  watch:    agent log ${ids[0]}"
+  fi
+}
+
+cmd_answer() {
+  local id; id=$(resolve_id "${1:?usage: agent answer <id>}")
+  meta_load "$id"
+  [[ $STATUS == waiting ]] || die "task $id has status '$STATUS' — it is not waiting for answers"
+  local q="$TASKS/$id/questions-$ROUND.md"
+  "${EDITOR:-nano}" "$q"
+  if validate_answers "$q"; then
+    local yn
+    read -rp "All questions are answered. Resume now? [Y/n] " yn
+    [[ ${yn,,} == n* ]] || cmd_resume "$id"
+  else
+    echo "Not all questions are answered. Complete them and run: agent answer $id"
+  fi
+}
+
+cmd_resume() {
+  local id; id=$(resolve_id "${1:?usage: agent resume <id> [additional note]}")
+  shift
+  meta_load "$id"
+  [[ $STATUS == waiting ]] || die "task $id has status '$STATUS' (resume only works for 'waiting')"
+  local q="$TASKS/$id/questions-$ROUND.md"
+  validate_answers "$q" || die "not all questions are answered — complete: $q"
+  [[ -n $SESSION_ID ]] || die "no agent session ID — cannot resume (see: agent log $id)"
+  if (($#)); then printf '%s\n' "$*" > "$TASKS/$id/note-$((RUN + 1)).md"; fi
+  meta_set "$id" ANSWERS_PENDING "$ROUND"
+
+  if [[ ${KIND:-worker} == worker ]]; then
+    local pending
+    pending=$(bus inv-pending --dir "$BUS_DIR" --task "$id")
+    if [[ -n $pending ]]; then
+      meta_set "$id" STATUS investigating
+      echo "Answers accepted. $id resumes automatically when investigation #$pending finishes."
+      return
+    fi
+    local busy
+    if busy=$(agent_running_task "$AGENT"); then
+      die "agent $AGENT is busy with $busy — resume when it finishes"
+    fi
+  else
+    bus inv-set --dir "$BUS_DIR" --id "$INV_ID" --status running
+  fi
+  start_runner "$id" resume || exit 1
+  echo "Resumed $id (run $((RUN + 1)))."
+}
+
+cmd_status() {
+  printf '%-30s %-12s %-13s %-6s %-5s %s\n' TASK AGENT STATUS ROUND RUN REPO
+  local d
+  for d in "$TASKS"/*/; do
+    [[ -f $d/meta.env ]] || continue
+    (
+      source "$d/meta.env"
+      st=$STATUS
+      if [[ $st == running || $st == starting ]] && ! unit_active "$ID" "$RUN"; then st="$st?"; fi
+      ag=$AGENT; [[ ${KIND:-worker} == investigation ]] && ag="inv#$INV_ID"
+      printf '%-30s %-12s %-13s %-6s %-5s %s\n' "$ID" "$ag" "$st" "$ROUND" "$RUN" "$REPO_NAME"
+    )
+  done
+}
+
+cmd_show() {
+  local id; id=$(resolve_id "${1:?usage: agent show <id>}")
+  local dir="$TASKS/$id"
+  meta_load "$id"
+  echo "== $id"
+  sed 's/^/  /' "$dir/meta.env"
+  echo; echo "== task"; cat "$dir/task.md"
+  if ((ROUND > 0)); then echo; echo "== questions (round $ROUND): $dir/questions-$ROUND.md"; fi
+  local last=""
+  [[ -f $dir/final.md ]] && last=$(<"$dir/final.md")
+  if [[ ${KIND:-worker} == worker ]]; then
+    local invs; invs=$(try inv_list_failed bus inv-list --dir "$BUS_DIR" --task "$id")
+    if [[ -n $invs ]]; then echo; echo "== investigations"; printf '%s\n' "$invs"; fi
+  else
+    echo; echo "== investigation #$INV_ID for $FROM_AGENT (task $PARENT_TASK)"
+    [[ -s $dir/result.md ]] && echo "   result: $dir/result.md"
+  fi
+  if [[ -n $last ]]; then echo; echo "== the agent's last message"; printf '%s\n' "$last"; fi
+  if [[ -f $WORKTREE/.agents/reports/$id.md ]]; then
+    echo; echo "== report: $WORKTREE/.agents/reports/$id.md"
+  fi
+}
+
+# render_log — renders log lines readably: structured records (JSON with an "event") become
+# "HH:MM:SS LEVEL event key=value ...", any other line (output of git, the CLIs, tail headers) passes unchanged.
+render_log() {
+  jq --unbuffered -Rr '. as $line | (try fromjson catch null) as $r
+    | if ($r | type) == "object" and ($r | has("event")) then
+        "\(($r.ts // "")[11:19]) \(($r.level // "info") | ascii_upcase | .[0:5]) \($r.event)"
+        + ([$r | to_entries[]
+            | select(.key | IN("ts", "level", "event", "component", "pid", "subcommand", "task") | not)
+            | select(.value != "")
+            | " \(.key)=\(.value | tostring | if test("[[:space:]]") then @json else . end)"] | join(""))
+      else $line end'
+}
+
+cmd_log() { # <id> [--raw] — follows the runner log of a task (structured records rendered unless --raw)
+  local id; id=$(resolve_id "${1:?usage: agent log <id> [--raw]}")
+  local dir="$TASKS/$id" run
+  run=$(task_field "$id" RUN)
+  # the error log of the current run may not exist yet; tail -F waits for it (its "cannot open" notice is noise)
+  if [[ ${2:-} == --raw ]]; then
+    tail -n 60 -F "$dir/runner.log" "$dir/err-$run.log" 2>/dev/null
+  else
+    tail -n 60 -F "$dir/runner.log" "$dir/err-$run.log" 2>/dev/null | render_log
+  fi
+}
+
+stop_all() { # agent stop --running: stops everything that is active, whatever its state
+  local flag="$AGENTS_HOME/.stop-all" d id st run units=() stopped=()
+  : > "$flag"
+  try cancel_pending_failed bus cancel-pending --dir "$BUS_DIR"
+  for d in "$TASKS"/*/; do
+    d=${d%/}; id=${d##*/}
+    [[ -f $d/meta.env ]] || continue
+    st=$(task_field "$id" STATUS)
+    case $st in
+      new|starting|running|waiting|investigating|sleeping)
+        touch "$d/stop-requested"
+        meta_set "$id" STATUS stopped
+        meta_set "$id" FINISHED "$(date -Is)"
+        run=$(task_field "$id" RUN)
+        units+=("$(unit_name "$id" "$run").service")
+        stopped+=("$id ($st)") ;;
+    esac
+  done
+  if ((${#units[@]})); then
+    try unit_stop_failed systemctl --user stop "${units[@]}"
+  fi
+  for d in "${stopped[@]}"; do   # a runner may have overwritten the status while stopping
+    id=${d%% *}
+    meta_set "$id" STATUS stopped
+    act "$id" info "■ stopped (agent stop --running)"
+  done
+  rm -f "$flag"
+  if ((${#stopped[@]})); then
+    local n=${#stopped[@]} w=tasks
+    ((n == 1)) && w=task
+    log_info stop_all "stopped=$n" "tasks=${stopped[*]}"
+    echo "Stopped $n $w:"
+    printf '  %s\n' "${stopped[@]}"
+  else
+    echo "Nothing was running."
+  fi
+}
+
+cmd_stop() {
+  if [[ ${1:-} == --running ]]; then stop_all; return; fi
+  local id; id=$(resolve_id "${1:?usage: agent stop <id> | --running}")
+  local run st team agent
+  run=$(task_field "$id" RUN); st=$(task_field "$id" STATUS)
+  team=$(task_field "$id" TEAM); agent=$(task_field "$id" AGENT)
+  touch "$TASKS/$id/stop-requested"
+  try unit_stop_failed systemctl --user stop "$(unit_name "$id" "$run").service"
+  meta_set "$id" STATUS stopped
+  meta_set "$id" FINISHED "$(date -Is)"
+  if [[ -n $team ]]; then
+    try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state done >/dev/null
+    if [[ $agent == "$(team_lead "$team")" ]]; then
+      finish_team "$team" "team stopped by the user"
+    elif [[ $st == sleeping ]]; then
+      notice member_stopped "${USER:-human}" "$(team_lead "$team")" "TEAM: member $agent was stopped by the human." "agent=$agent" "team=$team"
+    fi
+  fi
+  log_info task_stopped "task=$id"
+  echo "Stopped $id."
+}
+
+cmd_clean() {
+  local id; id=$(resolve_id "${1:?usage: agent clean <id>}")
+  meta_load "$id"
+  [[ $STATUS != running && $STATUS != starting ]] || die "task $id is still running (agent stop $id)"
+  if [[ -d $WORKTREE ]]; then
+    git -C "$REPO_ROOT" worktree remove --force "$WORKTREE"
+    echo "Removed worktree $WORKTREE (branch $BRANCH is kept)."
+  else
+    echo "The worktree no longer exists."
+  fi
+}
+
+cmd_agents() {
+  local a busy
+  for a in "${!AGENT_TYPE[@]}"; do
+    if busy=$(agent_running_task "$a"); then busy="busy: $busy"; else busy="free"; fi
+    printf '%-12s %-7s model=%-24s %s\n' "$a" "${AGENT_TYPE[$a]}" "${AGENT_MODEL[$a]:-default}" "$busy"
+  done
+  local inv
+  while read -r inv; do
+    printf '%-12s %-7s model=%-24s investigator\n' "$inv" "${INVESTIGATORS_TYPE[$inv]}" "${INVESTIGATORS_MODEL[$inv]:-default}"
+  done < <(investigator_names)
+  bus inv-list --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" | head -1
+}
+
+cmd_inv() { # [number] — the queue, or the full record of one investigation
+  if [[ -z ${1:-} ]]; then
+    bus inv-list --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS"
+    echo
+    echo "All: agent inv --all   |   details: agent inv <number>"
+  elif [[ $1 == --all ]]; then
+    bus inv-list --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" --all
+  else
+    local f; f=$(bus inv-get --dir "$BUS_DIR" --id "${1#\#}" | jq -r .file)
+    cat "$f"
+  fi
+}
+
+cmd_dispatch() { dispatch; bus inv-list --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS"; }
+
+cmd_live() {
+  local remind=$LIVE_REMIND_MIN feed=()
+  while (($#)); do
+    case $1 in
+      --remind) remind=${2:?give a number of minutes}; shift ;;
+      --feed)   feed+=(--feed) ;;
+      --light)  feed+=(--light) ;;
+      *) die "usage: agent live [--feed] [--remind MINUTES] [--light]" ;;
+    esac
+    shift
+  done
+  [[ -x $AGENTLIVE_BIN ]] || die "$AGENTLIVE_BIN not found — run ./install.sh again"
+  exec "$AGENTLIVE_BIN" --home "$AGENTS_HOME" --bus "$BUS_DIR" --agent "$SELF" \
+    --remind "$remind" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" "${feed[@]}"
+}
+
+cmd_ack() { # <id | all> — acknowledges finished tasks (they disappear from agent live)
+  local q=${1:?usage: agent ack <id|all>} d n=0
+  if [[ $q == all ]]; then
+    for d in "$TASKS"/*/; do
+      [[ -f $d/meta.env ]] || continue
+      case $(task_field "$(basename "$d")" STATUS) in
+        done|failed|stopped|excluded|hung) : > "$d/acked"; n=$((n + 1)) ;;
+      esac
+    done
+    echo "Acknowledged: $n"
+  else
+    local id; id=$(resolve_id "$q")
+    case $(task_field "$id" STATUS) in
+      done|failed|stopped|excluded|hung) : > "$TASKS/$id/acked"; echo "Acknowledged $id." ;;
+      *) die "task $id is still running" ;;
+    esac
+  fi
+}
+
+# ------------------------------------------------------------------ account authentication
+
+auth_classify() { # output-file → "needs authentication" | "other error: ..."
+  local text; text=$(tr '\n' ' ' < "$1" | tr -s ' ')
+  shopt -s nocasematch
+  if [[ $text =~ (401|unauthori[sz]ed|authentication|not[[:space:]]logged[[:space:]]in|log[[:space:]]?in[[:space:]]again|/login|invalid[[:space:]](api|x-api)[[:space:]-]?key|oauth[[:space:]]token|token[[:space:]](has[[:space:]])?expired|expired[[:space:]]token|refresh[[:space:]]token|re-?authenticate|sign[[:space:]]in|credentials) ]]; then
+    echo "needs authentication"
+  elif [[ $text =~ (rate[[:space:]_-]?limit|usage[[:space:]]limit|quota|429|too[[:space:]]many[[:space:]]requests|limit[[:space:]]reached|resource_exhausted|credits) ]]; then
+    echo "other error: usage limit reached"
+  elif [[ $text =~ (enotfound|econnrefused|econnreset|eai_again|could[[:space:]]not[[:space:]]resolve|network|connection[[:space:]](refused|reset)) ]]; then
+    echo "other error: cannot reach the provider"
+  else
+    local line; line=$(grep -m1 -v '^[[:space:]]*$' "$1" | cut -c1-120)
+    echo "other error: ${line:-unknown}"
+  fi
+  shopt -u nocasematch
+}
+
+cmd__authcheck() { # provider — runs as a systemd --user unit (the same context as the agents)
+  local p=$1 tmp rc=0
+  export LC_ALL=C.UTF-8
+  if [[ -f $AGENTS_HOME/secrets.env ]]; then set -a; source "$AGENTS_HOME/secrets.env"; set +a; fi
+  local v
+  for v in CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY CODEX_API_KEY OPENAI_API_KEY GEMINI_API_KEY OPENROUTER_API_KEY DEEPINFRA_API_KEY; do
+    if [[ -z ${!v:-} ]]; then unset "$v"; fi
+  done
+  tmp=$(mktemp -d); cd "$tmp" || exit 1
+  trap 'rm -rf "$tmp"' EXIT
+  local q="Reply with the single word: OK"
+  case $p in
+    anthropic)
+      [[ -x $CLAUDE_BIN ]] || { echo "other error: CLI not found ($CLAUDE_BIN)"; return; }
+      timeout 180 "$CLAUDE_BIN" -p "$q" --output-format json --max-turns 1 \
+        ${AUTH_MODEL_ANTHROPIC:+--model "$AUTH_MODEL_ANTHROPIC"} </dev/null >out 2>err || rc=$?
+      # output that is not JSON is not an OK answer; it is kept as the error text (fallback: cat out)
+      if ((rc == 0)) && [[ $(jq -r '.is_error | tostring' out 2>/dev/null) == false ]]; then echo OK; return; fi
+      jq -r '.result // empty' out >> err 2>/dev/null || cat out >> err ;;
+    openai)
+      [[ -x $CODEX_BIN ]] || { echo "other error: CLI not found ($CODEX_BIN)"; return; }
+      timeout 180 "$CODEX_BIN" exec --json --skip-git-repo-check \
+        ${AUTH_MODEL_OPENAI:+-m "$AUTH_MODEL_OPENAI"} "$q" </dev/null >out 2>err || rc=$?
+      if ((rc == 0)) && ! grep -q '"type":"\(turn.failed\|error\)"' out; then echo OK; return; fi
+      jq_soft auth_check_parse -rR 'fromjson? | select(.type=="turn.failed" or .type=="error") | (.error.message // .message // empty)' < out >> err ;;
+    gemini)
+      [[ -x $AGY_BIN ]] || { echo "other error: CLI not found ($AGY_BIN)"; return; }
+      timeout 180 "$AGY_BIN" -p "$q" --output-format json --print-timeout 2m \
+        ${AUTH_MODEL_GEMINI:+--model "$AUTH_MODEL_GEMINI"} </dev/null >out 2>err || rc=$?
+      # output that is not JSON is not an OK answer; it is kept as the error text (fallback: cat out)
+      if ((rc == 0)) && [[ $(jq -r '.status // empty' out 2>/dev/null) == SUCCESS ]]; then echo OK; return; fi
+      jq -r '.error // empty' out >> err 2>/dev/null || cat out >> err ;;
+    openrouter|deepinfra)
+      local key url model code
+      if [[ $p == openrouter ]]; then
+        key=${OPENROUTER_API_KEY:-}; url=https://openrouter.ai/api/v1; model=${AUTH_MODEL_OPENROUTER:-$(opencode_model_for openrouter)}
+      else
+        key=${DEEPINFRA_API_KEY:-}; url=https://api.deepinfra.com/v1/openai; model=${AUTH_MODEL_DEEPINFRA:-$(opencode_model_for deepinfra)}
+      fi
+      [[ -n $key ]] || { echo "needs authentication"; return; }   # no key in secrets.env
+      if [[ -z $model ]]; then
+        if [[ $p == openrouter ]]; then   # no model configured: only check the key and its limit
+          code=$(curl -sS -m 60 -o out -w '%{http_code}' -H "Authorization: Bearer $key" "$url/key" 2>err) || rc=$?
+          if [[ $code == 200 ]]; then
+            [[ $(jq -r '.data.limit_remaining // "x"' out) == 0 ]] && { echo "other error: usage limit reached"; return; }
+            echo OK; return
+          fi
+        else
+          echo "other error: no model to test (set AUTH_MODEL_DEEPINFRA or configure a deepinfra/... agent)"; return
+        fi
+      else
+        code=$(jq -n --arg m "$model" --arg q "$q" '{model:$m, max_tokens:5, messages:[{role:"user", content:$q}]}' \
+          | curl -sS -m 120 -o out -w '%{http_code}' -H "Authorization: Bearer $key" \
+              -H 'Content-Type: application/json' -d @- "$url/chat/completions" 2>err) || rc=$?
+        [[ $code == 200 ]] && { echo OK; return; }
+      fi
+      case $code in
+        401|403) echo "needs authentication"; return ;;
+        402|429) echo "other error: usage limit reached"; return ;;
+        000|"") echo "other error: cannot reach the provider"; return ;;
+      esac
+      { jq -r '.error.message // .detail // empty' out 2>/dev/null || cat out; } >> err ;;   # non-JSON body: keep it raw
+  esac
+  if ((rc == 124)); then echo "other error: the request timed out"; return; fi
+  auth_classify err
+}
+
+opencode_model_for() { # provider — the model (without prefix) of the first opencode agent using that provider
+  local a
+  for a in "${!AGENT_TYPE[@]}"; do
+    if [[ ${AGENT_TYPE[$a]} == opencode && ${AGENT_MODEL[$a]:-} == "$1"/* ]]; then
+      printf '%s' "${AGENT_MODEL[$a]#"$1"/}"; return
+    fi
+  done
+}
+
+cmd_authenticated() {
+  local tmp p; tmp=$(mktemp -d)
+  for p in anthropic openai gemini openrouter deepinfra; do
+    systemd-run --user --wait --pipe --quiet --collect --unit="agent-auth-$p-$$" \
+      --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" \
+      --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+      "$SELF" _authcheck "$p" </dev/null >"$tmp/$p" 2>"$tmp/$p.err" &
+  done
+  wait
+  for p in anthropic openai gemini openrouter deepinfra; do
+    local r=""
+    [[ -s $tmp/$p ]] && r=$(head -1 "$tmp/$p")
+    if [[ -z $r ]]; then
+      r="other error: could not run the check (systemd-run)"
+      log_warn auth_check_failed "provider=$p" "stderr=$(head -c 2000 "$tmp/$p.err")"
+    fi
+    printf '%-10s %s\n' "$p" "$r"
+  done
+  rm -rf "$tmp"
+}
+
+cmd_team() { # [id] [--all]
+  if [[ -n ${1:-} && $1 != --all ]]; then
+    bus team-get --dir "$BUS_DIR" --team "$1" | jq -r '"\(.id) repo \(.repo), coordinator \(.lead // "—"), finished: \(.done)"'
+    team_summary "$1"
+  else
+    bus team-list --dir "$BUS_DIR" "$@"
+  fi
+}
+
+cmd_notes() { # [repo] [--section S] [--search Q] [-n N]
+  local repo=""
+  if [[ -n ${1:-} && $1 != -* ]]; then repo=$1; shift; fi
+  if [[ -z $repo ]]; then
+    local root; root=$(git rev-parse --show-toplevel 2>/dev/null) || root=""   # outside a repository: no repository name
+    [[ -n $root ]] && repo=$(basename "$(dirname "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)")")
+  fi
+  if [[ -z $repo ]]; then
+    echo "Repository notebooks:"; bus notes --dir "$BUS_DIR" --list; return
+  fi
+  bus notes --dir "$BUS_DIR" --repo "$repo" "$@"
+}
+
+cmd_helpers() { bus helper-list --dir "$BUS_DIR" "$@"; }
+
+cmd_transcript() { # <task|team|fragment> [--raw] — chronological log of a task or a team
+  local q="" raw=0
+  while (($#)); do
+    case $1 in --raw) raw=1 ;; *) q=$1 ;; esac
+    shift
+  done
+  [[ -n $q ]] || die "usage: agent transcript <task id | team id | fragment> [--raw]"
+  local d first="" team=""
+  for d in "$TASKS"/*/; do
+    d=${d%/}; d=${d##*/}
+    [[ -f $TASKS/$d/meta.env ]] || continue
+    if [[ $d == *"$q"* || $(task_field "$d" TEAM) == *"$q"* ]]; then first=$d; team=$(task_field "$d" TEAM); break; fi
+  done
+  [[ -n $first ]] || die "no task or team matches: $q"
+
+  # tasks: the given one or the whole team + investigations and worker requests made for them (recursively)
+  local tasks=("$first") t p changed=1
+  if [[ -n $team ]]; then
+    tasks=()
+    for d in "$TASKS"/*/; do
+      d=${d%/}; d=${d##*/}
+      [[ -f $TASKS/$d/meta.env && $(task_field "$d" TEAM) == "$team" ]] && tasks+=("$d")
+    done
+  fi
+  while ((changed)); do
+    changed=0
+    for d in "$TASKS"/*/; do
+      d=${d%/}; d=${d##*/}
+      [[ -f $TASKS/$d/meta.env ]] || continue
+      p=$(task_field "$d" PARENT_TASK)
+      [[ -n $p ]] || continue
+      [[ " ${tasks[*]} " == *" $d "* ]] && continue
+      [[ " ${tasks[*]} " == *" $p "* ]] && { tasks+=("$d"); changed=1; }
+    done
+  done
+
+  local names=() start="" end="" c f
+  for t in "${tasks[@]}"; do
+    names+=("$(task_field "$t" AGENT)")
+    c=$(task_field "$t" CREATED | cut -c1-19 | tr T ' ')
+    f=$(task_field "$t" FINISHED | cut -c1-19 | tr T ' ')
+    [[ -z $start || $c < $start ]] && start=$c
+    [[ -z $f ]] && f="9999-12-31 23:59:59"
+    [[ -z $end || $f > $end ]] && end=$f
+  done
+
+  printf '# Transcript: %s%s\n# Tasks: %s\n# Window: %s — %s\n\n' "${team:-$first}" "$( ((raw)) && echo ' (full texts)')" \
+    "${tasks[*]}" "$start" "${end/9999-12-31 23:59:59/still running}"
+  {
+    jq -rc --argjson n "$(printf '%s\n' "${names[@]}" | jq -R . | jq -sc .)" \
+       --arg team "team:$team" --arg s "$start" --arg e "$end" '
+       select(.ts >= $s and .ts <= $e)
+       | select((.from as $f | $n | index($f)) or (.to as $t | $n | index($t)) or .to == $team)
+       | "\(.ts)\t[bus] \(.from) → \(.to): \(.text | gsub("\n"; "\u001f    "))"' "$BUS_DIR/messages.jsonl" 2>/dev/null || log_warn transcript_bus_unreadable "file=$BUS_DIR/messages.jsonl"
+    local label inv hid day file
+    for t in "${tasks[@]}"; do
+      file="$TASKS/$t/activity.jsonl"
+      ((raw)) && [[ -s $TASKS/$t/activity-full.jsonl ]] && file="$TASKS/$t/activity-full.jsonl"
+      [[ -f $file ]] || continue
+      label=$(task_field "$t" AGENT)
+      inv=$(task_field "$t" INV_ID); hid=$(task_field "$t" HELPER_ID)
+      [[ -n $inv ]] && label="inv#$inv"
+      [[ -n $hid ]] && label="$label/H$hid"
+      day=$(task_field "$t" CREATED | cut -c1-10)
+      jq -r '"\(.ts)\t\(.k)\t\(.t | gsub("\n"; "\u001f    "))"' "$file" | awk -F'\t' -v day="$day" -v who="$label" '
+        { ts = $1
+          if (length(ts) == 8) {            # old HH:MM:SS format — take the date from when the task was created
+            if (prev != "" && ts < prev) { cmd = "date -d \"" day " +1 day\" +%F"; cmd | getline day; close(cmd) }
+            prev = ts; ts = day " " ts
+          }
+          k = $2
+          icon = (k=="text")?"»":(k=="cmd")?"$":(k=="edit")?"✎":(k=="mcp")?"⇄":(k=="err")?"✗":(k=="info")?"·":"⚙"
+          printf "%s\t[%s] %s %s\n", ts, who, icon, $3 }'
+    done
+  } | sort -s -t$'\t' -k1,1 | sed 's/\t/  /' | tr '\037' '\n'
+}
+
+# ------------------------------------------------------------------ task archiving
+
+archive_index() { # loads the metadata of all tasks into the IX_* arrays (a single pass)
+  declare -gA IX_TEAM=() IX_RES=() IX_PAR=() IX_ST=() IX_KIND=()
+  local d id team res par st kind
+  for d in "$TASKS"/*/; do
+    [[ -f $d/meta.env ]] || continue
+    id=${d%/}; id=${id##*/}
+    IFS=$'\t' read -r team res par st kind < <( source "$d/meta.env"
+      printf '%s\t%s\t%s\t%s\t%s\n' "${TEAM:--}" "${RESUMED_FROM:--}" "${PARENT_TASK:--}" "${STATUS:--}" "${KIND:-worker}" )
+    IX_TEAM[$id]=${team#-}; IX_RES[$id]=${res#-}; IX_PAR[$id]=${par#-}; IX_ST[$id]=${st#-}; IX_KIND[$id]=$kind
+  done
+}
+
+archive_group() { # task → GROUP: the team/task with its whole resume chain, investigations and worker requests
+  declare -gA GROUP=()
+  local queue=("$1") t x
+  while ((${#queue[@]})); do
+    t=${queue[0]}; queue=("${queue[@]:1}")
+    [[ -n ${GROUP[$t]:-} || -z ${IX_ST[$t]+x} ]] && continue
+    GROUP[$t]=1
+    [[ -n ${IX_RES[$t]} ]] && queue+=("${IX_RES[$t]}")
+    [[ -n ${IX_PAR[$t]} ]] && queue+=("${IX_PAR[$t]}")
+    for x in "${!IX_ST[@]}"; do
+      [[ -n ${GROUP[$x]:-} ]] && continue
+      if [[ ( -n ${IX_TEAM[$t]} && ${IX_TEAM[$x]} == "${IX_TEAM[$t]}" ) || ${IX_RES[$x]} == "$t" || ${IX_PAR[$x]} == "$t" ]]; then
+        queue+=("$x")
+      fi
+    done
+  done
+}
+
+sevenzip() { command -v 7z || command -v 7za || command -v 7zr; }
+
+archive_one() { # start-task — packs the whole group into tasks-archived/<name>.7z and removes it from tasks/
+  local start=$1 t
+  archive_group "$start"
+  local ids=() active=()
+  for t in "${!GROUP[@]}"; do
+    ids+=("$t")
+    case ${IX_ST[$t]} in new|starting|running|waiting|investigating|sleeping) active+=("$t (${IX_ST[$t]})") ;; esac
+  done
+  if ((${#active[@]})); then
+    echo "agent: skipped — the group is still active: ${active[*]} (agent stop first)" >&2
+    return 1
+  fi
+  mapfile -t ids < <(printf '%s\n' "${ids[@]}" | sort)
+  local root=${ids[0]} name keys=() k
+  name=${IX_TEAM[$root]:-$root}
+  local zip; zip=$(sevenzip) || die "7z (p7zip) not found"
+  local arch_dir="$AGENTS_HOME/tasks-archived"; mkdir -p "$arch_dir"
+  local archive_file="$arch_dir/$name.7z" i=1
+  while [[ -e $archive_file ]]; do archive_file="$arch_dir/$name-$((i++)).7z"; done
+  local stage; stage=$(mktemp -d)
+  mkdir -p "$stage/tasks" "$stage/checkpoints"
+
+  # full transcripts (bus + activity) — while the task directories still exist
+  for t in "${ids[@]}"; do
+    [[ ${IX_KIND[$t]} == worker ]] || continue
+    k=${IX_TEAM[$t]:-$t}
+    [[ " ${keys[*]} " == *" $k "* ]] && continue
+    keys+=("$k")
+    ( cmd_transcript "$k" --raw ) > "$stage/transcript-$k.txt" || log_warn transcript_failed "key=$k" "effect=archive without a transcript of $k"
+  done
+  for k in "${keys[@]}"; do
+    for t in team task; do
+      [[ -f $BUS_DIR/checkpoints/$t-$k.md ]] && cp "$BUS_DIR/checkpoints/$t-$k.md" "$stage/checkpoints/"
+    done
+  done
+  for t in "${ids[@]}"; do cp -a "$TASKS/$t" "$stage/tasks/"; done
+
+  ( cd "$stage" && "$zip" a -t7z -mx=7 "$archive_file" . >/dev/null ) || { rm -rf "$stage"; die "packing failed"; }
+  "$zip" t "$archive_file" >/dev/null || { rm -rf "$stage"; rm -f "$archive_file"; die "archive test of $archive_file failed — nothing was removed"; }
+  rm -rf "$stage"
+
+  # only after a successful test: worktrees (branches stay), task directories, checkpoints
+  local wt root_repo n_wt=0
+  for t in "${ids[@]}"; do
+    wt=$(task_field "$t" WORKTREE); root_repo=$(task_field "$t" REPO_ROOT)
+    if [[ -n $wt && -d $wt && -n $root_repo ]]; then
+      if [[ -d $wt ]]; then
+        try worktree_remove_failed git -C "$root_repo" worktree remove --force "$wt"
+        [[ -d $wt ]] || n_wt=$((n_wt + 1))
+      fi
+      try worktree_prune_failed git -C "$root_repo" worktree prune
+    fi
+  done
+  for t in "${ids[@]}"; do rm -rf "${TASKS:?}/$t"; done
+  for k in "${keys[@]}"; do rm -f "$BUS_DIR/checkpoints/team-$k.md" "$BUS_DIR/checkpoints/task-$k.md" "$TASKS/.team-$k.stuck"; done
+  for t in "${ids[@]}"; do unset "IX_ST[$t]"; done
+  log_info archived "archive=$archive_file" "tasks=${ids[*]}" "worktrees_removed=$n_wt"
+  printf '%s  (%s, tasks: %d, worktrees removed: %d)\n' "$archive_file" "$(du -h "$archive_file" | cut -f1)" "${#ids[@]}" "$n_wt"
+}
+
+cmd_archive() { # <task|team> | --finished
+  local q=${1:?usage: agent archive <task|team> | --finished}
+  archive_index
+  if [[ $q == --finished ]]; then
+    local t done_n=0 skip=0
+    for t in $(printf '%s\n' "${!IX_ST[@]}" | sort); do
+      [[ -n ${IX_ST[$t]+x} ]] || continue          # already archived in this pass
+      archive_group "$t"
+      local x all=1
+      for x in "${!GROUP[@]}"; do
+        case ${IX_ST[$x]} in done|failed|stopped|excluded|hung) ;; *) all=0 ;; esac
+      done
+      if ((all)); then archive_one "$t" && done_n=$((done_n + 1)); else
+        for x in "${!GROUP[@]}"; do unset "IX_ST[$x]"; done; skip=$((skip + 1)); fi
+    done
+    echo "Archived: $done_n, skipped (still active): $skip"
+    return
+  fi
+  local d start=""
+  for d in "${!IX_ST[@]}"; do
+    if [[ $d == *"$q"* || ${IX_TEAM[$d]} == *"$q"* ]]; then start=$d; break; fi
+  done
+  [[ -n $start ]] || die "no task or team matches: $q"
+  archive_one "$start"
+}
+
+cmd_bus() { "$AGENTBUS_BIN" status --dir "$BUS_DIR"; echo; "$AGENTBUS_BIN" log --dir "$BUS_DIR" -n "${1:-30}"; }
+
+cmd_say() {
+  local to=${1:?usage: agent say <agent|all|team:ID> "text"}; shift
+  (($#)) || die "give the message text"
+  rm -f "$TASKS"/.team-*.stuck
+  "$AGENTBUS_BIN" send --dir "$BUS_DIR" --from "${USER:-mat}" --to "$to" "$*"
+}
+
+usage() {
+  cat <<'EOF'
+agent run <agent> "task" | -f file.md      start a task (run inside the repository)
+agent status                              task list
+agent agents                              configured agents and whether they are busy
+agent show <id>                           task details and the last message
+agent answer <id>                         open the questions in $EDITOR, validate, resume
+agent resume <id> ["note"]                resume after all questions are answered
+agent log <id> [--raw]                    follow the runner log (structured records rendered)
+agent stop <id>                           stop a run
+agent stop --running                      stop EVERYTHING that is active (teams, agents, investigations, queues)
+agent clean <id>                          remove the task's worktree (the branch is kept)
+agent inv [number | --all]                investigation queue / full record of one
+agent dispatch                            manually start the next queued investigation (fallback)
+agent live [--feed] [--remind MIN]        live panel (or an event stream with --feed)
+agent ack <id|all>                        acknowledge finished tasks (they leave the panel)
+agent run --team a,b[,c] [--verify] "task"  team; --verify: an investigator reviews the PR at the end
+agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
+agent team [id | --all]                   teams and their members
+agent helpers [--all]                     worker requests made by normal models
+agent transcript <id|team> [--raw]        full chronological log of a task/team (bus + activity)
+agent archive <id|team> | --finished      pack a finished task (with its resume chain) into tasks-archived/*.7z
+agent notes [repo] [--section S] [--search Q] [-n N]   persistent repository notebook
+agent authenticated                       are the Anthropic / OpenAI / Gemini / OpenRouter / DeepInfra accounts authenticated
+agent bus [N]                             bus state and the last N agent messages
+agent say <agent|all|team:ID> "text"     message agents through the bus
+<id> may be an unambiguous fragment of a task ID.
+EOF
+}
+
+main() {
+  local cmd=${1:-help}; (($#)) && shift
+  case $cmd in
+    run)     cmd_run "$@" ;;
+    status|ls) cmd_status ;;
+    agents)  cmd_agents ;;
+    show)    cmd_show "$@" ;;
+    answer)  cmd_answer "$@" ;;
+    resume)  cmd_resume "$@" ;;
+    log)     cmd_log "$@" ;;
+    stop)    cmd_stop "$@" ;;
+    clean)   cmd_clean "$@" ;;
+    bus)     cmd_bus "$@" ;;
+    inv)     cmd_inv "$@" ;;
+    live)    cmd_live "$@" ;;
+    ack)     cmd_ack "$@" ;;
+    authenticated) cmd_authenticated ;;
+    team)    cmd_team "$@" ;;
+    helpers) cmd_helpers "$@" ;;
+    transcript) cmd_transcript "$@" ;;
+    archive) cmd_archive "$@" ;;
+    _dispatch-helpers) dispatch_helpers ;;
+    notes)   cmd_notes "$@" ;;
+    _wake)   cmd__wake "$@" ;;
+    _authcheck) cmd__authcheck "$@" ;;
+    dispatch) cmd_dispatch ;;
+    say)     cmd_say "$@" ;;
+    _runner) cmd__runner "$@" ;;
+    help|-h|--help) usage ;;
+    *) usage; exit 1 ;;
+  esac
+}
+
+main "$@"

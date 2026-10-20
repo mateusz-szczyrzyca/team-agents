@@ -1,0 +1,796 @@
+{
+ "operations": [
+  {
+   "type": "ToolCall",
+   "op": "tools/call",
+   "what": "an MCP tools/call request (before the tool runs)",
+   "causes": [
+    {
+     "name": "UnknownTool",
+     "class": "UnknownTool",
+     "doc": "the requested tool does not exist"
+    },
+    {
+     "name": "InvalidArgument",
+     "class": "InvalidArgument",
+     "doc": "an argument does not match the type declared in the tool's schema"
+    }
+   ],
+   "noStorage": true
+  },
+  {
+   "type": "ListAgents",
+   "op": "list_agents",
+   "what": "the MCP tool list_agents",
+   "causes": []
+  },
+  {
+   "type": "SendMessage",
+   "op": "send_message",
+   "what": "the MCP tool send_message",
+   "causes": [
+    {
+     "name": "MissingArgument",
+     "class": "InvalidArgument",
+     "doc": "to or text is missing"
+    },
+    {
+     "name": "ToSelf",
+     "class": "InvalidArgument",
+     "doc": "the recipient is the caller itself"
+    },
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the recipient is \"team\" but the caller is not in a team"
+    }
+   ]
+  },
+  {
+   "type": "ReadMessages",
+   "op": "read_messages",
+   "what": "the MCP tool read_messages",
+   "causes": []
+  },
+  {
+   "type": "SetStatus",
+   "op": "set_status",
+   "what": "the MCP tool set_status",
+   "causes": []
+  },
+  {
+   "type": "Reserve",
+   "op": "reserve",
+   "what": "the MCP tool reserve",
+   "causes": [
+    {
+     "name": "MissingResource",
+     "class": "InvalidArgument",
+     "doc": "the resource name is missing"
+    }
+   ]
+  },
+  {
+   "type": "Release",
+   "op": "release",
+   "what": "the MCP tool release",
+   "causes": [
+    {
+     "name": "NotHolder",
+     "class": "Permission",
+     "doc": "the resource is held by another agent"
+    }
+   ]
+  },
+  {
+   "type": "ListReservations",
+   "op": "list_reservations",
+   "what": "the MCP tool list_reservations",
+   "causes": []
+  },
+  {
+   "type": "RequestInvestigation",
+   "op": "request_investigation",
+   "what": "the MCP tool request_investigation",
+   "causes": [
+    {
+     "name": "Investigator",
+     "class": "Permission",
+     "doc": "an investigator called it (investigators cannot request investigations)"
+    },
+    {
+     "name": "MissingQuestion",
+     "class": "InvalidArgument",
+     "doc": "the question is missing"
+    }
+   ]
+  },
+  {
+   "type": "RecordDecision",
+   "op": "record_decision",
+   "what": "the MCP tool record_decision",
+   "causes": [
+    {
+     "name": "Investigator",
+     "class": "Permission",
+     "doc": "an investigator called it (only the requesting agent decides)"
+    },
+    {
+     "name": "MissingArgument",
+     "class": "InvalidArgument",
+     "doc": "decision or justification is missing"
+    },
+    {
+     "name": "NoSuchInvestigation",
+     "class": "NotFound",
+     "doc": "there is no investigation with this number"
+    },
+    {
+     "name": "NotYourInvestigation",
+     "class": "Permission",
+     "doc": "the investigation belongs to another task"
+    },
+    {
+     "name": "NotFinished",
+     "class": "InvalidState",
+     "doc": "the investigation has not finished yet (no result or rejection to decide on)"
+    }
+   ]
+  },
+  {
+   "type": "InvestigationStatus",
+   "op": "investigation_status",
+   "what": "the MCP tool investigation_status",
+   "causes": []
+  },
+  {
+   "type": "WaitForMessage",
+   "op": "wait_for_message",
+   "what": "the MCP tool wait_for_message",
+   "causes": []
+  },
+  {
+   "type": "NotebookRead",
+   "op": "notebook_read",
+   "what": "the MCP tool notebook_read",
+   "causes": []
+  },
+  {
+   "type": "NotebookAppend",
+   "op": "notebook_append",
+   "what": "the MCP tool notebook_append",
+   "causes": [
+    {
+     "name": "MissingText",
+     "class": "InvalidArgument",
+     "doc": "the entry text is missing"
+    }
+   ]
+  },
+  {
+   "type": "NotebookWriteSection",
+   "op": "notebook_write_section",
+   "what": "the MCP tool notebook_write_section",
+   "causes": [
+    {
+     "name": "MissingName",
+     "class": "InvalidArgument",
+     "doc": "the section name is missing"
+    }
+   ]
+  },
+  {
+   "type": "TeamStatus",
+   "op": "team_status",
+   "what": "the MCP tool team_status",
+   "causes": [
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    }
+   ]
+  },
+  {
+   "type": "Checkpoint",
+   "op": "checkpoint",
+   "what": "the MCP tool checkpoint",
+   "causes": [
+    {
+     "name": "MissingSummary",
+     "class": "InvalidArgument",
+     "doc": "the summary is missing"
+    }
+   ]
+  },
+  {
+   "type": "ClaimLead",
+   "op": "claim_lead",
+   "what": "the MCP tool claim_lead",
+   "causes": [
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    }
+   ]
+  },
+  {
+   "type": "HandoverLead",
+   "op": "handover_lead",
+   "what": "the MCP tool handover_lead",
+   "causes": [
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    },
+    {
+     "name": "NotCoordinator",
+     "class": "Permission",
+     "doc": "the caller is not the team coordinator"
+    },
+    {
+     "name": "NotMember",
+     "class": "NotFound",
+     "doc": "the new coordinator is not a member of the team"
+    },
+    {
+     "name": "TargetIsWorker",
+     "class": "Permission",
+     "doc": "the new coordinator is a worker (workers cannot coordinate)"
+    },
+    {
+     "name": "TargetExcluded",
+     "class": "InvalidState",
+     "doc": "the new coordinator is excluded from the team"
+    }
+   ]
+  },
+  {
+   "type": "QuizStart",
+   "op": "quiz_start",
+   "what": "the MCP tool quiz_start",
+   "causes": [
+    {
+     "name": "MissingQuestion",
+     "class": "InvalidArgument",
+     "doc": "the question is missing"
+    },
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    },
+    {
+     "name": "NotCoordinator",
+     "class": "Permission",
+     "doc": "the caller is not the team coordinator"
+    },
+    {
+     "name": "AlreadyHeld",
+     "class": "Conflict",
+     "doc": "the team already had its quiz"
+    },
+    {
+     "name": "ResumedTeam",
+     "class": "InvalidState",
+     "doc": "the team was resumed: its members already passed the quiz"
+    }
+   ]
+  },
+  {
+   "type": "QuizAnswer",
+   "op": "quiz_answer",
+   "what": "the MCP tool quiz_answer",
+   "causes": [
+    {
+     "name": "MissingAnswer",
+     "class": "InvalidArgument",
+     "doc": "the answer is missing"
+    },
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    },
+    {
+     "name": "NoQuiz",
+     "class": "InvalidState",
+     "doc": "no quiz question has been asked yet"
+    },
+    {
+     "name": "CoordinatorAnswers",
+     "class": "Permission",
+     "doc": "the coordinator tried to answer its own quiz"
+    },
+    {
+     "name": "AlreadyAnswered",
+     "class": "Conflict",
+     "doc": "the member already answered (answers are final)"
+    }
+   ]
+  },
+  {
+   "type": "QuizResults",
+   "op": "quiz_results",
+   "what": "the MCP tool quiz_results",
+   "causes": [
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    },
+    {
+     "name": "NotCoordinator",
+     "class": "Permission",
+     "doc": "the caller is not the team coordinator"
+    },
+    {
+     "name": "NoQuiz",
+     "class": "InvalidState",
+     "doc": "no quiz question has been asked yet"
+    }
+   ]
+  },
+  {
+   "type": "TeamExclude",
+   "op": "team_exclude",
+   "what": "the MCP tool team_exclude",
+   "causes": [
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    },
+    {
+     "name": "NotCoordinator",
+     "class": "Permission",
+     "doc": "the caller is not the team coordinator"
+    },
+    {
+     "name": "NotMember",
+     "class": "NotFound",
+     "doc": "the agent is not a member of the team (or it is the coordinator itself)"
+    }
+   ]
+  },
+  {
+   "type": "BoardAdd",
+   "op": "board_add",
+   "what": "the MCP tool board_add",
+   "causes": [
+    {
+     "name": "MissingTitle",
+     "class": "InvalidArgument",
+     "doc": "the title is missing"
+    },
+    {
+     "name": "InvalidLevel",
+     "class": "InvalidArgument",
+     "doc": "the level is neither easy nor normal"
+    },
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team (outside a team: delegate)"
+    }
+   ]
+  },
+  {
+   "type": "BoardList",
+   "op": "board_list",
+   "what": "the MCP tool board_list",
+   "causes": [
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    }
+   ]
+  },
+  {
+   "type": "BoardClaim",
+   "op": "board_claim",
+   "what": "the MCP tool board_claim",
+   "causes": [
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    },
+    {
+     "name": "NoSuchItem",
+     "class": "NotFound",
+     "doc": "there is no board item with this ID"
+    },
+    {
+     "name": "WorkerNeedsEasy",
+     "class": "Permission",
+     "doc": "a worker tried to claim a normal-level item"
+    },
+    {
+     "name": "AlreadyTaken",
+     "class": "Conflict",
+     "doc": "the item is already claimed or done"
+    }
+   ]
+  },
+  {
+   "type": "BoardDone",
+   "op": "board_done",
+   "what": "the MCP tool board_done",
+   "causes": [
+    {
+     "name": "MissingResult",
+     "class": "InvalidArgument",
+     "doc": "the result is missing"
+    },
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    },
+    {
+     "name": "NotYourItem",
+     "class": "Permission",
+     "doc": "the item does not exist or is claimed by someone else"
+    }
+   ]
+  },
+  {
+   "type": "BoardRelease",
+   "op": "board_release",
+   "what": "the MCP tool board_release",
+   "causes": [
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    },
+    {
+     "name": "NotYourItem",
+     "class": "Permission",
+     "doc": "the item does not exist or is claimed by someone else"
+    }
+   ]
+  },
+  {
+   "type": "Delegate",
+   "op": "delegate",
+   "what": "the MCP tool delegate",
+   "causes": [
+    {
+     "name": "NotNormalTier",
+     "class": "Permission",
+     "doc": "a worker or an investigator called it (delegate is for normal models)"
+    },
+    {
+     "name": "MissingRequest",
+     "class": "InvalidArgument",
+     "doc": "the request text is missing"
+    }
+   ]
+  },
+  {
+   "type": "DelegationStatus",
+   "op": "delegation_status",
+   "what": "the MCP tool delegation_status",
+   "causes": []
+  },
+  {
+   "type": "Cli",
+   "op": "agentbus",
+   "what": "the agentbus command line (before a subcommand runs)",
+   "causes": [
+    {
+     "name": "InvalidFlags",
+     "class": "InvalidArgument",
+     "doc": "the flags of the subcommand could not be parsed"
+    },
+    {
+     "name": "NoHome",
+     "class": "InvalidArgument",
+     "doc": "neither AGENTS_HOME nor a home directory is set"
+    },
+    {
+     "name": "UnknownSubcommand",
+     "class": "InvalidArgument",
+     "doc": "the subcommand does not exist"
+    }
+   ],
+   "noStorage": true
+  },
+  {
+   "type": "CmdServe",
+   "op": "serve",
+   "what": "the subcommand serve (the MCP server of an agent run)",
+   "causes": [
+    {
+     "name": "MissingAgent",
+     "class": "InvalidArgument",
+     "doc": "--agent is missing"
+    },
+    {
+     "name": "InvalidRole",
+     "class": "InvalidArgument",
+     "doc": "--role is not worker or investigator"
+    },
+    {
+     "name": "InvalidTier",
+     "class": "InvalidArgument",
+     "doc": "--tier is not normal or worker"
+    },
+    {
+     "name": "ClientRead",
+     "class": "Storage",
+     "doc": "reading requests from the MCP client failed"
+    }
+   ]
+  },
+  {
+   "type": "CmdSend",
+   "op": "send",
+   "what": "the subcommand send",
+   "causes": [
+    {
+     "name": "MissingText",
+     "class": "InvalidArgument",
+     "doc": "the message text is missing"
+    },
+    {
+     "name": "InvalidNotice",
+     "class": "InvalidArgument",
+     "doc": "--notice is not a known script notice"
+    }
+   ]
+  },
+  {
+   "type": "CmdLog",
+   "op": "log",
+   "what": "the subcommand log",
+   "causes": []
+  },
+  {
+   "type": "CmdStatus",
+   "op": "status",
+   "what": "the subcommand status",
+   "causes": []
+  },
+  {
+   "type": "CmdRelease",
+   "op": "release",
+   "what": "the subcommand release (a forced release)",
+   "causes": [
+    {
+     "name": "Usage",
+     "class": "InvalidArgument",
+     "doc": "the resource argument is missing"
+    }
+   ]
+  },
+  {
+   "type": "CmdInvList",
+   "op": "inv-list",
+   "what": "the subcommand inv-list",
+   "causes": []
+  },
+  {
+   "type": "CmdInvNext",
+   "op": "inv-next",
+   "what": "the subcommand inv-next",
+   "causes": []
+  },
+  {
+   "type": "CmdInvSet",
+   "op": "inv-set",
+   "what": "the subcommand inv-set",
+   "causes": [
+    {
+     "name": "InvalidStatus",
+     "class": "InvalidArgument",
+     "doc": "--status is not an investigation status"
+    },
+    {
+     "name": "NoSuchInvestigation",
+     "class": "NotFound",
+     "doc": "there is no investigation with this number"
+    }
+   ]
+  },
+  {
+   "type": "CmdInvGet",
+   "op": "inv-get",
+   "what": "the subcommand inv-get",
+   "causes": [
+    {
+     "name": "NoSuchInvestigation",
+     "class": "NotFound",
+     "doc": "there is no investigation with this number"
+    }
+   ]
+  },
+  {
+   "type": "CmdInvPending",
+   "op": "inv-pending",
+   "what": "the subcommand inv-pending",
+   "causes": []
+  },
+  {
+   "type": "CmdInvAdd",
+   "op": "inv-add",
+   "what": "the subcommand inv-add",
+   "causes": [
+    {
+     "name": "InvalidKind",
+     "class": "InvalidArgument",
+     "doc": "--kind is not an investigation kind"
+    }
+   ]
+  },
+  {
+   "type": "CmdCancelPending",
+   "op": "cancel-pending",
+   "what": "the subcommand cancel-pending",
+   "causes": []
+  },
+  {
+   "type": "CmdNormalize",
+   "op": "normalize",
+   "what": "the subcommand normalize",
+   "causes": [
+    {
+     "name": "InvalidType",
+     "class": "InvalidArgument",
+     "doc": "--type is not claude, codex, gemini or opencode"
+    },
+    {
+     "name": "ReadInput",
+     "class": "Storage",
+     "doc": "the CLI event stream could not be read"
+    },
+    {
+     "name": "WriteOutput",
+     "class": "Storage",
+     "doc": "the activity entries could not be written to stdout"
+    }
+   ],
+   "noStorage": true
+  },
+  {
+   "type": "CmdTeamCreate",
+   "op": "team-create",
+   "what": "the subcommand team-create",
+   "causes": [
+    {
+     "name": "InvalidJSON",
+     "class": "InvalidArgument",
+     "doc": "the team JSON on stdin cannot be decoded"
+    },
+    {
+     "name": "MissingFields",
+     "class": "InvalidArgument",
+     "doc": "the team JSON has no id or no members"
+    }
+   ]
+  },
+  {
+   "type": "CmdTeamSet",
+   "op": "team-set",
+   "what": "the subcommand team-set",
+   "causes": [
+    {
+     "name": "InvalidState",
+     "class": "InvalidArgument",
+     "doc": "--state is not a member state"
+    },
+    {
+     "name": "NoSuchMember",
+     "class": "NotFound",
+     "doc": "the team or the member does not exist"
+    }
+   ]
+  },
+  {
+   "type": "CmdTeamDone",
+   "op": "team-done",
+   "what": "the subcommand team-done",
+   "causes": []
+  },
+  {
+   "type": "CmdTeamGet",
+   "op": "team-get",
+   "what": "the subcommand team-get",
+   "causes": [
+    {
+     "name": "NoSuchTeam",
+     "class": "NotFound",
+     "doc": "there is no team with this ID"
+    }
+   ]
+  },
+  {
+   "type": "CmdTeamList",
+   "op": "team-list",
+   "what": "the subcommand team-list",
+   "causes": []
+  },
+  {
+   "type": "CmdNotes",
+   "op": "notes",
+   "what": "the subcommand notes",
+   "causes": []
+  },
+  {
+   "type": "CmdHelperNext",
+   "op": "helper-next",
+   "what": "the subcommand helper-next",
+   "causes": []
+  },
+  {
+   "type": "CmdHelperSet",
+   "op": "helper-set",
+   "what": "the subcommand helper-set",
+   "causes": [
+    {
+     "name": "InvalidStatus",
+     "class": "InvalidArgument",
+     "doc": "--status is not a worker request status"
+    },
+    {
+     "name": "NoSuchRequest",
+     "class": "NotFound",
+     "doc": "there is no worker request with this number"
+    }
+   ]
+  },
+  {
+   "type": "CmdHelperGet",
+   "op": "helper-get",
+   "what": "the subcommand helper-get",
+   "causes": [
+    {
+     "name": "NoSuchRequest",
+     "class": "NotFound",
+     "doc": "there is no worker request with this number"
+    }
+   ]
+  },
+  {
+   "type": "CmdHelperList",
+   "op": "helper-list",
+   "what": "the subcommand helper-list",
+   "causes": []
+  },
+  {
+   "type": "CmdBoardDump",
+   "op": "board-dump",
+   "what": "the subcommand board-dump",
+   "causes": [
+    {
+     "name": "NoSuchTeam",
+     "class": "NotFound",
+     "doc": "there is no team with this ID"
+    }
+   ]
+  },
+  {
+   "type": "CmdBoardReleaseAgent",
+   "op": "board-release-agent",
+   "what": "the subcommand board-release-agent",
+   "causes": [
+    {
+     "name": "NoSuchTeam",
+     "class": "NotFound",
+     "doc": "there is no team with this ID"
+    }
+   ]
+  },
+  {
+   "type": "CmdCheckpointGet",
+   "op": "checkpoint-get",
+   "what": "the subcommand checkpoint-get",
+   "causes": []
+  }
+ ]
+}

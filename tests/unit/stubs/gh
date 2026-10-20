@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Test stub for gh: logs calls; `gh pr list` returns $STUB_HOME/gh-prs.json if present, else [].
+echo "gh $*" >> "$STUB_HOME/gh.log"
+if [[ "${1:-} ${2:-}" == "pr list" ]]; then
+  cat "$STUB_HOME/gh-prs.json" 2>/dev/null || echo '[]'
+fi
+exit 0
