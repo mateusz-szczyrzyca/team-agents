@@ -6,6 +6,7 @@ Behaviour is selected by the scenario file $STUB_HOME/scenario.json, keyed by ag
 Actions:
   done            final message "STATUS: DONE"
   tool-done       calls list_agents (an agentbus tool), then STATUS: DONE
+  commit          commits a file with the trailers from the prompt, then STATUS: DONE
   questions-file  writes the questions file, STATUS: QUESTIONS
   questions-text  asks questions only in the final message
   no-status       a final message without a STATUS line
@@ -63,6 +64,12 @@ if action == "team-lead-done":
     call("checkpoint", summary="stage 1 done", next_steps="stage 2")
     call("send_message", to="team", text="TEAM DONE")
     finish("STATUS: DONE\nRole: coordinator")
+if action == "commit":
+    trailers = re.search(r"exactly these trailers, after a blank line:\n\n```\n(.*?)\n```", prompt, re.S).group(1)
+    open("hello.txt", "w").write("hello\n")
+    subprocess.run(["git", "add", "hello.txt"], check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "Add hello.txt\n\n" + trailers], check=True)
+    finish("STATUS: DONE")
 if action == "tool-done":
     call("list_agents")
     finish("STATUS: DONE")

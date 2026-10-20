@@ -197,3 +197,39 @@ load helpers
   grep -qE '^- Installing tools: you have (passwordless sudo|no sudo)\.' "$HOME/prompt-solo-new.txt"
   ! grep -q '{{PRIVILEGES}}' "$HOME/prompt-solo-new.txt"
 }
+
+@test "commits carry the agent's identity, signature and trailers; languages are set per audience" {
+  ssh-keygen -q -t ed25519 -N "" -f "$HOME/agents-signing" >/dev/null
+  cat >> "$AGENTS_HOME/agents.conf" <<CONF
+AGENT_LANGUAGE="Polish"
+GIT_EMAIL="12345+my-agents@users.noreply.github.com"
+GIT_SIGNING_KEY="$HOME/agents-signing"
+CONF
+  scenario '{"solo": {"new": "commit"}}'
+  agent run solo "add a file"
+  t=$(task_of solo)
+  wait_status "$t" done
+  branch=$(sed -n 's/^BRANCH=//p' "$AGENTS_HOME/tasks/$t/meta.env")
+  run git -C "$HOME/repo" log -1 --format='%an|%ae|%cn|%ce' "$branch"
+  [ "$output" = "solo (team-agents)|12345+my-agents@users.noreply.github.com|solo (team-agents)|12345+my-agents@users.noreply.github.com" ]
+  git -C "$HOME/repo" cat-file commit "$branch" | grep -q '^gpgsig -----BEGIN SSH SIGNATURE-----'
+  run git -C "$HOME/repo" log -1 --format='%(trailers:key=Agent,valueonly)|%(trailers:key=Task,valueonly)' "$branch"
+  [[ $output == "solo"*"|$t"* ]]
+  prompt="$HOME/prompt-solo-new.txt"
+  grep -q 'is written in \*\*English\*\*' "$prompt"      # repository and GitHub texts
+  grep -q 'written in \*\*Polish\*\*' "$prompt"           # questions and the final message
+  grep -q '^Agent-Model: claude$' "$prompt"
+  ! grep -q '{{' "$prompt"
+}
+
+@test "without GIT_EMAIL commits still carry the agent's name" {
+  scenario '{"solo": {"new": "commit"}}'
+  agent run solo "add a file"
+  t=$(task_of solo)
+  wait_status "$t" done
+  branch=$(sed -n 's/^BRANCH=//p' "$AGENTS_HOME/tasks/$t/meta.env")
+  run git -C "$HOME/repo" log -1 --format='%an|%ae' "$branch"
+  # the test user has no git e-mail configured: the documented fallback applies
+  [ "$output" = "solo (team-agents)|solo@team-agents.invalid" ]
+  ! git -C "$HOME/repo" cat-file commit "$branch" | grep -q '^gpgsig'
+}

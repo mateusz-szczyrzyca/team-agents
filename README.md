@@ -186,14 +186,28 @@ compromised or confused agent can do as little damage as possible.
 
 ### Repositories and GitHub
 
-- Use a **fine-grained personal access token** limited to the repositories the agents work on, with the smallest
-  permissions that work (Contents: read/write, Pull requests: read/write, Metadata: read) and an expiry date.
-  Never a classic token with full `repo` scope, never your main account's token if you can avoid it — a separate
-  GitHub account for the agents ("machine user") makes their actions easy to tell apart and to revoke.
-- **Leave out the Workflows permission**, so the agents cannot change `.github/workflows/`. A modified workflow
-  runs with your CI secrets; a PR that changes it must be reviewed by a human.
-- For git over SSH, give each repository a **deploy key** (write access to that repository only) instead of your
-  personal SSH key.
+Give the agents **their own GitHub account** ("machine user", allowed by GitHub's terms: one per person). Their
+commits, pushes, pull requests and reviews then appear under that account instead of yours, their access can be
+revoked in one place, and you can review and approve their PRs (an author cannot approve their own). How to grant
+it access depends on who owns the repositories, because fine-grained tokens cannot be used for repositories where
+their owner is only a collaborator:
+
+- **Repositories in an organization (recommended).** Create a free organization for the projects, add the agents'
+  account as a member with write access to the chosen repositories, and create a **fine-grained token** for that
+  account with the organization as resource owner, only those repositories, Contents and Pull requests:
+  read/write, Metadata: read, **no Workflows**, and an expiry date.
+- **Repositories in your personal account.** Add the agents' account as a collaborator to the chosen repositories
+  and create a **classic token** for it with the `repo` scope and **without** the `workflow` scope. A classic token
+  is not limited per repository, but the account itself can reach only the repositories you shared with it.
+- **No separate account.** A fine-grained token of your own account, limited as above. Commits still carry the
+  agent's name (see [Commit identity](#commit-identity)), but pushes, PRs and reviews appear as you.
+
+Put the token into `secrets.env` as `GH_TOKEN` (gh uses it instead of a stored login). In every variant:
+
+- **No permission to change workflows** (Workflows / `workflow` scope), so the agents cannot touch
+  `.github/workflows/`: a modified workflow runs with your CI secrets.
+- For git over SSH use an SSH key of the agents' account, or a **deploy key** per repository — never your
+  personal key.
 - **Protect the main branch**: require a pull request with your review before merging, block force pushes and
   deletions. The agents open PRs; merging stays with you. Consider CODEOWNERS for sensitive paths.
 - Do not give agents repositories with secrets in their history or committed `.env` files; treat everything an
@@ -298,8 +312,9 @@ Then:
 2. Put tokens and API keys into `~/agents/secrets.env` (`chmod 600`).
 3. Edit `~/agents/agents.conf`: agents, models, tiers, investigators, language, notifications.
 4. Describe shared resources (devices, test hosts) in `~/agents/hardware.md`.
-5. Authenticate GitHub for the agents' user with a fine-grained token limited to the repositories (Contents and
-   Pull requests: read/write, no Workflows; see [Security](#security)), then `gh auth login --with-token`.
+5. Give the agents a GitHub identity: a token of the agents' GitHub account in `secrets.env` as `GH_TOKEN`, and
+   optionally `GIT_EMAIL`/`GIT_SIGNING_KEY` in `agents.conf` (see [Security](#security) and
+   [Commit identity](#commit-identity)).
 6. Check the accounts: `agent authenticated` — every configured provider should report `OK`.
 7. Try it: `cd <your repo> && agent run claude-1 "List the toolchain versions you find. Do not change anything."`
    and watch with `agent live`.
@@ -317,7 +332,9 @@ Then:
 | `INVESTIGATORS_TYPE/_MODEL/_EXTRA_ARGS[name]` | investigators (the legacy single `INVESTIGATOR_*` settings still work) |
 | `INVESTIGATION_QUEUE_MAX` | waiting investigation requests (default 3) |
 | `AGENT_HANG_MIN`, `AGENT_HANG_STRIKES` | watchdog (default 30 min, 3 strikes) |
-| `AGENT_LANGUAGE` | language of questions, reports and PR texts (default English) |
+| `AGENT_LANGUAGE` | language of questions and notifications — what only you read (default English) |
+| `REPO_LANGUAGE` | language of commits, PRs, reviews, reports and code comments (default English) |
+| `GIT_NAME_FORMAT`, `GIT_EMAIL`, `GIT_SIGNING_KEY` | identity and signing of the agents' commits (see [Commit identity](#commit-identity)) |
 | `ENV_NOTES_FILE` | environment notes shown to the agents (default `~/agents/hardware.md`) |
 | `RUN_PATH` | `PATH` inside agent runs (add your toolchains) |
 | `NOTIFY_CMD`, `NOTIFY_DIR`, `NOTIFY_MAX_CHARS` | notifications (see below) |
@@ -326,8 +343,8 @@ Then:
 | `BRANCH_PREFIX`, `CLAUDE_MAX_TURNS`, `AGY_PRINT_TIMEOUT`, `OPENCODE_BASH_TIMEOUT_MS` | misc |
 
 `~/agents/secrets.env` is loaded before every run: `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`,
-`CODEX_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY` and anything your notification hook
-needs.
+`CODEX_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, `GH_TOKEN` (the GitHub account the
+agents act as) and anything your notification hook needs.
 
 **OpenCode notes.** Each run uses `opencode run --standalone` (a private server per run, so it sees the keys and
 the generated per-run configuration with the agentbus MCP server; the shared background server of OpenCode 2
@@ -337,6 +354,33 @@ must support tool calling.
 
 **Project instructions.** Put repository-specific knowledge into `AGENTS.md` (and a `CLAUDE.md` symlink) in the
 repository; the CLIs read it in addition to the prompts.
+
+### Commit identity
+
+The runner sets the author and committer of every commit an agent makes, through git's environment variables,
+so it does not depend on the agent following instructions:
+
+| Setting | Effect |
+|---|---|
+| `GIT_NAME_FORMAT` (default `%a (team-agents)`) | the name, e.g. `claude-1 (team-agents)` — visible in `git log` and on GitHub |
+| `GIT_EMAIL` | the e-mail. GitHub attributes a commit to the account that owns its e-mail: use the noreply address of the agents' account (*Settings → Emails*, `<id>+<login>@users.noreply.github.com`). Empty = the e-mail from your git config, so GitHub shows the commits under your account; without any e-mail the fallback is `<agent>@team-agents.invalid` (with a warning in the log) |
+| `GIT_SIGNING_KEY` | an SSH private key that signs every commit. Add its public key to the agents' account as a **signing key** (*Settings → SSH and GPG keys → New SSH key → Key type: Signing key*) and GitHub marks the commits **Verified** |
+
+Every commit message also ends with trailers, and pull requests and reviews end with a signature line:
+
+```
+Fix debounce of the button on GPIO 15
+
+Agent: claude-1
+Agent-Model: claude/sonnet
+Task: 20261020-140312-claude-1
+Team: 20261020-140312-team
+```
+
+`Opened by team-agents: team …, coordinator claude-1 (claude, model sonnet), members: …` at the end of a PR,
+`— Review by the team-agents investigator inv-opus (claude, model opus), request #7.` at the end of a review.
+Commit messages, PRs, reviews and reports are written in `REPO_LANGUAGE` (default English); questions and
+notifications in `AGENT_LANGUAGE`.
 
 ## Usage
 

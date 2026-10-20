@@ -124,8 +124,19 @@ NOTIFY_CMD="${NOTIFY_CMD:-}"
 NOTIFY_DIR="${NOTIFY_DIR:-$AGENTS_HOME/notifications}"
 NOTIFY_SCRIPT="${NOTIFY_SCRIPT:-}"
 NOTIFY_MAX_CHARS="${NOTIFY_MAX_CHARS:-1500}"
-# Language the agents use for messages to the human (questions, reports, PR texts), e.g. "Polish".
+# Language of what only the human reads: questions and the final message of a run (the notification).
 AGENT_LANGUAGE="${AGENT_LANGUAGE:-English}"
+# Language of everything that ends up in the repository or on GitHub: commit messages, PR titles and
+# descriptions, PR reviews, reports and code comments.
+REPO_LANGUAGE="${REPO_LANGUAGE:-English}"
+# Git identity of the agents' commits, set by the runner for every git command of a run. %a = agent name.
+GIT_NAME_FORMAT="${GIT_NAME_FORMAT:-%a (team-agents)}"
+# E-mail of the agents' commits — e.g. the noreply address of a GitHub account for the agents: GitHub attributes
+# a commit to the account that owns its e-mail. Empty = the e-mail from the user's git config.
+GIT_EMAIL="${GIT_EMAIL:-}"
+# Private SSH key that signs the agents' commits (its public key added on GitHub as a signing key of the account
+# that owns GIT_EMAIL shows the commits as "Verified"). Empty = commits are not signed.
+GIT_SIGNING_KEY="${GIT_SIGNING_KEY:-}"
 # Environment notes for the agents: shared resources (probes, serial ports, test hosts), how to use them.
 ENV_NOTES_FILE="${ENV_NOTES_FILE:-$AGENTS_HOME/hardware.md}"
 BRANCH_PREFIX="${BRANCH_PREFIX:-agents}"
@@ -496,6 +507,42 @@ cmd__wake() { # id — called by agentbus when a sleeping member receives a mess
   fi
 }
 
+# git_identity — exports the commit identity of this run's agent (and commit signing, when configured) for every
+# git command the agent runs. Environment variables override the user's git config, so the identity does not
+# depend on the agent following the prompt.
+git_identity() {
+  local name=${GIT_NAME_FORMAT//%a/$AGENT}
+  export GIT_AUTHOR_NAME="$name" GIT_COMMITTER_NAME="$name"
+  local email=$GIT_EMAIL
+  if [[ -z $email ]] && ! git -C "$WORKTREE" config user.email >/dev/null; then
+    # without any e-mail every commit would fail ("Please tell me who you are"); .invalid never belongs to anyone
+    email="$AGENT@team-agents.invalid"
+    log_warn git_email_missing "fallback=$email" "fix=set GIT_EMAIL in agents.conf"
+  fi
+  if [[ -n $email ]]; then
+    export GIT_AUTHOR_EMAIL="$email" GIT_COMMITTER_EMAIL="$email"
+  fi
+  if [[ -n $GIT_SIGNING_KEY ]]; then
+    if [[ -r $GIT_SIGNING_KEY ]]; then
+      export GIT_CONFIG_COUNT=3 \
+        GIT_CONFIG_KEY_0=gpg.format GIT_CONFIG_VALUE_0=ssh \
+        GIT_CONFIG_KEY_1=user.signingkey GIT_CONFIG_VALUE_1="$GIT_SIGNING_KEY" \
+        GIT_CONFIG_KEY_2=commit.gpgsign GIT_CONFIG_VALUE_2=true
+    else
+      log_warn signing_key_unreadable "key=$GIT_SIGNING_KEY" "effect=commits of this run are not signed"
+    fi
+  fi
+  log_info git_identity "name=$name" "email=${email:-(git config)}" "signing=${GIT_SIGNING_KEY:+yes}"
+}
+
+# commit_trailers — the trailers that end every commit message of this run's agent
+commit_trailers() {
+  printf 'Agent: %s\nAgent-Model: %s%s\nTask: %s' "$AGENT" "$TYPE" "${MODEL:+/$MODEL}" "$1"
+  [[ -n ${TEAM:-} ]] && printf '\nTeam: %s' "$TEAM"
+  [[ -n ${INV_ID:-} ]] && printf '\nInvestigation: #%s' "$INV_ID"
+  return 0
+}
+
 # privileges_text — what the prompt tells the agent about installing missing tools; decided on every run,
 # because sudo rights can change between runs
 privileges_text() {
@@ -519,6 +566,8 @@ build_prompt() { # id mode qfile next_round
     [AGENT]=$AGENT [AGENT_TYPE]=$TYPE [TASK_ID]=$id [REPO]=$REPO_NAME
     [WORKTREE]=$WORKTREE [BRANCH]=$BRANCH [BASE]=$BASE
     [HARDWARE_FILE]="$ENV_NOTES_FILE" [PEERS]="$(peers_list)" [LANGUAGE]="$AGENT_LANGUAGE"
+    [REPO_LANGUAGE]="$REPO_LANGUAGE" [COMMIT_TRAILERS]="$(commit_trailers "$id")"
+    [GIT_NAME]="${GIT_NAME_FORMAT//%a/$AGENT}" [ATTRIBUTION]="\`$AGENT\` ($TYPE${MODEL:+, model $MODEL})"
     [PRIVILEGES]="$(privileges_text)"
     [QUESTIONS_FILE]=$qfile [ROUND]=$next_round
     [REPORT_FILE]=".agents/reports/$id.md"
@@ -1226,6 +1275,7 @@ cmd__runner() {
     if [[ -z ${!v:-} ]]; then unset "$v"; fi
   done
 
+  git_identity
   RUNNER_ID=$id RUNNER_DONE=0
   echo $$ > "$dir/runner.pid"
   rm -f "$dir/acked"
