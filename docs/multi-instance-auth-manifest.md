@@ -42,24 +42,25 @@ Tailscale mode is the default and recommended authentication mechanism. It elimi
 
 ### 3.2 Token mode (`HUB_AUTH=token`)
 
-For deployments where Tailscale is not available, Token mode provides mutual authentication using pre-shared tokens over TLS.
+For deployments where Tailscale is not available, Token mode provides authentication using pre-shared bearer tokens over TLS: the client verifies the hub via TLS server certificate validation, while the hub authenticates connecting instances via bearer tokens and expected source addresses.
 
 #### Mechanism
 1. **Transport Layer Security (TLS):** Token mode **strictly requires TLS**. The hub serves HTTPS on its configured listen address. Unencrypted plaintext HTTP in token mode is rejected on startup.
-2. **Hub Configuration:** The hub maintains a mapping of allowed instances and their pre-shared tokens in `secrets.env`:
+2. **Hub Configuration:** The hub maintains a mapping of allowed instances and their pre-shared tokens in `~/agents/secrets.env` (templated from `config/secrets.env.example`):
    ```bash
    HUB_TOKEN_mac="secret-token-value-for-mac"
    HUB_TOKEN_pi5="secret-token-value-for-pi5"
    ```
-   And `agents.conf` defines allowed instances:
+   And `config/agents.conf` defines allowed instances mapped to their expected IP/hostname:
    ```bash
-   ALLOWED_INSTANCES=(mac pi5)
+   ALLOWED_INSTANCES=(mac=192.168.1.50 pi5=192.168.1.10)
    ```
-3. **Instance Configuration:** Non-lead instances store the token in `secrets.env`:
+   The hub validates that incoming requests for instance `X` match both the expected token `HUB_TOKEN_<X>` and originate from the expected address.
+3. **Instance Configuration:** Non-lead instances store their client token in `~/agents/secrets.env`:
    ```bash
    HUB_TOKEN="secret-token-value-for-mac"
    ```
-   And in `agents.conf`:
+   And in `config/agents.conf`:
    ```bash
    LEAD_INSTANCE="https://hub.example.com:7777"
    HUB_AUTH=token
@@ -72,14 +73,14 @@ For deployments where Tailscale is not available, Token mode provides mutual aut
 5. **TLS Certificate Setup:**
    - The hub must be configured with a valid TLS certificate and key (`HUB_TLS_CERT` and `HUB_TLS_KEY`).
    - Certificates may be issued by Let's Encrypt / public ACME, an internal organizational PKI, or a dedicated private CA.
-   - Non-lead instances must trust the hub's certificate either via the system trust store or via a pinned CA file configured in `agents.conf`:
+   - Non-lead instances verify the hub's TLS certificate either via the system trust store or via a pinned CA file configured in `config/agents.conf`:
      ```bash
      HUB_CA_CERT="/home/dev/agents/config/hub-ca.crt"
      ```
 
 #### Security Caveat (Token Mode)
 > [!WARNING]
-> **Token Readability by Agents:** In Token mode, the token is stored in `secrets.env` (or environment variables) on the instance. Because agents running on that instance execute under the same user account (or have worktree access), an agent CLI can inspect `secrets.env` and read `HUB_TOKEN`. Token mode must only be used in trusted internal networks where instance identity isolation between agents is not a primary security boundary.
+> **Token Readability by Agents:** In Token mode, the client token is stored in `~/agents/secrets.env` (or environment variables) on the instance. Because agents running on that instance execute under the same user account (or have worktree access), an agent CLI can inspect `secrets.env` and read `HUB_TOKEN`. Token mode must only be used in trusted internal networks where instance identity isolation between agents is not a primary security boundary.
 
 ---
 
@@ -265,14 +266,20 @@ To enable macOS nodes (such as Mac mini build machines or developer MacBooks) to
 ### 7.1 Daemon Supervision via launchd
 
 On Linux, `systemd --user` runs background transient units (`systemd-run --user`). On macOS:
-- An unprivileged user cannot bootstrap transient jobs into `launchd` domains.
-- Per-task launchd plists are not viable.
+- An unprivileged user cannot bootstrap transient jobs into the system domain (`launchd`).
+- Therefore, per-task launchd jobs are not used.
+- Instead, a single daemon (`agent node`) supervises the runs itself.
 
 #### Architecture:
-1. **LaunchDaemon:** A system LaunchDaemon (`/Library/LaunchDaemons/com.team-agents.node.plist`) runs `agent node` at system boot under the dedicated user account (e.g. `UserName: dev`).
+1. **LaunchDaemon:** A system LaunchDaemon (`/Library/LaunchDaemons/com.team-agents.node.plist`) runs `agent node` at boot under the dedicated user account (`UserName: dev` or the agents user).
+   Key configuration properties in the plist:
+   - `<key>ProcessType</key><string>Background</string>`
+   - `<key>LowPriorityIO</key><true/>`
+   - `<key>Nice</key><integer>10</integer>`
+   - `<key>KeepAlive</key><true/>`
 2. **Process Management:** `agent node` acts as the process supervisor for all agent runs on that machine:
    - Spawns runner processes (`bin/agent _runner`) directly using POSIX process groups (`setpgid`).
-   - Configures runner priority: sets `nice -n 10` and background I/O scheduling where supported.
+   - Configures runner priority matching the daemon (`Nice`, background I/O).
    - Monitors execution, handles signals, streams logs, and enforces timeouts.
    - Cleans up child processes on cancellation (`SIGTERM` followed by `SIGKILL` to process group).
 
@@ -298,7 +305,7 @@ The macOS base system provides BSD core utilities rather than GNU coreutils. All
 
 - On macOS, the login Keychain (`login.keychain-db`) is locked unless an interactive graphical user session is unlocked.
 - Running headless under a LaunchDaemon or SSH means Keychain queries will prompt or hang.
-- **Rule:** In `team-agents`, credentials (API tokens, GitHub tokens, Tailscale auth keys) must **never** be looked up in the macOS Keychain. All credentials are read strictly from `config/secrets.env` (file mode `0600`) and the environment.
+- **Rule:** In `team-agents`, credentials (API tokens, GitHub tokens, Tailscale auth keys) must **never** be looked up in the macOS Keychain. All credentials are read strictly from `~/agents/secrets.env` (file mode `0600`, templated from `config/secrets.env.example`) and the environment.
 
 ---
 
