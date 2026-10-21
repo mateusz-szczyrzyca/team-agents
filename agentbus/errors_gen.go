@@ -2455,3 +2455,303 @@ func HubAuthCauseByName(name string) (HubAuthCause, bool) {
 	}
 	return 0, false
 }
+
+// wireOperationError rebuilds the typed error of an operation from its wire form (operation name, cause name,
+// message). It returns false when the operation or the cause is unknown, so a stale or foreign peer cannot
+// produce an error of the wrong type. Operation names used by both an MCP tool and a CLI subcommand ("release")
+// are left out: the wire does not yet say which kind failed, so they stay unresolved until it does.
+func wireOperationError(op, cause, message string) (error, bool) {
+	switch op {
+	case "tools/call":
+		if c, ok := ToolCallCauseByName(cause); ok {
+			return &OpError[ToolCallCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "list_agents":
+		if c, ok := ListAgentsCauseByName(cause); ok {
+			return &OpError[ListAgentsCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "send_message":
+		if c, ok := SendMessageCauseByName(cause); ok {
+			return &OpError[SendMessageCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "read_messages":
+		if c, ok := ReadMessagesCauseByName(cause); ok {
+			return &OpError[ReadMessagesCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "set_status":
+		if c, ok := SetStatusCauseByName(cause); ok {
+			return &OpError[SetStatusCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "reserve":
+		if c, ok := ReserveCauseByName(cause); ok {
+			return &OpError[ReserveCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "list_reservations":
+		if c, ok := ListReservationsCauseByName(cause); ok {
+			return &OpError[ListReservationsCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "request_investigation":
+		if c, ok := RequestInvestigationCauseByName(cause); ok {
+			return &OpError[RequestInvestigationCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "record_decision":
+		if c, ok := RecordDecisionCauseByName(cause); ok {
+			return &OpError[RecordDecisionCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "investigation_status":
+		if c, ok := InvestigationStatusCauseByName(cause); ok {
+			return &OpError[InvestigationStatusCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "wait_for_message":
+		if c, ok := WaitForMessageCauseByName(cause); ok {
+			return &OpError[WaitForMessageCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "notebook_read":
+		if c, ok := NotebookReadCauseByName(cause); ok {
+			return &OpError[NotebookReadCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "notebook_append":
+		if c, ok := NotebookAppendCauseByName(cause); ok {
+			return &OpError[NotebookAppendCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "notebook_write_section":
+		if c, ok := NotebookWriteSectionCauseByName(cause); ok {
+			return &OpError[NotebookWriteSectionCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "team_status":
+		if c, ok := TeamStatusCauseByName(cause); ok {
+			return &OpError[TeamStatusCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "checkpoint":
+		if c, ok := CheckpointCauseByName(cause); ok {
+			return &OpError[CheckpointCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "claim_lead":
+		if c, ok := ClaimLeadCauseByName(cause); ok {
+			return &OpError[ClaimLeadCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "handover_lead":
+		if c, ok := HandoverLeadCauseByName(cause); ok {
+			return &OpError[HandoverLeadCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "quiz_start":
+		if c, ok := QuizStartCauseByName(cause); ok {
+			return &OpError[QuizStartCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "quiz_answer":
+		if c, ok := QuizAnswerCauseByName(cause); ok {
+			return &OpError[QuizAnswerCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "quiz_results":
+		if c, ok := QuizResultsCauseByName(cause); ok {
+			return &OpError[QuizResultsCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "team_exclude":
+		if c, ok := TeamExcludeCauseByName(cause); ok {
+			return &OpError[TeamExcludeCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "board_add":
+		if c, ok := BoardAddCauseByName(cause); ok {
+			return &OpError[BoardAddCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "board_list":
+		if c, ok := BoardListCauseByName(cause); ok {
+			return &OpError[BoardListCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "board_claim":
+		if c, ok := BoardClaimCauseByName(cause); ok {
+			return &OpError[BoardClaimCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "board_done":
+		if c, ok := BoardDoneCauseByName(cause); ok {
+			return &OpError[BoardDoneCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "board_release":
+		if c, ok := BoardReleaseCauseByName(cause); ok {
+			return &OpError[BoardReleaseCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "delegate":
+		if c, ok := DelegateCauseByName(cause); ok {
+			return &OpError[DelegateCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "delegation_status":
+		if c, ok := DelegationStatusCauseByName(cause); ok {
+			return &OpError[DelegationStatusCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "agentbus":
+		if c, ok := CliCauseByName(cause); ok {
+			return &OpError[CliCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "serve":
+		if c, ok := CmdServeCauseByName(cause); ok {
+			return &OpError[CmdServeCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "send":
+		if c, ok := CmdSendCauseByName(cause); ok {
+			return &OpError[CmdSendCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "log":
+		if c, ok := CmdLogCauseByName(cause); ok {
+			return &OpError[CmdLogCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "status":
+		if c, ok := CmdStatusCauseByName(cause); ok {
+			return &OpError[CmdStatusCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "inv-list":
+		if c, ok := CmdInvListCauseByName(cause); ok {
+			return &OpError[CmdInvListCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "inv-next":
+		if c, ok := CmdInvNextCauseByName(cause); ok {
+			return &OpError[CmdInvNextCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "inv-set":
+		if c, ok := CmdInvSetCauseByName(cause); ok {
+			return &OpError[CmdInvSetCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "inv-get":
+		if c, ok := CmdInvGetCauseByName(cause); ok {
+			return &OpError[CmdInvGetCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "inv-pending":
+		if c, ok := CmdInvPendingCauseByName(cause); ok {
+			return &OpError[CmdInvPendingCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "inv-add":
+		if c, ok := CmdInvAddCauseByName(cause); ok {
+			return &OpError[CmdInvAddCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "cancel-pending":
+		if c, ok := CmdCancelPendingCauseByName(cause); ok {
+			return &OpError[CmdCancelPendingCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "normalize":
+		if c, ok := CmdNormalizeCauseByName(cause); ok {
+			return &OpError[CmdNormalizeCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "team-create":
+		if c, ok := CmdTeamCreateCauseByName(cause); ok {
+			return &OpError[CmdTeamCreateCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "team-set":
+		if c, ok := CmdTeamSetCauseByName(cause); ok {
+			return &OpError[CmdTeamSetCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "team-done":
+		if c, ok := CmdTeamDoneCauseByName(cause); ok {
+			return &OpError[CmdTeamDoneCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "team-get":
+		if c, ok := CmdTeamGetCauseByName(cause); ok {
+			return &OpError[CmdTeamGetCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "team-list":
+		if c, ok := CmdTeamListCauseByName(cause); ok {
+			return &OpError[CmdTeamListCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "notes":
+		if c, ok := CmdNotesCauseByName(cause); ok {
+			return &OpError[CmdNotesCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "helper-next":
+		if c, ok := CmdHelperNextCauseByName(cause); ok {
+			return &OpError[CmdHelperNextCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "helper-set":
+		if c, ok := CmdHelperSetCauseByName(cause); ok {
+			return &OpError[CmdHelperSetCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "helper-get":
+		if c, ok := CmdHelperGetCauseByName(cause); ok {
+			return &OpError[CmdHelperGetCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "helper-list":
+		if c, ok := CmdHelperListCauseByName(cause); ok {
+			return &OpError[CmdHelperListCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "board-dump":
+		if c, ok := CmdBoardDumpCauseByName(cause); ok {
+			return &OpError[CmdBoardDumpCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "board-release-agent":
+		if c, ok := CmdBoardReleaseAgentCauseByName(cause); ok {
+			return &OpError[CmdBoardReleaseAgentCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "checkpoint-get":
+		if c, ok := CmdCheckpointGetCauseByName(cause); ok {
+			return &OpError[CmdCheckpointGetCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "hub":
+		if c, ok := HubCallCauseByName(cause); ok {
+			return &OpError[HubCallCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "agentbus hub":
+		if c, ok := HubServeCauseByName(cause); ok {
+			return &OpError[HubServeCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	case "hub_auth":
+		if c, ok := HubAuthCauseByName(cause); ok {
+			return &OpError[HubAuthCause]{Cause: c, Message: message}, true
+		}
+		return nil, false
+	}
+	return nil, false
+}

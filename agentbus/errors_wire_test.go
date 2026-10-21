@@ -92,3 +92,32 @@ func TestHubAuthCauses(t *testing.T) {
 		t.Errorf("LocalAPIFailed: got %v/%v, want the Unavailable class", c, ok)
 	}
 }
+
+// TestWireOperationError checks that a wire error (operation name, cause name, message) is rebuilt as the
+// operation's own error type with the same cause, class and message, and that anything unknown is refused.
+func TestWireOperationError(t *testing.T) {
+	err, ok := wireOperationError("quiz_start", "NotCoordinator", "only the coordinator may start a quiz")
+	if !ok {
+		t.Fatal("quiz_start/NotCoordinator was not rebuilt")
+	}
+	var typed *QuizStartError
+	if !errors.As(err, &typed) {
+		t.Fatalf("got %T, want *QuizStartError", err)
+	}
+	if typed.Cause != QuizStartNotCoordinator || typed.Class() != ClassPermission || typed.ErrorMessage() != "only the coordinator may start a quiz" {
+		t.Errorf("rebuilt %v/%v/%q, want NotCoordinator/Permission/message", typed.Cause, typed.Class(), typed.ErrorMessage())
+	}
+	outcome, ok := wireOperationError("quiz_start", "OutcomeUnknown", "x")
+	if !ok || !errors.As(outcome, &typed) || typed.Class() != ClassInvalidState {
+		t.Errorf("forwarded OutcomeUnknown: got %v/%v, want an InvalidState error", outcome, ok)
+	}
+	if _, ok := wireOperationError("quiz_start", "NoSuchCause", "x"); ok {
+		t.Error("an unknown cause was rebuilt")
+	}
+	if _, ok := wireOperationError("no_such_operation", "Storage", "x"); ok {
+		t.Error("an unknown operation was rebuilt")
+	}
+	if _, ok := wireOperationError("release", "Storage", "x"); ok {
+		t.Error("release is shared by a tool and a CLI subcommand and must stay unresolved")
+	}
+}
