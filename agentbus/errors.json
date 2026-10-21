@@ -879,6 +879,11 @@
      "name": "Overloaded",
      "class": "Unavailable",
      "doc": "the hub is busy and refused the request; the caller may retry later"
+    },
+    {
+     "name": "OutcomeUnknown",
+     "class": "InvalidState",
+     "doc": "the hub accepted the request and its operation failed before the reply could be sent; the outcome is unknown, so the request is not retried"
     }
    ]
   },

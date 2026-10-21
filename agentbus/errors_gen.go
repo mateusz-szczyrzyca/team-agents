@@ -2330,6 +2330,7 @@ const (
 	HubCallRequestConflict                      // the request ID was used before for a different request [Conflict]
 	HubCallExpired                              // the request ID is older than the hub's replay window (24 h), so it is not executed again [InvalidState]
 	HubCallOverloaded                           // the hub is busy and refused the request; the caller may retry later [Unavailable]
+	HubCallOutcomeUnknown                       // the hub accepted the request and its operation failed before the reply could be sent; the outcome is unknown, so the request is not retried [InvalidState]
 	HubCallStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
@@ -2344,6 +2345,7 @@ var hubCallCauses = [...]causeInfo{
 	{"RequestConflict", ClassConflict},
 	{"Expired", ClassInvalidState},
 	{"Overloaded", ClassUnavailable},
+	{"OutcomeUnknown", ClassInvalidState},
 	{"Storage", ClassStorage},
 }
 

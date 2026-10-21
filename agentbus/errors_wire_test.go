@@ -54,7 +54,7 @@ func TestForwardedOperationsHaveOutcomeUnknown(t *testing.T) {
 
 // TestHubCauses checks the causes of the hub route and of the hub subcommand that the wire and the CLI rely on.
 func TestHubCauses(t *testing.T) {
-	for _, name := range []string{"Malformed", "UnknownOperation", "Identity", "RequestConflict", "Expired", "Overloaded", "Storage"} {
+	for _, name := range []string{"Malformed", "UnknownOperation", "Identity", "RequestConflict", "Expired", "Overloaded", "OutcomeUnknown", "Storage"} {
 		if _, ok := HubCallCauseByName(name); !ok {
 			t.Errorf("HubCall has no %s cause", name)
 		}
