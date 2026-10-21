@@ -74,7 +74,7 @@ func freeSlots(st *State) int {
 }
 
 // capacity returns how many requests may be "queued": the waiting limit + those that start right away.
-func capacity(st *State, max int) int { return max + freeSlots(st) }
+func capacity(st *State, queueLimit int) int { return queueLimit + freeSlots(st) }
 
 // waitingCount returns the requests waiting in the queue, excluding those that start right away.
 func waitingCount(st *State) int {
@@ -86,9 +86,9 @@ func waitingCount(st *State) int {
 
 // promote moves requests from the waiting room to the queue (FIFO) while there is room. Announcing the
 // move is a side effect of the operation that triggered the promotion, so failures are logged.
-func (b *Bus) promote(st *State, max int) {
+func (b *Bus) promote(st *State, queueLimit int) {
 	queued := queueCounts(st).Queued
-	limit := capacity(st, max)
+	limit := capacity(st, queueLimit)
 	for _, inv := range sortedInv(st) {
 		if queued >= limit {
 			return
@@ -190,7 +190,7 @@ func appendFile(path, text string) (serr *StorageError) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return storageErr(err, "cannot create the directory of %s", path)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // path is under AGENTS_HOME, which only the operator controls
 	if err != nil {
 		return storageErr(err, "cannot open %s", path)
 	}
@@ -432,13 +432,13 @@ func printJSON(v any) *StorageError {
 func cmdInvNext(args []string) {
 	fs := newFlagSet("inv-next")
 	dir := fs.String("dir", defaultDir(), "state directory")
-	max := fs.Int("queue-max", 3, "queue limit")
+	queueMax := fs.Int("queue-max", 3, "queue limit")
 	slots := fs.Int("inv-slots", 1, "number of investigators")
 	parseFlags(fs, args)
 	invSlots = *slots
 	b := &Bus{dir: *dir}
 	exitOn(transact(b, CmdInvNextStorage, func(st *State) *CmdInvNextError {
-		b.promote(st, *max)
+		b.promote(st, *queueMax)
 		if queueCounts(st).Active >= invSlots {
 			return nil
 		}
@@ -538,7 +538,7 @@ func cmdInvList(args []string) {
 	fs := newFlagSet("inv-list")
 	dir := fs.String("dir", defaultDir(), "state directory")
 	all := fs.Bool("all", false, "include finished")
-	max := fs.Int("queue-max", 3, "queue limit")
+	queueMax := fs.Int("queue-max", 3, "queue limit")
 	task := fs.String("task", "", "only investigations of this task (no header)")
 	slots := fs.Int("inv-slots", 1, "number of investigators")
 	parseFlags(fs, args)
@@ -548,7 +548,7 @@ func cmdInvList(args []string) {
 	exitOn(transact(b, CmdInvListStorage, func(st *State) *CmdInvListError {
 		if *task == "" {
 			q := queueCounts(st)
-			out.printf("Queue: in progress %d/%d, waiting %d/%d, waiting room %d\n", q.Active, invSlots, waitingCount(st), *max, q.Waitroom)
+			out.printf("Queue: in progress %d/%d, waiting %d/%d, waiting room %d\n", q.Active, invSlots, waitingCount(st), *queueMax, q.Waitroom)
 		}
 		for _, inv := range sortedInv(st) {
 			if *task != "" && inv.FromTask != *task {
@@ -571,7 +571,7 @@ func cmdInvList(args []string) {
 func cmdInvAdd(args []string) {
 	fs := newFlagSet("inv-add")
 	dir := fs.String("dir", defaultDir(), "state directory")
-	max := fs.Int("queue-max", 3, "queue limit")
+	queueMax := fs.Int("queue-max", 3, "queue limit")
 	kind := fs.String("kind", string(KindReview), "request kind")
 	fromAgent := fs.String("from-agent", "", "requesting agent")
 	fromTask := fs.String("from-task", "", "requesting task")
@@ -589,7 +589,7 @@ func cmdInvAdd(args []string) {
 	b := &Bus{dir: *dir}
 	var out cliWriter
 	exitOn(transact(b, CmdInvAddStorage, func(st *State) *CmdInvAddError {
-		b.promote(st, *max)
+		b.promote(st, *queueMax)
 		queued := queueCounts(st).Queued
 		st.NextInvID++
 		inv := &Investigation{
@@ -597,7 +597,7 @@ func cmdInvAdd(args []string) {
 			Question: *question, Created: Now(), Kind: k, PRURL: *prURL, PRNumber: *prNum, Status: InvQueued,
 			File: filepath.Join(*tasksDir, *fromTask, "investigations", fmt.Sprintf("inv-%d.md", st.NextInvID)),
 		}
-		if queued >= capacity(st, *max) {
+		if queued >= capacity(st, *queueMax) {
 			inv.Status = InvWaitroom
 		}
 		st.Investigations[invKey(inv.ID)] = inv

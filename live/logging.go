@@ -82,7 +82,7 @@ func setupLogging(home, role string) {
 	logDir := filepath.Join(home, "logs")
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "agentlive: logging to files disabled: cannot create %s: %v\n", logDir, err)
-	} else if f, err := os.OpenFile(filepath.Join(logDir, "agentlive.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err != nil {
+	} else if f, err := os.OpenFile(filepath.Join(logDir, "agentlive.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err != nil { //nolint:gosec // logDir is under AGENTS_HOME, which only the operator controls
 		fmt.Fprintf(os.Stderr, "agentlive: logging to files disabled: %v\n", err)
 	} else {
 		// one Write per record: O_APPEND keeps concurrent writers' lines intact
