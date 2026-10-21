@@ -617,6 +617,12 @@ make integration   # real agent CLIs and accounts (costs usage)
   transcripts, archives, the structured logs, typed bus notices, logged failures, commit identity and signing,
   and `AGENTS.md` handling. They run in CI
   (`.github/workflows/test.yml`).
+  The multi-instance hub transport is also tested with `httptest`: request identity checks, concurrent
+  retries, durable response replay, long-poll continuation, cursor delivery, and the crash window where an
+  accepted operation has an unknown outcome. Its private protocol is documented in
+  [`docs/multi-instance.md`](docs/multi-instance.md). Hub replay records live in `bus/replay/`; completed
+  response payloads are retained for 24 hours, then reduced to request-ID tombstones. Unresolved accepted
+  records are retained for reconciliation and are never automatically executed again.
 - **Errors.** Every operation of `agentbus` — each MCP tool and each CLI subcommand — returns its own error type,
   so the signature says what can go wrong:
 
