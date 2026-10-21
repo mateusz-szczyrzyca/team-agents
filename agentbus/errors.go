@@ -59,11 +59,15 @@ const (
 	ClassUnknownTool
 	// ClassProcess: a helper process (wake-up, dispatcher) could not be started or failed.
 	ClassProcess
+	// ClassUnavailable: the hub cannot be reached after the bounded retries (multi-instance mode). The operation
+	// may be retried by the caller; a lost mutation is never re-executed (see OutcomeUnknown in the design).
+	ClassUnavailable
 )
 
 // classNames are the String() values of the classes, indexed by ErrorClass.
 var classNames = [...]string{
 	"InvalidArgument", "NotFound", "NotInTeam", "Permission", "Conflict", "InvalidState", "Storage", "UnknownTool", "Process",
+	"Unavailable",
 }
 
 // String returns the class name, e.g. "NotFound".
@@ -78,7 +82,7 @@ func (c ErrorClass) String() string {
 // tell "not found" (an answer) from "storage" (a real error):
 //
 //	2 InvalidArgument   3 NotFound   4 NotInTeam   5 Permission   6 Conflict
-//	7 InvalidState      8 Storage    9 UnknownTool 10 Process
+//	7 InvalidState      8 Storage    9 UnknownTool 10 Process      11 Unavailable
 func (c ErrorClass) ExitCode() int {
 	if c < 0 || int(c) >= len(classNames) {
 		return 1
@@ -97,11 +101,13 @@ var (
 	ErrStorage         = errors.New("storage error")    // sentinel of ClassStorage
 	ErrUnknownTool     = errors.New("unknown tool")     // sentinel of ClassUnknownTool
 	ErrProcess         = errors.New("process failed")   // sentinel of ClassProcess
+	ErrUnavailable     = errors.New("hub unavailable")  // sentinel of ClassUnavailable
 )
 
 // sentinels maps every class to its sentinel error (same order as the constants).
 var sentinels = [...]error{
 	ErrInvalidArgument, ErrNotFound, ErrNotInTeam, ErrPermission, ErrConflict, ErrInvalidState, ErrStorage, ErrUnknownTool, ErrProcess,
+	ErrUnavailable,
 }
 
 // Sentinel returns the sentinel error of the class.

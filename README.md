@@ -629,9 +629,11 @@ make integration   # real agent CLIs and accounts (costs usage)
   `QuizStartAlreadyHeld`, `QuizStartResumedTeam`, `QuizStartStorage`); the compiler rejects any other cause.
   The enums are generated from `agentbus/errors.json` by `tools/errgen` (`make generate`; `make lint` fails when
   the generated file is stale). Each cause has a class (`InvalidArgument`, `NotFound`, `NotInTeam`,
-  `Permission`, `Conflict`, `InvalidState`, `Storage`, `UnknownTool`, `Process`) that gives the sentinel for
-  `errors.Is` and the exit status of CLI subcommands (2 … 10), so the `agent` script can tell "no such team"
-  (3) from a storage failure (8). Lower layers return concrete types too: `*StorageError` (state and log files,
+  `Permission`, `Conflict`, `InvalidState`, `Storage`, `UnknownTool`, `Process`, `Unavailable`) that gives the
+  sentinel for `errors.Is` and the exit status of CLI subcommands (2 … 11), so the `agent` script can tell "no such
+  team" (3) from a storage failure (8). `Unavailable` (11) is for the multi-instance hub: it is not reached yet, and
+  a forwarded operation whose reply was lost reports `OutcomeUnknown` (`InvalidState`), which is never retried
+  automatically. Lower layers return concrete types too: `*StorageError` (state and log files,
   stdout), `*ValueError` (invalid enum values, timestamps) and `*ProcessError` (helper processes); operations
   convert them into their own causes explicitly. The plain `error` interface appears only where an interface
   requires it (`slog.Handler`, `json.Unmarshaler`, `flag.Value`) and at the MCP dispatcher. Tests check exact

@@ -1,7 +1,8 @@
 // errgen generates the per-operation error types of agentbus from errors.json.
 //
 // For every operation it writes a cause enum (one constant per possible failure, documented), the error type
-// alias OpError[<Op>Cause] and the tables behind the opCause interface. A "Storage" cause is added to every
+// alias OpError[<Op>Cause], the tables behind the opCause interface and the <Op>CauseByName lookup used to
+// rebuild a cause received on the wire. A "Storage" cause is added to every
 // operation unless it sets "noStorage": the shared state can always fail to load or save.
 //
 //	go run . -spec ../../agentbus/errors.json -out ../../agentbus/errors_gen.go
@@ -28,7 +29,8 @@ type operation struct {
 	Op        string  `json:"op"`        // tool or subcommand name, e.g. "quiz_start"
 	What      string  `json:"what"`      // short description used in comments, e.g. "the MCP tool quiz_start"
 	NoStorage bool    `json:"noStorage"` // true: the operation never touches the shared state
-	Causes    []cause `json:"causes"`    // the possible failures (Storage is appended automatically)
+	Forwarded bool    `json:"forwarded"` // true: the hub forwards it, so OutcomeUnknown is appended (a mutation may have run)
+	Causes    []cause `json:"causes"`    // the possible failures (OutcomeUnknown and Storage are appended automatically)
 }
 
 // cause is one possible failure of an operation.
@@ -41,7 +43,7 @@ type cause struct {
 // validClasses are the ErrorClass names of agentbus/errors.go.
 var validClasses = map[string]bool{
 	"InvalidArgument": true, "NotFound": true, "NotInTeam": true, "Permission": true, "Conflict": true,
-	"InvalidState": true, "Storage": true, "UnknownTool": true, "Process": true,
+	"InvalidState": true, "Storage": true, "UnknownTool": true, "Process": true, "Unavailable": true,
 }
 
 // main reads the spec, validates it and writes the generated, gofmt-ed file.
@@ -71,6 +73,11 @@ func main() {
 		}
 		seen[op.Type] = true
 		causes := op.Causes
+		if op.Forwarded {
+			// a request forwarded to the hub may have run before the reply was lost; the caller must not
+			// assume it did not run, and the hub never replays it (design section 2, OutcomeUnknown)
+			causes = append(causes, cause{Name: "OutcomeUnknown", Class: "InvalidState", Doc: "the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried"})
+		}
 		if !op.NoStorage {
 			causes = append(causes, cause{Name: "Storage", Class: "Storage", Doc: "the shared state or a file could not be read or written"})
 		}
@@ -118,7 +125,10 @@ func writeOperation(b *bytes.Buffer, op operation, causes []cause) {
 	b.WriteString("}\n\n")
 	fmt.Fprintf(b, "// op implements opCause.\nfunc (%s) op() string { return %q }\n\n", ct, op.Op)
 	fmt.Fprintf(b, "// info implements opCause.\nfunc (c %s) info() causeInfo { return %s[c] }\n\n", ct, table)
-	fmt.Fprintf(b, "// String returns the cause name.\nfunc (c %s) String() string { return c.info().name }\n", ct)
+	fmt.Fprintf(b, "// String returns the cause name.\nfunc (c %s) String() string { return c.info().name }\n\n", ct)
+	// The wire carries cause names (multi-instance mode): the client rebuilds the typed cause from its name.
+	fmt.Fprintf(b, "// %sCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.\n", op.Type)
+	fmt.Fprintf(b, "func %sCauseByName(name string) (%s, bool) {\n\tfor i, info := range %s {\n\t\tif info.name == name {\n\t\t\treturn %s(i), true\n\t\t}\n\t}\n\treturn 0, false\n}\n", op.Type, ct, table, ct)
 }
 
 // fail prints an error and exits.
