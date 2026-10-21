@@ -373,7 +373,7 @@ New variables in `config/agents.conf` (all have defaults; a file without them is
 | `LEAD_INSTANCE` | — | `host:port` of the hub | where `agent node` connects |
 | `HUB_TOKEN` | — (per-instance tokens live in `secrets.env`) | `secrets.env` | token of this instance (token mode only) |
 | `HUB_BACKUP_DIR` | `~/agents/bus/backup` | — | where the hub writes periodic state backups (section 8) |
-| `HUB_RETRY_SECONDS` | `60` | `60` | how long `serve` retries an unreachable hub before returning `Unavailable` |
+| `HUB_RETRY_SECONDS` | `30` | `30` | how long `serve` retries an unreachable hub before returning `Unavailable` |
 | `HUB_TLS_CERT`, `HUB_TLS_KEY` | file paths (token mode, required) | — | TLS certificate and key of the hub (section 3.2) |
 | `HUB_CERT_SHA256` | — | 64 hex digits (token mode) | SHA-256 fingerprint of the hub's self-signed certificate; the only trust anchor in token mode (round 1 answer 5) |
 | `HUB_BACKUP_MINUTES` | `30` | — | interval of hub state backups |
