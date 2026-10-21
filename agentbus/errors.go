@@ -169,6 +169,13 @@ func (e *OpError[C]) Class() ErrorClass { return e.Cause.info().class }
 // CauseName returns the name of the cause.
 func (e *OpError[C]) CauseName() string { return e.Cause.info().name }
 
+// Operation returns the name of the operation (MCP tool or CLI subcommand) that failed, as in errors.json.
+func (e *OpError[C]) Operation() string { return e.Cause.op() }
+
+// ErrorMessage returns the human-readable message only (what went wrong and what to do instead), without the
+// operation prefix that Error adds; the hub sends it to remote clients as the message of the wire error.
+func (e *OpError[C]) ErrorMessage() string { return e.Message }
+
 // asError returns e as an error value, or a nil error when e is nil (never a non-nil interface holding nil).
 func (e *OpError[C]) asError() error {
 	if e == nil {

@@ -2405,3 +2405,51 @@ func HubServeCauseByName(name string) (HubServeCause, bool) {
 	}
 	return 0, false
 }
+
+// ---------------------------------------------------------------- hub_auth
+
+// HubAuthCause is a reason why hub client authentication failed.
+type HubAuthCause int
+
+const (
+	HubAuthMissingCredentials    HubAuthCause = iota // authorization header, token, or client address is missing [Permission]
+	HubAuthWrongToken                                // the provided bearer token is invalid [Permission]
+	HubAuthUnknownNode                               // the peer node is not in the allowed instances list [Permission]
+	HubAuthAddressMismatch                           // the client source address does not match the configured address for this instance [Permission]
+	HubAuthDuplicateInstanceName                     // an instance with this name is already connected with an active lease [Conflict]
+	HubAuthLocalAPIFailed                            // failed to query the local tailscaled LocalAPI socket [Unavailable]
+	HubAuthInvalidMode                               // the configured HUB_AUTH mode is unknown [InvalidArgument]
+)
+
+// HubAuthError is the error of hub client authentication.
+type HubAuthError = OpError[HubAuthCause]
+
+// hubAuthCauses describes the HubAuthCause values (same order as the constants).
+var hubAuthCauses = [...]causeInfo{
+	{"MissingCredentials", ClassPermission},
+	{"WrongToken", ClassPermission},
+	{"UnknownNode", ClassPermission},
+	{"AddressMismatch", ClassPermission},
+	{"DuplicateInstanceName", ClassConflict},
+	{"LocalAPIFailed", ClassUnavailable},
+	{"InvalidMode", ClassInvalidArgument},
+}
+
+// op implements opCause.
+func (HubAuthCause) op() string { return "hub_auth" }
+
+// info implements opCause.
+func (c HubAuthCause) info() causeInfo { return hubAuthCauses[c] }
+
+// String returns the cause name.
+func (c HubAuthCause) String() string { return c.info().name }
+
+// HubAuthCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func HubAuthCauseByName(name string) (HubAuthCause, bool) {
+	for i, info := range hubAuthCauses {
+		if info.name == name {
+			return HubAuthCause(i), true
+		}
+	}
+	return 0, false
+}

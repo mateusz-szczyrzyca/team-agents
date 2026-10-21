@@ -898,6 +898,49 @@
      "doc": "the hub cannot listen on HUB_LISTEN or cannot load its certificate"
     }
    ]
+  },
+  {
+   "type": "HubAuth",
+   "op": "hub_auth",
+   "what": "hub client authentication",
+   "noStorage": true,
+   "causes": [
+    {
+     "name": "MissingCredentials",
+     "class": "Permission",
+     "doc": "authorization header, token, or client address is missing"
+    },
+    {
+     "name": "WrongToken",
+     "class": "Permission",
+     "doc": "the provided bearer token is invalid"
+    },
+    {
+     "name": "UnknownNode",
+     "class": "Permission",
+     "doc": "the peer node is not in the allowed instances list"
+    },
+    {
+     "name": "AddressMismatch",
+     "class": "Permission",
+     "doc": "the client source address does not match the configured address for this instance"
+    },
+    {
+     "name": "DuplicateInstanceName",
+     "class": "Conflict",
+     "doc": "an instance with this name is already connected with an active lease"
+    },
+    {
+     "name": "LocalAPIFailed",
+     "class": "Unavailable",
+     "doc": "failed to query the local tailscaled LocalAPI socket"
+    },
+    {
+     "name": "InvalidMode",
+     "class": "InvalidArgument",
+     "doc": "the configured HUB_AUTH mode is unknown"
+    }
+   ]
   }
  ]
 }

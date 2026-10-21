@@ -68,3 +68,27 @@ func TestHubCauses(t *testing.T) {
 		}
 	}
 }
+
+// TestOpErrorWireAccessors checks the accessors the hub uses to encode an error: the operation name and the
+// message without the operation prefix.
+func TestOpErrorWireAccessors(t *testing.T) {
+	e := &OpError[QuizStartCause]{Cause: QuizStartNotCoordinator, Message: "only the coordinator can start a quiz"}
+	if e.Operation() != "quiz_start" {
+		t.Errorf("Operation() = %q, want quiz_start", e.Operation())
+	}
+	if e.ErrorMessage() != "only the coordinator can start a quiz" {
+		t.Errorf("ErrorMessage() = %q", e.ErrorMessage())
+	}
+}
+
+// TestHubAuthCauses checks the causes of the hub client authentication that the auth modes return.
+func TestHubAuthCauses(t *testing.T) {
+	for _, name := range []string{"MissingCredentials", "WrongToken", "UnknownNode", "AddressMismatch", "DuplicateInstanceName", "LocalAPIFailed", "InvalidMode"} {
+		if _, ok := HubAuthCauseByName(name); !ok {
+			t.Errorf("HubAuth has no %s cause", name)
+		}
+	}
+	if c, ok := HubAuthCauseByName("LocalAPIFailed"); !ok || c.info().class != ClassUnavailable {
+		t.Errorf("LocalAPIFailed: got %v/%v, want the Unavailable class", c, ok)
+	}
+}
