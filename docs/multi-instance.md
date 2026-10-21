@@ -472,7 +472,7 @@ Answers are recorded here after approval.
 
 To enable macOS nodes (such as Mac mini build machines or developer MacBooks) to participate as team-agents instances, `bin/agent` and node execution are adapted to macOS conventions.
 
-### 7.1 Daemon Supervision via launchd
+### 13.1 Daemon Supervision via launchd
 
 On Linux, `systemd --user` runs background transient units (`systemd-run --user`). On macOS:
 - An unprivileged user cannot bootstrap transient jobs into `launchd` domains.
@@ -488,7 +488,7 @@ On Linux, `systemd --user` runs background transient units (`systemd-run --user`
 
 ---
 
-### 7.2 BSD vs. GNU Tool Portability
+### 13.2 BSD vs. GNU Tool Portability
 
 The macOS base system provides BSD core utilities rather than GNU coreutils. All scripts in `bin/agent` must either use portable POSIX constructs or platform-conditional abstractions:
 
@@ -504,7 +504,7 @@ The macOS base system provides BSD core utilities rather than GNU coreutils. All
 
 ---
 
-### 7.3 Credentials and Keychain
+### 13.3 Credentials and Keychain
 
 - On macOS, the login Keychain (`login.keychain-db`) is locked unless an interactive graphical user session is unlocked.
 - Running headless under a LaunchDaemon or SSH means Keychain queries will prompt or hang.
@@ -512,7 +512,7 @@ The macOS base system provides BSD core utilities rather than GNU coreutils. All
 
 ---
 
-### 7.4 GUI Session Requirements for iOS Development
+### 13.4 GUI Session Requirements for iOS Development
 
 Certain macOS capabilities require an active, logged-in Aqua GUI window server session:
 - **iOS Simulator (`test:ios-simulator`):** `xcrun simctl` can boot simulators headlessly, but UI test execution (`xcodebuild test`) and Simulator rendering require an active window server session.
@@ -524,7 +524,7 @@ Certain macOS capabilities require an active, logged-in Aqua GUI window server s
 
 ---
 
-### 7.5 Laptop Power and Battery Awareness
+### 13.5 Laptop Power and Battery Awareness
 
 For instances running on Mac laptops (MacBook Pro / Air), running intensive builds on battery drains power and degrades performance.
 
