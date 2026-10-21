@@ -22,7 +22,8 @@
    "type": "ListAgents",
    "op": "list_agents",
    "what": "the MCP tool list_agents",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "SendMessage",
@@ -44,19 +45,22 @@
      "class": "NotInTeam",
      "doc": "the recipient is \"team\" but the caller is not in a team"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "ReadMessages",
    "op": "read_messages",
    "what": "the MCP tool read_messages",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "SetStatus",
    "op": "set_status",
    "what": "the MCP tool set_status",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "Reserve",
@@ -68,7 +72,8 @@
      "class": "InvalidArgument",
      "doc": "the resource name is missing"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "Release",
@@ -80,13 +85,15 @@
      "class": "Permission",
      "doc": "the resource is held by another agent"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "ListReservations",
    "op": "list_reservations",
    "what": "the MCP tool list_reservations",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "RequestInvestigation",
@@ -103,7 +110,8 @@
      "class": "InvalidArgument",
      "doc": "the question is missing"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "RecordDecision",
@@ -135,25 +143,29 @@
      "class": "InvalidState",
      "doc": "the investigation has not finished yet (no result or rejection to decide on)"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "InvestigationStatus",
    "op": "investigation_status",
    "what": "the MCP tool investigation_status",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "WaitForMessage",
    "op": "wait_for_message",
    "what": "the MCP tool wait_for_message",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "NotebookRead",
    "op": "notebook_read",
    "what": "the MCP tool notebook_read",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "NotebookAppend",
@@ -165,7 +177,8 @@
      "class": "InvalidArgument",
      "doc": "the entry text is missing"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "NotebookWriteSection",
@@ -177,7 +190,8 @@
      "class": "InvalidArgument",
      "doc": "the section name is missing"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "TeamStatus",
@@ -189,7 +203,8 @@
      "class": "NotInTeam",
      "doc": "the caller is not in a team"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "Checkpoint",
@@ -201,7 +216,8 @@
      "class": "InvalidArgument",
      "doc": "the summary is missing"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "ClaimLead",
@@ -213,7 +229,8 @@
      "class": "NotInTeam",
      "doc": "the caller is not in a team"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "HandoverLead",
@@ -245,7 +262,8 @@
      "class": "InvalidState",
      "doc": "the new coordinator is excluded from the team"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "QuizStart",
@@ -277,7 +295,8 @@
      "class": "InvalidState",
      "doc": "the team was resumed: its members already passed the quiz"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "QuizAnswer",
@@ -309,7 +328,8 @@
      "class": "Conflict",
      "doc": "the member already answered (answers are final)"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "QuizResults",
@@ -331,7 +351,8 @@
      "class": "InvalidState",
      "doc": "no quiz question has been asked yet"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "TeamExclude",
@@ -353,7 +374,8 @@
      "class": "NotFound",
      "doc": "the agent is not a member of the team (or it is the coordinator itself)"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "BoardAdd",
@@ -375,7 +397,8 @@
      "class": "NotInTeam",
      "doc": "the caller is not in a team (outside a team: delegate)"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "BoardList",
@@ -387,7 +410,8 @@
      "class": "NotInTeam",
      "doc": "the caller is not in a team"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "BoardClaim",
@@ -414,7 +438,8 @@
      "class": "Conflict",
      "doc": "the item is already claimed or done"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "BoardDone",
@@ -436,7 +461,8 @@
      "class": "Permission",
      "doc": "the item does not exist or is claimed by someone else"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "BoardRelease",
@@ -453,7 +479,8 @@
      "class": "Permission",
      "doc": "the item does not exist or is claimed by someone else"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "Delegate",
@@ -470,13 +497,15 @@
      "class": "InvalidArgument",
      "doc": "the request text is missing"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "DelegationStatus",
    "op": "delegation_status",
    "what": "the MCP tool delegation_status",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "Cli",
@@ -543,19 +572,22 @@
      "class": "InvalidArgument",
      "doc": "--notice is not a known script notice"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CmdLog",
    "op": "log",
    "what": "the subcommand log",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "CmdStatus",
    "op": "status",
    "what": "the subcommand status",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "CmdRelease",
@@ -567,19 +599,22 @@
      "class": "InvalidArgument",
      "doc": "the resource argument is missing"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CmdInvList",
    "op": "inv-list",
    "what": "the subcommand inv-list",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "CmdInvNext",
    "op": "inv-next",
    "what": "the subcommand inv-next",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "CmdInvSet",
@@ -596,7 +631,8 @@
      "class": "NotFound",
      "doc": "there is no investigation with this number"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CmdInvGet",
@@ -608,13 +644,15 @@
      "class": "NotFound",
      "doc": "there is no investigation with this number"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CmdInvPending",
    "op": "inv-pending",
    "what": "the subcommand inv-pending",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "CmdInvAdd",
@@ -626,13 +664,15 @@
      "class": "InvalidArgument",
      "doc": "--kind is not an investigation kind"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CmdCancelPending",
    "op": "cancel-pending",
    "what": "the subcommand cancel-pending",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "CmdNormalize",
@@ -672,7 +712,8 @@
      "class": "InvalidArgument",
      "doc": "the team JSON has no id or no members"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CmdTeamSet",
@@ -689,13 +730,15 @@
      "class": "NotFound",
      "doc": "the team or the member does not exist"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CmdTeamDone",
    "op": "team-done",
    "what": "the subcommand team-done",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "CmdTeamGet",
@@ -707,25 +750,29 @@
      "class": "NotFound",
      "doc": "there is no team with this ID"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CmdTeamList",
    "op": "team-list",
    "what": "the subcommand team-list",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "CmdNotes",
    "op": "notes",
    "what": "the subcommand notes",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "CmdHelperNext",
    "op": "helper-next",
    "what": "the subcommand helper-next",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "CmdHelperSet",
@@ -742,7 +789,8 @@
      "class": "NotFound",
      "doc": "there is no worker request with this number"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CmdHelperGet",
@@ -754,13 +802,15 @@
      "class": "NotFound",
      "doc": "there is no worker request with this number"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CmdHelperList",
    "op": "helper-list",
    "what": "the subcommand helper-list",
-   "causes": []
+   "causes": [],
+   "forwarded": true
   },
   {
    "type": "CmdBoardDump",
@@ -772,7 +822,8 @@
      "class": "NotFound",
      "doc": "there is no team with this ID"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CmdBoardReleaseAgent",
@@ -784,13 +835,117 @@
      "class": "NotFound",
      "doc": "there is no team with this ID"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CmdCheckpointGet",
    "op": "checkpoint-get",
    "what": "the subcommand checkpoint-get",
-   "causes": []
+   "causes": [],
+   "forwarded": true
+  },
+  {
+   "type": "HubCall",
+   "op": "hub",
+   "what": "a request to the hub route /v1/tools/{op} (multi-instance mode, before the operation runs)",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the request body or its envelope is not valid JSON, or its op does not match the route"
+    },
+    {
+     "name": "UnknownOperation",
+     "class": "UnknownTool",
+     "doc": "the route names an operation that the hub does not forward"
+    },
+    {
+     "name": "Identity",
+     "class": "Permission",
+     "doc": "the hub cannot tie the request to a configured instance (unknown node, bad token, address mismatch)"
+    },
+    {
+     "name": "RequestConflict",
+     "class": "Conflict",
+     "doc": "the request ID was used before for a different request"
+    },
+    {
+     "name": "Expired",
+     "class": "InvalidState",
+     "doc": "the request ID is older than the hub's replay window (24 h), so it is not executed again"
+    },
+    {
+     "name": "Overloaded",
+     "class": "Unavailable",
+     "doc": "the hub is busy and refused the request; the caller may retry later"
+    },
+    {
+     "name": "OutcomeUnknown",
+     "class": "InvalidState",
+     "doc": "the hub accepted the request and its operation failed before the reply could be sent; the outcome is unknown, so the request is not retried"
+    }
+   ]
+  },
+  {
+   "type": "HubServe",
+   "op": "agentbus hub",
+   "what": "the subcommand agentbus hub (the hub listener)",
+   "causes": [
+    {
+     "name": "InvalidConfig",
+     "class": "InvalidArgument",
+     "doc": "the hub configuration (HUB_LISTEN, HUB_AUTH, certificate, instance list) is missing or invalid"
+    },
+    {
+     "name": "Listen",
+     "class": "Process",
+     "doc": "the hub cannot listen on HUB_LISTEN or cannot load its certificate"
+    }
+   ]
+  },
+  {
+   "type": "HubAuth",
+   "op": "hub_auth",
+   "what": "hub client authentication",
+   "noStorage": true,
+   "causes": [
+    {
+     "name": "MissingCredentials",
+     "class": "Permission",
+     "doc": "authorization header, token, or client address is missing"
+    },
+    {
+     "name": "WrongToken",
+     "class": "Permission",
+     "doc": "the provided bearer token is invalid"
+    },
+    {
+     "name": "UnknownNode",
+     "class": "Permission",
+     "doc": "the peer node is not in the allowed instances list"
+    },
+    {
+     "name": "AddressMismatch",
+     "class": "Permission",
+     "doc": "the client source address does not match the configured address for this instance"
+    },
+    {
+     "name": "DuplicateInstanceName",
+     "class": "Conflict",
+     "doc": "an instance with this name is already connected with an active lease"
+    },
+    {
+     "name": "LocalAPIFailed",
+     "class": "Unavailable",
+     "doc": "failed to query the local tailscaled LocalAPI socket"
+    },
+    {
+     "name": "InvalidMode",
+     "class": "InvalidArgument",
+     "doc": "the configured HUB_AUTH mode is unknown"
+    }
+   ]
   }
  ]
 }
