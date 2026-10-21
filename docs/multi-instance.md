@@ -48,7 +48,235 @@ Sections written by team members are marked with their author. Everything else i
 
 ## 2. HTTP protocol
 
-(Author: codex-1 — to be merged from `docs/multi-instance-protocol.md`.)
+Author: codex-1, reviewed by gemini-1 and the coordinator; answers from the human applied (rounds 1–3).
+The protocol text below replaces the draft that was in `/tmp/opencode`; the same content is in section 2 of this document.
+
+Author: codex-1. Proposed M0 contract, subject to human approval. This is not an implemented API.
+
+### 2.1 Transport and endpoints
+
+Only `agentbus hub` listens. Node daemons, per-run MCP servers, interactive commands, and views initiate
+requests to that listener. The lead instance's own clients call the same hub dispatcher in-process (round 2 answer 4): there is no HTTP
+hop and no second authentication path for them, and they must not execute independent copies of the bus logic
+against local files while hub mode is enabled. Local callers take their identity from the local run registration.
+Without hub configuration, the existing local-file mode and all existing outputs remain unchanged.
+
+Proposed versioned endpoints:
+
+| Method and path | Operation and purpose |
+|---|---|
+| `POST /v1/tools/{op}` | one route per operation (round 2 answer 3, round 3 answer a): the MCP tool or shared-state CLI operation named `{op}`, from either client kind |
+| `POST /v1/instances/register` | `instance_register`: register an instance and initial manifest; return a lease |
+| `POST /v1/instances/heartbeat` | `instance_heartbeat`: renew the lease, update manifest and task summaries |
+| `POST /v1/commands/poll` | `command_poll`: long poll for commands addressed to the authenticated instance |
+| `POST /v1/commands/ack` | `command_ack`: record a command's durable execution result |
+
+Every endpoint operation gets its own errors.json entry, exact causes, generated error type, and tests.
+No endpoint exposes arbitrary file access, shell command execution, or a client-selected executable.
+Task views, questions retrieval/submission, and command enqueueing use explicit allowlisted operations
+through `/v1/tools/{op}`; they do not gain an unrestricted RPC or filesystem interface.
+
+Requests and responses use JSON and a protocol version of 1. All requests authenticate independently
+according to section 3, including reused connections and long polls. Authentication precedes body dispatch.
+Token mode uses HTTPS with hostname and certificate validation and the expected peer-address check.
+Tailscale mode uses the actual TCP peer address for LocalAPI whois; forwarded headers are never trusted.
+Credentials are not forwarded on redirects; clients reject redirects. The hub bounds request sizes,
+concurrent polls, header-read time, and idle connections. Response deadlines allow the negotiated poll time.
+Exact operational limits are implementation parameters to document and test before M1 completion.
+
+### 2.2 Call envelope and identity
+
+Example request:
+
+```json
+{
+  "version": 1,
+  "request_id": "fc7644e0-efc8-471e-a33b-f735e246dfcc",
+  "issued_at": "2026-10-21T20:00:00Z",
+  "caller": {
+    "agent": "codex-1",
+    "instance": "mac",
+    "task": "20261021-200000-codex-1",
+    "team": "20261021-200000-team",
+    "tier": "normal",
+    "role": "worker"
+  },
+  "kind": "tool",
+  "op": "send_message",
+  "tool": "send_message",
+  "args": {"to": "claude-1@linux", "text": "The build is ready."}
+}
+```
+
+The route and the envelope `op` must match, or the request is rejected as a malformed request (400). `kind` is a closed enum (`tool` or `cli`); `op` is the existing operation name. `tool` is required only
+for tool calls and must equal `op`. CLI calls use their existing subcommand names with typed arguments,
+never command strings. Request IDs come from `crypto/rand` and remain fixed across retries of one call.
+The envelope is internal: MCP clients continue using the existing stdio protocol and tool schemas.
+`initialize`, `ping`, and `tools/list` remain local MCP protocol handling. Existing role `worker` covers
+normal agents too; `investigator` remains distinct from the normal/worker tier enum.
+
+The hub binds `caller.instance` to the authenticated peer and active instance lease. It qualifies the
+agent as `agent@instance`; an unqualified recipient is resolved against the caller's instance, never
+the lead instance. Existing `all`, `team`, and `team:<id>` recipient semantics remain distinct.
+The hub verifies agent, task, tier, role, and team against registered runs and membership rather than
+granting privileges from the envelope alone. Team coordinator authority still comes from `claim_lead`.
+Node/admin operations require the relevant instance control identity and explicit authorization.
+This protects instance boundaries; processes running as the same instance user remain trusted together.
+
+Repository, branch, and worktree metadata belong to the registered run. A remote worktree path is display
+metadata, not a path the hub may open. Code transfer uses origin, not remote paths or RPC file reads.
+
+### 2.3 Results and typed errors
+
+Successful call, preserving the exact existing handler result string:
+
+```json
+{"version":1,"request_id":"fc7644e0-efc8-471e-a33b-f735e246dfcc","result":"Sent: ..."}
+```
+
+The final response also carries an `unread_count` computed at the hub so the proxy can retain the existing
+MCP unread footer without opening local bus files. CLI results use a typed `stdout` byte field encoded
+losslessly as base64 JSON, rather than assuming arbitrary output bytes are valid UTF-8 text.
+
+Failed operation:
+
+```json
+{
+  "version": 1,
+  "request_id": "a4a9e453-84c4-4e0f-a20a-afb09219c19e",
+  "error": {
+    "op": "quiz_start",
+    "cause": "NotCoordinator",
+    "message": "only the coordinator can do this"
+  }
+}
+```
+
+Exactly one of `result` or `error` is present. Cause strings are generated cause names such as
+`NotCoordinator`, not full Go identifiers or numeric enum values. The message excludes the `op: ` prefix;
+rebuilding `*QuizStartError` adds that prefix exactly once. Class and exit status come from the client's
+generated operation/cause table, never a peer-supplied class or exit code. Existing class exit codes stay
+2–10; append `Unavailable` as 11 with its own sentinel. Add an `Unavailable` cause to each forwardable
+operation. A remote `QuizStartNotCoordinator` must still support the same `errors.Is` and `errors.As`.
+Underlying operating-system error chains are local and are not serialized.
+
+Extend errgen with per-operation cause-by-name lookups and a dispatcher that rebuilds the concrete
+operation error, plus an operation-name accessor for encoding without parsing human messages.
+Unknown operation/cause names, wrong result shapes, mismatched request IDs, or an
+unsupported protocol version produce a typed transport/protocol failure, never a fabricated known cause
+or a successful empty answer. Valid dispatcher errors may name `tool_call` rather than the requested
+tool; the client validates that it is an allowed dispatch-stage failure. The protocol error needs its
+own errors.json operation/cause and coverage.
+
+Completed application calls return HTTP 200 even when the result contains a typed error. HTTP status codes
+describe transport/admission failures: malformed request 400, rejected credentials 401/403, lease or request
+conflict 409, oversized request 413, overload 429, hub unavailable 503. Authenticated structured failures
+carry endpoint operation/cause/message. A non-JSON proxy error is not decoded as an application error.
+Authentication, validation, permission, and version failures are not retried as transient outages.
+
+### 2.4 Retries and the mutation replay ledger
+
+HTTP retries alone can duplicate `send_message`, queue insertion, or board changes when an answer is lost.
+Accepted (round 1 answer 9): maintain a durable replay ledger on the hub, keyed by authenticated instance,
+run identity, and request ID. Store a hash of the validated operation, caller, and arguments. Reusing an
+ID with a different payload is a typed conflict. Never re-execute a completed request: return its stored
+result or exact typed error. Concurrent duplicates wait outside the bus lock or receive an in-progress
+response; they cannot both enter the handler.
+
+Before executing a mutating operation, durably write its accepted record. After the handler returns,
+durably write its response, then send the answer. Durability requires checked writes, file sync, atomic
+replacement where used, and directory sync where required. A failure recording acceptance prevents
+execution. A failure recording completion leaves the accepted record unresolved and is reported.
+
+**Crash window:** existing `transact` is not a transaction across state.json, messages.jsonl, notebook files,
+process side effects, and the replay ledger. A crash after acceptance and before durable completion can
+mean either that nothing ran or that effects already happened. On restart such a request returns the
+operation's typed `OutcomeUnknown` cause, which has the `InvalidState` class (round 2 answer 2). It is never automatically
+re-executed. The caller inspects state/messages or asks its coordinator before intentionally making a
+new call with a new ID. This is at-most-one automatic execution, not an exactly-once transaction.
+The human accepted this semantics (round 1 answer 9).
+
+An apparently read-only operation can mutate: `read_messages` and `wait_for_message` advance read cursors,
+and existing handlers refresh presence and run garbage collection. Replay classification must use actual
+effects. In particular, cursor-advancing responses must be cached so a lost answer does not lose delivery.
+Pure observational polling can be retried without replaying a mutation; no retry resets its deadline.
+
+Retention must not turn an old request ID into a new operation. Proposed ledger reclamation keeps
+unresolved records until explicitly reconciled and rejects requests older than the supported replay
+window using `issued_at`, a documented clock-skew allowance, and durable expiry/tombstone information.
+The supported window must exceed the maximum retry and long-poll durations. Exact retention limits
+remain part of the approval/design completion, not an unbounded claim of permanent deduplication.
+
+Clients retry only transient connection failures, transport timeouts, and retryable HTTP responses, using
+bounded backoff with jitter. The elapsed retry budget is `HUB_RETRY_SECONDS`, default 30 seconds (round 2 answer 5).
+Dial, TLS, request, and backoff time all count; a blackholed TCP connection cannot exceed the budget.
+On exhaustion, return the attempted operation's `Unavailable` cause. A lost mutation response retains
+its original ID throughout retry; no fallback ever executes it against local files.
+If the server reports `OutcomeUnknown`, do not transform it into `Unavailable` or retry execution.
+
+### 2.5 Long polling and command delivery
+
+`wait_for_message` travels through `/v1/tools/wait_for_message` and runs on the hub. Poll chunks are 25 seconds (round 2 answer 5);
+the original tool's total wait remains capped at its existing 600-second limit. Continuation carries the
+original deadline and call identity; an empty chunk is transport state and must not become an early MCP
+timeout answer. A third mutually exclusive response field, `pending`, signals this continuation (instead
+of `result` or `error`); final responses retain the disjoint result/error contract above. Empty chunk
+handling releases the HTTP connection without busy polling. Cancellation
+stops further waiting but cannot promise rollback of a cursor update or other completed mutation.
+No bus lock is held across sleeps, network writes, or client disconnection.
+Apply the same bounded continuation to other blocking tools such as reserve, quiz_results, and queue waits.
+
+The node long polls `/v1/commands/poll` with its lease and last acknowledged command cursor. An empty
+25-second poll returns 204; otherwise the hub returns a command batch. Commands carry stable IDs,
+instance/lease generation, typed kind, task/run identity, and validated parameters. They are persisted
+before delivery and remain pending until acknowledgment. Delivery is at least once.
+
+The node keeps a durable command journal and acknowledges with an execution result. Repeated `start_run`
+must identify the same task/run and reconcile its existing runner rather than launch a second process.
+`wake`, `stop_task`, and answer delivery similarly require idempotent handlers and local result records.
+The command journal must address the crash between spawning a process and recording its result; it
+cannot claim exactly-once process launch from an acknowledgment alone. Unknown command kinds fail
+explicitly. Enqueueing work for an expired instance fails with `InstanceUnreachable`.
+
+A live lease rejects a second daemon with the same instance name. Heartbeats and polls require the lease
+generation; reconnecting the same daemon renews its lease, while replacing an expired lease fences stale
+heartbeats, command acknowledgments, and polls. A member whose board claim was released during an outage
+must reacquire it before resuming that item; reconnection cannot revive the old exclusive claim.
+Heartbeats run independently of polls and tools. Reports carry monotonic sequences so an older heartbeat
+cannot overwrite newer task state, and hub time determines expiry. Command order is preserved per task:
+a delayed start command must not undo a later stop.
+
+### 2.6 Helper commands, questions, views, and watchdog
+
+Forward every shared-bus CLI path through the same authenticated envelope: `send`, `log`, `status`,
+`release`, `team-get`, `inv-next`, helper queue operations, notices, and state-changing runner callbacks.
+Keep their stdout bytes and existing exit statuses. Local-only event normalization stays local. Merely
+forwarding MCP calls while runners read local team/queue state would split one team into several buses.
+Remote inv/helper dispatch returns a node command, never an instruction to open the requester's worktree
+path on the lead host. Aggregated views read task summaries from the hub.
+
+`agent answer` retrieves a versioned questions snapshot through the hub and submits answers with the task,
+question round, and snapshot version; stale submissions fail explicitly. The hub durably queues delivery
+to the coordinator's instance. The destination validates identifiers and constructs the local path itself.
+Member questions go only to the coordinator; the coordinator broadcasts the full answer set through the
+bus. A solo task retains its own questions flow. Notifications include the originating instance.
+
+Local structured outage state records when hub communication becomes unavailable and recovers. The
+watchdog excludes only the affected outage interval from hang accounting and resumes its prior inactivity
+budget on recovery. It must not reset inactivity indefinitely from repeated failures or treat an unrelated
+hung build as evidence of an outage. Outage tracking works for bounded failures of both `serve` and node
+and survives the return of an `Unavailable` tool error. No change to local-only watchdog behavior.
+
+### 2.7 Verification and compatibility
+
+Use in-process httptest TLS servers, a stub LocalAPI Unix socket, fake clocks where appropriate, and
+isolated temporary homes. Cover every endpoint/cause, exact typed-error round trips, deadline bounds,
+lost-response replay, crash-window outcome unknown, cursor delivery, stale lease fencing, duplicate names,
+wrong token/address, unknown node/tag, long-poll cancellation, and command redelivery. No real agents or
+Tailscale are needed. Check helper CLI stdout/exit-code compatibility and unchanged local-only behavior.
+Add legacy fixtures for every persisted type change and include ledger/command state in coherent backups;
+restoring only state.json can otherwise re-enable already executed operations.
+
 
 ## 3. Authentication modes
 
@@ -94,9 +322,10 @@ For deployments where Tailscale is not available, Token mode provides mutual aut
    HUB_TOKEN_mac="secret-token-value-for-mac"
    HUB_TOKEN_pi5="secret-token-value-for-pi5"
    ```
-   And `agents.conf` defines allowed instances:
+   And `agents.conf` defines allowed instances with the address each must connect from (a token from any other
+   source address is rejected):
    ```bash
-   ALLOWED_INSTANCES=(mac pi5)
+   ALLOWED_INSTANCES=(mac=192.0.2.20 pi5=192.0.2.10)   # name=expected source address; token of each name in secrets.env
    ```
 3. **Instance Configuration:** Non-lead instances store the token in `secrets.env`:
    ```bash
@@ -112,13 +341,17 @@ For deployments where Tailscale is not available, Token mode provides mutual aut
    Authorization: Bearer <HUB_TOKEN>
    X-Instance-Name: mac
    ```
-5. **TLS Certificate Setup:**
-   - The hub must be configured with a valid TLS certificate and key (`HUB_TLS_CERT` and `HUB_TLS_KEY`).
-   - Certificates may be issued by Let's Encrypt / public ACME, an internal organizational PKI, or a dedicated private CA.
-   - Non-lead instances must trust the hub's certificate either via the system trust store or via a pinned CA file configured in `agents.conf`:
+5. **TLS Certificate Setup (round 1 answer 5: self-signed, pinned by fingerprint):**
+   - The hub uses a self-signed certificate and key (`HUB_TLS_CERT`, `HUB_TLS_KEY`), created once on the hub
+     with a documented command (for example `openssl req -x509 -newkey ec -nodes -days 3650 ...`).
+   - Each non-lead instance pins the SHA-256 fingerprint of that certificate in its `agents.conf`:
      ```bash
-     HUB_CA_CERT="/home/dev/agents/config/hub-ca.crt"
+     HUB_CERT_SHA256="<64 hex digits>"
      ```
+     The client accepts only a connection whose certificate has this fingerprint. No CA is operated; the
+     pin replaces the system trust store and the hostname check.
+   - Rotating the certificate: update `HUB_CERT_SHA256` on every instance first, then replace the hub's
+     certificate. A mismatch is a configuration error, never a silent fallback.
 
 #### Security Caveat (Token Mode)
 > [!WARNING]
@@ -142,10 +375,10 @@ New variables in `config/agents.conf` (all have defaults; a file without them is
 | `HUB_BACKUP_DIR` | `~/agents/bus/backup` | — | where the hub writes periodic state backups (section 8) |
 | `HUB_RETRY_SECONDS` | `60` | `60` | how long `serve` retries an unreachable hub before returning `Unavailable` |
 | `HUB_TLS_CERT`, `HUB_TLS_KEY` | file paths (token mode, required) | — | TLS certificate and key of the hub (section 3.2) |
-| `HUB_CA_CERT` | — | file path (token mode, optional) | CA or pinned certificate that the instance trusts for the hub |
+| `HUB_CERT_SHA256` | — | 64 hex digits (token mode) | SHA-256 fingerprint of the hub's self-signed certificate; the only trust anchor in token mode (round 1 answer 5) |
 | `HUB_BACKUP_MINUTES` | `30` | — | interval of hub state backups |
 | `MANIFEST_TTL` | `180` (seconds) | — | how long the hub keeps a manifest without heartbeat (section 5.1) |
-| `INSTANCE_CAPABILITIES` | array of typed capabilities | same | declared capabilities (section 5.3); the name follows decision 11 wording and replaces `DECLARED_CAPABILITIES` used in section 5 |
+| `INSTANCE_CAPABILITIES` | array of typed capabilities | same | declared capabilities (section 5.3); the name follows decision 11 wording |
 | `INSTANCE_ACCEPT_REPOS` | array (optional) | same | local policy: repositories this instance accepts work for |
 | `PAUSE_ON_BATTERY` | `false` | `false` | laptops: pause new runs on battery (section 13.5) |
 
@@ -272,7 +505,7 @@ Each non-lead instance runs the `agent node` daemon. Upon starting, and continuo
             "required": ["name", "tier", "role", "status"],
             "properties": {
               "name": { "type": "string" },
-              "tier": { "type": "string", "enum": ["normal", "worker"] },
+              "tier": { "type": "string", "enum": ["normal", "worker"] },   // an empty legacy tier is read as "normal", as in agentbus/types.go; no legacy value is newly rejected
               "role": { "type": "string" },
               "status": { "type": "string", "enum": ["idle", "busy", "sleeping"] },
               "current_task": { "type": "string" }
@@ -314,10 +547,11 @@ Capabilities are typed strings formatted as `<namespace>:<identifier>`. Namespac
 | `hw:` | Physical devices and CPU architectures | `hw:rp2350-probe`, `hw:jlink`, `hw:apple-silicon`, `hw:x86-64` |
 | `model:` | Specific model provider access | `model:claude-3-7-sonnet`, `model:codex`, `model:gemini-flash` |
 | `sign:` | Code signing keys and entitlements | `sign:apple-development`, `sign:apple-distribution`, `sign:android-keystore` |
+| `publish:` | Publishing packages and releases (approval-gated like `sign:*`, round 1 answer 7) | `publish:npm`, `publish:pypi`, `publish:github-release` |
 
 #### Configuration Validation Rule
 Capabilities must belong to the closed set of recognized capability identifiers defined in `agentbus/types.go`.
-- If an unknown or malformed capability appears in `DECLARED_CAPABILITIES` in `agents.conf`, `agent node` and `agentbus` **fail fast on startup** with a configuration error.
+- If an unknown or malformed capability appears in `INSTANCE_CAPABILITIES` in `agents.conf`, `agent node` and `agentbus` **fail fast on startup** with a configuration error.
 - Typos (e.g. `build:iso` instead of `build:ios`) are immediately caught at configuration time.
 
 #### Security Approval for Sensitive Capabilities
@@ -412,7 +646,9 @@ Decisions 16–20, made concrete:
 - **Approval of sensitive capabilities.** Capabilities in `sign:*` and publishing require the human's approval on
   the instance that would run the work, before the instance runs it. Approval is recorded locally (section 12,
   question 3).
-- Secrets stay on their instance (`secrets.env`); they are never sent through the hub.
+- Secrets stay on their instance (`secrets.env`). One exception: in token mode each instance sends its own token in the
+  `Authorization` header to the hub. The hub keeps the expected tokens in its `secrets.env` and never forwards a token
+  to another instance.
 
 ## 10. Compatibility with existing installations
 
@@ -445,7 +681,19 @@ Decisions 16–20, made concrete:
 
 ## 12. Open decisions (asked of the human)
 
-Answers are recorded here after approval.
+Recorded answers (human, rounds 1–3, `questions-1.md` to `questions-3.md`):
+- 1 (lint gate, round 1): restore `.golangci.yml` and install `bats` into `~/.local`; round 2: fix the findings (a+a1, see the PR).
+- 2 (lead platform): the hub is Linux-only; macOS instances are always non-lead.
+- 3 (read-only instances): allowed, an instance without a node only sends and reads messages through the hub.
+- 4 (sensitive capabilities): a persistent approval list in the instance's state, changed by `agent approve <capability>`.
+- 5 (token TLS): a self-signed certificate pinned by SHA-256 fingerprint in `agents.conf`.
+- 6 (timings): `MANIFEST_TTL=180` s and `HUB_BACKUP_MINUTES=30` approved.
+- 7 (publishing): the `publish:` namespace is added and is approval-gated like `sign:*`.
+- 8 (`agent node` language): a Go subcommand of `agentbus`.
+- 9 (replay): accepted as proposed; `OutcomeUnknown` is of class `InvalidState` (round 2).
+- Round 2: the protocol uses one route per operation (`/v1/tools/{op}`); the lead's own agents call the hub
+  in-process; poll chunks are 25 s and the retry budget is 30 s.
+- Round 3: CLI operations use the same routes as MCP tools (`/v1/tools/{op}`).
 
 1. Can the lead instance itself be a macOS machine, or is the hub Linux-only?
 2. Is `agent node` required on every non-lead instance, or can a non-lead instance run in a read-only mode
@@ -517,10 +765,10 @@ The macOS base system provides BSD core utilities rather than GNU coreutils. All
 Certain macOS capabilities require an active, logged-in Aqua GUI window server session:
 - **iOS Simulator (`test:ios-simulator`):** `xcrun simctl` can boot simulators headlessly, but UI test execution (`xcodebuild test`) and Simulator rendering require an active window server session.
 - **Apple Code Signing (`sign:apple`):** Interactive keychain prompts fail without a GUI session.
-- **Setup Guidance:** For dedicated Mac build nodes:
-  1. Configure macOS auto-login for the agents user.
-  2. Connect a dummy HDMI/DisplayPort plug (or virtual display software) to ensure the WindowServer is instantiated.
-  3. Lock the screen or use fast user switching to keep the GUI session alive without physical access.
+- **Setup candidates (not yet requirements):** which of these a dedicated Mac build node needs is decided by the manual
+  verification in M4 (report section "manual verification"), not assumed here: (a) auto-login for the agents user,
+  (b) a virtual or dummy display so that the window server runs, (c) fast user switching or a locked screen to keep
+  the GUI session alive without physical access.
 
 ---
 
