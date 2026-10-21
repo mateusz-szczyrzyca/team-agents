@@ -1570,8 +1570,10 @@ abandon_run() {
 }
 
 resume_history() { # task → the human's answers from this task and its predecessors (the --resume chain)
-  local t=$1 f
+  local t=$1 f seen=" "
   while [[ -n $t && -d $TASKS/$t ]]; do
+    [[ $seen != *" $t "* ]] || break
+    seen+="$t "
     for f in "$TASKS/$t"/questions-*.md; do
       [[ -f $f ]] || continue
       printf '\n### %s (%s)\n\n' "${f##*/}" "$t"; cat "$f"
@@ -1614,6 +1616,7 @@ resume_run() { # ref verify [addition...] — resumes an interrupted team or tas
 
   local ts new_team="" ids=() id old root wt name
   ts=$(date +%Y%m%d-%H%M%S)
+  while [[ -d $TASKS/$ts-${olds[0]##*-} ]]; do sleep 1; ts=$(date +%Y%m%d-%H%M%S); done
   [[ -n $old_team ]] && new_team="$ts-team"
   for old in "${olds[@]}"; do
     name=$(task_field "$old" AGENT); root=$(task_field "$old" REPO_ROOT)
