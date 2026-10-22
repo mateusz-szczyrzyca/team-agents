@@ -51,15 +51,15 @@ type HubConfig struct {
 	DisableSocket bool
 	// ManifestTTL is the hub-authoritative lease duration; zero uses 180 seconds.
 	ManifestTTL time.Duration
-	// Resolve is an optional identity resolver (defaults to defaultRunResolver which fails closed).
+	// TasksDir is the lead-local task metadata directory; empty uses the sibling tasks directory.
+	TasksDir string
+	// Resolve is an optional identity resolver (defaults to trusted instance reports and hub-owned run assignments).
 	Resolve func(HubCaller) (*Server, *HubCallError)
 }
 
-// defaultRunResolver returns an identity resolver that rejects all requests until the M2 trusted run registry is configured.
-func defaultRunResolver(_ *Bus) func(HubCaller) (*Server, *HubCallError) {
-	return func(c HubCaller) (*Server, *HubCallError) {
-		return nil, opErr(HubCallIdentity, "run %s (agent %s) is not registered in the trusted registry", c.Task, c.Agent)
-	}
+// defaultRunResolver denies identities until local metadata or authenticated instance reports are configured.
+func defaultRunResolver(b *Bus) func(HubCaller) (*Server, *HubCallError) {
+	return (hubRunRegistry{bus: b}).resolve
 }
 
 // splitAllowedInstances splits a comma- or whitespace-delimited string of allowed instances into a slice.
@@ -122,6 +122,7 @@ func parseHubConfig(args []string) *HubConfig {
 	socket := fs.String("socket", "", "tailscale LocalAPI socket path override")
 	socketListen := fs.String("socket-listen", "", "local Unix domain socket path for lead agents")
 	instanceName := fs.String("instance", "", "local instance name")
+	tasksDir := fs.String("tasks-dir", "", "lead-local task metadata directory")
 	manifestTTL := fs.Int("manifest-ttl", 0, "manifest lifetime in seconds (default 180)")
 	parseFlags(fs, args)
 
@@ -134,6 +135,7 @@ func parseHubConfig(args []string) *HubConfig {
 		TailscaleSocket: *socket,
 		SocketPath:      *socketListen,
 		InstanceName:    *instanceName,
+		TasksDir:        *tasksDir,
 		Tokens:          make(map[string]string),
 	}
 
@@ -259,17 +261,34 @@ func serveHub(cfg *HubConfig) *HubServeError {
 		}
 	}
 
+	localInstance := cfg.InstanceName
+	if localInstance == "" {
+		localInstance = os.Getenv("INSTANCE_NAME")
+	}
+	if localInstance == "" {
+		localInstance = "lead"
+	}
+	if !validInstanceName(localInstance) {
+		return opErr(HubServeInvalidConfig, "invalid local instance name %q", localInstance)
+	}
+	tasksDir := cfg.TasksDir
+	if tasksDir == "" {
+		tasksDir = filepath.Join(filepath.Dir(cfg.Dir), "tasks")
+	}
+	instances := &HubInstanceRegistry{Bus: b, TTL: cfg.ManifestTTL}
+	var authorizePeer func(string, string) *HubCallError // custom resolvers own their authentication contract
 	resolver := cfg.Resolve
 	if resolver == nil {
-		resolver = defaultRunResolver(b)
+		runs := hubRunRegistry{bus: b, instances: instances, localInstance: localInstance, tasksDir: tasksDir}
+		resolver = runs.resolve
+		authorizePeer = runs.authorizePeer
 	}
-
-	instances := &HubInstanceRegistry{Bus: b, TTL: cfg.ManifestTTL}
 	hub := &Hub{
-		Instances:    instances,
-		Bus:          b,
-		Authenticate: authenticator.Authenticate,
-		Resolve:      resolver,
+		Instances:     instances,
+		Bus:           b,
+		Authenticate:  authenticator.Authenticate,
+		Resolve:       resolver,
+		AuthorizePeer: authorizePeer,
 	}
 
 	ln := cfg.Listener
@@ -370,13 +389,6 @@ func serveHub(cfg *HubConfig) *HubServeError {
 			unixLn = ul
 		}
 
-		localInstance := cfg.InstanceName
-		if localInstance == "" {
-			localInstance = os.Getenv("INSTANCE_NAME")
-			if localInstance == "" {
-				localInstance = "lead"
-			}
-		}
 		unixHub := &Hub{
 			Instances: instances,
 			Bus:       b,
@@ -384,8 +396,9 @@ func serveHub(cfg *HubConfig) *HubServeError {
 				setHubAuthenticatedPeer(r, "local:"+localInstance)
 				return localInstance, nil
 			},
-			Resolve:      resolver,
-			PollDuration: hub.PollDuration,
+			Resolve:       resolver,
+			AuthorizePeer: authorizePeer,
+			PollDuration:  hub.PollDuration,
 		}
 		unixServer = &http.Server{
 			Handler:           unixHub,

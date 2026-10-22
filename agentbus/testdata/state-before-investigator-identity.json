@@ -1,0 +1,7 @@
+{
+  "next_id": 2,
+  "agents": {}, "reservations": {}, "cursors": {}, "teams": {}, "helpers": {},
+  "investigations": {
+    "1": {"id": 1, "from_agent": "codex-1", "from_task": "task-one", "repo": "example-app", "branch": "agents/codex-1", "worktree": "/example/worktree", "question": "Example investigation", "context": "", "status": "running", "created": "2026-10-22 16:00:00", "started": "2026-10-22 16:00:01", "inv_task": "task-investigator", "file": "/example/investigations/inv-1.md"}
+  }
+}

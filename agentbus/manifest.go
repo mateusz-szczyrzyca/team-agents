@@ -129,10 +129,15 @@ type SubscriptionQuota struct {
 
 // HubTaskSummary summarizes the state of a task running on an instance.
 type HubTaskSummary struct {
-	TaskID    string    `json:"task_id"`    // task directory identifier
-	Agent     string    `json:"agent"`      // executing agent
-	Team      string    `json:"team"`       // team identifier if part of a team
-	Status    string    `json:"status"`     // current runner state
-	StartedAt time.Time `json:"started_at"` // when task execution began
-	UpdatedAt time.Time `json:"updated_at"` // last activity timestamp
+	Repo      string    `json:"repo,omitempty"`     // repository key for notebooks; absent in older manifests
+	Branch    string    `json:"branch,omitempty"`   // task branch on its owning instance
+	Worktree  string    `json:"worktree,omitempty"` // display metadata only for remote tasks
+	Tier      Tier      `json:"tier,omitempty"`     // registered task tier; empty legacy summaries cannot authorize calls
+	Role      Role      `json:"role,omitempty"`     // registered task role; empty legacy summaries cannot authorize calls
+	TaskID    string    `json:"task_id"`            // task directory identifier
+	Agent     string    `json:"agent"`              // executing agent
+	Team      string    `json:"team"`               // team identifier if part of a team
+	Status    string    `json:"status"`             // current runner state
+	StartedAt time.Time `json:"started_at"`         // when task execution began
+	UpdatedAt time.Time `json:"updated_at"`         // last activity timestamp
 }

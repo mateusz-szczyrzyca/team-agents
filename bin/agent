@@ -3097,13 +3097,20 @@ cmd__node_answer() { # id [expected_round] [expected_sha256] — stores answers 
 cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
   local tasks_json="{}" active_runs=0
   local -A agent_busy=() agent_task=() agent_st=()
-  local d tid st tagent tteam tcreated tmod
+  local d tid st tagent tteam tcreated tmod trepo tbranch twt ttier trole tkind
   for d in "$TASKS"/*/; do
     [[ -f $d/meta.env ]] || continue
     tid=$(basename "$d")
     st=$(task_field "$tid" STATUS)
     tagent=$(task_field "$tid" AGENT)
     tteam=$(task_field "$tid" TEAM)
+    trepo=$(task_field "$tid" REPO_NAME)
+    tbranch=$(task_field "$tid" BRANCH)
+    twt=$(task_field "$tid" WORKTREE)
+    ttier=$(task_field "$tid" TIER); ttier=${ttier:-normal}
+    tkind=$(task_field "$tid" KIND)
+    trole=worker
+    if [[ $tkind == investigation ]]; then trole=investigator; fi
     tcreated=$(task_field "$tid" CREATED)
     [[ -n $tcreated ]] || tcreated=$(date_iso)
     if [[ -f $d/activity.jsonl ]]; then
@@ -3123,10 +3130,12 @@ cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
       --arg id "$tid" \
       --arg agent "$tagent" \
       --arg team "$tteam" \
+      --arg repo "$trepo" --arg branch "$tbranch" --arg worktree "$twt" \
+      --arg tier "$ttier" --arg role "$trole" \
       --arg status "$st" \
       --arg created "$tcreated" \
       --arg updated "$tmod" \
-      '.[$id] = {task_id: $id, agent: $agent, team: $team, status: $status, started_at: $created, updated_at: $updated}' \
+      '.[$id] = {task_id: $id, agent: $agent, team: $team, repo: $repo, branch: $branch, worktree: $worktree, tier: $tier, role: $role, status: $status, started_at: $created, updated_at: $updated}' \
       <<< "$tasks_json")
   done
 
