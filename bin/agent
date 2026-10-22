@@ -3059,32 +3059,8 @@ cmd__node_answer() { # id [expected_round] [expected_sha256] — stores answers 
 }
 
 cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
-  local agents_json="[]"
-  local a busy status cur_task tier role
-  for a in "${!AGENT_TYPE[@]}"; do
-    tier=$(agent_tier "$a")
-    role="worker"
-    if [[ $a == *investigator* ]]; then
-      role="investigator"
-    fi
-    if busy=$(agent_running_task "$a"); then
-      status="busy"
-      cur_task="$busy"
-    else
-      status="idle"
-      cur_task=""
-    fi
-    agents_json=$(jq -c \
-      --arg name "$a" \
-      --arg tier "$tier" \
-      --arg role "$role" \
-      --arg status "$status" \
-      --arg cur "$cur_task" \
-      '. += [{name: $name, tier: $tier, role: $role, status: $status} + (if $cur != "" then {current_task: $cur} else {} end)]' \
-      <<< "$agents_json")
-  done
-
   local tasks_json="{}" active_runs=0
+  local -A agent_busy=() agent_task=() agent_st=()
   local d tid st tagent tteam tcreated tmod
   for d in "$TASKS"/*/; do
     [[ -f $d/meta.env ]] || continue
@@ -3102,6 +3078,11 @@ cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
     if [[ $st == running || $st == starting ]]; then
       active_runs=$((active_runs + 1))
     fi
+    if [[ $st == running || $st == starting || $st == sleeping || $st == paused ]]; then
+      agent_busy[$tagent]=1
+      agent_task[$tagent]="$tid"
+      agent_st[$tagent]="$st"
+    fi
     tasks_json=$(jq -c \
       --arg id "$tid" \
       --arg agent "$tagent" \
@@ -3116,6 +3097,44 @@ cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
   local max_slots=${AGENT_MAX_RUNS:-4}
   local free_slots=$((max_slots - active_runs))
   if (( free_slots < 0 )); then free_slots=0; fi
+
+  local agents_json="[]"
+  local -A seen_agents=()
+  local a status cur_task tier role
+  local -a agent_list=()
+  for a in "${!AGENT_TYPE[@]}"; do agent_list+=("$a"); done
+  for a in "${!INVESTIGATORS_TYPE[@]}"; do agent_list+=("$a"); done
+
+  for a in "${agent_list[@]}"; do
+    [[ -z ${seen_agents[$a]:-} ]] || continue
+    seen_agents[$a]=1
+    if [[ -n ${INVESTIGATORS_TYPE[$a]:-} && -z ${AGENT_TYPE[$a]:-} ]]; then
+      tier="normal"
+      role="investigator"
+    else
+      tier=$(agent_tier "$a")
+      role="worker"
+    fi
+    if [[ -n ${agent_busy[$a]:-} ]]; then
+      if [[ ${agent_st[$a]} == sleeping ]]; then
+        status="sleeping"
+      else
+        status="busy"
+      fi
+      cur_task="${agent_task[$a]}"
+    else
+      status="idle"
+      cur_task=""
+    fi
+    agents_json=$(jq -c \
+      --arg name "$a" \
+      --arg tier "$tier" \
+      --arg role "$role" \
+      --arg status "$status" \
+      --arg cur "$cur_task" \
+      '. += [{name: $name, tier: $tier, role: $role, status: $status} + (if $cur != "" then {current_task: $cur} else {} end)]' \
+      <<< "$agents_json")
+  done
 
   jq -n \
     --argjson total "$max_slots" \
