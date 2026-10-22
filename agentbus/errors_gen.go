@@ -30,13 +30,25 @@ func (c ToolCallCause) info() causeInfo { return toolCallCauses[c] }
 // String returns the cause name.
 func (c ToolCallCause) String() string { return c.info().name }
 
+// ToolCallCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func ToolCallCauseByName(name string) (ToolCallCause, bool) {
+	for i, info := range toolCallCauses {
+		if info.name == name {
+			return ToolCallCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- list_agents
 
 // ListAgentsCause is a reason why the MCP tool list_agents failed.
 type ListAgentsCause int
 
 const (
-	ListAgentsStorage ListAgentsCause = iota // the shared state or a file could not be read or written [Storage]
+	ListAgentsOutcomeUnknown ListAgentsCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ListAgentsUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	ListAgentsStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
 // ListAgentsError is the error of the MCP tool list_agents.
@@ -44,6 +56,8 @@ type ListAgentsError = OpError[ListAgentsCause]
 
 // listAgentsCauses describes the ListAgentsCause values (same order as the constants).
 var listAgentsCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -56,6 +70,16 @@ func (c ListAgentsCause) info() causeInfo { return listAgentsCauses[c] }
 // String returns the cause name.
 func (c ListAgentsCause) String() string { return c.info().name }
 
+// ListAgentsCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func ListAgentsCauseByName(name string) (ListAgentsCause, bool) {
+	for i, info := range listAgentsCauses {
+		if info.name == name {
+			return ListAgentsCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- send_message
 
 // SendMessageCause is a reason why the MCP tool send_message failed.
@@ -65,6 +89,8 @@ const (
 	SendMessageMissingArgument SendMessageCause = iota // to or text is missing [InvalidArgument]
 	SendMessageToSelf                                  // the recipient is the caller itself [InvalidArgument]
 	SendMessageNotInTeam                               // the recipient is "team" but the caller is not in a team [NotInTeam]
+	SendMessageOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	SendMessageUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	SendMessageStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -76,6 +102,8 @@ var sendMessageCauses = [...]causeInfo{
 	{"MissingArgument", ClassInvalidArgument},
 	{"ToSelf", ClassInvalidArgument},
 	{"NotInTeam", ClassNotInTeam},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -88,13 +116,25 @@ func (c SendMessageCause) info() causeInfo { return sendMessageCauses[c] }
 // String returns the cause name.
 func (c SendMessageCause) String() string { return c.info().name }
 
+// SendMessageCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func SendMessageCauseByName(name string) (SendMessageCause, bool) {
+	for i, info := range sendMessageCauses {
+		if info.name == name {
+			return SendMessageCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- read_messages
 
 // ReadMessagesCause is a reason why the MCP tool read_messages failed.
 type ReadMessagesCause int
 
 const (
-	ReadMessagesStorage ReadMessagesCause = iota // the shared state or a file could not be read or written [Storage]
+	ReadMessagesOutcomeUnknown ReadMessagesCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ReadMessagesUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	ReadMessagesStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
 // ReadMessagesError is the error of the MCP tool read_messages.
@@ -102,6 +142,8 @@ type ReadMessagesError = OpError[ReadMessagesCause]
 
 // readMessagesCauses describes the ReadMessagesCause values (same order as the constants).
 var readMessagesCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -114,13 +156,25 @@ func (c ReadMessagesCause) info() causeInfo { return readMessagesCauses[c] }
 // String returns the cause name.
 func (c ReadMessagesCause) String() string { return c.info().name }
 
+// ReadMessagesCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func ReadMessagesCauseByName(name string) (ReadMessagesCause, bool) {
+	for i, info := range readMessagesCauses {
+		if info.name == name {
+			return ReadMessagesCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- set_status
 
 // SetStatusCause is a reason why the MCP tool set_status failed.
 type SetStatusCause int
 
 const (
-	SetStatusStorage SetStatusCause = iota // the shared state or a file could not be read or written [Storage]
+	SetStatusOutcomeUnknown SetStatusCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	SetStatusUnavailable                          // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	SetStatusStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
 // SetStatusError is the error of the MCP tool set_status.
@@ -128,6 +182,8 @@ type SetStatusError = OpError[SetStatusCause]
 
 // setStatusCauses describes the SetStatusCause values (same order as the constants).
 var setStatusCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -140,6 +196,16 @@ func (c SetStatusCause) info() causeInfo { return setStatusCauses[c] }
 // String returns the cause name.
 func (c SetStatusCause) String() string { return c.info().name }
 
+// SetStatusCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func SetStatusCauseByName(name string) (SetStatusCause, bool) {
+	for i, info := range setStatusCauses {
+		if info.name == name {
+			return SetStatusCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- reserve
 
 // ReserveCause is a reason why the MCP tool reserve failed.
@@ -147,6 +213,8 @@ type ReserveCause int
 
 const (
 	ReserveMissingResource ReserveCause = iota // the resource name is missing [InvalidArgument]
+	ReserveOutcomeUnknown                      // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ReserveUnavailable                         // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	ReserveStorage                             // the shared state or a file could not be read or written [Storage]
 )
 
@@ -156,6 +224,8 @@ type ReserveError = OpError[ReserveCause]
 // reserveCauses describes the ReserveCause values (same order as the constants).
 var reserveCauses = [...]causeInfo{
 	{"MissingResource", ClassInvalidArgument},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -168,14 +238,26 @@ func (c ReserveCause) info() causeInfo { return reserveCauses[c] }
 // String returns the cause name.
 func (c ReserveCause) String() string { return c.info().name }
 
+// ReserveCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func ReserveCauseByName(name string) (ReserveCause, bool) {
+	for i, info := range reserveCauses {
+		if info.name == name {
+			return ReserveCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- release
 
 // ReleaseCause is a reason why the MCP tool release failed.
 type ReleaseCause int
 
 const (
-	ReleaseNotHolder ReleaseCause = iota // the resource is held by another agent [Permission]
-	ReleaseStorage                       // the shared state or a file could not be read or written [Storage]
+	ReleaseNotHolder      ReleaseCause = iota // the resource is held by another agent [Permission]
+	ReleaseOutcomeUnknown                     // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ReleaseUnavailable                        // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	ReleaseStorage                            // the shared state or a file could not be read or written [Storage]
 )
 
 // ReleaseError is the error of the MCP tool release.
@@ -184,6 +266,8 @@ type ReleaseError = OpError[ReleaseCause]
 // releaseCauses describes the ReleaseCause values (same order as the constants).
 var releaseCauses = [...]causeInfo{
 	{"NotHolder", ClassPermission},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -196,13 +280,25 @@ func (c ReleaseCause) info() causeInfo { return releaseCauses[c] }
 // String returns the cause name.
 func (c ReleaseCause) String() string { return c.info().name }
 
+// ReleaseCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func ReleaseCauseByName(name string) (ReleaseCause, bool) {
+	for i, info := range releaseCauses {
+		if info.name == name {
+			return ReleaseCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- list_reservations
 
 // ListReservationsCause is a reason why the MCP tool list_reservations failed.
 type ListReservationsCause int
 
 const (
-	ListReservationsStorage ListReservationsCause = iota // the shared state or a file could not be read or written [Storage]
+	ListReservationsOutcomeUnknown ListReservationsCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ListReservationsUnavailable                                 // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	ListReservationsStorage                                     // the shared state or a file could not be read or written [Storage]
 )
 
 // ListReservationsError is the error of the MCP tool list_reservations.
@@ -210,6 +306,8 @@ type ListReservationsError = OpError[ListReservationsCause]
 
 // listReservationsCauses describes the ListReservationsCause values (same order as the constants).
 var listReservationsCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -222,6 +320,16 @@ func (c ListReservationsCause) info() causeInfo { return listReservationsCauses[
 // String returns the cause name.
 func (c ListReservationsCause) String() string { return c.info().name }
 
+// ListReservationsCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func ListReservationsCauseByName(name string) (ListReservationsCause, bool) {
+	for i, info := range listReservationsCauses {
+		if info.name == name {
+			return ListReservationsCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- request_investigation
 
 // RequestInvestigationCause is a reason why the MCP tool request_investigation failed.
@@ -230,6 +338,8 @@ type RequestInvestigationCause int
 const (
 	RequestInvestigationInvestigator    RequestInvestigationCause = iota // an investigator called it (investigators cannot request investigations) [Permission]
 	RequestInvestigationMissingQuestion                                  // the question is missing [InvalidArgument]
+	RequestInvestigationOutcomeUnknown                                   // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	RequestInvestigationUnavailable                                      // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	RequestInvestigationStorage                                          // the shared state or a file could not be read or written [Storage]
 )
 
@@ -240,6 +350,8 @@ type RequestInvestigationError = OpError[RequestInvestigationCause]
 var requestInvestigationCauses = [...]causeInfo{
 	{"Investigator", ClassPermission},
 	{"MissingQuestion", ClassInvalidArgument},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -252,6 +364,16 @@ func (c RequestInvestigationCause) info() causeInfo { return requestInvestigatio
 // String returns the cause name.
 func (c RequestInvestigationCause) String() string { return c.info().name }
 
+// RequestInvestigationCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func RequestInvestigationCauseByName(name string) (RequestInvestigationCause, bool) {
+	for i, info := range requestInvestigationCauses {
+		if info.name == name {
+			return RequestInvestigationCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- record_decision
 
 // RecordDecisionCause is a reason why the MCP tool record_decision failed.
@@ -263,6 +385,8 @@ const (
 	RecordDecisionNoSuchInvestigation                             // there is no investigation with this number [NotFound]
 	RecordDecisionNotYourInvestigation                            // the investigation belongs to another task [Permission]
 	RecordDecisionNotFinished                                     // the investigation has not finished yet (no result or rejection to decide on) [InvalidState]
+	RecordDecisionOutcomeUnknown                                  // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	RecordDecisionUnavailable                                     // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	RecordDecisionStorage                                         // the shared state or a file could not be read or written [Storage]
 )
 
@@ -276,6 +400,8 @@ var recordDecisionCauses = [...]causeInfo{
 	{"NoSuchInvestigation", ClassNotFound},
 	{"NotYourInvestigation", ClassPermission},
 	{"NotFinished", ClassInvalidState},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -288,13 +414,25 @@ func (c RecordDecisionCause) info() causeInfo { return recordDecisionCauses[c] }
 // String returns the cause name.
 func (c RecordDecisionCause) String() string { return c.info().name }
 
+// RecordDecisionCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func RecordDecisionCauseByName(name string) (RecordDecisionCause, bool) {
+	for i, info := range recordDecisionCauses {
+		if info.name == name {
+			return RecordDecisionCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- investigation_status
 
 // InvestigationStatusCause is a reason why the MCP tool investigation_status failed.
 type InvestigationStatusCause int
 
 const (
-	InvestigationStatusStorage InvestigationStatusCause = iota // the shared state or a file could not be read or written [Storage]
+	InvestigationStatusOutcomeUnknown InvestigationStatusCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	InvestigationStatusUnavailable                                    // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	InvestigationStatusStorage                                        // the shared state or a file could not be read or written [Storage]
 )
 
 // InvestigationStatusError is the error of the MCP tool investigation_status.
@@ -302,6 +440,8 @@ type InvestigationStatusError = OpError[InvestigationStatusCause]
 
 // investigationStatusCauses describes the InvestigationStatusCause values (same order as the constants).
 var investigationStatusCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -314,13 +454,25 @@ func (c InvestigationStatusCause) info() causeInfo { return investigationStatusC
 // String returns the cause name.
 func (c InvestigationStatusCause) String() string { return c.info().name }
 
+// InvestigationStatusCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func InvestigationStatusCauseByName(name string) (InvestigationStatusCause, bool) {
+	for i, info := range investigationStatusCauses {
+		if info.name == name {
+			return InvestigationStatusCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- wait_for_message
 
 // WaitForMessageCause is a reason why the MCP tool wait_for_message failed.
 type WaitForMessageCause int
 
 const (
-	WaitForMessageStorage WaitForMessageCause = iota // the shared state or a file could not be read or written [Storage]
+	WaitForMessageOutcomeUnknown WaitForMessageCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	WaitForMessageUnavailable                               // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	WaitForMessageStorage                                   // the shared state or a file could not be read or written [Storage]
 )
 
 // WaitForMessageError is the error of the MCP tool wait_for_message.
@@ -328,6 +480,8 @@ type WaitForMessageError = OpError[WaitForMessageCause]
 
 // waitForMessageCauses describes the WaitForMessageCause values (same order as the constants).
 var waitForMessageCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -340,13 +494,25 @@ func (c WaitForMessageCause) info() causeInfo { return waitForMessageCauses[c] }
 // String returns the cause name.
 func (c WaitForMessageCause) String() string { return c.info().name }
 
+// WaitForMessageCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func WaitForMessageCauseByName(name string) (WaitForMessageCause, bool) {
+	for i, info := range waitForMessageCauses {
+		if info.name == name {
+			return WaitForMessageCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- notebook_read
 
 // NotebookReadCause is a reason why the MCP tool notebook_read failed.
 type NotebookReadCause int
 
 const (
-	NotebookReadStorage NotebookReadCause = iota // the shared state or a file could not be read or written [Storage]
+	NotebookReadOutcomeUnknown NotebookReadCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	NotebookReadUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	NotebookReadStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
 // NotebookReadError is the error of the MCP tool notebook_read.
@@ -354,6 +520,8 @@ type NotebookReadError = OpError[NotebookReadCause]
 
 // notebookReadCauses describes the NotebookReadCause values (same order as the constants).
 var notebookReadCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -366,14 +534,26 @@ func (c NotebookReadCause) info() causeInfo { return notebookReadCauses[c] }
 // String returns the cause name.
 func (c NotebookReadCause) String() string { return c.info().name }
 
+// NotebookReadCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func NotebookReadCauseByName(name string) (NotebookReadCause, bool) {
+	for i, info := range notebookReadCauses {
+		if info.name == name {
+			return NotebookReadCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- notebook_append
 
 // NotebookAppendCause is a reason why the MCP tool notebook_append failed.
 type NotebookAppendCause int
 
 const (
-	NotebookAppendMissingText NotebookAppendCause = iota // the entry text is missing [InvalidArgument]
-	NotebookAppendStorage                                // the shared state or a file could not be read or written [Storage]
+	NotebookAppendMissingText    NotebookAppendCause = iota // the entry text is missing [InvalidArgument]
+	NotebookAppendOutcomeUnknown                            // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	NotebookAppendUnavailable                               // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	NotebookAppendStorage                                   // the shared state or a file could not be read or written [Storage]
 )
 
 // NotebookAppendError is the error of the MCP tool notebook_append.
@@ -382,6 +562,8 @@ type NotebookAppendError = OpError[NotebookAppendCause]
 // notebookAppendCauses describes the NotebookAppendCause values (same order as the constants).
 var notebookAppendCauses = [...]causeInfo{
 	{"MissingText", ClassInvalidArgument},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -394,14 +576,26 @@ func (c NotebookAppendCause) info() causeInfo { return notebookAppendCauses[c] }
 // String returns the cause name.
 func (c NotebookAppendCause) String() string { return c.info().name }
 
+// NotebookAppendCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func NotebookAppendCauseByName(name string) (NotebookAppendCause, bool) {
+	for i, info := range notebookAppendCauses {
+		if info.name == name {
+			return NotebookAppendCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- notebook_write_section
 
 // NotebookWriteSectionCause is a reason why the MCP tool notebook_write_section failed.
 type NotebookWriteSectionCause int
 
 const (
-	NotebookWriteSectionMissingName NotebookWriteSectionCause = iota // the section name is missing [InvalidArgument]
-	NotebookWriteSectionStorage                                      // the shared state or a file could not be read or written [Storage]
+	NotebookWriteSectionMissingName    NotebookWriteSectionCause = iota // the section name is missing [InvalidArgument]
+	NotebookWriteSectionOutcomeUnknown                                  // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	NotebookWriteSectionUnavailable                                     // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	NotebookWriteSectionStorage                                         // the shared state or a file could not be read or written [Storage]
 )
 
 // NotebookWriteSectionError is the error of the MCP tool notebook_write_section.
@@ -410,6 +604,8 @@ type NotebookWriteSectionError = OpError[NotebookWriteSectionCause]
 // notebookWriteSectionCauses describes the NotebookWriteSectionCause values (same order as the constants).
 var notebookWriteSectionCauses = [...]causeInfo{
 	{"MissingName", ClassInvalidArgument},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -422,14 +618,26 @@ func (c NotebookWriteSectionCause) info() causeInfo { return notebookWriteSectio
 // String returns the cause name.
 func (c NotebookWriteSectionCause) String() string { return c.info().name }
 
+// NotebookWriteSectionCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func NotebookWriteSectionCauseByName(name string) (NotebookWriteSectionCause, bool) {
+	for i, info := range notebookWriteSectionCauses {
+		if info.name == name {
+			return NotebookWriteSectionCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- team_status
 
 // TeamStatusCause is a reason why the MCP tool team_status failed.
 type TeamStatusCause int
 
 const (
-	TeamStatusNotInTeam TeamStatusCause = iota // the caller is not in a team [NotInTeam]
-	TeamStatusStorage                          // the shared state or a file could not be read or written [Storage]
+	TeamStatusNotInTeam      TeamStatusCause = iota // the caller is not in a team [NotInTeam]
+	TeamStatusOutcomeUnknown                        // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	TeamStatusUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	TeamStatusStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
 // TeamStatusError is the error of the MCP tool team_status.
@@ -438,6 +646,8 @@ type TeamStatusError = OpError[TeamStatusCause]
 // teamStatusCauses describes the TeamStatusCause values (same order as the constants).
 var teamStatusCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -450,6 +660,16 @@ func (c TeamStatusCause) info() causeInfo { return teamStatusCauses[c] }
 // String returns the cause name.
 func (c TeamStatusCause) String() string { return c.info().name }
 
+// TeamStatusCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func TeamStatusCauseByName(name string) (TeamStatusCause, bool) {
+	for i, info := range teamStatusCauses {
+		if info.name == name {
+			return TeamStatusCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- checkpoint
 
 // CheckpointCause is a reason why the MCP tool checkpoint failed.
@@ -457,6 +677,8 @@ type CheckpointCause int
 
 const (
 	CheckpointMissingSummary CheckpointCause = iota // the summary is missing [InvalidArgument]
+	CheckpointOutcomeUnknown                        // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CheckpointUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CheckpointStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
@@ -466,6 +688,8 @@ type CheckpointError = OpError[CheckpointCause]
 // checkpointCauses describes the CheckpointCause values (same order as the constants).
 var checkpointCauses = [...]causeInfo{
 	{"MissingSummary", ClassInvalidArgument},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -478,14 +702,26 @@ func (c CheckpointCause) info() causeInfo { return checkpointCauses[c] }
 // String returns the cause name.
 func (c CheckpointCause) String() string { return c.info().name }
 
+// CheckpointCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CheckpointCauseByName(name string) (CheckpointCause, bool) {
+	for i, info := range checkpointCauses {
+		if info.name == name {
+			return CheckpointCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- claim_lead
 
 // ClaimLeadCause is a reason why the MCP tool claim_lead failed.
 type ClaimLeadCause int
 
 const (
-	ClaimLeadNotInTeam ClaimLeadCause = iota // the caller is not in a team [NotInTeam]
-	ClaimLeadStorage                         // the shared state or a file could not be read or written [Storage]
+	ClaimLeadNotInTeam      ClaimLeadCause = iota // the caller is not in a team [NotInTeam]
+	ClaimLeadOutcomeUnknown                       // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ClaimLeadUnavailable                          // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	ClaimLeadStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
 // ClaimLeadError is the error of the MCP tool claim_lead.
@@ -494,6 +730,8 @@ type ClaimLeadError = OpError[ClaimLeadCause]
 // claimLeadCauses describes the ClaimLeadCause values (same order as the constants).
 var claimLeadCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -506,6 +744,16 @@ func (c ClaimLeadCause) info() causeInfo { return claimLeadCauses[c] }
 // String returns the cause name.
 func (c ClaimLeadCause) String() string { return c.info().name }
 
+// ClaimLeadCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func ClaimLeadCauseByName(name string) (ClaimLeadCause, bool) {
+	for i, info := range claimLeadCauses {
+		if info.name == name {
+			return ClaimLeadCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- handover_lead
 
 // HandoverLeadCause is a reason why the MCP tool handover_lead failed.
@@ -517,6 +765,8 @@ const (
 	HandoverLeadNotMember                               // the new coordinator is not a member of the team [NotFound]
 	HandoverLeadTargetIsWorker                          // the new coordinator is a worker (workers cannot coordinate) [Permission]
 	HandoverLeadTargetExcluded                          // the new coordinator is excluded from the team [InvalidState]
+	HandoverLeadOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	HandoverLeadUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	HandoverLeadStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -530,6 +780,8 @@ var handoverLeadCauses = [...]causeInfo{
 	{"NotMember", ClassNotFound},
 	{"TargetIsWorker", ClassPermission},
 	{"TargetExcluded", ClassInvalidState},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -542,6 +794,16 @@ func (c HandoverLeadCause) info() causeInfo { return handoverLeadCauses[c] }
 // String returns the cause name.
 func (c HandoverLeadCause) String() string { return c.info().name }
 
+// HandoverLeadCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func HandoverLeadCauseByName(name string) (HandoverLeadCause, bool) {
+	for i, info := range handoverLeadCauses {
+		if info.name == name {
+			return HandoverLeadCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- quiz_start
 
 // QuizStartCause is a reason why the MCP tool quiz_start failed.
@@ -553,6 +815,8 @@ const (
 	QuizStartNotCoordinator                        // the caller is not the team coordinator [Permission]
 	QuizStartAlreadyHeld                           // the team already had its quiz [Conflict]
 	QuizStartResumedTeam                           // the team was resumed: its members already passed the quiz [InvalidState]
+	QuizStartOutcomeUnknown                        // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	QuizStartUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	QuizStartStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
@@ -566,6 +830,8 @@ var quizStartCauses = [...]causeInfo{
 	{"NotCoordinator", ClassPermission},
 	{"AlreadyHeld", ClassConflict},
 	{"ResumedTeam", ClassInvalidState},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -578,6 +844,16 @@ func (c QuizStartCause) info() causeInfo { return quizStartCauses[c] }
 // String returns the cause name.
 func (c QuizStartCause) String() string { return c.info().name }
 
+// QuizStartCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func QuizStartCauseByName(name string) (QuizStartCause, bool) {
+	for i, info := range quizStartCauses {
+		if info.name == name {
+			return QuizStartCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- quiz_answer
 
 // QuizAnswerCause is a reason why the MCP tool quiz_answer failed.
@@ -589,6 +865,8 @@ const (
 	QuizAnswerNoQuiz                                    // no quiz question has been asked yet [InvalidState]
 	QuizAnswerCoordinatorAnswers                        // the coordinator tried to answer its own quiz [Permission]
 	QuizAnswerAlreadyAnswered                           // the member already answered (answers are final) [Conflict]
+	QuizAnswerOutcomeUnknown                            // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	QuizAnswerUnavailable                               // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	QuizAnswerStorage                                   // the shared state or a file could not be read or written [Storage]
 )
 
@@ -602,6 +880,8 @@ var quizAnswerCauses = [...]causeInfo{
 	{"NoQuiz", ClassInvalidState},
 	{"CoordinatorAnswers", ClassPermission},
 	{"AlreadyAnswered", ClassConflict},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -614,6 +894,16 @@ func (c QuizAnswerCause) info() causeInfo { return quizAnswerCauses[c] }
 // String returns the cause name.
 func (c QuizAnswerCause) String() string { return c.info().name }
 
+// QuizAnswerCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func QuizAnswerCauseByName(name string) (QuizAnswerCause, bool) {
+	for i, info := range quizAnswerCauses {
+		if info.name == name {
+			return QuizAnswerCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- quiz_results
 
 // QuizResultsCause is a reason why the MCP tool quiz_results failed.
@@ -623,6 +913,8 @@ const (
 	QuizResultsNotInTeam      QuizResultsCause = iota // the caller is not in a team [NotInTeam]
 	QuizResultsNotCoordinator                         // the caller is not the team coordinator [Permission]
 	QuizResultsNoQuiz                                 // no quiz question has been asked yet [InvalidState]
+	QuizResultsOutcomeUnknown                         // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	QuizResultsUnavailable                            // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	QuizResultsStorage                                // the shared state or a file could not be read or written [Storage]
 )
 
@@ -634,6 +926,8 @@ var quizResultsCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
 	{"NotCoordinator", ClassPermission},
 	{"NoQuiz", ClassInvalidState},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -646,6 +940,16 @@ func (c QuizResultsCause) info() causeInfo { return quizResultsCauses[c] }
 // String returns the cause name.
 func (c QuizResultsCause) String() string { return c.info().name }
 
+// QuizResultsCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func QuizResultsCauseByName(name string) (QuizResultsCause, bool) {
+	for i, info := range quizResultsCauses {
+		if info.name == name {
+			return QuizResultsCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- team_exclude
 
 // TeamExcludeCause is a reason why the MCP tool team_exclude failed.
@@ -655,6 +959,8 @@ const (
 	TeamExcludeNotInTeam      TeamExcludeCause = iota // the caller is not in a team [NotInTeam]
 	TeamExcludeNotCoordinator                         // the caller is not the team coordinator [Permission]
 	TeamExcludeNotMember                              // the agent is not a member of the team (or it is the coordinator itself) [NotFound]
+	TeamExcludeOutcomeUnknown                         // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	TeamExcludeUnavailable                            // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	TeamExcludeStorage                                // the shared state or a file could not be read or written [Storage]
 )
 
@@ -666,6 +972,8 @@ var teamExcludeCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
 	{"NotCoordinator", ClassPermission},
 	{"NotMember", ClassNotFound},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -678,6 +986,16 @@ func (c TeamExcludeCause) info() causeInfo { return teamExcludeCauses[c] }
 // String returns the cause name.
 func (c TeamExcludeCause) String() string { return c.info().name }
 
+// TeamExcludeCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func TeamExcludeCauseByName(name string) (TeamExcludeCause, bool) {
+	for i, info := range teamExcludeCauses {
+		if info.name == name {
+			return TeamExcludeCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- board_add
 
 // BoardAddCause is a reason why the MCP tool board_add failed.
@@ -689,6 +1007,8 @@ const (
 	BoardAddNotInTeam                               // the caller is not in a team (outside a team: delegate) [NotInTeam]
 	BoardAddUnknownMember                           // for names an agent that is not a member of the team (or is excluded) [NotFound]
 	BoardAddForWorkerNeedsEasy                      // for names a worker but the item is not level easy [InvalidArgument]
+	BoardAddOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	BoardAddUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	BoardAddStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -702,6 +1022,8 @@ var boardAddCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
 	{"UnknownMember", ClassNotFound},
 	{"ForWorkerNeedsEasy", ClassInvalidArgument},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -714,14 +1036,26 @@ func (c BoardAddCause) info() causeInfo { return boardAddCauses[c] }
 // String returns the cause name.
 func (c BoardAddCause) String() string { return c.info().name }
 
+// BoardAddCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func BoardAddCauseByName(name string) (BoardAddCause, bool) {
+	for i, info := range boardAddCauses {
+		if info.name == name {
+			return BoardAddCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- board_list
 
 // BoardListCause is a reason why the MCP tool board_list failed.
 type BoardListCause int
 
 const (
-	BoardListNotInTeam BoardListCause = iota // the caller is not in a team [NotInTeam]
-	BoardListStorage                         // the shared state or a file could not be read or written [Storage]
+	BoardListNotInTeam      BoardListCause = iota // the caller is not in a team [NotInTeam]
+	BoardListOutcomeUnknown                       // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	BoardListUnavailable                          // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	BoardListStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
 // BoardListError is the error of the MCP tool board_list.
@@ -730,6 +1064,8 @@ type BoardListError = OpError[BoardListCause]
 // boardListCauses describes the BoardListCause values (same order as the constants).
 var boardListCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -742,6 +1078,16 @@ func (c BoardListCause) info() causeInfo { return boardListCauses[c] }
 // String returns the cause name.
 func (c BoardListCause) String() string { return c.info().name }
 
+// BoardListCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func BoardListCauseByName(name string) (BoardListCause, bool) {
+	for i, info := range boardListCauses {
+		if info.name == name {
+			return BoardListCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- board_claim
 
 // BoardClaimCause is a reason why the MCP tool board_claim failed.
@@ -753,6 +1099,8 @@ const (
 	BoardClaimWorkerNeedsEasy                         // a worker tried to claim a normal-level item [Permission]
 	BoardClaimAlreadyTaken                            // the item is already claimed or done [Conflict]
 	BoardClaimReservedForOther                        // the item is reserved for another member (board_add with for) [Permission]
+	BoardClaimOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	BoardClaimUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	BoardClaimStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -766,6 +1114,8 @@ var boardClaimCauses = [...]causeInfo{
 	{"WorkerNeedsEasy", ClassPermission},
 	{"AlreadyTaken", ClassConflict},
 	{"ReservedForOther", ClassPermission},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -778,16 +1128,28 @@ func (c BoardClaimCause) info() causeInfo { return boardClaimCauses[c] }
 // String returns the cause name.
 func (c BoardClaimCause) String() string { return c.info().name }
 
+// BoardClaimCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func BoardClaimCauseByName(name string) (BoardClaimCause, bool) {
+	for i, info := range boardClaimCauses {
+		if info.name == name {
+			return BoardClaimCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- board_done
 
 // BoardDoneCause is a reason why the MCP tool board_done failed.
 type BoardDoneCause int
 
 const (
-	BoardDoneMissingResult BoardDoneCause = iota // the result is missing [InvalidArgument]
-	BoardDoneNotInTeam                           // the caller is not in a team [NotInTeam]
-	BoardDoneNotYourItem                         // the item does not exist or is claimed by someone else [Permission]
-	BoardDoneStorage                             // the shared state or a file could not be read or written [Storage]
+	BoardDoneMissingResult  BoardDoneCause = iota // the result is missing [InvalidArgument]
+	BoardDoneNotInTeam                            // the caller is not in a team [NotInTeam]
+	BoardDoneNotYourItem                          // the item does not exist or is claimed by someone else [Permission]
+	BoardDoneOutcomeUnknown                       // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	BoardDoneUnavailable                          // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	BoardDoneStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
 // BoardDoneError is the error of the MCP tool board_done.
@@ -798,6 +1160,8 @@ var boardDoneCauses = [...]causeInfo{
 	{"MissingResult", ClassInvalidArgument},
 	{"NotInTeam", ClassNotInTeam},
 	{"NotYourItem", ClassPermission},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -810,15 +1174,27 @@ func (c BoardDoneCause) info() causeInfo { return boardDoneCauses[c] }
 // String returns the cause name.
 func (c BoardDoneCause) String() string { return c.info().name }
 
+// BoardDoneCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func BoardDoneCauseByName(name string) (BoardDoneCause, bool) {
+	for i, info := range boardDoneCauses {
+		if info.name == name {
+			return BoardDoneCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- board_release
 
 // BoardReleaseCause is a reason why the MCP tool board_release failed.
 type BoardReleaseCause int
 
 const (
-	BoardReleaseNotInTeam   BoardReleaseCause = iota // the caller is not in a team [NotInTeam]
-	BoardReleaseNotYourItem                          // the item does not exist or is claimed by someone else [Permission]
-	BoardReleaseStorage                              // the shared state or a file could not be read or written [Storage]
+	BoardReleaseNotInTeam      BoardReleaseCause = iota // the caller is not in a team [NotInTeam]
+	BoardReleaseNotYourItem                             // the item does not exist or is claimed by someone else [Permission]
+	BoardReleaseOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	BoardReleaseUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	BoardReleaseStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
 // BoardReleaseError is the error of the MCP tool board_release.
@@ -828,6 +1204,8 @@ type BoardReleaseError = OpError[BoardReleaseCause]
 var boardReleaseCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
 	{"NotYourItem", ClassPermission},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -840,6 +1218,16 @@ func (c BoardReleaseCause) info() causeInfo { return boardReleaseCauses[c] }
 // String returns the cause name.
 func (c BoardReleaseCause) String() string { return c.info().name }
 
+// BoardReleaseCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func BoardReleaseCauseByName(name string) (BoardReleaseCause, bool) {
+	for i, info := range boardReleaseCauses {
+		if info.name == name {
+			return BoardReleaseCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- delegate
 
 // DelegateCause is a reason why the MCP tool delegate failed.
@@ -848,6 +1236,8 @@ type DelegateCause int
 const (
 	DelegateNotNormalTier  DelegateCause = iota // a worker or an investigator called it (delegate is for normal models) [Permission]
 	DelegateMissingRequest                      // the request text is missing [InvalidArgument]
+	DelegateOutcomeUnknown                      // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	DelegateUnavailable                         // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	DelegateStorage                             // the shared state or a file could not be read or written [Storage]
 )
 
@@ -858,6 +1248,8 @@ type DelegateError = OpError[DelegateCause]
 var delegateCauses = [...]causeInfo{
 	{"NotNormalTier", ClassPermission},
 	{"MissingRequest", ClassInvalidArgument},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -870,13 +1262,25 @@ func (c DelegateCause) info() causeInfo { return delegateCauses[c] }
 // String returns the cause name.
 func (c DelegateCause) String() string { return c.info().name }
 
+// DelegateCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func DelegateCauseByName(name string) (DelegateCause, bool) {
+	for i, info := range delegateCauses {
+		if info.name == name {
+			return DelegateCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- delegation_status
 
 // DelegationStatusCause is a reason why the MCP tool delegation_status failed.
 type DelegationStatusCause int
 
 const (
-	DelegationStatusStorage DelegationStatusCause = iota // the shared state or a file could not be read or written [Storage]
+	DelegationStatusOutcomeUnknown DelegationStatusCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	DelegationStatusUnavailable                                 // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	DelegationStatusStorage                                     // the shared state or a file could not be read or written [Storage]
 )
 
 // DelegationStatusError is the error of the MCP tool delegation_status.
@@ -884,6 +1288,8 @@ type DelegationStatusError = OpError[DelegationStatusCause]
 
 // delegationStatusCauses describes the DelegationStatusCause values (same order as the constants).
 var delegationStatusCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -895,6 +1301,16 @@ func (c DelegationStatusCause) info() causeInfo { return delegationStatusCauses[
 
 // String returns the cause name.
 func (c DelegationStatusCause) String() string { return c.info().name }
+
+// DelegationStatusCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func DelegationStatusCauseByName(name string) (DelegationStatusCause, bool) {
+	for i, info := range delegationStatusCauses {
+		if info.name == name {
+			return DelegationStatusCause(i), true
+		}
+	}
+	return 0, false
+}
 
 // ---------------------------------------------------------------- agentbus
 
@@ -925,6 +1341,16 @@ func (c CliCause) info() causeInfo { return cliCauses[c] }
 
 // String returns the cause name.
 func (c CliCause) String() string { return c.info().name }
+
+// CliCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CliCauseByName(name string) (CliCause, bool) {
+	for i, info := range cliCauses {
+		if info.name == name {
+			return CliCause(i), true
+		}
+	}
+	return 0, false
+}
 
 // ---------------------------------------------------------------- serve
 
@@ -960,15 +1386,27 @@ func (c CmdServeCause) info() causeInfo { return cmdServeCauses[c] }
 // String returns the cause name.
 func (c CmdServeCause) String() string { return c.info().name }
 
+// CmdServeCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdServeCauseByName(name string) (CmdServeCause, bool) {
+	for i, info := range cmdServeCauses {
+		if info.name == name {
+			return CmdServeCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- send
 
 // CmdSendCause is a reason why the subcommand send failed.
 type CmdSendCause int
 
 const (
-	CmdSendMissingText   CmdSendCause = iota // the message text is missing [InvalidArgument]
-	CmdSendInvalidNotice                     // --notice is not a known script notice [InvalidArgument]
-	CmdSendStorage                           // the shared state or a file could not be read or written [Storage]
+	CmdSendMissingText    CmdSendCause = iota // the message text is missing [InvalidArgument]
+	CmdSendInvalidNotice                      // --notice is not a known script notice [InvalidArgument]
+	CmdSendOutcomeUnknown                     // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdSendUnavailable                        // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdSendStorage                            // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdSendError is the error of the subcommand send.
@@ -978,6 +1416,8 @@ type CmdSendError = OpError[CmdSendCause]
 var cmdSendCauses = [...]causeInfo{
 	{"MissingText", ClassInvalidArgument},
 	{"InvalidNotice", ClassInvalidArgument},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -990,13 +1430,25 @@ func (c CmdSendCause) info() causeInfo { return cmdSendCauses[c] }
 // String returns the cause name.
 func (c CmdSendCause) String() string { return c.info().name }
 
+// CmdSendCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdSendCauseByName(name string) (CmdSendCause, bool) {
+	for i, info := range cmdSendCauses {
+		if info.name == name {
+			return CmdSendCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- log
 
 // CmdLogCause is a reason why the subcommand log failed.
 type CmdLogCause int
 
 const (
-	CmdLogStorage CmdLogCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdLogOutcomeUnknown CmdLogCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdLogUnavailable                       // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdLogStorage                           // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdLogError is the error of the subcommand log.
@@ -1004,6 +1456,8 @@ type CmdLogError = OpError[CmdLogCause]
 
 // cmdLogCauses describes the CmdLogCause values (same order as the constants).
 var cmdLogCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1016,13 +1470,25 @@ func (c CmdLogCause) info() causeInfo { return cmdLogCauses[c] }
 // String returns the cause name.
 func (c CmdLogCause) String() string { return c.info().name }
 
+// CmdLogCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdLogCauseByName(name string) (CmdLogCause, bool) {
+	for i, info := range cmdLogCauses {
+		if info.name == name {
+			return CmdLogCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- status
 
 // CmdStatusCause is a reason why the subcommand status failed.
 type CmdStatusCause int
 
 const (
-	CmdStatusStorage CmdStatusCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdStatusOutcomeUnknown CmdStatusCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdStatusUnavailable                          // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdStatusStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdStatusError is the error of the subcommand status.
@@ -1030,6 +1496,8 @@ type CmdStatusError = OpError[CmdStatusCause]
 
 // cmdStatusCauses describes the CmdStatusCause values (same order as the constants).
 var cmdStatusCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1042,14 +1510,26 @@ func (c CmdStatusCause) info() causeInfo { return cmdStatusCauses[c] }
 // String returns the cause name.
 func (c CmdStatusCause) String() string { return c.info().name }
 
+// CmdStatusCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdStatusCauseByName(name string) (CmdStatusCause, bool) {
+	for i, info := range cmdStatusCauses {
+		if info.name == name {
+			return CmdStatusCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- release
 
 // CmdReleaseCause is a reason why the subcommand release (a forced release) failed.
 type CmdReleaseCause int
 
 const (
-	CmdReleaseUsage   CmdReleaseCause = iota // the resource argument is missing [InvalidArgument]
-	CmdReleaseStorage                        // the shared state or a file could not be read or written [Storage]
+	CmdReleaseUsage          CmdReleaseCause = iota // the resource argument is missing [InvalidArgument]
+	CmdReleaseOutcomeUnknown                        // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdReleaseUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdReleaseStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdReleaseError is the error of the subcommand release (a forced release).
@@ -1058,6 +1538,8 @@ type CmdReleaseError = OpError[CmdReleaseCause]
 // cmdReleaseCauses describes the CmdReleaseCause values (same order as the constants).
 var cmdReleaseCauses = [...]causeInfo{
 	{"Usage", ClassInvalidArgument},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1070,13 +1552,25 @@ func (c CmdReleaseCause) info() causeInfo { return cmdReleaseCauses[c] }
 // String returns the cause name.
 func (c CmdReleaseCause) String() string { return c.info().name }
 
+// CmdReleaseCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdReleaseCauseByName(name string) (CmdReleaseCause, bool) {
+	for i, info := range cmdReleaseCauses {
+		if info.name == name {
+			return CmdReleaseCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- inv-list
 
 // CmdInvListCause is a reason why the subcommand inv-list failed.
 type CmdInvListCause int
 
 const (
-	CmdInvListStorage CmdInvListCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdInvListOutcomeUnknown CmdInvListCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInvListUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdInvListStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdInvListError is the error of the subcommand inv-list.
@@ -1084,6 +1578,8 @@ type CmdInvListError = OpError[CmdInvListCause]
 
 // cmdInvListCauses describes the CmdInvListCause values (same order as the constants).
 var cmdInvListCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1096,13 +1592,25 @@ func (c CmdInvListCause) info() causeInfo { return cmdInvListCauses[c] }
 // String returns the cause name.
 func (c CmdInvListCause) String() string { return c.info().name }
 
+// CmdInvListCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdInvListCauseByName(name string) (CmdInvListCause, bool) {
+	for i, info := range cmdInvListCauses {
+		if info.name == name {
+			return CmdInvListCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- inv-next
 
 // CmdInvNextCause is a reason why the subcommand inv-next failed.
 type CmdInvNextCause int
 
 const (
-	CmdInvNextStorage CmdInvNextCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdInvNextOutcomeUnknown CmdInvNextCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInvNextUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdInvNextStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdInvNextError is the error of the subcommand inv-next.
@@ -1110,6 +1618,8 @@ type CmdInvNextError = OpError[CmdInvNextCause]
 
 // cmdInvNextCauses describes the CmdInvNextCause values (same order as the constants).
 var cmdInvNextCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1122,6 +1632,16 @@ func (c CmdInvNextCause) info() causeInfo { return cmdInvNextCauses[c] }
 // String returns the cause name.
 func (c CmdInvNextCause) String() string { return c.info().name }
 
+// CmdInvNextCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdInvNextCauseByName(name string) (CmdInvNextCause, bool) {
+	for i, info := range cmdInvNextCauses {
+		if info.name == name {
+			return CmdInvNextCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- inv-set
 
 // CmdInvSetCause is a reason why the subcommand inv-set failed.
@@ -1130,6 +1650,8 @@ type CmdInvSetCause int
 const (
 	CmdInvSetInvalidStatus       CmdInvSetCause = iota // --status is not an investigation status [InvalidArgument]
 	CmdInvSetNoSuchInvestigation                       // there is no investigation with this number [NotFound]
+	CmdInvSetOutcomeUnknown                            // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInvSetUnavailable                               // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdInvSetStorage                                   // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1140,6 +1662,8 @@ type CmdInvSetError = OpError[CmdInvSetCause]
 var cmdInvSetCauses = [...]causeInfo{
 	{"InvalidStatus", ClassInvalidArgument},
 	{"NoSuchInvestigation", ClassNotFound},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1152,6 +1676,16 @@ func (c CmdInvSetCause) info() causeInfo { return cmdInvSetCauses[c] }
 // String returns the cause name.
 func (c CmdInvSetCause) String() string { return c.info().name }
 
+// CmdInvSetCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdInvSetCauseByName(name string) (CmdInvSetCause, bool) {
+	for i, info := range cmdInvSetCauses {
+		if info.name == name {
+			return CmdInvSetCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- inv-get
 
 // CmdInvGetCause is a reason why the subcommand inv-get failed.
@@ -1159,6 +1693,8 @@ type CmdInvGetCause int
 
 const (
 	CmdInvGetNoSuchInvestigation CmdInvGetCause = iota // there is no investigation with this number [NotFound]
+	CmdInvGetOutcomeUnknown                            // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInvGetUnavailable                               // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdInvGetStorage                                   // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1168,6 +1704,8 @@ type CmdInvGetError = OpError[CmdInvGetCause]
 // cmdInvGetCauses describes the CmdInvGetCause values (same order as the constants).
 var cmdInvGetCauses = [...]causeInfo{
 	{"NoSuchInvestigation", ClassNotFound},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1180,13 +1718,25 @@ func (c CmdInvGetCause) info() causeInfo { return cmdInvGetCauses[c] }
 // String returns the cause name.
 func (c CmdInvGetCause) String() string { return c.info().name }
 
+// CmdInvGetCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdInvGetCauseByName(name string) (CmdInvGetCause, bool) {
+	for i, info := range cmdInvGetCauses {
+		if info.name == name {
+			return CmdInvGetCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- inv-pending
 
 // CmdInvPendingCause is a reason why the subcommand inv-pending failed.
 type CmdInvPendingCause int
 
 const (
-	CmdInvPendingStorage CmdInvPendingCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdInvPendingOutcomeUnknown CmdInvPendingCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInvPendingUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdInvPendingStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdInvPendingError is the error of the subcommand inv-pending.
@@ -1194,6 +1744,8 @@ type CmdInvPendingError = OpError[CmdInvPendingCause]
 
 // cmdInvPendingCauses describes the CmdInvPendingCause values (same order as the constants).
 var cmdInvPendingCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1206,14 +1758,26 @@ func (c CmdInvPendingCause) info() causeInfo { return cmdInvPendingCauses[c] }
 // String returns the cause name.
 func (c CmdInvPendingCause) String() string { return c.info().name }
 
+// CmdInvPendingCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdInvPendingCauseByName(name string) (CmdInvPendingCause, bool) {
+	for i, info := range cmdInvPendingCauses {
+		if info.name == name {
+			return CmdInvPendingCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- inv-add
 
 // CmdInvAddCause is a reason why the subcommand inv-add failed.
 type CmdInvAddCause int
 
 const (
-	CmdInvAddInvalidKind CmdInvAddCause = iota // --kind is not an investigation kind [InvalidArgument]
-	CmdInvAddStorage                           // the shared state or a file could not be read or written [Storage]
+	CmdInvAddInvalidKind    CmdInvAddCause = iota // --kind is not an investigation kind [InvalidArgument]
+	CmdInvAddOutcomeUnknown                       // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInvAddUnavailable                          // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdInvAddStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdInvAddError is the error of the subcommand inv-add.
@@ -1222,6 +1786,8 @@ type CmdInvAddError = OpError[CmdInvAddCause]
 // cmdInvAddCauses describes the CmdInvAddCause values (same order as the constants).
 var cmdInvAddCauses = [...]causeInfo{
 	{"InvalidKind", ClassInvalidArgument},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1234,13 +1800,25 @@ func (c CmdInvAddCause) info() causeInfo { return cmdInvAddCauses[c] }
 // String returns the cause name.
 func (c CmdInvAddCause) String() string { return c.info().name }
 
+// CmdInvAddCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdInvAddCauseByName(name string) (CmdInvAddCause, bool) {
+	for i, info := range cmdInvAddCauses {
+		if info.name == name {
+			return CmdInvAddCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- cancel-pending
 
 // CmdCancelPendingCause is a reason why the subcommand cancel-pending failed.
 type CmdCancelPendingCause int
 
 const (
-	CmdCancelPendingStorage CmdCancelPendingCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdCancelPendingOutcomeUnknown CmdCancelPendingCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdCancelPendingUnavailable                                 // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdCancelPendingStorage                                     // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdCancelPendingError is the error of the subcommand cancel-pending.
@@ -1248,6 +1826,8 @@ type CmdCancelPendingError = OpError[CmdCancelPendingCause]
 
 // cmdCancelPendingCauses describes the CmdCancelPendingCause values (same order as the constants).
 var cmdCancelPendingCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1259,6 +1839,16 @@ func (c CmdCancelPendingCause) info() causeInfo { return cmdCancelPendingCauses[
 
 // String returns the cause name.
 func (c CmdCancelPendingCause) String() string { return c.info().name }
+
+// CmdCancelPendingCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdCancelPendingCauseByName(name string) (CmdCancelPendingCause, bool) {
+	for i, info := range cmdCancelPendingCauses {
+		if info.name == name {
+			return CmdCancelPendingCause(i), true
+		}
+	}
+	return 0, false
+}
 
 // ---------------------------------------------------------------- normalize
 
@@ -1290,15 +1880,27 @@ func (c CmdNormalizeCause) info() causeInfo { return cmdNormalizeCauses[c] }
 // String returns the cause name.
 func (c CmdNormalizeCause) String() string { return c.info().name }
 
+// CmdNormalizeCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdNormalizeCauseByName(name string) (CmdNormalizeCause, bool) {
+	for i, info := range cmdNormalizeCauses {
+		if info.name == name {
+			return CmdNormalizeCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- team-create
 
 // CmdTeamCreateCause is a reason why the subcommand team-create failed.
 type CmdTeamCreateCause int
 
 const (
-	CmdTeamCreateInvalidJSON   CmdTeamCreateCause = iota // the team JSON on stdin cannot be decoded [InvalidArgument]
-	CmdTeamCreateMissingFields                           // the team JSON has no id or no members [InvalidArgument]
-	CmdTeamCreateStorage                                 // the shared state or a file could not be read or written [Storage]
+	CmdTeamCreateInvalidJSON    CmdTeamCreateCause = iota // the team JSON on stdin cannot be decoded [InvalidArgument]
+	CmdTeamCreateMissingFields                            // the team JSON has no id or no members [InvalidArgument]
+	CmdTeamCreateOutcomeUnknown                           // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdTeamCreateUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdTeamCreateStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdTeamCreateError is the error of the subcommand team-create.
@@ -1308,6 +1910,8 @@ type CmdTeamCreateError = OpError[CmdTeamCreateCause]
 var cmdTeamCreateCauses = [...]causeInfo{
 	{"InvalidJSON", ClassInvalidArgument},
 	{"MissingFields", ClassInvalidArgument},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1320,15 +1924,27 @@ func (c CmdTeamCreateCause) info() causeInfo { return cmdTeamCreateCauses[c] }
 // String returns the cause name.
 func (c CmdTeamCreateCause) String() string { return c.info().name }
 
+// CmdTeamCreateCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdTeamCreateCauseByName(name string) (CmdTeamCreateCause, bool) {
+	for i, info := range cmdTeamCreateCauses {
+		if info.name == name {
+			return CmdTeamCreateCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- team-set
 
 // CmdTeamSetCause is a reason why the subcommand team-set failed.
 type CmdTeamSetCause int
 
 const (
-	CmdTeamSetInvalidState CmdTeamSetCause = iota // --state is not a member state [InvalidArgument]
-	CmdTeamSetNoSuchMember                        // the team or the member does not exist [NotFound]
-	CmdTeamSetStorage                             // the shared state or a file could not be read or written [Storage]
+	CmdTeamSetInvalidState   CmdTeamSetCause = iota // --state is not a member state [InvalidArgument]
+	CmdTeamSetNoSuchMember                          // the team or the member does not exist [NotFound]
+	CmdTeamSetOutcomeUnknown                        // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdTeamSetUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdTeamSetStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdTeamSetError is the error of the subcommand team-set.
@@ -1338,6 +1954,8 @@ type CmdTeamSetError = OpError[CmdTeamSetCause]
 var cmdTeamSetCauses = [...]causeInfo{
 	{"InvalidState", ClassInvalidArgument},
 	{"NoSuchMember", ClassNotFound},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1350,13 +1968,25 @@ func (c CmdTeamSetCause) info() causeInfo { return cmdTeamSetCauses[c] }
 // String returns the cause name.
 func (c CmdTeamSetCause) String() string { return c.info().name }
 
+// CmdTeamSetCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdTeamSetCauseByName(name string) (CmdTeamSetCause, bool) {
+	for i, info := range cmdTeamSetCauses {
+		if info.name == name {
+			return CmdTeamSetCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- team-done
 
 // CmdTeamDoneCause is a reason why the subcommand team-done failed.
 type CmdTeamDoneCause int
 
 const (
-	CmdTeamDoneStorage CmdTeamDoneCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdTeamDoneOutcomeUnknown CmdTeamDoneCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdTeamDoneUnavailable                            // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdTeamDoneStorage                                // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdTeamDoneError is the error of the subcommand team-done.
@@ -1364,6 +1994,8 @@ type CmdTeamDoneError = OpError[CmdTeamDoneCause]
 
 // cmdTeamDoneCauses describes the CmdTeamDoneCause values (same order as the constants).
 var cmdTeamDoneCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1376,14 +2008,26 @@ func (c CmdTeamDoneCause) info() causeInfo { return cmdTeamDoneCauses[c] }
 // String returns the cause name.
 func (c CmdTeamDoneCause) String() string { return c.info().name }
 
+// CmdTeamDoneCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdTeamDoneCauseByName(name string) (CmdTeamDoneCause, bool) {
+	for i, info := range cmdTeamDoneCauses {
+		if info.name == name {
+			return CmdTeamDoneCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- team-get
 
 // CmdTeamGetCause is a reason why the subcommand team-get failed.
 type CmdTeamGetCause int
 
 const (
-	CmdTeamGetNoSuchTeam CmdTeamGetCause = iota // there is no team with this ID [NotFound]
-	CmdTeamGetStorage                           // the shared state or a file could not be read or written [Storage]
+	CmdTeamGetNoSuchTeam     CmdTeamGetCause = iota // there is no team with this ID [NotFound]
+	CmdTeamGetOutcomeUnknown                        // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdTeamGetUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdTeamGetStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdTeamGetError is the error of the subcommand team-get.
@@ -1392,6 +2036,8 @@ type CmdTeamGetError = OpError[CmdTeamGetCause]
 // cmdTeamGetCauses describes the CmdTeamGetCause values (same order as the constants).
 var cmdTeamGetCauses = [...]causeInfo{
 	{"NoSuchTeam", ClassNotFound},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1404,13 +2050,25 @@ func (c CmdTeamGetCause) info() causeInfo { return cmdTeamGetCauses[c] }
 // String returns the cause name.
 func (c CmdTeamGetCause) String() string { return c.info().name }
 
+// CmdTeamGetCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdTeamGetCauseByName(name string) (CmdTeamGetCause, bool) {
+	for i, info := range cmdTeamGetCauses {
+		if info.name == name {
+			return CmdTeamGetCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- team-list
 
 // CmdTeamListCause is a reason why the subcommand team-list failed.
 type CmdTeamListCause int
 
 const (
-	CmdTeamListStorage CmdTeamListCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdTeamListOutcomeUnknown CmdTeamListCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdTeamListUnavailable                            // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdTeamListStorage                                // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdTeamListError is the error of the subcommand team-list.
@@ -1418,6 +2076,8 @@ type CmdTeamListError = OpError[CmdTeamListCause]
 
 // cmdTeamListCauses describes the CmdTeamListCause values (same order as the constants).
 var cmdTeamListCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1430,13 +2090,25 @@ func (c CmdTeamListCause) info() causeInfo { return cmdTeamListCauses[c] }
 // String returns the cause name.
 func (c CmdTeamListCause) String() string { return c.info().name }
 
+// CmdTeamListCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdTeamListCauseByName(name string) (CmdTeamListCause, bool) {
+	for i, info := range cmdTeamListCauses {
+		if info.name == name {
+			return CmdTeamListCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- notes
 
 // CmdNotesCause is a reason why the subcommand notes failed.
 type CmdNotesCause int
 
 const (
-	CmdNotesStorage CmdNotesCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdNotesOutcomeUnknown CmdNotesCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdNotesUnavailable                         // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdNotesStorage                             // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdNotesError is the error of the subcommand notes.
@@ -1444,6 +2116,8 @@ type CmdNotesError = OpError[CmdNotesCause]
 
 // cmdNotesCauses describes the CmdNotesCause values (same order as the constants).
 var cmdNotesCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1456,13 +2130,25 @@ func (c CmdNotesCause) info() causeInfo { return cmdNotesCauses[c] }
 // String returns the cause name.
 func (c CmdNotesCause) String() string { return c.info().name }
 
+// CmdNotesCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdNotesCauseByName(name string) (CmdNotesCause, bool) {
+	for i, info := range cmdNotesCauses {
+		if info.name == name {
+			return CmdNotesCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- helper-next
 
 // CmdHelperNextCause is a reason why the subcommand helper-next failed.
 type CmdHelperNextCause int
 
 const (
-	CmdHelperNextStorage CmdHelperNextCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdHelperNextOutcomeUnknown CmdHelperNextCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdHelperNextUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdHelperNextStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdHelperNextError is the error of the subcommand helper-next.
@@ -1470,6 +2156,8 @@ type CmdHelperNextError = OpError[CmdHelperNextCause]
 
 // cmdHelperNextCauses describes the CmdHelperNextCause values (same order as the constants).
 var cmdHelperNextCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1482,15 +2170,27 @@ func (c CmdHelperNextCause) info() causeInfo { return cmdHelperNextCauses[c] }
 // String returns the cause name.
 func (c CmdHelperNextCause) String() string { return c.info().name }
 
+// CmdHelperNextCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdHelperNextCauseByName(name string) (CmdHelperNextCause, bool) {
+	for i, info := range cmdHelperNextCauses {
+		if info.name == name {
+			return CmdHelperNextCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- helper-set
 
 // CmdHelperSetCause is a reason why the subcommand helper-set failed.
 type CmdHelperSetCause int
 
 const (
-	CmdHelperSetInvalidStatus CmdHelperSetCause = iota // --status is not a worker request status [InvalidArgument]
-	CmdHelperSetNoSuchRequest                          // there is no worker request with this number [NotFound]
-	CmdHelperSetStorage                                // the shared state or a file could not be read or written [Storage]
+	CmdHelperSetInvalidStatus  CmdHelperSetCause = iota // --status is not a worker request status [InvalidArgument]
+	CmdHelperSetNoSuchRequest                           // there is no worker request with this number [NotFound]
+	CmdHelperSetOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdHelperSetUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdHelperSetStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdHelperSetError is the error of the subcommand helper-set.
@@ -1500,6 +2200,8 @@ type CmdHelperSetError = OpError[CmdHelperSetCause]
 var cmdHelperSetCauses = [...]causeInfo{
 	{"InvalidStatus", ClassInvalidArgument},
 	{"NoSuchRequest", ClassNotFound},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1512,14 +2214,26 @@ func (c CmdHelperSetCause) info() causeInfo { return cmdHelperSetCauses[c] }
 // String returns the cause name.
 func (c CmdHelperSetCause) String() string { return c.info().name }
 
+// CmdHelperSetCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdHelperSetCauseByName(name string) (CmdHelperSetCause, bool) {
+	for i, info := range cmdHelperSetCauses {
+		if info.name == name {
+			return CmdHelperSetCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- helper-get
 
 // CmdHelperGetCause is a reason why the subcommand helper-get failed.
 type CmdHelperGetCause int
 
 const (
-	CmdHelperGetNoSuchRequest CmdHelperGetCause = iota // there is no worker request with this number [NotFound]
-	CmdHelperGetStorage                                // the shared state or a file could not be read or written [Storage]
+	CmdHelperGetNoSuchRequest  CmdHelperGetCause = iota // there is no worker request with this number [NotFound]
+	CmdHelperGetOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdHelperGetUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdHelperGetStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdHelperGetError is the error of the subcommand helper-get.
@@ -1528,6 +2242,8 @@ type CmdHelperGetError = OpError[CmdHelperGetCause]
 // cmdHelperGetCauses describes the CmdHelperGetCause values (same order as the constants).
 var cmdHelperGetCauses = [...]causeInfo{
 	{"NoSuchRequest", ClassNotFound},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1540,13 +2256,25 @@ func (c CmdHelperGetCause) info() causeInfo { return cmdHelperGetCauses[c] }
 // String returns the cause name.
 func (c CmdHelperGetCause) String() string { return c.info().name }
 
+// CmdHelperGetCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdHelperGetCauseByName(name string) (CmdHelperGetCause, bool) {
+	for i, info := range cmdHelperGetCauses {
+		if info.name == name {
+			return CmdHelperGetCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- helper-list
 
 // CmdHelperListCause is a reason why the subcommand helper-list failed.
 type CmdHelperListCause int
 
 const (
-	CmdHelperListStorage CmdHelperListCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdHelperListOutcomeUnknown CmdHelperListCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdHelperListUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdHelperListStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdHelperListError is the error of the subcommand helper-list.
@@ -1554,6 +2282,8 @@ type CmdHelperListError = OpError[CmdHelperListCause]
 
 // cmdHelperListCauses describes the CmdHelperListCause values (same order as the constants).
 var cmdHelperListCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1566,14 +2296,26 @@ func (c CmdHelperListCause) info() causeInfo { return cmdHelperListCauses[c] }
 // String returns the cause name.
 func (c CmdHelperListCause) String() string { return c.info().name }
 
+// CmdHelperListCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdHelperListCauseByName(name string) (CmdHelperListCause, bool) {
+	for i, info := range cmdHelperListCauses {
+		if info.name == name {
+			return CmdHelperListCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- board-dump
 
 // CmdBoardDumpCause is a reason why the subcommand board-dump failed.
 type CmdBoardDumpCause int
 
 const (
-	CmdBoardDumpNoSuchTeam CmdBoardDumpCause = iota // there is no team with this ID [NotFound]
-	CmdBoardDumpStorage                             // the shared state or a file could not be read or written [Storage]
+	CmdBoardDumpNoSuchTeam     CmdBoardDumpCause = iota // there is no team with this ID [NotFound]
+	CmdBoardDumpOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdBoardDumpUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdBoardDumpStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdBoardDumpError is the error of the subcommand board-dump.
@@ -1582,6 +2324,8 @@ type CmdBoardDumpError = OpError[CmdBoardDumpCause]
 // cmdBoardDumpCauses describes the CmdBoardDumpCause values (same order as the constants).
 var cmdBoardDumpCauses = [...]causeInfo{
 	{"NoSuchTeam", ClassNotFound},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1594,14 +2338,26 @@ func (c CmdBoardDumpCause) info() causeInfo { return cmdBoardDumpCauses[c] }
 // String returns the cause name.
 func (c CmdBoardDumpCause) String() string { return c.info().name }
 
+// CmdBoardDumpCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdBoardDumpCauseByName(name string) (CmdBoardDumpCause, bool) {
+	for i, info := range cmdBoardDumpCauses {
+		if info.name == name {
+			return CmdBoardDumpCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- board-release-agent
 
 // CmdBoardReleaseAgentCause is a reason why the subcommand board-release-agent failed.
 type CmdBoardReleaseAgentCause int
 
 const (
-	CmdBoardReleaseAgentNoSuchTeam CmdBoardReleaseAgentCause = iota // there is no team with this ID [NotFound]
-	CmdBoardReleaseAgentStorage                                     // the shared state or a file could not be read or written [Storage]
+	CmdBoardReleaseAgentNoSuchTeam     CmdBoardReleaseAgentCause = iota // there is no team with this ID [NotFound]
+	CmdBoardReleaseAgentOutcomeUnknown                                  // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdBoardReleaseAgentUnavailable                                     // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdBoardReleaseAgentStorage                                         // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdBoardReleaseAgentError is the error of the subcommand board-release-agent.
@@ -1610,6 +2366,8 @@ type CmdBoardReleaseAgentError = OpError[CmdBoardReleaseAgentCause]
 // cmdBoardReleaseAgentCauses describes the CmdBoardReleaseAgentCause values (same order as the constants).
 var cmdBoardReleaseAgentCauses = [...]causeInfo{
 	{"NoSuchTeam", ClassNotFound},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1622,13 +2380,25 @@ func (c CmdBoardReleaseAgentCause) info() causeInfo { return cmdBoardReleaseAgen
 // String returns the cause name.
 func (c CmdBoardReleaseAgentCause) String() string { return c.info().name }
 
+// CmdBoardReleaseAgentCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdBoardReleaseAgentCauseByName(name string) (CmdBoardReleaseAgentCause, bool) {
+	for i, info := range cmdBoardReleaseAgentCauses {
+		if info.name == name {
+			return CmdBoardReleaseAgentCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- checkpoint-get
 
 // CmdCheckpointGetCause is a reason why the subcommand checkpoint-get failed.
 type CmdCheckpointGetCause int
 
 const (
-	CmdCheckpointGetStorage CmdCheckpointGetCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdCheckpointGetOutcomeUnknown CmdCheckpointGetCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdCheckpointGetUnavailable                                 // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdCheckpointGetStorage                                     // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdCheckpointGetError is the error of the subcommand checkpoint-get.
@@ -1636,6 +2406,8 @@ type CmdCheckpointGetError = OpError[CmdCheckpointGetCause]
 
 // cmdCheckpointGetCauses describes the CmdCheckpointGetCause values (same order as the constants).
 var cmdCheckpointGetCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1648,16 +2420,28 @@ func (c CmdCheckpointGetCause) info() causeInfo { return cmdCheckpointGetCauses[
 // String returns the cause name.
 func (c CmdCheckpointGetCause) String() string { return c.info().name }
 
+// CmdCheckpointGetCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdCheckpointGetCauseByName(name string) (CmdCheckpointGetCause, bool) {
+	for i, info := range cmdCheckpointGetCauses {
+		if info.name == name {
+			return CmdCheckpointGetCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- consult_start
 
 // ConsultStartCause is a reason why the MCP tool consult_start failed.
 type ConsultStartCause int
 
 const (
-	ConsultStartMissingText ConsultStartCause = iota // the text is missing [InvalidArgument]
-	ConsultStartBadMinutes                           // the time limit is negative or longer than allowed [InvalidArgument]
-	ConsultStartNotInTeam                            // the caller is not in a team [NotInTeam]
-	ConsultStartStorage                              // the shared state or a file could not be read or written [Storage]
+	ConsultStartMissingText    ConsultStartCause = iota // the text is missing [InvalidArgument]
+	ConsultStartBadMinutes                              // the time limit is negative or longer than allowed [InvalidArgument]
+	ConsultStartNotInTeam                               // the caller is not in a team [NotInTeam]
+	ConsultStartOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ConsultStartUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	ConsultStartStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
 // ConsultStartError is the error of the MCP tool consult_start.
@@ -1668,6 +2452,8 @@ var consultStartCauses = [...]causeInfo{
 	{"MissingText", ClassInvalidArgument},
 	{"BadMinutes", ClassInvalidArgument},
 	{"NotInTeam", ClassNotInTeam},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1680,6 +2466,16 @@ func (c ConsultStartCause) info() causeInfo { return consultStartCauses[c] }
 // String returns the cause name.
 func (c ConsultStartCause) String() string { return c.info().name }
 
+// ConsultStartCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func ConsultStartCauseByName(name string) (ConsultStartCause, bool) {
+	for i, info := range consultStartCauses {
+		if info.name == name {
+			return ConsultStartCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- consult_reply
 
 // ConsultReplyCause is a reason why the MCP tool consult_reply failed.
@@ -1691,6 +2487,8 @@ const (
 	ConsultReplyNoSuchConsult                            // no consultation with this ID in the caller's team [NotFound]
 	ConsultReplyNotAsked                                 // the caller was not asked in this consultation [Permission]
 	ConsultReplyAlreadyReplied                           // the caller already answered this consultation [Conflict]
+	ConsultReplyOutcomeUnknown                           // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ConsultReplyUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	ConsultReplyStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1704,6 +2502,8 @@ var consultReplyCauses = [...]causeInfo{
 	{"NoSuchConsult", ClassNotFound},
 	{"NotAsked", ClassPermission},
 	{"AlreadyReplied", ClassConflict},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1716,6 +2516,16 @@ func (c ConsultReplyCause) info() causeInfo { return consultReplyCauses[c] }
 // String returns the cause name.
 func (c ConsultReplyCause) String() string { return c.info().name }
 
+// ConsultReplyCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func ConsultReplyCauseByName(name string) (ConsultReplyCause, bool) {
+	for i, info := range consultReplyCauses {
+		if info.name == name {
+			return ConsultReplyCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- consult_results
 
 // ConsultResultsCause is a reason why the MCP tool consult_results failed.
@@ -1725,6 +2535,8 @@ const (
 	ConsultResultsMissingArgument ConsultResultsCause = iota // the ID is missing [InvalidArgument]
 	ConsultResultsNotInTeam                                  // the caller is not in a team [NotInTeam]
 	ConsultResultsNoSuchConsult                              // no consultation with this ID in the caller's team [NotFound]
+	ConsultResultsOutcomeUnknown                             // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ConsultResultsUnavailable                                // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	ConsultResultsStorage                                    // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1736,6 +2548,8 @@ var consultResultsCauses = [...]causeInfo{
 	{"MissingArgument", ClassInvalidArgument},
 	{"NotInTeam", ClassNotInTeam},
 	{"NoSuchConsult", ClassNotFound},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1747,3 +2561,515 @@ func (c ConsultResultsCause) info() causeInfo { return consultResultsCauses[c] }
 
 // String returns the cause name.
 func (c ConsultResultsCause) String() string { return c.info().name }
+
+// ConsultResultsCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func ConsultResultsCauseByName(name string) (ConsultResultsCause, bool) {
+	for i, info := range consultResultsCauses {
+		if info.name == name {
+			return ConsultResultsCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- hub
+
+// HubCallCause is a reason why a request to the hub route /v1/tools/{op} (multi-instance mode, before the operation runs) failed.
+type HubCallCause int
+
+const (
+	HubCallMalformed        HubCallCause = iota // the request body or its envelope is not valid JSON, or its op does not match the route [InvalidArgument]
+	HubCallUnknownOperation                     // the route names an operation that the hub does not forward [UnknownTool]
+	HubCallIdentity                             // the hub cannot tie the request to a configured instance (unknown node, bad token, address mismatch) [Permission]
+	HubCallRequestConflict                      // the request ID was used before for a different request [Conflict]
+	HubCallExpired                              // the request ID is older than the hub's replay window (24 h), so it is not executed again [InvalidState]
+	HubCallOverloaded                           // the hub is busy and refused the request; the caller may retry later [Unavailable]
+	HubCallOutcomeUnknown                       // the hub accepted the request and its operation failed before the reply could be sent; the outcome is unknown, so the request is not retried [InvalidState]
+	HubCallStorage                              // the shared state or a file could not be read or written [Storage]
+)
+
+// HubCallError is the error of a request to the hub route /v1/tools/{op} (multi-instance mode, before the operation runs).
+type HubCallError = OpError[HubCallCause]
+
+// hubCallCauses describes the HubCallCause values (same order as the constants).
+var hubCallCauses = [...]causeInfo{
+	{"Malformed", ClassInvalidArgument},
+	{"UnknownOperation", ClassUnknownTool},
+	{"Identity", ClassPermission},
+	{"RequestConflict", ClassConflict},
+	{"Expired", ClassInvalidState},
+	{"Overloaded", ClassUnavailable},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (HubCallCause) op() string { return "hub" }
+
+// info implements opCause.
+func (c HubCallCause) info() causeInfo { return hubCallCauses[c] }
+
+// String returns the cause name.
+func (c HubCallCause) String() string { return c.info().name }
+
+// HubCallCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func HubCallCauseByName(name string) (HubCallCause, bool) {
+	for i, info := range hubCallCauses {
+		if info.name == name {
+			return HubCallCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- agentbus hub
+
+// HubServeCause is a reason why the subcommand agentbus hub (the hub listener) failed.
+type HubServeCause int
+
+const (
+	HubServeInvalidConfig HubServeCause = iota // the hub configuration (HUB_LISTEN, HUB_AUTH, certificate, instance list) is missing or invalid [InvalidArgument]
+	HubServeListen                             // the hub cannot listen on HUB_LISTEN or cannot load its certificate [Process]
+	HubServeSocket                             // the hub cannot create, bind, or secure its local unix domain socket [Process]
+	HubServeStorage                            // the shared state or a file could not be read or written [Storage]
+)
+
+// HubServeError is the error of the subcommand agentbus hub (the hub listener).
+type HubServeError = OpError[HubServeCause]
+
+// hubServeCauses describes the HubServeCause values (same order as the constants).
+var hubServeCauses = [...]causeInfo{
+	{"InvalidConfig", ClassInvalidArgument},
+	{"Listen", ClassProcess},
+	{"Socket", ClassProcess},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (HubServeCause) op() string { return "agentbus hub" }
+
+// info implements opCause.
+func (c HubServeCause) info() causeInfo { return hubServeCauses[c] }
+
+// String returns the cause name.
+func (c HubServeCause) String() string { return c.info().name }
+
+// HubServeCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func HubServeCauseByName(name string) (HubServeCause, bool) {
+	for i, info := range hubServeCauses {
+		if info.name == name {
+			return HubServeCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- hub_auth
+
+// HubAuthCause is a reason why hub client authentication failed.
+type HubAuthCause int
+
+const (
+	HubAuthMissingCredentials    HubAuthCause = iota // authorization header, token, or client address is missing [Permission]
+	HubAuthWrongToken                                // the provided bearer token is invalid [Permission]
+	HubAuthUnknownNode                               // the peer node is not in the allowed instances list [Permission]
+	HubAuthAddressMismatch                           // the client source address does not match the configured address for this instance [Permission]
+	HubAuthDuplicateInstanceName                     // an instance with this name is already connected with an active lease [Conflict]
+	HubAuthLocalAPIFailed                            // failed to query the local tailscaled LocalAPI socket [Unavailable]
+	HubAuthInvalidMode                               // the configured HUB_AUTH mode is unknown [InvalidArgument]
+)
+
+// HubAuthError is the error of hub client authentication.
+type HubAuthError = OpError[HubAuthCause]
+
+// hubAuthCauses describes the HubAuthCause values (same order as the constants).
+var hubAuthCauses = [...]causeInfo{
+	{"MissingCredentials", ClassPermission},
+	{"WrongToken", ClassPermission},
+	{"UnknownNode", ClassPermission},
+	{"AddressMismatch", ClassPermission},
+	{"DuplicateInstanceName", ClassConflict},
+	{"LocalAPIFailed", ClassUnavailable},
+	{"InvalidMode", ClassInvalidArgument},
+}
+
+// op implements opCause.
+func (HubAuthCause) op() string { return "hub_auth" }
+
+// info implements opCause.
+func (c HubAuthCause) info() causeInfo { return hubAuthCauses[c] }
+
+// String returns the cause name.
+func (c HubAuthCause) String() string { return c.info().name }
+
+// HubAuthCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func HubAuthCauseByName(name string) (HubAuthCause, bool) {
+	for i, info := range hubAuthCauses {
+		if info.name == name {
+			return HubAuthCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- hub_client
+
+// HubClientCause is a reason why the forwarding client transport failed.
+type HubClientCause int
+
+const (
+	HubClientInvalidConfig HubClientCause = iota // the hub URL, authentication settings or timeout is invalid [InvalidArgument]
+	HubClientMalformed                           // the hub returned an invalid or incompatible response [InvalidState]
+	HubClientUnavailable                         // the hub could not be reached within the bounded retry budget [Unavailable]
+	HubClientStorage                             // the shared state or a file could not be read or written [Storage]
+)
+
+// HubClientError is the error of the forwarding client transport.
+type HubClientError = OpError[HubClientCause]
+
+// hubClientCauses describes the HubClientCause values (same order as the constants).
+var hubClientCauses = [...]causeInfo{
+	{"InvalidConfig", ClassInvalidArgument},
+	{"Malformed", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (HubClientCause) op() string { return "hub_client" }
+
+// info implements opCause.
+func (c HubClientCause) info() causeInfo { return hubClientCauses[c] }
+
+// String returns the cause name.
+func (c HubClientCause) String() string { return c.info().name }
+
+// HubClientCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func HubClientCauseByName(name string) (HubClientCause, bool) {
+	for i, info := range hubClientCauses {
+		if info.name == name {
+			return HubClientCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// wireOperationError rebuilds the typed error of an operation from its wire form (operation name, cause name,
+// message). It returns false when the operation or the cause is unknown, so a stale or foreign peer cannot
+// produce an error of the wrong type. Operation names used by both an MCP tool and a CLI subcommand ("release")
+// are left out: the wire does not yet say which kind failed, so they stay unresolved until it does.
+func wireOperationError(op, cause, message string) (error, bool) {
+	switch op {
+	case "tools/call":
+		if c, ok := ToolCallCauseByName(cause); ok {
+			return &OpError[ToolCallCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "list_agents":
+		if c, ok := ListAgentsCauseByName(cause); ok {
+			return &OpError[ListAgentsCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "send_message":
+		if c, ok := SendMessageCauseByName(cause); ok {
+			return &OpError[SendMessageCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "read_messages":
+		if c, ok := ReadMessagesCauseByName(cause); ok {
+			return &OpError[ReadMessagesCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "set_status":
+		if c, ok := SetStatusCauseByName(cause); ok {
+			return &OpError[SetStatusCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "reserve":
+		if c, ok := ReserveCauseByName(cause); ok {
+			return &OpError[ReserveCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "list_reservations":
+		if c, ok := ListReservationsCauseByName(cause); ok {
+			return &OpError[ListReservationsCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "request_investigation":
+		if c, ok := RequestInvestigationCauseByName(cause); ok {
+			return &OpError[RequestInvestigationCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "record_decision":
+		if c, ok := RecordDecisionCauseByName(cause); ok {
+			return &OpError[RecordDecisionCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "investigation_status":
+		if c, ok := InvestigationStatusCauseByName(cause); ok {
+			return &OpError[InvestigationStatusCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "wait_for_message":
+		if c, ok := WaitForMessageCauseByName(cause); ok {
+			return &OpError[WaitForMessageCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "notebook_read":
+		if c, ok := NotebookReadCauseByName(cause); ok {
+			return &OpError[NotebookReadCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "notebook_append":
+		if c, ok := NotebookAppendCauseByName(cause); ok {
+			return &OpError[NotebookAppendCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "notebook_write_section":
+		if c, ok := NotebookWriteSectionCauseByName(cause); ok {
+			return &OpError[NotebookWriteSectionCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "team_status":
+		if c, ok := TeamStatusCauseByName(cause); ok {
+			return &OpError[TeamStatusCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "checkpoint":
+		if c, ok := CheckpointCauseByName(cause); ok {
+			return &OpError[CheckpointCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "claim_lead":
+		if c, ok := ClaimLeadCauseByName(cause); ok {
+			return &OpError[ClaimLeadCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "handover_lead":
+		if c, ok := HandoverLeadCauseByName(cause); ok {
+			return &OpError[HandoverLeadCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "quiz_start":
+		if c, ok := QuizStartCauseByName(cause); ok {
+			return &OpError[QuizStartCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "quiz_answer":
+		if c, ok := QuizAnswerCauseByName(cause); ok {
+			return &OpError[QuizAnswerCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "quiz_results":
+		if c, ok := QuizResultsCauseByName(cause); ok {
+			return &OpError[QuizResultsCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "team_exclude":
+		if c, ok := TeamExcludeCauseByName(cause); ok {
+			return &OpError[TeamExcludeCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "board_add":
+		if c, ok := BoardAddCauseByName(cause); ok {
+			return &OpError[BoardAddCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "board_list":
+		if c, ok := BoardListCauseByName(cause); ok {
+			return &OpError[BoardListCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "board_claim":
+		if c, ok := BoardClaimCauseByName(cause); ok {
+			return &OpError[BoardClaimCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "board_done":
+		if c, ok := BoardDoneCauseByName(cause); ok {
+			return &OpError[BoardDoneCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "board_release":
+		if c, ok := BoardReleaseCauseByName(cause); ok {
+			return &OpError[BoardReleaseCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "delegate":
+		if c, ok := DelegateCauseByName(cause); ok {
+			return &OpError[DelegateCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "delegation_status":
+		if c, ok := DelegationStatusCauseByName(cause); ok {
+			return &OpError[DelegationStatusCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "agentbus":
+		if c, ok := CliCauseByName(cause); ok {
+			return &OpError[CliCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "serve":
+		if c, ok := CmdServeCauseByName(cause); ok {
+			return &OpError[CmdServeCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "send":
+		if c, ok := CmdSendCauseByName(cause); ok {
+			return &OpError[CmdSendCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "log":
+		if c, ok := CmdLogCauseByName(cause); ok {
+			return &OpError[CmdLogCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "status":
+		if c, ok := CmdStatusCauseByName(cause); ok {
+			return &OpError[CmdStatusCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "inv-list":
+		if c, ok := CmdInvListCauseByName(cause); ok {
+			return &OpError[CmdInvListCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "inv-next":
+		if c, ok := CmdInvNextCauseByName(cause); ok {
+			return &OpError[CmdInvNextCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "inv-set":
+		if c, ok := CmdInvSetCauseByName(cause); ok {
+			return &OpError[CmdInvSetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "inv-get":
+		if c, ok := CmdInvGetCauseByName(cause); ok {
+			return &OpError[CmdInvGetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "inv-pending":
+		if c, ok := CmdInvPendingCauseByName(cause); ok {
+			return &OpError[CmdInvPendingCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "inv-add":
+		if c, ok := CmdInvAddCauseByName(cause); ok {
+			return &OpError[CmdInvAddCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "cancel-pending":
+		if c, ok := CmdCancelPendingCauseByName(cause); ok {
+			return &OpError[CmdCancelPendingCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "normalize":
+		if c, ok := CmdNormalizeCauseByName(cause); ok {
+			return &OpError[CmdNormalizeCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "team-create":
+		if c, ok := CmdTeamCreateCauseByName(cause); ok {
+			return &OpError[CmdTeamCreateCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "team-set":
+		if c, ok := CmdTeamSetCauseByName(cause); ok {
+			return &OpError[CmdTeamSetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "team-done":
+		if c, ok := CmdTeamDoneCauseByName(cause); ok {
+			return &OpError[CmdTeamDoneCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "team-get":
+		if c, ok := CmdTeamGetCauseByName(cause); ok {
+			return &OpError[CmdTeamGetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "team-list":
+		if c, ok := CmdTeamListCauseByName(cause); ok {
+			return &OpError[CmdTeamListCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "notes":
+		if c, ok := CmdNotesCauseByName(cause); ok {
+			return &OpError[CmdNotesCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "helper-next":
+		if c, ok := CmdHelperNextCauseByName(cause); ok {
+			return &OpError[CmdHelperNextCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "helper-set":
+		if c, ok := CmdHelperSetCauseByName(cause); ok {
+			return &OpError[CmdHelperSetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "helper-get":
+		if c, ok := CmdHelperGetCauseByName(cause); ok {
+			return &OpError[CmdHelperGetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "helper-list":
+		if c, ok := CmdHelperListCauseByName(cause); ok {
+			return &OpError[CmdHelperListCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "board-dump":
+		if c, ok := CmdBoardDumpCauseByName(cause); ok {
+			return &OpError[CmdBoardDumpCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "board-release-agent":
+		if c, ok := CmdBoardReleaseAgentCauseByName(cause); ok {
+			return &OpError[CmdBoardReleaseAgentCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "checkpoint-get":
+		if c, ok := CmdCheckpointGetCauseByName(cause); ok {
+			return &OpError[CmdCheckpointGetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "consult_start":
+		if c, ok := ConsultStartCauseByName(cause); ok {
+			return &OpError[ConsultStartCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "consult_reply":
+		if c, ok := ConsultReplyCauseByName(cause); ok {
+			return &OpError[ConsultReplyCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "consult_results":
+		if c, ok := ConsultResultsCauseByName(cause); ok {
+			return &OpError[ConsultResultsCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "hub":
+		if c, ok := HubCallCauseByName(cause); ok {
+			return &OpError[HubCallCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "agentbus hub":
+		if c, ok := HubServeCauseByName(cause); ok {
+			return &OpError[HubServeCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "hub_auth":
+		if c, ok := HubAuthCauseByName(cause); ok {
+			return &OpError[HubAuthCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "hub_client":
+		if c, ok := HubClientCauseByName(cause); ok {
+			return &OpError[HubClientCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	}
+	return nil, false
+}

@@ -3,7 +3,7 @@ package main
 import "testing"
 
 // teamSet runs the team-set subcommand for one member.
-func teamSet(t *testing.T, b *Bus, team, agent string, state MemberState) {
+func teamSet(t *testing.T, b *Bus, team, agent string, state MemberState) { //nolint:unparam // test helper; the shared team id "T" is the fixture (comment only, approved by human in round 1 answer 2)
 	t.Helper()
 	cmdTeamSet([]string{"--dir", b.dir, "--team", team, "--agent", agent, "--state", string(state)})
 }

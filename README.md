@@ -77,6 +77,31 @@ you ── agent run claude-1 "task" ──► systemd --user unit  agent-<task>
 
 ## Concepts
 
+### Multi-instance development preview
+
+The approved [multi-instance design](docs/multi-instance.md) is being implemented in milestones.
+The hub dispatcher, authentication primitives and MCP forwarding client are available for isolated tests;
+instance registration, node supervision and cross-instance task routing are still under development.
+Keep production installations in single-instance mode until these milestones are complete.
+
+With `LEAD_INSTANCE` set, `agentbus serve` forwards tool calls to that HTTP origin and never reads or writes
+local bus files. Set `INSTANCE_NAME` to the unique local instance name. `HUB_AUTH=tailscale` is the default;
+`HUB_AUTH=token` requires HTTPS, `HUB_TOKEN` from `secrets.env`, and `HUB_CERT_FINGERPRINT` containing the
+SHA-256 leaf-certificate fingerprint. The `agent` runner exports these settings from `agents.conf`.
+Redirects are refused so credentials cannot be forwarded to a different endpoint.
+
+`HUB_RETRY_SECONDS` defaults to 30 (allowed range 1–600). This bounds a contiguous outage, including connection,
+TLS and response time. Retries retain the original request ID; an `OutcomeUnknown` response is final and must
+be reconciled before submitting replacement work. Long polls reattach to their original execution with a
+630-second total cap. Requests are limited to 1 MiB and responses to 64 MiB. Transport exhaustion becomes the
+attempted operation's typed `Unavailable` error (exit class 11). Without `LEAD_INSTANCE`, `HUB_LISTEN` or `HUB_SOCKET`, the
+existing local-file mode is unchanged. Setting `HUB_LISTEN` or `HUB_SOCKET` routes lead-local `serve` calls
+through the hub daemon's owner-only Unix socket, with the same request envelopes and identity checks.
+`HUB_SOCKET` overrides the default `<bus directory>/hub.sock`; `serve --dir` selects that bus directory.
+The socket uses local filesystem permissions instead of a bearer token. Its directory must not be writable
+by other users. A missing or refused socket returns `Unavailable` and never falls back to local bus files.
+The temporary `lead_local_fallback` event name is retained for old logs but is no longer emitted.
+
 ### Tasks and runs
 
 `agent run <agent> "task"` (inside a git repository) creates a task: a worktree under `~/agents/worktrees`, a
@@ -682,6 +707,12 @@ make integration   # real agent CLIs and accounts (costs usage)
   transcripts, archives, the structured logs, typed bus notices, logged failures, commit identity and signing,
   and `AGENTS.md` handling. They run in CI
   (`.github/workflows/test.yml`).
+  The multi-instance hub transport is also tested with `httptest`: request identity checks, concurrent
+  retries, durable response replay, long-poll continuation, cursor delivery, and the crash window where an
+  accepted operation has an unknown outcome. Its private protocol is documented in
+  [`docs/multi-instance.md`](docs/multi-instance.md). Hub replay records live in `bus/replay/`; completed
+  response payloads are retained for 24 hours, then reduced to request-ID tombstones. Unresolved accepted
+  records are retained for reconciliation and are never automatically executed again.
 - **Errors.** Every operation of `agentbus` — each MCP tool and each CLI subcommand — returns its own error type,
   so the signature says what can go wrong:
 
@@ -694,9 +725,11 @@ make integration   # real agent CLIs and accounts (costs usage)
   `QuizStartAlreadyHeld`, `QuizStartResumedTeam`, `QuizStartStorage`); the compiler rejects any other cause.
   The enums are generated from `agentbus/errors.json` by `tools/errgen` (`make generate`; `make lint` fails when
   the generated file is stale). Each cause has a class (`InvalidArgument`, `NotFound`, `NotInTeam`,
-  `Permission`, `Conflict`, `InvalidState`, `Storage`, `UnknownTool`, `Process`) that gives the sentinel for
-  `errors.Is` and the exit status of CLI subcommands (2 … 10), so the `agent` script can tell "no such team"
-  (3) from a storage failure (8). Lower layers return concrete types too: `*StorageError` (state and log files,
+  `Permission`, `Conflict`, `InvalidState`, `Storage`, `UnknownTool`, `Process`, `Unavailable`) that gives the
+  sentinel for `errors.Is` and the exit status of CLI subcommands (2 … 11), so the `agent` script can tell "no such
+  team" (3) from a storage failure (8). `Unavailable` (11) is for the multi-instance hub: it is not reached yet, and
+  a forwarded operation whose reply was lost reports `OutcomeUnknown` (`InvalidState`), which is never retried
+  automatically. Lower layers return concrete types too: `*StorageError` (state and log files,
   stdout), `*ValueError` (invalid enum values, timestamps) and `*ProcessError` (helper processes); operations
   convert them into their own causes explicitly. The plain `error` interface appears only where an interface
   requires it (`slog.Handler`, `json.Unmarshaler`, `flag.Value`) and at the MCP dispatcher. Tests check exact

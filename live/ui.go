@@ -191,7 +191,7 @@ func (m *model) setFlash(s string) { m.flash, m.flashAt = s, time.Now() }
 // runAgent runs an `agent` subcommand in the background and reports its output as a flash message.
 func runAgent(cfg config, args ...string) tea.Cmd {
 	return func() tea.Msg {
-		out, err := exec.Command(cfg.agentCmd, args...).CombinedOutput()
+		out, err := exec.Command(cfg.agentCmd, args...).CombinedOutput() //nolint:gosec // agentCmd is the operator's configured agent command; no shell is involved
 		msg := strings.TrimSpace(string(out))
 		if err != nil && msg == "" {
 			msg = err.Error()
@@ -318,7 +318,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setFlash("this task is not waiting for your answers")
 			return m, nil
 		}
-		c := exec.Command(m.cfg.agentCmd, "answer", t.ID)
+		c := exec.Command(m.cfg.agentCmd, "answer", t.ID) //nolint:gosec // agentCmd is the operator's configured agent command; no shell is involved
 		return m, tea.ExecProcess(c, func(err error) tea.Msg {
 			if err != nil {
 				return flashMsg("agent answer: " + err.Error())
@@ -397,7 +397,7 @@ func (m *model) layout() {
 
 // readFile returns a file's content ("" when it does not exist; other read errors are logged once).
 func readFile(path string) string {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is a file under AGENTS_HOME, which only the operator controls
 	if errors.Is(err, os.ErrNotExist) {
 		return "" // the file does not exist yet (no questions, no result)
 	}

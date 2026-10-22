@@ -38,8 +38,11 @@ import (
 type LogEvent string
 
 const (
+	LogLeadLocalFallback  LogEvent = "lead_local_fallback"    // retired temporary fallback event, retained for log-schema compatibility; socket routing never emits it
 	LogServerStarted      LogEvent = "server_started"         // an MCP server started for an agent run
 	LogServerStopping     LogEvent = "server_stopping"        // an MCP server is exiting (signal or stdin closed)
+	LogHubStarted         LogEvent = "hub_started"            // the multi-instance hub HTTP listener started
+	LogHubStopping        LogEvent = "hub_stopping"           // the multi-instance hub HTTP listener is stopping
 	LogToolCall           LogEvent = "tool_call"              // an MCP tool call succeeded
 	LogToolCallFailed     LogEvent = "tool_call_failed"       // an MCP tool call returned an error
 	LogMessagePosted      LogEvent = "message_posted"         // a message was appended to the bus
@@ -97,7 +100,7 @@ func setupLogging(home, role string, attrs ...any) {
 	logDir := filepath.Join(home, "logs")
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "agentbus: logging to files disabled: cannot create %s: %v\n", logDir, err)
-	} else if f, err := os.OpenFile(filepath.Join(logDir, "agentbus.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err != nil {
+	} else if f, err := os.OpenFile(filepath.Join(logDir, "agentbus.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err != nil { //nolint:gosec // logDir is under AGENTS_HOME, which only the operator controls
 		fmt.Fprintf(os.Stderr, "agentbus: logging to files disabled: %v\n", err)
 	} else {
 		// one Write per record: O_APPEND keeps concurrent writers' lines intact

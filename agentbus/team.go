@@ -365,7 +365,7 @@ func (b *Bus) notebookDir(repo string) string {
 func (b *Bus) loadSections(repo string) (map[string]*NoteSection, *StorageError) {
 	secs := map[string]*NoteSection{}
 	path := filepath.Join(b.notebookDir(repo), "sections.json")
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is the notebook file under AGENTS_HOME, which only the operator controls
 	if errors.Is(err, os.ErrNotExist) {
 		return secs, nil
 	}
@@ -410,7 +410,7 @@ func (b *Bus) appendNote(repo string, e NoteEntry) *StorageError {
 // readNotes reads the whole notebook log (none yet = no entries). Corrupt lines are skipped and reported once.
 func (b *Bus) readNotes(repo string) ([]NoteEntry, *StorageError) {
 	path := filepath.Join(b.notebookDir(repo), "log.jsonl")
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path is under AGENTS_HOME, which only the operator controls
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}

@@ -115,13 +115,13 @@ func obj(m map[string]any, k string) map[string]any {
 
 // compactJSON renders v as compact JSON, truncated to max runes. Values decoded from JSON always encode;
 // anything else falls back to Go formatting and is logged.
-func compactJSON(v any, max int) string {
+func compactJSON(v any, maxRunes int) string {
 	b, err := json.Marshal(v)
 	if err != nil {
 		warnOnce("compactJSON", LogUnencodableInput, valueWrap(err, "cannot encode %T", v))
-		return trunc(fmt.Sprintf("%v", v), max)
+		return trunc(fmt.Sprintf("%v", v), maxRunes)
 	}
-	return trunc(string(b), max)
+	return trunc(string(b), maxRunes)
 }
 
 // toolSummary returns the kind and a short description of a tool call from its name and parameters.

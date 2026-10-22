@@ -117,6 +117,17 @@ CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
 CODEX_BIN="${CODEX_BIN:-$HOME/.local/bin/codex}"
 AGENTBUS_BIN="${AGENTBUS_BIN:-$HOME/.local/bin/agentbus}"
 RUN_PATH="${RUN_PATH:-$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin}"
+# Multi-instance bus transport; empty lead/listen settings retain local-file mode.
+export INSTANCE_NAME="${INSTANCE_NAME:-}"
+export LEAD_INSTANCE="${LEAD_INSTANCE:-}"
+export HUB_LISTEN="${HUB_LISTEN:-}"
+# Optional absolute path to the lead's private socket; empty uses the bus directory's hub.sock.
+export HUB_SOCKET="${HUB_SOCKET:-}"
+export HUB_AUTH="${HUB_AUTH:-tailscale}"
+export HUB_CERT_FINGERPRINT="${HUB_CERT_FINGERPRINT:-}"
+export HUB_RETRY_SECONDS="${HUB_RETRY_SECONDS:-30}"
+# The token is assigned by secrets.env, never by the public configuration template.
+export HUB_TOKEN="${HUB_TOKEN:-}"
 # Notifications: NOTIFY_CMD is called with the path of a notification file (first line = title/thread,
 # the rest = body). Empty = notifications are only written to NOTIFY_DIR. Legacy configs that set
 # NOTIFY_SCRIPT (run inside NOTIFY_DIR with the file name) keep working.
@@ -1918,8 +1929,10 @@ abandon_run() {
 }
 
 resume_history() { # task → the human's answers from this task and its predecessors (the --resume chain)
-  local t=$1 f
+  local t=$1 f seen=" "
   while [[ -n $t && -d $TASKS/$t ]]; do
+    [[ $seen != *" $t "* ]] || break
+    seen+="$t "
     for f in "$TASKS/$t"/questions-*.md; do
       [[ -f $f ]] || continue
       printf '\n### %s (%s)\n\n' "${f##*/}" "$t"; cat "$f"
@@ -1962,6 +1975,7 @@ resume_run() { # ref verify [addition...] — resumes an interrupted team or tas
 
   local ts new_team="" ids=() id old root wt name
   ts=$(date +%Y%m%d-%H%M%S)
+  while [[ -d $TASKS/$ts-${olds[0]##*-} ]]; do sleep 1; ts=$(date +%Y%m%d-%H%M%S); done
   [[ -n $old_team ]] && new_team="$ts-team"
   for old in "${olds[@]}"; do
     name=$(task_field "$old" AGENT); root=$(task_field "$old" REPO_ROOT)
