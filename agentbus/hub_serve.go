@@ -17,6 +17,20 @@ import (
 	"time"
 )
 
+// hubContextKey is the context key type for local instance authentication.
+type hubContextKey struct{}
+
+// withLocalAuth returns a context tagged with the authenticated local instance name.
+func withLocalAuth(ctx context.Context, instance string) context.Context {
+	return context.WithValue(ctx, hubContextKey{}, instance)
+}
+
+// localAuthFromContext extracts the authenticated local instance name from context if present.
+func localAuthFromContext(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(hubContextKey{}).(string)
+	return v, ok
+}
+
 // HubConfig holds configuration options for starting the multi-instance hub HTTP listener.
 type HubConfig struct {
 	// Dir is the bus state directory path.
@@ -242,10 +256,23 @@ func serveHub(cfg *HubConfig) *HubServeError {
 		resolver = defaultRunResolver(b)
 	}
 
+	localInstance := cfg.InstanceName
+	if localInstance == "" {
+		localInstance = os.Getenv("INSTANCE_NAME")
+		if localInstance == "" {
+			localInstance = "lead"
+		}
+	}
+
 	hub := &Hub{
-		Bus:          b,
-		Authenticate: authenticator.Authenticate,
-		Resolve:      resolver,
+		Bus: b,
+		Authenticate: func(r *http.Request) (string, *HubAuthError) {
+			if local, ok := localAuthFromContext(r.Context()); ok {
+				return local, nil
+			}
+			return authenticator.Authenticate(r)
+		},
+		Resolve: resolver,
 	}
 
 	ln := cfg.Listener
@@ -325,7 +352,9 @@ func serveHub(cfg *HubConfig) *HubServeError {
 				// Verify if another daemon is actively listening on this socket before removing
 				conn, dialErr := net.DialTimeout("unix", socketPath, 100*time.Millisecond) //nolint:gosec // G704: socketPath is dialed exclusively over unix domain socket
 				if dialErr == nil {
-					_ = conn.Close()
+					if closeErr := conn.Close(); closeErr != nil {
+						warnSideEffect("close unix probe connection", storageErr(closeErr, "cannot close probe connection"))
+					}
 					if closeErr := ln.Close(); closeErr != nil {
 						warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
 					}
@@ -346,8 +375,12 @@ func serveHub(cfg *HubConfig) *HubServeError {
 				return opErr(HubServeSocket, "failed to listen on unix socket %s: %v", socketPath, err)
 			}
 			if err := os.Chmod(socketPath, 0o600); err != nil { //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
-				_ = ul.Close()
-				_ = os.Remove(socketPath) //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+				if closeErr := ul.Close(); closeErr != nil {
+					warnSideEffect("close unix listener", storageErr(closeErr, "cannot close listener"))
+				}
+				if removeErr := os.Remove(socketPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) { //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+					warnSideEffect("remove socket file", storageErr(removeErr, "cannot remove socket %s", socketPath))
+				}
 				if closeErr := ln.Close(); closeErr != nil {
 					warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
 				}
@@ -356,23 +389,11 @@ func serveHub(cfg *HubConfig) *HubServeError {
 			unixLn = ul
 		}
 
-		localInstance := cfg.InstanceName
-		if localInstance == "" {
-			localInstance = os.Getenv("INSTANCE_NAME")
-			if localInstance == "" {
-				localInstance = "lead"
-			}
-		}
-		unixHub := &Hub{
-			Bus: b,
-			Authenticate: func(*http.Request) (string, *HubAuthError) {
-				return localInstance, nil
-			},
-			Resolve:      resolver,
-			PollDuration: hub.PollDuration,
-		}
+		unixHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hub.ServeHTTP(w, r.WithContext(withLocalAuth(r.Context(), localInstance)))
+		})
 		unixServer = &http.Server{
-			Handler:           unixHub,
+			Handler:           unixHandler,
 			ReadHeaderTimeout: 10 * time.Second,
 			ReadTimeout:       15 * time.Second,
 			IdleTimeout:       120 * time.Second,
@@ -411,7 +432,9 @@ func serveHub(cfg *HubConfig) *HubServeError {
 			warnSideEffect("shutdown hub unix socket server", storageErr(err, "unix server shutdown failed"))
 		}
 		if cfg.UnixListener == nil && socketPath != "" {
-			_ = os.Remove(socketPath) //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+			if removeErr := os.Remove(socketPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) { //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+				warnSideEffect("unlink hub unix socket", storageErr(removeErr, "cannot remove socket %s", socketPath))
+			}
 		}
 	}
 
