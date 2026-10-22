@@ -2482,6 +2482,7 @@ type HubServeCause int
 const (
 	HubServeInvalidConfig HubServeCause = iota // the hub configuration (HUB_LISTEN, HUB_AUTH, certificate, instance list) is missing or invalid [InvalidArgument]
 	HubServeListen                             // the hub cannot listen on HUB_LISTEN or cannot load its certificate [Process]
+	HubServeSocket                             // the hub cannot create, bind, or secure its local unix domain socket [Process]
 	HubServeStorage                            // the shared state or a file could not be read or written [Storage]
 )
 
@@ -2492,6 +2493,7 @@ type HubServeError = OpError[HubServeCause]
 var hubServeCauses = [...]causeInfo{
 	{"InvalidConfig", ClassInvalidArgument},
 	{"Listen", ClassProcess},
+	{"Socket", ClassProcess},
 	{"Storage", ClassStorage},
 }
 
