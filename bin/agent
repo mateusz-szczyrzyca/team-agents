@@ -2843,10 +2843,75 @@ agent say <agent|all|team:ID> "text"     message agents through the bus
 EOF
 }
 
+# ------------------------------------------------------------------ node bridge (supervisor commands)
+
+cmd__node_start() { # id mode [expected_run] — starts a runner directly under agent node without systemd
+  local id=$1 mode=$2 expected_run=${3:-}
+  local dir="$TASKS/$id"
+  [[ -d $dir && -f $dir/meta.env ]] || { echo "task $id not found" >&2; exit 1; }
+  meta_load "$id"
+  if [[ -n $expected_run && $expected_run -ne $((RUN + 1)) && $expected_run -ne $RUN ]]; then
+    echo "unexpected run number $RUN (expected $expected_run)" >&2
+    exit 1
+  fi
+  local repo_name; repo_name=$(task_field "$id" REPO_NAME)
+  if [[ ${#INSTANCE_ACCEPT_REPOS[@]} -gt 0 ]]; then
+    local accepted=0 r
+    for r in "${INSTANCE_ACCEPT_REPOS[@]}"; do
+      if [[ "$r" == "$repo_name" ]]; then accepted=1; break; fi
+    done
+    if ((!accepted)); then
+      echo "repository $repo_name not in INSTANCE_ACCEPT_REPOS" >&2
+      exit 1
+    fi
+  fi
+  local run=$((RUN + 1))
+  meta_set "$id" RUN "$run"
+  meta_set "$id" STATUS starting
+  log_info runner_starting "task=$id" "run=$run" "mode=$mode" "supervisor=node"
+  exec "$SELF" _runner "$id" "$mode"
+}
+
+cmd__node_wake() { # id — wakes a sleeping or waiting task under agent node
+  local id; id=$(resolve_id "${1:?}")
+  exec 8>"$TASKS/$id/wake.lock"
+  flock -w 30 8 || exit 0
+  meta_load "$id"
+  if [[ $STATUS == paused ]]; then
+    resume_paused "$id"
+    exit 0
+  fi
+  if [[ $STATUS != sleeping && $STATUS != waiting ]]; then
+    exit 0
+  fi
+  cmd__node_start "$id" resume
+}
+
+cmd__node_stop() { # id — stops a task runner supervised by agent node
+  local id; id=$(resolve_id "${1:?}")
+  local dir="$TASKS/$id"
+  touch "$dir/stop-requested"
+  if [[ -f $dir/runner.pid ]]; then
+    local pid; pid=$(cat "$dir/runner.pid")
+    killtree "$pid"
+  fi
+}
+
+cmd__node_answer() { # id — resumes a task waiting for answers under agent node
+  local id; id=$(resolve_id "${1:?}")
+  meta_load "$id"
+  cmd__node_start "$id" resume
+}
+
 main() {
   local cmd=${1:-help}; (($#)) && shift
   case $cmd in
     run)     cmd_run "$@" ;;
+    node)    bus node "$@" ;;
+    _node-start) cmd__node_start "$@" ;;
+    _node-wake) cmd__node_wake "$@" ;;
+    _node-stop) cmd__node_stop "$@" ;;
+    _node-answer) cmd__node_answer "$@" ;;
     status|ls) cmd_status ;;
     agents)  cmd_agents ;;
     show)    cmd_show "$@" ;;

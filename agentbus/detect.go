@@ -27,7 +27,7 @@ var toolchainChecks = []struct {
 	{name: "clang", cmd: "clang", args: []string{"--version"}},
 }
 
-// runDetectCommand executes a command with a strict timeout and returns the trimmed first line of output.
+// runDetectCommand executes a command with a strict timeout and returns the trimmed output.
 func runDetectCommand(cmdName string, args ...string) (string, bool) {
 	path, err := exec.LookPath(cmdName)
 	if err != nil {
@@ -41,11 +41,11 @@ func runDetectCommand(cmdName string, args ...string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 0 || lines[0] == "" {
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
 		return "", false
 	}
-	return lines[0], true
+	return trimmed, true
 }
 
 // DetectCapabilities scans the local environment for OS, architecture, toolchains, and hardware.
@@ -58,13 +58,14 @@ func DetectCapabilities() DetectedCapabilities {
 
 	for _, check := range toolchainChecks {
 		if out, ok := runDetectCommand(check.cmd, check.args...); ok {
-			detected.Toolchains = append(detected.Toolchains, check.name+":"+out)
+			firstLine := strings.Split(out, "\n")[0]
+			detected.Toolchains = append(detected.Toolchains, check.name+":"+firstLine)
 		}
 	}
 
 	if runtime.GOOS == "darwin" {
 		if out, ok := runDetectCommand("xcodebuild", "-version"); ok {
-			detected.XcodeVersion = out
+			detected.XcodeVersion = strings.Split(out, "\n")[0]
 		}
 		if out, ok := runDetectCommand("xcrun", "simctl", "list", "runtimes"); ok {
 			detected.IOSSimulators = parseIOSSimulators(out)
