@@ -125,6 +125,9 @@ type AgentState struct {
 	Role        Role   `json:"role"`                   // agent role
 	Status      string `json:"status"`                 // idle, busy, or sleeping
 	CurrentTask string `json:"current_task,omitempty"` // currently executing task ID
+	Repo        string `json:"repo,omitempty"`         // repository name
+	Branch      string `json:"branch,omitempty"`       // branch name
+	Worktree    string `json:"worktree,omitempty"`     // worktree path
 }
 
 // SubscriptionState reports model provider or API quota status.
@@ -397,6 +400,42 @@ func (m *InstanceManager) Heartbeat(authenticatedInstance string, req InstanceHe
 		ExpiresAt:       expiresAt,
 		AcknowledgedSeq: req.Sequence,
 	}, nil
+}
+
+// LeaseStatus indicates the validity of an instance lease.
+type LeaseStatus int
+
+const (
+	// LeaseValid indicates the instance is registered, active, and the lease matches.
+	LeaseValid LeaseStatus = iota
+	// LeaseNotFound indicates the instance is not registered.
+	LeaseNotFound
+	// LeaseExpired indicates the instance lease TTL has expired.
+	LeaseExpired
+	// LeaseStale indicates the lease generation does not match the active lease.
+	LeaseStale
+)
+
+// ValidateLease checks whether the given lease generation is currently valid for the instance.
+func (m *InstanceManager) ValidateLease(instance string, lease uint64) (LeaseStatus, *InstanceRecord) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	store, err := m.load()
+	if err != nil {
+		return LeaseNotFound, nil
+	}
+	rec, ok := store.Instances[instance]
+	if !ok {
+		return LeaseNotFound, nil
+	}
+	if rec.Status != InstanceActive || !rec.LeaseExpiresAt.After(time.Now()) {
+		return LeaseExpired, rec
+	}
+	if rec.Lease != lease {
+		return LeaseStale, rec
+	}
+	return LeaseValid, rec
 }
 
 // GetInstance returns a copy of the instance record if it exists and is active.

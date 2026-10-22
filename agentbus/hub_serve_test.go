@@ -442,3 +442,41 @@ func TestHubServeActiveSocketConflict(t *testing.T) {
 		t.Fatalf("active socket file was improperly deleted: %v", err)
 	}
 }
+
+// TestHubServeRefusesNonSocketFile checks that an existing regular file at socket path is refused.
+func TestHubServeRefusesNonSocketFile(t *testing.T) {
+	dir := t.TempDir()
+	regFile := filepath.Join(dir, "not-a-socket.txt")
+	if err := os.WriteFile(regFile, []byte("regular file content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tcpLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on test tcp: %v", err)
+	}
+	defer func() {
+		if err := tcpLn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Error(err)
+		}
+	}()
+
+	cfg := &HubConfig{
+		Dir:              dir,
+		Listener:         tcpLn,
+		SocketPath:       regFile,
+		Port:             7777,
+		Auth:             HubAuthModeTailscale,
+		AllowedInstances: []string{"node1"},
+	}
+
+	serveErr := serveHub(cfg)
+	if serveErr == nil || serveErr.Cause != HubServeSocket {
+		t.Fatalf("expected HubServeSocket on regular file collision, got %v", serveErr)
+	}
+
+	// Verify the regular file was NOT deleted
+	if _, err := os.Stat(regFile); err != nil {
+		t.Fatalf("regular file was improperly deleted: %v", err)
+	}
+}

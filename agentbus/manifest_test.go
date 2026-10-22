@@ -436,3 +436,36 @@ func TestHubInstanceHTTPRoutes(t *testing.T) {
 		t.Fatalf("expected 200 OK for heartbeat, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestValidateLease(t *testing.T) {
+	b := newBus(t)
+	im := NewInstanceManager(b)
+
+	// 1. Not found
+	st, rec := im.ValidateLease("unknown", 1)
+	if st != LeaseNotFound || rec != nil {
+		t.Fatalf("expected LeaseNotFound, got %v", st)
+	}
+
+	// Register instance
+	m := sampleManifest("mac")
+	m.CurrentState.Agents[0].Repo = "team-agents"
+	m.CurrentState.Agents[0].Branch = "main"
+	m.CurrentState.Agents[0].Worktree = "/tmp/worktree"
+	regResp, err := im.Register("mac", InstanceRegisterRequest{Version: hubProtocolVersion, Manifest: m})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Valid lease
+	st, rec = im.ValidateLease("mac", regResp.Lease)
+	if st != LeaseValid || rec == nil || rec.Manifest.CurrentState.Agents[0].Repo != "team-agents" {
+		t.Fatalf("expected LeaseValid, got %v, rec=%+v", st, rec)
+	}
+
+	// 3. Stale lease
+	st, rec = im.ValidateLease("mac", regResp.Lease+1)
+	if st != LeaseStale || rec == nil {
+		t.Fatalf("expected LeaseStale, got %v", st)
+	}
+}

@@ -346,9 +346,18 @@ func serveHub(cfg *HubConfig) *HubServeError {
 				return fromStorage(HubServeStorage, storageErr(err, "cannot create socket parent directory %s", filepath.Dir(socketPath)))
 			}
 			if err := os.Chmod(filepath.Dir(socketPath), 0o700); err != nil { //nolint:gosec // G302: directory requires 0700 permissions to be traversable by owner
-				warnSideEffect("set socket parent directory permissions", storageErr(err, "cannot set 0700 permissions on %s", filepath.Dir(socketPath)))
+				if closeErr := ln.Close(); closeErr != nil {
+					warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
+				}
+				return opErr(HubServeSocket, "cannot set 0700 permissions on socket directory %s: %v", filepath.Dir(socketPath), err)
 			}
-			if _, err := os.Stat(socketPath); err == nil {
+			if fi, err := os.Lstat(socketPath); err == nil {
+				if fi.Mode()&os.ModeSocket == 0 {
+					if closeErr := ln.Close(); closeErr != nil {
+						warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
+					}
+					return opErr(HubServeSocket, "refusing to remove non-socket file at %s", socketPath)
+				}
 				// Verify if another daemon is actively listening on this socket before removing
 				conn, dialErr := net.DialTimeout("unix", socketPath, 100*time.Millisecond) //nolint:gosec // G704: socketPath is dialed exclusively over unix domain socket
 				if dialErr == nil {
