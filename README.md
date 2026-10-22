@@ -672,7 +672,12 @@ including a member on the lead instance. The hub checks the live lease and repor
 holding its existing bus lock; it never starts another instance's wake script locally. Pending wake commands
 for the same member/task coalesce. An expired lease or queue/storage failure logs `side_effect_failed` and
 leaves the member sleeping with its triggering message unread. Unqualified local teams retain the existing
-wake hook. The owning instance must run `agent node` to poll and acknowledge these commands.
+wake hook. The owning instance must run `agent node` to poll and acknowledge these commands. Run a node on the lead
+instance too when it owns qualified team members. With `LEAD_INSTANCE` empty or equal to `INSTANCE_NAME`
+and `HUB_LISTEN` or `HUB_SOCKET` configured, that node selects the owner-only private hub socket. It needs no
+self-facing network address, token or certificate pin; it does not transmit an inherited network token to
+that socket. An explicitly different lead origin retains the configured network transport. Missing local
+sockets are outages, with no local-file fallback.
 
 Sensitive `sign:*` and `publish:*` requirements are denied unless the local human has approved them in
 `node/approved-capabilities.json` (a JSON array of typed capabilities). Requirements must also be declared

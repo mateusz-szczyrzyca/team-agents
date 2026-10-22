@@ -30,7 +30,7 @@ type NodeExecutor interface {
 type NodeConfig struct {
 	Home              string                                   // local AGENTS_HOME; contains only this node's journal and tasks
 	Instance          string                                   // unique qualified-name suffix
-	Lead              string                                   // hub origin or host:port
+	Lead              string                                   // hub origin or host:port; empty/self uses a configured lead-local socket
 	Auth              HubAuthMode                              // transport authentication mode
 	Token             string                                   // secret from environment, never a command-line argument
 	Fingerprint       string                                   // pinned token-mode certificate SHA-256
@@ -40,7 +40,7 @@ type NodeConfig struct {
 	HeartbeatInterval time.Duration                            // zero uses 60 seconds
 	RetryInterval     time.Duration                            // zero uses bounded one-second reconnect backoff
 	HubRetryDuration  time.Duration                            // maximum control request outage budget; zero uses 30 seconds
-	Client            *HubClient                               // optional preconfigured transport, primarily for isolated tests
+	Client            *HubClient                               // optional preconfigured transport for embedding and isolated tests
 	Manifest          func() (InstanceManifest, *ProcessError) // optional report provider; no hub lock is held while it runs
 	Executor          NodeExecutor                             // optional checked local command executor
 }
@@ -69,6 +69,18 @@ func newNodeClient(cfg NodeConfig) (*HubClient, *CmdNodeError) {
 	}
 	if mode != HubAuthModeTailscale && mode != HubAuthModeToken {
 		return nil, opErr(CmdNodeInvalidConfig, "HUB_AUTH must be tailscale or token")
+	}
+	if (cfg.Lead == "" || cfg.Lead == cfg.Instance) && (os.Getenv("HUB_LISTEN") != "" || os.Getenv("HUB_SOCKET") != "") {
+		path := os.Getenv("HUB_SOCKET")
+		if path == "" {
+			path = filepath.Join(cfg.Home, "bus", "hub.sock")
+		}
+		client, err := newHubSocketClient(path, cfg.Instance)
+		if err != nil {
+			return nil, opErr(CmdNodeInvalidConfig, "%s", err.Message)
+		}
+		client.RetryDuration = cfg.HubRetryDuration
+		return client, nil
 	}
 	transport := &http.Transport{DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 60 * time.Second}
 	client := &HubClient{URL: cfg.Lead, Instance: cfg.Instance, HTTP: &http.Client{Transport: transport}, RetryDuration: cfg.HubRetryDuration}
