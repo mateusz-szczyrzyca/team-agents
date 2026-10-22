@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # Test stub for systemd-run: runs the command as a detached background process (or in the foreground
 # with --wait) and records its PID under $STUB_UNITS/<unit>.service.pid so that the systemctl stub
-# can report and stop it.
-wd=.; envs=(); wait=0; unit=x
+# can report and stop it. Timers (--on-active) are recorded, not run.
+wd=.; envs=(); wait=0; unit=x; on_active=""
 while [[ ${1:-} == --* ]]; do
   case $1 in
     --working-directory=*) wd=${1#*=} ;;
     --setenv=*) envs+=("${1#*=}") ;;
     --wait) wait=1 ;;
     --unit=*) unit=${1#*=} ;;
+    --on-active=*) on_active=${1#*=} ;;
   esac
   shift
 done
+# a timer (--on-active) is only recorded: "<delay> <command…>" in $STUB_UNITS/<unit>.timer; tests fire it themselves
+if [[ -n $on_active ]]; then echo "$on_active $*" > "$STUB_UNITS/$unit.timer"; exit 0; fi
 if ((wait)); then ( cd "$wd" && exec env "${envs[@]}" "$@" ); exit $?; fi
 ( cd "$wd" && exec setsid env "${envs[@]}" "$@" ) </dev/null >/dev/null 2>&1 &
 echo $! > "$STUB_UNITS/$unit.service.pid"

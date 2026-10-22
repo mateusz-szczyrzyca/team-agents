@@ -93,3 +93,25 @@ wait_grep() {
   echo "'$1' not found in $2" >&2
   return 1
 }
+
+# wait_member_state team member state [seconds] — waits until the bus shows the team member in the state
+wait_member_state() {
+  local n=${4:-15}
+  for _ in $(seq 1 $((n * 5))); do
+    [[ $(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$1" | jq -r --arg a "$2" '.members[$a].state') == "$3" ]] && return 0
+    sleep 0.2
+  done
+  echo "member $2 of team $1 is not $3" >&2
+  return 1
+}
+
+# wait_jq filter file [seconds] — waits until a record of a JSONL file matches the jq filter
+wait_jq() {
+  local n=${3:-15}
+  for _ in $(seq 1 $((n * 5))); do
+    [[ -f $2 ]] && [[ -n $(jq -c "select($1)" "$2") ]] && return 0
+    sleep 0.2
+  done
+  echo "no record matching $1 in $2" >&2
+  return 1
+}

@@ -136,8 +136,9 @@ providers and accounts:
    continue.
 3. The coordinator splits the work on a **board** (`easy` items for workers, `normal` items for normal models),
    opens a **draft PR** from its branch and merges every finished part into it, saving **checkpoints** along the
-   way. Members push their branches after every commit. Idle members sleep and are woken by messages or new
-   board items.
+   way. Members push their branches after every commit. Idle members sleep and are woken by messages or by
+   board items they have not seen yet (see [Waking, pausing and quotas](#waking-pausing-and-quotas)). An item
+   for one particular member is added with `for=<member>`: only that member may claim it and only it is woken.
 4. Only the coordinator asks you questions; members ask the coordinator.
 5. The coordinator's `STATUS: DONE` (after `gh pr ready`) finishes the team.
 
@@ -152,6 +153,29 @@ Agents commit and push in small steps and call `checkpoint(summary, next_steps)`
 work — typically to extend the task — `agent run --resume <team|task> "addition"` starts the same agents on the
 same branches (and the same draft PR), with the checkpoints, the earlier answers and your addition in the
 prompt. A resumed team keeps its coordinator and board and skips the quiz.
+
+### Waking, pausing and quotas
+
+A sleeping member costs nothing; every wake-up starts a run and costs tokens. So:
+
+- A **message** to a sleeping member (or to its team) wakes it.
+- The **board** wakes a member only for work it has not seen yet: a new item at its level, an item returned to the
+  board, or an item designated to it (`for`). An item it has already seen — in `board_list` or because it was
+  woken for it — never wakes it again, even if it stays open.
+- **Wake-loop guard.** A member that keeps being woken without doing anything — `AGENT_WAKE_LOOP_MAX` (default 4)
+  idle runs in a row, an idle run being shorter than `AGENT_IDLE_RUN_SEC` (120 s) with no new commit and no bus
+  message, or more than `AGENT_WAKE_RATE_MAX` (30) runs within 10 minutes — is **paused** for
+  `AGENT_WAKE_LOOP_PAUSE_MIN` (15) minutes. You get a notification and the coordinator a `member_paused`
+  message; the log shows `wake_loop_detected`.
+- **Exhausted quota.** When a provider stops a run because its quota or usage limit is exhausted ("Individual
+  quota reached… Resets in 24m46s", "usage limit reached", "try again in 2 hours", "resets 3pm"…), the task is
+  **paused** until the limit resets (plus a minute; `AGENT_QUOTA_PAUSE_MIN`, default 30 min, when the CLI does
+  not say when) instead of failing. This applies to solo tasks, team members, investigators and workers alike.
+
+A paused task (`⏸ paused` in `agent status`) does not run and is not woken by messages or the board; a systemd
+timer (`agent-<task>-wake-<time>.timer`) resumes it at the announced time, in the same session. Its claimed board
+items stay with it. To resume it earlier: `agent _wake <task>` after the time has passed, or edit `WAKE_AT` in
+`~/agents/tasks/<task>/meta.env`; to give up on it: `agent stop <task>`.
 
 ### The hang watchdog
 
@@ -332,6 +356,8 @@ Then:
 | `INVESTIGATORS_TYPE/_MODEL/_EXTRA_ARGS[name]` | investigators (the legacy single `INVESTIGATOR_*` settings still work) |
 | `INVESTIGATION_QUEUE_MAX` | waiting investigation requests (default 3) |
 | `AGENT_HANG_MIN`, `AGENT_HANG_STRIKES` | watchdog (default 30 min, 3 strikes) |
+| `AGENT_IDLE_RUN_SEC`, `AGENT_WAKE_LOOP_MAX`, `AGENT_WAKE_RATE_MAX`, `AGENT_WAKE_LOOP_PAUSE_MIN` | wake-loop guard (default 120 s, 4 idle runs, 30 runs / 10 min, 15 min pause) |
+| `AGENT_QUOTA_PAUSE_MIN` | pause after an exhausted quota when the CLI does not say when it resets (default 30 min) |
 | `AGENT_LANGUAGE` | language of questions and notifications — what only you read (default English) |
 | `REPO_LANGUAGE` | language of commits, PRs, reviews, reports and code comments (default English) |
 | `GIT_NAME_FORMAT`, `GIT_EMAIL`, `GIT_SIGNING_KEY` | identity and signing of the agents' commits (see [Commit identity](#commit-identity)) |
@@ -458,7 +484,7 @@ event stream with bus messages, status changes and periodic reminders.
 | `delegate`, `delegation_status` | worker requests (normal tier) |
 | `team_status`, `claim_lead`, `handover_lead` | teams |
 | `quiz_start`, `quiz_answer`, `quiz_results`, `team_exclude` | the qualification quiz |
-| `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board |
+| `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item) |
 
 ## Files and state
 
@@ -586,6 +612,9 @@ Add the toolchains (`~/.cargo/bin`, `probe-rs`, `picotool`) to `RUN_PATH`. If yo
   the value, or stop all tasks and move `state.json` aside (queues, teams and boards are then forgotten). Values
   written by earlier versions are always accepted.
 - **Tasks left with status `new`** after an interrupted `agent run` — remove them with `agent discard <id>...`.
+- **A task is `paused`** — its provider's quota is exhausted or the wake-loop guard stopped it; the notification
+  and `agent log <id>` say which and until when. It resumes by itself (see
+  [Waking, pausing and quotas](#waking-pausing-and-quotas)).
 - **A task finished as `failed` without a message** — look at `agent log <id>`, `~/agents/tasks/<id>/err-N.log` and
   the warnings in `~/agents/logs/*.jsonl` (`jq 'select(.level == "warn" or .level == "error")' ~/agents/logs/*.jsonl`).
 - **Deleting `~/agents/tasks` by hand** makes tasks disappear from the lists but leaves worktrees and branches;

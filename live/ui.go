@@ -54,6 +54,8 @@ func statusStyle(s string) (string, lipgloss.Style) {
 		return "■ stopped", stFailed
 	case "sleeping":
 		return "zz sleeping (team)", stDim
+	case "paused":
+		return "⏸ paused", stDim
 	case "excluded":
 		return "⊘ excluded", stFailed
 	case "hung":

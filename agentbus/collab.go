@@ -52,6 +52,7 @@ type BoardItem struct {
 	Status   BoardStatus `json:"status"`             // todo | claimed | done
 	Creator  string      `json:"creator"`            // receives the result as a message
 	Assignee string      `json:"assignee,omitempty"` // who claimed it
+	For      string      `json:"for,omitempty"`      // the only member that may claim it ("" = anyone at its level)
 	Result   string      `json:"result,omitempty"`   // the result submitted with board_done
 	Updated  Timestamp   `json:"updated"`            // last change
 }
@@ -314,6 +315,9 @@ func (t *Team) releaseItemsOf(agent string) []string {
 			released = append(released, id)
 		}
 	}
+	if len(released) > 0 {
+		t.bumpBoard()
+	}
 	return released
 }
 
@@ -346,12 +350,29 @@ func (b *Bus) wakeOne(t *Team, tier Tier, except string) {
 	}
 	if pick != nil {
 		pick.State = MemberWaking
+		pick.BoardSeen = t.BoardRev
 		wakeFn(t, pick.Task)
 	}
 }
 
-// boardAdd (MCP board_add) adds a board item and wakes one sleeping member of the matching tier.
+// wakeDesignated wakes the member an item is designated to, if it sleeps.
+func (b *Bus) wakeDesignated(t *Team, name string) {
+	if m := t.Members[name]; m != nil && m.State == MemberSleeping {
+		m.State = MemberWaking
+		m.BoardSeen = t.BoardRev
+		wakeFn(t, m.Task)
+	}
+}
+
+// boardAdd adds an open board item (see boardAddFor).
 func (s *Server) boardAdd(title, details, level string) (string, *BoardAddError) {
+	return s.boardAddFor(title, details, level, "")
+}
+
+// boardAddFor (MCP board_add) adds a board item and wakes one sleeping member who can take it: the designated
+// member when forMember is given, otherwise one of the matching tier.
+func (s *Server) boardAddFor(title, details, level, forMember string) (string, *BoardAddError) {
+	forMember = strings.TrimSpace(forMember)
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return "", opErr(BoardAddMissingTitle, "%s", missing("title"))
@@ -367,17 +388,31 @@ func (s *Server) boardAdd(title, details, level string) (string, *BoardAddError)
 		if t == nil {
 			return opErr(BoardAddNotInTeam, "the board exists only in a team — outside a team use delegate")
 		}
+		if forMember != "" {
+			m := t.Members[forMember]
+			if m == nil || m.State == MemberExcluded {
+				return opErr(BoardAddUnknownMember, "%s is not a member of your team (see team_status)", forMember)
+			}
+			if m.Tier == TierWorker && lvl != LevelEasy {
+				return opErr(BoardAddForWorkerNeedsEasy, "%s is a worker: items for workers must be level easy", forMember)
+			}
+		}
 		if t.Board == nil {
 			t.Board = map[string]*BoardItem{}
 		}
 		t.NextBID++
 		id = "B" + strconv.Itoa(t.NextBID)
 		t.Board[id] = &BoardItem{ID: id, Title: title, Details: strings.TrimSpace(details), Level: lvl, Status: BoardTodo,
-			Creator: s.me, Updated: Now()}
-		if _, serr := s.bus.post(st, s.me, "all", EventBoardItemAdded{ID: id, Level: lvl, Title: title}); serr != nil {
+			Creator: s.me, For: forMember, Updated: Now()}
+		t.bumpBoard()
+		if _, serr := s.bus.post(st, s.me, "all", EventBoardItemAdded{ID: id, Level: lvl, Title: title, For: forMember}); serr != nil {
 			return fromStorage(BoardAddStorage, serr)
 		}
-		s.bus.wakeOne(t, tierForLevel(lvl), s.me)
+		if forMember != "" {
+			s.bus.wakeDesignated(t, forMember)
+		} else {
+			s.bus.wakeOne(t, tierForLevel(lvl), s.me)
+		}
 		return nil
 	})
 	if err != nil {
@@ -395,6 +430,9 @@ func (s *Server) boardList() (string, *BoardListError) {
 		if t == nil {
 			return opErr(BoardListNotInTeam, "you are not in a team")
 		}
+		if me := t.Members[s.me]; me != nil {
+			me.BoardSeen = t.BoardRev // the member has now seen every item on the board
+		}
 		ids := t.sortedBoardIDs()
 		if len(ids) == 0 {
 			sb.WriteString("The board is empty.\n")
@@ -404,6 +442,9 @@ func (s *Server) boardList() (string, *BoardListError) {
 			who := ""
 			if it.Assignee != "" {
 				who = " → " + it.Assignee
+			}
+			if it.For != "" && it.Status == BoardTodo {
+				who = " — for " + it.For + " only"
 			}
 			fmt.Fprintf(&sb, "- %s [%s, %s%s] %s (from %s)\n", id, it.Level, it.Status, who, it.Title, it.Creator)
 			if it.Status != BoardDone && it.Details != "" {
@@ -433,6 +474,9 @@ func (s *Server) boardClaim(id string) (string, *BoardClaimError) {
 		item := t.Board[strings.TrimSpace(id)]
 		if item == nil {
 			return opErr(BoardClaimNoSuchItem, "no board item %s (see board_list)", id)
+		}
+		if item.For != "" && item.For != s.me && item.Status == BoardTodo {
+			return opErr(BoardClaimReservedForOther, "%s is reserved for %s", item.ID, item.For)
 		}
 		if me := t.Members[s.me]; me != nil && me.Tier == TierWorker && item.Level != LevelEasy {
 			return opErr(BoardClaimWorkerNeedsEasy, "as a worker you only take easy items")
@@ -495,6 +539,7 @@ func (s *Server) boardRelease(id, note string) (string, *BoardReleaseError) {
 			return opErr(BoardReleaseNotYourItem, "%s is not your item", id)
 		}
 		it.Status, it.Assignee, it.Updated = BoardTodo, "", Now()
+		t.bumpBoard()
 		if note != "" {
 			it.Details += "\n[returned by " + s.me + ": " + note + "]"
 		}
@@ -606,9 +651,13 @@ func collabToolDefs(inTeam bool, tier Tier) []map[string]any {
 			tool("team_exclude", "Coordinator: exclude a member from the team for this task (e.g. failed the quiz).",
 				obj(map[string]any{"agent": str("Member"), "reason": str("Reason")}, "agent", "reason")),
 			tool("board_add", "Add a subtask to the team board. level=easy: simple, mechanical work for workers (listing, grep, checking "+
-				"file contents, running a known command and summarising its output); level=normal: for normal models. Wakes a sleeping assignee.",
+				"file contents, running a known command and summarising its output); level=normal: for normal models. Wakes one sleeping member "+
+				"who can take it (only the designated member when for is given).",
 				obj(map[string]any{"title": str("Short title"), "details": str("Exactly what to do and in what form to return the result"),
-					"level": map[string]any{"type": "string", "enum": []string{string(LevelEasy), string(LevelNormal)}}}, "title", "details", "level")),
+					"level": map[string]any{"type": "string", "enum": []string{string(LevelEasy), string(LevelNormal)}},
+					"for": str("Optional: the member that must do it. Only that member may claim the item and only it is woken. " +
+						"Use this instead of writing \"for X\" or \"wait for assignment\" in the text — an open item is for anyone at its level.")},
+					"title", "details", "level")),
 			tool("board_list", "Show the team board (todo / in progress / done).", obj(map[string]any{})),
 			tool("board_claim", "Take an item from the board (workers: easy only).", obj(map[string]any{"id": str("e.g. B3")}, "id")),
 			tool("board_done", "Submit the result of an item — it is sent as a message to whoever requested it.",

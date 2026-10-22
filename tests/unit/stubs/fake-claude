@@ -7,6 +7,8 @@ Actions:
   done            final message "STATUS: DONE"
   tool-done       calls list_agents (an agentbus tool), then STATUS: DONE
   commit          commits a file with the trailers from the prompt, then STATUS: DONE
+  quota           the provider refuses the run: a quota error on stderr, exit code 3, no result
+  idle            STATUS: SLEEPING right away, without doing anything
   questions-file  writes the questions file, STATUS: QUESTIONS
   questions-text  asks questions only in the final message
   no-status       a final message without a STATUS line
@@ -64,6 +66,11 @@ if action == "team-lead-done":
     call("checkpoint", summary="stage 1 done", next_steps="stage 2")
     call("send_message", to="team", text="TEAM DONE")
     finish("STATUS: DONE\nRole: coordinator")
+if action == "quota":
+    print("Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1m30s.", file=sys.stderr)
+    sys.exit(3)
+if action == "idle":
+    finish("Nothing for me.\n\nSTATUS: SLEEPING")
 if action == "commit":
     trailers = re.search(r"exactly these trailers, after a blank line:\n\n```\n(.*?)\n```", prompt, re.S).group(1)
     open("hello.txt", "w").write("hello\n")

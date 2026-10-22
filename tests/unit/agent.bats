@@ -304,3 +304,83 @@ CONF
   [ ! -d "$AGENTS_HOME/tasks/$t" ]
   [ -z "$(git -C "$HOME/repo" branch --list "$branch")" ]
 }
+
+@test "a run stopped by an exhausted quota pauses the task and a timer resumes it" {
+  scenario '{"solo": {"new": "quota", "resume": "done"}}'
+  agent run solo "task"
+  t=$(task_of solo)
+  wait_status "$t" paused
+  # paused, not failed: a timer is set for the reset time (1m30s + 1 min margin)
+  wake_at=$(sed -n 's/^WAKE_AT=//p' "$AGENTS_HOME/tasks/$t/meta.env")
+  (( wake_at - $(date +%s) > 120 && wake_at - $(date +%s) <= 150 ))
+  timer=$(cat "$STUB_UNITS"/agent-"$t"-wake-*.timer)
+  [[ $timer == 150s*"_wake $t" ]]
+  wait_grep "⏸ paused" "$HOME/notifications.log"
+  grep -q "quota or usage limit" "$HOME/notifications.log"
+  jq -e --arg t "$t" 'select(.event == "task_paused" and .task == $t and .reason == "quota")' "$AGENTS_HOME/logs/agent.jsonl" >/dev/null
+  # an early wake-up is deferred
+  agent _wake "$t"
+  [ "$(sed -n 's/^STATUS=//p' "$AGENTS_HOME/tasks/$t/meta.env")" = paused ]
+  # the timer fires after the reset: the task resumes
+  sed -i 's/^WAKE_AT=.*/WAKE_AT=1/' "$AGENTS_HOME/tasks/$t/meta.env"
+  agent _wake "$t"
+  wait_status "$t" done
+}
+
+@test "a team member stopped by an exhausted quota is paused, not dropped, and the team is told" {
+  scenario '{"lead": {"new": "team-lead-slow"}, "member": {"new": "quota"}}'
+  agent run --team lead,member "team task"
+  m=$(task_of member)
+  wait_status "$m" paused 30
+  wait_member_state "$(sed -n 's/^TEAM=//p' "$AGENTS_HOME/tasks/$m/meta.env")" member paused
+  wait_jq '.kind == "script" and .data.notice == "member_paused" and .data.fields.agent == "member"
+           and .data.fields.reason == "quota"' "$AGENTS_HOME/bus/messages.jsonl"
+  wait_status "$(task_of lead)" done 30
+}
+
+@test "the wake-loop guard pauses a member that keeps waking up without doing anything" {
+  echo 'AGENT_WAKE_LOOP_MAX=2' >> "$AGENTS_HOME/agents.conf"
+  scenario '{"lead": {"new": "sleep:15"}, "member": {"new": "idle", "resume": "idle"}}'
+  agent run --team lead,member "team task"
+  m=$(task_of member)
+  wait_status "$m" sleeping 30
+  team=$(sed -n 's/^TEAM=//p' "$AGENTS_HOME/tasks/$m/meta.env")
+  # a message wakes it; it does nothing again → second idle run in a row → paused
+  agentbus send --dir "$AGENTS_HOME/bus" --from human --to member "ping"
+  wait_status "$m" paused 30
+  [ "$(sed -n 's/^RUN=//p' "$AGENTS_HOME/tasks/$m/meta.env")" = 2 ]
+  jq -e 'select(.event == "wake_loop_detected")' "$AGENTS_HOME/logs/agent.jsonl" >/dev/null
+  wait_member_state "$team" member paused
+  ls "$STUB_UNITS"/agent-"$m"-wake-*.timer >/dev/null
+  # while paused, messages do not wake it
+  agentbus send --dir "$AGENTS_HOME/bus" --from human --to member "ping again"
+  sleep 3
+  [ "$(sed -n 's/^RUN=//p' "$AGENTS_HOME/tasks/$m/meta.env")" = 2 ]
+  wait_status "$(task_of lead)" done 30
+}
+
+@test "quota reset times are read from the messages of the CLIs" {
+  source "$HOME/.local/bin/agent"
+  d=$(mktemp -d)
+  now=$(date +%s)
+  printf 'Error: You have hit your usage limit. Try again in 2 hours 13 minutes.\n' > "$d/err-1.log"
+  [ "$(quota_reset_seconds "$d" 1 "")" = $(( 2 * 3600 + 13 * 60 + 60 )) ]
+  printf '' > "$d/err-1.log"
+  printf '%s\n' '{"type":"result","is_error":true,"result":"Claude AI usage limit reached|'"$((now + 600))"'"}' > "$d/out-1.jsonl"
+  secs=$(quota_reset_seconds "$d" 1 "")
+  (( secs >= 655 && secs <= 661 ))
+  rm "$d/out-1.jsonl"
+  printf '429 Too Many Requests: rate limit exceeded\n' > "$d/err-1.log"
+  [ "$(quota_reset_seconds "$d" 1 "")" = $(( AGENT_QUOTA_PAUSE_MIN * 60 + 60 )) ]
+  printf "5-hour limit reached · resets 3pm\n" > "$d/err-1.log"
+  secs=$(quota_reset_seconds "$d" 1 "")
+  (( secs > 60 && secs <= 86400 + 60 ))
+  # not a quota problem: no pause
+  printf 'Error: connection reset by peer\n' > "$d/err-1.log"
+  run quota_reset_seconds "$d" 1 ""
+  [ "$status" -eq 1 ]
+  # the agent's own report (with STATUS) is never read as a quota error
+  printf '' > "$d/err-1.log"
+  run quota_reset_seconds "$d" 1 $'Implemented the rate limit handling.\n\nSTATUS: DONE'
+  [ "$status" -eq 1 ]
+}

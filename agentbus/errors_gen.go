@@ -684,10 +684,12 @@ func (c TeamExcludeCause) String() string { return c.info().name }
 type BoardAddCause int
 
 const (
-	BoardAddMissingTitle BoardAddCause = iota // the title is missing [InvalidArgument]
-	BoardAddInvalidLevel                      // the level is neither easy nor normal [InvalidArgument]
-	BoardAddNotInTeam                         // the caller is not in a team (outside a team: delegate) [NotInTeam]
-	BoardAddStorage                           // the shared state or a file could not be read or written [Storage]
+	BoardAddMissingTitle       BoardAddCause = iota // the title is missing [InvalidArgument]
+	BoardAddInvalidLevel                            // the level is neither easy nor normal [InvalidArgument]
+	BoardAddNotInTeam                               // the caller is not in a team (outside a team: delegate) [NotInTeam]
+	BoardAddUnknownMember                           // for names an agent that is not a member of the team (or is excluded) [NotFound]
+	BoardAddForWorkerNeedsEasy                      // for names a worker but the item is not level easy [InvalidArgument]
+	BoardAddStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
 // BoardAddError is the error of the MCP tool board_add.
@@ -698,6 +700,8 @@ var boardAddCauses = [...]causeInfo{
 	{"MissingTitle", ClassInvalidArgument},
 	{"InvalidLevel", ClassInvalidArgument},
 	{"NotInTeam", ClassNotInTeam},
+	{"UnknownMember", ClassNotFound},
+	{"ForWorkerNeedsEasy", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 
@@ -744,11 +748,12 @@ func (c BoardListCause) String() string { return c.info().name }
 type BoardClaimCause int
 
 const (
-	BoardClaimNotInTeam       BoardClaimCause = iota // the caller is not in a team [NotInTeam]
-	BoardClaimNoSuchItem                             // there is no board item with this ID [NotFound]
-	BoardClaimWorkerNeedsEasy                        // a worker tried to claim a normal-level item [Permission]
-	BoardClaimAlreadyTaken                           // the item is already claimed or done [Conflict]
-	BoardClaimStorage                                // the shared state or a file could not be read or written [Storage]
+	BoardClaimNotInTeam        BoardClaimCause = iota // the caller is not in a team [NotInTeam]
+	BoardClaimNoSuchItem                              // there is no board item with this ID [NotFound]
+	BoardClaimWorkerNeedsEasy                         // a worker tried to claim a normal-level item [Permission]
+	BoardClaimAlreadyTaken                            // the item is already claimed or done [Conflict]
+	BoardClaimReservedForOther                        // the item is reserved for another member (board_add with for) [Permission]
+	BoardClaimStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
 // BoardClaimError is the error of the MCP tool board_claim.
@@ -760,6 +765,7 @@ var boardClaimCauses = [...]causeInfo{
 	{"NoSuchItem", ClassNotFound},
 	{"WorkerNeedsEasy", ClassPermission},
 	{"AlreadyTaken", ClassConflict},
+	{"ReservedForOther", ClassPermission},
 	{"Storage", ClassStorage},
 }
 

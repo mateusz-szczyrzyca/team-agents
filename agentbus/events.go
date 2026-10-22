@@ -391,15 +391,19 @@ func (e EventMemberExcluded) Text() string {
 
 // EventBoardItemAdded announces a new board item.
 type EventBoardItemAdded struct {
-	ID    string     `json:"id"`    // item ID ("B<n>")
-	Level BoardLevel `json:"level"` // who should take it
-	Title string     `json:"title"` // short description
+	ID    string     `json:"id"`            // item ID ("B<n>")
+	Level BoardLevel `json:"level"`         // who should take it
+	Title string     `json:"title"`         // short description
+	For   string     `json:"for,omitempty"` // the only member that may claim it ("" = anyone at its level)
 }
 
 func (e EventBoardItemAdded) Kind() MessageKind { return KindBoardItemAdded } // Kind implements busEvent.
 
 // Text implements busEvent.
 func (e EventBoardItemAdded) Text() string {
+	if e.For != "" {
+		return fmt.Sprintf("BOARD %s [%s, for %s]: %s", e.ID, e.Level, e.For, e.Title)
+	}
 	return fmt.Sprintf("BOARD %s [%s]: %s", e.ID, e.Level, e.Title)
 }
 
@@ -483,13 +487,15 @@ const (
 	NoticeCoordinatorHung    ScriptNotice = "coordinator_hung"    // the coordinator was marked hung
 	NoticeHelperResult       ScriptNotice = "helper_result"       // a worker request finished (result to the requester)
 	NoticeHelperStartFailure ScriptNotice = "helper_start_failed" // a worker request could not be started
+	NoticeMemberPaused       ScriptNotice = "member_paused"       // a member is paused (quota or wake-loop guard) until a given time
 )
 
 // Valid reports whether n is a defined notice.
 func (n ScriptNotice) Valid() bool {
 	switch n {
 	case NoticeMemberFinished, NoticeMemberFailed, NoticeMemberStopped, NoticeMemberQuestions, NoticeMemberNoStatus,
-		NoticeTeamStuck, NoticeWorkerHung, NoticeAgentHung, NoticeCoordinatorHung, NoticeHelperResult, NoticeHelperStartFailure:
+		NoticeTeamStuck, NoticeWorkerHung, NoticeAgentHung, NoticeCoordinatorHung, NoticeHelperResult, NoticeHelperStartFailure,
+		NoticeMemberPaused:
 		return true
 	}
 	return false

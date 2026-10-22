@@ -141,7 +141,7 @@ type Snapshot struct {
 }
 
 // activeStatuses are task statuses of unfinished tasks (shown regardless of acknowledgement).
-var activeStatuses = map[string]bool{"new": true, "starting": true, "running": true, "waiting": true, "investigating": true, "sleeping": true}
+var activeStatuses = map[string]bool{"new": true, "starting": true, "running": true, "waiting": true, "investigating": true, "sleeping": true, "paused": true}
 
 // Active reports whether the task has not finished yet (sleeping and waiting count as active).
 func (t *Task) Active() bool { return activeStatuses[t.Status] }
@@ -445,7 +445,7 @@ func statusPrio(t *Task) int {
 		return 1
 	case "investigating":
 		return 2
-	case "sleeping":
+	case "sleeping", "paused":
 		return 3
 	default:
 		return 4
@@ -664,6 +664,8 @@ func remindText(s *Snapshot) string {
 			wait = append(wait, t.Label())
 		case "sleeping":
 			sleep = append(sleep, t.Label())
+		case "paused":
+			sleep = append(sleep, t.Label()+" (paused)")
 		}
 	}
 	if len(work) == 0 && len(wait) == 0 {

@@ -27,26 +27,53 @@ type TeamMember struct {
 	Task     string      `json:"task"`               // the member's task ID
 	Branch   string      `json:"branch"`             // the member's git branch
 	Worktree string      `json:"worktree"`           // the member's worktree (teammates may read it)
-	State    MemberState `json:"state"`              // active | sleeping | waking | done | excluded | hung
+	State    MemberState `json:"state"`              // active | sleeping | waking | done | excluded | hung | paused
 	Tier     Tier        `json:"tier"`               // normal | worker
 	Provider string      `json:"provider,omitempty"` // anthropic | openai | google | openrouter | deepinfra | ... (load balancing)
+	// BoardSeen is the board revision (Team.BoardRev) the member has seen: when it last listed the board or was
+	// woken because of it. Going to sleep wakes the member again only for board changes newer than this.
+	BoardSeen int `json:"board_seen,omitempty"`
 }
 
 // Team is a group of agents working on the same task, each on its own branch. The
 // coordinator (Lead) is elected by the members via claim_lead (normal tier only).
 type Team struct {
-	ID      string                 `json:"id"`                     // "<timestamp>-team"
-	Repo    string                 `json:"repo"`                   // repository name
-	Lead    string                 `json:"lead"`                   // coordinator's agent name ("" until elected)
-	WakeCmd string                 `json:"wake_cmd"`               // `agent` script used to wake sleeping members
-	Home    string                 `json:"home"`                   // AGENTS_HOME for spawned wake processes
-	Done    bool                   `json:"done"`                   // set when the team's task is finished or stopped
-	Created Timestamp              `json:"created"`                // when the team was created
-	Members map[string]*TeamMember `json:"members"`                // by agent name
-	Quiz    *Quiz                  `json:"quiz,omitempty"`         // the qualification quiz (nil until it is asked)
-	Board   map[string]*BoardItem  `json:"board,omitempty"`        // by item ID ("B1", "B2", ...)
-	NextBID int                    `json:"next_board_id"`          // last board item number issued
-	Resumed string                 `json:"resumed_from,omitempty"` // previous team ID when created by agent run --resume
+	ID      string                 `json:"id"`              // "<timestamp>-team"
+	Repo    string                 `json:"repo"`            // repository name
+	Lead    string                 `json:"lead"`            // coordinator's agent name ("" until elected)
+	WakeCmd string                 `json:"wake_cmd"`        // `agent` script used to wake sleeping members
+	Home    string                 `json:"home"`            // AGENTS_HOME for spawned wake processes
+	Done    bool                   `json:"done"`            // set when the team's task is finished or stopped
+	Created Timestamp              `json:"created"`         // when the team was created
+	Members map[string]*TeamMember `json:"members"`         // by agent name
+	Quiz    *Quiz                  `json:"quiz,omitempty"`  // the qualification quiz (nil until it is asked)
+	Board   map[string]*BoardItem  `json:"board,omitempty"` // by item ID ("B1", "B2", ...)
+	NextBID int                    `json:"next_board_id"`   // last board item number issued
+	// BoardRev counts the changes that put claimable work on the board (an item added or returned); see
+	// TeamMember.BoardSeen.
+	BoardRev int    `json:"board_rev,omitempty"`
+	Resumed  string `json:"resumed_from,omitempty"` // previous team ID when created by agent run --resume
+}
+
+// bumpBoard records that claimable work changed: an item was added or returned to the board.
+func (t *Team) bumpBoard() { t.BoardRev++ }
+
+// hasWorkFor reports whether a "todo" item waits for the member: one designated to it, or an open item at the
+// level of its tier.
+func (t *Team) hasWorkFor(name string, m *TeamMember) bool {
+	want := LevelNormal
+	if m.Tier == TierWorker {
+		want = LevelEasy
+	}
+	for _, it := range t.Board {
+		if it.Status != BoardTodo {
+			continue
+		}
+		if it.For == name || (it.For == "" && it.Level == want) {
+			return true
+		}
+	}
+	return false
 }
 
 // names returns the member names sorted alphabetically.
@@ -688,18 +715,15 @@ func cmdTeamSet(args []string) {
 				return fromStorage(CmdTeamSetStorage, out.err)
 			}
 		}
-		// something at this member's level is waiting on the board (it may have been added while it was finishing)
-		want := LevelNormal
-		if m.Tier == TierWorker {
-			want = LevelEasy
-		}
-		for _, it := range t.Board {
-			if it.Status == BoardTodo && it.Level == want {
-				m.State = MemberWaking
-				wakeFn(t, m.Task)
-				out.println("waking (board)")
-				return fromStorage(CmdTeamSetStorage, out.err)
-			}
+		// Work for this member appeared on the board since it last looked (it may have been added while the member
+		// was finishing). Items it has already seen do not wake it again: a member that leaves an item alone (e.g.
+		// one the coordinator keeps for later) would otherwise be woken in an endless loop.
+		if t.BoardRev > m.BoardSeen && t.hasWorkFor(*agent, m) {
+			m.State = MemberWaking
+			m.BoardSeen = t.BoardRev
+			wakeFn(t, m.Task)
+			out.println("waking (board)")
+			return fromStorage(CmdTeamSetStorage, out.err)
 		}
 		return nil
 	}).asError())

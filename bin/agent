@@ -152,6 +152,14 @@ INVESTIGATOR_EXTRA_ARGS="${INVESTIGATOR_EXTRA_ARGS:-}"
 INVESTIGATION_QUEUE_MAX="${INVESTIGATION_QUEUE_MAX:-3}"
 AGENT_HANG_MIN="${AGENT_HANG_MIN:-30}"          # watchdog: this many minutes without any activity = hang
 AGENT_HANG_STRIKES="${AGENT_HANG_STRIKES:-3}"    # this many consecutive hangs without progress = agent is hung
+# Wake-loop guard: a team member that keeps being woken without doing anything is paused (see wake_loop_check).
+AGENT_IDLE_RUN_SEC="${AGENT_IDLE_RUN_SEC:-120}"           # a run shorter than this, without a commit or a bus message, is idle
+AGENT_WAKE_LOOP_MAX="${AGENT_WAKE_LOOP_MAX:-4}"           # this many idle runs in a row pause the member
+AGENT_WAKE_RATE_MAX="${AGENT_WAKE_RATE_MAX:-30}"          # more runs than this within 10 minutes pause the member
+AGENT_WAKE_LOOP_PAUSE_MIN="${AGENT_WAKE_LOOP_PAUSE_MIN:-15}" # how long the guard pauses it
+# A run stopped by an exhausted quota or usage limit pauses the task until the limit resets (see quota_reset_seconds);
+# this is the pause when the CLI does not say when that is.
+AGENT_QUOTA_PAUSE_MIN="${AGENT_QUOTA_PAUSE_MIN:-30}"
 # Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
 declare -p INVESTIGATORS_TYPE &>/dev/null || declare -A INVESTIGATORS_TYPE=()
 declare -p INVESTIGATORS_MODEL &>/dev/null || declare -A INVESTIGATORS_MODEL=()
@@ -389,12 +397,23 @@ team_after_run() { # id status final note — team logic after a member's run en
   lead=$(team_lead "$team")
   case $status in
     sleeping) state=sleeping ;;
+    paused) state=paused ;;
     excluded) state=excluded ;;
     hung) state=hung ;;
     done|failed|stopped) state=done ;;
     *) state=active ;;
   esac
   try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$AGENT" --state "$state" >/dev/null
+
+  if [[ $status == paused ]]; then
+    local to until; to=$lead
+    [[ -z $to || $to == "$AGENT" ]] && to="team:$team"
+    until=$(date -d "@$(task_field "$id" WAKE_AT)" '+%H:%M')
+    notice member_paused agentbus "$to" "$AGENT IS PAUSED until $until: $note. Messages and board items do not wake it; it resumes by itself at $until and its claimed board items stay with it. If the work cannot wait, plan without it." \
+      "agent=$AGENT" "team=$team" "until=$until" "reason=$(task_field "$id" PAUSE_REASON)"
+    notify "$id" paused "$final" "$note"
+    return 0
+  fi
 
   if [[ $status == hung ]]; then
     local released tj nm
@@ -481,12 +500,16 @@ $(team_summary "$team")" ;;
   fi
 }
 
-cmd__wake() { # id — called by agentbus when a sleeping member receives a message
+cmd__wake() { # id — a sleeping team member received a message, or the timer of a paused task fired
   stopping && return 0
   local id; id=$(resolve_id "${1:?}")
   exec 8>"$TASKS/$id/wake.lock"
   flock -w 30 8 || exit 0
   meta_load "$id"
+  if [[ $STATUS == paused ]]; then
+    resume_paused "$id"
+    exit 0
+  fi
   [[ -n ${TEAM:-} ]] || exit 0
   log_info wake_requested "task=$id" "agent=$AGENT" "team=$TEAM"
   local mstate
@@ -505,6 +528,150 @@ cmd__wake() { # id — called by agentbus when a sleeping member receives a mess
     case $STATUS in done|failed|stopped) state=done ;; sleeping) state=done ;; esac
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state "$state" >/dev/null
   fi
+}
+
+# Words in a CLI error that mean the provider stopped the run because a quota or usage limit is exhausted.
+QUOTA_PATTERN='quota (reached|exceeded|exhausted)|usage limit|rate[ _-]?limit|limit reached|too many requests|resource[ _]exhausted|out of credits|insufficient (credits|balance)'
+
+# quota_reset_seconds dir run final — when this run of the CLI stopped because a quota or usage limit is exhausted,
+# prints the seconds until it resets (plus a minute of margin) and returns 0; returns 1 otherwise. Searched: the
+# CLI's error stream, the error events of its output and the latest error entries of the activity log; the final
+# message only when it has no STATUS line (an agent's own report always has one).
+quota_reset_seconds() {
+  local dir=$1 run=$2 final=$3 text="" f
+  # grep exits 1 when nothing matches — that is the expected "no quota error"
+  if [[ -f $dir/err-$run.log ]]; then text+=$(grep -iE "$QUOTA_PATTERN" "$dir/err-$run.log" || (($? == 1))); fi
+  for f in "$dir/events-$run.jsonl" "$dir/out-$run.jsonl"; do
+    [[ -f $f ]] || continue
+    text+=$'\n'$(grep -iE '"(type|level|subtype)": ?"[a-z_]*error|"is_error": ?true|"error":' "$f" | grep -iE "$QUOTA_PATTERN" || (($? == 1)))
+  done
+  if [[ -f $dir/activity.jsonl ]]; then
+    text+=$'\n'$(tail -n 50 "$dir/activity.jsonl" | grep -F '"k":"err"' | grep -iE "$QUOTA_PATTERN" || (($? == 1)))
+  fi
+  if [[ -z $(final_status "$final") ]]; then
+    text+=$'\n'$(grep -iE "$QUOTA_PATTERN" <<< "$final" || (($? == 1)))
+  fi
+  [[ -n ${text//[[:space:]]/} ]] || return 1
+
+  local secs=0 now at t epoch dur
+  now=$(date +%s)
+  # "limit reached|1761120000" (Claude Code): the reset as a Unix time
+  epoch=$(grep -oE 'limit reached\|[0-9]{10}' <<< "$text" | head -1 | cut -d'|' -f2 || (($? == 1)))
+  if [[ -n $epoch ]] && ((epoch > now)); then secs=$((epoch - now)); fi
+  # "Resets in 24m46s", "try again in 2 hours 13 minutes", "retry after 90s"
+  if ((secs == 0)); then
+    dur=$(grep -ioE '(resets?|try again|retry|available again)( it)?( in| after)? [0-9][0-9hms ,:a-z]*' <<< "$text" | head -1 || (($? == 1)))
+    [[ -n $dur ]] && secs=$(duration_seconds "$dur")
+  fi
+  # "resets 3pm", "will reset at 15:30"
+  if ((secs == 0)); then
+    at=$(grep -ioE 'resets? (at )?[0-9]{1,2}(:[0-9]{2})? ?([ap]m)?' <<< "$text" | head -1 | sed -E 's/^resets? (at )?//I' || (($? == 1)))
+    # date reports an unparsable time on stderr; that only means the time is unknown (the default pause applies)
+    if [[ -n $at ]] && t=$(date -d "$at" +%s 2>/dev/null); then
+      ((t <= now)) && t=$((t + 86400))
+      secs=$((t - now))
+    fi
+  fi
+  ((secs > 0)) || secs=$((AGENT_QUOTA_PAUSE_MIN * 60))
+  echo $((secs + 60))
+}
+
+# duration_seconds text — the duration in a text ("24m46s", "2 hours 13 minutes", "1h 5m", "90s") in seconds
+duration_seconds() {
+  local s=0 n u
+  while read -r n u; do
+    case ${u,,} in
+      h*) s=$((s + n * 3600)) ;;
+      m*) s=$((s + n * 60)) ;;
+      s*) s=$((s + n)) ;;
+    esac
+  done < <(grep -oE '[0-9]+ ?[a-zA-Z]+' <<< "$1" | sed -E 's/^([0-9]+) ?/\1 /' || (($? == 1)))
+  echo "$s"
+}
+
+# bus_messages_from agent — how many bus messages the agent has posted (a progress signal of the wake-loop guard)
+bus_messages_from() {
+  local f="$BUS_DIR/messages.jsonl"
+  [[ -f $f ]] || { echo 0; return 0; }
+  # grep -c exits 1 when nothing matches; it still prints the count (0)
+  grep -cF "\"from\":\"$1\"" "$f" || (($? == 1))
+}
+
+# recent_run_starts list now — the run start times (Unix seconds) of the last 10 minutes, plus now
+recent_run_starts() {
+  local t out=()
+  for t in $1; do (( $2 - t < 600 )) && out+=("$t"); done
+  out+=("$2")
+  printf '%s' "${out[*]}"
+}
+
+# wake_loop_check id start head0 msgs0 — the wake-loop guard, for a team member whose run ended SLEEPING. When the
+# member keeps being woken without doing anything — AGENT_WAKE_LOOP_MAX idle runs in a row (shorter than
+# AGENT_IDLE_RUN_SEC, no new commit, no bus message) or more than AGENT_WAKE_RATE_MAX runs within 10 minutes —
+# prints the pause in seconds and returns 0; otherwise records the idle streak and returns 1.
+wake_loop_check() {
+  local id=$1 start=$2 head0=$3 msgs0=$4 now head msgs idle recent=0 t
+  now=$(date +%s)
+  head=$(git -C "$WORKTREE" rev-parse HEAD) || head="unknown"
+  msgs=$(bus_messages_from "$AGENT")
+  idle=$(task_field "$id" IDLE_RUNS); idle=${idle:-0}
+  if (( now - start < AGENT_IDLE_RUN_SEC )) && [[ $head == "$head0" && $msgs == "$msgs0" ]]; then
+    idle=$((idle + 1))
+  else
+    idle=0
+  fi
+  for t in $(task_field "$id" RUN_STARTS); do (( now - t < 600 )) && recent=$((recent + 1)); done
+  if (( idle >= AGENT_WAKE_LOOP_MAX || recent > AGENT_WAKE_RATE_MAX )); then
+    meta_set "$id" IDLE_RUNS 0
+    meta_set "$id" RUN_STARTS ""
+    log_warn wake_loop_detected "task=$id" "idle_runs=$idle" "runs_10min=$recent"
+    echo $((AGENT_WAKE_LOOP_PAUSE_MIN * 60))
+    return 0
+  fi
+  meta_set "$id" IDLE_RUNS "$idle"
+  return 1
+}
+
+# schedule_wake id seconds — runs `agent _wake <id>` after that many seconds (a transient systemd timer)
+schedule_wake() {
+  systemd-run --user --quiet --collect --unit="agent-$1-wake-$(date +%s)" \
+    --on-active="${2}s" --timer-property=AccuracySec=10s \
+    --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" \
+    --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+    "$SELF" _wake "$1" 3>&- 7>&- 8>&- 9>&-
+}
+
+# pause_task id seconds reason — the task waits (no run, not woken by messages) until a timer resumes it
+pause_task() {
+  local id=$1 secs=$2 reason=$3 at
+  at=$(( $(date +%s) + secs ))
+  meta_set "$id" WAKE_AT "$at"
+  meta_set "$id" PAUSE_REASON "$reason"
+  if ! schedule_wake "$id" "$secs"; then
+    # without the timer the task stays paused until `agent _wake <id>` or `agent run --resume`
+    log_error pause_timer_failed "task=$id" "seconds=$secs"
+  fi
+  log_warn task_paused "task=$id" "reason=$reason" "seconds=$secs" "until=$(date -d "@$at" '+%H:%M')"
+}
+
+# resume_paused id — the timer of a paused task fired (meta loaded): resume it, or defer an early wake-up
+resume_paused() {
+  local id=$1
+  if (( $(date +%s) < ${WAKE_AT:-0} )); then
+    log_info wake_deferred "task=$id" "wake_at=$WAKE_AT"
+    return 0
+  fi
+  meta_set "$id" WAKE_AT ""
+  if [[ -n ${TEAM:-} ]]; then
+    if [[ $(team_done_flag "$TEAM") == true ]]; then
+      meta_set "$id" STATUS done
+      try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state done >/dev/null
+      return 0
+    fi
+    meta_set "$id" WAKE_PENDING 1
+  fi
+  log_info resumed_after_pause "task=$id" "reason=${PAUSE_REASON:-}"
+  start_runner "$id" resume || log_error resume_failed "task=$id" "reason=resume after a pause"
 }
 
 # git_identity — exports the commit identity of this run's agent (and commit signing, when configured) for every
@@ -916,6 +1083,7 @@ notify() { # id status final note
     waiting) label="❓ waiting for answers" ;;
     failed)  label="❌ failed" ;;
     hung)    label="⚠ hung (watchdog)" ;;
+    paused)  label="⏸ paused" ;;
     *)       label=$status ;;
   esac
   [[ -n $final ]] || final="(no final message from the agent — see: agent log $id)"
@@ -1305,6 +1473,12 @@ cmd__runner() {
   trap 'exit 143' TERM INT HUP
   rm -f "$dir/stop-requested"
   meta_set "$id" STATUS running
+  # for the wake-loop guard: when the run started, the commit it started from, the agent's bus messages so far
+  local run_start run_head0 run_msgs0
+  run_start=$(date +%s)
+  run_head0=$(git -C "$WORKTREE" rev-parse HEAD) || run_head0="unknown"
+  run_msgs0=$(bus_messages_from "$AGENT")
+  meta_set "$id" RUN_STARTS "$(recent_run_starts "$(task_field "$id" RUN_STARTS)" "$run_start")"
 
   if [[ $mode == new && -f $WORKTREE/.gitmodules ]]; then
     try submodule_update_failed git -C "$WORKTREE" submodule update --init --recursive
@@ -1355,7 +1529,7 @@ cmd__runner() {
   done
   printf '%s\n' "$FINAL" > "$dir/final.md"
 
-  local status note="" pending="" member_q=0 member_ns=0 fst
+  local status note="" pending="" member_q=0 member_ns=0 fst pause_secs=0 pause_reason=""
   [[ ${KIND:-worker} == worker ]] && pending=$(bus inv-pending --dir "$BUS_DIR" --task "$id")
   fst=$(final_status "$FINAL")
   local is_member=0
@@ -1400,6 +1574,9 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     fi
   elif ((hang_final)); then
     status=hung; note="the agent hung $hangs times in a row without progress"
+  elif { ((RC != 0)) || [[ -z $fst ]]; } && pause_secs=$(quota_reset_seconds "$dir" "$nrun" "$FINAL"); then
+    status=paused; pause_reason=quota
+    note="the provider's quota or usage limit is exhausted — resumes at $(date -d "@$(( $(date +%s) + pause_secs ))" '+%H:%M')"
   elif [[ -s $qfile ]]; then
     meta_set "$id" ROUND "$next_round"
     status=waiting
@@ -1443,6 +1620,11 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
   else
     status=failed; note="unrecognised STATUS: ${fst:-none}"
   fi
+  # the wake-loop guard: a member that keeps waking up without doing anything is paused instead of put to sleep
+  if [[ $status == sleeping && -n ${TEAM:-} ]] && pause_secs=$(wake_loop_check "$id" "$run_start" "$run_head0" "$run_msgs0"); then
+    status=paused; pause_reason=wake_loop
+    note="woken again and again without anything to do (wake-loop guard) — paused until $(date -d "@$(( $(date +%s) + pause_secs ))" '+%H:%M')"
+  fi
   # --verify: the coordinator may not close a team with gaps — send it back once with the list of gaps
   if [[ $status == done && -n ${TEAM:-} && ${VERIFY:-} == 1 && ${VERIFY_BOUNCED:-} != 1 \
         && ${KIND:-worker} == worker && $AGENT == "$(team_lead "$TEAM")" ]]; then
@@ -1458,6 +1640,8 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     fi
   fi
 
+  # the wake-up time and its timer exist before anyone can see the task as paused
+  [[ $status == paused ]] && pause_task "$id" "$pause_secs" "$pause_reason"
   meta_set "$id" STATUS "$status"
   meta_set "$id" FINISHED "$(date -Is)"
   RUNNER_DONE=1
@@ -1466,6 +1650,8 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
 
   if [[ ${KIND:-worker} == investigation ]]; then
     case $status in
+      paused)
+        notify "$id" paused "$FINAL" "$note" ;;
       waiting)
         bus inv-set --dir "$BUS_DIR" --id "$INV_ID" --status waiting_human
         notify "$id" waiting "$FINAL" "investigation #$INV_ID paused — its investigator waits for your answers" ;;
@@ -1479,7 +1665,7 @@ Answer: the investigator hung ($AGENT_HANG_STRIKES times without progress) — n
           notify "$id" "$status" "$FINAL" "review of PR #$PR_NUMBER: $PR_URL"
         fi ;;
     esac
-  elif [[ ${KIND:-worker} == helper && $status != waiting && $status != investigating ]]; then
+  elif [[ ${KIND:-worker} == helper && $status != waiting && $status != investigating && $status != paused ]]; then
     helper_finish "$id" "$status" "$FINAL"
   elif [[ -n ${TEAM:-} ]]; then
     team_after_run "$id" "$status" "$FINAL" "$note"
@@ -1606,7 +1792,7 @@ resume_run() { # ref verify [addition...] — resumes an interrupted team or tas
   fi
   for t in "${olds[@]}"; do
     case $(task_field "$t" STATUS) in
-      new|starting|running|waiting|investigating|sleeping)
+      new|starting|running|waiting|investigating|sleeping|paused)
         die "task $t is still active ($(task_field "$t" STATUS)) — first: agent stop --running" ;;
     esac
     agent_running_task "$(task_field "$t" AGENT)" >/dev/null && die "agent $(task_field "$t" AGENT) is busy with another task"
@@ -1916,7 +2102,7 @@ stop_all() { # agent stop --running: stops everything that is active, whatever i
     [[ -f $d/meta.env ]] || continue
     st=$(task_field "$id" STATUS)
     case $st in
-      new|starting|running|waiting|investigating|sleeping)
+      new|starting|running|waiting|investigating|sleeping|paused)
         touch "$d/stop-requested"
         meta_set "$id" STATUS stopped
         meta_set "$id" FINISHED "$(date -Is)"
@@ -2298,7 +2484,7 @@ archive_one() { # start-task — packs the whole group into tasks-archived/<name
   local ids=() active=()
   for t in "${!GROUP[@]}"; do
     ids+=("$t")
-    case ${IX_ST[$t]} in new|starting|running|waiting|investigating|sleeping) active+=("$t (${IX_ST[$t]})") ;; esac
+    case ${IX_ST[$t]} in new|starting|running|waiting|investigating|sleeping|paused) active+=("$t (${IX_ST[$t]})") ;; esac
   done
   if ((${#active[@]})); then
     echo "agent: skipped — the group is still active: ${active[*]} (agent stop first)" >&2
@@ -2464,4 +2650,7 @@ main() {
   esac
 }
 
-main "$@"
+# run the command when executed; tests source the script to call its functions directly
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

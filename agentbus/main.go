@@ -816,7 +816,7 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 	case "team_exclude":
 		return toolResult(s.teamExclude(a.str("agent"), a.str("reason")))
 	case "board_add":
-		return toolResult(s.boardAdd(a.str("title"), a.str("details"), a.str("level")))
+		return toolResult(s.boardAddFor(a.str("title"), a.str("details"), a.str("level"), a.str("for")))
 	case "board_list":
 		return toolResult(s.boardList())
 	case "board_claim":

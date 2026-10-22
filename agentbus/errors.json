@@ -374,6 +374,16 @@
      "name": "NotInTeam",
      "class": "NotInTeam",
      "doc": "the caller is not in a team (outside a team: delegate)"
+    },
+    {
+     "name": "UnknownMember",
+     "class": "NotFound",
+     "doc": "for names an agent that is not a member of the team (or is excluded)"
+    },
+    {
+     "name": "ForWorkerNeedsEasy",
+     "class": "InvalidArgument",
+     "doc": "for names a worker but the item is not level easy"
     }
    ]
   },
@@ -413,6 +423,11 @@
      "name": "AlreadyTaken",
      "class": "Conflict",
      "doc": "the item is already claimed or done"
+    },
+    {
+     "name": "ReservedForOther",
+     "class": "Permission",
+     "doc": "the item is reserved for another member (board_add with for)"
     }
    ]
   },

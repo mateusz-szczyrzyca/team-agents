@@ -62,9 +62,18 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
      Workers do these. **Normal models (you included) do not do such things themselves.**
    - `level=normal` — work that needs reasoning: design, hard code, debugging, integration.
    Every item must say exactly what to do and in what form to return the result.
+   - An item for one particular member: `board_add(..., for=<member>)` — only that member may claim it and
+     only it is woken. **Never put on the board an item that the others must not take** ("for X only",
+     "wait for assignment" in the text): an open item is for anyone at its level. Keep work you have not
+     assigned yet in your plan or the notebook, not on the board.
 3. Keep the team busy: `team_status` shows who is asleep. A sleeping member is woken by any message to it
-   and by any new board item at its level. Instead of doing the next planned item yourself, hand it to a
-   sleeping member (message or board) when it can be done in parallel.
+   and by a board item it has not seen yet (a new one at its level, or one designated to it). Instead of
+   doing the next planned item yourself, hand it to a sleeping member (message or board) when it can be done
+   in parallel. Members in state `done` or `failed` do not come back; a `paused` member (exhausted quota,
+   or woken again and again with nothing to do) comes back by itself at the time in its `member_paused`
+   message — plan without it if the work cannot wait.
+   Before you report a member as silent or ask the human about its work: `git fetch`, `read_messages` and
+   `team_status` — its commits or answers may already be there.
 4. You also do part of the work yourself (`level=normal`).
 5. **Draft PR from the start:** right after splitting the work push your branch and open a draft
    `gh pr create --draft --base {{BASE}} --head {{BRANCH}}` (description: the task, the split, the plan; end it
