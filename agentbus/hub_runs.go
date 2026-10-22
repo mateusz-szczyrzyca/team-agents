@@ -16,6 +16,7 @@ type hubRunRegistry struct {
 	bus           *Bus                 // hub-owned state, never selected by the caller
 	instances     *HubInstanceRegistry // authenticated reports; nil denies remote runs
 	localInstance string               // only this instance may use the local task directory
+	localView     *InstanceView        // the lead's own capabilities for discovery; nil when the lead has none
 	tasksDir      string               // local metadata root; empty denies unregistered local solo runs
 }
 
@@ -71,7 +72,7 @@ func (r hubRunRegistry) resolve(c HubCaller) (*Server, *HubCallError) {
 	qualified := c.Agent + "@" + c.Instance
 	s := &Server{bus: r.bus, me: qualified, info: Presence{Agent: qualified, Task: c.Task, Repo: summary.Repo, Branch: summary.Branch, Worktree: summary.Worktree}, team: c.Team, tier: c.Tier, role: c.Role, instance: c.Instance, queueMax: 3}
 	if r.instances != nil {
-		s.directory = registryDirectory{registry: r.instances}
+		s.directory = registryDirectory{registry: r.instances, local: r.localView}
 	}
 	// Remote metadata is never used as a local records directory or executable path.
 	if c.Instance == r.localInstance {

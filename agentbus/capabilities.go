@@ -66,10 +66,57 @@ func newLocalDirectory(name, declared string) (localDirectory, *ValueError) {
 	for _, c := range caps {
 		provided[c] = true
 	}
-	if os := Capability("os:" + runtime.GOOS); os.Valid() {
-		provided[os] = true
+	for _, c := range detectedCapabilities(DetectCapabilities()) {
+		provided[c] = true
 	}
 	return localDirectory{view: InstanceView{Name: name, OS: runtime.GOOS, Arch: runtime.GOARCH, Provided: sortedCaps(provided)}}, nil
+}
+
+// toolchainCapability maps the name of a detected toolchain (the part before the colon) to the capability it proves.
+var toolchainCapability = map[string]Capability{
+	"go":    "build:go",
+	"rust":  "build:rust",
+	"c":     "build:c",
+	"clang": "build:c",
+}
+
+// probeCapability maps a detected hardware probe or board name to the capability it proves.
+var probeCapability = map[string]Capability{
+	"rp2350-probe": "hw:rp2350-probe",
+	"jlink":        "hw:jlink",
+}
+
+// detectedCapabilities derives the recognized capabilities that a detection result proves: the operating system,
+// the architecture, toolchains, Xcode and iOS simulators, and attached probes. Sensitive namespaces (sign:, publish:)
+// are never derived from detection: they must be declared and approved by the human (see boardClaim).
+func detectedCapabilities(d DetectedCapabilities) []Capability {
+	var out []Capability
+	add := func(c Capability, ok bool) {
+		if ok && c.Valid() {
+			out = append(out, c)
+		}
+	}
+	add(Capability("os:"+d.OS), d.OS != "")
+	switch {
+	case d.OS == "darwin" && d.Arch == "arm64":
+		add("hw:apple-silicon", true)
+	case d.Arch == "amd64":
+		add("hw:x86-64", true)
+	}
+	for _, tc := range d.Toolchains {
+		name, _, _ := strings.Cut(tc, ":")
+		c, ok := toolchainCapability[name]
+		add(c, ok)
+	}
+	if d.OS == "darwin" {
+		add("build:ios", d.XcodeVersion != "")
+		add("test:ios-simulator", len(d.IOSSimulators) > 0)
+	}
+	for _, p := range d.HardwareProbes {
+		c, ok := probeCapability[p]
+		add(c, ok)
+	}
+	return out
 }
 
 // parseCapabilityList splits a comma or space separated list and validates every entry against the closed set.
@@ -96,8 +143,8 @@ func sortedCaps(set map[Capability]bool) []Capability {
 	return out
 }
 
-// manifestView converts a registered manifest into the view. Only recognized capabilities count, and the
-// operating system the node detected always counts as provided.
+// manifestView converts a registered manifest into the view. Only recognized capabilities count: the declared ones
+// and the ones the node detected.
 func manifestView(name string, m InstanceManifest) InstanceView {
 	provided := map[Capability]bool{}
 	for _, c := range m.Declared {
@@ -105,8 +152,8 @@ func manifestView(name string, m InstanceManifest) InstanceView {
 			provided[c] = true
 		}
 	}
-	if os := Capability("os:" + m.Detected.OS); os.Valid() {
-		provided[os] = true
+	for _, c := range detectedCapabilities(m.Detected) {
+		provided[c] = true
 	}
 	agents := make([]string, 0, len(m.CurrentState.Agents))
 	for _, a := range m.CurrentState.Agents {
@@ -133,14 +180,27 @@ func (g *HubInstanceRegistry) liveViews() ([]InstanceView, *StorageError) {
 	return views, serr
 }
 
-// registryDirectory is the hub's directory: the live instances of its registry.
+// registryDirectory is the hub's directory: the live instances of its registry and, when the hub runs an instance
+// itself, the lead's own instance (the hub does not register its own lease).
 type registryDirectory struct {
 	registry *HubInstanceRegistry // the lease registry shared with the instance endpoints
+	local    *InstanceView        // the lead's own instance, nil when the hub has none; a registry entry with its name wins
 }
 
-// Instances returns the live instances of the registry.
+// Instances returns the live instances of the registry and the lead's own instance.
 func (d registryDirectory) Instances() ([]InstanceView, *StorageError) {
-	return d.registry.liveViews()
+	views, serr := d.registry.liveViews()
+	if serr != nil || d.local == nil {
+		return views, serr
+	}
+	for _, v := range views {
+		if v.Name == d.local.Name {
+			return views, nil
+		}
+	}
+	views = append(views, *d.local)
+	sort.Slice(views, func(i, j int) bool { return views[i].Name < views[j].Name })
+	return views, nil
 }
 
 // ownCapabilities returns the capabilities of the instance this server runs on. A server without a directory
