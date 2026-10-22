@@ -47,6 +47,7 @@ type ListAgentsCause int
 
 const (
 	ListAgentsOutcomeUnknown ListAgentsCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ListAgentsUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	ListAgentsStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
@@ -56,6 +57,7 @@ type ListAgentsError = OpError[ListAgentsCause]
 // listAgentsCauses describes the ListAgentsCause values (same order as the constants).
 var listAgentsCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -88,6 +90,7 @@ const (
 	SendMessageToSelf                                  // the recipient is the caller itself [InvalidArgument]
 	SendMessageNotInTeam                               // the recipient is "team" but the caller is not in a team [NotInTeam]
 	SendMessageOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	SendMessageUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	SendMessageStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -100,6 +103,7 @@ var sendMessageCauses = [...]causeInfo{
 	{"ToSelf", ClassInvalidArgument},
 	{"NotInTeam", ClassNotInTeam},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -129,6 +133,7 @@ type ReadMessagesCause int
 
 const (
 	ReadMessagesOutcomeUnknown ReadMessagesCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ReadMessagesUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	ReadMessagesStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -138,6 +143,7 @@ type ReadMessagesError = OpError[ReadMessagesCause]
 // readMessagesCauses describes the ReadMessagesCause values (same order as the constants).
 var readMessagesCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -167,6 +173,7 @@ type SetStatusCause int
 
 const (
 	SetStatusOutcomeUnknown SetStatusCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	SetStatusUnavailable                          // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	SetStatusStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
@@ -176,6 +183,7 @@ type SetStatusError = OpError[SetStatusCause]
 // setStatusCauses describes the SetStatusCause values (same order as the constants).
 var setStatusCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -206,6 +214,7 @@ type ReserveCause int
 const (
 	ReserveMissingResource ReserveCause = iota // the resource name is missing [InvalidArgument]
 	ReserveOutcomeUnknown                      // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ReserveUnavailable                         // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	ReserveStorage                             // the shared state or a file could not be read or written [Storage]
 )
 
@@ -216,6 +225,7 @@ type ReserveError = OpError[ReserveCause]
 var reserveCauses = [...]causeInfo{
 	{"MissingResource", ClassInvalidArgument},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -246,6 +256,7 @@ type ReleaseCause int
 const (
 	ReleaseNotHolder      ReleaseCause = iota // the resource is held by another agent [Permission]
 	ReleaseOutcomeUnknown                     // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ReleaseUnavailable                        // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	ReleaseStorage                            // the shared state or a file could not be read or written [Storage]
 )
 
@@ -256,6 +267,7 @@ type ReleaseError = OpError[ReleaseCause]
 var releaseCauses = [...]causeInfo{
 	{"NotHolder", ClassPermission},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -285,6 +297,7 @@ type ListReservationsCause int
 
 const (
 	ListReservationsOutcomeUnknown ListReservationsCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ListReservationsUnavailable                                 // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	ListReservationsStorage                                     // the shared state or a file could not be read or written [Storage]
 )
 
@@ -294,6 +307,7 @@ type ListReservationsError = OpError[ListReservationsCause]
 // listReservationsCauses describes the ListReservationsCause values (same order as the constants).
 var listReservationsCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -325,6 +339,7 @@ const (
 	RequestInvestigationInvestigator    RequestInvestigationCause = iota // an investigator called it (investigators cannot request investigations) [Permission]
 	RequestInvestigationMissingQuestion                                  // the question is missing [InvalidArgument]
 	RequestInvestigationOutcomeUnknown                                   // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	RequestInvestigationUnavailable                                      // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	RequestInvestigationStorage                                          // the shared state or a file could not be read or written [Storage]
 )
 
@@ -336,6 +351,7 @@ var requestInvestigationCauses = [...]causeInfo{
 	{"Investigator", ClassPermission},
 	{"MissingQuestion", ClassInvalidArgument},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -370,6 +386,7 @@ const (
 	RecordDecisionNotYourInvestigation                            // the investigation belongs to another task [Permission]
 	RecordDecisionNotFinished                                     // the investigation has not finished yet (no result or rejection to decide on) [InvalidState]
 	RecordDecisionOutcomeUnknown                                  // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	RecordDecisionUnavailable                                     // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	RecordDecisionStorage                                         // the shared state or a file could not be read or written [Storage]
 )
 
@@ -384,6 +401,7 @@ var recordDecisionCauses = [...]causeInfo{
 	{"NotYourInvestigation", ClassPermission},
 	{"NotFinished", ClassInvalidState},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -413,6 +431,7 @@ type InvestigationStatusCause int
 
 const (
 	InvestigationStatusOutcomeUnknown InvestigationStatusCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	InvestigationStatusUnavailable                                    // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	InvestigationStatusStorage                                        // the shared state or a file could not be read or written [Storage]
 )
 
@@ -422,6 +441,7 @@ type InvestigationStatusError = OpError[InvestigationStatusCause]
 // investigationStatusCauses describes the InvestigationStatusCause values (same order as the constants).
 var investigationStatusCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -451,6 +471,7 @@ type WaitForMessageCause int
 
 const (
 	WaitForMessageOutcomeUnknown WaitForMessageCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	WaitForMessageUnavailable                               // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	WaitForMessageStorage                                   // the shared state or a file could not be read or written [Storage]
 )
 
@@ -460,6 +481,7 @@ type WaitForMessageError = OpError[WaitForMessageCause]
 // waitForMessageCauses describes the WaitForMessageCause values (same order as the constants).
 var waitForMessageCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -489,6 +511,7 @@ type NotebookReadCause int
 
 const (
 	NotebookReadOutcomeUnknown NotebookReadCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	NotebookReadUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	NotebookReadStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -498,6 +521,7 @@ type NotebookReadError = OpError[NotebookReadCause]
 // notebookReadCauses describes the NotebookReadCause values (same order as the constants).
 var notebookReadCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -528,6 +552,7 @@ type NotebookAppendCause int
 const (
 	NotebookAppendMissingText    NotebookAppendCause = iota // the entry text is missing [InvalidArgument]
 	NotebookAppendOutcomeUnknown                            // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	NotebookAppendUnavailable                               // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	NotebookAppendStorage                                   // the shared state or a file could not be read or written [Storage]
 )
 
@@ -538,6 +563,7 @@ type NotebookAppendError = OpError[NotebookAppendCause]
 var notebookAppendCauses = [...]causeInfo{
 	{"MissingText", ClassInvalidArgument},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -568,6 +594,7 @@ type NotebookWriteSectionCause int
 const (
 	NotebookWriteSectionMissingName    NotebookWriteSectionCause = iota // the section name is missing [InvalidArgument]
 	NotebookWriteSectionOutcomeUnknown                                  // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	NotebookWriteSectionUnavailable                                     // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	NotebookWriteSectionStorage                                         // the shared state or a file could not be read or written [Storage]
 )
 
@@ -578,6 +605,7 @@ type NotebookWriteSectionError = OpError[NotebookWriteSectionCause]
 var notebookWriteSectionCauses = [...]causeInfo{
 	{"MissingName", ClassInvalidArgument},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -608,6 +636,7 @@ type TeamStatusCause int
 const (
 	TeamStatusNotInTeam      TeamStatusCause = iota // the caller is not in a team [NotInTeam]
 	TeamStatusOutcomeUnknown                        // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	TeamStatusUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	TeamStatusStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
@@ -618,6 +647,7 @@ type TeamStatusError = OpError[TeamStatusCause]
 var teamStatusCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -648,6 +678,7 @@ type CheckpointCause int
 const (
 	CheckpointMissingSummary CheckpointCause = iota // the summary is missing [InvalidArgument]
 	CheckpointOutcomeUnknown                        // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CheckpointUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CheckpointStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
@@ -658,6 +689,7 @@ type CheckpointError = OpError[CheckpointCause]
 var checkpointCauses = [...]causeInfo{
 	{"MissingSummary", ClassInvalidArgument},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -688,6 +720,7 @@ type ClaimLeadCause int
 const (
 	ClaimLeadNotInTeam      ClaimLeadCause = iota // the caller is not in a team [NotInTeam]
 	ClaimLeadOutcomeUnknown                       // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	ClaimLeadUnavailable                          // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	ClaimLeadStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
@@ -698,6 +731,7 @@ type ClaimLeadError = OpError[ClaimLeadCause]
 var claimLeadCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -732,6 +766,7 @@ const (
 	HandoverLeadTargetIsWorker                          // the new coordinator is a worker (workers cannot coordinate) [Permission]
 	HandoverLeadTargetExcluded                          // the new coordinator is excluded from the team [InvalidState]
 	HandoverLeadOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	HandoverLeadUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	HandoverLeadStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -746,6 +781,7 @@ var handoverLeadCauses = [...]causeInfo{
 	{"TargetIsWorker", ClassPermission},
 	{"TargetExcluded", ClassInvalidState},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -780,6 +816,7 @@ const (
 	QuizStartAlreadyHeld                           // the team already had its quiz [Conflict]
 	QuizStartResumedTeam                           // the team was resumed: its members already passed the quiz [InvalidState]
 	QuizStartOutcomeUnknown                        // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	QuizStartUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	QuizStartStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
@@ -794,6 +831,7 @@ var quizStartCauses = [...]causeInfo{
 	{"AlreadyHeld", ClassConflict},
 	{"ResumedTeam", ClassInvalidState},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -828,6 +866,7 @@ const (
 	QuizAnswerCoordinatorAnswers                        // the coordinator tried to answer its own quiz [Permission]
 	QuizAnswerAlreadyAnswered                           // the member already answered (answers are final) [Conflict]
 	QuizAnswerOutcomeUnknown                            // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	QuizAnswerUnavailable                               // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	QuizAnswerStorage                                   // the shared state or a file could not be read or written [Storage]
 )
 
@@ -842,6 +881,7 @@ var quizAnswerCauses = [...]causeInfo{
 	{"CoordinatorAnswers", ClassPermission},
 	{"AlreadyAnswered", ClassConflict},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -874,6 +914,7 @@ const (
 	QuizResultsNotCoordinator                         // the caller is not the team coordinator [Permission]
 	QuizResultsNoQuiz                                 // no quiz question has been asked yet [InvalidState]
 	QuizResultsOutcomeUnknown                         // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	QuizResultsUnavailable                            // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	QuizResultsStorage                                // the shared state or a file could not be read or written [Storage]
 )
 
@@ -886,6 +927,7 @@ var quizResultsCauses = [...]causeInfo{
 	{"NotCoordinator", ClassPermission},
 	{"NoQuiz", ClassInvalidState},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -918,6 +960,7 @@ const (
 	TeamExcludeNotCoordinator                         // the caller is not the team coordinator [Permission]
 	TeamExcludeNotMember                              // the agent is not a member of the team (or it is the coordinator itself) [NotFound]
 	TeamExcludeOutcomeUnknown                         // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	TeamExcludeUnavailable                            // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	TeamExcludeStorage                                // the shared state or a file could not be read or written [Storage]
 )
 
@@ -930,6 +973,7 @@ var teamExcludeCauses = [...]causeInfo{
 	{"NotCoordinator", ClassPermission},
 	{"NotMember", ClassNotFound},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -962,6 +1006,7 @@ const (
 	BoardAddInvalidLevel                        // the level is neither easy nor normal [InvalidArgument]
 	BoardAddNotInTeam                           // the caller is not in a team (outside a team: delegate) [NotInTeam]
 	BoardAddOutcomeUnknown                      // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	BoardAddUnavailable                         // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	BoardAddStorage                             // the shared state or a file could not be read or written [Storage]
 )
 
@@ -974,6 +1019,7 @@ var boardAddCauses = [...]causeInfo{
 	{"InvalidLevel", ClassInvalidArgument},
 	{"NotInTeam", ClassNotInTeam},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1004,6 +1050,7 @@ type BoardListCause int
 const (
 	BoardListNotInTeam      BoardListCause = iota // the caller is not in a team [NotInTeam]
 	BoardListOutcomeUnknown                       // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	BoardListUnavailable                          // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	BoardListStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1014,6 +1061,7 @@ type BoardListError = OpError[BoardListCause]
 var boardListCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1047,6 +1095,7 @@ const (
 	BoardClaimWorkerNeedsEasy                        // a worker tried to claim a normal-level item [Permission]
 	BoardClaimAlreadyTaken                           // the item is already claimed or done [Conflict]
 	BoardClaimOutcomeUnknown                         // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	BoardClaimUnavailable                            // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	BoardClaimStorage                                // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1060,6 +1109,7 @@ var boardClaimCauses = [...]causeInfo{
 	{"WorkerNeedsEasy", ClassPermission},
 	{"AlreadyTaken", ClassConflict},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1092,6 +1142,7 @@ const (
 	BoardDoneNotInTeam                            // the caller is not in a team [NotInTeam]
 	BoardDoneNotYourItem                          // the item does not exist or is claimed by someone else [Permission]
 	BoardDoneOutcomeUnknown                       // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	BoardDoneUnavailable                          // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	BoardDoneStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1104,6 +1155,7 @@ var boardDoneCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
 	{"NotYourItem", ClassPermission},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1135,6 +1187,7 @@ const (
 	BoardReleaseNotInTeam      BoardReleaseCause = iota // the caller is not in a team [NotInTeam]
 	BoardReleaseNotYourItem                             // the item does not exist or is claimed by someone else [Permission]
 	BoardReleaseOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	BoardReleaseUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	BoardReleaseStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1146,6 +1199,7 @@ var boardReleaseCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
 	{"NotYourItem", ClassPermission},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1177,6 +1231,7 @@ const (
 	DelegateNotNormalTier  DelegateCause = iota // a worker or an investigator called it (delegate is for normal models) [Permission]
 	DelegateMissingRequest                      // the request text is missing [InvalidArgument]
 	DelegateOutcomeUnknown                      // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	DelegateUnavailable                         // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	DelegateStorage                             // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1188,6 +1243,7 @@ var delegateCauses = [...]causeInfo{
 	{"NotNormalTier", ClassPermission},
 	{"MissingRequest", ClassInvalidArgument},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1217,6 +1273,7 @@ type DelegationStatusCause int
 
 const (
 	DelegationStatusOutcomeUnknown DelegationStatusCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	DelegationStatusUnavailable                                 // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	DelegationStatusStorage                                     // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1226,6 +1283,7 @@ type DelegationStatusError = OpError[DelegationStatusCause]
 // delegationStatusCauses describes the DelegationStatusCause values (same order as the constants).
 var delegationStatusCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1341,6 +1399,7 @@ const (
 	CmdSendMissingText    CmdSendCause = iota // the message text is missing [InvalidArgument]
 	CmdSendInvalidNotice                      // --notice is not a known script notice [InvalidArgument]
 	CmdSendOutcomeUnknown                     // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdSendUnavailable                        // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdSendStorage                            // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1352,6 +1411,7 @@ var cmdSendCauses = [...]causeInfo{
 	{"MissingText", ClassInvalidArgument},
 	{"InvalidNotice", ClassInvalidArgument},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1381,6 +1441,7 @@ type CmdLogCause int
 
 const (
 	CmdLogOutcomeUnknown CmdLogCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdLogUnavailable                       // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdLogStorage                           // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1390,6 +1451,7 @@ type CmdLogError = OpError[CmdLogCause]
 // cmdLogCauses describes the CmdLogCause values (same order as the constants).
 var cmdLogCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1419,6 +1481,7 @@ type CmdStatusCause int
 
 const (
 	CmdStatusOutcomeUnknown CmdStatusCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdStatusUnavailable                          // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdStatusStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1428,6 +1491,7 @@ type CmdStatusError = OpError[CmdStatusCause]
 // cmdStatusCauses describes the CmdStatusCause values (same order as the constants).
 var cmdStatusCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1458,6 +1522,7 @@ type CmdReleaseCause int
 const (
 	CmdReleaseUsage          CmdReleaseCause = iota // the resource argument is missing [InvalidArgument]
 	CmdReleaseOutcomeUnknown                        // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdReleaseUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdReleaseStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1468,6 +1533,7 @@ type CmdReleaseError = OpError[CmdReleaseCause]
 var cmdReleaseCauses = [...]causeInfo{
 	{"Usage", ClassInvalidArgument},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1497,6 +1563,7 @@ type CmdInvListCause int
 
 const (
 	CmdInvListOutcomeUnknown CmdInvListCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInvListUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdInvListStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1506,6 +1573,7 @@ type CmdInvListError = OpError[CmdInvListCause]
 // cmdInvListCauses describes the CmdInvListCause values (same order as the constants).
 var cmdInvListCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1535,6 +1603,7 @@ type CmdInvNextCause int
 
 const (
 	CmdInvNextOutcomeUnknown CmdInvNextCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInvNextUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdInvNextStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1544,6 +1613,7 @@ type CmdInvNextError = OpError[CmdInvNextCause]
 // cmdInvNextCauses describes the CmdInvNextCause values (same order as the constants).
 var cmdInvNextCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1575,6 +1645,7 @@ const (
 	CmdInvSetInvalidStatus       CmdInvSetCause = iota // --status is not an investigation status [InvalidArgument]
 	CmdInvSetNoSuchInvestigation                       // there is no investigation with this number [NotFound]
 	CmdInvSetOutcomeUnknown                            // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInvSetUnavailable                               // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdInvSetStorage                                   // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1586,6 +1657,7 @@ var cmdInvSetCauses = [...]causeInfo{
 	{"InvalidStatus", ClassInvalidArgument},
 	{"NoSuchInvestigation", ClassNotFound},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1616,6 +1688,7 @@ type CmdInvGetCause int
 const (
 	CmdInvGetNoSuchInvestigation CmdInvGetCause = iota // there is no investigation with this number [NotFound]
 	CmdInvGetOutcomeUnknown                            // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInvGetUnavailable                               // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdInvGetStorage                                   // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1626,6 +1699,7 @@ type CmdInvGetError = OpError[CmdInvGetCause]
 var cmdInvGetCauses = [...]causeInfo{
 	{"NoSuchInvestigation", ClassNotFound},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1655,6 +1729,7 @@ type CmdInvPendingCause int
 
 const (
 	CmdInvPendingOutcomeUnknown CmdInvPendingCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInvPendingUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdInvPendingStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1664,6 +1739,7 @@ type CmdInvPendingError = OpError[CmdInvPendingCause]
 // cmdInvPendingCauses describes the CmdInvPendingCause values (same order as the constants).
 var cmdInvPendingCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1694,6 +1770,7 @@ type CmdInvAddCause int
 const (
 	CmdInvAddInvalidKind    CmdInvAddCause = iota // --kind is not an investigation kind [InvalidArgument]
 	CmdInvAddOutcomeUnknown                       // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInvAddUnavailable                          // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdInvAddStorage                              // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1704,6 +1781,7 @@ type CmdInvAddError = OpError[CmdInvAddCause]
 var cmdInvAddCauses = [...]causeInfo{
 	{"InvalidKind", ClassInvalidArgument},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1733,6 +1811,7 @@ type CmdCancelPendingCause int
 
 const (
 	CmdCancelPendingOutcomeUnknown CmdCancelPendingCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdCancelPendingUnavailable                                 // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdCancelPendingStorage                                     // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1742,6 +1821,7 @@ type CmdCancelPendingError = OpError[CmdCancelPendingCause]
 // cmdCancelPendingCauses describes the CmdCancelPendingCause values (same order as the constants).
 var cmdCancelPendingCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1813,6 +1893,7 @@ const (
 	CmdTeamCreateInvalidJSON    CmdTeamCreateCause = iota // the team JSON on stdin cannot be decoded [InvalidArgument]
 	CmdTeamCreateMissingFields                            // the team JSON has no id or no members [InvalidArgument]
 	CmdTeamCreateOutcomeUnknown                           // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdTeamCreateUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdTeamCreateStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1824,6 +1905,7 @@ var cmdTeamCreateCauses = [...]causeInfo{
 	{"InvalidJSON", ClassInvalidArgument},
 	{"MissingFields", ClassInvalidArgument},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1855,6 +1937,7 @@ const (
 	CmdTeamSetInvalidState   CmdTeamSetCause = iota // --state is not a member state [InvalidArgument]
 	CmdTeamSetNoSuchMember                          // the team or the member does not exist [NotFound]
 	CmdTeamSetOutcomeUnknown                        // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdTeamSetUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdTeamSetStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1866,6 +1949,7 @@ var cmdTeamSetCauses = [...]causeInfo{
 	{"InvalidState", ClassInvalidArgument},
 	{"NoSuchMember", ClassNotFound},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1895,6 +1979,7 @@ type CmdTeamDoneCause int
 
 const (
 	CmdTeamDoneOutcomeUnknown CmdTeamDoneCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdTeamDoneUnavailable                            // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdTeamDoneStorage                                // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1904,6 +1989,7 @@ type CmdTeamDoneError = OpError[CmdTeamDoneCause]
 // cmdTeamDoneCauses describes the CmdTeamDoneCause values (same order as the constants).
 var cmdTeamDoneCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1934,6 +2020,7 @@ type CmdTeamGetCause int
 const (
 	CmdTeamGetNoSuchTeam     CmdTeamGetCause = iota // there is no team with this ID [NotFound]
 	CmdTeamGetOutcomeUnknown                        // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdTeamGetUnavailable                           // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdTeamGetStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1944,6 +2031,7 @@ type CmdTeamGetError = OpError[CmdTeamGetCause]
 var cmdTeamGetCauses = [...]causeInfo{
 	{"NoSuchTeam", ClassNotFound},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -1973,6 +2061,7 @@ type CmdTeamListCause int
 
 const (
 	CmdTeamListOutcomeUnknown CmdTeamListCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdTeamListUnavailable                            // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdTeamListStorage                                // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1982,6 +2071,7 @@ type CmdTeamListError = OpError[CmdTeamListCause]
 // cmdTeamListCauses describes the CmdTeamListCause values (same order as the constants).
 var cmdTeamListCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -2011,6 +2101,7 @@ type CmdNotesCause int
 
 const (
 	CmdNotesOutcomeUnknown CmdNotesCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdNotesUnavailable                         // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdNotesStorage                             // the shared state or a file could not be read or written [Storage]
 )
 
@@ -2020,6 +2111,7 @@ type CmdNotesError = OpError[CmdNotesCause]
 // cmdNotesCauses describes the CmdNotesCause values (same order as the constants).
 var cmdNotesCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -2049,6 +2141,7 @@ type CmdHelperNextCause int
 
 const (
 	CmdHelperNextOutcomeUnknown CmdHelperNextCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdHelperNextUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdHelperNextStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
@@ -2058,6 +2151,7 @@ type CmdHelperNextError = OpError[CmdHelperNextCause]
 // cmdHelperNextCauses describes the CmdHelperNextCause values (same order as the constants).
 var cmdHelperNextCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -2089,6 +2183,7 @@ const (
 	CmdHelperSetInvalidStatus  CmdHelperSetCause = iota // --status is not a worker request status [InvalidArgument]
 	CmdHelperSetNoSuchRequest                           // there is no worker request with this number [NotFound]
 	CmdHelperSetOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdHelperSetUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdHelperSetStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -2100,6 +2195,7 @@ var cmdHelperSetCauses = [...]causeInfo{
 	{"InvalidStatus", ClassInvalidArgument},
 	{"NoSuchRequest", ClassNotFound},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -2130,6 +2226,7 @@ type CmdHelperGetCause int
 const (
 	CmdHelperGetNoSuchRequest  CmdHelperGetCause = iota // there is no worker request with this number [NotFound]
 	CmdHelperGetOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdHelperGetUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdHelperGetStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -2140,6 +2237,7 @@ type CmdHelperGetError = OpError[CmdHelperGetCause]
 var cmdHelperGetCauses = [...]causeInfo{
 	{"NoSuchRequest", ClassNotFound},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -2169,6 +2267,7 @@ type CmdHelperListCause int
 
 const (
 	CmdHelperListOutcomeUnknown CmdHelperListCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdHelperListUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdHelperListStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
@@ -2178,6 +2277,7 @@ type CmdHelperListError = OpError[CmdHelperListCause]
 // cmdHelperListCauses describes the CmdHelperListCause values (same order as the constants).
 var cmdHelperListCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -2208,6 +2308,7 @@ type CmdBoardDumpCause int
 const (
 	CmdBoardDumpNoSuchTeam     CmdBoardDumpCause = iota // there is no team with this ID [NotFound]
 	CmdBoardDumpOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdBoardDumpUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdBoardDumpStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -2218,6 +2319,7 @@ type CmdBoardDumpError = OpError[CmdBoardDumpCause]
 var cmdBoardDumpCauses = [...]causeInfo{
 	{"NoSuchTeam", ClassNotFound},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -2248,6 +2350,7 @@ type CmdBoardReleaseAgentCause int
 const (
 	CmdBoardReleaseAgentNoSuchTeam     CmdBoardReleaseAgentCause = iota // there is no team with this ID [NotFound]
 	CmdBoardReleaseAgentOutcomeUnknown                                  // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdBoardReleaseAgentUnavailable                                     // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdBoardReleaseAgentStorage                                         // the shared state or a file could not be read or written [Storage]
 )
 
@@ -2258,6 +2361,7 @@ type CmdBoardReleaseAgentError = OpError[CmdBoardReleaseAgentCause]
 var cmdBoardReleaseAgentCauses = [...]causeInfo{
 	{"NoSuchTeam", ClassNotFound},
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -2287,6 +2391,7 @@ type CmdCheckpointGetCause int
 
 const (
 	CmdCheckpointGetOutcomeUnknown CmdCheckpointGetCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdCheckpointGetUnavailable                                 // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdCheckpointGetStorage                                     // the shared state or a file could not be read or written [Storage]
 )
 
@@ -2296,6 +2401,7 @@ type CmdCheckpointGetError = OpError[CmdCheckpointGetCause]
 // cmdCheckpointGetCauses describes the CmdCheckpointGetCause values (same order as the constants).
 var cmdCheckpointGetCauses = [...]causeInfo{
 	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 
@@ -2464,292 +2570,292 @@ func wireOperationError(op, cause, message string) (error, bool) {
 	switch op {
 	case "tools/call":
 		if c, ok := ToolCallCauseByName(cause); ok {
-			return &OpError[ToolCallCause]{Cause: c, Message: message}, true
+			return &OpError[ToolCallCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "list_agents":
 		if c, ok := ListAgentsCauseByName(cause); ok {
-			return &OpError[ListAgentsCause]{Cause: c, Message: message}, true
+			return &OpError[ListAgentsCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "send_message":
 		if c, ok := SendMessageCauseByName(cause); ok {
-			return &OpError[SendMessageCause]{Cause: c, Message: message}, true
+			return &OpError[SendMessageCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "read_messages":
 		if c, ok := ReadMessagesCauseByName(cause); ok {
-			return &OpError[ReadMessagesCause]{Cause: c, Message: message}, true
+			return &OpError[ReadMessagesCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "set_status":
 		if c, ok := SetStatusCauseByName(cause); ok {
-			return &OpError[SetStatusCause]{Cause: c, Message: message}, true
+			return &OpError[SetStatusCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "reserve":
 		if c, ok := ReserveCauseByName(cause); ok {
-			return &OpError[ReserveCause]{Cause: c, Message: message}, true
+			return &OpError[ReserveCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "list_reservations":
 		if c, ok := ListReservationsCauseByName(cause); ok {
-			return &OpError[ListReservationsCause]{Cause: c, Message: message}, true
+			return &OpError[ListReservationsCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "request_investigation":
 		if c, ok := RequestInvestigationCauseByName(cause); ok {
-			return &OpError[RequestInvestigationCause]{Cause: c, Message: message}, true
+			return &OpError[RequestInvestigationCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "record_decision":
 		if c, ok := RecordDecisionCauseByName(cause); ok {
-			return &OpError[RecordDecisionCause]{Cause: c, Message: message}, true
+			return &OpError[RecordDecisionCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "investigation_status":
 		if c, ok := InvestigationStatusCauseByName(cause); ok {
-			return &OpError[InvestigationStatusCause]{Cause: c, Message: message}, true
+			return &OpError[InvestigationStatusCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "wait_for_message":
 		if c, ok := WaitForMessageCauseByName(cause); ok {
-			return &OpError[WaitForMessageCause]{Cause: c, Message: message}, true
+			return &OpError[WaitForMessageCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "notebook_read":
 		if c, ok := NotebookReadCauseByName(cause); ok {
-			return &OpError[NotebookReadCause]{Cause: c, Message: message}, true
+			return &OpError[NotebookReadCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "notebook_append":
 		if c, ok := NotebookAppendCauseByName(cause); ok {
-			return &OpError[NotebookAppendCause]{Cause: c, Message: message}, true
+			return &OpError[NotebookAppendCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "notebook_write_section":
 		if c, ok := NotebookWriteSectionCauseByName(cause); ok {
-			return &OpError[NotebookWriteSectionCause]{Cause: c, Message: message}, true
+			return &OpError[NotebookWriteSectionCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "team_status":
 		if c, ok := TeamStatusCauseByName(cause); ok {
-			return &OpError[TeamStatusCause]{Cause: c, Message: message}, true
+			return &OpError[TeamStatusCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "checkpoint":
 		if c, ok := CheckpointCauseByName(cause); ok {
-			return &OpError[CheckpointCause]{Cause: c, Message: message}, true
+			return &OpError[CheckpointCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "claim_lead":
 		if c, ok := ClaimLeadCauseByName(cause); ok {
-			return &OpError[ClaimLeadCause]{Cause: c, Message: message}, true
+			return &OpError[ClaimLeadCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "handover_lead":
 		if c, ok := HandoverLeadCauseByName(cause); ok {
-			return &OpError[HandoverLeadCause]{Cause: c, Message: message}, true
+			return &OpError[HandoverLeadCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "quiz_start":
 		if c, ok := QuizStartCauseByName(cause); ok {
-			return &OpError[QuizStartCause]{Cause: c, Message: message}, true
+			return &OpError[QuizStartCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "quiz_answer":
 		if c, ok := QuizAnswerCauseByName(cause); ok {
-			return &OpError[QuizAnswerCause]{Cause: c, Message: message}, true
+			return &OpError[QuizAnswerCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "quiz_results":
 		if c, ok := QuizResultsCauseByName(cause); ok {
-			return &OpError[QuizResultsCause]{Cause: c, Message: message}, true
+			return &OpError[QuizResultsCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "team_exclude":
 		if c, ok := TeamExcludeCauseByName(cause); ok {
-			return &OpError[TeamExcludeCause]{Cause: c, Message: message}, true
+			return &OpError[TeamExcludeCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "board_add":
 		if c, ok := BoardAddCauseByName(cause); ok {
-			return &OpError[BoardAddCause]{Cause: c, Message: message}, true
+			return &OpError[BoardAddCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "board_list":
 		if c, ok := BoardListCauseByName(cause); ok {
-			return &OpError[BoardListCause]{Cause: c, Message: message}, true
+			return &OpError[BoardListCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "board_claim":
 		if c, ok := BoardClaimCauseByName(cause); ok {
-			return &OpError[BoardClaimCause]{Cause: c, Message: message}, true
+			return &OpError[BoardClaimCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "board_done":
 		if c, ok := BoardDoneCauseByName(cause); ok {
-			return &OpError[BoardDoneCause]{Cause: c, Message: message}, true
+			return &OpError[BoardDoneCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "board_release":
 		if c, ok := BoardReleaseCauseByName(cause); ok {
-			return &OpError[BoardReleaseCause]{Cause: c, Message: message}, true
+			return &OpError[BoardReleaseCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "delegate":
 		if c, ok := DelegateCauseByName(cause); ok {
-			return &OpError[DelegateCause]{Cause: c, Message: message}, true
+			return &OpError[DelegateCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "delegation_status":
 		if c, ok := DelegationStatusCauseByName(cause); ok {
-			return &OpError[DelegationStatusCause]{Cause: c, Message: message}, true
+			return &OpError[DelegationStatusCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "agentbus":
 		if c, ok := CliCauseByName(cause); ok {
-			return &OpError[CliCause]{Cause: c, Message: message}, true
+			return &OpError[CliCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "serve":
 		if c, ok := CmdServeCauseByName(cause); ok {
-			return &OpError[CmdServeCause]{Cause: c, Message: message}, true
+			return &OpError[CmdServeCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "send":
 		if c, ok := CmdSendCauseByName(cause); ok {
-			return &OpError[CmdSendCause]{Cause: c, Message: message}, true
+			return &OpError[CmdSendCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "log":
 		if c, ok := CmdLogCauseByName(cause); ok {
-			return &OpError[CmdLogCause]{Cause: c, Message: message}, true
+			return &OpError[CmdLogCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "status":
 		if c, ok := CmdStatusCauseByName(cause); ok {
-			return &OpError[CmdStatusCause]{Cause: c, Message: message}, true
+			return &OpError[CmdStatusCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "inv-list":
 		if c, ok := CmdInvListCauseByName(cause); ok {
-			return &OpError[CmdInvListCause]{Cause: c, Message: message}, true
+			return &OpError[CmdInvListCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "inv-next":
 		if c, ok := CmdInvNextCauseByName(cause); ok {
-			return &OpError[CmdInvNextCause]{Cause: c, Message: message}, true
+			return &OpError[CmdInvNextCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "inv-set":
 		if c, ok := CmdInvSetCauseByName(cause); ok {
-			return &OpError[CmdInvSetCause]{Cause: c, Message: message}, true
+			return &OpError[CmdInvSetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "inv-get":
 		if c, ok := CmdInvGetCauseByName(cause); ok {
-			return &OpError[CmdInvGetCause]{Cause: c, Message: message}, true
+			return &OpError[CmdInvGetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "inv-pending":
 		if c, ok := CmdInvPendingCauseByName(cause); ok {
-			return &OpError[CmdInvPendingCause]{Cause: c, Message: message}, true
+			return &OpError[CmdInvPendingCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "inv-add":
 		if c, ok := CmdInvAddCauseByName(cause); ok {
-			return &OpError[CmdInvAddCause]{Cause: c, Message: message}, true
+			return &OpError[CmdInvAddCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "cancel-pending":
 		if c, ok := CmdCancelPendingCauseByName(cause); ok {
-			return &OpError[CmdCancelPendingCause]{Cause: c, Message: message}, true
+			return &OpError[CmdCancelPendingCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "normalize":
 		if c, ok := CmdNormalizeCauseByName(cause); ok {
-			return &OpError[CmdNormalizeCause]{Cause: c, Message: message}, true
+			return &OpError[CmdNormalizeCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "team-create":
 		if c, ok := CmdTeamCreateCauseByName(cause); ok {
-			return &OpError[CmdTeamCreateCause]{Cause: c, Message: message}, true
+			return &OpError[CmdTeamCreateCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "team-set":
 		if c, ok := CmdTeamSetCauseByName(cause); ok {
-			return &OpError[CmdTeamSetCause]{Cause: c, Message: message}, true
+			return &OpError[CmdTeamSetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "team-done":
 		if c, ok := CmdTeamDoneCauseByName(cause); ok {
-			return &OpError[CmdTeamDoneCause]{Cause: c, Message: message}, true
+			return &OpError[CmdTeamDoneCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "team-get":
 		if c, ok := CmdTeamGetCauseByName(cause); ok {
-			return &OpError[CmdTeamGetCause]{Cause: c, Message: message}, true
+			return &OpError[CmdTeamGetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "team-list":
 		if c, ok := CmdTeamListCauseByName(cause); ok {
-			return &OpError[CmdTeamListCause]{Cause: c, Message: message}, true
+			return &OpError[CmdTeamListCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "notes":
 		if c, ok := CmdNotesCauseByName(cause); ok {
-			return &OpError[CmdNotesCause]{Cause: c, Message: message}, true
+			return &OpError[CmdNotesCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "helper-next":
 		if c, ok := CmdHelperNextCauseByName(cause); ok {
-			return &OpError[CmdHelperNextCause]{Cause: c, Message: message}, true
+			return &OpError[CmdHelperNextCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "helper-set":
 		if c, ok := CmdHelperSetCauseByName(cause); ok {
-			return &OpError[CmdHelperSetCause]{Cause: c, Message: message}, true
+			return &OpError[CmdHelperSetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "helper-get":
 		if c, ok := CmdHelperGetCauseByName(cause); ok {
-			return &OpError[CmdHelperGetCause]{Cause: c, Message: message}, true
+			return &OpError[CmdHelperGetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "helper-list":
 		if c, ok := CmdHelperListCauseByName(cause); ok {
-			return &OpError[CmdHelperListCause]{Cause: c, Message: message}, true
+			return &OpError[CmdHelperListCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "board-dump":
 		if c, ok := CmdBoardDumpCauseByName(cause); ok {
-			return &OpError[CmdBoardDumpCause]{Cause: c, Message: message}, true
+			return &OpError[CmdBoardDumpCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "board-release-agent":
 		if c, ok := CmdBoardReleaseAgentCauseByName(cause); ok {
-			return &OpError[CmdBoardReleaseAgentCause]{Cause: c, Message: message}, true
+			return &OpError[CmdBoardReleaseAgentCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "checkpoint-get":
 		if c, ok := CmdCheckpointGetCauseByName(cause); ok {
-			return &OpError[CmdCheckpointGetCause]{Cause: c, Message: message}, true
+			return &OpError[CmdCheckpointGetCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "hub":
 		if c, ok := HubCallCauseByName(cause); ok {
-			return &OpError[HubCallCause]{Cause: c, Message: message}, true
+			return &OpError[HubCallCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "agentbus hub":
 		if c, ok := HubServeCauseByName(cause); ok {
-			return &OpError[HubServeCause]{Cause: c, Message: message}, true
+			return &OpError[HubServeCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "hub_auth":
 		if c, ok := HubAuthCauseByName(cause); ok {
-			return &OpError[HubAuthCause]{Cause: c, Message: message}, true
+			return &OpError[HubAuthCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	}

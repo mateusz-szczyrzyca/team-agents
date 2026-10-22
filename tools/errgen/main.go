@@ -81,6 +81,10 @@ func main() {
 			// a request forwarded to the hub may have run before the reply was lost; the caller must not
 			// assume it did not run, and the hub never replays it (design section 2, OutcomeUnknown)
 			causes = append(causes, cause{Name: "OutcomeUnknown", Class: "InvalidState", Doc: "the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried"})
+			// the hub itself may be unreachable after the bounded retries; every forwarded operation can fail that way
+			if !hasCause(op.Causes, "Unavailable") {
+				causes = append(causes, cause{Name: "Unavailable", Class: "Unavailable", Doc: "the hub cannot be reached after the bounded retries; nothing was executed by the hub"})
+			}
 		}
 		if !op.NoStorage {
 			causes = append(causes, cause{Name: "Storage", Class: "Storage", Doc: "the shared state or a file could not be read or written"})
@@ -149,9 +153,19 @@ func writeWireLookup(b *bytes.Buffer, ops []operation, counts map[string]int) {
 		if counts[op.Op] > 1 {
 			continue
 		}
-		fmt.Fprintf(b, "\tcase %q:\n\t\tif c, ok := %sCauseByName(cause); ok {\n\t\t\treturn &OpError[%sCause]{Cause: c, Message: message}, true\n\t\t}\n\t\treturn nil, false\n", op.Op, op.Type, op.Type)
+		fmt.Fprintf(b, "\tcase %q:\n\t\tif c, ok := %sCauseByName(cause); ok {\n\t\t\treturn &OpError[%sCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true\n\t\t}\n\t\treturn nil, false\n", op.Op, op.Type, op.Type)
 	}
 	b.WriteString("\t}\n\treturn nil, false\n}\n")
+}
+
+// hasCause reports whether the spec lists a cause with the given name.
+func hasCause(causes []cause, name string) bool {
+	for _, c := range causes {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // fail prints an error and exits.
