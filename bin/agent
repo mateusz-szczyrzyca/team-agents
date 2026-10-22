@@ -212,11 +212,23 @@ AUTH_MODEL_OPENROUTER="${AUTH_MODEL_OPENROUTER:-}"   # empty = model of the firs
 AUTH_MODEL_DEEPINFRA="${AUTH_MODEL_DEEPINFRA:-}"     # empty = model of the first deepinfra/... agent in agents.conf
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
+declare -p INSTANCE_CAPABILITIES &>/dev/null || declare -a INSTANCE_CAPABILITIES=()
+declare -p INSTANCE_ACCEPT_REPOS &>/dev/null || declare -a INSTANCE_ACCEPT_REPOS=()
+
 bus() { "$AGENTBUS_BIN" "$@"; }
 
 # file_mtime_secs file — the modification time in epoch seconds (portable across GNU and BSD/macOS stat)
 file_mtime_secs() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+}
+
+# file_sha256 file — prints sha256 hex digest portably across sha256sum and shasum
+file_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
 }
 
 # date_iso — prints ISO-8601 timestamp portably across GNU date (-Is) and BSD/macOS date
@@ -2891,6 +2903,9 @@ cmd__node_start() { # id mode [expected_run] — starts a runner directly under 
   if [[ -n $expected_run ]]; then
     if (( expected_run <= RUN )); then
       log_info runner_already_running "task=$id" "run=$RUN" "desired=$expected_run"
+      if [[ -n ${NODE_READY_FD:-} ]]; then
+        printf '%s\n' "already_running" 1>&"$NODE_READY_FD" 2>/dev/null || true
+      fi
       exit 0
     fi
     if (( expected_run > RUN + 1 )); then
@@ -2925,6 +2940,9 @@ cmd__node_start() { # id mode [expected_run] — starts a runner directly under 
   meta_set "$id" RUN "$run"
   meta_set "$id" STATUS starting
   log_info runner_starting "task=$id" "run=$run" "mode=$mode" "supervisor=node"
+  if [[ -n ${NODE_READY_FD:-} ]]; then
+    printf '%s\n' "started" 1>&"$NODE_READY_FD" 2>/dev/null || true
+  fi
   exec "$SELF" _runner "$id" "$mode"
 }
 
@@ -2987,19 +3005,35 @@ cmd__node_mark_stopped() { # id — marks a task runner stopped in metadata with
   log_info node_task_marked_stopped "task=$id"
 }
 
-cmd__node_answer() { # id [expected_round] — stores answers from stdin and resumes under agent node
+cmd__node_answer() { # id [expected_round] [expected_sha256] — stores answers from stdin and resumes under agent node
   local id; id=$(resolve_id "${1:?}")
   local expected_round=${2:-}
+  local expected_sha256=${3:-}
   meta_load "$id"
   [[ $STATUS == waiting ]] || { echo "task $id has status '$STATUS' — not waiting" >&2; exit 1; }
   if [[ -n $expected_round && $ROUND -ne $expected_round ]]; then
     echo "unexpected question round $ROUND (expected $expected_round)" >&2
     exit 1
   fi
+  if [[ -n $expected_sha256 ]]; then
+    local qfile="$TASKS/$id/questions-$ROUND.md"
+    if [[ ! -f $qfile ]]; then
+      echo "questions file $qfile not found" >&2
+      exit 1
+    fi
+    local cur_sha; cur_sha=$(file_sha256 "$qfile")
+    if [[ $cur_sha != "$expected_sha256" ]]; then
+      echo "questions snapshot mismatch: expected $expected_sha256, got $cur_sha" >&2
+      exit 1
+    fi
+  fi
   local ans_file="$TASKS/$id/answers-$ROUND.md"
   cat > "$ans_file"
   meta_set "$id" ANSWERS_PENDING 1
   log_info node_answer_delivered "task=$id" "round=$ROUND"
+  if [[ -n ${NODE_READY_FD:-} ]]; then
+    printf '%s\n' "delivered" 1>&"$NODE_READY_FD" 2>/dev/null || true
+  fi
   cmd__node_start "$id" resume
 }
 
@@ -3071,7 +3105,13 @@ cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
 }
 
 cmd_node() { # runs the agent node daemon with configuration from agents.conf
-  local args=()
+  if [[ -f $AGENTS_HOME/secrets.env ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$AGENTS_HOME/secrets.env"
+    set +a
+  fi
+  local args=(--home "$AGENTS_HOME")
   [[ -n ${INSTANCE_NAME:-} ]] && args+=(--instance "$INSTANCE_NAME")
   [[ -n ${LEAD_INSTANCE:-} ]] && args+=(--lead "$LEAD_INSTANCE")
   [[ -n ${HUB_AUTH:-} ]] && args+=(--auth "$HUB_AUTH")
