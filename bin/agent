@@ -3135,21 +3135,12 @@ cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
   if (( free_slots < 0 )); then free_slots=0; fi
 
   local agents_json="[]"
-  local -A seen_agents=()
   local a status cur_task tier role
-  local -a agent_list=()
-  for a in "${!AGENT_TYPE[@]}"; do agent_list+=("$a"); done
-  for a in "${!INVESTIGATORS_TYPE[@]}"; do agent_list+=("$a"); done
-
-  for a in "${agent_list[@]}"; do
-    [[ -z ${seen_agents[$a]:-} ]] || continue
-    seen_agents[$a]=1
-    if [[ -n ${INVESTIGATORS_TYPE[$a]:-} && -z ${AGENT_TYPE[$a]:-} ]]; then
-      tier="normal"
+  for a in "${!AGENT_TYPE[@]}"; do
+    tier=$(agent_tier "$a")
+    role="worker"
+    if [[ $a == *investigator* ]]; then
       role="investigator"
-    else
-      tier=$(agent_tier "$a")
-      role="worker"
     fi
     if [[ -n ${agent_busy[$a]:-} ]]; then
       if [[ ${agent_st[$a]} == sleeping ]]; then
@@ -3171,7 +3162,6 @@ cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
       '. += [{name: $name, tier: $tier, role: $role, status: $status} + (if $cur != "" then {current_task: $cur} else {} end)]' \
       <<< "$agents_json")
   done
-
   jq -n \
     --argjson total "$max_slots" \
     --argjson free "$free_slots" \

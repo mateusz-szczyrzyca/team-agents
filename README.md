@@ -498,6 +498,7 @@ notifications in `AGENT_LANGUAGE`.
 agent run <agent> "task" | -f task.md         start a task (inside the repository)
 agent run --team a,b[,c] [--verify] "task"    start a team (optionally with a final PR review)
 agent run --resume <team|task> ["addition"]   resume from the last checkpoint (same branches)
+agent node                                  run this instance's outbound node daemon
 agent status | agents | show <id>            overview, agents, task details
 agent log <id> [--raw]                        follow the runner log (structured records rendered; --raw: JSON)
 agent answer <id>                             answer the questions in $EDITOR and resume
@@ -580,6 +581,36 @@ migration; an absent registry is empty and the legacy `state.json` format is unc
 errors use operation `instance_register`; heartbeat errors use `instance_heartbeat`, with generated
 cause names and the existing error classes. The later node and routing milestones connect these leases
 to remote task execution and member reachability.
+
+### Node daemon
+
+On a non-lead instance, `agent node` loads the local configuration and secrets, registers with the hub,
+then heartbeats every minute while independently long polling for commands. Each instance keeps its own
+models, credentials, worktrees and local task files. For token mode set `HUB_TOKEN` in `secrets.env` and
+`HUB_CERT_SHA256` in `agents.conf`; the earlier `HUB_CERT_FINGERPRINT` name remains accepted.
+`INSTANCE_CAPABILITIES` is an array from the closed vocabulary in the design. Unknown values fail startup.
+`INSTANCE_ACCEPT_REPOS` limits repositories accepted by the local script, and direct daemon use can add
+`agentbus node --accept-repos repo-a,repo-b` as an additional local restriction.
+
+The node accepts only fixed internal operations against locally provisioned task directories. The hub
+cannot select an executable or submit a shell command. A private readiness pipe confirms local admission
+before a start, wake or answer-delivery command is acknowledged. The daemon supervises its child process
+groups directly and stops those groups during graceful shutdown. Hub outages leave local runs working.
+A second daemon using the same local home fails with the typed `node.AlreadyRunning` cause.
+
+`node/state.json` records the session identity, report sequences, lease credentials and command outcomes;
+`node/daemon.lock` prevents concurrent daemons and `node/executor.log` captures bridge output. These local
+files do not replicate or execute logical bus state. Acceptance is synced before dispatch and the outcome
+before acknowledgment; a lost acknowledgment reuses the recorded outcome. If a crash leaves an accepted
+operation with no recorded outcome, the native executor reports an explicit unknown outcome and does not
+blindly spawn it again. Inspect that task before submitting replacement work. Keep the journal private and
+retain it across reconnects: deleting it discards the node's protection against duplicate execution.
+
+Sensitive `sign:*` and `publish:*` requirements are denied unless the local human has approved them in
+`node/approved-capabilities.json` (a JSON array of typed capabilities). Requirements must also be declared
+locally. Remote code provisioning, question snapshot retrieval, full approval-command integration, and
+cross-instance run creation are completed by their remaining milestones; the node daemon alone does not
+create a missing task or clone a repository selected by the hub.
 
 ## Files and state
 

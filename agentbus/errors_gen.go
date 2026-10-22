@@ -3030,6 +3030,56 @@ func CommandAckCauseByName(name string) (CommandAckCause, bool) {
 	return 0, false
 }
 
+// ---------------------------------------------------------------- node
+
+// CmdNodeCause is a reason why the agentbus node daemon failed.
+type CmdNodeCause int
+
+const (
+	CmdNodeInvalidConfig  CmdNodeCause = iota // the node configuration or local execution policy is invalid [InvalidArgument]
+	CmdNodeHubUnavailable                     // the hub cannot be reached within the bounded request budget [Unavailable]
+	CmdNodeProtocol                           // the hub response or command conflicts with the protocol or durable journal [InvalidState]
+	CmdNodeRejected                           // the authenticated hub rejected the request [Permission]
+	CmdNodeLeaseLost                          // the hub requires a fresh instance lease [Conflict]
+	CmdNodeDispatch                           // a local command could not be executed [Process]
+	CmdNodeAlreadyRunning                     // another node daemon holds this local home lock [Conflict]
+	CmdNodeStorage                            // the shared state or a file could not be read or written [Storage]
+)
+
+// CmdNodeError is the error of the agentbus node daemon.
+type CmdNodeError = OpError[CmdNodeCause]
+
+// cmdNodeCauses describes the CmdNodeCause values (same order as the constants).
+var cmdNodeCauses = [...]causeInfo{
+	{"InvalidConfig", ClassInvalidArgument},
+	{"HubUnavailable", ClassUnavailable},
+	{"Protocol", ClassInvalidState},
+	{"Rejected", ClassPermission},
+	{"LeaseLost", ClassConflict},
+	{"Dispatch", ClassProcess},
+	{"AlreadyRunning", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CmdNodeCause) op() string { return "node" }
+
+// info implements opCause.
+func (c CmdNodeCause) info() causeInfo { return cmdNodeCauses[c] }
+
+// String returns the cause name.
+func (c CmdNodeCause) String() string { return c.info().name }
+
+// CmdNodeCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdNodeCauseByName(name string) (CmdNodeCause, bool) {
+	for i, info := range cmdNodeCauses {
+		if info.name == name {
+			return CmdNodeCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // wireOperationError rebuilds the typed error of an operation from its wire form (operation name, cause name,
 // message). It returns false when the operation or the cause is unknown, so a stale or foreign peer cannot
 // produce an error of the wrong type. Operation names used by both an MCP tool and a CLI subcommand ("release")
@@ -3374,6 +3424,11 @@ func wireOperationError(op, cause, message string) (error, bool) {
 	case "command_ack":
 		if c, ok := CommandAckCauseByName(cause); ok {
 			return &OpError[CommandAckCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "node":
+		if c, ok := CmdNodeCauseByName(cause); ok {
+			return &OpError[CmdNodeCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	}

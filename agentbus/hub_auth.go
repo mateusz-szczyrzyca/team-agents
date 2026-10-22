@@ -16,7 +16,6 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -351,6 +350,17 @@ func (a *HubAuthenticator) authenticateToken(r *http.Request) (string, *HubAuthE
 	return instanceName, nil
 }
 
+// HubCertificateError distinguishes certificate validation from other lower-level value failures.
+type HubCertificateError struct {
+	Value *ValueError // concrete invalid-certificate reason; never nil
+}
+
+// Error preserves the existing human-readable certificate validation message.
+func (e *HubCertificateError) Error() string { return e.Value.Message }
+
+// Unwrap implements the error interface; the contained concrete error is *ValueError.
+func (e *HubCertificateError) Unwrap() error { return e.Value.asError() }
+
 // NewPinnedTLSConfig creates a *tls.Config that verifies the server presents a certificate
 // whose SHA-256 fingerprint matches expectedFingerprintHex and is within its validity period.
 // The fingerprint is case-insensitive and may optionally include colon separators.
@@ -371,16 +381,16 @@ func NewPinnedTLSConfig(expectedFingerprintHex string) (*tls.Config, error) {
 		InsecureSkipVerify: true, //nolint:gosec // G402: pinned leaf certificate SHA-256 fingerprint and validity period verified explicitly in VerifyConnection
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			if len(cs.PeerCertificates) == 0 {
-				return errors.New("server presented no certificates")
+				return &HubCertificateError{Value: valueErr("server presented no certificates")}
 			}
 			cert := cs.PeerCertificates[0]
 			now := time.Now()
 			if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
-				return fmt.Errorf("server certificate is not valid at current time (valid from %s to %s)", cert.NotBefore.Format(time.RFC3339), cert.NotAfter.Format(time.RFC3339))
+				return &HubCertificateError{Value: valueErr("server certificate is not valid at current time (valid from %s to %s)", cert.NotBefore.Format(time.RFC3339), cert.NotAfter.Format(time.RFC3339))}
 			}
 			leafHash := sha256.Sum256(cert.Raw)
 			if subtle.ConstantTimeCompare(leafHash[:], expectedBytes) != 1 {
-				return fmt.Errorf("certificate fingerprint mismatch: server presented SHA-256 %x, expected %s", leafHash, cleaned)
+				return &HubCertificateError{Value: valueErr("certificate fingerprint mismatch: server presented SHA-256 %x, expected %s", leafHash, cleaned)}
 			}
 			return nil
 		},

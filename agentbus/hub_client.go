@@ -156,6 +156,10 @@ func (c *HubClient) once(ctx context.Context, req HubRequest, data []byte) (HubR
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	response, err := client.Do(request)
 	if err != nil {
+		var invalid *HubCertificateError
+		if errors.As(err, &invalid) {
+			return HubResponse{}, opErr(HubClientInvalidConfig, "hub TLS verification failed: %s", invalid.Value.Message)
+		}
 		return HubResponse{}, opErr(HubClientUnavailable, "hub transport failed")
 	}
 	defer func() {

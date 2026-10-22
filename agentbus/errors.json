@@ -1250,6 +1250,48 @@
      "doc": "the command was already acknowledged with a different outcome or detail; an identical retry is accepted, a conflicting one is not"
     }
    ]
+  },
+  {
+   "type": "CmdNode",
+   "op": "node",
+   "what": "the agentbus node daemon",
+   "causes": [
+    {
+     "name": "InvalidConfig",
+     "class": "InvalidArgument",
+     "doc": "the node configuration or local execution policy is invalid"
+    },
+    {
+     "name": "HubUnavailable",
+     "class": "Unavailable",
+     "doc": "the hub cannot be reached within the bounded request budget"
+    },
+    {
+     "name": "Protocol",
+     "class": "InvalidState",
+     "doc": "the hub response or command conflicts with the protocol or durable journal"
+    },
+    {
+     "name": "Rejected",
+     "class": "Permission",
+     "doc": "the authenticated hub rejected the request"
+    },
+    {
+     "name": "LeaseLost",
+     "class": "Conflict",
+     "doc": "the hub requires a fresh instance lease"
+    },
+    {
+     "name": "Dispatch",
+     "class": "Process",
+     "doc": "a local command could not be executed"
+    },
+    {
+     "name": "AlreadyRunning",
+     "class": "Conflict",
+     "doc": "another node daemon holds this local home lock"
+    }
+   ]
   }
  ]
 }
