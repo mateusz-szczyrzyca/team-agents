@@ -118,7 +118,7 @@ func (b *Bus) wakeFor(st *State, m Message) {
 			}
 			if m.To == name || m.To == teamRecipient(t.ID) {
 				mem.State = MemberWaking
-				wakeFn(t, mem.Task)
+				b.wakeMemberLocked(t, name)
 			}
 		}
 	}
@@ -716,8 +716,9 @@ func cmdTeamSet(args []string) {
 		for _, msg := range msgs {
 			if msg.ID > cur && isForAgent(st, msg, *agent, false) {
 				m.State = MemberWaking
-				wakeFn(t, m.Task)
-				out.println("waking")
+				if b.wakeMemberLocked(t, *agent) {
+					out.println("waking")
+				}
 				return fromStorage(CmdTeamSetStorage, out.err)
 			}
 		}
@@ -726,9 +727,10 @@ func cmdTeamSet(args []string) {
 		// one the coordinator keeps for later) would otherwise be woken in an endless loop.
 		if t.BoardRev > m.BoardSeen && t.hasWorkFor(*agent, m) {
 			m.State = MemberWaking
-			m.BoardSeen = t.BoardRev
-			wakeFn(t, m.Task)
-			out.println("waking (board)")
+			if b.wakeMemberLocked(t, *agent) {
+				m.BoardSeen = t.BoardRev
+				out.println("waking (board)")
+			}
 			return fromStorage(CmdTeamSetStorage, out.err)
 		}
 		return nil
