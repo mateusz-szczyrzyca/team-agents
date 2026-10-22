@@ -293,7 +293,7 @@ func (g *HubInstanceRegistry) Register(instance, peer string, req HubInstanceReg
 		if serr := g.save(state); serr != nil {
 			return serr
 		}
-		restoreReturnedMembers(bus, instance) // a fresh lease: its members can resume
+		restoreReturnedMembers(g.Bus, bus, instance) // a fresh lease: its members can resume
 		return nil
 	})
 	if serr != nil {
@@ -334,7 +334,7 @@ func (g *HubInstanceRegistry) Heartbeat(instance, peer string, req HubInstanceHe
 			if serr := g.save(state); serr != nil {
 				return serr
 			}
-			restoreReturnedMembers(bus, instance) // normally a no-op: a live lease has no unreachable members
+			restoreReturnedMembers(g.Bus, bus, instance) // normally a no-op: a live lease has no unreachable members
 			return nil
 		}
 		return nil

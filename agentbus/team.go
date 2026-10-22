@@ -708,33 +708,62 @@ func cmdTeamSet(args []string) {
 		if newState != MemberSleeping || t.Done {
 			return nil
 		}
-		msgs, serr := b.messages()
+		reason, serr := b.wakeForPendingWork(st, t, *agent)
 		if serr != nil {
 			return fromStorage(CmdTeamSetStorage, serr)
 		}
-		cur := st.Cursors[*agent]
-		for _, msg := range msgs {
-			if msg.ID > cur && isForAgent(st, msg, *agent, false) {
-				m.State = MemberWaking
-				if b.wakeMemberLocked(t, *agent) {
-					out.println("waking")
-				}
-				return fromStorage(CmdTeamSetStorage, out.err)
-			}
+		switch reason {
+		case wakeForMessage:
+			out.println("waking")
+		case wakeForBoard:
+			out.println("waking (board)")
 		}
-		// Work for this member appeared on the board since it last looked (it may have been added while the member
-		// was finishing). Items it has already seen do not wake it again: a member that leaves an item alone (e.g.
-		// one the coordinator keeps for later) would otherwise be woken in an endless loop.
-		if t.BoardRev > m.BoardSeen && t.hasWorkFor(*agent, m) {
-			m.State = MemberWaking
-			if b.wakeMemberLocked(t, *agent) {
-				m.BoardSeen = t.BoardRev
-				out.println("waking (board)")
-			}
-			return fromStorage(CmdTeamSetStorage, out.err)
-		}
-		return nil
+		return fromStorage(CmdTeamSetStorage, out.err)
 	}).asError())
+}
+
+// wakeReason says why wakeForPendingWork woke a member; wakeNone means it did not wake one.
+type wakeReason string
+
+const (
+	wakeNone       wakeReason = ""        // no pending work, or the wake could not be delivered (the member stays sleeping)
+	wakeForMessage wakeReason = "message" // an unread message is addressed to the member
+	wakeForBoard   wakeReason = "board"   // board work appeared since the member last looked at the board
+)
+
+// wakeForPendingWork wakes the sleeping member name when it has an unread message or board work it has not seen.
+// The caller holds the bus lock. Only a delivered wake changes the member's board revision (BoardSeen), so a failed
+// wake is retried later. A storage failure is returned; the wake itself is a side effect handled by wakeMemberLocked.
+func (b *Bus) wakeForPendingWork(st *State, t *Team, name string) (wakeReason, *StorageError) {
+	m := t.Members[name]
+	if m == nil {
+		return wakeNone, nil
+	}
+	msgs, serr := b.messages()
+	if serr != nil {
+		return wakeNone, serr
+	}
+	cur := st.Cursors[name]
+	for _, msg := range msgs {
+		if msg.ID > cur && isForAgent(st, msg, name, false) {
+			m.State = MemberWaking
+			if b.wakeMemberLocked(t, name) {
+				return wakeForMessage, nil
+			}
+			return wakeNone, nil
+		}
+	}
+	// Work for this member appeared on the board since it last looked (it may have been added while the member
+	// was finishing). Items it has already seen do not wake it again: a member that leaves an item alone (e.g.
+	// one the coordinator keeps for later) would otherwise be woken in an endless loop.
+	if t.BoardRev > m.BoardSeen && t.hasWorkFor(name, m) {
+		m.State = MemberWaking
+		if b.wakeMemberLocked(t, name) {
+			m.BoardSeen = t.BoardRev
+			return wakeForBoard, nil
+		}
+	}
+	return wakeNone, nil
 }
 
 // team-done: marks a team finished (nothing to do for an unknown or already finished team).

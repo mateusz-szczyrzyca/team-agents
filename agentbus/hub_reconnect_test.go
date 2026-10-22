@@ -88,3 +88,49 @@ func TestHeartbeatRestoresUnreachableMember(t *testing.T) {
 		t.Fatalf("codex-1@mac is %s after heartbeat, want sleeping", got)
 	}
 }
+
+// TestReconnectWakesMemberWithUnreadMessage verifies that a message sent while the member's instance was away
+// wakes the member through the node queue as soon as the instance reconnects, instead of waiting for the next message.
+func TestReconnectWakesMemberWithUnreadMessage(t *testing.T) {
+	b := newBus(t)
+	clock := time.Now().UTC() // the queued wake checks the lease against the real clock
+	reg := &HubInstanceRegistry{Bus: b, TTL: 180 * time.Second, Now: func() time.Time { return clock }}
+	createTeam(t, b, "Remote", map[string][3]string{"lead@host": {"normal", "a", "active"}, "member@mac": {"normal", "b", "active"}})
+	mustWith(t, b, func(st *State) {
+		team := st.Teams["Remote"]
+		team.Lead = "lead@host"
+		team.Members["member@mac"].Task = "task-member"
+	})
+	if _, err := reg.Register("mac", "node-mac", reportingRegistration("session-mac")); err != nil {
+		t.Fatal(err)
+	}
+	reapMac(t, b, reg, &clock)
+	lead := server(b, "lead@host", inTeam("Remote"))
+	chk(t).ok(toolResult(lead.send("member@mac", "continue backend work")))
+	if pending, serr := b.pendingCommands("mac", 0); serr != nil || len(pending) != 0 {
+		t.Fatalf("a message to an unreachable member queued a wake: %v %v", pending, serr)
+	}
+	reconnectWith(t, reg, reportingRegistration("session-mac-2"))
+	if got := memberOf(t, b, "Remote", "member@mac").State; got != MemberWaking {
+		t.Fatalf("member@mac is %s after reconnect, want waking", got)
+	}
+	pending, serr := b.pendingCommands("mac", 0)
+	if serr != nil || len(pending) != 1 || pending[0].Kind != CommandWake || pending[0].Params["member"] != "member@mac" {
+		t.Fatalf("reconnect did not queue exactly one wake for member@mac: %v %v", pending, serr)
+	}
+}
+
+// reportingRegistration registers instance mac and reports the task of member@mac in team Remote.
+func reportingRegistration(session string) HubInstanceRegisterRequest {
+	request := instanceRegisterFixture("mac", session)
+	request.Manifest.CurrentState.Tasks = map[string]HubTaskSummary{"task-member": {TaskID: "task-member", Agent: "member", Team: "Remote", Status: "sleeping"}}
+	return request
+}
+
+// reconnectWith registers instance mac with the given request, as a restarted daemon does.
+func reconnectWith(t *testing.T, reg *HubInstanceRegistry, request HubInstanceRegisterRequest) {
+	t.Helper()
+	if _, err := reg.Register("mac", "node-mac", request); err != nil {
+		t.Fatal(err)
+	}
+}
