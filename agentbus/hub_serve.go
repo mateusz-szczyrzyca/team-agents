@@ -53,6 +53,10 @@ type HubConfig struct {
 	ManifestTTL time.Duration
 	// Resolve is an optional identity resolver (defaults to defaultRunResolver which fails closed).
 	Resolve func(HubCaller) (*Server, *HubCallError)
+	// BackupDir is where periodic state backups are written (HUB_BACKUP_DIR); empty uses bus/backup under Dir.
+	BackupDir string
+	// BackupInterval is the time between backups (HUB_BACKUP_MINUTES); zero uses 30 minutes, a negative value is invalid.
+	BackupInterval time.Duration
 }
 
 // defaultRunResolver returns an identity resolver that rejects all requests until the M2 trusted run registry is configured.
@@ -196,7 +200,23 @@ func parseHubConfig(args []string) *HubConfig {
 	} else {
 		cfg.ManifestTTL = time.Duration(ttlSeconds) * time.Second
 	}
+
+	cfg.BackupDir = os.Getenv("HUB_BACKUP_DIR")
+	cfg.BackupInterval = backupIntervalFromEnv(os.Getenv("HUB_BACKUP_MINUTES"))
 	return cfg
+}
+
+// backupIntervalFromEnv parses HUB_BACKUP_MINUTES. Unset gives zero (the default); an unusable value gives -1, which
+// serveHub rejects with a configuration error.
+func backupIntervalFromEnv(raw string) time.Duration {
+	if raw == "" {
+		return 0
+	}
+	minutes, err := strconv.Atoi(raw)
+	if err != nil || minutes < 1 || minutes > 1440 {
+		return -1
+	}
+	return time.Duration(minutes) * time.Minute
 }
 
 // serveHub validates configuration, initializes authentication and bus, binds listener, and serves requests.
@@ -206,6 +226,12 @@ func serveHub(cfg *HubConfig) *HubServeError {
 	}
 	if cfg.Port <= 0 || cfg.Port > 65535 {
 		return opErr(HubServeInvalidConfig, "invalid HUB_PORT %d: port must be between 1 and 65535", cfg.Port)
+	}
+	if cfg.BackupInterval == 0 {
+		cfg.BackupInterval = defaultBackupInterval
+	}
+	if cfg.BackupInterval < time.Minute || cfg.BackupInterval > 24*time.Hour {
+		return opErr(HubServeInvalidConfig, "HUB_BACKUP_MINUTES must be between 1 and 1440")
 	}
 
 	if cfg.Auth != HubAuthModeTailscale && cfg.Auth != HubAuthModeToken {
@@ -271,6 +297,16 @@ func serveHub(cfg *HubConfig) *HubServeError {
 		Authenticate: authenticator.Authenticate,
 		Resolve:      resolver,
 	}
+
+	// Maintenance runs until this function returns: periodic backups and the reaper of expired instances.
+	maintenanceStop := make(chan struct{})
+	defer close(maintenanceStop)
+	backupDir := cfg.BackupDir
+	if backupDir == "" {
+		backupDir = filepath.Join(cfg.Dir, "backup")
+	}
+	go runBackups(b, backupDir, cfg.BackupInterval, maintenanceStop)
+	go runReaper(b, instances, maintenanceStop)
 
 	ln := cfg.Listener
 	if ln == nil {

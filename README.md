@@ -582,6 +582,23 @@ errors use operation `instance_register`; heartbeat errors use `instance_heartbe
 cause names and the existing error classes. The later node and routing milestones connect these leases
 to remote task execution and member reachability.
 
+### Hub backups and expired instances
+
+The hub writes a backup of its state every `HUB_BACKUP_MINUTES` (default 30; allowed 1–1440) into
+`HUB_BACKUP_DIR` (default `<bus directory>/backup`). A backup is one snapshot taken under the bus lock: `state.json`,
+`messages.jsonl`, `instances.json`, `commands.json` and the `replay/` ledger, written to a `backup-YYYYMMDD-HHMMSS`
+directory (UTC). The newest 10 backups are kept. The directory and its files are private because they hold
+lease credentials. An unusable `HUB_BACKUP_MINUTES` stops `agentbus hub` at startup.
+
+Every 30 seconds the hub checks the leases in `bus/instances.json`. For an instance whose lease has expired (no
+heartbeat for `MANIFEST_TTL`), each member of a team whose name is qualified with that instance (`codex-1@mac`) becomes
+`unreachable` (unless it was done or excluded), and each board item claimed by such a member returns to `todo` with a
+note in its details. The team's board revision advances, and one `instance_unreachable` message goes to the
+coordinator, or to the whole team when the coordinator is on that instance too. Unqualified names belong to the
+local installation and are never reclaimed. The check is idempotent: a second scan of the same expired instance
+changes nothing. Members are not restored automatically when the instance returns; reconnection does not revive a
+released board claim.
+
 ### Node daemon
 
 On a non-lead instance, `agent node` loads the local configuration and secrets, registers with the hub,

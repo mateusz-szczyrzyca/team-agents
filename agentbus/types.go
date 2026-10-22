@@ -169,12 +169,15 @@ const (
 	// MemberPaused: out of quota, or stopped by the wake-loop guard. Messages and board items do not wake it;
 	// the `agent` script resumes it with a timer at the time it announced to the team.
 	MemberPaused MemberState = "paused"
+	// MemberUnreachable: the instance the member runs on lost its lease. Set by the hub reaper; the member's
+	// board items were returned to the board.
+	MemberUnreachable MemberState = "unreachable"
 )
 
 // Valid reports whether s is one of the defined states.
 func (s MemberState) Valid() bool {
 	switch s {
-	case MemberActive, MemberSleeping, MemberWaking, MemberDone, MemberExcluded, MemberHung, MemberPaused:
+	case MemberActive, MemberSleeping, MemberWaking, MemberDone, MemberExcluded, MemberHung, MemberPaused, MemberUnreachable:
 		return true
 	}
 	return false

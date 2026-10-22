@@ -52,6 +52,7 @@ const (
 	KindCheckpoint             MessageKind = "checkpoint"              // a checkpoint was saved
 	KindStopAll                MessageKind = "stop_all"                // the human stopped all work
 	KindScript                 MessageKind = "script"                  // an event of the `agent` script (see ScriptNotice)
+	KindInstanceUnreachable    MessageKind = "instance_unreachable"    // an instance's lease expired and its work was reclaimed
 )
 
 // Valid reports whether k is a defined kind ("" is accepted for messages written by older versions).
@@ -64,7 +65,7 @@ func (k MessageKind) Valid() bool {
 		KindCoordinatorTakeover, KindCoordinatorHandover, KindQuizQuestion, KindConsultRequest, KindConsultReply,
 		KindExcludedNotice, KindMemberExcluded,
 		KindBoardItemAdded, KindBoardResult, KindBoardReturned, KindWorkerRequest, KindCheckpoint, KindStopAll,
-		KindScript:
+		KindScript, KindInstanceUnreachable:
 		return true
 	}
 	return false
@@ -547,3 +548,26 @@ type EventScript struct {
 
 func (e EventScript) Kind() MessageKind { return KindScript } // Kind implements busEvent.
 func (e EventScript) Text() string      { return e.Body }     // Text implements busEvent.
+
+// ---------------------------------------------------------------- hub
+
+// EventInstanceUnreachable tells a team that the work of an instance was reclaimed after its lease expired.
+type EventInstanceUnreachable struct {
+	Instances []string `json:"instances"` // instances whose lease expired
+	Members   []string `json:"members"`   // members marked unreachable
+	Returned  []string `json:"returned"`  // board items returned to the board
+}
+
+func (e EventInstanceUnreachable) Kind() MessageKind { return KindInstanceUnreachable } // Kind implements busEvent.
+
+// Text implements busEvent.
+func (e EventInstanceUnreachable) Text() string {
+	parts := []string{fmt.Sprintf("instance %s is unreachable (its lease expired)", strings.Join(e.Instances, ", "))}
+	if len(e.Members) > 0 {
+		parts = append(parts, "members marked unreachable: "+strings.Join(e.Members, ", "))
+	}
+	if len(e.Returned) > 0 {
+		parts = append(parts, "board items back on the board: "+strings.Join(e.Returned, ", "))
+	}
+	return strings.Join(parts, "; ") + "."
+}
