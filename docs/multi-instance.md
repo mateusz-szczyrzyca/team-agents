@@ -285,6 +285,10 @@ contains UTC snapshot time, sorted credential-free instance/lease/capability/cap
 teams/boards, agent stages, investigation summaries and the latest 300 messages. Response size is bounded
 at 64 MiB. Reads are serialized with other bus accesses, and read-only retries need no mutation replay key.
 `agentbus snapshot` shares serve's authentication, certificate pins, redirect refusal and socket selection.
+The lead's own `agent node` also uses that private socket when `LEAD_INSTANCE` is empty or its own
+`INSTANCE_NAME` and a local hub listener/socket is configured. This lets qualified lead-local members
+receive the same durable commands without a second network identity or competing synthetic registration.
+A different explicit lead origin selects network transport; an absent local socket never opens a local bus.
 `agent status` uses it from any configured instance, and `agent live` invokes the same helper rather than
 duplicating authentication in the panel. Task references are `task@instance`; the panel never opens a path
 from a remote report. An expired instance marks its unfinished task summaries unreachable. During transport
