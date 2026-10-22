@@ -2307,6 +2307,41 @@ cmd_resume() {
   echo "Resumed $id (run $((RUN + 1)))."
 }
 
+# instances_status — prints the instances the hub records in bus/instances.json: lease (active or expired),
+# platform, free/total slots, active task count and declared capabilities. Prints nothing on a single-instance
+# installation (no LEAD_INSTANCE, no INSTANCE_NAME and no registry file).
+instances_status() {
+  local f="$BUS_DIR/instances.json" now rows name lease platform slots tasks caps
+  if [[ -z ${LEAD_INSTANCE:-} && -z ${INSTANCE_NAME:-} && ! -f $f ]]; then
+    return 0
+  fi
+  echo
+  printf '%-16s %-8s %-14s %-7s %-5s %s\n' INSTANCE LEASE PLATFORM SLOTS TASKS CAPABILITIES
+  if [[ ! -f $f ]]; then
+    echo "  (no instances recorded yet: $f does not exist)"
+    return 0
+  fi
+  # "now" uses the registry's storage layout, so lease expiries compare as strings in jq.
+  now=$(date -u '+%Y-%m-%d %H:%M:%S')
+  rows=$(jq_soft instances_read -r --arg now "$now" '
+    (.instances // {}) | to_entries | sort_by(.key) | .[]
+    | .value as $r
+    | [ .key,
+        (if ($r.lease.expires_at // "") > $now then "active" else "expired" end),
+        (($r.manifest.detected.os // "unknown") + "/" + ($r.manifest.detected.arch // "?")),
+        ((($r.manifest.current_state.slots.free // 0) | tostring) + "/" + (($r.manifest.current_state.slots.total // 0) | tostring)),
+        ((($r.manifest.current_state.tasks // {}) | length) | tostring),
+        (if (($r.manifest.declared // []) | length) == 0 then "-" else (($r.manifest.declared // []) | join(", ")) end)
+      ] | @tsv' "$f")
+  if [[ -z $rows ]]; then
+    echo "  (no instances recorded)"
+    return 0
+  fi
+  while IFS=$'\t' read -r name lease platform slots tasks caps; do
+    printf '%-16s %-8s %-14s %-7s %-5s %s\n' "$name" "$lease" "$platform" "$slots" "$tasks" "$caps"
+  done <<<"$rows"
+}
+
 cmd_status() {
   printf '%-30s %-12s %-13s %-6s %-5s %s\n' TASK AGENT STATUS ROUND RUN REPO
   local d
@@ -2320,6 +2355,7 @@ cmd_status() {
       printf '%-30s %-12s %-13s %-6s %-5s %s\n' "$ID" "$ag" "$st" "$ROUND" "$RUN" "$REPO_NAME"
     )
   done
+  instances_status
 }
 
 cmd_show() {
