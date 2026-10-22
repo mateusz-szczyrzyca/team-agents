@@ -444,7 +444,7 @@ func encodeHubOperationError(err error) *HubWireError {
 func qualifyHubArgs(args map[string]any, instance string) map[string]any {
 	out := make(map[string]any, len(args))
 	for name, value := range args {
-		if name == "to" || name == "from" || name == "agent" {
+		if name == "to" || name == "from" || name == "agent" || name == "for" {
 			if target, ok := value.(string); ok && target != "" && target != "all" && target != "team" &&
 				!strings.HasPrefix(target, "team:") && !strings.Contains(target, "@") {
 				value = target + "@" + instance

@@ -848,8 +848,9 @@ schedule_wake() {
       --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
       "$SELF" _wake "$1" 3>&- 7>&- 8>&- 9>&-
   else
-    ( sleep "$2" && "$SELF" _wake "$1" 3>&- 7>&- 8>&- 9>&- ) >/dev/null 2>&1 &
-    disown 2>/dev/null || true
+    ( sleep "$2" && "$SELF" _wake "$1" 3>&- 7>&- 8>&- 9>&- ) &
+    # Non-interactive shells may have no job table; a failure only affects shell ownership, not the timer.
+    try wake_timer_disown_failed disown
   fi
 }
 
@@ -2322,13 +2323,16 @@ instances_status() {
     echo "  (no instances recorded yet: $f does not exist)"
     return 0
   fi
-  # "now" uses the registry's storage layout, so lease expiries compare as strings in jq.
-  now=$(date -u '+%Y-%m-%d %H:%M:%S')
-  rows=$(jq_soft instances_read -r --arg now "$now" '
+  # Hub leases use UTC RFC3339; old registries used a space-separated UTC timestamp.
+  now=$(date +%s)
+  rows=$(jq_soft instances_read -r --argjson now "$now" '
+    def lease_epoch:
+      if test("^[0-9]{4}-[0-9]{2}-[0-9]{2} ") then sub(" "; "T") + "Z" else . end
+      | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
     (.instances // {}) | to_entries | sort_by(.key) | .[]
     | .value as $r
     | [ .key,
-        (if ($r.lease.expires_at // "") > $now then "active" else "expired" end),
+        (if (($r.lease.expires_at // "1970-01-01T00:00:00Z") | lease_epoch) > $now then "active" else "expired" end),
         (($r.manifest.detected.os // "unknown") + "/" + ($r.manifest.detected.arch // "?")),
         ((($r.manifest.current_state.slots.free // 0) | tostring) + "/" + (($r.manifest.current_state.slots.total // 0) | tostring)),
         ((($r.manifest.current_state.tasks // {}) | length) | tostring),
