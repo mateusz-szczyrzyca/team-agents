@@ -498,3 +498,32 @@ for p in sys.argv[1:]: socket.socket(socket.AF_UNIX).bind(p)' "$XDG_RUNTIME_DIR/
   done
   [[ $output != *"last notification failure"* ]]
 }
+
+@test "the watchdog does not count a hub outage as a hang" {
+  source "$HOME/.local/bin/agent"
+  local dir pid
+  dir=$(mktemp -d)
+  mkdir -p "$TASKS/rid"
+  export RUNNER_ID=rid AGENT_HANG_SECS=2 AGENT_HANG_POLL=1
+  echo "prompt" > "$dir/prompt-1.md"   # a real run always has its prompt: the inactivity clock starts there
+  # the hub has been unreachable since one second before the run started and stays unreachable
+  printf '{"total_seconds":0,"open_since":%s}\n' "$(( $(date +%s) - 1 ))" > "$AGENTS_HOME/hub-outage.json"
+  sleep 5 & pid=$!
+  watch_run "$pid" "$dir" 1 || RC=$?   # the killed run exits with 143, as in the callers
+  [ "$HUNG" = 0 ]
+}
+
+@test "after the hub answers again the hang budget applies" {
+  source "$HOME/.local/bin/agent"
+  local dir pid
+  dir=$(mktemp -d)
+  mkdir -p "$TASKS/rid"
+  export RUNNER_ID=rid AGENT_HANG_SECS=2 AGENT_HANG_POLL=1
+  echo "prompt" > "$dir/prompt-1.md"   # a real run always has its prompt: the inactivity clock starts there
+  # two closed outages of 3 seconds in total; the run itself has no activity
+  printf '{"total_seconds":3,"open_since":0}\n' > "$AGENTS_HOME/hub-outage.json"
+  sleep 30 & pid=$!
+  watch_run "$pid" "$dir" 1 || RC=$?   # the killed run exits with 143, as in the callers
+  [ "$RC" = 143 ]
+  [ "$HUNG" = 1 ]
+}

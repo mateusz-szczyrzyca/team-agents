@@ -1200,10 +1200,22 @@ killtree() { # pid — kills a process and all its descendants
   kill -TERM "$1" 2>/dev/null || :   # the process may already have exited — nothing to kill
 }
 
+hub_outage_secs() { # — prints the seconds the hub has been unreachable on this instance (closed outages plus the open one)
+  local f="$AGENTS_HOME/hub-outage.json" secs
+  [[ -f $f ]] || { echo 0; return; }
+  secs=$(jq_soft hub_outage_parse -r --argjson now "$(date +%s)" \
+    '(.total_seconds // 0) + (if (.open_since // 0) > 0 then ([$now - .open_since, 0] | max) else 0 end)' "$f")
+  printf '%s\n' "${secs:-0}"   # empty when the record is unreadable; jq_soft has logged that
+}
+
 watch_run() { # pid dir n — waits for a CLI run; kills it after AGENT_HANG_MIN min without any event (sets HUNG=1)
-  local pid=$1 dir=$2 n=$3 last now f m
+  # Time while the hub is unreachable (hub_outage_secs, written by agentbus) is not inactivity: the run waits for the
+  # hub and does not hang. Only outage time since the newest activity is left out, so a hang that starts while the
+  # hub is up is still detected, and the budget resumes when the hub answers again.
+  local pid=$1 dir=$2 n=$3 last now f m base base_out out_now delta idle
   local limit=${AGENT_HANG_SECS:-$((AGENT_HANG_MIN * 60))} poll=${AGENT_HANG_POLL:-15}
   HUNG=0
+  base=$(date +%s); base_out=$(hub_outage_secs)
   while kill -0 "$pid" 2>/dev/null; do   # kill -0 only asks whether the process still exists
     sleep "$poll"
     last=$(date +%s)
@@ -1212,8 +1224,11 @@ watch_run() { # pid dir n — waits for a CLI run; kills it after AGENT_HANG_MIN
       [[ -f $f ]] || continue
       m=$(file_mtime_secs "$f"); (( m > last )) && last=$m
     done
-    now=$(date +%s)
-    if (( now - last > limit )) && kill -0 "$pid" 2>/dev/null; then
+    now=$(date +%s); out_now=$(hub_outage_secs)
+    if (( last > base )); then base=$last; base_out=$out_now; fi   # newest activity restarts the inactivity clock
+    delta=$((out_now - base_out)); (( delta < 0 )) && delta=0
+    idle=$((now - base - delta))
+    if (( idle > limit )) && kill -0 "$pid" 2>/dev/null; then
       HUNG=1
       act "$RUNNER_ID" err "■ watchdog: no activity at all for $AGENT_HANG_MIN min — killing the run"
       killtree "$pid"
