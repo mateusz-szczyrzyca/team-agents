@@ -1257,6 +1257,7 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, `agentbus `+version+`
   agentbus serve   --agent NAME [--dir D --task --repo --branch --worktree --peers a,b]   (MCP server, stdio)
+  agentbus hub     [--dir D --listen L --port P --auth A --allowed I]   (multi-instance hub HTTP listener)
   agentbus send    [--dir D] [--from me] [--to all|agent] TEXT
   agentbus log     [--dir D] [-n 30]
   agentbus status  [--dir D]
@@ -1276,6 +1277,8 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		cmdServe(os.Args[2:])
+	case "hub":
+		cmdHub(os.Args[2:])
 	case "send":
 		cmdSend(os.Args[2:])
 	case "log":
