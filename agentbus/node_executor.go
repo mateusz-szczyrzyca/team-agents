@@ -168,7 +168,27 @@ func (e *nodeProcessExecutor) Execute(ctx context.Context, command Command, unce
 		return NodeExecutionResult{}, err
 	}
 	if path == "" {
-		return NodeExecutionResult{Outcome: CommandOutcomeUnknownTask}, nil
+		if command.Kind == CommandStartRun && command.Params["repo"] != "" {
+			provisionArgs := []string{
+				"_node-provision",
+				command.Task,
+				command.Params["agent"],
+				command.Params["repo"],
+				command.Params["branch"],
+				command.Params["base"],
+				command.Params["team"],
+			}
+			_, pErr := e.runBridge(ctx, CommandOutcomeStarted, provisionArgs...)
+			if pErr != nil {
+				return NodeExecutionResult{Outcome: CommandOutcomeFailed, Detail: pErr.Message}, pErr
+			}
+			path, err = e.taskPath(command.Task)
+			if err != nil || path == "" {
+				return NodeExecutionResult{Outcome: CommandOutcomeUnknownTask}, nil
+			}
+		} else {
+			return NodeExecutionResult{Outcome: CommandOutcomeUnknownTask}, nil
+		}
 	}
 
 	switch command.Kind {

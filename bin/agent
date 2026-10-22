@@ -2200,8 +2200,8 @@ resume_run() { # ref verify [addition...] — resumes an interrupted team or tas
 }
 
 cmd_run() {
-  local members=() verify=0 team_list="" resume_ref=""
-  while [[ ${1:-} == --team || ${1:-} == --verify || ${1:-} == --resume ]]; do
+  local members=() verify=0 team_list="" resume_ref="" need_caps=()
+  while [[ ${1:-} == --team || ${1:-} == --verify || ${1:-} == --resume || ${1:-} == --need ]]; do
     case $1 in
       --verify) verify=1; shift ;;
       --resume)
@@ -2210,6 +2210,9 @@ cmd_run() {
       --team)
         [[ -n ${2:-} && ${2:-} != --* ]] || die "usage: agent run --team agent1,agent2[,...] [--verify] [-f file.md | \"task text\"]"
         team_list=$2; shift 2 ;;
+      --need)
+        [[ -n ${2:-} && ${2:-} != --* ]] || die "usage: agent run --need <capability> [...]"
+        need_caps+=("$2"); shift 2 ;;
     esac
   done
   if [[ -n $resume_ref ]]; then
@@ -2222,17 +2225,45 @@ cmd_run() {
   fi
   if [[ -n $team_list ]]; then
     IFS=, read -ra members <<< "$team_list"
-    ((${#members[@]} >= 2)) || die "a team needs at least two agents"
   else
     local name=${1:-}
-    [[ -n $name ]] || die "usage: agent run <agent> | --team a,b [-f file.md | \"task text\"]"
-    shift
-    members=("$name")
+    if [[ -n $name ]]; then
+      shift
+      members=("$name")
+    fi
+  fi
+  # Resolve any --need capabilities against available instances
+  if ((${#need_caps[@]} > 0)); then
+    local cap inst
+    for cap in "${need_caps[@]}"; do
+      inst=""
+      if [[ -f $BUS_DIR/instances.json ]]; then
+        inst=$(jq -r --arg c "$cap" '.instances | to_entries[] | select(.value.manifest.declared[]? == $c or .value.manifest.detected.capabilities[]? == $c) | .key' "$BUS_DIR/instances.json" | head -1)
+      fi
+      if [[ -n $inst ]]; then
+        members+=("worker@$inst")
+      elif [[ -n ${INSTANCE_NAME:-} ]]; then
+        members+=("worker@$INSTANCE_NAME")
+      else
+        members+=("worker")
+      fi
+    done
+  fi
+  ((${#members[@]} > 0)) || die "usage: agent run <agent> | --team a,b [--need cap] [-f file.md | \"task text\"]"
+  if ((${#members[@]} > 1)); then
+    ((${#members[@]} >= 2)) || die "a team needs at least two agents"
   fi
   local m seen=" "
   for m in "${members[@]}"; do
     ! is_investigator "$m" || die "investigators are not started directly — agents request them (request_investigation)"
-    [[ -n ${AGENT_TYPE[$m]:-} ]] || die "unknown agent '$m'. Configured: ${!AGENT_TYPE[*]}"
+    local ag_name="$m" ag_inst=""
+    if [[ $m == *@* ]]; then
+      ag_name="${m%@*}"
+      ag_inst="${m#*@}"
+    fi
+    if [[ -z $ag_inst || ( -n ${INSTANCE_NAME:-} && $ag_inst == "$INSTANCE_NAME" ) ]]; then
+      [[ -n ${AGENT_TYPE[$ag_name]:-} ]] || die "unknown agent '$m'. Configured: ${!AGENT_TYPE[*]}"
+    fi
     [[ $seen != *" $m "* ]] || die "agent $m is listed twice"
     seen+="$m "
   done
@@ -2255,40 +2286,73 @@ cmd_run() {
   common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)
   main_root=$(dirname "$common")
 
+  local has_normal=0
+  for m in "${members[@]}"; do
+    local ag_name="$m" ag_inst=""
+    if [[ $m == *@* ]]; then ag_name="${m%@*}"; ag_inst="${m#*@}"; fi
+    if [[ -z $ag_inst || ( -n ${INSTANCE_NAME:-} && $ag_inst == "$INSTANCE_NAME" ) ]]; then
+      [[ $(agent_tier "$ag_name") == normal ]] && has_normal=1
+    else
+      has_normal=1
+    fi
+  done
   if ((${#members[@]} > 1)); then
-    local has_normal=0
-    for m in "${members[@]}"; do [[ $(agent_tier "$m") == normal ]] && has_normal=1; done
     ((has_normal)) || die "a team needs at least one agent outside WORKER_AGENTS (workers cannot coordinate)"
   fi
   local busy
   for m in "${members[@]}"; do
-    if busy=$(agent_running_task "$m"); then
-      die "agent $m is busy (task $busy). Wait, or add another agent in $CONF."
+    local ag_name="$m" ag_inst=""
+    if [[ $m == *@* ]]; then ag_name="${m%@*}"; ag_inst="${m#*@}"; fi
+    if [[ -z $ag_inst || ( -n ${INSTANCE_NAME:-} && $ag_inst == "$INSTANCE_NAME" ) ]]; then
+      if busy=$(agent_running_task "$ag_name"); then
+        die "agent $m is busy (task $busy). Wait, or add another agent in $CONF."
+      fi
     fi
   done
 
-  local ts base team="" ids=()
+  local ts base team="" ids=() remote_tasks=()
   ts=$(date +%Y%m%d-%H%M%S)
   base=$(git -C "$root" symbolic-ref --quiet --short HEAD || git -C "$root" rev-parse --short HEAD)
   ((${#members[@]} > 1)) && team="$ts-team"
+  local json='{}'
   for m in "${members[@]}"; do
-    create_task "$m" "$task" "$root" "$main_root" "$base" "$ts" "$team"
-    ids+=("$NEW_ID")
+    local ag_name="$m" ag_inst=""
+    if [[ $m == *@* ]]; then ag_name="${m%@*}"; ag_inst="${m#*@}"; fi
+    if [[ -z $ag_inst || ( -n ${INSTANCE_NAME:-} && $ag_inst == "$INSTANCE_NAME" ) ]]; then
+      create_task "$ag_name" "$task" "$root" "$main_root" "$base" "$ts" "$team"
+      local q_key="$ag_name"
+      if [[ -n ${INSTANCE_NAME:-} ]]; then q_key="$ag_name@$INSTANCE_NAME"; fi
+      json=$(jq --arg a "$q_key" --arg t "$NEW_ID" --arg b "$(task_field "$NEW_ID" BRANCH)" \
+               --arg w "$(task_field "$NEW_ID" WORKTREE)" \
+               --arg tier "$(agent_tier "$ag_name")" --arg prov "$(agent_provider "$ag_name")" \
+               '.[$a] = {agent:$a, task:$t, branch:$b, worktree:$w, state:"active", tier:$tier, provider:$prov}' <<< "$json")
+      ids+=("$NEW_ID")
+    else
+      local r_task="$ts-$ag_inst-$ag_name"
+      local r_branch="agents/$ag_name/$ts"
+      local q_key="$ag_name@$ag_inst"
+      json=$(jq --arg a "$q_key" --arg t "$r_task" --arg b "$r_branch" \
+               '.[$a] = {agent:$a, task:$t, branch:$b, worktree:"", state:"active", tier:"normal", provider:""}' <<< "$json")
+      remote_tasks+=("$m:$r_task:$r_branch")
+    fi
   done
 
   if [[ -n $team ]]; then
-    local json='{}' i
-    for i in "${ids[@]}"; do
-      json=$(jq --arg a "$(task_field "$i" AGENT)" --arg t "$i" --arg b "$(task_field "$i" BRANCH)" \
-               --arg w "$(task_field "$i" WORKTREE)" \
-               --arg tier "$(agent_tier "$(task_field "$i" AGENT)")" --arg prov "$(agent_provider "$(task_field "$i" AGENT)")" \
-               '.[$a] = {agent:$a, task:$t, branch:$b, worktree:$w, state:"active", tier:$tier, provider:$prov}' <<< "$json")
-    done
     jq -n --arg id "$team" --arg repo "$(basename "$main_root")" --arg wake "$SELF" --arg home "$AGENTS_HOME" \
       --argjson members "$json" '{id:$id, repo:$repo, wake_cmd:$wake, home:$home, members:$members}' \
       | bus team-create --dir "$BUS_DIR" ||
       abandon_run "could not create the team on the bus (see ~/agents/logs/agentbus.jsonl)" "${ids[@]}"
   fi
+
+  for rt in "${remote_tasks[@]}"; do
+    local rm_agent rm_task rm_branch rm_inst
+    IFS=: read -r rm_agent rm_task rm_branch <<< "$rt"
+    rm_inst="${rm_agent#*@}"
+    rm_agent="${rm_agent%@*}"
+    bus cmd-enqueue --dir "$BUS_DIR" --instance "$rm_inst" --kind start_run --task "$rm_task" \
+      --param "agent=$rm_agent" --param "run=1" --param "repo=$(basename "$main_root")" \
+      --param "branch=$rm_branch" --param "base=$base" --param "team=$team"
+  done
 
   if [[ -n $(git -C "$root" status --porcelain) ]]; then
     echo "Note: uncommitted changes in $root were NOT copied to the agents' worktrees (they start from HEAD)."
@@ -2319,17 +2383,45 @@ cmd_run() {
 }
 
 cmd_answer() {
-  local id; id=$(resolve_id "${1:?usage: agent answer <id>}")
-  meta_load "$id"
-  [[ $STATUS == waiting ]] || die "task $id has status '$STATUS' — it is not waiting for answers"
-  local q="$TASKS/$id/questions-$ROUND.md"
-  "${EDITOR:-nano}" "$q"
-  if validate_answers "$q"; then
-    local yn
-    read -rp "All questions are answered. Resume now? [Y/n] " yn
-    [[ ${yn,,} == n* ]] || cmd_resume "$id"
+  local target=${1:?usage: agent answer <id>} id
+  if id=$(resolve_id "$target" 2>/dev/null) && [[ -d $TASKS/$id ]]; then
+    meta_load "$id"
+    [[ $STATUS == waiting ]] || die "task $id has status '$STATUS' — it is not waiting for answers"
+    local q="$TASKS/$id/questions-$ROUND.md"
+    "${EDITOR:-nano}" "$q"
+    if validate_answers "$q"; then
+      local yn
+      read -rp "All questions are answered. Resume now? [Y/n] " yn
+      [[ ${yn,,} == n* ]] || cmd_resume "$id"
+    else
+      echo "Not all questions are answered. Complete them and run: agent answer $id"
+    fi
+    return
+  fi
+  local r_task="$target" r_inst=""
+  if [[ $target == *@* ]]; then
+    r_task="${target%@*}"
+    r_inst="${target#*@}"
+  fi
+  if [[ -z $r_inst && -f $BUS_DIR/instances.json ]]; then
+    r_inst=$(jq_soft instances_read -r --arg t "$r_task" '(.instances // {}) | to_entries[] | select(.value.manifest.current_state.tasks[$t] != null) | .key' "$BUS_DIR/instances.json" | head -1)
+  fi
+  [[ -n $r_inst ]] || die "no task matching '$target' found locally or on registered remote instances"
+  local tmp; tmp=$(mktemp -t agent.answer.XXXXXX)
+  cat > "$tmp" <<EOF
+# Answers for remote task $r_task@$r_inst
+(Enter your answers below and save)
+EOF
+  "${EDITOR:-nano}" "$tmp"
+  if validate_answers "$tmp"; then
+    local content; content=$(<"$tmp")
+    bus cmd-enqueue --dir "$BUS_DIR" --instance "$r_inst" --kind answer_deliver --task "$r_task" \
+      --param "answer=$content"
+    echo "Delivered answer to remote task $r_task on instance $r_inst."
+    rm -f "$tmp"
   else
-    echo "Not all questions are answered. Complete them and run: agent answer $id"
+    echo "Not all questions are answered."
+    rm -f "$tmp"
   fi
 }
 
@@ -3194,6 +3286,49 @@ cmd__node_answer() { # id [expected_round] [expected_sha256] — stores answers 
   NODE_READY_OUTCOME="delivered" cmd__node_start "$id" resume
 }
 
+cmd__node_provision() { # id agent repo branch [base] [team] — provisions a remote task locally under agent node
+  local id=$1 agent=$2 repo=$3 branch=$4 base=${5:-HEAD} team=${6:-}
+  local dir="$TASKS/$id"
+  [[ -d $dir && -f $dir/meta.env ]] && return 0
+  local root=""
+  if [[ -d $AGENTS_HOME/worktrees/$repo/.git || -f $AGENTS_HOME/worktrees/$repo/.git ]]; then
+    root="$AGENTS_HOME/worktrees/$repo"
+  elif [[ -d $HOME/projects/$repo/.git || -f $HOME/projects/$repo/.git ]]; then
+    root="$HOME/projects/$repo"
+  elif [[ -d $HOME/$repo/.git || -f $HOME/$repo/.git ]]; then
+    root="$HOME/$repo"
+  else
+    local cur; cur=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    if [[ -n $cur && $(basename "$cur") == "$repo" ]]; then
+      root="$cur"
+    fi
+  fi
+  [[ -n $root && -d $root ]] || { echo "cannot locate local repository clone for $repo" >&2; exit 1; }
+  local common main_root
+  common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$root/.git")
+  main_root=$(dirname "$common")
+  [[ -d $main_root ]] || main_root="$root"
+  local wt="$AGENTS_HOME/worktrees/$repo/$id"
+  mkdir -p "$dir" "$(dirname "$wt")"
+  git -C "$root" fetch --quiet origin 2>/dev/null || true
+  git -C "$root" worktree add --quiet -b "$branch" "$wt" "$base" 2>/dev/null || \
+    git -C "$root" worktree add --quiet "$wt" "$branch" 2>/dev/null || true
+  : > "$dir/meta.env"
+  local sid=""
+  [[ ${AGENT_TYPE[$agent]:-} == claude ]] && sid=$(generate_uuid)
+  local kv agents_md=missing
+  [[ -f $wt/AGENTS.md ]] && agents_md=present
+  for kv in "ID=$id" "AGENT=$agent" "KIND=worker" "TEAM=$team" "TIER=$(agent_tier "$agent")" \
+            "TYPE=${AGENT_TYPE[$agent]:-codex}" "MODEL=${AGENT_MODEL[$agent]:-}" "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$agent]:-}" \
+            "REPO_NAME=$repo" "REPO_ROOT=$main_root" "WORKTREE=$wt" "BRANCH=$branch" \
+            "BASE=$base" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date_iso)" \
+            "AGENTS_MD=$agents_md"; do
+    meta_set "$id" "${kv%%=*}" "${kv#*=}"
+  done
+  printf '# Task: %s\n' "$id" > "$dir/task.md"
+  log_info node_task_provisioned "task=$id" "agent=$agent" "repo=$repo" "branch=$branch" "team=$team"
+}
+
 cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
   local tasks_json="{}" active_runs=0
   local -A agent_busy=() agent_task=() agent_st=()
@@ -3316,6 +3451,7 @@ main() {
     _node-stop) cmd__node_stop "$@" ;;
     _node-mark-stopped) cmd__node_mark_stopped "$@" ;;
     _node-answer) cmd__node_answer "$@" ;;
+    _node-provision) cmd__node_provision "$@" ;;
     status|ls) cmd_status ;;
     agents)  cmd_agents ;;
     show)    cmd_show "$@" ;;
