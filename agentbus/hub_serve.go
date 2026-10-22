@@ -49,20 +49,14 @@ type HubConfig struct {
 	UnixListener net.Listener
 	// DisableSocket disables the Unix domain socket listener (for testing).
 	DisableSocket bool
+	// Resolve is an optional identity resolver (defaults to defaultRunResolver which fails closed).
+	Resolve func(HubCaller) (*Server, *HubCallError)
 }
 
-// defaultRunResolver creates a run resolver returning a server template matching the caller identity.
-func defaultRunResolver(b *Bus) func(HubCaller) (*Server, *HubCallError) {
+// defaultRunResolver returns an identity resolver that rejects all requests until the M2 trusted run registry is configured.
+func defaultRunResolver(_ *Bus) func(HubCaller) (*Server, *HubCallError) {
 	return func(c HubCaller) (*Server, *HubCallError) {
-		s := &Server{
-			bus:  b,
-			me:   c.Agent + "@" + c.Instance,
-			info: Presence{Agent: c.Agent, Task: c.Task},
-			team: c.Team,
-			tier: c.Tier,
-			role: c.Role,
-		}
-		return s, nil
+		return nil, opErr(HubCallIdentity, "run %s (agent %s) is not registered in the trusted registry", c.Task, c.Agent)
 	}
 }
 
@@ -82,18 +76,19 @@ func splitAllowedInstances(raw string) []string {
 }
 
 // findTailscaleIP searches local network interfaces for an IPv4 address in the 100.64.0.0/10 CGNAT range.
-func findTailscaleIP() (net.IP, error) {
+func findTailscaleIP() (net.IP, *HubServeError) {
 	_, tsNet, err := net.ParseCIDR("100.64.0.0/10")
 	if err != nil {
-		return nil, err
+		return nil, opErr(HubServeInvalidConfig, "internal CIDR parse error: %v", err)
 	}
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return nil, fmt.Errorf("cannot list network interfaces: %w", err)
+		return nil, fromStorage(HubServeStorage, storageErr(err, "cannot list network interfaces"))
 	}
 	for _, iface := range ifaces {
 		addrs, err := iface.Addrs()
 		if err != nil {
+			warnSideEffect("list interface addresses", storageErr(err, "cannot read addresses for interface %s", iface.Name))
 			continue
 		}
 		for _, addr := range addrs {
@@ -109,7 +104,7 @@ func findTailscaleIP() (net.IP, error) {
 			}
 		}
 	}
-	return nil, errors.New("no active tailscale IPv4 address (100.64.0.0/10) found on local interfaces")
+	return nil, opErr(HubServeListen, "no active tailscale IPv4 address (100.64.0.0/10) found on local interfaces")
 }
 
 // parseHubConfig parses command line flags and environment variables into a HubConfig.
@@ -242,10 +237,15 @@ func serveHub(cfg *HubConfig) *HubServeError {
 		}
 	}
 
+	resolver := cfg.Resolve
+	if resolver == nil {
+		resolver = defaultRunResolver(b)
+	}
+
 	hub := &Hub{
 		Bus:          b,
 		Authenticate: authenticator.Authenticate,
-		Resolve:      defaultRunResolver(b),
+		Resolve:      resolver,
 	}
 
 	ln := cfg.Listener
@@ -254,7 +254,7 @@ func serveHub(cfg *HubConfig) *HubServeError {
 		if listenTarget == "" || listenTarget == "tailscale" {
 			tsIP, err := findTailscaleIP()
 			if err != nil {
-				return opErr(HubServeListen, "failed to find tailscale IP: %v", err)
+				return err
 			}
 			listenTarget = fmt.Sprintf("%s:%d", tsIP.String(), cfg.Port)
 		} else if !strings.Contains(listenTarget, ":") {
@@ -311,11 +311,22 @@ func serveHub(cfg *HubConfig) *HubServeError {
 		if cfg.UnixListener != nil {
 			unixLn = cfg.UnixListener
 		} else {
-			if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
-				if closeErr := ln.Close(); closeErr != nil {
-					warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
+			if _, err := os.Stat(socketPath); err == nil {
+				// Verify if another daemon is actively listening on this socket before removing
+				conn, dialErr := net.DialTimeout("unix", socketPath, 100*time.Millisecond) //nolint:gosec // G704: socketPath is dialed exclusively over unix domain socket
+				if dialErr == nil {
+					_ = conn.Close()
+					if closeErr := ln.Close(); closeErr != nil {
+						warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
+					}
+					return opErr(HubServeSocket, "another hub daemon is actively listening on unix socket %s", socketPath)
 				}
-				return opErr(HubServeSocket, "cannot remove stale unix socket %s: %v", socketPath, err)
+				if err := os.Remove(socketPath); err != nil { //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+					if closeErr := ln.Close(); closeErr != nil {
+						warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
+					}
+					return opErr(HubServeSocket, "cannot remove stale unix socket %s: %v", socketPath, err)
+				}
 			}
 			ul, err := net.Listen("unix", socketPath)
 			if err != nil {
@@ -347,7 +358,7 @@ func serveHub(cfg *HubConfig) *HubServeError {
 			Authenticate: func(*http.Request) (string, *HubAuthError) {
 				return localInstance, nil
 			},
-			Resolve:      defaultRunResolver(b),
+			Resolve:      resolver,
 			PollDuration: hub.PollDuration,
 		}
 		unixServer = &http.Server{

@@ -372,3 +372,68 @@ func TestHubServeSocketCause(t *testing.T) {
 		t.Fatalf("expected HubServeSocket, got %v", serveErr)
 	}
 }
+
+// TestHubServeDefaultResolverFailsClosed checks that defaultRunResolver rejects callers with HubCallIdentity.
+func TestHubServeDefaultResolverFailsClosed(t *testing.T) {
+	b := &Bus{dir: t.TempDir()}
+	resolver := defaultRunResolver(b)
+	caller := HubCaller{
+		Agent:    "codex",
+		Instance: "lead",
+		Task:     "task-123",
+		Team:     "team-abc",
+		Tier:     TierNormal,
+		Role:     RoleAgent,
+	}
+	server, err := resolver(caller)
+	if server != nil {
+		t.Fatalf("expected nil server from defaultRunResolver, got %v", server)
+	}
+	if err == nil || err.Cause != HubCallIdentity {
+		t.Fatalf("expected HubCallIdentity error, got %v", err)
+	}
+}
+
+// TestHubServeActiveSocketConflict checks that starting a hub on an active socket returns HubServeSocket without unlinking.
+func TestHubServeActiveSocketConflict(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "active-hub.sock")
+	activeLn, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen on test unix socket: %v", err)
+	}
+	defer func() {
+		if err := activeLn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Error(err)
+		}
+	}()
+
+	tcpLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on test tcp: %v", err)
+	}
+	defer func() {
+		if err := tcpLn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Error(err)
+		}
+	}()
+
+	cfg := &HubConfig{
+		Dir:              dir,
+		Listener:         tcpLn,
+		SocketPath:       sockPath,
+		Port:             7777,
+		Auth:             HubAuthModeTailscale,
+		AllowedInstances: []string{"node1"},
+	}
+
+	serveErr := serveHub(cfg)
+	if serveErr == nil || serveErr.Cause != HubServeSocket {
+		t.Fatalf("expected HubServeSocket on active socket collision, got %v", serveErr)
+	}
+
+	// Verify the original active socket file is preserved (not unlinked)
+	if _, err := os.Stat(sockPath); err != nil {
+		t.Fatalf("active socket file was improperly deleted: %v", err)
+	}
+}
