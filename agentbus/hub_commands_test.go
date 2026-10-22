@@ -414,8 +414,50 @@ func TestCommandAckRejectsSecondAcknowledgement(t *testing.T) {
 	if w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, f.lease.Token, f.lease.Generation, 1, CommandOutcomeStopped)); w.Code != http.StatusOK {
 		t.Fatalf("first ack: status %d", w.Code)
 	}
-	w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, f.lease.Token, f.lease.Generation, 1, CommandOutcomeStopped))
-	wireCause(t, decodeReply(t, w), "command_ack", "NoSuchCommand")
+	// An identical retry after a lost response is accepted, and it does not record a second result.
+	if w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, f.lease.Token, f.lease.Generation, 1, CommandOutcomeStopped)); w.Code != http.StatusOK {
+		t.Fatalf("identical retry: status %d %s", w.Code, w.Body.String())
+	}
+	// A retry with a different outcome for the same command is a conflict, not a second answer.
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, f.lease.Token, f.lease.Generation, 1, CommandOutcomeFailed))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("conflicting retry: status %d", w.Code)
+	}
+	wireCause(t, decodeReply(t, w), "command_ack", "ConflictingOutcome")
+	store, serr := f.bus.loadCommandStore()
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	if results := store.Queues["mac"].Results; len(results) != 1 || results[0].Outcome != CommandOutcomeStopped {
+		t.Fatalf("retries changed the recorded result: %+v", results)
+	}
+}
+
+// A retry must match the detail too, so a failed outcome with a different reason is a conflict.
+func TestCommandAckRetryComparesDetail(t *testing.T) {
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
+	enqueueStop(t, h)
+	if w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, f.lease.Token, f.lease.Generation, 1, CommandOutcomeStopped)); w.Code != http.StatusOK {
+		t.Fatalf("first ack: status %d", w.Code)
+	}
+	data, err := json.Marshal(commandAckRequest{Version: hubProtocolVersion, Generation: f.lease.Generation, LeaseToken: f.lease.Token, Seq: 1, Outcome: CommandOutcomeStopped, Detail: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", string(data))
+	wireCause(t, decodeReply(t, w), "command_ack", "ConflictingOutcome")
+}
+
+// Commands handed out by a poll carry the lease generation the hub checked for that poll.
+func TestCommandPollStampsTheDeliveredGeneration(t *testing.T) {
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
+	enqueueStop(t, h)
+	reply := decodeReply(t, postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t, f.lease.Token, f.lease.Generation)))
+	if len(reply.Commands) != 1 || reply.Commands[0].Generation != f.lease.Generation {
+		t.Fatalf("delivered command without its generation: %+v", reply.Commands)
+	}
 }
 
 func TestCommandAckFailsOnJournalStorageError(t *testing.T) {

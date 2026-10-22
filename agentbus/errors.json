@@ -1210,6 +1210,11 @@
      "name": "NoSuchCommand",
      "class": "NotFound",
      "doc": "no undelivered command with this sequence number exists for the instance (already acknowledged, or never queued)"
+    },
+    {
+     "name": "ConflictingOutcome",
+     "class": "Conflict",
+     "doc": "the command was already acknowledged with a different outcome or detail; an identical retry is accepted, a conflicting one is not"
     }
    ]
   }
