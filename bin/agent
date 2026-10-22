@@ -2850,9 +2850,15 @@ cmd__node_start() { # id mode [expected_run] — starts a runner directly under 
   local dir="$TASKS/$id"
   [[ -d $dir && -f $dir/meta.env ]] || { echo "task $id not found" >&2; exit 1; }
   meta_load "$id"
-  if [[ -n $expected_run && $expected_run -ne $((RUN + 1)) && $expected_run -ne $RUN ]]; then
-    echo "unexpected run number $RUN (expected $expected_run)" >&2
-    exit 1
+  if [[ -n $expected_run ]]; then
+    if (( expected_run <= RUN )); then
+      log_info runner_already_running "task=$id" "run=$RUN" "desired=$expected_run"
+      exit 0
+    fi
+    if (( expected_run > RUN + 1 )); then
+      echo "unexpected run gap: task $id at run $RUN, expected $expected_run" >&2
+      exit 1
+    fi
   fi
   local repo_name; repo_name=$(task_field "$id" REPO_NAME)
   if [[ ${#INSTANCE_ACCEPT_REPOS[@]} -gt 0 ]]; then
@@ -2897,17 +2903,45 @@ cmd__node_stop() { # id — stops a task runner supervised by agent node
   fi
 }
 
-cmd__node_answer() { # id — resumes a task waiting for answers under agent node
+cmd__node_answer() { # id [expected_round] — stores answers from stdin and resumes under agent node
   local id; id=$(resolve_id "${1:?}")
+  local expected_round=${2:-}
   meta_load "$id"
+  [[ $STATUS == waiting ]] || { echo "task $id has status '$STATUS' — not waiting" >&2; exit 1; }
+  if [[ -n $expected_round && $ROUND -ne $expected_round ]]; then
+    echo "unexpected question round $ROUND (expected $expected_round)" >&2
+    exit 1
+  fi
+  local ans_file="$TASKS/$id/answers-$ROUND.md"
+  cat > "$ans_file"
+  meta_set "$id" ANSWERS_PENDING 1
+  log_info node_answer_delivered "task=$id" "round=$ROUND"
   cmd__node_start "$id" resume
+}
+
+cmd_node() { # runs the agent node daemon with configuration from agents.conf
+  local args=()
+  [[ -n ${INSTANCE_NAME:-} ]] && args+=(--instance "$INSTANCE_NAME")
+  [[ -n ${LEAD_INSTANCE:-} ]] && args+=(--lead "$LEAD_INSTANCE")
+  [[ -n ${HUB_AUTH:-} ]] && args+=(--auth "$HUB_AUTH")
+  [[ -n ${HUB_CERT_SHA256:-} ]] && args+=(--cert-sha256 "$HUB_CERT_SHA256")
+  if [[ ${#INSTANCE_CAPABILITIES[@]} -gt 0 ]]; then
+    local caps; caps=$(IFS=,; echo "${INSTANCE_CAPABILITIES[*]}")
+    args+=(--capabilities "$caps")
+  fi
+  if [[ ${#INSTANCE_ACCEPT_REPOS[@]} -gt 0 ]]; then
+    local repos; repos=$(IFS=,; echo "${INSTANCE_ACCEPT_REPOS[*]}")
+    args+=(--accept-repos "$repos")
+  fi
+  args+=(--agent-cmd "$SELF")
+  bus node "${args[@]}" "$@"
 }
 
 main() {
   local cmd=${1:-help}; (($#)) && shift
   case $cmd in
     run)     cmd_run "$@" ;;
-    node)    bus node "$@" ;;
+    node)    cmd_node "$@" ;;
     _node-start) cmd__node_start "$@" ;;
     _node-wake) cmd__node_wake "$@" ;;
     _node-stop) cmd__node_stop "$@" ;;
