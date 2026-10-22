@@ -39,10 +39,10 @@ Sections written by team members are marked with their author. Everything else i
   (agent, instance, task, team, tier, role) to the hub and returns the hub's answer unchanged. The hub runs the
   same `callTool` code path as a local `serve`; there is no second implementation of the bus logic and no
   remote locking.
-- **Local instance without a lead.** With no `LEAD_INSTANCE` and no `HUB_LISTEN`, `agentbus serve` uses the local
+- **Local instance without a lead.** With no `LEAD_INSTANCE`, `HUB_LISTEN` or `HUB_SOCKET`, `agentbus serve` uses the local
   files exactly as today (decision 2). The hub mode is a switch in configuration, not a different code base.
-- **The lead instance runs agents too** (decision 7). Its local `agentbus serve` calls the hub in-process through
-  the same forwarding interface (no HTTP hop), so there is one code path for "call the bus".
+- **The lead instance runs agents too** (decision 7). Its local `agentbus serve` sends the same HTTP envelope through
+  the hub daemon's private Unix socket (resumed round 1 approval), with one shared hub executor.
 - **`agent node`** runs on every non-lead instance (section 6). It is the only process that connects to the hub
   for control: registration, manifest, commands and task state. Only the hub listens (decision 8).
 
@@ -56,9 +56,13 @@ Author: codex-1. Proposed M0 contract, subject to human approval. This is not an
 ### 2.1 Transport and endpoints
 
 Only `agentbus hub` listens. Node daemons, per-run MCP servers, interactive commands, and views initiate
-requests to that listener. The lead instance's own clients call the same hub dispatcher in-process (round 2 answer 4): there is no HTTP
-hop and no second authentication path for them, and they must not execute independent copies of the bus logic
-against local files while hub mode is enabled. Local callers take their identity from the local run registration.
+requests to that listener. The lead instance's own per-run MCP servers send the same HTTP requests over a private Unix socket served by
+the hub daemon. This supersedes the original in-process proposal (resumed round 1 approval): per-run servers
+are separate processes. The socket has owner-only permissions, uses the configured local instance identity,
+and retains the same registered-run validation as network requests. `HUB_SOCKET` overrides the default
+`<bus directory>/hub.sock`; `serve --dir` selects the directory. Local callers must not execute independent
+copies of the bus logic against files while hub mode is enabled. A missing or refused socket returns
+`Unavailable`; the interim file fallback was removed with explicit resumed round 2 approval.
 Without hub configuration, the existing local-file mode and all existing outputs remain unchanged.
 
 Proposed versioned endpoints:
@@ -158,6 +162,15 @@ rebuilding `*QuizStartError` adds that prefix exactly once. Class and exit statu
 generated operation/cause table, never a peer-supplied class or exit code. Existing class exit codes stay
 2–10; append `Unavailable` as 11 with its own sentinel. Add an `Unavailable` cause to each forwardable
 operation. A remote `QuizStartNotCoordinator` must still support the same `errors.Is` and `errors.As`.
+
+The retry-stable request `kind` also disambiguates error types where an MCP tool and CLI command share
+an operation name. In particular, `release` rebuilds `*ReleaseError` for `kind=tool` and `*CmdReleaseError`
+for `kind=cli`. The generic operation lookup continues to reject this ambiguous name without a kind.
+
+M1 client limits: request body 1 MiB, response body 64 MiB, total pending lifetime 630 seconds; the default
+contiguous outage budget is 30 seconds. Requests never follow redirects. Retry backoff starts at 250 ms,
+doubles to one second, and adds up to 99 ms jitter. A successful pending poll resets the outage budget,
+while retaining the original request identity, timestamp and total operation deadline.
 Underlying operating-system error chains are local and are not serialized.
 
 Extend errgen with per-operation cause-by-name lookups and a dispatcher that rebuilds the concrete
@@ -213,6 +226,12 @@ Dial, TLS, request, and backoff time all count; a blackholed TCP connection cann
 On exhaustion, return the attempted operation's `Unavailable` cause. A lost mutation response retains
 its original ID throughout retry; no fallback ever executes it against local files.
 If the server reports `OutcomeUnknown`, do not transform it into `Unavailable` or retry execution.
+
+M1 limitation: retry identity is stable within one MCP call. A subsequent MCP call creates a new ID;
+there is no durable client outbox yet. After `Unavailable` or `OutcomeUnknown`, the caller must check the
+effect with the operation's read tool before resending a mutation, because a new call may repeat a write.
+The unavailable reply includes this instruction and the original ID. Some operations have no sufficient
+read-side reconciliation, so such calls need human investigation rather than automatic replacement work.
 
 ### 2.5 Long polling and command delivery
 
@@ -694,6 +713,11 @@ Recorded answers (human, rounds 1–3, `questions-1.md` to `questions-3.md`):
 - Round 2: the protocol uses one route per operation (`/v1/tools/{op}`); the lead's own agents call the hub
   in-process; poll chunks are 25 s and the retry budget is 30 s.
 - Round 3: CLI operations use the same routes as MCP tools (`/v1/tools/{op}`).
+- Resumed round 1 (20261022): lead-local per-run servers use a private Unix socket served by the hub daemon,
+  superseding the original in-process assumption. A temporary local-file fallback was allowed during development.
+- Resumed round 2 (20261022): remove the temporary fallback when socket routing is activated; missing sockets
+  return Unavailable. The human explicitly authorized updating the one interim fallback assertion in
+  TestHubClientEnvironmentAndPinnedTLS.
 
 1. Can the lead instance itself be a macOS machine, or is the hub Linux-only?
 2. Is `agent node` required on every non-lead instance, or can a non-lead instance run in a read-only mode

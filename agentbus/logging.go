@@ -38,6 +38,7 @@ import (
 type LogEvent string
 
 const (
+	LogLeadLocalFallback  LogEvent = "lead_local_fallback"    // retired temporary fallback event, retained for log-schema compatibility; socket routing never emits it
 	LogServerStarted      LogEvent = "server_started"         // an MCP server started for an agent run
 	LogServerStopping     LogEvent = "server_stopping"        // an MCP server is exiting (signal or stdin closed)
 	LogHubStarted         LogEvent = "hub_started"            // the multi-instance hub HTTP listener started

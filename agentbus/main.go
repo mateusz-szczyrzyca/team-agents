@@ -334,18 +334,20 @@ func fmtMsg(m Message) string {
 
 // Server is one `agentbus serve` instance — the MCP server of a single agent run.
 type Server struct {
-	bus      *Bus          // shared state
-	me       string        // this agent's name
-	info     Presence      // presence template (task, repo, branch, worktree)
-	peers    []string      // configured agent names (shown as inactive when not running)
-	out      *json.Encoder // JSON-RPC output (stdout)
-	role     Role          // regular agent or investigator
-	queueMax int           // investigation queue limit (waiting requests)
-	tasksDir string        // tasks directory (investigation records live under it)
-	team     string        // team ID when running in team mode, else ""
-	tier     Tier          // normal or worker (a cheap model: cannot coordinate or delegate)
-	agentCmd string        // path to the `agent` script (to spawn helper dispatch)
-	home     string        // AGENTS_HOME (passed to spawned processes)
+	bus       *Bus          // shared state
+	me        string        // this agent's name
+	info      Presence      // presence template (task, repo, branch, worktree)
+	peers     []string      // configured agent names (shown as inactive when not running)
+	out       *json.Encoder // JSON-RPC output (stdout)
+	role      Role          // regular agent or investigator
+	queueMax  int           // investigation queue limit (waiting requests)
+	tasksDir  string        // tasks directory (investigation records live under it)
+	team      string        // team ID when running in team mode, else ""
+	tier      Tier          // normal or worker (a cheap model: cannot coordinate or delegate)
+	agentCmd  string        // path to the `agent` script (to spawn helper dispatch)
+	home      string        // AGENTS_HOME (passed to spawned processes)
+	hubClient *HubClient    // nonnil forwards tools without touching a local bus
+	hubCaller HubCaller     // registered identity used for forwarded requests
 }
 
 // touch (re)registers this agent's presence and updates LastSeen.
@@ -964,12 +966,16 @@ func (s *Server) handle(line []byte) {
 			s.fail(req.ID, rpcInvalidParams, "invalid tools/call params: "+err.Error())
 			return
 		}
-		text, err := s.call(p.Name, p.Arguments)
+		text, unread, err := s.callForMCP(p.Name, p.Arguments)
 		if err != nil {
 			text = "ERROR: " + err.Error()
 		}
 		if p.Name != "read_messages" {
-			n, serr := s.unreadCount()
+			n := unread
+			var serr *StorageError
+			if s.hubClient == nil {
+				n, serr = s.unreadCount()
+			}
 			switch {
 			case serr != nil:
 				warnSideEffect("count unread messages", serr)
@@ -1026,14 +1032,23 @@ func cmdServe(args []string) {
 	if s.tasksDir == "" {
 		s.tasksDir = filepath.Join(filepath.Dir(*dir), "tasks")
 	}
-	exitOn(fromStorage(CmdServeStorage, s.register()).asError())
+	client, clientErr := hubClientForDir(*dir)
+	exitOn(clientErr.asError())
+	s.hubClient = client
+	if client != nil {
+		s.hubCaller = HubCaller{Agent: *agent, Instance: client.Instance, Task: *task, Team: *team, Tier: tr, Role: r}
+	} else {
+		exitOn(fromStorage(CmdServeStorage, s.register()).asError())
+	}
 	logInfo(LogServerStarted, "role", r, "tier", tr, "version", version)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	go func() {
 		got := <-sig
 		logInfo(LogServerStopping, "signal", got.String())
-		s.unregister()
+		if s.hubClient == nil {
+			s.unregister()
+		}
 		os.Exit(0)
 	}()
 
@@ -1054,7 +1069,9 @@ func cmdServe(args []string) {
 			break
 		}
 	}
-	s.unregister()
+	if s.hubClient == nil {
+		s.unregister()
+	}
 }
 
 // ---------------------------------------------------------------- human-facing CLI
