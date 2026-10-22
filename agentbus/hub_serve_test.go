@@ -1,0 +1,278 @@
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"errors"
+	"math/big"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+// TestHubServeInvalidPort verifies that invalid port numbers produce HubServeInvalidConfig.
+func TestHubServeInvalidPort(t *testing.T) {
+	cfg := &HubConfig{
+		Port:             0,
+		Auth:             HubAuthModeTailscale,
+		AllowedInstances: []string{"node1"},
+	}
+	err := serveHub(cfg)
+	if err == nil || err.Cause != HubServeInvalidConfig {
+		t.Fatalf("expected HubServeInvalidConfig for port 0, got %v", err)
+	}
+
+	cfg.Port = 70000
+	err = serveHub(cfg)
+	if err == nil || err.Cause != HubServeInvalidConfig {
+		t.Fatalf("expected HubServeInvalidConfig for port 70000, got %v", err)
+	}
+}
+
+// TestHubServeInvalidAuth verifies that unsupported auth modes produce HubServeInvalidConfig.
+func TestHubServeInvalidAuth(t *testing.T) {
+	cfg := &HubConfig{
+		Port:             7777,
+		Auth:             HubAuthMode("unsupported"),
+		AllowedInstances: []string{"node1"},
+	}
+	err := serveHub(cfg)
+	if err == nil || err.Cause != HubServeInvalidConfig {
+		t.Fatalf("expected HubServeInvalidConfig for unsupported auth mode, got %v", err)
+	}
+}
+
+// TestHubServeEmptyAllowed verifies that empty allowed instances produce HubServeInvalidConfig.
+func TestHubServeEmptyAllowed(t *testing.T) {
+	cfg := &HubConfig{
+		Port:             7777,
+		Auth:             HubAuthModeTailscale,
+		AllowedInstances: nil,
+	}
+	err := serveHub(cfg)
+	if err == nil || err.Cause != HubServeInvalidConfig {
+		t.Fatalf("expected HubServeInvalidConfig for empty allowed instances, got %v", err)
+	}
+}
+
+// TestHubServeTokenMissingTLS verifies that token mode without cert/key produces HubServeInvalidConfig.
+func TestHubServeTokenMissingTLS(t *testing.T) {
+	cfg := &HubConfig{
+		Port:             7777,
+		Auth:             HubAuthModeToken,
+		AllowedInstances: []string{"mac=192.0.2.1"},
+		Tokens:           map[string]string{"mac": "token123"},
+	}
+	err := serveHub(cfg)
+	if err == nil || err.Cause != HubServeInvalidConfig {
+		t.Fatalf("expected HubServeInvalidConfig when TLS cert/key are missing, got %v", err)
+	}
+}
+
+// TestHubServeTokenMissingToken verifies that token mode without a token for an allowed instance produces HubServeInvalidConfig.
+func TestHubServeTokenMissingToken(t *testing.T) {
+	cfg := &HubConfig{
+		Port:             7777,
+		Auth:             HubAuthModeToken,
+		AllowedInstances: []string{"mac=192.0.2.1"},
+		TLSCertFile:      "/tmp/cert.pem",
+		TLSKeyFile:       "/tmp/key.pem",
+		Tokens:           map[string]string{}, // empty
+	}
+	err := serveHub(cfg)
+	if err == nil || err.Cause != HubServeInvalidConfig {
+		t.Fatalf("expected HubServeInvalidConfig when token is missing, got %v", err)
+	}
+}
+
+// TestHubServeTokenInvalidFormat verifies that malformed allowed instance definitions produce HubServeInvalidConfig.
+func TestHubServeTokenInvalidFormat(t *testing.T) {
+	cfg := &HubConfig{
+		Port:             7777,
+		Auth:             HubAuthModeToken,
+		AllowedInstances: []string{"mac-without-addr"},
+		TLSCertFile:      "/tmp/cert.pem",
+		TLSKeyFile:       "/tmp/key.pem",
+		Tokens:           map[string]string{"mac-without-addr": "tok"},
+	}
+	err := serveHub(cfg)
+	if err == nil || err.Cause != HubServeInvalidConfig {
+		t.Fatalf("expected HubServeInvalidConfig for invalid name=addr format, got %v", err)
+	}
+}
+
+// TestHubServeListenInvalidAddr verifies that invalid listen addresses produce HubServeListen.
+func TestHubServeListenInvalidAddr(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &HubConfig{
+		Dir:              dir,
+		Listen:           "999.999.999.999:7777",
+		Port:             7777,
+		Auth:             HubAuthModeTailscale,
+		AllowedInstances: []string{"node1"},
+	}
+	err := serveHub(cfg)
+	if err == nil || err.Cause != HubServeListen {
+		t.Fatalf("expected HubServeListen for bad IP, got %v", err)
+	}
+}
+
+// TestHubServeListenBadTLSKey verifies that invalid TLS key files produce HubServeListen.
+func TestHubServeListenBadTLSKey(t *testing.T) {
+	dir := t.TempDir()
+	badCert := filepath.Join(dir, "cert.pem")
+	badKey := filepath.Join(dir, "key.pem")
+	_ = os.WriteFile(badCert, []byte("bad cert data"), 0o600)
+	_ = os.WriteFile(badKey, []byte("bad key data"), 0o600)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	defer func() {
+		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Error(err)
+		}
+	}()
+
+	cfg := &HubConfig{
+		Dir:              dir,
+		Listener:         ln,
+		Port:             7777,
+		Auth:             HubAuthModeToken,
+		AllowedInstances: []string{"mac=127.0.0.1"},
+		Tokens:           map[string]string{"mac": "token123"},
+		TLSCertFile:      badCert,
+		TLSKeyFile:       badKey,
+	}
+	serveErr := serveHub(cfg)
+	if serveErr == nil || serveErr.Cause != HubServeListen {
+		t.Fatalf("expected HubServeListen for corrupt TLS files, got %v", serveErr)
+	}
+}
+
+// TestHubServeSuccessGracefulShutdown verifies hub startup and graceful stop.
+func TestHubServeSuccessGracefulShutdown(t *testing.T) {
+	dir := t.TempDir()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	stopCh := make(chan struct{})
+	cfg := &HubConfig{
+		Dir:              dir,
+		Listener:         ln,
+		Port:             7777,
+		Auth:             HubAuthModeTailscale,
+		AllowedInstances: []string{"mac"},
+		Stop:             stopCh,
+	}
+
+	done := make(chan *HubServeError, 1)
+	go func() {
+		done <- serveHub(cfg)
+	}()
+
+	// Verify listener is serving
+	resp, httpErr := http.Get("http://" + ln.Addr().String() + "/v1/tools/send_message")
+	if httpErr == nil {
+		_ = resp.Body.Close()
+	}
+
+	// Trigger graceful stop
+	close(stopCh)
+
+	select {
+	case serveErr := <-done:
+		if serveErr != nil {
+			t.Fatalf("expected clean shutdown, got error: %v", serveErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for hub server graceful stop")
+	}
+}
+
+// TestHubServeTokenModeSuccess verifies that token mode starts with valid TLS files and shuts down cleanly.
+func TestHubServeTokenModeSuccess(t *testing.T) {
+	dir := t.TempDir()
+	certPath, keyPath := generateTestCertificate(t, dir)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	stopCh := make(chan struct{})
+	cfg := &HubConfig{
+		Dir:              dir,
+		Listener:         ln,
+		Port:             7777,
+		Auth:             HubAuthModeToken,
+		AllowedInstances: []string{"mac=127.0.0.1"},
+		Tokens:           map[string]string{"mac": "token123"},
+		TLSCertFile:      certPath,
+		TLSKeyFile:       keyPath,
+		Stop:             stopCh,
+	}
+
+	done := make(chan *HubServeError, 1)
+	go func() {
+		done <- serveHub(cfg)
+	}()
+
+	// Trigger graceful stop
+	close(stopCh)
+
+	select {
+	case serveErr := <-done:
+		if serveErr != nil {
+			t.Fatalf("expected clean shutdown, got error: %v", serveErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for token hub server graceful stop")
+	}
+}
+
+// generateTestCertificate creates a temporary self-signed cert and key for tests.
+func generateTestCertificate(t *testing.T, dir string) (string, string) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "127.0.0.1"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+
+	certPath := filepath.Join(dir, "cert.pem")
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil { //nolint:gosec // G304: test certificate fixture written into temporary test directory
+		t.Fatalf("write cert file: %v", err)
+	}
+
+	keyBytes, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	keyPath := filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}), 0o600); err != nil { //nolint:gosec // G304: test private key fixture written into temporary test directory
+		t.Fatalf("write key file: %v", err)
+	}
+
+	return certPath, keyPath
+}
