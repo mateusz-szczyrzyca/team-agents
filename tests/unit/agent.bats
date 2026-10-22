@@ -465,6 +465,15 @@ for p in sys.argv[1:]: socket.socket(socket.AF_UNIX).bind(p)' "$XDG_RUNTIME_DIR/
   [[ $output == *"is not an executable file"* ]]
 }
 
+@test "a NOTIFY_CMD of only whitespace is a configuration error, not an unbound variable" {
+  echo 'NOTIFY_CMD="   "' >> "$AGENTS_HOME/agents.conf"
+  scenario '{"solo": {"new": "done"}}'
+  run agent run solo "task"
+  [ "$status" -ne 0 ]
+  [[ $output == *"only whitespace"* ]]
+  [[ $output != *"unbound variable"* ]]
+}
+
 @test "agent status shows the last failed notification until a later delivery succeeds" {
   printf '#!/bin/sh\necho "pushsafer: invalid key" >&2\nexit 7\n' > "$HOME/notify-fail.sh"
   chmod +x "$HOME/notify-fail.sh"
