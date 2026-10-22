@@ -394,7 +394,9 @@ func serveHub(cfg *HubConfig) *HubServeError {
 				// Verify if another daemon is actively listening on this socket before removing
 				conn, dialErr := net.DialTimeout("unix", socketPath, 100*time.Millisecond) //nolint:gosec // G704: socketPath is dialed exclusively over unix domain socket
 				if dialErr == nil {
-					_ = conn.Close()
+					if err := conn.Close(); err != nil {
+						warnSideEffect("close active hub socket probe", storageErr(err, "cannot close socket probe"))
+					}
 					if closeErr := ln.Close(); closeErr != nil {
 						warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
 					}
@@ -415,8 +417,10 @@ func serveHub(cfg *HubConfig) *HubServeError {
 				return opErr(HubServeSocket, "failed to listen on unix socket %s: %v", socketPath, err)
 			}
 			if err := os.Chmod(socketPath, 0o600); err != nil { //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
-				_ = ul.Close()
-				_ = os.Remove(socketPath) //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+				if closeErr := ul.Close(); closeErr != nil {
+					warnSideEffect("close hub unix listener", storageErr(closeErr, "cannot close unix listener"))
+				}
+				removeHubSocket(socketPath)
 				if closeErr := ln.Close(); closeErr != nil {
 					warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
 				}
@@ -474,7 +478,7 @@ func serveHub(cfg *HubConfig) *HubServeError {
 			warnSideEffect("shutdown hub unix socket server", storageErr(err, "unix server shutdown failed"))
 		}
 		if cfg.UnixListener == nil && socketPath != "" {
-			_ = os.Remove(socketPath) //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+			removeHubSocket(socketPath)
 		}
 	}
 
@@ -490,4 +494,11 @@ func runHub(args []string) *HubServeError {
 // cmdHub is the agentbus hub subcommand entry point.
 func cmdHub(args []string) {
 	exitOn(runHub(args).asError())
+}
+
+// removeHubSocket reports cleanup failures; UnixListener.Close may already have unlinked its socket.
+func removeHubSocket(path string) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: operator-configured local socket path, never supplied by a remote request
+		warnSideEffect("remove hub unix socket", storageErr(err, "cannot remove unix socket %s", path))
+	}
 }

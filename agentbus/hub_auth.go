@@ -37,6 +37,16 @@ const (
 	HubAuthModeToken HubAuthMode = "token"
 )
 
+// Valid reports whether mode is one of the supported authentication modes.
+func (mode HubAuthMode) Valid() bool {
+	return mode == HubAuthModeTailscale || mode == HubAuthModeToken
+}
+
+// UnmarshalJSON implements json.Unmarshaler; failures contain *ValueError.
+func (mode *HubAuthMode) UnmarshalJSON(data []byte) error {
+	return unmarshalEnum(data, mode, "hub authentication mode").asError()
+}
+
 // DefaultTailscaleLinuxSocket is the standard LocalAPI socket path on Linux.
 const DefaultTailscaleLinuxSocket = "/var/run/tailscale/tailscaled.sock"
 

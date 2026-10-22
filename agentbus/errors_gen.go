@@ -3080,6 +3080,46 @@ func CmdNodeCauseByName(name string) (CmdNodeCause, bool) {
 	return 0, false
 }
 
+// ---------------------------------------------------------------- instances
+
+// CmdInstancesCause is a reason why the subcommand instances failed.
+type CmdInstancesCause int
+
+const (
+	CmdInstancesOutcomeUnknown CmdInstancesCause = iota // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdInstancesUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdInstancesStorage                                 // the shared state or a file could not be read or written [Storage]
+)
+
+// CmdInstancesError is the error of the subcommand instances.
+type CmdInstancesError = OpError[CmdInstancesCause]
+
+// cmdInstancesCauses describes the CmdInstancesCause values (same order as the constants).
+var cmdInstancesCauses = [...]causeInfo{
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CmdInstancesCause) op() string { return "instances" }
+
+// info implements opCause.
+func (c CmdInstancesCause) info() causeInfo { return cmdInstancesCauses[c] }
+
+// String returns the cause name.
+func (c CmdInstancesCause) String() string { return c.info().name }
+
+// CmdInstancesCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdInstancesCauseByName(name string) (CmdInstancesCause, bool) {
+	for i, info := range cmdInstancesCauses {
+		if info.name == name {
+			return CmdInstancesCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // wireOperationError rebuilds the typed error of an operation from its wire form (operation name, cause name,
 // message). It returns false when the operation or the cause is unknown, so a stale or foreign peer cannot
 // produce an error of the wrong type. Operation names used by both an MCP tool and a CLI subcommand ("release")
@@ -3429,6 +3469,11 @@ func wireOperationError(op, cause, message string) (error, bool) {
 	case "node":
 		if c, ok := CmdNodeCauseByName(cause); ok {
 			return &OpError[CmdNodeCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "instances":
+		if c, ok := CmdInstancesCauseByName(cause); ok {
+			return &OpError[CmdInstancesCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	}

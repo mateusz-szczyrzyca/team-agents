@@ -53,6 +53,11 @@ func (c Capability) Valid() bool {
 	return RecognizedCapabilities[c]
 }
 
+// UnmarshalJSON implements json.Unmarshaler; failures contain *ValueError.
+func (c *Capability) UnmarshalJSON(data []byte) error {
+	return unmarshalEnum(data, c, "capability").asError()
+}
+
 // Namespace returns the namespace prefix (including the colon) of the capability.
 func (c Capability) Namespace() string {
 	s := string(c)
@@ -71,9 +76,9 @@ func (c Capability) IsSensitive() bool {
 
 // ParseCapability validates that s is a known capability and returns it as a typed Capability.
 func ParseCapability(s string) (Capability, *ValueError) {
-	c := Capability(s)
-	if !c.Valid() {
-		return "", valueErr("unknown capability %q", s)
+	c, err := parseEnum[Capability](s, "capability")
+	if err != nil {
+		return "", err
 	}
 	return c, nil
 }

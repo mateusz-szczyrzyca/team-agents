@@ -100,12 +100,15 @@ func copyHubState(b *Bus, dst string) *StorageError {
 }
 
 // copyFile copies one regular file with owner-only permissions: backups hold lease credentials.
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) *StorageError {
 	data, err := os.ReadFile(src) //nolint:gosec // G304: src is a file of the trusted bus directory or its replay ledger
 	if err != nil {
-		return err
+		return storageErr(err, "cannot read backup source %s", src)
 	}
-	return os.WriteFile(dst, data, 0o600) //nolint:gosec // G703: dst is inside a backup directory the hub created
+	if err := os.WriteFile(dst, data, 0o600); err != nil { //nolint:gosec // G703: dst is inside a backup directory the hub created
+		return storageErr(err, "cannot write backup destination %s", dst)
+	}
+	return nil
 }
 
 // copyTree copies the files of a directory tree; a missing source is an empty tree.
@@ -120,6 +123,7 @@ func copyTree(src, dst string) *StorageError {
 	if !info.IsDir() {
 		return storageErr(valueErr("%s is not a directory", src), "cannot back up %s", src)
 	}
+	// WalkDir requires error; the callback returns filesystem errors or a *StorageError.
 	walkErr := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -132,7 +136,7 @@ func copyTree(src, dst string) *StorageError {
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o700)
 		}
-		return copyFile(p, target)
+		return copyFile(p, target).asError()
 	})
 	if walkErr != nil {
 		return storageErr(walkErr, "cannot back up %s", src)
