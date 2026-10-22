@@ -1304,6 +1304,46 @@
    "what": "the subcommand instances",
    "causes": [],
    "forwarded": true
+  },
+  {
+   "type": "HubView",
+   "op": "hub_view",
+   "what": "the authenticated read-only hub view endpoint",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the view request method, JSON or protocol version is invalid"
+    },
+    {
+     "name": "Identity",
+     "class": "Permission",
+     "doc": "the requested instance does not match transport authentication"
+    }
+   ]
+  },
+  {
+   "type": "CmdSnapshot",
+   "op": "snapshot",
+   "what": "the snapshot subcommand and its authenticated view client",
+   "forwarded": true,
+   "causes": [
+    {
+     "name": "InvalidConfig",
+     "class": "InvalidArgument",
+     "doc": "the hub transport or snapshot timeout is invalid"
+    },
+    {
+     "name": "Protocol",
+     "class": "InvalidState",
+     "doc": "the hub view response does not match the versioned protocol"
+    },
+    {
+     "name": "Rejected",
+     "class": "Permission",
+     "doc": "the authenticated hub rejected access to the view"
+    }
+   ]
   }
  ]
 }

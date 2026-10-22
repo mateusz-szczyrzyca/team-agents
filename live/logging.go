@@ -32,6 +32,7 @@ import (
 type LogEvent string
 
 const (
+	LogHubViewUnavailable  LogEvent = "hub_view_unavailable"  // authenticated hub overview could not be refreshed
 	LogFileReadFailed      LogEvent = "file_read_failed"      // a file the panel reads could not be read
 	LogMetaUnreadable      LogEvent = "meta_unreadable"       // a task's meta.env could not be read
 	LogMetaMalformed       LogEvent = "meta_malformed"        // a value in meta.env is malformed

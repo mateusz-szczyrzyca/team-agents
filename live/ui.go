@@ -58,6 +58,8 @@ func statusStyle(s string) (string, lipgloss.Style) {
 		return "⏸ paused", stDim
 	case "excluded":
 		return "⊘ excluded", stFailed
+	case statusUnreachable:
+		return "instance unreachable", stFailed
 	case "hung":
 		return "⚠ hung", stFailed
 	}
@@ -131,7 +133,7 @@ func newModel(cfg config) model {
 	ti := textinput.New()
 	ti.Prompt = "› "
 	ti.CharLimit = 2000
-	w := NewWatcher(cfg.home, cfg.busDir, cfg.remind)
+	w := configuredWatcher(cfg)
 	snap, _ := w.Poll() // the first poll only records the baseline: it has no events
 	m := model{cfg: cfg, w: w, snap: snap, input: ti, follow: true,
 		vp: viewport.New(80, 10), feed: viewport.New(80, 20)}
@@ -346,6 +348,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setFlash("only finished tasks can be acknowledged")
 			return m, nil
 		}
+		if t.Remote {
+			m.setFlash("Acknowledge this task on " + t.Instance + ".")
+			return m, nil
+		}
 		if err := os.WriteFile(filepath.Join(t.Dir, "acked"), nil, 0o600); err != nil {
 			logWarn(LogAcknowledgeFailed, "task", t.ID, "error", storageErr(err, "cannot write %s", t.Dir+"/acked").Error())
 			m.setFlash("cannot acknowledge " + t.Label() + ": " + err.Error())
@@ -355,7 +361,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "X":
 		n, failed := 0, 0
 		for _, tt := range m.snap.Tasks {
-			if tt.Active() {
+			if tt.Active() || tt.Remote {
 				continue
 			}
 			if err := os.WriteFile(filepath.Join(tt.Dir, "acked"), nil, 0o600); err != nil {
@@ -451,6 +457,10 @@ func readFile(path string) string {
 
 // detail renders the selected tab for a task.
 func (m *model) detail(t *Task) string {
+	if t != nil && t.Remote {
+		return fmt.Sprintf("Instance: %s\nTask: %s\nAgent: %s\nRepository: %s\nBranch: %s\nStatus: %s\n\nTask files and reports are available on %s.", t.Instance, t.ID, t.Agent, t.Repo, t.Branch, t.Status, t.Instance)
+	}
+
 	w := m.width
 	if w < 20 {
 		w = 80
@@ -683,7 +693,7 @@ func (m model) row(t *Task, width int) string {
 		since = "-" + human(time.Since(t.Finished))
 	}
 	stage := ""
-	if p := m.snap.Agents[t.BusName()]; p != nil && p.Task == t.ID && p.Status != "" {
+	if p := m.snap.Agents[t.BusName()]; p != nil && (p.Task == t.ID || (t.Remote && p.Task+"@"+t.Instance == t.ID)) && p.Status != "" {
 		stage = "„" + p.Status + "” "
 	}
 	if (t.Status == "running" || t.Status == "starting") && !t.Alive && !t.RunStart.IsZero() {
@@ -693,7 +703,7 @@ func (m model) row(t *Task, width int) string {
 	last := ""
 	switch {
 	case !t.Active():
-		last = finalSummary(t.Dir)
+		last = t.finalSummary()
 	case t.Last.Text != "":
 		last = shortTS(t.Last.TS) + " " + actIcon(t.Last.Kind) + " " + t.Last.Text
 	}
@@ -712,6 +722,9 @@ func (m model) row(t *Task, width int) string {
 		}
 	}
 	head := fmt.Sprintf("%-11s ", trunc(name, 11))
+	if t.Remote {
+		head = fmt.Sprintf("%-16s %-11s ", trunc(t.Instance, 16), trunc(strings.TrimSuffix(name, "@"+t.Instance), 11))
+	}
 	stat := st.Render(fmt.Sprintf("%-19s", label))
 	rest := fmt.Sprintf(" %6s  %-10s %s%s", since, trunc(t.Repo, 10), stage, last)
 	line := head + stat + rest
@@ -730,12 +743,18 @@ func (m model) View() string {
 	var b strings.Builder
 	waiting := len(m.snap.Waiting())
 	head := stHeader.Render("agent live") + "  " + stDim.Render(m.snap.At.Format("15:04:05")) + "  │ " + m.snap.QueueLine(m.cfg.queueMax)
+	if m.snap.HubError != "" {
+		head += "  │ hub unavailable (last overview)"
+	}
 	if waiting > 0 {
 		head += "  │ " + stWaiting.Render(fmt.Sprintf("waiting for you: %d", waiting))
 	}
 	b.WriteString(lipgloss.NewStyle().MaxWidth(m.width).Render(head) + "\n")
-	b.WriteString(stDim.Render(lipgloss.NewStyle().MaxWidth(m.width).Render(
-		fmt.Sprintf("%-11s %-19s %6s  %-10s %s", "AGENT", "STATUS", "TIME", "REPO", "STAGE / LAST ACTIVITY"))) + "\n")
+	tableHeader := fmt.Sprintf("%-11s %-19s %6s  %-10s %s", "AGENT", "STATUS", "TIME", "REPO", "STAGE / LAST ACTIVITY")
+	if m.cfg.snapshotCmd != "" {
+		tableHeader = fmt.Sprintf("%-16s %s", "INSTANCE", tableHeader)
+	}
+	b.WriteString(stDim.Render(lipgloss.NewStyle().MaxWidth(m.width).Render(tableHeader)) + "\n")
 
 	tasks := m.snap.Tasks
 	start := 0

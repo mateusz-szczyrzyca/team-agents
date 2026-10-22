@@ -522,6 +522,19 @@ team ID (`<timestamp>-team`) or any member's task ID.
 
 ## The live panel
 
+With a configured hub, `agent status` and `agent live` request an authenticated aggregate overview from the
+lead over the configured TLS/Tailscale connection (or the lead's private Unix socket). Every task shows its
+owning instance, and task references use `task@instance` so identical local task IDs stay distinct. These
+views use reported task metadata, not another instance's filesystem. The panel retains its last overview
+with a visible warning during an outage and signals recovery; status fails clearly instead of reading a
+second local bus. Remote task files, prompts, reports and acknowledgment remain on the owning instance;
+answer/stop/message actions use the qualified reference through the normal CLI routing.
+
+The internal `agentbus snapshot [--dir D] [--timeout SECONDS]` command emits the versioned public overview.
+The timeout defaults to 3 seconds (range 1–600). The panel requests a 2-second refresh deadline and logs
+`hub_view_unavailable` once when refreshing fails. In local-file mode the existing panel and status are
+unchanged.
+
 `agent live` shows all active and unacknowledged tasks (status, duration, repository, stage, last activity), a
 detail view with tabs (1 Activity, 2 Prompt, 3 Questions, 4 Investigations, 5 Result, 6 Notebook, 7 Board) and an
 event stream with bus messages, status changes and periodic reminders.
@@ -831,7 +844,9 @@ The `agentbus` Go suite initializes a temporary `HOME`, `AGENTS_HOME`, bus direc
 running tests. Default wake and helper-dispatch hooks record requests without spawning the installed agent;
 only tests that assert wake details install `captureWakes`. Node subprocess tests use temporary executable
 stubs or repository-script paths that reject work before starting an agent. Toolchain detection runs read-only
-version probes. The suite logger does not send to the host journal. On Linux, a final audit fails the suite
+version probes. A view integration test builds the stdlib-only agentbus helper into a temporary directory
+with a temporary Go cache, then runs only `agent status` against an in-process TLS hub in a separate home.
+Panel-source tests use a temporary snapshot stub. The suite logger does not send to the host journal. On Linux, a final audit fails the suite
 if it leaves a new open file handle under the original agents home; inherited runner descriptors are allowed.
 This audit detects leaked logger/storage handles, not arbitrary open-write-close access, so explicit file paths
 and subprocess fixtures must still use temporary directories. No existing test assertion is weakened.

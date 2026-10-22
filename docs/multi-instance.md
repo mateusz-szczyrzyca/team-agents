@@ -73,11 +73,16 @@ Proposed versioned endpoints:
 | `POST /v1/instances/heartbeat` | `instance_heartbeat`: renew the lease, update manifest and task summaries |
 | `POST /v1/commands/poll` | `command_poll`: long poll for commands addressed to the authenticated instance |
 | `POST /v1/commands/ack` | `command_ack`: record a command's durable execution result |
+| `POST /v1/view` | `hub_view`: authenticated read-only operator projection for aggregate status/panel views |
 
 Every endpoint operation gets its own errors.json entry, exact causes, generated error type, and tests.
 No endpoint exposes arbitrary file access, shell command execution, or a client-selected executable.
-Task views, questions retrieval/submission, and command enqueueing use explicit allowlisted operations
-through `/v1/tools/{op}`; they do not gain an unrestricted RPC or filesystem interface.
+Task RPCs, questions retrieval/submission, and command enqueueing use explicit allowlisted operations
+through `/v1/tools/{op}`; they do not gain an unrestricted RPC or filesystem interface. The read-only
+operator overview is a separate projection endpoint at `/v1/view`, approved during the review follow-up.
+It authenticates the instance directly, without pretending a human view is an agent run. It never supplies
+arbitrary paths or commands and omits lease tokens, session IDs, dispatch commands, worktree paths and private
+quiz answers. Public board/message text remains display content rather than filesystem authority.
 
 Requests and responses use JSON and a protocol version of 1. All requests authenticate independently
 according to section 3, including reused connections and long polls. Authentication precedes body dispatch.
@@ -272,6 +277,19 @@ Keep their stdout bytes and existing exit statuses. Local-only event normalizati
 forwarding MCP calls while runners read local team/queue state would split one team into several buses.
 Remote inv/helper dispatch returns a node command, never an instruction to open the requester's worktree
 path on the lead host. Aggregated views read task summaries from the hub.
+
+`POST /v1/view` accepts one `{ "version": 1, "instance": "mac" }` object whose instance must match
+transport authentication. It returns `{ "version": 1, "view": { ... } }`, or the usual typed `error`
+object (`hub_view`: `Malformed`, `Identity`, `Storage`; authentication errors retain `hub_auth`). The view
+contains UTC snapshot time, sorted credential-free instance/lease/capability/capacity/task summaries, public
+teams/boards, agent stages, investigation summaries and the latest 300 messages. Response size is bounded
+at 64 MiB. Reads are serialized with other bus accesses, and read-only retries need no mutation replay key.
+`agentbus snapshot` shares serve's authentication, certificate pins, redirect refusal and socket selection.
+`agent status` uses it from any configured instance, and `agent live` invokes the same helper rather than
+duplicating authentication in the panel. Task references are `task@instance`; the panel never opens a path
+from a remote report. An expired instance marks its unfinished task summaries unreachable. During transport
+failure, status returns an error; the panel retains and labels its last successful overview. Remote
+acknowledgment and task-file browsing remain actions on the owning instance.
 
 `agent answer` retrieves a versioned questions snapshot through the hub and submits answers with the task,
 question round, and snapshot version; stale submissions fail explicitly. The hub durably queues delivery
