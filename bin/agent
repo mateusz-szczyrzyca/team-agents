@@ -2904,7 +2904,9 @@ cmd__node_start() { # id mode [expected_run] — starts a runner directly under 
     if (( expected_run <= RUN )); then
       log_info runner_already_running "task=$id" "run=$RUN" "desired=$expected_run"
       if [[ -n ${NODE_READY_FD:-} ]]; then
-        printf '%s\n' "already_running" 1>&"$NODE_READY_FD" 2>/dev/null || true
+        printf '%s\n' "already_running" 1>&"$NODE_READY_FD"
+        exec {NODE_READY_FD}>&-
+        unset NODE_READY_FD
       fi
       exit 0
     fi
@@ -2941,7 +2943,10 @@ cmd__node_start() { # id mode [expected_run] — starts a runner directly under 
   meta_set "$id" STATUS starting
   log_info runner_starting "task=$id" "run=$run" "mode=$mode" "supervisor=node"
   if [[ -n ${NODE_READY_FD:-} ]]; then
-    printf '%s\n' "started" 1>&"$NODE_READY_FD" 2>/dev/null || true
+    local outcome=${NODE_READY_OUTCOME:-started}
+    printf '%s\n' "$outcome" 1>&"$NODE_READY_FD"
+    exec {NODE_READY_FD}>&-
+    unset NODE_READY_FD
   fi
   exec "$SELF" _runner "$id" "$mode"
 }
@@ -2954,6 +2959,11 @@ cmd__node_wake() { # id — wakes a sleeping or waiting task under agent node
   if [[ $STATUS == paused ]]; then
     if (( $(date +%s) < ${WAKE_AT:-0} )); then
       log_info wake_deferred "task=$id" "wake_at=$WAKE_AT"
+      if [[ -n ${NODE_READY_FD:-} ]]; then
+        printf '%s\n' "already_running" 1>&"$NODE_READY_FD"
+        exec {NODE_READY_FD}>&-
+        unset NODE_READY_FD
+      fi
       exit 0
     fi
     meta_set "$id" WAKE_AT ""
@@ -2961,6 +2971,11 @@ cmd__node_wake() { # id — wakes a sleeping or waiting task under agent node
       if [[ $(team_done_flag "$TEAM") == true ]]; then
         meta_set "$id" STATUS done
         try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state done >/dev/null
+        if [[ -n ${NODE_READY_FD:-} ]]; then
+          printf '%s\n' "already_running" 1>&"$NODE_READY_FD"
+          exec {NODE_READY_FD}>&-
+          unset NODE_READY_FD
+        fi
         exit 0
       fi
       meta_set "$id" WAKE_PENDING 1
@@ -2970,6 +2985,11 @@ cmd__node_wake() { # id — wakes a sleeping or waiting task under agent node
     exit 0
   fi
   if [[ $STATUS != sleeping && $STATUS != waiting ]]; then
+    if [[ -n ${NODE_READY_FD:-} ]]; then
+      printf '%s\n' "already_running" 1>&"$NODE_READY_FD"
+      exec {NODE_READY_FD}>&-
+      unset NODE_READY_FD
+    fi
     exit 0
   fi
   cmd__node_start "$id" resume
@@ -3015,26 +3035,26 @@ cmd__node_answer() { # id [expected_round] [expected_sha256] — stores answers 
     echo "unexpected question round $ROUND (expected $expected_round)" >&2
     exit 1
   fi
+  local qfile="$TASKS/$id/questions-$ROUND.md"
+  if [[ ! -f $qfile ]]; then
+    echo "questions file $qfile not found" >&2
+    exit 1
+  fi
   if [[ -n $expected_sha256 ]]; then
-    local qfile="$TASKS/$id/questions-$ROUND.md"
-    if [[ ! -f $qfile ]]; then
-      echo "questions file $qfile not found" >&2
-      exit 1
-    fi
     local cur_sha; cur_sha=$(file_sha256 "$qfile")
     if [[ $cur_sha != "$expected_sha256" ]]; then
       echo "questions snapshot mismatch: expected $expected_sha256, got $cur_sha" >&2
       exit 1
     fi
   fi
-  local ans_file="$TASKS/$id/answers-$ROUND.md"
-  cat > "$ans_file"
-  meta_set "$id" ANSWERS_PENDING 1
+  local tmp; tmp=$(mktemp -t agent.answer.XXXXXX)
+  cat > "$tmp"
+  validate_answers "$tmp" || { rm -f "$tmp"; echo "not all questions answered in submitted content" >&2; exit 1; }
+  mv "$tmp" "$qfile"
+  meta_set "$id" ANSWERS_PENDING "$ROUND"
+  stop_answers_watch "$id" "$ROUND"
   log_info node_answer_delivered "task=$id" "round=$ROUND"
-  if [[ -n ${NODE_READY_FD:-} ]]; then
-    printf '%s\n' "delivered" 1>&"$NODE_READY_FD" 2>/dev/null || true
-  fi
-  cmd__node_start "$id" resume
+  NODE_READY_OUTCOME="delivered" cmd__node_start "$id" resume
 }
 
 cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
