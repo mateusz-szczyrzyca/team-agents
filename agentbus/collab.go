@@ -340,6 +340,7 @@ func (b *Bus) wakeOne(t *Team, tier Tier, except string) {
 		}
 	}
 	var pick *TeamMember
+	var pickName string
 	for _, n := range t.names() {
 		m := t.Members[n]
 		if n == except || m.State != MemberSleeping || m.Tier != tier {
@@ -347,12 +348,14 @@ func (b *Bus) wakeOne(t *Team, tier Tier, except string) {
 		}
 		if pick == nil || busy[m.Provider] < busy[pick.Provider] {
 			pick = m
+			pickName = n
 		}
 	}
 	if pick != nil {
 		pick.State = MemberWaking
-		pick.BoardSeen = t.BoardRev
-		wakeFn(t, pick.Task)
+		if b.wakeMemberLocked(t, pickName) {
+			pick.BoardSeen = t.BoardRev
+		}
 	}
 }
 
@@ -360,8 +363,9 @@ func (b *Bus) wakeOne(t *Team, tier Tier, except string) {
 func (b *Bus) wakeDesignated(t *Team, name string) {
 	if m := t.Members[name]; m != nil && m.State == MemberSleeping {
 		m.State = MemberWaking
-		m.BoardSeen = t.BoardRev
-		wakeFn(t, m.Task)
+		if b.wakeMemberLocked(t, name) {
+			m.BoardSeen = t.BoardRev
+		}
 	}
 }
 
