@@ -139,6 +139,7 @@ export HUB_LISTEN="${HUB_LISTEN:-}"
 export HUB_SOCKET="${HUB_SOCKET:-}"
 export HUB_AUTH="${HUB_AUTH:-tailscale}"
 export HUB_CERT_FINGERPRINT="${HUB_CERT_FINGERPRINT:-}"
+export HUB_CERT_SHA256="${HUB_CERT_SHA256:-$HUB_CERT_FINGERPRINT}"
 export HUB_RETRY_SECONDS="${HUB_RETRY_SECONDS:-30}"
 # The token is assigned by secrets.env, never by the public configuration template.
 export HUB_TOKEN="${HUB_TOKEN:-}"
@@ -3047,12 +3048,12 @@ cmd__node_answer() { # id [expected_round] [expected_sha256] — stores answers 
       exit 1
     fi
   fi
-  local tmp; tmp=$(mktemp "$TASKS/$id/answer.tmp.XXXXXX")
+  local tmp; tmp=$(mktemp "$TASKS/$id/.answers.XXXXXX")
   cat > "$tmp"
   validate_answers "$tmp" || { rm -f "$tmp"; echo "not all questions answered in submitted content" >&2; exit 1; }
+  stop_answers_watch "$id" "$ROUND"
   mv "$tmp" "$qfile"
   meta_set "$id" ANSWERS_PENDING "$ROUND"
-  stop_answers_watch "$id" "$ROUND"
   log_info node_answer_delivered "task=$id" "round=$ROUND"
   NODE_READY_OUTCOME="delivered" cmd__node_start "$id" resume
 }
