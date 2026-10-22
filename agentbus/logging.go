@@ -61,6 +61,7 @@ const (
 	LogCommandAcked       LogEvent = "command_acked"          // an instance node acknowledged a command with its outcome
 	LogHubBackup          LogEvent = "hub_backup"             // the hub wrote a periodic state backup
 	LogInstanceReclaimed  LogEvent = "instance_reclaimed"     // an instance's lease expired; its members and board items were reclaimed
+	LogInstanceRestored   LogEvent = "instance_restored"      // a reconnected instance got its unreachable members back (state restored)
 )
 
 // logInfo, logWarn and logError write a record with the given event name.

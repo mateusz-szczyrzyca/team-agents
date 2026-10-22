@@ -121,17 +121,23 @@ func (g *HubInstanceRegistry) deadline() Timestamp {
 
 // withState serializes instance operations with all other hub state accesses.
 func (g *HubInstanceRegistry) withState(fn func(*hubInstanceState) *StorageError) *StorageError {
+	return g.withBusState(func(state *hubInstanceState, _ *State) *StorageError { return fn(state) })
+}
+
+// withBusState is withState for operations that also change the teams (the bus state), under the same lock. The
+// bus state is saved after fn returns, like every other locked change.
+func (g *HubInstanceRegistry) withBusState(fn func(*hubInstanceState, *State) *StorageError) *StorageError {
 	if g == nil || g.Bus == nil {
 		return storageErr(valueErr("missing hub bus"), "instance registry is not configured")
 	}
 	var result *StorageError
-	if serr := g.Bus.locked(func(_ *State) {
+	if serr := g.Bus.locked(func(bus *State) {
 		state, serr := g.load()
 		if serr != nil {
 			result = serr
 			return
 		}
-		result = fn(state)
+		result = fn(state, bus)
 	}); serr != nil {
 		return serr
 	}
@@ -255,7 +261,7 @@ func (g *HubInstanceRegistry) Register(instance, peer string, req HubInstanceReg
 		return lease, opErr(InstanceRegisterIdentity, "manifest must match the authenticated instance and peer")
 	}
 	var result *InstanceRegisterError
-	serr := g.withState(func(state *hubInstanceState) *StorageError {
+	serr := g.withBusState(func(state *hubInstanceState, bus *State) *StorageError {
 		prior := state.Instances[instance]
 		if prior != nil && prior.Peer != peer {
 			result = opErr(InstanceRegisterIdentity, "instance name is owned by another authenticated peer")
@@ -284,7 +290,11 @@ func (g *HubInstanceRegistry) Register(instance, peer string, req HubInstanceReg
 		}
 		lease = HubInstanceLease{Version: hubProtocolVersion, Token: hex.EncodeToString(secret[:]), Generation: generation, ExpiresAt: g.deadline()}
 		state.Instances[instance] = &hubInstanceRecord{Peer: peer, RegistrationID: req.RegistrationID, Lease: lease, Sequence: req.Sequence, Manifest: req.Manifest}
-		return g.save(state)
+		if serr := g.save(state); serr != nil {
+			return serr
+		}
+		restoreReturnedMembers(g.Bus, bus, instance) // a fresh lease: its members can resume
+		return nil
 	})
 	if serr != nil {
 		return HubInstanceLease{}, fromStorage(InstanceRegisterStorage, serr)
@@ -302,7 +312,7 @@ func (g *HubInstanceRegistry) Heartbeat(instance, peer string, req HubInstanceHe
 		return lease, opErr(InstanceHeartbeatIdentity, "heartbeat must match the authenticated instance and peer")
 	}
 	var result *InstanceHeartbeatError
-	serr := g.withState(func(state *hubInstanceState) *StorageError {
+	serr := g.withBusState(func(state *hubInstanceState, bus *State) *StorageError {
 		record := state.Instances[instance]
 		switch g.check(record, peer, req.Token, req.Generation) {
 		case HubLeaseUnknown:
@@ -321,7 +331,11 @@ func (g *HubInstanceRegistry) Heartbeat(instance, peer string, req HubInstanceHe
 			record.Sequence, record.Manifest = req.Sequence, req.Manifest
 			record.Lease.ExpiresAt = g.deadline()
 			lease = record.Lease
-			return g.save(state)
+			if serr := g.save(state); serr != nil {
+				return serr
+			}
+			restoreReturnedMembers(g.Bus, bus, instance) // normally a no-op: a live lease has no unreachable members
+			return nil
 		}
 		return nil
 	})
