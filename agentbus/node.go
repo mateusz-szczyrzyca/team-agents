@@ -306,6 +306,9 @@ func (n *Node) heartbeatLoop(ctx context.Context) *CmdNodeError {
 			if ctx.Err() != nil {
 				return nil
 			}
+			if serr := recordHubReachability(n.Config.Home, err == nil || err.Cause != CmdNodeHubUnavailable, time.Now()); serr != nil {
+				warnSideEffect("record hub reachability", serr, "instance", n.Config.Instance)
+			}
 			switch {
 			case err == nil:
 				if err := n.storeLease(renewed); err != nil {

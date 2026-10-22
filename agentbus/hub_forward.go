@@ -98,6 +98,9 @@ func (s *Server) callForMCP(name string, args map[string]any) (string, int, erro
 		return "", 0, requestErr
 	}
 	response, err := s.hubClient.Call(context.Background(), req)
+	if serr := recordHubReachability(s.home, hubReached(err), time.Now()); serr != nil {
+		warnSideEffect("record hub reachability", serr, "instance", s.instance)
+	}
 	text := ""
 	if response.Result != nil {
 		text = *response.Result

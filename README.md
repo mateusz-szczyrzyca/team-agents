@@ -247,6 +247,14 @@ coordinators and investigators are resumed in the same session and told not to r
 `AGENT_HANG_STRIKES` consecutive hangs without progress the agent is marked `hung`. Workers are not resumed —
 the normal agents are told instead. A team fails only if the coordinator and all normal members are hung.
 
+Time when the hub cannot be reached does not count. `agentbus` records each hub outage in
+`$AGENTS_HOME/hub-outage.json` (`total_seconds` of closed outages and `open_since` of the current one, written only
+when reachability changes). The node daemon and every `agentbus serve` process of the instance update it. The
+watchdog leaves out only the outage time since the run's last activity, so a run that waits for the hub is not
+killed, a hang that starts while the hub is up is still detected, and the budget resumes when the hub answers. An
+unreadable record is logged and counts as no outage. A typed refusal from a reachable hub is not an outage; an
+`Unavailable` result is, including a hub that cannot serve the request.
+
 ### Repository notebook
 
 A persistent notebook per repository (an append-only log plus overwritable sections) carries knowledge between
