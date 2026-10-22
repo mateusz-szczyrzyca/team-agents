@@ -8,7 +8,19 @@ shopt -u patsub_replacement 2>/dev/null || :   # bash < 5.2 has no such option (
 
 AGENTS_HOME="${AGENTS_HOME:-$HOME/agents}"
 CONF="$AGENTS_HOME/agents.conf"
-SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+if command -v readlink >/dev/null && readlink -f "${BASH_SOURCE[0]}" >/dev/null 2>&1; then
+  SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+else
+  _self_src="${BASH_SOURCE[0]}"
+  while [[ -h "$_self_src" ]]; do
+    _self_dir="$(cd -P "$(dirname "$_self_src")" && pwd)"
+    _self_src="$(readlink "$_self_src")"
+    [[ "$_self_src" != /* ]] && _self_src="$_self_dir/$_self_src"
+  done
+  _self_dir="$(cd -P "$(dirname "$_self_src")" && pwd)"
+  SELF="$_self_dir/$(basename "$_self_src")"
+  unset _self_src _self_dir
+fi
 TASKS="$AGENTS_HOME/tasks"
 PROMPTS="$AGENTS_HOME/prompts"
 BUS_DIR="$AGENTS_HOME/bus"
@@ -65,7 +77,7 @@ log_error() { log_event error "$@"; }
 try() {
   local event=$1; shift
   local errf rc=0
-  errf=$(mktemp)
+  errf=$(mktemp -t agent.err.XXXXXX)
   "$@" 2>"$errf" || rc=$?
   if ((rc != 0)); then
     log_warn "$event" "exit_code=$rc" "command=$*" "stderr=$(head -c 2000 "$errf")"
@@ -79,7 +91,7 @@ try() {
 jq_soft() {
   local event=$1; shift
   local errf rc=0 out
-  errf=$(mktemp)
+  errf=$(mktemp -t agent.err.XXXXXX)
   out=$(jq "$@" 2>"$errf") || rc=$?
   if ((rc != 0)); then
     log_warn "$event" "exit_code=$rc" "stderr=$(head -c 2000 "$errf")"
@@ -200,10 +212,15 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
 bus() { "$AGENTBUS_BIN" "$@"; }
 
+# file_mtime_secs file — the modification time in epoch seconds (portable across GNU and BSD/macOS stat)
+file_mtime_secs() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+}
+
 # `agent stop --running` in progress: blocks waking, queues and notifications (flag valid for 2 min)
 stopping() {
   local f="$AGENTS_HOME/.stop-all"
-  [[ -f $f ]] && (( $(date +%s) - $(stat -c %Y "$f") < 120 ))
+  [[ -f $f ]] && (( $(date +%s) - $(file_mtime_secs "$f") < 120 ))
 }
 
 # ------------------------------------------------------------------ task metadata (meta.env)
@@ -350,7 +367,7 @@ questions_note() {
   local id=$1 f=$2 note tmp
   note="> Answer every question after **Verdict:** — \`ok\` accepts the recommendation. When you are done, put **ANSWERED** on the last line and save: the answers are sent at once (or run \`agent resume $id\`)."
   grep -qF -- '**ANSWERED** on the last line' "$f" && return 0
-  tmp=$(mktemp)
+  tmp=$(mktemp -t agent.tmp.XXXXXX)
   awk -v note="$note" 'NR == 1 && /^# / { print; print ""; print note; next } NR == 1 { print note; print "" } { print }' "$f" > "$tmp"
   cat "$tmp" > "$f"     # rewrite in place: the file keeps its inode
   rm -f "$tmp"
@@ -450,7 +467,7 @@ BUS_NOT_FOUND=3
 # other failure is logged.
 team_json() {
   local errf rc=0 out
-  errf=$(mktemp)
+  errf=$(mktemp -t agent.err.XXXXXX)
   out=$(bus team-get --dir "$BUS_DIR" --team "$1" 2>"$errf") || rc=$?
   if ((rc != 0 && rc != BUS_NOT_FOUND)); then
     log_warn team_read_failed "team=$1" "exit_code=$rc" "stderr=$(head -c 2000 "$errf")"
@@ -709,7 +726,7 @@ quota_reset_seconds() {
   fi
   # "resets 3pm", "will reset at 15:30"
   if ((secs == 0)); then
-    at=$(grep -ioE 'resets? (at )?[0-9]{1,2}(:[0-9]{2})? ?([ap]m)?' <<< "$text" | head -1 | sed -E 's/^resets? (at )?//I' || (($? == 1)))
+    at=$(grep -ioE 'resets? (at )?[0-9]{1,2}(:[0-9]{2})? ?([ap]m)?' <<< "$text" | head -1 | sed -E 's/^[Rr][Ee][Ss][Ee][Tt][Ss]? ([Aa][Tt] )?//' || (($? == 1)))
     # date reports an unparsable time on stderr; that only means the time is unknown (the default pause applies)
     if [[ -n $at ]] && t=$(date -d "$at" +%s 2>/dev/null); then
       ((t <= now)) && t=$((t + 86400))
@@ -1053,10 +1070,10 @@ watch_run() { # pid dir n — waits for a CLI run; kills it after AGENT_HANG_MIN
   while kill -0 "$pid" 2>/dev/null; do   # kill -0 only asks whether the process still exists
     sleep "$poll"
     last=$(date +%s)
-    [[ -f $dir/prompt-$n.md ]] && last=$(stat -c %Y "$dir/prompt-$n.md")
+    [[ -f $dir/prompt-$n.md ]] && last=$(file_mtime_secs "$dir/prompt-$n.md")
     for f in "$dir/activity.jsonl" "$dir/out-$n.jsonl" "$dir/events-$n.jsonl" "$dir/err-$n.log"; do
       [[ -f $f ]] || continue
-      m=$(stat -c %Y "$f"); (( m > last )) && last=$m
+      m=$(file_mtime_secs "$f"); (( m > last )) && last=$m
     done
     now=$(date +%s)
     if (( now - last > limit )) && kill -0 "$pid" 2>/dev/null; then
@@ -1490,7 +1507,7 @@ pl_commits() { # number → "1 commit" / "N commits"
 
 verify_gaps() { # coordinator-id — gaps before closing a --verify team (empty = all good)
   local br=$BRANCH wt=$WORKTREE pr cnt m mb
-  local errf; errf=$(mktemp)
+  local errf; errf=$(mktemp -t agent.err.XXXXXX)
   if pr=$(cd "$wt" && gh pr list --head "$br" --state all --json number,isDraft,state --limit 1 2>"$errf"); then
     if [[ $(jq_soft pr_lookup_parse 'length' <<< "$pr") == 0 ]]; then
       echo "- no PR from your branch $br — open it (gh pr create --base $BASE --head $br)"
@@ -2464,7 +2481,7 @@ cmd__authcheck() { # provider — runs as a systemd --user unit (the same contex
   for v in CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY CODEX_API_KEY OPENAI_API_KEY GEMINI_API_KEY OPENROUTER_API_KEY DEEPINFRA_API_KEY; do
     if [[ -z ${!v:-} ]]; then unset "$v"; fi
   done
-  tmp=$(mktemp -d); cd "$tmp" || exit 1
+  tmp=$(mktemp -d -t agent.auth.XXXXXX); cd "$tmp" || exit 1
   trap 'rm -rf "$tmp"' EXIT
   local q="Reply with the single word: OK"
   case $p in
@@ -2533,7 +2550,7 @@ opencode_model_for() { # provider — the model (without prefix) of the first op
 }
 
 cmd_authenticated() {
-  local tmp p; tmp=$(mktemp -d)
+  local tmp p; tmp=$(mktemp -d -t agent.auth.XXXXXX)
   for p in anthropic openai gemini openrouter deepinfra; do
     systemd-run --user --wait --pipe --quiet --collect --unit="agent-auth-$p-$$" \
       --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" \
@@ -2707,7 +2724,7 @@ archive_one() { # start-task — packs the whole group into tasks-archived/<name
   local arch_dir="$AGENTS_HOME/tasks-archived"; mkdir -p "$arch_dir"
   local archive_file="$arch_dir/$name.7z" i=1
   while [[ -e $archive_file ]]; do archive_file="$arch_dir/$name-$((i++)).7z"; done
-  local stage; stage=$(mktemp -d)
+  local stage; stage=$(mktemp -d -t agent.stage.XXXXXX)
   mkdir -p "$stage/tasks" "$stage/checkpoints"
 
   # full transcripts (bus + activity) — while the task directories still exist
