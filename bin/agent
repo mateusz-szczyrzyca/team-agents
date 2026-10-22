@@ -220,7 +220,11 @@ bus() { "$AGENTBUS_BIN" "$@"; }
 
 # file_mtime_secs file — the modification time in epoch seconds (portable across GNU and BSD/macOS stat)
 file_mtime_secs() {
-  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+  if [[ $(uname -s) == Darwin ]]; then
+    stat -f %m "$1"
+  else
+    stat -c %Y "$1"
+  fi
 }
 
 # file_sha256 file — prints sha256 hex digest portably across sha256sum and shasum
@@ -232,18 +236,51 @@ file_sha256() {
   fi
 }
 
+# generate_uuid — generates a lowercase UUID portably across Linux (/proc), macOS (uuidgen) and python
+generate_uuid() {
+  if [[ -r /proc/sys/kernel/random/uuid ]]; then
+    cat /proc/sys/kernel/random/uuid
+  elif command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import uuid; print(uuid.uuid4())'
+  else
+    od -x /dev/urandom | head -1 | awk '{print $2$3$4$5}'
+  fi
+}
+
+# is_on_battery — returns 0 if the host is running on battery power (laptops)
+is_on_battery() {
+  if [[ ${PAUSE_ON_BATTERY:-0} != 1 ]]; then
+    return 1
+  fi
+  if [[ $(uname -s) == Darwin ]]; then
+    if command -v pmset >/dev/null 2>&1; then
+      pmset -g batt | grep -q "Battery Power" && return 0
+    fi
+  elif [[ -d /sys/class/power_supply ]]; then
+    grep -q "Discharging" /sys/class/power_supply/*/status 2>/dev/null && return 0
+  fi
+  return 1
+}
+
 # date_iso — prints ISO-8601 timestamp portably across GNU date (-Is) and BSD/macOS date
 date_iso() {
-  date -Is 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%SZ'
+  if [[ $(uname -s) == Darwin ]]; then
+    date -u '+%Y-%m-%dT%H:%M:%SZ'
+  else
+    date -Is
+  fi
 }
 
 # format_epoch epoch [fmt] — formats epoch seconds portably across GNU and BSD date
 format_epoch() {
   local epoch=$1 fmt=${2:-'+%H:%M'}
-  if date -d "@$epoch" "$fmt" 2>/dev/null; then
-    return 0
+  if [[ $(uname -s) == Darwin ]]; then
+    date -r "$epoch" "$fmt"
+  else
+    date -d "@$epoch" "$fmt"
   fi
-  date -r "$epoch" "$fmt" 2>/dev/null || date "$fmt"
 }
 
 # file_flock fd [timeout_secs] — portable file descriptor lock (flock or python fcntl fallback)
@@ -569,7 +606,7 @@ finish_team() { # team reason — closes the team; sleeping members finish as do
   for t in $(team_tasks "$team"); do
     if [[ $(task_field "$t" STATUS) == sleeping ]]; then
       meta_set "$t" STATUS done
-      meta_set "$t" FINISHED "$(date -Is)"
+      meta_set "$t" FINISHED "$(date_iso)"
       act "$t" info "■ $why"
     fi
     case $(task_field "$t" STATUS) in
@@ -711,7 +748,7 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
   stopping && return 0
   local id; id=$(resolve_id "${1:?}")
   exec 8>"$TASKS/$id/wake.lock"
-  flock -w 30 8 || exit 0
+  file_flock 8 30 || exit 0
   meta_load "$id"
   if [[ $STATUS == paused ]]; then
     resume_paused "$id"
@@ -723,7 +760,7 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
   mstate=$(team_json "$TEAM" | jq -r --arg a "$AGENT" '.members[$a].state // empty')
   if [[ $mstate == excluded && $STATUS == sleeping ]]; then
     meta_set "$id" STATUS excluded
-    meta_set "$id" FINISHED "$(date -Is)"
+    meta_set "$id" FINISHED "$(date_iso)"
     act "$id" info "■ excluded from the team by the coordinator"
     exit 0
   fi
@@ -1359,7 +1396,7 @@ dispatch() { # starts queued requests on free investigators
   stopping && return 0
   (
     exec 9>"$AGENTS_HOME/dispatch.lock"
-    flock -w 120 9 || { log_warn dispatch_lock_timeout "lock=$AGENTS_HOME/dispatch.lock" "effect=queued investigations wait for the next dispatch"; exit 0; }
+    file_flock 9 120 || { log_warn dispatch_lock_timeout "lock=$AGENTS_HOME/dispatch.lock" "effect=queued investigations wait for the next dispatch"; exit 0; }
     local inv j
     while inv=$(free_investigator); do
       j=$(bus inv-next --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS") || break
@@ -1405,13 +1442,13 @@ start_investigation() { # request-json (status "starting") investigator-name
   fi
   : > "$dir/meta.env"
   local sid=""
-  [[ ${INVESTIGATORS_TYPE[$iname]} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
+  [[ ${INVESTIGATORS_TYPE[$iname]} == claude ]] && sid=$(generate_uuid)
   local kv
   for kv in "ID=$id" "AGENT=$iname" "KIND=investigation" "INV_ID=$inv_id" \
             "PARENT_TASK=$from_task" "FROM_AGENT=$from_agent" "PARENT_WORKTREE=$p_wt" \
             "TYPE=${INVESTIGATORS_TYPE[$iname]}" "MODEL=${INVESTIGATORS_MODEL[$iname]:-}" "EXTRA_ARGS=${INVESTIGATORS_EXTRA_ARGS[$iname]:-}" \
             "REPO_NAME=$p_repo" "REPO_ROOT=$p_root" "WORKTREE=$wt" "BRANCH=$branch" \
-            "BASE=$p_branch" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)"; do
+            "BASE=$p_branch" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date_iso)"; do
     meta_set "$id" "${kv%%=*}" "${kv#*=}"
   done
   if [[ $kind == review ]]; then
@@ -1488,7 +1525,7 @@ dispatch_helpers() { # assigns queued requests to free workers
   ((${#WORKER_AGENTS[@]})) || return 0
   (
     exec 7>"$AGENTS_HOME/helpers.lock"
-    flock -w 60 7 || exit 0
+    file_flock 7 60 || exit 0
     local w j
     while w=$(free_worker); do
       j=$(bus helper-next --dir "$BUS_DIR" --worker "$w") || break
@@ -1524,12 +1561,12 @@ start_helper() { # request-json worker
   } > "$dir/task.md"
   : > "$dir/meta.env"
   local sid=""
-  [[ ${AGENT_TYPE[$w]} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
+  [[ ${AGENT_TYPE[$w]} == claude ]] && sid=$(generate_uuid)
   local kv
   for kv in "ID=$id" "AGENT=$w" "KIND=helper" "TIER=worker" "HELPER_ID=$hid" "PARENT_TASK=$from_task" \
             "FROM_AGENT=$from" "PARENT_WORKTREE=$p_wt" "TYPE=${AGENT_TYPE[$w]}" "MODEL=${AGENT_MODEL[$w]:-}" \
             "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$w]:-}" "REPO_NAME=$p_repo" "REPO_ROOT=$p_root" "WORKTREE=$wt" \
-            "BRANCH=$branch" "BASE=$p_branch" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)"; do
+            "BRANCH=$branch" "BASE=$p_branch" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date_iso)"; do
     meta_set "$id" "${kv%%=*}" "${kv#*=}"
   done
   bus helper-set --dir "$BUS_DIR" --id "$hid" --status running --task "$id"
@@ -1639,7 +1676,7 @@ runner_exit() {
   RUNNER_DONE=1
   if stopping; then   # agent stop --running: no notifications, queues or messages
     try meta_write_failed meta_set "$RUNNER_ID" STATUS stopped
-    try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
+    try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date_iso)"
     try activity_write_failed act "$RUNNER_ID" info "■ stopped (agent stop --running)"
     log_info run_stopped "reason=agent stop --running"
     return
@@ -1648,7 +1685,7 @@ runner_exit() {
   [[ -f $TASKS/$RUNNER_ID/stop-requested ]] && why="stopped by the user"
   log_warn run_interrupted "exit_code=$rc" "reason=$why"
   try meta_write_failed meta_set "$RUNNER_ID" STATUS failed
-  try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
+  try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date_iso)"
   try activity_write_failed act "$RUNNER_ID" err "■ $why"
   if [[ ${KIND:-worker} == investigation ]]; then
     try investigation_finish_failed inv_finish "$RUNNER_ID" failed "STATUS: FAILED
@@ -1884,7 +1921,7 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
   # likewise the answering instructions, the watch and the editor before the task shows as waiting
   [[ $status == waiting ]] && questions_ready "$id" "$qfile"
   meta_set "$id" STATUS "$status"
-  meta_set "$id" FINISHED "$(date -Is)"
+  meta_set "$id" FINISHED "$(date_iso)"
   RUNNER_DONE=1
   act "$id" info "■ end of run $n: $status${note:+ ($note)}"
   log_info run_finished "run=$n" "status=$status" "note=$note"
@@ -1954,12 +1991,12 @@ create_task() { # name text root main_root base ts [team] — sets NEW_ID
   [[ -f $wt/AGENTS.md ]] && agents_md=present
   : > "$dir/meta.env"
   local sid=""
-  [[ ${AGENT_TYPE[$name]} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
+  [[ ${AGENT_TYPE[$name]} == claude ]] && sid=$(generate_uuid)
   local kv
   for kv in "ID=$id" "AGENT=$name" "KIND=worker" "TEAM=$team" "TIER=$(agent_tier "$name")" "TYPE=${AGENT_TYPE[$name]}" "MODEL=${AGENT_MODEL[$name]:-}" \
             "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$name]:-}" \
             "REPO_NAME=$repo_name" "REPO_ROOT=$main_root" "WORKTREE=$wt" "BRANCH=$branch" \
-            "BASE=$base" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" \
+            "BASE=$base" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date_iso)" \
             "AGENTS_MD=$agents_md"; do
     meta_set "$id" "${kv%%=*}" "${kv#*=}"
   done
@@ -2062,12 +2099,12 @@ resume_run() { # ref verify [addition...] — resumes an interrupted team or tas
     for t in "${olds[@]}"; do resume_history "$t"; done > "$TASKS/$id/history.md"   # every member sees all answers
     : > "$TASKS/$id/meta.env"
     local sid="" kv
-    [[ ${AGENT_TYPE[$name]:-} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
+    [[ ${AGENT_TYPE[$name]:-} == claude ]] && sid=$(generate_uuid)
     for kv in "ID=$id" "AGENT=$name" "KIND=worker" "TEAM=$new_team" "TIER=$(agent_tier "$name")" \
               "TYPE=${AGENT_TYPE[$name]}" "MODEL=${AGENT_MODEL[$name]:-}" "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$name]:-}" \
               "REPO_NAME=$(task_field "$old" REPO_NAME)" "REPO_ROOT=$root" "WORKTREE=$wt" \
               "BRANCH=$(task_field "$old" BRANCH)" "BASE=$(task_field "$old" BASE)" "SESSION_ID=$sid" \
-              "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" "RESUMED_FROM=$old" \
+              "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date_iso)" "RESUMED_FROM=$old" \
               "VERIFY=$( ((verify)) && echo 1 || task_field "$old" VERIFY)"; do
       meta_set "$id" "${kv%%=*}" "${kv#*=}"
     done
@@ -2249,7 +2286,7 @@ cmd__answers_saved() { # id round — the human saved a questions file (systemd 
   local id; id=$(resolve_id "${1:?}")
   local round=${2:?} f out errs
   exec 8>"$TASKS/$id/answers.lock"
-  flock -w 30 8 || exit 0
+  file_flock 8 30 || exit 0
   meta_load "$id"
   f="$TASKS/$id/questions-$round.md"
   if [[ $STATUS != waiting || $ROUND != "$round" ]]; then
@@ -2419,7 +2456,7 @@ stop_all() { # agent stop --running: stops everything that is active, whatever i
       new|starting|running|waiting|investigating|sleeping|paused)
         touch "$d/stop-requested"
         meta_set "$id" STATUS stopped
-        meta_set "$id" FINISHED "$(date -Is)"
+        meta_set "$id" FINISHED "$(date_iso)"
         run=$(task_field "$id" RUN)
         units+=("$(unit_name "$id" "$run").service")
         stopped+=("$id ($st)") ;;
@@ -2454,7 +2491,7 @@ cmd_stop() {
   touch "$TASKS/$id/stop-requested"
   try unit_stop_failed systemctl --user stop "$(unit_name "$id" "$run").service"
   meta_set "$id" STATUS stopped
-  meta_set "$id" FINISHED "$(date -Is)"
+  meta_set "$id" FINISHED "$(date_iso)"
   if [[ -n $team ]]; then
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state done >/dev/null
     if [[ $agent == "$(team_lead "$team")" ]]; then
