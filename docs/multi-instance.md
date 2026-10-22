@@ -158,6 +158,15 @@ rebuilding `*QuizStartError` adds that prefix exactly once. Class and exit statu
 generated operation/cause table, never a peer-supplied class or exit code. Existing class exit codes stay
 2–10; append `Unavailable` as 11 with its own sentinel. Add an `Unavailable` cause to each forwardable
 operation. A remote `QuizStartNotCoordinator` must still support the same `errors.Is` and `errors.As`.
+
+The retry-stable request `kind` also disambiguates error types where an MCP tool and CLI command share
+an operation name. In particular, `release` rebuilds `*ReleaseError` for `kind=tool` and `*CmdReleaseError`
+for `kind=cli`. The generic operation lookup continues to reject this ambiguous name without a kind.
+
+M1 client limits: request body 1 MiB, response body 64 MiB, total pending lifetime 630 seconds; the default
+contiguous outage budget is 30 seconds. Requests never follow redirects. Retry backoff starts at 250 ms,
+doubles to one second, and adds up to 99 ms jitter. A successful pending poll resets the outage budget,
+while retaining the original request identity, timestamp and total operation deadline.
 Underlying operating-system error chains are local and are not serialized.
 
 Extend errgen with per-operation cause-by-name lookups and a dispatcher that rebuilds the concrete
@@ -213,6 +222,12 @@ Dial, TLS, request, and backoff time all count; a blackholed TCP connection cann
 On exhaustion, return the attempted operation's `Unavailable` cause. A lost mutation response retains
 its original ID throughout retry; no fallback ever executes it against local files.
 If the server reports `OutcomeUnknown`, do not transform it into `Unavailable` or retry execution.
+
+M1 limitation: retry identity is stable within one MCP call. A subsequent MCP call creates a new ID;
+there is no durable client outbox yet. After `Unavailable` or `OutcomeUnknown`, the caller must check the
+effect with the operation's read tool before resending a mutation, because a new call may repeat a write.
+The unavailable reply includes this instruction and the original ID. Some operations have no sufficient
+read-side reconciliation, so such calls need human investigation rather than automatic replacement work.
 
 ### 2.5 Long polling and command delivery
 

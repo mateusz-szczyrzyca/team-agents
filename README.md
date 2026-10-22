@@ -77,6 +77,27 @@ you ── agent run claude-1 "task" ──► systemd --user unit  agent-<task>
 
 ## Concepts
 
+### Multi-instance development preview
+
+The approved [multi-instance design](docs/multi-instance.md) is being implemented in milestones.
+The hub dispatcher, authentication primitives and MCP forwarding client are available for isolated tests;
+instance registration, node supervision and cross-instance task routing are still under development.
+Keep production installations in single-instance mode until these milestones are complete.
+
+With `LEAD_INSTANCE` set, `agentbus serve` forwards tool calls to that HTTP origin and never reads or writes
+local bus files. Set `INSTANCE_NAME` to the unique local instance name. `HUB_AUTH=tailscale` is the default;
+`HUB_AUTH=token` requires HTTPS, `HUB_TOKEN` from `secrets.env`, and `HUB_CERT_FINGERPRINT` containing the
+SHA-256 leaf-certificate fingerprint. The `agent` runner exports these settings from `agents.conf`.
+Redirects are refused so credentials cannot be forwarded to a different endpoint.
+
+`HUB_RETRY_SECONDS` defaults to 30 (allowed range 1–600). This bounds a contiguous outage, including connection,
+TLS and response time. Retries retain the original request ID; an `OutcomeUnknown` response is final and must
+be reconciled before submitting replacement work. Long polls reattach to their original execution with a
+630-second total cap. Requests are limited to 1 MiB and responses to 64 MiB. Transport exhaustion becomes the
+attempted operation's typed `Unavailable` error (exit class 11). Without `LEAD_INSTANCE` or `HUB_LISTEN`, the
+existing local-file mode is unchanged. The human approved a local Unix socket for lead-local dispatch. Until that transport is implemented,
+setting `HUB_LISTEN` makes lead-local `serve` use local files and log `lead_local_fallback` as a warning.
+
 ### Tasks and runs
 
 `agent run <agent> "task"` (inside a git repository) creates a task: a worktree under `~/agents/worktrees`, a
