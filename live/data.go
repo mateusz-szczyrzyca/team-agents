@@ -138,6 +138,106 @@ type Snapshot struct {
 	Invs   []*Investigation     // investigations sorted by ID
 	Msgs   []Message            // tail of messages.jsonl
 	Teams  map[string]*TeamInfo // teams by ID
+	// Instances are the instances the hub records in bus/instances.json, sorted by name; empty on a
+	// single-instance installation.
+	Instances []InstanceInfo
+}
+
+// InstanceInfo is one instance as the hub recorded it. The panel shows only what the operator needs to decide
+// where work can run; the file is written by agentbus and read here without importing it.
+type InstanceInfo struct {
+	Name         string    // registry key, the instance name
+	Active       bool      // the lease had not expired when the snapshot was taken
+	ExpiresAt    time.Time // lease expiry, UTC; zero when the record holds no readable expiry
+	OS           string    // detected operating system; empty when the node reported none
+	Arch         string    // detected cpu architecture; empty when the node reported none
+	SlotsFree    int       // idle runner slots reported by the node
+	SlotsTotal   int       // total runner slots reported by the node
+	Tasks        int       // task summaries the node reported (its active work)
+	Capabilities []string  // declared capabilities, in the order the node reported them
+}
+
+// instanceFile is the part of bus/instances.json (agentbus registry state) that the panel reads.
+type instanceFile struct {
+	Instances map[string]instanceRecord `json:"instances"` // by instance name; expired records are kept too
+}
+
+// instanceRecord is one registry entry: the lease and the last accepted manifest.
+type instanceRecord struct {
+	Lease    instanceLease    `json:"lease"`    // current or last lease
+	Manifest instanceManifest `json:"manifest"` // last accepted node report
+}
+
+// instanceLease carries the lease expiry in the storage layout ("2006-01-02 15:04:05", UTC).
+type instanceLease struct {
+	ExpiresAt string `json:"expires_at"` // expiry time, see parseInstanceTime
+}
+
+// instanceManifest is the node report used by the panel.
+type instanceManifest struct {
+	Detected     instanceDetected     `json:"detected"`      // platform
+	Declared     []string             `json:"declared"`      // declared capabilities
+	CurrentState instanceCurrentState `json:"current_state"` // capacity and active work
+}
+
+// instanceDetected is the platform the node reported.
+type instanceDetected struct {
+	OS   string `json:"os"`   // operating system family
+	Arch string `json:"arch"` // cpu architecture
+}
+
+// instanceCurrentState is the capacity and work the node reported.
+type instanceCurrentState struct {
+	Slots instanceSlots              `json:"slots"` // runner slots
+	Tasks map[string]json.RawMessage `json:"tasks"` // one entry per active task; contents not needed here
+}
+
+// instanceSlots counts runner slots.
+type instanceSlots struct {
+	Total int `json:"total"` // all runner slots of the node
+	Free  int `json:"free"`  // idle runner slots
+}
+
+// loadInstances reads bus/instances.json. A missing file means no instance is recorded (not an error); an
+// unreadable or undecodable file is logged once and yields no instances. now decides which leases are active.
+func loadInstances(busDir string, now time.Time) []InstanceInfo {
+	path := filepath.Join(busDir, "instances.json")
+	data, err := os.ReadFile(path) //nolint:gosec // path is a registry file under AGENTS_HOME, which only the operator controls
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		warnOnce("read:"+path, LogBusStateUnreadable, storageErr(err, "cannot read %s", path), "file", path)
+		return nil
+	}
+	var f instanceFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		warnOnce("decode:"+path, LogBusStateUnreadable, valueWrap(err, "cannot decode %s", path), "file", path)
+		return nil
+	}
+	out := make([]InstanceInfo, 0, len(f.Instances))
+	for name, rec := range f.Instances {
+		expires, perr := parseInstanceTime(rec.Lease.ExpiresAt)
+		if perr != nil {
+			warnOnce("expiry:"+name, LogBusStateUnreadable, valueWrap(perr, "instance %s has no readable lease expiry", name), "instance", name)
+		}
+		out = append(out, InstanceInfo{
+			Name: name, Active: perr == nil && now.Before(expires), ExpiresAt: expires,
+			OS: rec.Manifest.Detected.OS, Arch: rec.Manifest.Detected.Arch,
+			SlotsFree: rec.Manifest.CurrentState.Slots.Free, SlotsTotal: rec.Manifest.CurrentState.Slots.Total,
+			Tasks: len(rec.Manifest.CurrentState.Tasks), Capabilities: rec.Manifest.Declared,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// parseInstanceTime reads a lease expiry in the storage layout, or in RFC 3339 (both are written by agentbus).
+func parseInstanceTime(s string) (time.Time, error) {
+	if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+		return t.UTC(), nil
+	}
+	return time.Parse(time.RFC3339, s)
 }
 
 // activeStatuses are task statuses of unfinished tasks (shown regardless of acknowledgement).
@@ -419,6 +519,7 @@ func loadSnapshot(home, busDir string) *Snapshot {
 	if st.Agents != nil {
 		s.Agents = st.Agents
 	}
+	s.Instances = loadInstances(busDir, s.At)
 	s.Teams = st.Teams
 	if s.Teams == nil {
 		s.Teams = map[string]*TeamInfo{}

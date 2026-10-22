@@ -386,13 +386,54 @@ func (m *model) layout() {
 	if rows == 0 {
 		rows = 1
 	}
-	used := 1 + 1 + rows + 1 + 1 + 7 + 1 + 1 // header, table (header+rows), tabs, separator, events, help line
+	used := 1 + 1 + rows + len(instanceLines(m.snap.Instances, m.width)) + 1 + 1 + 7 + 1 + 1 // header, table (header+rows), instances, tabs, separator, events, help line
 	h := m.height - used
 	if h < 3 {
 		h = 3
 	}
 	m.vp.Width, m.vp.Height = m.width, h
 	m.feed.Width, m.feed.Height = m.width, m.height-2
+}
+
+// maxInstanceRows bounds the instance table; further instances are summarized in one line.
+const maxInstanceRows = 4
+
+// instanceLines renders the instances recorded by the hub: a header and one row per instance, at most
+// maxInstanceRows. It returns nil when no instance is recorded, so a single-instance installation shows nothing.
+// Rows of expired leases are dimmed; the platform and the capability list are shown as recorded.
+func instanceLines(instances []InstanceInfo, width int) []string {
+	if len(instances) == 0 {
+		return nil
+	}
+	lines := []string{stDim.Render(lipgloss.NewStyle().MaxWidth(width).Render(
+		fmt.Sprintf("%-16s %-8s %-14s %-7s %-5s %s", "INSTANCE", "LEASE", "PLATFORM", "SLOTS", "TASKS", "CAPABILITIES")))}
+	for i, in := range instances {
+		if i == maxInstanceRows {
+			lines = append(lines, stDim.Render(fmt.Sprintf("  … %d more instances", len(instances)-maxInstanceRows)))
+			break
+		}
+		lease := "active"
+		if !in.Active {
+			lease = "expired"
+		}
+		platform := "unknown"
+		if in.OS != "" {
+			platform = in.OS + "/" + in.Arch
+		}
+		caps := strings.Join(in.Capabilities, ", ")
+		if caps == "" {
+			caps = "-"
+		}
+		row := fmt.Sprintf("%-16s %-8s %-14s %-7s %-5d %s", in.Name, lease, platform,
+			fmt.Sprintf("%d/%d", in.SlotsFree, in.SlotsTotal), in.Tasks, caps)
+		row = lipgloss.NewStyle().MaxWidth(width).Render(row)
+		if in.Active {
+			lines = append(lines, "  "+row)
+		} else {
+			lines = append(lines, stDim.Render("  "+row))
+		}
+	}
+	return lines
 }
 
 // readFile returns a file's content ("" when it does not exist; other read errors are logged once).
@@ -717,6 +758,10 @@ func (m model) View() string {
 		b.WriteString(stDim.Render("  (no tasks)") + "\n")
 	} else if len(tasks) > maxTableRw {
 		b.WriteString(stDim.Render(fmt.Sprintf("  … %d tasks in total", len(tasks))) + "\n")
+	}
+
+	for _, l := range instanceLines(m.snap.Instances, m.width-2) {
+		b.WriteString(lipgloss.NewStyle().MaxWidth(m.width).Render(l) + "\n")
 	}
 
 	var tb []string
