@@ -11,13 +11,14 @@ import (
 
 // InstanceView is one instance as seen by capability discovery and board claims.
 type InstanceView struct {
-	Name     string       // instance name, unique within the installation
-	OS       string       // operating system family reported by the instance
-	Arch     string       // cpu architecture reported by the instance
-	Provided []Capability // capabilities the instance offers: declared ones plus its operating system, sorted
-	Free     int          // currently idle runner slots
-	Total    int          // total runner slots; zero when the instance does not report slots
-	Agents   []string     // agents on the instance with their reported status, e.g. "codex-1 (busy)"
+	Name      string       // instance name, unique within the installation
+	OS        string       // operating system family reported by the instance
+	Arch      string       // cpu architecture reported by the instance
+	Provided  []Capability // capabilities the instance offers: declared ones plus its operating system, sorted
+	Free      int          // currently idle runner slots
+	Total     int          // total runner slots; zero when the instance does not report slots
+	Agents    []string     // agents on the instance with their reported status, e.g. "codex-1 (busy)"
+	Discovery bool         // true for the hub's own instance without any registration: listed for discovery only, never routable capacity
 }
 
 // Provides reports whether the instance offers capability c.
@@ -163,6 +164,16 @@ func manifestView(name string, m InstanceManifest) InstanceView {
 		Free: m.CurrentState.Slots.Free, Total: m.CurrentState.Slots.Total, Agents: agents}
 }
 
+// hasRecord reports whether the registry holds any record of the instance, live or expired.
+func (g *HubInstanceRegistry) hasRecord(name string) (bool, *StorageError) {
+	found := false
+	serr := g.withState(func(state *hubInstanceState) *StorageError {
+		found = state.Instances[name] != nil
+		return nil
+	})
+	return found, serr
+}
+
 // liveViews reads the registry and returns every instance whose lease has not expired, sorted by name.
 func (g *HubInstanceRegistry) liveViews() ([]InstanceView, *StorageError) {
 	var views []InstanceView
@@ -184,10 +195,12 @@ func (g *HubInstanceRegistry) liveViews() ([]InstanceView, *StorageError) {
 // itself, the lead's own instance (the hub does not register its own lease).
 type registryDirectory struct {
 	registry *HubInstanceRegistry // the lease registry shared with the instance endpoints
-	local    *InstanceView        // the lead's own instance, nil when the hub has none; a registry entry with its name wins
+	local    *InstanceView        // the lead's own instance, nil when the hub has none
 }
 
-// Instances returns the live instances of the registry and the lead's own instance.
+// Instances returns the live instances of the registry and the lead's own instance. The local instance is added
+// with Discovery set, and only when the registry has no record of that name at all: a live lease wins, and an
+// expired lease is not replaced by the local view, so commands are never routed on an unconnected instance.
 func (d registryDirectory) Instances() ([]InstanceView, *StorageError) {
 	views, serr := d.registry.liveViews()
 	if serr != nil || d.local == nil {
@@ -198,7 +211,16 @@ func (d registryDirectory) Instances() ([]InstanceView, *StorageError) {
 			return views, nil
 		}
 	}
-	views = append(views, *d.local)
+	known, serr := d.registry.hasRecord(d.local.Name)
+	if serr != nil {
+		return nil, serr
+	}
+	if known {
+		return views, nil
+	}
+	local := *d.local
+	local.Discovery = true
+	views = append(views, local)
 	sort.Slice(views, func(i, j int) bool { return views[i].Name < views[j].Name })
 	return views, nil
 }
@@ -271,7 +293,9 @@ func (s *Server) findCapability(name string) (string, *FindCapabilityError) {
 		}
 		found++
 		slots := "slots not reported"
-		if v.Total > 0 {
+		if v.Discovery {
+			slots = "not connected to the hub, discovery only: not routable"
+		} else if v.Total > 0 {
 			slots = fmt.Sprintf("%d of %d slots free", v.Free, v.Total)
 		}
 		agents := "no agents reported"
