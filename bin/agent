@@ -3047,7 +3047,7 @@ cmd__node_answer() { # id [expected_round] [expected_sha256] — stores answers 
       exit 1
     fi
   fi
-  local tmp; tmp=$(mktemp -t agent.answer.XXXXXX)
+  local tmp; tmp=$(mktemp "$TASKS/$id/answer.tmp.XXXXXX")
   cat > "$tmp"
   validate_answers "$tmp" || { rm -f "$tmp"; echo "not all questions answered in submitted content" >&2; exit 1; }
   mv "$tmp" "$qfile"
