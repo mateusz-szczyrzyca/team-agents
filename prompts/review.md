@@ -64,5 +64,5 @@ Review: <html_url>
 ```
 
 If something important cannot be established and it blocks a reliable review, write questions to
-`{{QUESTIONS_FILE}}` (each starting with `## N. `, with an empty `**Answer:**` line) and end your turn with
+`{{QUESTIONS_FILE}}` (each starting with `## N. `, with a `**Recommended:**` part and an empty `**Verdict:**` line) and end your turn with
 `STATUS: QUESTIONS`.

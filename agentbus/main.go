@@ -686,6 +686,7 @@ func (a toolArgs) flag(k string) bool {
 // toolSchemas maps every tool name to its declared argument types (from the MCP tool definitions).
 func toolSchemas() map[string]map[string]string {
 	defs := append(append(append(toolDefs(), invToolDefs(RoleAgent)...), teamToolDefs(true)...), collabToolDefs(true, TierNormal)...)
+	defs = append(defs, consultToolDefs(true)...)
 	out := map[string]map[string]string{}
 	for _, d := range defs {
 		props := map[string]string{}
@@ -817,6 +818,12 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 		return toolResult(s.teamExclude(a.str("agent"), a.str("reason")))
 	case "board_add":
 		return toolResult(s.boardAddFor(a.str("title"), a.str("details"), a.str("level"), a.str("for")))
+	case "consult_start":
+		return toolResult(s.consultStart(a.str("text"), a.num("minutes")))
+	case "consult_reply":
+		return toolResult(s.consultReply(a.str("id"), a.str("text")))
+	case "consult_results":
+		return toolResult(s.consultResults(a.str("id"), a.flag("wait")))
 	case "board_list":
 		return toolResult(s.boardList())
 	case "board_claim":
@@ -953,6 +960,7 @@ func (s *Server) handle(line []byte) {
 		tools = append(tools, teamToolDefs(s.team != "")...)
 		if s.role != RoleInvestigator {
 			tools = append(tools, collabToolDefs(s.team != "", s.tier)...)
+			tools = append(tools, consultToolDefs(s.team != "")...)
 		}
 		s.reply(req.ID, map[string]any{"tools": tools})
 	case "tools/call":

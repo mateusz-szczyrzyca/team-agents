@@ -806,6 +806,82 @@
    "op": "checkpoint-get",
    "what": "the subcommand checkpoint-get",
    "causes": []
+  },
+  {
+   "type": "ConsultStart",
+   "op": "consult_start",
+   "what": "the MCP tool consult_start",
+   "causes": [
+    {
+     "name": "MissingText",
+     "class": "InvalidArgument",
+     "doc": "the text is missing"
+    },
+    {
+     "name": "BadMinutes",
+     "class": "InvalidArgument",
+     "doc": "the time limit is negative or longer than allowed"
+    },
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    }
+   ]
+  },
+  {
+   "type": "ConsultReply",
+   "op": "consult_reply",
+   "what": "the MCP tool consult_reply",
+   "causes": [
+    {
+     "name": "MissingArgument",
+     "class": "InvalidArgument",
+     "doc": "the ID or the text is missing"
+    },
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    },
+    {
+     "name": "NoSuchConsult",
+     "class": "NotFound",
+     "doc": "no consultation with this ID in the caller's team"
+    },
+    {
+     "name": "NotAsked",
+     "class": "Permission",
+     "doc": "the caller was not asked in this consultation"
+    },
+    {
+     "name": "AlreadyReplied",
+     "class": "Conflict",
+     "doc": "the caller already answered this consultation"
+    }
+   ]
+  },
+  {
+   "type": "ConsultResults",
+   "op": "consult_results",
+   "what": "the MCP tool consult_results",
+   "causes": [
+    {
+     "name": "MissingArgument",
+     "class": "InvalidArgument",
+     "doc": "the ID is missing"
+    },
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    },
+    {
+     "name": "NoSuchConsult",
+     "class": "NotFound",
+     "doc": "no consultation with this ID in the caller's team"
+    }
+   ]
   }
  ]
 }

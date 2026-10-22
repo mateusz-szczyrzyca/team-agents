@@ -51,8 +51,10 @@ type Team struct {
 	NextBID int                    `json:"next_board_id"`   // last board item number issued
 	// BoardRev counts the changes that put claimable work on the board (an item added or returned); see
 	// TeamMember.BoardSeen.
-	BoardRev int    `json:"board_rev,omitempty"`
-	Resumed  string `json:"resumed_from,omitempty"` // previous team ID when created by agent run --resume
+	BoardRev int                 `json:"board_rev,omitempty"`
+	Consults map[string]*Consult `json:"consults,omitempty"`        // the team's consultations (consult_start) by ID ("C1", ...)
+	NextCID  int                 `json:"next_consult_id,omitempty"` // last consultation number issued
+	Resumed  string              `json:"resumed_from,omitempty"`    // previous team ID when created by agent run --resume
 }
 
 // bumpBoard records that claimable work changed: an item was added or returned to the board.

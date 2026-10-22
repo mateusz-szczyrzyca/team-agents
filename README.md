@@ -12,7 +12,7 @@ OpenRouter or DeepInfra) — and adds what they lack when several of them work u
   resource reservations (debug probes, serial ports, test hosts), a persistent per-repository notebook and
   checkpoints.
 - **Human in the loop:** agents never guess; they write questions to a Markdown file, the task pauses, you answer
-  with `agent answer <id>` and the agent resumes in the same session.
+  with `agent answer <id>` (or just save the file marked `**ANSWERED**`) and the agent resumes in the same session.
 - **Model tiers:** cheap "worker" models do mechanical work (searching, listing, summarising output) on behalf of
   stronger "normal" models; expensive "investigator" models are queued for hard problems and PR reviews.
 - **Load spread across providers:** because agents of different CLI types (Claude Code, Codex, Antigravity,
@@ -98,9 +98,42 @@ Every turn of an agent must end with a `STATUS:` line. The runner maps it to the
 ### Questions and answers
 
 The prompts include a set of clarification rules (`prompts/clarification.md`): agents must not guess; if
-anything that affects the result is unclear they write numbered questions to a file and stop. You answer under
-each `**Answer:**` line and run `agent answer <id>` (opens `$EDITOR`, validates, resumes). Agents that ask only in
-their final message get their questions moved into a file automatically.
+anything that affects the result is unclear they write numbered questions to a file and stop. Agents that ask only
+in their final message get their questions moved into a file automatically.
+
+Every question comes with a **recommendation**: the option that makes the task simpler and less likely to go
+wrong, why, and whose recommendation it is. In a team the coordinator first collects the members'
+recommendations (`consult_start`, `AGENT_CONSULT_MIN` minutes, default 5; a member that does not answer in time is
+shown as NO ANSWER, not as agreement) and sends questions that need research to an investigator; where the team
+disagreed, the question shows the other views. A questions file without recommendations goes back to the agent
+once.
+
+```
+## 1. Where should the cache live?
+a) in memory — lost on restart
+b) on disk — survives restarts, needs cleanup
+
+**Recommended:** a) — nothing to clean up, restarts are rare here (coordinator; gemini-1 agrees, codex-1 preferred b)
+
+**Verdict:**
+```
+
+You write your decision after `**Verdict:**`; **`ok` accepts the recommendation** (the agent gets the recommendation
+spelled out). The labels are always these English words, whatever language the questions are in.
+
+Answering:
+
+- **Save the file with `**ANSWERED**` as its last line** — a systemd path unit notices the save and the answers are
+  sent at once. If a verdict is missing you get a notification and nothing is sent; save again when complete.
+  (Saved without the marker = still working on it.)
+- or `agent answer <id>` (opens `$EDITOR`, validates, resumes), or `agent resume <id>` after editing the file.
+
+**VS Code.** When you work on the agents' host through Remote-SSH, a new questions file opens in the VS Code window
+connected to it (the newest one that responds). Set `QUESTIONS_EDITOR=off` to disable it; `VSCODE_SERVER_DIRS`
+lists the server directories searched (default: VS Code, VS Code Insiders, Cursor).
+
+The path unit (`agent-<task>-answers-<round>.path`) does not survive a reboot of the host: after one, answer with
+`agent resume <id>`.
 
 ### Model tiers and providers
 
@@ -358,6 +391,8 @@ Then:
 | `AGENT_HANG_MIN`, `AGENT_HANG_STRIKES` | watchdog (default 30 min, 3 strikes) |
 | `AGENT_IDLE_RUN_SEC`, `AGENT_WAKE_LOOP_MAX`, `AGENT_WAKE_RATE_MAX`, `AGENT_WAKE_LOOP_PAUSE_MIN` | wake-loop guard (default 120 s, 4 idle runs, 30 runs / 10 min, 15 min pause) |
 | `AGENT_QUOTA_PAUSE_MIN` | pause after an exhausted quota when the CLI does not say when it resets (default 30 min) |
+| `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
+| `QUESTIONS_EDITOR`, `VSCODE_SERVER_DIRS` | open new questions files in the connected VS Code window (`vscode`, default) or not (`off`); where VS Code servers live |
 | `AGENT_LANGUAGE` | language of questions and notifications — what only you read (default English) |
 | `REPO_LANGUAGE` | language of commits, PRs, reviews, reports and code comments (default English) |
 | `GIT_NAME_FORMAT`, `GIT_EMAIL`, `GIT_SIGNING_KEY` | identity and signing of the agents' commits (see [Commit identity](#commit-identity)) |
@@ -485,6 +520,7 @@ event stream with bus messages, status changes and periodic reminders.
 | `team_status`, `claim_lead`, `handover_lead` | teams |
 | `quiz_start`, `quiz_answer`, `quiz_results`, `team_exclude` | the qualification quiz |
 | `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item) |
+| `consult_start`, `consult_reply`, `consult_results` | ask the other normal members with a time limit (e.g. for recommendations); silence is shown as NO ANSWER |
 
 ## Files and state
 

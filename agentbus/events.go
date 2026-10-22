@@ -41,6 +41,8 @@ const (
 	KindCoordinatorTakeover    MessageKind = "coordinator_takeover"    // a member replaced a hung coordinator
 	KindCoordinatorHandover    MessageKind = "coordinator_handover"    // the coordinator handed the role over
 	KindQuizQuestion           MessageKind = "quiz_question"           // the coordinator asked the qualification question
+	KindConsultRequest         MessageKind = "consult_request"         // a member asks the others for their answer (consult_start)
+	KindConsultReply           MessageKind = "consult_reply"           // an answer to a consultation (consult_reply)
 	KindExcludedNotice         MessageKind = "excluded_notice"         // tells the excluded member to stop
 	KindMemberExcluded         MessageKind = "member_excluded"         // tells the team that a member was excluded
 	KindBoardItemAdded         MessageKind = "board_item_added"        // a board item was added
@@ -59,7 +61,8 @@ func (k MessageKind) Valid() bool {
 		KindInvestigationRequested, KindInvestigationPromoted, KindInvestigationStarted, KindInvestigationResumed,
 		KindInvestigationWaiting, KindInvestigationRequeued, KindInvestigationFinished, KindDecisionRecorded,
 		KindReviewQueued, KindTeamCreated, KindTeamResumed, KindTeamFinished, KindCoordinatorClaimed,
-		KindCoordinatorTakeover, KindCoordinatorHandover, KindQuizQuestion, KindExcludedNotice, KindMemberExcluded,
+		KindCoordinatorTakeover, KindCoordinatorHandover, KindQuizQuestion, KindConsultRequest, KindConsultReply,
+		KindExcludedNotice, KindMemberExcluded,
 		KindBoardItemAdded, KindBoardResult, KindBoardReturned, KindWorkerRequest, KindCheckpoint, KindStopAll,
 		KindScript:
 		return true
@@ -361,6 +364,40 @@ func (e EventQuizQuestion) Kind() MessageKind { return KindQuizQuestion } // Kin
 func (e EventQuizQuestion) Text() string {
 	return fmt.Sprintf("QUIZ (qualification for this task): %s\nAnswer with the quiz_answer tool within %d s — the answer only, "+
 		"no commentary. You may use tools.", e.Question, e.Seconds)
+}
+
+// EventConsultRequest asks a member for its answer to a consultation.
+type EventConsultRequest struct {
+	ID       string `json:"id"`       // consultation ID ("C<n>")
+	From     string `json:"from"`     // who asks
+	Question string `json:"question"` // what is asked
+	Deadline string `json:"deadline"` // the time limit (HH:MM)
+}
+
+func (e EventConsultRequest) Kind() MessageKind { return KindConsultRequest } // Kind implements busEvent.
+
+// Text implements busEvent.
+func (e EventConsultRequest) Text() string {
+	return fmt.Sprintf("CONSULTATION %s from %s — answer with consult_reply(id=%s, text) by %s:\n%s", e.ID, e.From, e.ID, e.Deadline, e.Question)
+}
+
+// EventConsultReply delivers an answer to the member who started a consultation.
+type EventConsultReply struct {
+	ID     string `json:"id"`             // consultation ID
+	From   string `json:"from"`           // who answered
+	Answer string `json:"answer"`         // the answer
+	Late   bool   `json:"late,omitempty"` // after the time limit
+}
+
+func (e EventConsultReply) Kind() MessageKind { return KindConsultReply } // Kind implements busEvent.
+
+// Text implements busEvent.
+func (e EventConsultReply) Text() string {
+	late := ""
+	if e.Late {
+		late = " (LATE)"
+	}
+	return fmt.Sprintf("CONSULTATION %s — answer from %s%s: %s", e.ID, e.From, late, e.Answer)
 }
 
 // EventExcludedNotice tells an excluded member to stop working on the task.

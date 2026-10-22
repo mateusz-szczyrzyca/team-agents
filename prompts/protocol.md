@@ -129,15 +129,25 @@ The CLARIFICATION RULES (at the end of this message) apply throughout the task, 
    a) <option> — <how it changes the result>
    b) <option> — <how it changes the result>
 
-   **Answer:**
+   **Recommended:** a) — <why: simpler, less likely to go wrong> (<whose recommendation>)
+
+   **Verdict:**
 
    ## 2. <question>
 
-   **Answer:**
+   **Recommended:** <…>
+
+   **Verdict:**
    ```
 
-   Every question starts with `## <number>. ` and has exactly one `**Answer:**` line, which you leave
-   empty. Nothing else goes into the file.
+   Every question starts with `## <number>. ` and has exactly one `**Recommended:**` part and one empty
+   `**Verdict:**` line. Nothing else goes into the file.
+   Every question has a `**Recommended:**` part: the option that makes the task **simpler and less likely to go
+   wrong**, why in one sentence, and whose recommendation it is (yours, a teammate's, investigation #N). If you cannot
+   recommend anything without finding something out, find it out first (or start an investigation). The labels
+   `**Recommended:**` and `**Verdict:**` are written exactly like this, in English, whatever language the questions
+   are in. Leave every `**Verdict:**` empty: the human writes the verdict there (`ok` means "I accept the
+   recommendation").
 2. Ending your turn immediately — no further work, no drafts, no "temporary" solutions. Do not keep
    reservations. Last message: the summary (format below) with `STATUS: QUESTIONS`.
 

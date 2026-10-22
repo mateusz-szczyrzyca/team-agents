@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
-# Test stub for `systemctl --user is-active|stop <unit>...` backed by the PIDs recorded by the systemd-run stub.
+# Test stub for `systemctl --user is-active|stop <unit>...` backed by the PIDs recorded by the systemd-run stub
+# (path units: by the files it records).
 [[ ${1:-} == --user ]] && shift
 cmd=$1; shift
 for u in "$@"; do
   [[ $u == --quiet ]] && continue
+  if [[ $u == *.path ]]; then   # path units recorded by the systemd-run stub
+    case $cmd in
+      is-active) [[ -f $STUB_UNITS/$u ]] && exit 0 || exit 3 ;;
+      stop) rm -f "$STUB_UNITS/$u" ;;
+    esac
+    continue
+  fi
   f=$STUB_UNITS/$u; [[ $u == *.service ]] || f=$STUB_UNITS/$u.service
   p=$(cat "$f.pid" 2>/dev/null || true)
   case $cmd in

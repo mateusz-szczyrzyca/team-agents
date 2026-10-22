@@ -60,10 +60,14 @@ and cannot be established empirically, write your questions to `{{QUESTIONS_FILE
 a) <option> — <how it changes the result>
 b) <option> — <how it changes the result>
 
-**Answer:**
+**Recommended:** a) — <why: simpler, less likely to go wrong> (investigator)
+
+**Verdict:**
 ```
 
-(every question starts with `## <number>. ` and has exactly one empty `**Answer:**` line), release your
+(every question starts with `## <number>. ` and has exactly one `**Recommended:**` part and one empty
+`**Verdict:**` line; the labels stay in English; `ok` as the verdict means the human accepts the
+recommendation), release your
 reservations and end your turn immediately with `STATUS: QUESTIONS`. Your investigator slot stays blocked
 until the human answers — ask only about what really blocks you.
 

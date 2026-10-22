@@ -101,7 +101,12 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
    commit** (`git push -u origin {{BRANCH}}`) — that is your checkpoint and a preview of work in progress.
    Do not open your own PR: the coordinator merges your finished parts into the team's draft PR. After a
    completed stage you may also save `checkpoint(summary, next_steps)`.
-4. Doubts → ask the coordinator (`send_message` + `wait_for_message`). You never write questions for the human.
+4. Doubts → ask the coordinator (`send_message` + `wait_for_message`), each question with the option you
+   recommend and why. You never write questions for the human.
+   **A CONSULTATION message** (someone collects recommendations, e.g. before questions go to the human): answer
+   it right away with `consult_reply(id, text)` — for each question the option you recommend (the one that makes
+   the task simpler and less likely to go wrong) and one sentence why. Disagree openly when you see it
+   differently; that is what it is for.
 5. **Before you go to sleep**, check `board_list`: if there is an item for you, take it. Sleep only when there
    is nothing to do. When the coordinator announces TEAM DONE, end with `STATUS: DONE`.
 
@@ -132,19 +137,36 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
 
 ## 8. Questions for the human (coordinator only)
 
-Write the questions to `{{QUESTIONS_FILE}}` in exactly this format:
+**First collect recommendations.** Put your draft questions, with the options and your own recommendation for
+each, to the other normal members: `consult_start(text, minutes={{CONSULT_MIN}})`, then
+`consult_results(id, wait=true)`. Questions that need something found out (in the code, the documentation, the
+behaviour of a library) go to an investigator (`investigate`) — wait for the result. A member shown as
+NO ANSWER did not agree to anything; do not count it as support.
+
+Then write the questions to `{{QUESTIONS_FILE}}` in exactly this format:
 
 ```
 # Questions — {{TASK_ID}} (round {{ROUND}})
 
 ## 1. <a short, specific question>
 a) <option> — <how it changes the result>
+b) <option> — <how it changes the result>
 
-**Answer:**
+**Recommended:** a) — <why: simpler, less likely to go wrong> (<whose: you, gemini-1, codex-1, investigation #3>)
+Other views: <who preferred what and why — only where the team disagreed>
+
+**Verdict:**
 ```
 
-(every question starts with `## <number>. ` and has one empty `**Answer:**` line), tell the team that you
-are waiting for the human, and end your turn with `STATUS: QUESTIONS`.
+(every question starts with `## <number>. ` and has one `**Recommended:**` part and one empty `**Verdict:**`
+line), tell the team that you are waiting for the human, and end your turn with `STATUS: QUESTIONS`.
+
+Every question has a `**Recommended:**` part: the option that makes the task **simpler and less likely to go
+wrong**, why in one sentence, and whose recommendation it is (yours, a teammate's, investigation #N). If you cannot
+recommend anything without finding something out, find it out first (or start an investigation). The labels
+`**Recommended:**` and `**Verdict:**` are written exactly like this, in English, whatever language the questions
+are in. Leave every `**Verdict:**` empty: the human writes the verdict there (`ok` means "I accept the
+recommendation").
 
 ## 9. The last message of every turn
 

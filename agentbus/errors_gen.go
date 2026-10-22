@@ -1647,3 +1647,103 @@ func (c CmdCheckpointGetCause) info() causeInfo { return cmdCheckpointGetCauses[
 
 // String returns the cause name.
 func (c CmdCheckpointGetCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- consult_start
+
+// ConsultStartCause is a reason why the MCP tool consult_start failed.
+type ConsultStartCause int
+
+const (
+	ConsultStartMissingText ConsultStartCause = iota // the text is missing [InvalidArgument]
+	ConsultStartBadMinutes                           // the time limit is negative or longer than allowed [InvalidArgument]
+	ConsultStartNotInTeam                            // the caller is not in a team [NotInTeam]
+	ConsultStartStorage                              // the shared state or a file could not be read or written [Storage]
+)
+
+// ConsultStartError is the error of the MCP tool consult_start.
+type ConsultStartError = OpError[ConsultStartCause]
+
+// consultStartCauses describes the ConsultStartCause values (same order as the constants).
+var consultStartCauses = [...]causeInfo{
+	{"MissingText", ClassInvalidArgument},
+	{"BadMinutes", ClassInvalidArgument},
+	{"NotInTeam", ClassNotInTeam},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (ConsultStartCause) op() string { return "consult_start" }
+
+// info implements opCause.
+func (c ConsultStartCause) info() causeInfo { return consultStartCauses[c] }
+
+// String returns the cause name.
+func (c ConsultStartCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- consult_reply
+
+// ConsultReplyCause is a reason why the MCP tool consult_reply failed.
+type ConsultReplyCause int
+
+const (
+	ConsultReplyMissingArgument ConsultReplyCause = iota // the ID or the text is missing [InvalidArgument]
+	ConsultReplyNotInTeam                                // the caller is not in a team [NotInTeam]
+	ConsultReplyNoSuchConsult                            // no consultation with this ID in the caller's team [NotFound]
+	ConsultReplyNotAsked                                 // the caller was not asked in this consultation [Permission]
+	ConsultReplyAlreadyReplied                           // the caller already answered this consultation [Conflict]
+	ConsultReplyStorage                                  // the shared state or a file could not be read or written [Storage]
+)
+
+// ConsultReplyError is the error of the MCP tool consult_reply.
+type ConsultReplyError = OpError[ConsultReplyCause]
+
+// consultReplyCauses describes the ConsultReplyCause values (same order as the constants).
+var consultReplyCauses = [...]causeInfo{
+	{"MissingArgument", ClassInvalidArgument},
+	{"NotInTeam", ClassNotInTeam},
+	{"NoSuchConsult", ClassNotFound},
+	{"NotAsked", ClassPermission},
+	{"AlreadyReplied", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (ConsultReplyCause) op() string { return "consult_reply" }
+
+// info implements opCause.
+func (c ConsultReplyCause) info() causeInfo { return consultReplyCauses[c] }
+
+// String returns the cause name.
+func (c ConsultReplyCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- consult_results
+
+// ConsultResultsCause is a reason why the MCP tool consult_results failed.
+type ConsultResultsCause int
+
+const (
+	ConsultResultsMissingArgument ConsultResultsCause = iota // the ID is missing [InvalidArgument]
+	ConsultResultsNotInTeam                                  // the caller is not in a team [NotInTeam]
+	ConsultResultsNoSuchConsult                              // no consultation with this ID in the caller's team [NotFound]
+	ConsultResultsStorage                                    // the shared state or a file could not be read or written [Storage]
+)
+
+// ConsultResultsError is the error of the MCP tool consult_results.
+type ConsultResultsError = OpError[ConsultResultsCause]
+
+// consultResultsCauses describes the ConsultResultsCause values (same order as the constants).
+var consultResultsCauses = [...]causeInfo{
+	{"MissingArgument", ClassInvalidArgument},
+	{"NotInTeam", ClassNotInTeam},
+	{"NoSuchConsult", ClassNotFound},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (ConsultResultsCause) op() string { return "consult_results" }
+
+// info implements opCause.
+func (c ConsultResultsCause) info() causeInfo { return consultResultsCauses[c] }
+
+// String returns the cause name.
+func (c ConsultResultsCause) String() string { return c.info().name }

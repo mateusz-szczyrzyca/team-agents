@@ -121,6 +121,12 @@ RUN_PATH="${RUN_PATH:-$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin}"
 # the rest = body). Empty = notifications are only written to NOTIFY_DIR. Legacy configs that set
 # NOTIFY_SCRIPT (run inside NOTIFY_DIR with the file name) keep working.
 NOTIFY_CMD="${NOTIFY_CMD:-}"
+# Questions for the human: a new questions file opens in the VS Code window connected to this host, if there is one
+# (vscode | off); the VS Code server directories searched for its remote CLI; how long the coordinator waits for the
+# members' recommendations before it asks the human.
+QUESTIONS_EDITOR="${QUESTIONS_EDITOR:-vscode}"
+VSCODE_SERVER_DIRS="${VSCODE_SERVER_DIRS:-$HOME/.vscode-server $HOME/.vscode-server-insiders $HOME/.cursor-server}"
+AGENT_CONSULT_MIN="${AGENT_CONSULT_MIN:-5}"
 NOTIFY_DIR="${NOTIFY_DIR:-$AGENTS_HOME/notifications}"
 NOTIFY_SCRIPT="${NOTIFY_SCRIPT:-}"
 NOTIFY_MAX_CHARS="${NOTIFY_MAX_CHARS:-1500}"
@@ -254,29 +260,156 @@ count_questions() { # file → number of "## N." questions (0 for a missing file
   grep -cE '^## [0-9]+\.' "$1" || (($? == 1))   # grep -c exits 1 when it counts 0
 }
 
-validate_answers() { # file → 0 when every question has a non-empty answer
+# The labels of a questions file. They are fixed English words whatever language the questions are in; spaces
+# inside the asterisks are tolerated. "Answer" and "Odpowiedź" are the verdict labels of older versions.
+Q_VERDICT_RE='^[*][*][[:space:]]*(Verdict|Answer|Odpowiedź)[[:space:]]*:[[:space:]]*[*][*]'
+Q_RECOMMENDED_RE='^[*][*][[:space:]]*Recommended[[:space:]]*:[[:space:]]*[*][*]'
+Q_LABEL_RE='^[*][*][[:space:]]*[[:alpha:]][[:alpha:] ]*:[[:space:]]*[*][*]'
+Q_ANSWERED_RE='^[*][*][[:space:]]*ANSWERED[[:space:]]*[*][*][[:space:]]*$'
+
+validate_answers() { # file → 0 when every question has a non-empty verdict
   [[ -s $1 ]] || { echo "questions file missing: $1" >&2; return 1; }
-  awk '
+  awk -v ver="$Q_VERDICT_RE" -v lab="$Q_LABEL_RE" -v done_re="$Q_ANSWERED_RE" '
     function check() {
       if (!inq) return
-      if (!mark) { bad++; printf "  question %s: missing **Answer:** line\n", num > "/dev/stderr" }
-      else if (ans ~ /^[[:space:]]*$/) { bad++; printf "  question %s: no answer\n", num > "/dev/stderr" }
+      if (!mark) { bad++; printf "  question %s: missing **Verdict:** line\n", num > "/dev/stderr" }
+      else if (ans ~ /^[[:space:]]*$/) { bad++; printf "  question %s: no verdict\n", num > "/dev/stderr" }
     }
     /^## [0-9]+\./ {
-      check(); inq = 1; mark = 0; ans = ""; q++
+      check(); inq = 1; mark = 0; inv = 0; ans = ""; q++
       num = $2; sub(/\.$/, "", num); next
     }
-    /^\*\*(Answer|Odpowiedź):\*\*/ {   # "Odpowiedź" = the Polish marker used by older versions
-      if (inq) { mark = 1; line = $0; sub(/^\*\*(Answer|Odpowiedź):\*\*/, "", line); ans = ans line }
-      next
-    }
-    { if (inq && mark) ans = ans $0 }
+    $0 ~ done_re { next }
+    $0 ~ ver { if (inq) { mark = 1; inv = 1; line = $0; sub(ver, "", line); ans = ans line }; next }
+    $0 ~ lab { inv = 0; next }   # another label (e.g. **Recommended:**) is not part of the verdict
+    { if (inq && inv) ans = ans $0 }
     END {
       check()
       if (q == 0) { print "  no questions in the \"## N. ...\" format" > "/dev/stderr"; exit 1 }
       exit (bad > 0)
     }
   ' "$1"
+}
+
+# questions_missing_recommendations file — the numbers of the questions without a non-empty **Recommended:** part
+questions_missing_recommendations() {
+  awk -v rec="$Q_RECOMMENDED_RE" -v lab="$Q_LABEL_RE" '
+    function check() { if (inq && txt ~ /^[[:space:]]*$/) out = out (out == "" ? "" : " ") num }
+    /^## [0-9]+\./ { check(); inq = 1; txt = ""; inr = 0; num = $2; sub(/\.$/, "", num); next }
+    $0 ~ rec { inr = 1; line = $0; sub(rec, "", line); txt = txt line; next }
+    $0 ~ lab { inr = 0; next }
+    { if (inr) txt = txt $0 }
+    END { check(); printf "%s", out }
+  ' "$1"
+}
+
+# expand_answers file — the answered questions file as the agent gets it: a verdict that is exactly "ok" becomes
+# the recommendation it accepts; the ANSWERED marker and the answering instructions (questions_note) are dropped.
+expand_answers() {
+  awk -v ver="$Q_VERDICT_RE" -v rec="$Q_RECOMMENDED_RE" -v lab="$Q_LABEL_RE" -v done_re="$Q_ANSWERED_RE" '
+    function trim(x) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", x); return x }
+    function accepted() { return "**Verdict:** ok — the human accepts the recommendation: " trim(rect) }
+    /^## [0-9]+\./ { rect = ""; inr = 0; pend = 0; print; next }
+    $0 ~ done_re { next }
+    /^> Answer every question after / { skip_blank = 1; next }
+    skip_blank && /^[[:space:]]*$/ { skip_blank = 0; next }
+    { skip_blank = 0 }
+    $0 ~ rec { inr = 1; line = $0; sub(rec, "", line); rect = line; print; next }
+    $0 ~ ver {
+      inr = 0; line = $0; sub(ver, "", line)
+      if (tolower(trim(line)) == "ok") { print accepted(); next }
+      pend = (trim(line) == ""); print; next
+    }
+    $0 ~ lab { inr = 0; pend = 0; print; next }
+    {
+      if (inr && trim($0) != "") rect = rect " " $0
+      if (pend && trim($0) != "") { pend = 0; if (tolower(trim($0)) == "ok") { print accepted(); next } }
+      print
+    }
+  ' "$1"
+}
+
+# answers_marked file — 0 when the last non-empty line is the **ANSWERED** marker
+answers_marked() {
+  awk -v done_re="$Q_ANSWERED_RE" 'NF { last = $0 } END { exit !(last ~ done_re) }' "$1"
+}
+
+# questions_note id file — puts the answering instructions under the title of a new questions file (once)
+questions_note() {
+  local id=$1 f=$2 note tmp
+  note="> Answer every question after **Verdict:** — \`ok\` accepts the recommendation. When you are done, put **ANSWERED** on the last line and save: the answers are sent at once (or run \`agent resume $id\`)."
+  grep -qF -- '**ANSWERED** on the last line' "$f" && return 0
+  tmp=$(mktemp)
+  awk -v note="$note" 'NR == 1 && /^# / { print; print ""; print note; next } NR == 1 { print note; print "" } { print }' "$f" > "$tmp"
+  cat "$tmp" > "$f"     # rewrite in place: the file keeps its inode
+  rm -f "$tmp"
+}
+
+# file_mtime file — the modification time with sub-second precision
+file_mtime() {
+  # GNU stat first; BSD/macOS stat rejects -c (that error is expected) and the BSD form is used instead
+  stat -c %.9Y "$1" 2>/dev/null || stat -f %Fm "$1"
+}
+
+# questions_ready id file — a questions file now waits for the human: answering instructions, the time it was asked,
+# the watch that sends the answers when the file is saved marked ANSWERED, and the editor
+questions_ready() {
+  local id=$1 f=$2
+  questions_note "$id" "$f"
+  meta_set "$id" QUESTIONS_MTIME "$(file_mtime "$f")"
+  watch_answers "$id" "$f"
+  open_in_editor "$id" "$f"
+}
+
+# watch_answers id file — a systemd path unit runs `agent _answers_saved <id> <round>` whenever the file is saved
+watch_answers() {
+  local id=$1 f=$2 round
+  round=${f##*/questions-}; round=${round%.md}
+  systemd-run --user --quiet --collect --unit="agent-$id-answers-$round" \
+    --path-property=PathModified="$f" \
+    --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" \
+    --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+    "$SELF" _answers_saved "$id" "$round" 3>&- 7>&- 8>&- 9>&- \
+    || log_error answers_watch_failed "task=$id" "file=$f"   # answering still works: agent resume <id>
+}
+
+# stop_answers_watch id round — removes the path unit of a questions file (if it still exists)
+stop_answers_watch() {
+  local unit="agent-$1-answers-$2.path"
+  # a query: "inactive" and "no such unit" both mean there is nothing to stop
+  systemctl --user is-active --quiet "$unit" || return 0
+  try answers_watch_stop_failed systemctl --user stop "$unit"
+}
+
+# open_in_editor id file — opens a questions file in the VS Code window connected to this host, if there is one.
+# A connected window leaves a socket (vscode-ipc-*.sock) and its server a remote CLI; sockets of closed windows stay
+# behind and refuse connections, so the newest one that works is used.
+open_in_editor() {
+  [[ $QUESTIONS_EDITOR == vscode ]] || return 0
+  local id=$1 f=$2 cli="" c d s out last=""
+  for d in $VSCODE_SERVER_DIRS; do
+    for c in "$d"/cli/servers/*/server/bin/remote-cli/* "$d"/bin/*/bin/remote-cli/*; do
+      [[ -f $c && -x $c ]] || continue
+      if [[ -z $cli || $c -nt $cli ]]; then cli=$c; fi
+    done
+  done
+  [[ -n $cli ]] || return 0      # no VS Code server on this host
+  local socks=()
+  for s in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"/vscode-ipc-*.sock /tmp/vscode-ipc-*.sock; do
+    if [[ -S $s && -O $s ]]; then socks+=("$s"); fi
+  done
+  if ((${#socks[@]} == 0)); then
+    log_info editor_not_connected "task=$id"
+    return 0
+  fi
+  while IFS= read -r s; do
+    if out=$(VSCODE_IPC_HOOK_CLI=$s timeout 10 "$cli" "$f" 2>&1); then
+      log_info editor_opened "task=$id" "file=$f" "socket=$s"
+      return 0
+    fi
+    last=$out
+  done < <(for s in "${socks[@]}"; do printf '%s %s\n' "$(file_mtime "$s")" "$s"; done | sort -rn | cut -d' ' -f2-)
+  log_info editor_open_failed "task=$id" "file=$f" "error=$last"
 }
 
 # ------------------------------------------------------------------ prompts
@@ -756,7 +889,7 @@ build_prompt() { # id mode qfile next_round
     [REPO_LANGUAGE]="$REPO_LANGUAGE" [COMMIT_TRAILERS]="$(commit_trailers "$id")"
     [GIT_NAME]="${GIT_NAME_FORMAT//%a/$AGENT}" [ATTRIBUTION]="\`$AGENT\` ($TYPE${MODEL:+, model $MODEL})"
     [PRIVILEGES]="$(privileges_text)" [AGENTS_MD]="$(agents_md_text)"
-    [QUESTIONS_FILE]=$qfile [ROUND]=$next_round
+    [QUESTIONS_FILE]=$qfile [ROUND]=$next_round [CONSULT_MIN]=$AGENT_CONSULT_MIN
     [REPORT_FILE]=".agents/reports/$id.md"
     [RESULT_FILE]="$TASKS/$id/result.md"
     [INV_ID]=${INV_ID:-} [PARENT_TASK]=${PARENT_TASK:-} [PARENT_WORKTREE]=${PARENT_WORKTREE:-}
@@ -815,6 +948,13 @@ build_prompt() { # id mode qfile next_round
     printf '\n'
     any=1
   fi
+  if [[ -n ${QBOUNCE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    R[QUESTIONS_WITHOUT_REC]=$QBOUNCE_PENDING
+    render "$PROMPTS/questions-bounce.md"
+    printf '\n'
+    any=1
+  fi
   if [[ -n ${WAKE_PENDING:-} ]]; then
     ((any)) && printf '\n---\n\n'
     render "$PROMPTS/team-wake.md"
@@ -828,7 +968,7 @@ build_prompt() { # id mode qfile next_round
     R[ANSWERED_FILE]="$TASKS/$id/questions-$ANSWERS_PENDING.md"
     render "$PROMPTS/resume.md"
     printf '\n---\n\n'
-    cat "$TASKS/$id/questions-$ANSWERS_PENDING.md"
+    expand_answers "$TASKS/$id/questions-$ANSWERS_PENDING.md"
     printf '\n'
     any=1
   fi
@@ -1377,7 +1517,7 @@ questions_from_nostatus() { # message id round — questions file used when the 
   printf '_The agent ended its turn without a STATUS line — most likely it stopped halfway or is waiting for permission. Its last message is below._\n\n'
   printf '## 1. What should the agent do next? (e.g. "continue as planned", "finish", or a specific instruction)\n\n'
   sed 's/^/> /' <<< "$1"
-  printf '\n**Answer:**\n'
+  printf '\n**Verdict:**\n'
 }
 
 questions_from_final() { # last-message-text id round → questions file on stdout (when the agent did not write the file)
@@ -1398,14 +1538,14 @@ questions_from_final() { # last-message-text id round → questions file on stdo
       printf "_The agent asked these in its last message instead of the file — the script moved them here._\n\n"
       if (n == 0) {
         gsub(/\n+$/, "", pre)
-        printf "## 1. Answer the questions from the agent\n\n%s\n\n**Answer:**\n", pre
+        printf "## 1. Answer the questions from the agent\n\n%s\n\n**Verdict:**\n", pre
         exit
       }
       for (i = 1; i <= n; i++) {
         b = body[i]; gsub(/\n+$/, "", b)
         printf "## %d. %s\n", i, q[i]
         if (b != "") printf "%s\n", b
-        printf "\n**Answer:**\n\n"
+        printf "\n**Verdict:**\n\n"
       }
     }'
 }
@@ -1492,6 +1632,7 @@ cmd__runner() {
   meta_set "$id" INV_PENDING_DELIVERY ""
   meta_set "$id" WAKE_PENDING ""
   meta_set "$id" BOUNCE_PENDING ""
+  meta_set "$id" QBOUNCE_PENDING ""
   if [[ -n ${TEAM:-} ]]; then
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state active >/dev/null
   fi
@@ -1529,7 +1670,7 @@ cmd__runner() {
   done
   printf '%s\n' "$FINAL" > "$dir/final.md"
 
-  local status note="" pending="" member_q=0 member_ns=0 fst pause_secs=0 pause_reason=""
+  local status note="" pending="" member_q=0 member_ns=0 fst pause_secs=0 pause_reason="" qgen=0 norec=""
   [[ ${KIND:-worker} == worker ]] && pending=$(bus inv-pending --dir "$BUS_DIR" --task "$id")
   fst=$(final_status "$FINAL")
   local is_member=0
@@ -1541,7 +1682,7 @@ cmd__runner() {
     if ((is_member)); then
       member_ns=1
     elif [[ ${KIND:-worker} != helper ]]; then
-      questions_from_nostatus "$FINAL" "$id" "$next_round" > "$qfile"
+      questions_from_nostatus "$FINAL" "$id" "$next_round" > "$qfile"; qgen=1
       act "$id" info "turn without STATUS — the last message was passed to you as a question ($qfile)"
     fi
   fi
@@ -1551,7 +1692,7 @@ cmd__runner() {
     if ((is_member)); then
       member_q=1   # team member → questions go to the coordinator (below)
     elif [[ ${KIND:-worker} != helper ]]; then
-      questions_from_final "$FINAL" "$id" "$next_round" > "$qfile"
+      questions_from_final "$FINAL" "$id" "$next_round" > "$qfile"; qgen=1
       act "$id" info "questions from the last message moved to $qfile"
     fi
   fi
@@ -1578,8 +1719,16 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     status=paused; pause_reason=quota
     note="the provider's quota or usage limit is exhausted — resumes at $(date -d "@$(( $(date +%s) + pause_secs ))" '+%H:%M')"
   elif [[ -s $qfile ]]; then
-    meta_set "$id" ROUND "$next_round"
-    status=waiting
+    # every question the agent wrote must carry a recommendation; without one it gets the file back once
+    if ((qgen == 0)) && [[ $(task_field "$id" QUESTIONS_BOUNCED) != "$next_round" ]]; then
+      norec=$(questions_missing_recommendations "$qfile")
+    fi
+    if [[ -n $norec ]]; then
+      status=qbounce
+    else
+      meta_set "$id" ROUND "$next_round"
+      status=waiting
+    fi
   elif [[ -n $pending ]]; then
     status=investigating
   elif [[ -n ${TEAM:-} ]] && { [[ $fst == EXCLUDED ]] || \
@@ -1625,6 +1774,17 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     status=paused; pause_reason=wake_loop
     note="woken again and again without anything to do (wake-loop guard) — paused until $(date -d "@$(( $(date +%s) + pause_secs ))" '+%H:%M')"
   fi
+  # questions without recommendations go back to the agent once (the same questions file, the same round)
+  if [[ $status == qbounce ]]; then
+    meta_set "$id" QUESTIONS_BOUNCED "$next_round"
+    meta_set "$id" QBOUNCE_PENDING "$norec"
+    RUNNER_DONE=1
+    act "$id" info "↩ questions without a recommendation ($norec) — sent back to the agent once"
+    log_info questions_bounced "task=$id" "questions=$norec"
+    start_runner "$id" resume || log_error resume_failed "task=$id" "reason=questions without recommendations"
+    dispatch; dispatch_helpers
+    return 0
+  fi
   # --verify: the coordinator may not close a team with gaps — send it back once with the list of gaps
   if [[ $status == done && -n ${TEAM:-} && ${VERIFY:-} == 1 && ${VERIFY_BOUNCED:-} != 1 \
         && ${KIND:-worker} == worker && $AGENT == "$(team_lead "$TEAM")" ]]; then
@@ -1642,6 +1802,8 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
 
   # the wake-up time and its timer exist before anyone can see the task as paused
   [[ $status == paused ]] && pause_task "$id" "$pause_secs" "$pause_reason"
+  # likewise the answering instructions, the watch and the editor before the task shows as waiting
+  [[ $status == waiting ]] && questions_ready "$id" "$qfile"
   meta_set "$id" STATUS "$status"
   meta_set "$id" FINISHED "$(date -Is)"
   RUNNER_DONE=1
@@ -2000,6 +2162,39 @@ cmd_answer() {
   fi
 }
 
+cmd__answers_saved() { # id round — the human saved a questions file (systemd path unit)
+  stopping && return 0
+  local id; id=$(resolve_id "${1:?}")
+  local round=${2:?} f out errs
+  exec 8>"$TASKS/$id/answers.lock"
+  flock -w 30 8 || exit 0
+  meta_load "$id"
+  f="$TASKS/$id/questions-$round.md"
+  if [[ $STATUS != waiting || $ROUND != "$round" ]]; then
+    stop_answers_watch "$id" "$round"     # answered another way, or the task no longer waits
+    return 0
+  fi
+  [[ $(file_mtime "$f") != "${QUESTIONS_MTIME:-}" ]] || return 0   # not changed since the questions were asked
+  if ! answers_marked "$f"; then
+    log_info answers_saved "task=$id" "round=$round" "marked=false"
+    return 0
+  fi
+  if ! errs=$(validate_answers "$f" 2>&1); then
+    log_warn answers_incomplete "task=$id" "round=$round"
+    notify "$id" waiting "Questions file: $f" "the answers are marked ANSWERED but not complete:
+$errs
+Complete them and save the file again."
+    return 0
+  fi
+  if out=$(cmd_resume "$id" 2>&1); then
+    log_info answers_sent "task=$id" "round=$round"
+  else
+    log_warn answers_resume_failed "task=$id" "round=$round" "reason=$out"
+    notify "$id" waiting "Questions file: $f" "the answers are complete, but the task could not be resumed: $out
+Save the file again later, or run: agent resume $id"
+  fi
+}
+
 cmd_resume() {
   local id; id=$(resolve_id "${1:?usage: agent resume <id> [additional note]}")
   shift
@@ -2010,6 +2205,7 @@ cmd_resume() {
   [[ -n $SESSION_ID ]] || die "no agent session ID — cannot resume (see: agent log $id)"
   if (($#)); then printf '%s\n' "$*" > "$TASKS/$id/note-$((RUN + 1)).md"; fi
   meta_set "$id" ANSWERS_PENDING "$ROUND"
+  stop_answers_watch "$id" "$ROUND"
 
   if [[ ${KIND:-worker} == worker ]]; then
     local pending
@@ -2641,6 +2837,7 @@ main() {
     _dispatch-helpers) dispatch_helpers ;;
     notes)   cmd_notes "$@" ;;
     _wake)   cmd__wake "$@" ;;
+    _answers_saved) cmd__answers_saved "$@" ;;
     _authcheck) cmd__authcheck "$@" ;;
     dispatch) cmd_dispatch ;;
     say)     cmd_say "$@" ;;

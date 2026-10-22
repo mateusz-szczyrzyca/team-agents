@@ -45,7 +45,7 @@ load helpers
   t=$(task_of solo)
   wait_status "$t" waiting
   grep -q "What should the agent do next" "$AGENTS_HOME/tasks/$t/questions-1.md"
-  sed -i 's/^\*\*Answer:\*\*$/**Answer:** continue as planned/' "$AGENTS_HOME/tasks/$t/questions-1.md"
+  sed -i 's/^\*\*Verdict:\*\*$/**Verdict:** continue as planned/' "$AGENTS_HOME/tasks/$t/questions-1.md"
   agent resume "$t"
   wait_status "$t" done
 }
@@ -383,4 +383,67 @@ CONF
   printf '' > "$d/err-1.log"
   run quota_reset_seconds "$d" 1 $'Implemented the rate limit handling.\n\nSTATUS: DONE'
   [ "$status" -eq 1 ]
+}
+
+@test "questions without a recommendation are sent back to the agent once" {
+  scenario '{"solo": {"new": "questions-norec", "resume": "questions-file"}}'
+  agent run solo "task"
+  t=$(task_of solo)
+  wait_status "$t" waiting
+  [ "$(sed -n 's/^RUN=//p' "$AGENTS_HOME/tasks/$t/meta.env")" = 2 ]
+  grep -q "YOUR QUESTIONS NEED RECOMMENDATIONS" "$AGENTS_HOME/tasks/$t/prompt-2.md"
+  [ "$(sed -n 's/^QUESTIONS_BOUNCED=//p' "$AGENTS_HOME/tasks/$t/meta.env")" = 1 ]
+  grep -q '^\*\*Recommended:\*\* a)' "$AGENTS_HOME/tasks/$t/questions-1.md"
+}
+
+@test "saving the questions file marked ANSWERED sends the answers; ok accepts the recommendation" {
+  scenario '{"solo": {"new": "questions-file", "resume": "done"}}'
+  agent run solo "task"
+  t=$(task_of solo)
+  wait_status "$t" waiting
+  q="$AGENTS_HOME/tasks/$t/questions-1.md"
+  # the answering instructions are at the top; a path unit watches the file
+  grep -q 'put \*\*ANSWERED\*\* on the last line' "$q"
+  grep -q "PathModified=$q .*_answers_saved $t 1" "$STUB_UNITS/agent-$t-answers-1.path"
+  # saved without the marker: nothing happens
+  sed -i 's/^\*\*Answer:\*\*$/**Answer:** ok/' "$q"
+  agent _answers_saved "$t" 1
+  [ "$(sed -n 's/^STATUS=//p' "$AGENTS_HOME/tasks/$t/meta.env")" = waiting ]
+  # marked ANSWERED, but a verdict is missing: you are told, nothing is sent
+  sed -i 's/^\*\*Answer:\*\* ok$/**Answer:**/' "$q"
+  printf '\n** ANSWERED **\n' >> "$q"
+  agent _answers_saved "$t" 1
+  [ "$(sed -n 's/^STATUS=//p' "$AGENTS_HOME/tasks/$t/meta.env")" = waiting ]
+  wait_grep "not complete" "$HOME/notifications.log"
+  # complete and marked: the answers go to the agent, "ok" expanded to the recommendation
+  sed -i 's/^\*\*Answer:\*\*$/**Answer:** ok/' "$q"
+  agent _answers_saved "$t" 1
+  wait_status "$t" done
+  grep -q "the human accepts the recommendation: a) — the simpler one" "$HOME/prompt-solo-resume.txt"
+  run grep -q 'ANSWERED' "$HOME/prompt-solo-resume.txt"
+  [ "$status" -ne 0 ]
+  [ ! -f "$STUB_UNITS/agent-$t-answers-1.path" ]          # the watch is removed
+}
+
+@test "a new questions file opens in the VS Code window connected to this host" {
+  export XDG_RUNTIME_DIR="$HOME/run"; mkdir -p "$XDG_RUNTIME_DIR"
+  cli="$HOME/.vscode-server/cli/servers/Stable-abc/server/bin/remote-cli"
+  mkdir -p "$cli"
+  cat > "$cli/code" <<'STUB'
+#!/usr/bin/env bash
+# fake VS Code remote CLI: sockets named *dead* belong to closed windows
+[[ $VSCODE_IPC_HOOK_CLI == *dead* ]] && { echo "Unable to connect to VS Code server" >&2; exit 1; }
+echo "$VSCODE_IPC_HOOK_CLI $*" >> "$HOME/vscode.log"
+STUB
+  chmod +x "$cli/code"
+  python3 -c 'import socket, sys
+for p in sys.argv[1:]: socket.socket(socket.AF_UNIX).bind(p)' "$XDG_RUNTIME_DIR/vscode-ipc-live.sock" "$XDG_RUNTIME_DIR/vscode-ipc-dead.sock"
+  touch -d '1 minute ago' "$XDG_RUNTIME_DIR/vscode-ipc-live.sock"   # the closed window's socket is newer
+  scenario '{"solo": {"new": "questions-file"}}'
+  agent run solo "task"
+  t=$(task_of solo)
+  wait_status "$t" waiting
+  wait_grep "vscode-ipc-live.sock $AGENTS_HOME/tasks/$t/questions-1.md" "$HOME/vscode.log"
+  run grep -q dead "$HOME/vscode.log"
+  [ "$status" -ne 0 ]
 }
