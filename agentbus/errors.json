@@ -1067,6 +1067,77 @@
      "doc": "the hub could not be reached within the bounded retry budget"
     }
    ]
+  },
+  {
+   "type": "CommandEnqueue",
+   "op": "command_enqueue",
+   "what": "queueing a command for an instance on the hub",
+   "causes": [
+    {
+     "name": "UnknownKind",
+     "class": "InvalidArgument",
+     "doc": "the command kind is not in the closed command vocabulary"
+    },
+    {
+     "name": "InvalidParams",
+     "class": "InvalidArgument",
+     "doc": "the instance or task is empty, or a parameter required by the command kind is missing"
+    },
+    {
+     "name": "InstanceUnreachable",
+     "class": "Unavailable",
+     "doc": "the target instance has no live lease (its manifest expired or it never registered); the command is not queued"
+    },
+    {
+     "name": "QueueFull",
+     "class": "Unavailable",
+     "doc": "the instance already has the maximum number of undelivered commands; the caller may retry later"
+    }
+   ]
+  },
+  {
+   "type": "CommandPoll",
+   "op": "command_poll",
+   "what": "the long poll /v1/commands/poll of an instance node",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the request body is not a valid poll request for this protocol version"
+    },
+    {
+     "name": "LeaseStale",
+     "class": "InvalidState",
+     "doc": "the lease generation is not the current lease of this instance; the node must register again"
+    }
+   ]
+  },
+  {
+   "type": "CommandAck",
+   "op": "command_ack",
+   "what": "the acknowledgement /v1/commands/ack of a command by an instance node",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the request body is not a valid acknowledgement for this protocol version"
+    },
+    {
+     "name": "InvalidOutcome",
+     "class": "InvalidArgument",
+     "doc": "the outcome is not in the closed outcome vocabulary"
+    },
+    {
+     "name": "LeaseStale",
+     "class": "InvalidState",
+     "doc": "the lease generation is not the current lease of this instance; the node must register again"
+    },
+    {
+     "name": "NoSuchCommand",
+     "class": "NotFound",
+     "doc": "no undelivered command with this sequence number exists for the instance (already acknowledged, or never queued)"
+    }
+   ]
   }
  ]
 }

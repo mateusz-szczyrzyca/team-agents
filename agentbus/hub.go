@@ -142,6 +142,7 @@ type Hub struct {
 	Authenticate func(*http.Request) (string, *HubAuthError) // verifies each HTTP request; nil denies access
 	Resolve      func(HubCaller) (*Server, *HubCallError)    // checks registered run identity and returns its trusted server template
 	CLI          func(HubRequest) HubResponse                // allowlisted CLI dispatcher; nil rejects CLI requests
+	Leases       CommandLeases                               // instance leases for the command channel; nil means no instance is live
 	PollDuration time.Duration                               // zero uses the 25-second production poll interval
 	mu           sync.Mutex                                  // protects active operations and acceptance, never held across handler execution
 	active       map[string]*hubFlight                       // in-process operations; durable records survive a restart
@@ -179,6 +180,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		h.writeResponse(w, status, HubResponse{Version: hubProtocolVersion, Error: hubFailure(authErr)})
+		return
+	}
+	if isCommandRoute(r.URL.Path) {
+		h.serveCommands(w, r, instance)
 		return
 	}
 	if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/v1/tools/") {

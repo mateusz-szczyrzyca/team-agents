@@ -2754,6 +2754,134 @@ func HubClientCauseByName(name string) (HubClientCause, bool) {
 	return 0, false
 }
 
+// ---------------------------------------------------------------- command_enqueue
+
+// CommandEnqueueCause is a reason why queueing a command for an instance on the hub failed.
+type CommandEnqueueCause int
+
+const (
+	CommandEnqueueUnknownKind         CommandEnqueueCause = iota // the command kind is not in the closed command vocabulary [InvalidArgument]
+	CommandEnqueueInvalidParams                                  // the instance or task is empty, or a parameter required by the command kind is missing [InvalidArgument]
+	CommandEnqueueInstanceUnreachable                            // the target instance has no live lease (its manifest expired or it never registered); the command is not queued [Unavailable]
+	CommandEnqueueQueueFull                                      // the instance already has the maximum number of undelivered commands; the caller may retry later [Unavailable]
+	CommandEnqueueStorage                                        // the shared state or a file could not be read or written [Storage]
+)
+
+// CommandEnqueueError is the error of queueing a command for an instance on the hub.
+type CommandEnqueueError = OpError[CommandEnqueueCause]
+
+// commandEnqueueCauses describes the CommandEnqueueCause values (same order as the constants).
+var commandEnqueueCauses = [...]causeInfo{
+	{"UnknownKind", ClassInvalidArgument},
+	{"InvalidParams", ClassInvalidArgument},
+	{"InstanceUnreachable", ClassUnavailable},
+	{"QueueFull", ClassUnavailable},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CommandEnqueueCause) op() string { return "command_enqueue" }
+
+// info implements opCause.
+func (c CommandEnqueueCause) info() causeInfo { return commandEnqueueCauses[c] }
+
+// String returns the cause name.
+func (c CommandEnqueueCause) String() string { return c.info().name }
+
+// CommandEnqueueCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CommandEnqueueCauseByName(name string) (CommandEnqueueCause, bool) {
+	for i, info := range commandEnqueueCauses {
+		if info.name == name {
+			return CommandEnqueueCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- command_poll
+
+// CommandPollCause is a reason why the long poll /v1/commands/poll of an instance node failed.
+type CommandPollCause int
+
+const (
+	CommandPollMalformed  CommandPollCause = iota // the request body is not a valid poll request for this protocol version [InvalidArgument]
+	CommandPollLeaseStale                         // the lease generation is not the current lease of this instance; the node must register again [InvalidState]
+	CommandPollStorage                            // the shared state or a file could not be read or written [Storage]
+)
+
+// CommandPollError is the error of the long poll /v1/commands/poll of an instance node.
+type CommandPollError = OpError[CommandPollCause]
+
+// commandPollCauses describes the CommandPollCause values (same order as the constants).
+var commandPollCauses = [...]causeInfo{
+	{"Malformed", ClassInvalidArgument},
+	{"LeaseStale", ClassInvalidState},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CommandPollCause) op() string { return "command_poll" }
+
+// info implements opCause.
+func (c CommandPollCause) info() causeInfo { return commandPollCauses[c] }
+
+// String returns the cause name.
+func (c CommandPollCause) String() string { return c.info().name }
+
+// CommandPollCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CommandPollCauseByName(name string) (CommandPollCause, bool) {
+	for i, info := range commandPollCauses {
+		if info.name == name {
+			return CommandPollCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- command_ack
+
+// CommandAckCause is a reason why the acknowledgement /v1/commands/ack of a command by an instance node failed.
+type CommandAckCause int
+
+const (
+	CommandAckMalformed      CommandAckCause = iota // the request body is not a valid acknowledgement for this protocol version [InvalidArgument]
+	CommandAckInvalidOutcome                        // the outcome is not in the closed outcome vocabulary [InvalidArgument]
+	CommandAckLeaseStale                            // the lease generation is not the current lease of this instance; the node must register again [InvalidState]
+	CommandAckNoSuchCommand                         // no undelivered command with this sequence number exists for the instance (already acknowledged, or never queued) [NotFound]
+	CommandAckStorage                               // the shared state or a file could not be read or written [Storage]
+)
+
+// CommandAckError is the error of the acknowledgement /v1/commands/ack of a command by an instance node.
+type CommandAckError = OpError[CommandAckCause]
+
+// commandAckCauses describes the CommandAckCause values (same order as the constants).
+var commandAckCauses = [...]causeInfo{
+	{"Malformed", ClassInvalidArgument},
+	{"InvalidOutcome", ClassInvalidArgument},
+	{"LeaseStale", ClassInvalidState},
+	{"NoSuchCommand", ClassNotFound},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CommandAckCause) op() string { return "command_ack" }
+
+// info implements opCause.
+func (c CommandAckCause) info() causeInfo { return commandAckCauses[c] }
+
+// String returns the cause name.
+func (c CommandAckCause) String() string { return c.info().name }
+
+// CommandAckCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CommandAckCauseByName(name string) (CommandAckCause, bool) {
+	for i, info := range commandAckCauses {
+		if info.name == name {
+			return CommandAckCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // wireOperationError rebuilds the typed error of an operation from its wire form (operation name, cause name,
 // message). It returns false when the operation or the cause is unknown, so a stale or foreign peer cannot
 // produce an error of the wrong type. Operation names used by both an MCP tool and a CLI subcommand ("release")
@@ -3068,6 +3196,21 @@ func wireOperationError(op, cause, message string) (error, bool) {
 	case "hub_client":
 		if c, ok := HubClientCauseByName(cause); ok {
 			return &OpError[HubClientCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "command_enqueue":
+		if c, ok := CommandEnqueueCauseByName(cause); ok {
+			return &OpError[CommandEnqueueCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "command_poll":
+		if c, ok := CommandPollCauseByName(cause); ok {
+			return &OpError[CommandPollCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "command_ack":
+		if c, ok := CommandAckCauseByName(cause); ok {
+			return &OpError[CommandAckCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	}
