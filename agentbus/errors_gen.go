@@ -2562,6 +2562,48 @@ func HubAuthCauseByName(name string) (HubAuthCause, bool) {
 	return 0, false
 }
 
+// ---------------------------------------------------------------- hub_client
+
+// HubClientCause is a reason why the forwarding client transport failed.
+type HubClientCause int
+
+const (
+	HubClientInvalidConfig HubClientCause = iota // the hub URL, authentication settings or timeout is invalid [InvalidArgument]
+	HubClientMalformed                           // the hub returned an invalid or incompatible response [InvalidState]
+	HubClientUnavailable                         // the hub could not be reached within the bounded retry budget [Unavailable]
+	HubClientStorage                             // the shared state or a file could not be read or written [Storage]
+)
+
+// HubClientError is the error of the forwarding client transport.
+type HubClientError = OpError[HubClientCause]
+
+// hubClientCauses describes the HubClientCause values (same order as the constants).
+var hubClientCauses = [...]causeInfo{
+	{"InvalidConfig", ClassInvalidArgument},
+	{"Malformed", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (HubClientCause) op() string { return "hub_client" }
+
+// info implements opCause.
+func (c HubClientCause) info() causeInfo { return hubClientCauses[c] }
+
+// String returns the cause name.
+func (c HubClientCause) String() string { return c.info().name }
+
+// HubClientCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func HubClientCauseByName(name string) (HubClientCause, bool) {
+	for i, info := range hubClientCauses {
+		if info.name == name {
+			return HubClientCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // wireOperationError rebuilds the typed error of an operation from its wire form (operation name, cause name,
 // message). It returns false when the operation or the cause is unknown, so a stale or foreign peer cannot
 // produce an error of the wrong type. Operation names used by both an MCP tool and a CLI subcommand ("release")
@@ -2856,6 +2898,11 @@ func wireOperationError(op, cause, message string) (error, bool) {
 	case "hub_auth":
 		if c, ok := HubAuthCauseByName(cause); ok {
 			return &OpError[HubAuthCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "hub_client":
+		if c, ok := HubClientCauseByName(cause); ok {
+			return &OpError[HubClientCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	}

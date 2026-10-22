@@ -946,6 +946,28 @@
      "doc": "the configured HUB_AUTH mode is unknown"
     }
    ]
+  },
+  {
+   "type": "HubClient",
+   "op": "hub_client",
+   "what": "the forwarding client transport",
+   "causes": [
+    {
+     "name": "InvalidConfig",
+     "class": "InvalidArgument",
+     "doc": "the hub URL, authentication settings or timeout is invalid"
+    },
+    {
+     "name": "Malformed",
+     "class": "InvalidState",
+     "doc": "the hub returned an invalid or incompatible response"
+    },
+    {
+     "name": "Unavailable",
+     "class": "Unavailable",
+     "doc": "the hub could not be reached within the bounded retry budget"
+    }
+   ]
   }
  ]
 }

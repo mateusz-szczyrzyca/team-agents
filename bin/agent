@@ -117,6 +117,15 @@ CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
 CODEX_BIN="${CODEX_BIN:-$HOME/.local/bin/codex}"
 AGENTBUS_BIN="${AGENTBUS_BIN:-$HOME/.local/bin/agentbus}"
 RUN_PATH="${RUN_PATH:-$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin}"
+# Multi-instance bus transport; empty lead/listen settings retain local-file mode.
+export INSTANCE_NAME="${INSTANCE_NAME:-}"
+export LEAD_INSTANCE="${LEAD_INSTANCE:-}"
+export HUB_LISTEN="${HUB_LISTEN:-}"
+export HUB_AUTH="${HUB_AUTH:-tailscale}"
+export HUB_CERT_FINGERPRINT="${HUB_CERT_FINGERPRINT:-}"
+export HUB_RETRY_SECONDS="${HUB_RETRY_SECONDS:-30}"
+# The token is assigned by secrets.env, never by the public configuration template.
+export HUB_TOKEN="${HUB_TOKEN:-}"
 # Notifications: NOTIFY_CMD is called with the path of a notification file (first line = title/thread,
 # the rest = body). Empty = notifications are only written to NOTIFY_DIR. Legacy configs that set
 # NOTIFY_SCRIPT (run inside NOTIFY_DIR with the file name) keep working.
