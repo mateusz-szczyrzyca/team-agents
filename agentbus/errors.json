@@ -901,6 +901,11 @@
      "name": "Listen",
      "class": "Process",
      "doc": "the hub cannot listen on HUB_LISTEN or cannot load its certificate"
+    },
+    {
+     "name": "Socket",
+     "class": "Process",
+     "doc": "the hub cannot create, bind, or secure its local unix domain socket"
     }
    ]
   },

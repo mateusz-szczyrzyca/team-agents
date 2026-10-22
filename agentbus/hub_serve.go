@@ -35,12 +35,20 @@ type HubConfig struct {
 	TLSKeyFile string
 	// TailscaleSocket is an optional path override to the tailscaled LocalAPI socket.
 	TailscaleSocket string
+	// SocketPath is the path to the local Unix domain socket for lead-local agents.
+	SocketPath string
+	// InstanceName is the local instance name (defaults to INSTANCE_NAME or "lead").
+	InstanceName string
 	// Tokens maps instance name -> pre-shared bearer token (token mode).
 	Tokens map[string]string
 	// Stop is an optional channel to trigger graceful shutdown (for testing).
 	Stop <-chan struct{}
-	// Listener is an optional pre-configured net.Listener (for testing).
+	// Listener is an optional pre-configured net.Listener for TCP (for testing).
 	Listener net.Listener
+	// UnixListener is an optional pre-configured net.Listener for Unix socket (for testing).
+	UnixListener net.Listener
+	// DisableSocket disables the Unix domain socket listener (for testing).
+	DisableSocket bool
 }
 
 // defaultRunResolver creates a run resolver returning a server template matching the caller identity.
@@ -115,6 +123,8 @@ func parseHubConfig(args []string) *HubConfig {
 	certFile := fs.String("cert", "", "TLS certificate file path (token mode)")
 	keyFile := fs.String("key", "", "TLS private key file path (token mode)")
 	socket := fs.String("socket", "", "tailscale LocalAPI socket path override")
+	socketListen := fs.String("socket-listen", "", "local Unix domain socket path for lead agents")
+	instanceName := fs.String("instance", "", "local instance name")
 	parseFlags(fs, args)
 
 	cfg := &HubConfig{
@@ -124,6 +134,8 @@ func parseHubConfig(args []string) *HubConfig {
 		TLSCertFile:     *certFile,
 		TLSKeyFile:      *keyFile,
 		TailscaleSocket: *socket,
+		SocketPath:      *socketListen,
+		InstanceName:    *instanceName,
 		Tokens:          make(map[string]string),
 	}
 
@@ -277,15 +289,80 @@ func serveHub(cfg *HubConfig) *HubServeError {
 		IdleTimeout:       120 * time.Second,
 	}
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	go func() {
 		if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
-		close(errCh)
 	}()
 
-	logInfo(LogHubStarted, "auth", cfg.Auth, "listen", ln.Addr().String())
+	var unixLn net.Listener
+	var socketPath string
+	var unixServer *http.Server
+	if !cfg.DisableSocket {
+		socketPath = cfg.SocketPath
+		if socketPath == "" {
+			socketPath = os.Getenv("HUB_SOCKET")
+			if socketPath == "" {
+				socketPath = filepath.Join(cfg.Dir, "hub.sock")
+			}
+		}
+		socketPath = filepath.Clean(socketPath)
+		if cfg.UnixListener != nil {
+			unixLn = cfg.UnixListener
+		} else {
+			if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+				if closeErr := ln.Close(); closeErr != nil {
+					warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
+				}
+				return opErr(HubServeSocket, "cannot remove stale unix socket %s: %v", socketPath, err)
+			}
+			ul, err := net.Listen("unix", socketPath)
+			if err != nil {
+				if closeErr := ln.Close(); closeErr != nil {
+					warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
+				}
+				return opErr(HubServeSocket, "failed to listen on unix socket %s: %v", socketPath, err)
+			}
+			if err := os.Chmod(socketPath, 0o600); err != nil { //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+				_ = ul.Close()
+				_ = os.Remove(socketPath) //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+				if closeErr := ln.Close(); closeErr != nil {
+					warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
+				}
+				return opErr(HubServeSocket, "failed to set owner-only permissions on unix socket %s: %v", socketPath, err)
+			}
+			unixLn = ul
+		}
+
+		localInstance := cfg.InstanceName
+		if localInstance == "" {
+			localInstance = os.Getenv("INSTANCE_NAME")
+			if localInstance == "" {
+				localInstance = "lead"
+			}
+		}
+		unixHub := &Hub{
+			Bus: b,
+			Authenticate: func(*http.Request) (string, *HubAuthError) {
+				return localInstance, nil
+			},
+			Resolve:      defaultRunResolver(b),
+			PollDuration: hub.PollDuration,
+		}
+		unixServer = &http.Server{
+			Handler:           unixHub,
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       120 * time.Second,
+		}
+		go func() {
+			if err := unixServer.Serve(unixLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- err
+			}
+		}()
+	}
+
+	logInfo(LogHubStarted, "auth", cfg.Auth, "listen", ln.Addr().String(), "socket", socketPath)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
@@ -305,6 +382,14 @@ func serveHub(cfg *HubConfig) *HubServeError {
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		warnSideEffect("shutdown hub server", storageErr(err, "hub server shutdown failed"))
+	}
+	if unixServer != nil {
+		if err := unixServer.Shutdown(ctx); err != nil {
+			warnSideEffect("shutdown hub unix socket server", storageErr(err, "unix server shutdown failed"))
+		}
+		if cfg.UnixListener == nil && socketPath != "" {
+			_ = os.Remove(socketPath) //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+		}
 	}
 
 	return nil
