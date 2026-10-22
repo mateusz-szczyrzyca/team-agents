@@ -484,6 +484,7 @@ event stream with bus messages, status changes and periodic reminders.
 | `team_status`, `claim_lead`, `handover_lead` | teams |
 | `quiz_start`, `quiz_answer`, `quiz_results`, `team_exclude` | the qualification quiz |
 | `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board |
+| `find_capability` | discover instances and agents with required capabilities |
 
 ## Files and state
 
@@ -496,6 +497,7 @@ event stream with bus messages, status changes and periodic reminders.
                                              result.md (investigations), investigations/
   worktrees/<repo>/<task id>/                git worktrees
   bus/state.json  bus/messages.jsonl         agentbus state and message log
+  bus/instances.json bus/commands.json       instance manifests and node command queue (hub only)
   bus/notebooks/<repo>/                      repository notebooks
   bus/checkpoints/                           checkpoints (team-<id>.md, task-<id>.md)
   tasks-archived/*.7z                        archives (agent archive)

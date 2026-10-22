@@ -143,6 +143,8 @@ type Hub struct {
 	Resolve      func(HubCaller) (*Server, *HubCallError)    // checks registered run identity and returns its trusted server template
 	CLI          func(HubRequest) HubResponse                // allowlisted CLI dispatcher; nil rejects CLI requests
 	PollDuration time.Duration                               // zero uses the 25-second production poll interval
+	Instances    *InstanceManager                            // tracks instance manifests and heartbeats
+	Commands     *CommandManager                             // queues and delivers node commands
 	mu           sync.Mutex                                  // protects active operations and acceptance, never held across handler execution
 	active       map[string]*hubFlight                       // in-process operations; durable records survive a restart
 }
@@ -181,7 +183,27 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeResponse(w, status, HubResponse{Version: hubProtocolVersion, Error: hubFailure(authErr)})
 		return
 	}
-	if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/v1/tools/") {
+	if r.Method != http.MethodPost {
+		h.writeResponse(w, http.StatusBadRequest, hubErrorResponse("", opErr(HubCallMalformed, "only POST requests are supported")))
+		return
+	}
+
+	switch r.URL.Path {
+	case "/v1/instances/register":
+		h.serveInstanceRegister(w, r, instance)
+		return
+	case "/v1/instances/heartbeat":
+		h.serveInstanceHeartbeat(w, r, instance)
+		return
+	case "/v1/commands/poll":
+		h.serveCommandPoll(w, r, instance)
+		return
+	case "/v1/commands/ack":
+		h.serveCommandAck(w, r, instance)
+		return
+	}
+
+	if !strings.HasPrefix(r.URL.Path, "/v1/tools/") {
 		h.writeResponse(w, http.StatusBadRequest, hubErrorResponse("", opErr(HubCallMalformed, "use POST /v1/tools/{op}")))
 		return
 	}
@@ -223,6 +245,129 @@ func (h *Hub) writeResponse(w http.ResponseWriter, status int, response HubRespo
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		warnSideEffect("deliver hub response", storageErr(err, "cannot encode or write hub response"))
 	}
+}
+
+// writeJSON encodes an arbitrary response object as JSON with HTTP 200 OK.
+func (h *Hub) writeJSON(w http.ResponseWriter, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		warnSideEffect("deliver json response", storageErr(err, "cannot encode or write response"))
+	}
+}
+
+// statusFromClass maps an operation error class to the matching HTTP status code.
+func statusFromClass(c ErrorClass) int {
+	switch c {
+	case ClassConflict:
+		return http.StatusConflict
+	case ClassPermission:
+		return http.StatusForbidden
+	case ClassInvalidArgument:
+		return http.StatusBadRequest
+	case ClassNotFound:
+		return http.StatusNotFound
+	case ClassUnavailable:
+		return http.StatusServiceUnavailable
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// ensureManagers initializes Instances and Commands managers on the Hub if not already configured.
+func (h *Hub) ensureManagers() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.Instances == nil && h.Bus != nil {
+		h.Instances = NewInstanceManager(h.Bus)
+	}
+	if h.Commands == nil && h.Bus != nil {
+		h.Commands = NewCommandManager(h.Bus, h.Instances)
+	}
+}
+
+// serveInstanceRegister handles POST /v1/instances/register.
+func (h *Hub) serveInstanceRegister(w http.ResponseWriter, r *http.Request, instance string) {
+	h.ensureManagers()
+	var req InstanceRegisterRequest
+	r.Body = http.MaxBytesReader(w, r.Body, hubBodyLimit)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		h.writeResponse(w, http.StatusBadRequest, HubResponse{Version: hubProtocolVersion, Error: hubFailure(opErr(InstanceRegisterMalformed, "invalid json: %v", err))})
+		return
+	}
+	res, opErr := h.Instances.Register(instance, req)
+	if opErr != nil {
+		h.writeResponse(w, statusFromClass(opErr.Class()), HubResponse{Version: hubProtocolVersion, Error: hubFailure(opErr)})
+		return
+	}
+	h.writeJSON(w, res)
+}
+
+// serveInstanceHeartbeat handles POST /v1/instances/heartbeat.
+func (h *Hub) serveInstanceHeartbeat(w http.ResponseWriter, r *http.Request, instance string) {
+	h.ensureManagers()
+	var req InstanceHeartbeatRequest
+	r.Body = http.MaxBytesReader(w, r.Body, hubBodyLimit)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		h.writeResponse(w, http.StatusBadRequest, HubResponse{Version: hubProtocolVersion, Error: hubFailure(opErr(InstanceHeartbeatMalformed, "invalid json: %v", err))})
+		return
+	}
+	res, opErr := h.Instances.Heartbeat(instance, req)
+	if opErr != nil {
+		h.writeResponse(w, statusFromClass(opErr.Class()), HubResponse{Version: hubProtocolVersion, Error: hubFailure(opErr)})
+		return
+	}
+	h.writeJSON(w, res)
+}
+
+// serveCommandPoll handles POST /v1/commands/poll.
+func (h *Hub) serveCommandPoll(w http.ResponseWriter, r *http.Request, instance string) {
+	h.ensureManagers()
+	var req CommandPollRequest
+	r.Body = http.MaxBytesReader(w, r.Body, hubBodyLimit)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		h.writeResponse(w, http.StatusBadRequest, HubResponse{Version: hubProtocolVersion, Error: hubFailure(opErr(CommandPollMalformed, "invalid json: %v", err))})
+		return
+	}
+	pollTimeout := h.PollDuration
+	if pollTimeout == 0 {
+		pollTimeout = hubPollDuration
+	}
+	res, opErr := h.Commands.Poll(r.Context(), instance, req, pollTimeout)
+	if opErr != nil {
+		h.writeResponse(w, statusFromClass(opErr.Class()), HubResponse{Version: hubProtocolVersion, Error: hubFailure(opErr)})
+		return
+	}
+	if len(res.Commands) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	h.writeJSON(w, res)
+}
+
+// serveCommandAck handles POST /v1/commands/ack.
+func (h *Hub) serveCommandAck(w http.ResponseWriter, r *http.Request, instance string) {
+	h.ensureManagers()
+	var req CommandAckRequest
+	r.Body = http.MaxBytesReader(w, r.Body, hubBodyLimit)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		h.writeResponse(w, http.StatusBadRequest, HubResponse{Version: hubProtocolVersion, Error: hubFailure(opErr(CommandAckMalformed, "invalid json: %v", err))})
+		return
+	}
+	res, opErr := h.Commands.Ack(instance, req)
+	if opErr != nil {
+		h.writeResponse(w, statusFromClass(opErr.Class()), HubResponse{Version: hubProtocolVersion, Error: hubFailure(opErr)})
+		return
+	}
+	h.writeJSON(w, res)
 }
 
 // validate checks the envelope and age before touching the replay ledger.

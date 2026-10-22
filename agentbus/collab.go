@@ -53,6 +53,7 @@ type BoardItem struct {
 	Creator  string      `json:"creator"`            // receives the result as a message
 	Assignee string      `json:"assignee,omitempty"` // who claimed it
 	Result   string      `json:"result,omitempty"`   // the result submitted with board_done
+	Requires []string    `json:"requires,omitempty"` // capabilities required to claim this item
 	Updated  Timestamp   `json:"updated"`            // last change
 }
 
@@ -439,6 +440,27 @@ func (s *Server) boardClaim(id string) (string, *BoardClaimError) {
 		}
 		if item.Status != BoardTodo {
 			return opErr(BoardClaimAlreadyTaken, "%s is already %s (by %s)", item.ID, item.Status, item.Assignee)
+		}
+		if len(item.Requires) > 0 {
+			parts := strings.Split(s.me, "@")
+			if len(parts) == 2 && parts[1] != "" {
+				instName := parts[1]
+				im := NewInstanceManager(s.bus)
+				if rec, ok := im.GetInstance(instName); ok {
+					for _, reqCap := range item.Requires {
+						has := false
+						for _, decl := range rec.Manifest.Declared {
+							if decl == reqCap {
+								has = true
+								break
+							}
+						}
+						if !has {
+							return opErr(BoardClaimMissingCapability, "instance %q lacks required capability %q for %s", instName, reqCap, item.ID)
+						}
+					}
+				}
+			}
 		}
 		item.Status, item.Assignee, item.Updated = BoardClaimed, s.me, Now()
 		it = *item

@@ -160,18 +160,19 @@ func (t *Tier) UnmarshalJSON(data []byte) error {
 type MemberState string
 
 const (
-	MemberActive   MemberState = "active"   // its run is in progress
-	MemberSleeping MemberState = "sleeping" // waiting for messages or board items (no run, no tokens)
-	MemberWaking   MemberState = "waking"   // a wake-up was triggered, the run is starting
-	MemberDone     MemberState = "done"     // finished (with the team or on its own)
-	MemberExcluded MemberState = "excluded" // failed the quiz or was excluded by the coordinator
-	MemberHung     MemberState = "hung"     // marked hung by the watchdog (no longer resumed)
+	MemberActive      MemberState = "active"      // its run is in progress
+	MemberSleeping    MemberState = "sleeping"    // waiting for messages or board items (no run, no tokens)
+	MemberWaking      MemberState = "waking"      // a wake-up was triggered, the run is starting
+	MemberDone        MemberState = "done"        // finished (with the team or on its own)
+	MemberExcluded    MemberState = "excluded"    // failed the quiz or was excluded by the coordinator
+	MemberHung        MemberState = "hung"        // marked hung by the watchdog (no longer resumed)
+	MemberUnreachable MemberState = "unreachable" // the instance hosting the member missed heartbeats and is unreachable
 )
 
 // Valid reports whether s is one of the defined states.
 func (s MemberState) Valid() bool {
 	switch s {
-	case MemberActive, MemberSleeping, MemberWaking, MemberDone, MemberExcluded, MemberHung:
+	case MemberActive, MemberSleeping, MemberWaking, MemberDone, MemberExcluded, MemberHung, MemberUnreachable:
 		return true
 	}
 	return false

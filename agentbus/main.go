@@ -831,6 +831,8 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 		return toolResult(s.delegate(a.str("request"), a.str("context")))
 	case "delegation_status":
 		return toolResult(s.delegationStatus())
+	case "find_capability":
+		return toolResult(s.findCapability(a.str("capability")))
 	}
 	return toolResult("", opErr(ToolCallUnknownTool, "unknown tool %q", name)) // unreachable: validateArgs knows every tool
 }
@@ -863,6 +865,8 @@ func toolDefs() []map[string]any {
 		tool("release", "Release a resource you reserved (announced to everyone). Release it right after use.",
 			obj(map[string]any{"resource": str("Resource name")}, "resource")),
 		tool("list_reservations", "Show current resource reservations.", obj(map[string]any{})),
+		tool("find_capability", "Locate instances and agents with a required capability (e.g. 'build:ios', 'hw:rp2350-probe').",
+			obj(map[string]any{"capability": str("Required capability identifier")}, "capability")),
 	}
 }
 

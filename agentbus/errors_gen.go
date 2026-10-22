@@ -1090,13 +1090,14 @@ func BoardListCauseByName(name string) (BoardListCause, bool) {
 type BoardClaimCause int
 
 const (
-	BoardClaimNotInTeam       BoardClaimCause = iota // the caller is not in a team [NotInTeam]
-	BoardClaimNoSuchItem                             // there is no board item with this ID [NotFound]
-	BoardClaimWorkerNeedsEasy                        // a worker tried to claim a normal-level item [Permission]
-	BoardClaimAlreadyTaken                           // the item is already claimed or done [Conflict]
-	BoardClaimOutcomeUnknown                         // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
-	BoardClaimUnavailable                            // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
-	BoardClaimStorage                                // the shared state or a file could not be read or written [Storage]
+	BoardClaimNotInTeam         BoardClaimCause = iota // the caller is not in a team [NotInTeam]
+	BoardClaimNoSuchItem                               // there is no board item with this ID [NotFound]
+	BoardClaimWorkerNeedsEasy                          // a worker tried to claim a normal-level item [Permission]
+	BoardClaimAlreadyTaken                             // the item is already claimed or done [Conflict]
+	BoardClaimMissingCapability                        // the member's instance lacks one or more required capabilities for this item [Permission]
+	BoardClaimOutcomeUnknown                           // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	BoardClaimUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	BoardClaimStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
 // BoardClaimError is the error of the MCP tool board_claim.
@@ -1108,6 +1109,7 @@ var boardClaimCauses = [...]causeInfo{
 	{"NoSuchItem", ClassNotFound},
 	{"WorkerNeedsEasy", ClassPermission},
 	{"AlreadyTaken", ClassConflict},
+	{"MissingCapability", ClassPermission},
 	{"OutcomeUnknown", ClassInvalidState},
 	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
@@ -2606,6 +2608,282 @@ func HubClientCauseByName(name string) (HubClientCause, bool) {
 	return 0, false
 }
 
+// ---------------------------------------------------------------- instance_register
+
+// InstanceRegisterCause is a reason why registering a node instance and initial manifest on the hub failed.
+type InstanceRegisterCause int
+
+const (
+	InstanceRegisterMalformed         InstanceRegisterCause = iota // the registration request body or manifest is malformed or invalid JSON [InvalidArgument]
+	InstanceRegisterInstanceMismatch                               // the manifest instance name does not match the authenticated instance [Permission]
+	InstanceRegisterInvalidCapability                              // the manifest contains an unknown or malformed capability [InvalidArgument]
+	InstanceRegisterInstanceNameTaken                              // the instance name is already registered with an active live lease [Conflict]
+	InstanceRegisterProtocolVersion                                // the registration protocol version is not supported [InvalidArgument]
+	InstanceRegisterStorage                                        // the shared state or a file could not be read or written [Storage]
+)
+
+// InstanceRegisterError is the error of registering a node instance and initial manifest on the hub.
+type InstanceRegisterError = OpError[InstanceRegisterCause]
+
+// instanceRegisterCauses describes the InstanceRegisterCause values (same order as the constants).
+var instanceRegisterCauses = [...]causeInfo{
+	{"Malformed", ClassInvalidArgument},
+	{"InstanceMismatch", ClassPermission},
+	{"InvalidCapability", ClassInvalidArgument},
+	{"InstanceNameTaken", ClassConflict},
+	{"ProtocolVersion", ClassInvalidArgument},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (InstanceRegisterCause) op() string { return "instance_register" }
+
+// info implements opCause.
+func (c InstanceRegisterCause) info() causeInfo { return instanceRegisterCauses[c] }
+
+// String returns the cause name.
+func (c InstanceRegisterCause) String() string { return c.info().name }
+
+// InstanceRegisterCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func InstanceRegisterCauseByName(name string) (InstanceRegisterCause, bool) {
+	for i, info := range instanceRegisterCauses {
+		if info.name == name {
+			return InstanceRegisterCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- instance_heartbeat
+
+// InstanceHeartbeatCause is a reason why renewing an instance lease and reporting manifest state to the hub failed.
+type InstanceHeartbeatCause int
+
+const (
+	InstanceHeartbeatMalformed        InstanceHeartbeatCause = iota // the heartbeat request body or manifest is malformed or invalid JSON [InvalidArgument]
+	InstanceHeartbeatInstanceMismatch                               // the heartbeat instance name does not match the authenticated instance [Permission]
+	InstanceHeartbeatInstanceNotFound                               // the instance is not registered on the hub [NotFound]
+	InstanceHeartbeatStaleLease                                     // the heartbeat lease generation does not match the active lease [Conflict]
+	InstanceHeartbeatStaleHeartbeat                                 // the heartbeat sequence or timestamp is older than the current recorded state [Conflict]
+	InstanceHeartbeatInvalidManifest                                // the heartbeat manifest or capability list is invalid [InvalidArgument]
+	InstanceHeartbeatStorage                                        // the shared state or a file could not be read or written [Storage]
+)
+
+// InstanceHeartbeatError is the error of renewing an instance lease and reporting manifest state to the hub.
+type InstanceHeartbeatError = OpError[InstanceHeartbeatCause]
+
+// instanceHeartbeatCauses describes the InstanceHeartbeatCause values (same order as the constants).
+var instanceHeartbeatCauses = [...]causeInfo{
+	{"Malformed", ClassInvalidArgument},
+	{"InstanceMismatch", ClassPermission},
+	{"InstanceNotFound", ClassNotFound},
+	{"StaleLease", ClassConflict},
+	{"StaleHeartbeat", ClassConflict},
+	{"InvalidManifest", ClassInvalidArgument},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (InstanceHeartbeatCause) op() string { return "instance_heartbeat" }
+
+// info implements opCause.
+func (c InstanceHeartbeatCause) info() causeInfo { return instanceHeartbeatCauses[c] }
+
+// String returns the cause name.
+func (c InstanceHeartbeatCause) String() string { return c.info().name }
+
+// InstanceHeartbeatCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func InstanceHeartbeatCauseByName(name string) (InstanceHeartbeatCause, bool) {
+	for i, info := range instanceHeartbeatCauses {
+		if info.name == name {
+			return InstanceHeartbeatCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- command_poll
+
+// CommandPollCause is a reason why polling for node commands addressed to an instance failed.
+type CommandPollCause int
+
+const (
+	CommandPollMalformed           CommandPollCause = iota // the command poll request body is malformed or invalid JSON [InvalidArgument]
+	CommandPollInstanceMismatch                            // the polling instance name does not match the authenticated instance [Permission]
+	CommandPollInstanceUnreachable                         // the instance is not registered or its manifest lease has expired [NotFound]
+	CommandPollStaleLease                                  // the polling lease generation does not match the active lease [Conflict]
+	CommandPollInvalidCursor                               // the command cursor is invalid [InvalidArgument]
+	CommandPollStorage                                     // the shared state or a file could not be read or written [Storage]
+)
+
+// CommandPollError is the error of polling for node commands addressed to an instance.
+type CommandPollError = OpError[CommandPollCause]
+
+// commandPollCauses describes the CommandPollCause values (same order as the constants).
+var commandPollCauses = [...]causeInfo{
+	{"Malformed", ClassInvalidArgument},
+	{"InstanceMismatch", ClassPermission},
+	{"InstanceUnreachable", ClassNotFound},
+	{"StaleLease", ClassConflict},
+	{"InvalidCursor", ClassInvalidArgument},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CommandPollCause) op() string { return "command_poll" }
+
+// info implements opCause.
+func (c CommandPollCause) info() causeInfo { return commandPollCauses[c] }
+
+// String returns the cause name.
+func (c CommandPollCause) String() string { return c.info().name }
+
+// CommandPollCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CommandPollCauseByName(name string) (CommandPollCause, bool) {
+	for i, info := range commandPollCauses {
+		if info.name == name {
+			return CommandPollCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- command_ack
+
+// CommandAckCause is a reason why acknowledging execution of a node command failed.
+type CommandAckCause int
+
+const (
+	CommandAckMalformed           CommandAckCause = iota // the command acknowledgment request body is malformed or invalid JSON [InvalidArgument]
+	CommandAckInstanceMismatch                           // the ack instance name does not match the authenticated instance [Permission]
+	CommandAckInstanceUnreachable                        // the instance is not registered or its manifest lease has expired [NotFound]
+	CommandAckStaleLease                                 // the ack lease generation does not match the active lease [Conflict]
+	CommandAckCommandNotFound                            // the acknowledged command was not found in the command queue [NotFound]
+	CommandAckConflictAck                                // the command was already acknowledged with a different execution result [Conflict]
+	CommandAckInvalidResult                              // the command execution result is invalid or malformed [InvalidArgument]
+	CommandAckStorage                                    // the shared state or a file could not be read or written [Storage]
+)
+
+// CommandAckError is the error of acknowledging execution of a node command.
+type CommandAckError = OpError[CommandAckCause]
+
+// commandAckCauses describes the CommandAckCause values (same order as the constants).
+var commandAckCauses = [...]causeInfo{
+	{"Malformed", ClassInvalidArgument},
+	{"InstanceMismatch", ClassPermission},
+	{"InstanceUnreachable", ClassNotFound},
+	{"StaleLease", ClassConflict},
+	{"CommandNotFound", ClassNotFound},
+	{"ConflictAck", ClassConflict},
+	{"InvalidResult", ClassInvalidArgument},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CommandAckCause) op() string { return "command_ack" }
+
+// info implements opCause.
+func (c CommandAckCause) info() causeInfo { return commandAckCauses[c] }
+
+// String returns the cause name.
+func (c CommandAckCause) String() string { return c.info().name }
+
+// CommandAckCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CommandAckCauseByName(name string) (CommandAckCause, bool) {
+	for i, info := range commandAckCauses {
+		if info.name == name {
+			return CommandAckCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- command_enqueue
+
+// CommandEnqueueCause is a reason why enqueueing a node command on the hub failed.
+type CommandEnqueueCause int
+
+const (
+	CommandEnqueueInstanceUnreachable CommandEnqueueCause = iota // the target instance is not registered or its manifest lease has expired [NotFound]
+	CommandEnqueueInvalidCommand                                 // the command parameters or kind are invalid [InvalidArgument]
+	CommandEnqueueDuplicateCommand                               // a command with this ID is already queued or executed [Conflict]
+	CommandEnqueueStorage                                        // the shared state or a file could not be read or written [Storage]
+)
+
+// CommandEnqueueError is the error of enqueueing a node command on the hub.
+type CommandEnqueueError = OpError[CommandEnqueueCause]
+
+// commandEnqueueCauses describes the CommandEnqueueCause values (same order as the constants).
+var commandEnqueueCauses = [...]causeInfo{
+	{"InstanceUnreachable", ClassNotFound},
+	{"InvalidCommand", ClassInvalidArgument},
+	{"DuplicateCommand", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CommandEnqueueCause) op() string { return "command_enqueue" }
+
+// info implements opCause.
+func (c CommandEnqueueCause) info() causeInfo { return commandEnqueueCauses[c] }
+
+// String returns the cause name.
+func (c CommandEnqueueCause) String() string { return c.info().name }
+
+// CommandEnqueueCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CommandEnqueueCauseByName(name string) (CommandEnqueueCause, bool) {
+	for i, info := range commandEnqueueCauses {
+		if info.name == name {
+			return CommandEnqueueCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- find_capability
+
+// FindCapabilityCause is a reason why the MCP tool find_capability failed.
+type FindCapabilityCause int
+
+const (
+	FindCapabilityMissingCapability FindCapabilityCause = iota // the capability argument is missing [InvalidArgument]
+	FindCapabilityInvalidCapability                            // the requested capability is invalid or unknown [InvalidArgument]
+	FindCapabilityOutcomeUnknown                               // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	FindCapabilityUnavailable                                  // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	FindCapabilityStorage                                      // the shared state or a file could not be read or written [Storage]
+)
+
+// FindCapabilityError is the error of the MCP tool find_capability.
+type FindCapabilityError = OpError[FindCapabilityCause]
+
+// findCapabilityCauses describes the FindCapabilityCause values (same order as the constants).
+var findCapabilityCauses = [...]causeInfo{
+	{"MissingCapability", ClassInvalidArgument},
+	{"InvalidCapability", ClassInvalidArgument},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (FindCapabilityCause) op() string { return "find_capability" }
+
+// info implements opCause.
+func (c FindCapabilityCause) info() causeInfo { return findCapabilityCauses[c] }
+
+// String returns the cause name.
+func (c FindCapabilityCause) String() string { return c.info().name }
+
+// FindCapabilityCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func FindCapabilityCauseByName(name string) (FindCapabilityCause, bool) {
+	for i, info := range findCapabilityCauses {
+		if info.name == name {
+			return FindCapabilityCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // wireOperationError rebuilds the typed error of an operation from its wire form (operation name, cause name,
 // message). It returns false when the operation or the cause is unknown, so a stale or foreign peer cannot
 // produce an error of the wrong type. Operation names used by both an MCP tool and a CLI subcommand ("release")
@@ -2905,6 +3183,36 @@ func wireOperationError(op, cause, message string) (error, bool) {
 	case "hub_client":
 		if c, ok := HubClientCauseByName(cause); ok {
 			return &OpError[HubClientCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "instance_register":
+		if c, ok := InstanceRegisterCauseByName(cause); ok {
+			return &OpError[InstanceRegisterCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "instance_heartbeat":
+		if c, ok := InstanceHeartbeatCauseByName(cause); ok {
+			return &OpError[InstanceHeartbeatCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "command_poll":
+		if c, ok := CommandPollCauseByName(cause); ok {
+			return &OpError[CommandPollCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "command_ack":
+		if c, ok := CommandAckCauseByName(cause); ok {
+			return &OpError[CommandAckCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "command_enqueue":
+		if c, ok := CommandEnqueueCauseByName(cause); ok {
+			return &OpError[CommandEnqueueCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "find_capability":
+		if c, ok := FindCapabilityCauseByName(cause); ok {
+			return &OpError[FindCapabilityCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	}

@@ -437,6 +437,11 @@
      "name": "AlreadyTaken",
      "class": "Conflict",
      "doc": "the item is already claimed or done"
+    },
+    {
+     "name": "MissingCapability",
+     "class": "Permission",
+     "doc": "the member's instance lacks one or more required capabilities for this item"
     }
    ],
    "forwarded": true
@@ -973,6 +978,189 @@
      "doc": "the hub could not be reached within the bounded retry budget"
     }
    ]
+  },
+  {
+   "type": "InstanceRegister",
+   "op": "instance_register",
+   "what": "registering a node instance and initial manifest on the hub",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the registration request body or manifest is malformed or invalid JSON"
+    },
+    {
+     "name": "InstanceMismatch",
+     "class": "Permission",
+     "doc": "the manifest instance name does not match the authenticated instance"
+    },
+    {
+     "name": "InvalidCapability",
+     "class": "InvalidArgument",
+     "doc": "the manifest contains an unknown or malformed capability"
+    },
+    {
+     "name": "InstanceNameTaken",
+     "class": "Conflict",
+     "doc": "the instance name is already registered with an active live lease"
+    },
+    {
+     "name": "ProtocolVersion",
+     "class": "InvalidArgument",
+     "doc": "the registration protocol version is not supported"
+    }
+   ]
+  },
+  {
+   "type": "InstanceHeartbeat",
+   "op": "instance_heartbeat",
+   "what": "renewing an instance lease and reporting manifest state to the hub",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the heartbeat request body or manifest is malformed or invalid JSON"
+    },
+    {
+     "name": "InstanceMismatch",
+     "class": "Permission",
+     "doc": "the heartbeat instance name does not match the authenticated instance"
+    },
+    {
+     "name": "InstanceNotFound",
+     "class": "NotFound",
+     "doc": "the instance is not registered on the hub"
+    },
+    {
+     "name": "StaleLease",
+     "class": "Conflict",
+     "doc": "the heartbeat lease generation does not match the active lease"
+    },
+    {
+     "name": "StaleHeartbeat",
+     "class": "Conflict",
+     "doc": "the heartbeat sequence or timestamp is older than the current recorded state"
+    },
+    {
+     "name": "InvalidManifest",
+     "class": "InvalidArgument",
+     "doc": "the heartbeat manifest or capability list is invalid"
+    }
+   ]
+  },
+  {
+   "type": "CommandPoll",
+   "op": "command_poll",
+   "what": "polling for node commands addressed to an instance",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the command poll request body is malformed or invalid JSON"
+    },
+    {
+     "name": "InstanceMismatch",
+     "class": "Permission",
+     "doc": "the polling instance name does not match the authenticated instance"
+    },
+    {
+     "name": "InstanceUnreachable",
+     "class": "NotFound",
+     "doc": "the instance is not registered or its manifest lease has expired"
+    },
+    {
+     "name": "StaleLease",
+     "class": "Conflict",
+     "doc": "the polling lease generation does not match the active lease"
+    },
+    {
+     "name": "InvalidCursor",
+     "class": "InvalidArgument",
+     "doc": "the command cursor is invalid"
+    }
+   ]
+  },
+  {
+   "type": "CommandAck",
+   "op": "command_ack",
+   "what": "acknowledging execution of a node command",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the command acknowledgment request body is malformed or invalid JSON"
+    },
+    {
+     "name": "InstanceMismatch",
+     "class": "Permission",
+     "doc": "the ack instance name does not match the authenticated instance"
+    },
+    {
+     "name": "InstanceUnreachable",
+     "class": "NotFound",
+     "doc": "the instance is not registered or its manifest lease has expired"
+    },
+    {
+     "name": "StaleLease",
+     "class": "Conflict",
+     "doc": "the ack lease generation does not match the active lease"
+    },
+    {
+     "name": "CommandNotFound",
+     "class": "NotFound",
+     "doc": "the acknowledged command was not found in the command queue"
+    },
+    {
+     "name": "ConflictAck",
+     "class": "Conflict",
+     "doc": "the command was already acknowledged with a different execution result"
+    },
+    {
+     "name": "InvalidResult",
+     "class": "InvalidArgument",
+     "doc": "the command execution result is invalid or malformed"
+    }
+   ]
+  },
+  {
+   "type": "CommandEnqueue",
+   "op": "command_enqueue",
+   "what": "enqueueing a node command on the hub",
+   "causes": [
+    {
+     "name": "InstanceUnreachable",
+     "class": "NotFound",
+     "doc": "the target instance is not registered or its manifest lease has expired"
+    },
+    {
+     "name": "InvalidCommand",
+     "class": "InvalidArgument",
+     "doc": "the command parameters or kind are invalid"
+    },
+    {
+     "name": "DuplicateCommand",
+     "class": "Conflict",
+     "doc": "a command with this ID is already queued or executed"
+    }
+   ]
+  },
+  {
+   "type": "FindCapability",
+   "op": "find_capability",
+   "what": "the MCP tool find_capability",
+   "causes": [
+    {
+     "name": "MissingCapability",
+     "class": "InvalidArgument",
+     "doc": "the capability argument is missing"
+    },
+    {
+     "name": "InvalidCapability",
+     "class": "InvalidArgument",
+     "doc": "the requested capability is invalid or unknown"
+    }
+   ],
+   "forwarded": true
   }
  ]
 }
