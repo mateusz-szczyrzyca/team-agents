@@ -301,11 +301,16 @@ func serveHub(cfg *HubConfig) *HubServeError {
 	if tasksDir == "" {
 		tasksDir = filepath.Join(filepath.Dir(cfg.Dir), "tasks")
 	}
+	// The lead is an instance too: its declared and detected capabilities are discoverable like the others'.
+	leadDirectory, verr := newLocalDirectory(localInstance, os.Getenv("INSTANCE_CAPABILITIES"))
+	if verr != nil {
+		return fromValue(HubServeInvalidConfig, verr)
+	}
 	instances := &HubInstanceRegistry{Bus: b, TTL: cfg.ManifestTTL}
 	var authorizePeer func(string, string) *HubCallError // custom resolvers own their authentication contract
 	resolver := cfg.Resolve
 	if resolver == nil {
-		runs := hubRunRegistry{bus: b, instances: instances, localInstance: localInstance, tasksDir: tasksDir}
+		runs := hubRunRegistry{bus: b, instances: instances, localInstance: localInstance, localView: &leadDirectory.view, tasksDir: tasksDir}
 		resolver = runs.resolve
 		authorizePeer = runs.authorizePeer
 	}
