@@ -131,6 +131,8 @@ AGENTBUS_BIN="${AGENTBUS_BIN:-$HOME/.local/bin/agentbus}"
 RUN_PATH="${RUN_PATH:-$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin}"
 # Multi-instance bus transport; empty lead/listen settings retain local-file mode.
 export INSTANCE_NAME="${INSTANCE_NAME:-}"
+# Capabilities this instance declares, comma separated (e.g. build:go,hw:jlink); unknown names stop serve.
+export INSTANCE_CAPABILITIES="${INSTANCE_CAPABILITIES:-}"
 export LEAD_INSTANCE="${LEAD_INSTANCE:-}"
 export HUB_LISTEN="${HUB_LISTEN:-}"
 # Optional absolute path to the lead's private socket; empty uses the bus directory's hub.sock.
