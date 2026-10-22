@@ -462,6 +462,11 @@
      "name": "MissingCapability",
      "class": "Permission",
      "doc": "the instance of the caller does not provide every capability the item requires; the item stays on the board"
+    },
+    {
+     "name": "NeedsApproval",
+     "class": "Permission",
+     "doc": "the item requires a sensitive capability (sign:*, publish:*) that the operator has not approved for this instance in node/approved-capabilities.json; the item stays on the board"
     }
    ],
    "forwarded": true
