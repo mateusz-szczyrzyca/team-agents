@@ -1291,6 +1291,52 @@ func (w *cliWriter) printf(format string, args ...any) {
 // println writes a line.
 func (w *cliWriter) println(line string) { w.printf("%s\n", line) }
 
+// cmdCommandEnqueue queues a command for a connected node on the hub.
+func cmdCommandEnqueue(args []string) {
+	fs := newFlagSet("cmd-enqueue")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	instance := fs.String("instance", "", "target instance")
+	kind := fs.String("kind", "", "command kind (start_run, wake, stop_task, answer)")
+	task := fs.String("task", "", "task identifier")
+	params := make(fieldFlags)
+	fs.Var(&params, "param", "key=value parameter (can be repeated)")
+	parseFlags(fs, args)
+	if *instance == "" || *kind == "" || *task == "" {
+		exitOn(opErr(CommandEnqueueInvalidParams, "missing required flags --instance, --kind, or --task").asError())
+	}
+	b := &Bus{dir: *dir}
+	h := &Hub{
+		Bus:       b,
+		Instances: &HubInstanceRegistry{Bus: b},
+	}
+	err := h.EnqueueCommand(*instance, CommandKind(*kind), *task, params)
+	if err != nil {
+		exitOn(err.asError())
+	}
+}
+
+// cmdInstances prints connected instances and their state.
+func cmdInstances(args []string) {
+	fs := newFlagSet("instances")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	parseFlags(fs, args)
+	b := &Bus{dir: *dir}
+	reg := &HubInstanceRegistry{Bus: b}
+	views, serr := reg.liveViews()
+	if serr != nil {
+		exitOn(serr.asError())
+	}
+	var out cliWriter
+	for _, v := range views {
+		caps := make([]string, len(v.Provided))
+		for i, c := range v.Provided {
+			caps[i] = string(c)
+		}
+		out.println(fmt.Sprintf("%s\t%s/%s\t%d/%d\t%s", v.Name, v.OS, v.Arch, v.Free, v.Total, strings.Join(caps, ",")))
+	}
+	exitOn(fromStorage(CmdStatusStorage, out.err).asError())
+}
+
 // exitOn logs the error, prints it for the human and exits with the exit code of its class (see
 // ErrorClass.ExitCode). Callers pass typed errors through asError, so a nil pointer never arrives here as a
 // non-nil error.
@@ -1336,6 +1382,10 @@ func main() {
 		cmdServe(os.Args[2:])
 	case "hub":
 		cmdHub(os.Args[2:])
+	case "cmd-enqueue":
+		cmdCommandEnqueue(os.Args[2:])
+	case "instances":
+		cmdInstances(os.Args[2:])
 	case "send":
 		cmdSend(os.Args[2:])
 	case "log":

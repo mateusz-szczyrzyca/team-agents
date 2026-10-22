@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -527,5 +528,42 @@ func TestCommandKindAndOutcomeVocabularies(t *testing.T) {
 	}
 	if CommandOutcome("failed:disk").Valid() {
 		t.Fatal("the reason must be the detail field, not part of the outcome")
+	}
+}
+
+func TestCmdCommandEnqueueAndInstances(t *testing.T) {
+	f := newCommandFixture(t)
+
+	cmdCommandEnqueue([]string{
+		"--dir", f.bus.dir,
+		"--instance", "mac",
+		"--kind", "start_run",
+		"--task", "task-123",
+		"--param", "agent=codex-1",
+		"--param", "run=1",
+	})
+
+	cmds, serr := f.bus.pendingCommands("mac", 0)
+	if serr != nil || len(cmds) != 1 {
+		t.Fatalf("expected 1 pending command, got %v (err: %v)", cmds, serr)
+	}
+	if cmds[0].Kind != CommandStartRun || cmds[0].Task != "task-123" || cmds[0].Params["agent"] != "codex-1" {
+		t.Fatalf("unexpected command: %+v", cmds[0])
+	}
+
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	cmdInstances([]string{"--dir", f.bus.dir})
+	_ = w.Close()
+	os.Stdout = oldStdout
+	outBytes, _ := io.ReadAll(r)
+	_ = r.Close()
+	out := string(outBytes)
+	if !strings.Contains(out, "mac\t") {
+		t.Fatalf("unexpected instances output: %q", out)
 	}
 }
