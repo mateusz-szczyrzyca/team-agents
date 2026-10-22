@@ -2897,6 +2897,18 @@ cmd__node_start() { # id mode [expected_run] — starts a runner directly under 
     fi
   fi
   local repo_name; repo_name=$(task_field "$id" REPO_NAME)
+  if [[ -n ${NODE_ACCEPT_REPOS:-} ]]; then
+    local accepted=0 r
+    local -a n_repos
+    IFS=, read -r -a n_repos <<< "$NODE_ACCEPT_REPOS"
+    for r in "${n_repos[@]}"; do
+      if [[ "$r" == "$repo_name" ]]; then accepted=1; break; fi
+    done
+    if ((!accepted)); then
+      echo "repository $repo_name not in NODE_ACCEPT_REPOS" >&2
+      exit 1
+    fi
+  fi
   if [[ ${#INSTANCE_ACCEPT_REPOS[@]} -gt 0 ]]; then
     local accepted=0 r
     for r in "${INSTANCE_ACCEPT_REPOS[@]}"; do
@@ -3016,16 +3028,32 @@ cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
   done
 
   local tasks_json="{}" active_runs=0
-  local d
+  local d tid st tagent tteam tcreated tmod
   for d in "$TASKS"/*/; do
     [[ -f $d/meta.env ]] || continue
-    (
-      source "$d/meta.env"
-      local st=$STATUS
-      if [[ $st == running || $st == starting ]]; then
-        active_runs=$((active_runs + 1))
-      fi
-    )
+    tid=$(basename "$d")
+    st=$(task_field "$tid" STATUS)
+    tagent=$(task_field "$tid" AGENT)
+    tteam=$(task_field "$tid" TEAM)
+    tcreated=$(task_field "$tid" CREATED)
+    [[ -n $tcreated ]] || tcreated=$(date_iso)
+    if [[ -f $d/activity.jsonl ]]; then
+      tmod=$(format_epoch "$(file_mtime_secs "$d/activity.jsonl")" '+%Y-%m-%dT%H:%M:%SZ')
+    else
+      tmod=$(format_epoch "$(file_mtime_secs "$d/meta.env")" '+%Y-%m-%dT%H:%M:%SZ')
+    fi
+    if [[ $st == running || $st == starting ]]; then
+      active_runs=$((active_runs + 1))
+    fi
+    tasks_json=$(jq -c \
+      --arg id "$tid" \
+      --arg agent "$tagent" \
+      --arg team "$tteam" \
+      --arg status "$st" \
+      --arg created "$tcreated" \
+      --arg updated "$tmod" \
+      '.[$id] = {task_id: $id, agent: $agent, team: $team, status: $status, started_at: $created, updated_at: $updated}' \
+      <<< "$tasks_json")
   done
 
   local max_slots=${AGENT_MAX_RUNS:-4}
