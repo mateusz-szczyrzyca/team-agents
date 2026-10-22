@@ -26,6 +26,8 @@ type Activity struct {
 
 // Task is one task directory (~/agents/tasks/<id>) as seen by the live view, built from its meta.env.
 type Task struct {
+	Instance   string    // owning instance; empty for the existing local-file view
+	Remote     bool      // metadata-only task from the hub; Dir and Worktree must never be read locally
 	ID         string    // task ID: "<timestamp>-<agent>" (investigations/helpers have their own suffix)
 	Agent      string    // agent name
 	Kind       string    // worker (a normal task) | investigation | helper (a worker request)
@@ -131,13 +133,14 @@ type busState struct {
 
 // Snapshot is the state of all tasks and the bus at one point in time.
 type Snapshot struct {
-	At     time.Time            // when the snapshot was taken
-	Tasks  []*Task              // visible: active + finished but not acknowledged, sorted by priority
-	All    map[string]*Task     // every task by ID
-	Agents map[string]*Presence // running agents (bus presence) by name
-	Invs   []*Investigation     // investigations sorted by ID
-	Msgs   []Message            // tail of messages.jsonl
-	Teams  map[string]*TeamInfo // teams by ID
+	HubError string               // last overview read failure; nonempty means the retained hub view is stale
+	At       time.Time            // when the snapshot was taken
+	Tasks    []*Task              // visible: active + finished but not acknowledged, sorted by priority
+	All      map[string]*Task     // every task by ID
+	Agents   map[string]*Presence // running agents (bus presence) by name
+	Invs     []*Investigation     // investigations sorted by ID
+	Msgs     []Message            // tail of messages.jsonl
+	Teams    map[string]*TeamInfo // teams by ID
 	// Instances are the instances the hub records in bus/instances.json, sorted by name; empty on a
 	// single-instance installation.
 	Instances []InstanceInfo
@@ -240,14 +243,20 @@ func parseInstanceTime(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339, s)
 }
 
+// statusUnreachable means an instance lease expired while its task remained active.
+const statusUnreachable string = "unreachable"
+
 // activeStatuses are task statuses of unfinished tasks (shown regardless of acknowledgement).
-var activeStatuses = map[string]bool{"new": true, "starting": true, "running": true, "waiting": true, "investigating": true, "sleeping": true, "paused": true}
+var activeStatuses = map[string]bool{statusUnreachable: true, "new": true, "starting": true, "running": true, "waiting": true, "investigating": true, "sleeping": true, "paused": true}
 
 // Active reports whether the task has not finished yet (sleeping and waiting count as active).
 func (t *Task) Active() bool { return activeStatuses[t.Status] }
 
 // Label is the short name shown in the table (agent, inv#N or agent/HN).
 func (t *Task) Label() string {
+	if t.Remote {
+		return t.Agent
+	}
 	switch t.Kind {
 	case "investigation":
 		return "inv#" + t.InvID
@@ -602,6 +611,7 @@ type Event struct {
 // Watcher polls snapshots and turns differences into events (status changes, new bus messages,
 // new activity entries, periodic reminders).
 type Watcher struct {
+	hub          *hubViewSource   // non-nil selects the authenticated hub source with no local bus fallback
 	home, busDir string           // AGENTS_HOME and the bus directory
 	prev         *Snapshot        // previous snapshot (nil before the first poll)
 	lastMsg      int64            // last message ID already reported
@@ -636,6 +646,9 @@ func finalSummary(dir string) string {
 // newActivity returns new activity log entries. fromStart: the task appeared
 // while the view is running — read the file from the beginning.
 func (w *Watcher) newActivity(t *Task, fromStart bool) []Activity {
+	if t.Remote {
+		return nil
+	}
 	path := filepath.Join(t.Dir, "activity.jsonl")
 	if fromStart {
 		if _, seen := w.offsets[t.ID]; !seen {
@@ -680,7 +693,12 @@ func (w *Watcher) newActivity(t *Task, fromStart bool) []Activity {
 
 // Poll loads a new snapshot and returns the events since the previous one.
 func (w *Watcher) Poll() (*Snapshot, []Event) {
-	cur := loadSnapshot(w.home, w.busDir)
+	var cur *Snapshot
+	if w.hub != nil {
+		cur = w.hub.poll()
+	} else {
+		cur = loadSnapshot(w.home, w.busDir)
+	}
 	now := cur.At
 	var ev []Event
 	if w.prev == nil {
@@ -693,6 +711,15 @@ func (w *Watcher) Poll() (*Snapshot, []Event) {
 		w.prev = cur
 		return cur, nil
 	}
+	if (cur.HubError != "") != (w.prev.HubError != "") {
+		text := "Hub connection restored."
+		kind := "info"
+		if cur.HubError != "" {
+			text = "Hub unavailable; showing the last received overview."
+			kind = "err"
+		}
+		ev = append(ev, Event{now, kind, text})
+	}
 	ids := make([]string, 0, len(cur.All))
 	for id := range cur.All {
 		ids = append(ids, id)
@@ -703,7 +730,10 @@ func (w *Watcher) Poll() (*Snapshot, []Event) {
 		p := w.prev.All[id]
 		switch {
 		case p == nil:
-			what := firstLine(filepath.Join(t.Dir, "task.md"))
+			what := ""
+			if !t.Remote {
+				what = firstLine(filepath.Join(t.Dir, "task.md"))
+			}
 			if t.Kind == "investigation" {
 				what = "for " + t.FromAgent + ": " + what
 			}
@@ -713,7 +743,7 @@ func (w *Watcher) Poll() (*Snapshot, []Event) {
 			kind := "status"
 			switch t.Status {
 			case "done", "failed", "stopped":
-				if sum := finalSummary(t.Dir); sum != "" {
+				if sum := t.finalSummary(); sum != "" {
 					text += " — " + sum
 				}
 				if t.Status != "done" {
@@ -928,4 +958,12 @@ func closeQuietly(f *os.File, path string) {
 	if err := f.Close(); err != nil {
 		warnOnce("close:"+path, LogFileReadFailed, storageErr(err, "cannot close %s", path), "file", path)
 	}
+}
+
+// finalSummary reads only an existing local task directory.
+func (t *Task) finalSummary() string {
+	if t.Remote {
+		return ""
+	}
+	return finalSummary(t.Dir)
 }

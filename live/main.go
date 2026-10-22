@@ -20,11 +20,12 @@ import (
 
 // config holds the command-line settings of agentlive (passed by `agent live`).
 type config struct {
-	home     string        // AGENTS_HOME (tasks/, bus/)
-	busDir   string        // agentbus state directory (default <home>/bus)
-	agentCmd string        // path to the `agent` script, used for actions (answer, stop, say, ack)
-	remind   time.Duration // interval of "still working / waiting for you" reminders (0 = off)
-	queueMax int           // investigation queue limit, for the queue summary line
+	snapshotCmd string        // optional agentbus helper; nonempty uses authenticated hub views
+	home        string        // AGENTS_HOME (tasks/, bus/)
+	busDir      string        // agentbus state directory (default <home>/bus)
+	agentCmd    string        // path to the `agent` script, used for actions (answer, stop, say, ack)
+	remind      time.Duration // interval of "still working / waiting for you" reminders (0 = off)
+	queueMax    int           // investigation queue limit, for the queue summary line
 }
 
 // main parses flags and starts either the panel or the feed.
@@ -37,6 +38,7 @@ func main() {
 	cfg := config{}
 	flag.StringVar(&cfg.home, "home", filepath.Join(home, "agents"), "AGENTS_HOME directory")
 	flag.StringVar(&cfg.busDir, "bus", "", "bus directory (default <home>/bus)")
+	flag.StringVar(&cfg.snapshotCmd, "snapshot-agentbus", "", "absolute agentbus helper for authenticated hub views")
 	flag.StringVar(&cfg.agentCmd, "agent", filepath.Join(home, ".local", "bin", "agent"), "path to the agent script")
 	remindMin := flag.Float64("remind", 1, "remind every N minutes who is still working (0 = off)")
 	flag.IntVar(&cfg.queueMax, "queue-max", 3, "investigation queue limit")
@@ -69,7 +71,7 @@ func main() {
 
 // runFeed prints events to stdout until interrupted (agent live --feed).
 func runFeed(cfg config) {
-	w := NewWatcher(cfg.home, cfg.busDir, cfg.remind)
+	w := configuredWatcher(cfg)
 	snap, _ := w.Poll() // the first poll only records the baseline: it has no events
 	printSummary(cfg, snap)
 	sig := make(chan os.Signal, 1)
@@ -102,11 +104,23 @@ func printSummary(cfg config, s *Snapshot) {
 		label, st := statusStyle(t.Status)
 		extra := ""
 		if !t.Active() {
-			extra = " — " + finalSummary(t.Dir)
+			extra = " — " + t.finalSummary()
 		} else if t.Last.Text != "" {
 			extra = " — " + shortTS(t.Last.TS) + " " + actIcon(t.Last.Kind) + " " + trunc(t.Last.Text, 100)
 		}
 		fmt.Printf("  %-11s %s %s%s\n", t.Label(), st.Render(fmt.Sprintf("%-19s", label)), stDim.Render(t.ID), extra)
 	}
+	if s.HubError != "" {
+		fmt.Println(stFailed.Render("  Hub unavailable; showing the last received overview."))
+	}
 	fmt.Println(stDim.Render("  (Ctrl+C stops the view; tasks keep running)"))
+}
+
+// configuredWatcher retains local behavior unless the operator selected a hub snapshot helper.
+func configuredWatcher(cfg config) *Watcher {
+	watcher := NewWatcher(cfg.home, cfg.busDir, cfg.remind)
+	if cfg.snapshotCmd != "" {
+		watcher.hub = &hubViewSource{program: cfg.snapshotCmd, home: cfg.home, busDir: cfg.busDir}
+	}
+	return watcher
 }

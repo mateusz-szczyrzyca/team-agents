@@ -3120,6 +3120,92 @@ func CmdInstancesCauseByName(name string) (CmdInstancesCause, bool) {
 	return 0, false
 }
 
+// ---------------------------------------------------------------- hub_view
+
+// HubViewCause is a reason why the authenticated read-only hub view endpoint failed.
+type HubViewCause int
+
+const (
+	HubViewMalformed HubViewCause = iota // the view request method, JSON or protocol version is invalid [InvalidArgument]
+	HubViewIdentity                      // the requested instance does not match transport authentication [Permission]
+	HubViewStorage                       // the shared state or a file could not be read or written [Storage]
+)
+
+// HubViewError is the error of the authenticated read-only hub view endpoint.
+type HubViewError = OpError[HubViewCause]
+
+// hubViewCauses describes the HubViewCause values (same order as the constants).
+var hubViewCauses = [...]causeInfo{
+	{"Malformed", ClassInvalidArgument},
+	{"Identity", ClassPermission},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (HubViewCause) op() string { return "hub_view" }
+
+// info implements opCause.
+func (c HubViewCause) info() causeInfo { return hubViewCauses[c] }
+
+// String returns the cause name.
+func (c HubViewCause) String() string { return c.info().name }
+
+// HubViewCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func HubViewCauseByName(name string) (HubViewCause, bool) {
+	for i, info := range hubViewCauses {
+		if info.name == name {
+			return HubViewCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- snapshot
+
+// CmdSnapshotCause is a reason why the snapshot subcommand and its authenticated view client failed.
+type CmdSnapshotCause int
+
+const (
+	CmdSnapshotInvalidConfig  CmdSnapshotCause = iota // the hub transport or snapshot timeout is invalid [InvalidArgument]
+	CmdSnapshotProtocol                               // the hub view response does not match the versioned protocol [InvalidState]
+	CmdSnapshotRejected                               // the authenticated hub rejected access to the view [Permission]
+	CmdSnapshotOutcomeUnknown                         // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CmdSnapshotUnavailable                            // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	CmdSnapshotStorage                                // the shared state or a file could not be read or written [Storage]
+)
+
+// CmdSnapshotError is the error of the snapshot subcommand and its authenticated view client.
+type CmdSnapshotError = OpError[CmdSnapshotCause]
+
+// cmdSnapshotCauses describes the CmdSnapshotCause values (same order as the constants).
+var cmdSnapshotCauses = [...]causeInfo{
+	{"InvalidConfig", ClassInvalidArgument},
+	{"Protocol", ClassInvalidState},
+	{"Rejected", ClassPermission},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CmdSnapshotCause) op() string { return "snapshot" }
+
+// info implements opCause.
+func (c CmdSnapshotCause) info() causeInfo { return cmdSnapshotCauses[c] }
+
+// String returns the cause name.
+func (c CmdSnapshotCause) String() string { return c.info().name }
+
+// CmdSnapshotCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func CmdSnapshotCauseByName(name string) (CmdSnapshotCause, bool) {
+	for i, info := range cmdSnapshotCauses {
+		if info.name == name {
+			return CmdSnapshotCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // wireOperationError rebuilds the typed error of an operation from its wire form (operation name, cause name,
 // message). It returns false when the operation or the cause is unknown, so a stale or foreign peer cannot
 // produce an error of the wrong type. Operation names used by both an MCP tool and a CLI subcommand ("release")
@@ -3474,6 +3560,16 @@ func wireOperationError(op, cause, message string) (error, bool) {
 	case "instances":
 		if c, ok := CmdInstancesCauseByName(cause); ok {
 			return &OpError[CmdInstancesCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "hub_view":
+		if c, ok := HubViewCauseByName(cause); ok {
+			return &OpError[HubViewCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "snapshot":
+		if c, ok := CmdSnapshotCauseByName(cause); ok {
+			return &OpError[CmdSnapshotCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	}

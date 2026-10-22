@@ -2347,7 +2347,48 @@ instances_status() {
   done <<<"$rows"
 }
 
+# hub_view_credentials — loads the operator's token environment before a read-only hub view.
+hub_view_credentials() {
+  if [[ -f $AGENTS_HOME/secrets.env ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$AGENTS_HOME/secrets.env"
+    set +a
+  fi
+}
+
+# hub_status — prints authenticated task/instance summaries without reading a second local bus.
+hub_status() {
+  hub_view_credentials
+  local view rows task instance agent status repo
+  view=$(bus snapshot --dir "$BUS_DIR")
+  printf '%-40s %-16s %-24s %-13s %s\n' TASK INSTANCE AGENT STATUS REPO
+  rows=$(jq -r '
+    .instances | sort_by(.name) | .[] as $node
+    | ($node.tasks // {} | to_entries | sort_by(.key))[]
+    | .value as $task
+    | [(.key + "@" + $node.name), $node.name, ($task.agent + "@" + $node.name),
+       (if ($node.active | not) and (["new","running","starting","waiting","investigating","sleeping","paused"] | index($task.status)) != null then "unreachable" else $task.status end),
+       ($task.repo // "")] | @tsv' <<< "$view")
+  if [[ -n $rows ]]; then
+    while IFS=$'\t' read -r task instance agent status repo; do
+      printf '%-40s %-16s %-24s %-13s %s\n' "$task" "$instance" "$agent" "$status" "$repo"
+    done <<< "$rows"
+  fi
+  echo
+  printf '%-16s %-8s %-14s %-7s %s\n' INSTANCE LEASE PLATFORM SLOTS CAPABILITIES
+  jq -r '.instances | sort_by(.name) | .[] | [.name, (if .active then "active" else "expired" end),
+      (.os + "/" + .arch), ((.slots.free|tostring) + "/" + (.slots.total|tostring)),
+      ((.capabilities // []) | join(", "))] | @tsv' <<< "$view"
+  # Older installations have no notification-failure state helper; current ones include its local status.
+  if declare -F notify_status >/dev/null; then notify_status; fi
+}
+
 cmd_status() {
+  if [[ -n ${LEAD_INSTANCE:-} || -n ${HUB_LISTEN:-} || -n ${HUB_SOCKET:-} ]]; then
+    hub_status
+    return
+  fi
   printf '%-30s %-12s %-13s %-6s %-5s %s\n' TASK AGENT STATUS ROUND RUN REPO
   local d
   for d in "$TASKS"/*/; do
@@ -2523,8 +2564,13 @@ cmd_live() {
     shift
   done
   [[ -x $AGENTLIVE_BIN ]] || die "$AGENTLIVE_BIN not found — run ./install.sh again"
+  local hub_args=()
+  if [[ -n ${LEAD_INSTANCE:-} || -n ${HUB_LISTEN:-} || -n ${HUB_SOCKET:-} ]]; then
+    hub_view_credentials
+    hub_args+=(--snapshot-agentbus "$AGENTBUS_BIN")
+  fi
   exec "$AGENTLIVE_BIN" --home "$AGENTS_HOME" --bus "$BUS_DIR" --agent "$SELF" \
-    --remind "$remind" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" "${feed[@]}"
+    --remind "$remind" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" "${hub_args[@]}" "${feed[@]}"
 }
 
 cmd_ack() { # <id | all> — acknowledges finished tasks (they disappear from agent live)

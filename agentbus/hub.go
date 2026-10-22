@@ -183,6 +183,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeResponse(w, status, HubResponse{Version: hubProtocolVersion, Error: hubFailure(authErr)})
 		return
 	}
+	if r.URL.Path == "/v1/view" {
+		h.serveView(w, r, instance)
+		return
+	}
 	if isInstanceRoute(r.URL.Path) {
 		h.serveInstances(w, r, instance)
 		return

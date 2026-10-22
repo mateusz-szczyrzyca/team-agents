@@ -1393,6 +1393,8 @@ func main() {
 		cmdCommandEnqueue(os.Args[2:])
 	case "instances":
 		cmdInstances(os.Args[2:])
+	case "snapshot":
+		exitOn(runSnapshot(os.Args[2:]).asError())
 	case "send":
 		cmdSend(os.Args[2:])
 	case "log":
