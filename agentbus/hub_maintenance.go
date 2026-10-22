@@ -258,7 +258,7 @@ func reclaimTeam(b *Bus, st *State, t *Team, expired map[string]bool) {
 		if !expired[instanceOfName(name)] || m.State == MemberDone || m.State == MemberExcluded || m.State == MemberUnreachable {
 			continue
 		}
-		m.State = MemberUnreachable
+		m.UnreachableFrom, m.State = m.State, MemberUnreachable
 		members = append(members, name)
 		instances[instanceOfName(name)] = true
 	}
@@ -288,6 +288,28 @@ func reclaimTeam(b *Bus, st *State, t *Team, expired map[string]bool) {
 	}
 	if _, serr := b.post(st, "agentbus", to, ev); serr != nil {
 		warnSideEffect("announce unreachable instance", serr, "team", t.ID)
+	}
+}
+
+// restoreReturnedMembers gives back the members of a reconnected instance that were marked unreachable (the caller
+// holds the lock). A paused member stays paused, because its resume timer still applies. Every other member becomes
+// sleeping, so that wakeFor can resume it when it has work. Board items are not touched: reclaimTeam returned them
+// to the board, and another member may already have claimed them.
+func restoreReturnedMembers(st *State, instance string) {
+	for _, id := range sortedNames(st.Teams) {
+		t := st.Teams[id]
+		for _, name := range sortedNames(t.Members) {
+			m := t.Members[name]
+			if m.State != MemberUnreachable || instanceOfName(name) != instance {
+				continue
+			}
+			m.State = MemberSleeping
+			if m.UnreachableFrom == MemberPaused {
+				m.State = MemberPaused
+			}
+			m.UnreachableFrom = ""
+			logInfo(LogInstanceRestored, "team", t.ID, "member", name, "state", string(m.State))
+		}
 	}
 }
 

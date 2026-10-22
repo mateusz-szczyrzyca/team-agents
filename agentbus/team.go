@@ -30,6 +30,10 @@ type TeamMember struct {
 	State    MemberState `json:"state"`              // active | sleeping | waking | done | excluded | hung | paused
 	Tier     Tier        `json:"tier"`               // normal | worker
 	Provider string      `json:"provider,omitempty"` // anthropic | openai | google | openrouter | deepinfra | ... (load balancing)
+	// UnreachableFrom is the state the member had when its instance lost the lease. It is set only while the state
+	// is unreachable; on reconnection the member gets it back (paused stays paused, other states become sleeping so
+	// that the normal wake-up applies). Empty means the state is unknown, which restores as sleeping.
+	UnreachableFrom MemberState `json:"unreachable_from,omitempty"`
 	// BoardSeen is the board revision (Team.BoardRev) the member has seen: when it last listed the board or was
 	// woken because of it. Going to sleep wakes the member again only for board changes newer than this.
 	BoardSeen int `json:"board_seen,omitempty"`
