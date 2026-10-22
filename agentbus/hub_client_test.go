@@ -237,13 +237,10 @@ func TestHubClientEnvironmentAndPinnedTLS(t *testing.T) {
 		t.Fatal("single-instance mode enabled forwarding")
 	}
 	t.Setenv("HUB_LISTEN", "127.0.0.1:7777")
-	logs := captureLogs(t)
+	t.Setenv("INSTANCE_NAME", "mac")
 	client, err = hubClientFromEnv()
-	if client != nil || err != nil {
-		t.Fatal("approved lead-local fallback failed")
-	}
-	if !strings.Contains(logs.String(), string(LogLeadLocalFallback)) {
-		t.Fatal("lead-local fallback was silent")
+	if client == nil || err != nil || client.URL != "http://local-hub" {
+		t.Fatal("lead-local serve must select the Unix socket without file fallback")
 	}
 	t.Setenv("HUB_LISTEN", "")
 	t.Setenv("INSTANCE_NAME", "mac")

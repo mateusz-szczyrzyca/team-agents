@@ -1032,7 +1032,7 @@ func cmdServe(args []string) {
 	if s.tasksDir == "" {
 		s.tasksDir = filepath.Join(filepath.Dir(*dir), "tasks")
 	}
-	client, clientErr := hubClientFromEnv()
+	client, clientErr := hubClientForDir(*dir)
 	exitOn(clientErr.asError())
 	s.hubClient = client
 	if client != nil {

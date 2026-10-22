@@ -121,6 +121,8 @@ RUN_PATH="${RUN_PATH:-$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin}"
 export INSTANCE_NAME="${INSTANCE_NAME:-}"
 export LEAD_INSTANCE="${LEAD_INSTANCE:-}"
 export HUB_LISTEN="${HUB_LISTEN:-}"
+# Optional absolute path to the lead's private socket; empty uses the bus directory's hub.sock.
+export HUB_SOCKET="${HUB_SOCKET:-}"
 export HUB_AUTH="${HUB_AUTH:-tailscale}"
 export HUB_CERT_FINGERPRINT="${HUB_CERT_FINGERPRINT:-}"
 export HUB_RETRY_SECONDS="${HUB_RETRY_SECONDS:-30}"

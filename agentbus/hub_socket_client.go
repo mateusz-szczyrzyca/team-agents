@@ -34,7 +34,7 @@ func newHubSocketClient(path, instance string) (*HubClient, *HubClientError) {
 // checkHubSocket prevents other local users from supplying a replacement hub endpoint.
 // It implements the transport's filesystem admission; failures are reported through DialContext.
 func checkHubSocket(path string) *ValueError {
-	info, err := os.Lstat(path)
+	info, err := os.Lstat(path) //nolint:gosec // absolute socket path comes only from the operator's HUB_SOCKET or bus directory, never remote input
 	if err != nil {
 		return valueWrap(err, "cannot inspect local hub socket")
 	}
@@ -42,7 +42,7 @@ func checkHubSocket(path string) *ValueError {
 	if info.Mode()&os.ModeSocket == 0 || info.Mode().Perm()&0o077 != 0 || !ok || int64(owner.Uid) != int64(os.Geteuid()) {
 		return valueErr("local hub socket must be owned by this user and accessible only to its owner")
 	}
-	parent, err := os.Stat(filepath.Dir(path))
+	parent, err := os.Stat(filepath.Dir(path)) //nolint:gosec // parent is derived from the same operator-selected local socket path and is only inspected
 	if err != nil {
 		return valueWrap(err, "cannot inspect local hub socket directory")
 	}

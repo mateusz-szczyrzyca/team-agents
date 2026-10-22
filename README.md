@@ -94,9 +94,13 @@ Redirects are refused so credentials cannot be forwarded to a different endpoint
 TLS and response time. Retries retain the original request ID; an `OutcomeUnknown` response is final and must
 be reconciled before submitting replacement work. Long polls reattach to their original execution with a
 630-second total cap. Requests are limited to 1 MiB and responses to 64 MiB. Transport exhaustion becomes the
-attempted operation's typed `Unavailable` error (exit class 11). Without `LEAD_INSTANCE` or `HUB_LISTEN`, the
-existing local-file mode is unchanged. The human approved a local Unix socket for lead-local dispatch. Until that transport is implemented,
-setting `HUB_LISTEN` makes lead-local `serve` use local files and log `lead_local_fallback` as a warning.
+attempted operation's typed `Unavailable` error (exit class 11). Without `LEAD_INSTANCE`, `HUB_LISTEN` or `HUB_SOCKET`, the
+existing local-file mode is unchanged. Setting `HUB_LISTEN` or `HUB_SOCKET` routes lead-local `serve` calls
+through the hub daemon's owner-only Unix socket, with the same request envelopes and identity checks.
+`HUB_SOCKET` overrides the default `<bus directory>/hub.sock`; `serve --dir` selects that bus directory.
+The socket uses local filesystem permissions instead of a bearer token. Its directory must not be writable
+by other users. A missing or refused socket returns `Unavailable` and never falls back to local bus files.
+The temporary `lead_local_fallback` event name is retained for old logs but is no longer emitted.
 
 ### Tasks and runs
 

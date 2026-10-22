@@ -6,20 +6,24 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// hubClientFromEnv configures remote forwarding only when LEAD_INSTANCE is set.
+// hubClientFromEnv configures forwarding using the default bus directory.
 // Bash loads agents.conf and secrets.env; the bus never executes configuration as shell code.
 func hubClientFromEnv() (*HubClient, *HubClientError) {
+	return hubClientForDir(defaultDir())
+}
+
+// hubClientForDir respects serve's --dir when locating the default lead-local socket.
+func hubClientForDir(dir string) (*HubClient, *HubClientError) {
 	lead := os.Getenv("LEAD_INSTANCE")
-	if os.Getenv("HUB_LISTEN") != "" {
-		logWarn(LogLeadLocalFallback, "reason", "lead-local Unix socket transport is not yet available; using local bus files")
-		return nil, nil
-	}
-	if lead == "" {
+	socket := os.Getenv("HUB_SOCKET")
+	local := os.Getenv("HUB_LISTEN") != "" || socket != ""
+	if lead == "" && !local {
 		return nil, nil
 	}
 	mode := os.Getenv("HUB_AUTH")
@@ -36,6 +40,21 @@ func hubClientFromEnv() (*HubClient, *HubClientError) {
 			return nil, opErr(HubClientInvalidConfig, "HUB_RETRY_SECONDS must be between 1 and 600")
 		}
 		seconds = value
+	}
+	if local {
+		if socket == "" {
+			path, err := filepath.Abs(filepath.Join(dir, "hub.sock"))
+			if err != nil {
+				return nil, opErr(HubClientInvalidConfig, "cannot resolve default hub socket: %v", err)
+			}
+			socket = path
+		}
+		client, err := newHubSocketClient(socket, os.Getenv("INSTANCE_NAME"))
+		if err != nil {
+			return nil, err
+		}
+		client.RetryDuration = time.Duration(seconds) * time.Second
+		return client, nil
 	}
 	transport := &http.Transport{DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
 		TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 60 * time.Second}
