@@ -406,6 +406,11 @@
      "name": "ForWorkerNeedsEasy",
      "class": "InvalidArgument",
      "doc": "for names a worker but the item is not level easy"
+    },
+    {
+     "name": "InvalidCapability",
+     "class": "InvalidArgument",
+     "doc": "a capability in requires is not in the recognized set (see manifest.go)"
     }
    ],
    "forwarded": true
@@ -452,6 +457,11 @@
      "name": "ReservedForOther",
      "class": "Permission",
      "doc": "the item is reserved for another member (board_add with for)"
+    },
+    {
+     "name": "MissingCapability",
+     "class": "Permission",
+     "doc": "the instance of the caller does not provide every capability the item requires; the item stays on the board"
     }
    ],
    "forwarded": true
@@ -493,6 +503,24 @@
      "name": "NotYourItem",
      "class": "Permission",
      "doc": "the item does not exist or is claimed by someone else"
+    }
+   ],
+   "forwarded": true
+  },
+  {
+   "type": "FindCapability",
+   "op": "find_capability",
+   "what": "the MCP tool find_capability",
+   "causes": [
+    {
+     "name": "InvalidCapability",
+     "class": "InvalidArgument",
+     "doc": "the capability is not in the recognized set (see manifest.go)"
+    },
+    {
+     "name": "NoDirectory",
+     "class": "InvalidState",
+     "doc": "capability discovery is not configured for this installation"
     }
    ],
    "forwarded": true
@@ -569,6 +597,11 @@
      "name": "ClientRead",
      "class": "Storage",
      "doc": "reading requests from the MCP client failed"
+    },
+    {
+     "name": "InvalidInstanceCapabilities",
+     "class": "InvalidArgument",
+     "doc": "INSTANCE_CAPABILITIES names a capability that is not recognized; fix agents.conf"
     }
    ]
   },

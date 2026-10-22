@@ -45,16 +45,17 @@ type Quiz struct {
 
 // BoardItem is a subtask on the team board.
 type BoardItem struct {
-	ID       string      `json:"id"`                 // "B<n>"
-	Title    string      `json:"title"`              // short description shown in board_list
-	Details  string      `json:"details"`            // exactly what to do and how to return the result
-	Level    BoardLevel  `json:"level"`              // easy (for workers) | normal (for normal models)
-	Status   BoardStatus `json:"status"`             // todo | claimed | done
-	Creator  string      `json:"creator"`            // receives the result as a message
-	Assignee string      `json:"assignee,omitempty"` // who claimed it
-	For      string      `json:"for,omitempty"`      // the only member that may claim it ("" = anyone at its level)
-	Result   string      `json:"result,omitempty"`   // the result submitted with board_done
-	Updated  Timestamp   `json:"updated"`            // last change
+	ID       string       `json:"id"`                 // "B<n>"
+	Title    string       `json:"title"`              // short description shown in board_list
+	Details  string       `json:"details"`            // exactly what to do and how to return the result
+	Level    BoardLevel   `json:"level"`              // easy (for workers) | normal (for normal models)
+	Status   BoardStatus  `json:"status"`             // todo | claimed | done
+	Creator  string       `json:"creator"`            // receives the result as a message
+	Assignee string       `json:"assignee,omitempty"` // who claimed it
+	For      string       `json:"for,omitempty"`      // the only member that may claim it ("" = anyone at its level)
+	Requires []Capability `json:"requires,omitempty"` // capabilities the claiming instance must provide (none = anyone)
+	Result   string       `json:"result,omitempty"`   // the result submitted with board_done
+	Updated  Timestamp    `json:"updated"`            // last change
 }
 
 // Helper is a worker request created with delegate: a normal model hands a simple task to a
@@ -369,9 +370,15 @@ func (s *Server) boardAdd(title, details, level string) (string, *BoardAddError)
 	return s.boardAddFor(title, details, level, "")
 }
 
-// boardAddFor (MCP board_add) adds a board item and wakes one sleeping member who can take it: the designated
-// member when forMember is given, otherwise one of the matching tier.
+// boardAddFor adds a board item without capability requirements (see boardAddWith).
 func (s *Server) boardAddFor(title, details, level, forMember string) (string, *BoardAddError) {
+	return s.boardAddWith(title, details, level, forMember, nil)
+}
+
+// boardAddWith (MCP board_add) adds a board item and wakes one sleeping member who can take it: the designated
+// member when forMember is given, otherwise one of the matching tier. requires lists capabilities the claiming
+// instance must provide; each must be recognized (see manifest.go).
+func (s *Server) boardAddWith(title, details, level, forMember string, requires []string) (string, *BoardAddError) {
 	forMember = strings.TrimSpace(forMember)
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -380,6 +387,14 @@ func (s *Server) boardAddFor(title, details, level, forMember string) (string, *
 	lvl, verr := parseBoardLevel(level)
 	if verr != nil {
 		return "", fromValue(BoardAddInvalidLevel, verr)
+	}
+	caps := make([]Capability, 0, len(requires))
+	for _, r := range requires {
+		c, cerr := ParseCapability(strings.TrimSpace(r))
+		if cerr != nil {
+			return "", fromValue(BoardAddInvalidCapability, cerr)
+		}
+		caps = append(caps, c)
 	}
 	var id string
 	err := transact(s.bus, BoardAddStorage, func(st *State) *BoardAddError {
@@ -403,7 +418,7 @@ func (s *Server) boardAddFor(title, details, level, forMember string) (string, *
 		t.NextBID++
 		id = "B" + strconv.Itoa(t.NextBID)
 		t.Board[id] = &BoardItem{ID: id, Title: title, Details: strings.TrimSpace(details), Level: lvl, Status: BoardTodo,
-			Creator: s.me, For: forMember, Updated: Now()}
+			Creator: s.me, For: forMember, Requires: caps, Updated: Now()}
 		t.bumpBoard()
 		if _, serr := s.bus.post(st, s.me, "all", EventBoardItemAdded{ID: id, Level: lvl, Title: title, For: forMember}); serr != nil {
 			return fromStorage(BoardAddStorage, serr)
@@ -446,6 +461,9 @@ func (s *Server) boardList() (string, *BoardListError) {
 			if it.For != "" && it.Status == BoardTodo {
 				who = " — for " + it.For + " only"
 			}
+			if len(it.Requires) > 0 {
+				who += " — requires " + joinCapabilities(it.Requires)
+			}
 			fmt.Fprintf(&sb, "- %s [%s, %s%s] %s (from %s)\n", id, it.Level, it.Status, who, it.Title, it.Creator)
 			if it.Status != BoardDone && it.Details != "" {
 				fmt.Fprintf(&sb, "    %s\n", strings.ReplaceAll(it.Details, "\n", "\n    "))
@@ -464,6 +482,12 @@ func (s *Server) boardList() (string, *BoardListError) {
 
 // boardClaim (MCP board_claim) assigns a "todo" item to the caller (workers may claim only easy items).
 func (s *Server) boardClaim(id string) (string, *BoardClaimError) {
+	// The capabilities are read before the transaction: the registry takes the same bus lock, so reading it
+	// inside transact would deadlock. An item with requires is never claimed when this read fails.
+	provided, serr := s.ownCapabilities()
+	if serr != nil {
+		return "", fromStorage(BoardClaimStorage, serr)
+	}
 	var it BoardItem
 	err := transact(s.bus, BoardClaimStorage, func(st *State) *BoardClaimError {
 		s.touch(st)
@@ -483,6 +507,10 @@ func (s *Server) boardClaim(id string) (string, *BoardClaimError) {
 		}
 		if item.Status != BoardTodo {
 			return opErr(BoardClaimAlreadyTaken, "%s is already %s (by %s)", item.ID, item.Status, item.Assignee)
+		}
+		if missing := missingCapabilities(item.Requires, provided); len(missing) > 0 {
+			return opErr(BoardClaimMissingCapability, "%s requires %s, which instance %q does not provide",
+				item.ID, joinCapabilities(missing), s.instance)
 		}
 		item.Status, item.Assignee, item.Updated = BoardClaimed, s.me, Now()
 		it = *item
@@ -656,7 +684,9 @@ func collabToolDefs(inTeam bool, tier Tier) []map[string]any {
 				obj(map[string]any{"title": str("Short title"), "details": str("Exactly what to do and in what form to return the result"),
 					"level": map[string]any{"type": "string", "enum": []string{string(LevelEasy), string(LevelNormal)}},
 					"for": str("Optional: the member that must do it. Only that member may claim the item and only it is woken. " +
-						"Use this instead of writing \"for X\" or \"wait for assignment\" in the text — an open item is for anyone at its level.")},
+						"Use this instead of writing \"for X\" or \"wait for assignment\" in the text — an open item is for anyone at its level."),
+					"requires": map[string]any{"type": "array", "items": map[string]any{"type": "string"},
+						"description": "Optional: capabilities (e.g. build:ios) the claiming instance must provide. Use find_capability to see what exists."}},
 					"title", "details", "level")),
 			tool("board_list", "Show the team board (todo / in progress / done).", obj(map[string]any{})),
 			tool("board_claim", "Take an item from the board (workers: easy only).", obj(map[string]any{"id": str("e.g. B3")}, "id")),

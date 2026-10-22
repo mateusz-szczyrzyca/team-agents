@@ -334,20 +334,22 @@ func fmtMsg(m Message) string {
 
 // Server is one `agentbus serve` instance — the MCP server of a single agent run.
 type Server struct {
-	bus       *Bus          // shared state
-	me        string        // this agent's name
-	info      Presence      // presence template (task, repo, branch, worktree)
-	peers     []string      // configured agent names (shown as inactive when not running)
-	out       *json.Encoder // JSON-RPC output (stdout)
-	role      Role          // regular agent or investigator
-	queueMax  int           // investigation queue limit (waiting requests)
-	tasksDir  string        // tasks directory (investigation records live under it)
-	team      string        // team ID when running in team mode, else ""
-	tier      Tier          // normal or worker (a cheap model: cannot coordinate or delegate)
-	agentCmd  string        // path to the `agent` script (to spawn helper dispatch)
-	home      string        // AGENTS_HOME (passed to spawned processes)
-	hubClient *HubClient    // nonnil forwards tools without touching a local bus
-	hubCaller HubCaller     // registered identity used for forwarded requests
+	bus       *Bus                // shared state
+	me        string              // this agent's name
+	info      Presence            // presence template (task, repo, branch, worktree)
+	peers     []string            // configured agent names (shown as inactive when not running)
+	out       *json.Encoder       // JSON-RPC output (stdout)
+	role      Role                // regular agent or investigator
+	queueMax  int                 // investigation queue limit (waiting requests)
+	tasksDir  string              // tasks directory (investigation records live under it)
+	team      string              // team ID when running in team mode, else ""
+	tier      Tier                // normal or worker (a cheap model: cannot coordinate or delegate)
+	agentCmd  string              // path to the `agent` script (to spawn helper dispatch)
+	home      string              // AGENTS_HOME (passed to spawned processes)
+	hubClient *HubClient          // nonnil forwards tools without touching a local bus
+	hubCaller HubCaller           // registered identity used for forwarded requests
+	instance  string              // instance this server runs on (capability checks for board_claim)
+	directory CapabilityDirectory // who can run work; nil provides no capability (fails closed for requires)
 }
 
 // touch (re)registers this agent's presence and updates LastSeen.
@@ -674,6 +676,18 @@ func (a toolArgs) num(k string) int {
 	return 0
 }
 
+// list returns a string-array argument (nil when absent). validateArgs has checked every item.
+func (a toolArgs) list(k string) []string {
+	items, _ := a[k].([]any) // validated: absent or an array of strings
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		if sv, ok := it.(string); ok {
+			out = append(out, sv)
+		}
+	}
+	return out
+}
+
 // flag returns a boolean argument (false when absent). Booleans may arrive as JSON booleans or "true"/"false".
 func (a toolArgs) flag(k string) bool {
 	switch v := a[k].(type) {
@@ -689,6 +703,7 @@ func (a toolArgs) flag(k string) bool {
 func toolSchemas() map[string]map[string]string {
 	defs := append(append(append(toolDefs(), invToolDefs(RoleAgent)...), teamToolDefs(true)...), collabToolDefs(true, TierNormal)...)
 	defs = append(defs, consultToolDefs(true)...)
+	defs = append(defs, capabilityToolDefs()...)
 	out := map[string]map[string]string{}
 	for _, d := range defs {
 		props := map[string]string{}
@@ -736,6 +751,16 @@ func validateArgs(name string, a map[string]any) *ToolCallError {
 				}
 			default:
 				return opErr(ToolCallInvalidArgument, "%s: argument %q must be a number, got %T", name, k, v)
+			}
+		case "array":
+			items, ok := v.([]any)
+			if !ok {
+				return opErr(ToolCallInvalidArgument, "%s: argument %q must be an array, got %T", name, k, v)
+			}
+			for _, it := range items {
+				if _, isStr := it.(string); !isStr {
+					return opErr(ToolCallInvalidArgument, "%s: every item of %q must be a string, got %T", name, k, it)
+				}
 			}
 		case "boolean":
 			switch b := v.(type) {
@@ -819,7 +844,9 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 	case "team_exclude":
 		return toolResult(s.teamExclude(a.str("agent"), a.str("reason")))
 	case "board_add":
-		return toolResult(s.boardAddFor(a.str("title"), a.str("details"), a.str("level"), a.str("for")))
+		return toolResult(s.boardAddWith(a.str("title"), a.str("details"), a.str("level"), a.str("for"), a.list("requires")))
+	case "find_capability":
+		return toolResult(s.findCapability(a.str("capability")))
 	case "consult_start":
 		return toolResult(s.consultStart(a.str("text"), a.num("minutes")))
 	case "consult_reply":
@@ -959,6 +986,7 @@ func (s *Server) handle(line []byte) {
 		s.reply(req.ID, map[string]any{})
 	case "tools/list":
 		tools := append(toolDefs(), invToolDefs(s.role)...)
+		tools = append(tools, capabilityToolDefs()...)
 		tools = append(tools, teamToolDefs(s.team != "")...)
 		if s.role != RoleInvestigator {
 			tools = append(tools, collabToolDefs(s.team != "", s.tier)...)
@@ -1043,9 +1071,13 @@ func cmdServe(args []string) {
 	client, clientErr := hubClientForDir(*dir)
 	exitOn(clientErr.asError())
 	s.hubClient = client
+	local, verr := newLocalDirectory(os.Getenv(localInstanceNameEnv), os.Getenv("INSTANCE_CAPABILITIES"))
+	exitOn(fromValue(CmdServeInvalidInstanceCapabilities, verr).asError())
 	if client != nil {
+		// Hub mode: the hub's server resolves the instance and the registry directory, not this process.
 		s.hubCaller = HubCaller{Agent: *agent, Instance: client.Instance, Task: *task, Team: *team, Tier: tr, Role: r}
 	} else {
+		s.instance, s.directory = local.view.Name, local
 		exitOn(fromStorage(CmdServeStorage, s.register()).asError())
 	}
 	logInfo(LogServerStarted, "role", r, "tier", tr, "version", version)

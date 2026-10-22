@@ -85,7 +85,10 @@ instance registration, node supervision and cross-instance task routing are stil
 Keep production installations in single-instance mode until these milestones are complete.
 
 With `LEAD_INSTANCE` set, `agentbus serve` forwards tool calls to that HTTP origin and never reads or writes
-local bus files. Set `INSTANCE_NAME` to the unique local instance name. `HUB_AUTH=tailscale` is the default;
+local bus files. Set `INSTANCE_NAME` to the unique local instance name. `INSTANCE_CAPABILITIES` (comma separated,
+recognized names from `agentbus/manifest.go` only) declares what this instance offers; a misspelled name stops `agentbus serve`
+at startup. Without it the instance offers only its operating system, so board items with `requires` stay unclaimable here.
+In hub mode the hub decides from the registered manifests, not from the local setting. `HUB_AUTH=tailscale` is the default;
 `HUB_AUTH=token` requires HTTPS, `HUB_TOKEN` from `secrets.env`, and `HUB_CERT_FINGERPRINT` containing the
 SHA-256 leaf-certificate fingerprint. The `agent` runner exports these settings from `agents.conf`.
 Redirects are refused so credentials cannot be forwarded to a different endpoint.
@@ -544,7 +547,8 @@ event stream with bus messages, status changes and periodic reminders.
 | `delegate`, `delegation_status` | worker requests (normal tier) |
 | `team_status`, `claim_lead`, `handover_lead` | teams |
 | `quiz_start`, `quiz_answer`, `quiz_results`, `team_exclude` | the qualification quiz |
-| `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item) |
+| `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item; `requires=[capabilities]`: only an instance that provides all of them may claim it, and `board_claim` says which one is missing) |
+| `find_capability` | live instances that offer a capability (e.g. `build:ios`), with platform, free slots and agents |
 | `consult_start`, `consult_reply`, `consult_results` | ask the other normal members with a time limit (e.g. for recommendations); silence is shown as NO ANSWER |
 
 ### Instance registration and leases

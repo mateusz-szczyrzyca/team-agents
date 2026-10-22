@@ -1007,6 +1007,7 @@ const (
 	BoardAddNotInTeam                               // the caller is not in a team (outside a team: delegate) [NotInTeam]
 	BoardAddUnknownMember                           // for names an agent that is not a member of the team (or is excluded) [NotFound]
 	BoardAddForWorkerNeedsEasy                      // for names a worker but the item is not level easy [InvalidArgument]
+	BoardAddInvalidCapability                       // a capability in requires is not in the recognized set (see manifest.go) [InvalidArgument]
 	BoardAddOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
 	BoardAddUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	BoardAddStorage                                 // the shared state or a file could not be read or written [Storage]
@@ -1022,6 +1023,7 @@ var boardAddCauses = [...]causeInfo{
 	{"NotInTeam", ClassNotInTeam},
 	{"UnknownMember", ClassNotFound},
 	{"ForWorkerNeedsEasy", ClassInvalidArgument},
+	{"InvalidCapability", ClassInvalidArgument},
 	{"OutcomeUnknown", ClassInvalidState},
 	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
@@ -1094,14 +1096,15 @@ func BoardListCauseByName(name string) (BoardListCause, bool) {
 type BoardClaimCause int
 
 const (
-	BoardClaimNotInTeam        BoardClaimCause = iota // the caller is not in a team [NotInTeam]
-	BoardClaimNoSuchItem                              // there is no board item with this ID [NotFound]
-	BoardClaimWorkerNeedsEasy                         // a worker tried to claim a normal-level item [Permission]
-	BoardClaimAlreadyTaken                            // the item is already claimed or done [Conflict]
-	BoardClaimReservedForOther                        // the item is reserved for another member (board_add with for) [Permission]
-	BoardClaimOutcomeUnknown                          // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
-	BoardClaimUnavailable                             // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
-	BoardClaimStorage                                 // the shared state or a file could not be read or written [Storage]
+	BoardClaimNotInTeam         BoardClaimCause = iota // the caller is not in a team [NotInTeam]
+	BoardClaimNoSuchItem                               // there is no board item with this ID [NotFound]
+	BoardClaimWorkerNeedsEasy                          // a worker tried to claim a normal-level item [Permission]
+	BoardClaimAlreadyTaken                             // the item is already claimed or done [Conflict]
+	BoardClaimReservedForOther                         // the item is reserved for another member (board_add with for) [Permission]
+	BoardClaimMissingCapability                        // the instance of the caller does not provide every capability the item requires; the item stays on the board [Permission]
+	BoardClaimOutcomeUnknown                           // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	BoardClaimUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	BoardClaimStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
 // BoardClaimError is the error of the MCP tool board_claim.
@@ -1114,6 +1117,7 @@ var boardClaimCauses = [...]causeInfo{
 	{"WorkerNeedsEasy", ClassPermission},
 	{"AlreadyTaken", ClassConflict},
 	{"ReservedForOther", ClassPermission},
+	{"MissingCapability", ClassPermission},
 	{"OutcomeUnknown", ClassInvalidState},
 	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
@@ -1223,6 +1227,50 @@ func BoardReleaseCauseByName(name string) (BoardReleaseCause, bool) {
 	for i, info := range boardReleaseCauses {
 		if info.name == name {
 			return BoardReleaseCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- find_capability
+
+// FindCapabilityCause is a reason why the MCP tool find_capability failed.
+type FindCapabilityCause int
+
+const (
+	FindCapabilityInvalidCapability FindCapabilityCause = iota // the capability is not in the recognized set (see manifest.go) [InvalidArgument]
+	FindCapabilityNoDirectory                                  // capability discovery is not configured for this installation [InvalidState]
+	FindCapabilityOutcomeUnknown                               // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	FindCapabilityUnavailable                                  // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
+	FindCapabilityStorage                                      // the shared state or a file could not be read or written [Storage]
+)
+
+// FindCapabilityError is the error of the MCP tool find_capability.
+type FindCapabilityError = OpError[FindCapabilityCause]
+
+// findCapabilityCauses describes the FindCapabilityCause values (same order as the constants).
+var findCapabilityCauses = [...]causeInfo{
+	{"InvalidCapability", ClassInvalidArgument},
+	{"NoDirectory", ClassInvalidState},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (FindCapabilityCause) op() string { return "find_capability" }
+
+// info implements opCause.
+func (c FindCapabilityCause) info() causeInfo { return findCapabilityCauses[c] }
+
+// String returns the cause name.
+func (c FindCapabilityCause) String() string { return c.info().name }
+
+// FindCapabilityCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func FindCapabilityCauseByName(name string) (FindCapabilityCause, bool) {
+	for i, info := range findCapabilityCauses {
+		if info.name == name {
+			return FindCapabilityCause(i), true
 		}
 	}
 	return 0, false
@@ -1358,11 +1406,12 @@ func CliCauseByName(name string) (CliCause, bool) {
 type CmdServeCause int
 
 const (
-	CmdServeMissingAgent CmdServeCause = iota // --agent is missing [InvalidArgument]
-	CmdServeInvalidRole                       // --role is not worker or investigator [InvalidArgument]
-	CmdServeInvalidTier                       // --tier is not normal or worker [InvalidArgument]
-	CmdServeClientRead                        // reading requests from the MCP client failed [Storage]
-	CmdServeStorage                           // the shared state or a file could not be read or written [Storage]
+	CmdServeMissingAgent                CmdServeCause = iota // --agent is missing [InvalidArgument]
+	CmdServeInvalidRole                                      // --role is not worker or investigator [InvalidArgument]
+	CmdServeInvalidTier                                      // --tier is not normal or worker [InvalidArgument]
+	CmdServeClientRead                                       // reading requests from the MCP client failed [Storage]
+	CmdServeInvalidInstanceCapabilities                      // INSTANCE_CAPABILITIES names a capability that is not recognized; fix agents.conf [InvalidArgument]
+	CmdServeStorage                                          // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdServeError is the error of the subcommand serve (the MCP server of an agent run).
@@ -1374,6 +1423,7 @@ var cmdServeCauses = [...]causeInfo{
 	{"InvalidRole", ClassInvalidArgument},
 	{"InvalidTier", ClassInvalidArgument},
 	{"ClientRead", ClassStorage},
+	{"InvalidInstanceCapabilities", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 
@@ -3119,6 +3169,11 @@ func wireOperationError(op, cause, message string) (error, bool) {
 	case "board_release":
 		if c, ok := BoardReleaseCauseByName(cause); ok {
 			return &OpError[BoardReleaseCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "find_capability":
+		if c, ok := FindCapabilityCauseByName(cause); ok {
+			return &OpError[FindCapabilityCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "delegate":
