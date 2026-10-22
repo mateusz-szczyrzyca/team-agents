@@ -2919,6 +2919,53 @@ cmd__node_answer() { # id [expected_round] — stores answers from stdin and res
   cmd__node_start "$id" resume
 }
 
+cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
+  local agents_json="[]"
+  local a busy status cur_task tier
+  for a in "${!AGENT_TYPE[@]}"; do
+    tier=$(agent_tier "$a")
+    if busy=$(agent_running_task "$a"); then
+      status="busy"
+      cur_task="$busy"
+    else
+      status="idle"
+      cur_task=""
+    fi
+    agents_json=$(jq -c \
+      --arg name "$a" \
+      --arg tier "$tier" \
+      --arg role "$tier" \
+      --arg status "$status" \
+      --arg cur "$cur_task" \
+      '. += [{name: $name, tier: $tier, role: $role, status: $status} + (if $cur != "" then {current_task: $cur} else {} end)]' \
+      <<< "$agents_json")
+  done
+
+  local tasks_json="{}" active_runs=0
+  local d
+  for d in "$TASKS"/*/; do
+    [[ -f $d/meta.env ]] || continue
+    (
+      source "$d/meta.env"
+      local st=$STATUS
+      if [[ $st == running || $st == starting ]]; then
+        active_runs=$((active_runs + 1))
+      fi
+    )
+  done
+
+  local max_slots=${AGENT_MAX_RUNS:-4}
+  local free_slots=$((max_slots - active_runs))
+  if (( free_slots < 0 )); then free_slots=0; fi
+
+  jq -n \
+    --argjson total "$max_slots" \
+    --argjson free "$free_slots" \
+    --argjson agents "$agents_json" \
+    --argjson tasks "$tasks_json" \
+    '{slots: {total: $total, free: $free}, agents: $agents, subscriptions: {}, tasks: $tasks}'
+}
+
 cmd_node() { # runs the agent node daemon with configuration from agents.conf
   local args=()
   [[ -n ${INSTANCE_NAME:-} ]] && args+=(--instance "$INSTANCE_NAME")
@@ -2942,6 +2989,7 @@ main() {
   case $cmd in
     run)     cmd_run "$@" ;;
     node)    cmd_node "$@" ;;
+    _node-manifest) cmd__node_manifest ;;
     _node-start) cmd__node_start "$@" ;;
     _node-wake) cmd__node_wake "$@" ;;
     _node-stop) cmd__node_stop "$@" ;;
