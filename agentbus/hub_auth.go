@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 )
 
 // HubAuthMode is the authentication mode used by the hub.
@@ -61,6 +62,10 @@ type TokenAuthConfig struct {
 	AllowedAddrs map[string]string
 	// RequireTLS enforces that incoming requests must use TLS (r.TLS != nil).
 	RequireTLS bool
+	// InsecureNoTLS disables TLS enforcement (for testing only).
+	InsecureNoTLS bool
+	// InsecureSkipAddressCheck disables source IP verification (for testing only).
+	InsecureSkipAddressCheck bool
 }
 
 // HubAuthenticator authenticates incoming HTTP requests to the hub.
@@ -114,11 +119,15 @@ type tailscaleWhoisResponse struct {
 // RegisterInstance marks an instance name as actively connected. Returns HubAuthDuplicateInstanceName
 // if the instance name is already active.
 func (a *HubAuthenticator) RegisterInstance(name string) *HubAuthError {
-	if a.isDuplicate(name) {
-		return opErr(HubAuthDuplicateInstanceName, "instance %q is already connected with an active lease", name)
-	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.CheckDuplicate != nil {
+		if a.CheckDuplicate(name) {
+			return opErr(HubAuthDuplicateInstanceName, "instance %q is already connected with an active lease", name)
+		}
+	} else if a.activeInstances != nil && a.activeInstances[name] {
+		return opErr(HubAuthDuplicateInstanceName, "instance %q is already connected with an active lease", name)
+	}
 	if a.activeInstances == nil {
 		a.activeInstances = make(map[string]bool)
 	}
@@ -137,15 +146,11 @@ func (a *HubAuthenticator) UnregisterInstance(name string) {
 
 // IsInstanceActive reports whether the instance name is currently recorded as active.
 func (a *HubAuthenticator) IsInstanceActive(name string) bool {
-	return a.isDuplicate(name)
-}
-
-func (a *HubAuthenticator) isDuplicate(name string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.CheckDuplicate != nil {
 		return a.CheckDuplicate(name)
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	return a.activeInstances != nil && a.activeInstances[name]
 }
 
@@ -195,7 +200,9 @@ func (a *HubAuthenticator) authenticateTailscale(r *http.Request) (string, *HubA
 	}
 
 	whoisURL := fmt.Sprintf("http://local-tailscaled/localapi/v0/whois?addr=%s", url.QueryEscape(remoteAddr))
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, whoisURL, nil) //nolint:gosec // G704: query target is fixed local-tailscaled unix domain socket
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, whoisURL, nil) //nolint:gosec // G704: query target is fixed local-tailscaled unix domain socket
 	if err != nil {
 		return "", opErr(HubAuthLocalAPIFailed, "failed to create whois request: %v", err)
 	}
@@ -212,12 +219,16 @@ func (a *HubAuthenticator) authenticateTailscale(r *http.Request) (string, *HubA
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		body, rerr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if rerr != nil {
+			return "", opErr(HubAuthLocalAPIFailed, "tailscaled LocalAPI returned status %d (failed to read error response: %v)", resp.StatusCode, rerr)
+		}
 		return "", opErr(HubAuthLocalAPIFailed, "tailscaled LocalAPI returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
+	const maxWhoisResponseBytes = 64 * 1024
 	var whois tailscaleWhoisResponse
-	if err := json.NewDecoder(resp.Body).Decode(&whois); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxWhoisResponseBytes)).Decode(&whois); err != nil {
 		return "", opErr(HubAuthLocalAPIFailed, "failed to decode tailscaled whois response: %v", err)
 	}
 
@@ -281,7 +292,7 @@ func (a *HubAuthenticator) authenticateTailscale(r *http.Request) (string, *HubA
 
 // authenticateToken verifies the request using pre-shared bearer tokens and source address matching over TLS.
 func (a *HubAuthenticator) authenticateToken(r *http.Request) (string, *HubAuthError) {
-	if a.Token.RequireTLS && r.TLS == nil {
+	if !a.Token.InsecureNoTLS && r.TLS == nil {
 		return "", opErr(HubAuthMissingCredentials, "token authentication strictly requires TLS")
 	}
 
@@ -309,8 +320,12 @@ func (a *HubAuthenticator) authenticateToken(r *http.Request) (string, *HubAuthE
 		return "", opErr(HubAuthWrongToken, "invalid bearer token for instance %q", instanceName)
 	}
 
-	// Verify client source address if configured in AllowedAddrs (name=addr)
-	if expectedAddr, hasAddr := a.Token.AllowedAddrs[instanceName]; hasAddr && expectedAddr != "" {
+	// Verify client source address if enabled (token mode strictly enforces address matching).
+	if !a.Token.InsecureSkipAddressCheck {
+		expectedAddr, hasAddr := a.Token.AllowedAddrs[instanceName]
+		if !hasAddr || expectedAddr == "" {
+			return "", opErr(HubAuthAddressMismatch, "no allowed source address configured for token instance %q", instanceName)
+		}
 		remoteAddr := r.RemoteAddr
 		if remoteAddr == "" {
 			return "", opErr(HubAuthAddressMismatch, "client remote address is missing for address check")
@@ -328,27 +343,33 @@ func (a *HubAuthenticator) authenticateToken(r *http.Request) (string, *HubAuthE
 }
 
 // NewPinnedTLSConfig creates a *tls.Config that verifies the server presents a certificate
-// whose SHA-256 fingerprint matches expectedFingerprintHex.
+// whose SHA-256 fingerprint matches expectedFingerprintHex and is within its validity period.
 // The fingerprint is case-insensitive and may optionally include colon separators.
+// Failures return an error containing a *ValueError.
 func NewPinnedTLSConfig(expectedFingerprintHex string) (*tls.Config, error) {
 	cleaned := strings.ReplaceAll(expectedFingerprintHex, ":", "")
 	cleaned = strings.TrimSpace(cleaned)
 	if len(cleaned) != 64 {
-		return nil, fmt.Errorf("invalid SHA-256 certificate fingerprint: expected 64 hex characters, got %d", len(cleaned))
+		return nil, valueErr("invalid SHA-256 certificate fingerprint: expected 64 hex characters, got %d", len(cleaned)).asError()
 	}
 	expectedBytes, err := hex.DecodeString(cleaned)
 	if err != nil {
-		return nil, fmt.Errorf("invalid hex in certificate fingerprint: %w", err)
+		return nil, valueWrap(err, "invalid hex in certificate fingerprint").asError()
 	}
 
 	return &tls.Config{
 		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: true, //nolint:gosec // G402: pinned leaf certificate SHA-256 fingerprint verified explicitly in VerifyConnection
+		InsecureSkipVerify: true, //nolint:gosec // G402: pinned leaf certificate SHA-256 fingerprint and validity period verified explicitly in VerifyConnection
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			if len(cs.PeerCertificates) == 0 {
 				return errors.New("server presented no certificates")
 			}
-			leafHash := sha256.Sum256(cs.PeerCertificates[0].Raw)
+			cert := cs.PeerCertificates[0]
+			now := time.Now()
+			if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+				return fmt.Errorf("server certificate is not valid at current time (valid from %s to %s)", cert.NotBefore.Format(time.RFC3339), cert.NotAfter.Format(time.RFC3339))
+			}
+			leafHash := sha256.Sum256(cert.Raw)
 			if subtle.ConstantTimeCompare(leafHash[:], expectedBytes) != 1 {
 				return fmt.Errorf("certificate fingerprint mismatch: server presented SHA-256 %x, expected %s", leafHash, cleaned)
 			}
