@@ -523,6 +523,11 @@ team ID (`<timestamp>-team`) or any member's task ID.
 detail view with tabs (1 Activity, 2 Prompt, 3 Questions, 4 Investigations, 5 Result, 6 Notebook, 7 Board) and an
 event stream with bus messages, status changes and periodic reminders.
 
+When the hub records instances in `bus/instances.json`, the panel shows an instance table (at most four rows) below
+the task list: name, lease (`active` or `expired`), platform, free/total slots, active tasks and declared
+capabilities. `agent status` prints the same table after the task list. Single-instance installations show neither.
+The table reads only the registry file; it does not change any state.
+
 | Key | Action |
 |---|---|
 | `↑↓` / `j k` | select a task |
