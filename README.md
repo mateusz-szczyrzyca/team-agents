@@ -646,6 +646,13 @@ operation with no recorded outcome, the native executor reports an explicit unkn
 blindly spawn it again. Inspect that task before submitting replacement work. Keep the journal private and
 retain it across reconnects: deleting it discards the node's protection against duplicate execution.
 
+Message and board wakeups for a qualified member are queued as `wake` commands for its owning instance,
+including a member on the lead instance. The hub checks the live lease and reported task ownership while
+holding its existing bus lock; it never starts another instance's wake script locally. Pending wake commands
+for the same member/task coalesce. An expired lease or queue/storage failure logs `side_effect_failed` and
+leaves the member sleeping with its triggering message unread. Unqualified local teams retain the existing
+wake hook. The owning instance must run `agent node` to poll and acknowledge these commands.
+
 Sensitive `sign:*` and `publish:*` requirements are denied unless the local human has approved them in
 `node/approved-capabilities.json` (a JSON array of typed capabilities). Requirements must also be declared
 locally. The same file gates board items: a `board_add` item whose `requires` includes `sign:*` or `publish:*`
