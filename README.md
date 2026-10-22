@@ -269,7 +269,7 @@ compromised or confused agent can do as little damage as possible.
 
 ### Where to run it
 
-- **Linux only for now** (it relies on `systemd --user`); macOS support is planned.
+- **Linux or macOS** (Linux runs systemd runner units; macOS operates as an outbound node or runner via POSIX portability, LaunchAgents, and Homebrew).
 - **A dedicated machine or VM** — a small server, a Raspberry Pi, a VPS or a local VM — with nothing else of value
   on it: no personal files, no production credentials, no browser sessions, no password manager.
 - **A dedicated, unprivileged user** for the agents, never your own login user. `~/agents` is created with mode
@@ -327,6 +327,21 @@ Put the token into `secrets.env` as `GH_TOKEN` (gh uses it instead of a stored l
 - Optionally restrict outbound traffic with an egress firewall (nftables, OpenSnitch) to the providers, GitHub,
   package registries and the test hosts.
 
+### Multi-instance network and hub security
+
+Multi-instance deployments run a coordinator or hub instance and one or more node instances communicating over Tailscale or HTTPS.
+
+- **Threat model and network isolation:**
+  Keep the hub listener off the public internet. Use a mesh VPN such as **Tailscale** (default) or HTTPS with token authentication. In Tailscale mode (`HUB_AUTH=tailscale`), the hub verifies peer node identity via Tailscale LocalAPI whois on the active TCP connection; HTTP forward headers (`X-Forwarded-*`) are never trusted. Tailscale ACLs should restrict access to the hub port exclusively to authorized instances (e.g. `tag:agent-node`).
+- **Token mode and certificate pinning:**
+  In token mode (`HUB_AUTH=token`), peer nodes authenticate with `HUB_TOKEN` (in `secrets.env`) and verify the hub's TLS certificate using SHA-256 leaf fingerprint pinning (`HUB_CERT_SHA256` or `HUB_CERT_FINGERPRINT`). Plain HTTP token mode is rejected on non-loopback addresses.
+- **Node execution boundary:**
+  The node daemon (`agent node`) accepts only fixed internal operations (`start_run`, `wake`, `stop_task`, `answer_deliver`) on local task directories. The hub cannot execute arbitrary shell commands, specify binaries, or access arbitrary local files.
+- **Sensitive capability gating:**
+  Capabilities requiring code signing or publishing (`sign:*`, `publish:*`) require local operator approval in `node/approved-capabilities.json`. Any board claim requiring an unapproved sensitive capability is rejected with `NeedsApproval` (Permission class).
+- **Data privacy and operator views:**
+  The read-only operator projection endpoint `POST /v1/view` and CLI command `agentbus snapshot` deliver sanitized status overviews. They do not expose private credentials, lease tokens, session IDs, internal dispatch commands, or private quiz answers. Registry files (`bus/instances.json`) and backups (`bus/backup/`) are kept with strict file permissions (0600 / 0700).
+
 ### Secrets and providers
 
 - Create **separate API keys and tokens for the agents** in every service — Anthropic, OpenAI, Google, OpenRouter,
@@ -368,10 +383,8 @@ never on the orchestrator's host or a network with anything you care about.
 
 ## Requirements
 
-- Linux (macOS support is planned) with `systemd --user` and lingering enabled for the agents' user:
-  `sudo loginctl enable-linger <user>`
-  (otherwise units stop when you log out).
-- `git`, `jq`, `flock` (util-linux), `curl`, Go ≥ 1.22 (to build), `gh` (GitHub CLI) for pull requests,
+- Linux with `systemd --user` and lingering enabled for the agents' user (`sudo loginctl enable-linger <user>`), or macOS (with Homebrew).
+- `git`, `jq`, `flock` (util-linux or `file_flock` fallback on macOS), `curl`, Go ≥ 1.22 (to build), `gh` (GitHub CLI) for pull requests,
   `7z` (p7zip) for `agent archive`.
 - At least one agent CLI, logged in as the agents' user:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude setup-token` for a subscription token),
