@@ -663,6 +663,12 @@ NOTIFY_CMD="$HOME/agents/notify/pushsafer.sh"   # needs PUSHSAFER_KEY in secrets
 With `NOTIFY_CMD` empty the files are only written to `NOTIFY_DIR`. Older configurations that set
 `NOTIFY_SCRIPT` (a script run inside `NOTIFY_DIR` with the file name) keep working.
 
+`NOTIFY_CMD` must be an absolute path to an executable file. A relative name (`notify.sh`) or a file that is
+not executable is a configuration error: `agent` refuses to start tasks and prints the problem (`agent status`
+still runs, so it can show the problem). A failed delivery is logged as a `notification_failed` warning and kept
+in `$AGENTS_HOME/notify-failure.txt`; `agent status` prints it as `last notification failure: ...` until a later
+delivery succeeds.
+
 ## Logs
 
 Every component writes structured logs as one JSON object per line, ready for Promtail, Vector, vmagent or any

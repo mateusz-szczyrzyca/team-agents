@@ -154,6 +154,7 @@ QUESTIONS_EDITOR="${QUESTIONS_EDITOR:-vscode}"
 VSCODE_SERVER_DIRS="${VSCODE_SERVER_DIRS:-$HOME/.vscode-server $HOME/.vscode-server-insiders $HOME/.cursor-server}"
 AGENT_CONSULT_MIN="${AGENT_CONSULT_MIN:-5}"
 NOTIFY_DIR="${NOTIFY_DIR:-$AGENTS_HOME/notifications}"
+NOTIFY_FAILURE_FILE="$AGENTS_HOME/notify-failure.txt"   # the last failed notification (written by notify_send, shown by agent status)
 NOTIFY_SCRIPT="${NOTIFY_SCRIPT:-}"
 NOTIFY_MAX_CHARS="${NOTIFY_MAX_CHARS:-1500}"
 # Language of what only the human reads: questions and the final message of a run (the notification).
@@ -525,14 +526,57 @@ team_lead() { team_json "$1" | jq -r '.lead // empty'; }
 team_done_flag() { team_json "$1" | jq -r '.done // false'; }
 team_tasks() { team_json "$1" | jq -r '.members[]? | .task'; }
 
-notify_send() { # file — delivers a notification file (first line = title/thread, rest = body)
-  local f=$1
+notify_send() { # file — delivers a notification file (first line = title/thread, rest = body); a failure is logged and kept for agent status
+  local f=$1 rc=0 errf cmd_desc
+  local -a argv=()
   if [[ -n $NOTIFY_CMD ]]; then
-    try notification_failed $NOTIFY_CMD "$f"
+    read -r -a argv <<<"$NOTIFY_CMD"
+    argv+=("$f"); cmd_desc=$NOTIFY_CMD
   elif [[ -n $NOTIFY_SCRIPT ]]; then   # legacy: script run inside NOTIFY_DIR with the file name
-    (cd "$NOTIFY_DIR" && try notification_failed "$NOTIFY_SCRIPT" "${f##*/}")
+    argv=("$NOTIFY_SCRIPT" "${f##*/}"); cmd_desc=$NOTIFY_SCRIPT
+  else
+    return 0
   fi
+  errf=$(mktemp -t agent.err.XXXXXX)
+  if [[ -n $NOTIFY_CMD ]]; then
+    "${argv[@]}" 2>"$errf" || rc=$?
+  else
+    (cd "$NOTIFY_DIR" && "${argv[@]}" 2>"$errf") || rc=$?
+  fi
+  if ((rc == 0)); then
+    try notification_cleared rm -f -- "$NOTIFY_FAILURE_FILE"   # a delivery that works clears the last failure
+  else
+    log_warn notification_failed "exit_code=$rc" "command=$cmd_desc $f" "stderr=$(head -c 2000 "$errf")"
+    notify_record_failure "$rc" "$f" "$(head -n 1 "$errf")"
+  fi
+  rm -f "$errf"
   return 0
+}
+
+# notify_record_failure exit_code file stderr_line — overwrites NOTIFY_FAILURE_FILE with the last failed delivery
+# (one line, shown by agent status until a later delivery succeeds)
+notify_record_failure() {
+  local line
+  line="$(date_iso) exit_code=$1 notification=${2##*/} stderr=$3"
+  printf '%s\n' "$line" > "$NOTIFY_FAILURE_FILE" ||
+    log_warn notification_record_failed "file=$NOTIFY_FAILURE_FILE" "effect=agent status does not show this failure"
+}
+
+# validate_notify_cmd — NOTIFY_CMD must be an absolute path to an executable file: notifications run from units
+# without the operator's PATH, so a relative name or a file that is not executable fails on every run. Prints
+# the problem on stderr and returns 1 when it is not valid; an empty NOTIFY_CMD is valid (no command).
+validate_notify_cmd() {
+  local -a argv=()
+  [[ -n $NOTIFY_CMD ]] || return 0
+  read -r -a argv <<<"$NOTIFY_CMD"
+  if [[ ${argv[0]} != /* ]]; then
+    echo "agent: NOTIFY_CMD must be an absolute path to an executable, got '${argv[0]}' (fix it in $CONF)" >&2
+    return 1
+  fi
+  if [[ ! -f ${argv[0]} || ! -x ${argv[0]} ]]; then
+    echo "agent: NOTIFY_CMD '${argv[0]}' is not an executable file (fix it in $CONF)" >&2
+    return 1
+  fi
 }
 
 # notice kind from to text [field=value ...] — publishes an event of this script on the bus (kinds: ScriptNotice in
@@ -2357,6 +2401,14 @@ cmd_status() {
     )
   done
   instances_status
+  notify_status
+}
+
+# notify_status — prints the last failed notification, if it has not been cleared by a later successful delivery
+notify_status() {
+  [[ -f $NOTIFY_FAILURE_FILE ]] || return 0
+  printf '\nlast notification failure: '
+  cat -- "$NOTIFY_FAILURE_FILE"
 }
 
 cmd_show() {
@@ -3196,6 +3248,8 @@ cmd_node() { # runs the agent node daemon with configuration from agents.conf
 
 main() {
   local cmd=${1:-help}; (($#)) && shift
+  # an invalid NOTIFY_CMD stops every command that would run tasks; status stays usable to show the problem
+  if ! validate_notify_cmd && [[ $cmd != status && $cmd != ls ]]; then exit 1; fi
   case $cmd in
     run)     cmd_run "$@" ;;
     node)    cmd_node "$@" ;;

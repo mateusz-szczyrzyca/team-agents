@@ -447,3 +447,45 @@ for p in sys.argv[1:]: socket.socket(socket.AF_UNIX).bind(p)' "$XDG_RUNTIME_DIR/
   run grep -q dead "$HOME/vscode.log"
   [ "$status" -ne 0 ]
 }
+
+@test "a relative NOTIFY_CMD is a configuration error that stops agent run" {
+  echo 'NOTIFY_CMD="notify.sh"' >> "$AGENTS_HOME/agents.conf"
+  scenario '{"solo": {"new": "done"}}'
+  run agent run solo "task"
+  [ "$status" -ne 0 ]
+  [[ $output == *"NOTIFY_CMD must be an absolute path to an executable, got 'notify.sh'"* ]]
+}
+
+@test "a NOTIFY_CMD that is not an executable file is a configuration error" {
+  printf 'not a program\n' > "$HOME/notify-plain.txt"
+  echo "NOTIFY_CMD=\"$HOME/notify-plain.txt\"" >> "$AGENTS_HOME/agents.conf"
+  scenario '{"solo": {"new": "done"}}'
+  run agent run solo "task"
+  [ "$status" -ne 0 ]
+  [[ $output == *"is not an executable file"* ]]
+}
+
+@test "agent status shows the last failed notification until a later delivery succeeds" {
+  printf '#!/bin/sh\necho "pushsafer: invalid key" >&2\nexit 7\n' > "$HOME/notify-fail.sh"
+  chmod +x "$HOME/notify-fail.sh"
+  echo "NOTIFY_CMD=\"$HOME/notify-fail.sh\"" >> "$AGENTS_HOME/agents.conf"
+  scenario '{"solo": {"new": "done"}}'
+  agent run solo "task"
+  wait_status "$(task_of solo)" done
+  wait_grep "exit_code=7" "$AGENTS_HOME/notify-failure.txt"
+  run agent status
+  [ "$status" -eq 0 ]
+  [[ $output == *"last notification failure: "*"exit_code=7"*"stderr=pushsafer: invalid key"* ]]
+
+  printf '#!/bin/sh\necho delivered >> "$HOME/delivered.log"\n' > "$HOME/notify-fail.sh"
+  scenario '{"solo": {"new": "done"}}'
+  agent run solo "second task"
+  wait_status "$(task_of solo)" done
+  wait_grep "delivered" "$HOME/delivered.log"
+  # the file is removed right after the successful delivery: poll the status until it is gone
+  for _ in $(seq 1 100); do
+    run agent status
+    [[ $output != *"last notification failure"* ]] && break
+  done
+  [[ $output != *"last notification failure"* ]]
+}
