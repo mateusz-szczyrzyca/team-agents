@@ -286,6 +286,7 @@ func serveHub(cfg *HubConfig) *HubServeError {
 	server := &http.Server{
 		Handler:           hub,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 
@@ -311,6 +312,15 @@ func serveHub(cfg *HubConfig) *HubServeError {
 		if cfg.UnixListener != nil {
 			unixLn = cfg.UnixListener
 		} else {
+			if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
+				if closeErr := ln.Close(); closeErr != nil {
+					warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
+				}
+				return fromStorage(HubServeStorage, storageErr(err, "cannot create socket parent directory %s", filepath.Dir(socketPath)))
+			}
+			if err := os.Chmod(filepath.Dir(socketPath), 0o700); err != nil { //nolint:gosec // G302: directory requires 0700 permissions to be traversable by owner
+				warnSideEffect("set socket parent directory permissions", storageErr(err, "cannot set 0700 permissions on %s", filepath.Dir(socketPath)))
+			}
 			if _, err := os.Stat(socketPath); err == nil {
 				// Verify if another daemon is actively listening on this socket before removing
 				conn, dialErr := net.DialTimeout("unix", socketPath, 100*time.Millisecond) //nolint:gosec // G704: socketPath is dialed exclusively over unix domain socket
@@ -364,6 +374,7 @@ func serveHub(cfg *HubConfig) *HubServeError {
 		unixServer = &http.Server{
 			Handler:           unixHub,
 			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       15 * time.Second,
 			IdleTimeout:       120 * time.Second,
 		}
 		go func() {
@@ -377,6 +388,7 @@ func serveHub(cfg *HubConfig) *HubServeError {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	defer signal.Stop(sigCh)
 
 	select {
 	case err := <-errCh:

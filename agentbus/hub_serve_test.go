@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -356,8 +357,11 @@ func TestHubServeSocketCause(t *testing.T) {
 	}
 	defer func() { _ = ln.Close() }()
 
-	// Non-existent parent directory will cause net.Listen("unix", ...) to fail
-	badSockPath := filepath.Join(dir, "nonexistent", "deep", "dir", "hub.sock")
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+
+	// A socket path exceeding 108 characters fails net.Listen("unix", ...) with bind: file name too long
+	badSockPath := filepath.Join(dir, strings.Repeat("long_socket_path_component_", 10)+".sock")
 	cfg := &HubConfig{
 		Dir:              dir,
 		Listener:         ln,
@@ -365,6 +369,7 @@ func TestHubServeSocketCause(t *testing.T) {
 		Port:             7777,
 		Auth:             HubAuthModeTailscale,
 		AllowedInstances: []string{"node1"},
+		Stop:             stopCh,
 	}
 
 	serveErr := serveHub(cfg)
