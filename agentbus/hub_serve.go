@@ -315,6 +315,7 @@ func serveHub(cfg *HubConfig) *HubServeError {
 		Authenticate:  authenticator.Authenticate,
 		Resolve:       resolver,
 		AuthorizePeer: authorizePeer,
+		CLI:           hubCLIDispatcher(b, instances),
 	}
 
 	// Maintenance runs until this function returns: periodic backups and the reaper of expired instances.

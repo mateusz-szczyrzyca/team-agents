@@ -245,7 +245,7 @@ generate_uuid() {
   elif command -v python3 >/dev/null 2>&1; then
     python3 -c 'import uuid; print(uuid.uuid4())'
   else
-    od -x /dev/urandom | head -1 | awk '{print $2$3$4$5}'
+    die "no supported UUID generator found (/proc/sys/kernel/random/uuid, uuidgen, python3)"
   fi
 }
 
@@ -258,8 +258,12 @@ is_on_battery() {
     if command -v pmset >/dev/null 2>&1; then
       pmset -g batt | grep -q "Battery Power" && return 0
     fi
-  elif [[ -d /sys/class/power_supply ]]; then
-    grep -q "Discharging" /sys/class/power_supply/*/status 2>/dev/null && return 0
+  else
+    local f
+    for f in /sys/class/power_supply/*/status; do
+      [[ -r $f ]] || continue
+      grep -q "Discharging" "$f" && return 0
+    done
   fi
   return 1
 }
@@ -297,7 +301,7 @@ while True:
     sys.exit(0)
   except (BlockingIOError, OSError):
     if time.time() >= end: sys.exit(1)
-    time.sleep(0.05)" 2>/dev/null
+    time.sleep(0.05)"
 }
 
 # `agent stop --running` in progress: blocks waking, queues and notifications (flag valid for 2 min)
@@ -458,8 +462,11 @@ questions_note() {
 
 # file_mtime file — the modification time with sub-second precision
 file_mtime() {
-  # GNU stat first; BSD/macOS stat rejects -c (that error is expected) and the BSD form is used instead
-  stat -c %.9Y "$1" 2>/dev/null || stat -f %Fm "$1"
+  if [[ $(uname -s) == Darwin ]]; then
+    stat -f %Fm "$1"
+  else
+    stat -c %.9Y "$1"
+  fi
 }
 
 # questions_ready id file — a questions file now waits for the human: answering instructions, the time it was asked,

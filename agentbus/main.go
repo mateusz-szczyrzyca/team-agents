@@ -1183,6 +1183,10 @@ func cmdSend(args []string) {
 	if text == "" {
 		exitOn(opErr(CmdSendMissingText, "%s", missing("message text")).asError())
 	}
+	if ok, err := forwardCLI(*dir, "send", map[string]any{"text": text, "from": *from, "to": *to, "notice": *notice, "fields": map[string]string(fields)}); ok {
+		exitOn(err)
+		return
+	}
 	var ev busEvent = EventChat{Body: text}
 	if *notice != "" {
 		n, verr := parseEnum[ScriptNotice](*notice, "script notice")
@@ -1325,6 +1329,12 @@ func runInstances(args []string) *CmdInstancesError {
 	fs := newFlagSet("instances")
 	dir := fs.String("dir", defaultDir(), "state directory")
 	parseFlags(fs, args)
+	if ok, err := forwardCLI(*dir, "instances", nil); ok {
+		if err != nil {
+			return opErr(CmdInstancesStorage, "%v", err)
+		}
+		return nil
+	}
 	b := &Bus{dir: *dir}
 	reg := &HubInstanceRegistry{Bus: b}
 	views, serr := reg.liveViews()

@@ -104,3 +104,37 @@ func (s *Server) callForMCP(name string, args map[string]any) (string, int, erro
 	}
 	return text, response.UnreadCount, err
 }
+
+// forwardCLI forwards an allowlisted CLI operation to the hub if configured.
+// It writes the hub's stdout response directly to os.Stdout.
+// Returns (true, err) if forwarded, or (false, nil) if single-instance local mode applies.
+func forwardCLI(dir, op string, args map[string]any) (bool, error) {
+	client, err := hubClientForDir(dir)
+	if err != nil {
+		return true, err
+	}
+	if client == nil {
+		return false, nil
+	}
+	caller := HubCaller{
+		Agent:    "cli",
+		Instance: client.Instance,
+		Task:     "cli",
+		Role:     RoleAgent,
+		Tier:     TierNormal,
+	}
+	req, reqErr := client.NewRequest(caller, HubCLICall, op, args)
+	if reqErr != nil {
+		return true, reqErr
+	}
+	resp, callErr := client.Call(context.Background(), req)
+	if callErr != nil {
+		return true, callErr
+	}
+	if resp.Stdout != nil {
+		if _, writeErr := os.Stdout.Write(*resp.Stdout); writeErr != nil {
+			warnSideEffect("write forwarded CLI output", storageErr(writeErr, "write forwarded CLI output"))
+		}
+	}
+	return true, nil
+}

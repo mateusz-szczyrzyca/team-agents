@@ -24,6 +24,9 @@ func (r hubRunRegistry) resolve(c HubCaller) (*Server, *HubCallError) {
 	if r.bus == nil || c.Agent == "" || strings.Contains(c.Agent, "@") || !validInstanceName(c.Instance) || !validNodeTaskID(c.Task) || !c.Role.Valid() || !c.Tier.Valid() {
 		return nil, opErr(HubCallIdentity, "caller must identify a registered run")
 	}
+	if c.Task == "cli" || c.Agent == "cli" {
+		return &Server{bus: r.bus, me: c.Agent + "@" + c.Instance, instance: c.Instance, role: c.Role, tier: c.Tier}, nil
+	}
 	var summary HubTaskSummary
 	if c.Instance == r.localInstance {
 		var err *HubCallError

@@ -666,6 +666,11 @@ func cmdTeamCreate(args []string) {
 	if t.ID == "" || len(t.Members) == 0 {
 		exitOn(opErr(CmdTeamCreateMissingFields, "the team JSON needs an id and members").asError())
 	}
+	data, _ := json.Marshal(t)
+	if ok, err := forwardCLI(*dir, "team-create", map[string]any{"team_json": string(data)}); ok {
+		exitOn(err)
+		return
+	}
 	t.Created = Now()
 	b := &Bus{dir: *dir}
 	exitOn(transact(b, CmdTeamCreateStorage, func(st *State) *CmdTeamCreateError {
@@ -689,6 +694,10 @@ func cmdTeamSet(args []string) {
 	parseFlags(fs, args)
 	newState, verr := parseEnum[MemberState](*state, "member state")
 	exitOn(fromValue(CmdTeamSetInvalidState, verr).asError())
+	if ok, err := forwardCLI(*dir, "team-set", map[string]any{"team": *team, "agent": *agent, "state": *state}); ok {
+		exitOn(err)
+		return
+	}
 	b := &Bus{dir: *dir}
 	var out cliWriter
 	exitOn(transact(b, CmdTeamSetStorage, func(st *State) *CmdTeamSetError {
@@ -737,6 +746,10 @@ func cmdTeamDone(args []string) {
 	dir := fs.String("dir", defaultDir(), "state directory")
 	team := fs.String("team", "", "team ID")
 	parseFlags(fs, args)
+	if ok, err := forwardCLI(*dir, "team-done", map[string]any{"team": *team}); ok {
+		exitOn(err)
+		return
+	}
 	b := &Bus{dir: *dir}
 	exitOn(transact(b, CmdTeamDoneStorage, func(st *State) *CmdTeamDoneError {
 		t := st.Teams[*team]
@@ -755,6 +768,10 @@ func cmdTeamGet(args []string) {
 	dir := fs.String("dir", defaultDir(), "state directory")
 	team := fs.String("team", "", "team ID")
 	parseFlags(fs, args)
+	if ok, err := forwardCLI(*dir, "team-get", map[string]any{"team": *team}); ok {
+		exitOn(err)
+		return
+	}
 	b := &Bus{dir: *dir}
 	exitOn(transact(b, CmdTeamGetStorage, func(st *State) *CmdTeamGetError {
 		t := st.Teams[*team]
