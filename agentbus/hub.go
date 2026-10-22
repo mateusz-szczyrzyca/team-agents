@@ -138,6 +138,7 @@ type hubFlight struct {
 
 // Hub executes validated requests on one local bus; callbacks are installed before serving.
 type Hub struct {
+	Instances    *HubInstanceRegistry                        // shared persistent node leases; nil denies instance operations
 	Bus          *Bus                                        // the hub's own state directory, never selected by a request
 	Authenticate func(*http.Request) (string, *HubAuthError) // verifies each HTTP request; nil denies access
 	Resolve      func(HubCaller) (*Server, *HubCallError)    // checks registered run identity and returns its trusted server template
@@ -179,6 +180,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		h.writeResponse(w, status, HubResponse{Version: hubProtocolVersion, Error: hubFailure(authErr)})
+		return
+	}
+	if isInstanceRoute(r.URL.Path) {
+		h.serveInstances(w, r, instance)
 		return
 	}
 	if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/v1/tools/") {
