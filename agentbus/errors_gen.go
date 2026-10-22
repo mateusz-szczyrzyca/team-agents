@@ -1102,6 +1102,7 @@ const (
 	BoardClaimAlreadyTaken                             // the item is already claimed or done [Conflict]
 	BoardClaimReservedForOther                         // the item is reserved for another member (board_add with for) [Permission]
 	BoardClaimMissingCapability                        // the instance of the caller does not provide every capability the item requires; the item stays on the board [Permission]
+	BoardClaimNeedsApproval                            // the item requires a sensitive capability (sign:*, publish:*) that the operator has not approved for this instance in node/approved-capabilities.json; the item stays on the board [Permission]
 	BoardClaimOutcomeUnknown                           // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
 	BoardClaimUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	BoardClaimStorage                                  // the shared state or a file could not be read or written [Storage]
@@ -1118,6 +1119,7 @@ var boardClaimCauses = [...]causeInfo{
 	{"AlreadyTaken", ClassConflict},
 	{"ReservedForOther", ClassPermission},
 	{"MissingCapability", ClassPermission},
+	{"NeedsApproval", ClassPermission},
 	{"OutcomeUnknown", ClassInvalidState},
 	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},

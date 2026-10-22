@@ -555,7 +555,7 @@ The table reads only the registry file; it does not change any state.
 | `delegate`, `delegation_status` | worker requests (normal tier) |
 | `team_status`, `claim_lead`, `handover_lead` | teams |
 | `quiz_start`, `quiz_answer`, `quiz_results`, `team_exclude` | the qualification quiz |
-| `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item; `requires=[capabilities]`: only an instance that provides all of them may claim it, and `board_claim` says which one is missing) |
+| `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item; `requires=[capabilities]`: only an instance that provides all of them may claim it, and `board_claim` says which one is missing; sensitive ones also need the operator's approval in `node/approved-capabilities.json`, see `NeedsApproval`) |
 | `find_capability` | live instances that offer a capability (e.g. `build:ios`), with platform, free slots and agents |
 | `consult_start`, `consult_reply`, `consult_results` | ask the other normal members with a time limit (e.g. for recommendations); silence is shown as NO ANSWER |
 
@@ -648,7 +648,13 @@ retain it across reconnects: deleting it discards the node's protection against 
 
 Sensitive `sign:*` and `publish:*` requirements are denied unless the local human has approved them in
 `node/approved-capabilities.json` (a JSON array of typed capabilities). Requirements must also be declared
-locally. Remote code provisioning, question snapshot retrieval, full approval-command integration, and
+locally. The same file gates board items: a `board_add` item whose `requires` includes `sign:*` or `publish:*`
+can be claimed only by an instance whose `AGENTS_HOME` lists that capability there. Otherwise `board_claim`
+fails with `NeedsApproval` and the item stays on the board. Items without sensitive requirements never read the
+file, and a missing file approves nothing. Claims executed by the hub (which has no local home for the claiming
+instance) therefore cannot take sensitive items. Limitation: the approvals file is protected only by the operating
+system account. Agents on the same account can write it, so only give that account to agents you trust with
+signing or publishing. Remote code provisioning, question snapshot retrieval, full approval-command integration, and
 cross-instance run creation are completed by their remaining milestones; the node daemon alone does not
 create a missing task or clone a repository selected by the hub.
 
