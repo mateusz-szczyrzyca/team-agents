@@ -582,6 +582,27 @@ errors use operation `instance_register`; heartbeat errors use `instance_heartbe
 cause names and the existing error classes. The later node and routing milestones connect these leases
 to remote task execution and member reachability.
 
+### Trusted run identity
+
+Hub tool calls require a live instance registration owned by the authenticated peer, plus a task summary
+matching the caller's agent, task, team, tier and role. Team members use qualified keys (`agent@instance`)
+and must also match the hub's team assignment; excluded members are denied. Helper calls require their
+qualified worker assignment. Remote investigator assignments must explicitly bind both the investigator
+base name and its instance; older queue records still load but do not authorize remote investigators.
+Normal solo runs are verified against their instance's task summary.
+
+Task summaries now optionally include `repo`, `branch`, `worktree`, `tier`, and `role`. Earlier manifests
+remain readable; summaries without identity fields cannot authorize remote tool calls. Lead-local runs
+are verified against local `meta.env` files without evaluating shell content. `agentbus hub --tasks-dir DIR`
+selects that metadata root (default: the `tasks` directory beside the bus directory). Qualified team
+membership applies only in multi-instance mode; existing single-instance names and files keep working.
+The lead's Unix socket uses the configured `INSTANCE_NAME` (or `--instance`), defaulting to `lead`.
+
+Remote worktree paths remain display metadata. Investigation records for remote callers are stored under
+`bus/remote-tasks/<instance>/<task>/investigations`, never inside those remote worktree paths. Unknown,
+mismatched, excluded, or unreachable identities fail with the typed hub `Identity` cause; unreadable state
+fails with `Storage`. These checks also apply when attaching to a previous request after reconnection.
+
 ### Hub backups and expired instances
 
 The hub writes a backup of its state every `HUB_BACKUP_MINUTES` (default 30; allowed 1–1440) into

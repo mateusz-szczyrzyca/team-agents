@@ -839,3 +839,29 @@ Remote task provisioning, complete trusted-run resolution, versioned questions r
 full CLI routing are separate M2 integration work. The daemon does not clone a hub-selected repository
 or create arbitrary missing task files. Outage-aware watchdog accounting and scheduled unreachable
 member/board transitions remain M5 work.
+
+
+## 15. Implemented trusted run admission
+
+Production tool admission binds the authenticated peer to the live registry record's owner, closing the
+case where two Tailscale nodes share an allowed tag and one requests the other's alias. The lead-local
+Unix socket is admitted only for its configured local instance. Caller identity is then checked against
+the registered task summary, including base agent name, task, team, tier, role and repository. Only running,
+starting, sleeping, paused or waiting tasks authorize calls. All checks are repeated for replay attachment.
+Team records must contain the qualified member key and matching task, tier, branch, worktree and repository;
+finished teams and excluded members are denied. Existing local-file single-instance dispatch is unchanged.
+
+`HubTaskSummary` adds optional `repo`, `branch`, `worktree`, `tier` and `role` fields. Earlier persisted
+manifests decode unchanged; missing identity fields do not authorize remote calls. The node's fixed manifest
+bridge reports these fields from its own task metadata, deriving the role from task kind. Normal solo tasks
+are authorized by that trusted instance report. Helpers additionally require their qualified assignment.
+Investigations add optional `investigator` (base name) and `instance` ownership fields to the queue record;
+remote investigator admission requires both. Legacy local investigations may use verified local metadata.
+The dispatcher must populate remote investigator ownership before starting such a run.
+
+The lead's resolver reads selected `printf %q` metadata values without executing shell expansions. Its local
+root defaults to the tasks directory beside the configured bus directory and can be selected explicitly with
+`agentbus hub --tasks-dir`. Symlink escapes, malformed selected values and duplicate fields are rejected.
+Remote worktree paths are never opened. Remote callers' investigation records use a fixed hub-owned root,
+`bus/remote-tasks/<instance>/<task>/investigations`. Record delivery and remote queue dispatch remain separate
+integration work; empty record roots are unsafe because existing handlers join relative paths to them.
