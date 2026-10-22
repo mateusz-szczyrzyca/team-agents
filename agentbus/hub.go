@@ -138,11 +138,11 @@ type hubFlight struct {
 
 // Hub executes validated requests on one local bus; callbacks are installed before serving.
 type Hub struct {
+	Instances    *HubInstanceRegistry                        // shared persistent node leases; nil denies instance operations
 	Bus          *Bus                                        // the hub's own state directory, never selected by a request
 	Authenticate func(*http.Request) (string, *HubAuthError) // verifies each HTTP request; nil denies access
 	Resolve      func(HubCaller) (*Server, *HubCallError)    // checks registered run identity and returns its trusted server template
 	CLI          func(HubRequest) HubResponse                // allowlisted CLI dispatcher; nil rejects CLI requests
-	Leases       CommandLeases                               // instance leases for the command channel; nil means no instance is live
 	PollDuration time.Duration                               // zero uses the 25-second production poll interval
 	mu           sync.Mutex                                  // protects active operations and acceptance, never held across handler execution
 	active       map[string]*hubFlight                       // in-process operations; durable records survive a restart
@@ -180,6 +180,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		h.writeResponse(w, status, HubResponse{Version: hubProtocolVersion, Error: hubFailure(authErr)})
+		return
+	}
+	if isInstanceRoute(r.URL.Path) {
+		h.serveInstances(w, r, instance)
 		return
 	}
 	if isCommandRoute(r.URL.Path) {

@@ -6,33 +6,40 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-// fakeLeases is a registry with one instance holding one lease generation.
-type fakeLeases struct {
-	instance   string // the instance that holds the lease
-	generation int64  // the current lease generation
+// commandFixture is a hub state directory with one instance "mac" registered by the peer "token:mac".
+type commandFixture struct {
+	bus      *Bus                 // the hub's state directory, shared by the registry and the command journal
+	registry *HubInstanceRegistry // the lease registry that validates peers, tokens and generations
+	lease    HubInstanceLease     // the lease issued to the owning node
 }
 
-// Live reports whether instance holds the lease.
-func (f fakeLeases) Live(instance string) bool { return instance == f.instance }
-
-// Current reports whether generation is the current lease of instance.
-func (f fakeLeases) Current(instance string, generation int64) bool {
-	return f.Live(instance) && generation == f.generation
-}
-
-// commandHub returns a hub whose authenticated peer is instance "mac" with the given leases and poll window.
-func commandHub(t *testing.T, leases CommandLeases, poll time.Duration) *Hub {
+// newCommandFixture registers instance "mac" for the peer "token:mac" in a fresh state directory.
+func newCommandFixture(t *testing.T) *commandFixture {
 	t.Helper()
+	bus := newBus(t)
+	registry := &HubInstanceRegistry{Bus: bus}
+	lease, err := registry.Register("mac", "token:mac", instanceRegisterFixture("mac", "session-one"))
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	return &commandFixture{bus: bus, registry: registry, lease: lease}
+}
+
+// hub returns a hub on the fixture's state directory whose every request is authenticated as instance "mac"
+// with the given transport peer. A different peer models another node claiming the same instance name.
+func (f *commandFixture) hub(peer string, poll time.Duration) *Hub {
 	return &Hub{
-		Bus:          newBus(t),
-		Authenticate: func(*http.Request) (string, *HubAuthError) { return "mac", nil },
-		Leases:       leases,
+		Bus:       f.bus,
+		Instances: f.registry,
+		Authenticate: func(r *http.Request) (string, *HubAuthError) {
+			setHubAuthenticatedPeer(r, peer)
+			return "mac", nil
+		},
 		PollDuration: poll,
 	}
 }
@@ -55,27 +62,27 @@ func decodeReply(t *testing.T, w *httptest.ResponseRecorder) commandReply {
 	return reply
 }
 
-// pollBody encodes a poll request for lease generation 1, the generation the tests start with, from the start of the journal.
-func pollBody(t *testing.T) string {
+// pollBody encodes a poll request from the start of the journal with the given credentials.
+func pollBody(t *testing.T, token string, generation int64) string {
 	t.Helper()
-	data, err := json.Marshal(commandPollRequest{Version: hubProtocolVersion, Generation: 1, After: 0})
+	data, err := json.Marshal(commandPollRequest{Version: hubProtocolVersion, Generation: generation, LeaseToken: token, After: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return string(data)
 }
 
-// ackBody encodes an acknowledgement for the given lease generation.
-func ackBody(t *testing.T, generation, seq int64, outcome CommandOutcome) string {
+// ackBody encodes an acknowledgement with the given credentials.
+func ackBody(t *testing.T, token string, generation, seq int64, outcome CommandOutcome) string {
 	t.Helper()
-	data, err := json.Marshal(commandAckRequest{Version: hubProtocolVersion, Generation: generation, Seq: seq, Outcome: outcome})
+	data, err := json.Marshal(commandAckRequest{Version: hubProtocolVersion, Generation: generation, LeaseToken: token, Seq: seq, Outcome: outcome})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return string(data)
 }
 
-// wireCause checks that a reply carries the named cause of op and that the name is a known cause.
+// wireCause checks that a reply carries the named cause of op.
 func wireCause(t *testing.T, reply commandReply, op, cause string) {
 	t.Helper()
 	if reply.Error == nil {
@@ -86,51 +93,70 @@ func wireCause(t *testing.T, reply commandReply, op, cause string) {
 	}
 }
 
+// enqueueStop queues a valid stop_task command for task t1; tests use it when they only need a pending command.
+func enqueueStop(t *testing.T, h *Hub) {
+	t.Helper()
+	if err := h.EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "test"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCommandEnqueueRejectsUnknownKind(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
+	h := newCommandFixture(t).hub("token:mac", 0)
 	failsWith(t, CommandEnqueueUnknownKind)("enqueue", h.EnqueueCommand("mac", "reboot", "t1", nil))
 }
 
 func TestCommandEnqueueRejectsMissingInstanceOrTask(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
+	h := newCommandFixture(t).hub("token:mac", 0)
 	failsWith(t, CommandEnqueueInvalidParams)("enqueue", h.EnqueueCommand("", CommandStopTask, "t1", map[string]string{"reason": "x"}))
 	failsWith(t, CommandEnqueueInvalidParams)("enqueue", h.EnqueueCommand("mac", CommandStopTask, "", map[string]string{"reason": "x"}))
 }
 
 func TestCommandEnqueueRejectsMissingRequiredParameter(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
+	h := newCommandFixture(t).hub("token:mac", 0)
 	failsWith(t, CommandEnqueueInvalidParams)("enqueue", h.EnqueueCommand("mac", CommandStartRun, "t1", map[string]string{"agent": "claude"}))
 }
 
-func TestCommandEnqueueFailsWhenInstanceIsUnreachable(t *testing.T) {
-	failsWith(t, CommandEnqueueInstanceUnreachable)("enqueue",
-		commandHub(t, nil, 0).EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}))
-	failsWith(t, CommandEnqueueInstanceUnreachable)("enqueue",
-		commandHub(t, fakeLeases{"other", 1}, 0).EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}))
+func TestCommandEnqueueFailsWhenInstanceHasNoLease(t *testing.T) {
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
+	failsWith(t, CommandEnqueueInstanceUnreachable)("enqueue", h.EnqueueCommand("ghost", CommandStopTask, "t1", map[string]string{"reason": "x"}))
+	noRegistry := &Hub{Bus: f.bus}
+	failsWith(t, CommandEnqueueInstanceUnreachable)("enqueue", noRegistry.EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}))
+}
+
+func TestCommandEnqueueFailsOnRegistryStorageError(t *testing.T) {
+	f := newCommandFixture(t)
+	// A directory where the registry's state file belongs cannot be read as a file.
+	if err := os.Remove(f.bus.path("state.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(f.bus.path("state.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	failsWith(t, CommandEnqueueStorage)("enqueue", f.hub("token:mac", 0).EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}))
 }
 
 func TestCommandEnqueueFailsWhenQueueIsFull(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
+	h := newCommandFixture(t).hub("token:mac", 0)
 	for i := 0; i < commandQueueLimit; i++ {
-		if err := h.EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}); err != nil {
-			t.Fatalf("enqueue %d: %v", i, err)
-		}
+		enqueueStop(t, h)
 	}
 	failsWith(t, CommandEnqueueQueueFull)("enqueue", h.EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}))
 }
 
-func TestCommandEnqueueFailsOnStorageError(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
+func TestCommandEnqueueFailsOnJournalStorageError(t *testing.T) {
+	f := newCommandFixture(t)
 	// A directory where the journal belongs cannot be read as a file.
-	if err := os.Mkdir(filepath.Join(h.Bus.dir, commandStoreFile), 0o700); err != nil {
+	if err := os.Mkdir(f.bus.path(commandStoreFile), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	failsWith(t, CommandEnqueueStorage)("enqueue", h.EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}))
+	failsWith(t, CommandEnqueueStorage)("enqueue", f.hub("token:mac", 0).EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}))
 }
 
 func TestCommandEnqueueLogsTheQueuedCommand(t *testing.T) {
 	logs := captureLogs(t)
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
+	h := newCommandFixture(t).hub("token:mac", 0)
 	if err := h.EnqueueCommand("mac", CommandWake, "t1", map[string]string{"member": "codex-1", "reason": "message"}); err != nil {
 		t.Fatal(err)
 	}
@@ -140,14 +166,13 @@ func TestCommandEnqueueLogsTheQueuedCommand(t *testing.T) {
 }
 
 func TestCommandPollDeliversQueuedCommandsInOrder(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
 	if err := h.EnqueueCommand("mac", CommandStartRun, "t1", map[string]string{"agent": "claude-1", "run": "1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "done"}); err != nil {
-		t.Fatal(err)
-	}
-	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t))
+	enqueueStop(t, h)
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t, f.lease.Token, f.lease.Generation))
 	reply := decodeReply(t, w)
 	if w.Code != http.StatusOK || len(reply.Commands) != 2 {
 		t.Fatalf("poll: status %d, %+v", w.Code, reply)
@@ -159,15 +184,17 @@ func TestCommandPollDeliversQueuedCommandsInOrder(t *testing.T) {
 }
 
 func TestCommandPollReturnsNoContentWhenWindowEnds(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 50*time.Millisecond)
-	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t))
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 50*time.Millisecond)
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t, f.lease.Token, f.lease.Generation))
 	if w.Code != http.StatusNoContent || w.Body.Len() != 0 {
 		t.Fatalf("empty poll: status %d body %q", w.Code, w.Body.String())
 	}
 }
 
 func TestCommandPollWakesWhenCommandArrives(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 5*time.Second)
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 5*time.Second)
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		if err := h.EnqueueCommand("mac", CommandStopTask, "t9", map[string]string{"reason": "stop"}); err != nil {
@@ -175,7 +202,7 @@ func TestCommandPollWakesWhenCommandArrives(t *testing.T) {
 		}
 	}()
 	start := time.Now()
-	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t))
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t, f.lease.Token, f.lease.Generation))
 	reply := decodeReply(t, w)
 	if w.Code != http.StatusOK || len(reply.Commands) != 1 || reply.Commands[0].Task != "t9" {
 		t.Fatalf("long poll: status %d %+v", w.Code, reply)
@@ -185,12 +212,37 @@ func TestCommandPollWakesWhenCommandArrives(t *testing.T) {
 	}
 }
 
+func TestCommandPollRejectsWrongPeer(t *testing.T) {
+	f := newCommandFixture(t)
+	enqueueStop(t, f.hub("token:mac", 0))
+	// Another node that knows the token but authenticates as a different peer must not read the commands.
+	intruder := f.hub("token:other", 0)
+	w := postCommand(t, intruder, http.MethodPost, "/v1/commands/poll", pollBody(t, f.lease.Token, f.lease.Generation))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("wrong peer: status %d", w.Code)
+	}
+	wireCause(t, decodeReply(t, w), "command_poll", "NotLeaseOwner")
+}
+
+// A wrong token is a credential that no longer matches the lease, so the registry reports it as stale.
+func TestCommandPollRejectsWrongToken(t *testing.T) {
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
+	enqueueStop(t, h)
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t, strings.Repeat("0", 64), f.lease.Generation))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("wrong token: status %d", w.Code)
+	}
+	wireCause(t, decodeReply(t, w), "command_poll", "LeaseStale")
+}
+
 func TestCommandPollRejectsStaleLease(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 2}, 0)
-	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t))
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t, f.lease.Token, f.lease.Generation+1))
 	reply := decodeReply(t, w)
 	if w.Code != http.StatusConflict {
-		t.Fatalf("stale lease: status %d", w.Code)
+		t.Fatalf("stale generation: status %d", w.Code)
 	}
 	wireCause(t, reply, "command_poll", "LeaseStale")
 	if cause, ok := CommandPollCauseByName(reply.Error.Cause); !ok || cause != CommandPollLeaseStale {
@@ -199,8 +251,9 @@ func TestCommandPollRejectsStaleLease(t *testing.T) {
 }
 
 func TestCommandPollFailsClosedWithoutRegistry(t *testing.T) {
-	h := commandHub(t, nil, 0)
-	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t))
+	f := newCommandFixture(t)
+	h := &Hub{Bus: f.bus, Authenticate: f.hub("token:mac", 0).Authenticate}
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t, f.lease.Token, f.lease.Generation))
 	if w.Code != http.StatusConflict {
 		t.Fatalf("no registry: status %d", w.Code)
 	}
@@ -208,12 +261,13 @@ func TestCommandPollFailsClosedWithoutRegistry(t *testing.T) {
 }
 
 func TestCommandPollRejectsMalformedRequests(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
 	for name, body := range map[string]string{
 		"not JSON":      "{",
-		"unknown field": `{"version":1,"generation":1,"after":0,"extra":true}`,
-		"two objects":   pollBody(t) + pollBody(t),
-		"wrong version": `{"version":99,"generation":1,"after":0}`,
+		"unknown field": `{"version":1,"generation":1,"lease_token":"x","after":0,"extra":true}`,
+		"two objects":   pollBody(t, f.lease.Token, f.lease.Generation) + pollBody(t, f.lease.Token, f.lease.Generation),
+		"wrong version": `{"version":99,"generation":1,"lease_token":"x","after":0}`,
 	} {
 		w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", body)
 		if w.Code != http.StatusBadRequest {
@@ -224,7 +278,8 @@ func TestCommandPollRejectsMalformedRequests(t *testing.T) {
 }
 
 func TestCommandRoutesRejectOtherMethodsAndPaths(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
 	if w := postCommand(t, h, http.MethodGet, "/v1/commands/poll", ""); w.Code != http.StatusBadRequest {
 		t.Fatalf("GET: status %d", w.Code)
 	}
@@ -239,42 +294,60 @@ func TestCommandRoutesRejectOtherMethodsAndPaths(t *testing.T) {
 }
 
 func TestCommandsSurviveHubRestart(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
-	if err := h.EnqueueCommand("mac", CommandWake, "t1", map[string]string{"member": "codex-1", "reason": "board"}); err != nil {
+	f := newCommandFixture(t)
+	if err := f.hub("token:mac", 0).EnqueueCommand("mac", CommandWake, "t1", map[string]string{"member": "codex-1", "reason": "board"}); err != nil {
 		t.Fatal(err)
 	}
-	restarted := &Hub{Bus: h.Bus, Authenticate: h.Authenticate, Leases: fakeLeases{"mac", 1}, PollDuration: 0}
-	reply := decodeReply(t, postCommand(t, restarted, http.MethodPost, "/v1/commands/poll", pollBody(t)))
+	restarted := &Hub{Bus: f.bus, Instances: &HubInstanceRegistry{Bus: f.bus}, Authenticate: f.hub("token:mac", 0).Authenticate}
+	reply := decodeReply(t, postCommand(t, restarted, http.MethodPost, "/v1/commands/poll", pollBody(t, f.lease.Token, f.lease.Generation)))
 	if len(reply.Commands) != 1 || reply.Commands[0].Kind != CommandWake {
 		t.Fatalf("command lost across restart: %+v", reply)
 	}
 }
 
-func TestCommandPollFailsOnStorageError(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 50*time.Millisecond)
-	if err := os.Mkdir(filepath.Join(h.Bus.dir, commandStoreFile), 0o700); err != nil {
+func TestCommandPollFailsOnJournalStorageError(t *testing.T) {
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 50*time.Millisecond)
+	if err := os.Mkdir(f.bus.path(commandStoreFile), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t))
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t, f.lease.Token, f.lease.Generation))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("storage failure: status %d", w.Code)
 	}
 	wireCause(t, decodeReply(t, w), "command_poll", "Storage")
 }
 
+func TestCommandPollFailsOnRegistryStorageError(t *testing.T) {
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
+	if err := os.Remove(f.bus.path("state.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(f.bus.path("state.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t, f.lease.Token, f.lease.Generation))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("registry storage failure: status %d", w.Code)
+	}
+	wireCause(t, decodeReply(t, w), "command_poll", "Storage")
+}
+
 func TestCommandAckRemovesCommandAndRecordsOutcome(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 50*time.Millisecond)
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 50*time.Millisecond)
 	if err := h.EnqueueCommand("mac", CommandStartRun, "t1", map[string]string{"agent": "claude-1", "run": "3"}); err != nil {
 		t.Fatal(err)
 	}
-	w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, 1, 1, CommandOutcomeStarted))
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, f.lease.Token, f.lease.Generation, 1, CommandOutcomeStarted))
 	if w.Code != http.StatusOK {
 		t.Fatalf("ack: status %d %s", w.Code, w.Body.String())
 	}
-	if w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t)); w.Code != http.StatusNoContent {
+	if w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t, f.lease.Token, f.lease.Generation)); w.Code != http.StatusNoContent {
 		t.Fatalf("acknowledged command was delivered again: status %d", w.Code)
 	}
-	store, serr := h.Bus.loadCommandStore()
+	store, serr := f.bus.loadCommandStore()
 	if serr != nil {
 		t.Fatal(serr)
 	}
@@ -285,16 +358,15 @@ func TestCommandAckRemovesCommandAndRecordsOutcome(t *testing.T) {
 }
 
 func TestCommandAckKeepsOnlyRecentResults(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
 	for i := 0; i < commandResultLimit+5; i++ {
-		if err := h.EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}); err != nil {
-			t.Fatal(err)
-		}
-		if w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, 1, int64(i+1), CommandOutcomeStopped)); w.Code != http.StatusOK {
+		enqueueStop(t, h)
+		if w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, f.lease.Token, f.lease.Generation, int64(i+1), CommandOutcomeStopped)); w.Code != http.StatusOK {
 			t.Fatalf("ack %d: status %d", i, w.Code)
 		}
 	}
-	store, serr := h.Bus.loadCommandStore()
+	store, serr := f.bus.loadCommandStore()
 	if serr != nil {
 		t.Fatal(serr)
 	}
@@ -305,64 +377,83 @@ func TestCommandAckKeepsOnlyRecentResults(t *testing.T) {
 }
 
 func TestCommandAckErrors(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
-	if err := h.EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}); err != nil {
-		t.Fatal(err)
-	}
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
+	enqueueStop(t, h)
 	cases := []struct {
 		name   string
+		hub    *Hub
 		body   string
 		status int
 		cause  string
 	}{
-		{"unknown sequence number", ackBody(t, 1, 99, CommandOutcomeStopped), http.StatusNotFound, "NoSuchCommand"},
-		{"unknown outcome", ackBody(t, 1, 1, "exploded"), http.StatusBadRequest, "InvalidOutcome"},
-		{"stale lease", ackBody(t, 7, 1, CommandOutcomeStopped), http.StatusConflict, "LeaseStale"},
-		{"malformed body", "not json", http.StatusBadRequest, "Malformed"},
+		{"unknown sequence number", h, ackBody(t, f.lease.Token, f.lease.Generation, 99, CommandOutcomeStopped), http.StatusNotFound, "NoSuchCommand"},
+		{"unknown outcome", h, ackBody(t, f.lease.Token, f.lease.Generation, 1, "exploded"), http.StatusBadRequest, "InvalidOutcome"},
+		{"wrong peer", f.hub("token:other", 0), ackBody(t, f.lease.Token, f.lease.Generation, 1, CommandOutcomeStopped), http.StatusForbidden, "NotLeaseOwner"},
+		{"wrong token", h, ackBody(t, strings.Repeat("0", 64), f.lease.Generation, 1, CommandOutcomeStopped), http.StatusConflict, "LeaseStale"},
+		{"stale lease", h, ackBody(t, f.lease.Token, f.lease.Generation+1, 1, CommandOutcomeStopped), http.StatusConflict, "LeaseStale"},
+		{"malformed body", h, "not json", http.StatusBadRequest, "Malformed"},
 	}
 	for _, c := range cases {
-		w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", c.body)
+		w := postCommand(t, c.hub, http.MethodPost, "/v1/commands/ack", c.body)
 		if w.Code != c.status {
 			t.Fatalf("%s: status %d, want %d", c.name, w.Code, c.status)
 		}
 		wireCause(t, decodeReply(t, w), "command_ack", c.cause)
 	}
 	// The command is still pending after every failed acknowledgement.
-	if w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t)); w.Code != http.StatusOK {
+	if w := postCommand(t, h, http.MethodPost, "/v1/commands/poll", pollBody(t, f.lease.Token, f.lease.Generation)); w.Code != http.StatusOK {
 		t.Fatalf("pending command lost after failed acks: status %d", w.Code)
 	}
 }
 
 func TestCommandAckRejectsSecondAcknowledgement(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
-	if err := h.EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}); err != nil {
-		t.Fatal(err)
-	}
-	if w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, 1, 1, CommandOutcomeStopped)); w.Code != http.StatusOK {
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
+	enqueueStop(t, h)
+	if w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, f.lease.Token, f.lease.Generation, 1, CommandOutcomeStopped)); w.Code != http.StatusOK {
 		t.Fatalf("first ack: status %d", w.Code)
 	}
-	w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, 1, 1, CommandOutcomeStopped))
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, f.lease.Token, f.lease.Generation, 1, CommandOutcomeStopped))
 	wireCause(t, decodeReply(t, w), "command_ack", "NoSuchCommand")
 }
 
-func TestCommandAckFailsOnStorageError(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
-	if err := os.Mkdir(filepath.Join(h.Bus.dir, commandStoreFile), 0o700); err != nil {
+func TestCommandAckFailsOnJournalStorageError(t *testing.T) {
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
+	if err := os.Mkdir(f.bus.path(commandStoreFile), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, 1, 1, CommandOutcomeStopped))
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, f.lease.Token, f.lease.Generation, 1, CommandOutcomeStopped))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("storage failure: status %d", w.Code)
 	}
 	wireCause(t, decodeReply(t, w), "command_ack", "Storage")
 }
 
-func TestCommandJournalKeepsItsFormatVersion(t *testing.T) {
-	h := commandHub(t, fakeLeases{"mac", 1}, 0)
-	if err := h.EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}); err != nil {
+func TestCommandAckFailsOnRegistryStorageError(t *testing.T) {
+	f := newCommandFixture(t)
+	h := f.hub("token:mac", 0)
+	enqueueStop(t, h)
+	if err := os.Remove(f.bus.path("state.json")); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(h.Bus.dir, commandStoreFile))
+	if err := os.Mkdir(f.bus.path("state.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	w := postCommand(t, h, http.MethodPost, "/v1/commands/ack", ackBody(t, f.lease.Token, f.lease.Generation, 1, CommandOutcomeStopped))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("registry storage failure: status %d", w.Code)
+	}
+	wireCause(t, decodeReply(t, w), "command_ack", "Storage")
+}
+
+func TestCommandJournalKeepsItsFormatVersion(t *testing.T) {
+	f := newCommandFixture(t)
+	if err := f.hub("token:mac", 0).EnqueueCommand("mac", CommandStopTask, "t1", map[string]string{"reason": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(f.bus.path(commandStoreFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,10 +461,10 @@ func TestCommandJournalKeepsItsFormatVersion(t *testing.T) {
 		t.Fatalf("journal without a version: %s", data)
 	}
 	// A journal written by a newer protocol version is refused, not reinterpreted.
-	if err := os.WriteFile(filepath.Join(h.Bus.dir, commandStoreFile), []byte(`{"version":2,"queues":{}}`), 0o600); err != nil {
+	if err := os.WriteFile(f.bus.path(commandStoreFile), []byte(`{"version":2,"queues":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, serr := h.Bus.loadCommandStore(); serr == nil {
+	if _, serr := f.bus.loadCommandStore(); serr == nil {
 		t.Fatal("a journal of another version was accepted")
 	}
 }

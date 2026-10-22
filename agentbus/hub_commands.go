@@ -122,30 +122,22 @@ type commandQueue struct {
 	Results []CommandResult `json:"results"` // most recent acknowledgements, at most commandResultLimit
 }
 
-// CommandLeases is the part of the instance registry the command channel needs. Live reports whether an
-// instance holds an unexpired lease; Current reports whether generation is that lease. The hub fails closed
-// (no instance is live, no lease is current) when Leases is nil.
-type CommandLeases interface {
-	// Live reports whether the instance holds an unexpired lease.
-	Live(instance string) bool
-	// Current reports whether generation is the generation of the instance's current lease.
-	Current(instance string, generation int64) bool
-}
-
 // commandPollRequest is the body of POST /v1/commands/poll.
 type commandPollRequest struct {
-	Version    int   `json:"version"`    // protocol version, equal to hubProtocolVersion
-	Generation int64 `json:"generation"` // lease generation the node holds
-	After      int64 `json:"after"`      // highest sequence number the node has acknowledged; only later commands are returned
+	Version    int    `json:"version"`     // protocol version, equal to hubProtocolVersion
+	Generation int64  `json:"generation"`  // lease generation the node holds
+	LeaseToken string `json:"lease_token"` // secret token of the lease; checked together with the authenticated peer
+	After      int64  `json:"after"`       // highest sequence number the node has acknowledged; only later commands are returned
 }
 
 // commandAckRequest is the body of POST /v1/commands/ack.
 type commandAckRequest struct {
-	Version    int            `json:"version"`    // protocol version, equal to hubProtocolVersion
-	Generation int64          `json:"generation"` // lease generation the node holds
-	Seq        int64          `json:"seq"`        // the command being acknowledged
-	Outcome    CommandOutcome `json:"outcome"`    // the node's answer
-	Detail     string         `json:"detail"`     // reason for failed outcomes
+	Version    int            `json:"version"`     // protocol version, equal to hubProtocolVersion
+	Generation int64          `json:"generation"`  // lease generation the node holds
+	LeaseToken string         `json:"lease_token"` // secret token of the lease; checked together with the authenticated peer
+	Seq        int64          `json:"seq"`         // the command being acknowledged
+	Outcome    CommandOutcome `json:"outcome"`     // the node's answer
+	Detail     string         `json:"detail"`      // reason for failed outcomes
 }
 
 // commandReply is the body of every command-channel response; exactly one of Commands and Error is used,
@@ -227,9 +219,25 @@ func updateCommands[C opCause](b *Bus, storage C, fn func(*commandStore) *OpErro
 	return failed
 }
 
-// leaseCurrent reports whether generation is the current lease of instance; without a registry nothing is current.
-func (h *Hub) leaseCurrent(instance string, generation int64) bool {
-	return h.Leases != nil && h.Leases.Current(instance, generation)
+// checkCommandLease validates the node's lease through the instance registry. A storage failure keeps its own
+// cause; a lease owned by another peer is owner's cause; an unknown, expired or superseded lease, and a hub
+// without a registry (fail closed), are stale's cause.
+func checkCommandLease[C opCause](h *Hub, storage, owner, stale C, instance, peer, token string, generation int64) *OpError[C] {
+	if h.Instances == nil {
+		return opErr(stale, "no instance registry is configured; instance %q must register again", instance)
+	}
+	check, serr := h.Instances.CheckLease(instance, peer, token, generation)
+	if serr != nil {
+		return fromStorage(storage, serr)
+	}
+	switch check {
+	case HubLeaseValid:
+		return nil
+	case HubLeaseWrongPeer:
+		return opErr(owner, "instance %q is leased to another node or the lease token is wrong", instance)
+	default:
+		return opErr(stale, "lease generation %d is not current for instance %q; register again", generation, instance)
+	}
 }
 
 // EnqueueCommand queues one command for an instance connected to this hub. Parameters are checked against the kind.
@@ -246,7 +254,14 @@ func (h *Hub) EnqueueCommand(instance string, kind CommandKind, task string, par
 			return opErr(CommandEnqueueInvalidParams, "command %s needs the parameter %q", kind, name)
 		}
 	}
-	if h.Leases == nil || !h.Leases.Live(instance) {
+	if h.Instances == nil {
+		return opErr(CommandEnqueueInstanceUnreachable, "no instance registry is configured; the command for %q was not queued", instance)
+	}
+	reachable, serr := h.Instances.CheckReachable(instance)
+	if serr != nil {
+		return fromStorage(CommandEnqueueStorage, serr)
+	}
+	if !reachable {
 		return opErr(CommandEnqueueInstanceUnreachable, "instance %q is not connected to the hub; the command was not queued", instance)
 	}
 	if h.Bus == nil {
@@ -293,8 +308,8 @@ func (b *Bus) pendingCommands(instance string, after int64) ([]Command, *Storage
 }
 
 // pollCommands long-polls for commands of an instance. It returns an empty batch when the poll window ends, and
-// it rechecks the lease on every round, so a replaced lease ends the poll with LeaseStale.
-func (h *Hub) pollCommands(ctx context.Context, instance string, generation, after int64) ([]Command, *CommandPollError) {
+// it rechecks the lease on every round, so a replaced or foreign lease ends the poll with an error.
+func (h *Hub) pollCommands(ctx context.Context, instance, peer, token string, generation, after int64) ([]Command, *CommandPollError) {
 	if h.Bus == nil {
 		return nil, opErr(CommandPollStorage, "hub bus is not configured")
 	}
@@ -307,8 +322,9 @@ func (h *Hub) pollCommands(ctx context.Context, instance string, generation, aft
 	ticker := time.NewTicker(commandPollInterval)
 	defer ticker.Stop()
 	for {
-		if !h.leaseCurrent(instance, generation) {
-			return nil, opErr(CommandPollLeaseStale, "lease generation %d is not current for instance %q; register again", generation, instance)
+		if failed := checkCommandLease(h, CommandPollStorage, CommandPollNotLeaseOwner, CommandPollLeaseStale,
+			instance, peer, token, generation); failed != nil {
+			return nil, failed
 		}
 		cmds, serr := h.Bus.pendingCommands(instance, after)
 		if serr != nil {
@@ -329,15 +345,16 @@ func (h *Hub) pollCommands(ctx context.Context, instance string, generation, aft
 }
 
 // ackCommand records the node's outcome for one pending command and removes it from the queue.
-func (h *Hub) ackCommand(instance string, generation int64, req commandAckRequest) *CommandAckError {
+func (h *Hub) ackCommand(instance, peer string, req commandAckRequest) *CommandAckError {
 	if h.Bus == nil {
 		return opErr(CommandAckStorage, "hub bus is not configured")
 	}
 	if !req.Outcome.Valid() {
 		return opErr(CommandAckInvalidOutcome, "unknown outcome %q", string(req.Outcome))
 	}
-	if !h.leaseCurrent(instance, generation) {
-		return opErr(CommandAckLeaseStale, "lease generation %d is not current for instance %q; register again", generation, instance)
+	if failed := checkCommandLease(h, CommandAckStorage, CommandAckNotLeaseOwner, CommandAckLeaseStale,
+		instance, peer, req.LeaseToken, req.Generation); failed != nil {
+		return failed
 	}
 	var kind CommandKind
 	var task string
@@ -399,7 +416,7 @@ func (h *Hub) servePoll(w http.ResponseWriter, r *http.Request, instance string)
 		writeCommandError(h, w, opErr(CommandPollMalformed, "unsupported protocol version %d", req.Version))
 		return
 	}
-	cmds, failed := h.pollCommands(r.Context(), instance, req.Generation, req.After)
+	cmds, failed := h.pollCommands(r.Context(), instance, hubAuthenticatedPeer(r), req.LeaseToken, req.Generation, req.After)
 	if failed != nil {
 		writeCommandError(h, w, failed)
 		return
@@ -422,7 +439,7 @@ func (h *Hub) serveAck(w http.ResponseWriter, r *http.Request, instance string) 
 		writeCommandError(h, w, opErr(CommandAckMalformed, "unsupported protocol version %d", req.Version))
 		return
 	}
-	if failed := h.ackCommand(instance, req.Generation, req); failed != nil {
+	if failed := h.ackCommand(instance, hubAuthenticatedPeer(r), req); failed != nil {
 		writeCommandError(h, w, failed)
 		return
 	}

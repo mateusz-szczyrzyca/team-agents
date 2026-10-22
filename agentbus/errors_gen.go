@@ -2754,6 +2754,98 @@ func HubClientCauseByName(name string) (HubClientCause, bool) {
 	return 0, false
 }
 
+// ---------------------------------------------------------------- instance_register
+
+// InstanceRegisterCause is a reason why the hub instance_register endpoint failed.
+type InstanceRegisterCause int
+
+const (
+	InstanceRegisterMalformed             InstanceRegisterCause = iota // the registration body, manifest, or protocol version is invalid [InvalidArgument]
+	InstanceRegisterIdentity                                           // the manifest name or owner does not match the authenticated peer [Permission]
+	InstanceRegisterDuplicateInstanceName                              // another daemon holds a live lease for this instance name [Conflict]
+	InstanceRegisterEntropy                                            // a secure lease token could not be generated [Process]
+	InstanceRegisterStorage                                            // the shared state or a file could not be read or written [Storage]
+)
+
+// InstanceRegisterError is the error of the hub instance_register endpoint.
+type InstanceRegisterError = OpError[InstanceRegisterCause]
+
+// instanceRegisterCauses describes the InstanceRegisterCause values (same order as the constants).
+var instanceRegisterCauses = [...]causeInfo{
+	{"Malformed", ClassInvalidArgument},
+	{"Identity", ClassPermission},
+	{"DuplicateInstanceName", ClassConflict},
+	{"Entropy", ClassProcess},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (InstanceRegisterCause) op() string { return "instance_register" }
+
+// info implements opCause.
+func (c InstanceRegisterCause) info() causeInfo { return instanceRegisterCauses[c] }
+
+// String returns the cause name.
+func (c InstanceRegisterCause) String() string { return c.info().name }
+
+// InstanceRegisterCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func InstanceRegisterCauseByName(name string) (InstanceRegisterCause, bool) {
+	for i, info := range instanceRegisterCauses {
+		if info.name == name {
+			return InstanceRegisterCause(i), true
+		}
+	}
+	return 0, false
+}
+
+// ---------------------------------------------------------------- instance_heartbeat
+
+// InstanceHeartbeatCause is a reason why the hub instance_heartbeat endpoint failed.
+type InstanceHeartbeatCause int
+
+const (
+	InstanceHeartbeatMalformed       InstanceHeartbeatCause = iota // the heartbeat body, manifest, or protocol version is invalid [InvalidArgument]
+	InstanceHeartbeatIdentity                                      // the heartbeat does not belong to the authenticated lease owner [Permission]
+	InstanceHeartbeatUnknownInstance                               // the instance has never registered [NotFound]
+	InstanceHeartbeatLeaseExpired                                  // the lease has expired and requires registration [InvalidState]
+	InstanceHeartbeatStaleLease                                    // the token or generation belongs to an obsolete lease [Conflict]
+	InstanceHeartbeatStaleSequence                                 // the heartbeat sequence would replace newer task state [Conflict]
+	InstanceHeartbeatStorage                                       // the shared state or a file could not be read or written [Storage]
+)
+
+// InstanceHeartbeatError is the error of the hub instance_heartbeat endpoint.
+type InstanceHeartbeatError = OpError[InstanceHeartbeatCause]
+
+// instanceHeartbeatCauses describes the InstanceHeartbeatCause values (same order as the constants).
+var instanceHeartbeatCauses = [...]causeInfo{
+	{"Malformed", ClassInvalidArgument},
+	{"Identity", ClassPermission},
+	{"UnknownInstance", ClassNotFound},
+	{"LeaseExpired", ClassInvalidState},
+	{"StaleLease", ClassConflict},
+	{"StaleSequence", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (InstanceHeartbeatCause) op() string { return "instance_heartbeat" }
+
+// info implements opCause.
+func (c InstanceHeartbeatCause) info() causeInfo { return instanceHeartbeatCauses[c] }
+
+// String returns the cause name.
+func (c InstanceHeartbeatCause) String() string { return c.info().name }
+
+// InstanceHeartbeatCauseByName returns the cause with the given name (as in errors.json), or false when the operation has no such cause.
+func InstanceHeartbeatCauseByName(name string) (InstanceHeartbeatCause, bool) {
+	for i, info := range instanceHeartbeatCauses {
+		if info.name == name {
+			return InstanceHeartbeatCause(i), true
+		}
+	}
+	return 0, false
+}
+
 // ---------------------------------------------------------------- command_enqueue
 
 // CommandEnqueueCause is a reason why queueing a command for an instance on the hub failed.
@@ -2762,7 +2854,7 @@ type CommandEnqueueCause int
 const (
 	CommandEnqueueUnknownKind         CommandEnqueueCause = iota // the command kind is not in the closed command vocabulary [InvalidArgument]
 	CommandEnqueueInvalidParams                                  // the instance or task is empty, or a parameter required by the command kind is missing [InvalidArgument]
-	CommandEnqueueInstanceUnreachable                            // the target instance has no live lease (its manifest expired or it never registered); the command is not queued [Unavailable]
+	CommandEnqueueInstanceUnreachable                            // the target instance holds no unexpired registration; the command is not queued [Unavailable]
 	CommandEnqueueQueueFull                                      // the instance already has the maximum number of undelivered commands; the caller may retry later [Unavailable]
 	CommandEnqueueStorage                                        // the shared state or a file could not be read or written [Storage]
 )
@@ -2804,9 +2896,10 @@ func CommandEnqueueCauseByName(name string) (CommandEnqueueCause, bool) {
 type CommandPollCause int
 
 const (
-	CommandPollMalformed  CommandPollCause = iota // the request body is not a valid poll request for this protocol version [InvalidArgument]
-	CommandPollLeaseStale                         // the lease generation is not the current lease of this instance; the node must register again [InvalidState]
-	CommandPollStorage                            // the shared state or a file could not be read or written [Storage]
+	CommandPollMalformed     CommandPollCause = iota // the request body is not a valid poll request for this protocol version [InvalidArgument]
+	CommandPollNotLeaseOwner                         // the authenticated peer or the lease token does not belong to this instance [Permission]
+	CommandPollLeaseStale                            // the lease generation is not the current lease of this instance; the node must register again [InvalidState]
+	CommandPollStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
 // CommandPollError is the error of the long poll /v1/commands/poll of an instance node.
@@ -2815,6 +2908,7 @@ type CommandPollError = OpError[CommandPollCause]
 // commandPollCauses describes the CommandPollCause values (same order as the constants).
 var commandPollCauses = [...]causeInfo{
 	{"Malformed", ClassInvalidArgument},
+	{"NotLeaseOwner", ClassPermission},
 	{"LeaseStale", ClassInvalidState},
 	{"Storage", ClassStorage},
 }
@@ -2846,6 +2940,7 @@ type CommandAckCause int
 const (
 	CommandAckMalformed      CommandAckCause = iota // the request body is not a valid acknowledgement for this protocol version [InvalidArgument]
 	CommandAckInvalidOutcome                        // the outcome is not in the closed outcome vocabulary [InvalidArgument]
+	CommandAckNotLeaseOwner                         // the authenticated peer or the lease token does not belong to this instance [Permission]
 	CommandAckLeaseStale                            // the lease generation is not the current lease of this instance; the node must register again [InvalidState]
 	CommandAckNoSuchCommand                         // no undelivered command with this sequence number exists for the instance (already acknowledged, or never queued) [NotFound]
 	CommandAckStorage                               // the shared state or a file could not be read or written [Storage]
@@ -2858,6 +2953,7 @@ type CommandAckError = OpError[CommandAckCause]
 var commandAckCauses = [...]causeInfo{
 	{"Malformed", ClassInvalidArgument},
 	{"InvalidOutcome", ClassInvalidArgument},
+	{"NotLeaseOwner", ClassPermission},
 	{"LeaseStale", ClassInvalidState},
 	{"NoSuchCommand", ClassNotFound},
 	{"Storage", ClassStorage},
@@ -3196,6 +3292,16 @@ func wireOperationError(op, cause, message string) (error, bool) {
 	case "hub_client":
 		if c, ok := HubClientCauseByName(cause); ok {
 			return &OpError[HubClientCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "instance_register":
+		if c, ok := InstanceRegisterCauseByName(cause); ok {
+			return &OpError[InstanceRegisterCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
+		}
+		return nil, false
+	case "instance_heartbeat":
+		if c, ok := InstanceHeartbeatCauseByName(cause); ok {
+			return &OpError[InstanceHeartbeatCause]{Cause: c, Message: message, Err: c.info().class.Sentinel()}, true
 		}
 		return nil, false
 	case "command_enqueue":

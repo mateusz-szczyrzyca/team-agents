@@ -1069,6 +1069,70 @@
    ]
   },
   {
+   "type": "InstanceRegister",
+   "op": "instance_register",
+   "what": "the hub instance_register endpoint",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the registration body, manifest, or protocol version is invalid"
+    },
+    {
+     "name": "Identity",
+     "class": "Permission",
+     "doc": "the manifest name or owner does not match the authenticated peer"
+    },
+    {
+     "name": "DuplicateInstanceName",
+     "class": "Conflict",
+     "doc": "another daemon holds a live lease for this instance name"
+    },
+    {
+     "name": "Entropy",
+     "class": "Process",
+     "doc": "a secure lease token could not be generated"
+    }
+   ]
+  },
+  {
+   "type": "InstanceHeartbeat",
+   "op": "instance_heartbeat",
+   "what": "the hub instance_heartbeat endpoint",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the heartbeat body, manifest, or protocol version is invalid"
+    },
+    {
+     "name": "Identity",
+     "class": "Permission",
+     "doc": "the heartbeat does not belong to the authenticated lease owner"
+    },
+    {
+     "name": "UnknownInstance",
+     "class": "NotFound",
+     "doc": "the instance has never registered"
+    },
+    {
+     "name": "LeaseExpired",
+     "class": "InvalidState",
+     "doc": "the lease has expired and requires registration"
+    },
+    {
+     "name": "StaleLease",
+     "class": "Conflict",
+     "doc": "the token or generation belongs to an obsolete lease"
+    },
+    {
+     "name": "StaleSequence",
+     "class": "Conflict",
+     "doc": "the heartbeat sequence would replace newer task state"
+    }
+   ]
+  },
+  {
    "type": "CommandEnqueue",
    "op": "command_enqueue",
    "what": "queueing a command for an instance on the hub",
@@ -1086,7 +1150,7 @@
     {
      "name": "InstanceUnreachable",
      "class": "Unavailable",
-     "doc": "the target instance has no live lease (its manifest expired or it never registered); the command is not queued"
+     "doc": "the target instance holds no unexpired registration; the command is not queued"
     },
     {
      "name": "QueueFull",
@@ -1104,6 +1168,11 @@
      "name": "Malformed",
      "class": "InvalidArgument",
      "doc": "the request body is not a valid poll request for this protocol version"
+    },
+    {
+     "name": "NotLeaseOwner",
+     "class": "Permission",
+     "doc": "the authenticated peer or the lease token does not belong to this instance"
     },
     {
      "name": "LeaseStale",
@@ -1126,6 +1195,11 @@
      "name": "InvalidOutcome",
      "class": "InvalidArgument",
      "doc": "the outcome is not in the closed outcome vocabulary"
+    },
+    {
+     "name": "NotLeaseOwner",
+     "class": "Permission",
+     "doc": "the authenticated peer or the lease token does not belong to this instance"
     },
     {
      "name": "LeaseStale",
