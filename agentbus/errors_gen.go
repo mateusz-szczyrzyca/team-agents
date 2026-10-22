@@ -2938,12 +2938,13 @@ func CommandPollCauseByName(name string) (CommandPollCause, bool) {
 type CommandAckCause int
 
 const (
-	CommandAckMalformed      CommandAckCause = iota // the request body is not a valid acknowledgement for this protocol version [InvalidArgument]
-	CommandAckInvalidOutcome                        // the outcome is not in the closed outcome vocabulary [InvalidArgument]
-	CommandAckNotLeaseOwner                         // the authenticated peer or the lease token does not belong to this instance [Permission]
-	CommandAckLeaseStale                            // the lease generation is not the current lease of this instance; the node must register again [InvalidState]
-	CommandAckNoSuchCommand                         // no undelivered command with this sequence number exists for the instance (already acknowledged, or never queued) [NotFound]
-	CommandAckStorage                               // the shared state or a file could not be read or written [Storage]
+	CommandAckMalformed          CommandAckCause = iota // the request body is not a valid acknowledgement for this protocol version [InvalidArgument]
+	CommandAckInvalidOutcome                            // the outcome is not in the closed outcome vocabulary [InvalidArgument]
+	CommandAckNotLeaseOwner                             // the authenticated peer or the lease token does not belong to this instance [Permission]
+	CommandAckLeaseStale                                // the lease generation is not the current lease of this instance; the node must register again [InvalidState]
+	CommandAckNoSuchCommand                             // no undelivered command with this sequence number exists for the instance (already acknowledged, or never queued) [NotFound]
+	CommandAckConflictingOutcome                        // the command was already acknowledged with a different outcome or detail; an identical retry is accepted, a conflicting one is not [Conflict]
+	CommandAckStorage                                   // the shared state or a file could not be read or written [Storage]
 )
 
 // CommandAckError is the error of the acknowledgement /v1/commands/ack of a command by an instance node.
@@ -2956,6 +2957,7 @@ var commandAckCauses = [...]causeInfo{
 	{"NotLeaseOwner", ClassPermission},
 	{"LeaseStale", ClassInvalidState},
 	{"NoSuchCommand", ClassNotFound},
+	{"ConflictingOutcome", ClassConflict},
 	{"Storage", ClassStorage},
 }
 

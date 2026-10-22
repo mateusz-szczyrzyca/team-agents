@@ -97,6 +97,7 @@ type Command struct {
 	Task       string            `json:"task"`        // task the command concerns
 	Params     map[string]string `json:"params"`      // validated parameters for Kind
 	EnqueuedAt time.Time         `json:"enqueued_at"` // UTC; time.Time keeps the instant across time zones
+	Generation int64             `json:"generation"`  // lease generation the command was delivered under; set by poll, not stored
 }
 
 // CommandResult is the recorded acknowledgement of one command.
@@ -344,6 +345,16 @@ func (h *Hub) pollCommands(ctx context.Context, instance, peer, token string, ge
 	}
 }
 
+// recordedResult returns the kept acknowledgement of a command, if the journal still holds it.
+func recordedResult(q *commandQueue, seq int64) (CommandResult, bool) {
+	for _, r := range q.Results {
+		if r.Seq == seq {
+			return r, true
+		}
+	}
+	return CommandResult{}, false
+}
+
 // ackCommand records the node's outcome for one pending command and removes it from the queue.
 func (h *Hub) ackCommand(instance, peer string, req commandAckRequest) *CommandAckError {
 	if h.Bus == nil {
@@ -358,6 +369,7 @@ func (h *Hub) ackCommand(instance, peer string, req commandAckRequest) *CommandA
 	}
 	var kind CommandKind
 	var task string
+	var replayed bool
 	failed := updateCommands(h.Bus, CommandAckStorage, func(store *commandStore) *CommandAckError {
 		q := store.queue(instance)
 		idx := -1
@@ -368,7 +380,18 @@ func (h *Hub) ackCommand(instance, peer string, req commandAckRequest) *CommandA
 			}
 		}
 		if idx < 0 {
-			return opErr(CommandAckNoSuchCommand, "no undelivered command %d for instance %q", req.Seq, instance)
+			// A retry after a lost response: the hub already recorded this acknowledgement. An identical retry
+			// succeeds without a second record; a different outcome for the same command is a conflict.
+			prior, found := recordedResult(q, req.Seq)
+			if !found {
+				return opErr(CommandAckNoSuchCommand, "no undelivered command %d for instance %q", req.Seq, instance)
+			}
+			if prior.Outcome != req.Outcome || prior.Detail != req.Detail {
+				return opErr(CommandAckConflictingOutcome, "command %d of instance %q was acknowledged with outcome %q, not %q",
+					req.Seq, instance, prior.Outcome, req.Outcome)
+			}
+			replayed = true
+			return nil
 		}
 		c := q.Pending[idx]
 		kind, task = c.Kind, c.Task
@@ -380,7 +403,7 @@ func (h *Hub) ackCommand(instance, peer string, req commandAckRequest) *CommandA
 		}
 		return nil
 	})
-	if failed == nil {
+	if failed == nil && !replayed {
 		logInfo(LogCommandAcked, "instance", instance, "seq", req.Seq, "kind", string(kind), "task", task, "outcome", string(req.Outcome))
 	}
 	return failed
@@ -420,6 +443,10 @@ func (h *Hub) servePoll(w http.ResponseWriter, r *http.Request, instance string)
 	if failed != nil {
 		writeCommandError(h, w, failed)
 		return
+	}
+	for i := range cmds {
+		// The lease was checked for this generation just now; the node executes only under its own current lease.
+		cmds[i].Generation = req.Generation
 	}
 	if len(cmds) == 0 {
 		w.WriteHeader(http.StatusNoContent)
