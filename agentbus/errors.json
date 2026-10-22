@@ -1131,6 +1131,134 @@
      "doc": "the heartbeat sequence would replace newer task state"
     }
    ]
+  },
+  {
+   "type": "CommandEnqueue",
+   "op": "command_enqueue",
+   "what": "queueing a command for an instance on the hub",
+   "causes": [
+    {
+     "name": "UnknownKind",
+     "class": "InvalidArgument",
+     "doc": "the command kind is not in the closed command vocabulary"
+    },
+    {
+     "name": "InvalidParams",
+     "class": "InvalidArgument",
+     "doc": "the instance or task is empty, or a parameter required by the command kind is missing"
+    },
+    {
+     "name": "InstanceUnreachable",
+     "class": "Unavailable",
+     "doc": "the target instance holds no unexpired registration; the command is not queued"
+    },
+    {
+     "name": "QueueFull",
+     "class": "Unavailable",
+     "doc": "the instance already has the maximum number of undelivered commands; the caller may retry later"
+    }
+   ]
+  },
+  {
+   "type": "CommandPoll",
+   "op": "command_poll",
+   "what": "the long poll /v1/commands/poll of an instance node",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the request body is not a valid poll request for this protocol version"
+    },
+    {
+     "name": "NotLeaseOwner",
+     "class": "Permission",
+     "doc": "the authenticated peer or the lease token does not belong to this instance"
+    },
+    {
+     "name": "LeaseStale",
+     "class": "InvalidState",
+     "doc": "the lease generation is not the current lease of this instance; the node must register again"
+    }
+   ]
+  },
+  {
+   "type": "CommandAck",
+   "op": "command_ack",
+   "what": "the acknowledgement /v1/commands/ack of a command by an instance node",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the request body is not a valid acknowledgement for this protocol version"
+    },
+    {
+     "name": "InvalidOutcome",
+     "class": "InvalidArgument",
+     "doc": "the outcome is not in the closed outcome vocabulary"
+    },
+    {
+     "name": "NotLeaseOwner",
+     "class": "Permission",
+     "doc": "the authenticated peer or the lease token does not belong to this instance"
+    },
+    {
+     "name": "LeaseStale",
+     "class": "InvalidState",
+     "doc": "the lease generation is not the current lease of this instance; the node must register again"
+    },
+    {
+     "name": "NoSuchCommand",
+     "class": "NotFound",
+     "doc": "no undelivered command with this sequence number exists for the instance (already acknowledged, or never queued)"
+    },
+    {
+     "name": "ConflictingOutcome",
+     "class": "Conflict",
+     "doc": "the command was already acknowledged with a different outcome or detail; an identical retry is accepted, a conflicting one is not"
+    }
+   ]
+  },
+  {
+   "type": "CmdNode",
+   "op": "node",
+   "what": "the agentbus node daemon",
+   "causes": [
+    {
+     "name": "InvalidConfig",
+     "class": "InvalidArgument",
+     "doc": "the node configuration or local execution policy is invalid"
+    },
+    {
+     "name": "HubUnavailable",
+     "class": "Unavailable",
+     "doc": "the hub cannot be reached within the bounded request budget"
+    },
+    {
+     "name": "Protocol",
+     "class": "InvalidState",
+     "doc": "the hub response or command conflicts with the protocol or durable journal"
+    },
+    {
+     "name": "Rejected",
+     "class": "Permission",
+     "doc": "the authenticated hub rejected the request"
+    },
+    {
+     "name": "LeaseLost",
+     "class": "Conflict",
+     "doc": "the hub requires a fresh instance lease"
+    },
+    {
+     "name": "Dispatch",
+     "class": "Process",
+     "doc": "a local command could not be executed"
+    },
+    {
+     "name": "AlreadyRunning",
+     "class": "Conflict",
+     "doc": "another node daemon holds this local home lock"
+    }
+   ]
   }
  ]
 }

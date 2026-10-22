@@ -800,3 +800,42 @@ For instances running on Mac laptops (MacBook Pro / Air), running intensive buil
      - Mark instance capacity as `busy` / `paused` in the heartbeat manifest so the hub routes work elsewhere.
    - When AC power is restored:
      - Automatically resume normal operation and manifest capacity.
+
+
+## 14. Node daemon execution contract (M2 implementation)
+
+`agent node` is the local script wrapper for `agentbus node`. The wrapper sources the instance's own
+configuration and secrets; tokens stay in the environment. The daemon accepts `--home`, `--instance`,
+`--lead`, `--auth`, `--cert-sha256`, `--capabilities`, `--accept-repos` and `--agent-cmd`. Its native executor
+uses only that operator-installed script's fixed `_node-*` bridges and locally provisioned tasks.
+`HUB_CERT_SHA256` is preferred; `HUB_CERT_FINGERPRINT` remains a compatible alias for earlier clients.
+
+A local `node/state.json` retains the daemon registration ID, monotonic report sequence, lease,
+command acceptance/outcome journal and confirmed acknowledgment cursor. `node/daemon.lock` excludes
+another daemon in the same local home. Writes sync data and directories; no local file is a copy of
+the logical bus. Heartbeat renewal is independent of long polling and command execution. Hub outages
+leave local runs working, and a command's outcome is recorded before sending its acknowledgment.
+
+Commands returned by a poll carry the generation validated by that poll. Nodes reject stale generations
+and unordered sequences. A matching recorded outcome is acknowledged without re-executing the command;
+a missing/unknown acknowledgment is not silently accepted. The hub makes an identical recorded
+acknowledgment retry idempotent and rejects a different outcome for the same sequence.
+
+The native executor confirms local admission with a private readiness pipe before acknowledging a
+start or answer delivery. It supervises its own process groups and checks local repository/capability
+policy. Sensitive declarations also require local human approval in `node/approved-capabilities.json`,
+a JSON array of typed capabilities. `answer_deliver` additionally carries `question_round` (a positive
+integer string) and `snapshot_version` (SHA-256 of the original questions file); the destination checks
+both before storing the submitted full answered questions Markdown. Answer text travels over stdin,
+not in process arguments.
+
+A daemon crash between accepted-command persistence and completion remains an explicit unknown outcome.
+The native executor does not blindly respawn such work, nor kill a process selected only by a stale PID
+file. Unowned prior runner identities require manual reconciliation. This is not an exactly-once launch
+claim or a complete mechanism for adopting orphan processes after daemon restart. Network reconnection
+while the daemon remains alive keeps its current supervised runs.
+
+Remote task provisioning, complete trusted-run resolution, versioned questions retrieval/submission and
+full CLI routing are separate M2 integration work. The daemon does not clone a hub-selected repository
+or create arbitrary missing task files. Outage-aware watchdog accounting and scheduled unreachable
+member/board transitions remain M5 work.

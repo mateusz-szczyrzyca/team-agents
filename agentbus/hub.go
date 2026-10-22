@@ -186,6 +186,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveInstances(w, r, instance)
 		return
 	}
+	if isCommandRoute(r.URL.Path) {
+		h.serveCommands(w, r, instance)
+		return
+	}
 	if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/v1/tools/") {
 		h.writeResponse(w, http.StatusBadRequest, hubErrorResponse("", opErr(HubCallMalformed, "use POST /v1/tools/{op}")))
 		return

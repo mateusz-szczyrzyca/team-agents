@@ -67,9 +67,13 @@ func hubClientForDir(dir string) (*HubClient, *HubClientError) {
 		if client.Token == "" {
 			return nil, opErr(HubClientInvalidConfig, "token mode requires HUB_TOKEN from secrets.env")
 		}
-		tlsConfig, err := NewPinnedTLSConfig(os.Getenv("HUB_CERT_FINGERPRINT"))
+		fingerprint := os.Getenv("HUB_CERT_SHA256")
+		if fingerprint == "" {
+			fingerprint = os.Getenv("HUB_CERT_FINGERPRINT")
+		}
+		tlsConfig, err := NewPinnedTLSConfig(fingerprint)
 		if err != nil {
-			return nil, opErr(HubClientInvalidConfig, "invalid HUB_CERT_FINGERPRINT: %v", err)
+			return nil, opErr(HubClientInvalidConfig, "invalid HUB_CERT_SHA256/HUB_CERT_FINGERPRINT: %v", err)
 		}
 		transport.TLSClientConfig = tlsConfig
 	}

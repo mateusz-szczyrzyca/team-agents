@@ -131,12 +131,15 @@ AGENTBUS_BIN="${AGENTBUS_BIN:-$HOME/.local/bin/agentbus}"
 RUN_PATH="${RUN_PATH:-$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin}"
 # Multi-instance bus transport; empty lead/listen settings retain local-file mode.
 export INSTANCE_NAME="${INSTANCE_NAME:-}"
+# Capabilities this instance declares, comma separated (e.g. build:go,hw:jlink); unknown names stop serve.
+export INSTANCE_CAPABILITIES="${INSTANCE_CAPABILITIES:-}"
 export LEAD_INSTANCE="${LEAD_INSTANCE:-}"
 export HUB_LISTEN="${HUB_LISTEN:-}"
 # Optional absolute path to the lead's private socket; empty uses the bus directory's hub.sock.
 export HUB_SOCKET="${HUB_SOCKET:-}"
 export HUB_AUTH="${HUB_AUTH:-tailscale}"
 export HUB_CERT_FINGERPRINT="${HUB_CERT_FINGERPRINT:-}"
+export HUB_CERT_SHA256="${HUB_CERT_SHA256:-$HUB_CERT_FINGERPRINT}"
 export HUB_RETRY_SECONDS="${HUB_RETRY_SECONDS:-30}"
 # The token is assigned by secrets.env, never by the public configuration template.
 export HUB_TOKEN="${HUB_TOKEN:-}"
@@ -210,11 +213,54 @@ AUTH_MODEL_OPENROUTER="${AUTH_MODEL_OPENROUTER:-}"   # empty = model of the firs
 AUTH_MODEL_DEEPINFRA="${AUTH_MODEL_DEEPINFRA:-}"     # empty = model of the first deepinfra/... agent in agents.conf
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
+declare -p INSTANCE_CAPABILITIES &>/dev/null || declare -a INSTANCE_CAPABILITIES=()
+declare -p INSTANCE_ACCEPT_REPOS &>/dev/null || declare -a INSTANCE_ACCEPT_REPOS=()
+
 bus() { "$AGENTBUS_BIN" "$@"; }
 
 # file_mtime_secs file — the modification time in epoch seconds (portable across GNU and BSD/macOS stat)
 file_mtime_secs() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+}
+
+# file_sha256 file — prints sha256 hex digest portably across sha256sum and shasum
+file_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+# date_iso — prints ISO-8601 timestamp portably across GNU date (-Is) and BSD/macOS date
+date_iso() {
+  date -Is 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%SZ'
+}
+
+# format_epoch epoch [fmt] — formats epoch seconds portably across GNU and BSD date
+format_epoch() {
+  local epoch=$1 fmt=${2:-'+%H:%M'}
+  if date -d "@$epoch" "$fmt" 2>/dev/null; then
+    return 0
+  fi
+  date -r "$epoch" "$fmt" 2>/dev/null || date "$fmt"
+}
+
+# file_flock fd [timeout_secs] — portable file descriptor lock (flock or python fcntl fallback)
+file_flock() {
+  local fd=$1 timeout=${2:-30}
+  if command -v flock >/dev/null 2>&1; then
+    flock -w "$timeout" "$fd"
+    return $?
+  fi
+  python3 -c "import fcntl, sys, time; end=time.time()+$timeout
+while True:
+  try:
+    fcntl.flock($fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    sys.exit(0)
+  except (BlockingIOError, OSError):
+    if time.time() >= end: sys.exit(1)
+    time.sleep(0.05)" 2>/dev/null
 }
 
 # `agent stop --running` in progress: blocks waking, queues and notifications (flag valid for 2 min)
@@ -569,7 +615,7 @@ team_after_run() { # id status final note — team logic after a member's run en
   if [[ $status == paused ]]; then
     local to until; to=$lead
     [[ -z $to || $to == "$AGENT" ]] && to="team:$team"
-    until=$(date -d "@$(task_field "$id" WAKE_AT)" '+%H:%M')
+    until=$(format_epoch "$(task_field "$id" WAKE_AT)" '+%H:%M')
     notice member_paused agentbus "$to" "$AGENT IS PAUSED until $until: $note. Messages and board items do not wake it; it resumes by itself at $until and its claimed board items stay with it. If the work cannot wait, plan without it." \
       "agent=$AGENT" "team=$team" "until=$until" "reason=$(task_field "$id" PAUSE_REASON)"
     notify "$id" paused "$final" "$note"
@@ -793,13 +839,18 @@ wake_loop_check() {
   return 1
 }
 
-# schedule_wake id seconds — runs `agent _wake <id>` after that many seconds (a transient systemd timer)
+# schedule_wake id seconds — runs `agent _wake <id>` after that many seconds (transient systemd timer or background fallback)
 schedule_wake() {
-  systemd-run --user --quiet --collect --unit="agent-$1-wake-$(date +%s)" \
-    --on-active="${2}s" --timer-property=AccuracySec=10s \
-    --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" \
-    --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
-    "$SELF" _wake "$1" 3>&- 7>&- 8>&- 9>&-
+  if command -v systemd-run >/dev/null 2>&1; then
+    systemd-run --user --quiet --collect --unit="agent-$1-wake-$(date +%s)" \
+      --on-active="${2}s" --timer-property=AccuracySec=10s \
+      --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" \
+      --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+      "$SELF" _wake "$1" 3>&- 7>&- 8>&- 9>&-
+  else
+    ( sleep "$2" && "$SELF" _wake "$1" 3>&- 7>&- 8>&- 9>&- ) >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+  fi
 }
 
 # pause_task id seconds reason — the task waits (no run, not woken by messages) until a timer resumes it
@@ -812,7 +863,7 @@ pause_task() {
     # without the timer the task stays paused until `agent _wake <id>` or `agent run --resume`
     log_error pause_timer_failed "task=$id" "seconds=$secs"
   fi
-  log_warn task_paused "task=$id" "reason=$reason" "seconds=$secs" "until=$(date -d "@$at" '+%H:%M')"
+  log_warn task_paused "task=$id" "reason=$reason" "seconds=$secs" "until=$(format_epoch "$at" '+%H:%M')"
 }
 
 # resume_paused id — the timer of a paused task fired (meta loaded): resume it, or defer an early wake-up
@@ -1745,7 +1796,7 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     status=hung; note="the agent hung $hangs times in a row without progress"
   elif { ((RC != 0)) || [[ -z $fst ]]; } && pause_secs=$(quota_reset_seconds "$dir" "$nrun" "$FINAL"); then
     status=paused; pause_reason=quota
-    note="the provider's quota or usage limit is exhausted — resumes at $(date -d "@$(( $(date +%s) + pause_secs ))" '+%H:%M')"
+    note="the provider's quota or usage limit is exhausted — resumes at $(format_epoch "$(( $(date +%s) + pause_secs ))" '+%H:%M')"
   elif [[ -s $qfile ]]; then
     # every question the agent wrote must carry a recommendation; without one it gets the file back once
     if ((qgen == 0)) && [[ $(task_field "$id" QUESTIONS_BOUNCED) != "$next_round" ]]; then
@@ -1800,7 +1851,7 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
   # the wake-loop guard: a member that keeps waking up without doing anything is paused instead of put to sleep
   if [[ $status == sleeping && -n ${TEAM:-} ]] && pause_secs=$(wake_loop_check "$id" "$run_start" "$run_head0" "$run_msgs0"); then
     status=paused; pause_reason=wake_loop
-    note="woken again and again without anything to do (wake-loop guard) — paused until $(date -d "@$(( $(date +%s) + pause_secs ))" '+%H:%M')"
+    note="woken again and again without anything to do (wake-loop guard) — paused until $(format_epoch "$(( $(date +%s) + pause_secs ))" '+%H:%M')"
   fi
   # questions without recommendations go back to the agent once (the same questions file, the same round)
   if [[ $status == qbounce ]]; then
@@ -2843,10 +2894,272 @@ agent say <agent|all|team:ID> "text"     message agents through the bus
 EOF
 }
 
+# ------------------------------------------------------------------ node bridge (supervisor commands)
+
+cmd__node_start() { # id mode [expected_run] — starts a runner directly under agent node without systemd
+  local id=$1 mode=$2 expected_run=${3:-}
+  local dir="$TASKS/$id"
+  [[ -d $dir && -f $dir/meta.env ]] || { echo "task $id not found" >&2; exit 1; }
+  meta_load "$id"
+  if [[ -n $expected_run ]]; then
+    if (( expected_run <= RUN )); then
+      log_info runner_already_running "task=$id" "run=$RUN" "desired=$expected_run"
+      if [[ -n ${NODE_READY_FD:-} ]]; then
+        printf '%s\n' "already_running" 1>&"$NODE_READY_FD"
+        exec {NODE_READY_FD}>&-
+        unset NODE_READY_FD
+      fi
+      exit 0
+    fi
+    if (( expected_run > RUN + 1 )); then
+      echo "unexpected run gap: task $id at run $RUN, expected $expected_run" >&2
+      exit 1
+    fi
+  fi
+  local repo_name; repo_name=$(task_field "$id" REPO_NAME)
+  if [[ -n ${NODE_ACCEPT_REPOS:-} ]]; then
+    local accepted=0 r
+    local -a n_repos
+    IFS=, read -r -a n_repos <<< "$NODE_ACCEPT_REPOS"
+    for r in "${n_repos[@]}"; do
+      if [[ "$r" == "$repo_name" ]]; then accepted=1; break; fi
+    done
+    if ((!accepted)); then
+      echo "repository $repo_name not in NODE_ACCEPT_REPOS" >&2
+      exit 1
+    fi
+  fi
+  if [[ ${#INSTANCE_ACCEPT_REPOS[@]} -gt 0 ]]; then
+    local accepted=0 r
+    for r in "${INSTANCE_ACCEPT_REPOS[@]}"; do
+      if [[ "$r" == "$repo_name" ]]; then accepted=1; break; fi
+    done
+    if ((!accepted)); then
+      echo "repository $repo_name not in INSTANCE_ACCEPT_REPOS" >&2
+      exit 1
+    fi
+  fi
+  local run=$((RUN + 1))
+  meta_set "$id" RUN "$run"
+  meta_set "$id" STATUS starting
+  log_info runner_starting "task=$id" "run=$run" "mode=$mode" "supervisor=node"
+  if [[ -n ${NODE_READY_FD:-} ]]; then
+    local outcome=${NODE_READY_OUTCOME:-started}
+    printf '%s\n' "$outcome" 1>&"$NODE_READY_FD"
+    exec {NODE_READY_FD}>&-
+    unset NODE_READY_FD
+  fi
+  exec "$SELF" _runner "$id" "$mode"
+}
+
+cmd__node_wake() { # id — wakes a sleeping or waiting task under agent node
+  local id; id=$(resolve_id "${1:?}")
+  exec 8>"$TASKS/$id/wake.lock"
+  file_flock 8 30 || exit 0
+  meta_load "$id"
+  if [[ $STATUS == paused ]]; then
+    if (( $(date +%s) < ${WAKE_AT:-0} )); then
+      log_info wake_deferred "task=$id" "wake_at=$WAKE_AT"
+      if [[ -n ${NODE_READY_FD:-} ]]; then
+        printf '%s\n' "already_running" 1>&"$NODE_READY_FD"
+        exec {NODE_READY_FD}>&-
+        unset NODE_READY_FD
+      fi
+      exit 0
+    fi
+    meta_set "$id" WAKE_AT ""
+    if [[ -n ${TEAM:-} ]]; then
+      if [[ $(team_done_flag "$TEAM") == true ]]; then
+        meta_set "$id" STATUS done
+        try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state done >/dev/null
+        if [[ -n ${NODE_READY_FD:-} ]]; then
+          printf '%s\n' "already_running" 1>&"$NODE_READY_FD"
+          exec {NODE_READY_FD}>&-
+          unset NODE_READY_FD
+        fi
+        exit 0
+      fi
+      meta_set "$id" WAKE_PENDING 1
+    fi
+    log_info resumed_after_pause "task=$id" "reason=${PAUSE_REASON:-}"
+    cmd__node_start "$id" resume
+    exit 0
+  fi
+  if [[ $STATUS != sleeping && $STATUS != waiting ]]; then
+    if [[ -n ${NODE_READY_FD:-} ]]; then
+      printf '%s\n' "already_running" 1>&"$NODE_READY_FD"
+      exec {NODE_READY_FD}>&-
+      unset NODE_READY_FD
+    fi
+    exit 0
+  fi
+  cmd__node_start "$id" resume
+}
+
+cmd__node_stop() { # id — stops a task runner supervised by agent node
+  local id; id=$(resolve_id "${1:?}")
+  local dir="$TASKS/$id"
+  touch "$dir/stop-requested"
+  if [[ -f $dir/runner.pid ]]; then
+    local pid; pid=$(cat "$dir/runner.pid")
+    killtree "$pid"
+  fi
+}
+
+cmd__node_mark_stopped() { # id — marks a task runner stopped in metadata without killing PIDs
+  local id; id=$(resolve_id "${1:?}")
+  local dir="$TASKS/$id"
+  touch "$dir/stop-requested"
+  local st team agent
+  st=$(task_field "$id" STATUS)
+  team=$(task_field "$id" TEAM); agent=$(task_field "$id" AGENT)
+  meta_set "$id" STATUS stopped
+  meta_set "$id" FINISHED "$(date_iso)"
+  if [[ -n $team ]]; then
+    try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state done >/dev/null
+    if [[ $agent == "$(team_lead "$team")" ]]; then
+      finish_team "$team" "team stopped by the user"
+    elif [[ $st == sleeping ]]; then
+      notice member_stopped "${USER:-human}" "$(team_lead "$team")" "TEAM: member $agent was stopped by the human." "agent=$agent" "team=$team"
+    fi
+  fi
+  log_info node_task_marked_stopped "task=$id"
+}
+
+cmd__node_answer() { # id [expected_round] [expected_sha256] — stores answers from stdin and resumes under agent node
+  local id; id=$(resolve_id "${1:?}")
+  local expected_round=${2:-}
+  local expected_sha256=${3:-}
+  meta_load "$id"
+  [[ $STATUS == waiting ]] || { echo "task $id has status '$STATUS' — not waiting" >&2; exit 1; }
+  if [[ -n $expected_round && $ROUND -ne $expected_round ]]; then
+    echo "unexpected question round $ROUND (expected $expected_round)" >&2
+    exit 1
+  fi
+  local qfile="$TASKS/$id/questions-$ROUND.md"
+  if [[ ! -f $qfile ]]; then
+    echo "questions file $qfile not found" >&2
+    exit 1
+  fi
+  if [[ -n $expected_sha256 ]]; then
+    local cur_sha; cur_sha=$(file_sha256 "$qfile")
+    if [[ $cur_sha != "$expected_sha256" ]]; then
+      echo "questions snapshot mismatch: expected $expected_sha256, got $cur_sha" >&2
+      exit 1
+    fi
+  fi
+  local tmp; tmp=$(mktemp "$TASKS/$id/.answers.XXXXXX")
+  cat > "$tmp"
+  validate_answers "$tmp" || { rm -f "$tmp"; echo "not all questions answered in submitted content" >&2; exit 1; }
+  stop_answers_watch "$id" "$ROUND"
+  mv "$tmp" "$qfile"
+  meta_set "$id" ANSWERS_PENDING "$ROUND"
+  log_info node_answer_delivered "task=$id" "round=$ROUND"
+  NODE_READY_OUTCOME="delivered" cmd__node_start "$id" resume
+}
+
+cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
+  local agents_json="[]"
+  local a busy status cur_task tier role
+  for a in "${!AGENT_TYPE[@]}"; do
+    tier=$(agent_tier "$a")
+    role="worker"
+    if [[ $a == *investigator* ]]; then
+      role="investigator"
+    fi
+    if busy=$(agent_running_task "$a"); then
+      status="busy"
+      cur_task="$busy"
+    else
+      status="idle"
+      cur_task=""
+    fi
+    agents_json=$(jq -c \
+      --arg name "$a" \
+      --arg tier "$tier" \
+      --arg role "$role" \
+      --arg status "$status" \
+      --arg cur "$cur_task" \
+      '. += [{name: $name, tier: $tier, role: $role, status: $status} + (if $cur != "" then {current_task: $cur} else {} end)]' \
+      <<< "$agents_json")
+  done
+
+  local tasks_json="{}" active_runs=0
+  local d tid st tagent tteam tcreated tmod
+  for d in "$TASKS"/*/; do
+    [[ -f $d/meta.env ]] || continue
+    tid=$(basename "$d")
+    st=$(task_field "$tid" STATUS)
+    tagent=$(task_field "$tid" AGENT)
+    tteam=$(task_field "$tid" TEAM)
+    tcreated=$(task_field "$tid" CREATED)
+    [[ -n $tcreated ]] || tcreated=$(date_iso)
+    if [[ -f $d/activity.jsonl ]]; then
+      tmod=$(format_epoch "$(file_mtime_secs "$d/activity.jsonl")" '+%Y-%m-%dT%H:%M:%SZ')
+    else
+      tmod=$(format_epoch "$(file_mtime_secs "$d/meta.env")" '+%Y-%m-%dT%H:%M:%SZ')
+    fi
+    if [[ $st == running || $st == starting ]]; then
+      active_runs=$((active_runs + 1))
+    fi
+    tasks_json=$(jq -c \
+      --arg id "$tid" \
+      --arg agent "$tagent" \
+      --arg team "$tteam" \
+      --arg status "$st" \
+      --arg created "$tcreated" \
+      --arg updated "$tmod" \
+      '.[$id] = {task_id: $id, agent: $agent, team: $team, status: $status, started_at: $created, updated_at: $updated}' \
+      <<< "$tasks_json")
+  done
+
+  local max_slots=${AGENT_MAX_RUNS:-4}
+  local free_slots=$((max_slots - active_runs))
+  if (( free_slots < 0 )); then free_slots=0; fi
+
+  jq -n \
+    --argjson total "$max_slots" \
+    --argjson free "$free_slots" \
+    --argjson agents "$agents_json" \
+    --argjson tasks "$tasks_json" \
+    '{slots: {total: $total, free: $free}, agents: $agents, subscriptions: {}, tasks: $tasks}'
+}
+
+cmd_node() { # runs the agent node daemon with configuration from agents.conf
+  if [[ -f $AGENTS_HOME/secrets.env ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$AGENTS_HOME/secrets.env"
+    set +a
+  fi
+  local args=(--home "$AGENTS_HOME")
+  [[ -n ${INSTANCE_NAME:-} ]] && args+=(--instance "$INSTANCE_NAME")
+  [[ -n ${LEAD_INSTANCE:-} ]] && args+=(--lead "$LEAD_INSTANCE")
+  [[ -n ${HUB_AUTH:-} ]] && args+=(--auth "$HUB_AUTH")
+  [[ -n ${HUB_CERT_SHA256:-} ]] && args+=(--cert-sha256 "$HUB_CERT_SHA256")
+  if [[ ${#INSTANCE_CAPABILITIES[@]} -gt 0 ]]; then
+    local caps; caps=$(IFS=,; echo "${INSTANCE_CAPABILITIES[*]}")
+    args+=(--capabilities "$caps")
+  fi
+  if [[ ${#INSTANCE_ACCEPT_REPOS[@]} -gt 0 ]]; then
+    local repos; repos=$(IFS=,; echo "${INSTANCE_ACCEPT_REPOS[*]}")
+    args+=(--accept-repos "$repos")
+  fi
+  args+=(--agent-cmd "$SELF")
+  bus node "${args[@]}" "$@"
+}
+
 main() {
   local cmd=${1:-help}; (($#)) && shift
   case $cmd in
     run)     cmd_run "$@" ;;
+    node)    cmd_node "$@" ;;
+    _node-manifest) cmd__node_manifest ;;
+    _node-start) cmd__node_start "$@" ;;
+    _node-wake) cmd__node_wake "$@" ;;
+    _node-stop) cmd__node_stop "$@" ;;
+    _node-mark-stopped) cmd__node_mark_stopped "$@" ;;
+    _node-answer) cmd__node_answer "$@" ;;
     status|ls) cmd_status ;;
     agents)  cmd_agents ;;
     show)    cmd_show "$@" ;;

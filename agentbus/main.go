@@ -1302,6 +1302,8 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		cmdServe(os.Args[2:])
+	case "node":
+		cmdNode(os.Args[2:])
 	case "hub":
 		cmdHub(os.Args[2:])
 	case "send":
