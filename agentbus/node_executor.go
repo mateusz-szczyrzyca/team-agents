@@ -434,6 +434,7 @@ const (
 	nodeTaskRunning  string = "running"  // an active CLI reserves its configured agent
 	nodeTaskStarting string = "starting" // admission is complete but the runner is still starting
 	nodeTaskSleeping string = "sleeping" // a sleeping team member retains its configured agent
+	nodeTaskWaiting  string = "waiting"  // human questions retain a resumable registered run
 	nodeTaskPaused   string = "paused"   // quota or wake-loop pause retains the agent's current task
 )
 

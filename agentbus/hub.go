@@ -138,14 +138,15 @@ type hubFlight struct {
 
 // Hub executes validated requests on one local bus; callbacks are installed before serving.
 type Hub struct {
-	Instances    *HubInstanceRegistry                        // shared persistent node leases; nil denies instance operations
-	Bus          *Bus                                        // the hub's own state directory, never selected by a request
-	Authenticate func(*http.Request) (string, *HubAuthError) // verifies each HTTP request; nil denies access
-	Resolve      func(HubCaller) (*Server, *HubCallError)    // checks registered run identity and returns its trusted server template
-	CLI          func(HubRequest) HubResponse                // allowlisted CLI dispatcher; nil rejects CLI requests
-	PollDuration time.Duration                               // zero uses the 25-second production poll interval
-	mu           sync.Mutex                                  // protects active operations and acceptance, never held across handler execution
-	active       map[string]*hubFlight                       // in-process operations; durable records survive a restart
+	AuthorizePeer func(string, string) *HubCallError          // production ownership check; injected resolvers may provide their own trust boundary
+	Instances     *HubInstanceRegistry                        // shared persistent node leases; nil denies instance operations
+	Bus           *Bus                                        // the hub's own state directory, never selected by a request
+	Authenticate  func(*http.Request) (string, *HubAuthError) // verifies each HTTP request; nil denies access
+	Resolve       func(HubCaller) (*Server, *HubCallError)    // checks registered run identity and returns its trusted server template
+	CLI           func(HubRequest) HubResponse                // allowlisted CLI dispatcher; nil rejects CLI requests
+	PollDuration  time.Duration                               // zero uses the 25-second production poll interval
+	mu            sync.Mutex                                  // protects active operations and acceptance, never held across handler execution
+	active        map[string]*hubFlight                       // in-process operations; durable records survive a restart
 }
 
 // hubFailure converts an operation's concrete error without parsing human-readable text.
@@ -265,6 +266,12 @@ func (h *Hub) validate(instance string, req HubRequest) *HubCallError {
 func (h *Hub) Execute(ctx context.Context, instance string, req HubRequest) (HubResponse, int) {
 	if err := h.validate(instance, req); err != nil {
 		return hubErrorResponse(req.RequestID, err), hubAdmissionStatus(err)
+	}
+	if h.AuthorizePeer != nil {
+		peer, _ := ctx.Value(hubPeerContextKey{}).(string)
+		if err := h.AuthorizePeer(instance, peer); err != nil {
+			return hubErrorResponse(req.RequestID, err), hubAdmissionStatus(err)
+		}
 	}
 	s, err := h.Resolve(req.Caller)
 	if err != nil {
@@ -437,7 +444,7 @@ func encodeHubOperationError(err error) *HubWireError {
 func qualifyHubArgs(args map[string]any, instance string) map[string]any {
 	out := make(map[string]any, len(args))
 	for name, value := range args {
-		if name == "to" || name == "from" || name == "agent" {
+		if name == "to" || name == "from" || name == "agent" || name == "for" {
 			if target, ok := value.(string); ok && target != "" && target != "all" && target != "team" &&
 				!strings.HasPrefix(target, "team:") && !strings.Contains(target, "@") {
 				value = target + "@" + instance

@@ -51,7 +51,9 @@ type HubConfig struct {
 	DisableSocket bool
 	// ManifestTTL is the hub-authoritative lease duration; zero uses 180 seconds.
 	ManifestTTL time.Duration
-	// Resolve is an optional identity resolver (defaults to defaultRunResolver which fails closed).
+	// TasksDir is the lead-local task metadata directory; empty uses the sibling tasks directory.
+	TasksDir string
+	// Resolve is an optional identity resolver (defaults to trusted instance reports and hub-owned run assignments).
 	Resolve func(HubCaller) (*Server, *HubCallError)
 	// BackupDir is where periodic state backups are written (HUB_BACKUP_DIR); empty uses bus/backup under Dir.
 	BackupDir string
@@ -59,11 +61,9 @@ type HubConfig struct {
 	BackupInterval time.Duration
 }
 
-// defaultRunResolver returns an identity resolver that rejects all requests until the M2 trusted run registry is configured.
-func defaultRunResolver(_ *Bus) func(HubCaller) (*Server, *HubCallError) {
-	return func(c HubCaller) (*Server, *HubCallError) {
-		return nil, opErr(HubCallIdentity, "run %s (agent %s) is not registered in the trusted registry", c.Task, c.Agent)
-	}
+// defaultRunResolver denies identities until local metadata or authenticated instance reports are configured.
+func defaultRunResolver(b *Bus) func(HubCaller) (*Server, *HubCallError) {
+	return (hubRunRegistry{bus: b}).resolve
 }
 
 // splitAllowedInstances splits a comma- or whitespace-delimited string of allowed instances into a slice.
@@ -126,6 +126,7 @@ func parseHubConfig(args []string) *HubConfig {
 	socket := fs.String("socket", "", "tailscale LocalAPI socket path override")
 	socketListen := fs.String("socket-listen", "", "local Unix domain socket path for lead agents")
 	instanceName := fs.String("instance", "", "local instance name")
+	tasksDir := fs.String("tasks-dir", "", "lead-local task metadata directory")
 	manifestTTL := fs.Int("manifest-ttl", 0, "manifest lifetime in seconds (default 180)")
 	parseFlags(fs, args)
 
@@ -138,6 +139,7 @@ func parseHubConfig(args []string) *HubConfig {
 		TailscaleSocket: *socket,
 		SocketPath:      *socketListen,
 		InstanceName:    *instanceName,
+		TasksDir:        *tasksDir,
 		Tokens:          make(map[string]string),
 	}
 
@@ -285,17 +287,34 @@ func serveHub(cfg *HubConfig) *HubServeError {
 		}
 	}
 
+	localInstance := cfg.InstanceName
+	if localInstance == "" {
+		localInstance = os.Getenv("INSTANCE_NAME")
+	}
+	if localInstance == "" {
+		localInstance = "lead"
+	}
+	if !validInstanceName(localInstance) {
+		return opErr(HubServeInvalidConfig, "invalid local instance name %q", localInstance)
+	}
+	tasksDir := cfg.TasksDir
+	if tasksDir == "" {
+		tasksDir = filepath.Join(filepath.Dir(cfg.Dir), "tasks")
+	}
+	instances := &HubInstanceRegistry{Bus: b, TTL: cfg.ManifestTTL}
+	var authorizePeer func(string, string) *HubCallError // custom resolvers own their authentication contract
 	resolver := cfg.Resolve
 	if resolver == nil {
-		resolver = defaultRunResolver(b)
+		runs := hubRunRegistry{bus: b, instances: instances, localInstance: localInstance, tasksDir: tasksDir}
+		resolver = runs.resolve
+		authorizePeer = runs.authorizePeer
 	}
-
-	instances := &HubInstanceRegistry{Bus: b, TTL: cfg.ManifestTTL}
 	hub := &Hub{
-		Instances:    instances,
-		Bus:          b,
-		Authenticate: authenticator.Authenticate,
-		Resolve:      resolver,
+		Instances:     instances,
+		Bus:           b,
+		Authenticate:  authenticator.Authenticate,
+		Resolve:       resolver,
+		AuthorizePeer: authorizePeer,
 	}
 
 	// Maintenance runs until this function returns: periodic backups and the reaper of expired instances.
@@ -375,7 +394,9 @@ func serveHub(cfg *HubConfig) *HubServeError {
 				// Verify if another daemon is actively listening on this socket before removing
 				conn, dialErr := net.DialTimeout("unix", socketPath, 100*time.Millisecond) //nolint:gosec // G704: socketPath is dialed exclusively over unix domain socket
 				if dialErr == nil {
-					_ = conn.Close()
+					if err := conn.Close(); err != nil {
+						warnSideEffect("close active hub socket probe", storageErr(err, "cannot close socket probe"))
+					}
 					if closeErr := ln.Close(); closeErr != nil {
 						warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
 					}
@@ -396,8 +417,10 @@ func serveHub(cfg *HubConfig) *HubServeError {
 				return opErr(HubServeSocket, "failed to listen on unix socket %s: %v", socketPath, err)
 			}
 			if err := os.Chmod(socketPath, 0o600); err != nil { //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
-				_ = ul.Close()
-				_ = os.Remove(socketPath) //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+				if closeErr := ul.Close(); closeErr != nil {
+					warnSideEffect("close hub unix listener", storageErr(closeErr, "cannot close unix listener"))
+				}
+				removeHubSocket(socketPath)
 				if closeErr := ln.Close(); closeErr != nil {
 					warnSideEffect("close hub listener", storageErr(closeErr, "cannot close listener"))
 				}
@@ -406,13 +429,6 @@ func serveHub(cfg *HubConfig) *HubServeError {
 			unixLn = ul
 		}
 
-		localInstance := cfg.InstanceName
-		if localInstance == "" {
-			localInstance = os.Getenv("INSTANCE_NAME")
-			if localInstance == "" {
-				localInstance = "lead"
-			}
-		}
 		unixHub := &Hub{
 			Instances: instances,
 			Bus:       b,
@@ -420,8 +436,9 @@ func serveHub(cfg *HubConfig) *HubServeError {
 				setHubAuthenticatedPeer(r, "local:"+localInstance)
 				return localInstance, nil
 			},
-			Resolve:      resolver,
-			PollDuration: hub.PollDuration,
+			Resolve:       resolver,
+			AuthorizePeer: authorizePeer,
+			PollDuration:  hub.PollDuration,
 		}
 		unixServer = &http.Server{
 			Handler:           unixHub,
@@ -461,7 +478,7 @@ func serveHub(cfg *HubConfig) *HubServeError {
 			warnSideEffect("shutdown hub unix socket server", storageErr(err, "unix server shutdown failed"))
 		}
 		if cfg.UnixListener == nil && socketPath != "" {
-			_ = os.Remove(socketPath) //nolint:gosec // G703: socketPath is configured by the operator via HUB_SOCKET or defaultDir
+			removeHubSocket(socketPath)
 		}
 	}
 
@@ -477,4 +494,11 @@ func runHub(args []string) *HubServeError {
 // cmdHub is the agentbus hub subcommand entry point.
 func cmdHub(args []string) {
 	exitOn(runHub(args).asError())
+}
+
+// removeHubSocket reports cleanup failures; UnixListener.Close may already have unlinked its socket.
+func removeHubSocket(path string) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: operator-configured local socket path, never supplied by a remote request
+		warnSideEffect("remove hub unix socket", storageErr(err, "cannot remove unix socket %s", path))
+	}
 }

@@ -12,10 +12,13 @@ BIN="$HOME/.local/bin"
 
 # ------------------------------------------------------------------ tools
 # Required to build and run the orchestration: missing ones stop the installation.
-REQUIRED_TOOLS=(go git jq systemd-run flock)
-# Used by the orchestration for some features: pull requests (gh), archives (7z), journal logs (logger),
-# detached wake-ups (setsid), command time limits (timeout), account checks (curl).
-FEATURE_TOOLS=(gh 7z logger setsid timeout curl)
+if [[ $(uname -s) == Darwin ]]; then
+  REQUIRED_TOOLS=(go git jq)
+  FEATURE_TOOLS=(gh 7z timeout curl)
+else
+  REQUIRED_TOOLS=(go git jq systemd-run flock)
+  FEATURE_TOOLS=(gh 7z logger setsid timeout curl)
+fi
 # What agents typically reach for while working on code: searching, reading, editing, comparing, unpacking,
 # building and scripting. Missing ones do not stop the installation, but agents waste time working around them.
 AGENT_TOOLS=(rg grep sed awk find xargs diff patch file tar gzip unzip make python3 curl)
@@ -43,6 +46,12 @@ package_for() {
 
 # package_manager — the system package manager ("" when none is recognised)
 package_manager() {
+  if [[ $(uname -s) == Darwin ]]; then
+    if command -v brew >/dev/null; then
+      echo brew
+      return
+    fi
+  fi
   local pm
   for pm in apt-get dnf pacman apk zypper; do
     if command -v "$pm" >/dev/null; then
@@ -62,6 +71,7 @@ install_hint() {
   done
   mapfile -t pkgs < <(printf '%s\n' "${pkgs[@]}" | sort -u)
   case $pm in
+    brew) echo "brew install ${pkgs[*]}" ;;
     apt) echo "sudo apt install -y ${pkgs[*]}" ;;
     dnf) echo "sudo dnf install -y ${pkgs[*]}" ;;
     pacman) echo "sudo pacman -S --needed ${pkgs[*]}" ;;

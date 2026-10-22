@@ -101,6 +101,8 @@ attempted operation's typed `Unavailable` error (exit class 11). Without `LEAD_I
 existing local-file mode is unchanged. Setting `HUB_LISTEN` or `HUB_SOCKET` routes lead-local `serve` calls
 through the hub daemon's owner-only Unix socket, with the same request envelopes and identity checks.
 `HUB_SOCKET` overrides the default `<bus directory>/hub.sock`; `serve --dir` selects that bus directory.
+Unqualified address arguments, including a board item's `for` assignee, resolve relative to the caller's
+instance; explicitly qualified names keep their selected instance.
 The socket uses local filesystem permissions instead of a bearer token. Its directory must not be writable
 by other users. A missing or refused socket returns `Unavailable` and never falls back to local bus files.
 The temporary `lead_local_fallback` event name is retained for old logs but is no longer emitted.
@@ -582,6 +584,27 @@ errors use operation `instance_register`; heartbeat errors use `instance_heartbe
 cause names and the existing error classes. The later node and routing milestones connect these leases
 to remote task execution and member reachability.
 
+### Trusted run identity
+
+Hub tool calls require a live instance registration owned by the authenticated peer, plus a task summary
+matching the caller's agent, task, team, tier and role. Team members use qualified keys (`agent@instance`)
+and must also match the hub's team assignment; excluded members are denied. Helper calls require their
+qualified worker assignment. Remote investigator assignments must explicitly bind both the investigator
+base name and its instance; older queue records still load but do not authorize remote investigators.
+Normal solo runs are verified against their instance's task summary.
+
+Task summaries now optionally include `repo`, `branch`, `worktree`, `tier`, and `role`. Earlier manifests
+remain readable; summaries without identity fields cannot authorize remote tool calls. Lead-local runs
+are verified against local `meta.env` files without evaluating shell content. `agentbus hub --tasks-dir DIR`
+selects that metadata root (default: the `tasks` directory beside the bus directory). Qualified team
+membership applies only in multi-instance mode; existing single-instance names and files keep working.
+The lead's Unix socket uses the configured `INSTANCE_NAME` (or `--instance`), defaulting to `lead`.
+
+Remote worktree paths remain display metadata. Investigation records for remote callers are stored under
+`bus/remote-tasks/<instance>/<task>/investigations`, never inside those remote worktree paths. Unknown,
+mismatched, excluded, or unreachable identities fail with the typed hub `Identity` cause; unreadable state
+fails with `Storage`. These checks also apply when attaching to a previous request after reconnection.
+
 ### Hub backups and expired instances
 
 The hub writes a backup of its state every `HUB_BACKUP_MINUTES` (default 30; allowed 1–1440) into
@@ -648,6 +671,11 @@ create a missing task or clone a repository selected by the hub.
   logs/agentbus.jsonl  logs/agentlive.jsonl  structured logs of the bus servers/commands and the live panel
 ```
 
+The instance table in `agent status` compares lease expiry as UTC instants. It accepts both hub-written
+RFC3339 timestamps (including fractional seconds) and the older space-separated UTC representation.
+`agentbus instances` keeps its tab-separated output and exit codes; read/write failures now carry the
+operation name `instances` and its own `Storage` cause instead of the unrelated `status` cause.
+
 ## Notifications
 
 After every run (and on a few team events) the script writes a notification file — the first line is a title
@@ -699,7 +727,10 @@ constants (`LogEvent` in `agentbus/logging.go` and `live/logging.go`).
 Errors are never swallowed. A failure of the main operation fails it (the agent gets a tool error, a command
 exits with a non-zero status). A failure of a side effect — an investigation record file, a bus notice, a
 cleanup step — is logged as a warning and the operation continues. Problems found while polling (a corrupt
-line in a file read every few seconds) are logged once per process.
+line in a file read every few seconds) are logged once per process. Unix socket cleanup failures are logged
+as `side_effect_failed`; a socket already removed by listener shutdown is expected. A background wake timer
+that cannot be removed from the shell's job table logs `wake_timer_disown_failed`; its diagnostic output is
+preserved.
 
 Useful queries:
 
@@ -782,6 +813,15 @@ make lint          # shellcheck, gofmt, golangci-lint, staticcheck, doccheck, ge
 make test          # Go unit tests (agentbus, agentlive) + bats tests of the agent script
 make integration   # real agent CLIs and accounts (costs usage)
 ```
+
+The `agentbus` Go suite initializes a temporary `HOME`, `AGENTS_HOME`, bus directory and file logger before
+running tests. Default wake and helper-dispatch hooks record requests without spawning the installed agent;
+only tests that assert wake details install `captureWakes`. Node subprocess tests use temporary executable
+stubs or repository-script paths that reject work before starting an agent. Toolchain detection runs read-only
+version probes. The suite logger does not send to the host journal. On Linux, a final audit fails the suite
+if it leaves a new open file handle under the original agents home; inherited runner descriptors are allowed.
+This audit detects leaked logger/storage handles, not arbitrary open-write-close access, so explicit file paths
+and subprocess fixtures must still use temporary directories. No existing test assertion is weakened.
 
 - **Linters.** `tools/install-linters.sh` downloads pinned release binaries of `golangci-lint`, `staticcheck` and
   `shellcheck` from GitHub, verifies their SHA-256 checksums and installs them without sudo. `golangci-lint`

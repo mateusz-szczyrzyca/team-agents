@@ -1292,6 +1292,13 @@
      "doc": "another node daemon holds this local home lock"
     }
    ]
+  },
+  {
+   "type": "CmdInstances",
+   "op": "instances",
+   "what": "the subcommand instances",
+   "causes": [],
+   "forwarded": true
   }
  ]
 }

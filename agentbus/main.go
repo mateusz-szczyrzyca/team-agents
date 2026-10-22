@@ -87,6 +87,8 @@ type Reservation struct {
 // Status lifecycle: queued | waitroom → starting → running ⇄ waiting_human → done | failed;
 // "rejected" when the queue was full and the agent chose not to wait.
 type Investigation struct {
+	Investigator  string              `json:"investigator,omitempty"`  // assigned investigator base name; absent in legacy local records
+	Instance      string              `json:"instance,omitempty"`      // instance owning the investigator task; remote admission requires this binding
 	ID            int64               `json:"id"`                      // sequential number shown as "#ID" to agents and humans
 	FromAgent     string              `json:"from_agent"`              // requesting agent
 	FromTask      string              `json:"from_task"`               // requesting task (the result is delivered to it)
@@ -1316,7 +1318,10 @@ func cmdCommandEnqueue(args []string) {
 }
 
 // cmdInstances prints connected instances and their state.
-func cmdInstances(args []string) {
+func cmdInstances(args []string) { exitOn(runInstances(args).asError()) }
+
+// runInstances preserves the instances operation on read and stdout failures.
+func runInstances(args []string) *CmdInstancesError {
 	fs := newFlagSet("instances")
 	dir := fs.String("dir", defaultDir(), "state directory")
 	parseFlags(fs, args)
@@ -1324,7 +1329,7 @@ func cmdInstances(args []string) {
 	reg := &HubInstanceRegistry{Bus: b}
 	views, serr := reg.liveViews()
 	if serr != nil {
-		exitOn(serr.asError())
+		return fromStorage(CmdInstancesStorage, serr)
 	}
 	var out cliWriter
 	for _, v := range views {
@@ -1334,7 +1339,7 @@ func cmdInstances(args []string) {
 		}
 		out.println(fmt.Sprintf("%s\t%s/%s\t%d/%d\t%s", v.Name, v.OS, v.Arch, v.Free, v.Total, strings.Join(caps, ",")))
 	}
-	exitOn(fromStorage(CmdStatusStorage, out.err).asError())
+	return fromStorage(CmdInstancesStorage, out.err)
 }
 
 // exitOn logs the error, prints it for the human and exits with the exit code of its class (see
