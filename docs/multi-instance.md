@@ -442,6 +442,20 @@ Each non-lead instance runs the `agent node` daemon. Upon starting, and continuo
 
 ---
 
+The implemented registration request is `{version, registration_id, sequence, manifest}`. The daemon
+retains its random `registration_id` across lost-response retries within one session. Responses contain
+`{version, lease_token, generation, expires_at}`; `expires_at` uses RFC 3339 UTC. Heartbeats send
+`{version, instance_name, lease_token, generation, sequence, manifest}`. Task summaries are in
+`manifest.current_state.tasks`. A report sequence must increase strictly; rejected reports never replace
+newer state. Repeating registration for a live session returns its existing lease and never replaces a
+newer heartbeat report.
+
+The hub alone selects lease expiry (`MANIFEST_TTL`, default 180 seconds; accepted range 1–86400).
+Expiry requires re-registration and advances the persisted generation. Registration records retain their
+authenticated peer owner after expiry; a different node cannot take an offline instance name merely by
+sharing an allowed Tailscale tag. An operator must reconcile an intentional owner change. Neither the
+transport token nor a claimed instance name grants ownership of another peer's registration.
+
 ### 5.2 Manifest JSON Schema
 
 ```json

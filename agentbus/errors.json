@@ -1067,6 +1067,70 @@
      "doc": "the hub could not be reached within the bounded retry budget"
     }
    ]
+  },
+  {
+   "type": "InstanceRegister",
+   "op": "instance_register",
+   "what": "the hub instance_register endpoint",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the registration body, manifest, or protocol version is invalid"
+    },
+    {
+     "name": "Identity",
+     "class": "Permission",
+     "doc": "the manifest name or owner does not match the authenticated peer"
+    },
+    {
+     "name": "DuplicateInstanceName",
+     "class": "Conflict",
+     "doc": "another daemon holds a live lease for this instance name"
+    },
+    {
+     "name": "Entropy",
+     "class": "Process",
+     "doc": "a secure lease token could not be generated"
+    }
+   ]
+  },
+  {
+   "type": "InstanceHeartbeat",
+   "op": "instance_heartbeat",
+   "what": "the hub instance_heartbeat endpoint",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "the heartbeat body, manifest, or protocol version is invalid"
+    },
+    {
+     "name": "Identity",
+     "class": "Permission",
+     "doc": "the heartbeat does not belong to the authenticated lease owner"
+    },
+    {
+     "name": "UnknownInstance",
+     "class": "NotFound",
+     "doc": "the instance has never registered"
+    },
+    {
+     "name": "LeaseExpired",
+     "class": "InvalidState",
+     "doc": "the lease has expired and requires registration"
+    },
+    {
+     "name": "StaleLease",
+     "class": "Conflict",
+     "doc": "the token or generation belongs to an obsolete lease"
+    },
+    {
+     "name": "StaleSequence",
+     "class": "Conflict",
+     "doc": "the heartbeat sequence would replace newer task state"
+    }
+   ]
   }
  ]
 }

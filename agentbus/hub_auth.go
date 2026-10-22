@@ -96,6 +96,8 @@ func NewHubAuthenticator(mode HubAuthMode) *HubAuthenticator {
 
 // tailscaleWhoisNode represents node information in the /localapi/v0/whois response.
 type tailscaleWhoisNode struct {
+	// StableID binds leases to the node independently of a caller-selected instance alias.
+	StableID string `json:"StableID"`
 	// Name is the fully-qualified domain name of the node (e.g. "mac.example.ts.net.").
 	Name string `json:"Name"`
 	// Tags contains any Tailscale ACL tags assigned to the node (e.g. ["tag:agent-node"]).
@@ -287,6 +289,12 @@ func (a *HubAuthenticator) authenticateTailscale(r *http.Request) (string, *HubA
 		resolvedInstance = declaredName
 	}
 
+	peer := whois.Node.StableID
+	if peer == "" {
+		// Older LocalAPI responses lack StableID; the authenticated full node name remains authoritative.
+		peer = strings.ToLower(rawNodeName)
+	}
+	setHubAuthenticatedPeer(r, "tailscale:"+peer)
 	return resolvedInstance, nil
 }
 
@@ -339,6 +347,7 @@ func (a *HubAuthenticator) authenticateToken(r *http.Request) (string, *HubAuthE
 		}
 	}
 
+	setHubAuthenticatedPeer(r, "token:"+instanceName)
 	return instanceName, nil
 }
 

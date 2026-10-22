@@ -547,6 +547,31 @@ event stream with bus messages, status changes and periodic reminders.
 | `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item) |
 | `consult_start`, `consult_reply`, `consult_results` | ask the other normal members with a time limit (e.g. for recommendations); silence is shown as NO ANSWER |
 
+### Instance registration and leases
+
+The hub exposes authenticated `POST /v1/instances/register` and
+`POST /v1/instances/heartbeat` endpoints. Registration carries protocol `version: 1`, a random
+`registration_id` retained for one daemon session, a positive `sequence`, and the instance `manifest`.
+It returns `lease_token`, `generation`, and `expires_at` (UTC). Heartbeats carry `instance_name`,
+the current lease credentials, a strictly increasing `sequence`, and the replacement manifest.
+Nodes should heartbeat every 60 seconds. `MANIFEST_TTL` (default 180 seconds; 1–86400) is the hub's
+lease duration; `agentbus hub --manifest-ttl SECONDS` overrides the environment. A node cannot extend
+its lease by advertising a larger TTL.
+
+A live lease rejects another daemon session using the same instance name. Repeating registration
+for the current session returns the same lease without replacing newer heartbeat data. After expiry,
+the owning node registers again and receives a new token and generation. Old heartbeats and command
+credentials are fenced. A different Tailscale node sharing an allowed tag cannot take ownership of
+an existing instance name. A changed authenticated node identity requires administrative reconciliation
+of its registration before reusing that name.
+
+The new, private `bus/instances.json` stores leases and the last manifest under the existing bus lock.
+Lease tokens are credentials: keep this file and its backups private. Existing installations need no
+migration; an absent registry is empty and the legacy `state.json` format is unchanged. Registration
+errors use operation `instance_register`; heartbeat errors use `instance_heartbeat`, with generated
+cause names and the existing error classes. The later node and routing milestones connect these leases
+to remote task execution and member reachability.
+
 ## Files and state
 
 ```

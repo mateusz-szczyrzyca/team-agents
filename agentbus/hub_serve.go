@@ -49,6 +49,8 @@ type HubConfig struct {
 	UnixListener net.Listener
 	// DisableSocket disables the Unix domain socket listener (for testing).
 	DisableSocket bool
+	// ManifestTTL is the hub-authoritative lease duration; zero uses 180 seconds.
+	ManifestTTL time.Duration
 	// Resolve is an optional identity resolver (defaults to defaultRunResolver which fails closed).
 	Resolve func(HubCaller) (*Server, *HubCallError)
 }
@@ -120,6 +122,7 @@ func parseHubConfig(args []string) *HubConfig {
 	socket := fs.String("socket", "", "tailscale LocalAPI socket path override")
 	socketListen := fs.String("socket-listen", "", "local Unix domain socket path for lead agents")
 	instanceName := fs.String("instance", "", "local instance name")
+	manifestTTL := fs.Int("manifest-ttl", 0, "manifest lifetime in seconds (default 180)")
 	parseFlags(fs, args)
 
 	cfg := &HubConfig{
@@ -177,11 +180,30 @@ func parseHubConfig(args []string) *HubConfig {
 		cfg.TailscaleSocket = os.Getenv("TAILSCALE_SOCKET")
 	}
 
+	ttlSeconds := *manifestTTL
+	if ttlSeconds == 0 {
+		if raw := os.Getenv("MANIFEST_TTL"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 || parsed > 86400 {
+				ttlSeconds = -1
+			} else {
+				ttlSeconds = parsed
+			}
+		}
+	}
+	if ttlSeconds < 0 || ttlSeconds > 86400 {
+		cfg.ManifestTTL = -1
+	} else {
+		cfg.ManifestTTL = time.Duration(ttlSeconds) * time.Second
+	}
 	return cfg
 }
 
 // serveHub validates configuration, initializes authentication and bus, binds listener, and serves requests.
 func serveHub(cfg *HubConfig) *HubServeError {
+	if cfg.ManifestTTL < 0 || cfg.ManifestTTL > 24*time.Hour {
+		return opErr(HubServeInvalidConfig, "MANIFEST_TTL must be between 1 and 86400 seconds")
+	}
 	if cfg.Port <= 0 || cfg.Port > 65535 {
 		return opErr(HubServeInvalidConfig, "invalid HUB_PORT %d: port must be between 1 and 65535", cfg.Port)
 	}
@@ -242,7 +264,9 @@ func serveHub(cfg *HubConfig) *HubServeError {
 		resolver = defaultRunResolver(b)
 	}
 
+	instances := &HubInstanceRegistry{Bus: b, TTL: cfg.ManifestTTL}
 	hub := &Hub{
+		Instances:    instances,
 		Bus:          b,
 		Authenticate: authenticator.Authenticate,
 		Resolve:      resolver,
@@ -354,8 +378,10 @@ func serveHub(cfg *HubConfig) *HubServeError {
 			}
 		}
 		unixHub := &Hub{
-			Bus: b,
-			Authenticate: func(*http.Request) (string, *HubAuthError) {
+			Instances: instances,
+			Bus:       b,
+			Authenticate: func(r *http.Request) (string, *HubAuthError) {
+				setHubAuthenticatedPeer(r, "local:"+localInstance)
 				return localInstance, nil
 			},
 			Resolve:      resolver,
