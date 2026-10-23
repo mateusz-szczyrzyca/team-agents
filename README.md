@@ -188,6 +188,33 @@ work — typically to extend the task — `agent run --resume <team|task> "addit
 same branches (and the same draft PR), with the checkpoints, the earlier answers and your addition in the
 prompt. A resumed team keeps its coordinator and board and skips the quiz.
 
+### Rounds
+
+Big changes are not reviewable — so a task's PR has a size limit, and a bigger task is done in **rounds**, one
+PR each:
+
+- The size is added + deleted lines against the base, tests included, without the files matched by `ROUND_EXCLUDE`
+  (generated code, vendored files, lock files). `ROUND_MAX_LINES` is the hard limit (default 3000), `ROUND_SOFT_LINES`
+  what agents aim for (2000); `ROUND_MAX_LINES_REPO=([drafts]=0)` changes the limit per repository (0 = none).
+  `agent round-size <task>` shows the size of a task's change (the agents use it too).
+- At the start the agent (in a team: the coordinator) estimates the change. If it does not fit one round, it plans
+  rounds and asks you to approve the plan. After each round `main` stays green: unfinished work is dead code or a
+  stub; tests of later rounds are merged skipped (`pending: <what>, round N`).
+- A round ends with `STATUS: ROUND_DONE N/M`. If its change is over the limit, or a test due in it is still
+  pending, it goes back to the agent to be split (at most `ROUND_BOUNCES` times, default 2; then it closes with a
+  warning in the notification).
+- The notification ("🔁 round N/M done") gives the PR. Merge it, then `agent run --resume <team|task>`: the next
+  round starts on **new branches from the updated base** (the previous branches are kept and named in the task).
+  `--resume` refuses while the round's PR is not merged; to keep working on the same round — review fixes —
+  use `agent run --resume <team|task> --same-round "…"`.
+
+### Test first
+
+Agents write the test before the code (RED → GREEN → REFACTOR) and show it in the history: the test commit ends
+with its failing run, the next one with the passing run. Where a test first is not possible, the commit says
+`Test-First: not possible — <reason>`. The `--verify` review treats a change of behaviour without either as a
+major finding. The rules and a worked example: [docs/tdd.md](docs/tdd.md).
+
 ### Waking, pausing and quotas
 
 A sleeping member costs nothing; every wake-up starts a run and costs tokens. So:
@@ -393,6 +420,7 @@ Then:
 | `AGENT_IDLE_RUN_SEC`, `AGENT_WAKE_LOOP_MAX`, `AGENT_WAKE_RATE_MAX`, `AGENT_WAKE_LOOP_PAUSE_MIN` | wake-loop guard (default 120 s, 4 idle runs, 30 runs / 10 min, 15 min pause) |
 | `AGENT_QUOTA_PAUSE_MIN` | pause after an exhausted quota when the CLI does not say when it resets (default 30 min) |
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
+| `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
 | `QUESTIONS_EDITOR`, `VSCODE_SERVER_DIRS` | open new questions files in the connected VS Code window (`vscode`, default) or not (`off`); where VS Code servers live |
 | `AGENT_LANGUAGE` | language of questions and notifications — what only you read (default English) |
@@ -471,7 +499,9 @@ notifications in `AGENT_LANGUAGE`.
 ```
 agent run <agent> "task" | -f task.md         start a task (inside the repository)
 agent run --team a,b[,c] [--verify] "task"    start a team (optionally with a final PR review)
-agent run --resume <team|task> ["addition"]   resume from the last checkpoint (same branches)
+agent run --resume <team|task> ["addition"]   resume from the last checkpoint (same branches; after a merged round: new ones)
+agent run --resume <team|task> --same-round   continue an unmerged round on the same branches (e.g. review fixes)
+agent round-size <task>                       size of a task's change against the round limit
 agent status | agents | show <id>            overview, agents, task details
 agent log <id> [--raw]                        follow the runner log (structured records rendered; --raw: JSON)
 agent answer <id>                             answer the questions in $EDITOR and resume

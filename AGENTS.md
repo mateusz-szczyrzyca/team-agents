@@ -203,7 +203,9 @@ func (s *Server) quizStart(question string) (string, *QuizStartError)
 
 ## Tests
 
-- **New code comes with new tests**; a bug fix comes with a test that fails without the fix. Remember rule 1:
+- **Tests come first** (`docs/tdd.md`): RED (the test, failing, committed with its failing output) → GREEN (the
+  simplest code) → REFACTOR (tests unchanged). Where that is not possible, the commit says
+  `Test-First: not possible — <reason>`. A bug fix starts with a test that fails without the fix. Remember rule 1:
   existing tests are not yours to change.
 - Go: check errors by their exact cause (`failsWith(t, BoardClaimAlreadyTaken)(...)`, `failure(...)` when you need
   the error, `expectToolError` for dispatcher errors) or with `errors.Is` / `errors.As` — never by comparing
@@ -224,16 +226,26 @@ func (s *Server) quizStart(question string) (string, *QuizStartError)
 ## Commits and pull requests
 
 - The orchestrator sets the commit author and gives you the trailers to add; do not change git identity.
-- Small commits, each building and passing the checks. Subject in the imperative mood, at most 72 characters
+- Small commits, each building and passing the checks — except the RED commit of a test-first cycle, which fails
+  only on its new tests. Subject in the imperative mood, at most 72 characters
   (`Add board_reassign tool`, `Fix lost wake-up after a crash`); the body says why, and what the reader cannot
   see in the diff.
 - The PR description: what and why, how it was tested (commands and results), compatibility notes (rule 9),
   every lint suppression, and anything the reviewer should look at first.
 
+## Rounds
+
+A PR changes at most 3000 lines (added + deleted, tests included, generated and vendored files not counted; aim for
+2000). A bigger task is planned as rounds — see the "Rounds" part of your prompt and README "Rounds". After every
+round `main` builds and passes `make lint test`; unfinished work is dead code or a stub returning a typed "not
+implemented" error; tests of later rounds are skipped with `pending: <what>, round N`. Check the size with
+`agent round-size <task>`.
+
 ## Definition of done
 
 - [ ] `make lint test` passes with zero findings.
-- [ ] New behaviour has tests; no existing test was changed.
+- [ ] New behaviour has tests, written first (or a `Test-First: not possible` reason); no existing test was changed.
+- [ ] The PR is within the round limit (`agent round-size <task>`); no pending test of this round is left.
 - [ ] Errors are typed per operation; nothing is ignored; enums instead of string literals; every declaration
       has a comment.
 - [ ] README, `config/agents.conf` and prompts updated where the change is visible to users or agents.
