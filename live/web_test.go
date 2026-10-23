@@ -128,7 +128,7 @@ func testServer(t *testing.T, home string) (*webServer, *httptest.Server) {
 }
 
 // get fetches a path and returns the status and the body.
-func get(t *testing.T, ts *httptest.Server, path string, hdr ...string) (int, string) {
+func get(t *testing.T, ts *httptest.Server, path string, hdr ...string) (int, string) { //nolint:unparam // the helper keeps this signature so every test case calls it the same way
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, ts.URL+path, nil)
 	if err != nil {
@@ -158,7 +158,7 @@ func closeBody(t *testing.T, resp *http.Response) {
 }
 
 // post submits the answer form as htmx does (HX-Request).
-func post(t *testing.T, ts *httptest.Server, path string, form url.Values) (int, string) {
+func post(t *testing.T, ts *httptest.Server, path string, form url.Values) (int, string) { //nolint:unparam // the helper keeps this signature so every test case calls it the same way
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, ts.URL+path, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -394,7 +394,7 @@ func TestAnswerFormDraftIncompleteAndSend(t *testing.T) {
 	// a draft: verdicts saved, no marker, nothing sent
 	code, body := post(t, ts, "/questions/T2", url.Values{"c0": {"b"}, "t0": {""}, "c1": {"own"}, "t1": {""}, "action": {"draft"}})
 	mustContain(t, "draft", body, "Draft saved")
-	data, err := os.ReadFile(qfile)
+	data, err := os.ReadFile(qfile) // #nosec G304 -- the test reads a file inside its own temporary home
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +410,7 @@ func TestAnswerFormDraftIncompleteAndSend(t *testing.T) {
 	}
 	// send with a question left empty: refused, nothing written
 	code, body = post(t, ts, "/questions/T2", url.Values{"c0": {"ok"}, "c1": {"own"}, "t1": {"  "}, "action": {"send"}})
-	data2, err := os.ReadFile(qfile)
+	data2, err := os.ReadFile(qfile) // #nosec G304 -- the test reads a file inside its own temporary home
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func TestAnswerFormDraftIncompleteAndSend(t *testing.T) {
 		return "", nil
 	})
 	code, body = post(t, ts, "/questions/T2", url.Values{"c0": {"ok"}, "t0": {""}, "c1": {"own"}, "t1": {"parser"}, "action": {"send"}})
-	data, err = os.ReadFile(qfile)
+	data, err = os.ReadFile(qfile) // #nosec G304 -- the test reads a file inside its own temporary home
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,7 +502,7 @@ func TestTaskStreamSendsNewActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	br := openStream(t, ts, fmt.Sprintf("/events/task/T1?offset=%d", st.Size()))
-	f, err := os.OpenFile(act, os.O_APPEND|os.O_WRONLY, 0)
+	f, err := os.OpenFile(act, os.O_APPEND|os.O_WRONLY, 0) // #nosec G304 -- the test appends to a file inside its own temporary home
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,7 +529,7 @@ func TestDashboardAndBusStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 	br := openStream(t, ts, fmt.Sprintf("/events/bus?offset=%d&kind=chat", st.Size()))
-	f, err := os.OpenFile(msgs, os.O_APPEND|os.O_WRONLY, 0)
+	f, err := os.OpenFile(msgs, os.O_APPEND|os.O_WRONLY, 0) // #nosec G304 -- the test appends to a file inside its own temporary home
 	if err != nil {
 		t.Fatal(err)
 	}

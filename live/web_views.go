@@ -419,7 +419,7 @@ func (s *webServer) streamTask(w http.ResponseWriter, r *http.Request) {
 // readActivitySince reads the complete activity lines appended after off; it returns them and the new offset (a
 // truncated file starts again from the beginning; an incomplete last line is read next time).
 func readActivitySince(path string, off int64) ([]Activity, int64) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- the path is a task or bus file the program lists itself; no request text reaches it
 	if err != nil {
 		return nil, off // not created yet, or unreadable (the panel logs that)
 	}
@@ -754,7 +754,7 @@ func (s *webServer) streamBus(w http.ResponseWriter, r *http.Request) {
 
 // readLinesSince reads the complete lines appended to a file after off; it returns them and the new offset.
 func readLinesSince(path string, off int64) ([]string, int64) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- the path is a task or bus file the program lists itself; no request text reaches it
 	if err != nil {
 		return nil, off
 	}
@@ -834,7 +834,7 @@ func (s *webServer) loadAnswer(snap *Snapshot, id string) (*Task, string, *quest
 		return t, "", nil, webErr(AnswerNotWaiting, nil, "%s is %s — it does not wait for answers", t.ID, t.Status)
 	}
 	path := filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", t.Round))
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- the path is the questions file of a listed task (t.Dir + round); see insideDir
 	if err != nil {
 		return t, path, nil, webErr(AnswerNoQuestions, err, "cannot read %s", path)
 	}
@@ -947,7 +947,7 @@ func (s *webServer) postAnswer(w http.ResponseWriter, r *http.Request) {
 // writeInPlace rewrites an existing file without replacing it (same inode and mode: the path unit watching the
 // file sees an ordinary modification).
 func writeInPlace(path, text string) *StorageError {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0) // #nosec G703 -- an existing questions file of a listed task, checked with insideDir
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0) // #nosec G703 G304 -- an existing questions file of a listed task, checked with insideDir
 	if err != nil {
 		return storageErr(err, "cannot open %s", path)
 	}
