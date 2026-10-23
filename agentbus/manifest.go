@@ -85,12 +85,13 @@ func ParseCapability(s string) (Capability, *ValueError) {
 
 // InstanceManifest is the payload sent by agent node during registration and heartbeat.
 type InstanceManifest struct {
-	InstanceName string               `json:"instance_name"` // unique identifier of the instance (e.g. "mac", "pi5")
-	Timestamp    time.Time            `json:"timestamp"`     // generation timestamp
-	TTLSeconds   int                  `json:"ttl_seconds"`   // time-to-live before instance is considered unreachable
-	Detected     DetectedCapabilities `json:"detected"`      // discovered platform tools and hardware
-	Declared     []Capability         `json:"declared"`      // declared capabilities from configuration
-	CurrentState InstanceCurrentState `json:"current_state"` // active agents, slots, and quotas
+	InstanceName string               `json:"instance_name"`      // unique identifier of the instance (e.g. "mac", "pi5")
+	Timestamp    time.Time            `json:"timestamp"`          // generation timestamp
+	TTLSeconds   int                  `json:"ttl_seconds"`        // time-to-live before instance is considered unreachable
+	Detected     DetectedCapabilities `json:"detected"`           // discovered platform tools and hardware
+	Declared     []Capability         `json:"declared"`           // declared capabilities from configuration
+	Approved     []Capability         `json:"approved,omitempty"` // operator-approved sensitive capabilities for this instance
+	CurrentState InstanceCurrentState `json:"current_state"`      // active agents, slots, and quotas
 }
 
 // DetectedCapabilities describes automatically discovered platform tools and hardware.
@@ -134,15 +135,18 @@ type SubscriptionQuota struct {
 
 // HubTaskSummary summarizes the state of a task running on an instance.
 type HubTaskSummary struct {
-	Repo      string    `json:"repo,omitempty"`     // repository key for notebooks; absent in older manifests
-	Branch    string    `json:"branch,omitempty"`   // task branch on its owning instance
-	Worktree  string    `json:"worktree,omitempty"` // display metadata only for remote tasks
-	Tier      Tier      `json:"tier,omitempty"`     // registered task tier; empty legacy summaries cannot authorize calls
-	Role      Role      `json:"role,omitempty"`     // registered task role; empty legacy summaries cannot authorize calls
-	TaskID    string    `json:"task_id"`            // task directory identifier
-	Agent     string    `json:"agent"`              // executing agent
-	Team      string    `json:"team"`               // team identifier if part of a team
-	Status    string    `json:"status"`             // current runner state
-	StartedAt time.Time `json:"started_at"`         // when task execution began
-	UpdatedAt time.Time `json:"updated_at"`         // last activity timestamp
+	Repo           string    `json:"repo,omitempty"`            // repository key for notebooks; absent in older manifests
+	Branch         string    `json:"branch,omitempty"`          // task branch on its owning instance
+	Worktree       string    `json:"worktree,omitempty"`        // display metadata only for remote tasks
+	Tier           Tier      `json:"tier,omitempty"`            // registered task tier; empty legacy summaries cannot authorize calls
+	Role           Role      `json:"role,omitempty"`            // registered task role; empty legacy summaries cannot authorize calls
+	TaskID         string    `json:"task_id"`                   // task directory identifier
+	Agent          string    `json:"agent"`                     // executing agent
+	Team           string    `json:"team"`                      // team identifier if part of a team
+	Status         string    `json:"status"`                    // current runner state
+	StartedAt      time.Time `json:"started_at"`                // when task execution began
+	UpdatedAt      time.Time `json:"updated_at"`                // last activity timestamp
+	QuestionRound  int       `json:"question_round,omitempty"`  // question round waiting for human answers
+	QuestionSHA256 string    `json:"question_sha256,omitempty"` // sha256 checksum of the questions file
+	QuestionsText  string    `json:"questions_text,omitempty"`  // snapshot text of waiting questions
 }

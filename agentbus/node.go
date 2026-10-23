@@ -221,6 +221,13 @@ func (n *Node) report() (InstanceManifest, *CmdNodeError) {
 	manifest.Timestamp = time.Now().UTC()
 	manifest.TTLSeconds = int(hubInstanceTTL / time.Second)
 	manifest.Declared = append([]Capability(nil), n.Config.Declared...)
+	if approved, serr := approvedCapabilities(n.Config.Home); serr == nil && len(approved) > 0 {
+		var appList []Capability
+		for cap := range approved {
+			appList = append(appList, cap)
+		}
+		manifest.Approved = appList
+	}
 	if err := validateHubManifest(manifest); err != nil {
 		return manifest, opErr(CmdNodeProtocol, "invalid local manifest: %s", err.Message)
 	}

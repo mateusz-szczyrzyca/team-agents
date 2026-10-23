@@ -247,6 +247,35 @@ func (s *Server) ownCapabilities() (map[Capability]bool, *StorageError) {
 	return provided, nil
 }
 
+// ownApprovedCapabilities returns the sensitive capabilities approved for the instance this server runs on.
+// It must be called before any bus transaction: the registry takes the same bus lock.
+func (s *Server) ownApprovedCapabilities() (map[Capability]bool, *StorageError) {
+	approved := map[Capability]bool{}
+	if s.home != "" {
+		local, serr := approvedCapabilities(s.home)
+		if serr != nil {
+			return nil, serr
+		}
+		for c, v := range local {
+			if v {
+				approved[c] = true
+			}
+		}
+	}
+	if regDir, ok := s.directory.(registryDirectory); ok && regDir.registry != nil {
+		st, serr := regDir.registry.load()
+		if serr != nil {
+			return nil, serr
+		}
+		if record := st.Instances[s.instance]; record != nil {
+			for _, c := range record.Manifest.Approved {
+				approved[c] = true
+			}
+		}
+	}
+	return approved, nil
+}
+
 // missingCapabilities returns the required capabilities that the provided set lacks, in the order required.
 func missingCapabilities(required []Capability, provided map[Capability]bool) []Capability {
 	var missing []Capability

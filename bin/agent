@@ -250,11 +250,15 @@ generate_uuid() {
   fi
 }
 
+# is_battery_pause_enabled — returns 0 if battery pausing is enabled in agents.conf
+is_battery_pause_enabled() {
+  local val="${BATTERY_PAUSE:-${PAUSE_ON_BATTERY:-0}}"
+  [[ $val == 1 || $val == true || $val == yes ]]
+}
+
 # is_on_battery — returns 0 if the host is running on battery power (laptops)
 is_on_battery() {
-  if [[ ${PAUSE_ON_BATTERY:-0} != 1 ]]; then
-    return 1
-  fi
+  is_battery_pause_enabled || return 1
   if [[ $(uname -s) == Darwin ]]; then
     if command -v pmset >/dev/null 2>&1; then
       pmset -g batt | grep -q "Battery Power" && return 0
@@ -484,6 +488,9 @@ questions_ready() {
 watch_answers() {
   local id=$1 f=$2 round
   round=${f##*/questions-}; round=${round%.md}
+  if [[ $(uname -s) == Darwin ]] || ! command -v systemd-run >/dev/null 2>&1; then
+    return 0
+  fi
   systemd-run --user --quiet --collect --unit="agent-$id-answers-$round" \
     --path-property=PathModified="$f" \
     --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" \
@@ -495,6 +502,9 @@ watch_answers() {
 # stop_answers_watch id round — removes the path unit of a questions file (if it still exists)
 stop_answers_watch() {
   local unit="agent-$1-answers-$2.path"
+  if [[ $(uname -s) == Darwin ]] || ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
   # a query: "inactive" and "no such unit" both mean there is nothing to stop
   systemctl --user is-active --quiet "$unit" || return 0
   try answers_watch_stop_failed systemctl --user stop "$unit"
@@ -567,6 +577,11 @@ team_json() {
   printf '%s' "$out"
 }
 team_lead() { team_json "$1" | jq -r '.lead // empty'; }
+# is_team_lead agent lead — whether agent matches the team lead (comparing qualified or base names)
+is_team_lead() {
+  local ag=$1 ld=$2
+  [[ -n $ld && ( $ag == "$ld" || ${ag%@*} == "${ld%@*}" || ( -n ${INSTANCE_NAME:-} && "$ag@$INSTANCE_NAME" == "$ld" ) ) ]]
+}
 team_done_flag() { team_json "$1" | jq -r '.done // false'; }
 team_tasks() { team_json "$1" | jq -r '.members[]? | .task'; }
 
@@ -1815,13 +1830,22 @@ cmd__runner() {
   local qfile="$dir/questions-$next_round.md"
   local pf="$dir/prompt-$n.md"
   build_prompt "$id" "$mode" "$qfile" "$next_round" > "$pf"
+  if [[ -n ${ANSWERS_PENDING:-} && -n ${TEAM:-} ]]; then
+    local ans_file="$dir/questions-$ANSWERS_PENDING.md"
+    if [[ -f $ans_file ]]; then
+      local ans_body; ans_body=$(<"$ans_file")
+      notice answers_distributed "$AGENT" "team:$TEAM" "ANSWERS from the human (round $ANSWERS_PENDING):\n$ans_body" "team=$TEAM" "round=$ANSWERS_PENDING"
+    fi
+  fi
   meta_set "$id" ANSWERS_PENDING ""
   meta_set "$id" INV_PENDING_DELIVERY ""
   meta_set "$id" WAKE_PENDING ""
   meta_set "$id" BOUNCE_PENDING ""
   meta_set "$id" QBOUNCE_PENDING ""
   if [[ -n ${TEAM:-} ]]; then
-    try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state active >/dev/null
+    local qagent="$AGENT"
+    [[ -n ${INSTANCE_NAME:-} ]] && qagent="$AGENT@$INSTANCE_NAME"
+    try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$qagent" --state active >/dev/null
   fi
 
   # Watchdog: a hang (no activity for AGENT_HANG_MIN min) kills the run. Normal models,
@@ -2033,6 +2057,21 @@ start_runner() { # id mode
   meta_set "$id" RUN "$run"
   meta_set "$id" STATUS starting
   log_info runner_starting "task=$id" "run=$run" "mode=$mode" "unit=$(unit_name "$id" "$run")"
+  if is_on_battery; then
+    meta_set "$id" STATUS paused
+    meta_set "$id" PAUSE_REASON battery
+    log_info runner_paused_battery "task=$id" "run=$run"
+    echo "agent: run for $id paused on battery power" >&2
+    return 0
+  fi
+  if [[ $(uname -s) == Darwin ]] || ! command -v systemd-run >/dev/null 2>&1; then
+    (
+      cd "$(task_field "$id" WORKTREE)"
+      export AGENTS_HOME="$AGENTS_HOME" PATH="$RUN_PATH"
+      nohup nice -n 10 "$SELF" _runner "$id" "$mode" >/dev/null 2>&1 &
+    ) 3>&- 7>&- 8>&- 9>&-
+    return 0
+  fi
   systemd-run --user --quiet --collect \
     --unit="$(unit_name "$id" "$run")" \
     --working-directory="$(task_field "$id" WORKTREE)" \
@@ -2218,7 +2257,29 @@ resume_run() { # ref verify [addition...] — resumes an interrupted team or tas
   return 0
 }
 
+# is_valid_capability cap — checks if cap is recognized in the closed capability grammar
+is_valid_capability() {
+  local c=$1
+  case $c in
+    os:linux|os:darwin|build:ios|build:android|build:rust|build:go|build:c|\
+    test:ios-simulator|test:android-emulator|test:docker|\
+    hw:rp2350-probe|hw:jlink|hw:apple-silicon|hw:x86-64|\
+    model:claude-3-7-sonnet|model:codex|model:gemini-flash|\
+    sign:apple|sign:apple-development|sign:apple-distribution|sign:android-keystore|\
+    publish:npm|publish:pypi|publish:github-release)
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
+
 cmd_run() {
+  if [[ -f $AGENTS_HOME/secrets.env ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$AGENTS_HOME/secrets.env"
+    set +a
+  fi
   local members=() verify=0 team_list="" resume_ref="" need_caps=()
   while [[ ${1:-} == --team || ${1:-} == --verify || ${1:-} == --resume || ${1:-} == --need ]]; do
     case $1 in
@@ -2255,16 +2316,36 @@ cmd_run() {
   if ((${#need_caps[@]} > 0)); then
     local cap inst
     for cap in "${need_caps[@]}"; do
+      is_valid_capability "$cap" || die "unknown capability '$cap'. Valid namespaces: os: build: test: hw: model: sign: publish:"
       inst=""
       if [[ -f $BUS_DIR/instances.json ]]; then
-        inst=$(jq -r --arg c "$cap" '.instances | to_entries[] | select(.value.manifest.declared[]? == $c or .value.manifest.detected.capabilities[]? == $c) | .key' "$BUS_DIR/instances.json" | head -1)
+        local now_epoch; now_epoch=$(date +%s)
+        inst=$(jq_soft instances_read -r --arg c "$cap" --argjson now "$now_epoch" '
+          .instances // {} | to_entries[] |
+          select(.value.lease != null and (.value.lease.expires_at | fromdateiso8601? // 0) > $now) |
+          select((.value.manifest.current_state.slots.free // 0) > 0) |
+          select(
+            (.value.manifest.declared // [] | index($c)) or
+            ($c == "os:linux" and .value.manifest.detected.os == "linux") or
+            ($c == "os:darwin" and .value.manifest.detected.os == "darwin") or
+            ($c == "hw:apple-silicon" and .value.manifest.detected.arch == "arm64" and .value.manifest.detected.os == "darwin") or
+            ($c == "hw:x86-64" and .value.manifest.detected.arch == "amd64") or
+            ($c == "build:go" and (.value.manifest.detected.toolchains // [] | any(test("go")))) or
+            ($c == "build:rust" and (.value.manifest.detected.toolchains // [] | any(test("rust")))) or
+            ($c == "build:ios" and .value.manifest.detected.xcode_version != null and .value.manifest.detected.xcode_version != "") or
+            ($c == "test:ios-simulator" and (.value.manifest.detected.ios_simulators // [] | length > 0)) or
+            ($c == "hw:rp2350-probe" and (.value.manifest.detected.hardware_probes // [] | any(test("rp2350")))) or
+            ($c == "hw:jlink" and (.value.manifest.detected.hardware_probes // [] | any(test("jlink"))))
+          ) |
+          .key
+        ' "$BUS_DIR/instances.json" | head -1)
       fi
       if [[ -n $inst ]]; then
-        members+=("worker@$inst")
-      elif [[ -n ${INSTANCE_NAME:-} ]]; then
-        members+=("worker@$INSTANCE_NAME")
+        local ag; ag=$(jq_soft instances_read -r --arg inst "$inst" '.instances[$inst].manifest.current_state.agents[0].name // empty' "$BUS_DIR/instances.json")
+        [[ -n $ag ]] || ag="codex"
+        members+=("$ag@$inst")
       else
-        members+=("worker")
+        die "no active instance provides required capability '$cap'"
       fi
     done
   fi
@@ -2348,10 +2429,17 @@ cmd_run() {
       ids+=("$NEW_ID")
     else
       local r_task="$ts-$ag_inst-$ag_name"
-      local r_branch="agents/$ag_name/$ts"
+      local r_branch="agents/$ag_name-$ag_inst/$ts"
       local q_key="$ag_name@$ag_inst"
-      json=$(jq --arg a "$q_key" --arg t "$r_task" --arg b "$r_branch" \
-               '.[$a] = {agent:$a, task:$t, branch:$b, worktree:"", state:"active", tier:"normal", provider:""}' <<< "$json")
+      local r_tier="normal"
+      if [[ -f $BUS_DIR/instances.json ]]; then
+        local found_tier; found_tier=$(jq_soft instances_read -r --arg inst "$ag_inst" --arg ag "$ag_name" '
+          .instances[$inst].manifest.current_state.agents[]? | select(.name == $ag) | .tier // empty
+        ' "$BUS_DIR/instances.json")
+        [[ -n $found_tier ]] && r_tier="$found_tier"
+      fi
+      json=$(jq --arg a "$q_key" --arg t "$r_task" --arg b "$r_branch" --arg tier "$r_tier" \
+               '.[$a] = {agent:$a, task:$t, branch:$b, worktree:"", state:"active", tier:$tier, provider:""}' <<< "$json")
       remote_tasks+=("$m:$r_task:$r_branch")
     fi
   done
@@ -2368,9 +2456,16 @@ cmd_run() {
     IFS=: read -r rm_agent rm_task rm_branch <<< "$rt"
     rm_inst="${rm_agent#*@}"
     rm_agent="${rm_agent%@*}"
-    bus cmd-enqueue --dir "$BUS_DIR" --instance "$rm_inst" --kind start_run --task "$rm_task" \
-      --param "agent=$rm_agent" --param "run=1" --param "repo=$(basename "$main_root")" \
+    local enqueue_args=(
+      --dir "$BUS_DIR" --instance "$rm_inst" --kind start_run --task "$rm_task"
+      --param "agent=$rm_agent" --param "run=1" --param "repo=$(basename "$main_root")"
       --param "branch=$rm_branch" --param "base=$base" --param "team=$team"
+      --param "task_text=$task"
+    )
+    if ((${#need_caps[@]} > 0)); then
+      enqueue_args+=(--param "requires=${need_caps[*]}")
+    fi
+    bus cmd-enqueue "${enqueue_args[@]}"
   done
 
   if [[ -n $(git -C "$root" status --porcelain) ]]; then
@@ -2402,6 +2497,12 @@ cmd_run() {
 }
 
 cmd_answer() {
+  if [[ -f $AGENTS_HOME/secrets.env ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$AGENTS_HOME/secrets.env"
+    set +a
+  fi
   local target=${1:?usage: agent answer <id>} id
   if id=$(resolve_id "$target" 2>/dev/null) && [[ -d $TASKS/$id ]]; then
     meta_load "$id"
@@ -2426,17 +2527,39 @@ cmd_answer() {
     r_inst=$(jq_soft instances_read -r --arg t "$r_task" '(.instances // {}) | to_entries[] | select(.value.manifest.current_state.tasks[$t] != null) | .key' "$BUS_DIR/instances.json" | head -1)
   fi
   [[ -n $r_inst ]] || die "no task matching '$target' found locally or on registered remote instances"
+
+  local q_round=1 q_sha="" q_text=""
+  if [[ -f $BUS_DIR/instances.json ]]; then
+    q_round=$(jq_soft instances_read -r --arg inst "$r_inst" --arg t "$r_task" '(.instances[$inst].manifest.current_state.tasks[$t].question_round // 1)' "$BUS_DIR/instances.json")
+    q_sha=$(jq_soft instances_read -r --arg inst "$r_inst" --arg t "$r_task" '(.instances[$inst].manifest.current_state.tasks[$t].question_sha256 // empty)' "$BUS_DIR/instances.json")
+    q_text=$(jq_soft instances_read -r --arg inst "$r_inst" --arg t "$r_task" '(.instances[$inst].manifest.current_state.tasks[$t].questions_text // empty)' "$BUS_DIR/instances.json")
+  fi
+  if [[ -z $q_sha && -f $BUS_DIR/remote-tasks/$r_inst/$r_task/questions-$q_round.md ]]; then
+    local r_qfile="$BUS_DIR/remote-tasks/$r_inst/$r_task/questions-$q_round.md"
+    q_sha=$(file_sha256 "$r_qfile")
+    q_text=$(<"$r_qfile")
+  fi
+
   local tmp; tmp=$(mktemp -t agent.answer.XXXXXX)
-  cat > "$tmp" <<EOF
-# Answers for remote task $r_task@$r_inst
-(Enter your answers below and save)
+  if [[ -n $q_text ]]; then
+    printf '%s\n' "$q_text" > "$tmp"
+  else
+    cat > "$tmp" <<EOF
+# Questions — $r_task@$r_inst (round $q_round)
+
+## 1. Questions for $r_task
+**Recommended:** 
+
+**Verdict:** 
 EOF
+  fi
+  [[ -n $q_sha ]] || q_sha=$(file_sha256 "$tmp")
   "${EDITOR:-nano}" "$tmp"
   if validate_answers "$tmp"; then
     local content; content=$(<"$tmp")
     bus cmd-enqueue --dir "$BUS_DIR" --instance "$r_inst" --kind answer_deliver --task "$r_task" \
-      --param "answer=$content"
-    echo "Delivered answer to remote task $r_task on instance $r_inst."
+      --param "question_round=$q_round" --param "snapshot_version=$q_sha" --param "answer=$content"
+    echo "Delivered answer (round $q_round) to remote task $r_task on instance $r_inst."
     rm -f "$tmp"
   else
     echo "Not all questions are answered."
@@ -3351,10 +3474,30 @@ cmd__node_answer() { # id [expected_round] [expected_sha256] — stores answers 
   NODE_READY_OUTCOME="delivered" cmd__node_start "$id" resume
 }
 
-cmd__node_provision() { # id agent repo branch [base] [team] — provisions a remote task locally under agent node
-  local id=$1 agent=$2 repo=$3 branch=$4 base=${5:-HEAD} team=${6:-}
+cmd__node_provision() { # id agent repo branch [base] [team] [task_text] — provisions a remote task locally under agent node
+  local id=$1 agent=$2 repo=$3 branch=$4 base=${5:-HEAD} team=${6:-} task_text=${7:-}
+  if [[ -z $task_text && ! -t 0 ]]; then
+    task_text=$(cat)
+  fi
   local dir="$TASKS/$id"
-  [[ -d $dir && -f $dir/meta.env ]] && return 0
+  local wt="$AGENTS_HOME/worktrees/$repo/$id"
+  [[ -d $dir && -f $dir/meta.env && -d $wt ]] && return 0
+  if [[ -n ${NODE_ACCEPT_REPOS:-} ]]; then
+    local accepted=0 r
+    local -a n_repos
+    IFS=, read -r -a n_repos <<< "$NODE_ACCEPT_REPOS"
+    for r in "${n_repos[@]}"; do
+      if [[ $repo == "$r" ]]; then accepted=1; break; fi
+    done
+    if (( ! accepted )); then
+      echo "repository $repo is not accepted by NODE_ACCEPT_REPOS ($NODE_ACCEPT_REPOS)" >&2
+      exit 1
+    fi
+  fi
+  if [[ -z ${AGENT_TYPE[$agent]:-} ]]; then
+    echo "agent $agent is not configured on this instance. Configured: ${!AGENT_TYPE[*]}" >&2
+    exit 1
+  fi
   local root=""
   if [[ -d $AGENTS_HOME/worktrees/$repo/.git || -f $AGENTS_HOME/worktrees/$repo/.git ]]; then
     root="$AGENTS_HOME/worktrees/$repo"
@@ -3373,11 +3516,22 @@ cmd__node_provision() { # id agent repo branch [base] [team] — provisions a re
   common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$root/.git")
   main_root=$(dirname "$common")
   [[ -d $main_root ]] || main_root="$root"
-  local wt="$AGENTS_HOME/worktrees/$repo/$id"
   mkdir -p "$dir" "$(dirname "$wt")"
+  local fetch_base="$base"
   git -C "$root" fetch --quiet origin 2>/dev/null || true
-  git -C "$root" worktree add --quiet -b "$branch" "$wt" "$base" 2>/dev/null || \
-    git -C "$root" worktree add --quiet "$wt" "$branch" 2>/dev/null || true
+  if git -C "$root" rev-parse --verify --quiet "origin/$base" >/dev/null 2>&1; then
+    fetch_base="origin/$base"
+  elif git -C "$root" rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
+    fetch_base="$base"
+  else
+    echo "cannot resolve base revision '$base' in $repo" >&2
+    exit 1
+  fi
+  if ! git -C "$root" worktree add --quiet -b "$branch" "$wt" "$fetch_base" 2>/dev/null && \
+     ! git -C "$root" worktree add --quiet "$wt" "$branch" 2>/dev/null; then
+    echo "failed to create worktree at $wt on base $fetch_base" >&2
+    exit 1
+  fi
   : > "$dir/meta.env"
   local sid=""
   [[ ${AGENT_TYPE[$agent]:-} == claude ]] && sid=$(generate_uuid)
@@ -3390,7 +3544,11 @@ cmd__node_provision() { # id agent repo branch [base] [team] — provisions a re
             "AGENTS_MD=$agents_md"; do
     meta_set "$id" "${kv%%=*}" "${kv#*=}"
   done
-  printf '# Task: %s\n' "$id" > "$dir/task.md"
+  if [[ -n $task_text ]]; then
+    printf '%s\n' "$task_text" > "$dir/task.md"
+  else
+    printf '# Task: %s\n' "$id" > "$dir/task.md"
+  fi
   log_info node_task_provisioned "task=$id" "agent=$agent" "repo=$repo" "branch=$branch" "team=$team"
 }
 
@@ -3426,6 +3584,15 @@ cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
       agent_task[$tagent]="$tid"
       agent_st[$tagent]="$st"
     fi
+    local q_round=1 q_sha="" q_text=""
+    if [[ $st == waiting ]]; then
+      q_round=$(task_field "$tid" ROUND); q_round=${q_round:-1}
+      local qfile="$d/questions-$q_round.md"
+      if [[ -f $qfile ]]; then
+        q_sha=$(file_sha256 "$qfile")
+        q_text=$(head -c 32768 "$qfile")
+      fi
+    fi
     tasks_json=$(jq -c \
       --arg id "$tid" \
       --arg agent "$tagent" \
@@ -3435,8 +3602,32 @@ cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
       --arg status "$st" \
       --arg created "$tcreated" \
       --arg updated "$tmod" \
-      '.[$id] = {task_id: $id, agent: $agent, team: $team, repo: $repo, branch: $branch, worktree: $worktree, tier: $tier, role: $role, status: $status, started_at: $created, updated_at: $updated}' \
+      --arg q_round "$q_round" \
+      --arg q_sha "$q_sha" \
+      --arg q_text "$q_text" \
+      '.[$id] = ({task_id: $id, agent: $agent, team: $team, repo: $repo, branch: $branch, worktree: $worktree, tier: $tier, role: $role, status: $status, started_at: $created, updated_at: $updated} + (if $status == "waiting" and $q_sha != "" then {question_round: ($q_round|tonumber), question_sha256: $q_sha, questions_text: $q_text} else {} end))' \
       <<< "$tasks_json")
+  done
+
+  local subs_json="{}"
+  for d in "$TASKS"/*/; do
+    [[ -f $d/meta.env ]] || continue
+    local s_tid s_st s_reason s_wake_at s_type
+    s_tid=$(basename "$d")
+    s_st=$(task_field "$s_tid" STATUS)
+    s_reason=$(task_field "$s_tid" PAUSE_REASON)
+    if [[ $s_st == paused && $s_reason == quota ]]; then
+      s_wake_at=$(task_field "$s_tid" WAKE_AT)
+      s_type=$(task_field "$s_tid" TYPE)
+      local until_iso=""
+      if [[ -n $s_wake_at ]]; then
+        until_iso=$(format_epoch "$s_wake_at" '+%Y-%m-%dT%H:%M:%SZ')
+      fi
+      if [[ -n $s_type ]]; then
+        subs_json=$(jq -c --arg p "$s_type" --arg u "$until_iso" \
+          '.[$p] = {exhausted: true, exhausted_until: (if $u != "" then $u else null end)}' <<< "$subs_json")
+      fi
+    fi
   done
 
   local max_slots=${AGENT_MAX_RUNS:-4}
@@ -3475,8 +3666,9 @@ cmd__node_manifest() { # prints InstanceCurrentState JSON for agent node
     --argjson total "$max_slots" \
     --argjson free "$free_slots" \
     --argjson agents "$agents_json" \
+    --argjson subs "$subs_json" \
     --argjson tasks "$tasks_json" \
-    '{slots: {total: $total, free: $free}, agents: $agents, subscriptions: {}, tasks: $tasks}'
+    '{slots: {total: $total, free: $free}, agents: $agents, subscriptions: $subs, tasks: $tasks}'
 }
 
 cmd_node() { # runs the agent node daemon with configuration from agents.conf

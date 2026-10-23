@@ -69,7 +69,11 @@ install_hint() {
     read -ra p <<< "$(package_for "$t" "$pm")"
     pkgs+=("${p[@]}")
   done
-  mapfile -t pkgs < <(printf '%s\n' "${pkgs[@]}" | sort -u)
+  local line unique_pkgs=()
+  while IFS= read -r line; do
+    [[ -n $line ]] && unique_pkgs+=("$line")
+  done < <(printf '%s\n' "${pkgs[@]}" | sort -u)
+  pkgs=("${unique_pkgs[@]}")
   case $pm in
     brew) echo "brew install ${pkgs[*]}" ;;
     apt) echo "sudo apt install -y ${pkgs[*]}" ;;
@@ -95,8 +99,10 @@ has_passwordless_sudo() {
 }
 
 check_tools() {
-  local missing
-  mapfile -t missing < <(missing_from "${REQUIRED_TOOLS[@]}")
+  local missing=() line
+  while IFS= read -r line; do
+    [[ -n $line ]] && missing+=("$line")
+  done < <(missing_from "${REQUIRED_TOOLS[@]}")
   if ((${#missing[@]})); then
     echo "Missing required tools: ${missing[*]}"
     echo "  $(install_hint "${missing[@]}")"
@@ -104,9 +110,13 @@ check_tools() {
     exit 1
   fi
 
-  local feature agent
-  mapfile -t feature < <(missing_from "${FEATURE_TOOLS[@]}")
-  mapfile -t agent < <(missing_from "${AGENT_TOOLS[@]}" | grep -vxF -f <(printf '%s\n' "${feature[@]}" ""))
+  local feature=() agent=()
+  while IFS= read -r line; do
+    [[ -n $line ]] && feature+=("$line")
+  done < <(missing_from "${FEATURE_TOOLS[@]}")
+  while IFS= read -r line; do
+    [[ -n $line ]] && agent+=("$line")
+  done < <(missing_from "${AGENT_TOOLS[@]}" | grep -vxF -f <(printf '%s\n' "${feature[@]}" ""))
   ((${#feature[@]} + ${#agent[@]})) || return 0
 
   echo

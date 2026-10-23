@@ -492,6 +492,7 @@ func (s *Server) boardClaim(id string) (string, *BoardClaimError) {
 	if serr != nil {
 		return "", fromStorage(BoardClaimStorage, serr)
 	}
+	approved, aerr := s.ownApprovedCapabilities()
 	var it BoardItem
 	err := transact(s.bus, BoardClaimStorage, func(st *State) *BoardClaimError {
 		s.touch(st)
@@ -516,11 +517,10 @@ func (s *Server) boardClaim(id string) (string, *BoardClaimError) {
 			return opErr(BoardClaimMissingCapability, "%s requires %s, which instance %q does not provide",
 				item.ID, joinCapabilities(missing), s.instance)
 		}
-		// Only items with a sensitive requirement read the approvals file, so a broken file never blocks other items.
+		// Only items with a sensitive requirement check operator approval, so unapproved claims fail closed.
 		if sensitive := sensitiveOf(item.Requires); len(sensitive) > 0 {
-			approved, serr := approvedCapabilities(s.home)
-			if serr != nil {
-				return fromStorage(BoardClaimStorage, serr)
+			if aerr != nil {
+				return fromStorage(BoardClaimStorage, aerr)
 			}
 			if gated := unapproved(sensitive, approved); len(gated) > 0 {
 				return opErr(BoardClaimNeedsApproval, "%s requires %s, which the operator has not approved for instance %q (%s)",

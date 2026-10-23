@@ -177,6 +177,7 @@ func (e *nodeProcessExecutor) Execute(ctx context.Context, command Command, unce
 				command.Params["branch"],
 				command.Params["base"],
 				command.Params["team"],
+				command.Params["task_text"],
 			}
 			_, pErr := e.runBridge(ctx, CommandOutcomeStarted, provisionArgs...)
 			if pErr != nil {
