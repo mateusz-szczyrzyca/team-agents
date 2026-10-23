@@ -1,0 +1,40 @@
+{{define "task-row"}}<tr class="{{.StatusClass}}">
+  <td class="name"><a href="/task/{{.ID}}">{{.Name}}</a>{{if .Team}}{{if .Lead}}<span class="lead" title="coordinator">★</span>{{else}}<span class="dim">·</span>{{end}}{{end}}</td>
+  <td class="status"><span class="st {{.StatusClass}}">{{.StatusLabel}}</span></td>
+  <td class="since num">{{.Since}}</td>
+  <td class="repo hide-narrow">{{.Repo}}</td>
+  <td class="last">{{if .Team}}<a class="tag" href="/team/{{.Team}}">team {{.TeamShort}}</a> {{end}}{{if .Stage}}<span class="stage">{{.Stage}}</span> {{end}}{{if .LastIcon}}<span class="icon-k">{{.LastIcon}}</span> {{end}}{{trunc .Last 220}}</td>
+</tr>{{end}}
+
+{{define "task-table"}}<div class="scroll"><table class="tasks">
+<thead><tr><th>Agent</th><th>Status</th><th class="num">Time</th><th class="hide-narrow">Repo</th><th>Stage / last activity</th></tr></thead>
+<tbody>{{range .}}{{template "task-row" .}}{{else}}<tr><td colspan="5" class="dim">(no tasks)</td></tr>{{end}}</tbody>
+</table></div>{{end}}
+
+{{define "dash-table"}}{{template "task-table" .Rows}}{{end}}
+
+{{define "dash-head"}}<span>{{.Queue}}</span>{{if .Waiting}} · <a href="/questions" class="st-waiting">waiting for you: {{.Waiting}}</a>{{end}}{{end}}
+
+{{define "dash-event"}}<li class="{{.Class}}"><time>{{.Time}}</time> {{.Text}}</li>{{end}}
+
+{{define "dash-res"}}{{if .Res}}<ul class="plain">{{range .Res}}<li><b>{{.Resource}}</b> — {{.Agent}}{{if .Note}}: {{.Note}}{{end}} <span class="dim">since {{shortTS .Since}}</span>{{if .Task}} <a href="/task/{{.Task}}">task</a>{{end}}</li>{{end}}</ul>{{else}}<p class="dim">Nothing is reserved.</p>{{end}}{{end}}
+
+{{define "act-item"}}<li class="k-{{.Kind}}"><time>{{.TS}}</time> <span class="icon-k">{{.Icon}}</span> <span class="t">{{.Text}}</span></li>{{end}}
+
+{{define "msg-item"}}<li class="{{.Class}}"><time>{{.TS}}</time> <b>{{.From}}</b> → {{.To}} <span class="tag">{{.Kind}}</span><div class="t">{{.Text}}</div></li>{{end}}
+
+{{define "task-head"}}<span class="st {{.StatusClass}}">{{.StatusLabel}}</span> <span class="num">{{.Since}}</span>{{if .Stage}} · <span class="stage">{{.Stage}}</span>{{end}}{{end}}
+
+{{define "inv-card"}}<article class="card">
+  <h3><a href="/investigation/{{.ID}}">#{{.ID}}</a> <span class="st {{.StatusClass}}">{{.Status}}</span>{{if .Review}} <span class="tag">review</span>{{end}} <span class="dim">from {{.FromAgent}} · {{shortTS .Created}}</span></h3>
+  <p>{{trunc .Question 400}}</p>
+  {{if .Summary}}<p><b>Result:</b> {{.Summary}}</p>{{end}}
+  {{if .Decision}}<p><b>Decision:</b> {{.Decision}}</p>{{end}}
+  <p class="dim">{{if .FromTask}}<a href="/task/{{.FromTask}}">requesting task</a>{{end}}{{if .InvTask}} · <a href="/task/{{.InvTask}}">investigator's run</a>{{end}}{{if .PRURL}} · <a href="{{.PRURL}}" hx-boost="false" target="_blank" rel="noopener">pull request</a>{{end}}</p>
+</article>{{end}}
+
+{{define "notes"}}{{if .Repo}}<h2>Notebook of {{.Repo}}</h2>
+  {{range .Sections}}<details class="file"><summary>{{.Key}}</summary><pre class="doc">{{.Value}}</pre></details>{{end}}
+  {{if .Entries}}<ol class="notes">{{range .Entries}}<li><time>{{shortTS .TS}}</time> <b>{{.Author}}</b>{{if .Tag}} <span class="tag">{{.Tag}}</span>{{end}}<div class="t">{{.Text}}</div></li>{{end}}</ol>
+  {{else}}<p class="dim">No notes yet.</p>{{end}}
+{{else}}<p class="dim">No repository.</p>{{end}}{{end}}

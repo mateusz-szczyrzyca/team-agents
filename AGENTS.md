@@ -20,7 +20,7 @@ installation right now, started by the same `agent` script you are about to chan
 |---|---|---|---|
 | `agent` | `bin/agent` | Bash | the CLI and the runner: tasks, teams, git worktrees, systemd units, prompts, watchdog, notifications, archives |
 | `agentbus` | `agentbus/` | Go, standard library only | the MCP server every agent run talks to (messages, reservations, investigations, teams, board, notebook, checkpoints) and CLI subcommands the script uses; shared state in `~/agents/bus/` under `flock` |
-| `agentlive` | `live/` | Go + Bubble Tea | the terminal panel `agent live` |
+| `agentlive` | `live/` | Go + Bubble Tea; the web interface: Go standard library + vendored htmx | the terminal panel `agent live`, and `agent web` (`live/web*.go`, templates and static files in `live/web/`; never edit `live/web/static/vendor/` by hand — `tools/update-web-vendor.sh`) |
 | prompts | `prompts/*.md` | Markdown | the protocol given to the agents; `{{PLACEHOLDERS}}` are filled by `build_prompt` in `bin/agent` |
 | `errgen` | `tools/errgen/` | Go | generates the per-operation error types `agentbus/errors_gen.go` from `agentbus/errors.json` |
 | `doccheck` | `tools/doccheck/` | Go | fails when a constant, variable, type or struct field has no comment |

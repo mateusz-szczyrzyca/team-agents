@@ -70,6 +70,10 @@ type Investigation struct {
 	File      string `json:"file"`       // markdown record of the investigation
 	Summary   string `json:"summary"`    // one-line result summary
 	Decision  string `json:"decision"`   // the requester's decision after the result
+	Kind      string `json:"kind"`       // "" (a question) | review (a PR review)
+	PRURL     string `json:"pr_url"`     // reviews: the pull request
+	Created   string `json:"created"`    // when it was requested
+	Finished  string `json:"finished"`   // when it ended
 }
 
 // Message is one bus message (a line of messages.jsonl).
@@ -78,6 +82,7 @@ type Message struct {
 	TS   string `json:"ts"`   // local time
 	From string `json:"from"` // sender
 	To   string `json:"to"`   // agent name, "all" or "team:<id>"
+	Kind string `json:"kind"` // chat | checkpoint | board_result | script | … ("" = chat)
 	Text string `json:"text"` // message body
 }
 
@@ -90,6 +95,7 @@ type BoardItem struct {
 	Status   string `json:"status"`   // todo | claimed | done
 	Creator  string `json:"creator"`  // who added it (receives the result)
 	Assignee string `json:"assignee"` // who claimed it
+	For      string `json:"for"`      // the only member that may claim it ("" = anyone at its level)
 	Result   string `json:"result"`   // the submitted result
 }
 
@@ -108,18 +114,47 @@ type QuizInfo struct {
 
 // MemberInfo is a team member's state.
 type MemberInfo struct {
-	State string `json:"state"` // active | sleeping | waking | done | excluded | hung
+	State string `json:"state"` // active | sleeping | waking | done | excluded | hung | paused
 	Tier  string `json:"tier"`  // normal | worker
+	Task  string `json:"task"`  // the member's task ID
+}
+
+// ConsultReplyInfo is one member's answer to a consultation.
+type ConsultReplyInfo struct {
+	Text string `json:"text"` // the answer
+	At   string `json:"at"`   // when it was given
+	Late bool   `json:"late"` // after the time limit
+}
+
+// ConsultInfo is a team consultation (consult_start).
+type ConsultInfo struct {
+	ID       string                       `json:"id"`       // "C<n>"
+	From     string                       `json:"from"`     // who asked
+	Text     string                       `json:"text"`     // what was asked
+	Asked    []string                     `json:"asked"`    // the members asked
+	Started  string                       `json:"started"`  // when it started
+	Deadline string                       `json:"deadline"` // the time limit
+	Replies  map[string]*ConsultReplyInfo `json:"replies"`  // answers by member name
+}
+
+// Reservation is a reserved shared resource (see agentbus Reservation).
+type Reservation struct {
+	Resource string `json:"resource"` // resource name
+	Agent    string `json:"agent"`    // holder
+	Task     string `json:"task"`     // holder's task
+	Note     string `json:"note"`     // why it was reserved
+	Since    string `json:"since"`    // when
 }
 
 // TeamInfo is the part of an agentbus team that the live view needs.
 type TeamInfo struct {
-	ID      string                 `json:"id"`      // team ID
-	Lead    string                 `json:"lead"`    // coordinator's agent name
-	Done    bool                   `json:"done"`    // the team task is finished
-	Board   map[string]*BoardItem  `json:"board"`   // board items by ID
-	Quiz    *QuizInfo              `json:"quiz"`    // the qualification quiz (nil until asked)
-	Members map[string]*MemberInfo `json:"members"` // members by agent name
+	ID       string                  `json:"id"`       // team ID
+	Lead     string                  `json:"lead"`     // coordinator's agent name
+	Done     bool                    `json:"done"`     // the team task is finished
+	Board    map[string]*BoardItem   `json:"board"`    // board items by ID
+	Quiz     *QuizInfo               `json:"quiz"`     // the qualification quiz (nil until asked)
+	Members  map[string]*MemberInfo  `json:"members"`  // members by agent name
+	Consults map[string]*ConsultInfo `json:"consults"` // consultations by ID
 }
 
 // busState is the subset of agentbus' state.json read by the live view.
@@ -127,6 +162,7 @@ type busState struct {
 	Agents         map[string]*Presence      `json:"agents"`         // running agents by name
 	Investigations map[string]*Investigation `json:"investigations"` // investigations by ID
 	Teams          map[string]*TeamInfo      `json:"teams"`          // teams by ID
+	Reservations   map[string]*Reservation   `json:"reservations"`   // taken resources by name
 }
 
 // Snapshot is the state of all tasks and the bus at one point in time.
@@ -138,6 +174,7 @@ type Snapshot struct {
 	Invs   []*Investigation     // investigations sorted by ID
 	Msgs   []Message            // tail of messages.jsonl
 	Teams  map[string]*TeamInfo // teams by ID
+	Res    []*Reservation       // reserved resources, sorted by name
 }
 
 // activeStatuses are task statuses of unfinished tasks (shown regardless of acknowledgement).
@@ -427,6 +464,10 @@ func loadSnapshot(home, busDir string) *Snapshot {
 		s.Invs = append(s.Invs, inv)
 	}
 	sort.Slice(s.Invs, func(i, j int) bool { return s.Invs[i].ID < s.Invs[j].ID })
+	for _, r := range st.Reservations {
+		s.Res = append(s.Res, r)
+	}
+	sort.Slice(s.Res, func(i, j int) bool { return s.Res[i].Resource < s.Res[j].Resource })
 	for _, l := range tailLines(filepath.Join(busDir, "messages.jsonl"), 300, 1024*1024) {
 		var m Message
 		if json.Unmarshal([]byte(l), &m) == nil {
@@ -516,7 +557,7 @@ func NewWatcher(home, busDir string, remind time.Duration) *Watcher {
 
 // finalSummary returns the first lines of a task's last agent message (final.md) joined with " | ".
 func finalSummary(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "final.md"))
+	data, err := os.ReadFile(filepath.Join(dir, "final.md")) // #nosec G703 -- dir is a task directory from the listing of AGENTS_HOME/tasks; a request only selects one
 	if err != nil {
 		return ""
 	}

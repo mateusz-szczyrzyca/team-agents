@@ -7,8 +7,8 @@
 # Go modules of this repository (each has its own go.mod).
 GO_MODULES := agentbus live tools/doccheck tools/errgen
 # Bash scripts checked with shellcheck (bats files included: shellcheck understands @test blocks).
-SHELL_SCRIPTS := bin/agent install.sh tools/install-linters.sh tests/integration/run.sh examples/notify/*.sh \
-	tests/unit/helpers.bash tests/unit/agent.bats tests/unit/stubs/systemd-run tests/unit/stubs/systemctl tests/unit/stubs/gh
+SHELL_SCRIPTS := bin/agent install.sh tools/install-linters.sh tools/update-web-vendor.sh tests/integration/run.sh examples/notify/*.sh \
+	tests/unit/helpers.bash tests/unit/agent.bats tests/unit/web.bats tests/unit/stubs/systemd-run tests/unit/stubs/systemctl tests/unit/stubs/gh
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 

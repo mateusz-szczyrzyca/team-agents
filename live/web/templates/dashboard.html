@@ -1,0 +1,12 @@
+{{define "content"}}{{with .Data}}
+<div class="dash" hx-ext="sse" sse-connect="/events/dashboard">
+  <p class="dash-head" sse-swap="head">{{template "dash-head" .}}</p>
+  <div sse-swap="table">{{template "dash-table" .}}</div>
+  <div class="panels">
+    <section class="panel"><h2>Events</h2>
+      <ol class="events" sse-swap="event" hx-swap="afterbegin"><li class="dim">Events appear here as they happen.</li></ol>
+    </section>
+    <section class="panel"><h2>Reservations</h2><div sse-swap="res">{{template "dash-res" .}}</div></section>
+  </div>
+</div>
+{{end}}{{end}}

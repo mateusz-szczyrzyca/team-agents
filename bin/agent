@@ -180,6 +180,11 @@ investigator_names() { printf '%s\n' "${!INVESTIGATORS_TYPE[@]}" | sort; }
 is_investigator() { [[ -n ${INVESTIGATORS_TYPE[$1]:-} ]]; }
 AGENTLIVE_BIN="${AGENTLIVE_BIN:-$HOME/.local/bin/agentlive}"
 LIVE_REMIND_MIN="${LIVE_REMIND_MIN:-1}"
+# Web interface (agent web, agentweb.service): a loopback address only — remote access through `tailscale serve`;
+# the Tailscale logins let in that way; the URL under which you reach it (links in notifications, "" = none).
+AGENT_WEB_LISTEN="${AGENT_WEB_LISTEN:-127.0.0.1:8787}"
+AGENT_WEB_USERS="${AGENT_WEB_USERS:-}"
+AGENT_WEB_URL="${AGENT_WEB_URL:-}"
 AUTH_MODEL_ANTHROPIC="${AUTH_MODEL_ANTHROPIC:-haiku}"
 AUTH_MODEL_OPENAI="${AUTH_MODEL_OPENAI:-gpt-6-luna}"
 AUTH_MODEL_GEMINI="${AUTH_MODEL_GEMINI:-}"
@@ -1245,6 +1250,9 @@ notify() { # id status final note
     if [[ $status == waiting ]]; then
       printf 'Questions: %s — answer with: agent answer %s\n' \
         "$(count_questions "$TASKS/$id/questions-$ROUND.md")" "$id"
+      if [[ -n $AGENT_WEB_URL ]]; then printf 'Answer: %s/questions/%s?max=1\n' "${AGENT_WEB_URL%/}" "$id"; fi
+    elif [[ -n $AGENT_WEB_URL ]]; then
+      printf 'Open: %s/task/%s\n' "${AGENT_WEB_URL%/}" "$id"
     fi
     if [[ -f $WORKTREE/.agents/reports/$id.md ]]; then
       printf 'Report: .agents/reports/%s.md (branch %s)\n' "$id" "$BRANCH"
@@ -2405,6 +2413,28 @@ cmd_live() {
     --remind "$remind" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" "${feed[@]}"
 }
 
+cmd_web() { # runs the web interface in the foreground (agentweb.service runs this)
+  [[ -x $AGENTLIVE_BIN ]] || die "$AGENTLIVE_BIN not found — run ./install.sh again"
+  exec "$AGENTLIVE_BIN" web --home "$AGENTS_HOME" --bus "$BUS_DIR" --agent "$SELF" \
+    --listen "$AGENT_WEB_LISTEN" --users "$AGENT_WEB_USERS" \
+    --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS"
+}
+
+cmd__agents_json() { # the configured agents and investigators as JSON lines (for agentlive web)
+  local a tier inv
+  for a in "${!AGENT_TYPE[@]}"; do
+    tier=normal
+    [[ " ${WORKER_AGENTS[*]} " == *" $a "* ]] && tier=worker
+    jq -cn --arg name "$a" --arg type "${AGENT_TYPE[$a]}" --arg model "${AGENT_MODEL[$a]:-}" --arg tier "$tier" \
+      --arg provider "$(agent_provider "$a")" '{name: $name, type: $type, model: $model, tier: $tier, provider: $provider}'
+  done
+  while read -r inv; do
+    [[ -n $inv ]] || continue
+    jq -cn --arg name "$inv" --arg type "${INVESTIGATORS_TYPE[$inv]}" --arg model "${INVESTIGATORS_MODEL[$inv]:-}" \
+      '{name: $name, type: $type, model: $model, tier: "investigator", provider: ""}'
+  done < <(investigator_names)
+}
+
 cmd_ack() { # <id | all> — acknowledges finished tasks (they disappear from agent live)
   local q=${1:?usage: agent ack <id|all>} d n=0
   if [[ $q == all ]]; then
@@ -2796,6 +2826,7 @@ agent clean <id>                          remove the task's worktree (the branch
 agent inv [number | --all]                investigation queue / full record of one
 agent dispatch                            manually start the next queued investigation (fallback)
 agent live [--feed] [--remind MIN]        live panel (or an event stream with --feed)
+agent web                                 web interface in the foreground (normally: agentweb.service)
 agent ack <id|all>                        acknowledge finished tasks (they leave the panel)
 agent run --team a,b[,c] [--verify] "task"  team; --verify: an investigator reviews the PR at the end
 agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
@@ -2827,6 +2858,8 @@ main() {
     bus)     cmd_bus "$@" ;;
     inv)     cmd_inv "$@" ;;
     live)    cmd_live "$@" ;;
+    web)     cmd_web ;;
+    _agents-json) cmd__agents_json ;;
     ack)     cmd_ack "$@" ;;
     authenticated) cmd_authenticated ;;
     team)    cmd_team "$@" ;;

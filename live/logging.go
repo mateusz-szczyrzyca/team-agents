@@ -42,7 +42,25 @@ const (
 	LogCorruptActivityLine LogEvent = "corrupt_activity_line" // a line of activity.jsonl could not be decoded
 	LogCorruptNoteLine     LogEvent = "corrupt_notebook_line" // a line of a notebook log could not be decoded
 	LogAcknowledgeFailed   LogEvent = "acknowledge_failed"    // a finished task could not be acknowledged
+	LogWebStarted          LogEvent = "web_started"           // the web interface listens
+	LogWebStartFailed      LogEvent = "web_start_failed"      // the web interface could not start
+	LogWebStopFailed       LogEvent = "web_stop_failed"       // the web interface did not stop cleanly
+	LogWebAccessDenied     LogEvent = "web_access_denied"     // a request was refused (see "cause")
+	LogWebRenderFailed     LogEvent = "web_render_failed"     // a page or fragment could not be rendered
+	LogWebWriteFailed      LogEvent = "web_write_failed"      // a response could not be written (client gone)
+	LogWebViewFailed       LogEvent = "web_view_failed"       // a view could not be shown (see "cause")
+	LogWebAgentsFailed     LogEvent = "web_agents_failed"     // `agent _agents-json` failed or printed garbage
+	LogWebAnswersSaved     LogEvent = "web_answers_saved"     // answers were saved from the form
+	LogWebAnswersFailed    LogEvent = "web_answers_failed"    // answers from the form could not be saved or sent
 )
+
+// logInfo writes an info record with the given event name.
+func logInfo(ev LogEvent, attrs ...any) { logger.Info(string(ev), attrs...) }
+
+// logError writes an error record for a typed failure, with its class or cause.
+func logError(ev LogEvent, err error, attrs ...any) {
+	logger.Error(string(ev), append(attrs, "error", err.Error())...)
+}
 
 // logWarn writes a warning record with the given event name.
 func logWarn(ev LogEvent, attrs ...any) { logger.Warn(string(ev), attrs...) }
@@ -75,7 +93,7 @@ const journalSocket = "/run/systemd/journal/socket"
 // logger is the process-wide structured logger. Until setupLogging runs it discards everything; tests replace it.
 var logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 
-// setupLogging configures logger for this process. home is AGENTS_HOME, role is "panel" or "feed".
+// setupLogging configures logger for this process. home is AGENTS_HOME, role is "panel", "feed" or "web".
 func setupLogging(home, role string) {
 	var handlers []slog.Handler
 

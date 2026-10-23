@@ -1,0 +1,11 @@
+{{define "content"}}
+<div class="scroll"><table>
+<thead><tr><th>Team</th><th>Coordinator</th><th>Members</th><th class="hide-narrow">Board</th></tr></thead>
+<tbody>{{range .Data}}<tr class="{{if .Done}}st-dim{{end}}">
+  <td><a href="/team/{{.ID}}">{{.ID}}</a>{{if .Done}} <span class="tag">finished</span>{{end}}</td>
+  <td>{{.Lead}}</td>
+  <td>{{.Members}} <span class="dim">({{.States}})</span></td>
+  <td class="hide-narrow">{{.Todo}} to do · {{.Claimed}} in progress · {{.DoneItems}} done</td>
+</tr>{{else}}<tr><td colspan="4" class="dim">(no teams)</td></tr>{{end}}</tbody>
+</table></div>
+{{end}}

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"historyCacheSize":0,"allowEval":false}'>
+<title>{{.Title}} · team-agents</title>
+<link rel="stylesheet" href="/static/app.css?v={{.AssetV}}">
+<script src="/static/vendor/htmx.min.js?v={{.AssetV}}" defer></script>
+<script src="/static/vendor/sse.min.js?v={{.AssetV}}" defer></script>
+<script src="/static/app.js?v={{.AssetV}}" defer></script>
+</head>
+<body class="{{if .Max}}max{{end}}" hx-boost="true">
+<header class="top">
+  <button type="button" id="menu-btn" class="icon" aria-controls="menu" aria-expanded="false" title="Menu (m)">☰</button>
+  <a href="/" class="brand">team-agents</a>
+  {{if .Host}}<span class="host">{{.Host}}</span>{{end}}
+  <span class="spacer"></span>
+  {{if .Waiting}}<a href="/questions" class="badge st-waiting">? {{.Waiting}} waiting for you</a>{{end}}
+</header>
+<nav id="menu" aria-label="Views">
+  <a href="/" data-views="dashboard">Dashboard</a>
+  <a href="/agents" data-views="agents">Agents</a>
+  <a href="/teams" data-views="teams team">Teams</a>
+  <a href="/bus" data-views="bus">Bus</a>
+  <a href="/questions" data-views="questions answer">Questions{{if .Waiting}} <span class="count">{{.Waiting}}</span>{{end}}</a>
+  <a href="/investigations" data-views="investigations investigation">Investigations</a>
+  <a href="/logs" data-views="logs">Logs</a>
+  <p class="menu-help">m menu · f maximize · Esc back</p>
+</nav>
+<div id="scrim" hidden></div>
+<main id="view" data-view="{{.View}}">
+  <div class="viewbar">
+    <h1>{{.Title}}</h1>
+    <span class="spacer"></span>
+    {{block "tools" .}}{{end}}
+    <button type="button" class="icon" data-act="max" title="Maximize: cover the menu (f · Esc)">⤢</button>
+    <button type="button" class="icon" data-act="fullscreen" title="Full screen">⛶</button>
+  </div>
+  <noscript><p class="notice failed">This interface needs JavaScript (htmx, served by this host).</p></noscript>
+  {{block "content" .}}{{end}}
+</main>
+</body>
+</html>

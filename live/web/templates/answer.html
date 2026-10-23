@@ -1,0 +1,28 @@
+{{define "tools"}}{{with .Data}}<a class="btn" href="/task/{{.ID}}?tab=questions">Task</a>{{end}}{{end}}
+{{define "content"}}{{with .Data}}
+<p class="dim">{{.Row.Name}} · {{.ID}} · round {{.Round}} · <code>{{base .File}}</code></p>
+{{if .Message}}<p class="notice{{if .Failed}} failed{{else}} ok{{end}}" role="status">{{.Message}}</p>{{end}}
+{{if .Sent}}<p><a class="btn" href="/task/{{.ID}}">Follow the task</a> <a class="btn" href="/questions">Other questions</a></p>
+{{else}}
+{{if .Intro}}<pre class="doc intro">{{.Intro}}</pre>{{end}}
+<form method="post" action="/questions/{{.ID}}" class="answers">
+{{range .Qs}}<fieldset class="q{{if .Err}} has-err{{end}}">
+  <legend>{{.Q.Num}}. {{.Q.Title}}</legend>
+  {{if .Q.Body}}<pre class="doc">{{.Q.Body}}</pre>{{end}}
+  {{if .Q.Recommended}}<p class="rec"><b>Recommended:</b> {{.Q.Recommended}}</p>{{end}}
+  <div class="choices">{{$q := .}}
+    {{if .Q.Recommended}}<label class="choice"><input type="radio" name="c{{.Index}}" value="ok"{{if eq .Choice "ok"}} checked{{end}}> <b>ok</b> — accept the recommendation</label>{{end}}
+    {{range .Q.Options}}<label class="choice"><input type="radio" name="c{{$q.Index}}" value="{{.Letter}}"{{if eq $q.Choice .Letter}} checked{{end}}> <b>{{.Letter}})</b> {{.Text}}</label>{{end}}
+    <label class="choice"><input type="radio" name="c{{.Index}}" value="own"{{if eq .Choice "own"}} checked{{end}}> my own answer (below)</label>
+  </div>
+  <label class="own">Your answer, or a comment to the choice above
+    <textarea name="t{{.Index}}" rows="3">{{.Text}}</textarea></label>
+  {{if .Err}}<p class="err">{{.Err}}</p>{{end}}
+</fieldset>{{end}}
+<div class="actions">
+  <button type="submit" name="action" value="send" class="btn primary">Send answers</button>
+  <button type="submit" name="action" value="draft" class="btn">Save draft</button>
+</div>
+</form>
+{{end}}
+{{end}}{{end}}

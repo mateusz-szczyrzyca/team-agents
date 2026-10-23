@@ -44,6 +44,7 @@ it is specific to that: it works for any repository on any Linux host with `syst
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [The live panel](#the-live-panel)
+- [Web interface](#web-interface)
 - [MCP tools available to agents](#mcp-tools-available-to-agents)
 - [Files and state](#files-and-state)
 - [Notifications](#notifications)
@@ -392,6 +393,7 @@ Then:
 | `AGENT_IDLE_RUN_SEC`, `AGENT_WAKE_LOOP_MAX`, `AGENT_WAKE_RATE_MAX`, `AGENT_WAKE_LOOP_PAUSE_MIN` | wake-loop guard (default 120 s, 4 idle runs, 30 runs / 10 min, 15 min pause) |
 | `AGENT_QUOTA_PAUSE_MIN` | pause after an exhausted quota when the CLI does not say when it resets (default 30 min) |
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
+| `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
 | `QUESTIONS_EDITOR`, `VSCODE_SERVER_DIRS` | open new questions files in the connected VS Code window (`vscode`, default) or not (`off`); where VS Code servers live |
 | `AGENT_LANGUAGE` | language of questions and notifications — what only you read (default English) |
 | `REPO_LANGUAGE` | language of commits, PRs, reviews, reports and code comments (default English) |
@@ -506,6 +508,51 @@ event stream with bus messages, status changes and periodic reminders.
 | `x` / `X` | acknowledge the selected / all finished tasks |
 | `f` | full-screen event stream |
 | `q` | quit (tasks keep running) |
+
+## Web interface
+
+The same data as `agent live`, in a browser — on a laptop or a phone — plus answering questions. It runs as the
+systemd user service `agentweb.service` (installed and started by `./install.sh`; `agent web` runs it in the
+foreground). Plain HTML from the server; [htmx](https://htmx.org) swaps the views and keeps the live ones up to date
+over server-sent events. No npm, no JavaScript build: the two htmx files are vendored in `live/web/static/vendor`
+(versions and SHA-256 in `SOURCES`, checked by a test; update with `tools/update-web-vendor.sh`).
+
+The menu on the left slides out on demand (`☰` or `m`). Every view can be maximized to cover the menu (`⤢` or `f`,
+`Esc` back; it is kept in the URL as `?max=1`, so a link can open a view that way) or shown full screen (`⛶`).
+
+| View | What it shows |
+|---|---|
+| Dashboard | the panel's table (status, time, repository, stage, last activity) live, events as they happen, reserved resources |
+| Agents | the configured agents and investigators: tier, CLI, model, provider, what each is doing now, pauses (until when, why) |
+| Task | header (status, time, branch, team) and sections: live activity, the prompt of every run, question rounds, investigations, final message, error logs, the repository notebook, `meta.env` |
+| Teams / Team | members and their states, the board (items, `for`, results), consultations, the quiz, the team's messages, the notebook |
+| Bus | all bus messages, live, filtered by team, agent, kind or text |
+| Questions | everything waiting for your answers, and the answer form |
+| Investigations | investigations and PR reviews with their results and records |
+| Logs | `agent`, `agentbus` and `agentlive` logs, by level and text, optionally refreshed every 5 s |
+
+**Answering in the browser.** The form shows each question with its recommendation (pre-selected: `ok`), the
+options as buttons and a field for your own answer or a comment. *Save draft* writes the verdicts into the
+questions file; *Send answers* also adds `**ANSWERED**` and resumes the task — the same path as saving the file in
+an editor (see [Questions and answers](#questions-and-answers)), so the two can be mixed.
+
+**Access.** The server listens on a loopback address only (`AGENT_WEB_LISTEN`, default `127.0.0.1:8787`; any other
+address is refused). On the host — or through an SSH tunnel (`ssh -L 8787:127.0.0.1:8787 pi5`) — just open
+`http://127.0.0.1:8787`. Over your tailnet:
+
+```bash
+tailscale serve --bg --https=8787 http://127.0.0.1:8787     # https://<host>.<tailnet>.ts.net:8787
+```
+
+and list the Tailscale logins allowed in `AGENT_WEB_USERS` (`tailscale serve` tells the server who you are; anyone
+else on the tailnet is refused). A request forwarded without a Tailscale identity — **Tailscale Funnel** or another
+proxy — is refused: never expose this port with Funnel. Changes (the answer form) are accepted only from this
+interface itself (htmx header, same origin). Set `AGENT_WEB_URL` to the address you open, and notifications get
+direct links: `Answer: …/questions/<task>?max=1` for questions, `Open: …/task/<task>` otherwise.
+
+**Several instances.** Each instance runs its own web interface and shows its own tasks in full. Showing the
+other instances' tasks (from their manifests, linking to their interfaces) and the hub's bus state on non-lead
+instances comes with the multi-instance work.
 
 ## MCP tools available to agents
 

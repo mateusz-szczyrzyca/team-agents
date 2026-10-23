@@ -1,0 +1,5 @@
+# Vendored JavaScript of the web interface — copied unchanged from the npm registry tarballs (checked against the
+# registry's sha512 integrity). Updating: tools/update-web-vendor.sh. The SHA-256 sums below are checked by
+# TestVendoredAssetsMatchSources; change a file only together with this list.
+htmx.min.js d6fdc75f204e6bdefa99b69bf1e6d4ac69b8a364f77929f45c13476b4000f717 htmx.org@2.0.11 dist/htmx.min.js
+sse.min.js 98a46496de0c3605fbffdce9167ba427bdd9553184f83f149c261891a92c0136 htmx-ext-sse@2.2.4 dist/sse.min.js

@@ -1,0 +1,7 @@
+{{define "content"}}
+{{range .Data}}<article class="card">
+  <h3><a href="/questions/{{.Row.ID}}">{{.Row.Name}}</a> <span class="st st-waiting">{{.Count}} question{{if ne .Count 1}}s{{end}}</span> <span class="dim">round {{.Round}} · {{.Row.Since}}</span></h3>
+  <p class="dim">{{.Row.ID}} · {{.Row.Repo}}{{if .Row.Team}} · team {{.Row.TeamShort}}{{end}}</p>
+  <p><a class="btn primary" href="/questions/{{.Row.ID}}">Answer</a></p>
+</article>{{else}}<p class="dim">Nobody is waiting for your answers.</p>{{end}}
+{{end}}

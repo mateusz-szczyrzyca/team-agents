@@ -1,0 +1,4 @@
+{{define "content"}}{{with .Data}}
+{{template "inv-card" .I}}
+{{if .Text}}<pre class="doc">{{.Text}}</pre>{{else}}<p class="dim">No record yet.</p>{{end}}
+{{end}}{{end}}

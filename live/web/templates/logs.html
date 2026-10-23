@@ -1,0 +1,16 @@
+{{define "content"}}{{with .Data}}
+<form class="filters" method="get" action="/logs">
+  <label>Log <select name="src">{{$s := .Src}}{{range .Sources}}<option{{if eq . $s}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+  <label>Level <select name="level">{{$l := .Level}}<option value="">all</option>{{range $v := (split "info warn error")}}<option{{if eq $v $l}} selected{{end}}>{{$v}}</option>{{end}}</select></label>
+  <label>Text <input type="search" name="q" value="{{.Q}}"></label>
+  <label>Lines <input type="number" name="n" value="{{.N}}" min="10" max="5000" step="10"></label>
+  <label class="check"><input type="checkbox" name="live" value="1"{{if .Live}} checked{{end}}> refresh every 5 s</label>
+  <button type="submit" class="btn">Show</button>
+</form>
+<div id="logtable"{{if .Live}} hx-get="/logs?{{.Query}}" hx-trigger="every 5s" hx-select="#logtable" hx-target="this" hx-swap="outerHTML"{{end}}>
+<div class="scroll"><table class="logs">
+<thead><tr><th>Time</th><th>Level</th><th>Event</th><th class="hide-narrow">Task</th><th>Details</th></tr></thead>
+<tbody>{{range .Rows}}<tr class="lv-{{.Level}}"><td class="num">{{.TS}}</td><td>{{.Level}}</td><td><b>{{.Event}}</b> <span class="dim">{{.Component}}</span></td>
+<td class="hide-narrow">{{if .Task}}<a href="/task/{{.Task}}">{{.Task}}</a>{{end}}</td><td class="t">{{.Rest}}</td></tr>{{else}}<tr><td colspan="5" class="dim">(no records)</td></tr>{{end}}</tbody>
+</table></div></div>
+{{end}}{{end}}

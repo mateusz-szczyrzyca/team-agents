@@ -1,0 +1,24 @@
+{{define "tools"}}{{with .Data}}<a class="btn" href="/bus?team={{.ID}}">Messages</a>{{end}}{{end}}
+{{define "content"}}{{with .Data}}
+<p class="dim">{{.ID}}{{if .T.Done}} · <span class="tag">finished</span>{{end}} · coordinator: {{if .T.Lead}}{{.T.Lead}}{{else}}not chosen yet{{end}}</p>
+<h2>Members</h2>
+<div class="scroll"><table>
+<thead><tr><th>Member</th><th>State</th><th class="hide-narrow">Tier</th><th>Task now</th></tr></thead>
+<tbody>{{range .Members}}<tr>
+  <td class="name">{{.Name}}{{if .Lead}} <span class="lead" title="coordinator">★</span>{{end}}</td>
+  <td><span class="st {{.StateClass}}">{{.State}}</span></td>
+  <td class="hide-narrow">{{.Tier}}</td>
+  <td>{{with .Row}}<a href="/task/{{.ID}}">{{.StatusLabel}}</a> <span class="dim">{{.Since}}</span>{{if .Stage}} <span class="stage">{{.Stage}}</span>{{end}} <span class="dim">{{trunc .Last 140}}</span>{{else}}<span class="dim">{{.Task}}</span>{{end}}</td>
+</tr>{{end}}</tbody>
+</table></div>
+<h2>Board</h2>
+{{range .Board}}<details class="file item-{{.Status}}"><summary><b>{{.ID}}</b> <span class="tag">{{.Level}}</span> <span class="st {{if eq .Status "done"}}st-done{{else if eq .Status "claimed"}}st-running{{else}}st-dim{{end}}">{{.Status}}</span>{{if .Assignee}} → {{.Assignee}}{{end}}{{if .For}} <span class="tag">for {{.For}}</span>{{end}} {{.Title}}</summary>
+  <pre class="doc">{{.Details}}</pre>{{if .Result}}<h4>Result</h4><pre class="doc">{{.Result}}</pre>{{end}}<p class="dim">from {{.Creator}}</p></details>
+{{else}}<p class="dim">The board is empty.</p>{{end}}
+{{if .Consults}}<h2>Consultations</h2>{{range .Consults}}<article class="card"><h3>{{.ID}} <span class="dim">from {{.From}} · until {{shortTS .Deadline}}</span></h3><pre class="doc">{{.Text}}</pre>
+  <ul class="plain">{{range .Answers}}<li><b>{{.Key}}:</b> {{.Value}}</li>{{end}}</ul></article>{{end}}{{end}}
+{{with .T.Quiz}}<h2>Quiz</h2><p>{{.Question}}</p><ul class="plain">{{range $n, $a := .Answers}}<li><b>{{$n}}</b>: {{$a.Answer}} <span class="dim">after {{$a.Secs}} s</span></li>{{end}}</ul>{{end}}
+<h2>Messages <a class="small" href="/bus?team={{.ID}}">(live)</a></h2>
+<ol class="msgs">{{range .Msgs}}{{template "msg-item" .}}{{else}}<li class="dim">(no messages)</li>{{end}}</ol>
+{{template "notes" .Notes}}
+{{end}}{{end}}

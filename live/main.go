@@ -1,8 +1,9 @@
 // agentlive — live view of the agents in ~/agents (started by `agent live`).
 //
 //	agentlive --home ~/agents --agent ~/.local/bin/agent [--remind 1m] [--queue-max 3] [--feed]
+//	agentlive web [--listen 127.0.0.1:8787] [--users login,…] …
 //
-// Default mode: full-screen panel (Bubble Tea). --feed: event stream on stdout.
+// Default mode: full-screen panel (Bubble Tea). --feed: event stream on stdout. web: the web interface (web.go).
 package main
 
 import (
@@ -27,8 +28,12 @@ type config struct {
 	queueMax int           // investigation queue limit, for the queue summary line
 }
 
-// main parses flags and starts either the panel or the feed.
+// main parses flags and starts the panel, the feed or (agentlive web …) the web interface.
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "web" {
+		runWebCmd(os.Args[2:])
+		return
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agentlive: no home directory:", err)

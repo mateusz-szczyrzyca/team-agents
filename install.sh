@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs everything that does not need root: agentbus and agentlive (Go), the `agent` script,
+# Installs everything that does not need root: agentbus and agentlive (Go, also the web interface), the `agent` script,
 # the prompts and the configuration templates.
 # Run it from the project directory as the user the agents will run as:  ./install.sh
 # Re-running it updates the binaries, the script and the prompts; it never overwrites
@@ -156,6 +156,35 @@ mkdir -p "$AH/notify"
 for f in "$SRC"/examples/notify/*.sh; do
   [[ -f $AH/notify/${f##*/} ]] || install -m 755 "$f" "$AH/notify/${f##*/}"
 done
+
+echo "» web interface (agentweb.service: agent web)"
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+mkdir -p "$UNIT_DIR"
+cat > "$UNIT_DIR/agentweb.service" <<UNIT
+[Unit]
+Description=team-agents web interface (agent web)
+
+[Service]
+ExecStart=$BIN/agent web
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+UNIT
+if systemctl --user show-environment >/dev/null 2>&1; then   # a query: is there a systemd user session?
+  systemctl --user daemon-reload
+  if ! systemctl --user enable agentweb.service 2>/dev/null; then
+    echo "  WARNING: agentweb.service could not be enabled (start it by hand: systemctl --user start agentweb)"
+  fi
+  if systemctl --user restart agentweb.service; then
+    echo "  running — see README, \"Web interface\" (local address: AGENT_WEB_LISTEN in agents.conf, default 127.0.0.1:8787)"
+  else
+    echo "  WARNING: agentweb.service did not start — see: journalctl --user -u agentweb"
+  fi
+else
+  echo "  no systemd user session here — run the web interface with: agent web"
+fi
 
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "WARNING: add $BIN to your PATH (e.g. in ~/.bashrc)";; esac
 

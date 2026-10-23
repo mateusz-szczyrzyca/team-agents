@@ -1,0 +1,26 @@
+{{define "tools"}}{{with .Data}}{{if eq .T.Status "waiting"}}<a class="btn primary" href="/questions/{{.T.ID}}">Answer</a>{{end}}{{end}}{{end}}
+{{define "content"}}{{with .Data}}
+<div class="task-meta">
+  <p class="task-head" id="task-head">{{template "task-head" .Row}}{{if .Paused}} · {{.Paused}}{{end}}</p>
+  <p class="dim">{{.T.ID}} · {{.T.Type}}{{if .T.Model}} {{.T.Model}}{{end}} · {{.T.Repo}} · <code>{{.T.Branch}}</code> · run {{.T.Run}}{{if .T.Round}} · question round {{.T.Round}}{{end}}
+  {{if .T.Team}} · <a href="/team/{{.T.Team}}">team {{.Row.TeamShort}}</a>{{end}}{{if .T.ParentTask}} · for <a href="/task/{{.T.ParentTask}}">{{.T.ParentTask}}</a>{{end}}</p>
+</div>
+<nav class="tabs" aria-label="Sections">{{$cur := .Tab}}{{$id := .T.ID}}{{range .Tabs}}<a href="/task/{{$id}}?tab={{.Key}}"{{if eq .Key $cur}} aria-current="page"{{end}}>{{.Value}}</a>{{end}}</nav>
+{{if eq .Tab "activity"}}
+  <div hx-ext="sse" sse-connect="/events/task/{{.T.ID}}?offset={{.ActOffset}}">
+    <p class="dim live-head" sse-swap="head"></p>
+    <ol class="acts" sse-swap="act" hx-swap="beforeend">{{range .Acts}}{{template "act-item" .}}{{else}}<li class="dim">(no activity yet)</li>{{end}}</ol>
+  </div>
+{{else if eq .Tab "investigations"}}
+  {{range .Invs}}{{template "inv-card" .}}{{else}}<p class="dim">No investigations for this task.</p>{{end}}
+{{else if eq .Tab "report"}}
+  {{if .Text}}<pre class="doc">{{.Text}}</pre>{{else}}<p class="dim">No final message yet.</p>{{end}}
+{{else if eq .Tab "notebook"}}
+  {{template "notes" .Notes}}
+{{else if eq .Tab "meta"}}
+  <div class="scroll"><table class="kv">{{range .Meta}}<tr><th>{{.Key}}</th><td><code>{{.Value}}</code></td></tr>{{end}}</table></div>
+{{else}}
+  {{range .Files}}<details class="file"{{if .Current}} open{{end}}><summary>{{.Name}}{{if .Current}} <span class="tag">current</span>{{end}}</summary><pre class="doc">{{.Text}}</pre></details>
+  {{else}}<p class="dim">Nothing here yet.</p>{{end}}
+{{end}}
+{{end}}{{end}}

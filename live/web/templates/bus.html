@@ -1,0 +1,10 @@
+{{define "content"}}{{with .Data}}
+<form class="filters" method="get" action="/bus">
+  <label>Team <select name="team"><option value="">all</option>{{$t := .F.Team}}{{range .Teams}}<option value="{{.}}"{{if eq . $t}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+  <label>Agent <select name="agent"><option value="">all</option>{{$a := .F.Agent}}{{range .Agents}}<option{{if eq . $a}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+  <label>Kind <select name="kind"><option value="">all</option>{{$k := .F.Kind}}{{range .Kinds}}<option{{if eq . $k}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+  <label>Text <input type="search" name="q" value="{{.F.Q}}"></label>
+  <button type="submit" class="btn">Filter</button>
+</form>
+<ol class="msgs" hx-ext="sse" sse-connect="/events/bus?offset={{.Offset}}&amp;{{.Query}}" sse-swap="msg" hx-swap="beforeend">{{range .Rows}}{{template "msg-item" .}}{{else}}<li class="dim">(no messages)</li>{{end}}</ol>
+{{end}}{{end}}
