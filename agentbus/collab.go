@@ -92,9 +92,9 @@ func spawnAgentCmd(agentCmd, home string, args ...string) {
 // spawnDetached starts `program args...` detached from this process (setsid -f when available), with
 // AGENTS_HOME set. Start and exit failures are logged as *ProcessError side effects.
 func spawnDetached(home, program string, args ...string) {
-	cmd := exec.Command(program, args...)
+	cmd := exec.Command(program, args...) //nolint:gosec // G204: the operator configures the local agent command; no shell is involved.
 	if _, err := exec.LookPath("setsid"); err == nil {
-		cmd = exec.Command("setsid", append([]string{"-f", program}, args...)...)
+		cmd = exec.Command("setsid", append([]string{"-f", program}, args...)...) //nolint:gosec // G204: fixed setsid wraps the same operator-configured command.
 	}
 	cmd.Env = append(os.Environ(), "AGENTS_HOME="+home)
 	if err := cmd.Start(); err != nil {
