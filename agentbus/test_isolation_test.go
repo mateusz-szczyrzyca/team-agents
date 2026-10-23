@@ -38,6 +38,17 @@ func TestLegacyLeadershipRecordsWakeWithoutSpawning(t *testing.T) {
 	}
 }
 
+// TestGuardSelfCheckDetectsClosedWrite requires the syscall guard's self-check to have seen a file that was written
+// and closed in a synthetic protected home; the suite stops before any test when that check does not detect it.
+func TestGuardSelfCheckDetectsClosedWrite(t *testing.T) {
+	if os.Getenv(guardChildEnv) == "" {
+		t.Skip("syscall guard is inactive on this platform; the suite start prints the reason")
+	}
+	if got := os.Getenv(guardResultEnv); got != "detected" {
+		t.Fatalf("syscall guard self-check result %q, want %q: closed writes to a protected home are not reported", got, "detected")
+	}
+}
+
 // TestHomeDescriptorGuardRejectsLeakedFiles verifies the real-home check entirely with a synthetic home.
 func TestHomeDescriptorGuardRejectsLeakedFiles(t *testing.T) {
 	if runtime.GOOS != "linux" {
