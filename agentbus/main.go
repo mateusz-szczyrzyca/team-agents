@@ -1313,6 +1313,10 @@ func cmdCommandEnqueue(args []string) {
 	if *instance == "" || *kind == "" || *task == "" {
 		exitOn(opErr(CommandEnqueueInvalidParams, "missing required flags --instance, --kind, or --task").asError())
 	}
+	if ok, err := forwardCLI(*dir, "command_enqueue", map[string]any{"instance": *instance, "kind": *kind, "task": *task, "params": map[string]string(params)}); ok {
+		exitOn(err)
+		return
+	}
 	b := &Bus{dir: *dir}
 	h := &Hub{
 		Bus:       b,
@@ -1325,19 +1329,22 @@ func cmdCommandEnqueue(args []string) {
 }
 
 // cmdInstances prints connected instances and their state.
-func cmdInstances(args []string) { exitOn(runInstances(args).asError()) }
+func cmdInstances(args []string) {
+	fs := newFlagSet("instances")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	parseFlags(fs, args)
+	if ok, err := forwardCLI(*dir, "instances", nil); ok {
+		exitOn(err)
+		return
+	}
+	exitOn(runInstances(args).asError())
+}
 
 // runInstances preserves the instances operation on read and stdout failures.
 func runInstances(args []string) *CmdInstancesError {
 	fs := newFlagSet("instances")
 	dir := fs.String("dir", defaultDir(), "state directory")
 	parseFlags(fs, args)
-	if ok, err := forwardCLI(*dir, "instances", nil); ok {
-		if err != nil {
-			return opErr(CmdInstancesStorage, "%v", err)
-		}
-		return nil
-	}
 	b := &Bus{dir: *dir}
 	reg := &HubInstanceRegistry{Bus: b}
 	views, serr := reg.liveViews()
@@ -1345,13 +1352,7 @@ func runInstances(args []string) *CmdInstancesError {
 		return fromStorage(CmdInstancesStorage, serr)
 	}
 	var out cliWriter
-	for _, v := range views {
-		caps := make([]string, len(v.Provided))
-		for i, c := range v.Provided {
-			caps[i] = string(c)
-		}
-		out.println(fmt.Sprintf("%s\t%s/%s\t%d/%d\t%s", v.Name, v.OS, v.Arch, v.Free, v.Total, strings.Join(caps, ",")))
-	}
+	out.printf("%s", formatInstances(views))
 	return fromStorage(CmdInstancesStorage, out.err)
 }
 

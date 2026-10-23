@@ -26,7 +26,10 @@ func (r hubRunRegistry) resolve(c HubCaller) (*Server, *HubCallError) {
 		return nil, opErr(HubCallIdentity, "caller must identify a registered run")
 	}
 	if c.Task == "cli" || c.Agent == "cli" {
-		return &Server{bus: r.bus, me: c.Agent + "@" + c.Instance, instance: c.Instance, role: c.Role, tier: c.Tier}, nil
+		if !hubOperator(c) {
+			return nil, opErr(HubCallIdentity, "invalid instance operator identity")
+		}
+		return &Server{bus: r.bus, me: c.Agent + "@" + c.Instance, info: Presence{Task: c.Task}, instance: c.Instance, role: c.Role, tier: c.Tier}, nil
 	}
 	var summary HubTaskSummary
 	if c.Instance == r.localInstance {

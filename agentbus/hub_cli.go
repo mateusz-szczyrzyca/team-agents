@@ -4,14 +4,22 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 )
 
 // hubCLIDispatcher returns a dispatcher function for allowlisted Hub CLI operations.
 func hubCLIDispatcher(b *Bus, instances *HubInstanceRegistry) func(HubRequest) HubResponse {
 	return func(req HubRequest) HubResponse {
+		if !hubOperator(req.Caller) {
+			return hubErrorResponse(req.RequestID, opErr(HubCallIdentity, "CLI operations require an authenticated instance operator"))
+		}
+		req.Args = qualifyHubArgs(req.Args, req.Caller.Instance)
 		switch req.Op {
+		case "command_enqueue":
+			return handleCLIEnqueue(b, instances, req)
 		case "send":
 			return handleCLISend(b, req)
 		case "team-get":
@@ -108,197 +116,92 @@ func handleCLISend(b *Bus, req HubRequest) HubResponse {
 // handleCLITeamGet retrieves team state as JSON.
 func handleCLITeamGet(b *Bus, req HubRequest) HubResponse {
 	teamID, _ := req.Args["team"].(string)
-	if teamID == "" {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "team-get", Cause: CmdTeamGetNoSuchTeam.String(), Message: missing("team name")},
-		}
-	}
 	var out []byte
-	serr := b.locked(func(st *State) {
+	err := transact(b, CmdTeamGetStorage, func(st *State) *CmdTeamGetError {
 		t := st.Teams[teamID]
-		if t == nil {
-			return
+		if t == nil || !teamHasInstance(t, req.Caller.Instance) {
+			return opErr(CmdTeamGetNoSuchTeam, "no team %s on this instance", teamID)
 		}
-		data, err := json.Marshal(t)
-		if err == nil {
-			out = append(data, '\n')
+		public := *t
+		public.Quiz, public.Consults, public.WakeCmd, public.Home = nil, nil, "", ""
+		public.Members = make(map[string]*TeamMember, len(t.Members))
+		for name, member := range t.Members {
+			publicMember := *member
+			publicMember.Worktree = ""
+			public.Members[name] = &publicMember
 		}
+		data, marshalErr := json.Marshal(&public)
+		if marshalErr != nil {
+			return fromStorage(CmdTeamGetStorage, storageErr(marshalErr, "cannot encode team projection"))
+		}
+		out = append(data, '\n')
+		return nil
 	})
-	if serr != nil {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "team-get", Cause: CmdTeamGetStorage.String(), Message: serr.Error()},
-		}
-	}
-	if len(out) == 0 {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "team-get", Cause: CmdTeamGetNoSuchTeam.String(), Message: fmt.Sprintf("team %q not found", teamID)},
-		}
-	}
-	return HubResponse{
-		RequestID: req.RequestID,
-		Stdout:    &out,
-	}
+	return hubCLIResult(req, out, err)
 }
 
 // handleCLITeamSet sets a member's state in a team.
 func handleCLITeamSet(b *Bus, req HubRequest) HubResponse {
-	teamID, _ := req.Args["team"].(string)
+	team, _ := req.Args["team"].(string)
 	agent, _ := req.Args["agent"].(string)
-	stateStr, _ := req.Args["state"].(string)
-	if teamID == "" || agent == "" || stateStr == "" {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "team-set", Cause: CmdTeamSetNoSuchMember.String(), Message: "missing required arguments"},
-		}
-	}
-	stVal, verr := parseEnum[MemberState](stateStr, "member state")
+	raw, _ := req.Args["state"].(string)
+	state, verr := parseEnum[MemberState](raw, "member state")
 	if verr != nil {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "team-set", Cause: CmdTeamSetInvalidState.String(), Message: verr.Error()},
-		}
+		return hubCLIResult(req, nil, fromValue(CmdTeamSetInvalidState, verr))
 	}
-	serr := transact(b, CmdTeamSetStorage, func(st *State) *CmdTeamSetError {
-		t := st.Teams[teamID]
-		if t == nil {
-			return opErr(CmdTeamSetNoSuchMember, "team %q not found", teamID)
-		}
-		m := t.Members[agent]
-		if m == nil {
-			// Check if qualified name matches
-			for k, mem := range t.Members {
-				if mem.Agent == agent || strings.HasPrefix(k, agent+"@") {
-					m = mem
-					break
-				}
-			}
-		}
-		if m == nil {
-			return opErr(CmdTeamSetNoSuchMember, "member %q not found in team %q", agent, teamID)
-		}
-		m.State = stVal
-		return nil
-	})
-	if serr != nil {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "team-set", Cause: serr.Cause.String(), Message: serr.Message},
-		}
+	if !strings.HasSuffix(agent, "@"+req.Caller.Instance) {
+		return hubCLIResult(req, nil, opErr(CmdTeamSetNoSuchMember, "a node may only update its own member"))
 	}
-	empty := []byte{}
-	return HubResponse{
-		RequestID: req.RequestID,
-		Stdout:    &empty,
-	}
+	text, err := setTeamMember(b, team, agent, state)
+	return hubCLIResult(req, []byte(text), err)
 }
 
 // handleCLITeamDone marks a team as finished.
 func handleCLITeamDone(b *Bus, req HubRequest) HubResponse {
-	teamID, _ := req.Args["team"].(string)
-	if teamID == "" {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "team-done", Cause: CmdTeamDoneStorage.String(), Message: missing("team name")},
-		}
+	team, _ := req.Args["team"].(string)
+	var denied bool
+	if serr := b.locked(func(st *State) { t := st.Teams[team]; denied = t != nil && !teamHasInstance(t, req.Caller.Instance) }); serr != nil {
+		return hubCLIResult(req, nil, fromStorage(CmdTeamDoneStorage, serr))
 	}
-	serr := transact(b, CmdTeamDoneStorage, func(st *State) *CmdTeamDoneError {
-		t := st.Teams[teamID]
-		if t == nil {
-			return opErr(CmdTeamDoneStorage, "team %q not found", teamID)
-		}
-		t.Done = true
-		return nil
-	})
-	if serr != nil {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "team-done", Cause: serr.Cause.String(), Message: serr.Message},
-		}
+	if denied {
+		return hubErrorResponse(req.RequestID, opErr(HubCallIdentity, "team does not belong to this instance"))
 	}
-	empty := []byte{}
-	return HubResponse{
-		RequestID: req.RequestID,
-		Stdout:    &empty,
-	}
+	return hubCLIResult(req, []byte{}, finishTeam(b, team))
 }
 
 // handleCLITeamCreate creates a team on the hub bus.
 func handleCLITeamCreate(b *Bus, req HubRequest) HubResponse {
-	var t Team
-	if raw, ok := req.Args["team_json"].(string); ok {
-		if err := json.Unmarshal([]byte(raw), &t); err != nil {
-			return HubResponse{
-				RequestID: req.RequestID,
-				Error:     &HubWireError{Op: "team-create", Cause: CmdTeamCreateInvalidJSON.String(), Message: err.Error()},
-			}
-		}
-	} else if rawMap, ok := req.Args["team"].(map[string]any); ok {
-		data, _ := json.Marshal(rawMap)
-		if err := json.Unmarshal(data, &t); err != nil {
-			return HubResponse{
-				RequestID: req.RequestID,
-				Error:     &HubWireError{Op: "team-create", Cause: CmdTeamCreateInvalidJSON.String(), Message: err.Error()},
-			}
-		}
-	} else {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "team-create", Cause: CmdTeamCreateMissingFields.String(), Message: "missing team specification"},
-		}
+	raw, ok := req.Args["team_json"].(string)
+	if !ok {
+		return hubCLIResult(req, nil, opErr(CmdTeamCreateMissingFields, "missing team specification"))
 	}
-	serr := transact(b, CmdTeamCreateStorage, func(st *State) *CmdTeamCreateError {
-		if st.Teams == nil {
-			st.Teams = make(map[string]*Team)
-		}
-		if _, exists := st.Teams[t.ID]; exists {
-			return opErr(CmdTeamCreateStorage, "team %q already exists", t.ID)
-		}
-		st.Teams[t.ID] = &t
-		return nil
-	})
-	if serr != nil {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "team-create", Cause: serr.Cause.String(), Message: serr.Message},
-		}
+	var spec remoteTeamSpec
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&spec); err != nil {
+		return hubCLIResult(req, nil, opErr(CmdTeamCreateInvalidJSON, "invalid remote team specification: %v", err))
 	}
-	empty := []byte{}
-	return HubResponse{
-		RequestID: req.RequestID,
-		Stdout:    &empty,
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return hubCLIResult(req, nil, opErr(CmdTeamCreateInvalidJSON, "expected one team specification"))
 	}
+	team, err := spec.team(req.Caller.Instance)
+	if err != nil {
+		return hubCLIResult(req, nil, err)
+	}
+	return hubCLIResult(req, []byte{}, createRemoteTeamRecord(b, team, req.Caller.Instance))
 }
 
 // handleCLIInstances lists the registered instances.
 func handleCLIInstances(_ *Bus, instances *HubInstanceRegistry, req HubRequest) HubResponse {
 	if instances == nil {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "instances", Cause: CmdInstancesStorage.String(), Message: "instances registry is not configured"},
-		}
+		return hubCLIResult(req, nil, opErr(CmdInstancesStorage, "instance registry is not configured"))
 	}
-	records, err := instances.load()
+	views, err := instances.liveViews()
 	if err != nil {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "instances", Cause: CmdInstancesStorage.String(), Message: err.Error()},
-		}
+		return hubCLIResult(req, nil, fromStorage(CmdInstancesStorage, err))
 	}
-	data, mErr := json.Marshal(records)
-	if mErr != nil {
-		return HubResponse{
-			RequestID: req.RequestID,
-			Error:     &HubWireError{Op: "instances", Cause: CmdInstancesStorage.String(), Message: err.Error()},
-		}
-	}
-	out := append(data, '\n')
-	return HubResponse{
-		RequestID: req.RequestID,
-		Stdout:    &out,
-	}
+	return hubCLIResult(req, []byte(formatInstances(views)), (*CmdInstancesError)(nil))
 }
 
 // handleCLIStatus prints the hub's bus status.
@@ -349,4 +252,22 @@ func handleCLILog(b *Bus, req HubRequest) HubResponse {
 		RequestID: req.RequestID,
 		Stdout:    &buf,
 	}
+}
+
+// handleCLIEnqueue sends fixed node commands to the hub queue without local-state fallback.
+func handleCLIEnqueue(b *Bus, instances *HubInstanceRegistry, req HubRequest) HubResponse {
+	instance, _ := req.Args["instance"].(string)
+	kind, _ := req.Args["kind"].(string)
+	task, _ := req.Args["task"].(string)
+	params := make(map[string]string)
+	raw, _ := req.Args["params"].(map[string]any)
+	for key, value := range raw {
+		text, ok := value.(string)
+		if !ok {
+			return hubCLIResult(req, nil, opErr(CommandEnqueueInvalidParams, "command parameters must be strings"))
+		}
+		params[key] = text
+	}
+	h := &Hub{Bus: b, Instances: instances}
+	return hubCLIResult(req, []byte{}, h.EnqueueCommand(instance, CommandKind(kind), task, params))
 }

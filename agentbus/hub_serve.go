@@ -445,6 +445,7 @@ func serveHub(cfg *HubConfig) *HubServeError {
 			Resolve:       resolver,
 			AuthorizePeer: authorizePeer,
 			PollDuration:  hub.PollDuration,
+			CLI:           hub.CLI,
 		}
 		unixServer = &http.Server{
 			Handler:           unixHub,
