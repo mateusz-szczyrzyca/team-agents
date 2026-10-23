@@ -8,7 +8,7 @@
 GO_MODULES := agentbus live tools/doccheck tools/errgen
 # Bash scripts checked with shellcheck (bats files included: shellcheck understands @test blocks).
 SHELL_SCRIPTS := bin/agent install.sh tools/install-linters.sh tools/update-web-vendor.sh tests/integration/run.sh examples/notify/*.sh \
-	tests/unit/helpers.bash tests/unit/agent.bats tests/unit/web.bats tests/unit/rounds.bats tests/unit/stubs/systemd-run tests/unit/stubs/systemctl tests/unit/stubs/gh tests/unit/stubs/tailscale
+	tests/unit/helpers.bash tests/unit/agent.bats tests/unit/web.bats tests/unit/rounds.bats tests/unit/identity.bats tests/unit/stubs/systemd-run tests/unit/stubs/systemctl tests/unit/stubs/gh tests/unit/stubs/tailscale
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 
