@@ -393,7 +393,7 @@ Then:
 | `AGENT_IDLE_RUN_SEC`, `AGENT_WAKE_LOOP_MAX`, `AGENT_WAKE_RATE_MAX`, `AGENT_WAKE_LOOP_PAUSE_MIN` | wake-loop guard (default 120 s, 4 idle runs, 30 runs / 10 min, 15 min pause) |
 | `AGENT_QUOTA_PAUSE_MIN` | pause after an exhausted quota when the CLI does not say when it resets (default 30 min) |
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
-| `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
+| `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
 | `QUESTIONS_EDITOR`, `VSCODE_SERVER_DIRS` | open new questions files in the connected VS Code window (`vscode`, default) or not (`off`); where VS Code servers live |
 | `AGENT_LANGUAGE` | language of questions and notifications — what only you read (default English) |
 | `REPO_LANGUAGE` | language of commits, PRs, reviews, reports and code comments (default English) |
@@ -544,9 +544,12 @@ address is refused). On the host — or through an SSH tunnel (`ssh -L 8787:127.
 tailscale serve --bg --https=8787 http://127.0.0.1:8787     # https://<host>.<tailnet>.ts.net:8787
 ```
 
-and list the Tailscale logins allowed in `AGENT_WEB_USERS` (`tailscale serve` tells the server who you are; anyone
-else on the tailnet is refused). A request forwarded without a Tailscale identity — **Tailscale Funnel** or another
-proxy — is refused: never expose this port with Funnel. Changes (the answer form) are accepted only from this
+and say who may come in. A device that belongs to a user is let in by its Tailscale login, listed in
+`AGENT_WEB_USERS` (`tailscale serve` passes the login). A **tagged device** has no user, so `tailscale serve`
+passes no login; list it by name or tag in `AGENT_WEB_DEVICES` (e.g. `"workstation iphone tag:trusted"`) — the
+server asks the local `tailscaled` (`tailscale whois`) which device the request came from. A refused request says
+exactly which login or which device (with its tags) to add. Anyone else on the tailnet is refused, and so is a
+request from outside the tailnet — **Tailscale Funnel** or another proxy: never expose this port with Funnel. Changes (the answer form) are accepted only from this
 interface itself (htmx header, same origin). Set `AGENT_WEB_URL` to the address you open, and notifications get
 direct links: `Answer: …/questions/<task>?max=1` for questions, `Open: …/task/<task>` otherwise.
 

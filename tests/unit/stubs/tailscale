@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Test stub for `tailscale whois --json <address>`: 100.64.0.5 is the tagged device "workstation" (tag:trusted);
+# any other address is unknown. Anything else is unsupported.
+[[ ${1:-} == whois && ${2:-} == --json ]] || { echo "tailscale stub: unsupported: $*" >&2; exit 2; }
+case ${3:-} in
+  100.64.0.5)
+    cat <<'JSON'
+{"Node": {"Name": "workstation.example-tailnet.ts.net.", "ComputedName": "workstation", "Tags": ["tag:trusted"]},
+ "UserProfile": {"LoginName": "tagged-devices"}}
+JSON
+    ;;
+  *) echo "no match for IP:port ${3:-}" >&2; exit 1 ;;
+esac

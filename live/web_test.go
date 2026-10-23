@@ -25,6 +25,9 @@ func TestMain(m *testing.M) {
 	callAgent = func(agentCmd string, args ...string) (string, *OpError[AgentCallCause]) {
 		panic(fmt.Sprintf("callAgent(%s %v) without a stub — a test would have run the real agent script", agentCmd, args))
 	}
+	callTailscale = func(cli, ip string) (*tsWhois, *OpError[TailscaleCause]) {
+		panic(fmt.Sprintf("callTailscale(%s, %s) without a stub — a test would have asked the real tailscaled", cli, ip))
+	}
 	os.Exit(m.Run())
 }
 

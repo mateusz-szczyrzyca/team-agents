@@ -76,6 +76,8 @@ const (
 	AccessProxiedAnonymous                    // forwarded by a proxy without a Tailscale identity (e.g. Funnel)
 	AccessCrossSite                           // a state-changing request from another site
 	AccessNotHTMX                             // a state-changing request without the HX-Request header
+	AccessUnknownDevice                       // a tailnet device (tagged, no user) that is not in --devices
+	AccessWhoisFailed                         // `tailscale whois` could not say which device is connecting
 )
 
 // String returns the cause name.
@@ -91,6 +93,10 @@ func (c AccessCause) String() string {
 		return "CrossSite"
 	case AccessNotHTMX:
 		return "NotHTMX"
+	case AccessUnknownDevice:
+		return "UnknownDevice"
+	case AccessWhoisFailed:
+		return "WhoisFailed"
 	}
 	return fmt.Sprintf("AccessCause(%d)", int(c))
 }

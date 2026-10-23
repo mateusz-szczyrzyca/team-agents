@@ -181,9 +181,11 @@ is_investigator() { [[ -n ${INVESTIGATORS_TYPE[$1]:-} ]]; }
 AGENTLIVE_BIN="${AGENTLIVE_BIN:-$HOME/.local/bin/agentlive}"
 LIVE_REMIND_MIN="${LIVE_REMIND_MIN:-1}"
 # Web interface (agent web, agentweb.service): a loopback address only — remote access through `tailscale serve`;
-# the Tailscale logins let in that way; the URL under which you reach it (links in notifications, "" = none).
+# the Tailscale logins and the tagged devices (names or tag:…) let in that way; the URL under which you reach it
+# (links in notifications, "" = none).
 AGENT_WEB_LISTEN="${AGENT_WEB_LISTEN:-127.0.0.1:8787}"
 AGENT_WEB_USERS="${AGENT_WEB_USERS:-}"
+AGENT_WEB_DEVICES="${AGENT_WEB_DEVICES:-}"
 AGENT_WEB_URL="${AGENT_WEB_URL:-}"
 AUTH_MODEL_ANTHROPIC="${AUTH_MODEL_ANTHROPIC:-haiku}"
 AUTH_MODEL_OPENAI="${AUTH_MODEL_OPENAI:-gpt-6-luna}"
@@ -2416,7 +2418,8 @@ cmd_live() {
 cmd_web() { # runs the web interface in the foreground (agentweb.service runs this)
   [[ -x $AGENTLIVE_BIN ]] || die "$AGENTLIVE_BIN not found — run ./install.sh again"
   exec "$AGENTLIVE_BIN" web --home "$AGENTS_HOME" --bus "$BUS_DIR" --agent "$SELF" \
-    --listen "$AGENT_WEB_LISTEN" --users "$AGENT_WEB_USERS" \
+    --listen "$AGENT_WEB_LISTEN" --users "$AGENT_WEB_USERS" --devices "$AGENT_WEB_DEVICES" \
+    --tailscale "$(command -v tailscale || echo tailscale)" \
     --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS"
 }
 

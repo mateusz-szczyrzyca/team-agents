@@ -78,6 +78,15 @@ teardown() {
   [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST --data action=send "$WEB/questions/x")" = 403 ]
 }
 
+@test "tagged devices are let in by name through tailscale serve; other devices are told what to add" {
+  echo 'AGENT_WEB_DEVICES="workstation"' >> "$AGENTS_HOME/agents.conf"
+  start_web
+  [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forwarded-For: 100.64.0.5' "$WEB/")" = 200 ]
+  run curl -s -H 'X-Forwarded-For: 100.64.0.9' "$WEB/"
+  [[ $output == *"cannot tell which tailnet device 100.64.0.9 is"* ]]
+  [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forwarded-For: 203.0.113.9' "$WEB/")" = 403 ]
+}
+
 @test "agent web refuses to listen on a non-loopback address" {
   cp "$BUILD_DIR/agentlive" "$HOME/.local/bin/agentlive"
   echo "AGENT_WEB_LISTEN=0.0.0.0:0" >> "$AGENTS_HOME/agents.conf"

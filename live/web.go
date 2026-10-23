@@ -3,9 +3,9 @@
 //
 //	agentlive web --home ~/agents --bus ~/agents/bus --agent ~/.local/bin/agent --listen 127.0.0.1:8787 --users a@b
 //
-// It listens on a loopback address only. Remote access goes through `tailscale serve`, which adds the
-// Tailscale-User-Login header; only the logins given in --users are let in that way. A request forwarded by a
-// proxy without that identity (Tailscale Funnel, another proxy) is refused. Pages are plain HTML from html/template;
+// It listens on a loopback address only. Remote access goes through `tailscale serve`: devices of a user are let in
+// by their login (--users), tagged devices by name or tag (--devices, see web_identity.go). Funnel requests and
+// requests forwarded from outside the tailnet are refused. Pages are plain HTML from html/template;
 // htmx (vendored, see web/static/vendor/SOURCES) swaps the view and keeps live views up to date over server-sent
 // events. No JavaScript build, no npm.
 package main
@@ -42,10 +42,12 @@ var webFS embed.FS
 
 // webConfig holds the settings of agentlive web.
 type webConfig struct {
-	config                 // home, bus directory, agent script, queue limit (shared with the panel)
-	listen string          // host:port to listen on (loopback only)
-	users  map[string]bool // Tailscale logins allowed through `tailscale serve`
-	poll   time.Duration   // how often live views re-read the files
+	config                    // home, bus directory, agent script, queue limit (shared with the panel)
+	listen    string          // host:port to listen on (loopback only)
+	users     map[string]bool // Tailscale logins allowed through `tailscale serve`
+	devices   map[string]bool // tailnet devices allowed through `tailscale serve`: names and "tag:…" (lower case)
+	tailscale string          // the tailscale CLI (for `tailscale whois`)
+	poll      time.Duration   // how often live views re-read the files
 }
 
 // webServer serves the web interface.
@@ -57,6 +59,7 @@ type webServer struct {
 	assetV string                        // version of the static files (cache busting)
 	host   string                        // this host's name, shown in the header
 	agents agentsCache                   // the configured agents (from `agent _agents-json`)
+	whois  whoisCache                    // devices behind tailnet addresses (from `tailscale whois`)
 }
 
 // AgentCallCause: why a call of the `agent` script failed.
@@ -107,6 +110,8 @@ func runWebCmd(args []string) {
 	fs.StringVar(&cfg.agentCmd, "agent", filepath.Join(home, ".local", "bin", "agent"), "path to the agent script")
 	fs.StringVar(&cfg.listen, "listen", "127.0.0.1:8787", "loopback address to listen on")
 	users := fs.String("users", "", "Tailscale logins allowed through `tailscale serve` (comma or space separated)")
+	devices := fs.String("devices", "", "tailnet devices allowed through `tailscale serve`: names or tag:… (comma or space separated)")
+	fs.StringVar(&cfg.tailscale, "tailscale", "tailscale", "the tailscale CLI (for `tailscale whois`)")
 	fs.IntVar(&cfg.queueMax, "queue-max", 3, "investigation queue limit")
 	fs.IntVar(&InvSlots, "inv-slots", 1, "number of investigators")
 	if err := fs.Parse(args); err != nil {
@@ -116,6 +121,7 @@ func runWebCmd(args []string) {
 		cfg.busDir = filepath.Join(cfg.home, "bus")
 	}
 	cfg.users = parseUsers(*users)
+	cfg.devices = parseUsers(*devices)
 	cfg.poll = time.Second
 	setupLogging(cfg.home, "web")
 
@@ -144,7 +150,7 @@ func runWebCmd(args []string) {
 			logWarn(LogWebStopFailed, "error", err.Error())
 		}
 	}()
-	logInfo(LogWebStarted, "listen", ln.Addr().String(), "users", len(cfg.users))
+	logInfo(LogWebStarted, "listen", ln.Addr().String(), "users", len(cfg.users), "devices", len(cfg.devices))
 	if err := hs.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logWarn(LogWebStopFailed, "error", err.Error())
 		os.Exit(1)
@@ -195,6 +201,7 @@ func newWebServer(cfg webConfig) (*webServer, *OpError[StartCause]) {
 	}
 	s.host = host
 	s.agents.ttl = 30 * time.Second
+	s.whois.ttl, s.whois.failTTL = time.Minute, 10*time.Second
 	var static fs.FS
 	static, err = fs.Sub(webFS, "web/static")
 	if err != nil {
@@ -276,7 +283,7 @@ func (s *webServer) guard(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		if aerr := s.checkAccess(r); aerr != nil {
 			logWarn(LogWebAccessDenied, "cause", aerr.Cause.String(), "path", r.URL.Path, "remote", r.RemoteAddr,
-				"user", r.Header.Get("Tailscale-User-Login"), "error", aerr.Message)
+				"user", r.Header.Get("Tailscale-User-Login"), "forwarded_for", r.Header.Get("X-Forwarded-For"), "error", aerr.Message)
 			http.Error(w, "forbidden: "+aerr.Message, aerr.Cause.HTTPStatus())
 			return
 		}
@@ -284,31 +291,17 @@ func (s *webServer) guard(next http.Handler) http.Handler {
 	})
 }
 
-// proxyHeaders are the headers a forwarding proxy adds; with them and without a Tailscale identity the request
-// came through something other than `tailscale serve` (e.g. Funnel, open to the Internet).
-var proxyHeaders = []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "Forwarded", "Tailscale-Funnel-Request", "X-Real-Ip"}
-
 // checkAccess decides whether a request may be served:
 //   - the connection must come from this host (the server listens on loopback; checked again here);
-//   - a request with a Tailscale identity (Tailscale-User-Login, set by `tailscale serve`) needs a login from --users;
-//   - a proxied request without one is refused;
-//   - a direct local request (a browser on this host, an SSH tunnel) is allowed;
+//   - a request through a proxy needs an allowed identity (checkIdentity, web_identity.go);
 //   - a state-changing request (POST) must come from htmx on this site (HX-Request, same origin).
 func (s *webServer) checkAccess(r *http.Request) *OpError[AccessCause] {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil || !isLoopbackHost(host) {
 		return webErr(AccessNotLoopback, nil, "connections are accepted from this host only")
 	}
-	if login := strings.ToLower(strings.TrimSpace(r.Header.Get("Tailscale-User-Login"))); login != "" {
-		if !s.cfg.users[login] {
-			return webErr(AccessUnknownUser, nil, "Tailscale user %s is not allowed (AGENT_WEB_USERS in agents.conf)", login)
-		}
-	} else {
-		for _, ph := range proxyHeaders {
-			if r.Header.Get(ph) != "" {
-				return webErr(AccessProxiedAnonymous, nil, "a proxied request without a Tailscale identity (Funnel or another proxy) is refused")
-			}
-		}
+	if e := s.checkIdentity(r); e != nil {
+		return e
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		if r.Header.Get("HX-Request") != "true" {
