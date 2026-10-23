@@ -12,6 +12,9 @@ Actions:
   questions-file  writes the questions file, STATUS: QUESTIONS
   questions-text  asks questions only in the final message
   questions-norec writes a questions file without recommendations, STATUS: QUESTIONS
+  commit-lines:N  commits a file of N lines, STATUS: DONE
+  round-done:N/M  STATUS: ROUND_DONE N/M
+  pending:K:N/M   commits a test skipped as "pending: parser, round K", STATUS: ROUND_DONE N/M
   no-status       a final message without a STATUS line
   hang            sleeps without output (the watchdog must kill it)
   sleep:N         works silently for N seconds, then DONE
@@ -82,6 +85,21 @@ if action == "commit":
     subprocess.run(["git", "add", "hello.txt"], check=True)
     subprocess.run(["git", "commit", "-q", "-m", "Add hello.txt\n\n" + trailers], check=True)
     finish("STATUS: DONE")
+def commit_file(name, text, message):
+    trailers = re.search(r"exactly these trailers, after a blank line:\n\n```\n(.*?)\n```", prompt, re.S).group(1)
+    open(name, "w").write(text)
+    subprocess.run(["git", "add", name], check=True)
+    subprocess.run(["git", "commit", "-q", "-m", message + "\n\n" + trailers], check=True)
+if action.startswith("commit-lines:"):
+    n = int(action.split(":")[1])
+    commit_file("big.txt", "".join(f"line {i}\n" for i in range(n)), f"Add {n} lines")
+    finish("STATUS: DONE")
+if action.startswith("round-done:"):
+    finish("Round finished.\n\nSTATUS: ROUND_DONE " + action.split(":")[1])
+if action.startswith("pending:"):
+    _, due, nm = action.split(":")
+    commit_file("parser_test.go", f'package p\n\nimport "testing"\n\nfunc TestParser(t *testing.T) {{\n\tt.Skip("pending: parser, round {due}")\n}}\n', "Pending parser test")
+    finish("STATUS: ROUND_DONE " + nm)
 if action == "tool-done":
     call("list_agents")
     finish("STATUS: DONE")
