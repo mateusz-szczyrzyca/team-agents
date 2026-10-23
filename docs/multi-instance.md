@@ -205,6 +205,11 @@ Unauthorized, UntrustedNode and Rejected have class `Permission`; NoSuchJob is
 `NotFound`; JobConflict, StaleAssignment and TerminalConflict are `Conflict`;
 InvalidState is `InvalidState`. Whois process/output failures and node transport
 or server failures are `Process`. Other validation causes are `InvalidArgument`.
+Unauthorized includes an authenticated node reporting another node's job;
+StaleAssignment is reserved for superseded assignment evidence from its owner.
+HTTP adapters bound request bodies before decoding; oversized heartbeat or
+report bodies map to MalformedBody. Submit task text has its own TaskTooLarge
+validation independently of the HTTP body limit.
 Cancellation has no terminal-conflict cause: cancelling a finished job is an
 idempotent no-op that preserves its actual outcome.
 
@@ -265,10 +270,18 @@ This changes neither team member identity nor the local MCP connection.
 Each PR stays under 3,000 counted added/deleted lines (generated files excluded)
 and aims for 2,000. Every behavior starts with executable RED/GREEN tests in its
 owning round. Pending tests identify their future round; no test due in the
-current round remains pending. Existing test behavior remains unchanged; round 1
-also includes explicitly approved comment-only lint fixes in existing test files
-and identifier renames in production code to restore the strict lint baseline.
+current round remains pending. Existing test behavior remains unchanged. The
+explicitly approved lint baseline and resume-ID collision repair were reviewed separately in prerequisite PR #7,
+which is merged before this round.
 Unfinished entry points stay inactive and every round passes `make lint test`.
+
+The original roadmap markers span layers: the round-2 other-node report marker
+first exercises the pure assignment-ownership guard; round 3 adds complete report
+validation and persistence. Capability parsing, including malformed values, is
+tested in round 2; the round-4 capability marker checks boundary rejection, and
+round 6 enforces daemon startup failure. Per-operation authorization gets
+executable cause tests with the round-4 HTTP handlers. These markers are a
+roadmap, not a complete inventory of the tests required in each round.
 
 Registry and HTTP concurrency get race tests. Two temporary installations with
 stub CLIs cover capability routing, result commits, lead outage/recovery,
