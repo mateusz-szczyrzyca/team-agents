@@ -475,8 +475,23 @@ so it does not depend on the agent following instructions:
 | Setting | Effect |
 |---|---|
 | `GIT_NAME_FORMAT` (default `%a (team-agents)`) | the name, e.g. `claude-1 (team-agents)` — visible in `git log` and on GitHub |
-| `GIT_EMAIL` | the e-mail. GitHub attributes a commit to the account that owns its e-mail: use the noreply address of the agents' account (*Settings → Emails*, `<id>+<login>@users.noreply.github.com`). Empty = the e-mail from your git config, so GitHub shows the commits under your account; without any e-mail the fallback is `<agent>@team-agents.invalid` (with a warning in the log) |
-| `GIT_SIGNING_KEY` | an SSH private key that signs every commit. Add its public key to the agents' account as a **signing key** (*Settings → SSH and GPG keys → New SSH key → Key type: Signing key*) and GitHub marks the commits **Verified** |
+| `GIT_EMAIL` | the e-mail (`%a` = the agent's name). GitHub attributes a commit to the account that owns its e-mail: use the noreply address of the agents' account (*Settings → Emails*, `<id>+<login>@users.noreply.github.com`). Empty = `<agent>@team-agents.invalid`, an address nobody owns: GitHub shows the agent's name without an account. Never your own e-mail from git config |
+| `GIT_SIGNING_KEY` | an SSH private key that signs every commit. Add its public key to the agents' account as a **signing key** (*Settings → SSH and GPG keys → New SSH key → Key type: Signing key*) and GitHub marks the commits **Verified**. Empty = the agents do not sign — even if your git config signs every commit, your key is never used |
+
+**The agents as a separate GitHub account.** Commits are only part of it: pushes and pull requests are made with
+whatever credentials the agents find. To keep all of it off your account, create a machine account for the agents
+(GitHub allows one per person, used only for automation), give it write access to your repositories, and:
+
+1. `GIT_EMAIL` — its noreply address (`<id>+<login>@users.noreply.github.com`, *Settings → Emails* of that account);
+   optionally `GIT_SIGNING_KEY` with a signing key added to it.
+2. `GH_TOKEN` in `secrets.env` — a token of that account (fine-grained: the repositories, *Contents* and *Pull
+   requests* read/write). `gh` prefers it to your own login, so PRs and reviews are opened by that account.
+3. Pushes: with HTTPS remotes run `gh auth setup-git` once — git then pushes with `GH_TOKEN`. With SSH remotes
+   (`git@github.com:…`) set `GIT_SSH_COMMAND` in `secrets.env` to that account's key; otherwise pushes go out as the
+   owner of your SSH key.
+
+You review and merge as yourself. (The investigator's reviews come from the same account that opened the PR, so
+they stay comments — GitHub does not let an account approve its own PR.)
 
 Every commit message also ends with trailers, and pull requests and reviews end with a signature line:
 
