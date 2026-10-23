@@ -271,7 +271,7 @@ func ansiC(s string) string {
 // readMeta parses a meta.env file (KEY=printf-%q-value lines); a missing file gives an empty map.
 func readMeta(path string) map[string]string {
 	m := map[string]string{}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- the path is built from AGENTS_HOME and names the program lists itself; no request text reaches it
 	if errors.Is(err, os.ErrNotExist) {
 		return m // a directory without meta.env is not a task
 	}
@@ -322,7 +322,7 @@ func pidAlive(dir string) (bool, time.Time) {
 	if err != nil {
 		return false, time.Time{}
 	}
-	data, err := os.ReadFile(p)
+	data, err := os.ReadFile(p) // #nosec G304 -- the path is built from AGENTS_HOME and names the program lists itself; no request text reaches it
 	if err != nil {
 		warnOnce(p, LogPIDFileUnreadable, storageErr(err, "cannot read %s", p), "file", p)
 		return false, time.Time{}
@@ -339,7 +339,7 @@ func pidAlive(dir string) (bool, time.Time) {
 // tailLines returns the last n lines of a file (reads at most maxBytes from the end).
 // A missing file has no lines; other read errors are logged once.
 func tailLines(path string, n int, maxBytes int64) []string {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- the path is built from AGENTS_HOME and names the program lists itself; no request text reaches it
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -443,7 +443,7 @@ func loadSnapshot(home, busDir string) *Snapshot {
 
 	var st busState
 	statePath := filepath.Join(busDir, "state.json")
-	data, err := os.ReadFile(statePath)
+	data, err := os.ReadFile(statePath) // #nosec G304 -- the path is built from AGENTS_HOME and names the program lists itself; no request text reaches it
 	switch {
 	case errors.Is(err, os.ErrNotExist): // no bus state yet
 	case err != nil:
@@ -498,7 +498,7 @@ func statusPrio(t *Task) int {
 var InvSlots = 1
 
 // QueueLine summarises the investigation queue in one line.
-func (s *Snapshot) QueueLine(max int) string {
+func (s *Snapshot) QueueLine(queueMax int) string {
 	active, queued, wait := 0, 0, 0
 	for _, inv := range s.Invs {
 		switch inv.Status {
@@ -516,7 +516,7 @@ func (s *Snapshot) QueueLine(max int) string {
 			queued = 0
 		}
 	}
-	return fmt.Sprintf("investigations: in progress %d/%d, waiting %d/%d, waiting room %d", active, InvSlots, queued, max, wait)
+	return fmt.Sprintf("investigations: in progress %d/%d, waiting %d/%d, waiting room %d", active, InvSlots, queued, queueMax, wait)
 }
 
 // Waiting returns tasks waiting for the human's answers.
@@ -557,7 +557,7 @@ func NewWatcher(home, busDir string, remind time.Duration) *Watcher {
 
 // finalSummary returns the first lines of a task's last agent message (final.md) joined with " | ".
 func finalSummary(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "final.md")) // #nosec G703 -- dir is a task directory from the listing of AGENTS_HOME/tasks; a request only selects one
+	data, err := os.ReadFile(filepath.Join(dir, "final.md")) // #nosec G703 G304 -- dir is a task directory from the listing of AGENTS_HOME/tasks; a request only selects one
 	if err != nil {
 		return ""
 	}
@@ -591,7 +591,7 @@ func (w *Watcher) newActivity(t *Task, fromStart bool) []Activity {
 		w.offsets[t.ID] = st.Size()
 		return nil
 	}
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- the path is built from AGENTS_HOME and names the program lists itself; no request text reaches it
 	if err != nil {
 		warnOnce("open:"+path, LogFileReadFailed, storageErr(err, "cannot open %s", path), "file", path)
 		return nil
@@ -730,7 +730,7 @@ func remindText(s *Snapshot) string {
 
 // firstLine: the first non-empty line that is not a markdown heading (or the heading if nothing else).
 func firstLine(path string) string {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- the path is built from AGENTS_HOME and names the program lists itself; no request text reaches it
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		warnOnce("read:"+path, LogFileReadFailed, storageErr(err, "cannot read %s", path), "file", path)
 	}
@@ -840,7 +840,7 @@ func Notebook(busDir, repo string, last int) (map[string]noteSection, []noteEntr
 	dir := filepath.Join(busDir, "notebooks", safeName(repo))
 	secs := map[string]noteSection{}
 	secPath := filepath.Join(dir, "sections.json")
-	data, err := os.ReadFile(secPath)
+	data, err := os.ReadFile(secPath) // #nosec G304 -- the path is built from AGENTS_HOME and names the program lists itself; no request text reaches it
 	switch {
 	case errors.Is(err, os.ErrNotExist): // no sections yet
 	case err != nil:

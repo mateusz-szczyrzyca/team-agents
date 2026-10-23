@@ -97,7 +97,7 @@ func setupLogging(home, role string, attrs ...any) {
 	logDir := filepath.Join(home, "logs")
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "agentbus: logging to files disabled: cannot create %s: %v\n", logDir, err)
-	} else if f, err := os.OpenFile(filepath.Join(logDir, "agentbus.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err != nil {
+	} else if f, err := os.OpenFile(filepath.Join(logDir, "agentbus.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err != nil { //nolint:gosec // G304: the log directory is under the configured local AGENTS_HOME.
 		fmt.Fprintf(os.Stderr, "agentbus: logging to files disabled: %v\n", err)
 	} else {
 		// one Write per record: O_APPEND keeps concurrent writers' lines intact
