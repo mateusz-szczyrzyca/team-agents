@@ -1783,3 +1783,31 @@ func (c CmdRoundSizeCause) info() causeInfo { return cmdRoundSizeCauses[c] }
 
 // String returns the cause name.
 func (c CmdRoundSizeCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- team-waiting
+
+// CmdTeamWaitingCause is a reason why the subcommand team-waiting failed.
+type CmdTeamWaitingCause int
+
+const (
+	CmdTeamWaitingNoSuchTeam CmdTeamWaitingCause = iota // there is no team with this ID [NotFound]
+	CmdTeamWaitingStorage                               // the shared state or a file could not be read or written [Storage]
+)
+
+// CmdTeamWaitingError is the error of the subcommand team-waiting.
+type CmdTeamWaitingError = OpError[CmdTeamWaitingCause]
+
+// cmdTeamWaitingCauses describes the CmdTeamWaitingCause values (same order as the constants).
+var cmdTeamWaitingCauses = [...]causeInfo{
+	{"NoSuchTeam", ClassNotFound},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CmdTeamWaitingCause) op() string { return "team-waiting" }
+
+// info implements opCause.
+func (c CmdTeamWaitingCause) info() causeInfo { return cmdTeamWaitingCauses[c] }
+
+// String returns the cause name.
+func (c CmdTeamWaitingCause) String() string { return c.info().name }
