@@ -25,6 +25,11 @@ The task the team worked on is below. Check the PR's compliance with the reposit
    compliance with the repository conventions. Do not invent problems — every remark needs a concrete reason.
 3. Where it is cheap and safe, verify empirically (build, tests, lint). Shared resources — only with
    `reserve`/`release`.
+   **Test first:** for every change of behaviour, check that its test came first — a commit with the test (and a
+   bare signature) before the code, its message ending with the failing run (`RED: …`) — or that the commit says
+   `Test-First: not possible — <reason>` with a believable reason. You may check out that RED commit and run the
+   test. A change of behaviour with neither is a **major** finding. (The round size and the pending-test markers
+   are checked by the script, not by you.)
 4. Prepare `review.json`:
 
    ```json

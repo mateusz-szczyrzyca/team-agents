@@ -187,6 +187,14 @@ AGENT_WEB_LISTEN="${AGENT_WEB_LISTEN:-127.0.0.1:8787}"
 AGENT_WEB_USERS="${AGENT_WEB_USERS:-}"
 AGENT_WEB_DEVICES="${AGENT_WEB_DEVICES:-}"
 AGENT_WEB_URL="${AGENT_WEB_URL:-}"
+# Rounds (README "Rounds"): the change of a task — added + deleted lines against its base, tests included, without
+# the files matched by ROUND_EXCLUDE — has a soft and a hard limit; ROUND_MAX_LINES_REPO overrides the hard limit
+# per repository (0 = no limit). Over it, a finished round goes back to be split, at most ROUND_BOUNCES times.
+ROUND_SOFT_LINES="${ROUND_SOFT_LINES:-2000}"
+ROUND_MAX_LINES="${ROUND_MAX_LINES:-3000}"
+ROUND_EXCLUDE="${ROUND_EXCLUDE:-*_gen.go go.sum package-lock.json vendor/}"
+ROUND_BOUNCES="${ROUND_BOUNCES:-2}"
+declare -p ROUND_MAX_LINES_REPO >/dev/null 2>&1 || declare -gA ROUND_MAX_LINES_REPO=()   # a query: set in agents.conf?
 AUTH_MODEL_ANTHROPIC="${AUTH_MODEL_ANTHROPIC:-haiku}"
 AUTH_MODEL_OPENAI="${AUTH_MODEL_OPENAI:-gpt-6-luna}"
 AUTH_MODEL_GEMINI="${AUTH_MODEL_GEMINI:-}"
@@ -510,6 +518,80 @@ finish_team() { # team reason — closes the team; sleeping members finish as do
       excluded) bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state excluded >/dev/null ;;
     esac
   done
+}
+
+# ------------------------------------------------------------------ rounds (README "Rounds")
+
+round_limit() { # repository name → its hard round limit (0 = none)
+  printf '%s' "${ROUND_MAX_LINES_REPO[$1]:-$ROUND_MAX_LINES}"
+}
+
+round_limit_text() { # repository name → the round limit as the prompt states it
+  local hard; hard=$(round_limit "$1")
+  if ((hard > 0)); then
+    printf 'may change at most %s lines (aim for %s)' "$hard" "$(round_soft "$1")"
+  else
+    printf 'has no line limit in this repository (still: split a big task into rounds the human can review)'
+  fi
+}
+
+round_soft() { # repository name → its soft limit (never above the hard one)
+  local hard; hard=$(round_limit "$1")
+  if ((hard > 0 && ROUND_SOFT_LINES > hard)); then printf '%s' "$hard"; else printf '%s' "$ROUND_SOFT_LINES"; fi
+}
+
+round_base_ref() { # id → the ref a task's change is measured against: origin/<base> (fetched first) or <base>
+  local wt base; wt=$(task_field "$1" WORKTREE); base=$(task_field "$1" BASE)
+  if git -C "$wt" remote get-url origin >/dev/null 2>&1; then   # a query: no origin = a repository without a remote
+    try round_fetch_failed git -C "$wt" fetch --quiet origin "$base"
+    if git -C "$wt" rev-parse --verify --quiet "origin/$base" >/dev/null; then printf 'origin/%s' "$base"; return 0; fi
+  fi
+  printf '%s' "$base"
+}
+
+pending_due() { # id round — pending-test markers due by this round ("" = all of them): "file:line:text" lines
+  local wt due=${2:-}
+  wt=$(task_field "$1" WORKTREE)
+  { git -C "$wt" grep -nE 'pending: .*round [0-9]+' -- ':!*.md' || (($? == 1)); } |   # exit 1 = no marker
+    awk -v due="$due" '{ s = $0; sub(/.*round /, "", s); if (due == "" || s + 0 <= due + 0) print }'
+}
+
+round_check() { # id → what keeps a finished round from closing, one "- …" line each (empty: nothing)
+  local id=$1 limit size lines out="" pend
+  limit=$(round_limit "$(task_field "$id" REPO_NAME)")
+  if ((limit > 0)); then
+    if size=$(bus round-size --repo "$(task_field "$id" WORKTREE)" --base "$(round_base_ref "$id")" --exclude "$ROUND_EXCLUDE" --json); then
+      lines=$(jq -r .lines <<< "$size")
+      if ((lines > limit)); then
+        out+="- The change has $lines lines (+$(jq -r .added <<< "$size") -$(jq -r .deleted <<< "$size")): over the round limit of $limit (aim for $(round_soft "$(task_field "$id" REPO_NAME)"))."$'\n'
+      fi
+    else
+      log_warn round_size_failed "task=$id"   # the size cannot be measured: the round is not held back for that
+    fi
+  fi
+  pend=$(pending_due "$id" "$(task_field "$id" WORK_ROUND)")
+  if [[ -n $pend ]]; then
+    out+="- Pending tests due in this round are still pending:"$'\n'"$(sed 's/^/  - /' <<< "$pend")"$'\n'
+  fi
+  printf '%s' "$out"
+}
+
+round_pr_url() { # id → the URL of the PR of the task's branch ("" when there is none)
+  local pr
+  pr=$(cd "$(task_field "$1" REPO_ROOT)" && try pr_lookup_failed gh pr list --head "$(task_field "$1" BRANCH)" --state all --json url --limit 1)
+  jq_soft pr_lookup_parse -r '.[0].url // empty' <<< "${pr:-[]}"
+}
+
+cmd_round_size() { # <task> — the size of a task's change and its round limits
+  local id repo limit
+  id=$(resolve_id "${1:?usage: agent round-size <task>}")
+  repo=$(task_field "$id" REPO_NAME); limit=$(round_limit "$repo")
+  bus round-size --repo "$(task_field "$id" WORKTREE)" --base "$(round_base_ref "$id")" --exclude "$ROUND_EXCLUDE"
+  if ((limit > 0)); then
+    echo "limits: soft $(round_soft "$repo"), hard limit $limit lines (excluded from counting: $ROUND_EXCLUDE)"
+  else
+    echo "the repository $repo has no round limit"
+  fi
 }
 
 request_review() { # coordinator task id — --verify: queue a PR review by an investigator
@@ -897,6 +979,8 @@ build_prompt() { # id mode qfile next_round
     [GIT_NAME]="${GIT_NAME_FORMAT//%a/$AGENT}" [ATTRIBUTION]="\`$AGENT\` ($TYPE${MODEL:+, model $MODEL})"
     [PRIVILEGES]="$(privileges_text)" [AGENTS_MD]="$(agents_md_text)"
     [QUESTIONS_FILE]=$qfile [ROUND]=$next_round [CONSULT_MIN]=$AGENT_CONSULT_MIN
+    [ROUND_LIMIT_TEXT]="$(round_limit_text "$REPO_NAME")" [ROUND_SOFT]="$(round_soft "$REPO_NAME")"
+    [ROUND_SIZE_CMD]="agent round-size $id"
     [REPORT_FILE]=".agents/reports/$id.md"
     [RESULT_FILE]="$TASKS/$id/result.md"
     [INV_ID]=${INV_ID:-} [PARENT_TASK]=${PARENT_TASK:-} [PARENT_WORKTREE]=${PARENT_WORKTREE:-}
@@ -920,9 +1004,11 @@ build_prompt() { # id mode qfile next_round
       printf '\n# REQUEST H%s\n\n' "$HELPER_ID"
     elif [[ -n ${TEAM:-} ]]; then
       render "$PROMPTS/team.md"
+      render "$PROMPTS/tdd-rounds.md"
       printf '\n# TEAM TASK\n\n'
     else
       render "$PROMPTS/protocol.md"
+      render "$PROMPTS/tdd-rounds.md"
       printf '\n# TASK\n\n'
     fi
     cat "$TASKS/$id/task.md"
@@ -952,6 +1038,13 @@ build_prompt() { # id mode qfile next_round
   if [[ -n ${BOUNCE_PENDING:-} ]]; then
     R[BOUNCE]=$BOUNCE_PENDING
     render "$PROMPTS/verify-bounce.md"
+    printf '\n'
+    any=1
+  fi
+  if [[ -n ${RBOUNCE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    R[ROUND_PROBLEMS]=$RBOUNCE_PENDING
+    render "$PROMPTS/round-bounce.md"
     printf '\n'
     any=1
   fi
@@ -1226,7 +1319,8 @@ notify() { # id status final note
   log_info notification "task=$id" "status=$status" "note=$note"
   local label
   case $status in
-    done)    label="✅ done" ;;
+    done)    label="✅ done"
+             if [[ -n ${WORK_ROUND:-} ]]; then label="🔁 round $WORK_ROUND/$WORK_ROUNDS done"; fi ;;
     waiting) label="❓ waiting for answers" ;;
     failed)  label="❌ failed" ;;
     hung)    label="⚠ hung (watchdog)" ;;
@@ -1249,6 +1343,17 @@ notify() { # id status final note
     printf 'Status: %s\n' "$label"
     if [[ -n $note ]]; then printf 'Note: %s\n' "$note"; fi
     if [[ ${AGENTS_MD:-} == missing ]]; then printf 'Note: the repository has no AGENTS.md\n'; fi
+    if [[ $status == done && -n ${WORK_ROUND:-} ]]; then
+      local rref=${TEAM:-$id} rurl
+      rurl=$(round_pr_url "$id")
+      if [[ -n $rurl ]]; then printf 'PR: %s\n' "$rurl"; fi
+      if ((WORK_ROUND < WORK_ROUNDS)); then
+        printf 'Next: merge the PR of round %s, then: agent run --resume %s (round %s)\n' "$WORK_ROUND" "$rref" $((WORK_ROUND + 1))
+        printf 'Review fixes on the same PR first: agent run --resume %s --same-round "…"\n' "$rref"
+      else
+        printf 'This was the last round (%s/%s): merge the PR and the task is complete.\n' "$WORK_ROUND" "$WORK_ROUNDS"
+      fi
+    fi
     if [[ $status == waiting ]]; then
       printf 'Questions: %s — answer with: agent answer %s\n' \
         "$(count_questions "$TASKS/$id/questions-$ROUND.md")" "$id"
@@ -1517,9 +1622,9 @@ verify_gaps() { # coordinator-id — gaps before closing a --verify team (empty 
   return 0
 }
 
-final_status() { # last message → DONE|FAILED|QUESTIONS|INVESTIGATING|SLEEPING|EXCLUDED or nothing
+final_status() { # last message → DONE|ROUND_DONE|FAILED|QUESTIONS|INVESTIGATING|SLEEPING|EXCLUDED or nothing
   # no STATUS line → empty output (grep exits 1, which is the expected "not found")
-  sed 's/[*`]//g' <<< "$1" | { grep -oE '^[[:space:]]*STATUS:[[:space:]]*[A-Z]+' || (($? == 1)); } | head -1 | sed -E 's/.*STATUS:[[:space:]]*//'
+  sed 's/[*`]//g' <<< "$1" | { grep -oE '^[[:space:]]*STATUS:[[:space:]]*[A-Z_]+' || (($? == 1)); } | head -1 | sed -E 's/.*STATUS:[[:space:]]*//'
 }
 
 questions_from_nostatus() { # message id round — questions file used when the agent ended its turn without a STATUS line
@@ -1643,6 +1748,7 @@ cmd__runner() {
   meta_set "$id" WAKE_PENDING ""
   meta_set "$id" BOUNCE_PENDING ""
   meta_set "$id" QBOUNCE_PENDING ""
+  meta_set "$id" RBOUNCE_PENDING ""
   if [[ -n ${TEAM:-} ]]; then
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state active >/dev/null
   fi
@@ -1772,8 +1878,19 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
   elif ((RC != 0)) || [[ $fst == FAILED || -z ${FINAL//[[:space:]]/} ]]; then
     status=failed
     ((RC != 0)) && note="CLI exit code: $RC"
-  elif [[ $fst == DONE ]]; then
+  elif [[ $fst == DONE || $fst == ROUND_DONE ]]; then
     status=done
+    if [[ $fst == ROUND_DONE ]]; then   # "STATUS: ROUND_DONE N/M": round N of M is finished
+      local rn
+      rn=$(sed 's/[*`]//g' <<< "$FINAL" | { grep -oE 'STATUS:[[:space:]]*ROUND_DONE[[:space:]]+[0-9]+/[0-9]+' || (($? == 1)); } \
+             | head -1 | { grep -oE '[0-9]+/[0-9]+$' || (($? == 1)); })
+      if [[ -n $rn ]] && ((${rn%/*} >= 1 && ${rn%/*} <= ${rn#*/})); then
+        meta_set "$id" WORK_ROUND "${rn%/*}"; meta_set "$id" WORK_ROUNDS "${rn#*/}"
+        note="round $rn"
+      else
+        status=failed; note="STATUS: ROUND_DONE needs the round as N/M (e.g. ROUND_DONE 2/5)"
+      fi
+    fi
   elif [[ ${KIND:-worker} == helper ]]; then
     status=done; note="the worker gave no STATUS — its text was returned as the result"
   else
@@ -1794,6 +1911,26 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     start_runner "$id" resume || log_error resume_failed "task=$id" "reason=questions without recommendations"
     dispatch; dispatch_helpers
     return 0
+  fi
+  # rounds: a finished round must fit the limit and leave none of its own pending tests behind (README "Rounds")
+  if [[ $status == done && ${KIND:-worker} == worker ]] && { [[ -z ${TEAM:-} ]] || [[ $AGENT == "$(team_lead "$TEAM")" ]]; }; then
+    local problems bounced=${ROUND_BOUNCED:-0}
+    problems=$(round_check "$id")
+    if [[ -n $problems ]]; then
+      if ((bounced < ROUND_BOUNCES)); then
+        meta_set "$id" ROUND_BOUNCED $((bounced + 1))
+        meta_set "$id" RBOUNCE_PENDING "$problems"
+        RUNNER_DONE=1
+        act "$id" info "↩ the round cannot close yet: $(tr '\n' ' ' <<< "$problems")"
+        log_info round_bounced "task=$id" "bounce=$((bounced + 1))"
+        start_runner "$id" resume || log_error resume_failed "task=$id" "reason=round bounce"
+        dispatch; dispatch_helpers
+        return 0
+      fi
+      note="${note:+$note; }closed after $ROUND_BOUNCES corrections although: $(tr '\n' ' ' <<< "$problems")"
+      act "$id" err "the round closed with problems: $(tr '\n' ' ' <<< "$problems")"
+      log_warn round_closed_with_problems "task=$id"
+    fi
   fi
   # --verify: the coordinator may not close a team with gaps — send it back once with the list of gaps
   if [[ $status == done && -n ${TEAM:-} && ${VERIFY:-} == 1 && ${VERIFY_BOUNCED:-} != 1 \
@@ -1938,8 +2075,8 @@ resume_history() { # task → the human's answers from this task and its predece
   done
 }
 
-resume_run() { # ref verify [addition...] — resumes an interrupted team or task from its last checkpoint
-  local ref=$1 verify=$2; shift 2
+resume_run() { # ref verify same_round [addition...] — resumes an interrupted team or task from its last checkpoint
+  local ref=$1 verify=$2 same_round=$3; shift 3
   local add=""
   if [[ ${1:-} == -f ]]; then [[ -r ${2:-} ]] || die "file not found: ${2:-}"; add=$(<"$2")
   elif (($#)); then add="$*"
@@ -1970,7 +2107,32 @@ resume_run() { # ref verify [addition...] — resumes an interrupted team or tas
     agent_running_task "$(task_field "$t" AGENT)" >/dev/null && die "agent $(task_field "$t" AGENT) is busy with another task"
   done
 
-  local ts new_team="" ids=() id old root wt name
+  # rounds: after STATUS: ROUND_DONE the next round starts only once its PR is merged, on fresh branches from the
+  # updated base; --same-round continues the same round on the same branches (e.g. for review fixes)
+  local rtask="" wr="" wrs="" fresh=0 round_title="" round_head=""
+  for t in "${olds[@]}"; do
+    if [[ -n $(task_field "$t" WORK_ROUND) ]]; then rtask=$t; fi
+  done
+  if [[ -n $rtask ]]; then
+    wr=$(task_field "$rtask" WORK_ROUND); wrs=$(task_field "$rtask" WORK_ROUNDS)
+    if ((same_round)); then
+      round_title="Round $wr of $wrs continues"
+      round_head="Round $wr of $wrs continues: its PR is not merged — keep working on the same branches (e.g. on the review findings), then end with STATUS: ROUND_DONE $wr/$wrs again."
+    else
+      ((wr < wrs)) || die "all $wrs rounds are done (round $wr/$wrs was the last) — start a new task for more work"
+      local pr state url
+      pr=$(cd "$(task_field "$rtask" REPO_ROOT)" && gh pr list --head "$(task_field "$rtask" BRANCH)" --state all --json number,url,state --limit 1) \
+        || die "cannot check the PR of round $wr/$wrs (gh pr list failed) — merge it and retry, or continue the round: agent run --resume $ref --same-round"
+      state=$(jq -r '.[0].state // empty' <<< "$pr"); url=$(jq -r '.[0].url // empty' <<< "$pr")
+      [[ -n $url ]] || die "round $wr/$wrs has no PR (branch $(task_field "$rtask" BRANCH)) — open and merge it, or continue the round: agent run --resume $ref --same-round"
+      [[ $state == MERGED ]] || die "the PR of round $wr/$wrs ($url) is not merged yet ($state). Merge it and run this again — or keep working on round $wr (e.g. review fixes): agent run --resume $ref --same-round"
+      fresh=1
+    fi
+  elif ((same_round)); then
+    die "--same-round: the interrupted task did not end a round (no STATUS: ROUND_DONE N/M)"
+  fi
+
+  local ts new_team="" ids=() id old root wt name branch prev start base sha
   ts=$(date +%Y%m%d-%H%M%S)
   [[ -n $old_team ]] && new_team="$ts-team"
   for old in "${olds[@]}"; do
@@ -1982,8 +2144,25 @@ resume_run() { # ref verify [addition...] — resumes an interrupted team or tas
       try worktree_remove_failed git -C "$root" worktree remove --force "$(task_field "$old" WORKTREE)"
     fi
     git -C "$root" worktree prune
-    git -C "$root" worktree add --quiet "$wt" "$(task_field "$old" BRANCH)" || die "could not recreate the worktree of branch $(task_field "$old" BRANCH)"
+    prev=$(task_field "$old" BRANCH); branch=$prev
+    if ((fresh)); then   # the next round: a new branch from the base, which now contains the merged round
+      base=$(task_field "$old" BASE); start=$base
+      if git -C "$root" remote get-url origin >/dev/null 2>&1; then   # a query: no origin = no remote to update from
+        try round_fetch_failed git -C "$root" fetch --quiet origin "$base"
+        if git -C "$root" rev-parse --verify --quiet "origin/$base" >/dev/null; then start="origin/$base"; fi
+      fi
+      branch="$BRANCH_PREFIX/$name/$ts"
+      git -C "$root" worktree add --quiet -b "$branch" "$wt" "$start" || die "could not create branch $branch from $start"
+      sha=$(git -C "$root" rev-parse --short "$start")
+      round_title="Round $((wr + 1)) of $wrs"
+      round_head="Round $((wr + 1)) of $wrs. Round $wr is merged into $base: your branch $branch starts from there ($sha). Your previous branch $prev is kept — take from it only what the round plan puts into this round."
+    else
+      git -C "$root" worktree add --quiet "$wt" "$branch" || die "could not recreate the worktree of branch $branch"
+    fi
     { cat "$TASKS/$old/task.md"
+      if [[ -n $round_head ]]; then
+        printf '\n\n## %s (resumed %s)\n\n%s\n' "$round_title" "$(date '+%Y-%m-%d %H:%M')" "$round_head"
+      fi
       if [[ -n ${add//[[:space:]]/} ]]; then
         printf '\n\n## Addition from the human (resumed %s)\n\n%s\n' "$(date '+%Y-%m-%d %H:%M')" "$add"
       fi; } > "$TASKS/$id/task.md"
@@ -1994,7 +2173,7 @@ resume_run() { # ref verify [addition...] — resumes an interrupted team or tas
     for kv in "ID=$id" "AGENT=$name" "KIND=worker" "TEAM=$new_team" "TIER=$(agent_tier "$name")" \
               "TYPE=${AGENT_TYPE[$name]}" "MODEL=${AGENT_MODEL[$name]:-}" "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$name]:-}" \
               "REPO_NAME=$(task_field "$old" REPO_NAME)" "REPO_ROOT=$root" "WORKTREE=$wt" \
-              "BRANCH=$(task_field "$old" BRANCH)" "BASE=$(task_field "$old" BASE)" "SESSION_ID=$sid" \
+              "BRANCH=$branch" "PREV_BRANCH=$( ((fresh)) && echo "$prev")" "BASE=$(task_field "$old" BASE)" "SESSION_ID=$sid" \
               "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" "RESUMED_FROM=$old" \
               "VERIFY=$( ((verify)) && echo 1 || task_field "$old" VERIFY)"; do
       meta_set "$id" "${kv%%=*}" "${kv#*=}"
@@ -2039,10 +2218,11 @@ resume_run() { # ref verify [addition...] — resumes an interrupted team or tas
 }
 
 cmd_run() {
-  local members=() verify=0 team_list="" resume_ref=""
-  while [[ ${1:-} == --team || ${1:-} == --verify || ${1:-} == --resume ]]; do
+  local members=() verify=0 same_round=0 team_list="" resume_ref=""
+  while [[ ${1:-} == --team || ${1:-} == --verify || ${1:-} == --resume || ${1:-} == --same-round ]]; do
     case $1 in
       --verify) verify=1; shift ;;
+      --same-round) same_round=1; shift ;;
       --resume)
         [[ -n ${2:-} ]] || die "usage: agent run --resume <team|task> [\"addition\" | -f file.md]"
         resume_ref=$2; shift 2 ;;
@@ -2051,9 +2231,10 @@ cmd_run() {
         team_list=$2; shift 2 ;;
     esac
   done
+  ((same_round == 0)) || [[ -n $resume_ref ]] || die "--same-round only works with --resume"
   if [[ -n $resume_ref ]]; then
     [[ -z $team_list ]] || die "--resume takes the members from the interrupted task — do not combine it with --team"
-    resume_run "$resume_ref" "$verify" "$@"
+    resume_run "$resume_ref" "$verify" "$same_round" "$@"
     return
   fi
   if ((verify)) && [[ -z $team_list ]]; then
@@ -2830,6 +3011,8 @@ agent inv [number | --all]                investigation queue / full record of o
 agent dispatch                            manually start the next queued investigation (fallback)
 agent live [--feed] [--remind MIN]        live panel (or an event stream with --feed)
 agent web                                 web interface in the foreground (normally: agentweb.service)
+agent round-size <task>                   size of a task's change against the round limit (README "Rounds")
+agent run --resume <team|task> --same-round  continue an unmerged round (e.g. review fixes) on the same branches
 agent ack <id|all>                        acknowledge finished tasks (they leave the panel)
 agent run --team a,b[,c] [--verify] "task"  team; --verify: an investigator reviews the PR at the end
 agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
@@ -2862,6 +3045,7 @@ main() {
     inv)     cmd_inv "$@" ;;
     live)    cmd_live "$@" ;;
     web)     cmd_web ;;
+    round-size) cmd_round_size "$@" ;;
     _agents-json) cmd__agents_json ;;
     ack)     cmd_ack "$@" ;;
     authenticated) cmd_authenticated ;;

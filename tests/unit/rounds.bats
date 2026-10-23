@@ -82,7 +82,7 @@ latest() {
   t=$(task_of solo)
   wait_status "$t" done
   echo '[{"number": 5, "url": "https://github.com/o/r/pull/5", "state": "OPEN"}]' > "$HOME/gh-prs.json"
-  run agent run --resume "$t"
+  run agent run --resume "$t" < /dev/null   # no addition: --resume would read one from stdin
   [ "$status" -ne 0 ]
   [[ $output == *"not merged"* && $output == *"--same-round"* ]]
 
@@ -103,7 +103,7 @@ latest() {
   cd "$HOME/repo" && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "Merge round 1" && git push -q origin main
   echo '[{"number": 5, "url": "https://github.com/o/r/pull/5", "state": "MERGED"}]' > "$HOME/gh-prs.json"
   scenario '{"solo": {"new": "round-done:2/2"}}'
-  agent run --resume "$t"
+  agent run --resume "$t" < /dev/null
   t2=$(latest solo)
   [ "$t2" != "$t" ]
   [ "$(meta "$t2" BRANCH)" != "$(meta "$t" BRANCH)" ]
@@ -112,7 +112,7 @@ latest() {
   grep -q "Round 2 of 2" "$AGENTS_HOME/tasks/$t2/task.md"
   wait_status "$t2" done
 
-  run agent run --resume "$t2"
+  run agent run --resume "$t2" < /dev/null
   [ "$status" -ne 0 ]
   [[ $output == *"all 2 rounds are done"* ]]
 }
