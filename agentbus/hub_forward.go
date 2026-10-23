@@ -97,10 +97,8 @@ func (s *Server) callForMCP(name string, args map[string]any) (string, int, erro
 	if requestErr != nil {
 		return "", 0, requestErr
 	}
+	// Reachability is recorded per attempt by the client's Observe hook (see reachabilityObserver).
 	response, err := s.hubClient.Call(context.Background(), req)
-	if serr := recordHubReachability(s.home, hubReached(err), time.Now()); serr != nil {
-		warnSideEffect("record hub reachability", serr, "instance", s.instance)
-	}
 	text := ""
 	if response.Result != nil {
 		text = *response.Result

@@ -27,13 +27,14 @@ const (
 
 // HubClient owns transport settings; configure it before making concurrent calls.
 type HubClient struct {
-	URL             string        // lead instance origin, without endpoint path
-	HTTP            *http.Client  // authenticated transport; redirects are rejected regardless of its policy
-	Instance        string        // local authenticated instance name
-	Token           string        // bearer token in token mode; empty in Tailscale mode
-	RetryDuration   time.Duration // zero uses the approved 30-second outage budget
-	PendingDuration time.Duration // zero uses the 630-second overall operation cap
-	Local           *Hub          // trusted in-process dispatcher on the lead instance, when present
+	URL             string             // lead instance origin, without endpoint path
+	HTTP            *http.Client       // authenticated transport; redirects are rejected regardless of its policy
+	Instance        string             // local authenticated instance name
+	Token           string             // bearer token in token mode; empty in Tailscale mode
+	RetryDuration   time.Duration      // zero uses the approved 30-second outage budget
+	PendingDuration time.Duration      // zero uses the 630-second overall operation cap
+	Local           *Hub               // trusted in-process dispatcher on the lead instance, when present
+	Observe         func(reached bool) // optional; called after every transport attempt, before any retry wait, with false when the hub did not answer, so an outage starts at its first failed attempt
 }
 
 // NewRequest fixes the ID and timestamp once; every reattachment uses the same envelope.
@@ -83,6 +84,9 @@ func (c *HubClient) Send(ctx context.Context, req HubRequest) (HubResponse, *Hub
 		attempt, stop := context.WithDeadline(ctx, outageDeadline)
 		response, transportErr := c.once(attempt, req, data)
 		stop()
+		if c.Observe != nil {
+			c.Observe(transportErr == nil || transportErr.Cause != HubClientUnavailable)
+		}
 		if transportErr != nil && transportErr.Cause != HubClientUnavailable {
 			return HubResponse{}, transportErr
 		}

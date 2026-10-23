@@ -70,6 +70,17 @@ func recordHubReachability(home string, reachable bool, at time.Time) *StorageEr
 	return writeHubOutage(home, state)
 }
 
+// reachabilityObserver returns the hub client's per-attempt observer for one instance. It records every attempt as it
+// happens, so an outage counts from its first failed attempt, not from the end of the retry budget. Failures are
+// side effects: the call itself is not affected.
+func reachabilityObserver(home, instance string) func(bool) {
+	return func(reached bool) {
+		if serr := recordHubReachability(home, reached, time.Now()); serr != nil {
+			warnSideEffect("record hub reachability", serr, "instance", instance)
+		}
+	}
+}
+
 // readHubOutage loads the record; a missing file means no outage has been recorded yet.
 func readHubOutage(home string) (hubOutage, *StorageError) {
 	var state hubOutage

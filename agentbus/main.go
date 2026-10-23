@@ -1073,6 +1073,9 @@ func cmdServe(args []string) {
 	client, clientErr := hubClientForDir(*dir)
 	exitOn(clientErr.asError())
 	s.hubClient = client
+	if client != nil {
+		client.Observe = reachabilityObserver(s.home, client.Instance)
+	}
 	local, verr := newLocalDirectory(os.Getenv(localInstanceNameEnv), os.Getenv("INSTANCE_CAPABILITIES"))
 	exitOn(fromValue(CmdServeInvalidInstanceCapabilities, verr).asError())
 	if client != nil {

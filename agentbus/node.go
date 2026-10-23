@@ -71,7 +71,8 @@ func newNodeClient(cfg NodeConfig) (*HubClient, *CmdNodeError) {
 		return nil, opErr(CmdNodeInvalidConfig, "HUB_AUTH must be tailscale or token")
 	}
 	transport := &http.Transport{DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 60 * time.Second}
-	client := &HubClient{URL: cfg.Lead, Instance: cfg.Instance, HTTP: &http.Client{Transport: transport}, RetryDuration: cfg.HubRetryDuration}
+	client := &HubClient{URL: cfg.Lead, Instance: cfg.Instance, HTTP: &http.Client{Transport: transport}, RetryDuration: cfg.HubRetryDuration,
+		Observe: reachabilityObserver(cfg.Home, cfg.Instance)}
 	scheme := "http://"
 	if mode == HubAuthModeToken {
 		if cfg.Token == "" {
@@ -305,9 +306,6 @@ func (n *Node) heartbeatLoop(ctx context.Context) *CmdNodeError {
 			err = nodeExchange(ctx, n.client, "/v1/instances/heartbeat", HubInstanceHeartbeatRequest{Version: hubProtocolVersion, Instance: n.Config.Instance, Token: lease.Token, Generation: lease.Generation, Sequence: seq, Manifest: manifest}, &renewed)
 			if ctx.Err() != nil {
 				return nil
-			}
-			if serr := recordHubReachability(n.Config.Home, err == nil || err.Cause != CmdNodeHubUnavailable, time.Now()); serr != nil {
-				warnSideEffect("record hub reachability", serr, "instance", n.Config.Instance)
 			}
 			switch {
 			case err == nil:
