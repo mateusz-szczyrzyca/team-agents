@@ -33,11 +33,11 @@ func server(b *Bus, name string, opts ...func(*Server)) *Server {
 	return s
 }
 
-func inTeam(id string) func(*Server) { return func(s *Server) { s.team = id } }
+func inTeam(id string) func(*Server) { return func(s *Server) { s.team = id } } //nolint:unparam // The shared team ID T is intentional fixture data; retain the reusable helper.
 func asWorker(s *Server)             { s.tier = "worker" }
 
 // createTeam stores a team with the given members (name → tier/provider/state).
-func createTeam(t *testing.T, b *Bus, id string, members map[string][3]string) {
+func createTeam(t *testing.T, b *Bus, id string, members map[string][3]string) { //nolint:unparam // The shared team ID T is intentional fixture data; retain the reusable helper.
 	t.Helper()
 	team := &Team{ID: id, Repo: "repo", Members: map[string]*TeamMember{}}
 	for name, v := range members {

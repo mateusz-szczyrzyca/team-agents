@@ -1,0 +1,18 @@
+# golangci-lint configuration for every Go module (see Makefile lint-go, README "Linters").
+# Pinned golangci-lint version: tools/install-linters.sh (GOLANGCI_LINT_VERSION). Format: v2.
+version: "2"
+
+linters:
+  # The standard set (errcheck, govet, ineffassign, staticcheck, unused) plus the extra linters below.
+  default: standard
+  enable:
+    # Wrapped errors are compared and unwrapped correctly (errors.Is / errors.As).
+    - errorlint
+    # Security problems in Go code (file permissions, command execution, weak crypto).
+    - gosec
+    # Spelling mistakes in comments, identifiers and strings.
+    - misspell
+    # Style rules for exported identifiers and comments.
+    - revive
+    # Function parameters and results that are never used.
+    - unparam
