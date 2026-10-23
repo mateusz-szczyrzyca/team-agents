@@ -18,7 +18,11 @@ package main
 
 import (
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -123,5 +127,72 @@ func TestCountRound(t *testing.T) {
 		Excluded: []string{"agentbus/errors_gen.go", "live/web/static/vendor/htmx.min.js"}, Binary: []string{"docs/logo.png"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("countRound:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+// git runs git in a test repository, isolated from the user's configuration (a signing key or hooks there would
+// make the test depend on the machine).
+func git(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// Rule: the size is measured from the merge base of the base branch — a renamed file counts its changed lines,
+// not its whole content, and excluded files are listed. The only test that runs git (a temporary repository).
+func TestRoundSizeOfARepository(t *testing.T) {
+	repo := t.TempDir()
+	write := func(name, text string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, name)), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, repo, "init", "-q", "-b", "main")
+	write("a.go", "package a\n\nfunc A() {}\n")
+	write("old.go", strings.Repeat("// line\n", 40))
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-q", "-m", "base")
+	git(t, repo, "checkout", "-q", "-b", "round")
+	write("a.go", "package a\n\nfunc A() { B() }\n")             // 1 changed line: +1 -1
+	write("b.go", "package a\n\nfunc B() {}\n")                  // +3
+	write("errors_gen.go", strings.Repeat("// generated\n", 50)) // excluded
+	git(t, repo, "mv", "old.go", "renamed.go")                   // a pure rename: 0 lines
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-q", "-m", "round 1")
+
+	got, err := roundSizeOf(repo, "main", []string{"*_gen.go"})
+	if err != nil {
+		t.Fatalf("roundSizeOf: %v", err)
+	}
+	want := RoundSize{Lines: 5, Added: 4, Deleted: 1, Files: 3, Excluded: []string{"errors_gen.go"}, Binary: []string{}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("roundSizeOf:\n got %+v\nwant %+v", got, want)
+	}
+
+	for _, c := range []struct {
+		repo, base string
+		patterns   []string
+		want       CmdRoundSizeCause
+	}{
+		{"", "main", nil, CmdRoundSizeMissingArgument},
+		{repo, "", nil, CmdRoundSizeMissingArgument},
+		{repo, "--output=/tmp/x", nil, CmdRoundSizeBadBase}, // would be an option of git diff
+		{repo, "no-such-branch", nil, CmdRoundSizeGit},
+		{t.TempDir(), "main", nil, CmdRoundSizeGit}, // not a repository
+		{repo, "main", []string{"["}, CmdRoundSizeBadPattern},
+	} {
+		_, err := roundSizeOf(c.repo, c.base, c.patterns)
+		var e *CmdRoundSizeError
+		if !errors.As(err.asError(), &e) || e.Cause != c.want {
+			t.Errorf("roundSizeOf(%q, %q, %q): %v, want cause %v", c.repo, c.base, c.patterns, err, c.want)
+		}
 	}
 }

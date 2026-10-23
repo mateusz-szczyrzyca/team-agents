@@ -894,6 +894,11 @@
      "doc": "--repo or --base is missing"
     },
     {
+     "name": "BadBase",
+     "class": "InvalidArgument",
+     "doc": "the base is not a ref name (it starts with \"-\": git would read it as an option)"
+    },
+    {
      "name": "BadPattern",
      "class": "InvalidArgument",
      "doc": "an exclusion pattern is malformed"

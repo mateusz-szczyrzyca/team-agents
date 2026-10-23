@@ -1755,6 +1755,7 @@ type CmdRoundSizeCause int
 
 const (
 	CmdRoundSizeMissingArgument CmdRoundSizeCause = iota // --repo or --base is missing [InvalidArgument]
+	CmdRoundSizeBadBase                                  // the base is not a ref name (it starts with "-": git would read it as an option) [InvalidArgument]
 	CmdRoundSizeBadPattern                               // an exclusion pattern is malformed [InvalidArgument]
 	CmdRoundSizeGit                                      // git could not produce the diff (not a repository, unknown base) [Storage]
 	CmdRoundSizeBadNumstat                               // git's --numstat output could not be read [Storage]
@@ -1767,6 +1768,7 @@ type CmdRoundSizeError = OpError[CmdRoundSizeCause]
 // cmdRoundSizeCauses describes the CmdRoundSizeCause values (same order as the constants).
 var cmdRoundSizeCauses = [...]causeInfo{
 	{"MissingArgument", ClassInvalidArgument},
+	{"BadBase", ClassInvalidArgument},
 	{"BadPattern", ClassInvalidArgument},
 	{"Git", ClassStorage},
 	{"BadNumstat", ClassStorage},

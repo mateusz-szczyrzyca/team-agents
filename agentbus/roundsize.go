@@ -163,3 +163,9 @@ func countRound(files []RoundFile, patterns []string) RoundSize {
 	sort.Strings(size.Binary)
 	return size
 }
+
+// roundSizeOf counts the change of HEAD against base in a repository: `git diff --numstat -z -M base...HEAD`
+// (from the merge base, so commits that reached the base meanwhile do not count).
+func roundSizeOf(repo, base string, patterns []string) (RoundSize, *CmdRoundSizeError) {
+	return RoundSize{}, nil // not implemented yet: TestRoundSizeOfARepository comes first
+}
