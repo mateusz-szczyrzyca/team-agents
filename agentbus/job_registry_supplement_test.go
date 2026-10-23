@@ -184,7 +184,8 @@ func TestRegistryWaitReasonNeedsOneNodeWithAllCapabilities(t *testing.T) {
 	if got := regHeartbeat(t, r, regBeat("node-b", []string{"os:linux"}, alpha), regAt(2)); got != nil {
 		t.Fatalf("node-b with os only got %+v", got)
 	}
-	if reason := r.waitReason("job-1", regAt(3), regTTL); reason != "no node with os:linux and hw:rp2350" {
+	// The capabilities are a set, so the reason lists them in canonical (sorted) order.
+	if reason := r.waitReason("job-1", regAt(3), regTTL); reason != "no node with hw:rp2350 and os:linux" {
 		t.Fatalf("reason = %q, want one node that has both capabilities", reason)
 	}
 }

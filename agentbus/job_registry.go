@@ -19,18 +19,15 @@ const (
 	JobStopped  JobState = "stopped"  // stopped by a cancellation
 )
 
-// Valid reports whether s is one of the defined job states.
+// Valid reports whether s is one of the defined job states. RED stub: returns false until GREEN.
 func (s JobState) Valid() bool {
-	switch s {
-	case JobQueued, JobAssigned, JobRunning, JobWaiting, JobDone, JobFailed, JobStopped:
-		return true
-	}
 	return false
 }
 
 // UnmarshalJSON (json.Unmarshaler, hence the plain error type) rejects unknown states with a *ValueError.
-func (s *JobState) UnmarshalJSON(data []byte) error {
-	return unmarshalEnum(data, s, "job state").asError()
+// RED stub: accepts every value until GREEN.
+func (s *JobState) UnmarshalJSON(_ []byte) error {
+	return nil
 }
 
 // JobTransition is one entry of a job's history: the state it entered and when the lead recorded it.
