@@ -54,19 +54,23 @@ func parseNumstat(out []byte) ([]RoundFile, *CmdRoundSizeError) {
 			f.Path = records[i+2]
 			i += 2
 		}
-		if fields[0] == "-" && fields[1] == "-" {
-			f.Binary = true
-		} else {
-			added, aerr := strconv.Atoi(fields[0])
-			deleted, derr := strconv.Atoi(fields[1])
-			if aerr != nil || derr != nil {
-				return nil, opErr(CmdRoundSizeBadNumstat, "line counts of %s are not numbers: %q %q", f.Path, fields[0], fields[1])
-			}
-			f.Added, f.Deleted = added, deleted
+		var ok bool
+		if f.Added, f.Deleted, f.Binary, ok = parseCounts(fields[0], fields[1]); !ok {
+			return nil, opErr(CmdRoundSizeBadNumstat, "line counts of %s are not numbers: %q %q", f.Path, fields[0], fields[1])
 		}
 		files = append(files, f)
 	}
 	return files, nil
+}
+
+// parseCounts reads the two counts of a --numstat record; "-" "-" is a binary file. ok is false for anything else.
+func parseCounts(a, d string) (added, deleted int, binary, ok bool) {
+	if a == "-" && d == "-" {
+		return 0, 0, true, true
+	}
+	added, aerr := strconv.Atoi(a)
+	deleted, derr := strconv.Atoi(d)
+	return added, deleted, false, aerr == nil && derr == nil
 }
 
 // checkPatterns validates exclusion patterns (see excluded for their meaning).
@@ -83,20 +87,52 @@ func checkPatterns(patterns []string) *CmdRoundSizeError {
 	return nil
 }
 
+// patternKind is what an exclusion pattern is matched against.
+type patternKind int
+
+const (
+	patternName patternKind = iota // no "/": the file name ("*_gen.go", "go.sum")
+	patternDir                     // ends in "/": a directory anywhere in the path ("vendor/")
+	patternPath                    // any other: the whole path, with path.Match ("docs/*.png")
+)
+
+// String returns the kind's name.
+func (k patternKind) String() string {
+	switch k {
+	case patternName:
+		return "name"
+	case patternDir:
+		return "directory"
+	case patternPath:
+		return "path"
+	}
+	return "patternKind(" + strconv.Itoa(int(k)) + ")"
+}
+
+// kindOf classifies an exclusion pattern.
+func kindOf(p string) patternKind {
+	switch {
+	case strings.HasSuffix(p, "/"):
+		return patternDir
+	case strings.Contains(p, "/"):
+		return patternPath
+	}
+	return patternName
+}
+
 // excluded reports whether a file is left out by one of the patterns.
 func excluded(patterns []string, file string) bool {
 	for _, p := range patterns {
-		if strings.HasSuffix(p, "/") { // a directory anywhere in the path
-			if strings.Contains("/"+path.Dir(file)+"/", "/"+p) {
-				return true
-			}
-			continue
+		var ok bool
+		var err error
+		switch kindOf(p) {
+		case patternDir:
+			ok = strings.Contains("/"+path.Dir(file)+"/", "/"+p)
+		case patternName:
+			ok, err = path.Match(p, path.Base(file))
+		case patternPath:
+			ok, err = path.Match(p, file)
 		}
-		subject := file // a pattern with "/" matches the whole path…
-		if !strings.Contains(p, "/") {
-			subject = path.Base(file) // …one without it, the file name
-		}
-		ok, err := path.Match(p, subject)
 		if err != nil {
 			continue // cannot happen: checkPatterns refuses malformed patterns before anything is counted
 		}
