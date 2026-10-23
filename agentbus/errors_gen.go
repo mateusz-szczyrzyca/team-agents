@@ -1747,3 +1747,37 @@ func (c ConsultResultsCause) info() causeInfo { return consultResultsCauses[c] }
 
 // String returns the cause name.
 func (c ConsultResultsCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- round-size
+
+// CmdRoundSizeCause is a reason why the subcommand round-size failed.
+type CmdRoundSizeCause int
+
+const (
+	CmdRoundSizeMissingArgument CmdRoundSizeCause = iota // --repo or --base is missing [InvalidArgument]
+	CmdRoundSizeBadPattern                               // an exclusion pattern is malformed [InvalidArgument]
+	CmdRoundSizeGit                                      // git could not produce the diff (not a repository, unknown base) [Storage]
+	CmdRoundSizeBadNumstat                               // git's --numstat output could not be read [Storage]
+	CmdRoundSizeStorage                                  // the shared state or a file could not be read or written [Storage]
+)
+
+// CmdRoundSizeError is the error of the subcommand round-size.
+type CmdRoundSizeError = OpError[CmdRoundSizeCause]
+
+// cmdRoundSizeCauses describes the CmdRoundSizeCause values (same order as the constants).
+var cmdRoundSizeCauses = [...]causeInfo{
+	{"MissingArgument", ClassInvalidArgument},
+	{"BadPattern", ClassInvalidArgument},
+	{"Git", ClassStorage},
+	{"BadNumstat", ClassStorage},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CmdRoundSizeCause) op() string { return "round-size" }
+
+// info implements opCause.
+func (c CmdRoundSizeCause) info() causeInfo { return cmdRoundSizeCauses[c] }
+
+// String returns the cause name.
+func (c CmdRoundSizeCause) String() string { return c.info().name }

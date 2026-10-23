@@ -882,6 +882,33 @@
      "doc": "no consultation with this ID in the caller's team"
     }
    ]
+  },
+  {
+   "type": "CmdRoundSize",
+   "op": "round-size",
+   "what": "the subcommand round-size",
+   "causes": [
+    {
+     "name": "MissingArgument",
+     "class": "InvalidArgument",
+     "doc": "--repo or --base is missing"
+    },
+    {
+     "name": "BadPattern",
+     "class": "InvalidArgument",
+     "doc": "an exclusion pattern is malformed"
+    },
+    {
+     "name": "Git",
+     "class": "Storage",
+     "doc": "git could not produce the diff (not a repository, unknown base)"
+    },
+    {
+     "name": "BadNumstat",
+     "class": "Storage",
+     "doc": "git's --numstat output could not be read"
+    }
+   ]
   }
  ]
 }
