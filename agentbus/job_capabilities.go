@@ -66,9 +66,9 @@ func parseCapability(s string) (Capability, *CapsParseError) {
 	if len(parts) != 2 || parts[0] == "" {
 		return Capability{}, opErr(CapsParseMalformed, "capability %q must have namespace:value form", s)
 	}
-	ns := CapabilityNamespace(parts[0])
-	if !ns.Valid() {
-		return Capability{}, opErr(CapsParseUnknownNamespace, "unknown capability namespace %q", parts[0])
+	ns, err := parseEnum[CapabilityNamespace](parts[0], "capability namespace")
+	if err != nil {
+		return Capability{}, fromValue(CapsParseUnknownNamespace, err)
 	}
 	val := parts[1]
 	if val == "" {
