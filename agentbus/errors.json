@@ -926,6 +926,264 @@
      "doc": "there is no team with this ID"
     }
    ]
+  },
+  {
+   "type": "LeadHeartbeat",
+   "op": "lead/heartbeat",
+   "what": "a node heartbeat",
+   "causes": [
+    {
+     "name": "Unauthorized",
+     "class": "Permission",
+     "doc": "the caller is not authorized, including reports for another node"
+    },
+    {
+     "name": "MalformedBody",
+     "class": "InvalidArgument",
+     "doc": "the heartbeat body is malformed or exceeds its size limit"
+    },
+    {
+     "name": "InvalidCapabilities",
+     "class": "InvalidArgument",
+     "doc": "the declared capabilities are invalid"
+    },
+    {
+     "name": "NoSuchJob",
+     "class": "NotFound",
+     "doc": "a reported job does not exist"
+    },
+    {
+     "name": "StaleAssignment",
+     "class": "Conflict",
+     "doc": "a report carries superseded assignment evidence"
+    },
+    {
+     "name": "InvalidState",
+     "class": "InvalidState",
+     "doc": "a reported transition history is invalid"
+    },
+    {
+     "name": "TerminalConflict",
+     "class": "Conflict",
+     "doc": "a report conflicts with an accepted terminal outcome"
+    }
+   ]
+  },
+  {
+   "type": "LeadSubmit",
+   "op": "lead/submit",
+   "what": "submission of a remote job",
+   "causes": [
+    {
+     "name": "Unauthorized",
+     "class": "Permission",
+     "doc": "the caller or requester is not authorized"
+    },
+    {
+     "name": "MissingArgument",
+     "class": "InvalidArgument",
+     "doc": "a required job field is missing"
+    },
+    {
+     "name": "InvalidID",
+     "class": "InvalidArgument",
+     "doc": "the submitter-chosen job ID is invalid"
+    },
+    {
+     "name": "InvalidBase",
+     "class": "InvalidArgument",
+     "doc": "the base ref or exact commit is invalid"
+    },
+    {
+     "name": "InvalidCapabilities",
+     "class": "InvalidArgument",
+     "doc": "a required capability is invalid"
+    },
+    {
+     "name": "TaskTooLarge",
+     "class": "InvalidArgument",
+     "doc": "the task text exceeds its size limit"
+    },
+    {
+     "name": "MalformedBody",
+     "class": "InvalidArgument",
+     "doc": "the submission body is malformed or exceeds its size limit"
+    },
+    {
+     "name": "JobConflict",
+     "class": "Conflict",
+     "doc": "an existing job ID has different submission data"
+    }
+   ]
+  },
+  {
+   "type": "LeadReport",
+   "op": "lead/report",
+   "what": "a remote job state report",
+   "causes": [
+    {
+     "name": "Unauthorized",
+     "class": "Permission",
+     "doc": "the caller is not the node assigned to the job"
+    },
+    {
+     "name": "NoSuchJob",
+     "class": "NotFound",
+     "doc": "the reported job does not exist"
+    },
+    {
+     "name": "MalformedBody",
+     "class": "InvalidArgument",
+     "doc": "the report body is malformed or exceeds its size limit"
+    },
+    {
+     "name": "InvalidState",
+     "class": "InvalidState",
+     "doc": "the transition history or start evidence is invalid"
+    },
+    {
+     "name": "StaleAssignment",
+     "class": "Conflict",
+     "doc": "the report carries superseded assignment evidence"
+    },
+    {
+     "name": "TerminalConflict",
+     "class": "Conflict",
+     "doc": "the report conflicts with an accepted terminal outcome"
+    }
+   ]
+  },
+  {
+   "type": "LeadCancel",
+   "op": "lead/cancel",
+   "what": "cancellation of a remote job",
+   "causes": [
+    {
+     "name": "Unauthorized",
+     "class": "Permission",
+     "doc": "only the local lead CLI may cancel a job"
+    },
+    {
+     "name": "NoSuchJob",
+     "class": "NotFound",
+     "doc": "the job to cancel does not exist"
+    }
+   ]
+  },
+  {
+   "type": "LeadListJobs",
+   "op": "lead/list_jobs",
+   "what": "listing remote jobs",
+   "causes": [
+    {
+     "name": "Unauthorized",
+     "class": "Permission",
+     "doc": "the caller is not authorized to read jobs"
+    },
+    {
+     "name": "InvalidArgument",
+     "class": "InvalidArgument",
+     "doc": "a job listing argument is invalid"
+    }
+   ]
+  },
+  {
+   "type": "LeadGetJob",
+   "op": "lead/get_job",
+   "what": "reading a remote job",
+   "causes": [
+    {
+     "name": "Unauthorized",
+     "class": "Permission",
+     "doc": "the caller is not authorized to read the job"
+    },
+    {
+     "name": "NoSuchJob",
+     "class": "NotFound",
+     "doc": "the requested job does not exist"
+    }
+   ]
+  },
+  {
+   "type": "LeadListNodes",
+   "op": "lead/list_nodes",
+   "what": "listing registered nodes",
+   "causes": [
+    {
+     "name": "Unauthorized",
+     "class": "Permission",
+     "doc": "the caller is not authorized to read nodes"
+    }
+   ]
+  },
+  {
+   "type": "CapsParse",
+   "op": "caps/parse",
+   "what": "parsing declared capabilities",
+   "causes": [
+    {
+     "name": "Malformed",
+     "class": "InvalidArgument",
+     "doc": "a capability does not have namespace:value form"
+    },
+    {
+     "name": "UnknownNamespace",
+     "class": "InvalidArgument",
+     "doc": "a capability namespace is not supported"
+    },
+    {
+     "name": "InvalidValue",
+     "class": "InvalidArgument",
+     "doc": "a capability value has invalid characters or is empty"
+    }
+   ],
+   "noStorage": true
+  },
+  {
+   "type": "LeadWhois",
+   "op": "lead/whois",
+   "what": "identifying a lead HTTP peer",
+   "causes": [
+    {
+     "name": "UntrustedNode",
+     "class": "Permission",
+     "doc": "the device is not allowed by the lead configuration"
+    },
+    {
+     "name": "TailscaleFailed",
+     "class": "Process",
+     "doc": "the local Tailscale identity command failed"
+    },
+    {
+     "name": "MalformedOutput",
+     "class": "Process",
+     "doc": "the Tailscale identity output cannot identify the device"
+    }
+   ],
+   "noStorage": true
+  },
+  {
+   "type": "NodeClient",
+   "op": "node/client",
+   "what": "a node request to the lead",
+   "causes": [
+    {
+     "name": "Unreachable",
+     "class": "Process",
+     "doc": "the lead cannot be reached or its reply cannot be read"
+    },
+    {
+     "name": "Rejected",
+     "class": "Permission",
+     "doc": "the lead rejected the node request"
+    },
+    {
+     "name": "ServerError",
+     "class": "Process",
+     "doc": "the lead returned a server failure"
+    }
+   ],
+   "noStorage": true
   }
  ]
 }

@@ -1811,3 +1811,331 @@ func (c CmdTeamWaitingCause) info() causeInfo { return cmdTeamWaitingCauses[c] }
 
 // String returns the cause name.
 func (c CmdTeamWaitingCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/heartbeat
+
+// LeadHeartbeatCause is a reason why a node heartbeat failed.
+type LeadHeartbeatCause int
+
+const (
+	LeadHeartbeatUnauthorized        LeadHeartbeatCause = iota // the caller is not authorized, including reports for another node [Permission]
+	LeadHeartbeatMalformedBody                                 // the heartbeat body is malformed or exceeds its size limit [InvalidArgument]
+	LeadHeartbeatInvalidCapabilities                           // the declared capabilities are invalid [InvalidArgument]
+	LeadHeartbeatNoSuchJob                                     // a reported job does not exist [NotFound]
+	LeadHeartbeatStaleAssignment                               // a report carries superseded assignment evidence [Conflict]
+	LeadHeartbeatInvalidState                                  // a reported transition history is invalid [InvalidState]
+	LeadHeartbeatTerminalConflict                              // a report conflicts with an accepted terminal outcome [Conflict]
+	LeadHeartbeatStorage                                       // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadHeartbeatError is the error of a node heartbeat.
+type LeadHeartbeatError = OpError[LeadHeartbeatCause]
+
+// leadHeartbeatCauses describes the LeadHeartbeatCause values (same order as the constants).
+var leadHeartbeatCauses = [...]causeInfo{
+	{"Unauthorized", ClassPermission},
+	{"MalformedBody", ClassInvalidArgument},
+	{"InvalidCapabilities", ClassInvalidArgument},
+	{"NoSuchJob", ClassNotFound},
+	{"StaleAssignment", ClassConflict},
+	{"InvalidState", ClassInvalidState},
+	{"TerminalConflict", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadHeartbeatCause) op() string { return "lead/heartbeat" }
+
+// info implements opCause.
+func (c LeadHeartbeatCause) info() causeInfo { return leadHeartbeatCauses[c] }
+
+// String returns the cause name.
+func (c LeadHeartbeatCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/submit
+
+// LeadSubmitCause is a reason why submission of a remote job failed.
+type LeadSubmitCause int
+
+const (
+	LeadSubmitUnauthorized        LeadSubmitCause = iota // the caller or requester is not authorized [Permission]
+	LeadSubmitMissingArgument                            // a required job field is missing [InvalidArgument]
+	LeadSubmitInvalidID                                  // the submitter-chosen job ID is invalid [InvalidArgument]
+	LeadSubmitInvalidBase                                // the base ref or exact commit is invalid [InvalidArgument]
+	LeadSubmitInvalidCapabilities                        // a required capability is invalid [InvalidArgument]
+	LeadSubmitTaskTooLarge                               // the task text exceeds its size limit [InvalidArgument]
+	LeadSubmitMalformedBody                              // the submission body is malformed or exceeds its size limit [InvalidArgument]
+	LeadSubmitJobConflict                                // an existing job ID has different submission data [Conflict]
+	LeadSubmitStorage                                    // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadSubmitError is the error of submission of a remote job.
+type LeadSubmitError = OpError[LeadSubmitCause]
+
+// leadSubmitCauses describes the LeadSubmitCause values (same order as the constants).
+var leadSubmitCauses = [...]causeInfo{
+	{"Unauthorized", ClassPermission},
+	{"MissingArgument", ClassInvalidArgument},
+	{"InvalidID", ClassInvalidArgument},
+	{"InvalidBase", ClassInvalidArgument},
+	{"InvalidCapabilities", ClassInvalidArgument},
+	{"TaskTooLarge", ClassInvalidArgument},
+	{"MalformedBody", ClassInvalidArgument},
+	{"JobConflict", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadSubmitCause) op() string { return "lead/submit" }
+
+// info implements opCause.
+func (c LeadSubmitCause) info() causeInfo { return leadSubmitCauses[c] }
+
+// String returns the cause name.
+func (c LeadSubmitCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/report
+
+// LeadReportCause is a reason why a remote job state report failed.
+type LeadReportCause int
+
+const (
+	LeadReportUnauthorized     LeadReportCause = iota // the caller is not the node assigned to the job [Permission]
+	LeadReportNoSuchJob                               // the reported job does not exist [NotFound]
+	LeadReportMalformedBody                           // the report body is malformed or exceeds its size limit [InvalidArgument]
+	LeadReportInvalidState                            // the transition history or start evidence is invalid [InvalidState]
+	LeadReportStaleAssignment                         // the report carries superseded assignment evidence [Conflict]
+	LeadReportTerminalConflict                        // the report conflicts with an accepted terminal outcome [Conflict]
+	LeadReportStorage                                 // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadReportError is the error of a remote job state report.
+type LeadReportError = OpError[LeadReportCause]
+
+// leadReportCauses describes the LeadReportCause values (same order as the constants).
+var leadReportCauses = [...]causeInfo{
+	{"Unauthorized", ClassPermission},
+	{"NoSuchJob", ClassNotFound},
+	{"MalformedBody", ClassInvalidArgument},
+	{"InvalidState", ClassInvalidState},
+	{"StaleAssignment", ClassConflict},
+	{"TerminalConflict", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadReportCause) op() string { return "lead/report" }
+
+// info implements opCause.
+func (c LeadReportCause) info() causeInfo { return leadReportCauses[c] }
+
+// String returns the cause name.
+func (c LeadReportCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/cancel
+
+// LeadCancelCause is a reason why cancellation of a remote job failed.
+type LeadCancelCause int
+
+const (
+	LeadCancelUnauthorized LeadCancelCause = iota // only the local lead CLI may cancel a job [Permission]
+	LeadCancelNoSuchJob                           // the job to cancel does not exist [NotFound]
+	LeadCancelStorage                             // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadCancelError is the error of cancellation of a remote job.
+type LeadCancelError = OpError[LeadCancelCause]
+
+// leadCancelCauses describes the LeadCancelCause values (same order as the constants).
+var leadCancelCauses = [...]causeInfo{
+	{"Unauthorized", ClassPermission},
+	{"NoSuchJob", ClassNotFound},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadCancelCause) op() string { return "lead/cancel" }
+
+// info implements opCause.
+func (c LeadCancelCause) info() causeInfo { return leadCancelCauses[c] }
+
+// String returns the cause name.
+func (c LeadCancelCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/list_jobs
+
+// LeadListJobsCause is a reason why listing remote jobs failed.
+type LeadListJobsCause int
+
+const (
+	LeadListJobsUnauthorized    LeadListJobsCause = iota // the caller is not authorized to read jobs [Permission]
+	LeadListJobsInvalidArgument                          // a job listing argument is invalid [InvalidArgument]
+	LeadListJobsStorage                                  // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadListJobsError is the error of listing remote jobs.
+type LeadListJobsError = OpError[LeadListJobsCause]
+
+// leadListJobsCauses describes the LeadListJobsCause values (same order as the constants).
+var leadListJobsCauses = [...]causeInfo{
+	{"Unauthorized", ClassPermission},
+	{"InvalidArgument", ClassInvalidArgument},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadListJobsCause) op() string { return "lead/list_jobs" }
+
+// info implements opCause.
+func (c LeadListJobsCause) info() causeInfo { return leadListJobsCauses[c] }
+
+// String returns the cause name.
+func (c LeadListJobsCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/get_job
+
+// LeadGetJobCause is a reason why reading a remote job failed.
+type LeadGetJobCause int
+
+const (
+	LeadGetJobUnauthorized LeadGetJobCause = iota // the caller is not authorized to read the job [Permission]
+	LeadGetJobNoSuchJob                           // the requested job does not exist [NotFound]
+	LeadGetJobStorage                             // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadGetJobError is the error of reading a remote job.
+type LeadGetJobError = OpError[LeadGetJobCause]
+
+// leadGetJobCauses describes the LeadGetJobCause values (same order as the constants).
+var leadGetJobCauses = [...]causeInfo{
+	{"Unauthorized", ClassPermission},
+	{"NoSuchJob", ClassNotFound},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadGetJobCause) op() string { return "lead/get_job" }
+
+// info implements opCause.
+func (c LeadGetJobCause) info() causeInfo { return leadGetJobCauses[c] }
+
+// String returns the cause name.
+func (c LeadGetJobCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/list_nodes
+
+// LeadListNodesCause is a reason why listing registered nodes failed.
+type LeadListNodesCause int
+
+const (
+	LeadListNodesUnauthorized LeadListNodesCause = iota // the caller is not authorized to read nodes [Permission]
+	LeadListNodesStorage                                // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadListNodesError is the error of listing registered nodes.
+type LeadListNodesError = OpError[LeadListNodesCause]
+
+// leadListNodesCauses describes the LeadListNodesCause values (same order as the constants).
+var leadListNodesCauses = [...]causeInfo{
+	{"Unauthorized", ClassPermission},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadListNodesCause) op() string { return "lead/list_nodes" }
+
+// info implements opCause.
+func (c LeadListNodesCause) info() causeInfo { return leadListNodesCauses[c] }
+
+// String returns the cause name.
+func (c LeadListNodesCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- caps/parse
+
+// CapsParseCause is a reason why parsing declared capabilities failed.
+type CapsParseCause int
+
+const (
+	CapsParseMalformed        CapsParseCause = iota // a capability does not have namespace:value form [InvalidArgument]
+	CapsParseUnknownNamespace                       // a capability namespace is not supported [InvalidArgument]
+	CapsParseInvalidValue                           // a capability value has invalid characters or is empty [InvalidArgument]
+)
+
+// CapsParseError is the error of parsing declared capabilities.
+type CapsParseError = OpError[CapsParseCause]
+
+// capsParseCauses describes the CapsParseCause values (same order as the constants).
+var capsParseCauses = [...]causeInfo{
+	{"Malformed", ClassInvalidArgument},
+	{"UnknownNamespace", ClassInvalidArgument},
+	{"InvalidValue", ClassInvalidArgument},
+}
+
+// op implements opCause.
+func (CapsParseCause) op() string { return "caps/parse" }
+
+// info implements opCause.
+func (c CapsParseCause) info() causeInfo { return capsParseCauses[c] }
+
+// String returns the cause name.
+func (c CapsParseCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/whois
+
+// LeadWhoisCause is a reason why identifying a lead HTTP peer failed.
+type LeadWhoisCause int
+
+const (
+	LeadWhoisUntrustedNode   LeadWhoisCause = iota // the device is not allowed by the lead configuration [Permission]
+	LeadWhoisTailscaleFailed                       // the local Tailscale identity command failed [Process]
+	LeadWhoisMalformedOutput                       // the Tailscale identity output cannot identify the device [Process]
+)
+
+// LeadWhoisError is the error of identifying a lead HTTP peer.
+type LeadWhoisError = OpError[LeadWhoisCause]
+
+// leadWhoisCauses describes the LeadWhoisCause values (same order as the constants).
+var leadWhoisCauses = [...]causeInfo{
+	{"UntrustedNode", ClassPermission},
+	{"TailscaleFailed", ClassProcess},
+	{"MalformedOutput", ClassProcess},
+}
+
+// op implements opCause.
+func (LeadWhoisCause) op() string { return "lead/whois" }
+
+// info implements opCause.
+func (c LeadWhoisCause) info() causeInfo { return leadWhoisCauses[c] }
+
+// String returns the cause name.
+func (c LeadWhoisCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- node/client
+
+// NodeClientCause is a reason why a node request to the lead failed.
+type NodeClientCause int
+
+const (
+	NodeClientUnreachable NodeClientCause = iota // the lead cannot be reached or its reply cannot be read [Process]
+	NodeClientRejected                           // the lead rejected the node request [Permission]
+	NodeClientServerError                        // the lead returned a server failure [Process]
+)
+
+// NodeClientError is the error of a node request to the lead.
+type NodeClientError = OpError[NodeClientCause]
+
+// nodeClientCauses describes the NodeClientCause values (same order as the constants).
+var nodeClientCauses = [...]causeInfo{
+	{"Unreachable", ClassProcess},
+	{"Rejected", ClassPermission},
+	{"ServerError", ClassProcess},
+}
+
+// op implements opCause.
+func (NodeClientCause) op() string { return "node/client" }
+
+// info implements opCause.
+func (c NodeClientCause) info() causeInfo { return nodeClientCauses[c] }
+
+// String returns the cause name.
+func (c NodeClientCause) String() string { return c.info().name }

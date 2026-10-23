@@ -609,9 +609,11 @@ request from outside the tailnet — **Tailscale Funnel** or another proxy: neve
 interface itself (htmx header, same origin). Set `AGENT_WEB_URL` to the address you open, and notifications get
 direct links: `Answer: …/questions/<task>?max=1` for questions, `Open: …/task/<task>` otherwise.
 
-**Several instances.** Each instance runs its own web interface and shows its own tasks in full. Showing the
-other instances' tasks (from their manifests, linking to their interfaces) and the hub's bus state on non-lead
-instances comes with the multi-instance work.
+**Several instances.** Each installation currently shows its own local tasks. Remote jobs are being developed
+in nine rounds: [design and implementation plan](docs/multi-instance.md). Round 1 adds design documentation,
+typed error definitions and pending acceptance tests only; remote job commands, daemons and web views are
+not available yet. The planned model keeps every installation and its bus independent, with a lead queue
+from which nodes pull whole jobs.
 
 ## MCP tools available to agents
 
