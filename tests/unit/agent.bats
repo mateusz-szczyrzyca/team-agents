@@ -343,7 +343,9 @@ CONF
   scenario '{"lead": {"new": "sleep:15"}, "member": {"new": "idle", "resume": "idle"}}'
   agent run --team lead,member "team task"
   m=$(task_of member)
-  wait_status "$m" sleeping 30
+  # after its first idle run it sleeps — unless a team message woke it at once for a second idle run (a slow,
+  # loaded machine): then it is paused already, which is what this test is about
+  wait_status "$m" 'sleeping|paused' 30
   team=$(sed -n 's/^TEAM=//p' "$AGENTS_HOME/tasks/$m/meta.env")
   # a message wakes it; it does nothing again → second idle run in a row → paused
   agentbus send --dir "$AGENTS_HOME/bus" --from human --to member "ping"
