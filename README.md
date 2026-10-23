@@ -207,7 +207,10 @@ PR each:
   `agent round-size <task>` shows the size of a task's change (the agents use it too).
 - At the start the agent (in a team: the coordinator) estimates the change. If it does not fit one round, it plans
   rounds and asks you to approve the plan. After each round `main` stays green: unfinished work is dead code or a
-  stub; tests of later rounds are merged skipped (`pending: <what>, round N`).
+  stub; tests of later rounds are merged skipped (`pending: <what>, round N`). Put the literal reason on the
+  same line as a standalone Go `t.Skip` / `t.Skipf` call (any receiver name) or Bats `skip` command. Diagnostic
+  assertions quoting a pending reason do not hold the round open. This is a lightweight scan of these
+  statement forms, not a parser for arbitrary languages, multiline expressions or embedded source fixtures.
 - A round ends with `STATUS: ROUND_DONE N/M`. If its change is over the limit, or a test due in it is still
   pending, it goes back to the agent to be split (at most `ROUND_BOUNCES` times, default 2; then it closes with a
   warning in the notification).

@@ -560,9 +560,12 @@ round_base_ref() { # id → the ref a task's change is measured against: origin/
 }
 
 pending_due() { # id round — pending-test markers due by this round ("" = all of them): "file:line:text" lines
-  local wt due=${2:-}
+  local wt due=${2:-} marker
   wt=$(task_field "$1" WORKTREE)
-  { git -C "$wt" grep -nE 'pending: .*round [0-9]+' -- ':!*.md' || (($? == 1)); } |   # exit 1 = no marker
+  # Require a skip statement, not matching text in an assertion, comment or string fixture.
+  marker='^[[:space:]]*([[:alnum:]_]+[.])?Skip(f)?[[:space:]]*[(][[:space:]]*["`]pending: .*round [0-9]+'
+  marker+='|^[[:space:]]*skip[[:space:]]+["'"'"']pending: .*round [0-9]+'
+  { git -C "$wt" grep -nE "$marker" -- ':!*.md' || (($? == 1)); } |   # exit 1 = no marker
     awk -v due="$due" '{ s = $0; sub(/.*round /, "", s); if (due == "" || s + 0 <= due + 0) print }'
 }
 
