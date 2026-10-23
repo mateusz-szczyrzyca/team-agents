@@ -1,8 +1,10 @@
 # Independent installations and remote jobs
 
 This document specifies the approved v1 design. **Round 1 adds the design, error
-definitions and pending acceptance tests only. No remote job commands, listener,
-daemon or web views are available yet.** Later rounds implement the paths below.
+definitions and pending acceptance tests only. Round 2 implements the internal
+in-memory registry, capability parsing, idempotent submission and atomic routing.
+No persistent registry, remote job commands, listener, daemon or web views are
+available yet.** Later rounds implement the paths below.
 
 ## Boundaries
 

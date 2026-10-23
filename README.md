@@ -610,8 +610,8 @@ interface itself (htmx header, same origin). Set `AGENT_WEB_URL` to the address 
 direct links: `Answer: …/questions/<task>?max=1` for questions, `Open: …/task/<task>` otherwise.
 
 **Several instances.** Each installation currently shows its own local tasks. Remote jobs are being developed
-in nine rounds: [design and implementation plan](docs/multi-instance.md). Round 1 adds design documentation,
-typed error definitions and pending acceptance tests only; remote job commands, daemons and web views are
+in nine rounds: [design and implementation plan](docs/multi-instance.md). Round 2 adds the internal in-memory
+registry, capability parsing and assignment tests; remote job commands, persistence, daemons and web views are
 not available yet. The planned model keeps every installation and its bus independent, with a lead queue
 from which nodes pull whole jobs.
 
