@@ -188,6 +188,14 @@ work — typically to extend the task — `agent run --resume <team|task> "addit
 same branches (and the same draft PR), with the checkpoints, the earlier answers and your addition in the
 prompt. A resumed team keeps its coordinator and board and skips the quiz.
 
+Ordinary starts and `run --resume` reserve fresh timestamp-shaped task IDs and team IDs under the local
+`task-ids.lock`. If a timestamp is already occupied, allocation tries the next second. The whole team's task
+directories are claimed before a resume replaces any previous worktree, so immediate stop/resume preserves the
+original task text and metadata. Existing IDs and metadata remain readable; ordinary resume keeps its branches
+as before. Concurrent starts share the same reservation path, and release the lock before launching runners.
+Preparation holds this lock through checkout and team registration, including a next-round fetch. Another start
+waits up to 60 seconds for it, then reports an error and can be retried.
+
 ### Rounds
 
 Big changes are not reviewable — so a task's PR has a size limit, and a bigger task is done in **rounds**, one
@@ -628,6 +636,7 @@ from which nodes pull whole jobs.
   tasks/<task id>/                           meta.env, task.md, prompt-N.md, out-N.jsonl / events-N.jsonl,
                                              activity.jsonl, activity-full.jsonl, questions-N.md, final.md,
                                              result.md (investigations), investigations/
+  task-ids.lock                             serializes ordinary start/resume ID reservations
   worktrees/<repo>/<task id>/                git worktrees
   bus/state.json  bus/messages.jsonl         agentbus state and message log
   bus/notebooks/<repo>/                      repository notebooks

@@ -204,7 +204,8 @@ AUTH_MODEL_OPENROUTER="${AUTH_MODEL_OPENROUTER:-}"   # empty = model of the firs
 AUTH_MODEL_DEEPINFRA="${AUTH_MODEL_DEEPINFRA:-}"     # empty = model of the first deepinfra/... agent in agents.conf
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
-bus() { "$AGENTBUS_BIN" "$@"; }
+# bus forwards a local command without the admission lock, including any children it wakes.
+bus() { "$AGENTBUS_BIN" "$@" 10>&-; }
 
 # `agent stop --running` in progress: blocks waking, queues and notifications (flag valid for 2 min)
 stopping() {
@@ -386,7 +387,7 @@ watch_answers() {
     --path-property=PathModified="$f" \
     --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" \
     --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
-    "$SELF" _answers_saved "$id" "$round" 3>&- 7>&- 8>&- 9>&- \
+    "$SELF" _answers_saved "$id" "$round" 3>&- 7>&- 8>&- 9>&- 10>&- \
     || log_error answers_watch_failed "task=$id" "file=$f"   # answering still works: agent resume <id>
 }
 
@@ -523,6 +524,13 @@ finish_team() { # team reason — closes the team; sleeping members finish as do
 }
 
 # ------------------------------------------------------------------ rounds (README "Rounds")
+
+team_waits_on_others() { # team — does a member wait for a worker request or an investigation it asked for?
+  local out
+  out=$(bus team-waiting --dir "$BUS_DIR" --team "$1") || return 1   # cannot tell (bus logs why): check as before
+  [[ $(jq_soft team_waiting_parse -r '.waiting | length' <<< "$out") -gt 0 ]] || return 1
+  log_info team_waiting "team=$1" "for=$(jq_soft team_waiting_parse -r '.waiting | join("; ")' <<< "$out")"
+}
 
 round_limit() { # repository name → its hard round limit (0 = none)
   printf '%s' "${ROUND_MAX_LINES_REPO[$1]:-$ROUND_MAX_LINES}"
@@ -688,7 +696,8 @@ $(team_summary "$team")" ;;
     esac
   fi
 
-  # everyone finished without the coordinator closing the team / everyone sleeps = the team is stuck
+  # everyone finished without the coordinator closing the team / everyone sleeps = the team is stuck — unless a
+  # member waits for a worker or an investigation it asked for: that result wakes it
   [[ $(team_done_flag "$team") == true ]] && return 0
   local stuck_file="$TASKS/.team-$team.stuck"
   team_all() { # done|sleep — are all members in the given set of states
@@ -705,18 +714,18 @@ $(team_summary "$team")" ;;
   if team_all done; then
     finish_team "$team" "all members finished"
     push_text "$REPO_NAME" "Team $team finished without being closed by its coordinator:" "$(team_summary "$team")"
-  elif team_all sleep && { sleep 3   # give a pending wake-up a moment; re-check after the pause
+  elif team_all sleep && ! team_waits_on_others "$team" && { sleep 3   # a pending wake-up gets a moment; re-check
          [[ $(team_done_flag "$team") != true ]] && team_all sleep && ! team_all done; }; then
     local n=1
     [[ -f $stuck_file ]] && n=$(( $(<"$stuck_file") + 1 ))
     echo "$n" > "$stuck_file"
     if ((n == 1)) && [[ -n $lead ]]; then
       notice team_stuck agentbus "$lead" \
-        "TEAM STUCK: all members are asleep. As the coordinator, check the state (team_status, read_messages) and either assign work or finish the team task (STATUS: DONE)." \
+        "TEAM STUCK: all members are asleep. As the coordinator, check the state (team_status, read_messages) and either assign work or finish the team task (STATUS: DONE). Waiting for the human to merge a PR? Then end the round instead of sleeping: STATUS: ROUND_DONE N/M." \
         "team=$team"
     elif ((n == 2)); then
       push_text "$REPO_NAME" "Team $team is stuck: all members are asleep and waking the coordinator did not help." \
-        "See: agent live. Nudge them with a message (m / agent say) or stop: agent stop <coordinator task id>." \
+        "See: agent live. Nudge them with a message (m / agent say) or stop: agent stop <coordinator task id>. If the coordinator waits for you to merge a PR: merge it, then tell it so (agent say)." \
         "$(team_summary "$team")"
     fi
   else
@@ -862,7 +871,7 @@ schedule_wake() {
     --on-active="${2}s" --timer-property=AccuracySec=10s \
     --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" \
     --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
-    "$SELF" _wake "$1" 3>&- 7>&- 8>&- 9>&-
+    "$SELF" _wake "$1" 3>&- 7>&- 8>&- 9>&- 10>&-
 }
 
 # pause_task id seconds reason — the task waits (no run, not woken by messages) until a timer resumes it
@@ -1999,7 +2008,7 @@ start_runner() { # id mode
     --working-directory="$(task_field "$id" WORKTREE)" \
     --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" \
     --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
-    "$SELF" _runner "$id" "$mode" 3>&- 7>&- 8>&- 9>&- && return 0
+    "$SELF" _runner "$id" "$mode" 3>&- 7>&- 8>&- 9>&- 10>&- && return 0
   meta_set "$id" STATUS failed
   log_error runner_start_failed "task=$id" "run=$run"
   echo "agent: systemd-run could not start $id (is lingering enabled? sudo loginctl enable-linger $(id -un))" >&2
@@ -2008,7 +2017,95 @@ start_runner() { # id mode
 
 # ------------------------------------------------------------------ commands
 
-create_task() { # name text root main_root base ts [team] — sets NEW_ID
+# lock_task_ids serializes ordinary start/resume admission, before checking agents or touching predecessors.
+lock_task_ids() {
+  local mask
+  mask=$(umask)
+  umask 077
+  exec 10>"$AGENTS_HOME/task-ids.lock" || die "cannot open the task ID allocation lock"
+  umask "$mask"
+  flock -w 60 10 || die "cannot lock task ID allocation within 60 seconds; retry the run"
+}
+
+# unlock_task_ids releases admission before launching children, which must never retain this lock.
+unlock_task_ids() {
+  flock -u 10 || die "cannot release the task ID allocation lock"
+  exec 10>&-
+}
+
+# allocate_run_ids team names-array roots-array repos-array claims the entire cohort; prints its timestamp.
+# The caller holds task-ids.lock through team registration. Failed partial claims remove only our empty dirs.
+allocate_run_ids() {
+  local with_team=$1
+  local -n allocation_names=$2 allocation_roots=$3 allocation_repos=$4
+  local stamp epoch collision i target claimed_dir detail rc
+  local claimed=()
+  stamp=$(date +%Y%m%d-%H%M%S) || die "cannot read the task ID timestamp"
+  # Advance the encoded label in UTC so a local daylight-saving change cannot repeat candidates.
+  epoch=$(TZ=UTC date -d "${stamp:0:4}-${stamp:4:2}-${stamp:6:2} ${stamp:9:2}:${stamp:11:2}:${stamp:13:2}" +%s) \
+    || die "cannot parse the task ID timestamp: $stamp"
+  while :; do
+    stamp=$(TZ=UTC date -d "@$epoch" +%Y%m%d-%H%M%S) || die "cannot advance the task ID timestamp"
+    collision=0
+    if ((with_team)); then
+      # A crash before team-create can leave a claimed cohort with no bus record.
+      for target in "$TASKS/$stamp-"*; do
+        if [[ -e $target || -L $target ]]; then collision=1; break; fi
+      done
+    fi
+    for ((i = 0; i < ${#allocation_names[@]} && collision == 0; i++)); do
+      for target in "$TASKS/$stamp-${allocation_names[i]}" \
+          "$AGENTS_HOME/worktrees/${allocation_repos[i]}/$stamp-${allocation_names[i]}"; do
+        if [[ -e $target || -L $target ]]; then collision=1; break; fi
+      done
+      ((collision == 0)) || break
+      if git -C "${allocation_roots[i]}" show-ref --verify --quiet \
+          "refs/heads/$BRANCH_PREFIX/${allocation_names[i]}/$stamp" 10>&-; then
+        collision=1
+      else
+        rc=$?
+        # show-ref returns 1 for an absent branch; any other failure prevents safe allocation.
+        ((rc == 1)) || die "cannot check branch availability for ${allocation_names[i]} ($rc)"
+      fi
+    done
+    if ((with_team && collision == 0)); then
+      if detail=$(bus team-get --dir "$BUS_DIR" --team "$stamp-team" 2>&1); then
+        collision=1
+      else
+        rc=$?
+        # Archived tasks may be absent while their team remains: only NotFound means available.
+        if ((rc != BUS_NOT_FOUND)); then
+          # Preserve ordinary run's abandonment event and diagnostic when bus storage is invalid.
+          # No cohort directories have been claimed yet, so cleanup has no new tasks to remove.
+          abandon_run "could not create the team on the bus (cannot check team ID availability: $detail)"
+        fi
+      fi
+    fi
+    if ((collision == 0)); then
+      claimed=()
+      for target in "${allocation_names[@]}"; do
+        target="$TASKS/$stamp-$target"
+        if detail=$(mkdir -- "$target" 2>&1); then
+          claimed+=("$target")
+        else
+          for claimed_dir in "${claimed[@]}"; do
+            rmdir -- "$claimed_dir" || die "cannot release an empty task ID claim: $claimed_dir"
+          done
+          # Another filesystem writer can race our preflight; exclusive mkdir decides ownership.
+          if [[ -e $target || -L $target ]]; then collision=1; break; fi
+          die "cannot claim task ID directory $target: $detail"
+        fi
+      done
+      if ((collision == 0)); then
+        printf '%s\n' "$stamp" || die "cannot return the allocated task timestamp"
+        return 0
+      fi
+    fi
+    epoch=$((epoch + 1))
+  done
+}
+
+create_task() { # name text root main_root base ts [team] — uses a claimed task directory; sets NEW_ID
   local name=$1 task=$2 root=$3 main_root=$4 base=$5 ts=$6 team=${7:-}
   local id repo_name branch wt dir
   id="$ts-$name"
@@ -2016,8 +2113,8 @@ create_task() { # name text root main_root base ts [team] — sets NEW_ID
   branch="$BRANCH_PREFIX/$name/$ts"
   wt="$AGENTS_HOME/worktrees/$repo_name/$id"
   dir="$TASKS/$id"
-  mkdir -p "$dir" "$(dirname "$wt")"
-  git -C "$root" worktree add --quiet -b "$branch" "$wt" HEAD
+  mkdir -p "$(dirname "$wt")"
+  git -C "$root" worktree add --quiet -b "$branch" "$wt" HEAD 10>&-
   printf '%s\n' "$task" > "$dir/task.md"
   local agents_md=missing
   [[ -f $wt/AGENTS.md ]] && agents_md=present
@@ -2083,6 +2180,8 @@ resume_run() { # ref verify same_round [addition...] — resumes an interrupted 
   elif (($#)); then add="$*"
   elif [[ ! -t 0 ]]; then add=$(cat); fi
 
+  lock_task_ids
+
   # find the interrupted team (by team ID or a member's task ID) or a single task
   local d first="" old_team=""
   for d in "$TASKS"/*/; do
@@ -2134,31 +2233,38 @@ resume_run() { # ref verify same_round [addition...] — resumes an interrupted 
   fi
 
   local ts new_team="" ids=() id old root wt name branch prev start base sha
-  ts=$(date +%Y%m%d-%H%M%S)
+  local names=() roots=() repos=() with_team=0
+  for old in "${olds[@]}"; do
+    names+=("$(task_field "$old" AGENT)")
+    roots+=("$(task_field "$old" REPO_ROOT)")
+    repos+=("$(task_field "$old" REPO_NAME)")
+  done
+  [[ -n $old_team ]] && with_team=1
+  ts=$(allocate_run_ids "$with_team" names roots repos)
   [[ -n $old_team ]] && new_team="$ts-team"
   for old in "${olds[@]}"; do
     name=$(task_field "$old" AGENT); root=$(task_field "$old" REPO_ROOT)
     id="$ts-$name"; wt="$AGENTS_HOME/worktrees/$(task_field "$old" REPO_NAME)/$id"
-    mkdir -p "$TASKS/$id" "$(dirname "$wt")"
+    mkdir -p "$(dirname "$wt")"
     # the same branch (with its commits and draft PR) — the old worktree releases it
     if [[ -d $(task_field "$old" WORKTREE) ]]; then
-      try worktree_remove_failed git -C "$root" worktree remove --force "$(task_field "$old" WORKTREE)"
+      try worktree_remove_failed git -C "$root" worktree remove --force "$(task_field "$old" WORKTREE)" 10>&-
     fi
-    git -C "$root" worktree prune
+    git -C "$root" worktree prune 10>&-
     prev=$(task_field "$old" BRANCH); branch=$prev
     if ((fresh)); then   # the next round: a new branch from the base, which now contains the merged round
       base=$(task_field "$old" BASE); start=$base
       if git -C "$root" remote get-url origin >/dev/null 2>&1; then   # a query: no origin = no remote to update from
-        try round_fetch_failed git -C "$root" fetch --quiet origin "$base"
+        try round_fetch_failed git -C "$root" fetch --quiet origin "$base" 10>&-
         if git -C "$root" rev-parse --verify --quiet "origin/$base" >/dev/null; then start="origin/$base"; fi
       fi
       branch="$BRANCH_PREFIX/$name/$ts"
-      git -C "$root" worktree add --quiet -b "$branch" "$wt" "$start" || die "could not create branch $branch from $start"
+      git -C "$root" worktree add --quiet -b "$branch" "$wt" "$start" 10>&- || die "could not create branch $branch from $start"
       sha=$(git -C "$root" rev-parse --short "$start")
       round_title="Round $((wr + 1)) of $wrs"
       round_head="Round $((wr + 1)) of $wrs. Round $wr is merged into $base: your branch $branch starts from there ($sha). Your previous branch $prev is kept — take from it only what the round plan puts into this round."
     else
-      git -C "$root" worktree add --quiet "$wt" "$branch" || die "could not recreate the worktree of branch $branch"
+      git -C "$root" worktree add --quiet "$wt" "$branch" 10>&- || die "could not recreate the worktree of branch $branch"
     fi
     { cat "$TASKS/$old/task.md"
       if [[ -n $round_head ]]; then
@@ -2209,6 +2315,7 @@ resume_run() { # ref verify same_round [addition...] — resumes an interrupted 
     fi
   fi
 
+  unlock_task_ids
   for id in "${ids[@]}"; do start_runner "$id" new || exit 1; done
   log_info resumed "from=${old_team:-$first}" "new_team=$new_team" "tasks=${ids[*]}"
   echo "Resumed ${old_team:-$first} from the last checkpoint:"
@@ -2281,6 +2388,7 @@ cmd_run() {
     for m in "${members[@]}"; do [[ $(agent_tier "$m") == normal ]] && has_normal=1; done
     ((has_normal)) || die "a team needs at least one agent outside WORKER_AGENTS (workers cannot coordinate)"
   fi
+  lock_task_ids
   local busy
   for m in "${members[@]}"; do
     if busy=$(agent_running_task "$m"); then
@@ -2288,8 +2396,10 @@ cmd_run() {
     fi
   done
 
-  local ts base team="" ids=()
-  ts=$(date +%Y%m%d-%H%M%S)
+  local ts base team="" ids=() roots=() repos=() with_team=0
+  for m in "${members[@]}"; do roots+=("$root"); repos+=("$(basename "$main_root")"); done
+  ((${#members[@]} > 1)) && with_team=1
+  ts=$(allocate_run_ids "$with_team" members roots repos)
   base=$(git -C "$root" symbolic-ref --quiet --short HEAD || git -C "$root" rev-parse --short HEAD)
   ((${#members[@]} > 1)) && team="$ts-team"
   for m in "${members[@]}"; do
@@ -2311,12 +2421,13 @@ cmd_run() {
       abandon_run "could not create the team on the bus (see ~/agents/logs/agentbus.jsonl)" "${ids[@]}"
   fi
 
-  if [[ -n $(git -C "$root" status --porcelain) ]]; then
+  if [[ -n $(git -C "$root" status --porcelain 10>&-) ]]; then
     echo "Note: uncommitted changes in $root were NOT copied to the agents' worktrees (they start from HEAD)."
   fi
   if ((verify)); then
     for i in "${ids[@]}"; do meta_set "$i" VERIFY 1; done
   fi
+  unlock_task_ids
   for i in "${ids[@]}"; do
     start_runner "$i" new || exit 1
   done
