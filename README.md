@@ -107,6 +107,21 @@ The socket uses local filesystem permissions instead of a bearer token. Its dire
 by other users. A missing or refused socket returns `Unavailable` and never falls back to local bus files.
 The temporary `lead_local_fallback` event name is retained for old logs but is no longer emitted.
 
+The shared CLI adapter uses an instance operator identity, separate from registered agent MCP identities.
+The hub checks authenticated peer ownership for both. Registered agent calls cannot select CLI operations,
+and the operator identity cannot invoke agent tools. These are protocol boundaries, not a separate human
+credential: token-mode agents can read their instance token, as described in Security.
+Remote team creation accepts only shared assignments with qualified member names and validated task IDs;
+local executable/home settings are omitted by the client and rejected by the hub. The owning node retains
+its process configuration. Existing teams cannot be replaced by a remote create (`AlreadyExists`, exit 6).
+A resumed team's board and private qualification state are copied on the hub from the preceding team.
+Forwarded `team-get` omits quiz/consultation data and local paths and requires a member on the requesting
+instance. `team-set` addresses an exact qualified member owned by that node; exclusion remains final.
+Forwarded `instances` retains the local tab-separated display and never returns daemon registration or
+lease credentials. `cmd-enqueue` uses the configured hub without a local queue fallback. A forwarded stdout
+failure returns the command's typed `Storage` cause instead of reporting success. Other queue CLI forwarding
+and the full public cross-instance lifecycle remain subject to the development-preview limitations above.
+
 ### Tasks and runs
 
 `agent run <agent> "task"` (inside a git repository) creates a task: a worktree under `~/agents/worktrees`, a

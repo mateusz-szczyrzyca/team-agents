@@ -136,7 +136,10 @@ func forwardCLI(dir, op string, args map[string]any) (bool, error) {
 	}
 	if resp.Stdout != nil {
 		if _, writeErr := os.Stdout.Write(*resp.Stdout); writeErr != nil {
-			warnSideEffect("write forwarded CLI output", storageErr(writeErr, "write forwarded CLI output"))
+			if ok, outputErr := decodeHubWireError(HubCLICall, &HubWireError{Op: op, Cause: "Storage", Message: "cannot write forwarded stdout: " + writeErr.Error()}); ok {
+				return true, outputErr
+			}
+			return true, fromStorage(HubClientStorage, storageErr(writeErr, "cannot write forwarded stdout"))
 		}
 	}
 	return true, nil

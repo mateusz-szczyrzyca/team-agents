@@ -1950,6 +1950,7 @@ type CmdTeamCreateCause int
 const (
 	CmdTeamCreateInvalidJSON    CmdTeamCreateCause = iota // the team JSON on stdin cannot be decoded [InvalidArgument]
 	CmdTeamCreateMissingFields                            // the team JSON has no id or no members [InvalidArgument]
+	CmdTeamCreateAlreadyExists                            // a remote team creation attempts to replace an existing shared team [Conflict]
 	CmdTeamCreateOutcomeUnknown                           // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
 	CmdTeamCreateUnavailable                              // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CmdTeamCreateStorage                                  // the shared state or a file could not be read or written [Storage]
@@ -1962,6 +1963,7 @@ type CmdTeamCreateError = OpError[CmdTeamCreateCause]
 var cmdTeamCreateCauses = [...]causeInfo{
 	{"InvalidJSON", ClassInvalidArgument},
 	{"MissingFields", ClassInvalidArgument},
+	{"AlreadyExists", ClassConflict},
 	{"OutcomeUnknown", ClassInvalidState},
 	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
@@ -2908,6 +2910,8 @@ const (
 	CommandEnqueueInvalidParams                                  // the instance or task is empty, or a parameter required by the command kind is missing [InvalidArgument]
 	CommandEnqueueInstanceUnreachable                            // the target instance holds no unexpired registration; the command is not queued [Unavailable]
 	CommandEnqueueQueueFull                                      // the instance already has the maximum number of undelivered commands; the caller may retry later [Unavailable]
+	CommandEnqueueOutcomeUnknown                                 // the request was forwarded to the hub and the reply was lost; it may or may not have run, so it is not retried [InvalidState]
+	CommandEnqueueUnavailable                                    // the hub cannot be reached after the bounded retries; nothing was executed by the hub [Unavailable]
 	CommandEnqueueStorage                                        // the shared state or a file could not be read or written [Storage]
 )
 
@@ -2920,6 +2924,8 @@ var commandEnqueueCauses = [...]causeInfo{
 	{"InvalidParams", ClassInvalidArgument},
 	{"InstanceUnreachable", ClassUnavailable},
 	{"QueueFull", ClassUnavailable},
+	{"OutcomeUnknown", ClassInvalidState},
+	{"Unavailable", ClassUnavailable},
 	{"Storage", ClassStorage},
 }
 

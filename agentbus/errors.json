@@ -764,6 +764,11 @@
      "name": "MissingFields",
      "class": "InvalidArgument",
      "doc": "the team JSON has no id or no members"
+    },
+    {
+     "name": "AlreadyExists",
+     "class": "Conflict",
+     "doc": "a remote team creation attempts to replace an existing shared team"
     }
    ],
    "forwarded": true
@@ -1195,7 +1200,8 @@
      "class": "Unavailable",
      "doc": "the instance already has the maximum number of undelivered commands; the caller may retry later"
     }
-   ]
+   ],
+   "forwarded": true
   },
   {
    "type": "CommandPoll",

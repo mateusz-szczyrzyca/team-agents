@@ -670,22 +670,32 @@ func cmdTeamCreate(args []string) {
 	if t.ID == "" || len(t.Members) == 0 {
 		exitOn(opErr(CmdTeamCreateMissingFields, "the team JSON needs an id and members").asError())
 	}
-	data, _ := json.Marshal(t)
-	if ok, err := forwardCLI(*dir, "team-create", map[string]any{"team_json": string(data)}); ok {
+	data, encodeErr := remoteTeamJSON(&t)
+	exitOn(encodeErr.asError())
+	if ok, err := forwardCLI(*dir, "team-create", map[string]any{"team_json": data}); ok {
 		exitOn(err)
 		return
 	}
+	exitOn(createTeamRecord(&Bus{dir: *dir}, &t).asError())
+}
+
+// createTeamRecord preserves team creation and resume announcements for local and hub adapters.
+func createTeamRecord(b *Bus, t *Team) *CmdTeamCreateError {
 	t.Created = Now()
-	b := &Bus{dir: *dir}
-	exitOn(transact(b, CmdTeamCreateStorage, func(st *State) *CmdTeamCreateError {
-		st.Teams[t.ID] = &t
-		var announcement busEvent = EventTeamCreated{Team: t.ID, Members: t.names()}
-		if t.Resumed != "" {
-			announcement = EventTeamResumed{Team: t.ID, Previous: t.Resumed, Members: t.names(), Lead: t.Lead}
-		}
-		_, serr := b.post(st, "agentbus", teamRecipient(t.ID), announcement)
-		return fromStorage(CmdTeamCreateStorage, serr)
-	}).asError())
+	return transact(b, CmdTeamCreateStorage, func(st *State) *CmdTeamCreateError {
+		return storeTeamRecord(b, st, t)
+	})
+}
+
+// storeTeamRecord publishes a team and its announcement while the caller holds the bus lock.
+func storeTeamRecord(b *Bus, st *State, t *Team) *CmdTeamCreateError {
+	st.Teams[t.ID] = t
+	var announcement busEvent = EventTeamCreated{Team: t.ID, Members: t.names()}
+	if t.Resumed != "" {
+		announcement = EventTeamResumed{Team: t.ID, Previous: t.Resumed, Members: t.names(), Lead: t.Lead}
+	}
+	_, serr := b.post(st, "agentbus", teamRecipient(t.ID), announcement)
+	return fromStorage(CmdTeamCreateStorage, serr)
 }
 
 // team-set changes a member's state; for "sleeping" it wakes the member right away if messages or board items wait for it.
@@ -702,14 +712,22 @@ func cmdTeamSet(args []string) {
 		exitOn(err)
 		return
 	}
-	b := &Bus{dir: *dir}
+	text, err := setTeamMember(&Bus{dir: *dir}, *team, *agent, newState)
+	exitOn(err.asError())
 	var out cliWriter
-	exitOn(transact(b, CmdTeamSetStorage, func(st *State) *CmdTeamSetError {
-		t := st.Teams[*team]
-		if t == nil || t.Members[*agent] == nil {
-			return opErr(CmdTeamSetNoSuchMember, "no member %s in team %s", *agent, *team)
+	out.printf("%s", text)
+	exitOn(fromStorage(CmdTeamSetStorage, out.err).asError())
+}
+
+// setTeamMember preserves final exclusion and pending-work wake semantics on both transports.
+func setTeamMember(b *Bus, team, agent string, newState MemberState) (string, *CmdTeamSetError) {
+	var out strings.Builder
+	err := transact(b, CmdTeamSetStorage, func(st *State) *CmdTeamSetError {
+		t := st.Teams[team]
+		if t == nil || t.Members[agent] == nil {
+			return opErr(CmdTeamSetNoSuchMember, "no member %s in team %s", agent, team)
 		}
-		m := t.Members[*agent]
+		m := t.Members[agent]
 		if m.State == MemberExcluded && newState != MemberDone {
 			return nil // exclusion is final
 		}
@@ -717,18 +735,19 @@ func cmdTeamSet(args []string) {
 		if newState != MemberSleeping || t.Done {
 			return nil
 		}
-		reason, serr := b.wakeForPendingWork(st, t, *agent)
+		reason, serr := b.wakeForPendingWork(st, t, agent)
 		if serr != nil {
 			return fromStorage(CmdTeamSetStorage, serr)
 		}
 		switch reason {
 		case wakeForMessage:
-			out.println("waking")
+			out.WriteString("waking\n")
 		case wakeForBoard:
-			out.println("waking (board)")
+			out.WriteString("waking (board)\n")
 		}
-		return fromStorage(CmdTeamSetStorage, out.err)
-	}).asError())
+		return nil
+	})
+	return out.String(), err
 }
 
 // wakeReason says why wakeForPendingWork woke a member; wakeNone means it did not wake one.
@@ -785,16 +804,20 @@ func cmdTeamDone(args []string) {
 		exitOn(err)
 		return
 	}
-	b := &Bus{dir: *dir}
-	exitOn(transact(b, CmdTeamDoneStorage, func(st *State) *CmdTeamDoneError {
-		t := st.Teams[*team]
+	exitOn(finishTeam(&Bus{dir: *dir}, *team).asError())
+}
+
+// finishTeam emits the same idempotent completion event for local and forwarded commands.
+func finishTeam(b *Bus, team string) *CmdTeamDoneError {
+	return transact(b, CmdTeamDoneStorage, func(st *State) *CmdTeamDoneError {
+		t := st.Teams[team]
 		if t == nil || t.Done {
 			return nil
 		}
 		t.Done = true
 		_, serr := b.post(st, "agentbus", teamRecipient(t.ID), EventTeamFinished{Team: t.ID})
 		return fromStorage(CmdTeamDoneStorage, serr)
-	}).asError())
+	})
 }
 
 // team-get: prints a team as JSON (exit status 3 = no such team, see ErrorClass.ExitCode).

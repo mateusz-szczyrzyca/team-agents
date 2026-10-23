@@ -257,6 +257,9 @@ func (h *Hub) validate(instance string, req HubRequest) *HubCallError {
 		return opErr(HubCallStorage, "hub bus is not configured")
 	}
 	if req.Kind == HubToolCall {
+		if req.Caller.Agent == "cli" || req.Caller.Task == "cli" {
+			return opErr(HubCallIdentity, "instance operators cannot impersonate agent tool callers")
+		}
 		if _, known := toolSchemas()[req.Op]; !known {
 			return opErr(HubCallUnknownOperation, "unknown tool operation %q", req.Op)
 		}
