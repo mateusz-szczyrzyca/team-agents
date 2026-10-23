@@ -84,7 +84,7 @@ func TestLeadRegistryConcurrentHeartbeatsRace(t *testing.T) {
 
 	// Every job is submitted twice, concurrently: the duplicate must be the same job.
 	var wg sync.WaitGroup
-	submitErr := make([]error, 2*jobs)
+	submitErr := make([]*LeadSubmitError, 2*jobs)
 	for i := range 2 * jobs {
 		wg.Add(1)
 		go func() {
@@ -103,7 +103,7 @@ func TestLeadRegistryConcurrentHeartbeatsRace(t *testing.T) {
 
 	// Every node heartbeats once, concurrently, with one free normal agent.
 	heartbeats := make([]*Job, nodes)
-	heartbeatErr := make([]error, nodes)
+	heartbeatErr := make([]*LeadHeartbeatError, nodes)
 	for n := range nodes {
 		wg.Add(1)
 		go func() {
