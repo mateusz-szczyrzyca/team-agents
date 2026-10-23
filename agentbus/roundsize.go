@@ -7,6 +7,8 @@
 package main
 
 import (
+	"bytes"
+	"os/exec"
 	"path"
 	"sort"
 	"strconv"
@@ -167,5 +169,56 @@ func countRound(files []RoundFile, patterns []string) RoundSize {
 // roundSizeOf counts the change of HEAD against base in a repository: `git diff --numstat -z -M base...HEAD`
 // (from the merge base, so commits that reached the base meanwhile do not count).
 func roundSizeOf(repo, base string, patterns []string) (RoundSize, *CmdRoundSizeError) {
-	return RoundSize{}, nil // not implemented yet: TestRoundSizeOfARepository comes first
+	if repo == "" || base == "" {
+		return RoundSize{}, opErr(CmdRoundSizeMissingArgument, "%s", missing("repo", "base"))
+	}
+	if strings.HasPrefix(base, "-") {
+		return RoundSize{}, opErr(CmdRoundSizeBadBase, "base %q is not a ref name", base)
+	}
+	if err := checkPatterns(patterns); err != nil {
+		return RoundSize{}, err
+	}
+	// --no-color and --no-ext-diff: the user's git configuration must not change the format read below
+	cmd := exec.Command("git", "-C", repo, "diff", "--no-color", "--no-ext-diff", "--numstat", "-z", "-M", base+"...HEAD") // #nosec G204 -- fixed git arguments; base is checked not to be an option
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return RoundSize{}, opErr(CmdRoundSizeGit, "git diff %s...HEAD in %s: %v: %s", base, repo, err, strings.TrimSpace(stderr.String()))
+	}
+	files, perr := parseNumstat(out)
+	if perr != nil {
+		return RoundSize{}, perr
+	}
+	return countRound(files, patterns), nil
+}
+
+// cmdRoundSize — round-size: the size of a round's change (README "Rounds"), as text or JSON.
+//
+//	agentbus round-size --repo DIR --base REF [--exclude "*_gen.go vendor/"] [--json]
+func cmdRoundSize(args []string) {
+	fs := newFlagSet("round-size")
+	repo := fs.String("repo", ".", "the repository (a worktree)")
+	base := fs.String("base", "", "the base ref the round is measured against (e.g. origin/main)")
+	exclude := fs.String("exclude", "", "exclusion patterns, separated by spaces")
+	asJSON := fs.Bool("json", false, "print JSON")
+	parseFlags(fs, args)
+	size, err := roundSizeOf(*repo, *base, strings.Fields(*exclude))
+	if err != nil {
+		exitOn(err.asError())
+		return
+	}
+	if *asJSON {
+		exitOn(printJSON(size).asError())
+		return
+	}
+	var out cliWriter
+	out.printf("round size: %d lines (+%d -%d) in %d files\n", size.Lines, size.Added, size.Deleted, size.Files)
+	if len(size.Excluded) > 0 {
+		out.printf("not counted (excluded): %s\n", strings.Join(size.Excluded, ", "))
+	}
+	if len(size.Binary) > 0 {
+		out.printf("not counted (binary): %s\n", strings.Join(size.Binary, ", "))
+	}
+	exitOn(out.err.asError())
 }

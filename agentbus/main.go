@@ -1274,6 +1274,7 @@ func main() {
   agentbus normalize --type claude|codex|gemini|opencode   (stdin: CLI stream, stdout: activity JSONL)
   agentbus team-list [--all] | notes --repo R [--section S] [-n 30] [--search Q]
   agentbus team-create|team-set|team-done|team-get   (used by the agent script)
+  agentbus round-size --repo DIR --base REF [--exclude PATTERNS] [--json]   size of a round's change
   agentbus helper-list [--all] | helper-next|helper-set|helper-get|board-dump   (used by the agent script)
   agentbus checkpoint-get|cancel-pending|board-release-agent   (used by the agent script)`)
 		os.Exit(2)
@@ -1320,6 +1321,8 @@ func main() {
 		cmdTeamDone(os.Args[2:])
 	case "team-get":
 		cmdTeamGet(os.Args[2:])
+	case "round-size":
+		cmdRoundSize(os.Args[2:])
 	case "team-list":
 		cmdTeamList(os.Args[2:])
 	case "notes":
