@@ -77,12 +77,20 @@ you ── agent run claude-1 "task" ──► systemd --user unit  agent-<task>
 
 ## Concepts
 
-### Multi-instance development preview
+### Multi-instance support
 
-The approved [multi-instance design](docs/multi-instance.md) is being implemented in milestones.
-The hub dispatcher, authentication primitives and MCP forwarding client are available for isolated tests;
-instance registration, node supervision and cross-instance task routing are still under development.
-Keep production installations in single-instance mode until these milestones are complete.
+The [multi-instance architecture](docs/multi-instance.md) enables a single team of agents to span multiple machines
+(Linux and macOS) coordinated by a central hub on the lead instance.
+
+- **Lead instance:** runs `agentbus hub` (`HUB_LISTEN`, default port 7777) and maintains the authoritative bus state,
+  message log, instance registry, backups, and command queues. Local agents on the lead communicate with the hub via
+  an owner-only Unix domain socket (`hub.sock`).
+- **Node instances:** run the lightweight `agent node` daemon connecting outbound to the lead instance (`LEAD_INSTANCE`).
+  Nodes register their local instance manifest and capabilities (`INSTANCE_CAPABILITIES`, detected toolchains/hardware),
+  maintain persistent session leases via regular heartbeats, and long-poll for dispatched tasks. On network disconnection,
+  the node reconnects with exponential backoff, restores leases, and replays unacknowledged commands without loss.
+- **Tool forwarding:** `agentbus serve` on node instances forwards all agent MCP tool calls over HTTPS or Tailscale to the
+  hub, returning typed responses with end-to-end identity verification. Local bus files are never touched on nodes.
 
 With `LEAD_INSTANCE` set, `agentbus serve` forwards tool calls to that HTTP origin and never reads or writes
 local bus files. Set `INSTANCE_NAME` to the unique local instance name. `INSTANCE_CAPABILITIES` (comma separated,
@@ -119,8 +127,8 @@ Forwarded `team-get` omits quiz/consultation data and local paths and requires a
 instance. `team-set` addresses an exact qualified member owned by that node; exclusion remains final.
 Forwarded `instances` retains the local tab-separated display and never returns daemon registration or
 lease credentials. `cmd-enqueue` uses the configured hub without a local queue fallback. A forwarded stdout
-failure returns the command's typed `Storage` cause instead of reporting success. Other queue CLI forwarding
-and the full public cross-instance lifecycle remain subject to the development-preview limitations above.
+failure returns the command's typed `Storage` cause instead of reporting success. Remote task provisioning,
+wake execution, question/answer delivery, and sensitive capability gating operate transparently across the cluster.
 
 ### Tasks and runs
 
@@ -344,7 +352,7 @@ Put the token into `secrets.env` as `GH_TOKEN` (gh uses it instead of a stored l
 
 ### Multi-instance network and hub security
 
-Multi-instance deployments run a coordinator or hub instance and one or more node instances communicating over Tailscale or HTTPS.
+Multi-instance deployments run a lead instance (running the hub) and one or more node instances communicating over Tailscale or HTTPS.
 
 - **Threat model and network isolation:**
   Keep the hub listener off the public internet. Use a mesh VPN such as **Tailscale** (default) or HTTPS with token authentication. In Tailscale mode (`HUB_AUTH=tailscale`), the hub verifies peer node identity via Tailscale LocalAPI whois on the active TCP connection; HTTP forward headers (`X-Forwarded-*`) are never trusted. Tailscale ACLs should restrict access to the hub port exclusively to authorized instances (e.g. `tag:agent-node`).
@@ -468,6 +476,11 @@ Then:
 | `CLAUDE_BIN`, `CODEX_BIN`, `AGY_BIN`, `OPENCODE_BIN` | CLI paths |
 | `AUTH_MODEL_*` | cheap models used by `agent authenticated` |
 | `BRANCH_PREFIX`, `CLAUDE_MAX_TURNS`, `AGY_PRINT_TIMEOUT`, `OPENCODE_BASH_TIMEOUT_MS` | misc |
+| `INSTANCE_NAME`, `LEAD_INSTANCE`, `HUB_LISTEN`, `HUB_AUTH` | multi-instance networking: node/lead identity and transport auth |
+| `ALLOWED_INSTANCES` | array of accepted peer node names/tags (lead instance) |
+| `INSTANCE_CAPABILITIES`, `INSTANCE_ACCEPT_REPOS` | declared node capabilities and repository whitelist |
+| `BATTERY_PAUSE` | pause runs while on battery power on laptops (default 0, set 1 to enable) |
+| `HUB_RETRY_SECONDS`, `MANIFEST_TTL`, `HUB_BACKUP_MINUTES` | hub resilience: retry timeout, manifest heartbeat TTL, backup interval |
 
 `~/agents/secrets.env` is loaded before every run: `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`,
 `CODEX_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, `GH_TOKEN` (the GitHub account the

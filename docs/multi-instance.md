@@ -1,7 +1,7 @@
 # Multi-instance team-agents (design)
 
-Status: **DRAFT for human approval (milestone M0).** No implementation code is written before the human approves
-this document. Open decisions are listed in section 12 and are asked through the questions file.
+Status: **APPROVED (milestones M0–M11 implemented and verified).** All architecture decisions
+recorded in Section 12 have been confirmed by human operator review and verified through automated tests.
 
 Terminology (decision 5): the **lead instance** is the instance that runs the **hub** (the code name). "Coordinator"
 is only the role of an agent in a team (`claim_lead`). The lead instance is never called a coordinator.

@@ -216,6 +216,10 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
 declare -p INSTANCE_CAPABILITIES &>/dev/null || declare -a INSTANCE_CAPABILITIES=()
 declare -p INSTANCE_ACCEPT_REPOS &>/dev/null || declare -a INSTANCE_ACCEPT_REPOS=()
+declare -p ALLOWED_INSTANCES &>/dev/null || declare -a ALLOWED_INSTANCES=()
+if [[ -n "${ALLOWED_INSTANCES[*]:-}" ]]; then
+  export ALLOWED_INSTANCES="${ALLOWED_INSTANCES[*]}"
+fi
 
 bus() { "$AGENTBUS_BIN" "$@"; }
 
