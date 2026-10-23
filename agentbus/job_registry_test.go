@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +79,11 @@ func TestRegistrySubmitRejectsInvalidFields(t *testing.T) {
 		{"base ref contains a space", func(q *JobRequest) { q.BaseRef = "main branch" }, LeadSubmitInvalidBase},
 		{"base SHA is not hex", func(q *JobRequest) { q.BaseSHA = strings.Repeat("z", 40) }, LeadSubmitInvalidBase},
 		{"base SHA has 39 digits", func(q *JobRequest) { q.BaseSHA = regSHA[:39] }, LeadSubmitInvalidBase},
+		{"agent job without an exact SHA", func(q *JobRequest) { q.Requester = "agent@node-a"; q.BaseSHA = "" }, LeadSubmitInvalidBase},
+		{"requester without instance", func(q *JobRequest) { q.Requester = "agent" }, LeadSubmitMalformedBody},
+		{"requester with empty instance", func(q *JobRequest) { q.Requester = "agent@" }, LeadSubmitMalformedBody},
+		{"requester with two separators", func(q *JobRequest) { q.Requester = "agent@node@x" }, LeadSubmitMalformedBody},
+		{"requester with a space", func(q *JobRequest) { q.Requester = "agent node@x" }, LeadSubmitMalformedBody},
 		{"capability without namespace", func(q *JobRequest) { q.Requires = []string{"hw"} }, LeadSubmitInvalidCapabilities},
 		{"capability with empty value", func(q *JobRequest) { q.Requires = []string{"hw:"} }, LeadSubmitInvalidCapabilities},
 		{"capability with unknown namespace", func(q *JobRequest) { q.Requires = []string{"cpu:x86"} }, LeadSubmitInvalidCapabilities},
@@ -104,6 +111,9 @@ func TestRegistrySubmitAcceptsBoundaryFields(t *testing.T) {
 		{"ID of exactly 128 characters", func(q *JobRequest) { q.ID = "a" + strings.Repeat("b", 127) }},
 		{"ref with a slash and a dot", func(q *JobRequest) { q.BaseRef = "release/1.2" }},
 		{"SHA-256 commit", func(q *JobRequest) { q.BaseSHA = strings.Repeat("ab", 32) }},
+		{"upper case SHA", func(q *JobRequest) { q.BaseSHA = strings.ToUpper(regSHA) }},
+		{"human job without an exact SHA", func(q *JobRequest) { q.BaseSHA = "" }},
+		{"agent job with instance and exact SHA", func(q *JobRequest) { q.Requester = "agent-1@node.a_b" }},
 		{"capabilities of every namespace", func(q *JobRequest) {
 			q.Requires = []string{"os:linux", "arch:arm64", "build:go", "test:bats", "hw:rp2350", "net:tailnet"}
 		}},
@@ -226,5 +236,45 @@ func TestRegistryRetryReturnsSameAssignment(t *testing.T) {
 	other := regHeartbeat(t, r, regBeat("node-b", nil, free), regAt(3))
 	if other == nil || other.Request.ID != "job-2" || other.Assignment <= first.Assignment {
 		t.Fatalf("node-b got %+v, want job-2 under a newer assignment", other)
+	}
+}
+
+// TestJobStateRejectsUnknownValue: an unknown job state is refused with a *ValueError, as tiers are.
+func TestJobStateRejectsUnknownValue(t *testing.T) {
+	var s JobState
+	if err := json.Unmarshal([]byte(`"bogus"`), &s); err == nil {
+		t.Fatal("unknown job state accepted")
+	} else {
+		var verr *ValueError
+		if !errors.As(err, &verr) {
+			t.Fatalf("error %v is not a *ValueError", err)
+		}
+	}
+	if err := json.Unmarshal([]byte(`"assigned"`), &s); err != nil || s != JobAssigned {
+		t.Fatalf("assigned state: got %q, err %v", s, err)
+	}
+}
+
+// TestRegistryHistoryRecordsQueuedAndAssigned: the history keeps the queued and assigned transitions with their
+// times, and neither a resubmission nor a retried heartbeat adds an entry.
+func TestRegistryHistoryRecordsQueuedAndAssigned(t *testing.T) {
+	r := newLeadRegistry()
+	queued := regSubmit(t, r, regRequest("job-1"), regAt(0))
+	if len(queued.History) != 1 || queued.History[0].State != JobQueued || !queued.History[0].At.Equal(regAt(0).Time) {
+		t.Fatalf("history after submit = %+v, want [queued at submit time]", queued.History)
+	}
+	regSubmit(t, r, regRequest("job-1"), regAt(5))
+
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(6))
+	if got == nil || len(got.History) != 2 {
+		t.Fatalf("assigned job = %+v, want two history entries", got)
+	}
+	if got.History[0].State != JobQueued || got.History[1].State != JobAssigned || !got.History[1].At.Equal(regAt(6).Time) {
+		t.Fatalf("history = %+v, want queued then assigned at the heartbeat time", got.History)
+	}
+
+	retry := regHeartbeat(t, r, regBeat("node-a", nil), regAt(7))
+	if retry == nil || len(retry.History) != 2 {
+		t.Fatalf("retried assignment = %+v, want the same two entries", retry)
 	}
 }

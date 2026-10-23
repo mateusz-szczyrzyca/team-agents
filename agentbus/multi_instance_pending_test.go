@@ -138,6 +138,13 @@ func TestLeadRegistryWaitReasonNamesBlocker(t *testing.T) {
 	if got := r.waitReason("job-hw", regAt(5), regTTL); got != "no free normal agent" {
 		t.Fatalf("live node with hw but no free normal agent: reason = %q", got)
 	}
+	// Liveness boundary: node-b heartbeated at 4s; 59s later it is still live, 60s later (ttl) it is offline.
+	if got := r.waitReason("job-hw", regAt(63), regTTL); got != "no free normal agent" {
+		t.Fatalf("node 59s old: reason = %q, want it still live", got)
+	}
+	if got := r.waitReason("job-hw", regAt(64), regTTL); got != noNode {
+		t.Fatalf("node exactly ttl old: reason = %q, want %q (offline at ttl)", got, noNode)
+	}
 
 	if got := r.waitReason("job-hw", regAt(200), regTTL); got != noNode {
 		t.Fatalf("every node stale: reason = %q, want %q (stale nodes do not count)", got, noNode)

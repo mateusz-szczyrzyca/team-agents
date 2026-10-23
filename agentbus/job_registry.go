@@ -19,26 +19,47 @@ const (
 	JobStopped  JobState = "stopped"  // stopped by a cancellation
 )
 
+// Valid reports whether s is one of the defined job states.
+func (s JobState) Valid() bool {
+	switch s {
+	case JobQueued, JobAssigned, JobRunning, JobWaiting, JobDone, JobFailed, JobStopped:
+		return true
+	}
+	return false
+}
+
+// UnmarshalJSON (json.Unmarshaler, hence the plain error type) rejects unknown states with a *ValueError.
+func (s *JobState) UnmarshalJSON(data []byte) error {
+	return unmarshalEnum(data, s, "job state").asError()
+}
+
+// JobTransition is one entry of a job's history: the state it entered and when the lead recorded it.
+type JobTransition struct {
+	State JobState  // the state entered
+	At    Timestamp // when the lead recorded the transition (the submit or heartbeat time)
+}
+
 // JobRequest is a submission, as the lead receives it. Every field is compared on resubmission.
 type JobRequest struct {
 	ID         string   // submitter-chosen idempotency key, validated before use
 	Repository string   // logical repository name, resolved through the node's NODE_REPOS
 	BaseRef    string   // git ref name, validated before any git invocation
-	BaseSHA    string   // exact commit (40 or 64 lowercase hex digits)
+	BaseSHA    string   // exact commit (40 or 64 hex digits, either case); optional for "human", required for an agent
 	Requires   []string // capabilities the node must declare, all of them
 	Selector   string   // a tier (normal or worker) or one configured agent name
 	Target     string   // optional node name the job is pinned to; empty means any node
 	Task       string   // task text, at most 65536 bytes
-	Requester  string   // "human" or "<agent>@<instance>", routing data only
+	Requester  string   // "human" or "<agent>@<instance>", both parts valid identifiers; routing data only
 }
 
 // Job is a registered job as the registry holds it.
 type Job struct {
-	Request    JobRequest // the submitted fields, copied when stored and when returned
-	Seq        uint64     // submission order; the oldest queued job has the lowest value
-	State      JobState   // current lifecycle state
-	Node       string     // the node the job is assigned to; empty while queued
-	Assignment uint64     // identity of the current assignment, greater than 0 once assigned, never reused
+	Request    JobRequest      // the submitted fields, copied when stored and when returned
+	Seq        uint64          // submission order; the oldest queued job has the lowest value
+	State      JobState        // current lifecycle state
+	Node       string          // the node the job is assigned to; empty while queued
+	Assignment uint64          // identity of the current assignment, greater than 0 once assigned, never reused
+	History    []JobTransition // every state entered, in order; queued first, then assigned
 }
 
 // FreeAgent is a configured agent of a node that is free at the time of a heartbeat.
@@ -52,6 +73,7 @@ type NodeHeartbeat struct {
 	Node         string      // the authenticated node name (the short device name)
 	Capabilities []string    // declared capabilities, validated like JobRequest.Requires
 	FreeAgents   []FreeAgent // configured agents that are free now; empty when none is free
+	WebURL       string      // the node's AGENT_WEB_URL, shown by the lead for waiting jobs; may be empty
 }
 
 // leadRegistry is the lead's job and node registry. Every method is atomic with respect to the others.
@@ -76,8 +98,9 @@ func (r *leadRegistry) heartbeat(_ NodeHeartbeat, _ Timestamp) (*Job, *LeadHeart
 
 // waitReason explains why the queued job id is not assigned, naming the first blocker: a required capability
 // no live node declares ("no node with hw:rp2350"), or no live node with a free agent of the selector's tier
-// ("no free normal agent"). A node is live when its last heartbeat is at most ttl before now. It returns ""
-// when the job is not queued or no blocker is known.
+// ("no free normal agent"). A node is live when now minus its last heartbeat is less than ttl; at ttl or more
+// it is offline and does not count. A node with an unstarted assignment cannot take another job, so it does not
+// count as free either. It returns "" when the job is not queued or no blocker is known.
 func (r *leadRegistry) waitReason(_ string, _ Timestamp, _ time.Duration) string {
 	return ""
 }
