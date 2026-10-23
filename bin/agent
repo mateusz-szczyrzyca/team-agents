@@ -525,6 +525,13 @@ finish_team() { # team reason — closes the team; sleeping members finish as do
 
 # ------------------------------------------------------------------ rounds (README "Rounds")
 
+team_waits_on_others() { # team — does a member wait for a worker request or an investigation it asked for?
+  local out
+  out=$(bus team-waiting --dir "$BUS_DIR" --team "$1") || return 1   # cannot tell (bus logs why): check as before
+  [[ $(jq_soft team_waiting_parse -r '.waiting | length' <<< "$out") -gt 0 ]] || return 1
+  log_info team_waiting "team=$1" "for=$(jq_soft team_waiting_parse -r '.waiting | join("; ")' <<< "$out")"
+}
+
 round_limit() { # repository name → its hard round limit (0 = none)
   printf '%s' "${ROUND_MAX_LINES_REPO[$1]:-$ROUND_MAX_LINES}"
 }
@@ -689,7 +696,8 @@ $(team_summary "$team")" ;;
     esac
   fi
 
-  # everyone finished without the coordinator closing the team / everyone sleeps = the team is stuck
+  # everyone finished without the coordinator closing the team / everyone sleeps = the team is stuck — unless a
+  # member waits for a worker or an investigation it asked for: that result wakes it
   [[ $(team_done_flag "$team") == true ]] && return 0
   local stuck_file="$TASKS/.team-$team.stuck"
   team_all() { # done|sleep — are all members in the given set of states
@@ -706,18 +714,18 @@ $(team_summary "$team")" ;;
   if team_all done; then
     finish_team "$team" "all members finished"
     push_text "$REPO_NAME" "Team $team finished without being closed by its coordinator:" "$(team_summary "$team")"
-  elif team_all sleep && { sleep 3   # give a pending wake-up a moment; re-check after the pause
+  elif team_all sleep && ! team_waits_on_others "$team" && { sleep 3   # a pending wake-up gets a moment; re-check
          [[ $(team_done_flag "$team") != true ]] && team_all sleep && ! team_all done; }; then
     local n=1
     [[ -f $stuck_file ]] && n=$(( $(<"$stuck_file") + 1 ))
     echo "$n" > "$stuck_file"
     if ((n == 1)) && [[ -n $lead ]]; then
       notice team_stuck agentbus "$lead" \
-        "TEAM STUCK: all members are asleep. As the coordinator, check the state (team_status, read_messages) and either assign work or finish the team task (STATUS: DONE)." \
+        "TEAM STUCK: all members are asleep. As the coordinator, check the state (team_status, read_messages) and either assign work or finish the team task (STATUS: DONE). Waiting for the human to merge a PR? Then end the round instead of sleeping: STATUS: ROUND_DONE N/M." \
         "team=$team"
     elif ((n == 2)); then
       push_text "$REPO_NAME" "Team $team is stuck: all members are asleep and waking the coordinator did not help." \
-        "See: agent live. Nudge them with a message (m / agent say) or stop: agent stop <coordinator task id>." \
+        "See: agent live. Nudge them with a message (m / agent say) or stop: agent stop <coordinator task id>. If the coordinator waits for you to merge a PR: merge it, then tell it so (agent say)." \
         "$(team_summary "$team")"
     fi
   else

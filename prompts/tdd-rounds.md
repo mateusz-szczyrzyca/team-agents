@@ -29,6 +29,9 @@ vendored files not counted. Check it at any time: `{{ROUND_SIZE_CMD}}`. A task b
   the script checks it.
 - End a round with its PR ready and `STATUS: ROUND_DONE N/M` (this round / all rounds); the last one may end with
   `STATUS: DONE`. The human merges the PR and resumes you: you then start from the merged base, on new branches.
+- **Never sleep waiting for a merge.** If the human has to merge a PR before you can go on, that PR ends a round:
+  end it with `STATUS: ROUND_DONE N/M` (raise M if this splits a planned round, and say so in the PR description).
+  A team that sleeps with nothing running looks stuck, and the human gets an alarm instead of "ready to merge".
 - A round over the limit, or with its own pending tests left, comes back to you to be split.
 - In a team, the coordinator plans and ends the rounds and keeps the integration branch under the limit before
   merging members' work; every member follows "Test first" and keeps its part small.

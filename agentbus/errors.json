@@ -914,6 +914,18 @@
      "doc": "git's --numstat output could not be read"
     }
    ]
+  },
+  {
+   "type": "CmdTeamWaiting",
+   "op": "team-waiting",
+   "what": "the subcommand team-waiting",
+   "causes": [
+    {
+     "name": "NoSuchTeam",
+     "class": "NotFound",
+     "doc": "there is no team with this ID"
+    }
+   ]
   }
  ]
 }
