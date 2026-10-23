@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"fmt"
+	"sync"
+	"testing"
+)
 
 // Companion roadmap for cases that the design (docs/multi-instance.md) requires and that
 // multi_instance_pending_test.go does not yet name. Like that file, every test is a skipped
@@ -38,7 +42,28 @@ func TestLeadRegistryStopRequestReturnedUntilAcknowledged(t *testing.T) {
 
 // TestLeadRegistryLatestHeartbeatWinsForCapabilities: the capabilities of the latest heartbeat are the ones used for routing.
 func TestLeadRegistryLatestHeartbeatWinsForCapabilities(t *testing.T) {
-	t.Skip("pending: latest heartbeat's capabilities and free agents are used for routing, round 2")
+	r := newLeadRegistry()
+	req := regRequest("job-hw")
+	req.Requires = []string{"hw:rp2350"}
+	regSubmit(t, r, req, regAt(0))
+	alpha := FreeAgent{Name: "alpha", Tier: TierNormal}
+
+	// The first heartbeat declares hw:rp2350 but has no free agent, so nothing is assigned.
+	if got := regHeartbeat(t, r, regBeat("node-a", []string{"os:linux", "hw:rp2350"}), regAt(1)); got != nil {
+		t.Fatalf("node-a without a free agent got %+v", got)
+	}
+	// The latest heartbeat drops hw:rp2350 and has a free agent: the old declaration must not route the job.
+	if got := regHeartbeat(t, r, regBeat("node-a", []string{"os:linux"}, alpha), regAt(2)); got != nil {
+		t.Fatalf("node-a whose latest heartbeat lacks hw:rp2350 got %+v", got)
+	}
+	if reason := r.waitReason("job-hw", regAt(3), regTTL); reason != "no node with hw:rp2350" {
+		t.Fatalf("reason = %q, want the latest declaration to count", reason)
+	}
+	// And the reverse: a later heartbeat that declares hw:rp2350 gets the job.
+	got := regHeartbeat(t, r, regBeat("node-a", []string{"os:linux", "hw:rp2350"}, alpha), regAt(4))
+	if got == nil || got.Request.ID != "job-hw" {
+		t.Fatalf("node-a with hw:rp2350 again got %+v, want job-hw", got)
+	}
 }
 
 // TestLeadHTTPLoopbackRangeRequiresIdentity: 127.0.0.2 is not local authority; it needs an authenticated nonlocal node identity.
@@ -53,7 +78,71 @@ func TestLeadNotifiesOnFinalState(t *testing.T) {
 
 // TestLeadRegistryConcurrentHeartbeatsRace: concurrent heartbeats and submits keep the registry consistent under -race.
 func TestLeadRegistryConcurrentHeartbeatsRace(t *testing.T) {
-	t.Skip("pending: registry race test under -race, round 2")
+	const jobs = 50
+	const nodes = 60
+	r := newLeadRegistry()
+
+	// Every job is submitted twice, concurrently: the duplicate must be the same job.
+	var wg sync.WaitGroup
+	submitErr := make([]*LeadSubmitError, 2*jobs)
+	for i := range 2 * jobs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := r.submit(regRequest(fmt.Sprintf("job-%02d", i%jobs)), regAt(0)); err != nil {
+				submitErr[i] = err
+			}
+		}()
+	}
+	wg.Wait()
+	for i, err := range submitErr {
+		if err != nil {
+			t.Fatalf("concurrent submit %d refused: %v", i, err)
+		}
+	}
+
+	// Every node heartbeats once, concurrently, with one free normal agent.
+	heartbeats := make([]*Job, nodes)
+	heartbeatErr := make([]*LeadHeartbeatError, nodes)
+	for n := range nodes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h := regBeat(fmt.Sprintf("node-%02d", n), []string{"os:linux"}, FreeAgent{Name: "alpha", Tier: TierNormal})
+			got, err := r.heartbeat(h, regAt(1))
+			if err != nil {
+				heartbeatErr[n] = err
+			}
+			heartbeats[n] = got
+		}()
+	}
+	wg.Wait()
+
+	assigned := map[string]bool{}
+	assignments := map[uint64]bool{}
+	for n, err := range heartbeatErr {
+		if err != nil {
+			t.Fatalf("node-%02d heartbeat refused: %v", n, err)
+		}
+		got := heartbeats[n]
+		if got == nil {
+			continue
+		}
+		if assigned[got.Request.ID] {
+			t.Fatalf("job %s assigned twice", got.Request.ID)
+		}
+		if assignments[got.Assignment] || got.Assignment == 0 {
+			t.Fatalf("assignment %d is not unique and positive", got.Assignment)
+		}
+		if got.Node != fmt.Sprintf("node-%02d", n) || got.State != JobAssigned {
+			t.Fatalf("node-%02d got %+v, want its own assigned job", n, got)
+		}
+		assigned[got.Request.ID] = true
+		assignments[got.Assignment] = true
+	}
+	if len(assigned) != jobs {
+		t.Fatalf("%d jobs assigned, want all %d (60 nodes can take them)", len(assigned), jobs)
+	}
 }
 
 // TestLeadHTTPListenerConcurrentRequestsRace: concurrent HTTP requests to the listener are race-free under -race.
