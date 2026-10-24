@@ -20,6 +20,8 @@ Quiz: none in this resume (the team passed it earlier).
   - M2 omitted-time replay can rewind a job: `9fac166` (RED), `d78f564` (GREEN). A state change without its transition time is refused, except the first start (`assigned` → `running`) and a terminal state, because a replayed time-less report could not be told apart.
   - discarded `r.get` errors in `job_registry_review_test.go`: `6af4478`.
   - the rule is documented in `docs/multi-instance.md` (`5c1dca2`).
+  - R2 same-state payload overwrite (`running@2` branch A, `running@4` branch B, retry of `running@2` overwrote B): `afba5f4` (RED), `9c38f01` (GREEN). A same-state report may fill an empty branch, task or PR, but cannot replace a recorded one.
+  - R3 and R4 (edits to already-committed tests: `7f50f8d`, `6ff1635`, and `6af4478`, which changes the `r.get` error handling in this PR's own review test): **not self-cleared**. They need the human's explicit decision; see Open issues.
 
 ## Verify gaps (before the investigator review)
 
@@ -34,7 +36,8 @@ Quiz: none in this resume (the team passed it earlier).
 
 - `make -s gate`: rc=0, all 6 steps passed (on the merged tree before the merge commit, and on `395fc00` for the docs).
 - `go test -race` on the job tests: passed (before the merge commit).
-- Round size: `1,974` lines (`+1,943` / `−31`) in `18` files, under the 2,000 soft limit.
+- After R2 (`9c38f01`): `make -s gate` rc=0, 6 steps passed; `go test -race` on the job tests passed.
+- Round size: `2,055` lines (`+2,024` / `−31`) in `19` files. Above the 2,000 soft limit, under the 3,000 hard limit.
 
 ## Not done
 
@@ -46,4 +49,9 @@ Quiz: none in this resume (the team passed it earlier).
 ## Open issues
 
 - The time rule (refuse time-less non-terminal changes) is stricter than gemini-1's design. The human should confirm it.
+- Question for the human (R3/R4): authorize the repair of tests that were edited in committed history? Options:
+  - a) accept the current state: M4 (`7f50f8d`, `6ff1635`) stays a documented historical exception; `6af4478` stays as is.
+  - b) authorize a narrow repair: restore the earlier executable bodies of the edited tests and move the added coverage into separate tests. The history is not rewritten.
+  - Recommended: b), per codex-1's review of investigator #27 (no edit to an existing test without an explicit verdict).
+- Round size is above the 2,000 soft limit (2,055); under the hard limit. Splitting the PR would need the human's decision.
 - Three of gemini-1's tests are not in the branch; if the human wants them, their expectations must be revised to match the existing rules.
