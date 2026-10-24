@@ -220,6 +220,8 @@ func TestLeadRegistryReportCumulativeHistoryAtomic(t *testing.T) {
 	if job.State != JobAssigned || len(job.History) != 2 {
 		t.Fatalf("job state or history mutated on failure: state=%s, history=%+v", job.State, job.History)
 	}
+	_, errMissing := r.get("nonexistent")
+	failsWith(t, LeadGetJobNoSuchJob)("get unknown job", errMissing)
 }
 
 // TestLeadRegistryReportCumulativeHistoryMustMatchFinalState: if transitions are provided, the final transition

@@ -394,7 +394,10 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	}
 
 	if isTerminalJob(job.State) {
-		if job.State == rep.State && job.Result == rep.Result {
+		if job.State == rep.State && job.Result == rep.Result &&
+			(rep.TaskID == "" || job.TaskID == rep.TaskID) &&
+			(rep.Branch == "" || job.Branch == rep.Branch) &&
+			(rep.PRURL == "" || job.PRURL == rep.PRURL) {
 			return cloneJob(*job), nil
 		}
 		return Job{}, opErr(LeadReportTerminalConflict, "job %q is terminal with %s, cannot revise", rep.ID, job.State)
@@ -405,33 +408,42 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		at = now
 	}
 
+	newHistory := slices.Clone(job.History)
+	targetState := job.State
+
 	if len(rep.Transitions) > 0 {
+		if rep.Transitions[len(rep.Transitions)-1].State != rep.State {
+			return Job{}, opErr(LeadReportInvalidState, "cumulative history does not end at reported state %s", rep.State)
+		}
 		curr := job.State
 		for _, tr := range rep.Transitions {
-			if len(job.History) > 0 && job.History[len(job.History)-1].State == tr.State && job.History[len(job.History)-1].At == tr.At {
+			if len(newHistory) > 0 && newHistory[len(newHistory)-1].State == tr.State && newHistory[len(newHistory)-1].At.Equal(tr.At.Time) {
 				curr = tr.State
 				continue
 			}
 			if !validTransition(curr, tr.State) {
 				return Job{}, opErr(LeadReportInvalidState, "invalid transition from %s to %s", curr, tr.State)
 			}
-			job.History = append(job.History, tr)
+			newHistory = append(newHistory, tr)
 			curr = tr.State
 		}
-		job.State = curr
+		targetState = curr
 	} else {
 		if job.State == rep.State {
-			if job.State == JobWaiting && len(job.History) > 0 && at.After(job.History[len(job.History)-1].At.Time) {
-				job.History = append(job.History, JobTransition{State: JobWaiting, At: at})
+			if job.State == JobWaiting && len(newHistory) > 0 && at.After(newHistory[len(newHistory)-1].At.Time) {
+				newHistory = append(newHistory, JobTransition{State: JobWaiting, At: at})
 			}
 		} else {
 			if !validTransition(job.State, rep.State) {
 				return Job{}, opErr(LeadReportInvalidState, "invalid transition from %s to %s", job.State, rep.State)
 			}
-			job.State = rep.State
-			job.History = append(job.History, JobTransition{State: rep.State, At: at})
+			targetState = rep.State
+			newHistory = append(newHistory, JobTransition{State: rep.State, At: at})
 		}
 	}
+
+	job.State = targetState
+	job.History = newHistory
 
 	if rep.TaskID != "" {
 		job.TaskID = rep.TaskID
