@@ -545,6 +545,7 @@ agent run --team a,b[,c] [--verify] "task"    start a team (optionally with a fi
 agent run --resume <team|task> ["addition"]   resume from the last checkpoint (same branches; after a merged round: new ones)
 agent run --resume <team|task> --same-round   continue an unmerged round on the same branches (e.g. review fixes)
 agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)
+agent kick <task>                             cut a run short: a team member sleeps (its team can wake it), solo: stopped
 agent round-size <task>                       size of a task's change against the round limit
 agent status | agents | show <id>            overview, agents, task details
 agent log <id> [--raw]                        follow the runner log (structured records rendered; --raw: JSON)
@@ -597,13 +598,13 @@ The menu on the left slides out on demand (`☰` or `m`). Every view can be maxi
 
 | View | What it shows |
 |---|---|
-| Dashboard | the panel's table (status, time, repository, stage, last activity) live, events as they happen, reserved resources |
-| Agents | the configured agents and investigators: tier, CLI, model, provider, what each is doing now, pauses (until when, why) |
+| Dashboard | the panel's table (status, time, repository, stage, last activity) live, events as they happen, reserved resources; investigations as "investigator #N (agent)"; a ■ button on a running task cuts its run short (`agent kick`: a team member only sleeps and its team can wake it, a solo task is stopped); `stopped` in orange, failures in red |
+| Agents | the configured agents and investigators — working ones first, then by their last activity (shown) — tier, CLI, model, provider, what each is doing now, pauses (until when, why) |
 | Task | header (status, time, branch, team) and sections: live activity, the prompt of every run, question rounds, investigations, final message, error logs, the repository notebook, `meta.env` |
-| Teams / Team | members and their states, the board (items, `for`, results), consultations, the quiz, the team's messages, the notebook |
-| Bus | all bus messages, live, filtered by team, agent, kind or text |
+| Teams / Team | the newest 20 teams (and "all"); a team: members and their states, the board (newest first, `for`, results), consultations, the quiz, the team's messages, the notebook; a finished team can be woken from its last task — this round or the next, with a prompt |
+| Bus | all bus messages, newest first and live, coloured by direction (`a → b` and `b → a` differ), filtered by team, agent, kind or text |
 | Questions | everything waiting for your answers, and the answer form |
-| Investigations | investigations and PR reviews with their results and records |
+| Investigations | investigations and PR reviews with the investigator and its model, their results and records |
 | Logs | `agent`, `agentbus` and `agentlive` logs, by level and text, optionally refreshed every 5 s |
 
 **Answering in the browser.** The form shows each question with its recommendation (pre-selected: `ok`), the
