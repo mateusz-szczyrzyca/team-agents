@@ -494,6 +494,13 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		}
 		switch {
 		case job.State == rep.State:
+			// A same-state report may fill in a field that is still empty, but must not replace an identifier
+			// already recorded: an older retry would otherwise overwrite a newer payload (investigator #27, R2).
+			if (rep.Branch != "" && job.Branch != "" && rep.Branch != job.Branch) ||
+				(rep.TaskID != "" && job.TaskID != "" && rep.TaskID != job.TaskID) ||
+				(rep.PRURL != "" && job.PRURL != "" && rep.PRURL != job.PRURL) {
+				return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task or PR for job %q", rep.State, rep.ID)
+			}
 			// A repeated waiting report with its own later time is a new wait for a human. Anything else that
 			// repeats the current state (an identical retry, a report without a time) changes nothing.
 			if job.State == JobWaiting && !rep.At.IsZero() && at.After(lastAt.Time) {
