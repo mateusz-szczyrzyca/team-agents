@@ -598,7 +598,7 @@ The menu on the left slides out on demand (`☰` or `m`). Every view can be maxi
 
 | View | What it shows |
 |---|---|
-| Dashboard | the panel's table (status, time, repository, stage, last activity) live, events as they happen, reserved resources; investigations as "investigator #N (agent)"; a ■ button on a running task cuts its run short (`agent kick`: a team member only sleeps and its team can wake it, a solo task is stopped); `stopped` in orange, failures in red |
+| Dashboard | active tasks, then finished ones newest first (also acknowledged ones and investigations from the last 24 h; their time as \"… ago\") live, events as they happen, reserved resources; investigations as "investigator #N (agent)"; a ■ button on a running task cuts its run short (`agent kick`: a team member only sleeps and its team can wake it, a solo task is stopped); `stopped` in orange, failures in red |
 | Agents | the configured agents and investigators — working ones first, then by their last activity (shown) — tier, CLI, model, provider, what each is doing now, pauses (until when, why) |
 | Task | header (status, time, branch, team) and sections: live activity, the prompt of every run, question rounds, investigations, final message, error logs, the repository notebook, `meta.env` |
 | Teams / Team | the newest 20 teams (and "all"); a team: members and their states, the board (newest first, `for`, results), consultations, the quiz, the team's messages, the notebook; a finished team can be woken from its last task — this round or the next, with a prompt |
