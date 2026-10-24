@@ -525,6 +525,21 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		}
 	}
 
+	// A report must not replace an already-recorded branch or PR URL (they are immutable for a job).
+	if (rep.Branch != "" && job.Branch != "" && rep.Branch != job.Branch) ||
+		(rep.PRURL != "" && job.PRURL != "" && rep.PRURL != job.PRURL) {
+		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch or PR for job %q", rep.State, rep.ID)
+	}
+	// A same-state report (scalar or cumulative) may fill in fields that are still empty, but must not
+	// replace an identifier or result already recorded: an older retry would otherwise overwrite a newer
+	// payload (investigator #27, R2; investigator #28, M1, M2).
+	if targetState == job.State {
+		if (rep.TaskID != "" && job.TaskID != "" && rep.TaskID != job.TaskID) ||
+			(rep.Result != "" && job.Result != "" && rep.Result != job.Result) {
+			return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task, PR or result for job %q", rep.State, rep.ID)
+		}
+	}
+
 	job.State = targetState
 	job.History = newHistory
 	if isTerminalJob(targetState) {
