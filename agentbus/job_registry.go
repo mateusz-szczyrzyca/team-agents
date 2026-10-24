@@ -65,6 +65,10 @@ type Job struct {
 	Node       string          // the node the job is assigned to; empty while queued
 	Assignment uint64          // identity of the current assignment, greater than 0 once assigned, never reused
 	History    []JobTransition // every state entered, in order; queued first, then assigned
+	TaskID     string          // node's local task ID
+	Branch     string          // branch pushed by the node
+	PRURL      string          // optional PR URL
+	Result     string          // final result text or failure reason
 }
 
 // FreeAgent is a configured agent of a node that is free at the time of a heartbeat.
@@ -79,6 +83,20 @@ type NodeHeartbeat struct {
 	Capabilities []string    // declared capabilities, validated like JobRequest.Requires
 	FreeAgents   []FreeAgent // configured agents that are free now; empty when none is free
 	WebURL       string      // the node's AGENT_WEB_URL, shown by the lead for waiting jobs; may be empty
+}
+
+// JobReport is a state report sent by an assigned node for one job.
+type JobReport struct {
+	ID          string          // job ID being reported
+	Node        string          // authenticated reporting node name
+	Assignment  uint64          // assignment evidence the report belongs to
+	State       JobState        // target state being reported
+	TaskID      string          // node's local task ID
+	Branch      string          // branch pushed by the node
+	PRURL       string          // optional PR URL
+	Result      string          // final result text or failure reason
+	At          Timestamp       // timestamp of the transition; defaults to now when zero
+	Transitions []JobTransition // cumulative intermediate transitions observed by the node
 }
 
 // leadRegistry is the lead's job and node registry. Every method is atomic with respect to the others.
@@ -324,4 +342,33 @@ func (r *leadRegistry) checkAssignment(id, node string, assignment uint64) *Lead
 		return opErr(LeadReportStaleAssignment, "job %q has a different assignment", id)
 	}
 	return nil
+}
+
+// report records a state transition reported by the assigned node for job.
+func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportError) {
+	_ = rep
+	_ = now
+	return Job{}, nil
+}
+
+// requeueOffline returns unstarted assigned jobs of offline nodes to the queue.
+// Started jobs (running, waiting) remain in their state and are never requeued.
+func (r *leadRegistry) requeueOffline(now Timestamp, ttl time.Duration) []string {
+	_ = now
+	_ = ttl
+	return nil
+}
+
+// nodeOffline reports whether node has missed its heartbeat deadline at now.
+func (r *leadRegistry) nodeOffline(node string, now Timestamp, ttl time.Duration) bool {
+	_ = node
+	_ = now
+	_ = ttl
+	return false
+}
+
+// get returns a snapshot copy of job id.
+func (r *leadRegistry) get(id string) (Job, *LeadGetJobError) {
+	_ = id
+	return Job{}, nil
 }

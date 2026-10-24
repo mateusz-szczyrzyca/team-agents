@@ -12,7 +12,28 @@ import (
 
 // TestLeadRegistryExpiredAssignmentCannotStart: an expired assignment is refused even when the same node gets a new assignment for the same job.
 func TestLeadRegistryExpiredAssignmentCannotStart(t *testing.T) {
-	t.Skip("pending: expired assignment cannot start, even after reassignment to the same node, round 3")
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	first := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if first == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+	requeued := r.requeueOffline(regAt(100), regTTL)
+	if len(requeued) != 1 || requeued[0] != "job-1" {
+		t.Fatalf("requeueOffline = %v, want [job-1]", requeued)
+	}
+	second := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(101))
+	if second == nil || second.Assignment == first.Assignment {
+		t.Fatalf("second assignment = %+v, want new assignment", second)
+	}
+	_, err := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: first.Assignment,
+		State:      JobRunning,
+		TaskID:     "task-1",
+	}, regAt(102))
+	failsWith(t, LeadReportStaleAssignment)("expired assignment cannot start", err)
 }
 
 // TestLeadRegistryCancelUnacknowledgedAssignmentIsImmediate: cancelling an assigned but unacknowledged job stops it at once.
