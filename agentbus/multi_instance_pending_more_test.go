@@ -41,7 +41,22 @@ func TestLeadRegistryExpiredAssignmentCannotStart(t *testing.T) {
 
 // TestLeadRegistryCancelUnacknowledgedAssignmentIsImmediate: cancelling an assigned but unacknowledged job stops it at once.
 func TestLeadRegistryCancelUnacknowledgedAssignmentIsImmediate(t *testing.T) {
-	t.Skip("pending: cancel of an assigned, unacknowledged job is immediate, round 3")
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("cancel-me"), regAt(0))
+	assigned := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if assigned == nil {
+		t.Fatal("job not assigned")
+	}
+	stopped, err := r.cancel("cancel-me", regAt(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.State != JobStopped || stopped.StopRequested || stopped.Assignment != assigned.Assignment || stopped.Node != assigned.Node {
+		t.Fatalf("unstarted cancellation = %+v, want stopped with original ownership", stopped)
+	}
+	if got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(3)); got != nil {
+		t.Fatalf("cancelled assignment offered again: %+v", got)
+	}
 }
 
 // TestLeadRegistryFinishedJobsKeptThirtyDays: finished jobs stay visible for 30 days and are then removed.

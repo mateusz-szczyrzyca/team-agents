@@ -1,0 +1,26 @@
+{
+  "Version": 1,
+  "Jobs": [
+    {
+      "Request": {
+        "ID": "legacy",
+        "Repository": "team-agents",
+        "BaseRef": "main",
+        "BaseSHA": "0123456789abcdef0123456789abcdef01234567",
+        "Requires": null,
+        "Selector": "normal",
+        "Target": "",
+        "Task": "run the checks",
+        "Requester": "human"
+      },
+      "Seq": 1,
+      "State": "queued",
+      "Node": "",
+      "Assignment": 0,
+      "History": [{"State": "queued", "At": "2026-10-23T10:00:00Z"}]
+    }
+  ],
+  "Nodes": {},
+  "NextSequence": 1,
+  "NextAssignment": 0
+}

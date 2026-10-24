@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// Remote job registry of the lead (round 2 of docs/multi-instance.md): the pure in-memory model of jobs,
-// nodes, routing and assignment. Persistence (jobs.json), state reports and HTTP come in later rounds.
+// The lead's pure in-memory model of jobs, nodes, routing and lifecycle operations.
+// job_store.go persists whole operations under the bus lock; HTTP adapters arrive in a later round.
 
 // JobState is the lifecycle state of a remote job.
 type JobState string
@@ -59,16 +59,17 @@ type JobRequest struct {
 
 // Job is a registered job as the registry holds it.
 type Job struct {
-	Request    JobRequest      // the submitted fields, copied when stored and when returned
-	Seq        uint64          // submission order; the oldest queued job has the lowest value
-	State      JobState        // current lifecycle state
-	Node       string          // the node the job is assigned to; empty while queued
-	Assignment uint64          // identity of the current assignment, greater than 0 once assigned, never reused
-	History    []JobTransition // every state entered, in order; queued first, then assigned
-	TaskID     string          // node's local task ID
-	Branch     string          // branch pushed by the node
-	PRURL      string          // optional PR URL
-	Result     string          // final result text or failure reason
+	Request       JobRequest      // the submitted fields, copied when stored and when returned
+	Seq           uint64          // submission order; the oldest queued job has the lowest value
+	State         JobState        // current lifecycle state
+	Node          string          // the node the job is assigned to; empty while queued
+	Assignment    uint64          // identity of the current assignment, greater than 0 once assigned, never reused
+	History       []JobTransition // every state entered, in order; queued first, then assigned
+	TaskID        string          // node's local task ID
+	Branch        string          // branch pushed by the node
+	PRURL         string          // optional PR URL
+	Result        string          // final result text or failure reason
+	StopRequested bool            // a local cancellation awaits the assigned node's terminal report
 }
 
 // FreeAgent is a configured agent of a node that is free at the time of a heartbeat.

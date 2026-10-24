@@ -294,12 +294,56 @@ func TestLeadRegistryOfflineStartedJobNeverRequeued(t *testing.T) {
 
 // TestLeadRegistryCancelQueuedIsImmediate: cancelling a queued job stops it at once.
 func TestLeadRegistryCancelQueuedIsImmediate(t *testing.T) {
-	t.Skip("pending: cancel of a queued or unacknowledged job is immediate, round 3")
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("cancel-me"), regAt(0))
+	stopped, err := r.cancel("cancel-me", regAt(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.State != JobStopped || stopped.StopRequested || len(stopped.History) != 2 || !stopped.History[1].At.Equal(regAt(1).Time) {
+		t.Fatalf("queued cancellation = %+v, want immediate stopped transition", stopped)
+	}
+	again, retryErr := r.cancel("cancel-me", regAt(2))
+	if retryErr != nil || len(again.History) != len(stopped.History) {
+		t.Fatalf("cancel retry changed history: %+v, %v", again, retryErr)
+	}
+	if got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(3)); got != nil {
+		t.Fatalf("cancelled job was assigned: %+v", got)
+	}
 }
 
 // TestLeadRegistryCancelActiveWaitsForNodeConfirmation: an active job stays in its state until the node reports stopped.
 func TestLeadRegistryCancelActiveWaitsForNodeConfirmation(t *testing.T) {
-	t.Skip("pending: active cancel is a durable stop request until the node reports stopped, round 3")
+	for _, state := range []JobState{JobRunning, JobWaiting} {
+		t.Run(string(state), func(t *testing.T) {
+			b := newBus(t)
+			storeRun(t, b, regAt(2), func(r *leadRegistry) { cancelActiveFixture(t, r, state) })
+			err := transactJobs(b, LeadCancelStorage, regAt(3), func(r *leadRegistry) *LeadCancelError {
+				pending, err := r.cancel("cancel-me", regAt(3))
+				if err != nil {
+					return err
+				}
+				if pending.State != state || !pending.StopRequested {
+					t.Fatalf("active cancellation = %+v, want same state and pending stop", pending)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			storeRun(t, &Bus{dir: b.dir}, regAt(4), func(r *leadRegistry) {
+				job := r.jobs["cancel-me"]
+				if job.State != state || !job.StopRequested {
+					t.Fatalf("restart lost pending stop: %+v", job)
+				}
+				before := len(job.History)
+				pending, err := r.cancel("cancel-me", regAt(4))
+				if err != nil || len(pending.History) != before || !pending.StopRequested {
+					t.Fatalf("repeat active cancellation changed history: %+v, %v", pending, err)
+				}
+			})
+		})
+	}
 }
 
 // TestLeadRegistryReportHistoryKeepsFirstStart: cumulative report history keeps the first acknowledged start.
