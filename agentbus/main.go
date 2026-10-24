@@ -191,9 +191,8 @@ func (b *Bus) save(st *State) *StorageError {
 	return nil
 }
 
-// locked runs fn on the shared state under an exclusive lock (after removing stale entries) and saves the
-// state afterwards. Only storage can fail here; failures of the operation itself are fn's business.
-func (b *Bus) locked(fn func(*State)) *StorageError {
+// withLock serializes independent bus files with the same cross-process flock.
+func (b *Bus) withLock(fn func() *StorageError) *StorageError {
 	if err := os.MkdirAll(b.dir, 0o700); err != nil {
 		return storageErr(err, "cannot create the state directory %s", b.dir)
 	}
@@ -214,13 +213,21 @@ func (b *Bus) locked(fn func(*State)) *StorageError {
 			warnSideEffect("unlock", storageErr(err, "cannot unlock the bus state"))
 		}
 	}()
-	st, serr := b.load()
-	if serr != nil {
-		return serr
-	}
-	b.gc(st)
-	fn(st)
-	return b.save(st)
+	return fn()
+}
+
+// locked runs fn on the shared state under an exclusive lock (after removing stale entries) and saves the
+// state afterwards. Only storage can fail here; failures of the operation itself are fn's business.
+func (b *Bus) locked(fn func(*State)) *StorageError {
+	return b.withLock(func() *StorageError {
+		st, serr := b.load()
+		if serr != nil {
+			return serr
+		}
+		b.gc(st)
+		fn(st)
+		return b.save(st)
+	})
 }
 
 // transact runs one operation on the shared state. A storage failure (lock, load, save) becomes the
