@@ -203,7 +203,9 @@ AUTH_MODEL_ANTHROPIC="${AUTH_MODEL_ANTHROPIC:-haiku}"
 AUTH_MODEL_OPENAI="${AUTH_MODEL_OPENAI:-gpt-6-luna}"
 AUTH_MODEL_GEMINI="${AUTH_MODEL_GEMINI:-}"
 AUTH_MODEL_OPENROUTER="${AUTH_MODEL_OPENROUTER:-}"   # empty = model of the first openrouter/... agent in agents.conf
-AUTH_MODEL_DEEPINFRA="${AUTH_MODEL_DEEPINFRA:-}"     # empty = model of the first deepinfra/... agent in agents.conf
+AUTH_MODEL_DEEPINFRA="${AUTH_MODEL_DEEPINFRA:-}"
+AUTH_OPENROUTER_URL="${AUTH_OPENROUTER_URL:-https://openrouter.ai/api/v1}"        # the APIs agent authenticated asks
+AUTH_DEEPINFRA_URL="${AUTH_DEEPINFRA_URL:-https://api.deepinfra.com/v1/openai}"   # (tests: a fake on loopback)     # empty = model of the first deepinfra/... agent in agents.conf
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
 # bus forwards a local command without the admission lock, including any children it wakes.
@@ -2881,24 +2883,70 @@ cmd_ack() { # <id | all> — acknowledges finished tasks (they disappear from ag
 
 # ------------------------------------------------------------------ account authentication
 
-auth_classify() { # output-file → "needs authentication" | "other error: ..."
-  local text; text=$(tr '\n' ' ' < "$1" | tr -s ' ')
+auth_classify() { # error-file → a category with the CLI's or provider's own words: "needs authentication — …",
+  # "limit — …" (a quota, credits or a rate limit), "cannot reach the provider — …" or "other error: …"
+  local text line
+  text=$(tr '\n' ' ' < "$1" | tr -s ' ')
+  line=$(grep -m1 -v '^[[:space:]]*$' "$1" | cut -c1-200)
   shopt -s nocasematch
   if [[ $text =~ (401|unauthori[sz]ed|authentication|not[[:space:]]logged[[:space:]]in|log[[:space:]]?in[[:space:]]again|/login|invalid[[:space:]](api|x-api)[[:space:]-]?key|oauth[[:space:]]token|token[[:space:]](has[[:space:]])?expired|expired[[:space:]]token|refresh[[:space:]]token|re-?authenticate|sign[[:space:]]in|credentials) ]]; then
-    echo "needs authentication"
+    echo "needs authentication — ${line:-no message}"
   elif [[ $text =~ (rate[[:space:]_-]?limit|usage[[:space:]]limit|quota|429|too[[:space:]]many[[:space:]]requests|limit[[:space:]]reached|resource_exhausted|credits) ]]; then
-    echo "other error: usage limit reached"
+    echo "limit — ${line:-no message}"
   elif [[ $text =~ (enotfound|econnrefused|econnreset|eai_again|could[[:space:]]not[[:space:]]resolve|network|connection[[:space:]](refused|reset)) ]]; then
-    echo "other error: cannot reach the provider"
+    echo "cannot reach the provider — ${line:-no message}"
   else
-    local line; line=$(grep -m1 -v '^[[:space:]]*$' "$1" | cut -c1-120)
     echo "other error: ${line:-unknown}"
   fi
   shopt -u nocasematch
 }
 
-cmd__authcheck() { # provider — runs as a systemd --user unit (the same context as the agents)
-  local p=$1 tmp rc=0
+api_error_text() { # body-file — the provider's own message from an API error body (not JSON: the raw body)
+  local m=""
+  # a body that is not JSON makes jq fail: then the raw body is the message
+  m=$(jq -r '.error.message // .error.metadata.raw // .detail // .message // (.error | strings) // empty' "$1" 2>/dev/null) || m=""
+  [[ -n $m ]] || m=$(tr -s '[:space:]' ' ' < "$1")
+  printf '%s' "${m:0:200}"
+}
+
+agent_auth_target() { # agent → "provider<TAB>model": the model as its provider's API or CLI takes it ("" = CLI default)
+  local type model
+  if [[ -n ${AGENT_TYPE[$1]:-} ]]; then type=${AGENT_TYPE[$1]}; model=${AGENT_MODEL[$1]:-}
+  else type=${INVESTIGATORS_TYPE[$1]:-}; model=${INVESTIGATORS_MODEL[$1]:-}; fi
+  case $type in
+    claude) printf 'anthropic\t%s' "$model" ;;
+    codex) printf 'openai\t%s' "$model" ;;
+    gemini) printf 'gemini\t%s' "$model" ;;
+    opencode)
+      case $model in
+        openrouter/*) printf 'openrouter\t%s' "${model#openrouter/}" ;;
+        deepinfra/*) printf 'deepinfra\t%s' "${model#deepinfra/}" ;;
+        *) printf 'other\t%s' "$model" ;;
+      esac ;;
+    *) printf 'other\t%s' "$model" ;;
+  esac
+}
+
+cmd__authcheck() { # provider | --agent NAME — one check, as a systemd --user unit (the agents' context)
+  if [[ ${1:-} == --agent ]]; then
+    local p model
+    IFS=$'\t' read -r p model <<< "$(agent_auth_target "$2")"
+    printf '%s\t%s\t%s\n' "$p" "${model:-(CLI default)}" "$(auth_probe "$p" "$model" agent)"
+    return 0
+  fi
+  local m=""
+  case $1 in
+    anthropic) m=$AUTH_MODEL_ANTHROPIC ;;
+    openai) m=$AUTH_MODEL_OPENAI ;;
+    gemini) m=$AUTH_MODEL_GEMINI ;;
+    openrouter) m=${AUTH_MODEL_OPENROUTER:-$(opencode_model_for openrouter)} ;;
+    deepinfra) m=${AUTH_MODEL_DEEPINFRA:-$(opencode_model_for deepinfra)} ;;
+  esac
+  auth_probe "$1" "$m" provider
+}
+
+auth_probe() { # provider model mode(agent|provider) — one request to the provider; prints OK or what went wrong
+  local p=$1 model=$2 tmp rc=0
   export LC_ALL=C.UTF-8
   if [[ -f $AGENTS_HOME/secrets.env ]]; then set -a; source "$AGENTS_HOME/secrets.env"; set +a; fi
   local v
@@ -2912,36 +2960,36 @@ cmd__authcheck() { # provider — runs as a systemd --user unit (the same contex
     anthropic)
       [[ -x $CLAUDE_BIN ]] || { echo "other error: CLI not found ($CLAUDE_BIN)"; return; }
       timeout 180 "$CLAUDE_BIN" -p "$q" --output-format json --max-turns 1 \
-        ${AUTH_MODEL_ANTHROPIC:+--model "$AUTH_MODEL_ANTHROPIC"} </dev/null >out 2>err || rc=$?
+        ${model:+--model "$model"} </dev/null >out 2>err || rc=$?
       # output that is not JSON is not an OK answer; it is kept as the error text (fallback: cat out)
       if ((rc == 0)) && [[ $(jq -r '.is_error | tostring' out 2>/dev/null) == false ]]; then echo OK; return; fi
       jq -r '.result // empty' out >> err 2>/dev/null || cat out >> err ;;
     openai)
       [[ -x $CODEX_BIN ]] || { echo "other error: CLI not found ($CODEX_BIN)"; return; }
       timeout 180 "$CODEX_BIN" exec --json --skip-git-repo-check \
-        ${AUTH_MODEL_OPENAI:+-m "$AUTH_MODEL_OPENAI"} "$q" </dev/null >out 2>err || rc=$?
+        ${model:+-m "$model"} "$q" </dev/null >out 2>err || rc=$?
       if ((rc == 0)) && ! grep -q '"type":"\(turn.failed\|error\)"' out; then echo OK; return; fi
       jq_soft auth_check_parse -rR 'fromjson? | select(.type=="turn.failed" or .type=="error") | (.error.message // .message // empty)' < out >> err ;;
     gemini)
       [[ -x $AGY_BIN ]] || { echo "other error: CLI not found ($AGY_BIN)"; return; }
       timeout 180 "$AGY_BIN" -p "$q" --output-format json --print-timeout 2m \
-        ${AUTH_MODEL_GEMINI:+--model "$AUTH_MODEL_GEMINI"} </dev/null >out 2>err || rc=$?
+        ${model:+--model "$model"} </dev/null >out 2>err || rc=$?
       # output that is not JSON is not an OK answer; it is kept as the error text (fallback: cat out)
       if ((rc == 0)) && [[ $(jq -r '.status // empty' out 2>/dev/null) == SUCCESS ]]; then echo OK; return; fi
       jq -r '.error // empty' out >> err 2>/dev/null || cat out >> err ;;
     openrouter|deepinfra)
-      local key url model code
+      local key url code
       if [[ $p == openrouter ]]; then
-        key=${OPENROUTER_API_KEY:-}; url=https://openrouter.ai/api/v1; model=${AUTH_MODEL_OPENROUTER:-$(opencode_model_for openrouter)}
+        key=${OPENROUTER_API_KEY:-}; url=$AUTH_OPENROUTER_URL
       else
-        key=${DEEPINFRA_API_KEY:-}; url=https://api.deepinfra.com/v1/openai; model=${AUTH_MODEL_DEEPINFRA:-$(opencode_model_for deepinfra)}
+        key=${DEEPINFRA_API_KEY:-}; url=$AUTH_DEEPINFRA_URL
       fi
-      [[ -n $key ]] || { echo "needs authentication"; return; }   # no key in secrets.env
+      [[ -n $key ]] || { echo "needs authentication — no ${p^^}_API_KEY in secrets.env"; return; }
       if [[ -z $model ]]; then
         if [[ $p == openrouter ]]; then   # no model configured: only check the key and its limit
           code=$(curl -sS -m 60 -o out -w '%{http_code}' -H "Authorization: Bearer $key" "$url/key" 2>err) || rc=$?
           if [[ $code == 200 ]]; then
-            [[ $(jq -r '.data.limit_remaining // "x"' out) == 0 ]] && { echo "other error: usage limit reached"; return; }
+            [[ $(jq -r '.data.limit_remaining // "x"' out) == 0 ]] && { echo "limit — the key's credit limit is used up (limit_remaining 0)"; return; }
             echo OK; return
           fi
         else
@@ -2954,11 +3002,11 @@ cmd__authcheck() { # provider — runs as a systemd --user unit (the same contex
         [[ $code == 200 ]] && { echo OK; return; }
       fi
       case $code in
-        401|403) echo "needs authentication"; return ;;
-        402|429) echo "other error: usage limit reached"; return ;;
-        000|"") echo "other error: cannot reach the provider"; return ;;
-      esac
-      { jq -r '.error.message // .detail // empty' out 2>/dev/null || cat out; } >> err ;;   # non-JSON body: keep it raw
+        000|"") echo "cannot reach the provider — $(head -c 200 err)"; return ;;
+        401|403) echo "needs authentication — HTTP $code: $(api_error_text out)"; return ;;
+        *) echo "HTTP $code: $(api_error_text out)"; return ;;
+      esac ;;
+    *) echo "not checked — only claude, codex and gemini agents and opencode agents with openrouter/… or deepinfra/… models are"; return ;;
   esac
   if ((rc == 124)); then echo "other error: the request timed out"; return; fi
   auth_classify err
@@ -2973,7 +3021,41 @@ opencode_model_for() { # provider — the model (without prefix) of the first op
   done
 }
 
-cmd_authenticated() {
+cmd_authenticated() { # [--providers | agent...] — every agent with its own model (default), the given agents, or
+  # one quick request per provider (--providers)
+  [[ ${1:-} == --providers ]] && { auth_providers; return; }
+  local agents=() a tmp r p model res
+  if (($#)); then
+    for a in "$@"; do
+      [[ -n ${AGENT_TYPE[$a]:-} || -n ${INVESTIGATORS_TYPE[$a]:-} ]] || die "no agent '$a' in agents.conf (see: agent agents)"
+      agents+=("$a")
+    done
+  else
+    mapfile -t agents < <({ printf '%s\n' "${!AGENT_TYPE[@]}"; investigator_names; } | sort -u)
+  fi
+  tmp=$(mktemp -d)
+  for a in "${agents[@]}"; do
+    systemd-run --user --wait --pipe --quiet --collect --unit="agent-auth-$a-$$" \
+      --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" \
+      --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+      "$SELF" _authcheck --agent "$a" </dev/null >"$tmp/$a" 2>"$tmp/$a.err" &
+  done
+  wait
+  printf '%-26s %-10s %-44s %s\n' AGENT PROVIDER MODEL RESULT
+  for a in "${agents[@]}"; do
+    r=""
+    [[ -s $tmp/$a ]] && r=$(head -1 "$tmp/$a")
+    if [[ -z $r ]]; then
+      log_warn auth_check_failed "agent=$a" "stderr=$(head -c 2000 "$tmp/$a.err")"
+      r=$'?\t?\tother error: could not run the check (systemd-run)'
+    fi
+    IFS=$'\t' read -r p model res <<< "$r"
+    printf '%-26s %-10s %-44s %s\n' "$a" "$p" "$model" "$res"
+  done
+  rm -rf "$tmp"
+}
+
+auth_providers() { # one quick request per provider (agent authenticated --providers)
   local tmp p; tmp=$(mktemp -d)
   for p in anthropic openai gemini openrouter deepinfra; do
     systemd-run --user --wait --pipe --quiet --collect --unit="agent-auth-$p-$$" \
@@ -3263,7 +3345,8 @@ agent transcript <id|team> [--raw]        full chronological log of a task/team 
 agent archive <id|team> | --finished      pack a finished task (with its resume chain) into tasks-archived/*.7z
 agent discard <id>...                     remove tasks that never started (worktree, branch, task directory)
 agent notes [repo] [--section S] [--search Q] [-n N]   persistent repository notebook
-agent authenticated                       are the Anthropic / OpenAI / Gemini / OpenRouter / DeepInfra accounts authenticated
+agent authenticated [agent...]            check every agent's (or the given agents') model, with the provider's own message
+agent authenticated --providers           one quick request per provider account
 agent bus [N]                             bus state and the last N agent messages
 agent say <agent|all|team:ID> "text"     message agents through the bus
 <id> may be an unambiguous fragment of a task ID.
@@ -3289,7 +3372,7 @@ main() {
     round-size) cmd_round_size "$@" ;;
     _agents-json) cmd__agents_json ;;
     ack)     cmd_ack "$@" ;;
-    authenticated) cmd_authenticated ;;
+    authenticated) cmd_authenticated "$@" ;;
     team)    cmd_team "$@" ;;
     helpers) cmd_helpers "$@" ;;
     transcript) cmd_transcript "$@" ;;
