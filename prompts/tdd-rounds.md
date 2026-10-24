@@ -31,14 +31,23 @@ vendored files not counted. Check it at any time: `{{ROUND_SIZE_CMD}}`. A task b
   recommendation) before writing code. Keep the plan in your checkpoints, with the next round marked.
 - After every round the base stays green: it builds, passes the linters and the tests. Unfinished functionality is
   dead code or a stub returning a typed "not implemented" error, reachable from nothing that works today.
-- Tests of a later round's functionality may come earlier, skipped with a marker naming the round:
-  `t.Skip("pending: <what>, round N")` (other languages: the same text as the skip reason). Round N removes them;
-  the script checks it.
+- **No placeholder tests.** A test is written in the round that implements its behaviour (RED, then GREEN) — never
+  earlier as a skipped placeholder. A stub of a later round has no test yet: nothing reaches it.
+- **A skip is an exception**, for a reason outside the code (a missing tool or device, another operating system):
+  the reason goes into the skip itself, and the test with its reason into a `## Skipped tests` section of the PR
+  description. The script sends a round back while a skip it adds is missing there; a reason like "implemented in
+  round N" is a major review finding.
+- **Skipped tests already in the repository** are listed at the end of your prompt. Fill each one whose
+  functionality exists now, test first. The round that implements a placeholder's functionality replaces it with a
+  real test — the one exception to "existing tests are not yours to change".
+- **No idea for a meaningful test?** Ask an investigator (`investigate`): what the code must do, what you would
+  test. Do not skip, and do not write a test that checks nothing.
 - End a round with its PR ready and `STATUS: ROUND_DONE N/M` (this round / all rounds); the last one may end with
   `STATUS: DONE`. The human merges the PR and resumes you: you then start from the merged base, on new branches.
 - **Never sleep waiting for a merge.** If the human has to merge a PR before you can go on, that PR ends a round:
   end it with `STATUS: ROUND_DONE N/M` (raise M if this splits a planned round, and say so in the PR description).
   A team that sleeps with nothing running looks stuck, and the human gets an alarm instead of "ready to merge".
-- A round over the limit, or with its own pending tests left, comes back to you to be split.
+- A round over the limit, or adding skipped tests missing from the PR's `## Skipped tests` section, comes
+  back to you.
 - In a team, the coordinator plans and ends the rounds and keeps the integration branch under the limit before
   merging members' work; every member follows "Test first" and keeps its part small.

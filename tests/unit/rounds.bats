@@ -59,7 +59,7 @@ latest() {
   grep -q -- "--same-round" "$HOME/notifications.log"
 }
 
-@test "pending tests due in this round go back to the agent; those of later rounds do not" {
+@test "a skip added in a round goes back while the PR does not list it — whatever round its marker names" {
   printf 'ROUND_BOUNCES=1\n' >> "$AGENTS_HOME/agents.conf"
   scenario '{"solo": {"new": "pending:1:1/2", "resume": "round-done:1/2"}}'
   agent run solo "task"
@@ -67,13 +67,6 @@ latest() {
   wait_status "$t" done
   [ "$(meta "$t" RUN)" = 2 ]
   grep -q "pending: parser, round 1" "$HOME/prompt-solo-resume.txt"
-
-  cd "$HOME/repo" && git checkout -q main
-  scenario '{"solo": {"new": "pending:2:1/2"}}'
-  agent run solo "task 2"
-  t2=$(latest solo)
-  wait_status "$t2" done
-  [ "$(meta "$t2" RUN)" = 1 ]
 }
 
 @test "resuming a round whose PR is not merged stops; --same-round continues on the same branch" {

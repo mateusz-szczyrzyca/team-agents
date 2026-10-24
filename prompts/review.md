@@ -28,8 +28,11 @@ The task the team worked on is below. Check the PR's compliance with the reposit
    **Test first:** for every change of behaviour, check that its test came first — a commit with the test (and a
    bare signature) before the code, its message ending with the failing run (`RED: …`) — or that the commit says
    `Test-First: not possible — <reason>` with a believable reason. You may check out that RED commit and run the
-   test. A change of behaviour with neither is a **major** finding. (The round size and the pending-test markers
-   are checked by the script, not by you.)
+   test. A change of behaviour with neither is a **major** finding. **Skipped tests** the PR adds: each needs a
+   reason outside the code (a missing tool or device, another system), in the skip and in the PR's
+   `## Skipped tests` section; a placeholder ("implemented later", "round N") is a **major** finding. Write the
+   review for a person scanning for facts: identifiers and numbers in code format, one item per line. (The round size, and whether new skips are listed in the PR, are checked by the script; you judge
+   the reasons.)
 4. Prepare `review.json`:
 
    ```json

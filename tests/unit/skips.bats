@@ -60,3 +60,19 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
   grep -q '^   - coordinator: `lead` (claude' "$AGENTS_HOME/tasks/$t/prompt-1.md"
   grep -q '^   - member: `member` (claude' "$AGENTS_HOME/tasks/$t/prompt-1.md"
 }
+
+@test "skip detection counts skip statements of each kind of test file — not assertions, comments, strings or Markdown" {
+  # the cases of the former pending detector tests (tests/unit/pending_detector.bats), for the new detector
+  source "$REPO_ROOT/bin/agent"
+  cd "$HOME/repo"
+  printf '%s\n' 'package p' 'func TestA(t *testing.T) {' '	t.Skip("needs the board")' '	s.Skipf("no %s", "gpu")' \
+    '	want := "t.Skip(quoted)"' '	// t.Skip("comment")' '}' > a_test.go
+  printf '%s\n' '@test "x" {' '  skip "needs a device"' '  run grep -q "skip" f' "  expected='skip fixture'" \
+    '  cat > f_test.go <<X' '  t.Skip("Go in a heredoc of a bats file")' 'X' '}' > b.bats
+  printf '%s\n' '  t.Skip("in Markdown")' > notes.md
+  printf '%s\n' '  t.Skip("not a test file")' > main.go
+  git add a_test.go b.bats notes.md main.go
+  run skips_in_repo "$HOME/repo"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'a_test.go:3: t.Skip("needs the board")\na_test.go:4: s.Skipf("no %s", "gpu")\nb.bats:2: skip "needs a device"' ]
+}

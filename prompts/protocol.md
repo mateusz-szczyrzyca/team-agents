@@ -68,9 +68,12 @@ rely on that.
 - Commit to `{{BRANCH}}`, with the trailers above.
 - **Draft PR from the start:** after the first meaningful commit push your branch
   (`git push -u origin {{BRANCH}}`) and open a draft: `gh pr create --draft --base {{BASE}} --head {{BRANCH}}`
-  (title and description: the task and your plan; end the description with a line
-  `Opened by team-agents: agent {{ATTRIBUTION}}.`). Then commit in small steps and push after every
-  completed step — the human follows your progress. When the task is complete: `gh pr ready`.
+  (title and description: the task and your plan). End the description with these lines, as they are:
+
+{{ATTRIBUTION_BLOCK}}
+
+  Then commit in small steps and push after every completed step — the human follows your progress. When the
+  task is complete: `gh pr ready`.
 - **Checkpoints:** after every completed stage (and roughly every 30 minutes of work) — commit, push, then
   call `checkpoint(summary, next_steps)`: what is done, key findings and decisions, what comes next. If the
   human interrupts the work, resuming starts from the last checkpoint instead of from scratch.

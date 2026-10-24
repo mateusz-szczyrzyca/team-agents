@@ -76,8 +76,11 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
    `team_status` — its commits or answers may already be there.
 4. You also do part of the work yourself (`level=normal`).
 5. **Draft PR from the start:** right after splitting the work push your branch and open a draft
-   `gh pr create --draft --base {{BASE}} --head {{BRANCH}}` (description: the task, the split, the plan; end it
-   with a line `Opened by team-agents: team {{TEAM_ID}}, coordinator {{ATTRIBUTION}}, members: {{TEAM_MEMBERS}}.`).
+   `gh pr create --draft --base {{BASE}} --head {{BRANCH}}` (description: the task, the split, the plan). End the
+   description with these lines, as they are:
+
+{{TEAM_ATTRIBUTION_BLOCK}}
+
    Merge every finished part of a member into your branch right away (`git merge <member branch>` — the
    branches are local in the same repository), resolve conflicts and push — the draft PR must show progress
    as it happens, not only at the end.

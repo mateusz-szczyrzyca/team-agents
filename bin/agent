@@ -561,18 +561,82 @@ round_base_ref() { # id → the ref a task's change is measured against: origin/
   printf '%s' "$base"
 }
 
-pending_due() { # id round — pending-test markers due by this round ("" = all of them): "file:line:text" lines
-  local wt due=${2:-} marker
+# Skipped tests (docs/tdd.md "Skipped tests"): for each kind of test file, the statements that skip a test — a
+# statement starts its line, so assertions, comments and strings that only mention a skip do not count, and code
+# of another language inside a test (a heredoc, a fixture) is not read with this file's pattern. No backslashes:
+# the patterns are also given to awk.
+SKIP_GLOBS=('*_test.go' '*.bats' 'test_*.py' '*_test.py' '*.test.*' '*.spec.*' '*.rs')
+SKIP_PATTERNS=(
+  '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[.]Skip(f|Now)?[(]'
+  '^[[:space:]]*skip([[:space:]]|$)'
+  '^[[:space:]]*(@pytest[.]mark[.]skip|@unittest[.]skip|pytest[.]skip[(]|self[.]skipTest[(])'
+  '^[[:space:]]*(@pytest[.]mark[.]skip|@unittest[.]skip|pytest[.]skip[(]|self[.]skipTest[(])'
+  '^[[:space:]]*((it|test|describe)[.]skip[(]|x(it|describe)[(])'
+  '^[[:space:]]*((it|test|describe)[.]skip[(]|x(it|describe)[(])'
+  '^[[:space:]]*#[[]ignore'
+)
+
+skips_in_repo() { # worktree → its skipped tests, "file:line: statement", at most 30 (sed, not head: no SIGPIPE)
+  local i
+  for i in "${!SKIP_GLOBS[@]}"; do
+    { git -C "$1" grep -nE "${SKIP_PATTERNS[i]}" -- ":(glob)**/${SKIP_GLOBS[i]}" || (($? == 1)); }
+  done | sort -t: -k1,1 -k2,2n -u | sed -E 's/[[:space:]]+/ /g' | cut -c1-200 | sed -n '1,30p'
+}
+
+skips_added() { # id → the skips this task's change adds against its base, "file: statement"
+  local wt base i
+  wt=$(task_field "$1" WORKTREE); base=$(round_base_ref "$1")
+  for i in "${!SKIP_GLOBS[@]}"; do
+    git -C "$wt" diff -U0 --no-color --no-ext-diff "$base...HEAD" -- ":(glob)**/${SKIP_GLOBS[i]}" \
+      | awk -v pat="${SKIP_PATTERNS[i]}" '/^\+\+\+ b\// { file = substr($0, 7); next }
+          /^\+/ && !/^\+\+\+/ { line = substr($0, 2); if (line ~ pat) { gsub(/[[:space:]]+/, " ", line); print file ":" line } }'
+  done | sort -u
+}
+
+pr_skipped_section() { # id → the "## Skipped tests" section of the description of the task's PR (empty: none)
+  local pr body
+  pr=$(cd "$(task_field "$1" REPO_ROOT)" && try pr_lookup_failed gh pr list --head "$(task_field "$1" BRANCH)" --state all --json body --limit 1)
+  body=$(jq_soft pr_body_parse -r '.[0].body // empty' <<< "${pr:-[]}")
+  awk '/^#+[[:space:]]*Skipped tests/ { on = 1; next } on && /^#+[[:space:]]/ { on = 0 } on { print }' <<< "$body"
+}
+
+skip_note() { # id — the skipped tests of the task's repository, appended to every run's prompt (nothing if none)
+  [[ $(task_field "$1" KIND) != investigation ]] || return 0
+  local wt list
   wt=$(task_field "$1" WORKTREE)
-  # Require a skip statement, not matching text in an assertion, comment or string fixture.
-  marker='^[[:space:]]*([[:alnum:]_]+[.])?Skip(f)?[[:space:]]*[(][[:space:]]*["`]pending: .*round [0-9]+'
-  marker+='|^[[:space:]]*skip[[:space:]]+["'"'"']pending: .*round [0-9]+'
-  { git -C "$wt" grep -nE "$marker" -- ':!*.md' || (($? == 1)); } |   # exit 1 = no marker
-    awk -v due="$due" '{ s = $0; sub(/.*round /, "", s); if (due == "" || s + 0 <= due + 0) print }'
+  [[ -d $wt ]] || return 0
+  list=$(skips_in_repo "$wt")
+  [[ -n $list ]] || return 0
+  printf '\n---\n\n## Skipped tests in this repository (%s)\n\n' "$(wc -l <<< "$list")"
+  printf 'Fill every one whose functionality exists now, test first; a skip is never a placeholder (see "Test first").\n\n'
+  sed -E 's/^([^:]+:[0-9]+):[[:space:]]*(.*)$/- `\1`: \2/' <<< "$list"
+}
+
+agent_desc() { # agent → "`name` (type, model `model`)" for attributions
+  local model=${AGENT_MODEL[$1]:-}
+  printf '`%s` (%s%s)' "$1" "${AGENT_TYPE[$1]:-?}" "${model:+, model \`$model\`}"
+}
+
+attribution_block() { # indent — the lines that end the description of a PR: the agent, or the team, its coordinator and its members
+  local ind=$1 a
+  printf '%sOpened by team-agents:\n' "$ind"
+  if [[ -z ${TEAM:-} ]]; then
+    printf '%s- agent: %s\n' "$ind" "$(agent_desc "$AGENT")"
+    return 0
+  fi
+  printf '%s- team: `%s`\n' "$ind" "$TEAM"
+  printf '%s- coordinator: %s\n' "$ind" "$(agent_desc "$AGENT")"
+  # the members from their task files: they all exist before any run starts (the bus may not know them all yet)
+  local m
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] && grep -qxF "TEAM=$TEAM" "$m" || continue
+    a=$(sed -n 's/^AGENT=//p' "$m")
+    if [[ -n $a && $a != "$AGENT" ]]; then printf '%s- member: %s\n' "$ind" "$(agent_desc "$a")"; fi
+  done
 }
 
 round_check() { # id → what keeps a finished round from closing, one "- …" line each (empty: nothing)
-  local id=$1 limit size lines out="" pend
+  local id=$1 limit size lines out=""
   limit=$(round_limit "$(task_field "$id" REPO_NAME)")
   if ((limit > 0)); then
     if size=$(bus round-size --repo "$(task_field "$id" WORKTREE)" --base "$(round_base_ref "$id")" --exclude "$ROUND_EXCLUDE" --json); then
@@ -584,9 +648,18 @@ round_check() { # id → what keeps a finished round from closing, one "- …" l
       log_warn round_size_failed "task=$id"   # the size cannot be measured: the round is not held back for that
     fi
   fi
-  pend=$(pending_due "$id" "$(task_field "$id" WORK_ROUND)")
-  if [[ -n $pend ]]; then
-    out+="- Pending tests due in this round are still pending:"$'\n'"$(sed 's/^/  - /' <<< "$pend")"$'\n'
+  # every skip the round adds must be listed, with its reason, in the PR description's "## Skipped tests" section
+  local added section f missing=""
+  added=$(skips_added "$id")
+  if [[ -n $added ]]; then
+    section=$(pr_skipped_section "$id")
+    while read -r f; do
+      [[ -n $f ]] || continue
+      if ! grep -qF -- "${f##*/}" <<< "$section"; then missing+="  - $(grep -F -- "$f:" <<< "$added" | head -1)"$'\n'; fi
+    done < <(cut -d: -f1 <<< "$added" | sort -u)
+    if [[ -n $missing ]]; then
+      out+="- Skipped tests added in this round are not listed in the PR description's \"## Skipped tests\" section (each with its reason) — or fill them instead:"$'\n'"$missing"
+    fi
   fi
   printf '%s' "$out"
 }
@@ -1035,6 +1108,7 @@ build_prompt() { # id mode qfile next_round
     [INV_ID]=${INV_ID:-} [PARENT_TASK]=${PARENT_TASK:-} [PARENT_WORKTREE]=${PARENT_WORKTREE:-}
     [FROM_AGENT]=${FROM_AGENT:-}
     [TEAM_ID]=${TEAM:-} [TEAM_MEMBERS]="$(team_members_list)"
+    [ATTRIBUTION_BLOCK]="$(attribution_block "")" [TEAM_ATTRIBUTION_BLOCK]="$(attribution_block "   ")"
     [TIER]=$( [[ ${TIER:-normal} == worker ]] && echo "worker (a cheap model for simple tasks)" || echo "normal model" )
     [WORKERS]="$( ((${#WORKER_AGENTS[@]})) && (IFS=,; printf '%s' "${WORKER_AGENTS[*]}" | sed 's/,/, /g') || echo "(none configured)")"
     [HELPER_ID]=${HELPER_ID:-}
@@ -1054,10 +1128,12 @@ build_prompt() { # id mode qfile next_round
     elif [[ -n ${TEAM:-} ]]; then
       render "$PROMPTS/team.md"
       render "$PROMPTS/tdd-rounds.md"
+      render "$PROMPTS/writing.md"
       printf '\n# TEAM TASK\n\n'
     else
       render "$PROMPTS/protocol.md"
       render "$PROMPTS/tdd-rounds.md"
+      render "$PROMPTS/writing.md"
       printf '\n# TASK\n\n'
     fi
     cat "$TASKS/$id/task.md"
@@ -1080,6 +1156,7 @@ build_prompt() { # id mode qfile next_round
     elif [[ ${KIND:-worker} != helper && -f $PROMPTS/ask-solo.md ]]; then
       render "$PROMPTS/ask-solo.md"
     fi
+    skip_note "$id"
     return
   fi
 
@@ -1149,6 +1226,7 @@ build_prompt() { # id mode qfile next_round
   if ((any == 0)); then
     printf 'Continue task %s following the rules from the first message of this session.\n' "$id"
   fi
+  skip_note "$id"
 }
 
 bus_args_json() { # id → JSON (also valid TOML) array of `agentbus serve` arguments
