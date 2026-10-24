@@ -499,6 +499,11 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 			if job.State == JobWaiting && !rep.At.IsZero() && at.After(lastAt.Time) {
 				newHistory = append(newHistory, JobTransition{State: JobWaiting, At: at})
 			}
+		case rep.At.IsZero() && job.State != JobAssigned && !isTerminalJob(rep.State):
+			// Only the first start or a terminal state may omit its time: neither can rewind a job, since a
+			// job becomes terminal once. Other changes without a time cannot be told from a replay of an older
+			// report, so the node must send the time of every transition.
+			return Job{}, opErr(LeadReportInvalidState, "state change %s from %s needs its transition time; a report without one cannot be told from a replay", rep.State, job.State)
 		case at.Equal(lastAt.Time):
 			// Two states at one instant cannot be ordered; the node must send the cumulative history instead.
 			return Job{}, opErr(LeadReportInvalidState, "state %s at %v cannot follow %s at the same instant; send the cumulative history", rep.State, at, job.State)
