@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// Remote job registry of the lead (round 2 of docs/multi-instance.md): the pure in-memory model of jobs,
-// nodes, routing and assignment. Persistence (jobs.json), state reports and HTTP come in later rounds.
+// The lead's pure in-memory model of jobs, nodes, routing and lifecycle operations.
+// job_store.go persists whole operations under the bus lock; HTTP adapters arrive in a later round.
 
 // JobState is the lifecycle state of a remote job.
 type JobState string
