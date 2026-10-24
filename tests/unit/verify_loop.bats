@@ -51,13 +51,14 @@ teams_of() { grep -h '^TEAM=' "$AGENTS_HOME"/tasks/*-"$1"/meta.env 2> /dev/null 
 @test "a review with major findings wakes the team with them, twice at most; then the human is called on the PR" {
   printf 'AGENT_HUMAN_GITHUB=boss\n' >> "$AGENTS_HOME/agents.conf"
   echo '[{"number": 7, "url": "https://github.com/o/r/pull/7", "state": "OPEN"}]' > "$HOME/gh-prs.json"
-  scenario '{"lead": {"new": "done", "resume": "done"}, "member": {"new": "done", "resume": "done"}, "inv": {"new": "review-majors"}}'
+  # the coordinator claims its role (as in agent.bats) — without a coordinator no review is requested
+  scenario '{"lead": {"new": "team-lead-done", "resume": "team-lead-done"}, "member": {"new": "team-sleep", "resume": "done"}, "inv": {"new": "review-majors"}}'
   agent run --team lead,member --verify "team task"
   wait_grep "pr comment" "$HOME/gh.log" 150
   grep -q "@boss" "$HOME/gh.log"
   wait_grep "still" "$HOME/notifications.log"
   [ "$(teams_of lead | wc -l)" -eq 3 ]
-  passes=$(for t in $(leads); do meta "$t" FIX_PASS; done | tr '\n' ' ')
+  passes=$(for t in $(leads); do v=$(meta "$t" FIX_PASS); echo "${v:-0}"; done | tr '\n' ' ')   # no FIX_PASS = 0
   [ "$passes" = "0 1 2 " ]
   second=$(leads | sed -n 2p)
   grep -q "Fix pass 1 of 2" "$AGENTS_HOME/tasks/$second/task.md"
