@@ -398,7 +398,7 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 			(rep.TaskID != "" && job.TaskID != rep.TaskID) ||
 			(rep.Branch != "" && job.Branch != rep.Branch) ||
 			(rep.PRURL != "" && job.PRURL != rep.PRURL) ||
-			(!rep.At.IsZero() && !rep.At.Equal(lastTr.At.Time)) {
+			(len(rep.Transitions) == 0 && !rep.At.IsZero() && !rep.At.Equal(lastTr.At.Time)) {
 			return Job{}, opErr(LeadReportTerminalConflict, "job %q is terminal with %s, cannot revise", rep.ID, job.State)
 		}
 		if len(rep.Transitions) > 0 {
@@ -467,19 +467,38 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		}
 		targetState = currState
 	} else {
-		at := rep.At
-		if at.IsZero() {
-			at = now
-		}
-		lastAt := job.History[len(job.History)-1].At
-		if at.Before(lastAt.Time) {
-			return Job{}, opErr(LeadReportInvalidState, "report timestamp %v cannot precede last transition %v", at, lastAt)
-		}
-		if job.State == rep.State {
-			if job.State == JobWaiting && at.After(lastAt.Time) {
-				newHistory = append(newHistory, JobTransition{State: JobWaiting, At: at})
+		lastTr := job.History[len(job.History)-1]
+		if rep.State == job.State {
+			if !rep.At.IsZero() && rep.At.After(lastTr.At.Time) && job.State == JobWaiting {
+				newHistory = append(newHistory, JobTransition{State: JobWaiting, At: rep.At})
 			}
 		} else {
+			assignedIdx := -1
+			for i := len(job.History) - 1; i >= 0; i-- {
+				if job.History[i].State == JobAssigned {
+					assignedIdx = i
+					break
+				}
+			}
+			var recorded []JobTransition
+			if assignedIdx >= 0 && assignedIdx+1 < len(job.History) {
+				recorded = job.History[assignedIdx+1:]
+			}
+			if !rep.At.IsZero() {
+				for _, tr := range recorded {
+					if tr.State == rep.State && tr.At.Equal(rep.At.Time) {
+						// Stale replay of an earlier acknowledged transition.
+						return cloneJob(*job), nil
+					}
+				}
+			}
+			at := rep.At
+			if at.IsZero() {
+				at = now
+			}
+			if at.Before(lastTr.At.Time) {
+				return Job{}, opErr(LeadReportInvalidState, "report timestamp %v cannot precede last transition %v", at, lastTr.At)
+			}
 			if !validTransition(job.State, rep.State) {
 				return Job{}, opErr(LeadReportInvalidState, "invalid transition from %s to %s", job.State, rep.State)
 			}
@@ -493,6 +512,9 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	if isTerminalJob(targetState) {
 		// A real terminal result acknowledges the stop request, including completion winning the race.
 		job.StopRequested = false
+		job.Result = rep.Result
+	} else if rep.Result != "" {
+		job.Result = rep.Result
 	}
 
 	if rep.TaskID != "" {
@@ -503,9 +525,6 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	}
 	if rep.PRURL != "" {
 		job.PRURL = rep.PRURL
-	}
-	if rep.Result != "" {
-		job.Result = rep.Result
 	}
 
 	return cloneJob(*job), nil
