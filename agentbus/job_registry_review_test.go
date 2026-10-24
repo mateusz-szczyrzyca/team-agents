@@ -200,3 +200,29 @@ func TestJobReportSameStatePayloadCannotBeOverwritten(t *testing.T) {
 		t.Fatalf("branch overwritten to %q", job.Branch)
 	}
 }
+
+// TestJobReportSameStateResultCannotBeOverwritten: a same-state report with a different result than the one
+// already recorded is refused, and a same-state terminal replay without a result keeps the recorded result
+// (investigator #28, R2 result field).
+func TestJobReportSameStateResultCannotBeOverwritten(t *testing.T) {
+	r := newLeadRegistry()
+	assigned := reviewAssign(t, r, "result-replay", 1)
+	first := JobReport{ID: "result-replay", Node: "node-a", Assignment: assigned, State: JobRunning, At: regAt(2), Result: "old"}
+	if _, err := r.report(first, regAt(2)); err != nil {
+		t.Fatalf("running: %v", err)
+	}
+	newer := JobReport{ID: "result-replay", Node: "node-a", Assignment: assigned, State: JobRunning, At: regAt(4), Result: "new"}
+	if _, err := r.report(newer, regAt(4)); err == nil {
+		t.Fatal("same-state report with a different result was accepted")
+	}
+	if _, err := r.report(first, regAt(5)); err != nil {
+		t.Fatalf("identical retry: %v", err)
+	}
+	job, err := r.get("result-replay")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if job.Result != "old" {
+		t.Fatalf("result overwritten to %q", job.Result)
+	}
+}
