@@ -232,6 +232,8 @@ func pausedText(m map[string]string) string {
 	switch m["PAUSE_REASON"] {
 	case "quota":
 		out += " (quota exhausted)"
+	case "rate_limit":
+		out += " (rate-limited by the provider)"
 	case "wake_loop":
 		out += " (wake-loop guard)"
 	}

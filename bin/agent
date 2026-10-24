@@ -168,6 +168,8 @@ AGENT_WAKE_LOOP_PAUSE_MIN="${AGENT_WAKE_LOOP_PAUSE_MIN:-15}" # how long the guar
 # A run stopped by an exhausted quota or usage limit pauses the task until the limit resets (see quota_reset_seconds);
 # this is the pause when the CLI does not say when that is.
 AGENT_QUOTA_PAUSE_MIN="${AGENT_QUOTA_PAUSE_MIN:-30}"
+AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
+AGENT_LIMIT_TAIL_LINES="${AGENT_LIMIT_TAIL_LINES:-30}"           # how much of the end of stderr shows a provider limit
 # Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
 declare -p INVESTIGATORS_TYPE &>/dev/null || declare -A INVESTIGATORS_TYPE=()
 declare -p INVESTIGATORS_MODEL &>/dev/null || declare -A INVESTIGATORS_MODEL=()
@@ -767,27 +769,61 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
 }
 
 # Words in a CLI error that mean the provider stopped the run because a quota or usage limit is exhausted.
-QUOTA_PATTERN='quota (reached|exceeded|exhausted)|usage limit|rate[ _-]?limit|limit reached|too many requests|resource[ _]exhausted|out of credits|insufficient (credits|balance)'
+# Provider limits in a run's errors: an exhausted quota, usage limit or credits (a long pause until the reset), and
+# a rate limit — HTTP 429, the provider throttling requests (a short pause; credits may be fine).
+QUOTA_PATTERN='quota (reached|exceeded|exhausted)|usage limit|limit reached|resource[ _]exhausted|out of credits|insufficient (credits|balance)|(^|[^0-9])402([^0-9]|$)'
+RATE_LIMIT_PATTERN='rate[ _-]?limit|too many requests|(^|[^0-9])429([^0-9]|$)'
 
-# quota_reset_seconds dir run final — when this run of the CLI stopped because a quota or usage limit is exhausted,
-# prints the seconds until it resets (plus a minute of margin) and returns 0; returns 1 otherwise. Searched: the
-# CLI's error stream, the error events of its output and the latest error entries of the activity log; the final
-# message only when it has no STATUS line (an agent's own report always has one).
-quota_reset_seconds() {
-  local dir=$1 run=$2 final=$3 text="" f
-  # grep exits 1 when nothing matches — that is the expected "no quota error"
-  if [[ -f $dir/err-$run.log ]]; then text+=$(grep -iE "$QUOTA_PATTERN" "$dir/err-$run.log" || (($? == 1))); fi
+# limit_lines dir run final pattern — this run's error lines that match a pattern: the end of the CLI's stderr
+# (AGENT_LIMIT_TAIL_LINES lines: an early error the CLI retried does not count), the error events at the end of its
+# output, the last error entries of the activity, and the final message when it has no STATUS (the agent's own
+# report is never read as a provider error)
+limit_lines() {
+  local dir=$1 run=$2 final=$3 pat=$4 f
+  # every grep below exits 1 when nothing matches — that is the expected "no limit"
+  if [[ -f $dir/err-$run.log ]]; then
+    tail -n "$AGENT_LIMIT_TAIL_LINES" "$dir/err-$run.log" | { grep -iE "$pat" || (($? == 1)); }
+  fi
   for f in "$dir/events-$run.jsonl" "$dir/out-$run.jsonl"; do
     [[ -f $f ]] || continue
-    text+=$'\n'$(grep -iE '"(type|level|subtype)": ?"[a-z_]*error|"is_error": ?true|"error":' "$f" | grep -iE "$QUOTA_PATTERN" || (($? == 1)))
+    tail -n 200 "$f" | { grep -iE '"(type|level|subtype)": ?"[a-z_]*error|"is_error": ?true|"error":' || (($? == 1)); } \
+      | { grep -iE "$pat" || (($? == 1)); }
   done
   if [[ -f $dir/activity.jsonl ]]; then
-    text+=$'\n'$(tail -n 50 "$dir/activity.jsonl" | grep -F '"k":"err"' | grep -iE "$QUOTA_PATTERN" || (($? == 1)))
+    tail -n 50 "$dir/activity.jsonl" | { grep -F '"k":"err"' || (($? == 1)); } | { grep -iE "$pat" || (($? == 1)); }
   fi
   if [[ -z $(final_status "$final") ]]; then
-    text+=$'\n'$(grep -iE "$QUOTA_PATTERN" <<< "$final" || (($? == 1)))
+    grep -iE "$pat" <<< "$final" || (($? == 1))
   fi
-  [[ -n ${text//[[:space:]]/} ]] || return 1
+}
+
+# limit_kind dir run final — quota (an exhausted quota, usage limit or credits) or rate_limit (HTTP 429: the
+# provider throttles requests — not the same as running out); exit 1 when the run did not stop on a provider limit
+limit_kind() {
+  if [[ -n $(limit_lines "$1" "$2" "$3" "$QUOTA_PATTERN" | tr -d '[:space:]') ]]; then
+    echo quota
+  elif [[ -n $(limit_lines "$1" "$2" "$3" "$RATE_LIMIT_PATTERN" | tr -d '[:space:]') ]]; then
+    echo rate_limit
+  else
+    return 1
+  fi
+}
+
+# limit_line dir run final kind — the first line that showed the limit, at most 200 characters (for the note)
+limit_line() {
+  local pat=$QUOTA_PATTERN
+  [[ $4 == rate_limit ]] && pat=$RATE_LIMIT_PATTERN
+  limit_lines "$1" "$2" "$3" "$pat" | sed -E 's/^[[:space:]]+//' | { grep -m1 . || (($? == 1)); } | cut -c1-200
+}
+
+# quota_reset_seconds dir run final — when the run stopped on a provider limit: the seconds until it may go on.
+# The reset time comes from the message if it gives one; otherwise AGENT_QUOTA_PAUSE_MIN for an exhausted quota and
+# AGENT_RATE_LIMIT_PAUSE_MIN for a rate limit. Exit 1: not a provider limit.
+quota_reset_seconds() {
+  local kind text pat=$QUOTA_PATTERN default=$AGENT_QUOTA_PAUSE_MIN
+  kind=$(limit_kind "$1" "$2" "$3") || return 1
+  if [[ $kind == rate_limit ]]; then pat=$RATE_LIMIT_PATTERN; default=$AGENT_RATE_LIMIT_PAUSE_MIN; fi
+  text=$(limit_lines "$1" "$2" "$3" "$pat")
 
   local secs=0 now at t epoch dur
   now=$(date +%s)
@@ -808,7 +844,7 @@ quota_reset_seconds() {
       secs=$((t - now))
     fi
   fi
-  ((secs > 0)) || secs=$((AGENT_QUOTA_PAUSE_MIN * 60))
+  ((secs > 0)) || secs=$((default * 60))
   echo $((secs + 60))
 }
 
@@ -1845,8 +1881,16 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
   elif ((hang_final)); then
     status=hung; note="the agent hung $hangs times in a row without progress"
   elif { ((RC != 0)) || [[ -z $fst ]]; } && pause_secs=$(quota_reset_seconds "$dir" "$nrun" "$FINAL"); then
-    status=paused; pause_reason=quota
-    note="the provider's quota or usage limit is exhausted — resumes at $(date -d "@$(( $(date +%s) + pause_secs ))" '+%H:%M')"
+    status=paused
+    pause_reason=$(limit_kind "$dir" "$nrun" "$FINAL")
+    local why resume_at
+    why=$(limit_line "$dir" "$nrun" "$FINAL" "$pause_reason")
+    resume_at=$(date -d "@$(( $(date +%s) + pause_secs ))" '+%H:%M')
+    if [[ $pause_reason == rate_limit ]]; then
+      note="the provider is rate-limiting requests (HTTP 429) — not out of credits; resumes at $resume_at${why:+ — $why}"
+    else
+      note="the provider's quota or usage limit is exhausted — resumes at $resume_at${why:+ — $why}"
+    fi
   elif [[ -s $qfile ]]; then
     # every question the agent wrote must carry a recommendation; without one it gets the file back once
     if ((qgen == 0)) && [[ $(task_field "$id" QUESTIONS_BOUNCED) != "$next_round" ]]; then

@@ -373,7 +373,7 @@ CONF
   (( secs >= 655 && secs <= 661 ))
   rm "$d/out-1.jsonl"
   printf '429 Too Many Requests: rate limit exceeded\n' > "$d/err-1.log"
-  [ "$(quota_reset_seconds "$d" 1 "")" = $(( AGENT_QUOTA_PAUSE_MIN * 60 + 60 )) ]
+  [ "$(quota_reset_seconds "$d" 1 "")" = $(( AGENT_RATE_LIMIT_PAUSE_MIN * 60 + 60 )) ]
   printf "5-hour limit reached · resets 3pm\n" > "$d/err-1.log"
   secs=$(quota_reset_seconds "$d" 1 "")
   (( secs > 60 && secs <= 86400 + 60 ))
