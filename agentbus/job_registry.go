@@ -443,6 +443,7 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	}
 
 	newHistory := slices.Clone(job.History)
+	prevState := job.State
 	targetState := job.State
 
 	if len(rep.Transitions) > 0 {
@@ -494,15 +495,6 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		}
 		switch {
 		case job.State == rep.State:
-			// A same-state report may fill in a field that is still empty, but must not replace an identifier
-			// or a result already recorded: an older retry would otherwise overwrite a newer payload
-			// (investigator #27, R2; investigator #28, result field).
-			if (rep.Branch != "" && job.Branch != "" && rep.Branch != job.Branch) ||
-				(rep.TaskID != "" && job.TaskID != "" && rep.TaskID != job.TaskID) ||
-				(rep.PRURL != "" && job.PRURL != "" && rep.PRURL != job.PRURL) ||
-				(rep.Result != "" && job.Result != "" && rep.Result != job.Result) {
-				return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task, PR or result for job %q", rep.State, rep.ID)
-			}
 			// A repeated waiting report with its own later time is a new wait for a human. Anything else that
 			// repeats the current state (an identical retry, a report without a time) changes nothing.
 			if job.State == JobWaiting && !rep.At.IsZero() && at.After(lastAt.Time) {
@@ -523,6 +515,13 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 			targetState = rep.State
 			newHistory = append(newHistory, JobTransition{State: rep.State, At: at})
 		}
+	}
+
+	// A report that leaves the state unchanged must not replace a payload already recorded: an older retry
+	// would otherwise overwrite a newer one (investigator #27, R2; #28, M2 and result field). Reports that
+	// change the state carry newer payload and are not checked here.
+	if targetState == prevState && payloadConflicts(job, rep) {
+		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task, PR or result for job %q", rep.State, rep.ID)
 	}
 
 	job.State = targetState
@@ -547,6 +546,15 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	}
 
 	return cloneJob(*job), nil
+}
+
+// payloadConflicts reports whether rep names a branch, task, PR or result that differs from the non-empty
+// value already recorded on job. An empty field in rep never conflicts: it fills nothing and replaces nothing.
+func payloadConflicts(job *Job, rep JobReport) bool {
+	return (rep.Branch != "" && job.Branch != "" && rep.Branch != job.Branch) ||
+		(rep.TaskID != "" && job.TaskID != "" && rep.TaskID != job.TaskID) ||
+		(rep.PRURL != "" && job.PRURL != "" && rep.PRURL != job.PRURL) ||
+		(rep.Result != "" && job.Result != "" && rep.Result != job.Result)
 }
 
 // requeueOffline returns unstarted assigned jobs of offline nodes to the queue.
