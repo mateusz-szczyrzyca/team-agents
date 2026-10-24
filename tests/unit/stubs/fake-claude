@@ -12,6 +12,8 @@ Actions:
   questions-file  writes the questions file, STATUS: QUESTIONS
   questions-text  asks questions only in the final message
   questions-norec writes a questions file without recommendations, STATUS: QUESTIONS
+  rate-limit      exits 1 with an HTTP 429 rate-limit error on stderr
+  stale-rate-limit  a retried 429 early on stderr, much more output, then a final message without STATUS
   commit-lines:N  commits a file of N lines, STATUS: DONE
   round-done:N/M  STATUS: ROUND_DONE N/M
   pending:K:N/M   commits a test skipped as "pending: parser, round K", STATUS: ROUND_DONE N/M
@@ -77,6 +79,15 @@ if action == "team-lead-done":
 if action == "quota":
     print("Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1m30s.", file=sys.stderr)
     sys.exit(3)
+if action == "rate-limit":
+    print("APIError: 429 Too Many Requests: rate limit exceeded by the upstream provider", file=sys.stderr)
+    sys.exit(1)
+if action == "stale-rate-limit":
+    # an early 429 the CLI retried, then a long run that ends without STATUS for another reason
+    print("APIError: 429 Too Many Requests: rate limit exceeded, retrying in 2s", file=sys.stderr)
+    for i in range(60):
+        print(f"step {i}: working", file=sys.stderr)
+    finish("I changed the parser but forgot to say how it ended.")
 if action == "idle":
     finish("Nothing for me.\n\nSTATUS: SLEEPING")
 if action == "commit":

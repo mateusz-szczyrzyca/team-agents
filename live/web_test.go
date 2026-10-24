@@ -617,3 +617,14 @@ func TestAgentListFailuresAreShownNotHidden(t *testing.T) {
 		t.Errorf("parseAgents: %v", perr)
 	}
 }
+
+// Rule: the Agents view says why a task is paused — an exhausted quota, a rate limit or the wake-loop guard.
+func TestPausedText(t *testing.T) {
+	for reason, want := range map[string]string{
+		"quota": "(quota exhausted)", "rate_limit": "(rate-limited by the provider)", "wake_loop": "(wake-loop guard)",
+	} {
+		if got := pausedText(map[string]string{"WAKE_AT": "1792735200", "PAUSE_REASON": reason}); !strings.Contains(got, want) {
+			t.Errorf("pausedText(%s) = %q, want it to contain %q", reason, got, want)
+		}
+	}
+}
