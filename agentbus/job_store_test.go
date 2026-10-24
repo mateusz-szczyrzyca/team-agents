@@ -92,3 +92,87 @@ func TestJobStoreWriteFailureHasOperationCause(t *testing.T) {
 	err := transactJobs(b, LeadHeartbeatStorage, regAt(0), func(*leadRegistry) *LeadHeartbeatError { return nil })
 	failsWith(t, LeadHeartbeatStorage)("cannot write snapshot", err)
 }
+
+// TestJobStoreCumulativeHistoryRoundtrip verifies that multi-step cumulative transition history and
+// metadata persist across disk reloads.
+func TestJobStoreCumulativeHistoryRoundtrip(t *testing.T) {
+	b := newBus(t)
+	var assignment uint64
+	storeRun(t, b, regAt(0), func(r *leadRegistry) {
+		regSubmit(t, r, regRequest("job-1"), regAt(0))
+		got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+		if got == nil {
+			t.Fatal("heartbeat did not assign job-1")
+		}
+		assignment = got.Assignment
+	})
+
+	// Report cumulative transitions: running -> waiting -> running
+	transitions := []JobTransition{
+		{State: JobRunning, At: regAt(2)},
+		{State: JobWaiting, At: regAt(3)},
+		{State: JobRunning, At: regAt(4)},
+	}
+	storeRun(t, b, regAt(4), func(r *leadRegistry) {
+		_, err := r.report(JobReport{
+			ID:          "job-1",
+			Node:        "node-a",
+			Assignment:  assignment,
+			State:       JobRunning,
+			TaskID:      "task-1",
+			Branch:      "branch-1",
+			Transitions: transitions,
+		}, regAt(4))
+		if err != nil {
+			t.Fatalf("report cumulative transitions: %v", err)
+		}
+	})
+
+	// Reopen from disk and verify cumulative history and fields survived
+	storeRun(t, &Bus{dir: b.dir}, regAt(5), func(r *leadRegistry) {
+		job, err := r.get("job-1")
+		if err != nil {
+			t.Fatalf("get job-1 after reload: %v", err)
+		}
+		if job.State != JobRunning || job.TaskID != "task-1" || job.Branch != "branch-1" {
+			t.Fatalf("reloaded job fields mismatch: %+v", job)
+		}
+		if len(job.History) != 5 {
+			t.Fatalf("reloaded history length = %d, want 5: %+v", len(job.History), job.History)
+		}
+		for i, want := range append([]JobTransition{
+			{State: JobQueued, At: regAt(0)},
+			{State: JobAssigned, At: regAt(1)},
+		}, transitions...) {
+			if job.History[i].State != want.State || !job.History[i].At.Equal(want.At.Time) {
+				t.Fatalf("history[%d] = %+v, want %+v", i, job.History[i], want)
+			}
+		}
+
+		// Transition to terminal state (done)
+		_, errDone := r.report(JobReport{
+			ID:         "job-1",
+			Node:       "node-a",
+			Assignment: assignment,
+			State:      JobDone,
+			TaskID:     "task-1",
+			Branch:     "branch-1",
+			Result:     "success",
+			At:         regAt(6),
+		}, regAt(6))
+		if errDone != nil {
+			t.Fatalf("report done: %v", errDone)
+		}
+	})
+
+	// Reopen once more to verify terminal outcome survived
+	storeRun(t, &Bus{dir: b.dir}, regAt(7), func(r *leadRegistry) {
+		job, err := r.get("job-1")
+		if err != nil {
+			t.Fatalf("get terminal job: %v", err)
+		}
+		if job.State != JobDone || job.Result != "success" || len(job.History) != 6 {
+			t.Fatalf("terminal job mismatch after reload: %+v", job)
+		}
+	})
+}
