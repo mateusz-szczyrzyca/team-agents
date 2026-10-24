@@ -152,6 +152,8 @@ The path unit (`agent-<task>-answers-<round>.path`) does not survive a reboot of
 key has a budget. Splitting the agents into CLI types and tiers spreads the load and the token usage across
 providers and accounts:
 
+  Requests rotate across the investigators: each goes to the next free one after the last one, preferring
+  another provider than the last one's — no provider gets every investigation and review.
 - normal agents of different types (for example `claude-1`, `codex-1`, `gemini-1`) draw on three separate
   subscriptions, so a team can work in parallel without one account hitting its limit;
 - the token-hungry mechanical work (reading many files, long command output) goes to workers on pay-per-token
