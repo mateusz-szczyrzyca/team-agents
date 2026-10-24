@@ -141,3 +141,31 @@ func TestJobReportTerminalResultIsTheTerminalPayload(t *testing.T) {
 		t.Fatalf("result = %q, want the terminal report's empty result", job.Result)
 	}
 }
+
+// TestJobReportOmittedTimeReplayCannotRewindProgress: a report without its time is not an identifiable
+// transition, so a retry of an old running report after waiting must not move the job back or overwrite its
+// task ID; the lead refuses it.
+func TestJobReportOmittedTimeReplayCannotRewindProgress(t *testing.T) {
+	r := newLeadRegistry()
+	assigned := reviewAssign(t, r, "omitted-replay", 1)
+	timed := JobReport{ID: "omitted-replay", Node: "node-a", Assignment: assigned, State: JobRunning, At: regAt(2), TaskID: "original"}
+	if _, err := r.report(timed, regAt(2)); err != nil {
+		t.Fatalf("running: %v", err)
+	}
+	waiting := JobReport{ID: "omitted-replay", Node: "node-a", Assignment: assigned, State: JobWaiting, At: regAt(3), TaskID: "new"}
+	if _, err := r.report(waiting, regAt(3)); err != nil {
+		t.Fatalf("waiting: %v", err)
+	}
+	replay := timed
+	replay.At = Timestamp{}
+	if _, err := r.report(replay, regAt(4)); err == nil {
+		t.Fatal("replayed running report without its time was accepted")
+	}
+	job, err := r.get("omitted-replay")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if job.State != JobWaiting || job.TaskID != "new" {
+		t.Fatalf("job rewound to %s with task %q", job.State, job.TaskID)
+	}
+}
