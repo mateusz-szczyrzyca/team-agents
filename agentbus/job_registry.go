@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// Remote job registry of the lead (round 2 of docs/multi-instance.md): the pure in-memory model of jobs,
-// nodes, routing and assignment. Persistence (jobs.json), state reports and HTTP come in later rounds.
+// The lead's pure in-memory model of jobs, nodes, routing and lifecycle operations.
+// job_store.go persists whole operations under the bus lock; HTTP adapters arrive in a later round.
 
 // JobState is the lifecycle state of a remote job.
 type JobState string
@@ -59,12 +59,17 @@ type JobRequest struct {
 
 // Job is a registered job as the registry holds it.
 type Job struct {
-	Request    JobRequest      // the submitted fields, copied when stored and when returned
-	Seq        uint64          // submission order; the oldest queued job has the lowest value
-	State      JobState        // current lifecycle state
-	Node       string          // the node the job is assigned to; empty while queued
-	Assignment uint64          // identity of the current assignment, greater than 0 once assigned, never reused
-	History    []JobTransition // every state entered, in order; queued first, then assigned
+	Request       JobRequest      // the submitted fields, copied when stored and when returned
+	Seq           uint64          // submission order; the oldest queued job has the lowest value
+	State         JobState        // current lifecycle state
+	Node          string          // the node the job is assigned to; empty while queued
+	Assignment    uint64          // identity of the current assignment, greater than 0 once assigned, never reused
+	History       []JobTransition // every state entered, in order; queued first, then assigned
+	TaskID        string          // node's local task ID
+	Branch        string          // branch pushed by the node
+	PRURL         string          // optional PR URL
+	Result        string          // final result text or failure reason
+	StopRequested bool            // a local cancellation awaits the assigned node's terminal report
 }
 
 // FreeAgent is a configured agent of a node that is free at the time of a heartbeat.
@@ -79,6 +84,20 @@ type NodeHeartbeat struct {
 	Capabilities []string    // declared capabilities, validated like JobRequest.Requires
 	FreeAgents   []FreeAgent // configured agents that are free now; empty when none is free
 	WebURL       string      // the node's AGENT_WEB_URL, shown by the lead for waiting jobs; may be empty
+}
+
+// JobReport is a state report sent by an assigned node for one job.
+type JobReport struct {
+	ID          string          // job ID being reported
+	Node        string          // authenticated reporting node name
+	Assignment  uint64          // assignment evidence the report belongs to
+	State       JobState        // target state being reported
+	TaskID      string          // node's local task ID
+	Branch      string          // branch pushed by the node
+	PRURL       string          // optional PR URL
+	Result      string          // final result text or failure reason
+	At          Timestamp       // timestamp of the transition; defaults to now when zero
+	Transitions []JobTransition // cumulative intermediate transitions observed by the node
 }
 
 // leadRegistry is the lead's job and node registry. Every method is atomic with respect to the others.
@@ -217,7 +236,7 @@ func (r *leadRegistry) heartbeat(h NodeHeartbeat, now Timestamp) (*Job, *LeadHea
 		}
 		r.nextAssignment++
 		job.State, job.Node, job.Assignment = JobAssigned, h.Node, r.nextAssignment
-		job.History = append(job.History, JobTransition{State: JobAssigned, At: now})
+		job.History = append(job.History, JobTransition{State: JobAssigned, At: atOrAfterLast(job, now)})
 		snapshot := cloneJob(*job)
 		return &snapshot, nil
 	}
@@ -317,6 +336,12 @@ func (r *leadRegistry) checkAssignment(id, node string, assignment uint64) *Lead
 	if !ok {
 		return opErr(LeadReportNoSuchJob, "no job %q", id)
 	}
+	if job.State == JobQueued {
+		if assignment > 0 {
+			return opErr(LeadReportStaleAssignment, "job %q assignment %d has expired", id, assignment)
+		}
+		return opErr(LeadReportUnauthorized, "job %q is not assigned", id)
+	}
 	if job.Node != node {
 		return opErr(LeadReportUnauthorized, "job %q is not assigned to node %q", id, node)
 	}
@@ -324,4 +349,262 @@ func (r *leadRegistry) checkAssignment(id, node string, assignment uint64) *Lead
 		return opErr(LeadReportStaleAssignment, "job %q has a different assignment", id)
 	}
 	return nil
+}
+
+// atOrAfterLast returns at, raised to the job's last recorded transition when at is earlier. The lead's clock can
+// move backwards and a time may be captured before waiting for the lock; the history must never decrease, or the
+// store refuses to load it. Callers hold mu.
+func atOrAfterLast(job *Job, at Timestamp) Timestamp {
+	last := job.History[len(job.History)-1].At
+	if at.Before(last.Time) {
+		return last
+	}
+	return at
+}
+
+// validTransition reports whether a lifecycle transition from state to next is allowed.
+func validTransition(from, to JobState) bool {
+	switch from {
+	case JobAssigned:
+		return to == JobRunning || to == JobFailed || to == JobStopped
+	case JobRunning:
+		return to == JobRunning || to == JobWaiting || to == JobDone || to == JobFailed || to == JobStopped
+	case JobWaiting:
+		return to == JobWaiting || to == JobRunning || to == JobDone || to == JobFailed || to == JobStopped
+	case JobDone, JobFailed, JobStopped:
+		return from == to
+	}
+	return false
+}
+
+// isTerminalJob reports whether s is a terminal lifecycle state.
+func isTerminalJob(s JobState) bool {
+	return s == JobDone || s == JobFailed || s == JobStopped
+}
+
+// report records a state transition reported by the assigned node for job.
+func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportError) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[rep.ID]
+	if !ok {
+		return Job{}, opErr(LeadReportNoSuchJob, "no job %q", rep.ID)
+	}
+	if job.State == JobQueued {
+		if rep.Assignment > 0 {
+			return Job{}, opErr(LeadReportStaleAssignment, "job %q assignment %d has expired", rep.ID, rep.Assignment)
+		}
+		return Job{}, opErr(LeadReportUnauthorized, "job %q is not assigned", rep.ID)
+	}
+	if job.Node != rep.Node {
+		return Job{}, opErr(LeadReportUnauthorized, "job %q is not assigned to node %q", rep.ID, rep.Node)
+	}
+	if rep.Assignment == 0 || job.Assignment != rep.Assignment {
+		return Job{}, opErr(LeadReportStaleAssignment, "job %q has a different assignment", rep.ID)
+	}
+
+	// A cumulative report carries its own time, which must be the time of its last transition, so the first
+	// acceptance and an identical retry judge the same payload.
+	if len(rep.Transitions) > 0 && !rep.At.IsZero() && !rep.At.Equal(rep.Transitions[len(rep.Transitions)-1].At.Time) {
+		return Job{}, opErr(LeadReportInvalidState, "report time %v differs from its last transition %v", rep.At, rep.Transitions[len(rep.Transitions)-1].At)
+	}
+
+	if isTerminalJob(job.State) {
+		lastTr := job.History[len(job.History)-1]
+		if job.State != rep.State || job.Result != rep.Result ||
+			(rep.TaskID != "" && job.TaskID != rep.TaskID) ||
+			(rep.Branch != "" && job.Branch != rep.Branch) ||
+			(rep.PRURL != "" && job.PRURL != rep.PRURL) ||
+			(!rep.At.IsZero() && !rep.At.Equal(lastTr.At.Time)) {
+			return Job{}, opErr(LeadReportTerminalConflict, "job %q is terminal with %s, cannot revise", rep.ID, job.State)
+		}
+		if len(rep.Transitions) > 0 {
+			assignedIdx := -1
+			for i := len(job.History) - 1; i >= 0; i-- {
+				if job.History[i].State == JobAssigned {
+					assignedIdx = i
+					break
+				}
+			}
+			var recorded []JobTransition
+			if assignedIdx >= 0 && assignedIdx+1 < len(job.History) {
+				recorded = job.History[assignedIdx+1:]
+			}
+			if len(rep.Transitions) != len(recorded) {
+				return Job{}, opErr(LeadReportTerminalConflict, "terminal retry transitions count %d differs from %d", len(rep.Transitions), len(recorded))
+			}
+			for i := range recorded {
+				if rep.Transitions[i].State != recorded[i].State || !rep.Transitions[i].At.Equal(recorded[i].At.Time) {
+					return Job{}, opErr(LeadReportTerminalConflict, "terminal retry transition at index %d differs", i)
+				}
+			}
+		}
+		return cloneJob(*job), nil
+	}
+
+	newHistory := slices.Clone(job.History)
+	prevState := job.State
+	targetState := job.State
+
+	if len(rep.Transitions) > 0 {
+		if rep.Transitions[len(rep.Transitions)-1].State != rep.State {
+			return Job{}, opErr(LeadReportInvalidState, "cumulative history does not end at reported state %s", rep.State)
+		}
+		assignedIdx := -1
+		for i := len(job.History) - 1; i >= 0; i-- {
+			if job.History[i].State == JobAssigned {
+				assignedIdx = i
+				break
+			}
+		}
+		var recorded []JobTransition
+		if assignedIdx >= 0 && assignedIdx+1 < len(job.History) {
+			recorded = job.History[assignedIdx+1:]
+		}
+		if len(rep.Transitions) < len(recorded) {
+			return Job{}, opErr(LeadReportInvalidState, "cumulative history regresses previously recorded transitions")
+		}
+		for i := 0; i < len(recorded); i++ {
+			if rep.Transitions[i].State != recorded[i].State || !rep.Transitions[i].At.Equal(recorded[i].At.Time) {
+				return Job{}, opErr(LeadReportInvalidState, "cumulative history conflicts with recorded history at index %d", i)
+			}
+		}
+		newTransitions := rep.Transitions[len(recorded):]
+		currState := job.State
+		lastAt := job.History[len(job.History)-1].At
+		for _, tr := range newTransitions {
+			if tr.At.IsZero() || tr.At.Before(lastAt.Time) {
+				return Job{}, opErr(LeadReportInvalidState, "transition timestamp %v must be nonzero and nondecreasing after %v", tr.At, lastAt)
+			}
+			if !validTransition(currState, tr.State) {
+				return Job{}, opErr(LeadReportInvalidState, "invalid transition from %s to %s", currState, tr.State)
+			}
+			newHistory = append(newHistory, tr)
+			currState = tr.State
+			lastAt = tr.At
+		}
+		targetState = currState
+	} else {
+		at := rep.At
+		if at.IsZero() {
+			at = atOrAfterLast(job, now)
+		}
+		lastAt := job.History[len(job.History)-1].At
+		if at.Before(lastAt.Time) {
+			return Job{}, opErr(LeadReportInvalidState, "report timestamp %v cannot precede last transition %v", at, lastAt)
+		}
+		switch {
+		case job.State == rep.State:
+			// A repeated waiting report with its own later time is a new wait for a human. Anything else that
+			// repeats the current state (an identical retry, a report without a time) changes nothing.
+			if job.State == JobWaiting && !rep.At.IsZero() && at.After(lastAt.Time) {
+				newHistory = append(newHistory, JobTransition{State: JobWaiting, At: at})
+			}
+		case rep.At.IsZero() && job.State != JobAssigned && !isTerminalJob(rep.State):
+			// Only the first start or a terminal state may omit its time: neither can rewind a job, since a
+			// job becomes terminal once. Other changes without a time cannot be told from a replay of an older
+			// report, so the node must send the time of every transition.
+			return Job{}, opErr(LeadReportInvalidState, "state change %s from %s needs its transition time; a report without one cannot be told from a replay", rep.State, job.State)
+		case at.Equal(lastAt.Time):
+			// Two states at one instant cannot be ordered; the node must send the cumulative history instead.
+			return Job{}, opErr(LeadReportInvalidState, "state %s at %v cannot follow %s at the same instant; send the cumulative history", rep.State, at, job.State)
+		default:
+			if !validTransition(job.State, rep.State) {
+				return Job{}, opErr(LeadReportInvalidState, "invalid transition from %s to %s", job.State, rep.State)
+			}
+			targetState = rep.State
+			newHistory = append(newHistory, JobTransition{State: rep.State, At: at})
+		}
+	}
+
+	// Branch and PR URL are immutable once recorded, in every state.
+	if (rep.Branch != "" && job.Branch != "" && rep.Branch != job.Branch) ||
+		(rep.PRURL != "" && job.PRURL != "" && rep.PRURL != job.PRURL) {
+		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch or PR for job %q", rep.State, rep.ID)
+	}
+	// A report that leaves the state unchanged and adds no transition must not replace a task ID or result
+	// already recorded: an older retry would otherwise overwrite a newer payload (investigator #27, R2;
+	// #28, M1, M2). A report (cumulative or repeated wait) that appends transitions is newer by its history,
+	// so it may update them (investigator #29, M1; #30, M1). Any appended transition is new progress, not a replay,
+	// even when it ends in the recorded state.
+	historyExtended := len(newHistory) > len(job.History)
+	if targetState == prevState && !historyExtended && payloadConflicts(job, rep) {
+		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task, PR or result for job %q", rep.State, rep.ID)
+	}
+
+	job.State = targetState
+	job.History = newHistory
+	if isTerminalJob(targetState) {
+		// A real terminal result acknowledges the stop request, including completion winning the race.
+		job.StopRequested = false
+	}
+
+	if rep.TaskID != "" {
+		job.TaskID = rep.TaskID
+	}
+	if rep.Branch != "" {
+		job.Branch = rep.Branch
+	}
+	if rep.PRURL != "" {
+		job.PRURL = rep.PRURL
+	}
+	// A terminal report carries the final payload, so its result replaces any intermediate one, even an empty one.
+	if rep.Result != "" || isTerminalJob(targetState) {
+		job.Result = rep.Result
+	}
+
+	return cloneJob(*job), nil
+}
+
+// payloadConflicts reports whether rep names a branch, task, PR or result that differs from the non-empty
+// value already recorded on job. An empty field in rep never conflicts: it fills nothing and replaces nothing.
+func payloadConflicts(job *Job, rep JobReport) bool {
+	return (rep.Branch != "" && job.Branch != "" && rep.Branch != job.Branch) ||
+		(rep.TaskID != "" && job.TaskID != "" && rep.TaskID != job.TaskID) ||
+		(rep.PRURL != "" && job.PRURL != "" && rep.PRURL != job.PRURL) ||
+		(rep.Result != "" && job.Result != "" && rep.Result != job.Result)
+}
+
+// requeueOffline returns unstarted assigned jobs of offline nodes to the queue.
+// Started jobs (running, waiting) remain in their state and are never requeued.
+func (r *leadRegistry) requeueOffline(now Timestamp, ttl time.Duration) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var requeued []string
+	for _, id := range r.order {
+		job := r.jobs[id]
+		if job.State != JobAssigned {
+			continue
+		}
+		node, ok := r.nodes[job.Node]
+		if !ok || now.Sub(node.LastSeen.Time) >= ttl {
+			job.State = JobQueued
+			job.Node = ""
+			job.History = append(job.History, JobTransition{State: JobQueued, At: atOrAfterLast(job, now)})
+			requeued = append(requeued, id)
+		}
+	}
+	return requeued
+}
+
+// nodeOffline reports whether node has missed its heartbeat deadline at now.
+func (r *leadRegistry) nodeOffline(node string, now Timestamp, ttl time.Duration) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n, ok := r.nodes[node]
+	if !ok {
+		return true
+	}
+	return now.Sub(n.LastSeen.Time) >= ttl
+}
+
+// get returns a snapshot copy of job id.
+func (r *leadRegistry) get(id string) (Job, *LeadGetJobError) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok {
+		return Job{}, opErr(LeadGetJobNoSuchJob, "no job %q", id)
+	}
+	return cloneJob(*job), nil
 }
