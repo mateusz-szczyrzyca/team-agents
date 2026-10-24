@@ -48,6 +48,12 @@ The task the team worked on is below. Check the PR's compliance with the reposit
 
    - `event` MUST be `COMMENT` — the PR and the review come from the same GitHub account, and GitHub does
      not let an author approve or request changes on their own PR.
+   - **For every problem, the simplest fix that resolves it** — the smallest change in the code or a test that
+     makes the problem go away, not a redesign. The team fixes critical and major problems after your review
+     (a `--verify` fix pass), so an easy, concrete fix is what gets done.
+   - **A re-review** (the request says "re-review after fix pass N"): first check each critical and major
+     finding of the previous review — fixed, convincingly disputed on the PR, or still open; then the rest of
+     the change only for new problems. Say per previous finding what you found.
    - `body` — summary: overall assessment; problems grouped by severity (**critical / major / minor**); what you
      verified and how; recommendation: **"ready to merge"** or **"needs changes"** (with a list of what to fix).
    - `comments` — remarks attached to specific lines, ONLY on lines changed in the diff (side `RIGHT`, the line

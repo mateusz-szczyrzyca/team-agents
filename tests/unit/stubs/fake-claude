@@ -12,6 +12,7 @@ Actions:
   questions-file  writes the questions file, STATUS: QUESTIONS
   questions-text  asks questions only in the final message
   questions-norec writes a questions file without recommendations, STATUS: QUESTIONS
+  review-majors   a --verify review result with two major findings, STATUS: DONE
   rate-limit      exits 1 with an HTTP 429 rate-limit error on stderr
   stale-rate-limit  a retried 429 early on stderr, much more output, then a final message without STATUS
   commit-lines:N  commits a file of N lines, STATUS: DONE
@@ -79,6 +80,12 @@ if action == "team-lead-done":
 if action == "quota":
     print("Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1m30s.", file=sys.stderr)
     sys.exit(3)
+if action == "review-majors":
+    finish("Answer: needs changes — two major problems.\n"
+           "Problems: critical 0, major 2, minor 1\n\n"
+           "1. major: the parser drops the last line — simplest fix: read until EOF\n"
+           "2. major: no test for an empty file — simplest fix: add one table case\n\n"
+           "STATUS: DONE")
 if action == "rate-limit":
     print("APIError: 429 Too Many Requests: rate limit exceeded by the upstream provider", file=sys.stderr)
     sys.exit(1)

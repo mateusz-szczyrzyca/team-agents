@@ -2,7 +2,7 @@
 :root {
   --bg: #fafaf9; --fg: #1c1917; --dim: #78716c; --line: #e7e5e4; --panel: #ffffff; --hover: #f5f5f4;
   --accent: #2563eb; --waiting: #b45309; --waiting-bg: #fef3c7; --running: #15803d; --invest: #7c3aed;
-  --done: #57534e; --failed: #b91c1c; --failed-bg: #fee2e2; --ok-bg: #dcfce7;
+  --done: #57534e; --failed: #b91c1c; --failed-bg: #fee2e2; --ok-bg: #dcfce7; --stopped: #c2410c;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --top: 48px;
 }
@@ -10,7 +10,7 @@
   :root {
     --bg: #0f1115; --fg: #e7e5e4; --dim: #a8a29e; --line: #2a2d34; --panel: #171a20; --hover: #1f232b;
     --accent: #60a5fa; --waiting: #fbbf24; --waiting-bg: #3a2a08; --running: #4ade80; --invest: #c4b5fd;
-    --done: #a8a29e; --failed: #f87171; --failed-bg: #3b1212; --ok-bg: #0f2e1a;
+    --done: #a8a29e; --failed: #f87171; --failed-bg: #3b1212; --ok-bg: #0f2e1a; --stopped: #fb923c;
   }
 }
 * { box-sizing: border-box; }
@@ -66,6 +66,11 @@ body.max main#view { max-width: none; }
 .st { white-space: nowrap; font-weight: 600; }
 .st-waiting { color: var(--waiting); } .st-running { color: var(--running); } .st-invest { color: var(--invest); }
 .st-done { color: var(--done); } .st-failed { color: var(--failed); } .st-dim { color: var(--dim); }
+.st-stopped { color: var(--stopped); }
+button.stop { font-size: .8rem; padding: .1rem .35rem; color: var(--failed); }
+button.stop:hover { background: var(--failed-bg); }
+form.wake { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: .4rem 1rem .6rem; margin: .6rem 0; }
+form.wake textarea { width: 100%; }
 .lead { color: var(--waiting); margin-left: .15rem; }
 .stage { font-style: italic; color: var(--dim); }
 
@@ -138,3 +143,19 @@ pre.intro { font-size: .9rem; }
   .host { display: none; }
   .actions .btn { flex: 1; text-align: center; padding: .7rem; }
 }
+
+/* the direction of a bus message ("from → to"): the same direction, the same colour (pairClass in web_views.go).
+   The rules name the list item (li.pair-N) to outrank the list's own rule. */
+ol.msgs li { border-left-width: 4px; border-left-style: solid; border-left-color: transparent; padding-left: .5rem; }
+ol.msgs li.pair-0 { border-left-color: #3b82f6; } ol.msgs li.pair-0 .route { color: #3b82f6; }
+ol.msgs li.pair-1 { border-left-color: #22c55e; } ol.msgs li.pair-1 .route { color: #22c55e; }
+ol.msgs li.pair-2 { border-left-color: #f59e0b; } ol.msgs li.pair-2 .route { color: #f59e0b; }
+ol.msgs li.pair-3 { border-left-color: #ec4899; } ol.msgs li.pair-3 .route { color: #ec4899; }
+ol.msgs li.pair-4 { border-left-color: #8b5cf6; } ol.msgs li.pair-4 .route { color: #8b5cf6; }
+ol.msgs li.pair-5 { border-left-color: #06b6d4; } ol.msgs li.pair-5 .route { color: #06b6d4; }
+ol.msgs li.pair-6 { border-left-color: #ef4444; } ol.msgs li.pair-6 .route { color: #ef4444; }
+ol.msgs li.pair-7 { border-left-color: #84cc16; } ol.msgs li.pair-7 .route { color: #84cc16; }
+ol.msgs li.pair-8 { border-left-color: #a855f7; } ol.msgs li.pair-8 .route { color: #a855f7; }
+ol.msgs li.pair-9 { border-left-color: #f97316; } ol.msgs li.pair-9 .route { color: #f97316; }
+ol.msgs li.pair-10 { border-left-color: #14b8a6; } ol.msgs li.pair-10 .route { color: #14b8a6; }
+ol.msgs li.pair-11 { border-left-color: #6366f1; } ol.msgs li.pair-11 .route { color: #6366f1; }

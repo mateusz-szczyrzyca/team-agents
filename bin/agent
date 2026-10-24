@@ -195,6 +195,10 @@ AGENT_WEB_URL="${AGENT_WEB_URL:-}"
 # the files matched by ROUND_EXCLUDE — has a soft and a hard limit; ROUND_MAX_LINES_REPO overrides the hard limit
 # per repository (0 = no limit). Over it, a finished round goes back to be split, at most ROUND_BOUNCES times.
 ROUND_SOFT_LINES="${ROUND_SOFT_LINES:-2000}"
+# --verify: a review with critical or major findings wakes the team with them, at most VERIFY_MAX_FIX_PASSES
+# times; then the human (AGENT_HUMAN_GITHUB, default: the owner of the GitHub repository) is mentioned on the PR.
+VERIFY_MAX_FIX_PASSES="${VERIFY_MAX_FIX_PASSES:-2}"
+AGENT_HUMAN_GITHUB="${AGENT_HUMAN_GITHUB:-}"
 ROUND_MAX_LINES="${ROUND_MAX_LINES:-3000}"
 ROUND_EXCLUDE="${ROUND_EXCLUDE:-*_gen.go go.sum package-lock.json vendor/}"
 ROUND_BOUNCES="${ROUND_BOUNCES:-2}"
@@ -688,6 +692,86 @@ cmd_round_size() { # <task> — the size of a task's change and its round limits
   fi
 }
 
+last_team_id() { # the newest team of the repository in the current directory (outside one: the newest at all)
+  local root="" m t best=""
+  if root=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then   # fails outside a repository
+    root=$(dirname "$root")
+  fi
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    t=$(sed -n 's/^TEAM=//p' "$m")
+    [[ -n $t ]] || continue
+    if [[ -n $root && $(sed -n 's/^REPO_ROOT=//p' "$m") != "$root" ]]; then continue; fi
+    if [[ $t > $best ]]; then best=$t; fi
+  done
+  printf '%s' "$best"
+}
+
+github_owner() { # repository root → the owner of its GitHub origin ("" when origin is not on GitHub)
+  local url
+  url=$(git -C "$1" remote get-url origin 2>/dev/null) || return 0   # no origin: no owner
+  sed -nE 's#^(https://|git@|ssh://git@)github\.com[:/]([^/]+)/.*#\2#p' <<< "$url"
+}
+
+count_of() { # text words — the number next to the first of the words: "major 2", "major: 2", "major (2)" or "2 major"
+  local n
+  n=$({ grep -oiE "($2)[[:space:]]*[:=(]?[[:space:]]*[0-9]+" <<< "$1" || (($? == 1)); } | head -1 | grep -oE '[0-9]+$' || (($? == 1)))
+  if [[ -z $n ]]; then
+    n=$({ grep -oiE "[0-9]+[[:space:]]+($2)" <<< "$1" || (($? == 1)); } | head -1 | grep -oE '^[0-9]+' || (($? == 1)))
+  fi
+  echo "${n:-0}"
+}
+
+findings_count() { # text — the critical (blocker) + major problems a review reports, in any usual form: "critical 0,
+  # major 2", "0 critical, 2 major", "**Major:** 2", "| Major | 2 |", "Major (2)" (Markdown emphasis and table bars
+  # are dropped first)
+  local plain
+  plain=$(tr -d '*_`|' <<< "$1" | tr -s ' \t' '  ')
+  echo $(( $(count_of "$plain" 'critical|blocker') + $(count_of "$plain" 'major') ))
+}
+
+review_followup() { # investigator-task-id final — after a --verify review: critical or major findings wake the team
+  # with them (VERIFY_MAX_FIX_PASSES times at most); after that the human is mentioned on the PR and notified
+  local id=$1 text=$2 parent n pass ref repo root add out owner args=()
+  parent=$(task_field "$id" PARENT_TASK)
+  [[ -n $parent ]] || return 0
+  # the counts are in the final message ("Problems: …") and in the result file; the larger is the one that counts
+  local n2=0
+  n=$(findings_count "$text")
+  if [[ -s $TASKS/$id/result.md ]]; then
+    n2=$(findings_count "$(cat "$TASKS/$id/result.md")")
+    text=$(cat "$TASKS/$id/result.md")
+  fi
+  ((n2 > n)) && n=$n2
+  pass=$(task_field "$parent" FIX_PASS); pass=${pass:-0}
+  log_info review_findings "task=$parent" "review=$id" "critical_or_major=$n" "fix_pass=$pass"
+  ((n > 0)) || return 0
+  ref=$(task_field "$parent" TEAM); ref=${ref:-$parent}
+  repo=$(task_field "$parent" REPO_NAME); root=$(task_field "$parent" REPO_ROOT)
+  if ((pass < VERIFY_MAX_FIX_PASSES)); then
+    add="Fix pass $((pass + 1)) of $VERIFY_MAX_FIX_PASSES after the --verify review of PR #$PR_NUMBER ($PR_URL): $n critical or major finding(s).
+Fix every critical and major finding — or dispute one, with a justification, as a reply on the PR; fix minor ones only if trivial. Then finish as before (the PR ready; STATUS: DONE or STATUS: ROUND_DONE N/M): the PR is reviewed again.
+
+The review:
+
+${text:0:8000}"
+    args=(run --resume "$ref" --verify)
+    if [[ -n $(task_field "$parent" WORK_ROUND) ]]; then args+=(--same-round); fi
+    if out=$(cd "$root" && AGENT_FIX_PASS=$((pass + 1)) "$SELF" "${args[@]}" "$add" </dev/null 2>&1); then
+      act "$id" info "--verify: $n critical/major finding(s) — the team resumed for fix pass $((pass + 1))"
+      log_info review_fix_pass "task=$parent" "pass=$((pass + 1))" "findings=$n"
+    else
+      log_error review_fix_resume_failed "task=$parent" "reason=${out:0:500}"
+      push_text "$repo" "--verify: the review of PR #$PR_NUMBER found $n critical or major finding(s), but the team could not be resumed:" "${out:0:500}"
+    fi
+    return 0
+  fi
+  owner=${AGENT_HUMAN_GITHUB:-$(github_owner "$root")}
+  (cd "$root" && try review_mention_failed gh pr comment "$PR_URL" --body "${owner:+@$owner }The fixes are still not done: after $pass fix passes the review still finds $n critical or major problem(s) (see the review above). The team has stopped; your decision is needed.")
+  push_text "$repo" "--verify: PR #$PR_NUMBER still has $n critical or major problem(s) after $pass fix passes — your decision is needed: $PR_URL"
+  log_warn review_fixes_exhausted "task=$parent" "passes=$pass" "findings=$n"
+}
+
 request_review() { # coordinator task id — --verify: queue a PR review by an investigator
   local id=$1 root branch pr url num inv
   root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH)
@@ -699,9 +783,14 @@ request_review() { # coordinator task id — --verify: queue a PR review by an i
     push_text "$(task_field "$id" REPO_NAME)" "Team $(task_field "$id" TEAM): --verify — no PR found for branch $branch, investigator review skipped."
     return 0
   fi
+  local pass question
+  pass=$(task_field "$id" FIX_PASS); question="Recenzja PR #$num ($url)"
+  if ((${pass:-0} > 0)); then
+    question+=" — re-review after fix pass $pass: first check whether the critical and major findings of the previous review are fixed (or disputed convincingly on the PR), then the rest of the change only for new problems"
+  fi
   inv=$(bus inv-add --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" --kind review \
           --from-agent "$(task_field "$id" AGENT)" --from-task "$id" --repo "$(task_field "$id" REPO_NAME)" \
-          --branch "$branch" --tasks-dir "$TASKS" --question "Recenzja PR #$num ($url)" \
+          --branch "$branch" --tasks-dir "$TASKS" --question "$question" \
           --pr-url "$url" --pr-number "$num") || return 0
   meta_set "$id" REVIEW_INV "$inv"
   act "$id" info "--verify: review of PR #$num queued for an investigator (#$inv)"
@@ -2113,6 +2202,7 @@ Answer: the investigator hung ($AGENT_HANG_STRIKES times without progress) — n
         inv_finish "$id" "$status" "$FINAL"      # no push notification (the result goes to the requesting agent)…
         if [[ ${REVIEW:-} == 1 ]]; then          # …except PR reviews (--verify): those go to the human
           notify "$id" "$status" "$FINAL" "review of PR #$PR_NUMBER: $PR_URL"
+          [[ $status == done ]] && review_followup "$id" "$FINAL"
         fi ;;
     esac
   elif [[ ${KIND:-worker} == helper && $status != waiting && $status != investigating && $status != paused ]]; then
@@ -2359,8 +2449,8 @@ resume_run() { # ref verify same_round [addition...] — resumes an interrupted 
       [[ $state == MERGED ]] || die "the PR of round $wr/$wrs ($url) is not merged yet ($state). Merge it and run this again — or keep working on round $wr (e.g. review fixes): agent run --resume $ref --same-round"
       fresh=1
     fi
-  elif ((same_round)); then
-    die "--same-round: the interrupted task did not end a round (no STATUS: ROUND_DONE N/M)"
+  elif ((same_round)); then   # no round was ended: resuming keeps the branches anyway
+    echo "--same-round: no round was ended — continuing on the same branches"
   fi
 
   local ts new_team="" ids=() id old root wt name branch prev start base sha
@@ -2412,7 +2502,7 @@ resume_run() { # ref verify same_round [addition...] — resumes an interrupted 
               "TYPE=${AGENT_TYPE[$name]}" "MODEL=${AGENT_MODEL[$name]:-}" "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$name]:-}" \
               "REPO_NAME=$(task_field "$old" REPO_NAME)" "REPO_ROOT=$root" "WORKTREE=$wt" \
               "BRANCH=$branch" "PREV_BRANCH=$( ((fresh)) && echo "$prev")" "BASE=$(task_field "$old" BASE)" "SESSION_ID=$sid" \
-              "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" "RESUMED_FROM=$old" \
+              "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" "RESUMED_FROM=$old" "FIX_PASS=${AGENT_FIX_PASS:-0}" \
               "VERIFY=$( ((verify)) && echo 1 || task_field "$old" VERIFY)"; do
       meta_set "$id" "${kv%%=*}" "${kv#*=}"
     done
@@ -2458,8 +2548,12 @@ resume_run() { # ref verify same_round [addition...] — resumes an interrupted 
 
 cmd_run() {
   local members=() verify=0 same_round=0 team_list="" resume_ref=""
-  while [[ ${1:-} == --team || ${1:-} == --verify || ${1:-} == --resume || ${1:-} == --same-round ]]; do
+  while [[ ${1:-} == --team || ${1:-} == --verify || ${1:-} == --resume || ${1:-} == --same-round || ${1:-} == --last-team ]]; do
     case $1 in
+      --last-team)
+        resume_ref=$(last_team_id)
+        [[ -n $resume_ref ]] || die "--last-team: no team of this repository (outside a repository: no team at all)"
+        shift ;;
       --verify) verify=1; shift ;;
       --same-round) same_round=1; shift ;;
       --resume)
@@ -2837,6 +2931,29 @@ cmd_live() {
   [[ -x $AGENTLIVE_BIN ]] || die "$AGENTLIVE_BIN not found — run ./install.sh again"
   exec "$AGENTLIVE_BIN" --home "$AGENTS_HOME" --bus "$BUS_DIR" --agent "$SELF" \
     --remind "$remind" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" "${feed[@]}"
+}
+
+cmd_kick() { # <task> [from] — cuts an agent's current run short (the web interface's stop button): a team member
+  # goes to sleep, so its team can wake it again, and the coordinator is told; a solo task is stopped
+  local id run st team agent lead
+  id=$(resolve_id "${1:?usage: agent kick <task>}")
+  run=$(task_field "$id" RUN); st=$(task_field "$id" STATUS); team=$(task_field "$id" TEAM); agent=$(task_field "$id" AGENT)
+  [[ $st == running || $st == starting ]] || die "task $id is not running ($st) — nothing to stop"
+  meta_set "$id" KICKED "$(date -Is)"
+  try unit_stop_failed systemctl --user stop "$(unit_name "$id" "$run").service"
+  if [[ -n $team ]]; then
+    meta_set "$id" STATUS sleeping
+    try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state sleeping >/dev/null
+    lead=$(team_lead "$team")
+    if [[ -n $lead && $lead != "$agent" ]]; then
+      notice member_stopped "${USER:-human}" "$lead" "TEAM: member $agent was stopped by the human (its current run only); it sleeps — wake it if its work is still needed." "agent=$agent" "team=$team"
+    fi
+  else
+    meta_set "$id" STATUS stopped
+  fi
+  act "$id" info "■ stopped by the human${2:+ (from the $2 interface)}"
+  log_info task_kicked "task=$id" "team=$team" "from=${2:-cli}"
+  echo "stopped $id${team:+ — it sleeps; team $team can wake it}"
 }
 
 cmd_web() { # runs the web interface in the foreground (agentweb.service runs this)
@@ -3334,8 +3451,10 @@ agent inv [number | --all]                investigation queue / full record of o
 agent dispatch                            manually start the next queued investigation (fallback)
 agent live [--feed] [--remind MIN]        live panel (or an event stream with --feed)
 agent web                                 web interface in the foreground (normally: agentweb.service)
+agent kick <task>                         cut a run short: a team member sleeps (the team can wake it), solo: stopped
 agent round-size <task>                   size of a task's change against the round limit (README "Rounds")
 agent run --resume <team|task> --same-round  continue an unmerged round (e.g. review fixes) on the same branches
+agent run --last-team [--same-round] ["…"]  resume the newest team of this repository (no ID to look up)
 agent ack <id|all>                        acknowledge finished tasks (they leave the panel)
 agent run --team a,b[,c] [--verify] "task"  team; --verify: an investigator reviews the PR at the end
 agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
@@ -3369,6 +3488,7 @@ main() {
     inv)     cmd_inv "$@" ;;
     live)    cmd_live "$@" ;;
     web)     cmd_web ;;
+    kick)    cmd_kick "$@" ;;
     round-size) cmd_round_size "$@" ;;
     _agents-json) cmd__agents_json ;;
     ack)     cmd_ack "$@" ;;

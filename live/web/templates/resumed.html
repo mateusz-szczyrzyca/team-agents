@@ -1,0 +1,5 @@
+{{define "content"}}{{with .Data}}
+<p class="notice{{if .Failed}} failed{{end}}">{{if .Failed}}Team {{.Team}} could not be woken.{{else}}Team {{.Team}} is woken.{{end}}</p>
+<pre class="doc">{{.Output}}</pre>
+<p><a class="btn" href="/">Dashboard</a> <a class="btn" href="/teams">Teams</a></p>
+{{end}}{{end}}
