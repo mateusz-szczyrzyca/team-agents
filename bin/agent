@@ -2916,6 +2916,29 @@ cmd_live() {
     --remind "$remind" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" "${feed[@]}"
 }
 
+cmd_kick() { # <task> [from] — cuts an agent's current run short (the web interface's stop button): a team member
+  # goes to sleep, so its team can wake it again, and the coordinator is told; a solo task is stopped
+  local id run st team agent lead
+  id=$(resolve_id "${1:?usage: agent kick <task>}")
+  run=$(task_field "$id" RUN); st=$(task_field "$id" STATUS); team=$(task_field "$id" TEAM); agent=$(task_field "$id" AGENT)
+  [[ $st == running || $st == starting ]] || die "task $id is not running ($st) — nothing to stop"
+  meta_set "$id" KICKED "$(date -Is)"
+  try unit_stop_failed systemctl --user stop "$(unit_name "$id" "$run").service"
+  if [[ -n $team ]]; then
+    meta_set "$id" STATUS sleeping
+    try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state sleeping >/dev/null
+    lead=$(team_lead "$team")
+    if [[ -n $lead && $lead != "$agent" ]]; then
+      notice member_stopped "${USER:-human}" "$lead" "TEAM: member $agent was stopped by the human (its current run only); it sleeps — wake it if its work is still needed." "agent=$agent" "team=$team"
+    fi
+  else
+    meta_set "$id" STATUS stopped
+  fi
+  act "$id" info "■ stopped by the human${2:+ (from the $2 interface)}"
+  log_info task_kicked "task=$id" "team=$team" "from=${2:-cli}"
+  echo "stopped $id${team:+ — it sleeps; team $team can wake it}"
+}
+
 cmd_web() { # runs the web interface in the foreground (agentweb.service runs this)
   [[ -x $AGENTLIVE_BIN ]] || die "$AGENTLIVE_BIN not found — run ./install.sh again"
   exec "$AGENTLIVE_BIN" web --home "$AGENTS_HOME" --bus "$BUS_DIR" --agent "$SELF" \
@@ -3411,6 +3434,7 @@ agent inv [number | --all]                investigation queue / full record of o
 agent dispatch                            manually start the next queued investigation (fallback)
 agent live [--feed] [--remind MIN]        live panel (or an event stream with --feed)
 agent web                                 web interface in the foreground (normally: agentweb.service)
+agent kick <task>                         cut a run short: a team member sleeps (the team can wake it), solo: stopped
 agent round-size <task>                   size of a task's change against the round limit (README "Rounds")
 agent run --resume <team|task> --same-round  continue an unmerged round (e.g. review fixes) on the same branches
 agent run --last-team [--same-round] ["…"]  resume the newest team of this repository (no ID to look up)
@@ -3447,6 +3471,7 @@ main() {
     inv)     cmd_inv "$@" ;;
     live)    cmd_live "$@" ;;
     web)     cmd_web ;;
+    kick)    cmd_kick "$@" ;;
     round-size) cmd_round_size "$@" ;;
     _agents-json) cmd__agents_json ;;
     ack)     cmd_ack "$@" ;;

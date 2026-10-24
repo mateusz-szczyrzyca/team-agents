@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -110,22 +109,11 @@ func TestTeamBoardNewestFirstAndAFinishedTeamCanBeWoken(t *testing.T) {
 
 func TestBusNewestFirstInColoursByDirection(t *testing.T) {
 	home := fixture(t)
-	f, err := os.OpenFile(filepath.Join(home, "bus", "messages.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, l := range []string{
+	writeFile(t, filepath.Join(home, "bus", "messages.jsonl"), strings.Join([]string{
 		`{"id":3,"ts":"2026-10-23 08:02:00","from":"codex-1","to":"gemini-1","kind":"chat","text":"ping one"}`,
 		`{"id":4,"ts":"2026-10-23 08:03:00","from":"gemini-1","to":"codex-1","kind":"chat","text":"pong two"}`,
 		`{"id":5,"ts":"2026-10-23 08:04:00","from":"codex-1","to":"gemini-1","kind":"chat","text":"ping three"}`,
-	} {
-		if _, err := f.WriteString(l + "\n"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
+	}, "\n")+"\n")
 	_, ts := testServer(t, home)
 	_, body := get(t, ts, "/bus")
 	if !before(body, "ping three", "pong two") || !before(body, "pong two", "ping one") {
@@ -147,11 +135,8 @@ func TestBusNewestFirstInColoursByDirection(t *testing.T) {
 func TestInvestigationsNameTheInvestigatorAndModel(t *testing.T) {
 	home := fixture(t)
 	addTask(t, home, "T9", "AGENT=inv-astra\nKIND=investigation\nINV_ID=7\nMODEL=gpt-6-astra\nSTATUS=done\nRUN=1\n")
-	st, err := os.ReadFile(filepath.Join(home, "bus", "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(home, "bus", "state.json"), strings.Replace(string(st), `"summary": "yes, with a fence"`, `"summary": "yes, with a fence", "inv_task": "T9"`, 1))
+	writeFile(t, filepath.Join(home, "bus", "state.json"), `{"investigations": {"7": {"id": 7, "from_agent": "solo", "from_task": "T1",
+	  "question": "Is DMA safe here?", "status": "done", "summary": "yes, with a fence", "inv_task": "T9"}}}`)
 	_, ts := testServer(t, home)
 	_, body := get(t, ts, "/investigations")
 	mustContain(t, "/investigations", body, "inv-astra", "gpt-6-astra")

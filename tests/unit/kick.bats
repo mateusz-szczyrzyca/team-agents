@@ -21,16 +21,18 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
   grep -q 'stopped by the human' "$AGENTS_HOME/tasks/$t/activity.jsonl"
 }
 
-@test "kicking a team member puts it to sleep, so the team can wake it, and tells the coordinator" {
+@test "kicking a team member ends its run without leaving the team: it sleeps or is woken again, the coordinator is told" {
   scenario '{"lead": {"new": "team-lead-slow"}, "member": {"new": "sleep:60", "resume": "done"}}'
   agent run --team lead,member "team task"
   m=$(task_of member)
   wait_status "$m" running
   run agent kick "$m"
   [ "$status" -eq 0 ]
-  [ "$(meta "$m" STATUS)" = sleeping ]
+  # it went to sleep; with messages waiting for it, the bus wakes it at once for a fresh run — it is not out
+  [[ $(meta "$m" STATUS) =~ ^(sleeping|starting|running)$ ]]
   team=$(meta "$m" TEAM)
-  [ "$(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.members.member.state')" = sleeping ]
+  [[ $(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.members.member.state') =~ ^(sleeping|waking|active)$ ]]
+  [ -n "$(meta "$m" KICKED)" ]
   wait_grep 'was stopped by the human' "$AGENTS_HOME/bus/messages.jsonl"
 }
 

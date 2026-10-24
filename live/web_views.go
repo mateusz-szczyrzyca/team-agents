@@ -43,7 +43,9 @@ func statusClass(s string) string {
 		return "st-invest"
 	case "done":
 		return "st-done"
-	case "failed", "stopped", "excluded", "hung", "dead":
+	case "stopped":
+		return "st-stopped"
+	case "failed", "excluded", "hung", "dead":
 		return "st-failed"
 	}
 	return "st-dim"
@@ -69,6 +71,7 @@ type taskRow struct {
 	Stage       string // set_status text and the "for <agent>" of investigations
 	Last        string // the latest activity (active tasks) or the final summary
 	LastIcon    string // the icon of the latest activity
+	Running     bool   // a run is going on (the dashboard offers to stop it)
 }
 
 // makeRow builds a task's row exactly as the panel does (ui.go: row).
@@ -76,6 +79,10 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	r := taskRow{ID: t.ID, Name: t.Label(), Status: t.Status, Repo: t.Repo, Team: t.Team, TeamShort: strings.TrimSuffix(t.Team, "-team")}
 	r.StatusLabel, _ = statusStyle(t.Status)
 	r.StatusClass = statusClass(t.Status)
+	r.Running = t.Status == "running" || t.Status == "starting"
+	if t.Kind == "investigation" {
+		r.Name = fmt.Sprintf("investigator #%s (%s)", t.InvID, t.Agent)
+	}
 	switch {
 	case t.Active() && t.Alive && !t.RunStart.IsZero():
 		r.Since = human(time.Since(t.RunStart))
@@ -191,6 +198,22 @@ type agentRow struct {
 	Tasks      []taskRow // its active tasks
 	Presence   string    // its set_status text
 	Paused     string    // "until HH:MM (reason)" when paused
+	LastAt     time.Time // its latest activity in any task (zero: none)
+	Last       string    // LastAt as shown
+}
+
+// lastActivity is the latest moment a task shows activity: its run's start, its end or its latest activity entry.
+func lastActivity(t *Task) time.Time {
+	last := t.Created
+	for _, c := range []time.Time{t.RunStart, t.Finished} {
+		if c.After(last) {
+			last = c
+		}
+	}
+	if a, err := time.ParseInLocation("2006-01-02 15:04:05", t.Last.TS, time.Local); err == nil && a.After(last) {
+		last = a
+	}
+	return last
 }
 
 // viewAgents (GET /agents) lists the configured agents and what each one does.
@@ -202,7 +225,13 @@ func (s *webServer) viewAgents(w http.ResponseWriter, r *http.Request) {
 		row := agentRow{agentEntry: a, State: "free", StateClass: "st-dim"}
 		best := 99
 		for _, t := range snap.All {
-			if t.Agent != a.Name || !t.Active() {
+			if t.Agent != a.Name {
+				continue
+			}
+			if la := lastActivity(t); la.After(row.LastAt) {
+				row.LastAt = la
+			}
+			if !t.Active() {
 				continue
 			}
 			row.Tasks = append(row.Tasks, makeRow(snap, t))
@@ -218,8 +247,22 @@ func (s *webServer) viewAgents(w http.ResponseWriter, r *http.Request) {
 		if p := snap.Agents[a.Name]; p != nil {
 			row.Presence = p.Status
 		}
+		if !row.LastAt.IsZero() {
+			row.Last = row.LastAt.Format("2006-01-02 15:04")
+		}
 		rows = append(rows, row)
 	}
+	// working agents first, then by their latest activity, the never active last
+	sort.SliceStable(rows, func(i, j int) bool {
+		wi, wj := len(rows[i].Tasks) > 0, len(rows[j].Tasks) > 0
+		if wi != wj {
+			return wi
+		}
+		if !rows[i].LastAt.Equal(rows[j].LastAt) {
+			return rows[i].LastAt.After(rows[j].LastAt)
+		}
+		return rows[i].Name < rows[j].Name
+	})
 	s.render(w, r, http.StatusOK, "agents", "Agents", snap, map[string]any{"Rows": rows, "Error": lerr, "Queue": snap.QueueLine(s.cfg.queueMax)})
 }
 
@@ -341,7 +384,7 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 	case "investigations":
 		for _, inv := range snap.Invs {
 			if inv.FromTask == t.ID || (t.Kind == "investigation" && fmt.Sprint(inv.ID) == t.InvID) {
-				d.Invs = append(d.Invs, makeInvRow(inv))
+				d.Invs = append(d.Invs, makeInvRow(snap, inv))
 			}
 		}
 	case "report":
@@ -523,8 +566,15 @@ func (s *webServer) viewTeams(w http.ResponseWriter, r *http.Request) {
 		}
 		return rows[i].ID > rows[j].ID
 	})
-	s.render(w, r, http.StatusOK, "teams", "Teams", snap, rows)
+	total := len(rows)
+	if r.URL.Query().Get("all") != "1" && total > teamsShown {
+		rows = rows[:teamsShown]
+	}
+	s.render(w, r, http.StatusOK, "teams", "Teams", snap, map[string]any{"Rows": rows, "Total": total, "Cut": len(rows) < total})
 }
+
+// teamsShown is how many teams /teams lists before "all".
+const teamsShown = 20
 
 // memberRow is a team member.
 type memberRow struct {
@@ -583,7 +633,7 @@ func (s *webServer) viewTeam(w http.ResponseWriter, r *http.Request) {
 	for _, it := range t.Board {
 		d.Board = append(d.Board, it)
 	}
-	sort.Slice(d.Board, func(i, j int) bool { return itemNum(d.Board[i].ID) < itemNum(d.Board[j].ID) })
+	sort.Slice(d.Board, func(i, j int) bool { return itemNum(d.Board[i].ID) > itemNum(d.Board[j].ID) }) // newest first
 	for _, c := range t.Consults {
 		cr := consultRow{ConsultInfo: *c}
 		for _, n := range c.Asked {
@@ -630,6 +680,21 @@ type msgRow struct {
 	TS, From, To, Kind string // time, sender, recipient, kind
 	Text               string // body
 	Class              string // CSS class (by kind)
+	Pair               string // CSS class of the direction "from → to" (one of pairColours)
+}
+
+// pairColours is the number of colours a direction of messages can get (classes pair-0 … in app.css).
+const pairColours = 12
+
+// pairClass picks the colour class of a direction: the same "from → to" always gets the same one, the reverse
+// direction usually another.
+func pairClass(from, to string) string {
+	h := uint32(2166136261) // FNV-1a, computed in place: nothing here can fail
+	for _, c := range []byte(from + "\x00" + to) {
+		h ^= uint32(c)
+		h *= 16777619
+	}
+	return fmt.Sprintf("pair-%d", h%pairColours)
 }
 
 // makeMsgRow builds a message row.
@@ -638,7 +703,7 @@ func makeMsgRow(m Message) msgRow {
 	if k == "" {
 		k = "chat"
 	}
-	return msgRow{ID: m.ID, TS: shortTS(m.TS), From: m.From, To: m.To, Kind: k, Text: m.Text, Class: "mk-" + k}
+	return msgRow{ID: m.ID, TS: shortTS(m.TS), From: m.From, To: m.To, Kind: k, Text: m.Text, Class: "mk-" + k, Pair: pairClass(m.From, m.To)}
 }
 
 // readMessages reads the last n bus messages.
@@ -693,6 +758,9 @@ func (s *webServer) viewBus(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(rows) > 300 {
 		rows = rows[len(rows)-300:]
+	}
+	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+		rows[i], rows[j] = rows[j], rows[i] // newest first
 	}
 	var teams, agents []string
 	for id := range snap.Teams {
@@ -971,6 +1039,62 @@ func insideDir(dir, path string) bool {
 	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
+// ---------------------------------------------------------------- actions: stop a run, wake a team
+
+// postStop (POST /task/{id}/stop) cuts a running agent's run short: `agent kick <task> web` (a team member sleeps
+// and can be woken again; a solo task is stopped).
+func (s *webServer) postStop(w http.ResponseWriter, r *http.Request) {
+	t := findTask(s.snapshot(), r.PathValue("id"))
+	if t == nil {
+		http.Error(w, "no such task", http.StatusNotFound)
+		return
+	}
+	out, cerr := callAgent(s.cfg.agentCmd, "kick", t.ID, "web")
+	if cerr != nil {
+		logWarn(LogWebActionFailed, "action", "kick", "task", t.ID, "cause", cerr.Cause.String(), "error", cerr.Message)
+		http.Error(w, "cannot stop "+t.ID+": "+cerr.Message, http.StatusConflict)
+		return
+	}
+	logInfo(LogWebAction, "action", "kick", "task", t.ID)
+	writeText(w, strings.TrimSpace(out))
+}
+
+// postResume (POST /team/{id}/resume, mode=same|next, prompt) wakes a finished team from its last task:
+// `agent run --resume <team> [--same-round] [prompt]` — the same round, or the next one after a merged PR.
+func (s *webServer) postResume(w http.ResponseWriter, r *http.Request) {
+	snap := s.snapshot()
+	id := r.PathValue("id")
+	t := snap.Teams[id]
+	if t == nil {
+		viewError(s, w, r, webErr(ViewNotFound, nil, "no team %q", id))
+		return
+	}
+	if !t.Done {
+		viewError(s, w, r, webErr(ViewBadParameter, nil, "team %s is still working — nothing to wake", id))
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		viewError(s, w, r, webErr(ViewBadParameter, err, "the form"))
+		return
+	}
+	args := []string{"run", "--resume", id}
+	if r.PostFormValue("mode") == "same" {
+		args = append(args, "--same-round")
+	}
+	if p := strings.TrimSpace(strings.ReplaceAll(r.PostFormValue("prompt"), "\r\n", "\n")); p != "" {
+		args = append(args, p)
+	}
+	out, cerr := callAgent(s.cfg.agentCmd, args...)
+	msg := map[string]any{"Team": id, "Output": strings.TrimSpace(out), "Failed": cerr != nil}
+	if cerr != nil {
+		logWarn(LogWebActionFailed, "action", "resume", "team", id, "cause", cerr.Cause.String(), "error", cerr.Message)
+		msg["Output"] = cerr.Message
+	} else {
+		logInfo(LogWebAction, "action", "resume", "team", id, "mode", r.PostFormValue("mode"))
+	}
+	s.render(w, r, http.StatusOK, "resumed", "Wake team "+strings.TrimSuffix(id, "-team"), snap, msg)
+}
+
 // ---------------------------------------------------------------- investigations
 
 // invRow is an investigation or a PR review.
@@ -978,10 +1102,12 @@ type invRow struct {
 	*Investigation        // the record
 	StatusClass    string // CSS class of its status
 	Review         bool   // a PR review
+	Investigator   string // the investigator agent that worked on it ("" until one started)
+	Model          string // that investigator's model
 }
 
 // makeInvRow builds an investigation row.
-func makeInvRow(inv *Investigation) invRow {
+func makeInvRow(snap *Snapshot, inv *Investigation) invRow {
 	cls := statusClass(inv.Status)
 	switch inv.Status {
 	case "queued", "waitroom":
@@ -989,7 +1115,11 @@ func makeInvRow(inv *Investigation) invRow {
 	case "waiting_human":
 		cls = "st-waiting"
 	}
-	return invRow{Investigation: inv, StatusClass: cls, Review: inv.Kind == "review"}
+	row := invRow{Investigation: inv, StatusClass: cls, Review: inv.Kind == "review"}
+	if t := snap.All[inv.InvTask]; t != nil {
+		row.Investigator, row.Model = t.Agent, t.Model
+	}
+	return row
 }
 
 // viewInvestigations (GET /investigations) lists investigations and reviews, newest first.
@@ -997,7 +1127,7 @@ func (s *webServer) viewInvestigations(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	var rows []invRow
 	for i := len(snap.Invs) - 1; i >= 0; i-- {
-		rows = append(rows, makeInvRow(snap.Invs[i]))
+		rows = append(rows, makeInvRow(snap, snap.Invs[i]))
 	}
 	s.render(w, r, http.StatusOK, "investigations", "Investigations", snap, map[string]any{"Rows": rows, "Queue": snap.QueueLine(s.cfg.queueMax)})
 }
@@ -1009,7 +1139,7 @@ func (s *webServer) viewInvestigation(w http.ResponseWriter, r *http.Request) {
 	for _, inv := range snap.Invs {
 		if fmt.Sprint(inv.ID) == id {
 			s.render(w, r, http.StatusOK, "investigation", fmt.Sprintf("Investigation #%d", inv.ID), snap,
-				map[string]any{"I": makeInvRow(inv), "Text": readFile(inv.File)})
+				map[string]any{"I": makeInvRow(snap, inv), "Text": readFile(inv.File)})
 			return
 		}
 	}
