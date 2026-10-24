@@ -171,6 +171,9 @@ The next successful heartbeat sends it. A snapshot can cover intermediate states
 missed during an outage; validate the history, including `running` ↔ `waiting`,
 rather than imposing a total order on states. This preserves every transition
 time while avoiding a separate queue of network calls.
+Lead-owned transitions (assignment, offline requeue and immediate cancellation)
+use at least the preceding history time if the lead clock moves backward, so
+a successful write remains readable after restart.
 
 The assigned node alone may report. Identical timestamp-and-payload retries are
 idempotent. Stale reports cannot regress state, and conflicting reports cannot
