@@ -266,6 +266,8 @@ func (s *webServer) handler() http.Handler {
 	mux.HandleFunc("GET /investigations", s.viewInvestigations)
 	mux.HandleFunc("GET /investigation/{id}", s.viewInvestigation)
 	mux.HandleFunc("GET /logs", s.viewLogs)
+	mux.HandleFunc("POST /task/{id}/stop", s.postStop)
+	mux.HandleFunc("POST /team/{id}/resume", s.postResume)
 	mux.HandleFunc("GET /events/dashboard", s.streamDashboard)
 	mux.HandleFunc("GET /events/task/{id}", s.streamTask)
 	mux.HandleFunc("GET /events/bus", s.streamBus)

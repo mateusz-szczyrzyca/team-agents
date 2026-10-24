@@ -6,5 +6,5 @@
   <label>Text <input type="search" name="q" value="{{.F.Q}}"></label>
   <button type="submit" class="btn">Filter</button>
 </form>
-<ol class="msgs" hx-ext="sse" sse-connect="/events/bus?offset={{.Offset}}&amp;{{.Query}}" sse-swap="msg" hx-swap="beforeend">{{range .Rows}}{{template "msg-item" .}}{{else}}<li class="dim">(no messages)</li>{{end}}</ol>
+<ol class="msgs" hx-ext="sse" sse-connect="/events/bus?offset={{.Offset}}&amp;{{.Query}}" sse-swap="msg" hx-swap="afterbegin">{{range .Rows}}{{template "msg-item" .}}{{else}}<li class="dim">(no messages)</li>{{end}}</ol>
 {{end}}{{end}}

@@ -52,6 +52,8 @@ const (
 	LogWebAgentsFailed     LogEvent = "web_agents_failed"     // `agent _agents-json` failed or printed garbage
 	LogWebAnswersSaved     LogEvent = "web_answers_saved"     // answers were saved from the form
 	LogWebAnswersFailed    LogEvent = "web_answers_failed"    // answers from the form could not be saved or sent
+	LogWebAction           LogEvent = "web_action"            // an action from the interface (stop a run, wake a team)
+	LogWebActionFailed     LogEvent = "web_action_failed"     // an action from the interface failed (see "cause")
 )
 
 // logInfo writes an info record with the given event name.

@@ -1,6 +1,13 @@
 {{define "tools"}}{{with .Data}}<a class="btn" href="/bus?team={{.ID}}">Messages</a>{{end}}{{end}}
 {{define "content"}}{{with .Data}}
 <p class="dim">{{.ID}}{{if .T.Done}} · <span class="tag">finished</span>{{end}} · coordinator: {{if .T.Lead}}{{.T.Lead}}{{else}}not chosen yet{{end}}</p>
+{{if .T.Done}}<form method="post" action="/team/{{.ID}}/resume" class="wake">
+  <h2>Wake this team</h2>
+  <p class="dim">From its last task and checkpoint. <b>This round</b> keeps its branches (e.g. review fixes); <b>next round</b> needs the round's PR merged.</p>
+  <label class="own">Prompt for the coordinator (optional)<textarea name="prompt" rows="3"></textarea></label>
+  <div class="actions"><button type="submit" name="mode" value="same" class="btn primary">Continue this round</button>
+  <button type="submit" name="mode" value="next" class="btn">Next round</button></div>
+</form>{{end}}
 <h2>Members</h2>
 <div class="scroll"><table>
 <thead><tr><th>Member</th><th>State</th><th class="hide-narrow">Tier</th><th>Task now</th></tr></thead>
