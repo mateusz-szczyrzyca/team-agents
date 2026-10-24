@@ -524,8 +524,9 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	}
 	// A report that leaves the state unchanged and adds no transition must not replace a task ID or result
 	// already recorded: an older retry would otherwise overwrite a newer payload (investigator #27, R2;
-	// #28, M1, M2). A cumulative report that adds transitions is newer by its history, so it may update them.
-	// Any appended transition is new progress, not a replay, even when it ends in the recorded state.
+	// #28, M1, M2). A report (cumulative or repeated wait) that appends transitions is newer by its history,
+	// so it may update them (investigator #29, M1; #30, M1). Any appended transition is new progress, not a replay,
+	// even when it ends in the recorded state.
 	historyExtended := len(newHistory) > len(job.History)
 	if targetState == prevState && !historyExtended && payloadConflicts(job, rep) {
 		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task, PR or result for job %q", rep.State, rep.ID)
