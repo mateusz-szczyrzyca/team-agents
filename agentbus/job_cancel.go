@@ -11,7 +11,7 @@ func (r *leadRegistry) cancel(id string, now Timestamp) (Job, *LeadCancelError) 
 	switch job.State {
 	case JobQueued, JobAssigned:
 		job.State = JobStopped
-		job.History = append(job.History, JobTransition{State: JobStopped, At: now})
+		job.History = append(job.History, JobTransition{State: JobStopped, At: atOrAfterLast(job, now)})
 	case JobRunning, JobWaiting:
 		// The assigned node owns the process; the lead cannot claim it stopped before acknowledgement.
 		job.StopRequested = true
