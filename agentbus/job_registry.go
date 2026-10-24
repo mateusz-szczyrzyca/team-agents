@@ -490,6 +490,10 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 
 	job.State = targetState
 	job.History = newHistory
+	if isTerminalJob(targetState) {
+		// A real terminal result acknowledges the stop request, including completion winning the race.
+		job.StopRequested = false
+	}
 
 	if rep.TaskID != "" {
 		job.TaskID = rep.TaskID
