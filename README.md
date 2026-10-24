@@ -417,7 +417,9 @@ Then:
 5. Give the agents a GitHub identity: a token of the agents' GitHub account in `secrets.env` as `GH_TOKEN`, and
    optionally `GIT_EMAIL`/`GIT_SIGNING_KEY` in `agents.conf` (see [Security](#security) and
    [Commit identity](#commit-identity)).
-6. Check the accounts: `agent authenticated` — every configured provider should report `OK`.
+6. Check the accounts and models: `agent authenticated` — every agent should report `OK`. It sends one tiny
+   request per agent, with that agent's own model or preset; a failure shows the HTTP code and the provider's own
+   message (`HTTP 402: …`, `needs authentication — HTTP 401: …`). `--providers` checks only the accounts.
 7. Try it: `cd <your repo> && agent run claude-1 "List the toolchain versions you find. Do not change anything."`
    and watch with `agent live`.
 
@@ -448,7 +450,7 @@ Then:
 | `RUN_PATH` | `PATH` inside agent runs (add your toolchains) |
 | `NOTIFY_CMD`, `NOTIFY_DIR`, `NOTIFY_MAX_CHARS` | notifications (see below) |
 | `CLAUDE_BIN`, `CODEX_BIN`, `AGY_BIN`, `OPENCODE_BIN` | CLI paths |
-| `AUTH_MODEL_*` | cheap models used by `agent authenticated` |
+| `AUTH_MODEL_*` | cheap models used by `agent authenticated --providers` (the per-agent check uses each agent's model) |
 | `BRANCH_PREFIX`, `CLAUDE_MAX_TURNS`, `AGY_PRINT_TIMEOUT`, `OPENCODE_BASH_TIMEOUT_MS` | misc |
 
 `~/agents/secrets.env` is loaded before every run: `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`,
@@ -548,7 +550,8 @@ agent stop <id> | --running                   stop one task / EVERYTHING that is
 agent ack <id|all> | clean <id>               acknowledge finished tasks / remove a worktree
 agent archive <id|team> | --finished          pack finished work into ~/agents/tasks-archived/*.7z
 agent discard <id>...                         remove tasks that never started (worktree, branch, task directory)
-agent authenticated                           check every provider account
+agent authenticated [agent...]                check every agent's model (or the given agents'), one line each
+agent authenticated --providers               one quick request per provider account
 ```
 
 `<id>` can be any unambiguous fragment of a task ID. `agent run --resume` and `agent transcript` also accept a
@@ -754,6 +757,10 @@ Add the toolchains (`~/.cargo/bin`, `probe-rs`, `picotool`) to `RUN_PATH`. If yo
 ## Troubleshooting
 
 - **Units stop when you log out** — enable lingering: `sudo loginctl enable-linger <user>`.
+- **`agent authenticated` shows `HTTP 402` at OpenRouter/DeepInfra although credits are left** — read the
+  message next to it: usually a **spending limit set on the account or key** (the provider's billing settings),
+  otherwise a missing payment method. `HTTP 429` for one model only is that model being overloaded at the
+  provider, not your account.
 - **`agent authenticated` says "needs authentication" for OpenRouter/DeepInfra** — the key is missing from
   `secrets.env` or rejected (HTTP 401). Keys must be `NAME=value` without spaces around `=`.
 - **OpenCode: `provider.no-route: Model unavailable`** — the shared OpenCode 2 server did not get the keys or the
