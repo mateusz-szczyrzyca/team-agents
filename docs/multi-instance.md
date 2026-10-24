@@ -192,6 +192,24 @@ the actual terminal result. Repeating cancellation has no additional effect.
 Questions stay on the node: its notifications, `agent answer` and web interface.
 The lead shows `waiting` with a link to that node's `AGENT_WEB_URL`.
 
+## Lead storage
+
+The lead keeps its jobs in `jobs.json` in the bus directory, separate from
+`state.json`; job operations never read or write `state.json`.
+
+- Format: version 1, written to a temporary file and renamed into place.
+- Lock: the same `bus.lock` flock as `state.json`, through the shared
+  `Bus.withLock` helper, which `locked` also uses.
+- Time: stored as UTC RFC3339Nano. The snapshot uses its own structs, so the
+  ordinary `Timestamp` JSON format does not change.
+- Missing file: an empty registry. Corrupt, unsupported or inconsistent file: a
+  typed storage failure; the file is never overwritten with an empty registry.
+- Retention: a terminal job is removed once its age reaches 30 days, before the
+  next successful registry operation. Active jobs are always kept.
+- Counters: the sequence and assignment high-water marks survive job removal,
+  so identities are never reused.
+- Internal only: no CLI or HTTP entry point uses the store yet (round 4 and later).
+
 ## HTTP and authorization
 
 Plain HTTP is bound to the configured lead Tailscale address (`LEAD_LISTEN`) and
