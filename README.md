@@ -243,6 +243,13 @@ A sleeping member costs nothing; every wake-up starts a run and costs tokens. So
   quota reached… Resets in 24m46s", "usage limit reached", "try again in 2 hours", "resets 3pm"…), the task is
   **paused** until the limit resets (plus a minute; `AGENT_QUOTA_PAUSE_MIN`, default 30 min, when the CLI does
   not say when) instead of failing. This applies to solo tasks, team members, investigators and workers alike.
+- **Rate limit.** HTTP 429 / "too many requests" means the provider throttles requests — common on OpenRouter
+  when the upstream provider is busy, with credits still available. The task is paused briefly
+  (`AGENT_RATE_LIMIT_PAUSE_MIN`, default 5 min, unless the message gives a time), noted as rate-limited, not as
+  an exhausted quota.
+- Both are read only from the end of the run's errors (`AGENT_LIMIT_TAIL_LINES`, default 30 lines of stderr): a
+  429 the CLI retried and got past does not pause a run that later ends without STATUS for another reason. The
+  notification quotes the line that caused the pause.
 
 A paused task (`⏸ paused` in `agent status`) does not run and is not woken by messages or the board; a systemd
 timer (`agent-<task>-wake-<time>.timer`) resumes it at the announced time, in the same session. Its claimed board
@@ -430,6 +437,7 @@ Then:
 | `AGENT_HANG_MIN`, `AGENT_HANG_STRIKES` | watchdog (default 30 min, 3 strikes) |
 | `AGENT_IDLE_RUN_SEC`, `AGENT_WAKE_LOOP_MAX`, `AGENT_WAKE_RATE_MAX`, `AGENT_WAKE_LOOP_PAUSE_MIN` | wake-loop guard (default 120 s, 4 idle runs, 30 runs / 10 min, 15 min pause) |
 | `AGENT_QUOTA_PAUSE_MIN` | pause after an exhausted quota when the CLI does not say when it resets (default 30 min) |
+| `AGENT_RATE_LIMIT_PAUSE_MIN`, `AGENT_LIMIT_TAIL_LINES` | pause after a rate limit (HTTP 429) without a time (default 5 min); how many last lines of stderr are read for provider limits (default 30) |
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
