@@ -394,18 +394,15 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	}
 
 	if isTerminalJob(job.State) {
+		lastTr := job.History[len(job.History)-1]
 		if job.State == rep.State && job.Result == rep.Result &&
 			(rep.TaskID == "" || job.TaskID == rep.TaskID) &&
 			(rep.Branch == "" || job.Branch == rep.Branch) &&
-			(rep.PRURL == "" || job.PRURL == rep.PRURL) {
+			(rep.PRURL == "" || job.PRURL == rep.PRURL) &&
+			(rep.At.IsZero() || rep.At.Equal(lastTr.At.Time)) {
 			return cloneJob(*job), nil
 		}
 		return Job{}, opErr(LeadReportTerminalConflict, "job %q is terminal with %s, cannot revise", rep.ID, job.State)
-	}
-
-	at := rep.At
-	if at.IsZero() {
-		at = now
 	}
 
 	newHistory := slices.Clone(job.History)
@@ -415,22 +412,51 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		if rep.Transitions[len(rep.Transitions)-1].State != rep.State {
 			return Job{}, opErr(LeadReportInvalidState, "cumulative history does not end at reported state %s", rep.State)
 		}
-		curr := job.State
-		for _, tr := range rep.Transitions {
-			if len(newHistory) > 0 && newHistory[len(newHistory)-1].State == tr.State && newHistory[len(newHistory)-1].At.Equal(tr.At.Time) {
-				curr = tr.State
-				continue
+		assignedIdx := -1
+		for i := len(job.History) - 1; i >= 0; i-- {
+			if job.History[i].State == JobAssigned {
+				assignedIdx = i
+				break
 			}
-			if !validTransition(curr, tr.State) {
-				return Job{}, opErr(LeadReportInvalidState, "invalid transition from %s to %s", curr, tr.State)
+		}
+		var recorded []JobTransition
+		if assignedIdx >= 0 && assignedIdx+1 < len(job.History) {
+			recorded = job.History[assignedIdx+1:]
+		}
+		if len(rep.Transitions) < len(recorded) {
+			return Job{}, opErr(LeadReportInvalidState, "cumulative history regresses previously recorded transitions")
+		}
+		for i := 0; i < len(recorded); i++ {
+			if rep.Transitions[i].State != recorded[i].State || !rep.Transitions[i].At.Equal(recorded[i].At.Time) {
+				return Job{}, opErr(LeadReportInvalidState, "cumulative history conflicts with recorded history at index %d", i)
+			}
+		}
+		newTransitions := rep.Transitions[len(recorded):]
+		currState := job.State
+		lastAt := job.History[len(job.History)-1].At
+		for _, tr := range newTransitions {
+			if tr.At.IsZero() || tr.At.Before(lastAt.Time) {
+				return Job{}, opErr(LeadReportInvalidState, "transition timestamp %v must be nonzero and nondecreasing after %v", tr.At, lastAt)
+			}
+			if !validTransition(currState, tr.State) {
+				return Job{}, opErr(LeadReportInvalidState, "invalid transition from %s to %s", currState, tr.State)
 			}
 			newHistory = append(newHistory, tr)
-			curr = tr.State
+			currState = tr.State
+			lastAt = tr.At
 		}
-		targetState = curr
+		targetState = currState
 	} else {
+		at := rep.At
+		if at.IsZero() {
+			at = now
+		}
+		lastAt := job.History[len(job.History)-1].At
+		if at.Before(lastAt.Time) {
+			return Job{}, opErr(LeadReportInvalidState, "report timestamp %v cannot precede last transition %v", at, lastAt)
+		}
 		if job.State == rep.State {
-			if job.State == JobWaiting && len(newHistory) > 0 && at.After(newHistory[len(newHistory)-1].At.Time) {
+			if job.State == JobWaiting && at.After(lastAt.Time) {
 				newHistory = append(newHistory, JobTransition{State: JobWaiting, At: at})
 			}
 		} else {
