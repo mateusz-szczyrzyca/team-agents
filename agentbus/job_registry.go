@@ -354,10 +354,8 @@ func (r *leadRegistry) checkAssignment(id, node string, assignment uint64) *Lead
 // validTransition reports whether a lifecycle transition from state to next is allowed.
 func validTransition(from, to JobState) bool {
 	switch from {
-	case JobQueued:
-		return to == JobAssigned || to == JobStopped
 	case JobAssigned:
-		return to == JobRunning || to == JobFailed || to == JobStopped || to == JobQueued
+		return to == JobRunning || to == JobFailed || to == JobStopped
 	case JobRunning:
 		return to == JobRunning || to == JobWaiting || to == JobDone || to == JobFailed || to == JobStopped
 	case JobWaiting:
@@ -396,14 +394,35 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 
 	if isTerminalJob(job.State) {
 		lastTr := job.History[len(job.History)-1]
-		if job.State == rep.State && job.Result == rep.Result &&
-			(rep.TaskID == "" || job.TaskID == rep.TaskID) &&
-			(rep.Branch == "" || job.Branch == rep.Branch) &&
-			(rep.PRURL == "" || job.PRURL == rep.PRURL) &&
-			(rep.At.IsZero() || rep.At.Equal(lastTr.At.Time)) {
-			return cloneJob(*job), nil
+		if job.State != rep.State || job.Result != rep.Result ||
+			(rep.TaskID != "" && job.TaskID != rep.TaskID) ||
+			(rep.Branch != "" && job.Branch != rep.Branch) ||
+			(rep.PRURL != "" && job.PRURL != rep.PRURL) ||
+			(!rep.At.IsZero() && !rep.At.Equal(lastTr.At.Time)) {
+			return Job{}, opErr(LeadReportTerminalConflict, "job %q is terminal with %s, cannot revise", rep.ID, job.State)
 		}
-		return Job{}, opErr(LeadReportTerminalConflict, "job %q is terminal with %s, cannot revise", rep.ID, job.State)
+		if len(rep.Transitions) > 0 {
+			assignedIdx := -1
+			for i := len(job.History) - 1; i >= 0; i-- {
+				if job.History[i].State == JobAssigned {
+					assignedIdx = i
+					break
+				}
+			}
+			var recorded []JobTransition
+			if assignedIdx >= 0 && assignedIdx+1 < len(job.History) {
+				recorded = job.History[assignedIdx+1:]
+			}
+			if len(rep.Transitions) != len(recorded) {
+				return Job{}, opErr(LeadReportTerminalConflict, "terminal retry transitions count %d differs from %d", len(rep.Transitions), len(recorded))
+			}
+			for i := range recorded {
+				if rep.Transitions[i].State != recorded[i].State || !rep.Transitions[i].At.Equal(recorded[i].At.Time) {
+					return Job{}, opErr(LeadReportTerminalConflict, "terminal retry transition at index %d differs", i)
+				}
+			}
+		}
+		return cloneJob(*job), nil
 	}
 
 	newHistory := slices.Clone(job.History)

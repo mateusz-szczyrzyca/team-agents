@@ -420,3 +420,51 @@ func TestLeadRegistryTransitionsTimestampZeroOrDecreasingRejected(t *testing.T) 
 	_, errPast := r.report(pastRep, regAt(2))
 	failsWith(t, LeadReportInvalidState)("decreasing transition timestamp", errPast)
 }
+
+// TestLeadRegistryTerminalHistoryConflict: a terminal retry whose cumulative transitions differ from
+// accepted history is refused.
+func TestLeadRegistryTerminalHistoryConflict(t *testing.T) {
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+	rep := JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobDone,
+		At:         regAt(3),
+		Transitions: []JobTransition{
+			{State: JobRunning, At: regAt(2)},
+			{State: JobDone, At: regAt(3)},
+		},
+	}
+	if _, err := r.report(rep, regAt(3)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change an intermediate timestamp in terminal retry
+	rep.Transitions[0].At = regAt(1)
+	_, errConflict := r.report(rep, regAt(4))
+	failsWith(t, LeadReportTerminalConflict)("changed terminal history", errConflict)
+}
+
+// TestLeadRegistryReportCannotRequeueAssignment: a node state report cannot transition an assigned job to queued.
+func TestLeadRegistryReportCannotRequeueAssignment(t *testing.T) {
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+	_, err := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobQueued,
+		At:         regAt(2),
+	}, regAt(2))
+	failsWith(t, LeadReportInvalidState)("node cannot report requeue", err)
+}
