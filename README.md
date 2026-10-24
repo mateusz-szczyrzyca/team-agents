@@ -207,12 +207,11 @@ PR each:
   `agent round-size <task>` shows the size of a task's change (the agents use it too).
 - At the start the agent (in a team: the coordinator) estimates the change. If it does not fit one round, it plans
   rounds and asks you to approve the plan. After each round `main` stays green: unfinished work is dead code or a
-  stub; tests of later rounds are merged skipped (`pending: <what>, round N`). Put the literal reason on the
-  same line as a standalone Go `t.Skip` / `t.Skipf` call (any receiver name) or Bats `skip` command. Diagnostic
-  assertions quoting a pending reason do not hold the round open. This is a lightweight scan of these
-  statement forms, not a parser for arbitrary languages, multiline expressions or embedded source fixtures.
-- A round ends with `STATUS: ROUND_DONE N/M`. If its change is over the limit, or a test due in it is still
-  pending, it goes back to the agent to be split (at most `ROUND_BOUNCES` times, default 2; then it closes with a
+  stub. No test is written ahead of its round: a skipped test is an exception with a reason outside the code
+  (a missing tool or device), listed in the PR description's `## Skipped tests` section (`docs/tdd.md`). Every
+  run's prompt lists the repository's skipped tests, so they get filled.
+- A round ends with `STATUS: ROUND_DONE N/M`. If its change is over the limit, or it adds a skipped test the
+  PR does not list under `## Skipped tests`, it goes back to the agent to be split (at most `ROUND_BOUNCES` times, default 2; then it closes with a
   warning in the notification).
 - The notification ("🔁 round N/M done") gives the PR. Merge it, then `agent run --resume <team|task>`: the next
   round starts on **new branches from the updated base** (the previous branches are kept and named in the task).

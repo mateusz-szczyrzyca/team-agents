@@ -211,7 +211,8 @@ func (s *Server) quizStart(question string) (string, *QuizStartError)
 - **Tests come first** (`docs/tdd.md`): RED (the test, failing, committed with its failing output) → GREEN (the
   simplest code) → REFACTOR (tests unchanged). Where that is not possible, the commit says
   `Test-First: not possible — <reason>`. A bug fix starts with a test that fails without the fix. Remember rule 1:
-  existing tests are not yours to change.
+  existing tests are not yours to change. The one exception: the round that implements the
+  functionality of a skipped placeholder test replaces that placeholder with a real test.
 - Go: check errors by their exact cause (`failsWith(t, BoardClaimAlreadyTaken)(...)`, `failure(...)` when you need
   the error, `expectToolError` for dispatcher errors) or with `errors.Is` / `errors.As` — never by comparing
   message texts (the helper `missing(...)` is the one message that is part of a contract). Use `newBus(t)`
@@ -243,14 +244,16 @@ func (s *Server) quizStart(question string) (string, *QuizStartError)
 A PR changes at most 3000 lines (added + deleted, tests included, generated and vendored files not counted; aim for
 2000). A bigger task is planned as rounds — see the "Rounds" part of your prompt and README "Rounds". After every
 round `main` builds and passes `make lint test`; unfinished work is dead code or a stub returning a typed "not
-implemented" error; tests of later rounds are skipped with `pending: <what>, round N`. Check the size with
-`agent round-size <task>`.
+implemented" error; no test is written ahead of its round, and a skip is an exception
+with a reason outside the code, listed in the PR's `## Skipped tests` section (`docs/tdd.md`, "Skipped tests").
+Check the size with `agent round-size <task>`.
 
 ## Definition of done
 
 - [ ] `make lint test` passes with zero findings.
 - [ ] New behaviour has tests, written first (or a `Test-First: not possible` reason); no existing test was changed.
-- [ ] The PR is within the round limit (`agent round-size <task>`); no pending test of this round is left.
+- [ ] The PR is within the round limit (`agent round-size <task>`); every skip it adds is listed with its reason
+      in the PR's `## Skipped tests` section.
 - [ ] Errors are typed per operation; nothing is ignored; enums instead of string literals; every declaration
       has a comment.
 - [ ] README, `config/agents.conf` and prompts updated where the change is visible to users or agents.

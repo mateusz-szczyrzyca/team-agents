@@ -71,12 +71,22 @@ Layout and CSS, prompt wording, a line of configuration, a fix of a race in an e
 message — `Test-First: not possible — <reason>` — so the reviewer does not have to guess. A change of behaviour with
 neither a test commit before it nor that line is a **major** review finding.
 
-## Tests ahead of their round
+## Skipped tests
 
-A test for functionality of a later round may be merged earlier, skipped with a marker naming the round:
+A skipped test is an exception, never a placeholder:
 
-```go
-t.Skip("pending: board_next ordering, round 4")
-```
+- **No tests ahead of their round.** A test is written in the round that implements its behaviour — RED, then
+  GREEN. A stub for a later round has no test yet: nothing reaches it.
+- **A skip needs a reason outside the code** — a missing tool or device, another operating system — written into
+  the skip itself, and the test with that reason in a `## Skipped tests` section of the PR description. The script
+  sends a round back while a skip it adds is missing there; "implemented later" is a major review finding.
+- **Every run's prompt lists the repository's skipped tests.** Fill each one whose functionality exists now; the
+  round that implements a placeholder's functionality replaces it with a real test (the one exception to
+  "existing tests are not yours to change").
+- **No idea for a meaningful test?** Ask an investigator what to test — do not skip, do not test nothing.
 
-Round 4 must remove it; the script sends a round back while a test due in it is still pending.
+What counts as a skip: a statement that starts its line, per kind of test file — `<receiver>.Skip(…)`,
+`.Skipf(…)`, `.SkipNow()` in `*_test.go`; `skip` in `*.bats`; `pytest.skip(…)`, `@pytest.mark.skip`,
+`@unittest.skip`, `self.skipTest(…)` in Python tests; `it.skip(…)`, `test.skip(…)`, `describe.skip(…)`, `xit(…)`
+in `*.test.*` / `*.spec.*`; `#[ignore]` in Rust. Assertions, comments and strings that only mention a skip, code
+of another language inside a test (a heredoc, a fixture) and Markdown do not count.
