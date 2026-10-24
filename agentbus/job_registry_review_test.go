@@ -226,3 +226,30 @@ func TestJobReportSameStateResultCannotBeOverwritten(t *testing.T) {
 		t.Fatalf("result overwritten to %q", job.Result)
 	}
 }
+
+// TestJobReportCumulativeSamePayloadCannotBeOverwritten: a cumulative report that adds no transition is a
+// same-state report too, so a different branch than the recorded one is refused (investigator #28, M2).
+func TestJobReportCumulativeSamePayloadCannotBeOverwritten(t *testing.T) {
+	r := newLeadRegistry()
+	assigned := reviewAssign(t, r, "cumulative-replay", 1)
+	first := JobReport{ID: "cumulative-replay", Node: "node-a", Assignment: assigned, State: JobRunning, Branch: "branch-a",
+		Transitions: []JobTransition{{State: JobRunning, At: regAt(2)}}}
+	if _, err := r.report(first, regAt(2)); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	newer := first
+	newer.Branch = "branch-b"
+	if _, err := r.report(newer, regAt(4)); err == nil {
+		t.Fatal("cumulative report with a different branch was accepted")
+	}
+	if _, err := r.report(first, regAt(5)); err != nil {
+		t.Fatalf("identical retry: %v", err)
+	}
+	job, err := r.get("cumulative-replay")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if job.Branch != "branch-a" {
+		t.Fatalf("branch overwritten to %q", job.Branch)
+	}
+}
