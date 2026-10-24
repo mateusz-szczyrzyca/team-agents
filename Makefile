@@ -2,13 +2,13 @@
 #   make tools   installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
 #   make lint    every static check; fails when a linter is missing (run make tools)
 #   make test    unit tests: Go (agentbus, agentlive) and bats (the agent script)
-.PHONY: test unit-go unit-bats lint lint-go lint-shell lint-docs tools integration build generate check-generated
+.PHONY: gate test unit-go unit-bats lint lint-go lint-shell lint-docs tools integration build generate check-generated
 
 # Go modules of this repository (each has its own go.mod).
 GO_MODULES := agentbus live tools/doccheck tools/errgen
 # Bash scripts checked with shellcheck (bats files included: shellcheck understands @test blocks).
 SHELL_SCRIPTS := bin/agent install.sh tools/install-linters.sh tools/update-web-vendor.sh tests/integration/run.sh examples/notify/*.sh \
-	tests/unit/helpers.bash tests/unit/agent.bats tests/unit/web.bats tests/unit/rounds.bats tests/unit/identity.bats tests/unit/limits.bats tests/unit/gate.bats tests/unit/resume_alloc.bats tests/unit/pending_detector.bats tests/unit/stubs/systemd-run tests/unit/stubs/systemctl tests/unit/stubs/gh tests/unit/stubs/tailscale
+	tests/unit/helpers.bash tests/unit/agent.bats tests/unit/web.bats tests/unit/rounds.bats tests/unit/identity.bats tests/unit/limits.bats tests/unit/gate.bats tools/gate.sh tests/unit/resume_alloc.bats tests/unit/pending_detector.bats tests/unit/stubs/systemd-run tests/unit/stubs/systemctl tests/unit/stubs/gh tests/unit/stubs/tailscale
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 
@@ -23,6 +23,11 @@ unit-bats:
 
 tools:
 	tools/install-linters.sh
+
+# The same checks with short output — one line per step, the failures condensed, full logs in build/gate/
+# (tools/gate.sh). Agents use this: long tool output stays in their context and is read again at every later step.
+gate:
+	@tools/gate.sh
 
 lint: check-generated lint-shell lint-go lint-docs
 
