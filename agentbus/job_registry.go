@@ -65,6 +65,10 @@ type Job struct {
 	Node       string          // the node the job is assigned to; empty while queued
 	Assignment uint64          // identity of the current assignment, greater than 0 once assigned, never reused
 	History    []JobTransition // every state entered, in order; queued first, then assigned
+	TaskID     string          // node's local task ID
+	Branch     string          // branch pushed by the node
+	PRURL      string          // optional PR URL
+	Result     string          // final result text or failure reason
 }
 
 // FreeAgent is a configured agent of a node that is free at the time of a heartbeat.
@@ -79,6 +83,20 @@ type NodeHeartbeat struct {
 	Capabilities []string    // declared capabilities, validated like JobRequest.Requires
 	FreeAgents   []FreeAgent // configured agents that are free now; empty when none is free
 	WebURL       string      // the node's AGENT_WEB_URL, shown by the lead for waiting jobs; may be empty
+}
+
+// JobReport is a state report sent by an assigned node for one job.
+type JobReport struct {
+	ID          string          // job ID being reported
+	Node        string          // authenticated reporting node name
+	Assignment  uint64          // assignment evidence the report belongs to
+	State       JobState        // target state being reported
+	TaskID      string          // node's local task ID
+	Branch      string          // branch pushed by the node
+	PRURL       string          // optional PR URL
+	Result      string          // final result text or failure reason
+	At          Timestamp       // timestamp of the transition; defaults to now when zero
+	Transitions []JobTransition // cumulative intermediate transitions observed by the node
 }
 
 // leadRegistry is the lead's job and node registry. Every method is atomic with respect to the others.
@@ -317,6 +335,12 @@ func (r *leadRegistry) checkAssignment(id, node string, assignment uint64) *Lead
 	if !ok {
 		return opErr(LeadReportNoSuchJob, "no job %q", id)
 	}
+	if job.State == JobQueued {
+		if assignment > 0 {
+			return opErr(LeadReportStaleAssignment, "job %q assignment %d has expired", id, assignment)
+		}
+		return opErr(LeadReportUnauthorized, "job %q is not assigned", id)
+	}
 	if job.Node != node {
 		return opErr(LeadReportUnauthorized, "job %q is not assigned to node %q", id, node)
 	}
@@ -324,4 +348,147 @@ func (r *leadRegistry) checkAssignment(id, node string, assignment uint64) *Lead
 		return opErr(LeadReportStaleAssignment, "job %q has a different assignment", id)
 	}
 	return nil
+}
+
+// validTransition reports whether a lifecycle transition from state to next is allowed.
+func validTransition(from, to JobState) bool {
+	switch from {
+	case JobQueued:
+		return to == JobAssigned || to == JobStopped
+	case JobAssigned:
+		return to == JobRunning || to == JobFailed || to == JobStopped || to == JobQueued
+	case JobRunning:
+		return to == JobRunning || to == JobWaiting || to == JobDone || to == JobFailed || to == JobStopped
+	case JobWaiting:
+		return to == JobWaiting || to == JobRunning || to == JobDone || to == JobFailed || to == JobStopped
+	case JobDone, JobFailed, JobStopped:
+		return from == to
+	}
+	return false
+}
+
+// isTerminalJob reports whether s is a terminal lifecycle state.
+func isTerminalJob(s JobState) bool {
+	return s == JobDone || s == JobFailed || s == JobStopped
+}
+
+// report records a state transition reported by the assigned node for job.
+func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportError) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[rep.ID]
+	if !ok {
+		return Job{}, opErr(LeadReportNoSuchJob, "no job %q", rep.ID)
+	}
+	if job.State == JobQueued {
+		if rep.Assignment > 0 {
+			return Job{}, opErr(LeadReportStaleAssignment, "job %q assignment %d has expired", rep.ID, rep.Assignment)
+		}
+		return Job{}, opErr(LeadReportUnauthorized, "job %q is not assigned", rep.ID)
+	}
+	if job.Node != rep.Node {
+		return Job{}, opErr(LeadReportUnauthorized, "job %q is not assigned to node %q", rep.ID, rep.Node)
+	}
+	if rep.Assignment == 0 || job.Assignment != rep.Assignment {
+		return Job{}, opErr(LeadReportStaleAssignment, "job %q has a different assignment", rep.ID)
+	}
+
+	if isTerminalJob(job.State) {
+		if job.State == rep.State && job.Result == rep.Result {
+			return cloneJob(*job), nil
+		}
+		return Job{}, opErr(LeadReportTerminalConflict, "job %q is terminal with %s, cannot revise", rep.ID, job.State)
+	}
+
+	at := rep.At
+	if at.IsZero() {
+		at = now
+	}
+
+	if len(rep.Transitions) > 0 {
+		curr := job.State
+		for _, tr := range rep.Transitions {
+			if len(job.History) > 0 && job.History[len(job.History)-1].State == tr.State && job.History[len(job.History)-1].At == tr.At {
+				curr = tr.State
+				continue
+			}
+			if !validTransition(curr, tr.State) {
+				return Job{}, opErr(LeadReportInvalidState, "invalid transition from %s to %s", curr, tr.State)
+			}
+			job.History = append(job.History, tr)
+			curr = tr.State
+		}
+		job.State = curr
+	} else {
+		if job.State == rep.State {
+			if job.State == JobWaiting && len(job.History) > 0 && at.After(job.History[len(job.History)-1].At.Time) {
+				job.History = append(job.History, JobTransition{State: JobWaiting, At: at})
+			}
+		} else {
+			if !validTransition(job.State, rep.State) {
+				return Job{}, opErr(LeadReportInvalidState, "invalid transition from %s to %s", job.State, rep.State)
+			}
+			job.State = rep.State
+			job.History = append(job.History, JobTransition{State: rep.State, At: at})
+		}
+	}
+
+	if rep.TaskID != "" {
+		job.TaskID = rep.TaskID
+	}
+	if rep.Branch != "" {
+		job.Branch = rep.Branch
+	}
+	if rep.PRURL != "" {
+		job.PRURL = rep.PRURL
+	}
+	if rep.Result != "" {
+		job.Result = rep.Result
+	}
+
+	return cloneJob(*job), nil
+}
+
+// requeueOffline returns unstarted assigned jobs of offline nodes to the queue.
+// Started jobs (running, waiting) remain in their state and are never requeued.
+func (r *leadRegistry) requeueOffline(now Timestamp, ttl time.Duration) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var requeued []string
+	for _, id := range r.order {
+		job := r.jobs[id]
+		if job.State != JobAssigned {
+			continue
+		}
+		node, ok := r.nodes[job.Node]
+		if !ok || now.Sub(node.LastSeen.Time) >= ttl {
+			job.State = JobQueued
+			job.Node = ""
+			job.History = append(job.History, JobTransition{State: JobQueued, At: now})
+			requeued = append(requeued, id)
+		}
+	}
+	return requeued
+}
+
+// nodeOffline reports whether node has missed its heartbeat deadline at now.
+func (r *leadRegistry) nodeOffline(node string, now Timestamp, ttl time.Duration) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n, ok := r.nodes[node]
+	if !ok {
+		return true
+	}
+	return now.Sub(n.LastSeen.Time) >= ttl
+}
+
+// get returns a snapshot copy of job id.
+func (r *leadRegistry) get(id string) (Job, *LeadGetJobError) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok {
+		return Job{}, opErr(LeadGetJobNoSuchJob, "no job %q", id)
+	}
+	return cloneJob(*job), nil
 }

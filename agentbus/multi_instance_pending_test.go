@@ -176,17 +176,120 @@ func TestLeadRegistryRejectsReportFromOtherNode(t *testing.T) {
 
 // TestLeadRegistryRejectsSkippedTransition: assigned straight to done is refused; running must come first.
 func TestLeadRegistryRejectsSkippedTransition(t *testing.T) {
-	t.Skip("pending: transition table (assigned->running required before done), round 3")
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+	_, err := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobDone,
+		Result:     "finished prematurely",
+	}, regAt(2))
+	failsWith(t, LeadReportInvalidState)("assigned straight to done", err)
+
+	_, errWaiting := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobWaiting,
+	}, regAt(2))
+	failsWith(t, LeadReportInvalidState)("assigned straight to waiting", errWaiting)
+
+	running, errRun := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobRunning,
+		TaskID:     "task-1",
+		Branch:     "branch-1",
+	}, regAt(3))
+	if errRun != nil {
+		t.Fatalf("assigned to running failed: %v", errRun)
+	}
+	if running.State != JobRunning {
+		t.Fatalf("state = %s, want running", running.State)
+	}
+
+	done, errDone := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobDone,
+		Result:     "success",
+	}, regAt(4))
+	if errDone != nil {
+		t.Fatalf("running to done failed: %v", errDone)
+	}
+	if done.State != JobDone {
+		t.Fatalf("state = %s, want done", done.State)
+	}
 }
 
 // TestLeadRegistryOfflineUnstartedJobRequeued: an offline node's assigned but unacknowledged job goes back to the queue.
 func TestLeadRegistryOfflineUnstartedJobRequeued(t *testing.T) {
-	t.Skip("pending: offline node's assigned, unacknowledged job returns to queued, round 3")
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil || got.State != JobAssigned {
+		t.Fatalf("heartbeat = %+v, want job-1 assigned", got)
+	}
+	requeued := r.requeueOffline(regAt(100), regTTL)
+	if len(requeued) != 1 || requeued[0] != "job-1" {
+		t.Fatalf("requeueOffline = %v, want [job-1]", requeued)
+	}
+	job, errGet := r.get("job-1")
+	if errGet != nil {
+		t.Fatalf("get job-1: %v", errGet)
+	}
+	if job.State != JobQueued || job.Node != "" {
+		t.Fatalf("requeued job = %+v, want queued with no node", job)
+	}
+	taken := regHeartbeat(t, r, regBeat("node-b", nil, FreeAgent{Name: "beta", Tier: TierNormal}), regAt(101))
+	if taken == nil || taken.Request.ID != "job-1" || taken.Node != "node-b" {
+		t.Fatalf("node-b heartbeat = %+v, want job-1 assigned to node-b", taken)
+	}
 }
 
 // TestLeadRegistryOfflineStartedJobNeverRequeued: an acknowledged running job is never reassigned while its node is offline.
 func TestLeadRegistryOfflineStartedJobNeverRequeued(t *testing.T) {
-	t.Skip("pending: acknowledged running job is never requeued; shows node offline, round 3")
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+	_, err := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobRunning,
+		TaskID:     "task-1",
+	}, regAt(2))
+	if err != nil {
+		t.Fatalf("start report: %v", err)
+	}
+	requeued := r.requeueOffline(regAt(100), regTTL)
+	if len(requeued) != 0 {
+		t.Fatalf("requeued started jobs: %v, want none", requeued)
+	}
+	job, errGet := r.get("job-1")
+	if errGet != nil {
+		t.Fatalf("get job-1: %v", errGet)
+	}
+	if job.State != JobRunning {
+		t.Fatalf("job state = %s, want running", job.State)
+	}
+	if !r.nodeOffline("node-a", regAt(100), regTTL) {
+		t.Fatal("node-a should be offline at t=100")
+	}
+	other := regHeartbeat(t, r, regBeat("node-b", nil, FreeAgent{Name: "beta", Tier: TierNormal}), regAt(101))
+	if other != nil {
+		t.Fatalf("node-b got %+v, want nil", other)
+	}
 }
 
 // TestLeadRegistryCancelQueuedIsImmediate: cancelling a queued job stops it at once.
@@ -201,12 +304,132 @@ func TestLeadRegistryCancelActiveWaitsForNodeConfirmation(t *testing.T) {
 
 // TestLeadRegistryReportHistoryKeepsFirstStart: cumulative report history keeps the first acknowledged start.
 func TestLeadRegistryReportHistoryKeepsFirstStart(t *testing.T) {
-	t.Skip("pending: repeated waiting reports and the first acknowledged start survive compaction, round 3")
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+	firstStart := regAt(2)
+	if _, err := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobRunning,
+		TaskID:     "task-1",
+		At:         firstStart,
+	}, firstStart); err != nil {
+		t.Fatalf("first start: %v", err)
+	}
+
+	if _, err := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobWaiting,
+		At:         regAt(10),
+	}, regAt(10)); err != nil {
+		t.Fatalf("waiting 1: %v", err)
+	}
+	if _, err := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobWaiting,
+		At:         regAt(20),
+	}, regAt(20)); err != nil {
+		t.Fatalf("waiting 2: %v", err)
+	}
+	if _, err := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobRunning,
+		At:         regAt(30),
+	}, regAt(30)); err != nil {
+		t.Fatalf("resume running: %v", err)
+	}
+
+	job, errGet := r.get("job-1")
+	if errGet != nil {
+		t.Fatalf("get job-1: %v", errGet)
+	}
+	var runningTimes []Timestamp
+	var waitingCount int
+	for _, tr := range job.History {
+		if tr.State == JobRunning {
+			runningTimes = append(runningTimes, tr.At)
+		}
+		if tr.State == JobWaiting {
+			waitingCount++
+		}
+	}
+	if len(runningTimes) < 2 || runningTimes[0] != firstStart {
+		t.Fatalf("running times = %v, want first start %v preserved", runningTimes, firstStart)
+	}
+	if waitingCount != 2 {
+		t.Fatalf("waiting count = %d, want 2 repeated waiting reports", waitingCount)
+	}
 }
 
 // TestLeadRegistryRetryIsIdempotent: an identical report retry is accepted; a conflicting terminal revision is refused.
 func TestLeadRegistryRetryIsIdempotent(t *testing.T) {
-	t.Skip("pending: identical retries accepted, conflicting terminal revisions refused, round 3")
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+	if _, err := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobRunning,
+		TaskID:     "task-1",
+	}, regAt(2)); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	terminalRep := JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobDone,
+		TaskID:     "task-1",
+		Result:     "success",
+		At:         regAt(3),
+	}
+	done, err := r.report(terminalRep, regAt(3))
+	if err != nil {
+		t.Fatalf("terminal report: %v", err)
+	}
+	if done.State != JobDone {
+		t.Fatalf("state = %s, want done", done.State)
+	}
+
+	again, errRetry := r.report(terminalRep, regAt(4))
+	if errRetry != nil {
+		t.Fatalf("identical retry refused: %v", errRetry)
+	}
+	if again.State != JobDone || again.Result != "success" {
+		t.Fatalf("retry job = %+v, want done with success", again)
+	}
+
+	conflict := JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobFailed,
+		TaskID:     "task-1",
+		Result:     "conflicting failure",
+		At:         regAt(5),
+	}
+	_, errConflict := r.report(conflict, regAt(5))
+	failsWith(t, LeadReportTerminalConflict)("conflicting terminal report", errConflict)
+
+	diffResult := terminalRep
+	diffResult.Result = "different result"
+	_, errDiff := r.report(diffResult, regAt(6))
+	failsWith(t, LeadReportTerminalConflict)("different terminal result", errDiff)
 }
 
 // TestLeadHTTPIdentityLoopbackIsLeadNode: a connection from 127.0.0.1 or ::1 is the lead's own node.
