@@ -85,8 +85,13 @@ These rules have no exceptions unless the human explicitly asks for it in the ta
 Before **every** commit:
 
 ```sh
-make lint test
+make gate
 ```
+
+`make gate` runs the checks of `make lint test` with short output: one line per step, for a failed step only the
+lines that tell what failed, the full logs in `build/gate/`. When you need more, read the log with `grep -n` or
+`tail` — never print a whole log: everything a command prints stays in your context and is read again at every
+later step. (`make lint test` runs the same checks with their full output.)
 
 - `make lint` — `shellcheck -S warning` on every Bash script, `gofmt`, `golangci-lint` (configuration:
   `.golangci.yml`) and `staticcheck` on every Go module, `doccheck`, and a check that `errors_gen.go` matches

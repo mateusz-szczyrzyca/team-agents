@@ -14,6 +14,13 @@ Where a test first is not possible (layout, prompt text, a line of configuration
 `Test-First: not possible — <reason>`. A change of behaviour with neither a test commit before it nor that line is
 a major review finding. The rules in detail, with a worked example: `docs/tdd.md` of the team-agents repository.
 
+## Keep tool output short
+
+Everything a command prints stays in your context and is read again at every later step: a long output is paid
+for many times. Use the quiet check target the repository offers (in team-agents: `make gate`), run single tests
+while you work, send long output to a file and read only what you need (`grep -n`, `tail -n 40`). Do not print
+whole logs, whole large files or full test listings.
+
 ## Rounds — every PR stays reviewable
 
 The PR of this task {{ROUND_LIMIT_TEXT}}: added plus deleted lines against the base, tests included, generated and
