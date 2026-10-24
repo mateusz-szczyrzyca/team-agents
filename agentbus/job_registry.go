@@ -236,7 +236,7 @@ func (r *leadRegistry) heartbeat(h NodeHeartbeat, now Timestamp) (*Job, *LeadHea
 		}
 		r.nextAssignment++
 		job.State, job.Node, job.Assignment = JobAssigned, h.Node, r.nextAssignment
-		job.History = append(job.History, JobTransition{State: JobAssigned, At: now})
+		job.History = append(job.History, JobTransition{State: JobAssigned, At: atOrAfterLast(job, now)})
 		snapshot := cloneJob(*job)
 		return &snapshot, nil
 	}
@@ -351,6 +351,17 @@ func (r *leadRegistry) checkAssignment(id, node string, assignment uint64) *Lead
 	return nil
 }
 
+// atOrAfterLast returns at, raised to the job's last recorded transition when at is earlier. The lead's clock can
+// move backwards and a time may be captured before waiting for the lock; the history must never decrease, or the
+// store refuses to load it. Callers hold mu.
+func atOrAfterLast(job *Job, at Timestamp) Timestamp {
+	last := job.History[len(job.History)-1].At
+	if at.Before(last.Time) {
+		return last
+	}
+	return at
+}
+
 // validTransition reports whether a lifecycle transition from state to next is allowed.
 func validTransition(from, to JobState) bool {
 	switch from {
@@ -392,13 +403,19 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		return Job{}, opErr(LeadReportStaleAssignment, "job %q has a different assignment", rep.ID)
 	}
 
+	// A cumulative report carries its own time, which must be the time of its last transition, so the first
+	// acceptance and an identical retry judge the same payload.
+	if len(rep.Transitions) > 0 && !rep.At.IsZero() && !rep.At.Equal(rep.Transitions[len(rep.Transitions)-1].At.Time) {
+		return Job{}, opErr(LeadReportInvalidState, "report time %v differs from its last transition %v", rep.At, rep.Transitions[len(rep.Transitions)-1].At)
+	}
+
 	if isTerminalJob(job.State) {
 		lastTr := job.History[len(job.History)-1]
 		if job.State != rep.State || job.Result != rep.Result ||
 			(rep.TaskID != "" && job.TaskID != rep.TaskID) ||
 			(rep.Branch != "" && job.Branch != rep.Branch) ||
 			(rep.PRURL != "" && job.PRURL != rep.PRURL) ||
-			(len(rep.Transitions) == 0 && !rep.At.IsZero() && !rep.At.Equal(lastTr.At.Time)) {
+			(!rep.At.IsZero() && !rep.At.Equal(lastTr.At.Time)) {
 			return Job{}, opErr(LeadReportTerminalConflict, "job %q is terminal with %s, cannot revise", rep.ID, job.State)
 		}
 		if len(rep.Transitions) > 0 {
@@ -467,38 +484,39 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		}
 		targetState = currState
 	} else {
-		lastTr := job.History[len(job.History)-1]
-		if rep.State == job.State {
-			if !rep.At.IsZero() && rep.At.After(lastTr.At.Time) && job.State == JobWaiting {
-				newHistory = append(newHistory, JobTransition{State: JobWaiting, At: rep.At})
+		at := rep.At
+		if at.IsZero() {
+			at = atOrAfterLast(job, now)
+		}
+		lastAt := job.History[len(job.History)-1].At
+		if at.Before(lastAt.Time) {
+			return Job{}, opErr(LeadReportInvalidState, "report timestamp %v cannot precede last transition %v", at, lastAt)
+		}
+		switch {
+		case job.State == rep.State:
+			// A same-state report may fill in a field that is still empty, but must not replace an identifier
+			// or a result already recorded: an older retry would otherwise overwrite a newer payload
+			// (investigator #27, R2; investigator #28, result field).
+			if (rep.Branch != "" && job.Branch != "" && rep.Branch != job.Branch) ||
+				(rep.TaskID != "" && job.TaskID != "" && rep.TaskID != job.TaskID) ||
+				(rep.PRURL != "" && job.PRURL != "" && rep.PRURL != job.PRURL) ||
+				(rep.Result != "" && job.Result != "" && rep.Result != job.Result) {
+				return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task, PR or result for job %q", rep.State, rep.ID)
 			}
-		} else {
-			assignedIdx := -1
-			for i := len(job.History) - 1; i >= 0; i-- {
-				if job.History[i].State == JobAssigned {
-					assignedIdx = i
-					break
-				}
+			// A repeated waiting report with its own later time is a new wait for a human. Anything else that
+			// repeats the current state (an identical retry, a report without a time) changes nothing.
+			if job.State == JobWaiting && !rep.At.IsZero() && at.After(lastAt.Time) {
+				newHistory = append(newHistory, JobTransition{State: JobWaiting, At: at})
 			}
-			var recorded []JobTransition
-			if assignedIdx >= 0 && assignedIdx+1 < len(job.History) {
-				recorded = job.History[assignedIdx+1:]
-			}
-			if !rep.At.IsZero() {
-				for _, tr := range recorded {
-					if tr.State == rep.State && tr.At.Equal(rep.At.Time) {
-						// Stale replay of an earlier acknowledged transition.
-						return cloneJob(*job), nil
-					}
-				}
-			}
-			at := rep.At
-			if at.IsZero() {
-				at = now
-			}
-			if at.Before(lastTr.At.Time) {
-				return Job{}, opErr(LeadReportInvalidState, "report timestamp %v cannot precede last transition %v", at, lastTr.At)
-			}
+		case rep.At.IsZero() && job.State != JobAssigned && !isTerminalJob(rep.State):
+			// Only the first start or a terminal state may omit its time: neither can rewind a job, since a
+			// job becomes terminal once. Other changes without a time cannot be told from a replay of an older
+			// report, so the node must send the time of every transition.
+			return Job{}, opErr(LeadReportInvalidState, "state change %s from %s needs its transition time; a report without one cannot be told from a replay", rep.State, job.State)
+		case at.Equal(lastAt.Time):
+			// Two states at one instant cannot be ordered; the node must send the cumulative history instead.
+			return Job{}, opErr(LeadReportInvalidState, "state %s at %v cannot follow %s at the same instant; send the cumulative history", rep.State, at, job.State)
+		default:
 			if !validTransition(job.State, rep.State) {
 				return Job{}, opErr(LeadReportInvalidState, "invalid transition from %s to %s", job.State, rep.State)
 			}
@@ -512,9 +530,6 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	if isTerminalJob(targetState) {
 		// A real terminal result acknowledges the stop request, including completion winning the race.
 		job.StopRequested = false
-		job.Result = rep.Result
-	} else if rep.Result != "" {
-		job.Result = rep.Result
 	}
 
 	if rep.TaskID != "" {
@@ -525,6 +540,10 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	}
 	if rep.PRURL != "" {
 		job.PRURL = rep.PRURL
+	}
+	// A terminal report carries the final payload, so its result replaces any intermediate one, even an empty one.
+	if rep.Result != "" || isTerminalJob(targetState) {
+		job.Result = rep.Result
 	}
 
 	return cloneJob(*job), nil
@@ -545,7 +564,7 @@ func (r *leadRegistry) requeueOffline(now Timestamp, ttl time.Duration) []string
 		if !ok || now.Sub(node.LastSeen.Time) >= ttl {
 			job.State = JobQueued
 			job.Node = ""
-			job.History = append(job.History, JobTransition{State: JobQueued, At: now})
+			job.History = append(job.History, JobTransition{State: JobQueued, At: atOrAfterLast(job, now)})
 			requeued = append(requeued, id)
 		}
 	}

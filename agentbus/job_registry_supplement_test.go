@@ -220,11 +220,6 @@ func TestLeadRegistryReportCumulativeHistoryAtomic(t *testing.T) {
 	if job.State != JobAssigned || len(job.History) != 2 {
 		t.Fatalf("job state or history mutated on failure: state=%s, history=%+v", job.State, job.History)
 	}
-}
-
-// TestLeadRegistryGetUnknownJobReturnsError: requesting a nonexistent job returns NoSuchJob.
-func TestLeadRegistryGetUnknownJobReturnsError(t *testing.T) {
-	r := newLeadRegistry()
 	_, errMissing := r.get("nonexistent")
 	failsWith(t, LeadGetJobNoSuchJob)("get unknown job", errMissing)
 }
@@ -303,49 +298,11 @@ func TestLeadRegistryTerminalRetryRequiresIdenticalPayload(t *testing.T) {
 	diffBranch.Branch = "branch-2"
 	_, errBranch := r.report(diffBranch, regAt(4))
 	failsWith(t, LeadReportTerminalConflict)("terminal retry with different Branch", errBranch)
-}
 
-// TestLeadRegistryTerminalRetryDifferentAtTimestampRefused: a terminal retry with a different At timestamp is refused.
-func TestLeadRegistryTerminalRetryDifferentAtTimestampRefused(t *testing.T) {
-	r := newLeadRegistry()
-	regSubmit(t, r, regRequest("job-1"), regAt(0))
-	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
-	if got == nil {
-		t.Fatal("node-a did not get job-1")
-	}
-	if _, err := r.report(JobReport{
-		ID:         "job-1",
-		Node:       "node-a",
-		Assignment: got.Assignment,
-		State:      JobRunning,
-		TaskID:     "task-1",
-		Branch:     "branch-1",
-	}, regAt(2)); err != nil {
-		t.Fatalf("start: %v", err)
-	}
-	if _, err := r.report(JobReport{
-		ID:         "job-1",
-		Node:       "node-a",
-		Assignment: got.Assignment,
-		State:      JobDone,
-		TaskID:     "task-1",
-		Branch:     "branch-1",
-		Result:     "success",
-		At:         regAt(3),
-	}, regAt(3)); err != nil {
-		t.Fatalf("done: %v", err)
-	}
-
-	diffAt := JobReport{
-		ID:         "job-1",
-		Node:       "node-a",
-		Assignment: got.Assignment,
-		State:      JobDone,
-		TaskID:     "task-1",
-		Branch:     "branch-1",
-		Result:     "success",
-		At:         regAt(99),
-	}
+	// Retry with changed At timestamp must fail as conflict.
+	diffAt := diffTask
+	diffAt.TaskID = "task-1"
+	diffAt.At = regAt(99)
 	_, errAt := r.report(diffAt, regAt(4))
 	failsWith(t, LeadReportTerminalConflict)("terminal retry with different At", errAt)
 }
