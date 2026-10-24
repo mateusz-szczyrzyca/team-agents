@@ -21,7 +21,7 @@
 
 {{define "act-item"}}<li class="k-{{.Kind}}"><time>{{.TS}}</time> <span class="icon-k">{{.Icon}}</span> <span class="t">{{.Text}}</span></li>{{end}}
 
-{{define "msg-item"}}<li class="{{.Class}} {{.Pair}}"><time>{{.TS}}</time> <b>{{.From}}</b> → {{.To}} <span class="tag">{{.Kind}}</span><div class="t">{{.Text}}</div></li>{{end}}
+{{define "msg-item"}}<li class="{{.Class}} {{.Pair}}"><time>{{.TS}}</time> <span class="route"><b>{{.From}}</b> → {{.To}}</span> <span class="tag">{{.Kind}}</span><div class="t">{{.Text}}</div></li>{{end}}
 
 {{define "task-head"}}<span class="st {{.StatusClass}}">{{.StatusLabel}}</span> <span class="num">{{.Since}}</span>{{if .Stage}} · <span class="stage">{{.Stage}}</span>{{end}}{{end}}
 

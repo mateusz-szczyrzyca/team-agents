@@ -75,6 +75,45 @@ type taskRow struct {
 }
 
 // makeRow builds a task's row exactly as the panel does (ui.go: row).
+// dashRecent is how long a finished task stays on the dashboard even when acknowledged — investigations are
+// acknowledged as soon as their result is delivered.
+const dashRecent = 24 * time.Hour
+
+// dashTasks are the dashboard's tasks: the active ones in the panel's order, then the finished ones — not yet
+// acknowledged, or finished within dashRecent — newest first.
+func dashTasks(snap *Snapshot) []*Task {
+	var active, done []*Task
+	for _, t := range snap.All {
+		switch {
+		case t.Active():
+			active = append(active, t)
+		case !t.Acked || time.Since(finishedAt(t)) < dashRecent:
+			done = append(done, t)
+		}
+	}
+	sort.SliceStable(active, func(i, j int) bool {
+		if pi, pj := statusPrio(active[i]), statusPrio(active[j]); pi != pj {
+			return pi < pj
+		}
+		return active[i].ID < active[j].ID
+	})
+	sort.SliceStable(done, func(i, j int) bool {
+		if fi, fj := finishedAt(done[i]), finishedAt(done[j]); !fi.Equal(fj) {
+			return fi.After(fj)
+		}
+		return done[i].ID > done[j].ID
+	})
+	return append(active, done...)
+}
+
+// finishedAt is when a finished task ended (its last activity if FINISHED is missing).
+func finishedAt(t *Task) time.Time {
+	if !t.Finished.IsZero() {
+		return t.Finished
+	}
+	return lastActivity(t)
+}
+
 func makeRow(snap *Snapshot, t *Task) taskRow {
 	r := taskRow{ID: t.ID, Name: t.Label(), Status: t.Status, Repo: t.Repo, Team: t.Team, TeamShort: strings.TrimSuffix(t.Team, "-team")}
 	r.StatusLabel, _ = statusStyle(t.Status)
@@ -89,7 +128,7 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	case t.Active():
 		r.Since = human(time.Since(t.Created))
 	case !t.Finished.IsZero():
-		r.Since = "-" + human(time.Since(t.Finished))
+		r.Since = human(time.Since(t.Finished)) + " ago"
 	}
 	if p := snap.Agents[t.BusName()]; p != nil && p.Task == t.ID && p.Status != "" {
 		r.Stage = "„" + p.Status + "”"
@@ -125,7 +164,7 @@ type dashData struct {
 // dashboard builds the dashboard's data.
 func (s *webServer) dashboard(snap *Snapshot) dashData {
 	d := dashData{Queue: snap.QueueLine(s.cfg.queueMax), Waiting: len(snap.Waiting()), Res: snap.Res}
-	for _, t := range snap.Tasks {
+	for _, t := range dashTasks(snap) {
 		d.Rows = append(d.Rows, makeRow(snap, t))
 	}
 	return d

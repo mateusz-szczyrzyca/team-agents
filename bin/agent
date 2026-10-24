@@ -713,11 +713,21 @@ github_owner() { # repository root → the owner of its GitHub origin ("" when o
   sed -nE 's#^(https://|git@|ssh://git@)github\.com[:/]([^/]+)/.*#\2#p' <<< "$url"
 }
 
-findings_count() { # text — the critical (blocker) + major findings a review reports ("Problems: critical 0, major 2, …")
-  local c m
-  c=$({ grep -oiE '(critical|blocker)[[:space:]:]+[0-9]+' <<< "$1" || (($? == 1)); } | head -1 | grep -oE '[0-9]+$' || (($? == 1)))
-  m=$({ grep -oiE 'major[[:space:]:]+[0-9]+' <<< "$1" || (($? == 1)); } | head -1 | grep -oE '[0-9]+$' || (($? == 1)))
-  echo $(( ${c:-0} + ${m:-0} ))
+count_of() { # text words — the number next to the first of the words: "major 2", "major: 2", "major (2)" or "2 major"
+  local n
+  n=$({ grep -oiE "($2)[[:space:]]*[:=(]?[[:space:]]*[0-9]+" <<< "$1" || (($? == 1)); } | head -1 | grep -oE '[0-9]+$' || (($? == 1)))
+  if [[ -z $n ]]; then
+    n=$({ grep -oiE "[0-9]+[[:space:]]+($2)" <<< "$1" || (($? == 1)); } | head -1 | grep -oE '^[0-9]+' || (($? == 1)))
+  fi
+  echo "${n:-0}"
+}
+
+findings_count() { # text — the critical (blocker) + major problems a review reports, in any usual form: "critical 0,
+  # major 2", "0 critical, 2 major", "**Major:** 2", "| Major | 2 |", "Major (2)" (Markdown emphasis and table bars
+  # are dropped first)
+  local plain
+  plain=$(tr -d '*_`|' <<< "$1" | tr -s ' \t' '  ')
+  echo $(( $(count_of "$plain" 'critical|blocker') + $(count_of "$plain" 'major') ))
 }
 
 review_followup() { # investigator-task-id final — after a --verify review: critical or major findings wake the team
@@ -725,10 +735,17 @@ review_followup() { # investigator-task-id final — after a --verify review: cr
   local id=$1 text=$2 parent n pass ref repo root add out owner args=()
   parent=$(task_field "$id" PARENT_TASK)
   [[ -n $parent ]] || return 0
-  if [[ -s $TASKS/$id/result.md ]]; then text=$(cat "$TASKS/$id/result.md"); fi
+  # the counts are in the final message ("Problems: …") and in the result file; the larger is the one that counts
+  local n2=0
   n=$(findings_count "$text")
-  ((n > 0)) || return 0
+  if [[ -s $TASKS/$id/result.md ]]; then
+    n2=$(findings_count "$(cat "$TASKS/$id/result.md")")
+    text=$(cat "$TASKS/$id/result.md")
+  fi
+  ((n2 > n)) && n=$n2
   pass=$(task_field "$parent" FIX_PASS); pass=${pass:-0}
+  log_info review_findings "task=$parent" "review=$id" "critical_or_major=$n" "fix_pass=$pass"
+  ((n > 0)) || return 0
   ref=$(task_field "$parent" TEAM); ref=${ref:-$parent}
   repo=$(task_field "$parent" REPO_NAME); root=$(task_field "$parent" REPO_ROOT)
   if ((pass < VERIFY_MAX_FIX_PASSES)); then

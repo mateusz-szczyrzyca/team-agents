@@ -144,9 +144,18 @@ pre.intro { font-size: .9rem; }
   .actions .btn { flex: 1; text-align: center; padding: .7rem; }
 }
 
-/* the direction of a bus message ("from → to"): the same direction, the same colour (pairClass in web_views.go) */
-ol.msgs li { border-left: 4px solid transparent; padding-left: .5rem; }
-.pair-0 { border-left-color: #2563eb; } .pair-1 { border-left-color: #16a34a; } .pair-2 { border-left-color: #d97706; }
-.pair-3 { border-left-color: #db2777; } .pair-4 { border-left-color: #7c3aed; } .pair-5 { border-left-color: #0891b2; }
-.pair-6 { border-left-color: #dc2626; } .pair-7 { border-left-color: #65a30d; } .pair-8 { border-left-color: #9333ea; }
-.pair-9 { border-left-color: #ea580c; } .pair-10 { border-left-color: #0d9488; } .pair-11 { border-left-color: #4f46e5; }
+/* the direction of a bus message ("from → to"): the same direction, the same colour (pairClass in web_views.go).
+   The rules name the list item (li.pair-N) to outrank the list's own rule. */
+ol.msgs li { border-left-width: 4px; border-left-style: solid; border-left-color: transparent; padding-left: .5rem; }
+ol.msgs li.pair-0 { border-left-color: #3b82f6; } ol.msgs li.pair-0 .route { color: #3b82f6; }
+ol.msgs li.pair-1 { border-left-color: #22c55e; } ol.msgs li.pair-1 .route { color: #22c55e; }
+ol.msgs li.pair-2 { border-left-color: #f59e0b; } ol.msgs li.pair-2 .route { color: #f59e0b; }
+ol.msgs li.pair-3 { border-left-color: #ec4899; } ol.msgs li.pair-3 .route { color: #ec4899; }
+ol.msgs li.pair-4 { border-left-color: #8b5cf6; } ol.msgs li.pair-4 .route { color: #8b5cf6; }
+ol.msgs li.pair-5 { border-left-color: #06b6d4; } ol.msgs li.pair-5 .route { color: #06b6d4; }
+ol.msgs li.pair-6 { border-left-color: #ef4444; } ol.msgs li.pair-6 .route { color: #ef4444; }
+ol.msgs li.pair-7 { border-left-color: #84cc16; } ol.msgs li.pair-7 .route { color: #84cc16; }
+ol.msgs li.pair-8 { border-left-color: #a855f7; } ol.msgs li.pair-8 .route { color: #a855f7; }
+ol.msgs li.pair-9 { border-left-color: #f97316; } ol.msgs li.pair-9 .route { color: #f97316; }
+ol.msgs li.pair-10 { border-left-color: #14b8a6; } ol.msgs li.pair-10 .route { color: #14b8a6; }
+ol.msgs li.pair-11 { border-left-color: #6366f1; } ol.msgs li.pair-11 .route { color: #6366f1; }
