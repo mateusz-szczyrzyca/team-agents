@@ -298,4 +298,125 @@ func TestLeadRegistryTerminalRetryRequiresIdenticalPayload(t *testing.T) {
 	diffBranch.Branch = "branch-2"
 	_, errBranch := r.report(diffBranch, regAt(4))
 	failsWith(t, LeadReportTerminalConflict)("terminal retry with different Branch", errBranch)
+
+	// Retry with changed At timestamp must fail as conflict.
+	diffAt := diffTask
+	diffAt.TaskID = "task-1"
+	diffAt.At = regAt(99)
+	_, errAt := r.report(diffAt, regAt(4))
+	failsWith(t, LeadReportTerminalConflict)("terminal retry with different At", errAt)
+}
+
+// TestLeadRegistryCumulativeRetryPrefixPreserved: retrying a multi-step cumulative report does not duplicate
+// transitions or corrupt history.
+func TestLeadRegistryCumulativeRetryPrefixPreserved(t *testing.T) {
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+	history := []JobTransition{
+		{State: JobRunning, At: regAt(2)},
+		{State: JobWaiting, At: regAt(3)},
+		{State: JobRunning, At: regAt(4)},
+	}
+	rep := JobReport{
+		ID:          "job-1",
+		Node:        "node-a",
+		Assignment:  got.Assignment,
+		State:       JobRunning,
+		TaskID:      "task-1",
+		Transitions: history,
+	}
+	if _, err := r.report(rep, regAt(4)); err != nil {
+		t.Fatalf("first cumulative report: %v", err)
+	}
+
+	// Retry identical cumulative report.
+	if _, err := r.report(rep, regAt(5)); err != nil {
+		t.Fatalf("retry cumulative report: %v", err)
+	}
+
+	job, err := r.get("job-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	// Total transitions should be 5: queued(0), assigned(1), running(2), waiting(3), running(4)
+	if len(job.History) != 5 {
+		t.Fatalf("history length = %d, want 5 (duplicate transitions detected: %+v)", len(job.History), job.History)
+	}
+}
+
+// TestLeadRegistryCumulativeConflictingPrefixRejected: a cumulative report whose prefix conflicts with
+// previously acknowledged transitions is refused.
+func TestLeadRegistryCumulativeConflictingPrefixRejected(t *testing.T) {
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+	firstRep := JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobRunning,
+		Transitions: []JobTransition{
+			{State: JobRunning, At: regAt(2)},
+		},
+	}
+	if _, err := r.report(firstRep, regAt(2)); err != nil {
+		t.Fatalf("first report: %v", err)
+	}
+
+	// Conflicting prefix: reports waiting at t=2 instead of running at t=2
+	conflictRep := JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobWaiting,
+		Transitions: []JobTransition{
+			{State: JobWaiting, At: regAt(2)},
+		},
+	}
+	_, err := r.report(conflictRep, regAt(3))
+	failsWith(t, LeadReportInvalidState)("conflicting cumulative history prefix", err)
+}
+
+// TestLeadRegistryTransitionsTimestampZeroOrDecreasingRejected: transitions with zero or backward timestamps
+// are rejected.
+func TestLeadRegistryTransitionsTimestampZeroOrDecreasingRejected(t *testing.T) {
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+
+	// Zero timestamp in transition
+	zeroRep := JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobRunning,
+		Transitions: []JobTransition{
+			{State: JobRunning, At: Timestamp{}},
+		},
+	}
+	_, errZero := r.report(zeroRep, regAt(2))
+	failsWith(t, LeadReportInvalidState)("zero transition timestamp", errZero)
+
+	// Decreasing timestamp (before assigned at t=1)
+	pastRep := JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobRunning,
+		Transitions: []JobTransition{
+			{State: JobRunning, At: regAt(0)},
+		},
+	}
+	_, errPast := r.report(pastRep, regAt(2))
+	failsWith(t, LeadReportInvalidState)("decreasing transition timestamp", errPast)
 }
