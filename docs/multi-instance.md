@@ -1,8 +1,10 @@
 # Independent installations and remote jobs
 
 This document specifies the approved v1 design. **Round 1 adds the design, error
-definitions and pending acceptance tests only. No remote job commands, listener,
-daemon or web views are available yet.** Later rounds implement the paths below.
+definitions and pending acceptance tests only. Round 2 implements the internal
+in-memory registry, capability parsing, idempotent submission and atomic routing.
+No persistent registry, remote job commands, listener, daemon or web views are
+available yet.** Later rounds implement the paths below.
 
 ## Boundaries
 
@@ -57,6 +59,44 @@ An ID never creates two jobs. An identical submit returns the existing job; a
 different submission under an existing ID cannot overwrite it. Assignment
 identity changes on requeue/reassignment, including reassignment to the same node,
 so a delayed report from an older assignment cannot authorize a launch.
+
+### Internal core available after round 2
+
+The pure registry validates submissions before changing any state. Logical IDs,
+repository names, agent selectors and node pins use at most 128 ASCII characters:
+an initial letter or digit, followed by letters, digits, dots, underscores or
+hyphens. Requesters are `human` or two such names separated by `@`. These names
+are data; authenticating and binding a remote requester to its node arrives with
+the HTTP boundary in round 4.
+
+Base refs follow Git's one-level ref-name rules, with a leading dash also
+rejected. An optional SHA is exactly 40 or 64 hexadecimal digits; delegated
+requesters must supply it. This is syntax validation, not proof that the commit
+exists. The later node checkout verifies the repository and commit. Task text
+is nonblank and limited to 65,536 bytes.
+
+Capability requirements are a sorted, deduplicated set and hexadecimal SHAs are
+normalized to lowercase before comparing retry identity. Identical retries
+preserve the current state, submission sequence and history. Jobs with equal
+submission timestamps are considered in insertion order. A mutex protects the
+whole in-memory operation; callers receive independent copies of mutable slices.
+This mutex does not replace the cross-process flock planned for round 3.
+
+A heartbeat replaces the node's declaration only after successful validation.
+It returns an existing unstarted assignment before looking for another job;
+otherwise it assigns the oldest matching queued job. Assignment identities are
+nonzero and never reused during the lifetime of this in-memory registry.
+Queued and assigned transition times are retained, and retries add no transition.
+The pure ownership guard checks job existence, assigned node and assignment
+identity; it does not yet implement state reports or authorize a remote caller.
+
+Waiting diagnostics consider the latest accepted declarations of live nodes,
+including the node pin, all required capabilities on one node and matching free
+agents. A node is offline at an age greater than or equal to its TTL. A pending
+unstarted assignment blocks further admission on that node. Missing individual
+capabilities are named first; when capabilities exist only on different nodes,
+the diagnostic lists their whole canonical set. Assignment requeue, durable
+sequence/identity recovery and started-job lifecycle handling remain round 3.
 
 ### Node
 

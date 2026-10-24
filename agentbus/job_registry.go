@@ -1,0 +1,327 @@
+package main
+
+import (
+	"reflect"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Remote job registry of the lead (round 2 of docs/multi-instance.md): the pure in-memory model of jobs,
+// nodes, routing and assignment. Persistence (jobs.json), state reports and HTTP come in later rounds.
+
+// JobState is the lifecycle state of a remote job.
+type JobState string
+
+const (
+	JobQueued   JobState = "queued"   // waiting for a node heartbeat that can take it
+	JobAssigned JobState = "assigned" // given to one node, not yet reported as started
+	JobRunning  JobState = "running"  // the assigned node reported its start
+	JobWaiting  JobState = "waiting"  // running, blocked on a question or a human
+	JobDone     JobState = "done"     // finished with a result
+	JobFailed   JobState = "failed"   // finished without a usable result
+	JobStopped  JobState = "stopped"  // stopped by a cancellation
+)
+
+// Valid reports whether s is one of the defined job states.
+func (s JobState) Valid() bool {
+	switch s {
+	case JobQueued, JobAssigned, JobRunning, JobWaiting, JobDone, JobFailed, JobStopped:
+		return true
+	}
+	return false
+}
+
+// UnmarshalJSON (json.Unmarshaler, hence the plain error type) rejects unknown states with a *ValueError.
+func (s *JobState) UnmarshalJSON(data []byte) error {
+	return unmarshalEnum(data, s, "job state").asError()
+}
+
+// JobTransition is one entry of a job's history: the state it entered and when the lead recorded it.
+type JobTransition struct {
+	State JobState  // the state entered
+	At    Timestamp // when the lead recorded the transition (the submit or heartbeat time)
+}
+
+// JobRequest is a submission, as the lead receives it. Every field is compared on resubmission.
+type JobRequest struct {
+	ID         string   // submitter-chosen idempotency key, validated before use
+	Repository string   // logical repository name, resolved through the node's NODE_REPOS
+	BaseRef    string   // git ref name, validated before any git invocation
+	BaseSHA    string   // exact commit (40 or 64 hex digits, either case); optional for "human", required for an agent
+	Requires   []string // capabilities the node must declare, all of them
+	Selector   string   // a tier (normal or worker) or one configured agent name
+	Target     string   // optional node name the job is pinned to; empty means any node
+	Task       string   // task text, at most 65536 bytes
+	Requester  string   // "human" or "<agent>@<instance>", both parts valid identifiers; routing data only
+}
+
+// Job is a registered job as the registry holds it.
+type Job struct {
+	Request    JobRequest      // the submitted fields, copied when stored and when returned
+	Seq        uint64          // submission order; the oldest queued job has the lowest value
+	State      JobState        // current lifecycle state
+	Node       string          // the node the job is assigned to; empty while queued
+	Assignment uint64          // identity of the current assignment, greater than 0 once assigned, never reused
+	History    []JobTransition // every state entered, in order; queued first, then assigned
+}
+
+// FreeAgent is a configured agent of a node that is free at the time of a heartbeat.
+type FreeAgent struct {
+	Name string // the configured agent name on that node
+	Tier Tier   // the tier of that agent
+}
+
+// NodeHeartbeat is what a node declares in one heartbeat. It replaces the node's previous declaration.
+type NodeHeartbeat struct {
+	Node         string      // the authenticated node name (the short device name)
+	Capabilities []string    // declared capabilities, validated like JobRequest.Requires
+	FreeAgents   []FreeAgent // configured agents that are free now; empty when none is free
+	WebURL       string      // the node's AGENT_WEB_URL, shown by the lead for waiting jobs; may be empty
+}
+
+// leadRegistry is the lead's job and node registry. Every method is atomic with respect to the others.
+type leadRegistry struct {
+	mu             sync.Mutex         // protects the entire registry, including returned snapshots
+	jobs           map[string]*Job    // jobs by submitter ID; pointers never escape the lock
+	order          []string           // submission order, including equal-timestamp submissions
+	nodes          map[string]jobNode // latest accepted declaration of each authenticated node
+	nextSequence   uint64             // next submission sequence; duplicates do not consume one
+	nextAssignment uint64             // assignment evidence; never reused within this registry
+}
+
+// jobNode keeps trusted receipt time separate from the node's declaration.
+type jobNode struct {
+	Heartbeat NodeHeartbeat // cloned snapshot, replaced only after validation succeeds
+	LastSeen  Timestamp     // lead's receipt time; never advanced by invalid heartbeats
+}
+
+// newLeadRegistry returns an empty registry.
+func newLeadRegistry() *leadRegistry {
+	return &leadRegistry{jobs: make(map[string]*Job), nodes: make(map[string]jobNode)}
+}
+
+// submit registers a job or returns the existing one with the same ID when the submission is identical.
+// It returns a copy of the stored job. Validation failures and a different submission under an existing ID
+// are refused; a refused submission never changes the registry.
+func (r *leadRegistry) submit(req JobRequest, now Timestamp) (Job, *LeadSubmitError) {
+	req, err := validateJobRequest(req)
+	if err != nil {
+		return Job{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if old, ok := r.jobs[req.ID]; ok {
+		if !reflect.DeepEqual(old.Request, req) {
+			return Job{}, opErr(LeadSubmitJobConflict, "job %q already has a different submission", req.ID)
+		}
+		return cloneJob(*old), nil
+	}
+	r.nextSequence++
+	job := &Job{Request: req, Seq: r.nextSequence, State: JobQueued,
+		History: []JobTransition{{State: JobQueued, At: now}}}
+	r.jobs[req.ID] = job
+	r.order = append(r.order, req.ID)
+	return cloneJob(*job), nil
+}
+
+// validateJobRequest normalizes set-valued requirements before identity comparison, without mutating input.
+func validateJobRequest(req JobRequest) (JobRequest, *LeadSubmitError) {
+	if req.ID == "" || req.Repository == "" || req.BaseRef == "" || req.Selector == "" ||
+		strings.TrimSpace(req.Task) == "" || req.Requester == "" {
+		return JobRequest{}, opErr(LeadSubmitMissingArgument, "id, repository, base ref, selector, task and requester are required")
+	}
+	if !validJobIdentifier(req.ID) {
+		return JobRequest{}, opErr(LeadSubmitInvalidID, "job ID %q must be a bounded logical identifier", req.ID)
+	}
+	if !validJobBase(req.BaseRef, req.BaseSHA) || req.Requester != "human" && req.BaseSHA == "" {
+		return JobRequest{}, opErr(LeadSubmitInvalidBase, "use a ref name and an exact SHA for delegated jobs")
+	}
+	if !validJobIdentifier(req.Repository) || !validJobIdentifier(req.Selector) ||
+		req.Target != "" && !validJobIdentifier(req.Target) || !validJobRequester(req.Requester) {
+		return JobRequest{}, opErr(LeadSubmitMalformedBody, "repository, selector, target and requester must be logical names")
+	}
+	if len(req.Task) > 65536 {
+		return JobRequest{}, opErr(LeadSubmitTaskTooLarge, "task text exceeds 65536 bytes")
+	}
+	caps, err := canonicalJobCapabilities(req.Requires)
+	if err != nil {
+		return JobRequest{}, opErr(LeadSubmitInvalidCapabilities, "%v", err)
+	}
+	req.Requires = caps
+	req.BaseSHA = strings.ToLower(req.BaseSHA)
+	return req, nil
+}
+
+// validJobRequester checks routing data only; the transport separately binds an agent to its submitting node.
+func validJobRequester(s string) bool {
+	if s == "human" {
+		return true
+	}
+	agent, node, found := strings.Cut(s, "@")
+	return found && validJobIdentifier(agent) && validJobIdentifier(node)
+}
+
+// canonicalJobCapabilities produces an owned sorted set; nil and empty input have the same identity.
+func canonicalJobCapabilities(raw []string) ([]string, *CapsParseError) {
+	caps, err := parseCapabilities(raw)
+	if err != nil {
+		return nil, err
+	}
+	var result []string
+	for _, capability := range caps {
+		result = append(result, capability.String())
+	}
+	return result, nil
+}
+
+// cloneJob keeps mutable slices owned by the registry even after a result leaves its lock.
+func cloneJob(job Job) Job {
+	job.Request.Requires = slices.Clone(job.Request.Requires)
+	job.History = slices.Clone(job.History)
+	return job
+}
+
+// heartbeat records the node's declaration at time now and returns the job assigned to it, or nil when none
+// fits. A node with an unacknowledged assignment gets that same assignment back (a lost reply is retried,
+// never a second job). A job is assigned at most once, and only to one heartbeat that matches it.
+func (r *leadRegistry) heartbeat(h NodeHeartbeat, now Timestamp) (*Job, *LeadHeartbeatError) {
+	if !validJobIdentifier(h.Node) {
+		return nil, opErr(LeadHeartbeatMalformedBody, "heartbeat needs a valid node name")
+	}
+	caps, err := canonicalJobCapabilities(h.Capabilities)
+	if err != nil {
+		return nil, opErr(LeadHeartbeatInvalidCapabilities, "%v", err)
+	}
+	seen := make(map[string]bool, len(h.FreeAgents))
+	for _, agent := range h.FreeAgents {
+		if !validJobIdentifier(agent.Name) || !agent.Tier.Valid() || seen[agent.Name] {
+			return nil, opErr(LeadHeartbeatMalformedBody, "free agents need unique configured names and known tiers")
+		}
+		seen[agent.Name] = true
+	}
+	h.Capabilities = caps
+	h.FreeAgents = slices.Clone(h.FreeAgents)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.nodes[h.Node] = jobNode{Heartbeat: h, LastSeen: now}
+	if job := r.outstanding(h.Node); job != nil {
+		snapshot := cloneJob(*job)
+		return &snapshot, nil
+	}
+	for _, id := range r.order {
+		job := r.jobs[id]
+		if job.State != JobQueued || !jobNodeMatches(job.Request, h) {
+			continue
+		}
+		r.nextAssignment++
+		job.State, job.Node, job.Assignment = JobAssigned, h.Node, r.nextAssignment
+		job.History = append(job.History, JobTransition{State: JobAssigned, At: now})
+		snapshot := cloneJob(*job)
+		return &snapshot, nil
+	}
+	return nil, nil
+}
+
+// outstanding finds only unstarted assignments; callers hold mu. Running jobs must never be offered for launch.
+func (r *leadRegistry) outstanding(node string) *Job {
+	for _, id := range r.order {
+		job := r.jobs[id]
+		if job.Node == node && job.State == JobAssigned {
+			return job
+		}
+	}
+	return nil
+}
+
+// jobNodeMatches uses the same conjunction for assignment and its diagnostic, including any node pin.
+func jobNodeMatches(req JobRequest, h NodeHeartbeat) bool {
+	return (req.Target == "" || req.Target == h.Node) && jobHasCapabilities(h.Capabilities, req.Requires) &&
+		jobHasFreeAgent(h.FreeAgents, req.Selector)
+}
+
+// jobHasCapabilities compares canonical strings; all inputs were validated before storage.
+func jobHasCapabilities(available, required []string) bool {
+	for _, capability := range required {
+		if !slices.Contains(available, capability) {
+			return false
+		}
+	}
+	return true
+}
+
+// jobHasFreeAgent checks capacity, leaving the actual configured agent selection to the node.
+func jobHasFreeAgent(free []FreeAgent, selector string) bool {
+	tier, err := parseEnum[Tier](selector, "agent tier")
+	for _, agent := range free {
+		if err == nil && agent.Tier == tier || err != nil && agent.Name == selector {
+			return true
+		}
+	}
+	return false
+}
+
+// waitReason explains why the queued job id is not assigned, naming the first blocker: a required capability
+// no live node declares ("no node with hw:rp2350"), or no live node with a free agent of the selector's tier
+// ("no free normal agent"). A node is live when now minus its last heartbeat is less than ttl; at ttl or more
+// it is offline and does not count. A node with an unstarted assignment cannot take another job, so it does not
+// count as free either. It returns "" when the job is not queued or no blocker is known.
+func (r *leadRegistry) waitReason(id string, now Timestamp, ttl time.Duration) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok || job.State != JobQueued {
+		return ""
+	}
+	var live []NodeHeartbeat
+	for _, node := range r.nodes {
+		if now.Sub(node.LastSeen.Time) < ttl && (job.Request.Target == "" || node.Heartbeat.Node == job.Request.Target) {
+			live = append(live, node.Heartbeat)
+		}
+	}
+	for _, capability := range job.Request.Requires {
+		found := false
+		for _, node := range live {
+			if slices.Contains(node.Capabilities, capability) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return "no node with " + capability
+		}
+	}
+	capable := false
+	for _, node := range live {
+		if !jobHasCapabilities(node.Capabilities, job.Request.Requires) {
+			continue
+		}
+		capable = true
+		if r.outstanding(node.Node) == nil && jobNodeMatches(job.Request, node) {
+			return ""
+		}
+	}
+	if !capable && len(job.Request.Requires) > 0 {
+		return "no node with " + strings.Join(job.Request.Requires, " and ")
+	}
+	return "no free " + job.Request.Selector + " agent"
+}
+
+// checkAssignment decides whether a state report from node about job id under assignment may be accepted.
+// It returns nil only for the node and the assignment currently recorded for the job.
+func (r *leadRegistry) checkAssignment(id, node string, assignment uint64) *LeadReportError {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok {
+		return opErr(LeadReportNoSuchJob, "no job %q", id)
+	}
+	if job.Node != node {
+		return opErr(LeadReportUnauthorized, "job %q is not assigned to node %q", id, node)
+	}
+	if assignment == 0 || job.Assignment != assignment {
+		return opErr(LeadReportStaleAssignment, "job %q has a different assignment", id)
+	}
+	return nil
+}

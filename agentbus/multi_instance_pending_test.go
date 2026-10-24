@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 // Pending acceptance roadmap for the multi-instance jobs (task 20261023-151549-openrouter-haiku).
 // Each test is a skipped placeholder for behaviour that a later round implements. A round removes
@@ -9,27 +12,166 @@ import "testing"
 
 // TestLeadRegistrySubmitIsIdempotent: resubmitting the same job ID returns the existing job.
 func TestLeadRegistrySubmitIsIdempotent(t *testing.T) {
-	t.Skip("pending: submit with the same job ID is the same job (no duplicate), round 2")
+	r := newLeadRegistry()
+	first := regSubmit(t, r, regRequest("job-1"), regAt(0))
+	again := regSubmit(t, r, regRequest("job-1"), regAt(5))
+	if again.Seq != first.Seq || first.State != JobQueued {
+		t.Fatalf("resubmission = %+v, want the queued job %+v", again, first)
+	}
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(6))
+	if got == nil || got.Request.ID != "job-1" {
+		t.Fatalf("node-a got %+v, want job-1", got)
+	}
+	if extra := regHeartbeat(t, r, regBeat("node-b", nil, FreeAgent{Name: "beta", Tier: TierNormal}), regAt(7)); extra != nil {
+		t.Fatalf("resubmission created a second queued job: node-b got %+v", extra)
+	}
 }
 
 // TestLeadRegistryHeartbeatAssignsOneJobAtomically: one heartbeat gets at most one job, never twice.
 func TestLeadRegistryHeartbeatAssignsOneJobAtomically(t *testing.T) {
-	t.Skip("pending: a heartbeat takes at most one job and a job is never assigned twice, round 2")
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	regSubmit(t, r, regRequest("job-2"), regAt(0))
+	alpha := FreeAgent{Name: "alpha", Tier: TierNormal}
+	beta := FreeAgent{Name: "beta", Tier: TierNormal}
+
+	first := regHeartbeat(t, r, regBeat("node-a", nil, alpha, beta), regAt(1))
+	if first == nil || first.Request.ID != "job-1" || first.State != JobAssigned {
+		t.Fatalf("node-a with two free agents got %+v, want exactly job-1 assigned", first)
+	}
+	second := regHeartbeat(t, r, regBeat("node-b", nil, alpha), regAt(2))
+	if second == nil || second.Request.ID != "job-2" {
+		t.Fatalf("node-b got %+v, want job-2 (job-1 is already assigned)", second)
+	}
+	if third := regHeartbeat(t, r, regBeat("node-c", nil, alpha), regAt(3)); third != nil {
+		t.Fatalf("node-c got %+v, but no queued job is left", third)
+	}
 }
 
 // TestLeadRegistryRoutesByCapabilityAndAgent: a job goes only to a node with all required capabilities and a free agent of its tier.
 func TestLeadRegistryRoutesByCapabilityAndAgent(t *testing.T) {
-	t.Skip("pending: routing by requires and free agent tier or name, oldest queued job first, round 2")
+	normal := FreeAgent{Name: "alpha", Tier: TierNormal}
+
+	t.Run("every required capability", func(t *testing.T) {
+		r := newLeadRegistry()
+		req := regRequest("job-1")
+		req.Requires = []string{"os:linux", "hw:rp2350"}
+		regSubmit(t, r, req, regAt(0))
+		if got := regHeartbeat(t, r, regBeat("node-a", []string{"os:linux"}, normal), regAt(1)); got != nil {
+			t.Fatalf("node-a without hw:rp2350 got %+v", got)
+		}
+		got := regHeartbeat(t, r, regBeat("node-b", []string{"os:linux", "hw:rp2350"}, normal), regAt(2))
+		if got == nil || got.Node != "node-b" {
+			t.Fatalf("node-b with every capability got %+v, want job-1", got)
+		}
+	})
+
+	t.Run("agent tier", func(t *testing.T) {
+		r := newLeadRegistry()
+		req := regRequest("job-1")
+		req.Selector = string(TierWorker)
+		regSubmit(t, r, req, regAt(0))
+		if got := regHeartbeat(t, r, regBeat("node-a", nil, normal), regAt(1)); got != nil {
+			t.Fatalf("node-a with only a normal agent free got %+v for a worker job", got)
+		}
+		worker := FreeAgent{Name: "gamma", Tier: TierWorker}
+		if got := regHeartbeat(t, r, regBeat("node-b", nil, worker), regAt(2)); got == nil || got.Request.ID != "job-1" {
+			t.Fatalf("node-b with a free worker got %+v, want job-1", got)
+		}
+	})
+
+	t.Run("agent name", func(t *testing.T) {
+		r := newLeadRegistry()
+		req := regRequest("job-1")
+		req.Selector = "alpha"
+		regSubmit(t, r, req, regAt(0))
+		if got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "beta", Tier: TierNormal}), regAt(1)); got != nil {
+			t.Fatalf("node-a without agent alpha got %+v", got)
+		}
+		if got := regHeartbeat(t, r, regBeat("node-b", nil, normal), regAt(2)); got == nil || got.Request.ID != "job-1" {
+			t.Fatalf("node-b with agent alpha free got %+v, want job-1", got)
+		}
+	})
+
+	t.Run("target pin", func(t *testing.T) {
+		r := newLeadRegistry()
+		req := regRequest("job-1")
+		req.Target = "node-b"
+		regSubmit(t, r, req, regAt(0))
+		if got := regHeartbeat(t, r, regBeat("node-a", nil, normal), regAt(1)); got != nil {
+			t.Fatalf("node-a got a job pinned to node-b: %+v", got)
+		}
+		if got := regHeartbeat(t, r, regBeat("node-b", nil, normal), regAt(2)); got == nil || got.Node != "node-b" {
+			t.Fatalf("node-b got %+v, want the pinned job", got)
+		}
+	})
+
+	t.Run("oldest queued job first", func(t *testing.T) {
+		r := newLeadRegistry()
+		regSubmit(t, r, regRequest("job-1"), regAt(0))
+		regSubmit(t, r, regRequest("job-2"), regAt(1))
+		if got := regHeartbeat(t, r, regBeat("node-a", nil, normal), regAt(2)); got == nil || got.Request.ID != "job-1" {
+			t.Fatalf("node-a got %+v, want the oldest job-1", got)
+		}
+	})
 }
 
 // TestLeadRegistryWaitReasonNamesBlocker: a queued job says why it waits ("no node with hw:rp2350", "no free normal agent").
 func TestLeadRegistryWaitReasonNamesBlocker(t *testing.T) {
-	t.Skip("pending: a queued job reports the exact reason it waits, round 2")
+	r := newLeadRegistry()
+	req := regRequest("job-hw")
+	req.Requires = []string{"hw:rp2350"}
+	regSubmit(t, r, req, regAt(0))
+
+	const noNode = "no node with hw:rp2350"
+	if got := r.waitReason("job-hw", regAt(1), regTTL); got != noNode {
+		t.Fatalf("no node at all: reason = %q, want %q", got, noNode)
+	}
+	if got := regHeartbeat(t, r, regBeat("node-a", []string{"os:linux"}), regAt(2)); got != nil {
+		t.Fatalf("node-a without hw got %+v", got)
+	}
+	if got := r.waitReason("job-hw", regAt(3), regTTL); got != noNode {
+		t.Fatalf("live node without hw: reason = %q, want %q", got, noNode)
+	}
+
+	regHeartbeat(t, r, regBeat("node-b", []string{"hw:rp2350"}, FreeAgent{Name: "gamma", Tier: TierWorker}), regAt(4))
+	if got := r.waitReason("job-hw", regAt(5), regTTL); got != "no free normal agent" {
+		t.Fatalf("live node with hw but no free normal agent: reason = %q", got)
+	}
+	// Liveness boundary: node-b heartbeated at 4s; 59s later it is still live, 60s later (ttl) it is offline.
+	if got := r.waitReason("job-hw", regAt(63), regTTL); got != "no free normal agent" {
+		t.Fatalf("node 59s old: reason = %q, want it still live", got)
+	}
+	if got := r.waitReason("job-hw", regAt(64), regTTL); got != noNode {
+		t.Fatalf("node exactly ttl old: reason = %q, want %q (offline at ttl)", got, noNode)
+	}
+
+	if got := r.waitReason("job-hw", regAt(200), regTTL); got != noNode {
+		t.Fatalf("every node stale: reason = %q, want %q (stale nodes do not count)", got, noNode)
+	}
 }
 
 // TestLeadRegistryRejectsReportFromOtherNode: a state report from a node that is not assigned is refused with its cause.
 func TestLeadRegistryRejectsReportFromOtherNode(t *testing.T) {
-	t.Skip("pending: state reports accepted only from the assigned node, cause checked with errors.As, round 2")
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1, so there is no assignment to test")
+	}
+
+	other := r.checkAssignment("job-1", "node-b", got.Assignment)
+	failsWith(t, LeadReportUnauthorized)("node-b reports node-a's job", other)
+	var typed *LeadReportError
+	if !errors.As(error(other), &typed) || typed.Cause != LeadReportUnauthorized {
+		t.Fatalf("errors.As did not find the unauthorized cause: %v", other)
+	}
+
+	if err := r.checkAssignment("job-1", "node-a", got.Assignment); err != nil {
+		t.Fatalf("assigned node-a refused: %v", err)
+	}
+	failsWith(t, LeadReportStaleAssignment)("node-a with a superseded assignment", r.checkAssignment("job-1", "node-a", got.Assignment+1))
+	failsWith(t, LeadReportNoSuchJob)("report about an unknown job", r.checkAssignment("job-x", "node-a", got.Assignment))
 }
 
 // TestLeadRegistryRejectsSkippedTransition: assigned straight to done is refused; running must come first.
