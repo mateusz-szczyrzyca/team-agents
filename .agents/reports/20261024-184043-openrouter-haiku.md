@@ -34,3 +34,10 @@ Coordinator `openrouter-haiku`. Branch `agents/openrouter-haiku/20261024-155041`
 - Round 4 (HTTP listener, Tailscale identity, authorization): not started. Rounds 4–9 to be planned and approved.
 - Board B3–B5 (easy, todo): not done.
 - Skipped tests: 16 remain, all for rounds 4–9.
+
+## Member branches merged (verify gap)
+
+- `agents/codex-1/20261024-155041`: `822ce86` "Verify exact causes for rejected job report replays" (test file `agentbus/job_report_causes_test.go`, +68) merged; `agentbus` tests pass.
+- `agents/gemini-1/20261024-155041`: `ba42d30` "Add round 3 member report for gemini-1" (`.agents/reports/20261024-194956-gemini-1.md`, +23) merged.
+
+Both branches are now ancestors of `agents/openrouter-haiku/20261024-155041`. Round 3 ends at `ROUND_DONE 3/9`; rounds 4–9 are not started.
