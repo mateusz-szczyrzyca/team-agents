@@ -502,6 +502,7 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 			// repeats the current state (an identical retry, a report without a time) changes nothing.
 			if job.State == JobWaiting && !rep.At.IsZero() && at.After(lastAt.Time) {
 				newHistory = append(newHistory, JobTransition{State: JobWaiting, At: at})
+				historyExtended = true
 			}
 		case rep.At.IsZero() && job.State != JobAssigned && !isTerminalJob(rep.State):
 			// Only the first start or a terminal state may omit its time: neither can rewind a job, since a
