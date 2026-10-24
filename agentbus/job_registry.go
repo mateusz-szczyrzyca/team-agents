@@ -445,8 +445,6 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	newHistory := slices.Clone(job.History)
 	prevState := job.State
 	targetState := job.State
-	// historyExtended is true when a cumulative report appends transitions to the recorded history.
-	historyExtended := false
 
 	if len(rep.Transitions) > 0 {
 		if rep.Transitions[len(rep.Transitions)-1].State != rep.State {
@@ -486,7 +484,6 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 			lastAt = tr.At
 		}
 		targetState = currState
-		historyExtended = len(newTransitions) > 0
 	} else {
 		at := rep.At
 		if at.IsZero() {
@@ -502,7 +499,6 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 			// repeats the current state (an identical retry, a report without a time) changes nothing.
 			if job.State == JobWaiting && !rep.At.IsZero() && at.After(lastAt.Time) {
 				newHistory = append(newHistory, JobTransition{State: JobWaiting, At: at})
-				historyExtended = true
 			}
 		case rep.At.IsZero() && job.State != JobAssigned && !isTerminalJob(rep.State):
 			// Only the first start or a terminal state may omit its time: neither can rewind a job, since a
@@ -529,6 +525,8 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	// A report that leaves the state unchanged and adds no transition must not replace a task ID or result
 	// already recorded: an older retry would otherwise overwrite a newer payload (investigator #27, R2;
 	// #28, M1, M2). A cumulative report that adds transitions is newer by its history, so it may update them.
+	// Any appended transition is new progress, not a replay, even when it ends in the recorded state.
+	historyExtended := len(newHistory) > len(job.History)
 	if targetState == prevState && !historyExtended && payloadConflicts(job, rep) {
 		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task, PR or result for job %q", rep.State, rep.ID)
 	}
