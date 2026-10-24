@@ -171,6 +171,10 @@ The next successful heartbeat sends it. A snapshot can cover intermediate states
 missed during an outage; validate the history, including `running` ↔ `waiting`,
 rather than imposing a total order on states. This preserves every transition
 time while avoiding a separate queue of network calls.
+A single report must carry its transition time, except for the first start
+(`assigned` → `running`) and a terminal state: a report without a time that
+changes a non-terminal state cannot be told from a replay of an older report and
+is refused, so a replay cannot rewind a job or overwrite its task ID.
 Lead-owned transitions (assignment, offline requeue and immediate cancellation)
 use at least the preceding history time if the lead clock moves backward, so
 a successful write remains readable after restart.
