@@ -236,7 +236,7 @@ func (r *leadRegistry) heartbeat(h NodeHeartbeat, now Timestamp) (*Job, *LeadHea
 		}
 		r.nextAssignment++
 		job.State, job.Node, job.Assignment = JobAssigned, h.Node, r.nextAssignment
-		job.History = append(job.History, JobTransition{State: JobAssigned, At: now})
+		job.History = append(job.History, JobTransition{State: JobAssigned, At: jobLeadTime(job, now)})
 		snapshot := cloneJob(*job)
 		return &snapshot, nil
 	}
@@ -526,7 +526,7 @@ func (r *leadRegistry) requeueOffline(now Timestamp, ttl time.Duration) []string
 		if !ok || now.Sub(node.LastSeen.Time) >= ttl {
 			job.State = JobQueued
 			job.Node = ""
-			job.History = append(job.History, JobTransition{State: JobQueued, At: now})
+			job.History = append(job.History, JobTransition{State: JobQueued, At: jobLeadTime(job, now)})
 			requeued = append(requeued, id)
 		}
 	}
