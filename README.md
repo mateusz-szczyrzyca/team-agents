@@ -181,6 +181,13 @@ members' branches are merged); if something is missing the coordinator is sent b
 investigator reviews the PR and publishes a GitHub review (as a comment — GitHub does not let an author approve
 their own PR), and you get a notification with the recommendation.
 
+**The fix loop.** When the review finds critical or major problems, the team is woken with them: the review is
+added to its task ("Fix pass 1 of 2"), it fixes them (or disputes one on the PR) and finishes again — and the PR
+is reviewed again, a re-review that first checks the previous findings. After `VERIFY_MAX_FIX_PASSES` (2) fix
+passes with critical or major problems still found, the team is not woken again: the human is mentioned on the
+PR (`AGENT_HUMAN_GITHUB`, default the GitHub owner of the repository) and notified. The review gives, for each
+problem, the simplest fix that resolves it.
+
 ### Checkpoints and resuming
 
 Agents commit and push in small steps and call `checkpoint(summary, next_steps)` after every stage. If you stop
@@ -440,6 +447,7 @@ Then:
 | `AGENT_QUOTA_PAUSE_MIN` | pause after an exhausted quota when the CLI does not say when it resets (default 30 min) |
 | `AGENT_RATE_LIMIT_PAUSE_MIN`, `AGENT_LIMIT_TAIL_LINES` | pause after a rate limit (HTTP 429) without a time (default 5 min); how many last lines of stderr are read for provider limits (default 30) |
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
+| `VERIFY_MAX_FIX_PASSES`, `AGENT_HUMAN_GITHUB` | how many times a `--verify` review wakes the team to fix critical or major problems (default 2); who is then mentioned on the PR (default: the repository's GitHub owner) |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
 | `QUESTIONS_EDITOR`, `VSCODE_SERVER_DIRS` | open new questions files in the connected VS Code window (`vscode`, default) or not (`off`); where VS Code servers live |
@@ -536,6 +544,7 @@ agent run <agent> "task" | -f task.md         start a task (inside the repositor
 agent run --team a,b[,c] [--verify] "task"    start a team (optionally with a final PR review)
 agent run --resume <team|task> ["addition"]   resume from the last checkpoint (same branches; after a merged round: new ones)
 agent run --resume <team|task> --same-round   continue an unmerged round on the same branches (e.g. review fixes)
+agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)
 agent round-size <task>                       size of a task's change against the round limit
 agent status | agents | show <id>            overview, agents, task details
 agent log <id> [--raw]                        follow the runner log (structured records rendered; --raw: JSON)
