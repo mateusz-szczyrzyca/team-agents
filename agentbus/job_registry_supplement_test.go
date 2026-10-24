@@ -189,3 +189,111 @@ func TestRegistryWaitReasonNeedsOneNodeWithAllCapabilities(t *testing.T) {
 		t.Fatalf("reason = %q, want one node that has both capabilities", reason)
 	}
 }
+
+// TestLeadRegistryReportCumulativeHistoryAtomic: a report with an invalid transition anywhere in its history
+// leaves the stored job completely unmutated.
+func TestLeadRegistryReportCumulativeHistoryAtomic(t *testing.T) {
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+	// Transitions: running is valid from assigned, but queued is invalid from running.
+	rep := JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobQueued,
+		Transitions: []JobTransition{
+			{State: JobRunning, At: regAt(2)},
+			{State: JobQueued, At: regAt(3)},
+		},
+	}
+	_, err := r.report(rep, regAt(3))
+	failsWith(t, LeadReportInvalidState)("invalid transition in cumulative history", err)
+
+	job, errGet := r.get("job-1")
+	if errGet != nil {
+		t.Fatalf("get: %v", errGet)
+	}
+	if job.State != JobAssigned || len(job.History) != 2 {
+		t.Fatalf("job state or history mutated on failure: state=%s, history=%+v", job.State, job.History)
+	}
+}
+
+// TestLeadRegistryReportCumulativeHistoryMustMatchFinalState: if transitions are provided, the final transition
+// must match rep.State.
+func TestLeadRegistryReportCumulativeHistoryMustMatchFinalState(t *testing.T) {
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+	rep := JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobDone, // Mismatch with transitions ending at JobRunning
+		Transitions: []JobTransition{
+			{State: JobRunning, At: regAt(2)},
+		},
+	}
+	_, err := r.report(rep, regAt(2))
+	failsWith(t, LeadReportInvalidState)("transitions do not end at rep.State", err)
+}
+
+// TestLeadRegistryTerminalRetryRequiresIdenticalPayload: a terminal retry must match the full payload,
+// not just State and Result.
+func TestLeadRegistryTerminalRetryRequiresIdenticalPayload(t *testing.T) {
+	r := newLeadRegistry()
+	regSubmit(t, r, regRequest("job-1"), regAt(0))
+	got := regHeartbeat(t, r, regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal}), regAt(1))
+	if got == nil {
+		t.Fatal("node-a did not get job-1")
+	}
+	if _, err := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobRunning,
+		TaskID:     "task-1",
+		Branch:     "branch-1",
+	}, regAt(2)); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := r.report(JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobDone,
+		TaskID:     "task-1",
+		Branch:     "branch-1",
+		Result:     "success",
+		At:         regAt(3),
+	}, regAt(3)); err != nil {
+		t.Fatalf("done: %v", err)
+	}
+
+	// Retry with changed TaskID must fail as conflict.
+	diffTask := JobReport{
+		ID:         "job-1",
+		Node:       "node-a",
+		Assignment: got.Assignment,
+		State:      JobDone,
+		TaskID:     "task-2",
+		Branch:     "branch-1",
+		Result:     "success",
+		At:         regAt(3),
+	}
+	_, errTask := r.report(diffTask, regAt(4))
+	failsWith(t, LeadReportTerminalConflict)("terminal retry with different TaskID", errTask)
+
+	// Retry with changed Branch must fail as conflict.
+	diffBranch := diffTask
+	diffBranch.TaskID = "task-1"
+	diffBranch.Branch = "branch-2"
+	_, errBranch := r.report(diffBranch, regAt(4))
+	failsWith(t, LeadReportTerminalConflict)("terminal retry with different Branch", errBranch)
+}
