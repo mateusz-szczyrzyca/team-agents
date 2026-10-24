@@ -445,6 +445,8 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	newHistory := slices.Clone(job.History)
 	prevState := job.State
 	targetState := job.State
+	// historyExtended is true when a cumulative report appends transitions to the recorded history.
+	historyExtended := false
 
 	if len(rep.Transitions) > 0 {
 		if rep.Transitions[len(rep.Transitions)-1].State != rep.State {
@@ -484,6 +486,7 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 			lastAt = tr.At
 		}
 		targetState = currState
+		historyExtended = len(newTransitions) > 0
 	} else {
 		at := rep.At
 		if at.IsZero() {
@@ -517,10 +520,15 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		}
 	}
 
-	// A report that leaves the state unchanged must not replace a payload already recorded: an older retry
-	// would otherwise overwrite a newer one (investigator #27, R2; #28, M2 and result field). Reports that
-	// change the state carry newer payload and are not checked here.
-	if targetState == prevState && payloadConflicts(job, rep) {
+	// Branch and PR URL are immutable once recorded, in every state.
+	if (rep.Branch != "" && job.Branch != "" && rep.Branch != job.Branch) ||
+		(rep.PRURL != "" && job.PRURL != "" && rep.PRURL != job.PRURL) {
+		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch or PR for job %q", rep.State, rep.ID)
+	}
+	// A report that leaves the state unchanged and adds no transition must not replace a task ID or result
+	// already recorded: an older retry would otherwise overwrite a newer payload (investigator #27, R2;
+	// #28, M1, M2). A cumulative report that adds transitions is newer by its history, so it may update them.
+	if targetState == prevState && !historyExtended && payloadConflicts(job, rep) {
 		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task, PR or result for job %q", rep.State, rep.ID)
 	}
 
