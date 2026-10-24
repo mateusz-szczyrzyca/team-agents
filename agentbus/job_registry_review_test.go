@@ -175,3 +175,28 @@ func TestJobReportOmittedTimeReplayCannotRewindProgress(t *testing.T) {
 		t.Fatalf("job rewound to %s with task %q", job.State, job.TaskID)
 	}
 }
+
+// TestJobReportSameStatePayloadCannotBeOverwritten: a same-state report with a different branch than the one
+// already recorded is refused, so an older retry cannot overwrite a newer payload (investigator #27, R2).
+func TestJobReportSameStatePayloadCannotBeOverwritten(t *testing.T) {
+	r := newLeadRegistry()
+	assigned := reviewAssign(t, r, "payload-replay", 1)
+	first := JobReport{ID: "payload-replay", Node: "node-a", Assignment: assigned, State: JobRunning, At: regAt(2), Branch: "branch-a"}
+	if _, err := r.report(first, regAt(2)); err != nil {
+		t.Fatalf("running: %v", err)
+	}
+	newer := JobReport{ID: "payload-replay", Node: "node-a", Assignment: assigned, State: JobRunning, Branch: "branch-b"}
+	if _, err := r.report(newer, regAt(4)); err == nil {
+		t.Fatal("same-state report with a different branch was accepted")
+	}
+	if _, err := r.report(first, regAt(5)); err != nil {
+		t.Fatalf("identical retry: %v", err)
+	}
+	job, err := r.get("payload-replay")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if job.Branch != "branch-a" {
+		t.Fatalf("branch overwritten to %q", job.Branch)
+	}
+}
