@@ -88,12 +88,18 @@ func TestJobReportRepeatedWaitingIsNotANewTransition(t *testing.T) {
 	if _, err := r.report(waiting, regAt(3)); err != nil {
 		t.Fatalf("waiting: %v", err)
 	}
-	before, _ := r.get("repeat-waiting")
+	before, errBefore := r.get("repeat-waiting")
+	if errBefore != nil {
+		t.Fatalf("get before: %v", errBefore)
+	}
 	waiting.At = Timestamp{}
 	if _, err := r.report(waiting, regAt(5)); err != nil {
 		t.Fatalf("repeated waiting: %v", err)
 	}
-	after, _ := r.get("repeat-waiting")
+	after, errAfter := r.get("repeat-waiting")
+	if errAfter != nil {
+		t.Fatalf("get after: %v", errAfter)
+	}
 	if len(after.History) != len(before.History) {
 		t.Fatalf("repeated waiting added %d transition(s)", len(after.History)-len(before.History))
 	}
