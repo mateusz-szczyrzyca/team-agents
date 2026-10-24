@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Companion roadmap for cases that the design (docs/multi-instance.md) requires and that
@@ -43,17 +46,76 @@ func TestLeadRegistryCancelUnacknowledgedAssignmentIsImmediate(t *testing.T) {
 
 // TestLeadRegistryFinishedJobsKeptThirtyDays: finished jobs stay visible for 30 days and are then removed.
 func TestLeadRegistryFinishedJobsKeptThirtyDays(t *testing.T) {
-	t.Skip("pending: finished jobs are kept for 30 days, round 3")
+	b := newBus(t)
+	finished := regAt(10)
+	for _, state := range []JobState{JobDone, JobFailed, JobStopped} {
+		storeRun(t, b, regAt(0), func(r *leadRegistry) {
+			job := regSubmit(t, r, regRequest(string(state)), regAt(0))
+			r.jobs[job.Request.ID].State = state
+			r.jobs[job.Request.ID].History = append(r.jobs[job.Request.ID].History, JobTransition{State: state, At: finished})
+		})
+	}
+	storeRun(t, b, regAt(0), func(r *leadRegistry) { regSubmit(t, r, regRequest("unfinished"), regAt(0)) })
+	before := Timestamp{Time: finished.Add(30*24*time.Hour - time.Nanosecond)}
+	storeRun(t, b, before, func(r *leadRegistry) {
+		if len(r.jobs) != 4 {
+			t.Fatalf("before expiry: got %d jobs, want 4", len(r.jobs))
+		}
+	})
+	storeRun(t, b, Timestamp{Time: finished.Add(30 * 24 * time.Hour)}, func(r *leadRegistry) {
+		if len(r.jobs) != 1 || r.jobs["unfinished"] == nil {
+			t.Fatalf("expiry retained wrong jobs: %+v", r.jobs)
+		}
+		if len(r.order) != 1 || r.order[0] != "unfinished" {
+			t.Fatalf("expiry left stale ordering: %v", r.order)
+		}
+	})
 }
 
 // TestLeadRegistryAbsentJobsFileIsEmpty: a missing jobs.json is an empty registry, not an error.
 func TestLeadRegistryAbsentJobsFileIsEmpty(t *testing.T) {
-	t.Skip("pending: absent jobs.json reads as an empty registry, round 3")
+	b := newBus(t)
+	called := false
+	storeRun(t, b, regAt(0), func(r *leadRegistry) {
+		called = true
+		if len(r.jobs) != 0 || len(r.nodes) != 0 {
+			t.Fatal("absent file did not load empty registry")
+		}
+		regSubmit(t, r, regRequest("first"), regAt(0))
+	})
+	if !called {
+		t.Fatal("registry operation was not invoked")
+	}
+	storeRun(t, &Bus{dir: b.dir}, regAt(1), func(r *leadRegistry) {
+		if r.jobs["first"] == nil {
+			t.Fatal("job missing after reopening store")
+		}
+	})
+	if _, err := os.Stat(b.path("state.json")); !os.IsNotExist(err) {
+		t.Fatalf("job transaction touched ordinary state: %v", err)
+	}
 }
 
 // TestLeadRegistryCorruptJobsFileFailsStorage: a corrupt jobs.json fails with a typed storage cause and is never reset silently.
 func TestLeadRegistryCorruptJobsFileFailsStorage(t *testing.T) {
-	t.Skip("pending: corrupt jobs.json is a typed storage failure, never reset to empty, round 3")
+	for _, data := range []string{"{broken", "", "null", "{}", `{"Version":2}`} {
+		t.Run(fmt.Sprintf("%q", data), func(t *testing.T) {
+			b := newBus(t)
+			if err := os.WriteFile(b.path("jobs.json"), []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			err := transactJobs(b, LeadSubmitStorage, regAt(0), func(*leadRegistry) *LeadSubmitError { called = true; return nil })
+			failsWith(t, LeadSubmitStorage)("corrupt registry", err)
+			if called {
+				t.Fatal("callback ran on corrupt storage")
+			}
+			after, readErr := os.ReadFile(b.path("jobs.json"))
+			if readErr != nil || !bytes.Equal(after, []byte(data)) {
+				t.Fatalf("corruption overwritten: %q, %v", after, readErr)
+			}
+		})
+	}
 }
 
 // TestLeadRegistryStopRequestReturnedUntilAcknowledged: a durable stop request is returned in heartbeats until the node acknowledges it.
