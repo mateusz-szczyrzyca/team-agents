@@ -4,17 +4,19 @@
 
 load helpers
 
-setup_rotation() {
-  source "$REPO_ROOT/bin/agent"
+# investigators — after `source bin/agent` in the test itself (sourced inside a helper, the configuration's
+# declare -A arrays would be local to the helper and gone when it returns)
+investigators() {
   # three investigators: two at Anthropic, one at OpenAI (sorted: inv-a, inv-b, inv-c); read by the sourced script
+  # shellcheck disable=SC2034,SC2154 # an associative array, declared by the sourced configuration
+  INVESTIGATORS_TYPE=([inv-a]=claude [inv-b]=claude [inv-c]=codex)   # the test's own (sourced) arrays
   # shellcheck disable=SC2034
-  declare -gA INVESTIGATORS_TYPE=([inv-a]=claude [inv-b]=claude [inv-c]=codex)
-  # shellcheck disable=SC2034
-  declare -gA INVESTIGATORS_MODEL=()
+  INVESTIGATORS_MODEL=()
 }
 
 @test "the next investigator follows the last one, preferring another provider" {
-  setup_rotation
+  source "$REPO_ROOT/bin/agent"
+  investigators
   [ "$(pick_investigator "" inv-a inv-b inv-c)" = inv-a ]      # none yet: the first
   [ "$(pick_investigator inv-a inv-a inv-b inv-c)" = inv-c ]   # after Anthropic: OpenAI, not the next Anthropic one
   [ "$(pick_investigator inv-c inv-a inv-b inv-c)" = inv-a ]   # after OpenAI: the next one, at Anthropic
@@ -25,7 +27,8 @@ setup_rotation() {
 }
 
 @test "the last investigator is remembered, and the next free one is picked after it" {
-  setup_rotation
+  source "$REPO_ROOT/bin/agent"
+  investigators
   [ "$(free_investigator)" = inv-a ]
   remember_investigator inv-a
   [ "$(cat "$AGENTS_HOME/last-investigator")" = inv-a ]
