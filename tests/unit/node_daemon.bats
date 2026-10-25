@@ -43,3 +43,17 @@ teardown() {
   [ "$rc" -eq 0 ]
   rm "$HOME/node.pid"
 }
+
+@test "prepare_job_task tags created task with JOB_ID and JOB_ASSIGNMENT" {
+  source "$REPO_ROOT/bin/agent"
+  # shellcheck disable=SC2034 # NODE_REPOS is read by prepare_job_task
+  declare -gA NODE_REPOS=([repo]="$HOME/repo")
+  cd "$HOME/repo" || return 1
+  local first
+  first=$(git rev-parse HEAD)
+  local id
+  id=$( ( exec 10>&-; prepare_job_task job-123 solo repo main "$first" "task text" 42 && printf '%s\n' "$NEW_ID" ) )
+  [ -n "$id" ]
+  [ "$(task_field "$id" JOB_ID)" = "job-123" ]
+  [ "$(task_field "$id" JOB_ASSIGNMENT)" = "42" ]
+}
