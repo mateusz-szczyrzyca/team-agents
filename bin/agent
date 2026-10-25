@@ -2516,6 +2516,9 @@ prepare_job_task() {
     log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=${CREATE_TASK_ERROR:-task worktree could not be created}"
     return 1
   fi
+  meta_set "$NEW_ID" JOB_ID "$job"
+  [[ -z ${7:-} ]] || meta_set "$NEW_ID" JOB_ASSIGNMENT "$7"
+  [[ -z ${LEAD_URL:-} ]] || meta_set "$NEW_ID" JOB_LEAD "$LEAD_URL"
   unlock_task_ids
 }
 
