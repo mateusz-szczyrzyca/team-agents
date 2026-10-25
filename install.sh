@@ -216,6 +216,18 @@ UNIT
   else
     echo "  no systemd user session here — run the lead with: agent lead"
   fi
+else
+  # A unit left by an earlier install would run `agent lead` without LEAD_LISTEN and restart forever.
+  if [[ -e "$UNIT_DIR/agentlead.service" ]]; then
+    if systemctl --user show-environment >/dev/null 2>&1; then
+      if ! systemctl --user disable --now agentlead.service; then
+        echo "  WARNING: agentlead.service could not be stopped and disabled (stop it by hand: systemctl --user disable --now agentlead)"
+      fi
+      systemctl --user daemon-reload
+    fi
+    rm -f "$UNIT_DIR/agentlead.service"
+    echo "» lead: LEAD_LISTEN is not set — removed agentlead.service"
+  fi
 fi
 
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "WARNING: add $BIN to your PATH (e.g. in ~/.bashrc)";; esac

@@ -146,14 +146,14 @@ The path unit (`agent-<task>-answers-<round>.path`) does not survive a reboot of
 - **Investigators** (`INVESTIGATORS_TYPE`) are expensive models in a shared queue. An agent stuck on a hard
   problem calls `request_investigation`; it ends its turn, an investigator works on a copy of its branch, and
   the agent resumes with the result and must record a decision before acting on it. The queue holds one
-  request in progress per investigator plus `INVESTIGATION_QUEUE_MAX` waiting ones.
+  request in progress per investigator plus `INVESTIGATION_QUEUE_MAX` waiting ones. Requests rotate across the
+  investigators: each goes to the next free one after the last one, preferring another provider than the last
+  one's — no provider gets every investigation and review.
 
 **Why mix tiers and providers.** Every subscription has usage limits (per few hours and per week) and every API
 key has a budget. Splitting the agents into CLI types and tiers spreads the load and the token usage across
 providers and accounts:
 
-  Requests rotate across the investigators: each goes to the next free one after the last one, preferring
-  another provider than the last one's — no provider gets every investigation and review.
 - normal agents of different types (for example `claude-1`, `codex-1`, `gemini-1`) draw on three separate
   subscriptions, so a team can work in parallel without one account hitting its limit;
 - the token-hungry mechanical work (reading many files, long command output) goes to workers on pay-per-token
@@ -644,7 +644,9 @@ can be the **lead**, which keeps a job queue and the list of nodes; remote jobs 
 - `INSTANCE_NAME` is this installation's name on the lead (default: the short host name, which must match this machine's Tailscale device name); `NODE_TTL_SEC` (default 90)
   is how long a silent node stays online.
 - `agent lead` runs the listener in the foreground. `install.sh` installs and starts the `agentlead.service` user
-  unit only when `LEAD_LISTEN` is set.
+  unit only when `LEAD_LISTEN` is set; a unit left by an earlier install is stopped, disabled and removed when it
+  is not. A rejected socket peer is logged as `lead_peer_rejected` with the reason (a denied device or a failed
+  `tailscale whois`).
 - The HTTP API (heartbeat, job submission, state reports, cancel, and the reads `GET /v1/jobs`, `GET /v1/jobs/{id}`,
   `GET /v1/nodes`) is available for the node daemon and tests. Requests are limited to 256 KiB; JSON uses the Go
   field names (PascalCase) and times are RFC3339Nano. The lead keeps its jobs in `bus/jobs.json` (see
