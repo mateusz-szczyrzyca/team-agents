@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"net"
+	"net/http"
 	"net/netip"
 	"testing"
 	"time"
@@ -111,4 +114,75 @@ func TestParseLeadConfigTTL(t *testing.T) {
 	if cfg.ttl != 5*time.Second {
 		t.Errorf("ttl = %v, want 5s", cfg.ttl)
 	}
+}
+
+// freeLoopbackPort returns a port nothing listens on at the moment of the call.
+func freeLoopbackPort(t *testing.T) netip.AddrPort {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := netip.MustParseAddrPort(ln.Addr().String())
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close probe listener: %v", err)
+	}
+	return addr
+}
+
+// TestServeLeadAnswersAndStops checks that the listener serves the lead API on loopback and
+// shuts down cleanly when its context ends, releasing the port.
+func TestServeLeadAnswersAndStops(t *testing.T) {
+	ap := freeLoopbackPort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan *LeadServeError, 1)
+	go func() {
+		done <- runLead(ctx, leadConfig{dir: t.TempDir(), listen: ap, node: "lead-pi", ttl: 90 * time.Second})
+	}()
+	client := &http.Client{Timeout: 5 * time.Second}
+	url := "http://" + ap.String() + "/v1/nodes"
+	var resp *http.Response
+	var err error
+	for i := 0; i < 50; i++ {
+		resp, err = client.Get(url)
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("close response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET %s: status %d, want 200", url, resp.StatusCode)
+	}
+	cancel()
+	if serr := <-done; serr != nil {
+		t.Fatalf("runLead after cancel: %v", serr)
+	}
+	if conn, derr := net.DialTimeout("tcp", ap.String(), time.Second); derr == nil {
+		if err := conn.Close(); err != nil {
+			t.Fatalf("close probe connection: %v", err)
+		}
+		t.Errorf("port %s still accepts connections after shutdown", ap)
+	}
+}
+
+// TestServeLeadListenFailed checks that an address already in use is a ListenFailed cause.
+func TestServeLeadListenFailed(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("close listener: %v", err)
+		}
+	})
+	ap := netip.MustParseAddrPort(ln.Addr().String())
+	serr := runLead(context.Background(), leadConfig{dir: t.TempDir(), listen: ap, node: "lead-pi", ttl: time.Minute})
+	failsWith(t, LeadServeListenFailed)(ap.String(), serr)
 }

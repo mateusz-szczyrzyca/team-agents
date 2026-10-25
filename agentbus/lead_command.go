@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/netip"
 	"strings"
 	"time"
@@ -94,4 +95,10 @@ func parseLeadConfig(args []string) (leadConfig, *LeadServeError) {
 		return leadConfig{}, opErr(LeadServeBadFlags, "--ttl %v must be a positive duration, e.g. 90s", *ttl)
 	}
 	return leadConfig{dir: *dir, listen: addr, node: *node, allowed: allow, ttl: *ttl}, nil
+}
+
+// runLead runs the lead's HTTP listeners until ctx is done, then shuts them down. A listener
+// that cannot be opened, or a server that fails, is a typed LeadServe failure. RED: not implemented yet.
+func runLead(_ context.Context, _ leadConfig) *LeadServeError {
+	return nil
 }
