@@ -17,7 +17,7 @@ load helpers
 # node_job_setup — NODE_REPOS maps "repo" to the test clone and the clone has two commits. The caller sources
 # bin/agent itself: a source inside this function would make agents.conf's declare -A local to it.
 node_job_setup() {
-  # shellcheck disable=SC2034 # used by prepare_job_task in bin/agent
+  # shellcheck disable=SC2034 # NODE_REPOS is read by prepare_job_task, which is defined in the sourced bin/agent
   declare -gA NODE_REPOS=([repo]="$HOME/repo")
   cd "$HOME/repo" || return 1
   FIRST=$(git rev-parse HEAD)
@@ -104,7 +104,8 @@ EOF
   [ "$status" -ne 0 ]
   [ -z "$(ls -A "$TASKS")" ]
   grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
-  ! grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+  run grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+  [ "$status" -eq 1 ]
 }
 
 @test "create_task fails and leaves no task when the worktree directory cannot be created" {
@@ -115,7 +116,8 @@ EOF
   run create_task solo "text" "$HOME/repo" "$HOME/repo" main 20261025-000000 "" HEAD
   [ "$status" -ne 0 ]
   [ ! -e "$TASKS/20261025-000000-solo" ]
-  ! grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+  run grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+  [ "$status" -eq 1 ]
 }
 
 @test "create_task fails and leaves no task when git cannot add the worktree" {
@@ -129,7 +131,8 @@ EOF
   [ ! -e "$TASKS/20261025-000000-solo" ]
   run git -C "$HOME/repo" show-ref --verify --quiet refs/heads/agents/solo/20261025-000000
   [ "$status" -eq 1 ]
-  ! grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+  run grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+  [ "$status" -eq 1 ]
 }
 
 @test "a job whose task worktree cannot be created fails with node_checkout_failed and starts nothing" {
@@ -140,7 +143,8 @@ EOF
   [ "$status" -ne 0 ]
   [ -z "$(ls -A "$TASKS")" ]
   grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
-  ! grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+  run grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+  [ "$status" -eq 1 ]
 }
 
 @test "a job for an unknown agent is refused without an unbound-variable crash" {
@@ -152,4 +156,84 @@ EOF
   [ -z "$(ls -A "$TASKS")" ]
   [ ! -d "$AGENTS_HOME/worktrees/repo" ] || [ -z "$(ls -A "$AGENTS_HOME/worktrees/repo")" ]
   grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
+}
+
+@test "meta_set fails and keeps the old metadata when writing the new line fails" {
+  source "$REPO_ROOT/bin/agent"
+  mkdir -p "$TASKS/fault-meta"
+  cat > "$TASKS/fault-meta/meta.env" <<EOF
+ID=fault-meta
+STATUS=new
+EOF
+  # fault injection: the printf that writes the KEY=value line fails, as on a full disk
+  printf() { [[ $1 == '%s=%q\n' ]] && return 1; builtin printf "$@"; }
+  run meta_set fault-meta STATUS running
+  unset -f printf
+  [ "$status" -ne 0 ]
+  grep -qx 'ID=fault-meta' "$TASKS/fault-meta/meta.env"
+  grep -qx 'STATUS=new' "$TASKS/fault-meta/meta.env"
+}
+
+@test "create_task fails and leaves no task when a metadata write fails" {
+  source "$REPO_ROOT/bin/agent"
+  cd "$HOME/repo" || return 1
+  mkdir -p "$TASKS/20261025-000000-solo"
+  # fault injection: only the metadata lines fail; the task text is written
+  printf() { [[ $1 == '%s=%q\n' ]] && return 1; builtin printf "$@"; }
+  run create_task solo "text" "$HOME/repo" "$HOME/repo" main 20261025-000000 "" HEAD
+  unset -f printf
+  [ "$status" -ne 0 ]
+  [ ! -e "$TASKS/20261025-000000-solo" ]
+  [ ! -e "$AGENTS_HOME/worktrees/repo/20261025-000000-solo" ]
+  run git -C "$HOME/repo" show-ref --verify --quiet refs/heads/agents/solo/20261025-000000
+  [ "$status" -eq 1 ]
+  run grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+  [ "$status" -eq 1 ]
+}
+
+@test "create_task fails and leaves no task when the task text cannot be written" {
+  source "$REPO_ROOT/bin/agent"
+  cd "$HOME/repo" || return 1
+  mkdir -p "$TASKS/20261025-000000-solo"
+  # fault injection: the task text is the first write create_task makes
+  printf() { [[ $1 == '%s\n' ]] && return 1; builtin printf "$@"; }
+  run create_task solo "text" "$HOME/repo" "$HOME/repo" main 20261025-000000 "" HEAD
+  unset -f printf
+  [ "$status" -ne 0 ]
+  [ ! -e "$TASKS/20261025-000000-solo" ]
+  [ ! -e "$AGENTS_HOME/worktrees/repo/20261025-000000-solo" ]
+  run git -C "$HOME/repo" show-ref --verify --quiet refs/heads/agents/solo/20261025-000000
+  [ "$status" -eq 1 ]
+}
+
+@test "create_task fails and leaves no task when meta.env cannot be created" {
+  source "$REPO_ROOT/bin/agent"
+  cd "$HOME/repo" || return 1
+  mkdir -p "$TASKS/20261025-000000-solo"
+  # fault injection: creating the empty meta.env file fails
+  :() { return 1; }
+  run create_task solo "text" "$HOME/repo" "$HOME/repo" main 20261025-000000 "" HEAD
+  unset -f :
+  [ "$status" -ne 0 ]
+  [ ! -e "$TASKS/20261025-000000-solo" ]
+  [ ! -e "$AGENTS_HOME/worktrees/repo/20261025-000000-solo" ]
+}
+
+@test "a job is refused when its agent becomes busy during the checkout, and creates nothing" {
+  source "$REPO_ROOT/bin/agent"
+  node_job_setup
+  # fault injection: another task takes the agent while the checkout runs, outside the task-ID lock
+  bus() {
+    if [[ $1 == node-checkout ]]; then
+      mkdir -p "$TASKS/racing"
+      printf 'ID=racing\nAGENT=solo\nSTATUS=sleeping\n' > "$TASKS/racing/meta.env"
+    fi
+    "$AGENTBUS_BIN" "$@" 10>&-
+  }
+  run run_prepare job-race solo repo main "" "text"
+  unset -f bus
+  [ "$status" -ne 0 ]
+  [ "$(ls -1 "$TASKS" | wc -l)" -eq 1 ]
+  [ ! -d "$AGENTS_HOME/worktrees/repo" ]
+  grep '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl" | grep -q 'busy'
 }

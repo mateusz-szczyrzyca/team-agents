@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,8 +42,22 @@ func runNodeGit(root string, args ...string) ([]byte, *ProcessError) {
 	return out, nil
 }
 
-// nodeCheckout resolves a job base without creating a worktree, task metadata or runner.
-// Its caller holds the local task-admission lock through this fetch and worktree creation.
+// checkoutRefPrefix namespaces the private ref a checkout fetches into; it is never a branch or a tag.
+const checkoutRefPrefix = "refs/agentbus/node-checkout/"
+
+// checkoutRefName returns a ref name no other checkout uses, so concurrent fetches never overwrite each other's
+// commit (FETCH_HEAD is shared by the whole clone and is not used).
+func checkoutRefName() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return checkoutRefPrefix + hex.EncodeToString(b), nil
+}
+
+// nodeCheckout resolves a job base without creating a worktree, task metadata or runner. It fetches into a private
+// ref, resolves that ref and removes it. Its caller does not hold the task-admission lock: the private ref makes
+// concurrent checkouts independent, and the caller checks admission again before it creates the task.
 func nodeCheckout(repos map[string]string, req NodeCheckoutRequest) (NodeCheckoutResult, *NodeCheckoutError) {
 	if req.Repository == "" || req.BaseRef == "" {
 		return NodeCheckoutResult{}, opErr(NodeCheckoutMissingArgument, "repository and base ref are required")
@@ -64,16 +80,24 @@ func nodeCheckout(repos map[string]string, req NodeCheckoutRequest) (NodeCheckou
 	if sha != "" {
 		target = sha
 	}
-	if _, err := callNodeGit(root, "fetch", "--no-tags", "--no-recurse-submodules", "--", "origin", target); err != nil {
+	ref, nameErr := checkoutRefName()
+	if nameErr != nil {
+		return NodeCheckoutResult{}, opErr(NodeCheckoutCheckoutFailed, "cannot name a private checkout ref: %v", nameErr)
+	}
+	if _, err := callNodeGit(root, "fetch", "--no-tags", "--no-recurse-submodules", "--", "origin", target+":"+ref); err != nil {
 		return NodeCheckoutResult{}, nodeCheckoutGitFailure(NodeCheckoutFetchFailed, err)
 	}
-	out, err := callNodeGit(root, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
+	// A failed resolution keeps the private ref; its name is unique, so it cannot disturb a later checkout.
+	out, err := callNodeGit(root, "rev-parse", "--verify", ref+"^{commit}")
 	if err != nil {
 		return NodeCheckoutResult{}, nodeCheckoutGitFailure(NodeCheckoutCheckoutFailed, err)
 	}
 	commit := strings.ToLower(strings.TrimSpace(string(out)))
 	if !validJobSHA(commit) || sha != "" && sha != commit {
 		return NodeCheckoutResult{}, opErr(NodeCheckoutCheckoutFailed, "fetch did not resolve the requested commit")
+	}
+	if _, err := callNodeGit(root, "update-ref", "-d", ref); err != nil {
+		return NodeCheckoutResult{}, nodeCheckoutGitFailure(NodeCheckoutCheckoutFailed, err)
 	}
 	return NodeCheckoutResult{Root: root, Commit: commit}, nil
 }
