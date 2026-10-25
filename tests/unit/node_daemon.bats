@@ -511,6 +511,7 @@ STUB
 }
 
 @test "agent node consumes cumulative task transitions from journal for heartbeat reports" {
+  scenario '{"solo": {"new": "sleep"}}'
   local real_bus="$HOME/.local/bin/agentbus"
   mv "$real_bus" "$HOME/.local/bin/real-agentbus"
   cat > "$real_bus" <<'STUB'
@@ -529,6 +530,9 @@ if [[ ${1:-} == node-request ]]; then
   if ((validate)); then printf '{}\n'; exit 0; fi
   if [[ $path == "/v1/heartbeat" ]]; then
     cat > "$STUB_HOME/heartbeat-payload.json"
+    if jq -e '.Reports | length > 0' "$STUB_HOME/heartbeat-payload.json" >/dev/null 2>&1; then
+      cp "$STUB_HOME/heartbeat-payload.json" "$STUB_HOME/heartbeat-reports.json"
+    fi
     if [[ ! -f "$STUB_HOME/job-delivered" ]]; then
       touch "$STUB_HOME/job-delivered"
       cat <<'EOF'
@@ -580,6 +584,9 @@ STUB
   task_id=$(jq -r '.jobs["job-journal-1"].task_id' "$AGENTS_HOME/bus/node-jobs.json")
   [ -n "$task_id" ]
 
+  # Wait for runner to enter running status before rapid transitions
+  wait_status "$task_id" "running" 15
+
   # Append rapid transitions into job_transitions.jsonl
   cat >> "$AGENTS_HOME/tasks/$task_id/job_transitions.jsonl" <<'EOF'
 {"state":"waiting","at":"2026-10-25T20:01:00.000000000Z"}
@@ -591,8 +598,8 @@ EOF
   # Tick 2: node poll sends heartbeat carrying cumulative transitions
   run agent node --once
   [ "$status" -eq 0 ]
-  [ -f "$STUB_HOME/heartbeat-payload.json" ]
-  grep -q '"state":"waiting"' "$STUB_HOME/heartbeat-payload.json"
+  [ -f "$STUB_HOME/heartbeat-reports.json" ]
+  jq -e '.Reports[0].Transitions[] | select(.State == "waiting")' "$STUB_HOME/heartbeat-reports.json"
 }
 
 @test "agent node reconciles stale assignment on Rejected report and refuses to launch" {
