@@ -94,10 +94,16 @@ if [[ ${1:-} == node-request ]]; then
       "BaseSHA": "",
       "Requires": [],
       "Selector": "solo",
-      "Task": "say hello"
+      "Task": "say hello",
+      "Requester": "human"
     },
+    "State": "assigned",
     "Assignment": 1,
-    "Node": "node-test"
+    "Node": "node-test",
+    "History": [
+      {"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"},
+      {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"}
+    ]
   },
   "Stops": []
 }
@@ -109,7 +115,34 @@ EOF
   fi
   if [[ $path == /v1/jobs/*/state ]]; then
     cat > "$STUB_HOME/last-state.json"
-    printf '{"State":"running"}\n'
+    sid=$(jq -r '.ID' "$STUB_HOME/last-state.json")
+    asgn=$(jq -r '.Assignment' "$STUB_HOME/last-state.json")
+    tid=$(jq -r '.TaskID' "$STUB_HOME/last-state.json")
+    br=$(jq -r '.Branch' "$STUB_HOME/last-state.json")
+    cat <<EOF
+{
+  "Request": {
+    "ID": "$sid",
+    "Repository": "repo",
+    "BaseRef": "main",
+    "BaseSHA": "",
+    "Requires": [],
+    "Selector": "solo",
+    "Task": "say hello",
+    "Requester": "human"
+  },
+  "State": "running",
+  "Node": "node-test",
+  "Assignment": $asgn,
+  "TaskID": "$tid",
+  "Branch": "$br",
+  "History": [
+    {"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"},
+    {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"},
+    {"State": "running", "At": "2026-10-25T20:00:02.000000000Z"}
+  ]
+}
+EOF
     exit 0
   fi
   exit 0
@@ -122,6 +155,7 @@ STUB
 @test "agent node polls heartbeat, prepares assigned job, acks running state before launching" {
   setup_node_bus_stub
   echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
   echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
   run agent node --once
   [ "$status" -eq 0 ]
@@ -220,7 +254,18 @@ EOF
     exit 0
   fi
   if [[ $path == /v1/jobs/*/state ]]; then
-    printf '{"State":"running"}\n'
+    cat > "$STUB_HOME/last-state.json"
+    sid=$(jq -r '.ID' "$STUB_HOME/last-state.json")
+    asgn=$(jq -r '.Assignment' "$STUB_HOME/last-state.json")
+    tid=$(jq -r '.TaskID' "$STUB_HOME/last-state.json")
+    br=$(jq -r '.Branch' "$STUB_HOME/last-state.json")
+    cat <<EOF
+{
+  "Request": {"ID": "$sid", "Repository": "repo", "BaseRef": "main", "BaseSHA": "", "Requires": [], "Selector": "solo", "Task": "text", "Requester": "human"},
+  "State": "running", "Node": "node-test", "Assignment": $asgn, "TaskID": "$tid", "Branch": "$br",
+  "History": [{"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"}, {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"}, {"State": "running", "At": "2026-10-25T20:00:02.000000000Z"}]
+}
+EOF
     exit 0
   fi
   exit 0
@@ -230,6 +275,7 @@ STUB
   chmod +x "$real_bus"
 
   echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
   echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
   # Tick 1: prepares and starts job-stop-1
   run agent node --once
@@ -276,7 +322,18 @@ EOF
     exit 0
   fi
   if [[ $path == /v1/jobs/*/state ]]; then
-    printf '{"State":"running"}\n'
+    cat > "$STUB_HOME/last-state.json"
+    sid=$(jq -r '.ID' "$STUB_HOME/last-state.json")
+    asgn=$(jq -r '.Assignment' "$STUB_HOME/last-state.json")
+    tid=$(jq -r '.TaskID' "$STUB_HOME/last-state.json")
+    br=$(jq -r '.Branch' "$STUB_HOME/last-state.json")
+    cat <<EOF
+{
+  "Request": {"ID": "$sid", "Repository": "repo", "BaseRef": "main", "BaseSHA": "", "Requires": [], "Selector": "solo", "Task": "text", "Requester": "human"},
+  "State": "running", "Node": "node-test", "Assignment": $asgn, "TaskID": "$tid", "Branch": "$br",
+  "History": [{"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"}, {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"}, {"State": "running", "At": "2026-10-25T20:00:02.000000000Z"}]
+}
+EOF
     exit 0
   fi
   exit 0
@@ -286,6 +343,7 @@ STUB
   chmod +x "$real_bus"
 
   echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
   echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
   # Tick 1: prepares and starts job-done-race
   run agent node --once
