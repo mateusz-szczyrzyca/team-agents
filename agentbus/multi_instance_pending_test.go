@@ -586,7 +586,7 @@ func TestNodeCapabilitiesRejectUnknownNamespace(t *testing.T) {
 
 // TestNodeTwoHomesRecoverAfterLeadRestart: a node keeps its job running and reports after the lead returns.
 func TestNodeTwoHomesRecoverAfterLeadRestart(t *testing.T) {
-	t.Skip("pending: lead stopped during a job, node reports after restart, two homes, round 6")
+	assertNodeTransportRecovery(t)
 }
 
 // TestNodeCheckoutFailureFailsJobWithReason: a failed clone or worktree fails the job with a typed reason; nothing is marked started.
