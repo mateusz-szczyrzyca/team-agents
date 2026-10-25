@@ -212,6 +212,12 @@ ROUND_BOUNCES="${ROUND_BOUNCES:-2}"
 declare -p ROUND_MAX_LINES_REPO >/dev/null 2>&1 || declare -gA ROUND_MAX_LINES_REPO=()   # a query: set in agents.conf?
 # NODE_REPOS: repositories a node may run jobs for, name → local clone path (empty: no job is accepted).
 declare -p NODE_REPOS >/dev/null 2>&1 || declare -gA NODE_REPOS=()
+# Node daemon (agentnode.service, `agent node`; README "Several instances"): LEAD_URL is the lead's HTTP address
+# ("" = not a node); NODE_POLL_SEC is how often the node sends its heartbeat; INSTANCE_CAPABILITIES declares what this node
+# can run (os:..., arch:..., build:..., test:..., hw:..., net:...).
+LEAD_URL="${LEAD_URL:-}"
+NODE_POLL_SEC="${NODE_POLL_SEC:-10}"
+declare -p INSTANCE_CAPABILITIES >/dev/null 2>&1 || declare -ga INSTANCE_CAPABILITIES=()
 AUTH_MODEL_ANTHROPIC="${AUTH_MODEL_ANTHROPIC:-haiku}"
 AUTH_MODEL_OPENAI="${AUTH_MODEL_OPENAI:-gpt-6-luna}"
 AUTH_MODEL_GEMINI="${AUTH_MODEL_GEMINI:-}"
@@ -252,6 +258,28 @@ meta_set() { # id key value — sets one KEY=value (printf %q) line; writers of 
       rm -f "$tmp"
       log_error meta_write_failed "file=$f" "key=$2"
       exit 1
+    fi
+    if [[ $2 == STATUS ]]; then
+      local jid="" journal_rc
+      # Exit 1 means an ordinary task without a job marker; a read failure must not be hidden.
+      if jid=$(grep "^JOB_ID=" "$f"); then
+        jid=${jid#JOB_ID=}
+        if [[ -n $jid ]]; then
+          local now record
+          now=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+          record=$(jq -cn --arg state "$3" --arg at "$now" '{state:$state,at:$at}') || exit 1
+          if ! printf '%s\n' "$record" >> "$TASKS/$1/job_transitions.jsonl"; then
+            log_error meta_write_failed "file=$f" "key=job_transitions"
+            exit 1
+          fi
+        fi
+      else
+        journal_rc=$?
+        if ((journal_rc != 1)); then
+          log_error meta_write_failed "file=$f" "key=JOB_ID"
+          exit 1
+        fi
+      fi
     fi
   ) 9> "$f.lock"
 }
@@ -297,6 +325,12 @@ agent_running_task() { # agent name → ID of the task it is running (or nothing
       printf '%s' "$id"; return 0
     fi
     if [[ $ag == "$1" && $st == sleeping ]]; then   # a sleeping team member keeps its agent reserved
+      printf '%s' "$id"; return 0
+    fi
+    # A prepared node job awaiting lead start acknowledgement keeps its agent reserved before run 1
+    local jid
+    jid=$(task_field "$id" JOB_ID)
+    if [[ $ag == "$1" && -n $jid && $run -eq 0 && ($st == new || $st == starting || $st == running) ]]; then
       printf '%s' "$id"; return 0
     fi
   done
@@ -484,6 +518,8 @@ team_members_list() {
 
 # Exit codes of agentbus subcommands per error cause (ErrorCause.ExitCode in agentbus/errors.go).
 BUS_NOT_FOUND=3
+# BUS_PERMISSION is the typed Permission exit code used to reconcile a rejected node assignment.
+BUS_PERMISSION=5
 
 # team_json team — the team's JSON; nothing when the team does not exist (exit code BUS_NOT_FOUND), any
 # other failure is logged.
@@ -1961,6 +1997,12 @@ runner_exit() {
     log_info run_stopped "reason=agent stop --running"
     return
   fi
+  if [[ -n ${JOB_ID:-} && -f $TASKS/$RUNNER_ID/node-stop-requested ]]; then
+    meta_set "$RUNNER_ID" STATUS stopped
+    meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
+    log_info run_stopped "reason=node_job_cancel"
+    return
+  fi
   local why="runner interrupted (exit code $rc) — see: agent log $RUNNER_ID"
   [[ -f $TASKS/$RUNNER_ID/stop-requested ]] && why="stopped by the user"
   log_warn run_interrupted "exit_code=$rc" "reason=$why"
@@ -2478,6 +2520,7 @@ job_refusal() {
 # lock: node-checkout fetches into a private ref, so concurrent checkouts do not interfere.
 prepare_job_task() {
   local job=$1 name=$2 repo=$3 base=$4 sha=$5 task=$6
+  NODE_PREPARE_ERROR=""
   local -a args=() names roots repos
   local k out root commit ts reason
   for k in "${!NODE_REPOS[@]}"; do args+=(--repo-path "$k=${NODE_REPOS[$k]}"); done
@@ -2487,10 +2530,12 @@ prepare_job_task() {
   reason=$(job_refusal "$name")
   unlock_task_ids
   if [[ -n $reason ]]; then
+    NODE_PREPARE_ERROR=$reason
     log_error node_checkout_failed "job=$job" "agent=$name" "reason=$reason"
     return 1
   fi
   if ! out=$(bus node-checkout "${args[@]}" 2>&1); then
+    NODE_PREPARE_ERROR=$out
     log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=$out"
     return 1
   fi
@@ -2499,6 +2544,7 @@ prepare_job_task() {
   lock_task_ids
   reason=$(job_refusal "$name")
   if [[ -n $reason ]]; then
+    NODE_PREPARE_ERROR=$reason
     unlock_task_ids
     log_error node_checkout_failed "job=$job" "agent=$name" "reason=$reason"
     return 1
@@ -2506,10 +2552,14 @@ prepare_job_task() {
   names=("$name"); roots=("$root"); repos=("$(basename "$root")")
   ts=$(allocate_run_ids 0 names roots repos)
   if ! create_task "$name" "$task" "$root" "$root" "$base" "$ts" "" "$commit"; then
+    NODE_PREPARE_ERROR=${CREATE_TASK_ERROR:-task worktree could not be created}
     unlock_task_ids
     log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=${CREATE_TASK_ERROR:-task worktree could not be created}"
     return 1
   fi
+  meta_set "$NEW_ID" JOB_ID "$job"
+  [[ -z ${7:-} ]] || meta_set "$NEW_ID" JOB_ASSIGNMENT "$7"
+  [[ -z ${LEAD_URL:-} ]] || meta_set "$NEW_ID" JOB_LEAD "$LEAD_URL"
   unlock_task_ids
 }
 
@@ -3133,6 +3183,368 @@ cmd_lead() { # runs the lead's listener in the foreground (agentlead.service run
   exec "$AGENTBUS_BIN" "${args[@]}"
 }
 
+# node_jobs_file returns the node's durable local mapping and latest reports.
+node_jobs_file() { printf '%s/node-jobs.json' "$BUS_DIR"; }
+
+# node_jobs_load fails closed on damaged storage; only an absent path denotes a fresh installation.
+node_jobs_load() {
+  local f content
+  f=$(node_jobs_file)
+  if [[ ! -e $f && ! -L $f ]]; then printf '{"jobs":{},"outbox":[]}\n'; return; fi
+  [[ -f $f ]] || die "node state is not a regular file: $f"
+  content=$(cat -- "$f") || die "cannot read node state: $f"
+  jq -e 'type == "object" and (.jobs|type == "object") and (.outbox|type == "array")' <<< "$content" >/dev/null \
+    || die "corrupt node state: $f"
+  printf '%s\n' "$content"
+}
+
+# node_jobs_save atomically replaces state without losing the previous snapshot on a write failure.
+node_jobs_save() {
+  local data=$1 tmp
+  tmp=$(umask 077; mktemp "$BUS_DIR/node-jobs.XXXXXX") || die "cannot allocate node state temporary file"
+  if ! { printf '%s\n' "$data" > "$tmp" && mv -- "$tmp" "$(node_jobs_file)"; }; then
+    if ! rm -f -- "$tmp"; then log_error node_storage_failed "path=$tmp"; fi
+    die "cannot save node state"
+  fi
+}
+
+# node_save commits the current single-writer snapshot before any network or launch side effect.
+node_save() { node_jobs_save "$NODE_STATE"; }
+
+# node_lock excludes another daemon for this installation; runner children explicitly close descriptor 8.
+node_lock() {
+  mkdir -p "$BUS_DIR"
+  exec 8>"$BUS_DIR/node-daemon.lock"
+  flock -n 8 || die "another node daemon is already running"
+}
+
+# node_request sends only a coarse HTTP operation through the bounded Go transport.
+node_request() { bus node-request --url "$LEAD_URL" "$@"; }
+
+# node_heartbeat_json advertises locally configured capacity using the ordinary task admission rules.
+node_heartbeat_json() {
+  local a available_json='[]' caps='[]'
+  for a in "${!AGENT_TYPE[@]}"; do
+    is_investigator "$a" && continue
+    if agent_running_task "$a" >/dev/null; then continue; fi # Exit 1 means the configured agent is free.
+    available_json=$(jq -c --arg name "$a" --arg tier "$(agent_tier "$a")" '. + [{Name:$name,Tier:$tier}]' <<< "$available_json")
+  done
+  if ((${#INSTANCE_CAPABILITIES[@]})); then caps=$(printf '%s\n' "${INSTANCE_CAPABILITIES[@]}" | jq -R . | jq -s .); fi
+  jq -cn --arg node "$INSTANCE_NAME" --argjson caps "$caps" --argjson free "$available_json" --arg web "$AGENT_WEB_URL" \
+    '{Node:$node,Capabilities:$caps,FreeAgents:$free,WebURL:$web}'
+}
+
+# node_select_agent uses provider rotation for workers, otherwise the configured normal-agent order.
+node_select_agent() {
+  local selector=$1 a
+  case $selector in
+    worker) if free_worker; then return; else return 1; fi ;; # No free worker is an expected answer.
+    normal)
+      for a in "${NORMAL_AGENTS[@]}"; do
+        [[ -n ${AGENT_TYPE[$a]:-} ]] || continue
+        if ! agent_running_task "$a" >/dev/null; then printf '%s' "$a"; return; fi
+      done ;;
+    *)
+      [[ -n ${AGENT_TYPE[$selector]:-} ]] || return 1
+      is_investigator "$selector" && return 1
+      if ! agent_running_task "$selector" >/dev/null; then printf '%s' "$selector"; return; fi ;;
+  esac
+  return 1
+}
+
+# node_time normalizes a timestamp and clamps it to the last observed instant after clock rollback.
+node_time() {
+  local base=${1:-} candidate=${2:-} now
+  if [[ -n $candidate ]]; then now=$(date -u -d "$candidate" +%Y-%m-%dT%H:%M:%S.%NZ); else now=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ); fi
+  if [[ -n $base ]]; then
+    base=$(date -u -d "$base" +%Y-%m-%dT%H:%M:%S.%NZ)
+    [[ $now < $base ]] && now=$base
+  fi
+  printf '%s' "$now"
+}
+
+# node_map_state maps local statuses to the job lifecycle; transient local states are not separate job states.
+node_map_state() {
+  case $1 in
+    waiting) printf waiting ;;
+    done) printf done ;;
+    failed|hung|excluded) printf failed ;;
+    stopped) printf stopped ;;
+    new|starting|running|paused|investigating|sleeping) printf running ;;
+    *) die "unknown local task status: $1" ;;
+  esac
+}
+
+# node_transition persists a cumulative report; result text is a bounded UTF-8 prefix of the final message.
+node_transition() {
+  local jid=$1 state=$2 observed=${3:-} result=${4:-} previous at entry
+  entry=$(jq -c --arg id "$jid" '.jobs[$id]' <<< "$NODE_STATE")
+  previous=$(jq -r '.report.At // .assigned_at // empty' <<< "$entry")
+  at=$(node_time "$previous" "$observed")
+  # jq's UTF-8 byte length accounts for multibyte text; task output is text, not a transferred file.
+  result=$(jq -nr --arg text "$result" '$text | until(utf8bytelength <= 65536 and (tojson|utf8bytelength) <= 65536; .[0:(length / 2 | floor)])')
+  NODE_STATE=$(jq -c --arg id "$jid" --arg state "$state" --arg at "$at" --arg result "$result" --arg node "$INSTANCE_NAME" '
+    .jobs[$id] |= (. as $j | .report = {
+      ID:$id,Node:$node,Assignment:.assignment,State:$state,TaskID:(.task_id // ""),Branch:(.branch // ""),
+      PRURL:(.pr_url // ""),Result:$result,At:$at,
+      Transitions:((.report.Transitions // []) + [{State:$state,At:$at}])
+    } | .state=$state | .pending=true | if ($state == "done" or $state == "failed" or $state == "stopped") then .preparing=false else . end)' <<< "$NODE_STATE")
+  node_save
+}
+
+# node_reconcile fences a rejected old assignment without treating a transport failure as an acknowledgement.
+node_reconcile() {
+  local jid=$1 view assignment state
+  if ! view=$(node_request --get --path "/v1/jobs/$jid" < /dev/null); then return; fi
+  assignment=$(jq -r --arg id "$jid" '.jobs[$id].assignment' <<< "$NODE_STATE")
+  if ! jq -e --arg id "$jid" '.Request.ID == $id and (.State|type == "string")' <<< "$view" >/dev/null; then
+    log_warn node_reply_invalid "job=$jid"; return
+  fi
+  state=$(jq -r '.State' <<< "$view")
+  if [[ $(jq -r '.Assignment' <<< "$view") != "$assignment" || $(jq -r '.Node' <<< "$view") != "$INSTANCE_NAME" || $state =~ ^(done|failed|stopped|queued)$ ]]; then
+    NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].obsolete=true | .jobs[$id].pending=false' <<< "$NODE_STATE")
+    node_save
+    local prepared_task
+    prepared_task=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$NODE_STATE")
+    if [[ -n $prepared_task && -f $TASKS/$prepared_task/meta.env ]] && [[ $(task_field "$prepared_task" RUN) == 0 ]]; then
+      meta_set "$prepared_task" STATUS stopped
+    fi
+    log_warn node_assignment_obsolete "job=$jid" "state=$state"
+  fi
+}
+
+# node_start_ack retries the exact persisted start snapshot and requires matching assignment/task evidence.
+node_start_ack() {
+  local jid=$1 report reply rc
+  report=$(jq -c --arg id "$jid" '.jobs[$id].report' <<< "$NODE_STATE")
+  if reply=$(printf '%s' "$report" | node_request --path "/v1/jobs/$jid/state"); then
+    if jq -e --argjson report "$report" '.Request.ID == $report.ID and .Assignment == $report.Assignment and .State == "running" and .TaskID == $report.TaskID and .Branch == $report.Branch' <<< "$reply" >/dev/null; then
+      NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].start_acked=true | .jobs[$id].pending=false' <<< "$NODE_STATE")
+      node_save
+    else log_warn node_reply_invalid "job=$jid"; fi
+  else
+    rc=$?
+    log_warn node_start_report_failed "job=$jid" "exit=$rc"
+    if ((rc == BUS_PERMISSION)); then node_reconcile "$jid"; fi
+  fi
+}
+
+# node_process_pending_launches progresses prepared tasks independently of the heartbeat's assignment reply.
+node_process_pending_launches() {
+  local jid tid busy run status ids
+  ids=$(jq -r '.jobs | keys[]' <<< "$NODE_STATE")
+  for jid in $ids; do
+    [[ -n $jid ]] || continue
+    if jq -e --arg id "$jid" '.jobs[$id] | .obsolete or .launched or (.task_id == "")' <<< "$NODE_STATE" >/dev/null; then continue; fi
+    tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id' <<< "$NODE_STATE")
+    if [[ ! -f $TASKS/$tid/meta.env || ! -d $(task_field "$tid" WORKTREE) ]]; then
+      NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].launched=true' <<< "$NODE_STATE")
+      node_transition "$jid" failed '' 'CheckoutFailed: prepared task or worktree is missing during recovery'
+      continue
+    fi
+    run=$(task_field "$tid" RUN)
+    if ((run > 0)); then
+      # RUN is written before systemd-run: never create a second unit after a crash in that interval.
+      status=$(task_field "$tid" STATUS)
+      if [[ $status == starting ]] && ! unit_active "$tid" "$run"; then meta_set "$tid" STATUS failed; fi
+      NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].launched=true' <<< "$NODE_STATE"); node_save
+      continue
+    fi
+    if ! jq -e --arg id "$jid" '.jobs[$id].start_acked' <<< "$NODE_STATE" >/dev/null; then node_start_ack "$jid"; fi
+    if ! jq -e --arg id "$jid" '.jobs[$id] | .start_acked and (.obsolete|not)' <<< "$NODE_STATE" >/dev/null; then continue; fi
+    lock_task_ids
+    if busy=$(agent_running_task "$(task_field "$tid" AGENT)"); then
+      if [[ $busy != "$tid" ]]; then unlock_task_ids; continue; fi
+    fi
+    if start_runner "$tid" new; then :; else log_error node_launch_failed "job=$jid" "task=$tid"; fi
+    unlock_task_ids
+    NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].launched=true' <<< "$NODE_STATE"); node_save
+  done
+}
+
+# node_recover_tasks binds a preparation interrupted before its mapping save to its already tagged local task.
+node_recover_tasks() {
+  local jid tid assignment candidate found ids
+  ids=$(jq -r '.jobs | keys[]' <<< "$NODE_STATE")
+  for jid in $ids; do
+    [[ -n $jid ]] || continue
+    tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$NODE_STATE")
+    [[ -z $tid ]] || continue
+    if ! jq -e --arg id "$jid" '.jobs[$id].preparing and (.obsolete|not)' <<< "$NODE_STATE" >/dev/null; then continue; fi
+    assignment=$(jq -r --arg id "$jid" '.jobs[$id].assignment' <<< "$NODE_STATE")
+    found=''
+    for candidate in "$TASKS"/*/; do
+      [[ -f $candidate/meta.env ]] || continue
+      candidate=${candidate%/}; candidate=${candidate##*/}
+      if [[ $(task_field "$candidate" JOB_ID) == "$jid" && $(task_field "$candidate" JOB_ASSIGNMENT) == "$assignment" ]]; then found=$candidate; break; fi
+    done
+    if [[ -n $found ]]; then node_bind_task "$jid" "$found"; else node_transition "$jid" failed '' 'node preparation interrupted before a task was recorded'; fi
+  done
+}
+
+# node_bind_task persists a prepared checkout and its exact first running transition before asking permission to launch.
+node_bind_task() {
+  local jid=$1 tid=$2
+  NODE_STATE=$(jq -c --arg id "$jid" --arg tid "$tid" --arg branch "$(task_field "$tid" BRANCH)" \
+    '.jobs[$id].task_id=$tid | .jobs[$id].branch=$branch | .jobs[$id].preparing=false' <<< "$NODE_STATE")
+  node_transition "$jid" running
+}
+
+# node_scan_tasks consumes the job-only transition journal under the same lock as task metadata writes.
+node_scan_tasks() {
+  local jid tid journal cursor total record state result current previous ids
+  ids=$(jq -r '.jobs | keys[]' <<< "$NODE_STATE")
+  for jid in $ids; do
+    [[ -n $jid ]] || continue
+    tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$NODE_STATE")
+    [[ -n $tid && -f $TASKS/$tid/meta.env ]] || continue
+    if ! jq -e --arg id "$jid" '.jobs[$id].launched and (.obsolete|not)' <<< "$NODE_STATE" >/dev/null; then continue; fi
+    journal='[]'
+    if [[ -f $TASKS/$tid/job_transitions.jsonl ]]; then
+      journal=$({ flock -s 9 && jq -sc . "$TASKS/$tid/job_transitions.jsonl"; } 9>"$TASKS/$tid/meta.env.lock") || die "cannot read job transitions for $tid"
+    fi
+    cursor=$(jq -r --arg id "$jid" '.jobs[$id].cursor // 0' <<< "$NODE_STATE")
+    total=$(jq length <<< "$journal")
+    while ((cursor < total)); do
+      record=$(jq -c --argjson n "$cursor" '.[$n]' <<< "$journal")
+      state=$(node_map_state "$(jq -r .state <<< "$record")")
+      previous=$(jq -r --arg id "$jid" '.jobs[$id].state' <<< "$NODE_STATE")
+      cursor=$((cursor+1))
+      NODE_STATE=$(jq -c --arg id "$jid" --argjson cursor "$cursor" '.jobs[$id].cursor=$cursor' <<< "$NODE_STATE")
+      if [[ ! $previous =~ ^(done|failed|stopped)$ ]]; then
+        result=''
+        if [[ $state =~ ^(done|failed|stopped)$ && -f $TASKS/$tid/final.md ]]; then result=$(<"$TASKS/$tid/final.md"); fi
+        if [[ $state != "$previous" || $state == waiting ]]; then node_transition "$jid" "$state" "$(jq -r .at <<< "$record")" "$result"; fi
+      fi
+      node_save
+    done
+    # A crash after metadata replacement but before journal append still exposes the latest local state.
+    current=$(node_map_state "$(task_field "$tid" STATUS)")
+    previous=$(jq -r --arg id "$jid" '.jobs[$id].state' <<< "$NODE_STATE")
+    if [[ $current != "$previous" && ! $previous =~ ^(done|failed|stopped)$ ]]; then
+      result=''; if [[ $current =~ ^(done|failed|stopped)$ && -f $TASKS/$tid/final.md ]]; then result=$(<"$TASKS/$tid/final.md"); fi
+      node_transition "$jid" "$current" '' "$result"
+    fi
+  done
+}
+
+# node_flush_reports sends one latest snapshot per job with byte-bounded heartbeats, preserving it until acknowledgement.
+node_flush_reports() {
+  local jid declaration report payload reply rc ids
+  declaration=$(node_heartbeat_json)
+  # Start snapshots are acknowledged separately before launch; only launched/failed preparations use heartbeat reports.
+  ids=$(jq -r '.jobs | to_entries[] | select(.value.pending and (.value.obsolete|not) and (.value.launched or .value.task_id == "")) | .key' <<< "$NODE_STATE")
+  for jid in $ids; do
+    report=$(jq -c --arg id "$jid" '.jobs[$id].report' <<< "$NODE_STATE")
+    payload=$(jq -c --argjson report "$report" '.Reports=[$report]' <<< "$declaration")
+    # Truncate only when constructing a transition, never after an attempted send: retries stay identical.
+    if (($(printf '%s' "$payload" | wc -c) > 262144)); then die "job transition history exceeds heartbeat limit"; fi
+    if reply=$(printf '%s' "$payload" | node_request --path /v1/heartbeat); then
+      if ! jq -e 'has("Job") and (.Stops|type == "array")' <<< "$reply" >/dev/null; then log_warn node_reply_invalid "job=$jid"; continue; fi
+      NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].pending=false' <<< "$NODE_STATE"); node_save
+      node_handle_reply "$reply"
+    else
+      rc=$?; log_warn node_report_failed "job=$jid" "exit=$rc"
+      if ((rc == BUS_PERMISSION)); then node_reconcile "$jid"; fi
+    fi
+  done
+}
+
+# node_handle_stop requires a successful local stop and keeps the actual result if completion won the race.
+node_handle_stop() {
+  local jid=$1 assignment=$2 tid state run detail
+  if ! jq -e --arg id "$jid" --argjson assignment "$assignment" '.jobs[$id] | .assignment == $assignment and (.obsolete|not)' <<< "$NODE_STATE" >/dev/null; then return; fi
+  tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$NODE_STATE")
+  [[ -n $tid ]] || return 0
+  state=$(task_field "$tid" STATUS)
+  [[ ! $state =~ ^(done|failed|stopped)$ ]] || return 0
+  run=$(task_field "$tid" RUN)
+  if ((run > 0)); then
+    touch "$TASKS/$tid/node-stop-requested"
+    if ! detail=$(systemctl --user stop "$(unit_name "$tid" "$run").service" 2>&1); then
+      rm -f "$TASKS/$tid/node-stop-requested"
+      log_warn node_stop_failed "job=$jid" "error=$detail"; return
+    fi
+    if unit_active "$tid" "$run"; then
+      rm -f "$TASKS/$tid/node-stop-requested"
+      log_warn node_stop_failed "job=$jid" "error=unit remains active"; return
+    fi
+  fi
+  state=$(task_field "$tid" STATUS)
+  if [[ ! $state =~ ^(done|failed|stopped)$ ]]; then
+    touch "$TASKS/$tid/stop-requested"
+    meta_set "$tid" STATUS stopped
+  fi
+  node_scan_tasks
+}
+
+# node_handle_reply validates and handles only assignments and stop requests from this heartbeat.
+node_handle_reply() {
+  local reply=$1 stop job jid assignment existing agent at ids
+  ids=$(jq -r '.Stops[].Request.ID' <<< "$reply")
+  for stop in $ids; do
+    node_handle_stop "$stop" "$(jq -r --arg id "$stop" '.Stops[] | select(.Request.ID == $id) | .Assignment' <<< "$reply")"
+  done
+  job=$(jq -c .Job <<< "$reply")
+  [[ $job != null ]] || return 0
+  jid=$(jq -r .Request.ID <<< "$job"); assignment=$(jq -r .Assignment <<< "$job")
+  jq -e '.Request.ID | test("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")' <<< "$job" >/dev/null || die "invalid assignment ID"
+  [[ $assignment =~ ^[1-9][0-9]*$ ]] || die "invalid assignment evidence"
+  existing=$(jq -r --arg id "$jid" '.jobs[$id].assignment // 0' <<< "$NODE_STATE")
+  [[ $existing != "$assignment" ]] || return 0
+  at=$(jq -r '.History[-1].At // empty' <<< "$job")
+  if agent=$(node_select_agent "$(jq -r .Request.Selector <<< "$job")"); then :; else agent=''; fi
+  NODE_STATE=$(jq -c --arg id "$jid" --argjson assignment "$assignment" --argjson request "$(jq -c .Request <<< "$job")" --arg agent "$agent" --arg at "$at" \
+    '.jobs[$id]={assignment:$assignment,request:$request,agent:$agent,assigned_at:$at,task_id:"",branch:"",launched:false,start_acked:false,obsolete:false,pending:false,preparing:true,cursor:0}' <<< "$NODE_STATE"); node_save
+  if [[ -z $agent ]]; then node_transition "$jid" failed '' 'no free local agent for assignment'; return; fi
+  NODE_PREPARE_ERROR=''
+  if prepare_job_task "$jid" "$agent" "$(jq -r .Request.Repository <<< "$job")" "$(jq -r .Request.BaseRef <<< "$job")" "$(jq -r '.Request.BaseSHA // ""' <<< "$job")" "$(jq -r .Request.Task <<< "$job")" "$assignment"; then
+    node_bind_task "$jid" "$NEW_ID"
+  else
+    NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].preparing=false' <<< "$NODE_STATE")
+    node_transition "$jid" failed '' "${NODE_PREPARE_ERROR:-node task preparation failed}"
+  fi
+}
+
+# node_poll performs one durable recovery/report/assignment cycle without involving the ordinary MCP bus.
+node_poll() {
+  NODE_STATE=$(node_jobs_load)
+  node_recover_tasks
+  node_process_pending_launches
+  node_scan_tasks
+  node_flush_reports
+  local declaration reply
+  declaration=$(node_heartbeat_json)
+  if reply=$(printf '%s' "$declaration" | node_request --path /v1/heartbeat); then
+    if jq -e 'has("Job") and (.Stops|type == "array")' <<< "$reply" >/dev/null; then
+      log_info node_heartbeat_accepted
+      node_handle_reply "$reply"
+      node_process_pending_launches
+    else log_warn node_reply_invalid; fi
+  else log_warn node_heartbeat_failed; fi
+}
+
+# cmd_node runs the configured node in the foreground; --once is a single recovery/poll cycle for diagnostics.
+cmd_node() {
+  [[ $# == 0 || ($# == 1 && $1 == --once) ]] || die "usage: agent node [--once]"
+  exec 10>&-
+  [[ -n $LEAD_URL ]] || die "LEAD_URL is not set: set it in config/agents.conf (e.g. LEAD_URL=http://lead-instance:7780)"
+  [[ $NODE_POLL_SEC =~ ^[1-9][0-9]*$ ]] || die "NODE_POLL_SEC must be a positive integer"
+  local repo declaration detail
+  for repo in "${!NODE_REPOS[@]}"; do [[ ${NODE_REPOS[$repo]} == /* ]] || die "NODE_REPOS paths must be absolute: $repo"; done
+  declaration=$(node_heartbeat_json)
+  if ! detail=$(printf '%s' "$declaration" | node_request --validate 2>&1); then die "invalid capabilities: $detail"; fi
+  node_lock
+  log_info node_started "lead_url=$LEAD_URL" "poll_sec=$NODE_POLL_SEC"
+  trap 'log_info node_stopped; exit 0' TERM INT
+  while :; do
+    node_poll
+    [[ ${1:-} != --once ]] || break
+    sleep "$NODE_POLL_SEC" 8>&- &
+    if wait $!; then :; else log_warn node_sleep_interrupted; fi
+  done
+}
+
 cmd__agents_json() { # the configured agents and investigators as JSON lines (for agentlive web)
   local a tier inv
   for a in "${!AGENT_TYPE[@]}"; do
@@ -3621,6 +4033,7 @@ agent dispatch                            manually start the next queued investi
 agent live [--feed] [--remind MIN]        live panel (or an event stream with --feed)
 agent web                                 web interface in the foreground (normally: agentweb.service)
 agent lead                                the lead's job listener in the foreground (normally: agentlead.service; LEAD_LISTEN)
+agent node                                the node daemon in the foreground (normally: agentnode.service; LEAD_URL)
 agent kick <task>                         cut a run short: a team member sleeps (the team can wake it), solo: stopped
 agent round-size <task>                   size of a task's change against the round limit (README "Rounds")
 agent run --resume <team|task> --same-round  continue an unmerged round (e.g. review fixes) on the same branches
@@ -3659,6 +4072,7 @@ main() {
     live)    cmd_live "$@" ;;
     web)     cmd_web ;;
     lead)    cmd_lead ;;
+    node)    cmd_node "$@" ;;
     kick)    cmd_kick "$@" ;;
     round-size) cmd_round_size "$@" ;;
     _agents-json) cmd__agents_json ;;

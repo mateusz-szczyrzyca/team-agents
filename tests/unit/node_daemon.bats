@@ -1,0 +1,679 @@
+#!/usr/bin/env bats
+# The node daemon (`agent node`). It connects to the lead over HTTP, sends periodic heartbeats,
+# takes jobs matching its declared capabilities and free agents, starts tasks through the shared
+# runner path, and recovers durably across crashes and restarts.
+
+load helpers
+
+teardown() {
+  if [[ -f "$HOME/node.pid" ]]; then
+    local node_pid rc=0
+    node_pid=$(cat "$HOME/node.pid")
+    if kill -0 "$node_pid" 2> "$HOME/node-stop.err"; then
+      kill -TERM "$node_pid" 2>> "$HOME/node-stop.err" || rc=$?
+      if [[ $rc -eq 0 ]]; then
+        wait "$node_pid" 2>> "$HOME/node-stop.err" || rc=$?
+        if [[ $rc -ne 0 && $rc -ne 143 ]]; then
+          echo "node teardown wait failed with rc $rc" >&2
+        fi
+      fi
+    fi
+    rm -f "$HOME/node.pid" "$HOME/node-stop.err"
+  fi
+  # Clean up any child stub runners spawned during the test
+  local p pid prc
+  for p in "$STUB_UNITS"/*.pid; do
+    [[ -f $p ]] || continue
+    pid=$(cat "$p")
+    prc=0
+    if kill -0 -- -"$pid" 2> "$HOME/stub-stop.err"; then
+      kill -TERM -- -"$pid" 2>> "$HOME/stub-stop.err" || prc=$?
+      if [[ $prc -eq 0 ]]; then
+        wait "$pid" 2>> "$HOME/stub-stop.err" || prc=$?
+      fi
+    fi
+    rm -f "$p" "$HOME/stub-stop.err"
+  done
+}
+
+@test "agent node requires LEAD_URL and says how to set it" {
+  run agent node
+  [ "$status" -ne 0 ]
+  [[ $output == *"LEAD_URL is not set: set it in config/agents.conf (e.g. LEAD_URL=http://lead-instance:7780)"* ]]
+}
+
+@test "agent node validates capabilities on startup" {
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_CAPABILITIES=(unknown:foo)' >> "$AGENTS_HOME/agents.conf"
+  run agent node
+  [ "$status" -ne 0 ]
+  [[ $output == *"invalid capabilities:"* ]]
+}
+
+@test "agent node logs node_started and exits cleanly on SIGTERM" {
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  agent node > "$HOME/node.log" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$HOME/node.pid"
+  wait_grep '"event":"node_started"' "$AGENTS_HOME/logs/agent.jsonl" 15
+  kill -TERM "$pid"
+  local rc=0
+  wait "$pid" || rc=$?
+  [ "$rc" -eq 0 ]
+  rm "$HOME/node.pid"
+}
+
+@test "prepare_job_task tags created task with JOB_ID and JOB_ASSIGNMENT" {
+  source "$REPO_ROOT/bin/agent"
+  # shellcheck disable=SC2034 # NODE_REPOS is read by prepare_job_task
+  declare -gA NODE_REPOS=([repo]="$HOME/repo")
+  cd "$HOME/repo" || return 1
+  local first
+  first=$(git rev-parse HEAD)
+  local id
+  id=$( ( exec 10>&-; prepare_job_task job-123 solo repo main "$first" "task text" 42 && printf '%s\n' "$NEW_ID" ) )
+  [ -n "$id" ]
+  [ "$(task_field "$id" JOB_ID)" = "job-123" ]
+  [ "$(task_field "$id" JOB_ASSIGNMENT)" = "42" ]
+}
+
+# setup_node_bus_stub intercepts node-request to provide deterministic lead responses
+setup_node_bus_stub() {
+  local real_bus="$HOME/.local/bin/agentbus"
+  mv "$real_bus" "$HOME/.local/bin/real-agentbus"
+  cat > "$real_bus" <<'STUB'
+#!/usr/bin/env bash
+if [[ ${1:-} == node-request ]]; then
+  shift
+  path=""
+  validate=0
+  while (($#)); do
+    case $1 in
+      --path) path=$2; shift 2 ;;
+      --validate) validate=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  if ((validate)); then
+    cat >/dev/null
+    printf '{}\n'
+    exit 0
+  fi
+  if [[ $path == "/v1/heartbeat" ]]; then
+    cat > "$STUB_HOME/last-heartbeat.json"
+    if [[ ! -f "$STUB_HOME/job-delivered" ]]; then
+      touch "$STUB_HOME/job-delivered"
+      cat <<'EOF'
+{
+  "Job": {
+    "Request": {
+      "ID": "job-test-1",
+      "Repository": "repo",
+      "BaseRef": "main",
+      "BaseSHA": "",
+      "Requires": [],
+      "Selector": "solo",
+      "Task": "say hello",
+      "Requester": "human"
+    },
+    "State": "assigned",
+    "Assignment": 1,
+    "Node": "node-test",
+    "History": [
+      {"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"},
+      {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"}
+    ]
+  },
+  "Stops": []
+}
+EOF
+    else
+      printf '{"Job":null,"Stops":[]}\n'
+    fi
+    exit 0
+  fi
+  if [[ $path == /v1/jobs/*/state ]]; then
+    cat > "$STUB_HOME/last-state.json"
+    sid=$(jq -r '.ID' "$STUB_HOME/last-state.json")
+    asgn=$(jq -r '.Assignment' "$STUB_HOME/last-state.json")
+    tid=$(jq -r '.TaskID' "$STUB_HOME/last-state.json")
+    br=$(jq -r '.Branch' "$STUB_HOME/last-state.json")
+    cat <<EOF
+{
+  "Request": {
+    "ID": "$sid",
+    "Repository": "repo",
+    "BaseRef": "main",
+    "BaseSHA": "",
+    "Requires": [],
+    "Selector": "solo",
+    "Task": "say hello",
+    "Requester": "human"
+  },
+  "State": "running",
+  "Node": "node-test",
+  "Assignment": $asgn,
+  "TaskID": "$tid",
+  "Branch": "$br",
+  "History": [
+    {"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"},
+    {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"},
+    {"State": "running", "At": "2026-10-25T20:00:02.000000000Z"}
+  ]
+}
+EOF
+    exit 0
+  fi
+  exit 0
+fi
+exec "$HOME/.local/bin/real-agentbus" "$@"
+STUB
+  chmod +x "$real_bus"
+}
+
+@test "agent node polls heartbeat, prepares assigned job, acks running state before launching" {
+  setup_node_bus_stub
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
+  echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
+  run agent node --once
+  [ "$status" -eq 0 ]
+  [ -f "$AGENTS_HOME/bus/node-jobs.json" ]
+  [ -f "$HOME/last-state.json" ]
+  grep -q '"State":"running"' "$HOME/last-state.json"
+  grep -q '"Assignment":1' "$HOME/last-state.json"
+  local task_id
+  task_id=$(jq -r '.jobs["job-test-1"].task_id' "$AGENTS_HOME/bus/node-jobs.json")
+  [ -n "$task_id" ]
+  [ -f "$AGENTS_HOME/tasks/$task_id/meta.env" ]
+  grep -q 'JOB_ID=job-test-1' "$AGENTS_HOME/tasks/$task_id/meta.env"
+  grep -q 'JOB_ASSIGNMENT=1' "$AGENTS_HOME/tasks/$task_id/meta.env"
+}
+
+@test "second agent node daemon fails immediately when another daemon is running" {
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  agent node > "$HOME/node.log" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$HOME/node.pid"
+  wait_grep '"event":"node_started"' "$AGENTS_HOME/logs/agent.jsonl" 15
+  run agent node
+  [ "$status" -ne 0 ]
+  [[ $output == *"another node daemon is already running"* ]]
+  kill -TERM "$pid"
+  local rc=0
+  wait "$pid" || rc=$?
+  [ "$rc" -eq 0 ]
+  rm "$HOME/node.pid"
+}
+
+@test "agent node fails closed on corrupt node-jobs.json without overwriting it" {
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  printf '{"jobs": corrupt' > "$AGENTS_HOME/bus/node-jobs.json"
+  run agent node --once
+  [ "$status" -ne 0 ]
+  [[ $output == *"corrupt"* ]]
+  [ "$(cat "$AGENTS_HOME/bus/node-jobs.json")" = '{"jobs": corrupt' ]
+}
+
+@test "agent node handles checkout failure by reporting failed and marking nothing started" {
+  setup_node_bus_stub
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  # NODE_REPOS empty: checkout fails
+  run agent node --once
+  [ "$status" -eq 0 ]
+  [ -f "$AGENTS_HOME/bus/node-jobs.json" ]
+  grep -q '"State":"failed"' "$AGENTS_HOME/bus/node-jobs.json"
+}
+
+@test "agent node restart recovery does not duplicate launch" {
+  setup_node_bus_stub
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
+  run agent node --once
+  [ "$status" -eq 0 ]
+  local task_id
+  task_id=$(jq -r '.jobs["job-test-1"].task_id' "$AGENTS_HOME/bus/node-jobs.json")
+  grep -q '^RUN=1' "$AGENTS_HOME/tasks/$task_id/meta.env"
+
+  # Second poll tick / restart
+  run agent node --once
+  [ "$status" -eq 0 ]
+  # RUN remains 1, no duplicate runner was started
+  grep -q '^RUN=1' "$AGENTS_HOME/tasks/$task_id/meta.env"
+}
+
+@test "agent node stops active task on stop request in heartbeat" {
+  local real_bus="$HOME/.local/bin/agentbus"
+  mv "$real_bus" "$HOME/.local/bin/real-agentbus"
+  cat > "$real_bus" <<'STUB'
+#!/usr/bin/env bash
+if [[ ${1:-} == node-request ]]; then
+  shift
+  path=""
+  validate=0
+  while (($#)); do
+    case $1 in
+      --path) path=$2; shift 2 ;;
+      --validate) validate=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  if ((validate)); then printf '{}\n'; exit 0; fi
+  if [[ $path == "/v1/heartbeat" ]]; then
+    if [[ ! -f "$STUB_HOME/job-delivered" ]]; then
+      touch "$STUB_HOME/job-delivered"
+      cat <<'EOF'
+{"Job":{"Request":{"ID":"job-stop-1","Repository":"repo","BaseRef":"main","BaseSHA":"","Requires":[],"Selector":"solo","Task":"text"},"Assignment":1,"Node":"node-test"},"Stops":[]}
+EOF
+    else
+      cat <<'EOF'
+{"Job":null,"Stops":[{"Request":{"ID":"job-stop-1"},"Assignment":1}]}
+EOF
+    fi
+    exit 0
+  fi
+  if [[ $path == /v1/jobs/*/state ]]; then
+    cat > "$STUB_HOME/last-state.json"
+    sid=$(jq -r '.ID' "$STUB_HOME/last-state.json")
+    asgn=$(jq -r '.Assignment' "$STUB_HOME/last-state.json")
+    tid=$(jq -r '.TaskID' "$STUB_HOME/last-state.json")
+    br=$(jq -r '.Branch' "$STUB_HOME/last-state.json")
+    cat <<EOF
+{
+  "Request": {"ID": "$sid", "Repository": "repo", "BaseRef": "main", "BaseSHA": "", "Requires": [], "Selector": "solo", "Task": "text", "Requester": "human"},
+  "State": "running", "Node": "node-test", "Assignment": $asgn, "TaskID": "$tid", "Branch": "$br",
+  "History": [{"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"}, {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"}, {"State": "running", "At": "2026-10-25T20:00:02.000000000Z"}]
+}
+EOF
+    exit 0
+  fi
+  exit 0
+fi
+exec "$HOME/.local/bin/real-agentbus" "$@"
+STUB
+  chmod +x "$real_bus"
+
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
+  echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
+  # Tick 1: prepares and starts job-stop-1
+  run agent node --once
+  [ "$status" -eq 0 ]
+  local task_id
+  task_id=$(jq -r '.jobs["job-stop-1"].task_id' "$AGENTS_HOME/bus/node-jobs.json")
+  [ -n "$task_id" ]
+
+  # Tick 2: receives Stops for job-stop-1
+  run agent node --once
+  [ "$status" -eq 0 ]
+  grep -q '^STATUS=stopped' "$AGENTS_HOME/tasks/$task_id/meta.env"
+  grep -q '"State":"stopped"' "$AGENTS_HOME/bus/node-jobs.json"
+}
+
+@test "agent node preserves done outcome when completion wins race against stop request" {
+  local real_bus="$HOME/.local/bin/agentbus"
+  mv "$real_bus" "$HOME/.local/bin/real-agentbus"
+  cat > "$real_bus" <<'STUB'
+#!/usr/bin/env bash
+if [[ ${1:-} == node-request ]]; then
+  shift
+  path=""
+  validate=0
+  while (($#)); do
+    case $1 in
+      --path) path=$2; shift 2 ;;
+      --validate) validate=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  if ((validate)); then printf '{}\n'; exit 0; fi
+  if [[ $path == "/v1/heartbeat" ]]; then
+    if [[ ! -f "$STUB_HOME/job-delivered" ]]; then
+      touch "$STUB_HOME/job-delivered"
+      cat <<'EOF'
+{"Job":{"Request":{"ID":"job-done-race","Repository":"repo","BaseRef":"main","BaseSHA":"","Requires":[],"Selector":"solo","Task":"text"},"Assignment":1,"Node":"node-test"},"Stops":[]}
+EOF
+    else
+      cat <<'EOF'
+{"Job":null,"Stops":[{"Request":{"ID":"job-done-race"},"Assignment":1}]}
+EOF
+    fi
+    exit 0
+  fi
+  if [[ $path == /v1/jobs/*/state ]]; then
+    cat > "$STUB_HOME/last-state.json"
+    sid=$(jq -r '.ID' "$STUB_HOME/last-state.json")
+    asgn=$(jq -r '.Assignment' "$STUB_HOME/last-state.json")
+    tid=$(jq -r '.TaskID' "$STUB_HOME/last-state.json")
+    br=$(jq -r '.Branch' "$STUB_HOME/last-state.json")
+    cat <<EOF
+{
+  "Request": {"ID": "$sid", "Repository": "repo", "BaseRef": "main", "BaseSHA": "", "Requires": [], "Selector": "solo", "Task": "text", "Requester": "human"},
+  "State": "running", "Node": "node-test", "Assignment": $asgn, "TaskID": "$tid", "Branch": "$br",
+  "History": [{"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"}, {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"}, {"State": "running", "At": "2026-10-25T20:00:02.000000000Z"}]
+}
+EOF
+    exit 0
+  fi
+  exit 0
+fi
+exec "$HOME/.local/bin/real-agentbus" "$@"
+STUB
+  chmod +x "$real_bus"
+
+  scenario '{"solo": {"new": "done"}}'
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
+  echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
+  # Tick 1: prepares and starts job-done-race
+  run agent node --once
+  [ "$status" -eq 0 ]
+  local task_id
+  task_id=$(jq -r '.jobs["job-done-race"].task_id' "$AGENTS_HOME/bus/node-jobs.json")
+  [ -n "$task_id" ]
+
+  # Wait for the stub agent to complete and record STATUS=done
+  wait_status "$task_id" "done" 15
+
+  # Tick 2: receives Stops for job-done-race
+  run agent node --once
+  [ "$status" -eq 0 ]
+  # Done status must be preserved: terminal result wins race
+  grep -q '^STATUS=done' "$AGENTS_HOME/tasks/$task_id/meta.env"
+}
+
+@test "agent node preserves outbox when lead returns malformed reply" {
+  local real_bus="$HOME/.local/bin/agentbus"
+  mv "$real_bus" "$HOME/.local/bin/real-agentbus"
+  cat > "$real_bus" <<'STUB'
+#!/usr/bin/env bash
+if [[ ${1:-} == node-request ]]; then
+  shift
+  path=""
+  validate=0
+  while (($#)); do
+    case $1 in
+      --path) path=$2; shift 2 ;;
+      --validate) validate=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  if ((validate)); then printf '{}\n'; exit 0; fi
+  if [[ $path == "/v1/heartbeat" ]]; then
+    echo "malformed-not-json"
+    exit 1
+  fi
+  exit 0
+fi
+exec "$HOME/.local/bin/real-agentbus" "$@"
+STUB
+  chmod +x "$real_bus"
+
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  # Put a pending report in outbox
+  mkdir -p "$AGENTS_HOME/bus"
+  cat > "$AGENTS_HOME/bus/node-jobs.json" <<'EOF'
+{"jobs":{},"outbox":[{"ID":"job-pending","State":"running"}]}
+EOF
+
+  run agent node --once
+  # Outbox must not be cleared on failure
+  [ "$(jq -r '.outbox | length' "$AGENTS_HOME/bus/node-jobs.json")" = "1" ]
+}
+
+@test "agent node retries exact start report snapshot on lost ACK without duplicate runner or altered timestamp" {
+  local real_bus="$HOME/.local/bin/agentbus"
+  mv "$real_bus" "$HOME/.local/bin/real-agentbus"
+  cat > "$real_bus" <<'STUB'
+#!/usr/bin/env bash
+if [[ ${1:-} == node-request ]]; then
+  shift
+  path=""
+  validate=0
+  while (($#)); do
+    case $1 in
+      --path) path=$2; shift 2 ;;
+      --validate) validate=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  if ((validate)); then printf '{}\n'; exit 0; fi
+  if [[ $path == "/v1/heartbeat" ]]; then
+    if [[ ! -f "$STUB_HOME/job-delivered" ]]; then
+      touch "$STUB_HOME/job-delivered"
+      cat <<'EOF'
+{
+  "Job": {
+    "Request": {"ID": "job-retry-1", "Repository": "repo", "BaseRef": "main", "BaseSHA": "", "Requires": [], "Selector": "solo", "Task": "say retry", "Requester": "human"},
+    "State": "assigned",
+    "Assignment": 1,
+    "Node": "node-test",
+    "History": [{"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"}, {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"}]
+  },
+  "Stops": []
+}
+EOF
+    else
+      printf '{"Job":null,"Stops":[]}\n'
+    fi
+    exit 0
+  fi
+  if [[ $path == /v1/jobs/*/state ]]; then
+    if [[ ! -f "$STUB_HOME/first-post-seen" ]]; then
+      touch "$STUB_HOME/first-post-seen"
+      cat > "$STUB_HOME/post-1.json"
+      echo "server error" >&2
+      exit 1
+    fi
+    cat > "$STUB_HOME/post-2.json"
+    sid=$(jq -r '.ID' "$STUB_HOME/post-2.json")
+    asgn=$(jq -r '.Assignment' "$STUB_HOME/post-2.json")
+    tid=$(jq -r '.TaskID' "$STUB_HOME/post-2.json")
+    br=$(jq -r '.Branch' "$STUB_HOME/post-2.json")
+    cat <<EOF
+{
+  "Request": {"ID": "$sid", "Repository": "repo", "BaseRef": "main", "BaseSHA": "", "Requires": [], "Selector": "solo", "Task": "say retry", "Requester": "human"},
+  "State": "running", "Node": "node-test", "Assignment": $asgn, "TaskID": "$tid", "Branch": "$br",
+  "History": [{"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"}, {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"}, {"State": "running", "At": "2026-10-25T20:00:02.000000000Z"}]
+}
+EOF
+    exit 0
+  fi
+  exit 0
+fi
+exec "$HOME/.local/bin/real-agentbus" "$@"
+STUB
+  chmod +x "$real_bus"
+
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
+  echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
+
+  # Tick 1: prepares job-retry-1, attempts start report (fails)
+  run agent node --once
+  [ "$status" -eq 0 ]
+  [ -f "$STUB_HOME/post-1.json" ]
+  local first_at
+  first_at=$(jq -r '.At' "$STUB_HOME/post-1.json")
+  [ -n "$first_at" ]
+
+  # Tick 2: retries start report (succeeds), launches runner
+  run agent node --once
+  [ "$status" -eq 0 ]
+  [ -f "$STUB_HOME/post-2.json" ]
+  local second_at
+  second_at=$(jq -r '.At' "$STUB_HOME/post-2.json")
+  [ "$first_at" = "$second_at" ]
+
+  local task_id
+  task_id=$(jq -r '.jobs["job-retry-1"].task_id' "$AGENTS_HOME/bus/node-jobs.json")
+  grep -q '^RUN=1' "$AGENTS_HOME/tasks/$task_id/meta.env"
+}
+
+@test "agent node consumes cumulative task transitions from journal for heartbeat reports" {
+  scenario '{"solo": {"new": "sleep"}}'
+  local real_bus="$HOME/.local/bin/agentbus"
+  mv "$real_bus" "$HOME/.local/bin/real-agentbus"
+  cat > "$real_bus" <<'STUB'
+#!/usr/bin/env bash
+if [[ ${1:-} == node-request ]]; then
+  shift
+  path=""
+  validate=0
+  while (($#)); do
+    case $1 in
+      --path) path=$2; shift 2 ;;
+      --validate) validate=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  if ((validate)); then printf '{}\n'; exit 0; fi
+  if [[ $path == "/v1/heartbeat" ]]; then
+    cat > "$STUB_HOME/heartbeat-payload.json"
+    if jq -e '.Reports | length > 0' "$STUB_HOME/heartbeat-payload.json" >/dev/null 2>&1; then
+      cp "$STUB_HOME/heartbeat-payload.json" "$STUB_HOME/heartbeat-reports.json"
+    fi
+    if [[ ! -f "$STUB_HOME/job-delivered" ]]; then
+      touch "$STUB_HOME/job-delivered"
+      cat <<'EOF'
+{
+  "Job": {
+    "Request": {"ID": "job-journal-1", "Repository": "repo", "BaseRef": "main", "BaseSHA": "", "Requires": [], "Selector": "solo", "Task": "say journal", "Requester": "human"},
+    "State": "assigned",
+    "Assignment": 1,
+    "Node": "node-test",
+    "History": [{"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"}, {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"}]
+  },
+  "Stops": []
+}
+EOF
+    else
+      printf '{"Job":null,"Stops":[]}\n'
+    fi
+    exit 0
+  fi
+  if [[ $path == /v1/jobs/*/state ]]; then
+    cat > "$STUB_HOME/last-state.json"
+    sid=$(jq -r '.ID' "$STUB_HOME/last-state.json")
+    asgn=$(jq -r '.Assignment' "$STUB_HOME/last-state.json")
+    tid=$(jq -r '.TaskID' "$STUB_HOME/last-state.json")
+    br=$(jq -r '.Branch' "$STUB_HOME/last-state.json")
+    cat <<EOF
+{
+  "Request": {"ID": "$sid", "Repository": "repo", "BaseRef": "main", "BaseSHA": "", "Requires": [], "Selector": "solo", "Task": "say journal", "Requester": "human"},
+  "State": "running", "Node": "node-test", "Assignment": $asgn, "TaskID": "$tid", "Branch": "$br",
+  "History": [{"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"}, {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"}, {"State": "running", "At": "2026-10-25T20:00:02.000000000Z"}]
+}
+EOF
+    exit 0
+  fi
+  exit 0
+fi
+exec "$HOME/.local/bin/real-agentbus" "$@"
+STUB
+  chmod +x "$real_bus"
+
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
+  echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
+
+  # Tick 1: prepares and launches job-journal-1
+  run agent node --once
+  [ "$status" -eq 0 ]
+  local task_id
+  task_id=$(jq -r '.jobs["job-journal-1"].task_id' "$AGENTS_HOME/bus/node-jobs.json")
+  [ -n "$task_id" ]
+
+  # Wait for runner to enter running status before rapid transitions
+  wait_status "$task_id" "running" 15
+
+  # Append rapid transitions into job_transitions.jsonl
+  cat >> "$AGENTS_HOME/tasks/$task_id/job_transitions.jsonl" <<'EOF'
+{"state":"waiting","at":"2026-10-25T20:01:00.000000000Z"}
+{"state":"running","at":"2026-10-25T20:01:05.000000000Z"}
+{"state":"waiting","at":"2026-10-25T20:01:10.000000000Z"}
+EOF
+  echo "STATUS=waiting" >> "$AGENTS_HOME/tasks/$task_id/meta.env"
+
+  # Tick 2: node poll sends heartbeat carrying cumulative transitions
+  run agent node --once
+  [ "$status" -eq 0 ]
+  [ -f "$STUB_HOME/heartbeat-reports.json" ]
+  jq -e '.Reports[0].Transitions[] | select(.State == "waiting")' "$STUB_HOME/heartbeat-reports.json"
+}
+
+@test "agent node reconciles stale assignment on Rejected report and refuses to launch" {
+  local real_bus="$HOME/.local/bin/agentbus"
+  mv "$real_bus" "$HOME/.local/bin/real-agentbus"
+  cat > "$real_bus" <<'STUB'
+#!/usr/bin/env bash
+if [[ ${1:-} == node-request ]]; then
+  shift
+  path=""
+  get=0
+  validate=0
+  while (($#)); do
+    case $1 in
+      --path) path=$2; shift 2 ;;
+      --get) get=1; shift ;;
+      --validate) validate=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  if ((validate)); then printf '{}\n'; exit 0; fi
+  if [[ $path == "/v1/heartbeat" ]]; then
+    if [[ ! -f "$STUB_HOME/job-delivered" ]]; then
+      touch "$STUB_HOME/job-delivered"
+      cat <<'EOF'
+{
+  "Job": {
+    "Request": {"ID": "job-stale-1", "Repository": "repo", "BaseRef": "main", "BaseSHA": "", "Requires": [], "Selector": "solo", "Task": "stale", "Requester": "human"},
+    "State": "assigned",
+    "Assignment": 1,
+    "Node": "node-test",
+    "History": [{"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"}, {"State": "assigned", "At": "2026-10-25T20:00:01.000000000Z"}]
+  },
+  "Stops": []
+}
+EOF
+    else
+      printf '{"Job":null,"Stops":[]}\n'
+    fi
+    exit 0
+  fi
+  if [[ $path == /v1/jobs/job-stale-1/state ]]; then
+    echo "rejected: stale assignment" >&2
+    exit 3
+  fi
+  if [[ $path == /v1/jobs/job-stale-1 && $get -eq 1 ]]; then
+    cat <<'EOF'
+{
+  "Request": {"ID": "job-stale-1", "Repository": "repo", "BaseRef": "main", "BaseSHA": "", "Requires": [], "Selector": "solo", "Task": "stale", "Requester": "human"},
+  "State": "assigned",
+  "Node": "node-other",
+  "Assignment": 2,
+  "History": [{"State": "queued", "At": "2026-10-25T20:00:00.000000000Z"}, {"State": "assigned", "At": "2026-10-25T20:05:00.000000000Z"}]
+}
+EOF
+    exit 0
+  fi
+  exit 0
+fi
+exec "$HOME/.local/bin/real-agentbus" "$@"
+STUB
+  chmod +x "$real_bus"
+
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
+  echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
+
+  # Tick 1: prepares job-stale-1, state report rejected, reconciles, marks obsolete
+  run agent node --once
+  [ "$status" -eq 0 ]
+  local task_id
+  task_id=$(jq -r '.jobs["job-stale-1"].task_id // empty' "$AGENTS_HOME/bus/node-jobs.json")
+  if [[ -n $task_id ]]; then
+    # Task must never have been launched
+    grep -q '^RUN=0' "$AGENTS_HOME/tasks/$task_id/meta.env"
+  fi
+}

@@ -137,11 +137,15 @@ func parseNodeCheckout(args []string) (map[string]string, NodeCheckoutRequest, *
 func cmdNodeCheckout(args []string) {
 	repos, req, err := parseNodeCheckout(args)
 	if err != nil {
+		// The node persists this diagnostic as a job result; retain the operation-specific cause.
+		err.Message = err.CauseName() + ": " + err.Message
 		exitOn(err.asError())
 		return
 	}
 	result, err := nodeCheckout(repos, req)
 	if err != nil {
+		// The node persists this diagnostic as a job result; retain the operation-specific cause.
+		err.Message = err.CauseName() + ": " + err.Message
 		exitOn(err.asError())
 		return
 	}

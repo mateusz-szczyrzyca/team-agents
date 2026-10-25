@@ -633,7 +633,8 @@ direct links: `Answer: …/questions/<task>?max=1` for questions, `Open: …/tas
 
 **Several instances.** Every installation stays independent: its own bus, tasks and web interface. One installation
 can be the **lead**, which keeps a job queue and the list of nodes; remote jobs are being built in nine rounds:
-[design and implementation plan](docs/multi-instance.md). Round 4 adds the lead's HTTP listener:
+[design and implementation plan](docs/multi-instance.md). Rounds 4 and 6 add the lead's HTTP listener and the node
+daemon (rounds 7 to 9 add the commands, delegation and views):
 
 - `LEAD_LISTEN` in `agents.conf` is the lead's Tailscale address, e.g. `100.101.102.103:7780`. Empty (the default)
   means the installation is not a lead and nothing changes. The lead serves that address and `127.0.0.1` on the
@@ -658,13 +659,41 @@ can be the **lead**, which keeps a job queue and the list of nodes; remote jobs 
   field names (PascalCase) and times are RFC3339Nano. A returning node's heartbeat refreshes caller liveness
   before expiry and applies pending reports atomically; other silent nodes still expire. Nodes must truncate
   each `JobReport.Result` to at most 64 KiB before batching and keep the entire encoded heartbeat within 256 KiB
-  (send multiple batches if needed; enforcement and tests arrive with the round 6 node daemon). The lead keeps its jobs in `bus/jobs.json` (see
+  (the node sends several batches when needed). The lead keeps its jobs in `bus/jobs.json` (see
   [design](docs/multi-instance.md), "Lead storage").
 - `NODE_REPOS` in `agents.conf`: maps repository logical names to local clone paths (e.g. `([team-agents]=/home/dev/src/team-agents)`). A node only accepts jobs for repositories in this allow-list; any other repository is refused before any task or worktree is created.
 - `agentbus node-checkout`: validates the repository against local `NODE_REPOS`, validates base ref and SHA, fetches from origin into a unique private ref without checking out the clone, resolves an immutable commit, and cleans up the temporary ref.
-- There are no `agent run --need`, `agent jobs` or
-  `agent nodes` commands yet, and no node daemon (`agent node`) yet: a job cannot run on another installation
-  until those rounds are merged.
+- **Setting up a node** (round 6). On the machine that takes jobs, in `agents.conf`:
+  - `LEAD_URL`: the lead's address as this machine reaches it, e.g. `http://100.101.102.103:7780`. Empty (the
+    default) means the installation is not a node; `install.sh` then writes no node unit.
+  - `INSTANCE_NAME`: this machine's Tailscale short device name; the lead checks it with `tailscale whois` and
+    lists it in its `LEAD_NODES`.
+  - `INSTANCE_CAPABILITIES`: what this machine can do, declared by you, e.g.
+    `(os:linux arch:arm64 hw:rp2350)`. Namespaces: `os`, `arch`, `build`, `test`, `hw`, `net`; values match
+    `[a-z0-9._-]+`. An unknown namespace or a malformed value stops the daemon with `invalid capabilities: …`.
+  - `NODE_POLL_SEC` (default `10`): the heartbeat interval.
+  - `NODE_REPOS`: the repositories this node runs jobs for; paths must be absolute.
+- `agent node` runs the node daemon in the foreground. `agent node --once` performs one recovery and poll cycle and
+  exits; that cycle may send several heartbeat and report batches. It is a diagnostic. `install.sh` installs and starts `agentnode.service` only when `LEAD_URL` is set. A second daemon on
+  the same installation refuses to start (`bus/node-daemon.lock`).
+- Each heartbeat declares the capabilities, the free agents of the configured tiers and `AGENT_WEB_URL`. The lead
+  answers with at most one job. The node starts it with the same runner as `agent run`; the task records `JOB_ID`,
+  `JOB_ASSIGNMENT` and `JOB_LEAD` in its `meta.env`, and its transitions in `job_transitions.jsonl`. The node
+  reports every state change and the final result. Questions stay on the node: its notifications and web
+  interface, `agent answer` there.
+- The node keeps the latest unreported state of each job in `bus/node-jobs.json` and sends it with the next
+  heartbeat that reaches the lead. A lead outage delays the reports; running tasks continue.
+- A job fails with a typed reason, and no task is started, when its repository is not in `NODE_REPOS`
+  (`RepositoryNotAllowed`) or its checkout fails (`FetchFailed`, `CheckoutFailed`). The branch of a finished
+  job is the one the agent pushed to `origin`.
+- Node events in `logs/agent.jsonl`: `node_started`, `node_heartbeat_accepted`, `node_heartbeat_failed`,
+  `node_stopped`, `node_checkout_failed`, `node_launch_failed`. Diagnostic events, logged when the daemon cannot
+  continue normally: `node_storage_failed`, `node_reply_invalid`, `node_assignment_obsolete`,
+  `node_start_report_failed`, `node_report_failed`, `node_stop_failed`, `node_sleep_interrupted`.
+- **Not yet:** the CLI commands `agent run --need` / `--on`, `agent jobs`, `agent nodes` and cancel (round 7);
+  delegation of a team member's step to another machine (round 8); the Jobs and Instances web views (round 9).
+  Until round 7 a job is submitted to the lead with `agentbus node-request --url <lead> --path /v1/jobs` from the
+  lead's own machine.
 
 ## MCP tools available to agents
 

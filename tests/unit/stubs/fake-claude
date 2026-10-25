@@ -103,6 +103,13 @@ if action == "commit":
     subprocess.run(["git", "add", "hello.txt"], check=True)
     subprocess.run(["git", "commit", "-q", "-m", "Add hello.txt\n\n" + trailers], check=True)
     finish("STATUS: DONE")
+if action == "commit-push":
+    trailers = re.search(r"exactly these trailers, after a blank line:\n\n```\n(.*?)\n```", prompt, re.S).group(1)
+    open("hello.txt", "w").write("hello\n")
+    subprocess.run(["git", "add", "hello.txt"], check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "Add hello.txt\n\n" + trailers], check=True)
+    subprocess.run(["git", "push", "-q", "-u", "origin", "HEAD"], check=True)
+    finish("STATUS: DONE")
 def commit_file(name, text, message):
     trailers = re.search(r"exactly these trailers, after a blank line:\n\n```\n(.*?)\n```", prompt, re.S).group(1)
     open(name, "w").write(text)
