@@ -106,3 +106,50 @@ EOF
   ! grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
 }
 
+@test "create_task fails and leaves no task when the worktree directory cannot be created" {
+  source "$REPO_ROOT/bin/agent"
+  cd "$HOME/repo" || return 1
+  touch "$AGENTS_HOME/worktrees/repo"   # a file where the worktree directory must be
+  mkdir -p "$TASKS/20261025-000000-solo"
+  run create_task solo "text" "$HOME/repo" "$HOME/repo" main 20261025-000000 "" HEAD
+  [ "$status" -ne 0 ]
+  [ ! -e "$TASKS/20261025-000000-solo" ]
+  ! grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+}
+
+@test "create_task fails and leaves no task when git cannot add the worktree" {
+  source "$REPO_ROOT/bin/agent"
+  cd "$HOME/repo" || return 1
+  mkdir -p "$AGENTS_HOME/worktrees/repo"
+  touch "$AGENTS_HOME/worktrees/repo/20261025-000000-solo"   # the worktree path is taken
+  mkdir -p "$TASKS/20261025-000000-solo"
+  run create_task solo "text" "$HOME/repo" "$HOME/repo" main 20261025-000000 "" HEAD
+  [ "$status" -ne 0 ]
+  [ ! -e "$TASKS/20261025-000000-solo" ]
+  ! git -C "$HOME/repo" show-ref --verify --quiet refs/heads/agents/solo/20261025-000000
+  ! grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+}
+
+@test "a job whose task worktree cannot be created fails with node_checkout_failed and starts nothing" {
+  source "$REPO_ROOT/bin/agent"
+  node_job_setup
+  touch "$AGENTS_HOME/worktrees/repo"   # the worktree directory cannot be made
+  run run_prepare job-7 solo repo main "" "text"
+  [ "$status" -ne 0 ]
+  [ -z "$(ls -A "$TASKS")" ]
+  grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
+  ! grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+}
+
+@test "a job for an unknown agent is refused without an unbound-variable crash" {
+  source "$REPO_ROOT/bin/agent"
+  node_job_setup
+  run run_prepare job-9 ghost repo main "" "text"
+  [ "$status" -ne 0 ]
+  [[ $output != *unbound* ]]
+  [ -z "$(ls -A "$TASKS")" ]
+  [ ! -d "$AGENTS_HOME/worktrees/repo" ] || [ -z "$(ls -A "$AGENTS_HOME/worktrees/repo")" ]
+  grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
+}
+
+

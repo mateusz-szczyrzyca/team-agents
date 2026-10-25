@@ -2396,10 +2396,22 @@ create_task() { # name text root main_root base ts [team [start]] — uses a cla
     CREATE_TASK_ERROR="${err:-git worktree add failed}"
     return 1
   fi
-  printf '%s\n' "$task" > "$dir/task.md"
+  if ! printf '%s\n' "$task" > "$dir/task.md"; then
+    git -C "$root" worktree remove --force "$wt" >/dev/null 2>&1 || true
+    git -C "$root" branch -D "$branch" >/dev/null 2>&1 || true
+    rm -rf "$wt" "$dir" 2>/dev/null || true
+    CREATE_TASK_ERROR="cannot write task.md"
+    return 1
+  fi
   local agents_md=missing
   [[ -f $wt/AGENTS.md ]] && agents_md=present
-  : > "$dir/meta.env"
+  if ! : > "$dir/meta.env"; then
+    git -C "$root" worktree remove --force "$wt" >/dev/null 2>&1 || true
+    git -C "$root" branch -D "$branch" >/dev/null 2>&1 || true
+    rm -rf "$wt" "$dir" 2>/dev/null || true
+    CREATE_TASK_ERROR="cannot create meta.env"
+    return 1
+  fi
   local sid=""
   [[ ${AGENT_TYPE[$name]} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
   local kv
