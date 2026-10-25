@@ -53,7 +53,8 @@ func TestNodeClientHTTP(t *testing.T) {
 		{"rejected", 403, `{"Message":"denied"}`, NodeClientRejected},
 		{"server", 500, `{"Message":"disk"}`, NodeClientServerError},
 		{"broken", 200, `{broken`, NodeClientMalformedReply},
-		{"oversized", 200, strings.Repeat("x", 1048577), NodeClientMalformedReply},
+		// Valid JSON one byte over the reply limit: only the size check may reject it.
+		{"oversized", 200, `"` + strings.Repeat("x", 1048575) + `"`, NodeClientMalformedReply},
 		{"redirect", 307, `{}`, NodeClientRejected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

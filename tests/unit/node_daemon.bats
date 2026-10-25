@@ -410,15 +410,16 @@ STUB
   chmod +x "$real_bus"
 
   echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
-  # Put a pending report in outbox
+  # A job whose state report is still pending (the production queue is .jobs[id].pending)
   mkdir -p "$AGENTS_HOME/bus"
   cat > "$AGENTS_HOME/bus/node-jobs.json" <<'EOF'
-{"jobs":{},"outbox":[{"ID":"job-pending","State":"running"}]}
+{"jobs":{"job-pending":{"assignment":1,"state":"running","pending":true,"obsolete":false,"launched":false,"start_acked":false,"task_id":"","branch":"","preparing":false,"cursor":0,"report":{"ID":"job-pending","Node":"node-test","Assignment":1,"State":"running","TaskID":"","Branch":"","PRURL":"","Result":"","At":"2026-10-25T20:00:00.000000000Z","Transitions":[{"State":"running","At":"2026-10-25T20:00:00.000000000Z"}]}}}}
 EOF
 
   run agent node --once
-  # Outbox must not be cleared on failure
-  [ "$(jq -r '.outbox | length' "$AGENTS_HOME/bus/node-jobs.json")" = "1" ]
+  # The pending report must survive a malformed reply: it is resent with the next heartbeat.
+  [ "$(jq -r '.jobs["job-pending"].pending' "$AGENTS_HOME/bus/node-jobs.json")" = "true" ]
+  [ "$(jq -r '.jobs["job-pending"].report.State' "$AGENTS_HOME/bus/node-jobs.json")" = "running" ]
 }
 
 @test "agent node retries exact start report snapshot on lost ACK without duplicate runner or altered timestamp" {
@@ -643,7 +644,7 @@ EOF
   fi
   if [[ $path == /v1/jobs/job-stale-1/state ]]; then
     echo "rejected: stale assignment" >&2
-    exit 3
+    exit 5
   fi
   if [[ $path == /v1/jobs/job-stale-1 && $get -eq 1 ]]; then
     cat <<'EOF'
@@ -672,8 +673,9 @@ STUB
   [ "$status" -eq 0 ]
   local task_id
   task_id=$(jq -r '.jobs["job-stale-1"].task_id // empty' "$AGENTS_HOME/bus/node-jobs.json")
-  if [[ -n $task_id ]]; then
-    # Task must never have been launched
-    grep -q '^RUN=0' "$AGENTS_HOME/tasks/$task_id/meta.env"
-  fi
+  [ -n "$task_id" ]
+  # The rejected report reconciles: the job is marked obsolete and its prepared task is never launched.
+  [ "$(jq -r '.jobs["job-stale-1"].obsolete' "$AGENTS_HOME/bus/node-jobs.json")" = true ]
+  grep -qx 'RUN=0' "$AGENTS_HOME/tasks/$task_id/meta.env"
+  grep -qx 'STATUS=stopped' "$AGENTS_HOME/tasks/$task_id/meta.env"
 }
