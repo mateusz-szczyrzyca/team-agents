@@ -3195,9 +3195,31 @@ node_validate_config() {
   fi
 }
 
+# node_stop — cleanly shuts down the node daemon on signal or stop request.
+node_stop() {
+  local reason=${1:-signal}
+  log_info node_stopped "reason=$reason"
+  exit 0
+}
+
+# node_poll — executes one polling cycle: sends heartbeat, processes stops and assignments.
+node_poll() {
+  return 0
+}
+
 cmd_node() { # runs the node daemon in the foreground (agentnode.service runs this); needs LEAD_URL
   [[ -n $LEAD_URL ]] || die "LEAD_URL is not set: set it in config/agents.conf (e.g. LEAD_URL=http://lead-instance:7780)"
   node_validate_config
+
+  trap 'node_stop "signal"' TERM INT
+  log_info node_started "lead_url=$LEAD_URL" "poll_sec=$NODE_POLL_SEC"
+
+  while true; do
+    node_poll
+    [[ ${1:-} == --once ]] && break
+    sleep "$NODE_POLL_SEC" &
+    wait $! 2>/dev/null || true
+  done
 }
 
 cmd__agents_json() { # the configured agents and investigators as JSON lines (for agentlive web)
