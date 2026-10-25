@@ -186,6 +186,38 @@ else
   echo "  no systemd user session here — run the web interface with: agent web"
 fi
 
+# The lead's job listener (agentlead.service: agent lead) is installed only when this instance is a lead: LEAD_LISTEN
+# is set in agents.conf (README "Several instances"). Without it no lead unit is written.
+lead_listen=$(bash -c 'source "$1"; printf %s "${LEAD_LISTEN:-}"' _ "$AH/agents.conf")
+if [[ -n $lead_listen ]]; then
+  echo "» lead (agentlead.service: agent lead, listening on $lead_listen)"
+  cat > "$UNIT_DIR/agentlead.service" <<UNIT
+[Unit]
+Description=team-agents lead (agent lead)
+
+[Service]
+ExecStart=$BIN/agent lead
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+UNIT
+  if systemctl --user show-environment >/dev/null 2>&1; then   # a query: is there a systemd user session?
+    systemctl --user daemon-reload
+    if ! systemctl --user enable agentlead.service; then
+      echo "  WARNING: agentlead.service could not be enabled (start it by hand: systemctl --user start agentlead)"
+    fi
+    if systemctl --user restart agentlead.service; then
+      echo "  running — see README, \"Several instances\""
+    else
+      echo "  WARNING: agentlead.service did not start — see: journalctl --user -u agentlead"
+    fi
+  else
+    echo "  no systemd user session here — run the lead with: agent lead"
+  fi
+fi
+
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "WARNING: add $BIN to your PATH (e.g. in ~/.bashrc)";; esac
 
 echo
