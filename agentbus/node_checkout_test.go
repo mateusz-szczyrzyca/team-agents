@@ -70,7 +70,14 @@ func TestNodeCheckoutFetchAndResolve(t *testing.T) {
 			if sha != "" {
 				target = regSHA
 			}
-			want := [][]string{{"fetch", "--no-tags", "--no-recurse-submodules", "--", "origin", target}, {"rev-parse", "--verify", "FETCH_HEAD^{commit}"}}
+			if len(calls) != 3 || len(calls[0]) != 6 {
+				t.Fatalf("want private fetch, resolve and cleanup, got %q", calls)
+			}
+			_, privateRef, ok := strings.Cut(calls[0][5], ":") // unique destination used by this preparation
+			if !ok || !strings.HasPrefix(privateRef, "refs/team-agents/node-checkout/") {
+				t.Fatalf("fetch destination is not a private ref: %q", calls[0][5])
+			}
+			want := [][]string{{"fetch", "--no-tags", "--no-recurse-submodules", "--", "origin", target + ":" + privateRef}, {"rev-parse", "--verify", privateRef + "^{commit}"}, {"update-ref", "-d", privateRef}}
 			if !reflect.DeepEqual(calls, want) {
 				t.Fatalf("calls=%q, want %q", calls, want)
 			}
