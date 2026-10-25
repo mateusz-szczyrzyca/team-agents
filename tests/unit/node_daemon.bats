@@ -30,3 +30,16 @@ teardown() {
   [ "$status" -ne 0 ]
   [[ $output == *"invalid capabilities:"* ]]
 }
+
+@test "agent node logs node_started and exits cleanly on SIGTERM" {
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  agent node > "$HOME/node.log" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$HOME/node.pid"
+  wait_grep '"event":"node_started"' "$AGENTS_HOME/logs/agent.jsonl" 15
+  kill -TERM "$pid"
+  local rc=0
+  wait "$pid" || rc=$?
+  [ "$rc" -eq 0 ]
+  rm "$HOME/node.pid"
+}
