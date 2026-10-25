@@ -2175,3 +2175,45 @@ func (c LeadServeCause) info() causeInfo { return leadServeCauses[c] }
 
 // String returns the cause name.
 func (c LeadServeCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- node/checkout
+
+// NodeCheckoutCause is a reason why resolving and checking out a repository for an assigned job failed.
+type NodeCheckoutCause int
+
+const (
+	NodeCheckoutBadFlags             NodeCheckoutCause = iota // a flag is unknown or has no value, or an argument is not a flag [InvalidArgument]
+	NodeCheckoutMissingArgument                               // --repo or --base is missing [InvalidArgument]
+	NodeCheckoutRepositoryNotAllowed                          // the requested repository is not listed in NODE_REPOS [Permission]
+	NodeCheckoutInvalidRepository                             // the repository name is invalid or empty [InvalidArgument]
+	NodeCheckoutInvalidBaseRef                                // the base ref name is invalid or starts with a dash [InvalidArgument]
+	NodeCheckoutInvalidCommit                                 // the commit SHA is invalid [InvalidArgument]
+	NodeCheckoutFetchFailed                                   // fetching from the git remote failed [Process]
+	NodeCheckoutCheckoutFailed                                // git revision resolution or checkout failed [Process]
+	NodeCheckoutWorktreeFailed                                // creating the task worktree failed [Process]
+)
+
+// NodeCheckoutError is the error of resolving and checking out a repository for an assigned job.
+type NodeCheckoutError = OpError[NodeCheckoutCause]
+
+// nodeCheckoutCauses describes the NodeCheckoutCause values (same order as the constants).
+var nodeCheckoutCauses = [...]causeInfo{
+	{"BadFlags", ClassInvalidArgument},
+	{"MissingArgument", ClassInvalidArgument},
+	{"RepositoryNotAllowed", ClassPermission},
+	{"InvalidRepository", ClassInvalidArgument},
+	{"InvalidBaseRef", ClassInvalidArgument},
+	{"InvalidCommit", ClassInvalidArgument},
+	{"FetchFailed", ClassProcess},
+	{"CheckoutFailed", ClassProcess},
+	{"WorktreeFailed", ClassProcess},
+}
+
+// op implements opCause.
+func (NodeCheckoutCause) op() string { return "node/checkout" }
+
+// info implements opCause.
+func (c NodeCheckoutCause) info() causeInfo { return nodeCheckoutCauses[c] }
+
+// String returns the cause name.
+func (c NodeCheckoutCause) String() string { return c.info().name }
