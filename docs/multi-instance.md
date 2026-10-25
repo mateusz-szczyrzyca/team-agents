@@ -250,7 +250,12 @@ operations as the daemon; no second implementation of admission or mutation.
 
 Round 4 implements all seven endpoints. A successful heartbeat atomically
 acknowledges its entire report batch and returns `{"Job": ...}` with at most one
-assignment (`null` when none matches). Delivery of durable stop requests is
+assignment (`null` when none matches). A returning node's heartbeat refreshes caller
+liveness before offline expiry and applies pending reports atomically, while other
+silent nodes still expire. Nodes must truncate each `JobReport.Result` to at most
+64 KiB before batching and keep the entire encoded heartbeat within 256 KiB
+(sending multiple batches if needed; daemon enforcement and testing belong to round 6).
+Delivery of durable stop requests is
 added with the node daemon in round 6; cancellation of an already started job
 currently persists `StopRequested` for read views. JSON field names use
 PascalCase, timestamps use UTC RFC3339Nano, and request bodies are limited to
