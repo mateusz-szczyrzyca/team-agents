@@ -43,8 +43,7 @@ func TestNodeCheckoutValidation(t *testing.T) {
 	}
 }
 
-// TestNodeCheckoutFetchAndResolve: Git receives fixed commands; the fetched commit is resolved from a private ref
-// that only this checkout names, never from the shared FETCH_HEAD, and the private ref is removed afterwards.
+// TestNodeCheckoutFetchAndResolve: Git receives fixed commands and a validated ref or exact SHA.
 func TestNodeCheckoutFetchAndResolve(t *testing.T) {
 	for _, sha := range []string{"", strings.ToUpper(regSHA)} {
 		t.Run("sha="+sha, func(t *testing.T) {
@@ -55,10 +54,10 @@ func TestNodeCheckoutFetchAndResolve(t *testing.T) {
 					t.Fatalf("root=%q, want %q", gotRoot, root)
 				}
 				calls = append(calls, args)
-				if args[0] == "rev-parse" {
-					return []byte(regSHA + "\n"), nil
+				if len(calls) == 1 {
+					return nil, nil
 				}
-				return nil, nil
+				return []byte(regSHA + "\n"), nil
 			})
 			got, err := nodeCheckout(map[string]string{"repo": root}, NodeCheckoutRequest{Repository: "repo", BaseRef: "main", BaseSHA: sha})
 			if err != nil {
@@ -67,60 +66,22 @@ func TestNodeCheckoutFetchAndResolve(t *testing.T) {
 			if got.Root != root || got.Commit != regSHA {
 				t.Fatalf("result=%+v", got)
 			}
-			if len(calls) != 3 {
-				t.Fatalf("calls=%q, want fetch, rev-parse and update-ref", calls)
-			}
 			target := "main"
 			if sha != "" {
 				target = regSHA
 			}
-			ref := calls[0][len(calls[0])-1]
-			ref = strings.TrimPrefix(ref, target+":")
-			if !strings.HasPrefix(ref, "refs/agentbus/node-checkout/") {
-				t.Fatalf("private ref=%q, want refs/agentbus/node-checkout/...", ref)
+			if len(calls) != 3 || len(calls[0]) != 6 {
+				t.Fatalf("want private fetch, resolve and cleanup, got %q", calls)
 			}
-			want := [][]string{
-				{"fetch", "--no-tags", "--no-recurse-submodules", "--", "origin", target + ":" + ref},
-				{"rev-parse", "--verify", ref + "^{commit}"},
-				{"update-ref", "-d", ref},
+			_, privateRef, ok := strings.Cut(calls[0][5], ":") // unique destination used by this preparation
+			if !ok || !strings.HasPrefix(privateRef, "refs/team-agents/node-checkout/") {
+				t.Fatalf("fetch destination is not a private ref: %q", calls[0][5])
 			}
+			want := [][]string{{"fetch", "--no-tags", "--no-recurse-submodules", "--", "origin", target + ":" + privateRef}, {"rev-parse", "--verify", privateRef + "^{commit}"}, {"update-ref", "-d", privateRef}}
 			if !reflect.DeepEqual(calls, want) {
 				t.Fatalf("calls=%q, want %q", calls, want)
 			}
 		})
-	}
-}
-
-// TestNodeCheckoutIgnoresAnotherFetch: another job's fetch overwrites the shared FETCH_HEAD between this job's fetch
-// and its resolution. The checkout must still resolve the commit it asked for, not the other job's commit.
-func TestNodeCheckoutIgnoresAnotherFetch(t *testing.T) {
-	other := strings.Repeat("b", 40)
-	refs := map[string]string{} // private refs written by fetch
-	fetchHead := ""             // the shared FETCH_HEAD, as the interleaved fetch leaves it
-	stubNodeGit(t, func(_ string, args ...string) ([]byte, *ProcessError) {
-		switch args[0] {
-		case "fetch":
-			if dst := args[len(args)-1]; strings.Contains(dst, ":") {
-				_, ref, _ := strings.Cut(dst, ":")
-				refs[ref] = regSHA
-			}
-			fetchHead = other // interleaved fetch of another job
-			return nil, nil
-		case "rev-parse":
-			if args[2] == "FETCH_HEAD^{commit}" {
-				return []byte(fetchHead + "\n"), nil
-			}
-			return []byte(refs[strings.TrimSuffix(args[2], "^{commit}")] + "\n"), nil
-		default:
-			return nil, nil
-		}
-	})
-	got, err := nodeCheckout(map[string]string{"repo": t.TempDir()}, NodeCheckoutRequest{Repository: "repo", BaseRef: "main", BaseSHA: regSHA})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Commit != regSHA {
-		t.Fatalf("commit=%s, want %s (the other job's fetch must not be used)", got.Commit, regSHA)
 	}
 }
 
