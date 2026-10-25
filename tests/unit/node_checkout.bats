@@ -17,6 +17,7 @@ load helpers
 # node_job_setup — NODE_REPOS maps "repo" to the test clone and the clone has two commits. The caller sources
 # bin/agent itself: a source inside this function would make agents.conf's declare -A local to it.
 node_job_setup() {
+  # shellcheck disable=SC2034 # NODE_REPOS is read by prepare_job_task, which is defined in the sourced bin/agent
   declare -gA NODE_REPOS=([repo]="$HOME/repo")
   cd "$HOME/repo" || return 1
   FIRST=$(git rev-parse HEAD)
@@ -161,7 +162,10 @@ EOF
 @test "meta_set fails and keeps the old metadata when writing the new line fails" {
   source "$REPO_ROOT/bin/agent"
   mkdir -p "$TASKS/fault-meta"
-  printf 'ID=fault-meta\nSTATUS=new\n' > "$TASKS/fault-meta/meta.env"
+  cat > "$TASKS/fault-meta/meta.env" <<EOF
+ID=fault-meta
+STATUS=new
+EOF
   # fault injection: the printf that writes the KEY=value line fails, as on a full disk
   printf() { [[ $1 == '%s=%q\n' ]] && return 1; builtin printf "$@"; }
   run meta_set fault-meta STATUS running
