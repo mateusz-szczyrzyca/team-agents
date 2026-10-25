@@ -2191,6 +2191,7 @@ const (
 	NodeCheckoutFetchFailed                                   // fetching from the git remote failed [Process]
 	NodeCheckoutCheckoutFailed                                // git revision resolution or checkout failed [Process]
 	NodeCheckoutWorktreeFailed                                // creating the task worktree failed [Process]
+	NodeCheckoutStorage                                       // the shared state or a file could not be read or written [Storage]
 )
 
 // NodeCheckoutError is the error of resolving and checking out a repository for an assigned job.
@@ -2207,6 +2208,7 @@ var nodeCheckoutCauses = [...]causeInfo{
 	{"FetchFailed", ClassProcess},
 	{"CheckoutFailed", ClassProcess},
 	{"WorktreeFailed", ClassProcess},
+	{"Storage", ClassStorage},
 }
 
 // op implements opCause.

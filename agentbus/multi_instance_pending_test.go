@@ -591,12 +591,41 @@ func TestNodeTwoHomesRecoverAfterLeadRestart(t *testing.T) {
 
 // TestNodeCheckoutFailureFailsJobWithReason: a failed clone or worktree fails the job with a typed reason; nothing is marked started.
 func TestNodeCheckoutFailureFailsJobWithReason(t *testing.T) {
-	t.Skip("pending: checkout failure is failed with reason, no running report sent, round 5")
+	stubNodeGit(t, func(_ string, _ ...string) ([]byte, *ProcessError) {
+		return nil, processErr("git", nil, "fetch refused by remote")
+	})
+	registry := newLeadRegistry()
+	req := regRequest("checkout-failure")
+	regSubmit(t, registry, req, regAt(0))
+	assigned := regHeartbeat(t, registry, regBeat("node-a", nil, FreeAgent{Name: "builder", Tier: TierNormal}), regAt(1))
+	if assigned == nil {
+		t.Fatal("job was not assigned")
+	}
+	_, err := nodeCheckout(map[string]string{req.Repository: t.TempDir()}, NodeCheckoutRequest{Repository: req.Repository, BaseRef: req.BaseRef})
+	failsWith(t, NodeCheckoutFetchFailed)("checkout failure", err)
+	if err == nil {
+		return
+	}
+	failed, reportErr := registry.report(JobReport{ID: req.ID, Node: "node-a", Assignment: assigned.Assignment, State: JobFailed, Result: err.Error()}, regAt(2))
+	if reportErr != nil {
+		t.Fatal(reportErr)
+	}
+	if failed.State != JobFailed || failed.Result == "" {
+		t.Fatalf("outcome=%+v", failed)
+	}
+	for _, transition := range failed.History {
+		if transition.State == JobRunning {
+			t.Fatal("checkout failure recorded as running")
+		}
+	}
 }
 
 // TestNodeRefusesRepositoryOutsideAllowList: a job naming a repository not in NODE_REPOS is refused.
 func TestNodeRefusesRepositoryOutsideAllowList(t *testing.T) {
-	t.Skip("pending: repository not in NODE_REPOS refused before any work, round 5")
+	_, err := nodeCheckout(map[string]string{"allowed": t.TempDir()}, NodeCheckoutRequest{Repository: "forbidden", BaseRef: "main"})
+	failsWith(t, NodeCheckoutRepositoryNotAllowed)("repository allow-list", err)
+	_, emptyErr := nodeCheckout(map[string]string{"empty": ""}, NodeCheckoutRequest{Repository: "empty", BaseRef: "main"})
+	failsWith(t, NodeCheckoutRepositoryNotAllowed)("empty allow-list path", emptyErr)
 }
 
 // TestCLIRunNeedSubmitsJob: agent run --need submits a job instead of starting a local task.
