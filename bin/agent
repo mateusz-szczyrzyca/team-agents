@@ -259,6 +259,19 @@ meta_set() { # id key value — sets one KEY=value (printf %q) line; writers of 
       log_error meta_write_failed "file=$f" "key=$2"
       exit 1
     fi
+    if [[ $2 == STATUS && -f $f ]]; then
+      local jid=""
+      # grep exits 1 when JOB_ID is not present; that is expected for ordinary local tasks
+      if jid=$(grep "^JOB_ID=" "$f"); then
+        jid=${jid#JOB_ID=}
+        jid=${jid//[\'\"]/}; jid=${jid//[[:space:]]/}
+        if [[ -n $jid ]]; then
+          local now
+          now=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+          printf '{"state":"%s","at":"%s"}\n' "$3" "$now" >> "$TASKS/$1/job_transitions.jsonl"
+        fi
+      fi
+    fi
   ) 9> "$f.lock"
 }
 
@@ -303,6 +316,12 @@ agent_running_task() { # agent name → ID of the task it is running (or nothing
       printf '%s' "$id"; return 0
     fi
     if [[ $ag == "$1" && $st == sleeping ]]; then   # a sleeping team member keeps its agent reserved
+      printf '%s' "$id"; return 0
+    fi
+    # A prepared node job awaiting lead start acknowledgement keeps its agent reserved before run 1
+    local jid
+    jid=$(task_field "$id" JOB_ID)
+    if [[ $ag == "$1" && -n $jid && $run -eq 0 && ($st == new || $st == starting || $st == running) ]]; then
       printf '%s' "$id"; return 0
     fi
   done
@@ -3192,9 +3211,7 @@ node_validate_config() {
   local payload out
   payload=$(node_heartbeat_json)
   if ! out=$(printf '%s' "$payload" | bus node-request --url "$LEAD_URL" --validate 2>&1); then
-    if [[ $out != *"unknown subcommand"* ]]; then
-      die "invalid capabilities: $out"
-    fi
+    die "invalid capabilities: $out"
   fi
 }
 
@@ -3205,11 +3222,19 @@ node_stop() {
   exit 0
 }
 
+# node_lock — acquires exclusive lifetime lock for the node daemon on FD 8.
+node_lock() {
+  local lockfile="$BUS_DIR/node-daemon.lock"
+  mkdir -p "$BUS_DIR"
+  exec 8>"$lockfile"
+  if ! flock -n 8; then
+    die "another node daemon is already running"
+  fi
+}
+
 # node_request — sends a coarse API request via agentbus node-request using LEAD_URL.
 node_request() {
-  local -a args=(--url "$LEAD_URL")
-  [[ -z ${NODE_SOURCE:-} ]] || args+=(--source "$NODE_SOURCE")
-  bus node-request "${args[@]}" "$@"
+  bus node-request --url "$LEAD_URL" "$@"
 }
 
 # node_jobs_file — returns the path to the durable node job state file.
@@ -3217,15 +3242,21 @@ node_jobs_file() {
   printf '%s/node-jobs.json' "$BUS_DIR"
 }
 
-# node_jobs_load — loads node-jobs.json or returns default empty state.
+# node_jobs_load — loads node-jobs.json or returns default empty state; fails closed if corrupt.
 node_jobs_load() {
-  local f
+  local f content
   f=$(node_jobs_file)
-  if [[ -f $f ]]; then
-    cat "$f" 2>/dev/null || printf '{"jobs":{},"outbox":[]}\n'
-  else
+  if [[ ! -f $f ]]; then
     printf '{"jobs":{},"outbox":[]}\n'
+    return 0
   fi
+  if ! content=$(cat "$f"); then
+    die "cannot read $f: storage failure"
+  fi
+  if ! jq -e . >/dev/null <<< "$content"; then
+    die "$f is corrupt: invalid JSON"
+  fi
+  printf '%s\n' "$content"
 }
 
 # node_jobs_save json — atomically writes node-jobs.json under BUS_DIR.
@@ -3236,6 +3267,18 @@ node_jobs_save() {
   tmp="$BUS_DIR/node-jobs.tmp.$$"
   printf '%s\n' "$json" > "$tmp"
   mv -f "$tmp" "$f"
+}
+
+# node_map_state raw_status — maps local task status to public JobState enum.
+node_map_state() {
+  case $1 in
+    running|starting|new) printf 'running' ;;
+    waiting) printf 'waiting' ;;
+    done) printf 'done' ;;
+    failed|hung) printf 'failed' ;;
+    stopped) printf 'stopped' ;;
+    *) printf '' ;;
+  esac
 }
 
 # node_select_agent selector — selects a free configured agent for a job selector (exact name, normal, or worker).
@@ -3288,7 +3331,7 @@ node_recover_tasks() {
     ag=$(task_field "$tid" AGENT)
     state=$(jq -c --arg jid "$jid" --argjson as "${asgn:-0}" --arg tid "$tid" \
       --arg st "$st" --argjson launched "$(( run > 0 ? 1 : 0 ))" --arg br "$br" --arg ag "$ag" \
-      '.jobs[$jid] = (.jobs[$jid] // {id: $jid, assignment: $as, task_id: $tid, agent: $ag, branch: $br, launched: ($launched == 1), state: $st})' <<< "$state")
+      '.jobs[$jid] = (.jobs[$jid] // {id: $jid, assignment: $as, task_id: $tid, agent: $ag, branch: $br, launched: ($launched == 1), start_acked: ($launched == 1), state: $st})' <<< "$state")
   done
   node_jobs_save "$state"
 }
@@ -3297,20 +3340,24 @@ node_recover_tasks() {
 node_scan_tasks() {
   local state
   state=$(node_jobs_load)
-  local jids jid tid prev_st curr_st asgn br now final rep
-  jids=$(jq -r '.jobs | keys[]' <<< "$state" 2>/dev/null || true)
+  local jids jid tid prev_st raw_st curr_st asgn br now final rep
+  jids=$(jq -r '.jobs | keys[]' <<< "$state")
   now=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
   for jid in $jids; do
     tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$state")
     [[ -n $tid && -f $TASKS/$tid/meta.env ]] || continue
     prev_st=$(jq -r --arg id "$jid" '.jobs[$id].state // empty' <<< "$state")
-    curr_st=$(task_field "$tid" STATUS)
+    raw_st=$(task_field "$tid" STATUS)
+    curr_st=$(node_map_state "$raw_st")
+    [[ -n $curr_st ]] || continue
     asgn=$(jq -r --arg id "$jid" '.jobs[$id].assignment // 0' <<< "$state")
     br=$(task_field "$tid" BRANCH)
     if [[ $curr_st != "$prev_st" ]]; then
       final=""
       if [[ $curr_st == done || $curr_st == failed || $curr_st == stopped ]]; then
-        final=$(task_field "$tid" FINAL)
+        if [[ -f "$TASKS/$tid/final.md" ]]; then
+          final=$(<"$TASKS/$tid/final.md")
+        fi
         [[ ${#final} -le 65536 ]] || final="${final:0:65536}"
       fi
       rep=$(jq -cn --arg id "$jid" --arg node "$INSTANCE_NAME" --argjson as "$asgn" \
@@ -3323,47 +3370,121 @@ node_scan_tasks() {
   node_jobs_save "$state"
 }
 
+# node_process_pending_launches — sends pending start reports and launches tasks once acknowledged.
+node_process_pending_launches() {
+  local state
+  state=$(node_jobs_load)
+  local jids jid launched acked tid asgn ag br now rep out
+  jids=$(jq -r '.jobs | keys[]' <<< "$state")
+  for jid in $jids; do
+    launched=$(jq -r --arg id "$jid" '.jobs[$id].launched // false' <<< "$state")
+    if [[ $launched == true ]]; then
+      continue
+    fi
+    tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$state")
+    [[ -n $tid ]] || continue
+    acked=$(jq -r --arg id "$jid" '.jobs[$id].start_acked // false' <<< "$state")
+    asgn=$(jq -r --arg id "$jid" '.jobs[$id].assignment // 0' <<< "$state")
+    ag=$(jq -r --arg id "$jid" '.jobs[$id].agent // empty' <<< "$state")
+    br=$(task_field "$tid" BRANCH)
+    now=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+
+    if [[ $acked != true ]]; then
+      rep=$(jq -cn --arg id "$jid" --arg node "$INSTANCE_NAME" --argjson as "$asgn" \
+        --arg st "running" --arg tid "$tid" --arg br "$br" --arg at "$now" \
+        '{ID: $id, Node: $node, Assignment: $as, State: $st, TaskID: $tid, Branch: $br, At: $at}')
+      if out=$(printf '%s' "$rep" | node_request --path "/v1/jobs/$jid/state" 2>&1); then
+        state=$(jq -c --arg id "$jid" '.jobs[$id].start_acked = true' <<< "$state")
+        node_jobs_save "$state"
+        acked=true
+      else
+        log_warn node_start_report_failed "job=$jid" "error=$out"
+      fi
+    fi
+
+    if [[ $acked == true ]]; then
+      lock_task_ids
+      local busy
+      busy=$(agent_running_task "$ag") || true
+      if [[ -z $busy || $busy == "$tid" ]]; then
+        if start_runner "$tid" new; then
+          unlock_task_ids
+          state=$(jq -c --arg id "$jid" '.jobs[$id].launched = true | .jobs[$id].state = "running"' <<< "$state")
+          node_jobs_save "$state"
+        else
+          unlock_task_ids
+          log_error runner_start_failed "job=$jid" "task=$tid"
+        fi
+      else
+        unlock_task_ids
+        log_error runner_start_conflict "job=$jid" "agent=$ag" "busy=$busy"
+      fi
+    fi
+  done
+}
+
 # node_poll — executes one polling cycle: recovers, scans tasks, sends heartbeat, handles stops and assignments.
 node_poll() {
   node_recover_tasks
   node_scan_tasks
+  node_process_pending_launches
 
   local state
   state=$(node_jobs_load)
   local rep_count
   rep_count=$(jq -r '.outbox | length' <<< "$state")
-  local hb_payload hb_resp
-  if ((rep_count > 0)); then
-    local outbox_slice
-    outbox_slice=$(jq -c '.outbox[0:10]' <<< "$state")
-    hb_payload=$(node_heartbeat_json | jq -c --argjson reps "$outbox_slice" '.Reports = $reps')
-  else
-    hb_payload=$(node_heartbeat_json | jq -c '.Reports = []')
+  local -a batch=()
+  local batch_size=0 rep_str rep_len i
+  for ((i=0; i<rep_count; i++)); do
+    rep_str=$(jq -c --argjson i "$i" '.outbox[$i]' <<< "$state")
+    rep_len=${#rep_str}
+    if (( batch_size + rep_len > 200000 )); then
+      break
+    fi
+    batch+=("$rep_str")
+    batch_size=$((batch_size + rep_len))
+  done
+
+  local batch_json="[]"
+  if ((${#batch[@]} > 0)); then
+    batch_json=$(printf '%s\n' "${batch[@]}" | jq -s '.')
   fi
+
+  local hb_payload hb_resp
+  hb_payload=$(node_heartbeat_json | jq -c --argjson reps "$batch_json" '.Reports = $reps')
 
   if ! hb_resp=$(printf '%s' "$hb_payload" | node_request --path /v1/heartbeat 2>&1); then
     log_warn node_heartbeat_failed "error=$hb_resp"
     return 0
   fi
 
-  # Clear acknowledged outbox reports
-  if ((rep_count > 0)); then
-    state=$(jq -c '.outbox = .outbox[10:]' <<< "$state")
+  # Clear only the exact batch of reports that were confirmed by the lead
+  if ((${#batch[@]} > 0)); then
+    local sent_count=${#batch[@]}
+    state=$(jq -c --argjson n "$sent_count" '.outbox = .outbox[$n:]' <<< "$state")
     node_jobs_save "$state"
   fi
 
   log_info node_heartbeat_accepted "assigned=$(jq -r '.Job.Request.ID // empty' <<< "$hb_resp")"
 
-  # Process stop requests
+  # Process stop requests from heartbeat
   local stops sid tid asgn now srep
-  stops=$(jq -r '.Stops[]?.Request.ID // empty' <<< "$hb_resp" 2>/dev/null || true)
+  stops=$(jq -r '.Stops[]?.Request.ID // empty' <<< "$hb_resp")
   now=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
   for sid in $stops; do
     tid=$(jq -r --arg id "$sid" '.jobs[$id].task_id // empty' <<< "$state")
     [[ -n $tid ]] || continue
     asgn=$(jq -r --arg id "$sid" '.jobs[$id].assignment // 0' <<< "$state")
-    if [[ $(task_field "$tid" STATUS) =~ ^(starting|running|waiting)$ ]]; then
-      cmd_kick "$tid" node >/dev/null 2>&1 || meta_set "$tid" STATUS stopped
+    local curr_local_st
+    curr_local_st=$(task_field "$tid" STATUS)
+    if [[ $curr_local_st == done || $curr_local_st == failed ]]; then
+      # Terminal completion won the race: preserve actual result
+      continue
+    fi
+    if [[ $curr_local_st =~ ^(starting|running|waiting)$ ]]; then
+      local run
+      run=$(task_field "$tid" RUN)
+      systemctl --user stop "$(unit_name "$tid" "$run").service" >/dev/null 2>&1 || true
       meta_set "$tid" STATUS stopped
       srep=$(jq -cn --arg id "$sid" --arg node "$INSTANCE_NAME" --argjson as "$asgn" \
         --arg st "stopped" --arg tid "$tid" --arg at "$now" \
@@ -3374,9 +3495,9 @@ node_poll() {
     fi
   done
 
-  # Process assigned job
+  # Process assigned job from heartbeat
   if jq -e '.Job != null and .Job.Request != null' <<< "$hb_resp" >/dev/null 2>&1; then
-    local jid asgn repo base sha task sel launched br rep
+    local jid asgn repo base sha task sel launched
     jid=$(jq -r '.Job.Request.ID' <<< "$hb_resp")
     asgn=$(jq -r '.Job.Assignment' <<< "$hb_resp")
     launched=$(jq -r --arg id "$jid" '.jobs[$id].launched // false' <<< "$state")
@@ -3386,16 +3507,8 @@ node_poll() {
 
     tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$state")
     if [[ -n $tid ]]; then
-      # Already prepared: report running and launch
-      br=$(task_field "$tid" BRANCH)
-      rep=$(jq -cn --arg id "$jid" --arg node "$INSTANCE_NAME" --argjson as "$asgn" \
-        --arg st "running" --arg tid "$tid" --arg br "$br" --arg at "$now" \
-        '{ID: $id, Node: $node, Assignment: $as, State: $st, TaskID: $tid, Branch: $br, At: $at}')
-      if printf '%s' "$rep" | node_request --path "/v1/jobs/$jid/state" >/dev/null 2>&1; then
-        start_runner "$tid" new || true
-        state=$(jq -c --arg id "$jid" '.jobs[$id].launched = true | .jobs[$id].state = "running"' <<< "$state")
-        node_jobs_save "$state"
-      fi
+      # Already prepared: node_process_pending_launches handles ack and runner launch
+      node_process_pending_launches
       return 0
     fi
 
@@ -3428,32 +3541,21 @@ node_poll() {
 
     tid="$NEW_ID"
     br=$(task_field "$tid" BRANCH)
-    now=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
 
     state=$(jq -c --arg id "$jid" --argjson as "$asgn" --arg tid "$tid" \
       --arg ag "$ag" --arg repo "$repo" --arg br "$br" \
-      '.jobs[$id] = {id: $id, assignment: $as, task_id: $tid, agent: $ag, repo: $repo, branch: $br, launched: false, state: "running"}' <<< "$state")
+      '.jobs[$id] = {id: $id, assignment: $as, task_id: $tid, agent: $ag, repo: $repo, branch: $br, launched: false, start_acked: false, state: "running"}' <<< "$state")
     node_jobs_save "$state"
 
-    rep=$(jq -cn --arg id "$jid" --arg node "$INSTANCE_NAME" --argjson as "$asgn" \
-      --arg st "running" --arg tid "$tid" --arg br "$br" --arg at "$now" \
-      '{ID: $id, Node: $node, Assignment: $as, State: $st, TaskID: $tid, Branch: $br, At: $at}')
-
-    if printf '%s' "$rep" | node_request --path "/v1/jobs/$jid/state" >/dev/null 2>&1; then
-      start_runner "$tid" new || true
-      state=$(jq -c --arg id "$jid" '.jobs[$id].launched = true' <<< "$state")
-      node_jobs_save "$state"
-    else
-      # Ack not received yet: add report to outbox so next heartbeat delivers it
-      state=$(jq -c --argjson rep "$rep" '.outbox += [$rep]' <<< "$state")
-      node_jobs_save "$state"
-    fi
+    # Immediately attempt start report and launch
+    node_process_pending_launches
   fi
 }
 
 cmd_node() { # runs the node daemon in the foreground (agentnode.service runs this); needs LEAD_URL
   [[ -n $LEAD_URL ]] || die "LEAD_URL is not set: set it in config/agents.conf (e.g. LEAD_URL=http://lead-instance:7780)"
   node_validate_config
+  node_lock
 
   trap 'node_stop "signal"' TERM INT
   log_info node_started "lead_url=$LEAD_URL" "poll_sec=$NODE_POLL_SEC"
