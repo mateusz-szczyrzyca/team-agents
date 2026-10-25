@@ -194,7 +194,7 @@ wait_heartbeats() {
   setup_node
   start_lead
   start_node
-  echo '{"solo": {"new": "commit"}}' > "$NODE/scenario.json"
+  echo '{"solo": {"new": "commit-push"}}' > "$NODE/scenario.json"
   submit_job j-hw team-agents '["hw:rp2350"]' solo
   wait_job j-hw 'done' 60
   [[ $(job_field j-hw Node) == node2 ]]
