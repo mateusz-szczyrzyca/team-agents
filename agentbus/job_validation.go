@@ -39,9 +39,11 @@ func validJobBase(ref, sha string) bool {
 			return false
 		}
 	}
-	if sha == "" {
-		return true
-	}
+	return sha == "" || validJobSHA(sha)
+}
+
+// validJobSHA accepts a complete SHA-1 or SHA-256 object ID, without a ref name.
+func validJobSHA(sha string) bool {
 	if len(sha) != 40 && len(sha) != 64 {
 		return false
 	}

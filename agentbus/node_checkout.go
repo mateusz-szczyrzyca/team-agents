@@ -56,7 +56,7 @@ func nodeCheckout(repos map[string]string, req NodeCheckoutRequest) (NodeCheckou
 	if !validJobBase(req.BaseRef, "") {
 		return NodeCheckoutResult{}, opErr(NodeCheckoutInvalidBaseRef, "base %q is not a ref name", req.BaseRef)
 	}
-	if !validJobBase(req.BaseRef, req.BaseSHA) {
+	if req.BaseSHA != "" && !validJobSHA(req.BaseSHA) {
 		return NodeCheckoutResult{}, opErr(NodeCheckoutInvalidCommit, "commit must contain exactly 40 or 64 hexadecimal digits")
 	}
 	target := req.BaseRef
@@ -72,7 +72,7 @@ func nodeCheckout(repos map[string]string, req NodeCheckoutRequest) (NodeCheckou
 		return NodeCheckoutResult{}, nodeCheckoutGitFailure(NodeCheckoutCheckoutFailed, err)
 	}
 	commit := strings.ToLower(strings.TrimSpace(string(out)))
-	if commit == "" || !validJobBase("main", commit) || sha != "" && sha != commit {
+	if !validJobSHA(commit) || sha != "" && sha != commit {
 		return NodeCheckoutResult{}, opErr(NodeCheckoutCheckoutFailed, "fetch did not resolve the requested commit")
 	}
 	return NodeCheckoutResult{Root: root, Commit: commit}, nil

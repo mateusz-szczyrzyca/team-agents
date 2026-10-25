@@ -1226,7 +1226,7 @@
   {
    "type": "NodeCheckout",
    "op": "node/checkout",
-   "what": "resolving and checking out a repository for an assigned job",
+   "what": "resolving a repository base for an assigned job",
    "causes": [
     {
      "name": "BadFlags",
@@ -1266,12 +1266,7 @@
     {
      "name": "CheckoutFailed",
      "class": "Process",
-     "doc": "git revision resolution or checkout failed"
-    },
-    {
-     "name": "WorktreeFailed",
-     "class": "Process",
-     "doc": "creating the task worktree failed"
+     "doc": "git revision resolution failed"
     }
    ]
   }
