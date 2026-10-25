@@ -239,9 +239,20 @@ meta_set() { # id key value — sets one KEY=value (printf %q) line; writers of 
   (
     # a run, agent stop and the bus's wake-ups write the same file: without the lock an update gets lost
     flock -w 30 9 || { log_error meta_lock_timeout "file=$f" "key=$2"; exit 1; }
+    # Each step reports its own failure: a failed write must never be moved over the old file. Inside the
+    # conditional the subshell does not stop at the first error, so the status is checked explicitly.
+    local tmp="$f.tmp.$$"
     # grep exits 1 when no other line remains — that is not an error
-    { grep -v "^$2=" "$f" || (($? == 1)); printf '%s=%q\n' "$2" "$3"; } > "$f.tmp.$$"
-    mv "$f.tmp.$$" "$f"
+    if ! { grep -v "^$2=" "$f" || (($? == 1)); printf '%s=%q\n' "$2" "$3"; } > "$tmp"; then
+      rm -f "$tmp"
+      log_error meta_write_failed "file=$f" "key=$2"
+      exit 1
+    fi
+    if ! mv "$tmp" "$f"; then
+      rm -f "$tmp"
+      log_error meta_write_failed "file=$f" "key=$2"
+      exit 1
+    fi
   ) 9> "$f.lock"
 }
 
@@ -2400,7 +2411,11 @@ create_task() { # name text root main_root base ts [team [start]] — uses a cla
   fi
   local agents_md=missing
   [[ -f $wt/AGENTS.md ]] && agents_md=present
-  : > "$dir/meta.env"
+  if ! : > "$dir/meta.env"; then
+    drop_unstarted_task "$root" "$wt" "$branch" "$dir"
+    log_error task_create_failed "task=$id" "step=meta_file"
+    return 1
+  fi
   local sid=""
   [[ ${AGENT_TYPE[$name]} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
   local kv
