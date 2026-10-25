@@ -662,8 +662,7 @@ can be the **lead**, which keeps a job queue and the list of nodes; remote jobs 
   [design](docs/multi-instance.md), "Lead storage").
 - `NODE_REPOS` in `agents.conf`: maps repository logical names to local clone paths (e.g. `([team-agents]=/home/dev/src/team-agents)`). A node only accepts jobs for repositories in this allow-list; any other repository is refused before any task or worktree is created.
 - `agentbus node-checkout`: validates the repository against local `NODE_REPOS`, validates base ref and SHA, fetches from origin without checking out the clone, and resolves an immutable commit.
-- `prepare_job_task` in `bin/agent`: uses `agentbus node-checkout` to resolve the repository and commit, then creates the task worktree and metadata using the same `create_task` path as `agent run`. Failures log `node_checkout_failed` and exit cleanly without starting a runner.
-  There are no `agent run --need`, `agent jobs` or
+- There are no `agent run --need`, `agent jobs` or
   `agent nodes` commands yet, and no node daemon (`agent node`) yet: a job cannot run on another installation
   until those rounds are merged.
 
