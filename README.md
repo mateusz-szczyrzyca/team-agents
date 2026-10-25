@@ -673,8 +673,8 @@ daemon (rounds 7 to 9 add the commands, delegation and views):
     `[a-z0-9._-]+`. An unknown namespace or a malformed value stops the daemon with `invalid capabilities: …`.
   - `NODE_POLL_SEC` (default `10`): the heartbeat interval.
   - `NODE_REPOS`: the repositories this node runs jobs for; paths must be absolute.
-- `agent node` runs the node daemon in the foreground. `agent node --once` sends one heartbeat and exits; it is a
-  diagnostic. `install.sh` installs and starts `agentnode.service` only when `LEAD_URL` is set. A second daemon on
+- `agent node` runs the node daemon in the foreground. `agent node --once` performs one recovery and poll cycle and
+  exits; that cycle may send several heartbeat and report batches. It is a diagnostic. `install.sh` installs and starts `agentnode.service` only when `LEAD_URL` is set. A second daemon on
   the same installation refuses to start (`bus/node-daemon.lock`).
 - Each heartbeat declares the capabilities, the free agents of the configured tiers and `AGENT_WEB_URL`. The lead
   answers with at most one job. The node starts it with the same runner as `agent run`; the task records `JOB_ID`,
@@ -687,7 +687,9 @@ daemon (rounds 7 to 9 add the commands, delegation and views):
   (`RepositoryNotAllowed`) or its checkout fails (`FetchFailed`, `CheckoutFailed`). The branch of a finished
   job is the one the agent pushed to `origin`.
 - Node events in `logs/agent.jsonl`: `node_started`, `node_heartbeat_accepted`, `node_heartbeat_failed`,
-  `node_stopped`, `node_checkout_failed`, `node_launch_failed`.
+  `node_stopped`, `node_checkout_failed`, `node_launch_failed`. Diagnostic events, logged when the daemon cannot
+  continue normally: `node_storage_failed`, `node_reply_invalid`, `node_assignment_obsolete`,
+  `node_start_report_failed`, `node_report_failed`, `node_stop_failed`, `node_sleep_interrupted`.
 - **Not yet:** the CLI commands `agent run --need` / `--on`, `agent jobs`, `agent nodes` and cancel (round 7);
   delegation of a team member's step to another machine (round 8); the Jobs and Instances web views (round 9).
   Until round 7 a job is submitted to the lead with `agentbus node-request --url <lead> --path /v1/jobs` from the
