@@ -7,14 +7,33 @@ load helpers
 
 teardown() {
   if [[ -f "$HOME/node.pid" ]]; then
-    local node_pid
+    local node_pid rc=0
     node_pid=$(cat "$HOME/node.pid")
-    if kill -0 "$node_pid" 2>/dev/null; then
-      kill -TERM "$node_pid" 2>/dev/null || true
-      wait "$node_pid" 2>/dev/null || true
+    if kill -0 "$node_pid" 2> "$HOME/node-stop.err"; then
+      kill -TERM "$node_pid" 2>> "$HOME/node-stop.err" || rc=$?
+      if [[ $rc -eq 0 ]]; then
+        wait "$node_pid" 2>> "$HOME/node-stop.err" || rc=$?
+        if [[ $rc -ne 0 && $rc -ne 143 ]]; then
+          echo "node teardown wait failed with rc $rc" >&2
+        fi
+      fi
     fi
-    rm -f "$HOME/node.pid"
+    rm -f "$HOME/node.pid" "$HOME/node-stop.err"
   fi
+  # Clean up any child stub runners spawned during the test
+  local p pid prc
+  for p in "$STUB_UNITS"/*.pid; do
+    [[ -f $p ]] || continue
+    pid=$(cat "$p")
+    prc=0
+    if kill -0 -- -"$pid" 2> "$HOME/stub-stop.err"; then
+      kill -TERM -- -"$pid" 2>> "$HOME/stub-stop.err" || prc=$?
+      if [[ $prc -eq 0 ]]; then
+        wait "$pid" 2>> "$HOME/stub-stop.err" || prc=$?
+      fi
+    fi
+    rm -f "$p" "$HOME/stub-stop.err"
+  done
 }
 
 @test "agent node requires LEAD_URL and says how to set it" {
