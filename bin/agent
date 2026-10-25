@@ -2374,7 +2374,7 @@ allocate_run_ids() {
   done
 }
 
-create_task() { # name text root main_root base ts [team [start]] — uses a claimed task directory; sets NEW_ID; start defaults to HEAD
+create_task() { # name text root main_root base ts [team [start]] — uses a claimed task directory; sets NEW_ID; start defaults to HEAD; returns 1 with nothing left behind when a step fails
   local name=$1 task=$2 root=$3 main_root=$4 base=$5 ts=$6 team=${7:-} start=${8:-HEAD}
   local id repo_name branch wt dir err
   id="$ts-$name"
@@ -2385,30 +2385,29 @@ create_task() { # name text root main_root base ts [team [start]] — uses a cla
   NEW_ID=""
   CREATE_TASK_ERROR=""
   if ! err=$(mkdir -p "$(dirname "$wt")" 2>&1); then
-    rm -rf "$dir" 2>/dev/null || true
+    rm -rf "${dir:?}"
+    log_error task_create_failed "task=$id" "step=worktree_directory"
     CREATE_TASK_ERROR="${err:-cannot create worktree parent directory}"
     return 1
   fi
   if ! err=$(git -C "$root" worktree add --quiet -b "$branch" "$wt" "$start" 10>&- 2>&1); then
-    git -C "$root" worktree remove --force "$wt" >/dev/null 2>&1 || true
-    git -C "$root" branch -D "$branch" >/dev/null 2>&1 || true
-    rm -rf "$wt" "$dir" 2>/dev/null || true
+    drop_unstarted_task "$root" "$wt" "$branch" "$dir"
+    log_error task_create_failed "task=$id" "step=worktree"
     CREATE_TASK_ERROR="${err:-git worktree add failed}"
     return 1
   fi
+  # From here on the worktree exists: any failure removes it again, so no task is left half-made.
   if ! printf '%s\n' "$task" > "$dir/task.md"; then
-    git -C "$root" worktree remove --force "$wt" >/dev/null 2>&1 || true
-    git -C "$root" branch -D "$branch" >/dev/null 2>&1 || true
-    rm -rf "$wt" "$dir" 2>/dev/null || true
+    drop_unstarted_task "$root" "$wt" "$branch" "$dir"
+    log_error task_create_failed "task=$id" "step=task_text"
     CREATE_TASK_ERROR="cannot write task.md"
     return 1
   fi
   local agents_md=missing
   [[ -f $wt/AGENTS.md ]] && agents_md=present
   if ! : > "$dir/meta.env"; then
-    git -C "$root" worktree remove --force "$wt" >/dev/null 2>&1 || true
-    git -C "$root" branch -D "$branch" >/dev/null 2>&1 || true
-    rm -rf "$wt" "$dir" 2>/dev/null || true
+    drop_unstarted_task "$root" "$wt" "$branch" "$dir"
+    log_error task_create_failed "task=$id" "step=meta"
     CREATE_TASK_ERROR="cannot create meta.env"
     return 1
   fi
@@ -2420,29 +2419,56 @@ create_task() { # name text root main_root base ts [team [start]] — uses a cla
             "REPO_NAME=$repo_name" "REPO_ROOT=$main_root" "WORKTREE=$wt" "BRANCH=$branch" \
             "BASE=$base" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" \
             "AGENTS_MD=$agents_md"; do
-    meta_set "$id" "${kv%%=*}" "${kv#*=}"
+    if ! meta_set "$id" "${kv%%=*}" "${kv#*=}"; then
+      drop_unstarted_task "$root" "$wt" "$branch" "$dir"
+      log_error task_create_failed "task=$id" "step=meta"
+      CREATE_TASK_ERROR="cannot set meta $kv"
+      return 1
+    fi
   done
   log_info task_created "task=$id" "agent=$name" "repo=$repo_name" "branch=$branch" "team=$team" "agents_md=$agents_md"
   NEW_ID=$id
 }
 
-# prepare_job_task job agent repo base sha task — prepares a node job's task: agentbus node-checkout resolves the
-# repository (NODE_REPOS allow-list) and the commit, then create_task starts the worktree there, as agent run does.
-# Sets NEW_ID. On failure nothing is created, the reason is logged and the function returns 1.
+# drop_unstarted_task root wt branch dir — undoes a create_task that failed: the worktree, its branch and the task
+# directory. Nothing ran in it, so nothing is archived. Each removal reports its own failure (the task is not started).
+drop_unstarted_task() {
+  local root=$1 wt=$2 branch=$3 dir=$4
+  if [[ -e $wt ]] && ! git -C "$root" worktree remove --force "$wt" 10>&-; then
+    log_error task_cleanup_failed "step=worktree" "path=$wt"
+  fi
+  if git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && ! git -C "$root" branch -D "$branch" >/dev/null 10>&-; then
+    log_error task_cleanup_failed "step=branch" "branch=$branch"
+  fi
+  rm -rf "${dir:?}"
+}
+
+# job_refusal agent → why a node job cannot start on this agent now, with the admission checks of agent run
+# (configured, not an investigator, not busy); prints nothing when the agent is free. Call it under the task lock.
+job_refusal() {
+  local name=$1 busy
+  if is_investigator "$name"; then
+    printf 'agent %s is an investigator' "$name"; return 0
+  fi
+  if [[ -z ${AGENT_TYPE[$name]:-} ]]; then
+    printf 'unknown agent %s' "$name"; return 0
+  fi
+  if busy=$(agent_running_task "$name"); then
+    printf 'agent %s is busy (task %s)' "$name" "$busy"
+  fi
+  return 0
+}
+
+# prepare_job_task job agent repo base sha task — prepares a node job's task: the agent must be free (job_refusal),
+# agentbus node-checkout resolves the repository (NODE_REPOS allow-list) and the commit, then create_task starts the
+# worktree there, as agent run does. Sets NEW_ID. On failure nothing is created, the reason is logged, returns 1.
 prepare_job_task() {
   local job=$1 name=$2 repo=$3 base=$4 sha=$5 task=$6
   local -a args=() names roots repos
-  local k out root commit ts busy
-  if is_investigator "$name"; then
-    log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=agent $name is an investigator"
-    return 1
-  fi
-  if [[ -z ${AGENT_TYPE[$name]:-} ]]; then
-    log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=unknown agent '$name'"
-    return 1
-  fi
-  if busy=$(agent_running_task "$name"); then
-    log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=agent $name is busy (task $busy)"
+  local k out root commit ts reason
+  reason=$(job_refusal "$name")
+  if [[ -n $reason ]]; then
+    log_error node_checkout_failed "job=$job" "agent=$name" "reason=$reason"
     return 1
   fi
   for k in "${!NODE_REPOS[@]}"; do args+=(--repo-path "$k=${NODE_REPOS[$k]}"); done
@@ -2455,16 +2481,17 @@ prepare_job_task() {
   root=$(jq -er '.root' <<< "$out") && commit=$(jq -er '.commit' <<< "$out") \
     || die "node-checkout returned an unreadable result for job $job: $out"
   lock_task_ids
-  if busy=$(agent_running_task "$name"); then
+  reason=$(job_refusal "$name")
+  if [[ -n $reason ]]; then
     unlock_task_ids
-    log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=agent $name is busy (task $busy)"
+    log_error node_checkout_failed "job=$job" "agent=$name" "reason=$reason"
     return 1
   fi
   names=("$name"); roots=("$root"); repos=("$(basename "$root")")
   ts=$(allocate_run_ids 0 names roots repos)
   if ! create_task "$name" "$task" "$root" "$root" "$base" "$ts" "" "$commit"; then
     unlock_task_ids
-    log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=${CREATE_TASK_ERROR:-worktree creation failed}"
+    log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=${CREATE_TASK_ERROR:-task worktree could not be created}"
     return 1
   fi
   unlock_task_ids

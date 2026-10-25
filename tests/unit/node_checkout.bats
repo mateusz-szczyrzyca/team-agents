@@ -151,5 +151,3 @@ EOF
   [ ! -d "$AGENTS_HOME/worktrees/repo" ] || [ -z "$(ls -A "$AGENTS_HOME/worktrees/repo")" ]
   grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
 }
-
-
