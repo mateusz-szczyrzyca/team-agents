@@ -2372,8 +2372,8 @@ allocate_run_ids() {
   done
 }
 
-create_task() { # name text root main_root base ts [team] — uses a claimed task directory; sets NEW_ID
-  local name=$1 task=$2 root=$3 main_root=$4 base=$5 ts=$6 team=${7:-}
+create_task() { # name text root main_root base ts [team [start]] — uses a claimed task directory; sets NEW_ID; start defaults to HEAD
+  local name=$1 task=$2 root=$3 main_root=$4 base=$5 ts=$6 team=${7:-} start=${8:-HEAD}
   local id repo_name branch wt dir
   id="$ts-$name"
   repo_name=$(basename "$main_root")
@@ -2381,7 +2381,7 @@ create_task() { # name text root main_root base ts [team] — uses a claimed tas
   wt="$AGENTS_HOME/worktrees/$repo_name/$id"
   dir="$TASKS/$id"
   mkdir -p "$(dirname "$wt")"
-  git -C "$root" worktree add --quiet -b "$branch" "$wt" HEAD 10>&-
+  git -C "$root" worktree add --quiet -b "$branch" "$wt" "$start" 10>&-
   printf '%s\n' "$task" > "$dir/task.md"
   local agents_md=missing
   [[ -f $wt/AGENTS.md ]] && agents_md=present
