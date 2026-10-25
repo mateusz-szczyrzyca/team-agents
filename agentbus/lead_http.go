@@ -136,6 +136,8 @@ func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Durat
 func serveLead[C opCause](w http.ResponseWriter, r *http.Request, localNode string, allowed []string, unauthorized C, run func(leadIdentity) (any, *OpError[C])) {
 	peer, whoErr := identifyLeadPeer(r.RemoteAddr, localNode, allowed)
 	if whoErr != nil {
+		// Denials and broken tailscaled answers look the same to the peer; the journal keeps the real cause.
+		logWarn(LogLeadPeerRejected, "remote", r.RemoteAddr, "error", whoErr.Error())
 		writeLeadError(w, opErr(unauthorized, "socket peer is not an allowed node"))
 		return
 	}
