@@ -361,6 +361,7 @@ exec "$HOME/.local/bin/real-agentbus" "$@"
 STUB
   chmod +x "$real_bus"
 
+  scenario '{"solo": {"new": "done"}}'
   echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
   echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
   echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
@@ -371,9 +372,8 @@ STUB
   task_id=$(jq -r '.jobs["job-done-race"].task_id' "$AGENTS_HOME/bus/node-jobs.json")
   [ -n "$task_id" ]
 
-  # Simulate completion before next heartbeat
-  echo "STATUS=done" >> "$AGENTS_HOME/tasks/$task_id/meta.env"
-  printf 'Success result text\n' > "$AGENTS_HOME/tasks/$task_id/final.md"
+  # Wait for the stub agent to complete and record STATUS=done
+  wait_status "$task_id" "done" 15
 
   # Tick 2: receives Stops for job-done-race
   run agent node --once
