@@ -80,3 +80,32 @@ cancel_exit_prepare() {
     [ ! -e "$TASKS/$tid/node-stop-requested" ]
   done
 }
+
+@test "node cancellation completes undelivered finalization after RUNNER_DONE" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/agent"
+  # shellcheck disable=SC2034 # prepare_job_task consumes this repository map.
+  declare -gA NODE_REPOS=([repo]="$HOME/repo")
+  local tid delivered finished='2026-10-25T20:00:00+00:00'
+  tid=$(cancel_exit_prepare)
+  meta_set "$tid" RUN 1
+  meta_set "$tid" STATUS "done"
+  meta_set "$tid" FINISHED "$finished"
+  touch "$TASKS/$tid/node-stop-requested"
+  printf 'persisted completion\n' > "$TASKS/$tid/final.md"
+  for delivered in 0 1; do
+    (
+      meta_load "$tid"
+      export RUNNER_ID=$tid RUNNER_DONE=1 RUNNER_DELIVERED=$delivered
+      runner_exit 143
+    )
+    [ "$(task_field "$tid" STATUS)" = "done" ]
+    [ "$(task_field "$tid" FINISHED)" = "$finished" ]
+    if [[ $delivered == 0 ]]; then
+      grep -qF 'persisted completion' "$NOTIFY_DIR/$tid-r1-summary.md"
+      rm "$NOTIFY_DIR/$tid-r1-summary.md"
+    else
+      [ ! -e "$NOTIFY_DIR/$tid-r1-summary.md" ]
+    fi
+  done
+}
