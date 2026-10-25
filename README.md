@@ -685,6 +685,9 @@ daemon (rounds 7 to 9 add the commands, delegation and views):
   heartbeat that reaches the lead. A lead outage delays the reports; running tasks continue.
   Cancellation preserves a completed task's outcome and local result notification; an unfinished cancelled
   runner finishes as `stopped`.
+  Recovery completes interrupted job markers and removes ambiguous unstarted checkouts. It prefers a unique
+  started task; multiple started matches stop recovery without deleting or stopping them. Inspect the local
+  tasks named in the error before retrying recovery.
 - A job fails with a typed reason, and no task is started, when its repository is not in `NODE_REPOS`
   (`RepositoryNotAllowed`) or its checkout fails (`FetchFailed`, `CheckoutFailed`). The branch of a finished
   job is the one the agent pushed to `origin`.

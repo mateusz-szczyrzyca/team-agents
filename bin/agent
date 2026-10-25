@@ -3091,10 +3091,13 @@ stop_all() { # agent stop --running: stops everything that is active, whatever i
 cmd_stop() {
   if [[ ${1:-} == --running ]]; then stop_all; return; fi
   local id; id=$(resolve_id "${1:?usage: agent stop <id> | --running}")
-  local run st team agent
+  local run st team agent is_job=0
+  [[ -n $(task_field "$id" JOB_ID) ]] && is_job=1
+  ((is_job)) && lock_task_ids
+  touch "$TASKS/$id/stop-requested"
   run=$(task_field "$id" RUN); st=$(task_field "$id" STATUS)
   team=$(task_field "$id" TEAM); agent=$(task_field "$id" AGENT)
-  touch "$TASKS/$id/stop-requested"
+  ((is_job)) && unlock_task_ids
   try unit_stop_failed systemctl --user stop "$(unit_name "$id" "$run").service"
   meta_set "$id" STATUS stopped
   meta_set "$id" FINISHED "$(date -Is)"
@@ -3360,25 +3363,42 @@ node_process_pending_launches() {
     if jq -e --arg id "$jid" '.jobs[$id] | .obsolete or .launched or (.task_id == "")' <<< "$NODE_STATE" >/dev/null; then continue; fi
     tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id' <<< "$NODE_STATE")
     if [[ -f $TASKS/$tid/meta.env ]]; then
+      run=$(task_field "$tid" RUN)
       status=$(task_field "$tid" STATUS)
-      if [[ $status =~ ^(done|failed|stopped)$ ]]; then
+      if [[ $status =~ ^(done|failed|stopped|hung|excluded)$ ]]; then
         # A stop can arrive after acknowledgement while local capacity delays launch.
+        NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].launched=true' <<< "$NODE_STATE")
+        node_save
+        continue
+      elif ((run == 0)) && [[ -f $TASKS/$tid/stop-requested || -f $TASKS/$tid/node-stop-requested ]]; then
+        meta_set "$tid" STATUS stopped
+        meta_set "$tid" FINISHED "$(date -Is)"
         NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].launched=true' <<< "$NODE_STATE")
         node_save
         continue
       fi
     fi
-    if [[ ! -f $TASKS/$tid/meta.env || ! -d $(task_field "$tid" WORKTREE) ]]; then
+    if [[ ! -f $TASKS/$tid/meta.env ]]; then
       NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].launched=true' <<< "$NODE_STATE")
       node_transition "$jid" failed '' 'CheckoutFailed: prepared task or worktree is missing during recovery'
       continue
     fi
     run=$(task_field "$tid" RUN)
     if ((run > 0)); then
-      # RUN is written before systemd-run: never create a second unit after a crash in that interval.
+      # A live runner stays independent even if its checkout was removed after launch.
       status=$(task_field "$tid" STATUS)
-      if [[ $status == starting ]] && ! unit_active "$tid" "$run"; then meta_set "$tid" STATUS failed; fi
+      if [[ $status =~ ^(starting|new)$ ]] && ! unit_active "$tid" "$run"; then
+        meta_set "$tid" STATUS failed
+        meta_set "$tid" FINISHED "$(date -Is)"
+      fi
       NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].launched=true' <<< "$NODE_STATE"); node_save
+      continue
+    fi
+    if [[ ! -d $(task_field "$tid" WORKTREE) ]]; then
+      meta_set "$tid" STATUS failed
+      meta_set "$tid" FINISHED "$(date -Is)"
+      NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].launched=true' <<< "$NODE_STATE")
+      node_transition "$jid" failed '' 'CheckoutFailed: prepared task or worktree is missing during recovery'
       continue
     fi
     if ! jq -e --arg id "$jid" '.jobs[$id].start_acked' <<< "$NODE_STATE" >/dev/null; then node_start_ack "$jid"; fi
@@ -3386,6 +3406,17 @@ node_process_pending_launches() {
     lock_task_ids
     if busy=$(agent_running_task "$(task_field "$tid" AGENT)"); then
       if [[ $busy != "$tid" ]]; then unlock_task_ids; continue; fi
+    fi
+    status=$(task_field "$tid" STATUS)
+    if [[ $status =~ ^(done|failed|stopped|hung|excluded)$ ]] || [[ -f $TASKS/$tid/stop-requested || -f $TASKS/$tid/node-stop-requested ]] || jq -e --arg id "$jid" '.jobs[$id] | .obsolete or (.state == "stopped")' <<< "$NODE_STATE" >/dev/null; then
+      if [[ ! $status =~ ^(done|failed|stopped|hung|excluded)$ ]]; then
+        meta_set "$tid" STATUS stopped
+        meta_set "$tid" FINISHED "$(date -Is)"
+      fi
+      NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].launched=true' <<< "$NODE_STATE")
+      node_save
+      unlock_task_ids
+      continue
     fi
     if start_runner "$tid" new; then :; else log_error node_launch_failed "job=$jid" "task=$tid"; fi
     unlock_task_ids
@@ -3395,7 +3426,8 @@ node_process_pending_launches() {
 
 # node_recover_tasks binds a preparation interrupted before its mapping save to its already tagged local task.
 node_recover_tasks() {
-  local jid tid assignment candidate found ids
+  local jid tid assignment candidate found ids assigned run
+  local -a matched partial started
   ids=$(jq -r '.jobs | keys[]' <<< "$NODE_STATE")
   for jid in $ids; do
     [[ -n $jid ]] || continue
@@ -3403,13 +3435,44 @@ node_recover_tasks() {
     [[ -z $tid ]] || continue
     if ! jq -e --arg id "$jid" '.jobs[$id].preparing and (.obsolete|not)' <<< "$NODE_STATE" >/dev/null; then continue; fi
     assignment=$(jq -r --arg id "$jid" '.jobs[$id].assignment' <<< "$NODE_STATE")
-    found=''
+    # Admission excludes a local resume while recovery classifies or removes unstarted checkouts.
+    lock_task_ids
+    found=''; matched=(); partial=(); started=()
     for candidate in "$TASKS"/*/; do
       [[ -f $candidate/meta.env ]] || continue
       candidate=${candidate%/}; candidate=${candidate##*/}
-      if [[ $(task_field "$candidate" JOB_ID) == "$jid" && $(task_field "$candidate" JOB_ASSIGNMENT) == "$assignment" ]]; then found=$candidate; break; fi
+      [[ $(task_field "$candidate" JOB_ID) == "$jid" ]] || continue
+      assigned=$(task_field "$candidate" JOB_ASSIGNMENT)
+      run=$(task_field "$candidate" RUN)
+      if [[ $assigned == "$assignment" ]]; then
+        matched+=("$candidate")
+        [[ $run == 0 ]] || started+=("$candidate")
+      elif [[ -z $assigned && $run == 0 ]]; then
+        partial+=("$candidate")
+      fi
     done
-    if [[ -n $found ]]; then node_bind_task "$jid" "$found"; else node_transition "$jid" failed '' 'node preparation interrupted before a task was recorded'; fi
+    if ((${#started[@]} > 1)); then
+      unlock_task_ids
+      die "multiple started tasks match job $jid; inspect local tasks ${started[*]} before restarting the node"
+    elif ((${#started[@]} == 1)); then
+      found=${started[0]}
+    elif ((${#matched[@]} == 1)); then
+      found=${matched[0]}
+    elif ((${#matched[@]} == 0 && ${#partial[@]} == 1)); then
+      found=${partial[0]}
+    fi
+    # Other assignments were excluded above; every removable candidate has RUN=0.
+    for candidate in "${matched[@]}" "${partial[@]}"; do
+      [[ $candidate == "$found" ]] || discard_task "$candidate"
+    done
+    if [[ -n $found ]]; then
+      if [[ -z $(task_field "$found" JOB_ASSIGNMENT) ]]; then meta_set "$found" JOB_ASSIGNMENT "$assignment"; fi
+      if [[ -n ${LEAD_URL:-} && -z $(task_field "$found" JOB_LEAD) ]]; then meta_set "$found" JOB_LEAD "$LEAD_URL"; fi
+      node_bind_task "$jid" "$found"
+    else
+      node_transition "$jid" failed '' 'CheckoutFailed: prepared task is missing or ambiguous during recovery'
+    fi
+    unlock_task_ids
   done
 }
 
