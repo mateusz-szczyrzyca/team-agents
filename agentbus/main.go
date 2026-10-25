@@ -1282,8 +1282,7 @@ func main() {
   agentbus team-list [--all] | notes --repo R [--section S] [-n 30] [--search Q]
   agentbus team-create|team-set|team-done|team-get|team-waiting   (used by the agent script)
   agentbus round-size --repo DIR --base REF [--exclude PATTERNS] [--json]   size of a round's change
-  agentbus lead --listen IP:PORT --node NAME [--dir D --allow DEVICE --ttl 90s]   lead HTTP service
-  agentbus lead    --listen TAILSCALE:PORT --node NAME [--allow DEVICE]... [--ttl 90s]   the lead's HTTP listener (agent lead)
+  agentbus lead    --listen TAILSCALE:PORT --node NAME [--dir D] [--allow DEVICE]... [--ttl 90s]   the lead's HTTP listener (agent lead)
   agentbus helper-list [--all] | helper-next|helper-set|helper-get|board-dump   (used by the agent script)
   agentbus checkpoint-get|cancel-pending|board-release-agent   (used by the agent script)`)
 		os.Exit(2)

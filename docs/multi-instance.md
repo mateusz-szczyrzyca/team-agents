@@ -253,7 +253,10 @@ acknowledges its entire report batch and returns `{"Job": ...}` with at most one
 assignment (`null` when none matches). The authenticated caller's liveness is
 refreshed before offline expiry, so its delayed start reports retain their
 assignment; rejected heartbeats roll back both liveness and reports. Other
-silent nodes still expire normally. Delivery of durable stop requests is
+silent nodes still expire normally. Nodes must truncate each `JobReport.Result`
+to at most 64 KiB before batching and keep the entire encoded heartbeat within
+256 KiB (sending multiple batches if needed; daemon enforcement and testing
+belong to round 6). Delivery of durable stop requests is
 added with the node daemon in round 6; cancellation of an already started job
 currently persists `StopRequested` for read views. JSON field names use
 PascalCase, timestamps use UTC RFC3339Nano, and request bodies are limited to

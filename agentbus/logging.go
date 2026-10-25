@@ -57,6 +57,7 @@ const (
 	LogLeadListening      LogEvent = "lead_listening"         // the lead started listening on an address
 	LogLeadStopped        LogEvent = "lead_stopped"           // the lead shut down its listeners
 	LogLeadHTTPError      LogEvent = "lead_http_error"        // net/http emitted a connection or handler diagnostic
+	LogLeadPeerRejected   LogEvent = "lead_peer_rejected"     // the lead refused a socket peer; the error says why
 )
 
 // logInfo, logWarn and logError write a record with the given event name.
