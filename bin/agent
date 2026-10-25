@@ -243,7 +243,7 @@ meta_set() { # id key value — sets one KEY=value (printf %q) line; writers of 
     # conditional the subshell does not stop at the first error, so the status is checked explicitly.
     local tmp="$f.tmp.$$"
     # grep exits 1 when no other line remains — that is not an error
-    if ! { grep -v "^$2=" "$f" || (($? == 1)); printf '%s=%q\n' "$2" "$3"; } > "$tmp"; then
+    if ! { { grep -v "^$2=" "$f" || (($? == 1)); } && printf '%s=%q\n' "$2" "$3"; } > "$tmp"; then
       rm -f "$tmp"
       log_error meta_write_failed "file=$f" "key=$2"
       exit 1
