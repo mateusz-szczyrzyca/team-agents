@@ -2,9 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
-	"net"
-	"net/http"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -12,12 +9,6 @@ import (
 	"syscall"
 	"time"
 )
-
-// leadShutdownTimeout bounds how long a stopping lead waits for requests in flight.
-const leadShutdownTimeout = 10 * time.Second
-
-// leadReadHeaderTimeout bounds how long a peer may take to send request headers.
-const leadReadHeaderTimeout = 10 * time.Second
 
 // leadTailnetPrefixes are the ranges Tailscale assigns to devices: 100.64.0.0/10 (CGNAT,
 // IPv4) and fd7a:115c:a1e0::/48 (IPv6). The lead listens only on these or on loopback.
@@ -114,59 +105,6 @@ func parseLeadConfig(args []string) (leadConfig, *LeadServeError) {
 		return leadConfig{}, opErr(LeadServeBadFlags, "--ttl %v must be a positive duration, e.g. 90s", *ttl)
 	}
 	return leadConfig{dir: *dir, listen: addr, node: *node, allowed: allow, ttl: *ttl}, nil
-}
-
-// runLead runs the lead's HTTP listeners until ctx is done, then shuts them down within
-// leadShutdownTimeout. A listener that cannot be opened is LeadServe ListenFailed; a server that
-// fails or cannot shut down is ServeFailed.
-func runLead(ctx context.Context, cfg leadConfig) *LeadServeError {
-	srv := &http.Server{
-		Handler:           newLeadHandler(&Bus{dir: cfg.dir}, cfg.node, cfg.allowed, cfg.ttl),
-		ReadHeaderTimeout: leadReadHeaderTimeout,
-	}
-	var lns []net.Listener
-	for _, ap := range leadListenAddrs(cfg.listen) {
-		ln, err := net.Listen("tcp", ap.String())
-		if err != nil {
-			if cerr := closeListeners(lns); cerr != nil {
-				return opErr(LeadServeListenFailed, "cannot listen on %s: %v (closing the others failed too: %v)", ap, err, cerr)
-			}
-			return opErr(LeadServeListenFailed, "cannot listen on %s: %v (is another agentbus lead or a service using the port?)", ap, err)
-		}
-		logInfo(LogLeadListening, "address", ap.String(), "node", cfg.node)
-		lns = append(lns, ln)
-	}
-	errc := make(chan error, len(lns))
-	for _, ln := range lns {
-		go func(ln net.Listener) { errc <- srv.Serve(ln) }(ln)
-	}
-	var serveErr error
-	select {
-	case <-ctx.Done():
-	case serveErr = <-errc: // a server returned before shutdown: every listener fails the lead
-	}
-	shutCtx, cancel := context.WithTimeout(context.Background(), leadShutdownTimeout)
-	defer cancel()
-	shutErr := srv.Shutdown(shutCtx)
-	logInfo(LogLeadStopped, "node", cfg.node)
-	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-		return opErr(LeadServeServeFailed, "a listener failed: %v", serveErr)
-	}
-	if shutErr != nil {
-		return opErr(LeadServeServeFailed, "shutdown did not finish within %v: %v", leadShutdownTimeout, shutErr)
-	}
-	return nil
-}
-
-// closeListeners closes every listener and joins the errors.
-func closeListeners(lns []net.Listener) error {
-	var errs []error
-	for _, ln := range lns {
-		if err := ln.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
 }
 
 // cmdLead runs `agentbus lead` in the foreground (agent lead runs it under agentlead.service).

@@ -56,6 +56,7 @@ const (
 	LogUnencodableInput   LogEvent = "tool_input_unencodable" // a tool input of a CLI event could not be encoded
 	LogLeadListening      LogEvent = "lead_listening"         // the lead started listening on an address
 	LogLeadStopped        LogEvent = "lead_stopped"           // the lead shut down its listeners
+	LogLeadHTTPError      LogEvent = "lead_http_error"        // net/http emitted a connection or handler diagnostic
 )
 
 // logInfo, logWarn and logError write a record with the given event name.

@@ -645,6 +645,13 @@ can be the **lead**, which keeps a job queue and the list of nodes; remote jobs 
   is how long a silent node stays online.
 - `agent lead` runs the listener in the foreground. `install.sh` installs and starts the `agentlead.service` user
   unit only when `LEAD_LISTEN` is set.
+- The listener authenticates the socket peer; forwarded identity headers grant no authority. Exact
+  `127.0.0.1` and `::1` peers are trusted as the lead's own node; other loopback addresses require whois.
+  Human submission and cancellation use the lead's loopback interface. Browser requests carrying `Origin`
+  or `Sec-Fetch-Site` are refused; this API is for direct CLI and daemon requests.
+- Requests have bounded header/body/read/write timeouts, and shutdown drains requests for at most `5` seconds
+  before closing connections. Structured events are `lead_listening`, `lead_stopped`, and `lead_http_error`;
+  response and cleanup failures use the existing `side_effect_failed` event.
 - The HTTP API (heartbeat, job submission, state reports, cancel, and the reads `GET /v1/jobs`, `GET /v1/jobs/{id}`,
   `GET /v1/nodes`) is available for the node daemon and tests. Requests are limited to 256 KiB; JSON uses the Go
   field names (PascalCase) and times are RFC3339Nano. The lead keeps its jobs in `bus/jobs.json` (see
