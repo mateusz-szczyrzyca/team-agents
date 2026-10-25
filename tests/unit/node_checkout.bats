@@ -55,3 +55,54 @@ run_prepare() {
   id=$(run_prepare job-3 solo repo main "$FIRST" "text")
   [ "$(git -C "$AGENTS_HOME/worktrees/repo/$id" rev-parse HEAD)" = "$FIRST" ]
 }
+
+@test "prepare_job_task refuses an unknown agent without creating task or worktree" {
+  source "$REPO_ROOT/bin/agent"
+  node_job_setup
+  run run_prepare job-unknown ghost repo main "" "text"
+  [ "$status" -ne 0 ]
+  [ -z "$(ls -A "$TASKS")" ]
+  [ ! -d "$AGENTS_HOME/worktrees/repo" ]
+  grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
+  grep '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl" | grep -q 'unknown agent'
+}
+
+@test "prepare_job_task refuses an investigator agent without creating task or worktree" {
+  source "$REPO_ROOT/bin/agent"
+  node_job_setup
+  run run_prepare job-inv inv repo main "" "text"
+  [ "$status" -ne 0 ]
+  [ -z "$(ls -A "$TASKS")" ]
+  [ ! -d "$AGENTS_HOME/worktrees/repo" ]
+  grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
+  grep '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl" | grep -q 'investigator'
+}
+
+@test "prepare_job_task refuses an agent busy with another task" {
+  source "$REPO_ROOT/bin/agent"
+  node_job_setup
+  mkdir -p "$TASKS/existing"
+  cat > "$TASKS/existing/meta.env" <<EOF
+ID=existing
+AGENT=solo
+STATUS=sleeping
+EOF
+  run run_prepare job-busy solo repo main "" "text"
+  [ "$status" -ne 0 ]
+  [ "$(ls -1 "$TASKS" | wc -l)" -eq 1 ]
+  [ ! -d "$AGENTS_HOME/worktrees/repo" ]
+  grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
+  grep '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl" | grep -q 'busy'
+}
+
+@test "prepare_job_task fails cleanly when worktree creation fails" {
+  source "$REPO_ROOT/bin/agent"
+  node_job_setup
+  touch "$HOME/repo/.git/worktrees"
+  run run_prepare job-wt solo repo main "" "text"
+  [ "$status" -ne 0 ]
+  [ -z "$(ls -A "$TASKS")" ]
+  grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
+  ! grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+}
+
