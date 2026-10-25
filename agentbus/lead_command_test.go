@@ -135,6 +135,7 @@ func freeLoopbackPort(t *testing.T) netip.AddrPort {
 func TestServeLeadAnswersAndStops(t *testing.T) {
 	ap := freeLoopbackPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel) // a failing readiness check must not leave the server running
 	done := make(chan *LeadServeError, 1)
 	go func() {
 		done <- runLead(ctx, leadConfig{dir: t.TempDir(), listen: ap, node: "lead-pi", ttl: 90 * time.Second})
@@ -185,4 +186,18 @@ func TestServeLeadListenFailed(t *testing.T) {
 	ap := netip.MustParseAddrPort(ln.Addr().String())
 	serr := runLead(context.Background(), leadConfig{dir: t.TempDir(), listen: ap, node: "lead-pi", ttl: time.Minute})
 	failsWith(t, LeadServeListenFailed)(ap.String(), serr)
+}
+
+// TestParseLeadConfigRejectsBadNode checks that --node must be a logical name: it is the
+// identity of the lead's own node, so it is validated before anything listens.
+func TestParseLeadConfigRejectsBadNode(t *testing.T) {
+	_, err := parseLeadConfig([]string{"--listen", "127.0.0.1:7780", "--node", "lead pi!"})
+	failsWith(t, LeadServeBadFlags)("--node with a space", err)
+}
+
+// TestParseLeadConfigRejectsPositionalArguments checks that a stray argument is an error, not
+// silently ignored (a mistyped flag value would otherwise shift the others).
+func TestParseLeadConfigRejectsPositionalArguments(t *testing.T) {
+	_, err := parseLeadConfig([]string{"--listen", "127.0.0.1:7780", "--node", "lead-pi", "extra"})
+	failsWith(t, LeadServeBadFlags)("a positional argument", err)
 }
