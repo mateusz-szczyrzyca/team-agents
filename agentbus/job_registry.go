@@ -587,6 +587,16 @@ func (r *leadRegistry) requeueOffline(now Timestamp, ttl time.Duration) []string
 	return requeued
 }
 
+// touch records that node spoke at now. It is a no-op for an unknown node, which holds no assignments.
+func (r *leadRegistry) touch(node string, now Timestamp) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if n, ok := r.nodes[node]; ok {
+		n.LastSeen = now
+		r.nodes[node] = n
+	}
+}
+
 // nodeOffline reports whether node has missed its heartbeat deadline at now.
 func (r *leadRegistry) nodeOffline(node string, now Timestamp, ttl time.Duration) bool {
 	r.mu.Lock()

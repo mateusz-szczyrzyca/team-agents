@@ -8,9 +8,19 @@ import (
 
 // leadTransaction applies expiry and an operation under the durable registry's existing flock.
 func leadTransaction[C opCause](a *leadAPI, storage C, fn func(*leadRegistry, Timestamp) *OpError[C]) *OpError[C] {
+	return leadNodeTransaction(a, "", storage, fn)
+}
+
+// leadNodeTransaction is leadTransaction for an operation sent by node (empty for none). The sender is speaking,
+// so its liveness is refreshed before expiry runs: a node that returns after its TTL keeps its assignments
+// instead of losing them to its own sweep.
+func leadNodeTransaction[C opCause](a *leadAPI, node string, storage C, fn func(*leadRegistry, Timestamp) *OpError[C]) *OpError[C] {
 	// Capture receipt time inside the lock so queued lock wait cannot create a backwards transition.
 	return transactJobs(a.bus, storage, Timestamp{time.Now().UTC()}, func(r *leadRegistry) *OpError[C] {
 		now := Timestamp{time.Now().UTC()}
+		if node != "" {
+			r.touch(node, now)
+		}
 		r.requeueOffline(now, a.ttl)
 		return fn(r, now)
 	})
@@ -37,7 +47,7 @@ func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody) (*Job, *LeadHea
 	}
 	body.Node = node
 	var job *Job // one assignment, or nil when no job matches
-	err := leadTransaction(a, LeadHeartbeatStorage, func(r *leadRegistry, now Timestamp) *LeadHeartbeatError {
+	err := leadNodeTransaction(a, node, LeadHeartbeatStorage, func(r *leadRegistry, now Timestamp) *LeadHeartbeatError {
 		for _, rep := range body.Reports {
 			if rep.Node != "" && rep.Node != node {
 				return opErr(LeadHeartbeatUnauthorized, "report identity differs from its socket peer")
@@ -86,7 +96,7 @@ func (a *leadAPI) report(node, id string, rep JobReport) (Job, *LeadReportError)
 	}
 	rep.ID, rep.Node = id, node
 	var job Job // durable accepted snapshot
-	err := leadTransaction(a, LeadReportStorage, func(r *leadRegistry, now Timestamp) *LeadReportError {
+	err := leadNodeTransaction(a, node, LeadReportStorage, func(r *leadRegistry, now Timestamp) *LeadReportError {
 		var failure *LeadReportError // shared lifecycle/assignment validation
 		job, failure = r.report(rep, now)
 		return failure
