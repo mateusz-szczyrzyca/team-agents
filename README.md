@@ -661,7 +661,7 @@ can be the **lead**, which keeps a job queue and the list of nodes; remote jobs 
   (send multiple batches if needed; enforcement and tests arrive with the round 6 node daemon). The lead keeps its jobs in `bus/jobs.json` (see
   [design](docs/multi-instance.md), "Lead storage").
 - `NODE_REPOS` in `agents.conf`: maps repository logical names to local clone paths (e.g. `([team-agents]=/home/dev/src/team-agents)`). A node only accepts jobs for repositories in this allow-list; any other repository is refused before any task or worktree is created.
-- `agentbus node-checkout`: validates the repository against local `NODE_REPOS`, validates base ref and SHA, fetches from origin without checking out the clone, and resolves an immutable commit.
+- `agentbus node-checkout`: validates the repository against local `NODE_REPOS`, validates base ref and SHA, fetches from origin into a unique private ref without checking out the clone, resolves an immutable commit, and cleans up the temporary ref.
 - There are no `agent run --need`, `agent jobs` or
   `agent nodes` commands yet, and no node daemon (`agent node`) yet: a job cannot run on another installation
   until those rounds are merged.
