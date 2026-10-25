@@ -3205,9 +3205,250 @@ node_stop() {
   exit 0
 }
 
-# node_poll — executes one polling cycle: sends heartbeat, processes stops and assignments.
+# node_request — sends a coarse API request via agentbus node-request using LEAD_URL.
+node_request() {
+  local -a args=(--url "$LEAD_URL")
+  [[ -z ${NODE_SOURCE:-} ]] || args+=(--source "$NODE_SOURCE")
+  bus node-request "${args[@]}" "$@"
+}
+
+# node_jobs_file — returns the path to the durable node job state file.
+node_jobs_file() {
+  printf '%s/node-jobs.json' "$BUS_DIR"
+}
+
+# node_jobs_load — loads node-jobs.json or returns default empty state.
+node_jobs_load() {
+  local f
+  f=$(node_jobs_file)
+  if [[ -f $f ]]; then
+    cat "$f" 2>/dev/null || printf '{"jobs":{},"outbox":[]}\n'
+  else
+    printf '{"jobs":{},"outbox":[]}\n'
+  fi
+}
+
+# node_jobs_save json — atomically writes node-jobs.json under BUS_DIR.
+node_jobs_save() {
+  local json=$1 f tmp
+  f=$(node_jobs_file)
+  mkdir -p "$BUS_DIR"
+  tmp="$BUS_DIR/node-jobs.tmp.$$"
+  printf '%s\n' "$json" > "$tmp"
+  mv -f "$tmp" "$f"
+}
+
+# node_select_agent selector — selects a free configured agent for a job selector (exact name, normal, or worker).
+node_select_agent() {
+  local sel=$1 a busy
+  if [[ -n ${AGENT_TYPE[$sel]:-} ]]; then
+    busy=$(agent_running_task "$sel") || true
+    if [[ -z $busy ]]; then
+      printf '%s\n' "$sel"
+      return 0
+    fi
+    return 1
+  fi
+  if [[ $sel == worker ]]; then
+    local w
+    w=$(free_worker) || true
+    if [[ -n $w ]]; then
+      printf '%s\n' "$w"
+      return 0
+    fi
+    return 1
+  fi
+  if [[ $sel == normal ]]; then
+    for a in "${NORMAL_AGENTS[@]}"; do
+      busy=$(agent_running_task "$a") || true
+      if [[ -z $busy ]]; then
+        printf '%s\n' "$a"
+        return 0
+      fi
+    done
+    return 1
+  fi
+  return 1
+}
+
+# node_recover_tasks — scans task metadata for jobs created on this node and synchronizes node-jobs.json.
+node_recover_tasks() {
+  local state
+  state=$(node_jobs_load)
+  local d jid asgn tid st run br ag
+  for d in "$TASKS"/*/; do
+    [[ -f $d/meta.env ]] || continue
+    d=${d%/}; tid=${d##*/}
+    jid=$(task_field "$tid" JOB_ID)
+    [[ -n $jid ]] || continue
+    asgn=$(task_field "$tid" JOB_ASSIGNMENT)
+    st=$(task_field "$tid" STATUS)
+    run=$(task_field "$tid" RUN)
+    br=$(task_field "$tid" BRANCH)
+    ag=$(task_field "$tid" AGENT)
+    state=$(jq -c --arg jid "$jid" --argjson as "${asgn:-0}" --arg tid "$tid" \
+      --arg st "$st" --argjson launched "$(( run > 0 ? 1 : 0 ))" --arg br "$br" --arg ag "$ag" \
+      '.jobs[$jid] = (.jobs[$jid] // {id: $jid, assignment: $as, task_id: $tid, agent: $ag, branch: $br, launched: ($launched == 1), state: $st})' <<< "$state")
+  done
+  node_jobs_save "$state"
+}
+
+# node_scan_tasks — updates task states in node-jobs.json and enqueues terminal or waiting reports.
+node_scan_tasks() {
+  local state
+  state=$(node_jobs_load)
+  local jids jid tid prev_st curr_st asgn br now final rep
+  jids=$(jq -r '.jobs | keys[]' <<< "$state" 2>/dev/null || true)
+  now=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+  for jid in $jids; do
+    tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$state")
+    [[ -n $tid && -f $TASKS/$tid/meta.env ]] || continue
+    prev_st=$(jq -r --arg id "$jid" '.jobs[$id].state // empty' <<< "$state")
+    curr_st=$(task_field "$tid" STATUS)
+    asgn=$(jq -r --arg id "$jid" '.jobs[$id].assignment // 0' <<< "$state")
+    br=$(task_field "$tid" BRANCH)
+    if [[ $curr_st != "$prev_st" ]]; then
+      final=""
+      if [[ $curr_st == done || $curr_st == failed || $curr_st == stopped ]]; then
+        final=$(task_field "$tid" FINAL)
+        [[ ${#final} -le 65536 ]] || final="${final:0:65536}"
+      fi
+      rep=$(jq -cn --arg id "$jid" --arg node "$INSTANCE_NAME" --argjson as "$asgn" \
+        --arg st "$curr_st" --arg tid "$tid" --arg br "$br" --arg res "$final" --arg at "$now" \
+        '{ID: $id, Node: $node, Assignment: $as, State: $st, TaskID: $tid, Branch: $br, Result: $res, At: $at}')
+      state=$(jq -c --arg id "$jid" --arg st "$curr_st" --argjson rep "$rep" \
+        '.jobs[$id].state = $st | .outbox += [$rep]' <<< "$state")
+    fi
+  done
+  node_jobs_save "$state"
+}
+
+# node_poll — executes one polling cycle: recovers, scans tasks, sends heartbeat, handles stops and assignments.
 node_poll() {
-  return 0
+  node_recover_tasks
+  node_scan_tasks
+
+  local state
+  state=$(node_jobs_load)
+  local rep_count
+  rep_count=$(jq -r '.outbox | length' <<< "$state")
+  local hb_payload hb_resp
+  if ((rep_count > 0)); then
+    local outbox_slice
+    outbox_slice=$(jq -c '.outbox[0:10]' <<< "$state")
+    hb_payload=$(node_heartbeat_json | jq -c --argjson reps "$outbox_slice" '.Reports = $reps')
+  else
+    hb_payload=$(node_heartbeat_json | jq -c '.Reports = []')
+  fi
+
+  if ! hb_resp=$(printf '%s' "$hb_payload" | node_request --path /v1/heartbeat 2>&1); then
+    log_warn node_heartbeat_failed "error=$hb_resp"
+    return 0
+  fi
+
+  # Clear acknowledged outbox reports
+  if ((rep_count > 0)); then
+    state=$(jq -c '.outbox = .outbox[10:]' <<< "$state")
+    node_jobs_save "$state"
+  fi
+
+  log_info node_heartbeat_accepted "assigned=$(jq -r '.Job.Request.ID // empty' <<< "$hb_resp")"
+
+  # Process stop requests
+  local stops sid tid asgn now srep
+  stops=$(jq -r '.Stops[]?.Request.ID // empty' <<< "$hb_resp" 2>/dev/null || true)
+  now=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+  for sid in $stops; do
+    tid=$(jq -r --arg id "$sid" '.jobs[$id].task_id // empty' <<< "$state")
+    [[ -n $tid ]] || continue
+    asgn=$(jq -r --arg id "$sid" '.jobs[$id].assignment // 0' <<< "$state")
+    if [[ $(task_field "$tid" STATUS) =~ ^(starting|running|waiting)$ ]]; then
+      cmd_kick "$tid" node >/dev/null 2>&1 || meta_set "$tid" STATUS stopped
+      meta_set "$tid" STATUS stopped
+      srep=$(jq -cn --arg id "$sid" --arg node "$INSTANCE_NAME" --argjson as "$asgn" \
+        --arg st "stopped" --arg tid "$tid" --arg at "$now" \
+        '{ID: $id, Node: $node, Assignment: $as, State: $st, TaskID: $tid, At: $at}')
+      state=$(jq -c --arg id "$sid" --argjson rep "$srep" \
+        '.jobs[$id].state = "stopped" | .outbox += [$rep]' <<< "$state")
+      node_jobs_save "$state"
+    fi
+  done
+
+  # Process assigned job
+  if jq -e '.Job != null and .Job.Request != null' <<< "$hb_resp" >/dev/null 2>&1; then
+    local jid asgn repo base sha task sel launched br rep
+    jid=$(jq -r '.Job.Request.ID' <<< "$hb_resp")
+    asgn=$(jq -r '.Job.Assignment' <<< "$hb_resp")
+    launched=$(jq -r --arg id "$jid" '.jobs[$id].launched // false' <<< "$state")
+    if [[ $launched == true ]]; then
+      return 0
+    fi
+
+    tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$state")
+    if [[ -n $tid ]]; then
+      # Already prepared: report running and launch
+      br=$(task_field "$tid" BRANCH)
+      rep=$(jq -cn --arg id "$jid" --arg node "$INSTANCE_NAME" --argjson as "$asgn" \
+        --arg st "running" --arg tid "$tid" --arg br "$br" --arg at "$now" \
+        '{ID: $id, Node: $node, Assignment: $as, State: $st, TaskID: $tid, Branch: $br, At: $at}')
+      if printf '%s' "$rep" | node_request --path "/v1/jobs/$jid/state" >/dev/null 2>&1; then
+        start_runner "$tid" new || true
+        state=$(jq -c --arg id "$jid" '.jobs[$id].launched = true | .jobs[$id].state = "running"' <<< "$state")
+        node_jobs_save "$state"
+      fi
+      return 0
+    fi
+
+    repo=$(jq -r '.Job.Request.Repository' <<< "$hb_resp")
+    base=$(jq -r '.Job.Request.BaseRef' <<< "$hb_resp")
+    sha=$(jq -r '.Job.Request.BaseSHA // empty' <<< "$hb_resp")
+    task=$(jq -r '.Job.Request.Task' <<< "$hb_resp")
+    sel=$(jq -r '.Job.Request.Selector' <<< "$hb_resp")
+
+    local ag
+    if ! ag=$(node_select_agent "$sel"); then
+      now=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+      rep=$(jq -cn --arg id "$jid" --arg node "$INSTANCE_NAME" --argjson as "$asgn" \
+        --arg st "failed" --arg res "no free agent matching selector $sel" --arg at "$now" \
+        '{ID: $id, Node: $node, Assignment: $as, State: $st, Result: $res, At: $at}')
+      state=$(jq -c --argjson rep "$rep" '.outbox += [$rep]' <<< "$state")
+      node_jobs_save "$state"
+      return 0
+    fi
+
+    if ! prepare_job_task "$jid" "$ag" "$repo" "$base" "$sha" "$task" "$asgn"; then
+      now=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+      rep=$(jq -cn --arg id "$jid" --arg node "$INSTANCE_NAME" --argjson as "$asgn" \
+        --arg st "failed" --arg res "task preparation failed" --arg at "$now" \
+        '{ID: $id, Node: $node, Assignment: $as, State: $st, Result: $res, At: $at}')
+      state=$(jq -c --argjson rep "$rep" '.outbox += [$rep]' <<< "$state")
+      node_jobs_save "$state"
+      return 0
+    fi
+
+    tid="$NEW_ID"
+    br=$(task_field "$tid" BRANCH)
+    now=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+
+    state=$(jq -c --arg id "$jid" --argjson as "$asgn" --arg tid "$tid" \
+      --arg ag "$ag" --arg repo "$repo" --arg br "$br" \
+      '.jobs[$id] = {id: $id, assignment: $as, task_id: $tid, agent: $ag, repo: $repo, branch: $br, launched: false, state: "running"}' <<< "$state")
+    node_jobs_save "$state"
+
+    rep=$(jq -cn --arg id "$jid" --arg node "$INSTANCE_NAME" --argjson as "$asgn" \
+      --arg st "running" --arg tid "$tid" --arg br "$br" --arg at "$now" \
+      '{ID: $id, Node: $node, Assignment: $as, State: $st, TaskID: $tid, Branch: $br, At: $at}')
+
+    if printf '%s' "$rep" | node_request --path "/v1/jobs/$jid/state" >/dev/null 2>&1; then
+      start_runner "$tid" new || true
+      state=$(jq -c --arg id "$jid" '.jobs[$id].launched = true' <<< "$state")
+      node_jobs_save "$state"
+    else
+      # Ack not received yet: add report to outbox so next heartbeat delivers it
+      state=$(jq -c --argjson rep "$rep" '.outbox += [$rep]' <<< "$state")
+      node_jobs_save "$state"
+    fi
+  fi
 }
 
 cmd_node() { # runs the node daemon in the foreground (agentnode.service runs this); needs LEAD_URL

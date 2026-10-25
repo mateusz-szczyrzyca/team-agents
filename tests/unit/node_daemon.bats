@@ -132,7 +132,7 @@ STUB
   local task_id
   task_id=$(jq -r '.jobs["job-test-1"].task_id' "$AGENTS_HOME/bus/node-jobs.json")
   [ -n "$task_id" ]
-  [ -f "$TASKS/$task_id/meta.env" ]
-  grep -q 'JOB_ID=job-test-1' "$TASKS/$task_id/meta.env"
-  grep -q 'JOB_ASSIGNMENT=1' "$TASKS/$task_id/meta.env"
+  [ -f "$AGENTS_HOME/tasks/$task_id/meta.env" ]
+  grep -q 'JOB_ID=job-test-1' "$AGENTS_HOME/tasks/$task_id/meta.env"
+  grep -q 'JOB_ASSIGNMENT=1' "$AGENTS_HOME/tasks/$task_id/meta.env"
 }
