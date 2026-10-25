@@ -22,3 +22,11 @@ teardown() {
   [ "$status" -ne 0 ]
   [[ $output == *"LEAD_URL is not set: set it in config/agents.conf (e.g. LEAD_URL=http://lead-instance:7780)"* ]]
 }
+
+@test "agent node validates capabilities on startup" {
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_CAPABILITIES=(unknown:foo)' >> "$AGENTS_HOME/agents.conf"
+  run agent node
+  [ "$status" -ne 0 ]
+  [[ $output == *"invalid capabilities:"* ]]
+}
