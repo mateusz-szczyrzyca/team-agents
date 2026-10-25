@@ -1222,6 +1222,53 @@
     }
    ],
    "noStorage": true
+  },
+  {
+   "type": "NodeCheckout",
+   "op": "node/checkout",
+   "what": "resolving a repository base for an assigned job",
+   "causes": [
+    {
+     "name": "BadFlags",
+     "class": "InvalidArgument",
+     "doc": "a flag is unknown or has no value, or an argument is not a flag"
+    },
+    {
+     "name": "MissingArgument",
+     "class": "InvalidArgument",
+     "doc": "--repo or --base is missing"
+    },
+    {
+     "name": "RepositoryNotAllowed",
+     "class": "Permission",
+     "doc": "the requested repository is not listed in NODE_REPOS"
+    },
+    {
+     "name": "InvalidRepository",
+     "class": "InvalidArgument",
+     "doc": "the repository name is invalid or empty"
+    },
+    {
+     "name": "InvalidBaseRef",
+     "class": "InvalidArgument",
+     "doc": "the base ref name is invalid or starts with a dash"
+    },
+    {
+     "name": "InvalidCommit",
+     "class": "InvalidArgument",
+     "doc": "the commit SHA is invalid"
+    },
+    {
+     "name": "FetchFailed",
+     "class": "Process",
+     "doc": "fetching from the git remote failed"
+    },
+    {
+     "name": "CheckoutFailed",
+     "class": "Process",
+     "doc": "git revision resolution failed"
+    }
+   ]
   }
  ]
 }
