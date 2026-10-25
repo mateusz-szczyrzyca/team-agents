@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -166,7 +167,40 @@ func TestLeadRegistryLatestHeartbeatWinsForCapabilities(t *testing.T) {
 
 // TestLeadHTTPLoopbackRangeRequiresIdentity: 127.0.0.2 is not local authority; it needs an authenticated nonlocal node identity.
 func TestLeadHTTPLoopbackRangeRequiresIdentity(t *testing.T) {
-	t.Skip("pending: 127.0.0.2 requires authenticated nonlocal node identity, never local authority; no blanket refusal, round 4")
+	stubWhois(t, func(_, ip string) (*leadWhoisResponse, *LeadWhoisError) {
+		if ip == "127.0.0.2" {
+			return &leadWhoisResponse{
+				Node: leadWhoisNode{
+					ComputedName: "node2",
+					Name:         "node2.example.ts.net.",
+					Tags:         []string{"tag:runners"},
+				},
+			}, nil
+		}
+		return nil, opErr(LeadWhoisTailscaleFailed, "unknown ip %s", ip)
+	})
+
+	// 127.0.0.2 must not be treated as local authority.
+	id, err := identifyLeadPeer("127.0.0.2:12345", "lead-node", []string{"node2"})
+	if err != nil {
+		t.Fatalf("identifyLeadPeer(127.0.0.2) unexpected error: %v", err)
+	}
+	if id.Local || id.Node != "node2" {
+		t.Fatalf("identifyLeadPeer(127.0.0.2) = %+v, want {Node: node2, Local: false}", id)
+	}
+
+	// When 127.0.0.2 is not in allowed list, it is refused with LeadWhoisUntrustedNode.
+	_, errDenied := identifyLeadPeer("127.0.0.2:12345", "lead-node", []string{"other-node"})
+	if errDenied == nil {
+		t.Fatal("expected 127.0.0.2 with unlisted device to fail, got nil")
+	}
+	var whoisErr *LeadWhoisError
+	if !errors.As(errDenied, &whoisErr) {
+		t.Fatalf("errDenied %v is not *LeadWhoisError", errDenied)
+	}
+	if whoisErr.Cause != LeadWhoisUntrustedNode {
+		t.Fatalf("cause = %v, want LeadWhoisUntrustedNode", whoisErr.Cause)
+	}
 }
 
 // TestLeadNotifiesOnFinalState: the lead notifies when a job becomes done, failed or stopped.
@@ -245,5 +279,5 @@ func TestLeadRegistryConcurrentHeartbeatsRace(t *testing.T) {
 
 // TestLeadHTTPListenerConcurrentRequestsRace: concurrent HTTP requests to the listener are race-free under -race.
 func TestLeadHTTPListenerConcurrentRequestsRace(t *testing.T) {
-	t.Skip("pending: listener race test under -race, round 4")
+	leadConcurrentRequests(t)
 }
