@@ -174,6 +174,22 @@ EOF
   grep -qx 'STATUS=new' "$TASKS/fault-meta/meta.env"
 }
 
+@test "meta_set fails and keeps the old metadata when reading the file fails" {
+  source "$REPO_ROOT/bin/agent"
+  mkdir -p "$TASKS/read-fault"
+  cat > "$TASKS/read-fault/meta.env" <<EOF
+ID=read-fault
+AGENT=solo
+STATUS=new
+EOF
+  # fault injection: grep returns 2 (read failure) in a subshell where set -e is active
+  run bash -c 'source "$1/bin/agent"; grep() { return 2; }; meta_set read-fault STATUS running' _ "$REPO_ROOT"
+  [ "$status" -ne 0 ]
+  grep -qx 'ID=read-fault' "$TASKS/read-fault/meta.env"
+  grep -qx 'AGENT=solo' "$TASKS/read-fault/meta.env"
+  grep -qx 'STATUS=new' "$TASKS/read-fault/meta.env"
+}
+
 @test "create_task fails and leaves no task when a metadata write fails" {
   source "$REPO_ROOT/bin/agent"
   cd "$HOME/repo" || return 1
