@@ -85,15 +85,17 @@ func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Durat
 			if err := decodeLeadBody(r, &body); err != nil {
 				return nil, fromValue(LeadHeartbeatMalformedBody, err)
 			}
-			job, err := a.heartbeat(peer.Node, body)
+			var stops []leadJobView // durable requests from the report/assignment transaction
+			job, err := a.heartbeat(peer.Node, body, &stops)
 			var view *leadJobView // no assignment is represented by JSON null
 			if job != nil {
 				v := publicLeadJob(*job)
 				view = &v
 			}
 			return struct {
-				Job *leadJobView /* at most one assignment */
-			}{view}, err
+				Job   *leadJobView  /* at most one assignment */
+				Stops []leadJobView /* bounded, durable stop requests for this authenticated node */
+			}{view, stops}, err
 		})
 	})
 	mux.HandleFunc("POST /v1/jobs/{id}/state", func(w http.ResponseWriter, r *http.Request) {
