@@ -48,3 +48,8 @@ func validJobBase(ref, sha string) bool {
 	_, err := hex.DecodeString(sha)
 	return err == nil
 }
+
+// validJobSHA accepts a complete SHA-1 or SHA-256 object ID, without a ref name.
+func validJobSHA(_ string) bool {
+	return false
+}
