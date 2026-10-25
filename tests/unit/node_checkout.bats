@@ -215,3 +215,22 @@ EOF
   [ ! -e "$TASKS/20261025-000000-solo" ]
   [ ! -e "$AGENTS_HOME/worktrees/repo/20261025-000000-solo" ]
 }
+
+@test "a job is refused when its agent becomes busy during the checkout, and creates nothing" {
+  source "$REPO_ROOT/bin/agent"
+  node_job_setup
+  # fault injection: another task takes the agent while the checkout runs, outside the task-ID lock
+  bus() {
+    if [[ $1 == node-checkout ]]; then
+      mkdir -p "$TASKS/racing"
+      printf 'ID=racing\nAGENT=solo\nSTATUS=sleeping\n' > "$TASKS/racing/meta.env"
+    fi
+    "$AGENTBUS_BIN" "$@" 10>&-
+  }
+  run run_prepare job-race solo repo main "" "text"
+  unset -f bus
+  [ "$status" -ne 0 ]
+  [ "$(ls -1 "$TASKS" | wc -l)" -eq 1 ]
+  [ ! -d "$AGENTS_HOME/worktrees/repo" ]
+  grep '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl" | grep -q 'busy'
+}
