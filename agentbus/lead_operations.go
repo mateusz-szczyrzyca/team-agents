@@ -38,12 +38,14 @@ func (a *leadAPI) submit(node string, local bool, req JobRequest) (Job, *LeadSub
 }
 
 // heartbeat applies one node's reports and declaration in one storage transaction.
-func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody) (*Job, *LeadHeartbeatError) {
+// When supplied, stopOut receives bounded, durable stop requests from the same transaction.
+func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody, stopOut ...*[]leadJobView) (*Job, *LeadHeartbeatError) {
 	if body.Node != "" && body.Node != node {
 		return nil, opErr(LeadHeartbeatUnauthorized, "heartbeat identity differs from its socket peer")
 	}
 	body.Node = node
-	var job *Job // one assignment, or nil when no job matches
+	var job *Job             // one assignment, or nil when no job matches
+	stops := []leadJobView{} // at most 64 compact stop requests, retried until a terminal acknowledgement
 	err := leadTransaction(a, LeadHeartbeatStorage, node, func(r *leadRegistry, now Timestamp) *LeadHeartbeatError {
 		for _, rep := range body.Reports {
 			if rep.Node != "" && rep.Node != node {
@@ -56,8 +58,24 @@ func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody) (*Job, *LeadHea
 		}
 		var failure *LeadHeartbeatError // declaration validation or persistence failure
 		job, failure = r.heartbeat(body.NodeHeartbeat, now)
-		return failure
+		if failure != nil {
+			return failure
+		}
+		// The transaction exclusively owns r; no pointers escape this compact public projection.
+		for _, id := range r.order {
+			pending := r.jobs[id]
+			if pending.Node == node && pending.StopRequested {
+				stops = append(stops, leadJobView{Request: JobRequest{ID: id}, State: pending.State, Node: node, Assignment: pending.Assignment, TaskID: pending.TaskID, StopRequested: true})
+				if len(stops) == 64 {
+					break
+				}
+			}
+		}
+		return nil
 	})
+	if len(stopOut) > 0 {
+		*stopOut[0] = stops
+	}
 	return job, err
 }
 

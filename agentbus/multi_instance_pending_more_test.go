@@ -136,7 +136,7 @@ func TestLeadRegistryCorruptJobsFileFailsStorage(t *testing.T) {
 
 // TestLeadRegistryStopRequestReturnedUntilAcknowledged: a durable stop request is returned in heartbeats until the node acknowledges it.
 func TestLeadRegistryStopRequestReturnedUntilAcknowledged(t *testing.T) {
-	t.Skip("pending: durable stop request is returned in heartbeats until the node acknowledges it, round 6")
+	assertHeartbeatStopDelivery(t)
 }
 
 // TestLeadRegistryLatestHeartbeatWinsForCapabilities: the capabilities of the latest heartbeat are the ones used for routing.
