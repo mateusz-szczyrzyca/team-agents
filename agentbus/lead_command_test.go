@@ -3,6 +3,7 @@ package main
 import (
 	"net/netip"
 	"testing"
+	"time"
 )
 
 // TestValidateLeadListenAccepts checks the addresses the lead may listen on: loopback (its
@@ -68,5 +69,46 @@ func TestLeadListenAddrs(t *testing.T) {
 				t.Errorf("leadListenAddrs(%s)[%d] = %v, want %s", in, i, got[i], want[i])
 			}
 		}
+	}
+}
+
+// TestParseLeadConfig checks the flags of `agentbus lead`: required values, the repeated --allow,
+// and the default node liveness window of 90 s.
+func TestParseLeadConfig(t *testing.T) {
+	cfg, err := parseLeadConfig([]string{"--dir", "/tmp/bus", "--listen", "100.101.102.103:7780",
+		"--node", "lead-pi", "--allow", "pi5", "--allow", "tag:nodes"})
+	if err != nil {
+		t.Fatalf("parseLeadConfig: unexpected error %v", err)
+	}
+	if cfg.dir != "/tmp/bus" || cfg.node != "lead-pi" {
+		t.Errorf("dir/node = %q/%q, want /tmp/bus/lead-pi", cfg.dir, cfg.node)
+	}
+	if cfg.listen != netip.MustParseAddrPort("100.101.102.103:7780") {
+		t.Errorf("listen = %v, want 100.101.102.103:7780", cfg.listen)
+	}
+	if len(cfg.allowed) != 2 || cfg.allowed[0] != "pi5" || cfg.allowed[1] != "tag:nodes" {
+		t.Errorf("allowed = %v, want [pi5 tag:nodes]", cfg.allowed)
+	}
+	if cfg.ttl != 90*time.Second {
+		t.Errorf("ttl = %v, want 90s", cfg.ttl)
+	}
+}
+
+// TestParseLeadConfigRequiresNodeAndListen checks the two arguments that have no default.
+func TestParseLeadConfigRequiresNodeAndListen(t *testing.T) {
+	_, err := parseLeadConfig([]string{"--listen", "100.101.102.103:7780"})
+	failsWith(t, LeadServeMissingArgument)("no --node", err)
+	_, err = parseLeadConfig([]string{"--node", "lead-pi"})
+	failsWith(t, LeadServeMissingArgument)("no --listen", err)
+}
+
+// TestParseLeadConfigTTL checks that --ttl sets the liveness window.
+func TestParseLeadConfigTTL(t *testing.T) {
+	cfg, err := parseLeadConfig([]string{"--listen", "127.0.0.1:7780", "--node", "lead-pi", "--ttl", "5s"})
+	if err != nil {
+		t.Fatalf("parseLeadConfig: unexpected error %v", err)
+	}
+	if cfg.ttl != 5*time.Second {
+		t.Errorf("ttl = %v, want 5s", cfg.ttl)
 	}
 }

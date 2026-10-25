@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/netip"
+	"time"
 )
 
 // leadTailnetPrefixes are the ranges Tailscale assigns to devices: 100.64.0.0/10 (CGNAT,
@@ -45,4 +46,18 @@ func leadListenAddrs(ap netip.AddrPort) []netip.AddrPort {
 		out = append(out, loop)
 	}
 	return out
+}
+
+// leadConfig is the parsed command line of `agentbus lead`.
+type leadConfig struct {
+	dir     string         // the bus directory holding the lead's job registry
+	listen  netip.AddrPort // the validated --listen address (Tailscale or loopback)
+	node    string         // this instance's name on the lead; the lead is also a node
+	allowed []string       // devices allowed to take jobs: names or tag:…; loopback is always the lead's own node
+	ttl     time.Duration  // how long a silent node stays online
+}
+
+// parseLeadConfig parses the arguments of `agentbus lead`. RED: not implemented yet.
+func parseLeadConfig(_ []string) (leadConfig, *LeadServeError) {
+	return leadConfig{}, nil
 }
