@@ -1,27 +1,33 @@
 #!/usr/bin/env bats
-# Two installations on one machine: the lead (the test HOME, listening on 127.0.0.2) and a node (NODE_HOME, named
-# node2). The node connects from 127.0.0.2 through a test wrapper of AGENTBUS_BIN (node-request only), and a
-# tailscale stub answers that address as the device node2, so the lead identifies it as a node. The agents are the
-# fake-claude stub; nothing reaches the network beyond loopback and no real agent CLI runs.
+# Two installations on one machine: the lead (the test HOME, listening on 127.0.0.2) and a node (NODE, named node2),
+# with its own HOME, AGENTS_HOME, STUB_HOME and STUB_UNITS, so nothing of the node touches the lead's files. The node
+# connects from 127.0.0.2 through a test wrapper of AGENTBUS_BIN (node-request only), and a tailscale stub answers
+# that address as the device node2, so the lead identifies it as a node. The agent is the fake-claude stub; nothing
+# reaches the network beyond loopback and no real agent CLI runs.
 
 load helpers
 
-# teardown — stops the node and the lead even when an assertion fails, and the stub agents (as helpers.bash does).
+# teardown — stops the node and the lead even when an assertion fails, and the stub agents of both installations.
 teardown() {
-  local f pid
+  local f pid rc
   for f in "$BATS_TEST_TMPDIR/node2/node.pid" "$HOME/lead.pid"; do
     [[ -f $f ]] || continue
     pid=$(cat "$f")
     # A process already reaped by the test is an expected non-running answer (as in lead.bats).
     if kill -0 "$pid" 2> /dev/null; then
       kill -TERM "$pid"
-      local rc=0
-      wait "$pid" || rc=$?   # the exit status of a stopped daemon is not checked here
+      rc=0
+      wait "$pid" || rc=$?
+      # 143 is the expected status of a process stopped by SIGTERM; anything else is a cleanup failure to show.
+      if [[ $rc -ne 0 && $rc -ne 143 ]]; then
+        echo "cleanup of $f: exit $rc" >&2
+      fi
     fi
   done
-  for p in "$STUB_UNITS"/*.pid; do
-    [[ -f $p ]] && kill -TERM -- -"$(cat "$p")" 2>/dev/null || true
+  for p in "$BATS_TEST_TMPDIR"/node2/units/*.pid "$STUB_UNITS"/*.pid; do
+    [[ -f $p ]] && kill -TERM -- -"$(cat "$p")" 2> /dev/null
   done
+  return 0
 }
 
 # free_port — a free TCP port on 127.0.0.2 (the lead's address).
@@ -33,7 +39,7 @@ free_port() {
 # of the shared remote as NODE_REPOS[team-agents], and agents.conf declaring the capability hw:rp2350.
 setup_node() {
   NODE="$BATS_TEST_TMPDIR/node2"
-  mkdir -p "$NODE/.local/bin" "$NODE/agents"/{tasks,worktrees,bus,prompts}
+  mkdir -p "$NODE/.local/bin" "$NODE/agents"/{tasks,worktrees,bus,prompts} "$NODE/units"
   install -m755 "$REPO_ROOT/bin/agent" "$NODE/.local/bin/agent"
   cp "$BUILD_DIR/agentbus" "$NODE/.local/bin/agentbus"
   cp "$BATS_TEST_DIRNAME/stubs/fake-claude" "$NODE/.local/bin/claude"
@@ -43,8 +49,8 @@ setup_node() {
   : > "$NODE/agents/secrets.env"
   echo '{}' > "$NODE/scenario.json"
   git clone -q "$HOME/remote.git" "$NODE/repo"
-  git -C "$NODE/repo" config user.name t
-  git -C "$NODE/repo" config user.email t@t
+  git -C "$NODE/repo" config user.name test
+  git -C "$NODE/repo" config user.email test@example.com
   cat > "$NODE/agents/agents.conf" <<CONF
 declare -A AGENT_TYPE=([solo]=claude [worker]=claude)
 declare -A AGENT_MODEL=()
@@ -92,29 +98,29 @@ STUB
   wait_lead_up
 }
 
-# wait_lead_up — waits until the lead answers its API on 127.0.0.2.
+# wait_lead_up — waits until the lead answers its API on 127.0.0.2; on failure shows the end of its log.
 wait_lead_up() {
   for _ in $(seq 1 75); do
     curl -fsS --noproxy '*' --max-time 1 "http://127.0.0.2:$LEAD_PORT/v1/nodes" > /dev/null && return 0
     sleep 0.2
   done
   echo "the lead does not answer on 127.0.0.2:$LEAD_PORT" >&2
-  cat "$HOME/lead.log" >&2
+  tail -n 40 "$HOME/lead.log" >&2
   return 1
 }
 
-# stop_lead — stops the lead with SIGTERM and waits for it.
+# stop_lead — stops the lead with SIGTERM and waits for it; its exit status must be 0.
 stop_lead() {
   local pid rc=0
   pid=$(cat "$HOME/lead.pid")
   kill -TERM "$pid"
   wait "$pid" || rc=$?
-  [[ $rc -eq 0 ]] || { echo "lead exit $rc" >&2; return 1; }
+  [[ $rc -eq 0 ]] || { echo "lead exit $rc" >&2; tail -n 40 "$HOME/lead.log" >&2; return 1; }
   rm "$HOME/lead.pid"
 }
 
-# start_node — starts the node daemon (agent node) in NODE_HOME, through a wrapper of AGENTBUS_BIN that sends
-# node-request from 127.0.0.2 (node2); the wrapper is test-only and changes no other subcommand.
+# start_node — starts the node daemon (agent node) of the node installation. A test-only wrapper of AGENTBUS_BIN sends
+# node-request from 127.0.0.2 (node2); it changes no other subcommand.
 start_node() {
   cat > "$NODE/.local/bin/agentbus-node2" <<WRAP
 #!/usr/bin/env bash
@@ -123,10 +129,17 @@ if [[ \${1:-} == node-request ]]; then shift; exec "$NODE/.local/bin/agentbus" n
 exec "$NODE/.local/bin/agentbus" "\$@"
 WRAP
   chmod +x "$NODE/.local/bin/agentbus-node2"
-  HOME="$NODE" AGENTBUS_BIN="$NODE/.local/bin/agentbus-node2" \
-    PATH="$BATS_TEST_DIRNAME/stubs:$NODE/.local/bin:$PATH" agent node > "$NODE/node.log" 2>&1 &
+  env HOME="$NODE" AGENTS_HOME="$NODE/agents" STUB_HOME="$NODE" STUB_UNITS="$NODE/units" \
+    AGENTBUS_BIN="$NODE/.local/bin/agentbus-node2" PATH="$BATS_TEST_DIRNAME/stubs:$NODE/.local/bin:$PATH" \
+    "$NODE/.local/bin/agent" node > "$NODE/node.log" 2>&1 &
   echo "$!" > "$NODE/node.pid"
-  wait_grep '"event":"node_heartbeat_accepted"' "$NODE/agents/logs/agentbus.jsonl" 20
+  wait_grep '"event":"node_heartbeat_accepted"' "$NODE/agents/logs/agent.jsonl" 20
+}
+
+# node_task_meta agent — the metadata file of the newest task of an agent on the node.
+node_task_meta() {
+  local all=("$NODE"/agents/tasks/*-"$1")
+  echo "${all[-1]}/meta.env"
 }
 
 # lead_post path json — POST a JSON body to the lead's API from the lead's own CLI (loopback).
@@ -163,7 +176,20 @@ job_field() {
   lead_get "/v1/jobs/$1" | jq -r --arg f "$2" '.[$f]'
 }
 
-@test "a job with requires is taken by the node that declares the capability and its commit is reported" {
+# wait_heartbeats n — waits until the node has had n heartbeats accepted by the lead.
+wait_heartbeats() {
+  local f="$NODE/agents/logs/agent.jsonl"
+  for _ in $(seq 1 $(($1 * 40))); do
+    if [[ -f $f ]] && [[ $(grep -c '"event":"node_heartbeat_accepted"' "$f") -ge $1 ]]; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "fewer than $1 heartbeats accepted by the lead" >&2
+  return 1
+}
+
+@test "a job with requires is taken by the node that declares the capability, and its commit is on the branch" {
   LEAD_PORT=$(free_port)
   setup_node
   start_lead
@@ -175,7 +201,7 @@ job_field() {
   local branch
   branch=$(job_field j-hw Branch)
   [[ -n $branch ]]
-  git -C "$HOME/remote.git" rev-parse --verify -q "refs/heads/$branch" > /dev/null
+  [[ $(git -C "$HOME/remote.git" show "$branch:hello.txt") == hello ]]
   [[ -n $(job_field j-hw Result) ]]
 }
 
@@ -184,9 +210,12 @@ job_field() {
   setup_node
   start_lead
   start_node
+  wait_heartbeats 2
   submit_job j-arm team-agents '["arch:arm64"]' solo
   wait_job j-arm 'queued' 20
+  wait_heartbeats 4
   [[ $(job_field j-arm WaitReason) == *"arch:arm64"* ]]
+  [[ -z $(job_field j-arm Node) ]]
 }
 
 @test "a lead stopped while a job runs: the node finishes it and reports after the lead returns" {
@@ -198,13 +227,13 @@ job_field() {
   submit_job j-outage team-agents '["hw:rp2350"]' solo
   wait_job j-outage 'running' 60
   stop_lead
-  wait_grep 'STATUS=done' "$(ls -d "$NODE"/agents/tasks/*-solo)/meta.env" 60
+  wait_grep 'STATUS=done' "$(node_task_meta solo)" 60
   start_lead
   wait_job j-outage 'done' 60
   [[ -n $(job_field j-outage Result) ]]
 }
 
-@test "a job whose checkout fails is failed with its reason and nothing is recorded as started" {
+@test "a job whose checkout fails is failed with the typed cause, and nothing is recorded as started" {
   LEAD_PORT=$(free_port)
   setup_node
   start_lead
@@ -212,9 +241,11 @@ job_field() {
   echo '{"solo": {"new": "commit"}}' > "$NODE/scenario.json"
   submit_job j-broken broken '["hw:rp2350"]' solo
   wait_job j-broken 'failed' 60
-  [[ -n $(job_field j-broken Result) ]]
-  [[ $(job_field j-broken History) != *'"running"'* ]]
-  grep -qF '"event":"node_checkout_failed"' "$NODE/agents/logs/agentbus.jsonl"
+  local result
+  result=$(job_field j-broken Result)
+  [[ $result == *FetchFailed* || $result == *CheckoutFailed* ]]
+  lead_get "/v1/jobs/j-broken" | jq -e '[.History[] | tostring] | any(contains("running")) | not' > /dev/null
+  wait_jq 'select(.event == "node_checkout_failed" and .job == "j-broken")' "$NODE/agents/logs/agent.jsonl" 20
   [[ -z $(ls -A "$NODE/agents/tasks") ]]
 }
 
@@ -225,6 +256,7 @@ job_field() {
   start_node
   submit_job j-unknown no-such-repo '["hw:rp2350"]' solo
   wait_job j-unknown 'failed' 60
-  wait_jq 'select(.event == "node_checkout_failed" and .job == "j-unknown")' "$NODE/agents/logs/agentbus.jsonl" 20
+  [[ $(job_field j-unknown Result) == *RepositoryNotAllowed* || $(job_field j-unknown Result) == *NODE_REPOS* ]]
+  wait_jq 'select(.event == "node_checkout_failed" and .job == "j-unknown")' "$NODE/agents/logs/agent.jsonl" 20
   [[ -z $(ls -A "$NODE/agents/tasks") ]]
 }
