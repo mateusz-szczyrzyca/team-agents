@@ -3139,8 +3139,65 @@ cmd_lead() { # runs the lead's listener in the foreground (agentlead.service run
   exec "$AGENTBUS_BIN" "${args[@]}"
 }
 
+# node_validate_capabilities — validates declared INSTANCE_CAPABILITIES (namespaces os, arch, build, test, hw, net;
+# values [a-z0-9._-]+).
+node_validate_capabilities() {
+  local cap ns
+  for cap in "${INSTANCE_CAPABILITIES[@]}"; do
+    if [[ ! $cap =~ ^([a-z]+):([a-z0-9._-]+)$ ]]; then
+      die "invalid capabilities: malformed capability '$cap'"
+    fi
+    ns="${BASH_REMATCH[1]}"
+    case $ns in
+      os|arch|build|test|hw|net) ;;
+      *) die "invalid capabilities: unknown namespace '$ns' in '$cap'" ;;
+    esac
+  done
+}
+
+# node_heartbeat_json — builds the JSON payload for the node heartbeat declaration.
+node_heartbeat_json() {
+  local -a free_json=()
+  local a tier busy
+  for a in "${!AGENT_TYPE[@]}"; do
+    busy=$(agent_running_task "$a") || true
+    if [[ -z $busy ]]; then
+      tier=normal
+      [[ " ${WORKER_AGENTS[*]:-} " == *" $a "* ]] && tier=worker
+      free_json+=("$(jq -cn --arg n "$a" --arg t "$tier" '{Name: $n, Tier: $t}')")
+    fi
+  done
+  local free_arr="[]"
+  if ((${#free_json[@]})); then
+    free_arr=$(printf '%s\n' "${free_json[@]}" | jq -s '.')
+  fi
+  local caps_arr="[]"
+  if ((${#INSTANCE_CAPABILITIES[@]})); then
+    caps_arr=$(printf '%s\n' "${INSTANCE_CAPABILITIES[@]}" | jq -R . | jq -s '.')
+  fi
+  jq -cn \
+    --arg node "$INSTANCE_NAME" \
+    --argjson caps "$caps_arr" \
+    --argjson free "$free_arr" \
+    --arg web "${AGENT_WEB_URL:-}" \
+    '{Node: $node, Capabilities: $caps, FreeAgents: $free, WebURL: $web}'
+}
+
+# node_validate_config — validates node configuration before polling begins.
+node_validate_config() {
+  node_validate_capabilities
+  local payload out
+  payload=$(node_heartbeat_json)
+  if ! out=$(printf '%s' "$payload" | bus node-request --url "$LEAD_URL" --validate 2>&1); then
+    if [[ $out != *"unknown subcommand"* ]]; then
+      die "invalid capabilities: $out"
+    fi
+  fi
+}
+
 cmd_node() { # runs the node daemon in the foreground (agentnode.service runs this); needs LEAD_URL
   [[ -n $LEAD_URL ]] || die "LEAD_URL is not set: set it in config/agents.conf (e.g. LEAD_URL=http://lead-instance:7780)"
+  node_validate_config
 }
 
 cmd__agents_json() { # the configured agents and investigators as JSON lines (for agentlive web)
