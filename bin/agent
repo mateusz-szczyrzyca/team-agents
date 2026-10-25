@@ -1998,9 +1998,23 @@ runner_exit() {
     return
   fi
   if [[ -n ${JOB_ID:-} && -f $TASKS/$RUNNER_ID/node-stop-requested ]]; then
-    meta_set "$RUNNER_ID" STATUS stopped
-    meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
-    log_info run_stopped "reason=node_job_cancel"
+    local node_status node_finished node_final="${FINAL:-}"
+    node_status=$(task_field "$RUNNER_ID" STATUS)
+    node_finished=$(task_field "$RUNNER_ID" FINISHED)
+    # Completion may have persisted its outcome just before SIGTERM interrupted final delivery.
+    if [[ ! $node_status =~ ^(done|failed|stopped|hung|excluded)$ ]]; then
+      node_status=stopped
+      node_finished=""
+      try meta_write_failed meta_set "$RUNNER_ID" STATUS "$node_status"
+    fi
+    if [[ -z $node_finished ]]; then
+      try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
+    fi
+    if [[ -f $TASKS/$RUNNER_ID/final.md ]]; then node_final=$(<"$TASKS/$RUNNER_ID/final.md"); fi
+    log_info run_stopped "reason=node_job_cancel" "status=$node_status"
+    try notification_failed notify "$RUNNER_ID" "$node_status" "$node_final" "node job cancellation"
+    try dispatch_failed dispatch
+    try dispatch_failed dispatch_helpers
     return
   fi
   local why="runner interrupted (exit code $rc) — see: agent log $RUNNER_ID"
@@ -3474,7 +3488,7 @@ node_handle_stop() {
   tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$NODE_STATE")
   [[ -n $tid ]] || return 0
   state=$(task_field "$tid" STATUS)
-  [[ ! $state =~ ^(done|failed|stopped)$ ]] || return 0
+  [[ ! $state =~ ^(done|failed|stopped|hung|excluded)$ ]] || return 0
   run=$(task_field "$tid" RUN)
   if ((run > 0)); then
     touch "$TASKS/$tid/node-stop-requested"
@@ -3488,7 +3502,7 @@ node_handle_stop() {
     fi
   fi
   state=$(task_field "$tid" STATUS)
-  if [[ ! $state =~ ^(done|failed|stopped)$ ]]; then
+  if [[ ! $state =~ ^(done|failed|stopped|hung|excluded)$ ]]; then
     touch "$TASKS/$tid/stop-requested"
     meta_set "$tid" STATUS stopped
   fi

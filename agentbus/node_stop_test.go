@@ -42,6 +42,7 @@ func assertHeartbeatStopDelivery(t *testing.T) {
 			t.Fatalf("stop not redelivered: %s", w.Body.String())
 		}
 		other := httpLeadRequest(t, newLeadHandler(b, "node-b", nil, time.Minute), http.MethodPost, "/v1/heartbeat", leadHeartbeatBody{})
+		requireLeadStatus(t, other, http.StatusOK)
 		var foreign struct {
 			Stops []leadJobView /* requests must never cross node ownership */
 		}
@@ -56,6 +57,7 @@ func assertHeartbeatStopDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httpLeadRequest(t, newLeadHandler(b, "node-a", nil, time.Minute), http.MethodPost, "/v1/heartbeat", beat)
+	requireLeadStatus(t, w, http.StatusOK)
 	var reply struct {
 		Stops []leadJobView /* acknowledgement removes the durable request */
 	}

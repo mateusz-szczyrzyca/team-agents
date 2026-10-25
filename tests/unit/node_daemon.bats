@@ -400,8 +400,20 @@ if [[ ${1:-} == node-request ]]; then
   done
   if ((validate)); then printf '{}\n'; exit 0; fi
   if [[ $path == "/v1/heartbeat" ]]; then
-    echo "malformed-not-json"
-    exit 1
+    # Only heartbeats that carry a report are counted; the plain heartbeat of each poll is not.
+    cat > "$STUB_HOME/payload.tmp"
+    if jq -e '.Reports | length > 0' "$STUB_HOME/payload.tmp" >/dev/null; then
+      n=1
+      if [[ -f "$STUB_HOME/report-calls" ]]; then n=$(( $(cat "$STUB_HOME/report-calls") + 1 )); fi
+      printf '%s\n' "$n" > "$STUB_HOME/report-calls"
+      mv "$STUB_HOME/payload.tmp" "$STUB_HOME/report-$n.json"
+      if ((n == 1)); then
+        echo "malformed-not-json"
+        exit 1
+      fi
+    fi
+    printf '{"Job":null,"Stops":[]}\n'
+    exit 0
   fi
   exit 0
 fi
@@ -410,15 +422,27 @@ STUB
   chmod +x "$real_bus"
 
   echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
-  # Put a pending report in outbox
+  # A job whose state report is still pending (the production queue is .jobs[id].pending).
+  # The fixture includes outbox, which node_jobs_load requires.
   mkdir -p "$AGENTS_HOME/bus"
   cat > "$AGENTS_HOME/bus/node-jobs.json" <<'EOF'
-{"jobs":{},"outbox":[{"ID":"job-pending","State":"running"}]}
+{"jobs":{"job-pending":{"assignment":1,"state":"running","pending":true,"obsolete":false,"launched":false,"start_acked":false,"task_id":"","branch":"","preparing":false,"cursor":0,"report":{"ID":"job-pending","Node":"node-test","Assignment":1,"State":"running","TaskID":"","Branch":"","PRURL":"","Result":"","At":"2026-10-25T20:00:00.000000000Z","Transitions":[{"State":"running","At":"2026-10-25T20:00:00.000000000Z"}]}}},"outbox":[]}
 EOF
 
+  # Cycle 1: the lead's reply to the report is malformed. The tick still succeeds and the report stays pending.
   run agent node --once
-  # Outbox must not be cleared on failure
-  [ "$(jq -r '.outbox | length' "$AGENTS_HOME/bus/node-jobs.json")" = "1" ]
+  [ "$status" -eq 0 ]
+  [ -f "$STUB_HOME/report-1.json" ]
+  jq -e '.Reports[] | select(.ID == "job-pending" and .State == "running")' "$STUB_HOME/report-1.json"
+  [ "$(jq -r '.jobs["job-pending"].pending' "$AGENTS_HOME/bus/node-jobs.json")" = "true" ]
+  [ "$(jq -r '.jobs["job-pending"].report.State' "$AGENTS_HOME/bus/node-jobs.json")" = "running" ]
+
+  # Cycle 2: the next successful report resends exactly the same persisted report and clears pending.
+  run agent node --once
+  [ "$status" -eq 0 ]
+  [ -f "$STUB_HOME/report-2.json" ]
+  [ "$(jq -c '.Reports' "$STUB_HOME/report-1.json")" = "$(jq -c '.Reports' "$STUB_HOME/report-2.json")" ]
+  [ "$(jq -r '.jobs["job-pending"].pending' "$AGENTS_HOME/bus/node-jobs.json")" = "false" ]
 }
 
 @test "agent node retries exact start report snapshot on lost ACK without duplicate runner or altered timestamp" {
@@ -643,9 +667,10 @@ EOF
   fi
   if [[ $path == /v1/jobs/job-stale-1/state ]]; then
     echo "rejected: stale assignment" >&2
-    exit 3
+    exit 5
   fi
   if [[ $path == /v1/jobs/job-stale-1 && $get -eq 1 ]]; then
+    printf '%s\n' "$path" > "$STUB_HOME/reconcile-get.txt"
     cat <<'EOF'
 {
   "Request": {"ID": "job-stale-1", "Repository": "repo", "BaseRef": "main", "BaseSHA": "", "Requires": [], "Selector": "solo", "Task": "stale", "Requester": "human"},
@@ -672,8 +697,11 @@ STUB
   [ "$status" -eq 0 ]
   local task_id
   task_id=$(jq -r '.jobs["job-stale-1"].task_id // empty' "$AGENTS_HOME/bus/node-jobs.json")
-  if [[ -n $task_id ]]; then
-    # Task must never have been launched
-    grep -q '^RUN=0' "$AGENTS_HOME/tasks/$task_id/meta.env"
-  fi
+  [ -n "$task_id" ]
+  # The rejected report reconciles: the lead's job is read back explicitly, the job is marked obsolete,
+  # and its prepared task is stopped and never launched.
+  [ "$(cat "$STUB_HOME/reconcile-get.txt")" = "/v1/jobs/job-stale-1" ]
+  [ "$(jq -r '.jobs["job-stale-1"].obsolete' "$AGENTS_HOME/bus/node-jobs.json")" = true ]
+  grep -qx 'RUN=0' "$AGENTS_HOME/tasks/$task_id/meta.env"
+  grep -qx 'STATUS=stopped' "$AGENTS_HOME/tasks/$task_id/meta.env"
 }
