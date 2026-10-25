@@ -56,6 +56,57 @@ run_prepare() {
   [ "$(git -C "$AGENTS_HOME/worktrees/repo/$id" rev-parse HEAD)" = "$FIRST" ]
 }
 
+@test "prepare_job_task refuses an unknown agent without creating task or worktree" {
+  source "$REPO_ROOT/bin/agent"
+  node_job_setup
+  run run_prepare job-unknown ghost repo main "" "text"
+  [ "$status" -ne 0 ]
+  [ -z "$(ls -A "$TASKS")" ]
+  [ ! -d "$AGENTS_HOME/worktrees/repo" ]
+  grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
+  grep '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl" | grep -q 'unknown agent'
+}
+
+@test "prepare_job_task refuses an investigator agent without creating task or worktree" {
+  source "$REPO_ROOT/bin/agent"
+  node_job_setup
+  run run_prepare job-inv inv repo main "" "text"
+  [ "$status" -ne 0 ]
+  [ -z "$(ls -A "$TASKS")" ]
+  [ ! -d "$AGENTS_HOME/worktrees/repo" ]
+  grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
+  grep '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl" | grep -q 'investigator'
+}
+
+@test "prepare_job_task refuses an agent busy with another task" {
+  source "$REPO_ROOT/bin/agent"
+  node_job_setup
+  mkdir -p "$TASKS/existing"
+  cat > "$TASKS/existing/meta.env" <<EOF
+ID=existing
+AGENT=solo
+STATUS=sleeping
+EOF
+  run run_prepare job-busy solo repo main "" "text"
+  [ "$status" -ne 0 ]
+  [ "$(ls -1 "$TASKS" | wc -l)" -eq 1 ]
+  [ ! -d "$AGENTS_HOME/worktrees/repo" ]
+  grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
+  grep '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl" | grep -q 'busy'
+}
+
+@test "prepare_job_task fails cleanly when worktree creation fails" {
+  source "$REPO_ROOT/bin/agent"
+  node_job_setup
+  touch "$HOME/repo/.git/worktrees"
+  run run_prepare job-wt solo repo main "" "text"
+  [ "$status" -ne 0 ]
+  [ -z "$(ls -A "$TASKS")" ]
+  grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
+  ! grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
+}
+
+
 @test "create_task fails and leaves no task when the worktree directory cannot be created" {
   source "$REPO_ROOT/bin/agent"
   cd "$HOME/repo" || return 1
@@ -91,18 +142,7 @@ run_prepare() {
   ! grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
 }
 
-@test "a job for an agent that is busy is refused, as agent run would refuse it" {
-  source "$REPO_ROOT/bin/agent"
-  node_job_setup
-  mkdir -p "$TASKS/20261025-000001-solo"
-  printf 'AGENT=solo\nSTATUS=sleeping\n' > "$TASKS/20261025-000001-solo/meta.env"
-  run run_prepare job-8 solo repo main "" "text"
-  [ "$status" -ne 0 ]
-  [ "$(ls -A "$TASKS")" = "20261025-000001-solo" ]
-  grep -q '"event":"node_job_refused"' "$HOME/agents/logs/agent.jsonl"
-}
-
-@test "a job for an unknown agent is refused before anything is created, without an unbound-variable crash" {
+@test "a job for an unknown agent is refused without an unbound-variable crash" {
   source "$REPO_ROOT/bin/agent"
   node_job_setup
   run run_prepare job-9 ghost repo main "" "text"
@@ -110,5 +150,5 @@ run_prepare() {
   [[ $output != *unbound* ]]
   [ -z "$(ls -A "$TASKS")" ]
   [ ! -d "$AGENTS_HOME/worktrees/repo" ] || [ -z "$(ls -A "$AGENTS_HOME/worktrees/repo")" ]
-  grep -q '"event":"node_job_refused"' "$HOME/agents/logs/agent.jsonl"
+  grep -q '"event":"node_checkout_failed"' "$HOME/agents/logs/agent.jsonl"
 }

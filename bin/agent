@@ -2436,11 +2436,11 @@ drop_unstarted_task() {
 # (configured, not an investigator, not busy); prints nothing when the agent is free. Call it under the task lock.
 job_refusal() {
   local name=$1 busy
-  if [[ -z ${AGENT_TYPE[$name]:-} ]]; then
-    printf 'unknown agent %s' "$name"; return 0
-  fi
   if is_investigator "$name"; then
     printf 'investigators are not started by jobs'; return 0
+  fi
+  if [[ -z ${AGENT_TYPE[$name]:-} ]]; then
+    printf 'unknown agent %s' "$name"; return 0
   fi
   if busy=$(agent_running_task "$name"); then
     printf 'agent %s is busy (task %s)' "$name" "$busy"
@@ -2462,7 +2462,7 @@ prepare_job_task() {
   reason=$(job_refusal "$name")
   if [[ -n $reason ]]; then
     unlock_task_ids
-    log_error node_job_refused "job=$job" "agent=$name" "reason=$reason"
+    log_error node_checkout_failed "job=$job" "agent=$name" "reason=$reason"
     return 1
   fi
   # The checkout fetches into the configured clone, so it runs under the same lock as the task IDs.
