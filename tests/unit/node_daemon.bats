@@ -244,3 +244,102 @@ STUB
   grep -q '^STATUS=stopped' "$AGENTS_HOME/tasks/$task_id/meta.env"
   grep -q '"State":"stopped"' "$AGENTS_HOME/bus/node-jobs.json"
 }
+
+@test "agent node preserves done outcome when completion wins race against stop request" {
+  local real_bus="$HOME/.local/bin/agentbus"
+  mv "$real_bus" "$HOME/.local/bin/real-agentbus"
+  cat > "$real_bus" <<'STUB'
+#!/usr/bin/env bash
+if [[ ${1:-} == node-request ]]; then
+  shift
+  path=""
+  validate=0
+  while (($#)); do
+    case $1 in
+      --path) path=$2; shift 2 ;;
+      --validate) validate=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  if ((validate)); then printf '{}\n'; exit 0; fi
+  if [[ $path == "/v1/heartbeat" ]]; then
+    if [[ ! -f "$STUB_HOME/job-delivered" ]]; then
+      touch "$STUB_HOME/job-delivered"
+      cat <<'EOF'
+{"Job":{"Request":{"ID":"job-done-race","Repository":"repo","BaseRef":"main","BaseSHA":"","Requires":[],"Selector":"solo","Task":"text"},"Assignment":1,"Node":"node-test"},"Stops":[]}
+EOF
+    else
+      cat <<'EOF'
+{"Job":null,"Stops":[{"Request":{"ID":"job-done-race"},"Assignment":1}]}
+EOF
+    fi
+    exit 0
+  fi
+  if [[ $path == /v1/jobs/*/state ]]; then
+    printf '{"State":"running"}\n'
+    exit 0
+  fi
+  exit 0
+fi
+exec "$HOME/.local/bin/real-agentbus" "$@"
+STUB
+  chmod +x "$real_bus"
+
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
+  # Tick 1: prepares and starts job-done-race
+  run agent node --once
+  [ "$status" -eq 0 ]
+  local task_id
+  task_id=$(jq -r '.jobs["job-done-race"].task_id' "$AGENTS_HOME/bus/node-jobs.json")
+  [ -n "$task_id" ]
+
+  # Simulate completion before next heartbeat
+  echo "STATUS=done" >> "$AGENTS_HOME/tasks/$task_id/meta.env"
+  printf 'Success result text\n' > "$AGENTS_HOME/tasks/$task_id/final.md"
+
+  # Tick 2: receives Stops for job-done-race
+  run agent node --once
+  [ "$status" -eq 0 ]
+  # Done status must be preserved: terminal result wins race
+  grep -q '^STATUS=done' "$AGENTS_HOME/tasks/$task_id/meta.env"
+}
+
+@test "agent node preserves outbox when lead returns malformed reply" {
+  local real_bus="$HOME/.local/bin/agentbus"
+  mv "$real_bus" "$HOME/.local/bin/real-agentbus"
+  cat > "$real_bus" <<'STUB'
+#!/usr/bin/env bash
+if [[ ${1:-} == node-request ]]; then
+  shift
+  path=""
+  validate=0
+  while (($#)); do
+    case $1 in
+      --path) path=$2; shift 2 ;;
+      --validate) validate=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  if ((validate)); then printf '{}\n'; exit 0; fi
+  if [[ $path == "/v1/heartbeat" ]]; then
+    echo "malformed-not-json"
+    exit 1
+  fi
+  exit 0
+fi
+exec "$HOME/.local/bin/real-agentbus" "$@"
+STUB
+  chmod +x "$real_bus"
+
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  # Put a pending report in outbox
+  mkdir -p "$AGENTS_HOME/bus"
+  cat > "$AGENTS_HOME/bus/node-jobs.json" <<'EOF'
+{"jobs":{},"outbox":[{"ID":"job-pending","State":"running"}]}
+EOF
+
+  run agent node --once
+  # Outbox must not be cleared on failure
+  [ "$(jq -r '.outbox | length' "$AGENTS_HOME/bus/node-jobs.json")" = "1" ]
+}
