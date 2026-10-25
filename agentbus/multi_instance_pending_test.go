@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -478,22 +480,101 @@ func TestLeadRegistryRetryIsIdempotent(t *testing.T) {
 
 // TestLeadHTTPIdentityLoopbackIsLeadNode: a connection from 127.0.0.1 or ::1 is the lead's own node.
 func TestLeadHTTPIdentityLoopbackIsLeadNode(t *testing.T) {
-	t.Skip("pending: loopback peers are the lead's node, whois not consulted, round 4")
+	calls := 0
+	stubWhois(t, func(_, _ string) (*leadWhoisResponse, *LeadWhoisError) {
+		calls++
+		return nil, opErr(LeadWhoisTailscaleFailed, "whois should not be consulted for loopback")
+	})
+
+	for _, addr := range []string{"127.0.0.1:54321", "127.0.0.1", "[::1]:54321", "::1"} {
+		id, err := identifyLeadPeer(addr, "lead-node", []string{"other-node"})
+		if err != nil {
+			t.Fatalf("identifyLeadPeer(%q) error: %v", addr, err)
+		}
+		if !id.Local || id.Node != "lead-node" {
+			t.Fatalf("identifyLeadPeer(%q) = %+v, want {Node: lead-node, Local: true}", addr, id)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("tailscale whois called %d times, want 0 for local loopback", calls)
+	}
 }
 
 // TestLeadHTTPIdentityAllowsListedDeviceByNameAndTag: LEAD_NODES entries match device name or tag:….
 func TestLeadHTTPIdentityAllowsListedDeviceByNameAndTag(t *testing.T) {
-	t.Skip("pending: devices allowed by short name or tag from LEAD_NODES, round 4")
+	stubWhois(t, func(_, ip string) (*leadWhoisResponse, *LeadWhoisError) {
+		if ip == "100.64.0.10" {
+			return &leadWhoisResponse{
+				Node: leadWhoisNode{
+					ComputedName: "worker-1",
+					Name:         "worker-1.example.ts.net.",
+					Tags:         []string{"tag:ci", "tag:runners"},
+				},
+			}, nil
+		}
+		return nil, opErr(LeadWhoisTailscaleFailed, "unknown ip %s", ip)
+	})
+
+	allowedCases := [][]string{
+		{"worker-1"},
+		{"WORKER-1"},
+		{"worker-1.example.ts.net"},
+		{"tag:ci"},
+		{"TAG:RUNNERS"},
+		{"other-node", "tag:ci"},
+	}
+	for _, allowed := range allowedCases {
+		id, err := identifyLeadPeer("100.64.0.10:4321", "lead-node", allowed)
+		if err != nil {
+			t.Fatalf("identifyLeadPeer(allowed=%v) unexpected error: %v", allowed, err)
+		}
+		if id.Local || id.Node != "worker-1" {
+			t.Fatalf("identifyLeadPeer(allowed=%v) = %+v, want {Node: worker-1, Local: false}", allowed, id)
+		}
+	}
 }
 
 // TestLeadHTTPIdentityDeniesUnlistedDevice: a device not in LEAD_NODES is refused.
 func TestLeadHTTPIdentityDeniesUnlistedDevice(t *testing.T) {
-	t.Skip("pending: unlisted tailnet device refused, cause checked with errors.As, round 4")
+	stubWhois(t, func(_, ip string) (*leadWhoisResponse, *LeadWhoisError) {
+		if ip == "100.64.0.20" {
+			return &leadWhoisResponse{
+				Node: leadWhoisNode{
+					ComputedName: "untrusted-box",
+					Name:         "untrusted-box.example.ts.net.",
+					Tags:         []string{"tag:external"},
+				},
+			}, nil
+		}
+		return nil, opErr(LeadWhoisTailscaleFailed, "unknown ip %s", ip)
+	})
+
+	id, err := identifyLeadPeer("100.64.0.20:5555", "lead-node", []string{"worker-1", "tag:ci"})
+	if err == nil {
+		t.Fatalf("identifyLeadPeer returned id %+v, want refusal", id)
+	}
+	var whoisErr *LeadWhoisError
+	if !errors.As(err, &whoisErr) {
+		t.Fatalf("error %v is not *LeadWhoisError", err)
+	}
+	if whoisErr.Cause != LeadWhoisUntrustedNode {
+		t.Fatalf("cause = %v, want LeadWhoisUntrustedNode", whoisErr.Cause)
+	}
 }
 
 // TestLeadHTTPIdentityFailsWhenWhoisNotStubbed: the test whois fake fails when a test forgets to stub it.
 func TestLeadHTTPIdentityFailsWhenWhoisNotStubbed(t *testing.T) {
-	t.Skip("pending: unstubbed whois fails the test, as in live/, round 4")
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected unstubbed whois to panic, but it returned normally")
+		}
+		msg := fmt.Sprint(r)
+		if !strings.Contains(msg, "without a stub") {
+			t.Fatalf("panic message %q does not mention missing stub", msg)
+		}
+	}()
+	_, _ = identifyLeadPeer("100.64.0.30:5555", "lead-node", []string{"any"})
 }
 
 // TestNodeCapabilitiesRejectUnknownNamespace: an unknown capability namespace stops the node with a clear error.
