@@ -2150,6 +2150,7 @@ const (
 	LeadServeInvalidListen                         // the listen address is not host:port with a numeric port [InvalidArgument]
 	LeadServeUntrustedBind                         // the listen address is unspecified or outside loopback and the Tailscale ranges [InvalidArgument]
 	LeadServeListenFailed                          // a listener could not be opened on the address [Process]
+	LeadServeServeFailed                           // the server stopped with an error or could not shut down cleanly [Process]
 )
 
 // LeadServeError is the error of starting the lead listener (agentbus lead).
@@ -2161,6 +2162,7 @@ var leadServeCauses = [...]causeInfo{
 	{"InvalidListen", ClassInvalidArgument},
 	{"UntrustedBind", ClassInvalidArgument},
 	{"ListenFailed", ClassProcess},
+	{"ServeFailed", ClassProcess},
 }
 
 // op implements opCause.

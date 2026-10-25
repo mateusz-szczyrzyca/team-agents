@@ -1209,6 +1209,11 @@
       "name": "ListenFailed",
       "class": "Process",
       "doc": "a listener could not be opened on the address"
+    },
+    {
+      "name": "ServeFailed",
+      "class": "Process",
+      "doc": "the server stopped with an error or could not shut down cleanly"
     }
    ],
    "noStorage": true
