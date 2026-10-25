@@ -1273,8 +1273,7 @@
      "class": "Process",
      "doc": "creating the task worktree failed"
     }
-   ],
-   "noStorage": true
+   ]
   }
  ]
 }
