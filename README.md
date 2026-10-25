@@ -650,15 +650,15 @@ can be the **lead**, which keeps a job queue and the list of nodes; remote jobs 
   Human submission and cancellation use the lead's loopback interface. Browser requests carrying `Origin`
   or `Sec-Fetch-Site` are refused; this API is for direct CLI and daemon requests.
 - Requests have bounded header/body/read/write timeouts, and shutdown drains requests for at most `5` seconds
-  before closing connections. Structured events are `lead_listening`, `lead_stopped`, and `lead_http_error`;
+  before closing connections. Structured events are `lead_listening`, `lead_stopped`, `lead_http_error`, and
+  `lead_peer_rejected` (socket identity rejection with the whois cause);
   response and cleanup failures use the existing `side_effect_failed` event.
 - The HTTP API (heartbeat, job submission, state reports, cancel, and the reads `GET /v1/jobs`, `GET /v1/jobs/{id}`,
   `GET /v1/nodes`) is available for the node daemon and tests. Requests are limited to 256 KiB; JSON uses the Go
   field names (PascalCase) and times are RFC3339Nano. A returning node's heartbeat refreshes caller liveness
   before expiry and applies pending reports atomically; other silent nodes still expire. Nodes must truncate
   each `JobReport.Result` to at most 64 KiB before batching and keep the entire encoded heartbeat within 256 KiB
-  (send multiple batches if needed; daemon enforcement and testing belong to round 6; no node daemon is claimed
-  implemented here). The lead keeps its jobs in `bus/jobs.json` (see
+  (send multiple batches if needed; enforcement and tests arrive with the round 6 node daemon). The lead keeps its jobs in `bus/jobs.json` (see
   [design](docs/multi-instance.md), "Lead storage"). There are no `agent run --need`, `agent jobs` or
   `agent nodes` commands yet, and no node daemon (`agent node`) yet: a job cannot run on another installation
   until those rounds are merged.

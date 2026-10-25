@@ -140,6 +140,8 @@ func serveLead[C opCause](w http.ResponseWriter, r *http.Request, localNode stri
 	}
 	peer, whoErr := identifyLeadPeer(r.RemoteAddr, localNode, allowed)
 	if whoErr != nil {
+		// Denials and broken tailscaled answers look the same to the peer; the journal keeps the real cause.
+		logWarn(LogLeadPeerRejected, "remote", r.RemoteAddr, "error", whoErr.Error())
 		writeLeadError(w, opErr(unauthorized, "socket peer is not an allowed node"))
 		return
 	}
