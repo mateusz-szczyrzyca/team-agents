@@ -2557,9 +2557,17 @@ prepare_job_task() {
     log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=${CREATE_TASK_ERROR:-task worktree could not be created}"
     return 1
   fi
-  meta_set "$NEW_ID" JOB_ID "$job"
-  [[ -z ${7:-} ]] || meta_set "$NEW_ID" JOB_ASSIGNMENT "$7"
-  [[ -z ${LEAD_URL:-} ]] || meta_set "$NEW_ID" JOB_LEAD "$LEAD_URL"
+  if ! {
+    meta_set "$NEW_ID" JOB_ID "$job" &&
+    { [[ -z ${7:-} ]] || meta_set "$NEW_ID" JOB_ASSIGNMENT "$7"; } &&
+    { [[ -z ${LEAD_URL:-} ]] || meta_set "$NEW_ID" JOB_LEAD "$LEAD_URL"; }
+  }; then
+    NODE_PREPARE_ERROR="cannot record node job identity metadata"
+    drop_unstarted_task "$root" "$AGENTS_HOME/worktrees/$(basename "$root")/$NEW_ID" "$BRANCH_PREFIX/$name/$ts" "$TASKS/$NEW_ID"
+    unlock_task_ids
+    log_error node_checkout_failed "job=$job" "reason=$NODE_PREPARE_ERROR"
+    return 1
+  fi
   unlock_task_ids
 }
 
@@ -3337,6 +3345,15 @@ node_process_pending_launches() {
     [[ -n $jid ]] || continue
     if jq -e --arg id "$jid" '.jobs[$id] | .obsolete or .launched or (.task_id == "")' <<< "$NODE_STATE" >/dev/null; then continue; fi
     tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id' <<< "$NODE_STATE")
+    if [[ -f $TASKS/$tid/meta.env ]]; then
+      status=$(task_field "$tid" STATUS)
+      if [[ $status =~ ^(done|failed|stopped)$ ]]; then
+        # A stop can arrive after acknowledgement while local capacity delays launch.
+        NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].launched=true' <<< "$NODE_STATE")
+        node_save
+        continue
+      fi
+    fi
     if [[ ! -f $TASKS/$tid/meta.env || ! -d $(task_field "$tid" WORKTREE) ]]; then
       NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].launched=true' <<< "$NODE_STATE")
       node_transition "$jid" failed '' 'CheckoutFailed: prepared task or worktree is missing during recovery'
