@@ -2178,7 +2178,7 @@ func (c LeadServeCause) String() string { return c.info().name }
 
 // ---------------------------------------------------------------- node/checkout
 
-// NodeCheckoutCause is a reason why resolving and checking out a repository for an assigned job failed.
+// NodeCheckoutCause is a reason why resolving a repository base for an assigned job failed.
 type NodeCheckoutCause int
 
 const (
@@ -2189,12 +2189,11 @@ const (
 	NodeCheckoutInvalidBaseRef                                // the base ref name is invalid or starts with a dash [InvalidArgument]
 	NodeCheckoutInvalidCommit                                 // the commit SHA is invalid [InvalidArgument]
 	NodeCheckoutFetchFailed                                   // fetching from the git remote failed [Process]
-	NodeCheckoutCheckoutFailed                                // git revision resolution or checkout failed [Process]
-	NodeCheckoutWorktreeFailed                                // creating the task worktree failed [Process]
+	NodeCheckoutCheckoutFailed                                // git revision resolution failed [Process]
 	NodeCheckoutStorage                                       // the shared state or a file could not be read or written [Storage]
 )
 
-// NodeCheckoutError is the error of resolving and checking out a repository for an assigned job.
+// NodeCheckoutError is the error of resolving a repository base for an assigned job.
 type NodeCheckoutError = OpError[NodeCheckoutCause]
 
 // nodeCheckoutCauses describes the NodeCheckoutCause values (same order as the constants).
@@ -2207,7 +2206,6 @@ var nodeCheckoutCauses = [...]causeInfo{
 	{"InvalidCommit", ClassInvalidArgument},
 	{"FetchFailed", ClassProcess},
 	{"CheckoutFailed", ClassProcess},
-	{"WorktreeFailed", ClassProcess},
 	{"Storage", ClassStorage},
 }
 
