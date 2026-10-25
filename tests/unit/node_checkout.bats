@@ -17,6 +17,7 @@ load helpers
 # node_job_setup — NODE_REPOS maps "repo" to the test clone and the clone has two commits. The caller sources
 # bin/agent itself: a source inside this function would make agents.conf's declare -A local to it.
 node_job_setup() {
+  # shellcheck disable=SC2034 # used by prepare_job_task in bin/agent
   declare -gA NODE_REPOS=([repo]="$HOME/repo")
   cd "$HOME/repo" || return 1
   FIRST=$(git rev-parse HEAD)
@@ -126,7 +127,8 @@ EOF
   run create_task solo "text" "$HOME/repo" "$HOME/repo" main 20261025-000000 "" HEAD
   [ "$status" -ne 0 ]
   [ ! -e "$TASKS/20261025-000000-solo" ]
-  ! git -C "$HOME/repo" show-ref --verify --quiet refs/heads/agents/solo/20261025-000000
+  run git -C "$HOME/repo" show-ref --verify --quiet refs/heads/agents/solo/20261025-000000
+  [ "$status" -eq 1 ]
   ! grep -q '"event":"task_created"' "$HOME/agents/logs/agent.jsonl"
 }
 
