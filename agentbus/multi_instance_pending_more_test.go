@@ -245,5 +245,5 @@ func TestLeadRegistryConcurrentHeartbeatsRace(t *testing.T) {
 
 // TestLeadHTTPListenerConcurrentRequestsRace: concurrent HTTP requests to the listener are race-free under -race.
 func TestLeadHTTPListenerConcurrentRequestsRace(t *testing.T) {
-	t.Skip("pending: listener race test under -race, round 4")
+	leadConcurrentRequests(t)
 }

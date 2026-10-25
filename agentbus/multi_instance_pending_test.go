@@ -498,7 +498,9 @@ func TestLeadHTTPIdentityFailsWhenWhoisNotStubbed(t *testing.T) {
 
 // TestNodeCapabilitiesRejectUnknownNamespace: an unknown capability namespace stops the node with a clear error.
 func TestNodeCapabilitiesRejectUnknownNamespace(t *testing.T) {
-	t.Skip("pending: capabilities outside os, arch, build, test, hw, net are refused, round 4")
+	a := &leadAPI{bus: newBus(t)}
+	_, err := a.heartbeat("node-a", leadHeartbeatBody{NodeHeartbeat: NodeHeartbeat{Capabilities: []string{"sign:key"}}})
+	failsWith(t, LeadHeartbeatInvalidCapabilities)("HTTP boundary capability validation", err)
 }
 
 // TestNodeTwoHomesRecoverAfterLeadRestart: a node keeps its job running and reports after the lead returns.
