@@ -212,6 +212,12 @@ ROUND_BOUNCES="${ROUND_BOUNCES:-2}"
 declare -p ROUND_MAX_LINES_REPO >/dev/null 2>&1 || declare -gA ROUND_MAX_LINES_REPO=()   # a query: set in agents.conf?
 # NODE_REPOS: repositories a node may run jobs for, name → local clone path (empty: no job is accepted).
 declare -p NODE_REPOS >/dev/null 2>&1 || declare -gA NODE_REPOS=()
+# Node daemon (agentnode.service, `agent node`; README "Several instances"): LEAD_URL is the lead's HTTP address
+# ("" = not a node); NODE_POLL_SEC is how often the node sends its heartbeat; INSTANCE_CAPABILITIES declares what this node
+# can run (os:..., arch:..., build:..., test:..., hw:..., net:...).
+LEAD_URL="${LEAD_URL:-}"
+NODE_POLL_SEC="${NODE_POLL_SEC:-10}"
+declare -p INSTANCE_CAPABILITIES >/dev/null 2>&1 || declare -ga INSTANCE_CAPABILITIES=()
 AUTH_MODEL_ANTHROPIC="${AUTH_MODEL_ANTHROPIC:-haiku}"
 AUTH_MODEL_OPENAI="${AUTH_MODEL_OPENAI:-gpt-6-luna}"
 AUTH_MODEL_GEMINI="${AUTH_MODEL_GEMINI:-}"
@@ -3133,6 +3139,10 @@ cmd_lead() { # runs the lead's listener in the foreground (agentlead.service run
   exec "$AGENTBUS_BIN" "${args[@]}"
 }
 
+cmd_node() { # runs the node daemon in the foreground (agentnode.service runs this); needs LEAD_URL
+  [[ -n $LEAD_URL ]] || die "LEAD_URL is not set: set it in config/agents.conf (e.g. LEAD_URL=http://lead-instance:7780)"
+}
+
 cmd__agents_json() { # the configured agents and investigators as JSON lines (for agentlive web)
   local a tier inv
   for a in "${!AGENT_TYPE[@]}"; do
@@ -3621,6 +3631,7 @@ agent dispatch                            manually start the next queued investi
 agent live [--feed] [--remind MIN]        live panel (or an event stream with --feed)
 agent web                                 web interface in the foreground (normally: agentweb.service)
 agent lead                                the lead's job listener in the foreground (normally: agentlead.service; LEAD_LISTEN)
+agent node                                the node daemon in the foreground (normally: agentnode.service; LEAD_URL)
 agent kick <task>                         cut a run short: a team member sleeps (the team can wake it), solo: stopped
 agent round-size <task>                   size of a task's change against the round limit (README "Rounds")
 agent run --resume <team|task> --same-round  continue an unmerged round (e.g. review fixes) on the same branches
@@ -3659,6 +3670,7 @@ main() {
     live)    cmd_live "$@" ;;
     web)     cmd_web ;;
     lead)    cmd_lead ;;
+    node)    cmd_node "$@" ;;
     kick)    cmd_kick "$@" ;;
     round-size) cmd_round_size "$@" ;;
     _agents-json) cmd__agents_json ;;
