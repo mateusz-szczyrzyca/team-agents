@@ -1184,6 +1184,34 @@
     }
    ],
    "noStorage": true
+  },
+  {
+   "type": "LeadServe",
+   "op": "lead/serve",
+   "what": "starting the lead listener (agentbus lead)",
+   "causes": [
+    {
+      "name": "MissingArgument",
+      "class": "InvalidArgument",
+      "doc": "--listen or --node is missing"
+    },
+    {
+      "name": "InvalidListen",
+      "class": "InvalidArgument",
+      "doc": "the listen address is not host:port with a numeric port"
+    },
+    {
+      "name": "UntrustedBind",
+      "class": "InvalidArgument",
+      "doc": "the listen address is unspecified or outside loopback and the Tailscale ranges"
+    },
+    {
+      "name": "ListenFailed",
+      "class": "Process",
+      "doc": "a listener could not be opened on the address"
+    }
+   ],
+   "noStorage": true
   }
  ]
 }

@@ -2139,3 +2139,35 @@ func (c NodeClientCause) info() causeInfo { return nodeClientCauses[c] }
 
 // String returns the cause name.
 func (c NodeClientCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/serve
+
+// LeadServeCause is a reason why starting the lead listener (agentbus lead) failed.
+type LeadServeCause int
+
+const (
+	LeadServeMissingArgument LeadServeCause = iota // --listen or --node is missing [InvalidArgument]
+	LeadServeInvalidListen                         // the listen address is not host:port with a numeric port [InvalidArgument]
+	LeadServeUntrustedBind                         // the listen address is unspecified or outside loopback and the Tailscale ranges [InvalidArgument]
+	LeadServeListenFailed                          // a listener could not be opened on the address [Process]
+)
+
+// LeadServeError is the error of starting the lead listener (agentbus lead).
+type LeadServeError = OpError[LeadServeCause]
+
+// leadServeCauses describes the LeadServeCause values (same order as the constants).
+var leadServeCauses = [...]causeInfo{
+	{"MissingArgument", ClassInvalidArgument},
+	{"InvalidListen", ClassInvalidArgument},
+	{"UntrustedBind", ClassInvalidArgument},
+	{"ListenFailed", ClassProcess},
+}
+
+// op implements opCause.
+func (LeadServeCause) op() string { return "lead/serve" }
+
+// info implements opCause.
+func (c LeadServeCause) info() causeInfo { return leadServeCauses[c] }
+
+// String returns the cause name.
+func (c LeadServeCause) String() string { return c.info().name }
