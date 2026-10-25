@@ -2466,6 +2466,9 @@ job_refusal() {
 # prepare_job_task job agent repo base sha task — prepares a node job's task: the agent must be free (job_refusal),
 # agentbus node-checkout resolves the repository (NODE_REPOS allow-list) and the commit, then create_task starts the
 # worktree there, as agent run does. Sets NEW_ID. On failure nothing is created, the reason is logged, returns 1.
+# The admission check runs twice: before the checkout and again under the task-ID lock before the task is created,
+# because the checkout fetches over the network and an agent can take a task meanwhile. The fetch runs without the
+# lock: node-checkout fetches into a private ref, so concurrent checkouts do not interfere.
 prepare_job_task() {
   local job=$1 name=$2 repo=$3 base=$4 sha=$5 task=$6
   local -a args=() names roots repos
@@ -2475,19 +2478,24 @@ prepare_job_task() {
   [[ -z $sha ]] || args+=(--sha "$sha")
   lock_task_ids
   reason=$(job_refusal "$name")
+  unlock_task_ids
   if [[ -n $reason ]]; then
-    unlock_task_ids
     log_error node_checkout_failed "job=$job" "agent=$name" "reason=$reason"
     return 1
   fi
-  # The checkout fetches into the configured clone, so it runs under the same lock as the task IDs.
   if ! out=$(bus node-checkout "${args[@]}" 2>&1); then
-    unlock_task_ids
     log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=$out"
     return 1
   fi
   root=$(jq -er '.root' <<< "$out") && commit=$(jq -er '.commit' <<< "$out") \
     || die "node-checkout returned an unreadable result for job $job: $out"
+  lock_task_ids
+  reason=$(job_refusal "$name")
+  if [[ -n $reason ]]; then
+    unlock_task_ids
+    log_error node_checkout_failed "job=$job" "agent=$name" "reason=$reason"
+    return 1
+  fi
   names=("$name"); roots=("$root"); repos=("$(basename "$root")")
   ts=$(allocate_run_ids 0 names roots repos)
   if ! create_task "$name" "$task" "$root" "$root" "$base" "$ts" "" "$commit"; then
