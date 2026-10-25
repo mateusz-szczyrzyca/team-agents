@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
 	"time"
 )
@@ -15,6 +18,28 @@ type leadAPI struct {
 type leadHeartbeatBody struct {
 	NodeHeartbeat             // declaration, with identity supplied by the socket peer
 	Reports       []JobReport // latest unacknowledged snapshots, applied atomically
+}
+
+// MarshalJSON implements json.Marshaler; encoding/json supplies its interface error.
+// Pending reports must use precise UTC instants rather than the ordinary bus's legacy local layout.
+func (b leadHeartbeatBody) MarshalJSON() ([]byte, error) {
+	type wireReport struct {
+		JobReport                      // report payload except for shadowed timestamps
+		At          jobTime            // precise scalar report time
+		Transitions []storedTransition // precise cumulative history
+	}
+	reports := make([]wireReport, 0, len(b.Reports))
+	for _, rep := range b.Reports {
+		transitions := make([]storedTransition, 0, len(rep.Transitions))
+		for _, tr := range rep.Transitions {
+			transitions = append(transitions, storedTransition{State: tr.State, At: jobTime{tr.At}})
+		}
+		reports = append(reports, wireReport{JobReport: rep, At: jobTime{rep.At}, Transitions: transitions})
+	}
+	return json.Marshal(struct {
+		NodeHeartbeat              // current node declaration
+		Reports       []wireReport // snapshots with lossless times
+	}{b.NodeHeartbeat, reports})
 }
 
 // leadJobView exposes job data without registry counters or bus internals.
@@ -41,29 +66,138 @@ type leadNodeView struct {
 }
 
 // newLeadHandler constructs the HTTP boundary shared by configured listeners.
-func newLeadHandler(_ *Bus, _ string, _ []string, _ time.Duration) http.Handler {
-	return http.NotFoundHandler()
+func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Duration) http.Handler {
+	a := &leadAPI{bus: bus, ttl: ttl}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		serveLead(w, r, localNode, allowed, LeadSubmitUnauthorized, func(peer leadIdentity) (any, *LeadSubmitError) {
+			var body JobRequest // untrusted submission, validated by the registry
+			if err := decodeLeadBody(r, &body); err != nil {
+				return nil, fromValue(LeadSubmitMalformedBody, err)
+			}
+			job, err := a.submit(peer.Node, peer.Local, body)
+			return publicLeadJob(job), err
+		})
+	})
+	mux.HandleFunc("POST /v1/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		serveLead(w, r, localNode, allowed, LeadHeartbeatUnauthorized, func(peer leadIdentity) (any, *LeadHeartbeatError) {
+			var body leadHeartbeatBody // declaration and reports share one transaction
+			if err := decodeLeadBody(r, &body); err != nil {
+				return nil, fromValue(LeadHeartbeatMalformedBody, err)
+			}
+			job, err := a.heartbeat(peer.Node, body)
+			var view *leadJobView // no assignment is represented by JSON null
+			if job != nil {
+				v := publicLeadJob(*job)
+				view = &v
+			}
+			return struct {
+				Job *leadJobView /* at most one assignment */
+			}{view}, err
+		})
+	})
+	mux.HandleFunc("POST /v1/jobs/{id}/state", func(w http.ResponseWriter, r *http.Request) {
+		serveLead(w, r, localNode, allowed, LeadReportUnauthorized, func(peer leadIdentity) (any, *LeadReportError) {
+			var body JobReport // caller-supplied identity never grants authority
+			if err := decodeLeadBody(r, &body); err != nil {
+				return nil, fromValue(LeadReportMalformedBody, err)
+			}
+			job, err := a.report(peer.Node, r.PathValue("id"), body)
+			return publicLeadJob(job), err
+		})
+	})
+	mux.HandleFunc("POST /v1/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		serveLead(w, r, localNode, allowed, LeadCancelUnauthorized, func(peer leadIdentity) (any, *LeadCancelError) {
+			job, err := a.cancel(peer.Local, r.PathValue("id"))
+			return publicLeadJob(job), err
+		})
+	})
+	mux.HandleFunc("GET /v1/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		serveLead(w, r, localNode, allowed, LeadGetJobUnauthorized, func(_ leadIdentity) (any, *LeadGetJobError) { return a.get(r.PathValue("id")) })
+	})
+	mux.HandleFunc("GET /v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		serveLead(w, r, localNode, allowed, LeadListJobsUnauthorized, func(_ leadIdentity) (any, *LeadListJobsError) {
+			query := r.URL.Query()
+			for key, values := range query {
+				if key != "node" || len(values) != 1 {
+					return nil, opErr(LeadListJobsInvalidArgument, "use only one optional node filter")
+				}
+			}
+			return a.listJobs(query.Get("node"))
+		})
+	})
+	mux.HandleFunc("GET /v1/nodes", func(w http.ResponseWriter, r *http.Request) {
+		serveLead(w, r, localNode, allowed, LeadListNodesUnauthorized, func(_ leadIdentity) (any, *LeadListNodesError) { return a.listNodes() })
+	})
+	return mux
 }
 
-// submit binds delegated requester data to its authenticated device.
-func (a *leadAPI) submit(_ string, _ bool, _ JobRequest) (Job, *LeadSubmitError) { return Job{}, nil }
-
-// heartbeat applies one node's reports and declaration in one storage transaction.
-func (a *leadAPI) heartbeat(_ string, _ leadHeartbeatBody) (*Job, *LeadHeartbeatError) {
-	return nil, nil
+// serveLead authenticates the socket peer before decoding any operation data. Errors stay typed until encoded.
+func serveLead[C opCause](w http.ResponseWriter, r *http.Request, localNode string, allowed []string, unauthorized C, run func(leadIdentity) (any, *OpError[C])) {
+	peer, whoErr := identifyLeadPeer(r.RemoteAddr, localNode, allowed)
+	if whoErr != nil {
+		writeLeadError(w, opErr(unauthorized, "socket peer is not an allowed node"))
+		return
+	}
+	result, err := run(peer)
+	if err != nil {
+		writeLeadError(w, err)
+		return
+	}
+	writeLeadJSON(w, http.StatusOK, result)
 }
 
-// report binds path and socket identities before invoking the shared report implementation.
-func (a *leadAPI) report(_, _ string, _ JobReport) (Job, *LeadReportError) { return Job{}, nil }
+// decodeLeadBody accepts exactly one bounded JSON object, with no unknown fields or trailing values.
+func decodeLeadBody(r *http.Request, out any) *ValueError {
+	const limit = 256 * 1024 // maximum request bytes, independent of the task-text limit
+	data, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if err != nil {
+		return valueWrap(err, "cannot read request body")
+	}
+	if len(data) > limit {
+		return valueErr("request exceeds 262144 bytes")
+	}
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || data[0] != '{' {
+		return valueErr("request must be one JSON object of at most 262144 bytes")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(out); err != nil {
+		return valueWrap(err, "invalid request JSON")
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return valueErr("request must contain exactly one JSON object")
+	}
+	return nil
+}
 
-// cancel accepts only the trusted lead-local caller.
-func (a *leadAPI) cancel(_ bool, _ string) (Job, *LeadCancelError) { return Job{}, nil }
+// writeLeadError exposes stable operation/cause names without reconstructing Go errors from the wire.
+func writeLeadError[C opCause](w http.ResponseWriter, err *OpError[C]) {
+	status := http.StatusInternalServerError
+	switch err.Class() {
+	case ClassInvalidArgument:
+		status = http.StatusBadRequest
+	case ClassPermission:
+		status = http.StatusForbidden
+	case ClassNotFound:
+		status = http.StatusNotFound
+	case ClassConflict, ClassInvalidState:
+		status = http.StatusConflict
+	}
+	writeLeadJSON(w, status, struct {
+		Operation string // stable operation identifier
+		Cause     string // operation-specific failure cause
+		Message   string // human-readable explanation
+	}{err.Cause.op(), err.CauseName(), err.Message})
+}
 
-// get returns one public job from durable storage.
-func (a *leadAPI) get(_ string) (Job, *LeadGetJobError) { return Job{}, nil }
-
-// listJobs returns ordered public jobs and current waiting diagnostics.
-func (a *leadAPI) listJobs(_ string) ([]leadJobView, *LeadListJobsError) { return nil, nil }
-
-// listNodes returns public node declarations in stable name order.
-func (a *leadAPI) listNodes() ([]leadNodeView, *LeadListNodesError) { return nil, nil }
+// writeLeadJSON logs a disconnected client's write failure after the durable operation has completed.
+func writeLeadJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		warnSideEffect("lead HTTP response", storageErr(err, "cannot write lead response"))
+	}
+}
