@@ -190,3 +190,33 @@ load helpers
   state=$(jq -r '.jobs["marker-only-job"].state' <<< "$(node_jobs_load)")
   [ "$state" = stopped ]
 }
+
+@test "cmd_stop locks task IDs before writing stop-requested and releases before unit stop" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/agent"
+  # shellcheck disable=SC2034 # The sourced prepare_job_task reads this local repository allow-list.
+  declare -gA NODE_REPOS=([repo]="$HOME/repo")
+  local tid
+  tid=$(
+    exec 10>&-
+    prepare_job_task stop-sync solo repo main "" "task body" 10
+    printf '%s' "$NEW_ID"
+  )
+  local -a trace=()
+  lock_task_ids() { trace+=("lock"); }
+  unlock_task_ids() { trace+=("unlock"); }
+  touch() {
+    if [[ ${1:-} == */stop-requested ]]; then trace+=("marker"); fi
+    command touch "$@"
+  }
+  unit_stop_failed() { :; }
+  systemctl() { trace+=("systemctl"); return 0; }
+
+  ( exec 10>&-; cmd_stop "$tid" )
+
+  # Must lock first, then write marker, then unlock before systemctl stop
+  [ "${trace[0]:-}" = "lock" ]
+  [ "${trace[1]:-}" = "marker" ]
+  [ "${trace[2]:-}" = "unlock" ]
+  [ "${trace[3]:-}" = "systemctl" ]
+}
