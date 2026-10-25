@@ -210,6 +210,8 @@ ROUND_MAX_LINES="${ROUND_MAX_LINES:-3000}"
 ROUND_EXCLUDE="${ROUND_EXCLUDE:-*_gen.go go.sum package-lock.json vendor/}"
 ROUND_BOUNCES="${ROUND_BOUNCES:-2}"
 declare -p ROUND_MAX_LINES_REPO >/dev/null 2>&1 || declare -gA ROUND_MAX_LINES_REPO=()   # a query: set in agents.conf?
+# NODE_REPOS: repositories a node may run jobs for, name → local clone path (empty: no job is accepted).
+declare -p NODE_REPOS >/dev/null 2>&1 || declare -gA NODE_REPOS=()
 AUTH_MODEL_ANTHROPIC="${AUTH_MODEL_ANTHROPIC:-haiku}"
 AUTH_MODEL_OPENAI="${AUTH_MODEL_OPENAI:-gpt-6-luna}"
 AUTH_MODEL_GEMINI="${AUTH_MODEL_GEMINI:-}"
@@ -2400,9 +2402,29 @@ create_task() { # name text root main_root base ts [team [start]] — uses a cla
   NEW_ID=$id
 }
 
-# prepare_job_task job agent repo base sha task — prepares a node job's task (RED stub: not implemented yet).
+# prepare_job_task job agent repo base sha task — prepares a node job's task: agentbus node-checkout resolves the
+# repository (NODE_REPOS allow-list) and the commit, then create_task starts the worktree there, as agent run does.
+# Sets NEW_ID. On failure nothing is created, the reason is logged and the function returns 1.
 prepare_job_task() {
-  return 1
+  local job=$1 name=$2 repo=$3 base=$4 sha=$5 task=$6
+  local -a args=() names roots repos
+  local k out root commit ts
+  for k in "${!NODE_REPOS[@]}"; do args+=(--repo-path "$k=${NODE_REPOS[$k]}"); done
+  args+=(--repo "$repo" --base "$base")
+  [[ -z $sha ]] || args+=(--sha "$sha")
+  lock_task_ids
+  # The checkout fetches into the configured clone, so it runs under the same lock as the task IDs.
+  if ! out=$(bus node-checkout "${args[@]}" 2>&1); then
+    unlock_task_ids
+    log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=$out"
+    return 1
+  fi
+  root=$(jq -er '.root' <<< "$out") && commit=$(jq -er '.commit' <<< "$out") \
+    || die "node-checkout returned an unreadable result for job $job: $out"
+  names=("$name"); roots=("$root"); repos=("$(basename "$root")")
+  ts=$(allocate_run_ids 0 names roots repos)
+  create_task "$name" "$task" "$root" "$root" "$base" "$ts" "" "$commit"
+  unlock_task_ids
 }
 
 # discard_task id — removes a task that never ran: its worktree, its branch and its task directory. Nothing of
