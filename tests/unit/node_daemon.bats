@@ -57,3 +57,82 @@ teardown() {
   [ "$(task_field "$id" JOB_ID)" = "job-123" ]
   [ "$(task_field "$id" JOB_ASSIGNMENT)" = "42" ]
 }
+
+# setup_node_bus_stub intercepts node-request to provide deterministic lead responses
+setup_node_bus_stub() {
+  local real_bus="$HOME/.local/bin/agentbus"
+  mv "$real_bus" "$HOME/.local/bin/real-agentbus"
+  cat > "$real_bus" <<'STUB'
+#!/usr/bin/env bash
+if [[ ${1:-} == node-request ]]; then
+  shift
+  path=""
+  validate=0
+  while (($#)); do
+    case $1 in
+      --path) path=$2; shift 2 ;;
+      --validate) validate=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  if ((validate)); then
+    cat >/dev/null
+    printf '{}\n'
+    exit 0
+  fi
+  if [[ $path == "/v1/heartbeat" ]]; then
+    cat > "$STUB_HOME/last-heartbeat.json"
+    if [[ ! -f "$STUB_HOME/job-delivered" ]]; then
+      touch "$STUB_HOME/job-delivered"
+      cat <<'EOF'
+{
+  "Job": {
+    "Request": {
+      "ID": "job-test-1",
+      "Repository": "repo",
+      "BaseRef": "main",
+      "BaseSHA": "",
+      "Requires": [],
+      "Selector": "solo",
+      "Task": "say hello"
+    },
+    "Assignment": 1,
+    "Node": "node-test"
+  },
+  "Stops": []
+}
+EOF
+    else
+      printf '{"Job":null,"Stops":[]}\n'
+    fi
+    exit 0
+  fi
+  if [[ $path == /v1/jobs/*/state ]]; then
+    cat > "$STUB_HOME/last-state.json"
+    printf '{"State":"running"}\n'
+    exit 0
+  fi
+  exit 0
+fi
+exec "$HOME/.local/bin/real-agentbus" "$@"
+STUB
+  chmod +x "$real_bus"
+}
+
+@test "agent node polls heartbeat, prepares assigned job, acks running state before launching" {
+  setup_node_bus_stub
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo "declare -gA NODE_REPOS=([repo]=\"$HOME/repo\")" >> "$AGENTS_HOME/agents.conf"
+  run agent node --once
+  [ "$status" -eq 0 ]
+  [ -f "$AGENTS_HOME/bus/node-jobs.json" ]
+  [ -f "$HOME/last-state.json" ]
+  grep -q '"State":"running"' "$HOME/last-state.json"
+  grep -q '"Assignment":1' "$HOME/last-state.json"
+  local task_id
+  task_id=$(jq -r '.jobs["job-test-1"].task_id' "$AGENTS_HOME/bus/node-jobs.json")
+  [ -n "$task_id" ]
+  [ -f "$TASKS/$task_id/meta.env" ]
+  grep -q 'JOB_ID=job-test-1' "$TASKS/$task_id/meta.env"
+  grep -q 'JOB_ASSIGNMENT=1' "$TASKS/$task_id/meta.env"
+}
