@@ -2400,6 +2400,11 @@ create_task() { # name text root main_root base ts [team [start]] — uses a cla
   NEW_ID=$id
 }
 
+# prepare_job_task job agent repo base sha task — prepares a node job's task (RED stub: not implemented yet).
+prepare_job_task() {
+  return 1
+}
+
 # discard_task id — removes a task that never ran: its worktree, its branch and its task directory. Nothing of
 # value exists yet (no run, no commits), so nothing is archived.
 discard_task() {
