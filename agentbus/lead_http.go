@@ -134,6 +134,10 @@ func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Durat
 
 // serveLead authenticates the socket peer before decoding any operation data. Errors stay typed until encoded.
 func serveLead[C opCause](w http.ResponseWriter, r *http.Request, localNode string, allowed []string, unauthorized C, run func(leadIdentity) (any, *OpError[C])) {
+	if r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "" {
+		writeLeadError(w, opErr(unauthorized, "browser requests are not allowed"))
+		return
+	}
 	peer, whoErr := identifyLeadPeer(r.RemoteAddr, localNode, allowed)
 	if whoErr != nil {
 		writeLeadError(w, opErr(unauthorized, "socket peer is not an allowed node"))
