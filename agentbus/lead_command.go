@@ -36,3 +36,9 @@ func validateLeadListen(addr string) (netip.AddrPort, *LeadServeError) {
 	return netip.AddrPort{}, opErr(LeadServeUntrustedBind,
 		"--listen %s is neither loopback nor a Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48); use this device's tailnet address", ap)
 }
+
+// leadListenAddrs returns the addresses the lead serves on: the validated address and, so the
+// lead's own node can connect, 127.0.0.1 on the same port. RED: not implemented yet.
+func leadListenAddrs(_ netip.AddrPort) []netip.AddrPort {
+	return nil
+}

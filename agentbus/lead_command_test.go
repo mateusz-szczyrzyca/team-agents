@@ -47,3 +47,26 @@ func TestValidateLeadListenRefuses(t *testing.T) {
 		failsWith(t, c.want)(c.addr, err)
 	}
 }
+
+// TestLeadListenAddrs checks that the lead serves on its configured address and on loopback
+// for its own node, each address once.
+func TestLeadListenAddrs(t *testing.T) {
+	cases := map[string][]string{
+		"100.101.102.103:7780": {"100.101.102.103:7780", "127.0.0.1:7780"},
+		"127.0.0.2:7780":       {"127.0.0.2:7780", "127.0.0.1:7780"},
+		"127.0.0.1:7780":       {"127.0.0.1:7780"},
+	}
+	for in, want := range cases {
+		ap := netip.MustParseAddrPort(in)
+		got := leadListenAddrs(ap)
+		if len(got) != len(want) {
+			t.Errorf("leadListenAddrs(%s) = %v, want %v", in, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != netip.MustParseAddrPort(want[i]) {
+				t.Errorf("leadListenAddrs(%s)[%d] = %v, want %s", in, i, got[i], want[i])
+			}
+		}
+	}
+}
