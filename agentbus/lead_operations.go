@@ -7,10 +7,17 @@ import (
 )
 
 // leadTransaction applies expiry and an operation under the durable registry's existing flock.
-func leadTransaction[C opCause](a *leadAPI, storage C, fn func(*leadRegistry, Timestamp) *OpError[C]) *OpError[C] {
+// fresh is the authenticated heartbeat caller, or empty for operations that do not refresh liveness.
+func leadTransaction[C opCause](a *leadAPI, storage C, fresh string, fn func(*leadRegistry, Timestamp) *OpError[C]) *OpError[C] {
 	// Capture receipt time inside the lock so queued lock wait cannot create a backwards transition.
 	return transactJobs(a.bus, storage, Timestamp{time.Now().UTC()}, func(r *leadRegistry) *OpError[C] {
 		now := Timestamp{time.Now().UTC()}
+		// The callback owns this registry. Refresh the returning caller before expiry
+		// can invalidate its pending start reports; rejected heartbeats roll back both.
+		if node, ok := r.nodes[fresh]; fresh != "" && ok {
+			node.LastSeen = now
+			r.nodes[fresh] = node
+		}
 		r.requeueOffline(now, a.ttl)
 		return fn(r, now)
 	})
@@ -22,7 +29,7 @@ func (a *leadAPI) submit(node string, local bool, req JobRequest) (Job, *LeadSub
 		return Job{}, opErr(LeadSubmitUnauthorized, "requester must belong to the authenticated node; human submissions are lead-local")
 	}
 	var job Job // snapshot returned only after successful persistence
-	err := leadTransaction(a, LeadSubmitStorage, func(r *leadRegistry, now Timestamp) *LeadSubmitError {
+	err := leadTransaction(a, LeadSubmitStorage, "", func(r *leadRegistry, now Timestamp) *LeadSubmitError {
 		var failure *LeadSubmitError // exact validation/conflict cause from the registry
 		job, failure = r.submit(req, now)
 		return failure
@@ -37,7 +44,7 @@ func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody) (*Job, *LeadHea
 	}
 	body.Node = node
 	var job *Job // one assignment, or nil when no job matches
-	err := leadTransaction(a, LeadHeartbeatStorage, func(r *leadRegistry, now Timestamp) *LeadHeartbeatError {
+	err := leadTransaction(a, LeadHeartbeatStorage, node, func(r *leadRegistry, now Timestamp) *LeadHeartbeatError {
 		for _, rep := range body.Reports {
 			if rep.Node != "" && rep.Node != node {
 				return opErr(LeadHeartbeatUnauthorized, "report identity differs from its socket peer")
@@ -86,7 +93,7 @@ func (a *leadAPI) report(node, id string, rep JobReport) (Job, *LeadReportError)
 	}
 	rep.ID, rep.Node = id, node
 	var job Job // durable accepted snapshot
-	err := leadTransaction(a, LeadReportStorage, func(r *leadRegistry, now Timestamp) *LeadReportError {
+	err := leadTransaction(a, LeadReportStorage, "", func(r *leadRegistry, now Timestamp) *LeadReportError {
 		var failure *LeadReportError // shared lifecycle/assignment validation
 		job, failure = r.report(rep, now)
 		return failure
@@ -100,7 +107,7 @@ func (a *leadAPI) cancel(local bool, id string) (Job, *LeadCancelError) {
 		return Job{}, opErr(LeadCancelUnauthorized, "cancel jobs on the lead's loopback interface")
 	}
 	var job Job // actual state; started jobs only acquire a stop request
-	err := leadTransaction(a, LeadCancelStorage, func(r *leadRegistry, now Timestamp) *LeadCancelError {
+	err := leadTransaction(a, LeadCancelStorage, "", func(r *leadRegistry, now Timestamp) *LeadCancelError {
 		var failure *LeadCancelError // missing job or storage failure
 		job, failure = r.cancel(id, now)
 		return failure
@@ -128,7 +135,7 @@ func registryLeadJob(r *leadRegistry, job Job, now Timestamp, ttl time.Duration)
 // get returns one public job from durable storage.
 func (a *leadAPI) get(id string) (leadJobView, *LeadGetJobError) {
 	var view leadJobView // result from one consistent registry transaction
-	err := leadTransaction(a, LeadGetJobStorage, func(r *leadRegistry, now Timestamp) *LeadGetJobError {
+	err := leadTransaction(a, LeadGetJobStorage, "", func(r *leadRegistry, now Timestamp) *LeadGetJobError {
 		job, err := r.get(id)
 		if err != nil {
 			return err
@@ -145,7 +152,7 @@ func (a *leadAPI) listJobs(node string) ([]leadJobView, *LeadListJobsError) {
 		return nil, opErr(LeadListJobsInvalidArgument, "node filter must be a logical instance name")
 	}
 	views := []leadJobView{}
-	err := leadTransaction(a, LeadListJobsStorage, func(r *leadRegistry, now Timestamp) *LeadListJobsError {
+	err := leadTransaction(a, LeadListJobsStorage, "", func(r *leadRegistry, now Timestamp) *LeadListJobsError {
 		for _, id := range r.order {
 			job := cloneJob(*r.jobs[id])
 			if node == "" || job.Node == node {
@@ -160,7 +167,7 @@ func (a *leadAPI) listJobs(node string) ([]leadJobView, *LeadListJobsError) {
 // listNodes returns public node declarations in stable name order.
 func (a *leadAPI) listNodes() ([]leadNodeView, *LeadListNodesError) {
 	views := []leadNodeView{}
-	err := leadTransaction(a, LeadListNodesStorage, func(r *leadRegistry, now Timestamp) *LeadListNodesError {
+	err := leadTransaction(a, LeadListNodesStorage, "", func(r *leadRegistry, now Timestamp) *LeadListNodesError {
 		for name, node := range r.nodes {
 			views = append(views, leadNodeView{NodeHeartbeat: node.Heartbeat, LastSeen: jobTime{node.LastSeen}, Offline: r.nodeOffline(name, now, a.ttl)})
 		}
