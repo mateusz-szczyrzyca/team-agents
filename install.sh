@@ -218,6 +218,38 @@ UNIT
   fi
 fi
 
+# The node daemon (agentnode.service: agent node) is installed only when this instance is a node: LEAD_URL is set in
+# agents.conf (README "Several instances"). Without it no node unit is written.
+lead_url=$(bash -c 'source "$1"; printf %s "${LEAD_URL:-}"' _ "$AH/agents.conf")
+if [[ -n $lead_url ]]; then
+  echo "» node daemon (agentnode.service: agent node, lead $lead_url)"
+  cat > "$UNIT_DIR/agentnode.service" <<UNIT
+[Unit]
+Description=team-agents node daemon (agent node)
+
+[Service]
+ExecStart=$BIN/agent node
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+UNIT
+  if systemctl --user show-environment >/dev/null 2>&1; then   # a query: is there a systemd user session?
+    systemctl --user daemon-reload
+    if ! systemctl --user enable agentnode.service; then
+      echo "  WARNING: agentnode.service could not be enabled (start it by hand: systemctl --user start agentnode)"
+    fi
+    if systemctl --user restart agentnode.service; then
+      echo "  running — see README, \"Several instances\""
+    else
+      echo "  WARNING: agentnode.service did not start — see: journalctl --user -u agentnode"
+    fi
+  else
+    echo "  no systemd user session here — run the node daemon with: agent node"
+  fi
+fi
+
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "WARNING: add $BIN to your PATH (e.g. in ~/.bashrc)";; esac
 
 echo
