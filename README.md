@@ -684,7 +684,7 @@ daemon (rounds 7 to 9 add the commands, delegation and views):
 - The node keeps the latest unreported state of each job in `bus/node-jobs.json` and sends it with the next
   heartbeat that reaches the lead. A lead outage delays the reports; running tasks continue.
   Cancellation preserves a completed task's outcome and local result notification; an unfinished cancelled
-  runner finishes as `stopped`.
+  runner finishes as `stopped`. Delivery interrupted by cancellation is retried; notification hooks may run twice.
   Recovery completes interrupted job markers and removes ambiguous unstarted checkouts. It prefers a unique
   started task; multiple started matches stop recovery without deleting or stopping them. Inspect the local
   tasks named in the error before retrying recovery.

@@ -1988,7 +1988,10 @@ questions_from_final() { # last-message-text id round → questions file on stdo
 # Every step runs through try: one failing step must not prevent the others (status, queues, notification).
 runner_exit() {
   local rc=$1
-  ((RUNNER_DONE)) && return
+  # A persisted outcome can still have an interrupted local result delivery.
+  if ((RUNNER_DONE)); then
+    [[ -n ${JOB_ID:-} && -f $TASKS/$RUNNER_ID/node-stop-requested && ${RUNNER_DELIVERED:-0} == 0 ]] || return 0
+  fi
   RUNNER_DONE=1
   if stopping; then   # agent stop --running: no notifications, queues or messages
     try meta_write_failed meta_set "$RUNNER_ID" STATUS stopped
@@ -2013,6 +2016,7 @@ runner_exit() {
     if [[ -f $TASKS/$RUNNER_ID/final.md ]]; then node_final=$(<"$TASKS/$RUNNER_ID/final.md"); fi
     log_info run_stopped "reason=node_job_cancel" "status=$node_status"
     try notification_failed notify "$RUNNER_ID" "$node_status" "$node_final" "node job cancellation"
+    RUNNER_DELIVERED=1
     try dispatch_failed dispatch
     try dispatch_failed dispatch_helpers
     return
@@ -2057,7 +2061,8 @@ cmd__runner() {
   done
 
   git_identity
-  RUNNER_ID=$id RUNNER_DONE=0
+  # Bounce paths owe no delivery; normal finalization opens the delivery window below.
+  RUNNER_ID=$id RUNNER_DONE=0 RUNNER_DELIVERED=1
   echo $$ > "$dir/runner.pid"
   rm -f "$dir/acked"
   act "$id" info "▶ run $n ($mode)"
@@ -2298,6 +2303,7 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
   [[ $status == waiting ]] && questions_ready "$id" "$qfile"
   meta_set "$id" STATUS "$status"
   meta_set "$id" FINISHED "$(date -Is)"
+  RUNNER_DELIVERED=0
   RUNNER_DONE=1
   act "$id" info "■ end of run $n: $status${note:+ ($note)}"
   log_info run_finished "run=$n" "status=$status" "note=$note"
@@ -2329,6 +2335,7 @@ Answer: the investigator hung ($AGENT_HANG_STRIKES times without progress) — n
   else
     notify "$id" "$status" "$FINAL" "$note"
   fi
+  RUNNER_DELIVERED=1
   dispatch
   dispatch_helpers
 }
