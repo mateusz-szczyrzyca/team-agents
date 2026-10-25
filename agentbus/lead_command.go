@@ -38,7 +38,11 @@ func validateLeadListen(addr string) (netip.AddrPort, *LeadServeError) {
 }
 
 // leadListenAddrs returns the addresses the lead serves on: the validated address and, so the
-// lead's own node can connect, 127.0.0.1 on the same port. RED: not implemented yet.
-func leadListenAddrs(_ netip.AddrPort) []netip.AddrPort {
-	return nil
+// lead's own node can connect, 127.0.0.1 on the same port (once, when ap is that address).
+func leadListenAddrs(ap netip.AddrPort) []netip.AddrPort {
+	out := []netip.AddrPort{ap}
+	if loop := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), ap.Port()); loop != ap {
+		out = append(out, loop)
+	}
+	return out
 }
