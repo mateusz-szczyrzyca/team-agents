@@ -4,6 +4,25 @@
 
 load helpers
 
+# teardown — cleans up the foreground lead even when an assertion fails; this file starts no transient units.
+teardown() {
+  [[ -f "$HOME/lead.pid" ]] || return 0
+  local lead_pid rc=0
+  lead_pid=$(cat "$HOME/lead.pid")
+  # A process already reaped by the test is an expected non-running answer.
+  if kill -0 "$lead_pid" 2> "$HOME/lead-cleanup.log"; then
+    if ! kill -TERM "$lead_pid" 2>> "$HOME/lead-cleanup.log"; then
+      cat "$HOME/lead-cleanup.log" >&2
+      return 1
+    fi
+    wait "$lead_pid" || rc=$?
+    if [[ $rc -ne 0 && $rc -ne 143 ]]; then
+      cat "$HOME/lead.log" >&2
+      return 1
+    fi
+  fi
+}
+
 @test "agent lead needs LEAD_LISTEN and says how to set it" {
   run agent lead
   [ "$status" -ne 0 ]
@@ -22,18 +41,17 @@ load helpers
   echo "LEAD_LISTEN=127.0.0.2:$port" >> "$AGENTS_HOME/agents.conf"
   agent lead > "$HOME/lead.log" 2>&1 &
   local pid=$!
-  local ok=0
-  for _ in $(seq 1 50); do
-    curl -fsS "http://127.0.0.2:$port/v1/nodes" > /dev/null 2>&1 && { ok=1; break; }
-    sleep 0.2
-  done
-  [ "$ok" = 1 ] || { cat "$HOME/lead.log"; return 1; }
-  run curl -fsS "http://127.0.0.1:$port/v1/nodes"
+  echo "$pid" > "$HOME/lead.pid"
+  wait_grep '"event":"lead_listening"' "$AGENTS_HOME/logs/agentbus.jsonl" 15
+  run curl -fsS --noproxy '*' --max-time 2 "http://127.0.0.2:$port/v1/nodes"
+  [ "$status" -eq 0 ]
+  run curl -fsS --noproxy '*' --max-time 2 "http://127.0.0.1:$port/v1/nodes"
   [ "$status" -eq 0 ]
   kill -TERM "$pid"
   local rc=0
   wait "$pid" || rc=$?
   [ "$rc" -eq 0 ]
-  run curl -fsS --max-time 2 "http://127.0.0.2:$port/v1/nodes"
+  rm "$HOME/lead.pid"
+  run curl -fsS --noproxy '*' --max-time 2 "http://127.0.0.2:$port/v1/nodes"
   [ "$status" -ne 0 ]
 }
