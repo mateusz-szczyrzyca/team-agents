@@ -1191,6 +1191,11 @@
    "what": "starting the lead listener (agentbus lead)",
    "causes": [
     {
+      "name": "BadFlags",
+      "class": "InvalidArgument",
+      "doc": "a flag is unknown, has no value, or --ttl is not a positive duration"
+    },
+    {
       "name": "MissingArgument",
       "class": "InvalidArgument",
       "doc": "--listen or --node is missing"

@@ -2146,7 +2146,8 @@ func (c NodeClientCause) String() string { return c.info().name }
 type LeadServeCause int
 
 const (
-	LeadServeMissingArgument LeadServeCause = iota // --listen or --node is missing [InvalidArgument]
+	LeadServeBadFlags        LeadServeCause = iota // a flag is unknown, has no value, or --ttl is not a positive duration [InvalidArgument]
+	LeadServeMissingArgument                       // --listen or --node is missing [InvalidArgument]
 	LeadServeInvalidListen                         // the listen address is not host:port with a numeric port [InvalidArgument]
 	LeadServeUntrustedBind                         // the listen address is unspecified or outside loopback and the Tailscale ranges [InvalidArgument]
 	LeadServeListenFailed                          // a listener could not be opened on the address [Process]
@@ -2158,6 +2159,7 @@ type LeadServeError = OpError[LeadServeCause]
 
 // leadServeCauses describes the LeadServeCause values (same order as the constants).
 var leadServeCauses = [...]causeInfo{
+	{"BadFlags", ClassInvalidArgument},
 	{"MissingArgument", ClassInvalidArgument},
 	{"InvalidListen", ClassInvalidArgument},
 	{"UntrustedBind", ClassInvalidArgument},

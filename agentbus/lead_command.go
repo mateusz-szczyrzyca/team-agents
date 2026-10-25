@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/netip"
+	"strings"
 	"time"
 )
 
@@ -57,7 +58,40 @@ type leadConfig struct {
 	ttl     time.Duration  // how long a silent node stays online
 }
 
-// parseLeadConfig parses the arguments of `agentbus lead`. RED: not implemented yet.
-func parseLeadConfig(_ []string) (leadConfig, *LeadServeError) {
-	return leadConfig{}, nil
+// leadDevices collects the repeated --allow flag.
+type leadDevices []string
+
+// String renders the collected devices for flag's help output.
+func (d *leadDevices) String() string { return strings.Join(*d, ",") }
+
+// Set appends one device name or tag:… (flag.Value).
+func (d *leadDevices) Set(v string) error {
+	*d = append(*d, v)
+	return nil
+}
+
+// parseLeadConfig parses the arguments of `agentbus lead`. --listen and --node have no default;
+// the liveness window --ttl must be positive.
+func parseLeadConfig(args []string) (leadConfig, *LeadServeError) {
+	fs := newFlagSet("lead")
+	dir := fs.String("dir", defaultDir(), "the bus directory (the lead keeps jobs.json there)")
+	listen := fs.String("listen", "", "the lead's Tailscale address, e.g. 100.x.y.z:7780 (loopback is served too)")
+	node := fs.String("node", "", "this instance's name on the lead, the lead's own node")
+	var allow leadDevices
+	fs.Var(&allow, "allow", "a device allowed to take jobs: its name or tag:… (repeat for each)")
+	ttl := fs.Duration("ttl", 90*time.Second, "how long a silent node stays online")
+	if err := fs.Parse(args); err != nil {
+		return leadConfig{}, opErr(LeadServeBadFlags, "%v", err)
+	}
+	if *node == "" {
+		return leadConfig{}, opErr(LeadServeMissingArgument, "--node is required: this instance's name on the lead")
+	}
+	addr, err := validateLeadListen(*listen)
+	if err != nil {
+		return leadConfig{}, err
+	}
+	if *ttl <= 0 {
+		return leadConfig{}, opErr(LeadServeBadFlags, "--ttl %v must be a positive duration, e.g. 90s", *ttl)
+	}
+	return leadConfig{dir: *dir, listen: addr, node: *node, allowed: allow, ttl: *ttl}, nil
 }
