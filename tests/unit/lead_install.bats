@@ -34,3 +34,12 @@ install_here() {
   [[ $output == *"listening on 127.0.0.2:7780"* ]]
   [[ $output == *"running — see README"* ]]
 }
+
+@test "install.sh removes an existing agentlead.service when LEAD_LISTEN is no longer set" {
+  mkdir -p "$HOME/.config/systemd/user"
+  printf '[Unit]\nDescription=stale lead\n' > "$HOME/.config/systemd/user/agentlead.service"
+  install_here
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.config/systemd/user/agentlead.service" ]
+  [[ $output == *"removed agentlead.service"* ]]
+}
