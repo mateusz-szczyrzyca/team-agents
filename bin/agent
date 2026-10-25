@@ -191,6 +191,13 @@ AGENT_WEB_LISTEN="${AGENT_WEB_LISTEN:-127.0.0.1:8787}"
 AGENT_WEB_USERS="${AGENT_WEB_USERS:-}"
 AGENT_WEB_DEVICES="${AGENT_WEB_DEVICES:-}"
 AGENT_WEB_URL="${AGENT_WEB_URL:-}"
+# Several instances (agentlead.service, `agent lead`; README "Several instances"): LEAD_LISTEN is this instance's
+# Tailscale address when it is a lead ("" = not a lead); LEAD_NODES lists the devices allowed to take jobs (names or
+# tag:…); INSTANCE_NAME is this instance's name on the lead; NODE_TTL_SEC is how long a silent node stays online.
+LEAD_LISTEN="${LEAD_LISTEN:-}"
+LEAD_NODES="${LEAD_NODES:-}"
+INSTANCE_NAME="${INSTANCE_NAME:-${HOSTNAME%%.*}}"   # the short host name: bash sets HOSTNAME; no command is run
+NODE_TTL_SEC="${NODE_TTL_SEC:-90}"
 # Rounds (README "Rounds"): the change of a task — added + deleted lines against its base, tests included, without
 # the files matched by ROUND_EXCLUDE — has a soft and a hard limit; ROUND_MAX_LINES_REPO overrides the hard limit
 # per repository (0 = no limit). Over it, a finished round goes back to be split, at most ROUND_BOUNCES times.
@@ -1598,8 +1605,44 @@ notify() { # id status final note
 
 # ------------------------------------------------------------------ investigations
 
-free_investigator() { # first free investigator (not working and not waiting for the human's answers)
-  local inv d busy
+pick_investigator() { # last free... — the next investigator in the rotation (sorted names) after the last one,
+  # preferring another provider than the last one's; when every free one shares it, the next free one anyway.
+  # Exit 1: none is free.
+  local last=$1 names=() i k n start=0 cand first="" lastp=""
+  shift
+  (($#)) || return 1
+  mapfile -t names < <(investigator_names)
+  n=${#names[@]}
+  for i in "${!names[@]}"; do
+    if [[ ${names[i]} == "$last" ]]; then start=$((i + 1)); fi
+  done
+  [[ -n $last && -n ${INVESTIGATORS_TYPE[$last]:-} ]] && lastp=$(agent_auth_target "$last" | cut -f1)
+  for ((k = 0; k < n; k++)); do
+    cand=${names[(start + k) % n]}
+    is_one_of "$cand" "$@" || continue
+    [[ -n $first ]] || first=$cand
+    if [[ -z $lastp || $(agent_auth_target "$cand" | cut -f1) != "$lastp" ]]; then
+      printf '%s' "$cand"
+      return 0
+    fi
+  done
+  printf '%s' "$first"
+}
+
+is_one_of() { # word words... — is the word among the words?
+  local w=$1 x
+  shift
+  for x in "$@"; do [[ $x == "$w" ]] && return 0; done
+  return 1
+}
+
+remember_investigator() { # name — the investigator that got the last request (the rotation starts after it)
+  printf '%s\n' "$1" > "$AGENTS_HOME/last-investigator.tmp.$$"
+  mv "$AGENTS_HOME/last-investigator.tmp.$$" "$AGENTS_HOME/last-investigator"
+}
+
+free_investigator() { # the next free investigator in the rotation (not working, not waiting for the human's answers)
+  local inv d busy free=() last=""
   while read -r inv; do
     busy=0
     for d in "$TASKS"/*/; do
@@ -1608,9 +1651,11 @@ free_investigator() { # first free investigator (not working and not waiting for
       [[ $(task_field "$d" AGENT) == "$inv" && $(task_field "$d" KIND) == investigation ]] || continue
       case $(task_field "$d" STATUS) in new|starting|running|waiting) busy=1; break ;; esac
     done
-    ((busy)) || { printf '%s' "$inv"; return 0; }
+    ((busy)) || free+=("$inv")
   done < <(investigator_names)
-  return 1
+  ((${#free[@]})) || return 1
+  if [[ -f $AGENTS_HOME/last-investigator ]]; then last=$(<"$AGENTS_HOME/last-investigator"); fi
+  pick_investigator "$last" "${free[@]}"
 }
 
 dispatch() { # starts queued requests on free investigators
@@ -1622,6 +1667,7 @@ dispatch() { # starts queued requests on free investigators
     while inv=$(free_investigator); do
       j=$(bus inv-next --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS") || break
       [[ -n $j ]] || break
+      remember_investigator "$inv"
       start_investigation "$j" "$inv" || log_error investigation_start_failed "investigation=$(jq -r .id <<< "$j")" "investigator=$inv"
     done
   )
@@ -2964,6 +3010,14 @@ cmd_web() { # runs the web interface in the foreground (agentweb.service runs th
     --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS"
 }
 
+cmd_lead() { # runs the lead's listener in the foreground (agentlead.service runs this); needs LEAD_LISTEN
+  [[ -n $LEAD_LISTEN ]] || die "LEAD_LISTEN is not set in agents.conf — a lead needs its Tailscale address, e.g. 100.x.y.z:7780"
+  local args=(lead --dir "$BUS_DIR" --listen "$LEAD_LISTEN" --node "$INSTANCE_NAME" --ttl "${NODE_TTL_SEC}s")
+  local dev
+  for dev in $LEAD_NODES; do args+=(--allow "$dev"); done
+  exec "$AGENTBUS_BIN" "${args[@]}"
+}
+
 cmd__agents_json() { # the configured agents and investigators as JSON lines (for agentlive web)
   local a tier inv
   for a in "${!AGENT_TYPE[@]}"; do
@@ -3451,6 +3505,7 @@ agent inv [number | --all]                investigation queue / full record of o
 agent dispatch                            manually start the next queued investigation (fallback)
 agent live [--feed] [--remind MIN]        live panel (or an event stream with --feed)
 agent web                                 web interface in the foreground (normally: agentweb.service)
+agent lead                                the lead's job listener in the foreground (normally: agentlead.service; LEAD_LISTEN)
 agent kick <task>                         cut a run short: a team member sleeps (the team can wake it), solo: stopped
 agent round-size <task>                   size of a task's change against the round limit (README "Rounds")
 agent run --resume <team|task> --same-round  continue an unmerged round (e.g. review fixes) on the same branches
@@ -3488,6 +3543,7 @@ main() {
     inv)     cmd_inv "$@" ;;
     live)    cmd_live "$@" ;;
     web)     cmd_web ;;
+    lead)    cmd_lead ;;
     kick)    cmd_kick "$@" ;;
     round-size) cmd_round_size "$@" ;;
     _agents-json) cmd__agents_json ;;

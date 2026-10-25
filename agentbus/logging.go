@@ -54,6 +54,10 @@ const (
 	LogCorruptNoteLine    LogEvent = "corrupt_notebook_line"  // a line of a notebook log could not be decoded
 	LogNonJSONCLILine     LogEvent = "non_json_cli_line"      // the CLI event stream contained a non-JSON line
 	LogUnencodableInput   LogEvent = "tool_input_unencodable" // a tool input of a CLI event could not be encoded
+	LogLeadListening      LogEvent = "lead_listening"         // the lead started listening on an address
+	LogLeadStopped        LogEvent = "lead_stopped"           // the lead shut down its listeners
+	LogLeadHTTPError      LogEvent = "lead_http_error"        // net/http emitted a connection or handler diagnostic
+	LogLeadPeerRejected   LogEvent = "lead_peer_rejected"     // the lead refused a socket peer; the error says why
 )
 
 // logInfo, logWarn and logError write a record with the given event name.

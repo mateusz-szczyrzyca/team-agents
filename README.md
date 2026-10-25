@@ -146,7 +146,9 @@ The path unit (`agent-<task>-answers-<round>.path`) does not survive a reboot of
 - **Investigators** (`INVESTIGATORS_TYPE`) are expensive models in a shared queue. An agent stuck on a hard
   problem calls `request_investigation`; it ends its turn, an investigator works on a copy of its branch, and
   the agent resumes with the result and must record a decision before acting on it. The queue holds one
-  request in progress per investigator plus `INVESTIGATION_QUEUE_MAX` waiting ones.
+  request in progress per investigator plus `INVESTIGATION_QUEUE_MAX` waiting ones. Requests rotate across
+  the investigators: each goes to the next free one after the last one, preferring another provider than the
+  last one's — no provider gets every investigation and review.
 
 **Why mix tiers and providers.** Every subscription has usage limits (per few hours and per week) and every API
 key has a budget. Splitting the agents into CLI types and tiers spreads the load and the token usage across
@@ -629,11 +631,37 @@ request from outside the tailnet — **Tailscale Funnel** or another proxy: neve
 interface itself (htmx header, same origin). Set `AGENT_WEB_URL` to the address you open, and notifications get
 direct links: `Answer: …/questions/<task>?max=1` for questions, `Open: …/task/<task>` otherwise.
 
-**Several instances.** Each installation currently shows its own local tasks. Remote jobs are being developed
-in nine rounds: [design and implementation plan](docs/multi-instance.md). Round 2 adds the internal in-memory
-registry, capability parsing and assignment tests; remote job commands, persistence, daemons and web views are
-not available yet. The planned model keeps every installation and its bus independent, with a lead queue
-from which nodes pull whole jobs.
+**Several instances.** Every installation stays independent: its own bus, tasks and web interface. One installation
+can be the **lead**, which keeps a job queue and the list of nodes; remote jobs are being built in nine rounds:
+[design and implementation plan](docs/multi-instance.md). Round 4 adds the lead's HTTP listener:
+
+- `LEAD_LISTEN` in `agents.conf` is the lead's Tailscale address, e.g. `100.101.102.103:7780`. Empty (the default)
+  means the installation is not a lead and nothing changes. The lead serves that address and `127.0.0.1` on the
+  same port (its own node). Only loopback and the Tailscale ranges (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) are
+  accepted; `0.0.0.0`, `::` and public addresses are refused.
+- `LEAD_NODES` lists the devices allowed to take jobs, by name or `tag:…`, space-separated. A device is recognized
+  with `tailscale whois`; a request from a device not listed is refused.
+- `INSTANCE_NAME` is this installation's name on the lead (default: the short host name, which must match this machine's Tailscale device name); `NODE_TTL_SEC` (default 90)
+  is how long a silent node stays online.
+- `agent lead` runs the listener in the foreground. `install.sh` installs and starts the `agentlead.service` user
+  unit only when `LEAD_LISTEN` is set.
+- The listener authenticates the socket peer; forwarded identity headers grant no authority. Exact
+  `127.0.0.1` and `::1` peers are trusted as the lead's own node; other loopback addresses require whois.
+  Human submission and cancellation use the lead's loopback interface. Browser requests carrying `Origin`
+  or `Sec-Fetch-Site` are refused; this API is for direct CLI and daemon requests.
+- Requests have bounded header/body/read/write timeouts, and shutdown drains requests for at most `5` seconds
+  before closing connections. Structured events are `lead_listening`, `lead_stopped`, `lead_http_error`, and
+  `lead_peer_rejected` (socket identity rejection with the whois cause);
+  response and cleanup failures use the existing `side_effect_failed` event.
+- The HTTP API (heartbeat, job submission, state reports, cancel, and the reads `GET /v1/jobs`, `GET /v1/jobs/{id}`,
+  `GET /v1/nodes`) is available for the node daemon and tests. Requests are limited to 256 KiB; JSON uses the Go
+  field names (PascalCase) and times are RFC3339Nano. A returning node's heartbeat refreshes caller liveness
+  before expiry and applies pending reports atomically; other silent nodes still expire. Nodes must truncate
+  each `JobReport.Result` to at most 64 KiB before batching and keep the entire encoded heartbeat within 256 KiB
+  (send multiple batches if needed; enforcement and tests arrive with the round 6 node daemon). The lead keeps its jobs in `bus/jobs.json` (see
+  [design](docs/multi-instance.md), "Lead storage"). There are no `agent run --need`, `agent jobs` or
+  `agent nodes` commands yet, and no node daemon (`agent node`) yet: a job cannot run on another installation
+  until those rounds are merged.
 
 ## MCP tools available to agents
 

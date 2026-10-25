@@ -1,10 +1,10 @@
 # Independent installations and remote jobs
 
-This document specifies the approved v1 design. **Round 1 adds the design, error
-definitions and pending acceptance tests only. Round 2 implements the internal
-in-memory registry, capability parsing, idempotent submission and atomic routing.
-No persistent registry, remote job commands, listener, daemon or web views are
-available yet.** Later rounds implement the paths below.
+This document specifies the approved v1 design. **Rounds 1–4 provide the typed
+registry, durable storage, capability routing, lifecycle validation and the
+authenticated lead HTTP service. Task checkout, the node daemon, remote job
+commands, delegation and web views remain later rounds.** The sections below
+describe the full target design; current HTTP limitations are identified explicitly.
 
 ## Boundaries
 
@@ -66,8 +66,8 @@ The pure registry validates submissions before changing any state. Logical IDs,
 repository names, agent selectors and node pins use at most 128 ASCII characters:
 an initial letter or digit, followed by letters, digits, dots, underscores or
 hyphens. Requesters are `human` or two such names separated by `@`. These names
-are data; authenticating and binding a remote requester to its node arrives with
-the HTTP boundary in round 4.
+are data; the HTTP boundary added in round 4 authenticates and binds a remote
+requester to its node.
 
 Base refs follow Git's one-level ref-name rules, with a leading dash also
 rejected. An optional SHA is exactly 40 or 64 hexadecimal digits; delegated
@@ -80,7 +80,7 @@ normalized to lowercase before comparing retry identity. Identical retries
 preserve the current state, submission sequence and history. Jobs with equal
 submission timestamps are considered in insertion order. A mutex protects the
 whole in-memory operation; callers receive independent copies of mutable slices.
-This mutex does not replace the cross-process flock planned for round 3.
+This mutex does not replace the cross-process flock used by durable operations.
 
 A heartbeat replaces the node's declaration only after successful validation.
 It returns an existing unstarted assignment before looking for another job;
@@ -88,7 +88,8 @@ otherwise it assigns the oldest matching queued job. Assignment identities are
 nonzero and never reused during the lifetime of this in-memory registry.
 Queued and assigned transition times are retained, and retries add no transition.
 The pure ownership guard checks job existence, assigned node and assignment
-identity; it does not yet implement state reports or authorize a remote caller.
+identity; state reports reuse the lifecycle validator added in round 3, and
+remote authorization belongs to the HTTP boundary.
 
 Waiting diagnostics consider the latest accepted declarations of live nodes,
 including the node pin, all required capabilities on one node and matching free
@@ -96,7 +97,7 @@ agents. A node is offline at an age greater than or equal to its TTL. A pending
 unstarted assignment blocks further admission on that node. Missing individual
 capabilities are named first; when capabilities exist only on different nodes,
 the diagnostic lists their whole canonical set. Assignment requeue, durable
-sequence/identity recovery and started-job lifecycle handling remain round 3.
+sequence/identity recovery and started-job lifecycle handling were added in round 3.
 
 ### Node
 
@@ -215,7 +216,8 @@ The lead keeps its jobs in `jobs.json` in the bus directory, separate from
   next successful registry operation. Active jobs are always kept.
 - Counters: the sequence and assignment high-water marks survive job removal,
   so identities are never reused.
-- Internal only: no CLI or HTTP entry point uses the store yet (round 4 and later).
+- Used by the lead's HTTP listener (`agentbus lead`, round 4). No remote job command or node daemon uses it yet
+  (rounds 5 to 9).
 
 ## HTTP and authorization
 
@@ -245,6 +247,30 @@ Requests and replies are JSON. Each operation has its own causes in
 arbitrary Go error types from the wire. Heartbeat reports use the same registry
 report implementation as the state endpoint. CLI adapters reuse the same
 operations as the daemon; no second implementation of admission or mutation.
+
+Round 4 implements all seven endpoints. A successful heartbeat atomically
+acknowledges its entire report batch and returns `{"Job": ...}` with at most one
+assignment (`null` when none matches). The authenticated caller's liveness is
+refreshed before offline expiry, so its delayed start reports retain their
+assignment; rejected heartbeats roll back both liveness and reports. Other
+silent nodes still expire normally. Nodes must truncate each `JobReport.Result`
+to at most 64 KiB before batching and keep the entire encoded heartbeat within
+256 KiB (sending multiple batches if needed; daemon enforcement and testing
+belong to round 6). Delivery of durable stop requests is
+added with the node daemon in round 6; cancellation of an already started job
+currently persists `StopRequested` for read views. JSON field names use
+PascalCase, timestamps use UTC RFC3339Nano, and request bodies are limited to
+256 KiB independently of the 64 KiB task-text limit. Malformed or oversized JSON
+maps to the operation's own cause. An error reply contains `Operation`, `Cause`
+and `Message`; clients never reconstruct Go errors from it.
+
+Browser requests carrying `Origin` or `Sec-Fetch-Site` are refused, including
+requests to loopback. Forwarded headers never grant local authority. Listeners
+have bounded header, read, write and idle timeouts; shutdown drains requests for
+at most 5 seconds and then closes connections. HTTP diagnostics use structured
+logging. `agent lead` starts the foreground service; `agentbus lead` is its thin
+command adapter, and `install.sh` installs `agentlead.service` only when
+`LEAD_LISTEN` is configured.
 
 ### Operation causes
 
@@ -292,7 +318,7 @@ is invoked by tests. All test homes are temporary, with loopback networking only
 
 ## Planned user interface
 
-These commands are planned, not shipped in round 1:
+The following commands remain planned after round 4 (`agent lead` is available):
 
 ```text
 agent run --need <capability>[,…] <agent|normal|worker> "task"
