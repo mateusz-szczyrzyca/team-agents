@@ -15,3 +15,25 @@ load helpers
   [ "$status" -ne 0 ]
   [[ $output == *"neither loopback nor a Tailscale address"* ]]
 }
+
+@test "agent lead serves its API on its address and on 127.0.0.1, and stops on SIGTERM" {
+  local port
+  port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.2", 0)); print(s.getsockname()[1])')
+  echo "LEAD_LISTEN=127.0.0.2:$port" >> "$AGENTS_HOME/agents.conf"
+  agent lead > "$HOME/lead.log" 2>&1 &
+  local pid=$!
+  local ok=0
+  for _ in $(seq 1 50); do
+    curl -fsS "http://127.0.0.2:$port/v1/nodes" > /dev/null 2>&1 && { ok=1; break; }
+    sleep 0.2
+  done
+  [ "$ok" = 1 ] || { cat "$HOME/lead.log"; return 1; }
+  run curl -fsS "http://127.0.0.1:$port/v1/nodes"
+  [ "$status" -eq 0 ]
+  kill -TERM "$pid"
+  local rc=0
+  wait "$pid" || rc=$?
+  [ "$rc" -eq 0 ]
+  run curl -fsS --max-time 2 "http://127.0.0.2:$port/v1/nodes"
+  [ "$status" -ne 0 ]
+}

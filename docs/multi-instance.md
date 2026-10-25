@@ -215,7 +215,8 @@ The lead keeps its jobs in `jobs.json` in the bus directory, separate from
   next successful registry operation. Active jobs are always kept.
 - Counters: the sequence and assignment high-water marks survive job removal,
   so identities are never reused.
-- Internal only: no CLI or HTTP entry point uses the store yet (round 4 and later).
+- Used by the lead's HTTP listener (`agentbus lead`, round 4). No remote job command or node daemon uses it yet
+  (rounds 5 to 9).
 
 ## HTTP and authorization
 

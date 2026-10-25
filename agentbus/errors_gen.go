@@ -2146,7 +2146,7 @@ func (c NodeClientCause) String() string { return c.info().name }
 type LeadServeCause int
 
 const (
-	LeadServeBadFlags        LeadServeCause = iota // a flag is unknown, has no value, or --ttl is not a positive duration [InvalidArgument]
+	LeadServeBadFlags        LeadServeCause = iota // a flag is unknown or has no value, --node is not a valid name, --ttl is not a positive duration, or an argument is not a flag [InvalidArgument]
 	LeadServeMissingArgument                       // --listen or --node is missing [InvalidArgument]
 	LeadServeInvalidListen                         // the listen address is not host:port with a numeric port [InvalidArgument]
 	LeadServeUntrustedBind                         // the listen address is unspecified or outside loopback and the Tailscale ranges [InvalidArgument]

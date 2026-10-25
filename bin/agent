@@ -196,7 +196,7 @@ AGENT_WEB_URL="${AGENT_WEB_URL:-}"
 # tag:…); INSTANCE_NAME is this instance's name on the lead; NODE_TTL_SEC is how long a silent node stays online.
 LEAD_LISTEN="${LEAD_LISTEN:-}"
 LEAD_NODES="${LEAD_NODES:-}"
-INSTANCE_NAME="${INSTANCE_NAME:-$(hostname -s)}"
+INSTANCE_NAME="${INSTANCE_NAME:-${HOSTNAME%%.*}}"   # the short host name: bash sets HOSTNAME; no command is run
 NODE_TTL_SEC="${NODE_TTL_SEC:-90}"
 # Rounds (README "Rounds"): the change of a task — added + deleted lines against its base, tests included, without
 # the files matched by ROUND_EXCLUDE — has a soft and a hard limit; ROUND_MAX_LINES_REPO overrides the hard limit

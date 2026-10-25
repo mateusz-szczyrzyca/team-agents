@@ -1193,7 +1193,7 @@
     {
       "name": "BadFlags",
       "class": "InvalidArgument",
-      "doc": "a flag is unknown, has no value, or --ttl is not a positive duration"
+      "doc": "a flag is unknown or has no value, --node is not a valid name, --ttl is not a positive duration, or an argument is not a flag"
     },
     {
       "name": "MissingArgument",
