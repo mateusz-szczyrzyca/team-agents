@@ -28,7 +28,6 @@ start_test_lead() {
   local pid=$!
   echo "$pid" > "$HOME/lead.pid"
   wait_grep '"event":"lead_listening"' "$AGENTS_HOME/logs/agentbus.jsonl" 15
-  LEAD_PORT=$port
 }
 
 @test "agent jobs and nodes require LEAD_URL or LEAD_LISTEN" {
@@ -95,5 +94,5 @@ start_test_lead() {
 
   run agent nodes
   [ "$status" -eq 0 ]
-  [[ $output == *"Node"* || $output == *"Last seen"* || $output == *"(no nodes registered yet)"* ]]
+  [[ $output == *"NODE"* || $output == *"No nodes registered yet"* ]]
 }
