@@ -93,6 +93,13 @@ message — meanwhile do independent work, and when you need the result: `wait_f
 (the worker's name is shown by `delegation_status`). Describe the request precisely: what to do and in
 what form to return the result.
 
+For a step requiring a capability, pass `requires=["hw:rp2350"]` (namespaces:
+`os`, `arch`, `build`, `test`, `hw`, `net`). If the local instance lacks it, its node daemon
+routes the request remotely. Commit and push your branch to `origin` first; the job uses
+the commit captured when you call `delegate`. Remote helpers cannot read your local
+worktree. Their result arrives from `agentbus` with state, node and branch; use
+`wait_for_message()` without a worker filter. A lead outage leaves the request queued.
+
 If you are a worker: do the task economically and precisely; if it is beyond you, consider
 `request_investigation`, or describe the problem in your report instead of guessing.
 

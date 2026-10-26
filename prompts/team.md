@@ -131,6 +131,10 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
   `record_decision` with a justification) or retry with `wait_if_full=true`.
 - A simple task when the team has no free worker: a normal model may use `delegate(request, context)` — it
   goes to a free worker outside the team; the result arrives as a message.
+  For capabilities missing locally, add `requires=["hw:rp2350"]`; commit and push to `origin`
+  first. The node daemon submits that captured commit remotely and retries during lead outages.
+  Remote worktrees cannot read local files. Results come from `agentbus` with state, node and branch;
+  use `wait_for_message()` without a worker filter.
 
 ## 7. Repository notebook (persistent) and shared resources
 

@@ -597,7 +597,7 @@ func (s *Server) boardRelease(id, note string) (string, *BoardReleaseError) {
 // ---------------------------------------------------------------- worker requests (delegate)
 
 // delegate (MCP delegate) queues a worker request and spawns the `agent` helper dispatcher.
-func (s *Server) delegate(request, context string, _ ...string) (string, *DelegateError) {
+func (s *Server) delegate(request, context string, requires ...string) (string, *DelegateError) {
 	if s.tier == TierWorker || s.role == RoleInvestigator {
 		return "", opErr(DelegateNotNormalTier, "delegate is for normal models")
 	}
@@ -605,12 +605,27 @@ func (s *Server) delegate(request, context string, _ ...string) (string, *Delega
 	if request == "" {
 		return "", opErr(DelegateMissingRequest, "%s", missing("request"))
 	}
+	caps, cerr := canonicalJobCapabilities(requires)
+	if cerr != nil {
+		return "", opErr(DelegateInvalidCapabilities, "%v", cerr)
+	}
+	sha := "" // ordinary local requests preserve the existing no-Git path
+	if len(caps) > 0 {
+		out, perr := callNodeGit(s.info.Worktree, "rev-parse", "--verify", "HEAD^{commit}")
+		if perr != nil {
+			return "", &DelegateError{Cause: DelegateSnapshotFailed, Message: perr.Error(), Err: perr}
+		}
+		sha = strings.ToLower(strings.TrimSpace(string(out)))
+		if !validJobSHA(sha) {
+			return "", opErr(DelegateSnapshotFailed, "cannot capture a valid requester HEAD commit")
+		}
+	}
 	var id int64
 	err := transact(s.bus, DelegateStorage, func(st *State) *DelegateError {
 		s.touch(st)
 		st.NextHelperID++
 		h := &Helper{ID: st.NextHelperID, From: s.me, FromTask: s.info.Task, Repo: s.info.Repo, Branch: s.info.Branch,
-			Worktree: s.info.Worktree, Request: request, Context: strings.TrimSpace(context), Status: HelperQueued, Created: Now()}
+			Worktree: s.info.Worktree, Request: request, Context: strings.TrimSpace(context), Status: HelperQueued, Created: Now(), Requires: caps, BaseSHA: sha}
 		st.Helpers[helperKey(h.ID)] = h
 		id = h.ID
 		_, serr := s.bus.post(st, s.me, "all", EventWorkerRequest{ID: h.ID, Request: request})
@@ -620,6 +635,9 @@ func (s *Server) delegate(request, context string, _ ...string) (string, *Delega
 		return "", err
 	}
 	agentCmdFn(s.agentCmd, s.home, "_dispatch-helpers")
+	if len(caps) > 0 {
+		return fmt.Sprintf("Request H%d accepted with capabilities %s at commit %s. The local dispatcher or node daemon will route it; the result returns as a helper message.", id, strings.Join(caps, ","), sha), nil
+	}
 	return fmt.Sprintf("Request H%d accepted. The worker gets the state of your branch's last commit and the path to your worktree "+
 		"(read-only). The result will arrive as a message from the worker (wait_for_message) — meanwhile do your own work.", id), nil
 }
@@ -720,7 +738,7 @@ func collabToolDefs(inTeam bool, tier Tier) []map[string]any {
 			tool("delegate", "Delegate a simple, mechanical task to a free worker (a cheap model) instead of doing it yourself and spending expensive tokens: "+
 				"listing and searching files, checking whether something exists, running a known command and summarising its output. "+
 				"The result will arrive as a message. In a team use the board first (board_add level=easy).",
-				obj(map[string]any{"request": str("Exactly what to do and in what form to return the result"), "context": str("Paths, commands, what to look for")}, "request")),
+				obj(map[string]any{"request": str("Exactly what to do and in what form to return the result"), "context": str("Paths, commands, what to look for"), "requires": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Required declared capabilities; push your commit first when this needs another node"}}, "request")),
 			tool("delegation_status", "Status of your worker requests and of the queue.", obj(map[string]any{})),
 		)
 	}
@@ -734,14 +752,17 @@ func cmdHelperNext(args []string) {
 	fs := newFlagSet("helper-next")
 	dir := fs.String("dir", defaultDir(), "state directory")
 	worker := fs.String("worker", "", "worker that gets it")
+	caps := fs.String("capabilities", "[]", "local capabilities JSON array")
 	parseFlags(fs, args)
+	capabilities, cerr := helperCapabilities(*caps)
+	if cerr != nil {
+		exitOn(opErr(CmdHelperNextInvalidCapabilities, "%v", cerr).asError())
+		return
+	}
 	b := &Bus{dir: *dir}
 	exitOn(transact(b, CmdHelperNextStorage, func(st *State) *CmdHelperNextError {
-		for _, h := range sortedHelpers(st) {
-			if h.Status == HelperQueued {
-				h.Status, h.Worker = HelperStarting, *worker
-				return fromStorage(CmdHelperNextStorage, printJSON(h))
-			}
+		if h := takeLocalHelper(st, *worker, capabilities); h != nil {
+			return fromStorage(CmdHelperNextStorage, printJSON(h))
 		}
 		return nil
 	}).asError())

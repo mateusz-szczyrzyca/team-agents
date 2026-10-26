@@ -667,6 +667,21 @@ func (a toolArgs) str(k string) string {
 	return v
 }
 
+// strings returns an optional validated array of capability strings.
+func (a toolArgs) strings(k string) []string {
+	switch values := a[k].(type) {
+	case []string:
+		return append([]string(nil), values...)
+	case []any:
+		out := make([]string, len(values))
+		for i, value := range values {
+			out[i], _ = value.(string)
+		} // validateArgs checked every element.
+		return out
+	}
+	return nil
+}
+
 // num returns a numeric argument (0 when absent). Numbers may arrive as JSON numbers or numeric strings.
 func (a toolArgs) num(k string) int {
 	switch v := a[k].(type) {
@@ -741,6 +756,18 @@ func validateArgs(name string, a map[string]any) *ToolCallError {
 				}
 			default:
 				return opErr(ToolCallInvalidArgument, "%s: argument %q must be a number, got %T", name, k, v)
+			}
+		case "array":
+			switch values := v.(type) {
+			case []string:
+			case []any:
+				for _, value := range values {
+					if _, ok := value.(string); !ok {
+						return opErr(ToolCallInvalidArgument, "%s: argument %q must contain strings", name, k)
+					}
+				}
+			default:
+				return opErr(ToolCallInvalidArgument, "%s: argument %q must be an array of strings", name, k)
 			}
 		case "boolean":
 			switch b := v.(type) {
@@ -842,7 +869,7 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 	case "board_progress":
 		return toolResult(s.boardProgress(a.str("id"), a.str("note")))
 	case "delegate":
-		return toolResult(s.delegate(a.str("request"), a.str("context")))
+		return toolResult(s.delegate(a.str("request"), a.str("context"), a.strings("requires")...))
 	case "delegation_status":
 		return toolResult(s.delegationStatus())
 	}
@@ -1349,6 +1376,12 @@ func main() {
 		cmdTeamList(os.Args[2:])
 	case "notes":
 		cmdNotes(os.Args[2:])
+	case "helper-remote-list":
+		cmdHelperRemoteList(os.Args[2:])
+	case "helper-remote-prepare":
+		cmdHelperRemotePrepare(os.Args[2:])
+	case "helper-remote-finish":
+		cmdHelperRemoteFinish(os.Args[2:])
 	case "helper-next":
 		cmdHelperNext(os.Args[2:])
 	case "helper-set":
