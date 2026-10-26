@@ -63,6 +63,10 @@ type BoardItem struct {
 // free worker; the `agent` script starts the worker as a helper task on a copy of the
 // requester's branch and sends the result back as a message.
 type Helper struct {
+	Requires  []string    `json:"requires,omitempty"`   // required declared capabilities; absent means ordinary local delegation
+	BaseSHA   string      `json:"base_sha,omitempty"`   // requester HEAD captured at delegation time
+	RemoteJob *JobRequest `json:"remote_job,omitempty"` // immutable verified submission retained for retry
+
 	ID         int64        `json:"id"`                    // sequential number shown as "H<ID>"
 	From       string       `json:"from"`                  // requesting agent
 	FromTask   string       `json:"from_task"`             // requesting task
@@ -593,7 +597,7 @@ func (s *Server) boardRelease(id, note string) (string, *BoardReleaseError) {
 // ---------------------------------------------------------------- worker requests (delegate)
 
 // delegate (MCP delegate) queues a worker request and spawns the `agent` helper dispatcher.
-func (s *Server) delegate(request, context string) (string, *DelegateError) {
+func (s *Server) delegate(request, context string, _ ...string) (string, *DelegateError) {
 	if s.tier == TierWorker || s.role == RoleInvestigator {
 		return "", opErr(DelegateNotNormalTier, "delegate is for normal models")
 	}

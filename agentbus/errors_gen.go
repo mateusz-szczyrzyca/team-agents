@@ -846,9 +846,11 @@ func (c BoardReleaseCause) String() string { return c.info().name }
 type DelegateCause int
 
 const (
-	DelegateNotNormalTier  DelegateCause = iota // a worker or an investigator called it (delegate is for normal models) [Permission]
-	DelegateMissingRequest                      // the request text is missing [InvalidArgument]
-	DelegateStorage                             // the shared state or a file could not be read or written [Storage]
+	DelegateNotNormalTier       DelegateCause = iota // a worker or an investigator called it (delegate is for normal models) [Permission]
+	DelegateMissingRequest                           // the request text is missing [InvalidArgument]
+	DelegateInvalidCapabilities                      // requires contains an unknown or malformed capability [InvalidArgument]
+	DelegateSnapshotFailed                           // the requester commit could not be captured [Process]
+	DelegateStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
 // DelegateError is the error of the MCP tool delegate.
@@ -858,6 +860,8 @@ type DelegateError = OpError[DelegateCause]
 var delegateCauses = [...]causeInfo{
 	{"NotNormalTier", ClassPermission},
 	{"MissingRequest", ClassInvalidArgument},
+	{"InvalidCapabilities", ClassInvalidArgument},
+	{"SnapshotFailed", ClassProcess},
 	{"Storage", ClassStorage},
 }
 
@@ -1462,7 +1466,8 @@ func (c CmdNotesCause) String() string { return c.info().name }
 type CmdHelperNextCause int
 
 const (
-	CmdHelperNextStorage CmdHelperNextCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdHelperNextInvalidCapabilities CmdHelperNextCause = iota // local capabilities are malformed [InvalidArgument]
+	CmdHelperNextStorage                                       // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdHelperNextError is the error of the subcommand helper-next.
@@ -1470,6 +1475,7 @@ type CmdHelperNextError = OpError[CmdHelperNextCause]
 
 // cmdHelperNextCauses describes the CmdHelperNextCause values (same order as the constants).
 var cmdHelperNextCauses = [...]causeInfo{
+	{"InvalidCapabilities", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 
@@ -2257,3 +2263,93 @@ func (c BoardProgressCause) info() causeInfo { return boardProgressCauses[c] }
 
 // String returns the cause name.
 func (c BoardProgressCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- helper-remote-list
+
+// HelperRemoteListCause is a reason why the local subcommand helper-remote-list failed.
+type HelperRemoteListCause int
+
+const (
+	HelperRemoteListInvalidCapabilities HelperRemoteListCause = iota // local capabilities are malformed [InvalidArgument]
+	HelperRemoteListStorage                                          // the shared state or a file could not be read or written [Storage]
+)
+
+// HelperRemoteListError is the error of the local subcommand helper-remote-list.
+type HelperRemoteListError = OpError[HelperRemoteListCause]
+
+// helperRemoteListCauses describes the HelperRemoteListCause values (same order as the constants).
+var helperRemoteListCauses = [...]causeInfo{
+	{"InvalidCapabilities", ClassInvalidArgument},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (HelperRemoteListCause) op() string { return "helper-remote-list" }
+
+// info implements opCause.
+func (c HelperRemoteListCause) info() causeInfo { return helperRemoteListCauses[c] }
+
+// String returns the cause name.
+func (c HelperRemoteListCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- helper-remote-prepare
+
+// HelperRemotePrepareCause is a reason why the local subcommand helper-remote-prepare failed.
+type HelperRemotePrepareCause int
+
+const (
+	HelperRemotePrepareNoSuchRequest  HelperRemotePrepareCause = iota // the helper request does not exist [NotFound]
+	HelperRemotePrepareInvalidRequest                                 // the helper cannot be delegated or its identity is invalid [InvalidArgument]
+	HelperRemotePrepareNotPushed                                      // the captured commit is not reachable from the origin branch [Process]
+	HelperRemotePrepareStorage                                        // the shared state or a file could not be read or written [Storage]
+)
+
+// HelperRemotePrepareError is the error of the local subcommand helper-remote-prepare.
+type HelperRemotePrepareError = OpError[HelperRemotePrepareCause]
+
+// helperRemotePrepareCauses describes the HelperRemotePrepareCause values (same order as the constants).
+var helperRemotePrepareCauses = [...]causeInfo{
+	{"NoSuchRequest", ClassNotFound},
+	{"InvalidRequest", ClassInvalidArgument},
+	{"NotPushed", ClassProcess},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (HelperRemotePrepareCause) op() string { return "helper-remote-prepare" }
+
+// info implements opCause.
+func (c HelperRemotePrepareCause) info() causeInfo { return helperRemotePrepareCauses[c] }
+
+// String returns the cause name.
+func (c HelperRemotePrepareCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- helper-remote-finish
+
+// HelperRemoteFinishCause is a reason why the local subcommand helper-remote-finish failed.
+type HelperRemoteFinishCause int
+
+const (
+	HelperRemoteFinishNoSuchRequest HelperRemoteFinishCause = iota // the helper request does not exist [NotFound]
+	HelperRemoteFinishInvalidState                                 // the job result is not terminal [InvalidArgument]
+	HelperRemoteFinishStorage                                      // the shared state or a file could not be read or written [Storage]
+)
+
+// HelperRemoteFinishError is the error of the local subcommand helper-remote-finish.
+type HelperRemoteFinishError = OpError[HelperRemoteFinishCause]
+
+// helperRemoteFinishCauses describes the HelperRemoteFinishCause values (same order as the constants).
+var helperRemoteFinishCauses = [...]causeInfo{
+	{"NoSuchRequest", ClassNotFound},
+	{"InvalidState", ClassInvalidArgument},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (HelperRemoteFinishCause) op() string { return "helper-remote-finish" }
+
+// info implements opCause.
+func (c HelperRemoteFinishCause) info() causeInfo { return helperRemoteFinishCauses[c] }
+
+// String returns the cause name.
+func (c HelperRemoteFinishCause) String() string { return c.info().name }
