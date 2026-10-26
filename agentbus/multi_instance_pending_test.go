@@ -717,12 +717,37 @@ func TestCLIRunNeedSubmitsJob(t *testing.T) {
 
 // TestDelegateRequiresCreatesJob: a delegate request with requires the local node lacks becomes a job on the lead.
 func TestDelegateRequiresCreatesJob(t *testing.T) {
-	t.Skip("pending: delegate with requires becomes a job based on the pushed SHA, round 8")
+	b := newBus(t)
+	remoteHelperFixture(t, b)
+	stubNodeGit(t, func(string, ...string) ([]byte, *ProcessError) { return nil, nil })
+	req, err := prepareRemoteHelper(b, 1, "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newLeadRegistry()
+	job, submitErr := r.submit(req, regAt(2))
+	if submitErr != nil {
+		t.Fatal(submitErr)
+	}
+	if job.Request.BaseSHA != regSHA || job.Request.Requester != "member@node-a" || job.State != JobQueued {
+		t.Fatalf("wrong delegated job: %+v", job)
+	}
 }
 
 // TestDelegateResultReturnsHelperMessage: the finished job reaches the member as the ordinary helper-result message.
 func TestDelegateResultReturnsHelperMessage(t *testing.T) {
-	t.Skip("pending: delegated job result goes back as a helper-result message, round 8")
+	b := newBus(t)
+	remoteHelperFixture(t, b)
+	if err := finishRemoteHelper(b, 1, remoteHelperResult{State: JobDone, Node: "node-b", Branch: "agents/result", Result: "build passed"}); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := b.messages()
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("missing helper result: %+v %v", msgs, err)
+	}
+	if msgs[0].To != "member" || !strings.Contains(msgs[0].Text, "build passed") {
+		t.Fatalf("wrong helper result: %+v", msgs[0])
+	}
 }
 
 // TestWebJobsAndInstancesViews: the lead's web interface shows jobs and instances; the node marks job tasks.

@@ -1,11 +1,12 @@
 # Independent installations and remote jobs
 
-This document specifies the approved v1 design. **Rounds 1–7 provide the typed
+This document specifies the approved v1 design. **Rounds 1–8 provide the typed
 registry, durable storage, capability routing, lifecycle validation, the
 authenticated lead HTTP service, allow-listed task checkout preparation,
 the node daemon (`agent node`), lead completion notifications, and the
 remote job CLI commands (`agent run --need/--on`, `agent jobs`, `agent nodes`,
-`agent jobs --cancel`). Remote delegation and web views remain rounds 8 and 9.** The sections below
+`agent jobs --cancel`), plus remote delegation and local helper-result delivery.
+Web views remain round 9.** The sections below
 describe the full target design; current HTTP limitations are identified explicitly.
 
 ## Boundaries
@@ -219,7 +220,7 @@ The lead keeps its jobs in `jobs.json` in the bus directory, separate from
 - Counters: the sequence and assignment high-water marks survive job removal,
   so identities are never reused.
 - Used by the lead's HTTP listener (`agentbus lead`, round 4). The node daemon reaches it only
-  over HTTP (round 6); delegation (round 8) is not implemented yet.
+  over HTTP (round 6), including remote delegation (round 8).
 
 ## HTTP and authorization
 
@@ -318,9 +319,9 @@ External programs use package-variable boundaries. Test defaults fail loudly
 unless a test installs a fake, including whois; no real agent CLI or tailscaled
 is invoked by tests. All test homes are temporary, with loopback networking only.
 
-## Planned user interface
+## User interface
 
-The following commands remain planned after round 4 (`agent lead` is available):
+The following commands are available after round 7:
 
 ```text
 agent run --need <capability>[,…] <agent|normal|worker> "task"
@@ -341,9 +342,27 @@ The lead's Jobs view shows state, node, agent and outcome, linking to the node
 for questions. Instances shows capabilities, free agents, last heartbeat and
 offline status. A node's task identifies `job <id> from <lead>`.
 
-`delegate` gains optional `requires`. If local capabilities are insufficient,
-require the member's commit to be pushed, submit its exact SHA as a job and
-deliver the ordinary helper-result message with state, node, branch and result.
+`delegate` accepts optional `requires` as a string array. Satisfied requirements stay
+with the ordinary local worker dispatcher. Otherwise the local node daemon prepares
+a worker job using the requester SHA captured at the delegate call. It fetches the
+requester's origin branch into a unique private ref and checks that this SHA is an
+ancestor; a missing push fails the helper before submission with an actionable
+`NotPushed` cause. Git and HTTP never run while holding the local bus lock.
+
+The node saves the immutable submission in the helper's optional `remote_job`
+field before POSTing it. The ID is derived from the requesting instance, local
+helper ID, creation time and requester task. A lost submission response or lead
+outage retries this same request without rechecking a moving branch or changing
+the SHA. There is no additional timeout. Without `LEAD_URL`, an unsatisfied helper
+fails locally. Only the node daemon contacts the lead for delegation.
+
+The daemon reads the job outcome and delivers the ordinary `helper_result` notice
+to the requesting local agent, with state, node, branch, optional PR and result
+head. `stopped` remains visible in the message and maps to a failed helper status.
+The local notice identifies an already delivered result if saving helper state
+fails, so a retry retains that outcome and does not post it again. Existing bus
+state files without `requires`, `base_sha` and `remote_job` still load unchanged;
+`testdata/state-before-remote-helpers.json` preserves the previous helper format.
 This changes neither team member identity nor the local MCP connection.
 
 ## Approved implementation rounds

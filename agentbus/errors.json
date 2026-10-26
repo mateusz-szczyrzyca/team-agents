@@ -484,6 +484,16 @@
      "name": "MissingRequest",
      "class": "InvalidArgument",
      "doc": "the request text is missing"
+    },
+    {
+     "name": "InvalidCapabilities",
+     "class": "InvalidArgument",
+     "doc": "requires contains an unknown or malformed capability"
+    },
+    {
+     "name": "SnapshotFailed",
+     "class": "Process",
+     "doc": "the requester commit could not be captured"
     }
    ]
   },
@@ -740,7 +750,13 @@
    "type": "CmdHelperNext",
    "op": "helper-next",
    "what": "the subcommand helper-next",
-   "causes": []
+   "causes": [
+    {
+     "name": "InvalidCapabilities",
+     "class": "InvalidArgument",
+     "doc": "local capabilities are malformed"
+    }
+   ]
   },
   {
    "type": "CmdHelperSet",
@@ -1309,6 +1325,57 @@
      "name": "EmptyNote",
      "class": "InvalidArgument",
      "doc": "the progress note is empty"
+    }
+   ]
+  },
+  {
+   "type": "HelperRemoteList",
+   "op": "helper-remote-list",
+   "what": "the local subcommand helper-remote-list",
+   "causes": [
+    {
+     "name": "InvalidCapabilities",
+     "class": "InvalidArgument",
+     "doc": "local capabilities are malformed"
+    }
+   ]
+  },
+  {
+   "type": "HelperRemotePrepare",
+   "op": "helper-remote-prepare",
+   "what": "the local subcommand helper-remote-prepare",
+   "causes": [
+    {
+     "name": "NoSuchRequest",
+     "class": "NotFound",
+     "doc": "the helper request does not exist"
+    },
+    {
+     "name": "InvalidRequest",
+     "class": "InvalidArgument",
+     "doc": "the helper cannot be delegated or its identity is invalid"
+    },
+    {
+     "name": "NotPushed",
+     "class": "Process",
+     "doc": "the captured commit is not reachable from the origin branch"
+    }
+   ]
+  },
+  {
+   "type": "HelperRemoteFinish",
+   "op": "helper-remote-finish",
+   "what": "the local subcommand helper-remote-finish",
+   "causes": [
+    {
+     "name": "NoSuchRequest",
+     "class": "NotFound",
+     "doc": "the helper request does not exist"
+    },
+    {
+     "name": "InvalidState",
+     "class": "InvalidArgument",
+     "doc": "the job result is not terminal"
     }
    ]
   }

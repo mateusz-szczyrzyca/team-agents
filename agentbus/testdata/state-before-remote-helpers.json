@@ -1,0 +1,17 @@
+{
+  "next_helper_id": 1,
+  "helpers": {
+    "1": {
+      "id": 1,
+      "from": "member",
+      "from_task": "task-member",
+      "repo": "repo",
+      "branch": "agents/member",
+      "worktree": "/tmp/example-worktree",
+      "request": "build",
+      "context": "",
+      "status": "queued",
+      "created": "2026-10-20T10:00:00Z"
+    }
+  }
+}

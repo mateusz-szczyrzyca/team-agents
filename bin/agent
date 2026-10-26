@@ -522,6 +522,8 @@ team_members_list() {
 BUS_NOT_FOUND=3
 # BUS_PERMISSION is the typed Permission exit code used to reconcile a rejected node assignment.
 BUS_PERMISSION=5
+# BUS_STORAGE is the typed Storage exit code used to identify retryable local storage errors.
+BUS_STORAGE=8
 
 # team_json team — the team's JSON; nothing when the team does not exist (exit code BUS_NOT_FOUND), any
 # other failure is logged.
@@ -1869,13 +1871,34 @@ free_worker() { # a free worker; balances providers: picks the provider with the
 
 dispatch_helpers() { # assigns queued requests to free workers
   stopping && return 0
-  ((${#WORKER_AGENTS[@]})) || return 0
   (
     exec 7>"$AGENTS_HOME/helpers.lock"
     flock -w 60 7 || exit 0
+    local caps='[]'
+    if ((${#INSTANCE_CAPABILITIES[@]})); then caps=$(printf '%s\n' "${INSTANCE_CAPABILITIES[@]}" | jq -R . | jq -s .); fi
+    if [[ -z ${LEAD_URL:-} ]]; then
+      local remote_open rows
+      if remote_open=$(bus helper-remote-list --dir "$BUS_DIR" --capabilities "$caps"); then
+        if rows=$(jq -c '.[]' <<< "$remote_open"); then
+          local rh rh_id
+          while read -r rh; do
+            [[ -n $rh ]] || continue
+            if [[ $(jq -r '.status // empty' <<< "$rh") == "queued" ]]; then
+              rh_id=$(jq -r '.id' <<< "$rh")
+              try helper_finish_failed bus helper-remote-finish --dir "$BUS_DIR" --id "$rh_id" --state failed --node "" --branch "" --result "remote delegation requires LEAD_URL in config/agents.conf"
+            fi
+          done <<< "$rows"
+        else
+          log_warn helper_remote_list_parse_failed
+        fi
+      else
+        log_warn helper_remote_list_failed
+      fi
+    fi
+    ((${#WORKER_AGENTS[@]})) || exit 0
     local w j
     while w=$(free_worker); do
-      j=$(bus helper-next --dir "$BUS_DIR" --worker "$w") || break
+      j=$(bus helper-next --dir "$BUS_DIR" --worker "$w" --capabilities "$caps") || break
       [[ -n $j ]] || break
       start_helper "$j" "$w" || log_error helper_start_failed "request=$(jq -r .id <<< "$j")" "worker=$w"
     done
@@ -3898,8 +3921,9 @@ node_handle_reply() {
   [[ $existing != "$assignment" ]] || return 0
   at=$(jq -r '.History[-1].At // empty' <<< "$job")
   if agent=$(node_select_agent "$(jq -r .Request.Selector <<< "$job")"); then :; else agent=''; fi
-  NODE_STATE=$(jq -c --arg id "$jid" --argjson assignment "$assignment" --argjson request "$(jq -c .Request <<< "$job")" --arg agent "$agent" --arg at "$at" \
-    '.jobs[$id]={assignment:$assignment,request:$request,agent:$agent,assigned_at:$at,task_id:"",branch:"",launched:false,start_acked:false,obsolete:false,pending:false,preparing:true,cursor:0}' <<< "$NODE_STATE"); node_save
+  # Stream the request: escaped task text can exceed Linux's per-argument limit.
+  NODE_STATE=$(printf '%s\n' "$job" "$NODE_STATE" | jq -cs --arg id "$jid" --argjson assignment "$assignment" --arg agent "$agent" --arg at "$at" \
+    '.[1].jobs[$id]={assignment:$assignment,request:.[0].Request,agent:$agent,assigned_at:$at,task_id:"",branch:"",launched:false,start_acked:false,obsolete:false,pending:false,preparing:true,cursor:0} | .[1]'); node_save
   if [[ -z $agent ]]; then node_transition "$jid" failed '' 'no free local agent for assignment'; return; fi
   NODE_PREPARE_ERROR=''
   if prepare_job_task "$jid" "$agent" "$(jq -r .Request.Repository <<< "$job")" "$(jq -r .Request.BaseRef <<< "$job")" "$(jq -r '.Request.BaseSHA // ""' <<< "$job")" "$(jq -r .Request.Task <<< "$job")" "$assignment"; then
@@ -3910,6 +3934,85 @@ node_handle_reply() {
   fi
 }
 
+# node_poll_remote_helpers submits queued remote helpers and polls terminal results.
+node_poll_remote_helpers() {
+  local caps='[]' list rows helper hid job_id req_json reply state node branch result pr rc diag
+  if ((${#INSTANCE_CAPABILITIES[@]})); then caps=$(printf '%s\n' "${INSTANCE_CAPABILITIES[@]}" | jq -R . | jq -s .); fi
+  if ! list=$(bus helper-remote-list --dir "$BUS_DIR" --capabilities "$caps"); then
+    log_warn node_remote_helpers_list_failed
+    return 0
+  fi
+  [[ -n $list && $list != "[]" ]] || return 0
+  if ! rows=$(jq -c '.[]' <<< "$list"); then
+    log_warn node_remote_helpers_parse_failed
+    return 0
+  fi
+
+  while read -r helper; do
+    [[ -n $helper ]] || continue
+    hid=$(jq -r '.id' <<< "$helper")
+    job_id=$(jq -r '.remote_job.ID // empty' <<< "$helper")
+    local hstatus
+    hstatus=$(jq -r '.status // empty' <<< "$helper")
+
+    if [[ -z $job_id ]]; then
+      rc=0
+      req_json=$(bus helper-remote-prepare --dir "$BUS_DIR" --id "$hid" --instance "${INSTANCE_NAME:-node}" 2>&1) || rc=$?
+      if ((rc != 0)); then
+        if ((rc == BUS_STORAGE)); then
+          log_warn node_helper_prepare_storage_failed "helper=$hid" "exit=$rc"
+        else
+          log_warn node_helper_prepare_failed "helper=$hid" "exit=$rc" "detail=$req_json"
+          diag=${req_json:-remote preparation failed}
+          try helper_finish_failed bus helper-remote-finish --dir "$BUS_DIR" --id "$hid" --state failed --node "" --branch "" --result "$diag"
+        fi
+        continue
+      fi
+      job_id=$(jq -r '.ID' <<< "$req_json")
+    else
+      req_json=$(jq -c '.remote_job' <<< "$helper")
+    fi
+
+    # Compare complete JSON documents via stdin so escaped maximum-size tasks fit.
+    if [[ $hstatus == "queued" ]]; then
+      if reply=$(printf '%s' "$req_json" | node_request --path /v1/jobs); then
+        if ! printf '%s\n' "$req_json" "$reply" | jq -es 'length == 2 and .[1].Request == .[0] and (.[1].State|type == "string")' >/dev/null; then
+          log_warn node_helper_reply_invalid "helper=$hid" "job=$job_id"
+          continue
+        fi
+        log_info node_helper_submitted "helper=$hid" "job=$job_id"
+        try helper_state_failed bus helper-set --dir "$BUS_DIR" --id "$hid" --status running
+      else
+        rc=$?
+        log_warn node_helper_submit_failed "helper=$hid" "job=$job_id" "exit=$rc"
+        continue
+      fi
+    fi
+
+    if reply=$(node_request --get --path "/v1/jobs/$job_id" < /dev/null); then
+      if ! printf '%s\n' "$req_json" "$reply" | jq -es 'length == 2 and .[1].Request == .[0] and (.[1].State|type == "string")' >/dev/null; then
+        log_warn node_helper_reply_invalid "helper=$hid" "job=$job_id"
+        continue
+      fi
+      state=$(jq -r '.State' <<< "$reply")
+      case "$state" in
+        done|failed|stopped)
+          node=$(jq -r '.Node // ""' <<< "$reply")
+          branch=$(jq -r '.Branch // ""' <<< "$reply")
+          result=$(jq -r '.Result // ""' <<< "$reply")
+          pr=$(jq -r '.PRURL // ""' <<< "$reply")
+          local finish_args=(helper-remote-finish --dir "$BUS_DIR" --id "$hid" --state "$state" --node "$node" --branch "$branch" --result "$result")
+          [[ -z $pr ]] || finish_args+=(--pr "$pr")
+          try helper_finish_failed bus "${finish_args[@]}"
+          ;;
+      esac
+    else
+      rc=$?
+      log_warn node_helper_get_failed "helper=$hid" "job=$job_id" "exit=$rc"
+    fi
+  done <<< "$rows"
+}
+
 # node_poll performs one durable recovery/report/assignment cycle without involving the ordinary MCP bus.
 node_poll() {
   NODE_STATE=$(node_jobs_load)
@@ -3917,6 +4020,7 @@ node_poll() {
   node_process_pending_launches
   node_scan_tasks
   node_flush_reports
+  node_poll_remote_helpers
   local declaration reply
   declaration=$(node_heartbeat_json)
   if reply=$(printf '%s' "$declaration" | node_request --path /v1/heartbeat); then

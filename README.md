@@ -661,8 +661,8 @@ direct links: `Answer: …/questions/<task>?max=1` for questions, `Open: …/tas
 
 **Several instances.** Every installation stays independent: its own bus, tasks and web interface. One installation
 can be the **lead**, which keeps a job queue and the list of nodes; remote jobs are being built in nine rounds:
-[design and implementation plan](docs/multi-instance.md). Rounds 4, 6 and 7 add the lead's HTTP listener, the node
-daemon, remote job CLI commands and lead notifications (rounds 8 and 9 add delegation and web views):
+[design and implementation plan](docs/multi-instance.md). Rounds 4–8 provide the lead's HTTP listener, the node
+daemon, remote job CLI commands, lead notifications and remote delegation (web views remain round 9):
 
 - `LEAD_LISTEN` in `agents.conf` is the lead's Tailscale address, e.g. `100.101.102.103:7780`. Empty (the default)
   means the installation is not a lead and nothing changes. The lead serves that address and `127.0.0.1` on the
@@ -731,7 +731,32 @@ daemon, remote job CLI commands and lead notifications (rounds 8 and 9 add deleg
   - `agent nodes`: lists the nodes registered on the lead, their declared capabilities, free agents, last seen time and online/offline status.
   - Remote submissions use the main clone's repository name, including from a linked worktree, and the current worktree branch. A detached `HEAD` deliberately uses `main`; git lookup failures stop submission with a diagnostic.
   - **Lead notifications**: when a remote job reaches a terminal state (`done`, `failed`, `stopped`), the lead notifies the human requester by writing a summary file into `NOTIFY_DIR` and invoking `NOTIFY_CMD` if configured.
-- **Not yet:** delegation of a team member's step to another machine (round 8); the Jobs and Instances web views (round 9).
+- **Remote delegation** (round 8): a normal agent can call
+  `delegate(request, context, requires=["hw:rp2350"])`. Requirements use the same declared capability syntax as
+  `agent run --need`. If this installation has them all, the ordinary local worker dispatcher handles the request.
+  Otherwise its node daemon submits a worker job to the lead. Set `LEAD_URL` and `INSTANCE_NAME` on the requesting
+  installation and run its node daemon too; the lead can use its own loopback node.
+  Commit and push the requester's branch to `origin` before delegating remotely. The bus captures `HEAD` when
+  the request is made; the daemon fetches that origin branch into a private ref and verifies the captured commit
+  is reachable before submission. An absent commit fails the helper with `NotPushed` and a push instruction.
+  Later requester commits do not change the job's base. Uncommitted files and requester worktree paths are not
+  transferred; put the remote instructions in the request and context.
+- Outgoing delegation lives in the local bus's helper records (`state.json`): optional `requires`, `base_sha`
+  and the frozen `remote_job` submission. Old helper records still load as ordinary local requests. The daemon
+  saves the exact job request before sending it and retries the same job ID through lead outages, without a
+  new timeout. Running agents continue. Missing `LEAD_URL` fails an unsatisfied request with a helper result.
+  Response validation compares the complete frozen request through stdin, so JSON escaping of a valid
+  `65,536`-byte job task does not exceed the shell command argument limit.
+- Terminal delegated jobs return the ordinary `helper_result` bus notice to the requesting agent: actual job
+  state (`done`, `failed`, `stopped`), executing node, pushed branch, optional PR and result head. Failed and stopped
+  jobs are failed helper requests. The requester can use `delegation_status` or `wait_for_message()`; remote notices
+  come from `agentbus`. Delivery retries retain the first posted outcome and suppress a repeated local notice.
+- Delegation events in `logs/agent.jsonl`: `node_helper_submitted`, `node_helper_submit_failed`,
+  `node_helper_get_failed`, `node_helper_reply_invalid`, `node_helper_prepare_failed`,
+  `node_helper_prepare_storage_failed`, `node_remote_helpers_list_failed`, `node_remote_helpers_parse_failed`,
+  `helper_remote_list_failed`, `helper_remote_list_parse_failed`. Submission and query failures retain pending
+  requests; preparation failures return their diagnostic, while storage failures are retried.
+- **Not yet:** the Jobs and Instances web views (round 9).
 
 ## MCP tools available to agents
 
@@ -742,7 +767,7 @@ daemon, remote job CLI commands and lead notifications (rounds 8 and 9 add deleg
 | `notebook_read`, `notebook_append`, `notebook_write_section` | the repository notebook |
 | `checkpoint` | save a resumable work state |
 | `request_investigation`, `investigation_status`, `record_decision` | investigators (not for investigators themselves) |
-| `delegate`, `delegation_status` | worker requests (normal tier) |
+| `delegate`, `delegation_status` | worker requests (normal tier); optional `requires` routes to a capable node |
 | `team_status`, `claim_lead`, `handover_lead` | teams |
 | `quiz_start`, `quiz_answer`, `quiz_results`, `team_exclude` | the qualification quiz |
 | `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item) |
