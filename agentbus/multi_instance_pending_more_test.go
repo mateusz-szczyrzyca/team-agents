@@ -254,7 +254,7 @@ func TestLeadNotifiesOnFinalState(t *testing.T) {
 	if dirErr != nil || len(entries) != 1 {
 		t.Fatalf("expected 1 notification file for done job, got %d (err: %v)", len(entries), dirErr)
 	}
-	content, readErr := os.ReadFile(filepath.Join(notifyDir, entries[0].Name()))
+	content, readErr := os.ReadFile(filepath.Join(notifyDir, filepath.Clean(entries[0].Name()))) //nolint:gosec // G304: notification file is inside t.TempDir()
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
