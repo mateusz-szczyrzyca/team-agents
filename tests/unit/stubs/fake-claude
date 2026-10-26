@@ -13,6 +13,7 @@ Actions:
   questions-text  asks questions only in the final message
   questions-norec writes a questions file without recommendations, STATUS: QUESTIONS
   review-majors   a --verify review result with two major findings, STATUS: DONE
+  big-report      commits a 3500-line report under .agents/reports/ and one small file, STATUS: DONE
   capacity        exits 1: "Selected model is at capacity" (the provider is overloaded)
   team-lead-crash claims the coordinator role, then the CLI fails (exit 1, no STATUS)
   blocked         ends with STATUS: BLOCKED (not a status of the system)
@@ -90,6 +91,16 @@ def claim_one():
     call("board_add", title="the parser", details="write the parser", level="normal")
     call("board_claim", id="B1")
     call("board_progress", id="B1", note="lexer done at abc123; next: the parser")
+if action == "big-report":
+    # a team report of the protocol (.agents/reports/) far over the round limit, plus a small change
+    os.makedirs(".agents/reports", exist_ok=True)
+    with open(".agents/reports/report.md", "w") as f:
+        f.write("".join(f"report line {i}\n" for i in range(3500)))
+    with open("small.txt", "w") as f:
+        f.write("one line\n")
+    subprocess.run(["git", "add", "-A"], check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "a small change and the team report"], check=True)
+    finish("Done.\nSTATUS: DONE")
 if action == "capacity":
     print("Selected model is at capacity. Please try a different model.", file=sys.stderr)
     sys.exit(1)
