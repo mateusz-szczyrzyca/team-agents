@@ -113,7 +113,35 @@ func parseLeadConfig(args []string) (leadConfig, *LeadServeError) {
 
 // leadCancel cancels a job in the lead registry directly under the bus lock.
 func leadCancel(dir, id string) (leadJobView, *LeadCancelError) {
-	return leadJobView{}, nil
+	a := &leadAPI{bus: &Bus{dir: dir}, ttl: 90 * time.Second}
+	job, err := a.cancel(true, id)
+	if err != nil {
+		return leadJobView{}, err
+	}
+	return publicLeadJob(job), nil
+}
+
+// cmdLeadCancel cancels a remote job on the lead.
+func cmdLeadCancel(args []string) {
+	fs := newFlagSet("lead-cancel")
+	dir := fs.String("dir", defaultDir(), "the bus directory")
+	if err := fs.Parse(args); err != nil {
+		exitOn(opErr(LeadCancelNoSuchJob, "%v", err).asError())
+		return
+	}
+	if fs.NArg() != 1 {
+		exitOn(opErr(LeadCancelNoSuchJob, "usage: agentbus lead-cancel [--dir D] <id>").asError())
+		return
+	}
+	id := fs.Arg(0)
+	view, err := leadCancel(*dir, id)
+	if err != nil {
+		exitOn(err.asError())
+		return
+	}
+	if serr := printJSON(view); serr != nil {
+		exitOn(fromStorage(LeadCancelStorage, serr).asError())
+	}
 }
 
 // cmdLead runs `agentbus lead` in the foreground (agent lead runs it under agentlead.service).
