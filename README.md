@@ -662,7 +662,7 @@ direct links: `Answer: …/questions/<task>?max=1` for questions, `Open: …/tas
 **Several instances.** Every installation stays independent: its own bus, tasks and web interface. One installation
 can be the **lead**, which keeps a job queue and the list of nodes; remote jobs are being built in nine rounds:
 [design and implementation plan](docs/multi-instance.md). Rounds 4–8 provide the lead's HTTP listener, the node
-daemon, remote job CLI commands, lead notifications and remote delegation (web views remain round 9):
+daemon, remote job CLI commands, lead notifications and remote delegation. The Jobs and Instances web views (round 9) are described below the list:
 
 - `LEAD_LISTEN` in `agents.conf` is the lead's Tailscale address, e.g. `100.101.102.103:7780`. Empty (the default)
   means the installation is not a lead and nothing changes. The lead serves that address and `127.0.0.1` on the
@@ -756,7 +756,16 @@ daemon, remote job CLI commands, lead notifications and remote delegation (web v
   `node_helper_prepare_storage_failed`, `node_remote_helpers_list_failed`, `node_remote_helpers_parse_failed`,
   `helper_remote_list_failed`, `helper_remote_list_parse_failed`. Submission and query failures retain pending
   requests; preparation failures return their diagnostic, while storage failures are retried.
-- **Not yet:** the Jobs and Instances web views (round 9).
+- **Jobs and Instances views** (round 9), in the web interface only (`/jobs`, `/instances`, served by `agent web`):
+  the lead's remote jobs (state, node, requested agent, branch, PR, result, a link to the node's web interface) and
+  the nodes (capabilities, free agents, last heartbeat, online or offline). Both pages refresh every 5 seconds and
+  read only the local `bus/jobs.json` on the host that serves them. A missing `jobs.json` means empty views. A
+  malformed or unreadable `jobs.json` shows as an error page, never as an empty list. External links (node, task, PR) leave the
+  htmx navigation so they open normally.
+- **Node offline threshold for the web views**: `agent web` passes `NODE_TTL_SEC` to `agentlive web --node-ttl`.
+  The value uses the same syntax as the lead: a positive duration in seconds, e.g. `90`, `0.5` or `1m30`. Without
+  it the views use 90 seconds. Zero, negative or unparsable values stop `agentlive web` with an error.
+- **Manual checks** on a real lead and node are listed in `docs/multi-instance.md`; they are not run by `make gate`.
 
 ## MCP tools available to agents
 
