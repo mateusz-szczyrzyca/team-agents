@@ -115,9 +115,16 @@ func runWebCmd(args []string) {
 	fs.StringVar(&cfg.tailscale, "tailscale", "tailscale", "the tailscale CLI (for `tailscale whois`)")
 	fs.IntVar(&cfg.queueMax, "queue-max", 3, "investigation queue limit")
 	fs.IntVar(&InvSlots, "inv-slots", 1, "number of investigators")
+	nodeTTL := webNodeTTLFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
+	ttl, ttlErr := parseWebNodeTTL(*nodeTTL)
+	if ttlErr != nil {
+		fmt.Fprintln(os.Stderr, "agentlive web:", ttlErr)
+		os.Exit(2)
+	}
+	cfg.nodeTTL = ttl
 	if cfg.busDir == "" {
 		cfg.busDir = filepath.Join(cfg.home, "bus")
 	}
@@ -195,6 +202,9 @@ func isLoopbackHost(host string) bool {
 
 // newWebServer parses the templates and prepares the static files.
 func newWebServer(cfg webConfig) (*webServer, *OpError[StartCause]) {
+	if cfg.nodeTTL == 0 {
+		cfg.nodeTTL = 90 * time.Second
+	}
 	s := &webServer{cfg: cfg, pages: map[string]*template.Template{}}
 	host, err := os.Hostname()
 	if err != nil {
@@ -257,6 +267,8 @@ func (s *webServer) handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeText(w, "ok") })
 	mux.HandleFunc("GET /{$}", s.viewDashboard)
 	mux.HandleFunc("GET /agents", s.viewAgents)
+	mux.HandleFunc("GET /jobs", s.viewJobs)
+	mux.HandleFunc("GET /instances", s.viewInstances)
 	mux.HandleFunc("GET /task/{id}", s.viewTask)
 	mux.HandleFunc("GET /teams", s.viewTeams)
 	mux.HandleFunc("GET /team/{id}", s.viewTeam)
