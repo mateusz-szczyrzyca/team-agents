@@ -98,7 +98,7 @@ func prepareRemoteHelper(b *Bus, id int64, instance string) (JobRequest, *Helper
 
 // verifyRemoteHelperPush fetches only the requester's branch into an isolated ref, checking real remote ancestry.
 func verifyRemoteHelperPush(h Helper) *HelperRemotePrepareError {
-	var nonce [16]byte // private refs avoid FETCH_HEAD and shared tracking-ref races
+	var nonce [16]byte // private refs avoid reliance on FETCH_HEAD and shared tracking-ref races
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return fromStorage(HelperRemotePrepareStorage, storageErr(err, "cannot allocate push verification ref"))
 	}

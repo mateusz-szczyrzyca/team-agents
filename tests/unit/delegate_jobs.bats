@@ -135,7 +135,7 @@ complete_job() {
   destination_cycle
   local tid
   tid=$(jq -r '.jobs[] | .task_id' "$NODE/agents/bus/node-jobs.json")
-  wait_grep '^STATUS=done$' "$NODE/agents/tasks/$tid/meta.env" 20
+  ( AGENTS_HOME="$NODE/agents" wait_status "$tid" "done" 20 )
   destination_cycle
   source_cycle
   [ "$(helper | jq -r .status)" = "done" ]
