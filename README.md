@@ -1,5 +1,7 @@
 # team-agents
 
+![Web interface: the dashboard with running agents](docs/images/ta-web-interface.jpg)
+
 Run a crew of headless LLM coding agents on your own Linux machine and let them work on your repositories
 in parallel — alone or as teams — while you watch, answer their questions and review their pull requests.
 
