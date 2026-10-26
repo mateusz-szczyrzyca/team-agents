@@ -216,8 +216,7 @@ complete_job() {
   source_cycle
   [ "$(jobs | jq length)" = 1 ]
   [ "$(jobs | jq -r '.[0].Request.Task | length')" = 65536 ] # request + "\n\nContext:\n" + context is the lead's maximum
-  complete_job
-  read_result | grep -q 'RESULT H1 \[done\]'
+  complete_job # also checks the terminal GET and the delivered RESULT message; read_messages consumes it
 }
 
 @test "requester commits after delegation cannot change the submitted base" {

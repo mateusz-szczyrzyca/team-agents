@@ -3676,7 +3676,8 @@ node_start_ack() {
   local jid=$1 report reply rc
   report=$(jq -c --arg id "$jid" '.jobs[$id].report' <<< "$NODE_STATE")
   if reply=$(printf '%s' "$report" | node_request --path "/v1/jobs/$jid/state"); then
-    if jq -e --argjson report "$report" '.Request.ID == $report.ID and .Assignment == $report.Assignment and .State == "running" and .TaskID == $report.TaskID and .Branch == $report.Branch' <<< "$reply" >/dev/null; then
+    # Documents travel on stdin: a jq --argjson value is a single argv string, and a report can hold a 64 KiB result.
+    if printf '%s\n%s\n' "$reply" "$report" | jq -e -s '.[0] as $r | .[1] as $p | $r.Request.ID == $p.ID and $r.Assignment == $p.Assignment and $r.State == "running" and $r.TaskID == $p.TaskID and $r.Branch == $p.Branch' >/dev/null; then
       NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].start_acked=true | .jobs[$id].pending=false' <<< "$NODE_STATE")
       node_save
     else log_warn node_reply_invalid "job=$jid"; fi
@@ -3863,7 +3864,7 @@ node_flush_reports() {
   ids=$(jq -r '.jobs | to_entries[] | select(.value.pending and (.value.obsolete|not) and (.value.launched or .value.task_id == "")) | .key' <<< "$NODE_STATE")
   for jid in $ids; do
     report=$(jq -c --arg id "$jid" '.jobs[$id].report' <<< "$NODE_STATE")
-    payload=$(jq -c --argjson report "$report" '.Reports=[$report]' <<< "$declaration")
+    payload=$(printf '%s\n%s\n' "$declaration" "$report" | jq -c -s '. as [$d, $r] | $d | .Reports=[$r]')
     # Truncate only when constructing a transition, never after an attempted send: retries stay identical.
     if (($(printf '%s' "$payload" | wc -c) > 262144)); then die "job transition history exceeds heartbeat limit"; fi
     if reply=$(printf '%s' "$payload" | node_request --path /v1/heartbeat); then
@@ -3921,8 +3922,9 @@ node_handle_reply() {
   [[ $existing != "$assignment" ]] || return 0
   at=$(jq -r '.History[-1].At // empty' <<< "$job")
   if agent=$(node_select_agent "$(jq -r .Request.Selector <<< "$job")"); then :; else agent=''; fi
-  NODE_STATE=$(jq -c --arg id "$jid" --argjson assignment "$assignment" --argjson request "$(jq -c .Request <<< "$job")" --arg agent "$agent" --arg at "$at" \
-    '.jobs[$id]={assignment:$assignment,request:$request,agent:$agent,assigned_at:$at,task_id:"",branch:"",launched:false,start_acked:false,obsolete:false,pending:false,preparing:true,cursor:0}' <<< "$NODE_STATE"); node_save
+  # The job and the state are both read from stdin (see node_start_ack): the request can be 64 KiB of task text.
+  NODE_STATE=$(printf '%s\n%s\n' "$NODE_STATE" "$job" | jq -c -s --arg id "$jid" --argjson assignment "$assignment" --arg agent "$agent" --arg at "$at" \
+    '. as [$st, $j] | $st | .jobs[$id]={assignment:$assignment,request:$j.Request,agent:$agent,assigned_at:$at,task_id:"",branch:"",launched:false,start_acked:false,obsolete:false,pending:false,preparing:true,cursor:0}'); node_save
   if [[ -z $agent ]]; then node_transition "$jid" failed '' 'no free local agent for assignment'; return; fi
   NODE_PREPARE_ERROR=''
   if prepare_job_task "$jid" "$agent" "$(jq -r .Request.Repository <<< "$job")" "$(jq -r .Request.BaseRef <<< "$job")" "$(jq -r '.Request.BaseSHA // ""' <<< "$job")" "$(jq -r .Request.Task <<< "$job")" "$assignment"; then
@@ -3974,7 +3976,7 @@ node_poll_remote_helpers() {
 
     if [[ $hstatus == "queued" ]]; then
       if reply=$(printf '%s' "$req_json" | node_request --path /v1/jobs); then
-        if ! jq -e --argjson req "$req_json" '.Request == $req and (.State|type == "string")' <<< "$reply" >/dev/null; then
+        if ! printf '%s\n%s\n' "$reply" "$req_json" | jq -e -s '.[0].Request == .[1] and (.[0].State|type == "string")' >/dev/null; then
           log_warn node_helper_reply_invalid "helper=$hid" "job=$job_id"
           continue
         fi
@@ -3988,7 +3990,7 @@ node_poll_remote_helpers() {
     fi
 
     if reply=$(node_request --get --path "/v1/jobs/$job_id" < /dev/null); then
-      if ! jq -e --argjson req "$req_json" '.Request == $req and (.State|type == "string")' <<< "$reply" >/dev/null; then
+      if ! printf '%s\n%s\n' "$reply" "$req_json" | jq -e -s '.[0].Request == .[1] and (.[0].State|type == "string")' >/dev/null; then
         log_warn node_helper_reply_invalid "helper=$hid" "job=$job_id"
         continue
       fi
