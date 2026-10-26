@@ -204,6 +204,9 @@ NODE_TTL_SEC="${NODE_TTL_SEC:-90}"
 # the files matched by ROUND_EXCLUDE — has a soft and a hard limit; ROUND_MAX_LINES_REPO overrides the hard limit
 # per repository (0 = no limit). Over it, a finished round goes back to be split, at most ROUND_BOUNCES times.
 ROUND_SOFT_LINES="${ROUND_SOFT_LINES:-2000}"
+# The team reports the protocol writes into the worktree are not code to review: never counted, whatever
+# ROUND_EXCLUDE says (agents.conf often sets ROUND_EXCLUDE itself).
+ROUND_ALWAYS_EXCLUDE=".agents/reports/"
 # --verify: a review with critical or major findings wakes the team with them, at most VERIFY_MAX_FIX_PASSES
 # times; then the human (AGENT_HUMAN_GITHUB, default: the owner of the GitHub repository) is mentioned on the PR.
 VERIFY_MAX_FIX_PASSES="${VERIFY_MAX_FIX_PASSES:-2}"
@@ -709,7 +712,7 @@ round_check() { # id → what keeps a finished round from closing, one "- …" l
   local id=$1 limit size lines out=""
   limit=$(round_limit "$(task_field "$id" REPO_NAME)")
   if ((limit > 0)); then
-    if size=$(bus round-size --repo "$(task_field "$id" WORKTREE)" --base "$(round_base_ref "$id")" --exclude "$ROUND_EXCLUDE" --json); then
+    if size=$(bus round-size --repo "$(task_field "$id" WORKTREE)" --base "$(round_base_ref "$id")" --exclude "$ROUND_EXCLUDE $ROUND_ALWAYS_EXCLUDE" --json); then
       lines=$(jq -r .lines <<< "$size")
       if ((lines > limit)); then
         out+="- The change has $lines lines (+$(jq -r .added <<< "$size") -$(jq -r .deleted <<< "$size")): over the round limit of $limit (aim for $(round_soft "$(task_field "$id" REPO_NAME)"))."$'\n'
@@ -744,7 +747,7 @@ cmd_round_size() { # <task> — the size of a task's change and its round limits
   local id repo limit
   id=$(resolve_id "${1:?usage: agent round-size <task>}")
   repo=$(task_field "$id" REPO_NAME); limit=$(round_limit "$repo")
-  bus round-size --repo "$(task_field "$id" WORKTREE)" --base "$(round_base_ref "$id")" --exclude "$ROUND_EXCLUDE"
+  bus round-size --repo "$(task_field "$id" WORKTREE)" --base "$(round_base_ref "$id")" --exclude "$ROUND_EXCLUDE $ROUND_ALWAYS_EXCLUDE"
   if ((limit > 0)); then
     echo "limits: soft $(round_soft "$repo"), hard limit $limit lines (excluded from counting: $ROUND_EXCLUDE)"
   else
