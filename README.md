@@ -192,6 +192,23 @@ passes with critical or major problems still found, the team is not woken again:
 PR (`AGENT_HUMAN_GITHUB`, default the GitHub owner of the repository) and notified. The review gives, for each
 problem, the simplest fix that resolves it.
 
+### When a member drops out
+
+A member can drop out of a team's work: its run fails, it is paused for long (an exhausted quota), or its runner
+dies. Its work stays outside its head — board items with progress notes (`board_progress`, after every push),
+its pushed branch, the checkpoints — so the others finish it:
+
+- **A failed run or a dead runner:** its board items go back to the board, with its progress note and who held
+  it (`previously:`), and the coordinator and the normal members get one message: who is out, why, which items,
+  its branch and last commit. Whoever takes an item over continues from that branch unless the note says the
+  approach failed.
+- **A pause longer than `AGENT_RELEASE_PAUSE_MIN`** (20 min): its items go back the same way; when it resumes it
+  hears which ones and takes new work from the board. A shorter pause (an HTTP 429) keeps its items.
+- **A dead runner** (a reboot, a killed process) is found by `agent-supervise.timer` (every 3 minutes, installed
+  by `install.sh`), which ends the task and tells its team.
+- **An unknown STATUS** (e.g. `BLOCKED`) goes back to the agent once with the statuses that exist — blocked by
+  someone else's work is `SLEEPING`; a second one fails the run.
+
 ### Checkpoints and resuming
 
 Agents commit and push in small steps and call `checkpoint(summary, next_steps)` after every stage. If you stop
@@ -449,6 +466,7 @@ Then:
 | `AGENT_HANG_MIN`, `AGENT_HANG_STRIKES` | watchdog (default 30 min, 3 strikes) |
 | `AGENT_IDLE_RUN_SEC`, `AGENT_WAKE_LOOP_MAX`, `AGENT_WAKE_RATE_MAX`, `AGENT_WAKE_LOOP_PAUSE_MIN` | wake-loop guard (default 120 s, 4 idle runs, 30 runs / 10 min, 15 min pause) |
 | `AGENT_QUOTA_PAUSE_MIN` | pause after an exhausted quota when the CLI does not say when it resets (default 30 min) |
+| `AGENT_RELEASE_PAUSE_MIN`, `AGENT_SUPERVISE_GRACE_SEC` | a team member paused longer than this gives its board items back (default 20 min); how young a run may be before `agent _supervise` checks its unit (default 120 s) |
 | `AGENT_RATE_LIMIT_PAUSE_MIN`, `AGENT_LIMIT_TAIL_LINES` | pause after a rate limit (HTTP 429) without a time (default 5 min); how many last lines of stderr are read for provider limits (default 30) |
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
 | `VERIFY_MAX_FIX_PASSES`, `AGENT_HUMAN_GITHUB` | how many times a `--verify` review wakes the team to fix critical or major problems (default 2); who is then mentioned on the PR (default: the repository's GitHub owner) |
