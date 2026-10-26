@@ -9,15 +9,23 @@
 load helpers
 
 teardown() {
-  if [[ -f "$HOME/lead.pid" ]]; then
-    local lead_pid
-    lead_pid=$(cat "$HOME/lead.pid")
-    if kill -0 "$lead_pid" 2>/dev/null; then
-      kill -TERM "$lead_pid" 2>/dev/null || true
-      wait "$lead_pid" 2>/dev/null || true
+  [[ -f "$HOME/lead.pid" ]] || return 0
+  local lead_pid rc=0
+  lead_pid=$(cat "$HOME/lead.pid")
+  # A process already reaped by the test is an expected non-running answer.
+  if kill -0 "$lead_pid" 2> "$HOME/lead-cleanup.log"; then
+    if ! kill -TERM "$lead_pid" 2>> "$HOME/lead-cleanup.log"; then
+      cat "$HOME/lead-cleanup.log" >&2
+      return 1
     fi
-    rm -f "$HOME/lead.pid"
+    wait "$lead_pid" || rc=$?
+    # 143 is the status of a process stopped by SIGTERM; anything else is a failed cleanup.
+    if [[ $rc -ne 0 && $rc -ne 143 ]]; then
+      cat "$HOME/lead.log" >&2
+      return 1
+    fi
   fi
+  rm -f "$HOME/lead.pid"
 }
 
 start_test_lead() {

@@ -219,7 +219,7 @@ The lead keeps its jobs in `jobs.json` in the bus directory, separate from
 - Counters: the sequence and assignment high-water marks survive job removal,
   so identities are never reused.
 - Used by the lead's HTTP listener (`agentbus lead`, round 4). The node daemon reaches it only
-  over HTTP (round 6); the job CLI commands (round 7) and delegation (round 8) are not implemented yet.
+  over HTTP (round 6); delegation (round 8) is not implemented yet.
 
 ## HTTP and authorization
 
