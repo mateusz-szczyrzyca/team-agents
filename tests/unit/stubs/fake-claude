@@ -131,6 +131,29 @@ if action == "commit-push":
     subprocess.run(["git", "commit", "-q", "-m", "Add hello.txt\n\n" + trailers], check=True)
     subprocess.run(["git", "push", "-q", "-u", "origin", "HEAD"], check=True)
     finish("STATUS: DONE")
+if action.startswith(("round8-delegate:", "round8-unpushed:", "round8-advance:")):
+    # New fixture action: capture a real commit, optionally push it, and submit a capabilities request.
+    kind, capability = action.split(":", 1)
+    trailers = re.search(r"exactly these trailers, after a blank line:\n\n```\n(.*?)\n```", prompt, re.S).group(1)
+    with open("delegated.txt", "w") as f:
+        f.write("captured base\n")
+    subprocess.run(["git", "add", "delegated.txt"], check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "Capture delegation base\n\n" + trailers], check=True)
+    captured = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    with open(os.path.join(home, "captured-sha.txt"), "w") as f:
+        f.write(captured)
+    if kind != "round8-unpushed":
+        subprocess.run(["git", "push", "-q", "-u", "origin", "HEAD"], check=True)
+    answer = call("delegate", request="commit and push hello.txt", context="verify this captured base", requires=[capability])
+    with open(os.path.join(home, "delegation.txt"), "w") as f:
+        f.write(answer)
+    if kind == "round8-advance":
+        with open("advance.txt", "w") as f:
+            f.write("later commit\n")
+        subprocess.run(["git", "add", "advance.txt"], check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "Advance requester\n\n" + trailers], check=True)
+        subprocess.run(["git", "push", "-q", "origin", "HEAD"], check=True)
+    finish("STATUS: DONE")
 def commit_file(name, text, message):
     trailers = re.search(r"exactly these trailers, after a blank line:\n\n```\n(.*?)\n```", prompt, re.S).group(1)
     open(name, "w").write(text)
