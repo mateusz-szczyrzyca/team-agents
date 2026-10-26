@@ -1,0 +1,14 @@
+{{define "content"}}
+<p class="dim">Nodes registered on this lead. Free agents reflect the last heartbeat. Refreshes every 5 s.</p>
+<div id="remote-instances" hx-get="/instances" hx-trigger="every 5s" hx-select="#remote-instances" hx-target="this" hx-swap="outerHTML">
+<div class="scroll"><table>
+<thead><tr><th>Instance</th><th>Status</th><th>Capabilities</th><th>Free agents</th><th>Last heartbeat</th></tr></thead>
+<tbody>{{range .Data}}<tr>
+<td>{{if .URL}}<a href="{{.URL}}" hx-boost="false">{{.Name}}</a>{{else}}{{.Name}}{{end}}</td>
+<td>{{if .Offline}}<span class="st-stopped">offline</span>{{else}}<span class="st-done">online</span>{{end}}</td>
+<td>{{join .Heartbeat.Capabilities ", "}}</td>
+<td>{{range .Heartbeat.FreeAgents}}<div>{{.Name}} <span class="dim">{{.Tier}}</span></div>{{else}}<span class="dim">none</span>{{end}}</td>
+<td class="num">{{if .Seen}}{{.Seen}}{{else}}unknown{{end}}</td>
+</tr>{{else}}<tr><td colspan="5" class="dim">No nodes registered on this installation.</td></tr>{{end}}</tbody>
+</table></div></div>
+{{end}}
