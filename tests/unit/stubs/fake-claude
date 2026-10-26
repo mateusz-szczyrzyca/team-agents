@@ -131,6 +131,36 @@ if action == "commit-push":
     subprocess.run(["git", "commit", "-q", "-m", "Add hello.txt\n\n" + trailers], check=True)
     subprocess.run(["git", "push", "-q", "-u", "origin", "HEAD"], check=True)
     finish("STATUS: DONE")
+if action.startswith(("push-delegate:", "push-delegate-advance:", "commit-delegate:")):
+    # Commits hello.txt (pushed first by push-delegate*), then calls delegate with the listed capabilities; the tool
+    # text is written to delegate-<agent>.txt. push-delegate-advance then commits and pushes advance.txt, so the
+    # requester's HEAD moves on after the delegate call.
+    kind, caps = action.split(":", 1)
+    trailers = re.search(r"exactly these trailers, after a blank line:\n\n```\n(.*?)\n```", prompt, re.S).group(1)
+    open("hello.txt", "w").write("hello\n")
+    subprocess.run(["git", "add", "hello.txt"], check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "Add hello.txt\n\n" + trailers], check=True)
+    if kind.startswith("push-delegate"):
+        subprocess.run(["git", "push", "-q", "-u", "origin", "HEAD"], check=True)
+    text = call("delegate", request="add hello.txt", context="remote", requires=caps.split(","))
+    open(os.path.join(home, f"delegate-{me}.txt"), "w").write(text)
+    if kind == "push-delegate-advance":
+        open("advance.txt", "w").write("advance\n")
+        subprocess.run(["git", "add", "advance.txt"], check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "Add advance.txt\n\n" + trailers], check=True)
+        subprocess.run(["git", "push", "-q", "origin", "HEAD"], check=True)
+    # The requesting member stays alive until a message reaches it (the helper result), and keeps what it got.
+    delivered = call("wait_for_message", timeout_seconds=300)
+    open(os.path.join(home, f"delivered-{me}.txt"), "w").write(delivered)
+    finish("STATUS: DONE")
+if action == "commit-push-other":
+    # Commits other.txt (not hello.txt, which a delegating member's base already contains) and pushes HEAD.
+    trailers = re.search(r"exactly these trailers, after a blank line:\n\n```\n(.*?)\n```", prompt, re.S).group(1)
+    open("other.txt", "w").write("other\n")
+    subprocess.run(["git", "add", "other.txt"], check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "Add other.txt\n\n" + trailers], check=True)
+    subprocess.run(["git", "push", "-q", "-u", "origin", "HEAD"], check=True)
+    finish("STATUS: DONE")
 def commit_file(name, text, message):
     trailers = re.search(r"exactly these trailers, after a blank line:\n\n```\n(.*?)\n```", prompt, re.S).group(1)
     open(name, "w").write(text)
