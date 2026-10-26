@@ -10,8 +10,10 @@ import (
 
 // leadAPI adapts authenticated operations to the durable registry without touching ordinary bus state.
 type leadAPI struct {
-	bus *Bus          // registry storage and shared flock
-	ttl time.Duration // maximum node silence before unstarted assignments expire
+	bus       *Bus          // registry storage and shared flock
+	ttl       time.Duration // maximum node silence before unstarted assignments expire
+	notifyDir string        // optional directory for completion notification files to human requesters
+	notifyCmd string        // optional delivery command run with the notification file path
 }
 
 // leadHeartbeatBody adds pending reports to the node's current declaration.
@@ -66,8 +68,15 @@ type leadNodeView struct {
 }
 
 // newLeadHandler constructs the HTTP boundary shared by configured listeners.
-func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Duration) http.Handler {
-	a := &leadAPI{bus: bus, ttl: ttl}
+func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Duration, notify ...string) http.Handler {
+	var notifyDir, notifyCmd string
+	if len(notify) > 0 {
+		notifyDir = notify[0]
+	}
+	if len(notify) > 1 {
+		notifyCmd = notify[1]
+	}
+	a := &leadAPI{bus: bus, ttl: ttl, notifyDir: notifyDir, notifyCmd: notifyCmd}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/jobs", func(w http.ResponseWriter, r *http.Request) {
 		serveLead(w, r, localNode, allowed, LeadSubmitUnauthorized, func(peer leadIdentity) (any, *LeadSubmitError) {

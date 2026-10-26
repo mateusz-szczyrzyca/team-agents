@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -205,7 +207,107 @@ func TestLeadHTTPLoopbackRangeRequiresIdentity(t *testing.T) {
 
 // TestLeadNotifiesOnFinalState: the lead notifies when a job becomes done, failed or stopped.
 func TestLeadNotifiesOnFinalState(t *testing.T) {
-	t.Skip("pending: lead notifications on done, failed and stopped, round 7")
+	b := newBus(t)
+	notifyDir := t.TempDir()
+	a := &leadAPI{bus: b, ttl: time.Minute, notifyDir: notifyDir}
+
+	// 1. Submit and run a job to done.
+	req1 := regRequest("job-done-1")
+	req1.Repository = "test-repo"
+	job1, err := a.submit("node-a", true, req1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beat := leadHeartbeatBody{NodeHeartbeat: regBeat("node-a", nil, FreeAgent{Name: "alpha", Tier: TierNormal})}
+	assigned, beatErr := a.heartbeat("node-a", beat)
+	if beatErr != nil || assigned == nil {
+		t.Fatalf("assignment failed: %v", beatErr)
+	}
+
+	at := Timestamp{time.Now().UTC()}
+	repRunning := JobReport{ID: job1.Request.ID, Assignment: assigned.Assignment, State: JobRunning, Node: "node-a", Branch: "agents/alpha/job", At: at}
+	if _, err := a.report("node-a", job1.Request.ID, repRunning); err != nil {
+		t.Fatal(err)
+	}
+
+	// Intermediate running report must not trigger notification.
+	entries, rerr := os.ReadDir(notifyDir)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected 0 notifications for running job, got %d", len(entries))
+	}
+
+	// Report done.
+	repDone := repRunning
+	repDone.State = JobDone
+	repDone.Result = "all tasks finished successfully"
+	repDone.PRURL = "https://example.com/pr/1"
+	repDone.At = Timestamp{at.Add(time.Second)}
+	if _, err := a.report("node-a", job1.Request.ID, repDone); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify notification file for done job.
+	entries, dirErr := os.ReadDir(notifyDir)
+	if dirErr != nil || len(entries) != 1 {
+		t.Fatalf("expected 1 notification file for done job, got %d (err: %v)", len(entries), dirErr)
+	}
+	content, readErr := os.ReadFile(filepath.Join(notifyDir, entries[0].Name()))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	text := string(content)
+	for _, expected := range []string{"test-repo", "job-done-1", "node-a", "agents/alpha/job", "done", "all tasks finished successfully", "https://example.com/pr/1"} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("notification missing %q:\n%s", expected, text)
+		}
+	}
+
+	// Duplicate terminal report must not write an additional notification.
+	if _, err := a.report("node-a", job1.Request.ID, repDone); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ = os.ReadDir(notifyDir)
+	if len(entries) != 1 {
+		t.Fatalf("duplicate terminal report created extra notification: %d files", len(entries))
+	}
+
+	// 2. Job failing.
+	req2 := regRequest("job-failed-1")
+	req2.Repository = "test-repo"
+	job2, err := a.submit("node-a", true, req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assigned2, beatErr := a.heartbeat("node-a", beat)
+	if beatErr != nil || assigned2 == nil {
+		t.Fatalf("assignment 2 failed: %v", beatErr)
+	}
+	repFailed := JobReport{ID: job2.Request.ID, Assignment: assigned2.Assignment, State: JobFailed, Node: "node-a", Result: "build error: syntax", At: Timestamp{at.Add(2 * time.Second)}}
+	if _, err := a.report("node-a", job2.Request.ID, repFailed); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ = os.ReadDir(notifyDir)
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 notification files after failure, got %d", len(entries))
+	}
+
+	// 3. Job stopped while queued.
+	req3 := regRequest("job-stopped-1")
+	req3.Repository = "test-repo"
+	job3, err := a.submit("node-a", true, req3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.cancel(true, job3.Request.ID); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ = os.ReadDir(notifyDir)
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 notification files after cancel, got %d", len(entries))
+	}
 }
 
 // TestLeadRegistryConcurrentHeartbeatsRace: concurrent heartbeats and submits keep the registry consistent under -race.
