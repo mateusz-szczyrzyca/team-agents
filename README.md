@@ -700,9 +700,10 @@ daemon, remote job CLI commands and lead notifications (rounds 8 and 9 add deleg
 - **Remote job commands and lead notifications** (round 7):
   - `agent run --need <capability>[,…] <agent|normal|worker> "task"`: submits a remote job requiring the specified capabilities to the lead queue instead of launching a local task.
   - `agent run --on <instance> <agent> "task"`: submits a remote job pinned to a specific instance name.
-  - `agent jobs [<id>]`: lists remote jobs on the lead (on a node: its own jobs). Shows obstacle diagnostics (e.g. `no node with hw:rp2350`, `no free normal agent`) when a job stays queued. Given an ID, displays full details including history, base ref, branch, PR URL and result.
+  - `agent jobs [<id>]`: lists remote jobs on the lead (on a node: its own jobs). Shows obstacle diagnostics (e.g. `no node with hw:rp2350`, `no free normal agent`) when a job stays queued. Given an ID, displays repository, base ref, selector, node, branch, PR URL, task and result.
   - `agent jobs --cancel <id>`: cancels a job on the lead (unstarted jobs stop immediately; started jobs request a stop from the node). Allowed only on the lead.
   - `agent nodes`: lists the nodes registered on the lead, their declared capabilities, free agents, last seen time and online/offline status.
+  - Remote submissions use the main clone's repository name, including from a linked worktree, and the current worktree branch. A detached `HEAD` deliberately uses `main`; git lookup failures stop submission with a diagnostic.
   - **Lead notifications**: when a remote job reaches a terminal state (`done`, `failed`, `stopped`), the lead notifies the human requester by writing a summary file into `NOTIFY_DIR` and invoking `NOTIFY_CMD` if configured.
 - **Not yet:** delegation of a team member's step to another machine (round 8); the Jobs and Instances web views (round 9).
 
