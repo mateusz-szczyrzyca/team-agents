@@ -68,6 +68,7 @@ type taskRow struct {
 	Team        string // team ID ("" for a solo task)
 	TeamShort   string // team ID without the "-team" suffix
 	Lead        bool   // the task's agent coordinates its team
+	JobMarker   string // remote job marker ("job <id> from <lead>")
 	Stage       string // set_status text and the "for <agent>" of investigations
 	Last        string // the latest activity (active tasks) or the final summary
 	LastIcon    string // the icon of the latest activity
@@ -115,7 +116,7 @@ func finishedAt(t *Task) time.Time {
 }
 
 func makeRow(snap *Snapshot, t *Task) taskRow {
-	r := taskRow{ID: t.ID, Name: t.Label(), Status: t.Status, Repo: t.Repo, Team: t.Team, TeamShort: strings.TrimSuffix(t.Team, "-team")}
+	r := taskRow{ID: t.ID, Name: t.Label(), Status: t.Status, Repo: t.Repo, Team: t.Team, TeamShort: strings.TrimSuffix(t.Team, "-team"), JobMarker: t.JobMarker()}
 	r.StatusLabel, _ = statusStyle(t.Status)
 	r.StatusClass = statusClass(t.Status)
 	r.Running = t.Status == "running" || t.Status == "starting"

@@ -749,8 +749,3 @@ func TestDelegateResultReturnsHelperMessage(t *testing.T) {
 		t.Fatalf("wrong helper result: %+v", msgs[0])
 	}
 }
-
-// TestWebJobsAndInstancesViews: the lead's web interface shows jobs and instances; the node marks job tasks.
-func TestWebJobsAndInstancesViews(t *testing.T) {
-	t.Skip("pending: Jobs and Instances views, job marker on a node task, round 9")
-}

@@ -628,3 +628,53 @@ func TestPausedText(t *testing.T) {
 		}
 	}
 }
+
+// TestWebTaskJobMarker: on a node, a task started for a job shows "job <id> from <lead>" in the task list and task view.
+func TestWebTaskJobMarker(t *testing.T) {
+	home := fixture(t)
+	// Task with explicit JOB_ID and JOB_LEAD
+	t1Dir := filepath.Join(home, "tasks", "T-job1")
+	writeFile(t, filepath.Join(t1Dir, "meta.env"),
+		"ID=T-job1\nTYPE=gemini\nREPO_NAME=repo\nBRANCH=agents/job1\nAGENT=worker1\nSTATUS=running\nRUN=1\nCREATED=2026-10-23T08:00:00+02:00\nJOB_ID=job-99\nJOB_LEAD=lead-server\n")
+	writeFile(t, filepath.Join(t1Dir, "activity.jsonl"), `{"ts":"2026-10-23 08:01:00","k":"cmd","t":"make test"}`+"\n")
+
+	// Task with JOB_ID and default lead (JOB_LEAD omitted)
+	t2Dir := filepath.Join(home, "tasks", "T-job2")
+	writeFile(t, filepath.Join(t2Dir, "meta.env"),
+		"ID=T-job2\nTYPE=gemini\nREPO_NAME=repo\nBRANCH=agents/job2\nAGENT=worker2\nSTATUS=running\nRUN=1\nCREATED=2026-10-23T08:00:00+02:00\nJOB_ID=job-100\n")
+	writeFile(t, filepath.Join(t2Dir, "activity.jsonl"), `{"ts":"2026-10-23 08:01:00","k":"cmd","t":"make test"}`+"\n")
+
+	_, ts := testServer(t, home)
+
+	// 1. Dashboard task list (GET /)
+	status, body := get(t, ts, "/")
+	if status != http.StatusOK {
+		t.Fatalf("dashboard status = %d", status)
+	}
+	marker1 := "job job-99 from lead-server"
+	if !strings.Contains(body, marker1) {
+		t.Fatalf("dashboard task list missing marker %q:\n%s", marker1, body)
+	}
+	marker2 := "job job-100 from lead"
+	if !strings.Contains(body, marker2) {
+		t.Fatalf("dashboard task list missing default marker %q:\n%s", marker2, body)
+	}
+
+	// 2. Task view (GET /task/T-job1)
+	status, body = get(t, ts, "/task/T-job1")
+	if status != http.StatusOK {
+		t.Fatalf("task view status = %d", status)
+	}
+	if !strings.Contains(body, marker1) {
+		t.Fatalf("task view missing marker %q:\n%s", marker1, body)
+	}
+
+	// 3. Task view (GET /task/T-job2)
+	status, body = get(t, ts, "/task/T-job2")
+	if status != http.StatusOK {
+		t.Fatalf("task view status = %d", status)
+	}
+	if !strings.Contains(body, marker2) {
+		t.Fatalf("task view missing marker %q:\n%s", marker2, body)
+	}
+}

@@ -3,7 +3,7 @@
 <div class="task-meta">
   <p class="task-head" id="task-head">{{template "task-head" .Row}}{{if .Paused}} · {{.Paused}}{{end}}</p>
   <p class="dim">{{.T.ID}} · {{.T.Type}}{{if .T.Model}} {{.T.Model}}{{end}} · {{.T.Repo}} · <code>{{.T.Branch}}</code> · run {{.T.Run}}{{if .T.Round}} · question round {{.T.Round}}{{end}}
-  {{if .T.Team}} · <a href="/team/{{.T.Team}}">team {{.Row.TeamShort}}</a>{{end}}{{if .T.ParentTask}} · for <a href="/task/{{.T.ParentTask}}">{{.T.ParentTask}}</a>{{end}}</p>
+  {{if .T.Team}} · <a href="/team/{{.T.Team}}">team {{.Row.TeamShort}}</a>{{end}}{{if .T.ParentTask}} · for <a href="/task/{{.T.ParentTask}}">{{.T.ParentTask}}</a>{{end}}{{if .T.JobMarker}} · <span class="tag">{{.T.JobMarker}}</span>{{end}}</p>
 </div>
 <nav class="tabs" aria-label="Sections">{{$cur := .Tab}}{{$id := .T.ID}}{{range .Tabs}}<a href="/task/{{$id}}?tab={{.Key}}"{{if eq .Key $cur}} aria-current="page"{{end}}>{{.Value}}</a>{{end}}</nav>
 {{if eq .Tab "activity"}}

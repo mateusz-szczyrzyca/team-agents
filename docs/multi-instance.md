@@ -6,7 +6,7 @@ authenticated lead HTTP service, allow-listed task checkout preparation,
 the node daemon (`agent node`), lead completion notifications, and the
 remote job CLI commands (`agent run --need/--on`, `agent jobs`, `agent nodes`,
 `agent jobs --cancel`), plus remote delegation and local helper-result delivery.
-Web views remain round 9.** The sections below
+The Jobs and Instances web views and the node job marker are round 9 (see "User interface").** The sections below
 describe the full target design; current HTTP limitations are identified explicitly.
 
 ## Boundaries
@@ -401,3 +401,25 @@ checkout failure, unknown repositories and delegated results. The final manual
 checklist covers real tailnet capability jobs, delegated work, node offline/back
 and lead restart during a job. The human runs that checklist; automated tests
 do not claim it was executed.
+
+### Manual checklist (human, real tailnet)
+
+Needs one lead and one Linux node, both on the tailnet, with `LEAD_NODES`, `INSTANCE_NAME`,
+`INSTANCE_CAPABILITIES` and `NODE_REPOS` set as in the README "Several instances" section. Record the result of
+each step; a failed step is a bug to report, not a reason to skip the rest.
+
+1. Capability job: on the lead, `agent run --need test:remote normal "…"`, where `test:remote` is declared only by
+   the node (not by the lead's own loopback node), so the job cannot run on the lead itself. The job reaches the
+   node; the Jobs view shows it `running`, then `done` with a branch and result. The Jobs view shows the
+   requested agent selector (the `Agent` column).
+2. Delegated step: a normal agent on the requesting installation (with `LEAD_URL`, `INSTANCE_NAME` and its node
+   daemon running) calls `delegate(…, requires=[…])` for a capability the requester lacks and the destination
+   node has. The requester pushes its branch to `origin` first. The lead's Jobs view shows the worker job; the
+   requester gets a `helper_result`.
+3. Node offline and back: stop `agentnode.service` on the node for longer than `NODE_TTL_SEC`. The Instances view
+   shows it `offline`. Start it again; it shows `online`. A running task keeps running on the node. A job that was
+   only assigned and not started is requeued by the lead. Jobs that were started are never restarted elsewhere;
+   the Jobs view shows their last reported state.
+4. Lead restart during a job: restart `agentlead.service` on the lead while a job runs. After it is back, the job
+   completes and its state reaches the Jobs view without duplicates.
+5. Web links: the node and PR links from the Jobs view open in a new navigation, not inside the htmx page.
