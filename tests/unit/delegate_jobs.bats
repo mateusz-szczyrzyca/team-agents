@@ -210,6 +210,16 @@ complete_job() {
   read_result | grep -q 'RESULT H1 \[failed\]'
 }
 
+@test "a 65536-byte request crosses the POST, poll and assignment boundaries without jq argument limits" {
+  installations; lead_start
+  request_step round8-large:hw:rp2350
+  source_cycle
+  [ "$(jobs | jq length)" = 1 ]
+  [ "$(jobs | jq -r '.[0].Request.Task | length')" = 65536 ] # request + "\n\nContext:\n" + context is the lead's maximum
+  complete_job
+  read_result | grep -q 'RESULT H1 \[done\]'
+}
+
 @test "requester commits after delegation cannot change the submitted base" {
   installations; lead_start
   request_step round8-advance:hw:rp2350

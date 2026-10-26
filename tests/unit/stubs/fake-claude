@@ -140,9 +140,12 @@ if action == "commit-push":
     subprocess.run(["git", "commit", "-q", "-m", "Add hello.txt\n\n" + trailers], check=True)
     subprocess.run(["git", "push", "-q", "-u", "origin", "HEAD"], check=True)
     finish("STATUS: DONE")
-if action.startswith(("round8-delegate:", "round8-unpushed:", "round8-advance:")):
+if action.startswith(("round8-delegate:", "round8-unpushed:", "round8-advance:", "round8-large:")):
     # New fixture action: capture a real commit, optionally push it, and submit a capabilities request.
+    # round8-large sends the longest request whose composed task (request, "\n\nContext:\n" and the 25-byte context) is exactly 65536 bytes.
+    # Quotes are escaped as two bytes of JSON, so the job JSON exceeds the 131072-byte limit of one argv string.
     kind, capability = action.split(":", 1)
+    request_text = '"' * 65500 if kind == "round8-large" else "commit and push hello.txt"
     trailers = re.search(r"exactly these trailers, after a blank line:\n\n```\n(.*?)\n```", prompt, re.S).group(1)
     with open("delegated.txt", "w") as f:
         f.write("captured base\n")
@@ -153,7 +156,7 @@ if action.startswith(("round8-delegate:", "round8-unpushed:", "round8-advance:")
         f.write(captured)
     if kind != "round8-unpushed":
         subprocess.run(["git", "push", "-q", "-u", "origin", "HEAD"], check=True)
-    answer = call("delegate", request="commit and push hello.txt", context="verify this captured base", requires=[capability])
+    answer = call("delegate", request=request_text, context="verify this captured base", requires=[capability])
     with open(os.path.join(home, "delegation.txt"), "w") as f:
         f.write(answer)
     if kind == "round8-advance":
