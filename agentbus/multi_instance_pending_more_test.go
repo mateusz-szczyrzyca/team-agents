@@ -269,7 +269,10 @@ func TestLeadNotifiesOnFinalState(t *testing.T) {
 	if _, err := a.report("node-a", job1.Request.ID, repDone); err != nil {
 		t.Fatal(err)
 	}
-	entries, _ = os.ReadDir(notifyDir)
+	entries, rerr1 := os.ReadDir(notifyDir)
+	if rerr1 != nil {
+		t.Fatal(rerr1)
+	}
 	if len(entries) != 1 {
 		t.Fatalf("duplicate terminal report created extra notification: %d files", len(entries))
 	}
@@ -289,7 +292,10 @@ func TestLeadNotifiesOnFinalState(t *testing.T) {
 	if _, err := a.report("node-a", job2.Request.ID, repFailed); err != nil {
 		t.Fatal(err)
 	}
-	entries, _ = os.ReadDir(notifyDir)
+	entries, rerr2 := os.ReadDir(notifyDir)
+	if rerr2 != nil {
+		t.Fatal(rerr2)
+	}
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 notification files after failure, got %d", len(entries))
 	}
@@ -304,9 +310,114 @@ func TestLeadNotifiesOnFinalState(t *testing.T) {
 	if _, err := a.cancel(true, job3.Request.ID); err != nil {
 		t.Fatal(err)
 	}
-	entries, _ = os.ReadDir(notifyDir)
+	entries, rerr3 := os.ReadDir(notifyDir)
+	if rerr3 != nil {
+		t.Fatal(rerr3)
+	}
 	if len(entries) != 3 {
 		t.Fatalf("expected 3 notification files after cancel, got %d", len(entries))
+	}
+}
+
+// TestLeadNotificationCommandExecution verifies NOTIFY_CMD execution on terminal state.
+func TestLeadNotificationCommandExecution(t *testing.T) {
+	b := newBus(t)
+	notifyDir := t.TempDir()
+	var executedCmd, executedFile string
+	stubNotifyCmd(t, func(cmdPath, filePath string) error {
+		executedCmd = cmdPath
+		executedFile = filePath
+		return nil
+	})
+
+	a := &leadAPI{bus: b, ttl: time.Minute, notifyDir: notifyDir, notifyCmd: "/usr/local/bin/notify-tool"}
+	req := regRequest("job-cmd-exec")
+	req.Requester = "human"
+	req.Repository = "test-repo"
+	job, err := a.submit("node-a", true, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Cancel job while queued; should trigger notifyLead and execNotifyCmd
+	if _, err := a.cancel(true, job.Request.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if executedCmd != "/usr/local/bin/notify-tool" {
+		t.Fatalf("executedCmd = %q, want /usr/local/bin/notify-tool", executedCmd)
+	}
+	wantFile := filepath.Join(notifyDir, "job-cmd-exec-summary.md")
+	if executedFile != wantFile {
+		t.Fatalf("executedFile = %q, want %q", executedFile, wantFile)
+	}
+	data, readErr := os.ReadFile(executedFile) //nolint:gosec // G304: file path inside t.TempDir()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(data), "Status: stopped") {
+		t.Fatalf("expected notification content to have Status: stopped, got:\n%s", string(data))
+	}
+}
+
+// TestLeadNotificationHeartbeatTerminalDelivery verifies terminal reports in heartbeat deliver notifications.
+func TestLeadNotificationHeartbeatTerminalDelivery(t *testing.T) {
+	b := newBus(t)
+	notifyDir := t.TempDir()
+	var notifiedFiles []string
+	stubNotifyCmd(t, func(_, filePath string) error {
+		notifiedFiles = append(notifiedFiles, filePath)
+		return nil
+	})
+
+	a := &leadAPI{bus: b, ttl: time.Minute, notifyDir: notifyDir, notifyCmd: "/usr/local/bin/notify-heartbeat"}
+	req := regRequest("job-heartbeat-term")
+	req.Requester = "human"
+	req.Repository = "test-repo"
+	job, err := a.submit("node-a", true, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	beat1 := leadHeartbeatBody{NodeHeartbeat: regBeat("node-a", nil, FreeAgent{Name: "agent-1", Tier: TierNormal})}
+	assigned, beatErr := a.heartbeat("node-a", beat1)
+	if beatErr != nil || assigned == nil {
+		t.Fatalf("heartbeat assign failed: %v", beatErr)
+	}
+
+	at := Timestamp{time.Now().UTC()}
+	repRunning := JobReport{
+		ID:         job.Request.ID,
+		Assignment: assigned.Assignment,
+		State:      JobRunning,
+		Node:       "node-a",
+		At:         at,
+	}
+	repDone := JobReport{
+		ID:         job.Request.ID,
+		Assignment: assigned.Assignment,
+		State:      JobDone,
+		Node:       "node-a",
+		Result:     "finished via heartbeat report",
+		At:         Timestamp{at.Add(time.Second)},
+	}
+	beat2 := leadHeartbeatBody{
+		NodeHeartbeat: regBeat("node-a", nil, FreeAgent{Name: "agent-1", Tier: TierNormal}),
+		Reports:       []JobReport{repRunning, repDone},
+	}
+	if _, err := a.heartbeat("node-a", beat2); err != nil {
+		t.Fatalf("heartbeat with terminal report failed: %v", err)
+	}
+
+	entries, dirErr := os.ReadDir(notifyDir)
+	if dirErr != nil {
+		t.Fatal(dirErr)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 notification file from heartbeat report, got %d", len(entries))
+	}
+	if len(notifiedFiles) != 1 {
+		t.Fatalf("expected 1 notifyCmd invocation from heartbeat report, got %d", len(notifiedFiles))
 	}
 }
 

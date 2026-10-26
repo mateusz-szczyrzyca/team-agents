@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"testing"
 	"time"
 )
@@ -202,7 +203,7 @@ func TestParseLeadConfigRejectsPositionalArguments(t *testing.T) {
 	failsWith(t, LeadServeBadFlags)("a positional argument", err)
 }
 
-// TestLeadCancelCLI verifies leadCancel cancels a job and returns its public view.
+// TestLeadCancelCLI verifies leadCancel cancels a job, writes notifications, and returns its public view.
 func TestLeadCancelCLI(t *testing.T) {
 	b := newBus(t)
 	a := &leadAPI{bus: b, ttl: time.Minute}
@@ -213,7 +214,8 @@ func TestLeadCancelCLI(t *testing.T) {
 		t.Fatal(submitErr)
 	}
 
-	view, err := leadCancel(b.dir, "job-to-cancel")
+	notifyDir := t.TempDir()
+	view, err := leadCancel(b.dir, "job-to-cancel", time.Minute, notifyDir, "")
 	if err != nil {
 		t.Fatalf("leadCancel failed: %v", err)
 	}
@@ -221,6 +223,53 @@ func TestLeadCancelCLI(t *testing.T) {
 		t.Fatalf("state = %s, want JobStopped", view.State)
 	}
 
-	_, noErr := leadCancel(b.dir, "nonexistent")
+	entries, dirErr := os.ReadDir(notifyDir)
+	if dirErr != nil {
+		t.Fatal(dirErr)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 notification file after leadCancel, got %d", len(entries))
+	}
+
+	_, noErr := leadCancel(b.dir, "nonexistent", time.Minute, "", "")
 	failsWith(t, LeadCancelNoSuchJob)("nonexistent job", noErr)
+}
+
+// TestParseLeadCancelConfigRejectsInvalidArguments tests invalid flag invocations.
+func TestParseLeadCancelConfigRejectsInvalidArguments(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"bad-flag", []string{"--unknown-flag"}},
+		{"missing-id", []string{}},
+		{"extra-args", []string{"job-1", "extra"}},
+		{"non-positive-ttl", []string{"--ttl", "0s", "job-1"}},
+		{"negative-ttl", []string{"--ttl", "-10s", "job-1"}},
+		{"invalid-id", []string{"job/bad/id"}},
+	}
+	for _, c := range cases {
+		_, err := parseLeadCancelConfig(c.args)
+		failsWith(t, LeadCancelBadFlags)(c.name, err)
+	}
+}
+
+// TestLeadCancelBadFlagsClass checks that LeadCancelBadFlags maps to ClassInvalidArgument and exit code 2.
+func TestLeadCancelBadFlagsClass(t *testing.T) {
+	err := opErr(LeadCancelBadFlags, "bad flags")
+	if err.Class() != ClassInvalidArgument {
+		t.Fatalf("class = %v, want ClassInvalidArgument", err.Class())
+	}
+	if err.Class().ExitCode() != 2 {
+		t.Fatalf("exit code = %d, want 2", err.Class().ExitCode())
+	}
+}
+func TestParseLeadCancelConfigAcceptsValidArguments(t *testing.T) {
+	cfg, err := parseLeadCancelConfig([]string{"--dir", "/tmp/bus", "--ttl", "45s", "--notify-dir", "/tmp/notes", "--notify-cmd", "/bin/echo", "job-xyz"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.dir != "/tmp/bus" || cfg.id != "job-xyz" || cfg.ttl != 45*time.Second || cfg.notifyDir != "/tmp/notes" || cfg.notifyCmd != "/bin/echo" {
+		t.Fatalf("unexpected config: %+v", cfg)
+	}
 }

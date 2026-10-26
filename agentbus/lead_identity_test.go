@@ -10,6 +10,19 @@ func init() {
 	callTailscaleWhois = func(cli, ip string) (*leadWhoisResponse, *LeadWhoisError) {
 		panic(fmt.Sprintf("callTailscaleWhois(%s, %s) without a stub — a test would have asked the real tailscaled", cli, ip))
 	}
+	execNotifyCmd = func(cmdPath, filePath string) error {
+		panic(fmt.Sprintf("execNotifyCmd(%s, %s) without a stub — a test would have executed an external command", cmdPath, filePath))
+	}
+}
+
+// stubNotifyCmd replaces execNotifyCmd for the duration of a test and restores it during cleanup.
+func stubNotifyCmd(t *testing.T, fn func(cmdPath, filePath string) error) {
+	t.Helper()
+	prev := execNotifyCmd
+	execNotifyCmd = fn
+	t.Cleanup(func() {
+		execNotifyCmd = prev
+	})
 }
 
 // stubWhois replaces callTailscaleWhois for the duration of a test and restores it during cleanup.

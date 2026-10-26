@@ -1938,7 +1938,8 @@ func (c LeadReportCause) String() string { return c.info().name }
 type LeadCancelCause int
 
 const (
-	LeadCancelUnauthorized LeadCancelCause = iota // only the local lead CLI may cancel a job [Permission]
+	LeadCancelBadFlags     LeadCancelCause = iota // flags or arguments to lead-cancel are invalid [InvalidArgument]
+	LeadCancelUnauthorized                        // only the local lead CLI may cancel a job [Permission]
 	LeadCancelNoSuchJob                           // the job to cancel does not exist [NotFound]
 	LeadCancelStorage                             // the shared state or a file could not be read or written [Storage]
 )
@@ -1948,6 +1949,7 @@ type LeadCancelError = OpError[LeadCancelCause]
 
 // leadCancelCauses describes the LeadCancelCause values (same order as the constants).
 var leadCancelCauses = [...]causeInfo{
+	{"BadFlags", ClassInvalidArgument},
 	{"Unauthorized", ClassPermission},
 	{"NoSuchJob", ClassNotFound},
 	{"Storage", ClassStorage},

@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// execNotifyCmd executes the notification command or a test fake.
+var execNotifyCmd = func(cmdPath, filePath string) error {
+	cmd := exec.Command(cmdPath, filePath) //nolint:gosec // G204: the operator configures the local notification command; no shell is involved.
+	return cmd.Run()
+}
+
 // notifyLead delivers a terminal job notification to the human requester.
 func (a *leadAPI) notifyLead(job Job) {
 	if job.Request.Requester != "human" {
@@ -58,8 +64,7 @@ func (a *leadAPI) notifyLead(job Job) {
 	}
 
 	if a.notifyCmd != "" {
-		cmd := exec.Command(a.notifyCmd, filePath) //nolint:gosec // G204: the operator configures the local notification command; no shell is involved.
-		if err := cmd.Run(); err != nil {
+		if err := execNotifyCmd(a.notifyCmd, filePath); err != nil {
 			warnSideEffect("run lead notify command", processErr(a.notifyCmd, err, "cannot run notify command"))
 		}
 	}

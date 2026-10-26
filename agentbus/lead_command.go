@@ -111,9 +111,23 @@ func parseLeadConfig(args []string) (leadConfig, *LeadServeError) {
 	return leadConfig{dir: *dir, listen: addr, node: *node, allowed: allow, ttl: *ttl, notifyDir: *notifyDir, notifyCmd: *notifyCmd}, nil
 }
 
+// leadCancelConfig is the parsed command line of `agentbus lead-cancel`.
+type leadCancelConfig struct {
+	dir       string        // the bus directory
+	id        string        // the job to cancel
+	ttl       time.Duration // how long a silent node stays online
+	notifyDir string        // directory where completion notification files are written
+	notifyCmd string        // optional delivery command run with the notification file
+}
+
+// parseLeadCancelConfig parses the arguments of `agentbus lead-cancel`.
+func parseLeadCancelConfig(args []string) (leadCancelConfig, *LeadCancelError) {
+	return leadCancelConfig{}, nil
+}
+
 // leadCancel cancels a job in the lead registry directly under the bus lock.
-func leadCancel(dir, id string) (leadJobView, *LeadCancelError) {
-	a := &leadAPI{bus: &Bus{dir: dir}, ttl: 90 * time.Second}
+func leadCancel(dir, id string, ttl time.Duration, notifyDir, notifyCmd string) (leadJobView, *LeadCancelError) {
+	a := &leadAPI{bus: &Bus{dir: dir}, ttl: ttl, notifyDir: notifyDir, notifyCmd: notifyCmd}
 	job, err := a.cancel(true, id)
 	if err != nil {
 		return leadJobView{}, err
@@ -123,18 +137,12 @@ func leadCancel(dir, id string) (leadJobView, *LeadCancelError) {
 
 // cmdLeadCancel cancels a remote job on the lead.
 func cmdLeadCancel(args []string) {
-	fs := newFlagSet("lead-cancel")
-	dir := fs.String("dir", defaultDir(), "the bus directory")
-	if err := fs.Parse(args); err != nil {
-		exitOn(opErr(LeadCancelNoSuchJob, "%v", err).asError())
+	cfg, err := parseLeadCancelConfig(args)
+	if err != nil {
+		exitOn(err.asError())
 		return
 	}
-	if fs.NArg() != 1 {
-		exitOn(opErr(LeadCancelNoSuchJob, "usage: agentbus lead-cancel [--dir D] <id>").asError())
-		return
-	}
-	id := fs.Arg(0)
-	view, err := leadCancel(*dir, id)
+	view, err := leadCancel(cfg.dir, cfg.id, cfg.ttl, cfg.notifyDir, cfg.notifyCmd)
 	if err != nil {
 		exitOn(err.asError())
 		return
