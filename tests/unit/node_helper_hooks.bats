@@ -312,3 +312,26 @@ EOF
   [ ! -f "$STUB_HOME/remote-finish.log" ]
   grep -q '"event":"node_helper_get_failed"' "$AGENTS_HOME/logs/agent.jsonl"
 }
+
+@test "maximum-size escaped helper task delivers its terminal GET result" {
+  stub_agentbus_remote
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
+  # A running helper bypasses POST, exercising GET validation independently.
+  python3 - "$STUB_HOME" <<'MAKE'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+r = {"ID":"large-task", "Repository":"repo", "BaseRef":"main",
+     "BaseSHA":"a"*40, "Requires":["hw:rp2350"], "Selector":"worker",
+     "Target":"", "Task":'"'*65536, "Requester":"member@node-test"}
+(p/"remote-helpers.json").write_text(json.dumps([
+    {"id":1,"status":"running","remote_job":r}]))
+(p/"job-get.json").write_text(json.dumps({"Request":r,"State":"done",
+    "Node":"node2","Branch":"result","Result":"completed"}))
+MAKE
+  run agent node --once
+  [ "$status" -eq 0 ]
+  [ ! -f "$STUB_HOME/last-job-submit.json" ]
+  [ -f "$STUB_HOME/remote-finish.log" ]
+  grep -q -- '--id 1 --state done --node node2 --branch result --result completed' "$STUB_HOME/remote-finish.log"
+}

@@ -222,3 +222,23 @@ complete_job() {
   git -C "$HOME/remote.git" cat-file -e "$branch:advance.txt" || rc=$?
   [ "$rc" = 128 ] # Missing file proves the newer requester commit was not included.
 }
+
+@test "maximum-size escaped helper task is accepted by the real lead and tracked after POST" {
+  installations; lead_start
+  request_step round8-delegate:hw:rp2350
+  # Preserve the real captured identity while replacing only the bounded task text.
+  python3 - "$AGENTS_HOME/bus/state.json" <<'MAKE'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = json.loads(p.read_text())
+s["helpers"]["1"]["request"] = '"' * 65536
+s["helpers"]["1"]["context"] = ""
+p.write_text(json.dumps(s))
+MAKE
+  run source_cycle
+  [ "$status" -eq 0 ]
+  [ "$(jobs | jq length)" = 1 ]
+  jobs | jq -e '.[0].Request.Task == ("\"" * 65536)' >/dev/null
+  [ "$(helper | jq -r .status)" = running ]
+  [ "$(helper | jq -r '.remote_job.Task | length')" = 65536 ]
+}
