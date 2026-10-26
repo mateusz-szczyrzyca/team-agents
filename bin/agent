@@ -3921,8 +3921,9 @@ node_handle_reply() {
   [[ $existing != "$assignment" ]] || return 0
   at=$(jq -r '.History[-1].At // empty' <<< "$job")
   if agent=$(node_select_agent "$(jq -r .Request.Selector <<< "$job")"); then :; else agent=''; fi
-  NODE_STATE=$(jq -c --arg id "$jid" --argjson assignment "$assignment" --argjson request "$(jq -c .Request <<< "$job")" --arg agent "$agent" --arg at "$at" \
-    '.jobs[$id]={assignment:$assignment,request:$request,agent:$agent,assigned_at:$at,task_id:"",branch:"",launched:false,start_acked:false,obsolete:false,pending:false,preparing:true,cursor:0}' <<< "$NODE_STATE"); node_save
+  # Stream the request: escaped task text can exceed Linux's per-argument limit.
+  NODE_STATE=$(printf '%s\n' "$job" "$NODE_STATE" | jq -cs --arg id "$jid" --argjson assignment "$assignment" --arg agent "$agent" --arg at "$at" \
+    '.[1].jobs[$id]={assignment:$assignment,request:.[0].Request,agent:$agent,assigned_at:$at,task_id:"",branch:"",launched:false,start_acked:false,obsolete:false,pending:false,preparing:true,cursor:0} | .[1]'); node_save
   if [[ -z $agent ]]; then node_transition "$jid" failed '' 'no free local agent for assignment'; return; fi
   NODE_PREPARE_ERROR=''
   if prepare_job_task "$jid" "$agent" "$(jq -r .Request.Repository <<< "$job")" "$(jq -r .Request.BaseRef <<< "$job")" "$(jq -r '.Request.BaseSHA // ""' <<< "$job")" "$(jq -r .Request.Task <<< "$job")" "$assignment"; then
@@ -3972,9 +3973,10 @@ node_poll_remote_helpers() {
       req_json=$(jq -c '.remote_job' <<< "$helper")
     fi
 
+    # Compare complete JSON documents via stdin so escaped maximum-size tasks fit.
     if [[ $hstatus == "queued" ]]; then
       if reply=$(printf '%s' "$req_json" | node_request --path /v1/jobs); then
-        if ! jq -e --argjson req "$req_json" '.Request == $req and (.State|type == "string")' <<< "$reply" >/dev/null; then
+        if ! printf '%s\n' "$req_json" "$reply" | jq -es 'length == 2 and .[1].Request == .[0] and (.[1].State|type == "string")' >/dev/null; then
           log_warn node_helper_reply_invalid "helper=$hid" "job=$job_id"
           continue
         fi
@@ -3988,7 +3990,7 @@ node_poll_remote_helpers() {
     fi
 
     if reply=$(node_request --get --path "/v1/jobs/$job_id" < /dev/null); then
-      if ! jq -e --argjson req "$req_json" '.Request == $req and (.State|type == "string")' <<< "$reply" >/dev/null; then
+      if ! printf '%s\n' "$req_json" "$reply" | jq -es 'length == 2 and .[1].Request == .[0] and (.[1].State|type == "string")' >/dev/null; then
         log_warn node_helper_reply_invalid "helper=$hid" "job=$job_id"
         continue
       fi

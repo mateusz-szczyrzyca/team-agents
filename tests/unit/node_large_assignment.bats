@@ -3,6 +3,30 @@
 
 load helpers
 
+# teardown waits for this fixture's detached runners before Bats removes their files.
+teardown() {
+  local p pid
+  for p in "$STUB_UNITS"/*.pid; do
+    [[ -f $p ]] || continue
+    pid=$(cat "$p") || return 1
+    # These are this fixture's own PIDs; an exited runner needs no signal.
+    if kill -0 "$pid" 2> "$HOME/stub-stop.err"; then
+      if ! kill -TERM -- -"$pid" 2> "$HOME/stub-stop.err"; then
+        # Exiting between the liveness check and signal is expected.
+        if kill -0 "$pid" 2>> "$HOME/stub-stop.err"; then
+          cat "$HOME/stub-stop.err" >&2
+          return 1
+        fi
+      fi
+      if ! timeout 10 tail --pid="$pid" -f /dev/null; then
+        printf 'stub runner %s did not exit within 10 seconds\n' "$pid" >&2
+        return 1
+      fi
+    fi
+    rm -f "$p" "$HOME/stub-stop.err" || return 1
+  done
+}
+
 # setup_large_task_bus_stub returns bounded deterministic lead replies for one assignment.
 setup_large_task_bus_stub() {
   local real_bus="$HOME/.local/bin/agentbus"

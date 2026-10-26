@@ -745,6 +745,8 @@ daemon, remote job CLI commands, lead notifications and remote delegation (web v
   and the frozen `remote_job` submission. Old helper records still load as ordinary local requests. The daemon
   saves the exact job request before sending it and retries the same job ID through lead outages, without a
   new timeout. Running agents continue. Missing `LEAD_URL` fails an unsatisfied request with a helper result.
+  Response validation compares the complete frozen request through stdin, so JSON escaping of a valid
+  `65,536`-byte job task does not exceed the shell command argument limit.
 - Terminal delegated jobs return the ordinary `helper_result` bus notice to the requesting agent: actual job
   state (`done`, `failed`, `stopped`), executing node, pushed branch, optional PR and result head. Failed and stopped
   jobs are failed helper requests. The requester can use `delegation_status` or `wait_for_message()`; remote notices
