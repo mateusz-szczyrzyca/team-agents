@@ -3,7 +3,7 @@
   <td class="status"><span class="st {{.StatusClass}}">{{.StatusLabel}}</span></td>
   <td class="since num">{{.Since}}</td>
   <td class="repo hide-narrow">{{.Repo}}</td>
-  <td class="last">{{if .Team}}<a class="tag" href="/team/{{.Team}}">team {{.TeamShort}}</a> {{end}}{{if .Stage}}<span class="stage">{{.Stage}}</span> {{end}}{{if .LastIcon}}<span class="icon-k">{{.LastIcon}}</span> {{end}}{{trunc .Last 220}}</td>
+  <td class="last">{{if .Team}}<a class="tag" href="/team/{{.Team}}">team {{.TeamShort}}</a> {{end}}{{if .JobMarker}}<span class="tag">{{.JobMarker}}</span> {{end}}{{if .Stage}}<span class="stage">{{.Stage}}</span> {{end}}{{if .LastIcon}}<span class="icon-k">{{.LastIcon}}</span> {{end}}{{trunc .Last 220}}</td>
 </tr>{{end}}
 
 {{define "task-table"}}<div class="scroll"><table class="tasks">

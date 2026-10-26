@@ -15,7 +15,7 @@
   <td class="name">{{.Name}}{{if .Lead}} <span class="lead" title="coordinator">★</span>{{end}}</td>
   <td><span class="st {{.StateClass}}">{{.State}}</span></td>
   <td class="hide-narrow">{{.Tier}}</td>
-  <td>{{with .Row}}<a href="/task/{{.ID}}">{{.StatusLabel}}</a> <span class="dim">{{.Since}}</span>{{if .Stage}} <span class="stage">{{.Stage}}</span>{{end}} <span class="dim">{{trunc .Last 140}}</span>{{else}}<span class="dim">{{.Task}}</span>{{end}}</td>
+  <td>{{with .Row}}<a href="/task/{{.ID}}">{{.StatusLabel}}</a> <span class="dim">{{.Since}}</span>{{if .JobMarker}} <span class="tag">{{.JobMarker}}</span>{{end}}{{if .Stage}} <span class="stage">{{.Stage}}</span>{{end}} <span class="dim">{{trunc .Last 140}}</span>{{else}}<span class="dim">{{.Task}}</span>{{end}}</td>
 </tr>{{end}}</tbody>
 </table></div>
 <h2>Board</h2>

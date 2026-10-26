@@ -201,7 +201,14 @@ func (t *Task) BusName() string { return t.Agent }
 
 // JobMarker returns the remote job marker ("job <id> from <lead>") when started for a job.
 func (t *Task) JobMarker() string {
-	return ""
+	if t.JobID == "" {
+		return ""
+	}
+	lead := t.JobLead
+	if lead == "" {
+		lead = "lead"
+	}
+	return fmt.Sprintf("job %s from %s", t.JobID, lead)
 }
 
 // ---------------------------------------------------------------- reading state
