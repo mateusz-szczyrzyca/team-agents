@@ -41,6 +41,8 @@ type Task struct {
 	Team       string    // team ID ("" for a solo task)
 	HelperID   string    // helpers: the worker request number
 	Tier       string    // normal | worker
+	JobID      string    // remote job ID when started for a job
+	JobLead    string    // lead URL or instance name when started for a job
 	Round      int       // question rounds so far (questions-<Round>.md is the latest)
 	Run        int       // runs so far (prompt-<Run>.md is the latest)
 	Created    time.Time // when the task was created
@@ -196,6 +198,11 @@ func (t *Task) Label() string {
 
 // BusName: the name under which the agent appears on the bus.
 func (t *Task) BusName() string { return t.Agent }
+
+// JobMarker returns the remote job marker ("job <id> from <lead>") when started for a job.
+func (t *Task) JobMarker() string {
+	return ""
+}
 
 // ---------------------------------------------------------------- reading state
 
@@ -415,6 +422,7 @@ func loadSnapshot(home, busDir string) *Snapshot {
 			ID: m["ID"], Agent: m["AGENT"], Kind: m["KIND"], Type: m["TYPE"], Model: m["MODEL"],
 			Repo: m["REPO_NAME"], Branch: m["BRANCH"], Worktree: m["WORKTREE"], Status: m["STATUS"],
 			InvID: m["INV_ID"], ParentTask: m["PARENT_TASK"], FromAgent: m["FROM_AGENT"], Team: m["TEAM"], HelperID: m["HELPER_ID"], Tier: m["TIER"],
+			JobID: m["JOB_ID"], JobLead: m["JOB_LEAD"],
 			Created: parseTime(m["CREATED"]), Finished: parseTime(m["FINISHED"]), Dir: dir,
 		}
 		if t.Kind == "" {
