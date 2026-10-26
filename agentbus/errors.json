@@ -1206,34 +1206,34 @@
    "what": "starting the lead listener (agentbus lead)",
    "causes": [
     {
-      "name": "BadFlags",
-      "class": "InvalidArgument",
-      "doc": "a flag is unknown or has no value, --node is not a valid name, --ttl is not a positive duration, or an argument is not a flag"
+     "name": "BadFlags",
+     "class": "InvalidArgument",
+     "doc": "a flag is unknown or has no value, --node is not a valid name, --ttl is not a positive duration, or an argument is not a flag"
     },
     {
-      "name": "MissingArgument",
-      "class": "InvalidArgument",
-      "doc": "--listen or --node is missing"
+     "name": "MissingArgument",
+     "class": "InvalidArgument",
+     "doc": "--listen or --node is missing"
     },
     {
-      "name": "InvalidListen",
-      "class": "InvalidArgument",
-      "doc": "the listen address is not host:port with a numeric port"
+     "name": "InvalidListen",
+     "class": "InvalidArgument",
+     "doc": "the listen address is not host:port with a numeric port"
     },
     {
-      "name": "UntrustedBind",
-      "class": "InvalidArgument",
-      "doc": "the listen address is unspecified or outside loopback and the Tailscale ranges"
+     "name": "UntrustedBind",
+     "class": "InvalidArgument",
+     "doc": "the listen address is unspecified or outside loopback and the Tailscale ranges"
     },
     {
-      "name": "ListenFailed",
-      "class": "Process",
-      "doc": "a listener could not be opened on the address"
+     "name": "ListenFailed",
+     "class": "Process",
+     "doc": "a listener could not be opened on the address"
     },
     {
-      "name": "ServeFailed",
-      "class": "Process",
-      "doc": "the server stopped with an error or could not shut down cleanly"
+     "name": "ServeFailed",
+     "class": "Process",
+     "doc": "the server stopped with an error or could not shut down cleanly"
     }
    ],
    "noStorage": true
@@ -1282,6 +1282,28 @@
      "name": "CheckoutFailed",
      "class": "Process",
      "doc": "git revision resolution failed"
+    }
+   ]
+  },
+  {
+   "type": "BoardProgress",
+   "op": "board_progress",
+   "what": "the tool board_progress",
+   "causes": [
+    {
+     "name": "NotInTeam",
+     "class": "NotInTeam",
+     "doc": "the caller is not in a team"
+    },
+    {
+     "name": "NotYourItem",
+     "class": "Permission",
+     "doc": "the item is not claimed by the caller"
+    },
+    {
+     "name": "EmptyNote",
+     "class": "InvalidArgument",
+     "doc": "the progress note is empty"
     }
    ]
   }

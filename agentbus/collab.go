@@ -54,7 +54,8 @@ type BoardItem struct {
 	Assignee string      `json:"assignee,omitempty"` // who claimed it
 	For      string      `json:"for,omitempty"`      // the only member that may claim it ("" = anyone at its level)
 	Result   string      `json:"result,omitempty"`   // the result submitted with board_done
-	Updated  Timestamp   `json:"updated"`            // last change
+	Updated  Timestamp   `json:"updated"`            // last change	Progress string        `json:"progress,omitempty"` // the claimant's latest progress note (board_progress), kept when the item goes back
+	Previous string      `json:"previous,omitempty"` // who held the item before it went back to the board
 }
 
 // Helper is a worker request created with delegate: a normal model hands a simple task to a
@@ -526,6 +527,13 @@ func (s *Server) boardDone(id, result string) (string, *BoardDoneError) {
 }
 
 // boardRelease (MCP board_release) returns a claimed item to "todo" with a note to its creator.
+// boardProgress (MCP board_progress) records how far the caller got with its claimed item — what is done, the
+// last commit, what comes next. The note stays with the item when it goes back to the board, for whoever takes
+// it over.
+func (s *Server) boardProgress(_, _ string) (string, *BoardProgressError) {
+	return "", nil // not implemented yet: board_progress_test.go comes first
+}
+
 func (s *Server) boardRelease(id, note string) (string, *BoardReleaseError) {
 	var released string
 	err := transact(s.bus, BoardReleaseStorage, func(st *State) *BoardReleaseError {
