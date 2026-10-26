@@ -204,12 +204,18 @@ its pushed branch, the checkpoints — so the others finish it:
   approach failed.
 - **A pause longer than `AGENT_RELEASE_PAUSE_MIN`** (20 min): its items go back the same way; when it resumes it
   hears which ones and takes new work from the board. A shorter pause (an HTTP 429) keeps its items.
+- **The coordinator's failed run** does not close the team: its members hear that it is out and a normal model
+  takes over coordination (`claim_lead`) from the last checkpoint, the board and the PR; you are notified.
 - **A dead runner** (a reboot, a killed process) is found by `agent-supervise.timer` (every 3 minutes, installed
   by `install.sh`), which ends the task and tells its team.
 - **An unknown STATUS** (e.g. `BLOCKED`) goes back to the agent once with the statuses that exist — blocked by
   someone else's work is `SLEEPING`; a second one fails the run.
 
 ### Checkpoints and resuming
+
+Resuming never throws away uncommitted work: a task's uncommitted changes (untracked files included) go to the
+stash and on into its new worktree; when a new round starts on a fresh branch they stay in the stash, named in the
+output (`git stash apply <sha>`).
 
 Agents commit and push in small steps and call `checkpoint(summary, next_steps)` after every stage. If you stop
 work — typically to extend the task — `agent run --resume <team|task> "addition"` starts the same agents on the
@@ -270,6 +276,8 @@ A sleeping member costs nothing; every wake-up starts a run and costs tokens. So
   quota reached… Resets in 24m46s", "usage limit reached", "try again in 2 hours", "resets 3pm"…), the task is
   **paused** until the limit resets (plus a minute; `AGENT_QUOTA_PAUSE_MIN`, default 30 min, when the CLI does
   not say when) instead of failing. This applies to solo tasks, team members, investigators and workers alike.
+- **Overloaded model.** "Selected model is at capacity", "overloaded", HTTP 503/529: the provider has no room for
+  that model right now — not your account. A short pause like a rate limit (`AGENT_RATE_LIMIT_PAUSE_MIN`).
 - **Rate limit.** HTTP 429 / "too many requests" means the provider throttles requests — common on OpenRouter
   when the upstream provider is busy, with credits still available. The task is paused briefly
   (`AGENT_RATE_LIMIT_PAUSE_MIN`, default 5 min, unless the message gives a time), noted as rate-limited, not as
