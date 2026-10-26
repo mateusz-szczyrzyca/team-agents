@@ -2116,9 +2116,12 @@ func (c LeadWhoisCause) String() string { return c.info().name }
 type NodeClientCause int
 
 const (
-	NodeClientUnreachable NodeClientCause = iota // the lead cannot be reached or its reply cannot be read [Process]
-	NodeClientRejected                           // the lead rejected the node request [Permission]
-	NodeClientServerError                        // the lead returned a server failure [Process]
+	NodeClientUnreachable     NodeClientCause = iota // the lead cannot be reached or its reply cannot be read [Process]
+	NodeClientRejected                               // the lead rejected the node request [Permission]
+	NodeClientServerError                            // the lead returned a server failure [Process]
+	NodeClientInvalidArgument                        // the URL, route, declaration or local flags are invalid [InvalidArgument]
+	NodeClientMalformedReply                         // the lead returned invalid or oversized JSON [Process]
+	NodeClientOutputFailed                           // the reply cannot be written to the caller [Storage]
 )
 
 // NodeClientError is the error of a node request to the lead.
@@ -2129,6 +2132,9 @@ var nodeClientCauses = [...]causeInfo{
 	{"Unreachable", ClassProcess},
 	{"Rejected", ClassPermission},
 	{"ServerError", ClassProcess},
+	{"InvalidArgument", ClassInvalidArgument},
+	{"MalformedReply", ClassProcess},
+	{"OutputFailed", ClassStorage},
 }
 
 // op implements opCause.

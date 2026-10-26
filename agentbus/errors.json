@@ -1181,6 +1181,21 @@
      "name": "ServerError",
      "class": "Process",
      "doc": "the lead returned a server failure"
+    },
+    {
+     "name": "InvalidArgument",
+     "class": "InvalidArgument",
+     "doc": "the URL, route, declaration or local flags are invalid"
+    },
+    {
+     "name": "MalformedReply",
+     "class": "Process",
+     "doc": "the lead returned invalid or oversized JSON"
+    },
+    {
+     "name": "OutputFailed",
+     "class": "Storage",
+     "doc": "the reply cannot be written to the caller"
     }
    ],
    "noStorage": true
