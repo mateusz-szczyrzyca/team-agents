@@ -48,6 +48,7 @@ type webConfig struct {
 	devices   map[string]bool // tailnet devices allowed through `tailscale serve`: names and "tag:…" (lower case)
 	tailscale string          // the tailscale CLI (for `tailscale whois`)
 	poll      time.Duration   // how often live views re-read the files
+	nodeTTL   time.Duration   // lead heartbeat timeout; zero uses the default for older callers
 }
 
 // webServer serves the web interface.
