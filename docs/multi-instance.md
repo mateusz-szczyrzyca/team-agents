@@ -1,11 +1,11 @@
 # Independent installations and remote jobs
 
-This document specifies the approved v1 design. **Rounds 1–6 provide the typed
+This document specifies the approved v1 design. **Rounds 1–7 provide the typed
 registry, durable storage, capability routing, lifecycle validation, the
-authenticated lead HTTP service, allow-listed task checkout preparation, and the
-node daemon (`agent node`) that takes jobs from the lead.
-The remote job commands (`agent run --need/--on`, `agent jobs`, `agent nodes`, cancel),
-delegation and web views remain later rounds.** The sections below
+authenticated lead HTTP service, allow-listed task checkout preparation,
+the node daemon (`agent node`), lead completion notifications, and the
+remote job CLI commands (`agent run --need/--on`, `agent jobs`, `agent nodes`,
+`agent jobs --cancel`). Remote delegation and web views remain rounds 8 and 9.** The sections below
 describe the full target design; current HTTP limitations are identified explicitly.
 
 ## Boundaries
@@ -219,7 +219,7 @@ The lead keeps its jobs in `jobs.json` in the bus directory, separate from
 - Counters: the sequence and assignment high-water marks survive job removal,
   so identities are never reused.
 - Used by the lead's HTTP listener (`agentbus lead`, round 4). The node daemon reaches it only
-  over HTTP (round 6); the job CLI commands (round 7) and delegation (round 8) are not implemented yet.
+  over HTTP (round 6); delegation (round 8) is not implemented yet.
 
 ## HTTP and authorization
 

@@ -38,7 +38,7 @@ func runLead(ctx context.Context, cfg leadConfig) *LeadServeError {
 		}
 		listeners = append(listeners, listener)
 	}
-	handler := newLeadHandler(&Bus{dir: cfg.dir}, cfg.node, cfg.allowed, cfg.ttl)
+	handler := newLeadHandler(&Bus{dir: cfg.dir}, cfg.node, cfg.allowed, cfg.ttl, cfg.notifyDir, cfg.notifyCmd)
 	servers := make([]*http.Server, 0, len(listeners))
 	stopped := make(chan *LeadServeError, len(listeners)) // one completion per server; shutdown cannot block a sender
 	for _, listener := range listeners {

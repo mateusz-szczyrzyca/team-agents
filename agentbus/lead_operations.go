@@ -46,14 +46,21 @@ func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody, stopOut ...*[]l
 	body.Node = node
 	var job *Job             // one assignment, or nil when no job matches
 	stops := []leadJobView{} // at most 64 compact stop requests, retried until a terminal acknowledgement
+	var terminalJobs []Job   // newly terminal jobs to notify after transaction commits
 	err := leadTransaction(a, LeadHeartbeatStorage, node, func(r *leadRegistry, now Timestamp) *LeadHeartbeatError {
 		for _, rep := range body.Reports {
 			if rep.Node != "" && rep.Node != node {
 				return opErr(LeadHeartbeatUnauthorized, "report identity differs from its socket peer")
 			}
 			rep.Node = node
-			if _, err := r.report(rep, now); err != nil {
+			existing, ok := r.jobs[rep.ID]
+			wasTerminal := ok && isTerminalJob(existing.State)
+			repJob, err := r.report(rep, now)
+			if err != nil {
 				return heartbeatReportError(err)
+			}
+			if !wasTerminal && isTerminalJob(repJob.State) {
+				terminalJobs = append(terminalJobs, repJob)
 			}
 		}
 		var failure *LeadHeartbeatError // declaration validation or persistence failure
@@ -73,6 +80,11 @@ func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody, stopOut ...*[]l
 		}
 		return nil
 	})
+	if err == nil {
+		for _, tj := range terminalJobs {
+			a.notifyLead(tj)
+		}
+	}
 	if len(stopOut) > 0 {
 		*stopOut[0] = stops
 	}
@@ -111,11 +123,19 @@ func (a *leadAPI) report(node, id string, rep JobReport) (Job, *LeadReportError)
 	}
 	rep.ID, rep.Node = id, node
 	var job Job // durable accepted snapshot
+	var newlyTerminal bool
 	err := leadTransaction(a, LeadReportStorage, "", func(r *leadRegistry, now Timestamp) *LeadReportError {
+		existing, ok := r.jobs[rep.ID]
+		if ok && !isTerminalJob(existing.State) && isTerminalJob(rep.State) {
+			newlyTerminal = true
+		}
 		var failure *LeadReportError // shared lifecycle/assignment validation
 		job, failure = r.report(rep, now)
 		return failure
 	})
+	if err == nil && newlyTerminal {
+		a.notifyLead(job)
+	}
 	return job, err
 }
 
@@ -125,11 +145,19 @@ func (a *leadAPI) cancel(local bool, id string) (Job, *LeadCancelError) {
 		return Job{}, opErr(LeadCancelUnauthorized, "cancel jobs on the lead's loopback interface")
 	}
 	var job Job // actual state; started jobs only acquire a stop request
+	var newlyStopped bool
 	err := leadTransaction(a, LeadCancelStorage, "", func(r *leadRegistry, now Timestamp) *LeadCancelError {
+		existing, ok := r.jobs[id]
+		if ok && (existing.State == JobQueued || existing.State == JobAssigned) {
+			newlyStopped = true
+		}
 		var failure *LeadCancelError // missing job or storage failure
 		job, failure = r.cancel(id, now)
 		return failure
 	})
+	if err == nil && newlyStopped {
+		a.notifyLead(job)
+	}
 	return job, err
 }
 

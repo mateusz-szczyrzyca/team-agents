@@ -1337,6 +1337,8 @@ func main() {
 		cmdRoundSize(os.Args[2:])
 	case "lead":
 		cmdLead(os.Args[2:])
+	case "lead-cancel":
+		cmdLeadCancel(os.Args[2:])
 	case "node-checkout":
 		cmdNodeCheckout(os.Args[2:])
 	case "node-request":

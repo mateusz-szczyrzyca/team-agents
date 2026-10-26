@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Pending acceptance roadmap for the multi-instance jobs (task 20261023-151549-openrouter-haiku).
@@ -628,9 +629,90 @@ func TestNodeRefusesRepositoryOutsideAllowList(t *testing.T) {
 	failsWith(t, NodeCheckoutRepositoryNotAllowed)("empty allow-list path", emptyErr)
 }
 
-// TestCLIRunNeedSubmitsJob: agent run --need submits a job instead of starting a local task.
+// TestCLIRunNeedSubmitsJob: agent run --need and --on submit a job through the lead.
 func TestCLIRunNeedSubmitsJob(t *testing.T) {
-	t.Skip("pending: run --need and --on submit a job through the lead, round 7")
+	b := newBus(t)
+	a := &leadAPI{bus: b, ttl: time.Minute}
+
+	// 1. Submit a job with capability requirements (--need).
+	req := regRequest("cli-need-job")
+	req.Requires = []string{"hw:rp2350"}
+	req.Requester = "human"
+	req.Selector = "worker"
+	job, err := a.submit("lead-node", true, req)
+	if err != nil {
+		t.Fatalf("submit --need failed: %v", err)
+	}
+	if job.State != JobQueued || len(job.Request.Requires) != 1 || job.Request.Requires[0] != "hw:rp2350" {
+		t.Fatalf("unexpected queued job: %+v", job)
+	}
+
+	// Heartbeat from a node without the capability must not receive the job.
+	otherBeat := leadHeartbeatBody{NodeHeartbeat: regBeat("node-plain", []string{"os:linux"}, FreeAgent{Name: "w1", Tier: TierWorker})}
+	assigned, beatErr := a.heartbeat("node-plain", otherBeat)
+	if beatErr != nil {
+		t.Fatal(beatErr)
+	}
+	if assigned != nil {
+		t.Fatalf("node-plain received job without required capability: %+v", assigned)
+	}
+
+	// Diagnosis explains why the job waits.
+	view, getErr := a.get("cli-need-job")
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if view.WaitReason != "no node with hw:rp2350" {
+		t.Fatalf("waitReason = %q, want 'no node with hw:rp2350'", view.WaitReason)
+	}
+
+	// Heartbeat from a node declaring the capability and a free worker receives the job.
+	hwBeat := leadHeartbeatBody{NodeHeartbeat: regBeat("node-hw", []string{"os:linux", "hw:rp2350"}, FreeAgent{Name: "w1", Tier: TierWorker})}
+	assigned, beatErr = a.heartbeat("node-hw", hwBeat)
+	if beatErr != nil {
+		t.Fatal(beatErr)
+	}
+	if assigned == nil || assigned.Request.ID != "cli-need-job" {
+		t.Fatalf("node-hw failed to receive job: %+v", assigned)
+	}
+
+	// 2. Submit a job pinned to a node (--on).
+	reqPin := regRequest("cli-on-job")
+	reqPin.Target = "node-target"
+	reqPin.Requester = "human"
+	reqPin.Selector = "normal"
+	jobPin, errPin := a.submit("lead-node", true, reqPin)
+	if errPin != nil {
+		t.Fatalf("submit --on failed: %v", errPin)
+	}
+	if jobPin.State != JobQueued || jobPin.Request.Target != "node-target" {
+		t.Fatalf("unexpected pinned job: %+v", jobPin)
+	}
+
+	// Other node does not receive it.
+	assigned, beatErr = a.heartbeat("node-other", leadHeartbeatBody{NodeHeartbeat: regBeat("node-other", nil, FreeAgent{Name: "alpha", Tier: TierNormal})})
+	if beatErr != nil {
+		t.Fatal(beatErr)
+	}
+	if assigned != nil {
+		t.Fatalf("node-other received pinned job: %+v", assigned)
+	}
+
+	// Target node receives it.
+	assigned, beatErr = a.heartbeat("node-target", leadHeartbeatBody{NodeHeartbeat: regBeat("node-target", nil, FreeAgent{Name: "beta", Tier: TierNormal})})
+	if beatErr != nil {
+		t.Fatal(beatErr)
+	}
+	if assigned == nil || assigned.Request.ID != "cli-on-job" {
+		t.Fatalf("node-target failed to receive pinned job: %+v", assigned)
+	}
+
+	// 3. Invalid capability namespace is rejected.
+	reqBad := regRequest("cli-bad-caps")
+	reqBad.Requires = []string{"invalid_namespace:x"}
+	reqBad.Requester = "human"
+	_, errBad := a.submit("lead-node", true, reqBad)
+	failsWith(t, LeadSubmitInvalidCapabilities)("invalid capability namespace", errBad)
 }
 
 // TestDelegateRequiresCreatesJob: a delegate request with requires the local node lacks becomes a job on the lead.
