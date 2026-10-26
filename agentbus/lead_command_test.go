@@ -201,3 +201,26 @@ func TestParseLeadConfigRejectsPositionalArguments(t *testing.T) {
 	_, err := parseLeadConfig([]string{"--listen", "127.0.0.1:7780", "--node", "lead-pi", "extra"})
 	failsWith(t, LeadServeBadFlags)("a positional argument", err)
 }
+
+// TestLeadCancelCLI verifies leadCancel cancels a job and returns its public view.
+func TestLeadCancelCLI(t *testing.T) {
+	b := newBus(t)
+	a := &leadAPI{bus: b, ttl: time.Minute}
+	req := regRequest("job-to-cancel")
+	req.Requester = "human"
+	_, submitErr := a.submit("node-lead", true, req)
+	if submitErr != nil {
+		t.Fatal(submitErr)
+	}
+
+	view, err := leadCancel(b.dir, "job-to-cancel")
+	if err != nil {
+		t.Fatalf("leadCancel failed: %v", err)
+	}
+	if view.State != JobStopped {
+		t.Fatalf("state = %s, want JobStopped", view.State)
+	}
+
+	_, noErr := leadCancel(b.dir, "nonexistent")
+	failsWith(t, LeadCancelNoSuchJob)("nonexistent job", noErr)
+}

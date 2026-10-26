@@ -111,6 +111,11 @@ func parseLeadConfig(args []string) (leadConfig, *LeadServeError) {
 	return leadConfig{dir: *dir, listen: addr, node: *node, allowed: allow, ttl: *ttl, notifyDir: *notifyDir, notifyCmd: *notifyCmd}, nil
 }
 
+// leadCancel cancels a job in the lead registry directly under the bus lock.
+func leadCancel(dir, id string) (leadJobView, *LeadCancelError) {
+	return leadJobView{}, nil
+}
+
 // cmdLead runs `agentbus lead` in the foreground (agent lead runs it under agentlead.service).
 // SIGINT and SIGTERM stop the listeners cleanly.
 func cmdLead(args []string) {
