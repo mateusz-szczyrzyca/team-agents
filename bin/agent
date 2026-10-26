@@ -3298,10 +3298,12 @@ node_request() { bus node-request --url "$LEAD_URL" "$@"; }
 submit_remote_job() {
   local selector=$1 target_node=$2 task=$3; shift 3
   local caps=("$@")
-  local root repo_name base_ref job_id req_json body out state
-  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "run this inside a git repository"
-  repo_name=$(basename "$root")
-  base_ref=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+  local root common repo_name base_ref job_id req_json body out state
+  root=$(git rev-parse --show-toplevel) || die "cannot find the repository root; run this inside a git repository"
+  common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir) || die "cannot resolve the repository common directory"
+  repo_name=$(basename "$(dirname "$common")")
+  base_ref=$(git -C "$root" rev-parse --abbrev-ref HEAD) || die "cannot resolve the current branch for the remote job"
+  # A detached checkout deliberately uses main; failed git lookups must never submit a fallback job.
   [[ $base_ref != "HEAD" ]] || base_ref="main"
   job_id="$(date +%Y%m%d-%H%M%S)-${USER:-human}-$RANDOM"
   req_json='[]'
@@ -3426,10 +3428,10 @@ cmd_nodes() {
     echo "No nodes registered yet."
     return
   fi
-  printf '%-16s %-10s %-24s %-20s %s\n' "NODE" "STATUS" "CAPABILITIES" "FREE AGENTS" "WEB URL"
+  printf '%-16s %-10s %-24s %-20s %-32s %s\n' "NODE" "STATUS" "CAPABILITIES" "FREE AGENTS" "LAST SEEN" "WEB URL"
   local i
   for ((i=0; i<count; i++)); do
-    local row name off status="online" caps free web
+    local row name off status="online" caps free last_seen web
     row=$(jq -c ".[$i]" <<< "$nodes")
     name=$(jq -r '.Node // ""' <<< "$row")
     off=$(jq -r '.Offline // false' <<< "$row")
@@ -3438,9 +3440,10 @@ cmd_nodes() {
     [[ -n $caps ]] || caps="-"
     free=$(jq -r '[.FreeAgents[]? | .Name] | join(",")' <<< "$row")
     [[ -n $free ]] || free="none"
+    last_seen=$(jq -r '.LastSeen // "-"' <<< "$row")
     web=$(jq -r '.WebURL // "-"' <<< "$row")
     [[ -n $web ]] || web="-"
-    printf '%-16s %-10s %-24s %-20s %s\n' "$name" "$status" "$caps" "$free" "$web"
+    printf '%-16s %-10s %-24s %-20s %-32s %s\n' "$name" "$status" "$caps" "$free" "$last_seen" "$web"
   done
 }
 
