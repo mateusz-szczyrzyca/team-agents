@@ -56,11 +56,13 @@ func leadListenAddrs(ap netip.AddrPort) []netip.AddrPort {
 
 // leadConfig is the parsed command line of `agentbus lead`.
 type leadConfig struct {
-	dir     string         // the bus directory holding the lead's job registry
-	listen  netip.AddrPort // the validated --listen address (Tailscale or loopback)
-	node    string         // this instance's name on the lead; the lead is also a node
-	allowed []string       // devices allowed to take jobs: names or tag:…; loopback is always the lead's own node
-	ttl     time.Duration  // how long a silent node stays online
+	dir       string         // the bus directory holding the lead's job registry
+	listen    netip.AddrPort // the validated --listen address (Tailscale or loopback)
+	node      string         // this instance's name on the lead; the lead is also a node
+	allowed   []string       // devices allowed to take jobs: names or tag:…; loopback is always the lead's own node
+	ttl       time.Duration  // how long a silent node stays online
+	notifyDir string         // directory where completion notification markdown files are written
+	notifyCmd string         // optional delivery command run with the notification file
 }
 
 // leadDevices collects the repeated --allow flag.
@@ -85,6 +87,8 @@ func parseLeadConfig(args []string) (leadConfig, *LeadServeError) {
 	var allow leadDevices
 	fs.Var(&allow, "allow", "a device allowed to take jobs: its name or tag:… (repeat for each)")
 	ttl := fs.Duration("ttl", 90*time.Second, "how long a silent node stays online")
+	notifyDir := fs.String("notify-dir", "", "directory where completion notification files are written")
+	notifyCmd := fs.String("notify-cmd", "", "optional delivery command run with the notification file")
 	if err := fs.Parse(args); err != nil {
 		return leadConfig{}, opErr(LeadServeBadFlags, "%v", err)
 	}
@@ -104,7 +108,66 @@ func parseLeadConfig(args []string) (leadConfig, *LeadServeError) {
 	if *ttl <= 0 {
 		return leadConfig{}, opErr(LeadServeBadFlags, "--ttl %v must be a positive duration, e.g. 90s", *ttl)
 	}
-	return leadConfig{dir: *dir, listen: addr, node: *node, allowed: allow, ttl: *ttl}, nil
+	return leadConfig{dir: *dir, listen: addr, node: *node, allowed: allow, ttl: *ttl, notifyDir: *notifyDir, notifyCmd: *notifyCmd}, nil
+}
+
+// leadCancelConfig is the parsed command line of `agentbus lead-cancel`.
+type leadCancelConfig struct {
+	dir       string        // the bus directory
+	id        string        // the job to cancel
+	ttl       time.Duration // how long a silent node stays online
+	notifyDir string        // directory where completion notification files are written
+	notifyCmd string        // optional delivery command run with the notification file
+}
+
+// parseLeadCancelConfig parses the arguments of `agentbus lead-cancel`.
+func parseLeadCancelConfig(args []string) (leadCancelConfig, *LeadCancelError) {
+	fs := newFlagSet("lead-cancel")
+	dir := fs.String("dir", defaultDir(), "the bus directory")
+	ttl := fs.Duration("ttl", 90*time.Second, "how long a silent node stays online")
+	notifyDir := fs.String("notify-dir", "", "directory where completion notification files are written")
+	notifyCmd := fs.String("notify-cmd", "", "optional delivery command run with the notification file")
+	if err := fs.Parse(args); err != nil {
+		return leadCancelConfig{}, opErr(LeadCancelBadFlags, "%v", err)
+	}
+	if fs.NArg() != 1 {
+		return leadCancelConfig{}, opErr(LeadCancelBadFlags, "usage: agentbus lead-cancel [--dir D] [--ttl T] [--notify-dir D] [--notify-cmd C] <id>")
+	}
+	if *ttl <= 0 {
+		return leadCancelConfig{}, opErr(LeadCancelBadFlags, "--ttl %v must be a positive duration", *ttl)
+	}
+	id := fs.Arg(0)
+	if !validJobIdentifier(id) {
+		return leadCancelConfig{}, opErr(LeadCancelBadFlags, "invalid job identifier %q: must be letters, digits, '.', '_' or '-', starting with a letter or digit", id)
+	}
+	return leadCancelConfig{dir: *dir, id: id, ttl: *ttl, notifyDir: *notifyDir, notifyCmd: *notifyCmd}, nil
+}
+
+// leadCancel cancels a job in the lead registry directly under the bus lock.
+func leadCancel(dir, id string, ttl time.Duration, notifyDir, notifyCmd string) (leadJobView, *LeadCancelError) {
+	a := &leadAPI{bus: &Bus{dir: dir}, ttl: ttl, notifyDir: notifyDir, notifyCmd: notifyCmd}
+	job, err := a.cancel(true, id)
+	if err != nil {
+		return leadJobView{}, err
+	}
+	return publicLeadJob(job), nil
+}
+
+// cmdLeadCancel cancels a remote job on the lead.
+func cmdLeadCancel(args []string) {
+	cfg, err := parseLeadCancelConfig(args)
+	if err != nil {
+		exitOn(err.asError())
+		return
+	}
+	view, err := leadCancel(cfg.dir, cfg.id, cfg.ttl, cfg.notifyDir, cfg.notifyCmd)
+	if err != nil {
+		exitOn(err.asError())
+		return
+	}
+	if serr := printJSON(view); serr != nil {
+		exitOn(fromStorage(LeadCancelStorage, serr).asError())
+	}
 }
 
 // cmdLead runs `agentbus lead` in the foreground (agent lead runs it under agentlead.service).

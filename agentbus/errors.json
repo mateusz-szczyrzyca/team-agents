@@ -1059,6 +1059,11 @@
    "what": "cancellation of a remote job",
    "causes": [
     {
+     "name": "BadFlags",
+     "class": "InvalidArgument",
+     "doc": "flags or arguments to lead-cancel are invalid"
+    },
+    {
      "name": "Unauthorized",
      "class": "Permission",
      "doc": "only the local lead CLI may cancel a job"

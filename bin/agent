@@ -2785,9 +2785,15 @@ resume_run() { # ref verify same_round [addition...] — resumes an interrupted 
 }
 
 cmd_run() {
-  local members=() verify=0 same_round=0 team_list="" resume_ref=""
-  while [[ ${1:-} == --team || ${1:-} == --verify || ${1:-} == --resume || ${1:-} == --same-round || ${1:-} == --last-team ]]; do
+  local members=() verify=0 same_round=0 team_list="" resume_ref="" need_caps=() target_node=""
+  while [[ ${1:-} == --need || ${1:-} == --on || ${1:-} == --team || ${1:-} == --verify || ${1:-} == --resume || ${1:-} == --same-round || ${1:-} == --last-team ]]; do
     case $1 in
+      --need)
+        [[ -n ${2:-} && ${2:-} != --* ]] || die "usage: agent run --need cap1,cap2 <agent|normal|worker> \"task\""
+        IFS=, read -ra need_caps <<< "$2"; shift 2 ;;
+      --on)
+        [[ -n ${2:-} && ${2:-} != --* ]] || die "usage: agent run --on instance <agent> \"task\""
+        target_node=$2; shift 2 ;;
       --last-team)
         resume_ref=$(last_team_id)
         [[ -n $resume_ref ]] || die "--last-team: no team of this repository (outside a repository: no team at all)"
@@ -2802,6 +2808,28 @@ cmd_run() {
         team_list=$2; shift 2 ;;
     esac
   done
+  if ((${#need_caps[@]} > 0)) || [[ -n $target_node ]]; then
+    [[ -z $team_list ]] || die "--need/--on cannot be combined with --team"
+    ((verify == 0)) || die "--need/--on cannot be combined with --verify"
+    [[ -z $resume_ref ]] || die "--need/--on cannot be combined with --resume"
+    local selector=${1:-}
+    [[ -n $selector ]] || die "usage: agent run --need <caps> | --on <node> <agent|normal|worker> \"task\""
+    shift
+    local task
+    if [[ ${1:-} == -f ]]; then
+      [[ -r ${2:-} ]] || die "file not found: ${2:-}"
+      task=$(<"$2")
+    elif (($#)); then
+      task="$*"
+    elif [[ ! -t 0 ]]; then
+      task=$(cat)
+    else
+      die "give the task text (argument, -f file or stdin)"
+    fi
+    [[ -n ${task//[[:space:]]/} ]] || die "empty task"
+    submit_remote_job "$selector" "$target_node" "$task" "${need_caps[@]}"
+    return
+  fi
   ((same_round == 0)) || [[ -n $resume_ref ]] || die "--same-round only works with --resume"
   if [[ -n $resume_ref ]]; then
     [[ -z $team_list ]] || die "--resume takes the members from the interrupted task — do not combine it with --team"
@@ -3210,6 +3238,8 @@ cmd_web() { # runs the web interface in the foreground (agentweb.service runs th
 cmd_lead() { # runs the lead's listener in the foreground (agentlead.service runs this); needs LEAD_LISTEN
   [[ -n $LEAD_LISTEN ]] || die "LEAD_LISTEN is not set in agents.conf — a lead needs its Tailscale address, e.g. 100.x.y.z:7780"
   local args=(lead --dir "$BUS_DIR" --listen "$LEAD_LISTEN" --node "$INSTANCE_NAME" --ttl "${NODE_TTL_SEC}s")
+  [[ -n ${NOTIFY_DIR:-} ]] && args+=(--notify-dir "$NOTIFY_DIR")
+  [[ -n ${NOTIFY_CMD:-} ]] && args+=(--notify-cmd "$NOTIFY_CMD")
   local dev
   for dev in $LEAD_NODES; do args+=(--allow "$dev"); done
   exec "$AGENTBUS_BIN" "${args[@]}"
@@ -3250,8 +3280,172 @@ node_lock() {
   flock -n 8 || die "another node daemon is already running"
 }
 
+# lead_url returns the configured LEAD_URL or the lead's loopback address.
+lead_url() {
+  if [[ -n ${LEAD_URL:-} ]]; then
+    printf '%s' "${LEAD_URL%/}"
+  elif [[ -n ${LEAD_LISTEN:-} ]]; then
+    printf 'http://127.0.0.1:%s' "${LEAD_LISTEN##*:}"
+  else
+    die "neither LEAD_URL nor LEAD_LISTEN is configured"
+  fi
+}
+
 # node_request sends only a coarse HTTP operation through the bounded Go transport.
 node_request() { bus node-request --url "$LEAD_URL" "$@"; }
+
+# submit_remote_job submits a job to the lead queue.
+submit_remote_job() {
+  local selector=$1 target_node=$2 task=$3; shift 3
+  local caps=("$@")
+  local root common repo_name base_ref job_id req_json body out state
+  root=$(git rev-parse --show-toplevel) || die "cannot find the repository root; run this inside a git repository"
+  common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir) || die "cannot resolve the repository common directory"
+  repo_name=$(basename "$(dirname "$common")")
+  base_ref=$(git -C "$root" rev-parse --abbrev-ref HEAD) || die "cannot resolve the current branch for the remote job"
+  # A detached checkout deliberately uses main; failed git lookups must never submit a fallback job.
+  [[ $base_ref != "HEAD" ]] || base_ref="main"
+  job_id="$(date +%Y%m%d-%H%M%S)-${USER:-human}-$RANDOM"
+  req_json='[]'
+  if ((${#caps[@]})); then
+    req_json=$(printf '%s\n' "${caps[@]}" | jq -R . | jq -s .)
+  fi
+  body=$(jq -cn \
+    --arg id "$job_id" \
+    --arg repo "$repo_name" \
+    --arg base "$base_ref" \
+    --argjson req "$req_json" \
+    --arg sel "$selector" \
+    --arg target "$target_node" \
+    --arg task "$task" \
+    --arg reqstr "human" \
+    '{ID:$id,Repository:$repo,BaseRef:$base,Requires:$req,Selector:$sel,Target:$target,Task:$task,Requester:$reqstr}')
+  out=$(printf '%s' "$body" | bus node-request --url "$(lead_url)" --path /v1/jobs) || die "failed to submit job to lead: $out"
+  state=$(jq -r '.State // "queued"' <<< "$out")
+  echo "Job $job_id submitted to lead ($state)"
+  echo "Track with: agent jobs $job_id"
+}
+
+# cmd_jobs lists remote jobs, inspects a single job, or cancels a job on the lead.
+cmd_jobs() {
+  if [[ ${1:-} == --cancel ]]; then
+    local id=${2:-}
+    [[ -n $id ]] || die "usage: agent jobs --cancel <id>"
+    [[ -n ${LEAD_LISTEN:-} ]] || die "cancelling a job is only supported on the lead"
+    local cancel_args=(lead-cancel --dir "$BUS_DIR" --ttl "${NODE_TTL_SEC}s")
+    [[ -n ${NOTIFY_DIR:-} ]] && cancel_args+=(--notify-dir "$NOTIFY_DIR")
+    [[ -n ${NOTIFY_CMD:-} ]] && cancel_args+=(--notify-cmd "$NOTIFY_CMD")
+    cancel_args+=("$id")
+    local res state
+    res=$(bus "${cancel_args[@]}") || die "cannot cancel job $id"
+    state=$(jq -r '.State // "stopped"' <<< "$res")
+    echo "Job $id cancelled ($state)"
+    return
+  fi
+  local id=${1:-}
+  if [[ -n $id ]]; then
+    local job state node branch pr wait_reason offline task_text result reqs target
+    job=$(bus node-request --url "$(lead_url)" --path "/v1/jobs/$id" --get) || die "job not found: $id"
+    state=$(jq -r '.State // ""' <<< "$job")
+    node=$(jq -r '.Node // ""' <<< "$job")
+    branch=$(jq -r '.Branch // ""' <<< "$job")
+    pr=$(jq -r '.PRURL // ""' <<< "$job")
+    wait_reason=$(jq -r '.WaitReason // ""' <<< "$job")
+    offline=$(jq -r '.NodeOffline // false' <<< "$job")
+    task_text=$(jq -r '.Request.Task // ""' <<< "$job")
+    result=$(jq -r '.Result // ""' <<< "$job")
+
+    echo "Job: $id"
+    if [[ $state == queued && -n $wait_reason ]]; then
+      echo "State: queued (waiting: $wait_reason)"
+    elif [[ $offline == true && $state == running ]]; then
+      echo "State: running (node offline)"
+    else
+      echo "State: $state"
+    fi
+    echo "Repo: $(jq -r '.Request.Repository // ""' <<< "$job")"
+    echo "Base: $(jq -r '.Request.BaseRef // ""' <<< "$job")"
+    reqs=$(jq -r '.Request.Requires // [] | join(",")' <<< "$job")
+    [[ -z $reqs ]] || echo "Requires: $reqs"
+    echo "Selector: $(jq -r '.Request.Selector // ""' <<< "$job")"
+    target=$(jq -r '.Request.Target // ""' <<< "$job")
+    [[ -z $target ]] || echo "Target: $target"
+    [[ -z $node ]] || echo "Node: $node"
+    [[ -z $branch ]] || echo "Branch: $branch"
+    [[ -z $pr ]] || echo "PR: $pr"
+    if [[ -n $task_text ]]; then
+      echo
+      echo "Task:"
+      echo "$task_text"
+    fi
+    if [[ -n $result ]]; then
+      echo
+      echo "Result:"
+      echo "$result"
+    fi
+  else
+    local jobs count
+    jobs=$(bus node-request --url "$(lead_url)" --path "/v1/jobs" --get) || die "failed to list jobs from lead"
+    if [[ -z ${LEAD_LISTEN:-} && -n ${LEAD_URL:-} ]]; then
+      jobs=$(jq -c --arg node "$INSTANCE_NAME" '[.[] | select(.Node == $node)]' <<< "$jobs")
+    fi
+    count=$(jq 'length' <<< "$jobs")
+    if ((count == 0)); then
+      echo "No remote jobs found."
+      return
+    fi
+    printf '%-26s %-12s %-12s %-10s %s\n' "JOB ID" "STATE" "NODE" "SELECTOR" "DETAILS"
+    local i
+    for ((i=0; i<count; i++)); do
+      local row jid st nd sel wr off br details=""
+      row=$(jq -c ".[$i]" <<< "$jobs")
+      jid=$(jq -r '.Request.ID // ""' <<< "$row")
+      st=$(jq -r '.State // ""' <<< "$row")
+      nd=$(jq -r '.Node // "-"' <<< "$row")
+      [[ -n $nd ]] || nd="-"
+      sel=$(jq -r '.Request.Selector // ""' <<< "$row")
+      wr=$(jq -r '.WaitReason // ""' <<< "$row")
+      off=$(jq -r '.NodeOffline // false' <<< "$row")
+      br=$(jq -r '.Branch // ""' <<< "$row")
+      if [[ $st == queued && -n $wr ]]; then
+        details="waiting: $wr"
+      elif [[ $off == true && $st == running ]]; then
+        details="node offline"
+      elif [[ -n $br ]]; then
+        details="$br"
+      fi
+      printf '%-26s %-12s %-12s %-10s %s\n' "$jid" "$st" "$nd" "$sel" "$details"
+    done
+  fi
+}
+
+# cmd_nodes lists the nodes registered on the lead.
+cmd_nodes() {
+  local nodes count
+  nodes=$(bus node-request --url "$(lead_url)" --path "/v1/nodes" --get) || die "failed to list nodes from lead"
+  count=$(jq 'length' <<< "$nodes")
+  if ((count == 0)); then
+    echo "No nodes registered yet."
+    return
+  fi
+  printf '%-16s %-10s %-24s %-20s %-32s %s\n' "NODE" "STATUS" "CAPABILITIES" "FREE AGENTS" "LAST SEEN" "WEB URL"
+  local i
+  for ((i=0; i<count; i++)); do
+    local row name off status="online" caps free last_seen web
+    row=$(jq -c ".[$i]" <<< "$nodes")
+    name=$(jq -r '.Node // ""' <<< "$row")
+    off=$(jq -r '.Offline // false' <<< "$row")
+    [[ $off != true ]] || status="offline"
+    caps=$(jq -r '.Capabilities // [] | join(",")' <<< "$row")
+    [[ -n $caps ]] || caps="-"
+    free=$(jq -r '[.FreeAgents[]? | .Name] | join(",")' <<< "$row")
+    [[ -n $free ]] || free="none"
+    last_seen=$(jq -r '.LastSeen // "-"' <<< "$row")
+    web=$(jq -r '.WebURL // "-"' <<< "$row")
+    [[ -n $web ]] || web="-"
+    printf '%-16s %-10s %-24s %-20s %-32s %s\n' "$name" "$status" "$caps" "$free" "$last_seen" "$web"
+  done
+}
 
 # node_heartbeat_json advertises locally configured capacity using the ordinary task admission rules.
 node_heartbeat_json() {
@@ -4135,8 +4329,13 @@ agent live [--feed] [--remind MIN]        live panel (or an event stream with --
 agent web                                 web interface in the foreground (normally: agentweb.service)
 agent lead                                the lead's job listener in the foreground (normally: agentlead.service; LEAD_LISTEN)
 agent node                                the node daemon in the foreground (normally: agentnode.service; LEAD_URL)
+agent jobs [<id>]                         remote jobs on the lead (or this node's jobs)
+agent jobs --cancel <id>                  cancel a remote job on the lead
+agent nodes                               registered nodes on the lead
 agent kick <task>                         cut a run short: a team member sleeps (the team can wake it), solo: stopped
 agent round-size <task>                   size of a task's change against the round limit (README "Rounds")
+agent run --need <caps> <agent|normal|worker> "task"   submit a remote job with required capabilities
+agent run --on <instance> <agent> "task"               submit a remote job pinned to an instance
 agent run --resume <team|task> --same-round  continue an unmerged round (e.g. review fixes) on the same branches
 agent run --last-team [--same-round] ["…"]  resume the newest team of this repository (no ID to look up)
 agent ack <id|all>                        acknowledge finished tasks (they leave the panel)
@@ -4174,6 +4373,8 @@ main() {
     web)     cmd_web ;;
     lead)    cmd_lead ;;
     node)    cmd_node "$@" ;;
+    jobs)    cmd_jobs "$@" ;;
+    nodes)   cmd_nodes ;;
     kick)    cmd_kick "$@" ;;
     round-size) cmd_round_size "$@" ;;
     _agents-json) cmd__agents_json ;;

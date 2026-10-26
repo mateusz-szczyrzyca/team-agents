@@ -635,8 +635,8 @@ direct links: `Answer: …/questions/<task>?max=1` for questions, `Open: …/tas
 
 **Several instances.** Every installation stays independent: its own bus, tasks and web interface. One installation
 can be the **lead**, which keeps a job queue and the list of nodes; remote jobs are being built in nine rounds:
-[design and implementation plan](docs/multi-instance.md). Rounds 4 and 6 add the lead's HTTP listener and the node
-daemon (rounds 7 to 9 add the commands, delegation and views):
+[design and implementation plan](docs/multi-instance.md). Rounds 4, 6 and 7 add the lead's HTTP listener, the node
+daemon, remote job CLI commands and lead notifications (rounds 8 and 9 add delegation and web views):
 
 - `LEAD_LISTEN` in `agents.conf` is the lead's Tailscale address, e.g. `100.101.102.103:7780`. Empty (the default)
   means the installation is not a lead and nothing changes. The lead serves that address and `127.0.0.1` on the
@@ -697,10 +697,15 @@ daemon (rounds 7 to 9 add the commands, delegation and views):
   `node_stopped`, `node_checkout_failed`, `node_launch_failed`. Diagnostic events, logged when the daemon cannot
   continue normally: `node_storage_failed`, `node_reply_invalid`, `node_assignment_obsolete`,
   `node_start_report_failed`, `node_report_failed`, `node_stop_failed`, `node_sleep_interrupted`.
-- **Not yet:** the CLI commands `agent run --need` / `--on`, `agent jobs`, `agent nodes` and cancel (round 7);
-  delegation of a team member's step to another machine (round 8); the Jobs and Instances web views (round 9).
-  Until round 7 a job is submitted to the lead with `agentbus node-request --url <lead> --path /v1/jobs` from the
-  lead's own machine.
+- **Remote job commands and lead notifications** (round 7):
+  - `agent run --need <capability>[,…] <agent|normal|worker> "task"`: submits a remote job requiring the specified capabilities to the lead queue instead of launching a local task.
+  - `agent run --on <instance> <agent> "task"`: submits a remote job pinned to a specific instance name.
+  - `agent jobs [<id>]`: lists remote jobs on the lead (on a node: its own jobs). Shows obstacle diagnostics (e.g. `no node with hw:rp2350`, `no free normal agent`) when a job stays queued. Given an ID, displays repository, base ref, selector, node, branch, PR URL, task and result.
+  - `agent jobs --cancel <id>`: cancels a job on the lead (unstarted jobs stop immediately; started jobs request a stop from the node). Allowed only on the lead.
+  - `agent nodes`: lists the nodes registered on the lead, their declared capabilities, free agents, last seen time and online/offline status.
+  - Remote submissions use the main clone's repository name, including from a linked worktree, and the current worktree branch. A detached `HEAD` deliberately uses `main`; git lookup failures stop submission with a diagnostic.
+  - **Lead notifications**: when a remote job reaches a terminal state (`done`, `failed`, `stopped`), the lead notifies the human requester by writing a summary file into `NOTIFY_DIR` and invoking `NOTIFY_CMD` if configured.
+- **Not yet:** delegation of a team member's step to another machine (round 8); the Jobs and Instances web views (round 9).
 
 ## MCP tools available to agents
 
