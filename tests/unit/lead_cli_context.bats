@@ -111,7 +111,7 @@ GIT
   [[ $output == *'LAST SEEN'* ]]
   [[ $output == *context-lead* ]]
   [[ $output == *online* ]]
-  [[ $output == *'os:linux,hw:rp2350'* ]]
+  [[ $output == *'hw:rp2350,os:linux'* ]]
   [[ $output == *worker* ]]
   [[ $output == *'http://example.com/node'* ]]
   [[ $output == *"$last_seen"* ]]
