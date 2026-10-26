@@ -54,7 +54,8 @@ type BoardItem struct {
 	Assignee string      `json:"assignee,omitempty"` // who claimed it
 	For      string      `json:"for,omitempty"`      // the only member that may claim it ("" = anyone at its level)
 	Result   string      `json:"result,omitempty"`   // the result submitted with board_done
-	Updated  Timestamp   `json:"updated"`            // last change	Progress string        `json:"progress,omitempty"` // the claimant's latest progress note (board_progress), kept when the item goes back
+	Updated  Timestamp   `json:"updated"`            // last change
+	Progress string      `json:"progress,omitempty"` // the claimant's latest progress note (board_progress), kept when the item goes back
 	Previous string      `json:"previous,omitempty"` // who held the item before it went back to the board
 }
 
@@ -312,7 +313,7 @@ func (t *Team) releaseItemsOf(agent string) []string {
 	for _, id := range t.sortedBoardIDs() {
 		it := t.Board[id]
 		if it.Assignee == agent && it.Status == BoardClaimed {
-			it.Status, it.Assignee, it.Updated = BoardTodo, "", Now()
+			it.Status, it.Assignee, it.Previous, it.Updated = BoardTodo, "", agent, Now()
 			released = append(released, id)
 		}
 	}
@@ -451,6 +452,12 @@ func (s *Server) boardList() (string, *BoardListError) {
 			if it.Status != BoardDone && it.Details != "" {
 				fmt.Fprintf(&sb, "    %s\n", strings.ReplaceAll(it.Details, "\n", "\n    "))
 			}
+			if it.Previous != "" && it.Status != BoardDone {
+				fmt.Fprintf(&sb, "    previously: %s — continue from its branch unless its progress note says otherwise\n", it.Previous)
+			}
+			if it.Progress != "" && it.Status != BoardDone {
+				fmt.Fprintf(&sb, "    progress: %s\n", trunc(it.Progress, 400))
+			}
 			if it.Status == BoardDone && it.Result != "" {
 				fmt.Fprintf(&sb, "    result: %s\n", trunc(it.Result, 300))
 			}
@@ -530,8 +537,30 @@ func (s *Server) boardDone(id, result string) (string, *BoardDoneError) {
 // boardProgress (MCP board_progress) records how far the caller got with its claimed item — what is done, the
 // last commit, what comes next. The note stays with the item when it goes back to the board, for whoever takes
 // it over.
-func (s *Server) boardProgress(_, _ string) (string, *BoardProgressError) {
-	return "", nil // not implemented yet: board_progress_test.go comes first
+func (s *Server) boardProgress(id, note string) (string, *BoardProgressError) {
+	note = strings.TrimSpace(note)
+	if note == "" {
+		return "", opErr(BoardProgressEmptyNote, "the progress note is empty")
+	}
+	id = strings.TrimSpace(id)
+	err := transact(s.bus, BoardProgressStorage, func(st *State) *BoardProgressError {
+		s.touch(st)
+		t := s.myTeam(st)
+		if t == nil {
+			return opErr(BoardProgressNotInTeam, "you are not in a team")
+		}
+		it := t.Board[id]
+		if it == nil || it.Assignee != s.me || it.Status != BoardClaimed {
+			return opErr(BoardProgressNotYourItem, "%s is not your item", id)
+		}
+		it.Progress, it.Updated = note+" ("+s.me+", "+Now().String()+")", Now()
+		t.bumpBoard()
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return "Progress on " + id + " recorded.", nil
 }
 
 func (s *Server) boardRelease(id, note string) (string, *BoardReleaseError) {
@@ -546,7 +575,7 @@ func (s *Server) boardRelease(id, note string) (string, *BoardReleaseError) {
 		if it == nil || it.Assignee != s.me {
 			return opErr(BoardReleaseNotYourItem, "%s is not your item", id)
 		}
-		it.Status, it.Assignee, it.Updated = BoardTodo, "", Now()
+		it.Status, it.Assignee, it.Previous, it.Updated = BoardTodo, "", s.me, Now()
 		t.bumpBoard()
 		if note != "" {
 			it.Details += "\n[returned by " + s.me + ": " + note + "]"
@@ -672,6 +701,9 @@ func collabToolDefs(inTeam bool, tier Tier) []map[string]any {
 				obj(map[string]any{"id": str("e.g. B3"), "result": str("Result")}, "id", "result")),
 			tool("board_release", "Return an item to the board (e.g. too hard for you), with a note.",
 				obj(map[string]any{"id": str("e.g. B3"), "note": str("Why")}, "id")),
+			tool("board_progress", "Record how far you got with your claimed item: what is done, the last commit (pushed), "+
+				"what comes next. Do it after every push — if you drop out, whoever takes the item over starts from this note.",
+				obj(map[string]any{"id": str("e.g. B3"), "note": str("Done so far, the last pushed commit, what comes next")}, "id", "note")),
 		)
 	}
 	defs = append(defs, tool("checkpoint", "Save a work checkpoint: what is done (commits, findings, decisions) and what comes next. "+

@@ -839,6 +839,8 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 		return toolResult(s.boardDone(a.str("id"), a.str("result")))
 	case "board_release":
 		return toolResult(s.boardRelease(a.str("id"), a.str("note")))
+	case "board_progress":
+		return toolResult(s.boardProgress(a.str("id"), a.str("note")))
 	case "delegate":
 		return toolResult(s.delegate(a.str("request"), a.str("context")))
 	case "delegation_status":
