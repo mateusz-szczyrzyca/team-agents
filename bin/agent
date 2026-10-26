@@ -3238,6 +3238,8 @@ cmd_web() { # runs the web interface in the foreground (agentweb.service runs th
 cmd_lead() { # runs the lead's listener in the foreground (agentlead.service runs this); needs LEAD_LISTEN
   [[ -n $LEAD_LISTEN ]] || die "LEAD_LISTEN is not set in agents.conf — a lead needs its Tailscale address, e.g. 100.x.y.z:7780"
   local args=(lead --dir "$BUS_DIR" --listen "$LEAD_LISTEN" --node "$INSTANCE_NAME" --ttl "${NODE_TTL_SEC}s")
+  [[ -n ${NOTIFY_DIR:-} ]] && args+=(--notify-dir "$NOTIFY_DIR")
+  [[ -n ${NOTIFY_CMD:-} ]] && args+=(--notify-cmd "$NOTIFY_CMD")
   local dev
   for dev in $LEAD_NODES; do args+=(--allow "$dev"); done
   exec "$AGENTBUS_BIN" "${args[@]}"
@@ -3328,8 +3330,12 @@ cmd_jobs() {
     local id=${2:-}
     [[ -n $id ]] || die "usage: agent jobs --cancel <id>"
     [[ -n ${LEAD_LISTEN:-} ]] || die "cancelling a job is only supported on the lead"
+    local cancel_args=(lead-cancel --dir "$BUS_DIR" --ttl "${NODE_TTL_SEC}s")
+    [[ -n ${NOTIFY_DIR:-} ]] && cancel_args+=(--notify-dir "$NOTIFY_DIR")
+    [[ -n ${NOTIFY_CMD:-} ]] && cancel_args+=(--notify-cmd "$NOTIFY_CMD")
+    cancel_args+=("$id")
     local res state
-    res=$(bus lead-cancel --dir "$BUS_DIR" "$id") || die "cannot cancel job $id"
+    res=$(bus "${cancel_args[@]}") || die "cannot cancel job $id"
     state=$(jq -r '.State // "stopped"' <<< "$res")
     echo "Job $id cancelled ($state)"
     return

@@ -146,17 +146,17 @@ start_test_lead() {
   local port
   port=$(grep '^LEAD_LISTEN=' "$AGENTS_HOME/agents.conf" | cut -d: -f2)
 
-  local beat_body='{"Node":"lead-test","Tier":"worker","Free":[{"Name":"w1","Tier":"worker"}],"Capabilities":["hw:other"]}'
+  local beat_body='{"Node":"lead-test","FreeAgents":[{"Name":"w1","Tier":"worker"}],"Capabilities":["hw:other"]}'
   local assign_resp
   assign_resp=$(curl -s -X POST -H "Content-Type: application/json" -d "$beat_body" "http://127.0.0.1:$port/v1/heartbeat")
   local assignment
-  assignment=$(echo "$assign_resp" | jq -r '.Assignment // empty')
+  assignment=$(echo "$assign_resp" | jq -r '.Job.Assignment // empty')
   [ -n "$assignment" ]
 
-  local rep_running='{"ID":"'"$job_id2"'","Assignment":"'"$assignment"'","State":"running","Node":"lead-test","Branch":"agents/w1/job"}'
+  local rep_running='{"ID":"'"$job_id2"'","Assignment":'"$assignment"',"State":"running","Node":"lead-test","Branch":"agents/w1/job"}'
   curl -s -X POST -H "Content-Type: application/json" -d "$rep_running" "http://127.0.0.1:$port/v1/jobs/$job_id2/state" >/dev/null
 
-  local rep_done='{"ID":"'"$job_id2"'","Assignment":"'"$assignment"'","State":"done","Node":"lead-test","Result":"done ok"}'
+  local rep_done='{"ID":"'"$job_id2"'","Assignment":'"$assignment"',"State":"done","Node":"lead-test","Result":"done ok"}'
   curl -s -X POST -H "Content-Type: application/json" -d "$rep_done" "http://127.0.0.1:$port/v1/jobs/$job_id2/state" >/dev/null
 
   [ -f "$HOME/notify/$job_id2-summary.md" ]
