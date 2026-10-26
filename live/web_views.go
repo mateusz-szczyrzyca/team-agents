@@ -316,6 +316,8 @@ func pausedText(m map[string]string) string {
 		out += " (quota exhausted)"
 	case "rate_limit":
 		out += " (rate-limited by the provider)"
+	case "overloaded":
+		out += " (model overloaded at the provider)"
 	case "wake_loop":
 		out += " (wake-loop guard)"
 	}

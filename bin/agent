@@ -913,7 +913,12 @@ team_after_run() { # id status final note — team logic after a member's run en
   if [[ $AGENT == "$lead" ]]; then
     case $status in
       waiting) notify "$id" waiting "$final" "questions from the coordinator of team $team (members sleep until answered)" ;;
-      done|failed)
+      failed)   # a failure is not the end of the team's work: the coordinator is out, the others go on
+        member_out "$id" "the coordinator's run failed${note:+ ($note)}"
+        push_text "$REPO_NAME" "⚠ The coordinator $AGENT of team $team failed${note:+ ($note)}. The team stays open: its members were told to take over coordination." \
+          "To resume it yourself: agent run --resume $team --same-round \"…\""
+        return 0 ;;
+      done)
         finish_team "$team" "team task finished by the coordinator ($AGENT)"
         if [[ $status == done && $(task_field "$id" VERIFY) == 1 ]]; then
           request_review "$id"
@@ -1005,6 +1010,8 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
 # a rate limit — HTTP 429, the provider throttling requests (a short pause; credits may be fine).
 QUOTA_PATTERN='quota (reached|exceeded|exhausted)|usage limit|limit reached|resource[ _]exhausted|out of credits|insufficient (credits|balance)|(^|[^0-9])402([^0-9]|$)'
 RATE_LIMIT_PATTERN='rate[ _-]?limit|too many requests|(^|[^0-9])429([^0-9]|$)'
+# A model overloaded at the provider ("Selected model is at capacity", HTTP 503/529): a short pause like a rate limit.
+OVERLOAD_PATTERN='at capacity|overloaded|temporarily unavailable|(^|[^0-9])(503|529)([^0-9]|$)'
 
 # limit_lines dir run final pattern — this run's error lines that match a pattern: the end of the CLI's stderr
 # (AGENT_LIMIT_TAIL_LINES lines: an early error the CLI retried does not count), the error events at the end of its
@@ -1036,6 +1043,8 @@ limit_kind() {
     echo quota
   elif [[ -n $(limit_lines "$1" "$2" "$3" "$RATE_LIMIT_PATTERN" | tr -d '[:space:]') ]]; then
     echo rate_limit
+  elif [[ -n $(limit_lines "$1" "$2" "$3" "$OVERLOAD_PATTERN" | tr -d '[:space:]') ]]; then
+    echo overloaded
   else
     return 1
   fi
@@ -1045,6 +1054,7 @@ limit_kind() {
 limit_line() {
   local pat=$QUOTA_PATTERN
   [[ $4 == rate_limit ]] && pat=$RATE_LIMIT_PATTERN
+  [[ $4 == overloaded ]] && pat=$OVERLOAD_PATTERN
   limit_lines "$1" "$2" "$3" "$pat" | sed -E 's/^[[:space:]]+//' | { grep -m1 . || (($? == 1)); } | cut -c1-200
 }
 
@@ -1055,6 +1065,7 @@ quota_reset_seconds() {
   local kind text pat=$QUOTA_PATTERN default=$AGENT_QUOTA_PAUSE_MIN
   kind=$(limit_kind "$1" "$2" "$3") || return 1
   if [[ $kind == rate_limit ]]; then pat=$RATE_LIMIT_PATTERN; default=$AGENT_RATE_LIMIT_PAUSE_MIN; fi
+  if [[ $kind == overloaded ]]; then pat=$OVERLOAD_PATTERN; default=$AGENT_RATE_LIMIT_PAUSE_MIN; fi
   text=$(limit_lines "$1" "$2" "$3" "$pat")
 
   local secs=0 now at t epoch dur
@@ -2203,6 +2214,8 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     resume_at=$(date -d "@$(( $(date +%s) + pause_secs ))" '+%H:%M')
     if [[ $pause_reason == rate_limit ]]; then
       note="the provider is rate-limiting requests (HTTP 429) — not out of credits; resumes at $resume_at${why:+ — $why}"
+    elif [[ $pause_reason == overloaded ]]; then
+      note="the model is overloaded at the provider (at capacity) — not your account; resumes at $resume_at${why:+ — $why}"
     else
       note="the provider's quota or usage limit is exhausted — resumes at $resume_at${why:+ — $why}"
     fi
@@ -2667,7 +2680,8 @@ resume_history() { # task → the human's answers from this task and its predece
   done
 }
 
-resume_run() { # ref verify same_round [addition...] — resumes an interrupted team or task from its last checkpoint
+resume_run() {
+  local carry # ref verify same_round [addition...] — resumes an interrupted team or task from its last checkpoint
   local ref=$1 verify=$2 same_round=$3; shift 3
   local add=""
   if [[ ${1:-} == -f ]]; then [[ -r ${2:-} ]] || die "file not found: ${2:-}"; add=$(<"$2")
@@ -2741,7 +2755,14 @@ resume_run() { # ref verify same_round [addition...] — resumes an interrupted 
     id="$ts-$name"; wt="$AGENTS_HOME/worktrees/$(task_field "$old" REPO_NAME)/$id"
     mkdir -p "$(dirname "$wt")"
     # the same branch (with its commits and draft PR) — the old worktree releases it
+    carry=""
     if [[ -d $(task_field "$old" WORKTREE) ]]; then
+      # uncommitted changes are never thrown away: they go to the stash and on into the new worktree
+      if [[ -n $(git -C "$(task_field "$old" WORKTREE)" status --porcelain 10>&-) ]]; then
+        git -C "$(task_field "$old" WORKTREE)" stash push --include-untracked --quiet -m "agent resume of $old: uncommitted work" 10>&- \
+          || die "the worktree of $old has uncommitted changes that could not be stashed — commit them first"
+        carry=$(git -C "$root" rev-parse --verify --quiet refs/stash 10>&-)
+      fi
       try worktree_remove_failed git -C "$root" worktree remove --force "$(task_field "$old" WORKTREE)" 10>&-
     fi
     git -C "$root" worktree prune 10>&-
@@ -2759,6 +2780,18 @@ resume_run() { # ref verify same_round [addition...] — resumes an interrupted 
       round_head="Round $((wr + 1)) of $wrs. Round $wr is merged into $base: your branch $branch starts from there ($sha). Your previous branch $prev is kept — take from it only what the round plan puts into this round."
     else
       git -C "$root" worktree add --quiet "$wt" "$branch" 10>&- || die "could not recreate the worktree of branch $branch"
+    fi
+    if [[ -n $carry ]] && ((fresh)); then   # a new round starts clean: the old round's leftovers stay in the stash
+      echo "  $name: the uncommitted changes of $old stay in the stash ($carry) — the new round starts clean"
+    elif [[ -n $carry ]]; then
+      if git -C "$wt" stash apply --quiet "$carry" 10>&-; then
+        git -C "$root" stash drop --quiet "$(git -C "$root" stash list --format='%gd %H' | awk -v h="$carry" '$2 == h {print $1; exit}')" 10>&- \
+          || log_warn stash_drop_failed "stash=$carry"
+        echo "  $name: the uncommitted changes of $old are carried into the new worktree"
+      else
+        log_error stash_apply_failed "task=$old" "stash=$carry"
+        echo "  WARNING $name: the uncommitted changes of $old could not be applied — they stay in the stash: git stash apply $carry"
+      fi
     fi
     { cat "$TASKS/$old/task.md"
       if [[ -n $round_head ]]; then
@@ -3250,6 +3283,9 @@ member_out() { # id reason — a team member is out of the team's work: its boar
     head=$(git -C "$wt" rev-parse --short HEAD 2>/dev/null) || head=""   # no commit yet: no head to name
   fi
   text="MEMBER $agent IS OUT: $why.${released:+ Its items ($released) are back on the board with its progress notes — take them over.} Its work is on branch $branch${head:+ at $head}: continue from there (merge it) unless its notes say the approach failed."
+  if [[ $agent == "$(team_lead "$team")" ]]; then
+    text="COORDINATOR $agent IS OUT: $why. Normal model: take over coordination (claim_lead), read the last checkpoint, the board and the PR, and continue.${released:+ Its items ($released) are back on the board.} Its integrated work is on branch $branch${head:+ at $head} — the PR's branch."
+  fi
   for nm in $(bus team-get --dir "$BUS_DIR" --team "$team" | jq -r --arg a "$agent" '.members[] | select(.agent != $a and .tier != "worker" and (.state == "active" or .state == "sleeping" or .state == "waking")) | .agent'); do
     notice member_out agentbus "$nm" "$text" "agent=$agent" "team=$team" "released=$released"
   done
