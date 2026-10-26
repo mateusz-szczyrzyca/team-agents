@@ -173,6 +173,15 @@ recommendation").
 
 ## 9. The last message of every turn
 
+**Every turn ends with a `STATUS: …` line** — only the statuses described here exist (`DONE`, `ROUND_DONE N/M`,
+`SLEEPING`, `QUESTIONS`, `INVESTIGATING`, `EXCLUDED`, `FAILED`). Blocked by another member's work or by a merge is
+`SLEEPING`: you are woken when it lands.
+
+**Your claimed board items: `board_progress` after every push** — what is done, the last pushed commit, what comes
+next. If you drop out, whoever takes the item over starts from this note. An item back on the board shows who held
+it (`previously:`) and its note: continue from that member's branch (merge it) unless the note says the approach
+failed.
+
 **Every turn ends with a `STATUS: …` line.** You work unattended: nobody will answer "should I continue?".
 If you can keep working — keep working. A turn without `STATUS` does not count as finished work — it is
 passed on as a question and pauses you.

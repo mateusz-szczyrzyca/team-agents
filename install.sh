@@ -160,6 +160,26 @@ done
 echo "» web interface (agentweb.service: agent web)"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$UNIT_DIR"
+# the supervisor: every 3 minutes, tasks whose runner died (no running unit) are ended and their team told
+cat > "$UNIT_DIR/agent-supervise.service" <<UNIT
+[Unit]
+Description=team-agents: end the tasks whose runner died (agent _supervise)
+
+[Service]
+Type=oneshot
+ExecStart=$BIN/agent _supervise
+UNIT
+cat > "$UNIT_DIR/agent-supervise.timer" <<UNIT
+[Unit]
+Description=team-agents: look for runners that died, every 3 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=3min
+
+[Install]
+WantedBy=timers.target
+UNIT
 cat > "$UNIT_DIR/agentweb.service" <<UNIT
 [Unit]
 Description=team-agents web interface (agent web)
@@ -174,6 +194,9 @@ WantedBy=default.target
 UNIT
 if systemctl --user show-environment >/dev/null 2>&1; then   # a query: is there a systemd user session?
   systemctl --user daemon-reload
+  if ! systemctl --user enable --now agent-supervise.timer; then
+    echo "  WARNING: agent-supervise.timer could not be enabled (dead runners are not found by themselves)"
+  fi
   if ! systemctl --user enable agentweb.service 2>/dev/null; then
     echo "  WARNING: agentweb.service could not be enabled (start it by hand: systemctl --user start agentweb)"
   fi

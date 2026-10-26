@@ -50,8 +50,8 @@ item() { agentbus team-get --dir "$AGENTS_HOME/bus" --team "$1" | jq -r ".board.
   m=$(task_of member)
   wait_status "$m" paused
   team=$(meta "$m" TEAM)
+  wait_grep 'back on the board' "$AGENTS_HOME/bus/messages.jsonl"   # the items go back right after the pause
   [ "$(item "$team" status)" = todo ]
-  wait_grep 'back on the board' "$AGENTS_HOME/bus/messages.jsonl"
 }
 
 @test "a short pause (a rate limit) keeps the member's items" {
@@ -68,9 +68,11 @@ item() { agentbus team-get --dir "$AGENTS_HOME/bus" --team "$1" | jq -r ".board.
   agent run solo "task"
   t=$(task_of solo)
   wait_status "$t" running
-  pid=$(cat "$STUB_UNITS"/*"$t"*.pid)
-  kill -9 -- "-$pid" 2> /dev/null || kill -9 "$pid"
-  sleep 0.5
+  # the runner dies; as systemd would, the stub then sees no active unit (a killed process can linger as a zombie in
+  # a container, which kill -0 still finds — so the recorded PID is replaced by one that does not exist)
+  pidfile=$(ls "$STUB_UNITS"/*"$t"*.pid)
+  kill -9 -- "-$(cat "$pidfile")" 2> /dev/null || kill -9 "$(cat "$pidfile")"
+  echo 999999 > "$pidfile"
   AGENT_SUPERVISE_GRACE_SEC=0 agent _supervise
   [ "$(meta "$t" STATUS)" = failed ]
   wait_grep 'runner died' "$HOME/notifications.log"

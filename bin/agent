@@ -168,6 +168,8 @@ AGENT_WAKE_LOOP_PAUSE_MIN="${AGENT_WAKE_LOOP_PAUSE_MIN:-15}" # how long the guar
 # A run stopped by an exhausted quota or usage limit pauses the task until the limit resets (see quota_reset_seconds);
 # this is the pause when the CLI does not say when that is.
 AGENT_QUOTA_PAUSE_MIN="${AGENT_QUOTA_PAUSE_MIN:-30}"
+AGENT_RELEASE_PAUSE_MIN="${AGENT_RELEASE_PAUSE_MIN:-20}"     # a team member paused longer gives its board items back
+AGENT_SUPERVISE_GRACE_SEC="${AGENT_SUPERVISE_GRACE_SEC:-120}" # agent _supervise: a run this young may not have its unit yet
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_LIMIT_TAIL_LINES="${AGENT_LIMIT_TAIL_LINES:-30}"           # how much of the end of stderr shows a provider limit
 # Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
@@ -870,8 +872,18 @@ team_after_run() { # id status final note — team logic after a member's run en
     local to until; to=$lead
     [[ -z $to || $to == "$AGENT" ]] && to="team:$team"
     until=$(date -d "@$(task_field "$id" WAKE_AT)" '+%H:%M')
-    notice member_paused agentbus "$to" "$AGENT IS PAUSED until $until: $note. Messages and board items do not wake it; it resumes by itself at $until and its claimed board items stay with it. If the work cannot wait, plan without it." \
-      "agent=$AGENT" "team=$team" "until=$until" "reason=$(task_field "$id" PAUSE_REASON)"
+    local released=""
+    if (($(task_field "$id" WAKE_AT) - $(date +%s) > AGENT_RELEASE_PAUSE_MIN * 60)); then   # a long pause: the work goes on without it
+      released=$(try board_release_failed bus board-release-agent --dir "$BUS_DIR" --team "$team" --agent "$AGENT" | paste -sd,)
+      [[ -z $released ]] || meta_set "$id" PAUSE_RELEASED "$released"
+    fi
+    if [[ -n $released ]]; then
+      notice member_paused agentbus "$to" "$AGENT IS PAUSED until $until: $note. Its items ($released) are back on the board with its progress notes — take them over; it resumes by itself at $until and takes new work from the board." \
+        "agent=$AGENT" "team=$team" "until=$until" "reason=$(task_field "$id" PAUSE_REASON)" "released=$released"
+    else
+      notice member_paused agentbus "$to" "$AGENT IS PAUSED until $until: $note. Messages and board items do not wake it; it resumes by itself at $until and its claimed board items stay with it. If the work cannot wait, plan without it." \
+        "agent=$AGENT" "team=$team" "until=$until" "reason=$(task_field "$id" PAUSE_REASON)"
+    fi
     notify "$id" paused "$final" "$note"
     return 0
   fi
@@ -913,11 +925,7 @@ $(team_summary "$team")" ;;
   else
     case $status in
       waiting) notify "$id" waiting "$final" "a member of team $team asked you directly (should have asked the coordinator)" ;;
-      failed)
-        if [[ -n $lead ]]; then
-          notice member_failed agentbus "$lead" "TEAM: member $AGENT failed${note:+ ($note)}. Last message: ${final:0:300}" \
-            "agent=$AGENT" "team=$team" "note=$note"
-        fi ;;
+      failed) member_out "$id" "its run failed${note:+ ($note)}; its last message: ${final:0:300}" ;;
       done)
         if [[ -n $lead && $(team_done_flag "$team") != true ]]; then
           notice member_finished agentbus "$lead" "TEAM: member $AGENT finished (STATUS: DONE)." "agent=$AGENT" "team=$team"
@@ -1330,6 +1338,18 @@ build_prompt() { # id mode qfile next_round
     R[QUESTIONS_WITHOUT_REC]=$QBOUNCE_PENDING
     render "$PROMPTS/questions-bounce.md"
     printf '\n'
+    any=1
+  fi
+  if [[ -n ${SBOUNCE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    R[BAD_STATUS]=$SBOUNCE_PENDING
+    render "$PROMPTS/status-bounce.md"
+    printf '\n'
+    any=1
+  fi
+  if [[ -n ${PAUSE_RELEASED:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    printf 'While you were paused, your board items (%s) went back to the board for others to take over. Do not continue them unless the board shows them free again: take your next work from the board.\n' "$PAUSE_RELEASED"
     any=1
   fi
   if [[ -n ${WAKE_PENDING:-} ]]; then
@@ -2090,6 +2110,8 @@ cmd__runner() {
   meta_set "$id" WAKE_PENDING ""
   meta_set "$id" BOUNCE_PENDING ""
   meta_set "$id" QBOUNCE_PENDING ""
+  meta_set "$id" SBOUNCE_PENDING ""
+  meta_set "$id" PAUSE_RELEASED ""
   meta_set "$id" RBOUNCE_PENDING ""
   if [[ -n ${TEAM:-} ]]; then
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state active >/dev/null
@@ -2243,6 +2265,8 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     fi
   elif [[ ${KIND:-worker} == helper ]]; then
     status=done; note="the worker gave no STATUS — its text was returned as the result"
+  elif [[ -n $fst && $(task_field "$id" STATUS_BOUNCED) != "$(( $(task_field "$id" RUN) - 1 ))" ]]; then
+    status=sbounce   # an unknown STATUS goes back to the agent once, with the statuses it may use
   else
     status=failed; note="unrecognised STATUS: ${fst:-none}"
   fi
@@ -2259,6 +2283,17 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     act "$id" info "↩ questions without a recommendation ($norec) — sent back to the agent once"
     log_info questions_bounced "task=$id" "questions=$norec"
     start_runner "$id" resume || log_error resume_failed "task=$id" "reason=questions without recommendations"
+    dispatch; dispatch_helpers
+    return 0
+  fi
+  # an unknown STATUS goes back to the agent once (a second one fails the run)
+  if [[ $status == sbounce ]]; then
+    meta_set "$id" STATUS_BOUNCED "$(task_field "$id" RUN)"
+    meta_set "$id" SBOUNCE_PENDING "$fst"
+    RUNNER_DONE=1
+    act "$id" info "↩ unknown STATUS: $fst — sent back to the agent once"
+    log_info status_bounced "task=$id" "status=$fst"
+    start_runner "$id" resume || log_error resume_failed "task=$id" "reason=an unknown STATUS"
     dispatch; dispatch_helpers
     return 0
   fi
@@ -3202,6 +3237,44 @@ cmd_live() {
   [[ -x $AGENTLIVE_BIN ]] || die "$AGENTLIVE_BIN not found — run ./install.sh again"
   exec "$AGENTLIVE_BIN" --home "$AGENTS_HOME" --bus "$BUS_DIR" --agent "$SELF" \
     --remind "$remind" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" "${feed[@]}"
+}
+
+member_out() { # id reason — a team member is out of the team's work: its board items go back (with their progress
+  # notes) and the coordinator and the normal members hear who, why, which items and where its work is
+  local id=$1 why=$2 team agent branch wt released head="" nm text
+  team=$(task_field "$id" TEAM)
+  [[ -n $team ]] || return 0
+  agent=$(task_field "$id" AGENT); branch=$(task_field "$id" BRANCH); wt=$(task_field "$id" WORKTREE)
+  released=$(try board_release_failed bus board-release-agent --dir "$BUS_DIR" --team "$team" --agent "$agent" | paste -sd,)
+  if [[ -d $wt ]]; then
+    head=$(git -C "$wt" rev-parse --short HEAD 2>/dev/null) || head=""   # no commit yet: no head to name
+  fi
+  text="MEMBER $agent IS OUT: $why.${released:+ Its items ($released) are back on the board with its progress notes — take them over.} Its work is on branch $branch${head:+ at $head}: continue from there (merge it) unless its notes say the approach failed."
+  for nm in $(bus team-get --dir "$BUS_DIR" --team "$team" | jq -r --arg a "$agent" '.members[] | select(.agent != $a and .tier != "worker" and (.state == "active" or .state == "sleeping" or .state == "waking")) | .agent'); do
+    notice member_out agentbus "$nm" "$text" "agent=$agent" "team=$team" "released=$released"
+  done
+  log_warn member_out "task=$id" "team=$team" "released=$released" "reason=${why:0:200}"
+}
+
+cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running or starting, but no unit is active
+  local d id st run
+  for d in "$TASKS"/*/; do
+    [[ -f $d/meta.env ]] || continue
+    id=${d%/}; id=${id##*/}
+    st=$(task_field "$id" STATUS)
+    [[ $st == running || $st == starting ]] || continue
+    (($(date +%s) - $(stat -c %Y "$d/meta.env") >= AGENT_SUPERVISE_GRACE_SEC)) || continue   # a fresh run: its unit may come
+    run=$(task_field "$id" RUN)
+    systemctl --user is-active --quiet "$(unit_name "$id" "$run").service" && continue   # inactive is the case looked for
+    meta_set "$id" STATUS failed
+    act "$id" err "✗ the runner died (no running unit) — the task is ended"
+    log_warn runner_died "task=$id" "run=$run"
+    if [[ -n $(task_field "$id" TEAM) ]]; then
+      try team_state_failed bus team-set --dir "$BUS_DIR" --team "$(task_field "$id" TEAM)" --agent "$(task_field "$id" AGENT)" --state done >/dev/null
+      member_out "$id" "its runner died (no running unit)"
+    fi
+    notify "$id" failed "" "the runner died (no running unit) — the task is ended"
+  done
 }
 
 cmd_kick() { # <task> [from] — cuts an agent's current run short (the web interface's stop button): a team member
@@ -4388,6 +4461,7 @@ main() {
     _dispatch-helpers) dispatch_helpers ;;
     notes)   cmd_notes "$@" ;;
     _wake)   cmd__wake "$@" ;;
+    _supervise) cmd__supervise ;;
     _answers_saved) cmd__answers_saved "$@" ;;
     _authcheck) cmd__authcheck "$@" ;;
     dispatch) cmd_dispatch ;;
