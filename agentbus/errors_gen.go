@@ -2225,3 +2225,35 @@ func (c NodeCheckoutCause) info() causeInfo { return nodeCheckoutCauses[c] }
 
 // String returns the cause name.
 func (c NodeCheckoutCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- board_progress
+
+// BoardProgressCause is a reason why the tool board_progress failed.
+type BoardProgressCause int
+
+const (
+	BoardProgressNotInTeam   BoardProgressCause = iota // the caller is not in a team [NotInTeam]
+	BoardProgressNotYourItem                           // the item is not claimed by the caller [Permission]
+	BoardProgressEmptyNote                             // the progress note is empty [InvalidArgument]
+	BoardProgressStorage                               // the shared state or a file could not be read or written [Storage]
+)
+
+// BoardProgressError is the error of the tool board_progress.
+type BoardProgressError = OpError[BoardProgressCause]
+
+// boardProgressCauses describes the BoardProgressCause values (same order as the constants).
+var boardProgressCauses = [...]causeInfo{
+	{"NotInTeam", ClassNotInTeam},
+	{"NotYourItem", ClassPermission},
+	{"EmptyNote", ClassInvalidArgument},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (BoardProgressCause) op() string { return "board_progress" }
+
+// info implements opCause.
+func (c BoardProgressCause) info() causeInfo { return boardProgressCauses[c] }
+
+// String returns the cause name.
+func (c BoardProgressCause) String() string { return c.info().name }

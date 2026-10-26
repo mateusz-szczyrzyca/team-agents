@@ -13,6 +13,9 @@ Actions:
   questions-text  asks questions only in the final message
   questions-norec writes a questions file without recommendations, STATUS: QUESTIONS
   review-majors   a --verify review result with two major findings, STATUS: DONE
+  blocked         ends with STATUS: BLOCKED (not a status of the system)
+  claim-fail / claim-quota / claim-rate-limit   add, claim and note progress on B1, then STATUS: FAILED / an
+                  exhausted quota / an HTTP 429
   rate-limit      exits 1 with an HTTP 429 rate-limit error on stderr
   stale-rate-limit  a retried 429 early on stderr, much more output, then a final message without STATUS
   commit-lines:N  commits a file of N lines, STATUS: DONE
@@ -80,6 +83,24 @@ if action == "team-lead-done":
 if action == "quota":
     print("Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1m30s.", file=sys.stderr)
     sys.exit(3)
+def claim_one():
+    """adds an item, claims it and records progress on it (through the bus, as an agent does)"""
+    call("board_add", title="the parser", details="write the parser", level="normal")
+    call("board_claim", id="B1")
+    call("board_progress", id="B1", note="lexer done at abc123; next: the parser")
+if action == "blocked":
+    finish("Waiting for the daemon to be merged.\nSTATUS: BLOCKED")
+if action == "claim-fail":
+    claim_one()
+    finish("I cannot go on.\nSTATUS: FAILED")
+if action == "claim-quota":
+    claim_one()
+    print("Error: You have hit your usage limit. Individual quota reached", file=sys.stderr)
+    sys.exit(3)
+if action == "claim-rate-limit":
+    claim_one()
+    print("APIError: 429 Too Many Requests: rate limit exceeded", file=sys.stderr)
+    sys.exit(1)
 if action == "review-majors":
     finish("Answer: needs changes — two major problems.\n"
            "Problems: critical 0, major 2, minor 1\n\n"
