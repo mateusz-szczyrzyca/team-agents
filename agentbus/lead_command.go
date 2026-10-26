@@ -122,7 +122,25 @@ type leadCancelConfig struct {
 
 // parseLeadCancelConfig parses the arguments of `agentbus lead-cancel`.
 func parseLeadCancelConfig(args []string) (leadCancelConfig, *LeadCancelError) {
-	return leadCancelConfig{}, nil
+	fs := newFlagSet("lead-cancel")
+	dir := fs.String("dir", defaultDir(), "the bus directory")
+	ttl := fs.Duration("ttl", 90*time.Second, "how long a silent node stays online")
+	notifyDir := fs.String("notify-dir", "", "directory where completion notification files are written")
+	notifyCmd := fs.String("notify-cmd", "", "optional delivery command run with the notification file")
+	if err := fs.Parse(args); err != nil {
+		return leadCancelConfig{}, opErr(LeadCancelBadFlags, "%v", err)
+	}
+	if fs.NArg() != 1 {
+		return leadCancelConfig{}, opErr(LeadCancelBadFlags, "usage: agentbus lead-cancel [--dir D] [--ttl T] [--notify-dir D] [--notify-cmd C] <id>")
+	}
+	if *ttl <= 0 {
+		return leadCancelConfig{}, opErr(LeadCancelBadFlags, "--ttl %v must be a positive duration", *ttl)
+	}
+	id := fs.Arg(0)
+	if !validJobIdentifier(id) {
+		return leadCancelConfig{}, opErr(LeadCancelBadFlags, "invalid job identifier %q: must be letters, digits, '.', '_' or '-', starting with a letter or digit", id)
+	}
+	return leadCancelConfig{dir: *dir, id: id, ttl: *ttl, notifyDir: *notifyDir, notifyCmd: *notifyCmd}, nil
 }
 
 // leadCancel cancels a job in the lead registry directly under the bus lock.
