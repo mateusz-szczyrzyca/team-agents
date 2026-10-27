@@ -3198,10 +3198,14 @@ cmd_status() {
     [[ -f $d/meta.env ]] || continue
     (
       source "$d/meta.env"
-      st=$STATUS
-      if [[ $st == running || $st == starting ]] && ! unit_active "$ID" "$RUN"; then st="$st?"; fi
-      ag=$AGENT; [[ ${KIND:-worker} == investigation ]] && ag="inv#$INV_ID"
-      printf '%-30s %-12s %-13s %-6s %-5s %s\n' "$ID" "$ag" "$st" "$ROUND" "$RUN" "$REPO_NAME"
+      st=${STATUS:-?}
+      # a remote member's proxy task has no local unit: its member runs on its node
+      if [[ ${KIND:-worker} != remote-member && ( $st == running || $st == starting ) ]] && ! unit_active "${ID:-}" "${RUN:-0}"; then
+        st="$st?"
+      fi
+      ag=${AGENT:-?}; [[ ${KIND:-worker} == investigation ]] && ag="inv#${INV_ID:-?}"
+      d=${d%/}
+      printf '%-30s %-12s %-13s %-6s %-5s %s\n' "${ID:-${d##*/}}" "$ag" "$st" "${ROUND:--}" "${RUN:--}" "${REPO_NAME:-}"
     )
   done
 }
@@ -3400,6 +3404,8 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
     id=${d%/}; id=${id##*/}
     st=$(task_field "$id" STATUS)
     [[ $st == running || $st == starting ]] || continue
+    # a remote member's proxy task has no local unit: its member runs on its node, followed through its heartbeat
+    [[ $(task_field "$id" KIND) != remote-member ]] || continue
     (($(date +%s) - $(stat -c %Y "$d/meta.env") >= AGENT_SUPERVISE_GRACE_SEC)) || continue   # a fresh run: its unit may come
     run=$(task_field "$id" RUN)
     systemctl --user is-active --quiet "$(unit_name "$id" "$run").service" && continue   # inactive is the case looked for
@@ -3436,6 +3442,7 @@ remote_member_task() { # member task team base main-root ts — a remote member'
   meta_set "$id" ID "$id"; meta_set "$id" AGENT "$member"; meta_set "$id" KIND remote-member
   meta_set "$id" REMOTE_NODE "$node"; meta_set "$id" REMOTE_AGENT "$agent"; meta_set "$id" TEAM "$team"
   meta_set "$id" TIER "$tier"; meta_set "$id" STATUS remote; meta_set "$id" CREATED "$(date -Is)"
+  meta_set "$id" ROUND 0; meta_set "$id" RUN 0   # what every task has (agent status reads them)
   meta_set "$id" REPO_NAME "$(basename "$root")"; meta_set "$id" REPO_ROOT "$root"
   meta_set "$id" BASE "$base"; meta_set "$id" BASE_SHA "$sha"; meta_set "$id" BRANCH ""; meta_set "$id" WORKTREE ""
   meta_set "$id" JOB_ID "member-$id"
