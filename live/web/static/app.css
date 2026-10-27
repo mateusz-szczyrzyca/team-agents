@@ -2,7 +2,7 @@
 :root {
   --bg: #fafaf9; --fg: #1c1917; --dim: #78716c; --line: #e7e5e4; --panel: #ffffff; --hover: #f5f5f4;
   --accent: #2563eb; --waiting: #b45309; --waiting-bg: #fef3c7; --running: #15803d; --invest: #7c3aed;
-  --done: #57534e; --failed: #b91c1c; --failed-bg: #fee2e2; --ok-bg: #dcfce7; --stopped: #c2410c;
+  --done: #2563eb; --failed: #b91c1c; --failed-bg: #fee2e2; --ok-bg: #dcfce7; --stopped: #c2410c;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --top: 48px;
 }
@@ -10,7 +10,7 @@
   :root {
     --bg: #0f1115; --fg: #e7e5e4; --dim: #a8a29e; --line: #2a2d34; --panel: #171a20; --hover: #1f232b;
     --accent: #60a5fa; --waiting: #fbbf24; --waiting-bg: #3a2a08; --running: #4ade80; --invest: #c4b5fd;
-    --done: #a8a29e; --failed: #f87171; --failed-bg: #3b1212; --ok-bg: #0f2e1a; --stopped: #fb923c;
+    --done: #60a5fa; --failed: #f87171; --failed-bg: #3b1212; --ok-bg: #0f2e1a; --stopped: #fb923c;
   }
 }
 * { box-sizing: border-box; }
@@ -67,6 +67,7 @@ body.max main#view { max-width: none; }
 .st-waiting { color: var(--waiting); } .st-running { color: var(--running); } .st-invest { color: var(--invest); }
 .st-done { color: var(--done); } .st-failed { color: var(--failed); } .st-dim { color: var(--dim); }
 .st-stopped { color: var(--stopped); }
+.st-online { color: var(--running); } .st-offline { color: var(--failed); }
 button.stop { font-size: .8rem; padding: .1rem .35rem; color: var(--failed); }
 button.stop:hover { background: var(--failed-bg); }
 form.wake { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: .4rem 1rem .6rem; margin: .6rem 0; }

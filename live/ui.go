@@ -26,7 +26,7 @@ var (
 	stWaiting  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#b45309", Dark: "#fbbf24"})       // tasks waiting for the human, reminders
 	stRunning  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#047857", Dark: "#6ee7b7"})                  // working tasks
 	stInvest   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#7c3aed", Dark: "#c4b5fd"})                  // investigations, bus messages
-	stDone     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#15803d", Dark: "#86efac"})                  // finished tasks
+	stDone     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#1d4ed8", Dark: "#93c5fd"})                  // finished tasks (blue)
 	stFailed   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#b91c1c", Dark: "#fca5a5"})       // failed/stopped/hung tasks, errors
 	stTabOn    = lipgloss.NewStyle().Bold(true).Underline(true)                                                             // the active tab
 	stFlash    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#b45309", Dark: "#fbbf24"})       // temporary flash messages

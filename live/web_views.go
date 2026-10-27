@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -58,22 +59,23 @@ func (s *webServer) snapshot() *Snapshot { return loadSnapshot(s.cfg.home, s.cfg
 
 // taskRow is a task as the tables show it — the columns of the panel.
 type taskRow struct {
-	ID          string // task ID
-	Name        string // agent, inv#N or agent/HN
-	Status      string // task status
-	StatusLabel string // the status as the panel shows it
-	StatusClass string // CSS class of the status
-	Since       string // time in the current run, or since it finished ("-5m")
-	Repo        string // repository
-	Team        string // team ID ("" for a solo task)
-	TeamShort   string // team ID without the "-team" suffix
-	Lead        bool   // the task's agent coordinates its team
-	JobMarker   string // remote job marker ("job <id> from <lead>")
-	Stage       string // set_status text and the "for <agent>" of investigations
-	Last        string // the latest activity (active tasks) or the final summary
-	LastIcon    string // the icon of the latest activity
-	Running     bool   // a run is going on (the dashboard offers to stop it)
-	Link        string // where the name links: the task's page, or a remote job's page
+	ID          string    // task ID
+	Name        string    // agent, inv#N or agent/HN
+	Status      string    // task status
+	StatusLabel string    // the status as the panel shows it
+	StatusClass string    // CSS class of the status
+	Since       string    // time in the current run, or since it finished ("-5m")
+	Repo        string    // repository
+	Team        string    // team ID ("" for a solo task)
+	TeamShort   string    // team ID without the "-team" suffix
+	Lead        bool      // the task's agent coordinates its team
+	JobMarker   string    // remote job marker ("job <id> from <lead>")
+	Stage       string    // set_status text and the "for <agent>" of investigations
+	Last        string    // the latest activity (active tasks) or the final summary
+	LastIcon    string    // the icon of the latest activity
+	Running     bool      // a run is going on (the dashboard offers to stop it)
+	Link        string    // where the name links: the task's page, or a remote job's page
+	FinishedAt  time.Time // when the task or remote job finished (zero for active)
 }
 
 // makeRow builds a task's row exactly as the panel does (ui.go: row).
@@ -82,8 +84,8 @@ type taskRow struct {
 const dashRecent = 24 * time.Hour
 
 // dashTasks are the dashboard's tasks: the active ones in the panel's order, then the finished ones — not yet
-// acknowledged, or finished within dashRecent — newest first.
-func dashTasks(snap *Snapshot) []*Task {
+// acknowledged, or finished within dashRecent.
+func dashTasks(snap *Snapshot) ([]*Task, []*Task) {
 	var active, done []*Task
 	for _, t := range snap.All {
 		switch {
@@ -99,13 +101,7 @@ func dashTasks(snap *Snapshot) []*Task {
 		}
 		return active[i].ID < active[j].ID
 	})
-	sort.SliceStable(done, func(i, j int) bool {
-		if fi, fj := finishedAt(done[i]), finishedAt(done[j]); !fi.Equal(fj) {
-			return fi.After(fj)
-		}
-		return done[i].ID > done[j].ID
-	})
-	return append(active, done...)
+	return active, done
 }
 
 // finishedAt is when a finished task ended (its last activity if FINISHED is missing).
@@ -117,7 +113,7 @@ func finishedAt(t *Task) time.Time {
 }
 
 func makeRow(snap *Snapshot, t *Task) taskRow {
-	r := taskRow{ID: t.ID, Name: t.Label(), Status: t.Status, Repo: t.Repo, Team: t.Team, TeamShort: strings.TrimSuffix(t.Team, "-team"), JobMarker: t.JobMarker()}
+	r := taskRow{ID: t.ID, Name: t.Label(), Status: t.Status, Repo: t.Repo, Team: t.Team, TeamShort: strings.TrimSuffix(t.Team, "-team"), JobMarker: t.JobMarker(), FinishedAt: finishedAt(t)}
 	r.Link = "/task/" + t.ID
 	r.StatusLabel, _ = statusStyle(t.Status)
 	r.StatusClass = statusClass(t.Status)
@@ -167,11 +163,46 @@ type dashData struct {
 // dashboard builds the dashboard's data.
 func (s *webServer) dashboard(snap *Snapshot) dashData {
 	d := dashData{Queue: snap.QueueLine(s.cfg.queueMax), Waiting: len(snap.Waiting()), Res: snap.Res}
-	for _, t := range dashTasks(snap) {
-		d.Rows = append(d.Rows, makeRow(snap, t))
+	active, done := dashTasks(snap)
+
+	var localActiveRows, localDoneRows []taskRow
+	for _, t := range active {
+		localActiveRows = append(localActiveRows, makeRow(snap, t))
 	}
-	// the lead's remote jobs, as "agent@node", after the local active tasks' place in the table
-	d.Rows = append(remoteRows(s.cfg.busDir), d.Rows...)
+	for _, t := range done {
+		localDoneRows = append(localDoneRows, makeRow(snap, t))
+	}
+
+	remRows := remoteRows(s.cfg.busDir)
+	var remoteActive, remoteDone []taskRow
+	for _, r := range remRows {
+		hasProxy := false
+		for _, t := range snap.All {
+			if t.JobID == r.ID {
+				hasProxy = true
+				break
+			}
+		}
+		if hasProxy {
+			continue
+		}
+		if r.Status == "done" || r.Status == "failed" || r.Status == "stopped" {
+			remoteDone = append(remoteDone, r)
+		} else {
+			remoteActive = append(remoteActive, r)
+		}
+	}
+
+	doneRows := append(localDoneRows, remoteDone...)
+	sort.SliceStable(doneRows, func(i, j int) bool {
+		if !doneRows[i].FinishedAt.Equal(doneRows[j].FinishedAt) {
+			return doneRows[i].FinishedAt.After(doneRows[j].FinishedAt)
+		}
+		return doneRows[i].ID > doneRows[j].ID
+	})
+
+	d.Rows = append(remoteActive, localActiveRows...)
+	d.Rows = append(d.Rows, doneRows...)
 	return d
 }
 
@@ -295,6 +326,90 @@ func (s *webServer) viewAgents(w http.ResponseWriter, r *http.Request) {
 			row.Last = row.LastAt.Format("2006-01-02 15:04")
 		}
 		rows = append(rows, row)
+	}
+	snapJobs, jerr := readWebJobs(s.cfg.busDir)
+	if jerr != nil {
+		viewError(s, w, r, jerr)
+		return
+	}
+	if snapJobs != nil {
+		for nodeName, node := range snapJobs.Nodes {
+			agents := node.Heartbeat.Agents
+			if len(agents) == 0 && len(node.Heartbeat.FreeAgents) > 0 {
+				for _, fa := range node.Heartbeat.FreeAgents {
+					agents = append(agents, webNodeAgent{Name: fa.Name, Tier: string(fa.Tier)})
+				}
+			}
+			for _, na := range agents {
+				fullName := na.Name + "@" + nodeName
+				isFree := false
+				for _, fa := range node.Heartbeat.FreeAgents {
+					if fa.Name == na.Name {
+						isFree = true
+						break
+					}
+				}
+				defState := "unavailable"
+				if isFree {
+					defState = "free"
+				}
+				row := agentRow{
+					agentEntry: agentEntry{
+						Name:  fullName,
+						Type:  na.Type,
+						Model: na.Model,
+						Tier:  na.Tier,
+					},
+					State:      defState,
+					StateClass: "st-dim",
+				}
+				for _, j := range snapJobs.Jobs {
+					if j.Node != nodeName {
+						continue
+					}
+					a := snapJobs.activityOf(j)
+					if jobAgent(a, j) != na.Name {
+						continue
+					}
+					tFin := jobFinishedAt(j)
+					if tFin.After(row.LastAt) {
+						row.LastAt = tFin
+					}
+					for _, tr := range j.History {
+						if tr.At.After(row.LastAt) {
+							row.LastAt = tr.At
+						}
+					}
+					if j.State != "done" && j.State != "failed" && j.State != "stopped" {
+						row.State = j.State
+						row.StateClass = statusClass(j.State)
+						if !node.LastSeen.IsZero() && node.LastSeen.After(row.LastAt) {
+							row.LastAt = node.LastSeen
+						}
+						jRow := taskRow{
+							ID:          j.Request.ID,
+							Name:        fullName,
+							Status:      j.State,
+							StatusLabel: j.State,
+							StatusClass: statusClass(j.State),
+							Repo:        j.Request.Repository,
+							Link:        "/jobs/" + url.PathEscape(j.Request.ID),
+							Running:     j.State == "running",
+						}
+						if n := len(a.Lines); n > 0 {
+							jRow.Last = a.Lines[n-1]
+						} else if a.Stage != "" {
+							jRow.Last = a.Stage
+						}
+						row.Tasks = append(row.Tasks, jRow)
+					}
+				}
+				if !row.LastAt.IsZero() {
+					row.Last = row.LastAt.Format("2006-01-02 15:04")
+				}
+				rows = append(rows, row)
+			}
+		}
 	}
 	// working agents first, then by their latest activity, the never active last
 	sort.SliceStable(rows, func(i, j int) bool {
@@ -1286,4 +1401,257 @@ func str(rec map[string]any, k string) string {
 		return fmt.Sprint(v)
 	}
 	return ""
+}
+
+// webInstanceData is the data passed to the instance detail view.
+type webInstanceData struct {
+	Name       string         // node name
+	Node       webJobNode     // node declaration
+	URL        string         // node's own web interface URL
+	NeverSeen  bool           // node was never seen
+	Offline    bool           // node is currently offline
+	Seen       string         // formatted last seen timestamp
+	AllAgents  []webNodeAgent // all configured agents declared by the node
+	FreeAgents []webJobAgent  // free agents declared by the node
+	Jobs       []webJobRow    // jobs assigned to this node
+}
+
+// viewInstance (GET /instances/{node}) shows details of one registered node.
+func (s *webServer) viewInstance(w http.ResponseWriter, r *http.Request) {
+	snap, err := readWebJobs(s.cfg.busDir)
+	if err != nil {
+		viewError(s, w, r, err)
+		return
+	}
+	name := r.PathValue("node")
+	node, ok := snap.Nodes[name]
+	if !ok {
+		viewError(s, w, r, webErr(ViewNotFound, nil, "no node %q", name))
+		return
+	}
+	now := time.Now()
+	neverSeen := node.LastSeen.IsZero()
+	offline := !neverSeen && webNodeOffline(node, now, s.cfg.nodeTTL)
+	seen := ""
+	if !neverSeen {
+		seen = node.LastSeen.Format(time.RFC3339Nano)
+	}
+	allAgents := node.Heartbeat.Agents
+	if len(allAgents) == 0 && len(node.Heartbeat.FreeAgents) > 0 {
+		for _, fa := range node.Heartbeat.FreeAgents {
+			allAgents = append(allAgents, webNodeAgent{Name: fa.Name, Tier: string(fa.Tier)})
+		}
+	}
+	localSnap := s.snapshot()
+	var assignedJobs []webJobRow
+	for _, j := range snap.Jobs {
+		if j.Node == name {
+			assignedJobs = append(assignedJobs, buildWebJobRow(j, snap, localSnap, now, s.cfg.nodeTTL))
+		}
+	}
+	data := webInstanceData{
+		Name:       name,
+		Node:       node,
+		URL:        safeJobURL(node.Heartbeat.WebURL),
+		NeverSeen:  neverSeen,
+		Offline:    offline,
+		Seen:       seen,
+		AllAgents:  allAgents,
+		FreeAgents: node.Heartbeat.FreeAgents,
+		Jobs:       assignedJobs,
+	}
+	s.render(w, r, http.StatusOK, "instance", "Instance "+name, localSnap, data)
+}
+
+// webAgentData holds details of one local or remote agent for viewAgent.
+type webAgentData struct {
+	Name       string     // agent name, local or agent@node
+	Remote     bool       // true for remote agent
+	Node       string     // node name if remote
+	Entry      agentEntry // agent configuration
+	State      string     // free or task/job status
+	StateClass string     // CSS class of status
+	Tasks      []taskRow  // tasks or jobs
+	Last       string     // formatted last activity
+}
+
+// viewAgent (GET /agents/{id}) shows details of one local or remote agent.
+func (s *webServer) viewAgent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	snap := s.snapshot()
+	if strings.Contains(id, "@") {
+		parts := strings.SplitN(id, "@", 2)
+		agentName, nodeName := parts[0], parts[1]
+		snapJobs, err := readWebJobs(s.cfg.busDir)
+		if err != nil {
+			viewError(s, w, r, err)
+			return
+		}
+		node, ok := snapJobs.Nodes[nodeName]
+		if !ok {
+			viewError(s, w, r, webErr(ViewNotFound, nil, "no node %q for agent %q", nodeName, id))
+			return
+		}
+		var targetAgent *webNodeAgent
+		for i := range node.Heartbeat.Agents {
+			if node.Heartbeat.Agents[i].Name == agentName {
+				targetAgent = &node.Heartbeat.Agents[i]
+				break
+			}
+		}
+		if targetAgent == nil {
+			for _, fa := range node.Heartbeat.FreeAgents {
+				if fa.Name == agentName {
+					targetAgent = &webNodeAgent{Name: fa.Name, Tier: string(fa.Tier)}
+					break
+				}
+			}
+		}
+		if targetAgent == nil {
+			viewError(s, w, r, webErr(ViewNotFound, nil, "no agent %q on node %q", agentName, nodeName))
+			return
+		}
+
+		isFree := false
+		for _, fa := range node.Heartbeat.FreeAgents {
+			if fa.Name == agentName {
+				isFree = true
+				break
+			}
+		}
+		defState := "unavailable"
+		if isFree {
+			defState = "free"
+		}
+		data := webAgentData{
+			Name:   id,
+			Remote: true,
+			Node:   nodeName,
+			Entry: agentEntry{
+				Name:  id,
+				Type:  targetAgent.Type,
+				Model: targetAgent.Model,
+				Tier:  targetAgent.Tier,
+			},
+			State:      defState,
+			StateClass: "st-dim",
+		}
+		var lastAt time.Time
+		for _, j := range snapJobs.Jobs {
+			if j.Node != nodeName {
+				continue
+			}
+			a := snapJobs.activityOf(j)
+			if jobAgent(a, j) != agentName {
+				continue
+			}
+			tFin := jobFinishedAt(j)
+			if tFin.After(lastAt) {
+				lastAt = tFin
+			}
+			for _, tr := range j.History {
+				if tr.At.After(lastAt) {
+					lastAt = tr.At
+				}
+			}
+			if j.State != "done" && j.State != "failed" && j.State != "stopped" {
+				data.State = j.State
+				data.StateClass = statusClass(j.State)
+				if !node.LastSeen.IsZero() && node.LastSeen.After(lastAt) {
+					lastAt = node.LastSeen
+				}
+			}
+			jRow := taskRow{
+				ID:          j.Request.ID,
+				Name:        id,
+				Status:      j.State,
+				StatusLabel: j.State,
+				StatusClass: statusClass(j.State),
+				Repo:        j.Request.Repository,
+				Link:        "/jobs/" + url.PathEscape(j.Request.ID),
+				Running:     j.State == "running",
+				FinishedAt:  tFin,
+			}
+			if n := len(a.Lines); n > 0 {
+				jRow.Last = a.Lines[n-1]
+			} else if a.Stage != "" {
+				jRow.Last = a.Stage
+			} else if j.Result != "" {
+				jRow.Last = j.Result
+			}
+			data.Tasks = append(data.Tasks, jRow)
+		}
+		sort.SliceStable(data.Tasks, func(i, j int) bool {
+			wi, wj := data.Tasks[i].Running, data.Tasks[j].Running
+			if wi != wj {
+				return wi
+			}
+			return data.Tasks[i].FinishedAt.After(data.Tasks[j].FinishedAt)
+		})
+		if !lastAt.IsZero() {
+			data.Last = lastAt.Format("2006-01-02 15:04")
+		}
+		s.render(w, r, http.StatusOK, "agent", "Agent "+id, snap, data)
+		return
+	}
+
+	// Local agent
+	list, lerr := s.agents.get(s.cfg.agentCmd)
+	if lerr != "" && len(list) == 0 {
+		viewError(s, w, r, webErr(ViewStorage, nil, "cannot list agents: %s", lerr))
+		return
+	}
+	var targetEntry *agentEntry
+	for i := range list {
+		if list[i].Name == id {
+			targetEntry = &list[i]
+			break
+		}
+	}
+	if targetEntry == nil {
+		viewError(s, w, r, webErr(ViewNotFound, nil, "no agent %q", id))
+		return
+	}
+
+	data := webAgentData{
+		Name:       id,
+		Remote:     false,
+		Entry:      *targetEntry,
+		State:      "free",
+		StateClass: "st-dim",
+	}
+	best := 99
+	var lastAt time.Time
+	for _, t := range snap.All {
+		if t.Agent != id {
+			continue
+		}
+		if la := lastActivity(t); la.After(lastAt) {
+			lastAt = la
+		}
+		r := makeRow(snap, t)
+		data.Tasks = append(data.Tasks, r)
+		if t.Active() {
+			if p := statusPrio(t); p < best {
+				best, data.State, data.StateClass = p, t.Status, statusClass(t.Status)
+			}
+		}
+	}
+	sort.SliceStable(data.Tasks, func(i, j int) bool {
+		ti, tj := snap.All[data.Tasks[i].ID], snap.All[data.Tasks[j].ID]
+		if ti != nil && tj != nil {
+			ai, aj := ti.Active(), tj.Active()
+			if ai != aj {
+				return ai
+			}
+			if ai {
+				return statusPrio(ti) < statusPrio(tj)
+			}
+		}
+		return data.Tasks[i].FinishedAt.After(data.Tasks[j].FinishedAt)
+	})
+	if !lastAt.IsZero() {
+		data.Last = lastAt.Format("2006-01-02 15:04")
+	}
+	s.render(w, r, http.StatusOK, "agent", "Agent "+id, snap, data)
 }
