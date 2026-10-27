@@ -72,6 +72,7 @@ type Job struct {
 	Assignment    uint64          // identity of the current assignment, greater than 0 once assigned, never reused
 	History       []JobTransition // every state entered, in order; queued first, then assigned
 	TaskID        string          // node's local task ID
+	Agent         string          `json:",omitempty"` // optional actual chosen agent on the node (e.g. for tier-selected jobs)
 	Branch        string          // branch pushed by the node
 	PRURL         string          // optional PR URL
 	Result        string          // final result text or failure reason
@@ -132,6 +133,7 @@ type JobReport struct {
 	Assignment  uint64          // assignment evidence the report belongs to
 	State       JobState        // target state being reported
 	TaskID      string          // node's local task ID
+	Agent       string          `json:",omitempty"` // optional actual chosen agent on the node
 	Branch      string          // branch pushed by the node
 	PRURL       string          // optional PR URL
 	Result      string          // final result text or failure reason

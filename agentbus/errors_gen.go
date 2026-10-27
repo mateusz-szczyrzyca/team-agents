@@ -1831,6 +1831,7 @@ const (
 	LeadHeartbeatStaleAssignment                               // a report carries superseded assignment evidence [Conflict]
 	LeadHeartbeatInvalidState                                  // a reported transition history is invalid [InvalidState]
 	LeadHeartbeatTerminalConflict                              // a report conflicts with an accepted terminal outcome [Conflict]
+	LeadHeartbeatInvalidAgent                                  // a reported chosen agent is not a logical identifier [InvalidArgument]
 	LeadHeartbeatStorage                                       // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1846,6 +1847,7 @@ var leadHeartbeatCauses = [...]causeInfo{
 	{"StaleAssignment", ClassConflict},
 	{"InvalidState", ClassInvalidState},
 	{"TerminalConflict", ClassConflict},
+	{"InvalidAgent", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 
@@ -1918,6 +1920,7 @@ const (
 	LeadReportInvalidState                            // the transition history or start evidence is invalid [InvalidState]
 	LeadReportStaleAssignment                         // the report carries superseded assignment evidence [Conflict]
 	LeadReportTerminalConflict                        // the report conflicts with an accepted terminal outcome [Conflict]
+	LeadReportInvalidAgent                            // the optional chosen agent is not a logical identifier [InvalidArgument]
 	LeadReportStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1932,6 +1935,7 @@ var leadReportCauses = [...]causeInfo{
 	{"InvalidState", ClassInvalidState},
 	{"StaleAssignment", ClassConflict},
 	{"TerminalConflict", ClassConflict},
+	{"InvalidAgent", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 
