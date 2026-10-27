@@ -712,7 +712,11 @@ The heartbeat's optional `Agents` list declares each configured agent's name, CL
 these new heartbeat/submission fields. Job submissions may carry
 `RepoURL` (only `https://github.com/<owner>/<repo>`, otherwise empty) and `RequesterTask` (a delegating task ID).
 The submitter derives these from the origin and delegation context; these fields are links, never authority.
-Existing stored jobs without them load with empty links. Invalid supplied values fail with
+Job reports also retain the chosen `Agent`, so a completed job requested as `normal` or `worker` still
+appears on the actual agent's page after its live activity expires. Older reports may omit it; an unknown
+legacy tier is shown without an agent link. Invalid chosen names are refused with `LeadReportInvalidAgent`
+or `LeadHeartbeatInvalidAgent`. This name is display data and never selects a CLI or configuration.
+Existing stored jobs without these fields load with empty links and unknown chosen-agent attribution. Invalid supplied values fail with
 `LeadSubmitInvalidRepoURL` or `LeadSubmitInvalidRequesterTask`. A failed origin lookup is logged as
 `job_origin_lookup_failed`; an absent or non-GitHub origin simply has no link.
 
