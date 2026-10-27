@@ -127,6 +127,7 @@ start_node() {
 # Test wrapper: node-request leaves from 127.0.0.2, so the lead identifies this device as node2.
 if [[ \${1:-} == node-request ]]; then shift; exec "$NODE/.local/bin/agentbus" node-request --source 127.0.0.2 "\$@"; fi
 if [[ \${1:-} == serve && " \$* " == *" --relay "* ]]; then shift; exec "$NODE/.local/bin/agentbus" serve --source 127.0.0.2 "\$@"; fi
+if [[ \${1:-} == node-doorbell ]]; then shift; exec "$NODE/.local/bin/agentbus" node-doorbell --source 127.0.0.2 "\$@"; fi
 exec "$NODE/.local/bin/agentbus" "\$@"
 WRAP
   chmod +x "$NODE/.local/bin/agentbus-node2"
@@ -291,4 +292,33 @@ wait_member_state() {
   agent say solo@node2 "go on"
   wait_member_state solo@node2 'done' 60
   [[ $(grep '^RUN=' "$(node_task_meta solo)" | cut -d= -f2) -ge 2 ]]   # woken: a second run on the node
+}
+
+@test "the doorbell starts a job on its node at once, long before the next heartbeat" {
+  LEAD_PORT=$(free_port)
+  setup_node
+  sed -i 's/^NODE_POLL_SEC=1$/NODE_POLL_SEC=30/' "$NODE/agents/agents.conf"   # without the doorbell: up to 30 s
+  start_lead
+  start_node
+  echo '{"solo": {"new": "commit-push"}}' > "$NODE/scenario.json"
+  sleep 1   # the node's doorbell connects after its first heartbeat
+  submit_job j-bell team-agents '["hw:rp2350"]' solo
+  wait_job j-bell 'done' 12
+}
+
+@test "a remote member that fails is out of its team on the lead: its items go back, the members are told" {
+  LEAD_PORT=$(free_port)
+  setup_node
+  echo "NODE_REPOS[repo]=\"$NODE/repo\"" >> "$NODE/agents/agents.conf"   # the lead's repository is "repo" here
+  start_lead
+  start_node
+  echo '{"solo": {"new": "claim-fail"}}' > "$NODE/scenario.json"
+  scenario '{"lead": {"new": "team-lead-wait", "resume": "team-lead-wait"}}'
+  cd "$HOME/repo"
+  agent run --team lead,solo@node2 "team task"
+  wait_grep 'MEMBER solo@node2 IS OUT' "$AGENTS_HOME/bus/messages.jsonl" 60
+  local team
+  team=$(grep -h '^TEAM=' "$AGENTS_HOME"/tasks/*/meta.env | head -1 | cut -d= -f2)
+  [[ $(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.board.B1.status') == todo ]]
+  [[ $(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.board.B1.previous') == solo@node2 ]]
 }

@@ -58,6 +58,17 @@ type leadMCPBody struct {
 	Message json.RawMessage // one JSON-RPC message, as the member's CLI sent it
 }
 
+// remoteMemberFn hands a remote member's change to the agent script on the lead — `agent _remote_member <proxy>
+// <status> <branch> <note>`, which keeps the proxy task's status and runs the team's logic (team_after_run) for it.
+// A variable so that tests record the calls instead.
+var remoteMemberFn = spawnRemoteMember
+
+// spawnRemoteMember runs `agent _remote_member` for a member's proxy task, detached, as wakes are.
+func spawnRemoteMember(t *Team, task, status, branch, note string) {
+	logInfo(LogRemoteMemberEvent, "team", t.ID, "task", task, "status", status)
+	spawnDetached(t.Home, t.WakeCmd, "_remote_member", task, status, branch, note)
+}
+
 // grantMember records a remote member's grant (replacing one of the same name).
 func (a *leadAPI) grantMember(m RemoteMember) *LeadMemberError {
 	agent, node, ok := strings.Cut(m.Member, "@")

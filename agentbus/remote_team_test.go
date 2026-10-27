@@ -103,8 +103,9 @@ func TestAWakeWaitsForTheNodeUntilTheMemberRuns(t *testing.T) {
 	failsWith(t, LeadMemberNoSuchMember)("unknown", a.wakeMember("nobody@node2"))
 }
 
-func TestFinishedRemoteMemberIsDoneAndTheCoordinatorIsTold(t *testing.T) {
+func TestFinishedRemoteMemberIsDoneAndItsTeamLogicRuns(t *testing.T) {
 	b, a, _, assignment := remoteTeam(t)
+	events := captureRemoteMember(t)
 	chk(t).ok(toolResult(server(b, "lead", inTeam("T")).claimLead()))
 	for _, rep := range []JobReport{
 		{ID: "job-m", Assignment: assignment, State: JobRunning, TaskID: "t-node", Branch: "agents/solo/x"},
@@ -118,8 +119,8 @@ func TestFinishedRemoteMemberIsDoneAndTheCoordinatorIsTold(t *testing.T) {
 	if st != MemberDone || branch != "agents/solo/x" {
 		t.Errorf("the finished remote member is %s on %q, want done on agents/solo/x", st, branch)
 	}
-	out := chk(t).ok(toolResult(server(b, "lead", inTeam("T")).read(0)))
-	if !strings.Contains(out, "solo@node2") || !strings.Contains(out, "finished") {
-		t.Errorf("the coordinator was not told:\n%s", out)
+	// the coordinator is told by the team's logic (team_after_run: member_finished), run for the proxy task
+	if len(*events) != 1 || !strings.HasSuffix((*events)[0], " done agents/solo/x") {
+		t.Errorf("the team's logic was not run for the finished member: %q", *events)
 	}
 }
