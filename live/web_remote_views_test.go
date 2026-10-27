@@ -308,3 +308,21 @@ func TestDashboardFinishedRemoteJobsAndDoneBlue(t *testing.T) {
 		t.Errorf("app.css should define --done in blue")
 	}
 }
+
+func TestDashboardProxyTaskDeduplication(t *testing.T) {
+	home := fixture(t)
+	setupRound1Bus(t, home)
+	// Add a proxy task on the lead representing job-active
+	writeFile(t, filepath.Join(home, "tasks", "T_PROXY", "meta.env"),
+		"ID=T_PROXY\nAGENT=worker-1@node-online\nSTATUS=running\nRUN=1\nKIND=remote-member\nJOB_ID=job-active\n")
+	_, ts := testServer(t, home)
+
+	_, body := get(t, ts, "/")
+
+	// job-active should appear as the local proxy task (/task/T_PROXY),
+	// not duplicated as a remote job row (/jobs/job-active)
+	mustContain(t, "/", body, `href="/task/T_PROXY"`)
+	if strings.Contains(body, `href="/jobs/job-active"`) {
+		t.Errorf("job-active should be represented by its proxy task, not duplicated as a remote job row")
+	}
+}
