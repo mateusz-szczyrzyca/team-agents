@@ -27,6 +27,14 @@ teardown() {
   for p in "$BATS_TEST_TMPDIR"/node2/units/*.pid "$STUB_UNITS"/*.pid; do
     [[ -f $p ]] && kill -TERM -- -"$(cat "$p")" 2> /dev/null
   done
+  # a stopped run writes its state on the way out: wait for it, or the removal of the test's files races it
+  for p in "$BATS_TEST_TMPDIR"/node2/units/*.pid "$STUB_UNITS"/*.pid; do
+    [[ -f $p ]] || continue
+    for _ in $(seq 1 50); do
+      kill -0 "$(cat "$p")" 2> /dev/null || break   # gone: "no such process" is the answer waited for
+      sleep 0.1
+    done
+  done
   return 0
 }
 
@@ -348,4 +356,12 @@ wait_member_state() {
     sleep 0.2
   done
   [[ $(grep -c 'hello from node2' "$AGENTS_HOME/bus/messages.jsonl") -ge 2 ]]
+  # the lead's team logic for the member going to sleep again ends before the cleanup (team_after_run re-checks
+  # a sleeping team after 3 s): its proxy task sleeps, then a moment more
+  local proxies=("$AGENTS_HOME"/tasks/*-solo-at-node2)
+  for _ in $(seq 1 150); do
+    grep -qx 'STATUS=sleeping' "${proxies[-1]}/meta.env" && break
+    sleep 0.2
+  done
+  sleep 5
 }
