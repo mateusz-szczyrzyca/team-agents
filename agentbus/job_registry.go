@@ -705,6 +705,7 @@ func (r *leadRegistry) requeueOffline(now Timestamp, ttl time.Duration) []string
 		if !ok || now.Sub(node.LastSeen.Time) >= ttl {
 			job.State = JobQueued
 			job.Node = ""
+			job.Agent = ""
 			job.History = append(job.History, JobTransition{State: JobQueued, At: atOrAfterLast(job, now)})
 			requeued = append(requeued, id)
 		}
