@@ -79,6 +79,8 @@ type webJobRequest struct {
 	Requires      []string // required capabilities
 	RepoURL       string   // canonical GitHub repository URL (https://github.com/<owner>/<repo>)
 	RequesterTask string   // optional task ID of the requesting agent on the lead
+	Team          string   // optional team on the lead for remote team member jobs
+	Member        string   // optional remote member name in that team
 }
 
 // webJobNode is the read-only declaration and trusted heartbeat receipt time.
@@ -245,7 +247,9 @@ func (s *webServer) viewJob(w http.ResponseWriter, r *http.Request) {
 			"Offline": row.Offline, "NodeLink": row.NodeLink, "AgentLink": row.AgentLink,
 			"BranchURL": row.BranchURL, "RequesterTask": row.RequesterTask,
 			"RequesterTaskLink": row.RequesterTaskLink, "RequesterTeam": row.RequesterTeam,
-			"RequesterTeamShort": row.RequesterTeamShort})
+			"RequesterTeamShort": row.RequesterTeamShort,
+			"Team":               row.Team, "TeamShort": row.TeamShort,
+			"ProxyTask": row.ProxyTask, "ProxyTaskLink": row.ProxyTaskLink})
 		return
 	}
 	viewError(s, w, r, webErr(ViewNotFound, nil, "no job %q", id))
@@ -289,6 +293,10 @@ type webJobRow struct {
 	RequesterTaskLink  string // /task/<RequesterTask> link if task exists locally
 	RequesterTeam      string // team ID if requester task is in a team
 	RequesterTeamShort string // team ID without -team suffix
+	Team               string // team ID for remote team member jobs
+	TeamShort          string // team ID without -team suffix
+	ProxyTask          string // proxy task ID on the lead for remote team member jobs
+	ProxyTaskLink      string // /task/<ProxyTask> link if task exists locally
 }
 
 // buildWebJobRow constructs a webJobRow with links according to decision 7.
@@ -326,6 +334,27 @@ func buildWebJobRow(j webJob, snapshot *webJobsSnapshot, snapLocal *Snapshot, no
 				break
 			}
 		}
+	}
+	memberTeam := j.Request.Team
+	var proxyTask string
+	if snapLocal != nil {
+		for _, t := range snapLocal.All {
+			if t.JobID == j.Request.ID {
+				proxyTask = t.ID
+				if memberTeam == "" && t.Team != "" {
+					memberTeam = t.Team
+				}
+				break
+			}
+		}
+	}
+	if proxyTask != "" {
+		row.ProxyTask = proxyTask
+		row.ProxyTaskLink = "/task/" + url.PathEscape(proxyTask)
+	}
+	if memberTeam != "" {
+		row.Team = memberTeam
+		row.TeamShort = strings.TrimSuffix(memberTeam, "-team")
 	}
 	return row
 }
