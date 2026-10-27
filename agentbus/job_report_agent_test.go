@@ -1,9 +1,14 @@
 package main
 
 import (
+	_ "embed"
+	"os"
 	"testing"
 	"time"
 )
+
+//go:embed testdata/jobs-before-job-agent.json
+var jobsBeforeAgent []byte
 
 // Tests of persisting the node's chosen agent on jobs (decision 6/7 gap, written first, docs/tdd.md):
 // a report carries the actual agent who accepted a tier-selected job; the lead stores it on Job and
@@ -67,16 +72,36 @@ func TestReportPersistsChosenAgentWithoutActivity(t *testing.T) {
 	if v2.Agent != "worker-1" {
 		t.Fatalf("terminal view.Agent = %q, want %q", v2.Agent, "worker-1")
 	}
+
+	// Terminal retry with identical agent succeeds.
+	if _, aerr := a.report("node-a", "job-tier", doneRep); aerr != nil {
+		t.Fatalf("terminal retry failed: %v", aerr)
+	}
+
+	// Terminal retry with empty Agent succeeds (backward-compatible retry).
+	emptyAgentRep := doneRep
+	emptyAgentRep.Agent = ""
+	if _, eerr := a.report("node-a", "job-tier", emptyAgentRep); eerr != nil {
+		t.Fatalf("terminal retry with empty agent failed: %v", eerr)
+	}
+
+	// Terminal retry with conflicting agent fails.
+	conflictRep := doneRep
+	conflictRep.Agent = "worker-2"
+	_, cerr := a.report("node-a", "job-tier", conflictRep)
+	failsWith(t, LeadReportTerminalConflict)("conflicting terminal agent", cerr)
 }
 
 func TestReportRejectsInvalidAgent(t *testing.T) {
 	r := newLeadRegistry()
 	req := regRequest("job-invalid-agent")
 	req.Selector = "worker"
-	r.submit(req, regAt(0))
-	assigned, _ := r.heartbeat(NodeHeartbeat{Node: "node-a", FreeAgents: []FreeAgent{{Name: "worker-1", Tier: TierWorker}}}, regAt(1))
-	if assigned == nil {
-		t.Fatal("expected assignment")
+	if _, err := r.submit(req, regAt(0)); err != nil {
+		t.Fatal(err)
+	}
+	assigned, herr := r.heartbeat(NodeHeartbeat{Node: "node-a", FreeAgents: []FreeAgent{{Name: "worker-1", Tier: TierWorker}}}, regAt(1))
+	if herr != nil || assigned == nil {
+		t.Fatalf("assigned=%+v, herr=%v", assigned, herr)
 	}
 
 	for _, bad := range []string{"../escape", "worker/1", "has space", "worker\n1"} {
@@ -97,9 +122,12 @@ func TestReportRejectsInvalidAgent(t *testing.T) {
 			Reports:       []JobReport{rep},
 		}
 		a := &leadAPI{bus: newBus(t), ttl: time.Minute}
-		// Register job in API bus.
-		a.submit("lead", true, req)
-		a.heartbeat("node-a", leadHeartbeatBody{NodeHeartbeat: NodeHeartbeat{Node: "node-a", FreeAgents: []FreeAgent{{Name: "worker-1", Tier: TierWorker}}}})
+		if _, serr := a.submit("lead", true, req); serr != nil {
+			t.Fatal(serr)
+		}
+		if _, hberr0 := a.heartbeat("node-a", leadHeartbeatBody{NodeHeartbeat: NodeHeartbeat{Node: "node-a", FreeAgents: []FreeAgent{{Name: "worker-1", Tier: TierWorker}}}}); hberr0 != nil {
+			t.Fatal(hberr0)
+		}
 		_, hberr := a.heartbeat("node-a", hb)
 		failsWith(t, LeadHeartbeatInvalidAgent)(bad, hberr)
 	}
@@ -109,10 +137,12 @@ func TestReportAgentImmutable(t *testing.T) {
 	r := newLeadRegistry()
 	req := regRequest("job-immutable-agent")
 	req.Selector = "worker"
-	r.submit(req, regAt(0))
-	assigned, _ := r.heartbeat(NodeHeartbeat{Node: "node-a", FreeAgents: []FreeAgent{{Name: "worker-1", Tier: TierWorker}}}, regAt(1))
-	if assigned == nil {
-		t.Fatal("expected assignment")
+	if _, err := r.submit(req, regAt(0)); err != nil {
+		t.Fatal(err)
+	}
+	assigned, herr := r.heartbeat(NodeHeartbeat{Node: "node-a", FreeAgents: []FreeAgent{{Name: "worker-1", Tier: TierWorker}}}, regAt(1))
+	if herr != nil || assigned == nil {
+		t.Fatalf("assigned=%+v, herr=%v", assigned, herr)
 	}
 
 	rep1 := JobReport{
@@ -137,4 +167,63 @@ func TestReportAgentImmutable(t *testing.T) {
 	}
 	_, err2 := r.report(rep2, regAt(3))
 	failsWith(t, LeadReportInvalidState)("mutated agent", err2)
+}
+
+func TestRequeueOfflineClearsAgent(t *testing.T) {
+	r := newLeadRegistry()
+	req := regRequest("job-requeue-agent")
+	req.Selector = "worker"
+	if _, err := r.submit(req, regAt(0)); err != nil {
+		t.Fatal(err)
+	}
+	assigned, herr := r.heartbeat(NodeHeartbeat{Node: "node-a", FreeAgents: []FreeAgent{{Name: "worker-1", Tier: TierWorker}}}, regAt(1))
+	if herr != nil || assigned == nil {
+		t.Fatalf("assigned=%+v, herr=%v", assigned, herr)
+	}
+	// Node reports early metadata with agent while assigned.
+	rep := JobReport{
+		ID:         "job-requeue-agent",
+		Node:       "node-a",
+		Assignment: assigned.Assignment,
+		State:      JobAssigned,
+		Agent:      "worker-1",
+		At:         regAt(1),
+	}
+	if _, err := r.report(rep, regAt(1)); err != nil {
+		t.Fatalf("assigned report: %v", err)
+	}
+	if r.jobs["job-requeue-agent"].Agent != "worker-1" {
+		t.Fatalf("expected recorded agent, got %q", r.jobs["job-requeue-agent"].Agent)
+	}
+
+	// Node goes offline and job is requeued; Agent must be reset.
+	requeued := r.requeueOffline(regAt(100), time.Minute)
+	if len(requeued) != 1 || requeued[0] != "job-requeue-agent" {
+		t.Fatalf("requeue: %+v", requeued)
+	}
+	if r.jobs["job-requeue-agent"].Agent != "" {
+		t.Fatalf("requeued job retained agent: %q", r.jobs["job-requeue-agent"].Agent)
+	}
+}
+
+// Rule: jobs.json snapshots written before Job.Agent existed load with empty Agent and attribution intact.
+func TestJobStoreLoadsJobsBeforeAgentField(t *testing.T) {
+	b := newBus(t)
+	if err := os.WriteFile(b.path("jobs.json"), jobsBeforeAgent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, serr := b.loadJobs()
+	if serr != nil {
+		t.Fatalf("loadJobs: %v", serr)
+	}
+	job, ok := r.jobs["attributed-job"]
+	if !ok {
+		t.Fatal("attributed-job missing after load")
+	}
+	if job.Agent != "" {
+		t.Fatalf("job.Agent = %q, want empty", job.Agent)
+	}
+	if job.Request.RepoURL != "https://github.com/example/repo" || job.Request.RequesterTask != "task-delegator" {
+		t.Fatalf("request attribution lost: %+v", job.Request)
+	}
 }

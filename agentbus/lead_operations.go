@@ -103,6 +103,8 @@ func heartbeatReportError(err *LeadReportError) *LeadHeartbeatError {
 		cause = LeadHeartbeatStaleAssignment
 	case LeadReportTerminalConflict:
 		cause = LeadHeartbeatTerminalConflict
+	case LeadReportInvalidAgent:
+		cause = LeadHeartbeatInvalidAgent
 	case LeadReportMalformedBody:
 		cause = LeadHeartbeatMalformedBody
 	case LeadReportStorage:
@@ -176,7 +178,7 @@ func publicLeadJob(job Job) leadJobView {
 	for _, tr := range job.History {
 		history = append(history, storedTransition{State: tr.State, At: jobTime{tr.At}})
 	}
-	return leadJobView{Request: job.Request, State: job.State, Node: job.Node, Assignment: job.Assignment, History: history, TaskID: job.TaskID, Branch: job.Branch, PRURL: job.PRURL, Result: job.Result, StopRequested: job.StopRequested}
+	return leadJobView{Request: job.Request, State: job.State, Node: job.Node, Assignment: job.Assignment, History: history, TaskID: job.TaskID, Agent: job.Agent, Branch: job.Branch, PRURL: job.PRURL, Result: job.Result, StopRequested: job.StopRequested}
 }
 
 // registryLeadJob adds live diagnostics to a detached public job snapshot.

@@ -518,6 +518,10 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		return Job{}, opErr(LeadReportStaleAssignment, "job %q has a different assignment", rep.ID)
 	}
 
+	if rep.Agent != "" && !validJobIdentifier(rep.Agent) {
+		return Job{}, opErr(LeadReportInvalidAgent, "agent %q is not a valid identifier", rep.Agent)
+	}
+
 	// A cumulative report carries its own time, which must be the time of its last transition, so the first
 	// acceptance and an identical retry judge the same payload.
 	if len(rep.Transitions) > 0 && !rep.At.IsZero() && !rep.At.Equal(rep.Transitions[len(rep.Transitions)-1].At.Time) {
@@ -528,6 +532,7 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		lastTr := job.History[len(job.History)-1]
 		if job.State != rep.State || job.Result != rep.Result ||
 			(rep.TaskID != "" && job.TaskID != rep.TaskID) ||
+			(rep.Agent != "" && job.Agent != rep.Agent) ||
 			(rep.Branch != "" && job.Branch != rep.Branch) ||
 			(rep.PRURL != "" && job.PRURL != rep.PRURL) ||
 			(!rep.At.IsZero() && !rep.At.Equal(lastTr.At.Time)) {
@@ -632,10 +637,11 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		}
 	}
 
-	// Branch and PR URL are immutable once recorded, in every state.
+	// Branch, Agent and PR URL are immutable once recorded, in every state.
 	if (rep.Branch != "" && job.Branch != "" && rep.Branch != job.Branch) ||
+		(rep.Agent != "" && job.Agent != "" && rep.Agent != job.Agent) ||
 		(rep.PRURL != "" && job.PRURL != "" && rep.PRURL != job.PRURL) {
-		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch or PR for job %q", rep.State, rep.ID)
+		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, agent or PR for job %q", rep.State, rep.ID)
 	}
 	// A report that leaves the state unchanged and adds no transition must not replace a task ID or result
 	// already recorded: an older retry would otherwise overwrite a newer payload (investigator #27, R2;
@@ -644,7 +650,7 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	// even when it ends in the recorded state.
 	historyExtended := len(newHistory) > len(job.History)
 	if targetState == prevState && !historyExtended && payloadConflicts(job, rep) {
-		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task, PR or result for job %q", rep.State, rep.ID)
+		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task, agent, PR or result for job %q", rep.State, rep.ID)
 	}
 
 	job.State = targetState
@@ -656,6 +662,9 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 
 	if rep.TaskID != "" {
 		job.TaskID = rep.TaskID
+	}
+	if rep.Agent != "" {
+		job.Agent = rep.Agent
 	}
 	if rep.Branch != "" {
 		job.Branch = rep.Branch
@@ -671,11 +680,12 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	return cloneJob(*job), nil
 }
 
-// payloadConflicts reports whether rep names a branch, task, PR or result that differs from the non-empty
+// payloadConflicts reports whether rep names a branch, task, agent, PR or result that differs from the non-empty
 // value already recorded on job. An empty field in rep never conflicts: it fills nothing and replaces nothing.
 func payloadConflicts(job *Job, rep JobReport) bool {
 	return (rep.Branch != "" && job.Branch != "" && rep.Branch != job.Branch) ||
 		(rep.TaskID != "" && job.TaskID != "" && rep.TaskID != job.TaskID) ||
+		(rep.Agent != "" && job.Agent != "" && rep.Agent != job.Agent) ||
 		(rep.PRURL != "" && job.PRURL != "" && rep.PRURL != job.PRURL) ||
 		(rep.Result != "" && job.Result != "" && rep.Result != job.Result)
 }
@@ -695,6 +705,7 @@ func (r *leadRegistry) requeueOffline(now Timestamp, ttl time.Duration) []string
 		if !ok || now.Sub(node.LastSeen.Time) >= ttl {
 			job.State = JobQueued
 			job.Node = ""
+			job.Agent = ""
 			job.History = append(job.History, JobTransition{State: JobQueued, At: atOrAfterLast(job, now)})
 			requeued = append(requeued, id)
 		}

@@ -3827,7 +3827,7 @@ node_transition() {
   result=$(jq -nr --arg text "$result" '$text | until(utf8bytelength <= 65536 and (tojson|utf8bytelength) <= 65536; .[0:(length / 2 | floor)])')
   NODE_STATE=$(jq -c --arg id "$jid" --arg state "$state" --arg at "$at" --arg result "$result" --arg node "$INSTANCE_NAME" '
     .jobs[$id] |= (. as $j | .report = {
-      ID:$id,Node:$node,Assignment:.assignment,State:$state,TaskID:(.task_id // ""),Branch:(.branch // ""),
+      ID:$id,Node:$node,Assignment:.assignment,State:$state,TaskID:(.task_id // ""),Branch:(.branch // ""),Agent:(.agent // ""),
       PRURL:(.pr_url // ""),Result:$result,At:$at,
       Transitions:((.report.Transitions // []) + [{State:$state,At:$at}])
     } | .state=$state | .pending=true | if ($state == "done" or $state == "failed" or $state == "stopped") then .preparing=false else . end)' <<< "$NODE_STATE")

@@ -123,10 +123,17 @@ func (s *webJobsSnapshot) activityOf(j webJob) webJobActivity {
 	return webJobActivity{}
 }
 
-// jobAgent names who works on a job: the node's agent if the node said, else the requested selector.
+// jobAgent names who works on a job: the persisted chosen agent, or the node's live activity agent if reported,
+// or the requested selector when not a tier selector ("normal" or "worker") to avoid bogus agent links.
 func jobAgent(a webJobActivity, j webJob) string {
+	if j.Agent != "" {
+		return j.Agent
+	}
 	if a.Agent != "" {
 		return a.Agent
+	}
+	if j.Request.Selector == "normal" || j.Request.Selector == "worker" {
+		return ""
 	}
 	return j.Request.Selector
 }
@@ -177,9 +184,13 @@ func remoteRows(busDir string) []taskRow {
 		}
 		a := snap.activityOf(j)
 		agent := jobAgent(a, j)
+		displayAgent := agent
+		if displayAgent == "" {
+			displayAgent = j.Request.Selector
+		}
 		r := taskRow{
 			ID:          j.Request.ID,
-			Name:        agent + "@" + j.Node,
+			Name:        displayAgent + "@" + j.Node,
 			Status:      j.State,
 			StatusLabel: j.State,
 			StatusClass: statusClass(j.State),
@@ -285,12 +296,16 @@ func buildWebJobRow(j webJob, snapshot *webJobsSnapshot, snapLocal *Snapshot, no
 	node := snapshot.Nodes[j.Node]
 	a := snapshot.activityOf(j)
 	agent := jobAgent(a, j)
+	displayAgent := agent
+	if displayAgent == "" {
+		displayAgent = j.Request.Selector
+	}
 	j.PRURL = safeJobURL(j.PRURL)
 	row := webJobRow{
 		webJob:        j,
 		NodeURL:       jobNodeURL(node.Heartbeat.WebURL, j.TaskID),
 		Offline:       j.Node != "" && webNodeOffline(node, now, ttl),
-		AgentName:     agent,
+		AgentName:     displayAgent,
 		BranchURL:     gitHubBranchURL(j.Request.RepoURL, j.Branch),
 		RequesterTask: j.Request.RequesterTask,
 	}
