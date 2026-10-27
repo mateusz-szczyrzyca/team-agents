@@ -69,29 +69,23 @@ func TestHeartbeatRejectsInvalidConfiguredAgents(t *testing.T) {
 	for i := range manyAgents {
 		manyAgents[i] = NodeAgent{Name: fmt.Sprintf("a-%d", i), Type: "claude", Tier: TierNormal}
 	}
-	manyFree := make([]FreeAgent, nodeAgentsMax+1)
-	for i := range manyFree {
-		manyFree[i] = FreeAgent{Name: fmt.Sprintf("f-%d", i), Tier: TierNormal}
-	}
 	cases := []struct {
 		name   string
 		agents []NodeAgent
-		free   []FreeAgent
 	}{
-		{"empty agent name", []NodeAgent{{Name: "", Type: "claude", Tier: TierNormal}}, nil},
-		{"path in agent name", []NodeAgent{{Name: "../alpha", Type: "claude", Tier: TierNormal}}, nil},
+		{"empty agent name", []NodeAgent{{Name: "", Type: "claude", Tier: TierNormal}}},
+		{"path in agent name", []NodeAgent{{Name: "../alpha", Type: "claude", Tier: TierNormal}}},
 		{"duplicate agent name", []NodeAgent{
 			{Name: "alpha", Type: "claude", Tier: TierNormal},
 			{Name: "alpha", Type: "codex", Tier: TierWorker},
-		}, nil},
-		{"empty agent type", []NodeAgent{{Name: "alpha", Type: "", Tier: TierNormal}}, nil},
-		{"invalid agent type", []NodeAgent{{Name: "alpha", Type: "claude/code", Tier: TierNormal}}, nil},
-		{"unknown agent tier", []NodeAgent{{Name: "alpha", Type: "claude", Tier: Tier("investigator")}}, nil},
-		{"newline in model", []NodeAgent{{Name: "alpha", Type: "claude", Model: "sonnet\nx", Tier: TierNormal}}, nil},
-		{"nul in model", []NodeAgent{{Name: "alpha", Type: "claude", Model: "sonnet\x00", Tier: TierNormal}}, nil},
-		{"model exceeds max length", []NodeAgent{{Name: "alpha", Type: "claude", Model: strings.Repeat("m", nodeAgentModelMax+1), Tier: TierNormal}}, nil},
-		{"too many configured agents", manyAgents, nil},
-		{"too many free agents", nil, manyFree},
+		}},
+		{"empty agent type", []NodeAgent{{Name: "alpha", Type: "", Tier: TierNormal}}},
+		{"invalid agent type", []NodeAgent{{Name: "alpha", Type: "claude/code", Tier: TierNormal}}},
+		{"unknown agent tier", []NodeAgent{{Name: "alpha", Type: "claude", Tier: Tier("investigator")}}},
+		{"newline in model", []NodeAgent{{Name: "alpha", Type: "claude", Model: "sonnet\nx", Tier: TierNormal}}},
+		{"nul in model", []NodeAgent{{Name: "alpha", Type: "claude", Model: "sonnet\x00", Tier: TierNormal}}},
+		{"model exceeds max length", []NodeAgent{{Name: "alpha", Type: "claude", Model: strings.Repeat("m", nodeAgentModelMax+1), Tier: TierNormal}}},
+		{"too many configured agents", manyAgents},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,7 +96,7 @@ func TestHeartbeatRejectsInvalidConfiguredAgents(t *testing.T) {
 				FreeAgents: []FreeAgent{{Name: "alpha", Tier: TierNormal}},
 			}
 			regHeartbeat(t, r, initial, regAt(1))
-			_, err := r.heartbeat(NodeHeartbeat{Node: "node-a", Agents: tc.agents, FreeAgents: tc.free}, regAt(2))
+			_, err := r.heartbeat(NodeHeartbeat{Node: "node-a", Agents: tc.agents}, regAt(2))
 			failsWith(t, LeadHeartbeatMalformedBody)(tc.name, err)
 			if got := r.nodes["node-a"]; !got.LastSeen.Equal(regAt(1).Time) || len(got.Heartbeat.Agents) != 1 {
 				t.Fatalf("refused heartbeat altered stored node: %+v", got)
@@ -111,7 +105,8 @@ func TestHeartbeatRejectsInvalidConfiguredAgents(t *testing.T) {
 	}
 }
 
-// Rule: a jobs.json written before NodeHeartbeat.Agents existed still loads with its node declaration intact.
+// Rule: a jobs.json written before NodeHeartbeat.Agents existed still loads with its node declaration intact,
+// and existing FreeAgents validation remains unchanged for compatibility (AGENTS.md rule 9).
 func TestJobStoreLoadsNodeBeforeAgentsField(t *testing.T) {
 	r, err := (&Bus{dir: "testdata/jobs-before-node-agents"}).loadJobs()
 	if err != nil {
@@ -123,5 +118,12 @@ func TestJobStoreLoadsNodeBeforeAgentsField(t *testing.T) {
 	}
 	if len(node.Heartbeat.Agents) != 0 || len(node.Heartbeat.FreeAgents) != 1 || node.Heartbeat.FreeAgents[0].Name != "alpha" {
 		t.Fatalf("loaded node declaration mismatch: %+v", node.Heartbeat)
+	}
+	manyFree := make([]FreeAgent, nodeAgentsMax+1)
+	for i := range manyFree {
+		manyFree[i] = FreeAgent{Name: fmt.Sprintf("f-%d", i), Tier: TierNormal}
+	}
+	if _, herr := r.heartbeat(NodeHeartbeat{Node: "node-a", FreeAgents: manyFree}, regAt(2)); herr != nil {
+		t.Fatalf("legacy FreeAgents list rejected: %v", herr)
 	}
 }
