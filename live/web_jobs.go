@@ -156,7 +156,9 @@ func gitHubBranchURL(repoURL, branch string) string {
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return ""
 	}
-	return "https://github.com/" + parts[0] + "/" + parts[1] + "/tree/" + branch
+	u.Path = "/" + parts[0] + "/" + parts[1] + "/tree/" + branch
+	u.RawPath = ""
+	return u.String()
 }
 
 // remoteRows are the dashboard rows of the lead's remote jobs: active jobs and jobs finished in the
