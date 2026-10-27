@@ -218,6 +218,11 @@ func TestAgentsListShowsRemoteAgents(t *testing.T) {
 
 	// What worker-1@node-online is doing now (job-active)
 	mustContain(t, "/agents", body, `href="/jobs/job-active"`)
+
+	// Working agents first, then free
+	if !before(body, ">worker-1@node-online<", ">agent-free@node-online<") {
+		t.Errorf("working agent should be ordered before free agent")
+	}
 }
 
 func TestAgentDetailPageLocalAndRemote(t *testing.T) {
@@ -289,6 +294,11 @@ func TestDashboardFinishedRemoteJobsAndDoneBlue(t *testing.T) {
 	// Active remote job appears
 	mustContain(t, "/", body, "worker-1@node-online", `href="/jobs/job-active"`)
 
+	// Remote jobs do not offer stop button on the lead until round 4
+	if strings.Contains(body, `hx-post="/task/job-active/stop"`) {
+		t.Errorf("remote job should not offer stop button on lead until round 4")
+	}
+
 	// Recent done job appears and links to /jobs/job-recent-done
 	mustContain(t, "/", body, `href="/jobs/job-recent-done"`)
 
@@ -297,15 +307,17 @@ func TestDashboardFinishedRemoteJobsAndDoneBlue(t *testing.T) {
 		t.Errorf("remote job finished >24h ago should not appear on dashboard")
 	}
 
-	// CSS defines done as blue
+	// CSS defines done as blue for light and dark modes
 	css, err := os.ReadFile(filepath.Join("web", "static", "app.css"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(css)
-	// Light mode done blue
-	if !strings.Contains(s, "--done: #2563eb;") && !strings.Contains(s, "--done: var(--accent);") {
-		t.Errorf("app.css should define --done in blue")
+	if !strings.Contains(s, "--done: #2563eb;") {
+		t.Errorf("app.css should define light mode --done in blue (#2563eb)")
+	}
+	if !strings.Contains(s, "--done: #60a5fa;") {
+		t.Errorf("app.css should define dark mode --done in blue (#60a5fa)")
 	}
 }
 
