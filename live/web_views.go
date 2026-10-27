@@ -48,6 +48,8 @@ func statusClass(s string) string {
 		return "st-stopped"
 	case "failed", "excluded", "hung", "dead":
 		return "st-failed"
+	case "offline":
+		return "st-offline"
 	}
 	return "st-dim"
 }
@@ -333,7 +335,9 @@ func (s *webServer) viewAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if snapJobs != nil {
+		now := time.Now()
 		for nodeName, node := range snapJobs.Nodes {
+			nodeOffline := webNodeOffline(node, now, s.cfg.nodeTTL)
 			agents := node.Heartbeat.Agents
 			if len(agents) == 0 && len(node.Heartbeat.FreeAgents) > 0 {
 				for _, fa := range node.Heartbeat.FreeAgents {
@@ -350,7 +354,9 @@ func (s *webServer) viewAgents(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				defState := "unavailable"
-				if isFree {
+				if nodeOffline {
+					defState = "offline"
+				} else if isFree {
 					defState = "free"
 				}
 				row := agentRow{
@@ -361,7 +367,7 @@ func (s *webServer) viewAgents(w http.ResponseWriter, r *http.Request) {
 						Tier:  na.Tier,
 					},
 					State:      defState,
-					StateClass: "st-dim",
+					StateClass: statusClass(defState),
 				}
 				for _, j := range snapJobs.Jobs {
 					if j.Node != nodeName {
@@ -1512,6 +1518,8 @@ func (s *webServer) viewAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		now := time.Now()
+		nodeOffline := webNodeOffline(node, now, s.cfg.nodeTTL)
 		isFree := false
 		for _, fa := range node.Heartbeat.FreeAgents {
 			if fa.Name == agentName {
@@ -1520,7 +1528,9 @@ func (s *webServer) viewAgent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		defState := "unavailable"
-		if isFree {
+		if nodeOffline {
+			defState = "offline"
+		} else if isFree {
 			defState = "free"
 		}
 		data := webAgentData{
@@ -1534,7 +1544,7 @@ func (s *webServer) viewAgent(w http.ResponseWriter, r *http.Request) {
 				Tier:  targetAgent.Tier,
 			},
 			State:      defState,
-			StateClass: "st-dim",
+			StateClass: statusClass(defState),
 		}
 		var lastAt time.Time
 		for _, j := range snapJobs.Jobs {
@@ -1582,11 +1592,18 @@ func (s *webServer) viewAgent(w http.ResponseWriter, r *http.Request) {
 			data.Tasks = append(data.Tasks, jRow)
 		}
 		sort.SliceStable(data.Tasks, func(i, j int) bool {
-			wi, wj := data.Tasks[i].Running, data.Tasks[j].Running
-			if wi != wj {
-				return wi
+			ti, tj := data.Tasks[i], data.Tasks[j]
+			termI, termJ := jobTerminal(ti.Status), jobTerminal(tj.Status)
+			if termI != termJ {
+				return !termI
 			}
-			return data.Tasks[i].FinishedAt.After(data.Tasks[j].FinishedAt)
+			if !termI {
+				if ti.Running != tj.Running {
+					return ti.Running
+				}
+				return ti.ID < tj.ID
+			}
+			return ti.FinishedAt.After(tj.FinishedAt)
 		})
 		if !lastAt.IsZero() {
 			data.Last = lastAt.Format("2006-01-02 15:04")

@@ -140,11 +140,16 @@ func jobAgent(a webJobActivity, j webJob) string {
 	return j.Request.Selector
 }
 
+// jobTerminal reports whether a remote job state is terminal.
+func jobTerminal(state string) bool {
+	return state == "done" || state == "failed" || state == "stopped"
+}
+
 // jobFinishedAt returns when a finished job ended, or zero if still active or unknown.
 func jobFinishedAt(j webJob) time.Time {
 	for i := len(j.History) - 1; i >= 0; i-- {
 		h := j.History[i]
-		if h.State == "done" || h.State == "failed" || h.State == "stopped" {
+		if jobTerminal(h.State) {
 			if !h.At.IsZero() {
 				return h.At
 			}
