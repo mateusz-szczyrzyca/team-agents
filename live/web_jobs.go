@@ -384,6 +384,15 @@ func (s *webServer) viewJobs(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusOK, "jobs", "Jobs", localSnap, rows)
 }
 
+// webInstanceList holds the filtered rows and preserves the operator's choice during refresh.
+type webInstanceList struct {
+	Rows    []webInstanceRow // visible nodes, sorted by name
+	ShowAll bool             // include nodes whose known heartbeat is older than the visibility window
+}
+
+// instanceVisibilityWindow limits clutter without removing nodes from the registry.
+const instanceVisibilityWindow = 24 * time.Hour
+
 // viewInstances renders node capabilities, free agents and current heartbeat liveness.
 func (s *webServer) viewInstances(w http.ResponseWriter, r *http.Request) {
 	snapshot, err := readWebJobs(s.cfg.busDir)
@@ -392,6 +401,7 @@ func (s *webServer) viewInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := make([]webInstanceRow, 0, len(snapshot.Nodes))
+	showAll := r.URL.Query().Get("all") == "1"
 	now := time.Now()
 	for name, node := range snapshot.Nodes {
 		neverSeen := node.LastSeen.IsZero()
@@ -402,11 +412,14 @@ func (s *webServer) viewInstances(w http.ResponseWriter, r *http.Request) {
 			NeverSeen:  neverSeen,
 			Offline:    !neverSeen && webNodeOffline(node, now, s.cfg.nodeTTL),
 		}
+		if !showAll && row.Offline && now.Sub(node.LastSeen) > instanceVisibilityWindow {
+			continue
+		}
 		if !node.LastSeen.IsZero() {
 			row.Seen = node.LastSeen.Format(time.RFC3339Nano)
 		}
 		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
-	s.render(w, r, http.StatusOK, "instances", "Instances", s.snapshot(), rows)
+	s.render(w, r, http.StatusOK, "instances", "Instances", s.snapshot(), webInstanceList{Rows: rows, ShowAll: showAll})
 }

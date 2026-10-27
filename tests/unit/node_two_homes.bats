@@ -27,6 +27,14 @@ teardown() {
   for p in "$BATS_TEST_TMPDIR"/node2/units/*.pid "$STUB_UNITS"/*.pid; do
     [[ -f $p ]] && kill -TERM -- -"$(cat "$p")" 2> /dev/null
   done
+  # a stopped run writes its state on the way out: wait for it, or the removal of the test's files races it
+  for p in "$BATS_TEST_TMPDIR"/node2/units/*.pid "$STUB_UNITS"/*.pid; do
+    [[ -f $p ]] || continue
+    for _ in $(seq 1 50); do
+      kill -0 "$(cat "$p")" 2> /dev/null || break   # gone: "no such process" is the answer waited for
+      sleep 0.1
+    done
+  done
   return 0
 }
 
@@ -322,4 +330,38 @@ wait_member_state() {
   team=$(grep -h '^TEAM=' "$AGENTS_HOME"/tasks/*/meta.env | head -1 | cut -d= -f2)
   [[ $(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.board.B1.status') == todo ]]
   [[ $(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.board.B1.previous') == solo@node2 ]]
+}
+
+@test "resuming a team with a remote member brings the member back on its node" {
+  LEAD_PORT=$(free_port)
+  setup_node
+  echo "NODE_REPOS[repo]=\"$NODE/repo\"" >> "$NODE/agents/agents.conf"   # the lead's repository is "repo" here
+  start_lead
+  start_node
+  echo '{"solo": {"new": "remote-hello"}}' > "$NODE/scenario.json"
+  scenario '{"lead": {"new": "team-lead-wait", "resume": "team-lead-wait"}}'
+  cd "$HOME/repo"
+  agent run --team lead,solo@node2 "team task"
+  wait_grep 'hello from node2' "$AGENTS_HOME/bus/messages.jsonl" 60
+  local old new
+  old=$(grep -h '^TEAM=' "$AGENTS_HOME"/tasks/*/meta.env | head -1 | cut -d= -f2)
+  agent stop "$(task_of lead)"
+  run agent run --last-team "go on" < /dev/null
+  [ "$status" -eq 0 ]
+  new=$(grep -h '^TEAM=' "$AGENTS_HOME"/tasks/*/meta.env | sort -u | grep -v "$old" | head -1 | cut -d= -f2)
+  [ -n "$new" ]
+  [[ $(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$new" | jq -r '.members["solo@node2"].provider') == remote ]]
+  for _ in $(seq 1 300); do   # the member runs again on its node: a second hello
+    [[ $(grep -c 'hello from node2' "$AGENTS_HOME/bus/messages.jsonl") -ge 2 ]] && break
+    sleep 0.2
+  done
+  [[ $(grep -c 'hello from node2' "$AGENTS_HOME/bus/messages.jsonl") -ge 2 ]]
+  # the lead's team logic for the member going to sleep again ends before the cleanup (team_after_run re-checks
+  # a sleeping team after 3 s): its proxy task sleeps, then a moment more
+  local proxies=("$AGENTS_HOME"/tasks/*-solo-at-node2)
+  for _ in $(seq 1 150); do
+    grep -qx 'STATUS=sleeping' "${proxies[-1]}/meta.env" && break
+    sleep 0.2
+  done
+  sleep 5
 }

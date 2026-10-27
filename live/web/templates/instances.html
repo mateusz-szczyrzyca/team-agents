@@ -1,14 +1,15 @@
-{{define "content"}}
+{{define "content"}}{{with .Data}}
 <p class="dim">Nodes registered on this lead. Free agents reflect the last heartbeat. Refreshes every 5 s.</p>
-<div id="remote-instances" hx-get="/instances" hx-trigger="every 5s" hx-select="#remote-instances" hx-target="this" hx-swap="outerHTML">
+<div id="remote-instances" hx-get="/instances{{if .ShowAll}}?all=1{{end}}" hx-trigger="every 5s" hx-select="#remote-instances" hx-target="this" hx-swap="outerHTML">
+<p>{{if .ShowAll}}<a href="/instances">Show recent instances</a>{{else}}<a href="/instances?all=1">Show all instances</a> <span class="dim">Offline nodes last seen more than 24 hours ago are hidden.</span>{{end}}</p>
 <div class="scroll"><table>
 <thead><tr><th>Instance</th><th>Status</th><th>Capabilities</th><th>Free agents</th><th>Last heartbeat</th></tr></thead>
-<tbody>{{range .Data}}<tr>
+<tbody>{{range .Rows}}{{$node := .Name}}<tr>
 <td><a href="/instances/{{.Name}}">{{.Name}}</a></td>
 <td>{{if .NeverSeen}}<span class="st-dim">never seen</span>{{else if .Offline}}<span class="st-offline">offline</span>{{else}}<span class="st-online">online</span>{{end}}</td>
 <td>{{join .Heartbeat.Capabilities ", "}}</td>
-<td>{{range .Heartbeat.FreeAgents}}<div>{{.Name}} <span class="dim">{{.Tier}}</span></div>{{else}}<span class="dim">none</span>{{end}}</td>
+<td>{{range .Heartbeat.FreeAgents}}<div><a href="/agents/{{.Name}}@{{$node}}">{{.Name}}</a> <span class="dim">{{.Tier}}</span></div>{{else}}<span class="dim">none</span>{{end}}</td>
 <td class="num">{{if .Seen}}{{.Seen}}{{else}}<span class="dim">unknown</span>{{end}}</td>
-</tr>{{else}}<tr><td colspan="5" class="dim">No nodes registered on this installation.</td></tr>{{end}}</tbody>
+</tr>{{else}}<tr><td colspan="5" class="dim">No nodes to show.</td></tr>{{end}}</tbody>
 </table></div></div>
-{{end}}
+{{end}}{{end}}

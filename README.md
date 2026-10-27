@@ -702,7 +702,9 @@ agent jobs [<id>]                                        # its state, node, bran
 activity; finished jobs remain for 24 hours. `/jobs/<id>` shows activity and results. Jobs links to their
 instance and agent pages, and to the result branch when the submitter supplied a GitHub repository origin.
 Instances links to `/instances/<node>` with capabilities, configured and free agents, jobs, last heartbeat,
-and the node's web interface when configured. Online is green, offline red, and unknown grey. Agents lists
+and the node's web interface when configured. Free agents link to their remote agent pages. The instance list
+hides offline nodes whose last heartbeat is more than 24 hours old; **Show all** restores them. Nodes never
+seen stay visible. Online is green, offline red, and unknown grey. Agents lists
 local and remote agents together and links to `/agents/<agent>` or `/agents/<agent>@<node>` for configuration
 and current/recent work. Completed (`done`) work is blue.
 
