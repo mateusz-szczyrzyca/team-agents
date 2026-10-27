@@ -353,6 +353,7 @@ type Server struct {
 	tier     Tier          // normal or worker (a cheap model: cannot coordinate or delegate)
 	agentCmd string        // path to the `agent` script (to spawn helper dispatch)
 	home     string        // AGENTS_HOME (passed to spawned processes)
+	remote   string        // the node a remote team member works on ("" = a local agent); its tools run here
 }
 
 // touch (re)registers this agent's presence and updates LastSeen.
@@ -787,6 +788,9 @@ func validateArgs(name string, a map[string]any) *ToolCallError {
 // call dispatches an MCP tools/call request to its handler and logs the outcome. The error is the tool's own
 // typed error (e.g. *QuizStartError) or a *ToolCallError for an unknown tool or a mistyped argument.
 func (s *Server) call(name string, raw map[string]any) (string, error) {
+	if why, blocked := remoteUnavailable[name]; blocked && s.remote != "" {
+		return "", fmt.Errorf("%s is not available to a remote member: %s", name, why)
+	}
 	start := time.Now()
 	out, err := s.callTool(name, raw)
 	attrs := []any{"tool", name, "duration_ms", time.Since(start).Milliseconds()}
@@ -997,6 +1001,9 @@ func (s *Server) handle(line []byte) {
 		if s.role != RoleInvestigator {
 			tools = append(tools, collabToolDefs(s.team != "", s.tier)...)
 			tools = append(tools, consultToolDefs(s.team != "")...)
+		}
+		if s.remote != "" {
+			tools = withoutRemoteUnavailable(tools)
 		}
 		s.reply(req.ID, map[string]any{"tools": tools})
 	case "tools/call":

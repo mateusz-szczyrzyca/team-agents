@@ -120,12 +120,13 @@ type JobReport struct {
 
 // leadRegistry is the lead's job and node registry. Every method is atomic with respect to the others.
 type leadRegistry struct {
-	mu             sync.Mutex         // protects the entire registry, including returned snapshots
-	jobs           map[string]*Job    // jobs by submitter ID; pointers never escape the lock
-	order          []string           // submission order, including equal-timestamp submissions
-	nodes          map[string]jobNode // latest accepted declaration of each authenticated node
-	nextSequence   uint64             // next submission sequence; duplicates do not consume one
-	nextAssignment uint64             // assignment evidence; never reused within this registry
+	mu             sync.Mutex              // protects the entire registry, including returned snapshots
+	jobs           map[string]*Job         // jobs by submitter ID; pointers never escape the lock
+	order          []string                // submission order, including equal-timestamp submissions
+	nodes          map[string]jobNode      // latest accepted declaration of each authenticated node
+	nextSequence   uint64                  // next submission sequence; duplicates do not consume one
+	nextAssignment uint64                  // assignment evidence; never reused within this registry
+	members        map[string]RemoteMember // remote team members' grants by member name ("<agent>@<node>")
 }
 
 // jobNode keeps trusted receipt time separate from the node's declaration.
@@ -136,7 +137,7 @@ type jobNode struct {
 
 // newLeadRegistry returns an empty registry.
 func newLeadRegistry() *leadRegistry {
-	return &leadRegistry{jobs: make(map[string]*Job), nodes: make(map[string]jobNode)}
+	return &leadRegistry{jobs: make(map[string]*Job), nodes: make(map[string]jobNode), members: make(map[string]RemoteMember)}
 }
 
 // submit registers a job or returns the existing one with the same ID when the submission is identical.

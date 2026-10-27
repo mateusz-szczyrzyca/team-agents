@@ -14,6 +14,7 @@ type jobSnapshot struct {
 	Nodes          map[string]storedJobNode // trusted declarations and receipt times retained across restarts
 	NextSequence   uint64                   // high-water mark, retained even after all jobs expire
 	NextAssignment uint64                   // assignment high-water mark; old evidence is never reused
+	Members        map[string]RemoteMember  `json:",omitempty"` // remote team members' grants by member name
 }
 
 // jobTime preserves the instant and subsecond precision without changing the legacy bus timestamp format.
@@ -87,6 +88,9 @@ func (b *Bus) loadJobs() (*leadRegistry, *StorageError) {
 	}
 	r := newLeadRegistry()
 	r.nextSequence, r.nextAssignment = snapshot.NextSequence, snapshot.NextAssignment
+	for name, m := range snapshot.Members {
+		r.members[name] = m
+	}
 	var previous uint64
 	for _, stored := range snapshot.Jobs {
 		job := stored.Job
@@ -127,6 +131,12 @@ func (b *Bus) loadJobs() (*leadRegistry, *StorageError) {
 // saveJobs atomically replaces only the job snapshot; its caller holds bus.lock and owns r exclusively.
 func (b *Bus) saveJobs(r *leadRegistry) *StorageError {
 	snapshot := jobSnapshot{Version: 1, Nodes: make(map[string]storedJobNode), NextSequence: r.nextSequence, NextAssignment: r.nextAssignment}
+	if len(r.members) > 0 {
+		snapshot.Members = make(map[string]RemoteMember, len(r.members))
+		for name, m := range r.members {
+			snapshot.Members[name] = m
+		}
+	}
 	for name, node := range r.nodes {
 		snapshot.Nodes[name] = storedJobNode{jobNode: node, LastSeen: jobTime{node.LastSeen}}
 	}

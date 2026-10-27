@@ -88,6 +88,18 @@ func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Durat
 			return publicLeadJob(job), err
 		})
 	})
+	mux.HandleFunc("POST /v1/mcp", func(w http.ResponseWriter, r *http.Request) {
+		serveLead(w, r, localNode, allowed, LeadMCPUnauthorized, func(peer leadIdentity) (any, *LeadMCPError) {
+			var body leadMCPBody // one remote member's JSON-RPC message
+			if err := decodeLeadBody(r, &body); err != nil {
+				return nil, fromValue(LeadMCPMalformedBody, err)
+			}
+			reply, err := a.mcp(peer.Node, body)
+			return struct {
+				Message json.RawMessage /* the JSON-RPC reply; null for a notification */
+			}{reply}, err
+		})
+	})
 	mux.HandleFunc("POST /v1/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		serveLead(w, r, localNode, allowed, LeadHeartbeatUnauthorized, func(peer leadIdentity) (any, *LeadHeartbeatError) {
 			var body leadHeartbeatBody // declaration and reports share one transaction
