@@ -3717,7 +3717,6 @@ cmd_nodes() {
   done
 }
 
-# node_heartbeat_json advertises locally configured capacity using the ordinary task admission rules.
 # agent_cli_present agent — is the CLI of the agent's type installed? (a missing one is not offered as free)
 agent_cli_present() {
   local bin=""
@@ -3755,10 +3754,13 @@ node_job_result() {
   task_field "$tid" NOTE
 }
 
+# node_heartbeat_json advertises configured inventory and free capacity using ordinary admission rules.
 node_heartbeat_json() {
-  local a available_json='[]' caps='[]'
+  local a available_json='[]' configured_json='[]' caps='[]'
   for a in "${!AGENT_TYPE[@]}"; do
     is_investigator "$a" && continue
+    configured_json=$(jq -c --arg name "$a" --arg type "${AGENT_TYPE[$a]}" --arg model "${AGENT_MODEL[$a]:-}" \
+      --arg tier "$(agent_tier "$a")" '. + [{Name:$name,Type:$type,Model:$model,Tier:$tier}]' <<< "$configured_json")
     if ! agent_cli_present "$a"; then
       if [[ -z ${NODE_MISSING_CLI[$a]:-} ]]; then
         NODE_MISSING_CLI[$a]=1
@@ -3771,7 +3773,7 @@ node_heartbeat_json() {
   done
   if ((${#INSTANCE_CAPABILITIES[@]})); then caps=$(printf '%s\n' "${INSTANCE_CAPABILITIES[@]}" | jq -R . | jq -s .); fi
   jq -cn --arg node "$INSTANCE_NAME" --argjson caps "$caps" --argjson free "$available_json" --arg web "$AGENT_WEB_URL" \
-    --argjson activity "$(node_activity_json)" '{Node:$node,Capabilities:$caps,FreeAgents:$free,WebURL:$web,Activity:$activity}'
+    --argjson agents "$configured_json" --argjson activity "$(node_activity_json)" '{Node:$node,Capabilities:$caps,Agents:($agents|sort_by(.Name)),FreeAgents:$free,WebURL:$web,Activity:$activity}'
 }
 
 # node_select_agent uses provider rotation for workers, otherwise the configured normal-agent order.

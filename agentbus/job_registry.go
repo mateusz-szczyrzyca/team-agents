@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // The lead's pure in-memory model of jobs, nodes, routing and lifecycle operations.
@@ -87,7 +88,7 @@ type NodeAgent struct {
 
 // Limits of the agent declarations a heartbeat may carry.
 const (
-	nodeAgentsMax     = 128 // configured or free agents per heartbeat
+	nodeAgentsMax     = 128 // configured agents per heartbeat; legacy FreeAgents remains unchanged
 	nodeAgentModelMax = 256 // bytes in a configured model name
 )
 
@@ -101,7 +102,7 @@ type FreeAgent struct {
 type NodeHeartbeat struct {
 	Node         string        // the authenticated node name (the short device name)
 	Capabilities []string      // declared capabilities, validated like JobRequest.Requires
-	Agents       []NodeAgent   // all configured agents of the node (non-secret fields only)
+	Agents       []NodeAgent   `json:",omitempty"` // all configured agents of the node (non-secret fields only)
 	FreeAgents   []FreeAgent   // configured agents that are free now; empty when none is free
 	WebURL       string        // the node's AGENT_WEB_URL, shown by the lead for waiting jobs; may be empty
 	Activity     []JobActivity // what the node's running jobs are doing now (kept only for jobs assigned to it)
@@ -266,6 +267,18 @@ func (r *leadRegistry) heartbeat(h NodeHeartbeat, now Timestamp) (*Job, *LeadHea
 	if err != nil {
 		return nil, opErr(LeadHeartbeatInvalidCapabilities, "%v", err)
 	}
+
+	if len(h.Agents) > nodeAgentsMax {
+		return nil, opErr(LeadHeartbeatMalformedBody, "configured agents exceed %d entries", nodeAgentsMax)
+	}
+	configuredSeen := make(map[string]bool, len(h.Agents))
+	for _, agent := range h.Agents {
+		if !validJobIdentifier(agent.Name) || !validJobIdentifier(agent.Type) || !agent.Tier.Valid() || configuredSeen[agent.Name] ||
+			len(agent.Model) > nodeAgentModelMax || strings.IndexFunc(agent.Model, unicode.IsControl) >= 0 {
+			return nil, opErr(LeadHeartbeatMalformedBody, "configured agents need unique logical names, CLI types, known tiers and bounded models without control characters")
+		}
+		configuredSeen[agent.Name] = true
+	}
 	seen := make(map[string]bool, len(h.FreeAgents))
 	for _, agent := range h.FreeAgents {
 		if !validJobIdentifier(agent.Name) || !agent.Tier.Valid() || seen[agent.Name] {
@@ -274,7 +287,7 @@ func (r *leadRegistry) heartbeat(h NodeHeartbeat, now Timestamp) (*Job, *LeadHea
 		seen[agent.Name] = true
 	}
 	h.Capabilities = caps
-	h.Agents = nil
+	h.Agents = slices.Clone(h.Agents)
 	h.FreeAgents = slices.Clone(h.FreeAgents)
 	h.Activity = boundedActivity(h.Activity)
 	r.mu.Lock()

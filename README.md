@@ -707,7 +707,8 @@ local and remote agents together and links to `/agents/<agent>` or `/agents/<age
 and current/recent work. Completed (`done`) work is blue.
 
 The heartbeat's optional `Agents` list declares each configured agent's name, CLI type, model and tier;
-`FreeAgents` still controls routing. Older nodes without that list remain compatible. Upgrade the lead before nodes: older lead versions reject
+`FreeAgents` still controls routing. The new inventory is limited to `128` agents, with model names of at most
+`256` bytes and no control characters; invalid declarations are refused with `LeadHeartbeatMalformedBody`. Older nodes without that list remain compatible. Upgrade the lead before nodes: older lead versions reject
 these new heartbeat/submission fields. Job submissions may carry
 `RepoURL` (only `https://github.com/<owner>/<repo>`, otherwise empty) and `RequesterTask` (a delegating task ID).
 The submitter derives these from the origin and delegation context; these fields are links, never authority.
