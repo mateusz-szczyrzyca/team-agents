@@ -433,3 +433,9 @@ generic relay, the lead running them with `Server.handle` — no per-tool reimpl
 the lead's grant for that node, never from the request; nodes still pull (a wake rides on the heartbeat reply);
 an unreachable lead is a tool error and the member sleeps (no queued calls, no outage accounting). The coordinator
 is always local. See README "Several instances".
+
+A remote member's changes reach the team's logic in the agent script on the lead (`agent _remote_member` keeps its
+proxy task's status and runs `team_after_run`), so it is put out when it fails and counts in "all asleep" and "all
+finished". The doorbell (`GET /v1/events`, node-initiated, server-sent events) only rings: what waits is fetched by
+the ordinary heartbeat, so nothing has to be replayed after a broken stream. A lead's shutdown cancels the
+streams (its requests' base context), or draining would wait for them.
