@@ -4,13 +4,13 @@
 <div class="scroll"><table>
 <thead><tr><th>Agent</th><th>Tier</th><th>CLI / model</th><th class="hide-narrow">Provider</th><th>Now</th><th>Last activity</th></tr></thead>
 <tbody>{{range .Rows}}<tr>
-  <td class="name">{{.Name}}</td>
+  <td class="name"><a href="/agents/{{.Name}}">{{.Name}}</a></td>
   <td><span class="tag">{{.Tier}}</span></td>
   <td>{{.Type}}{{if .Model}} · <span class="dim">{{.Model}}</span>{{end}}</td>
   <td class="hide-narrow">{{.Provider}}</td>
   <td><span class="st {{.StateClass}}">{{if eq .State "free"}}free{{else}}{{statusLabel .State}}{{end}}</span>{{if .Paused}} <span class="dim">{{.Paused}}</span>{{end}}
     {{if .Presence}}<div class="stage">„{{.Presence}}”</div>{{end}}
-    {{range .Tasks}}<div><a href="/task/{{.ID}}">{{.ID}}</a> <span class="dim">{{.Since}}</span>{{if .Team}} <a class="tag" href="/team/{{.Team}}">team {{.TeamShort}}</a>{{end}}</div>{{end}}</td>
+    {{range .Tasks}}<div><a href="{{if .Link}}{{.Link}}{{else}}/task/{{.ID}}{{end}}">{{.ID}}</a> <span class="dim">{{.Since}}</span>{{if .Team}} <a class="tag" href="/team/{{.Team}}">team {{.TeamShort}}</a>{{end}}</div>{{end}}</td>
   <td class="num">{{if .Last}}{{.Last}}{{else}}<span class="dim">—</span>{{end}}</td>
 </tr>{{else}}<tr><td colspan="6" class="dim">(no agents)</td></tr>{{end}}</tbody>
 </table></div>
