@@ -218,6 +218,11 @@ func TestAgentsListShowsRemoteAgents(t *testing.T) {
 
 	// What worker-1@node-online is doing now (job-active)
 	mustContain(t, "/agents", body, `href="/jobs/job-active"`)
+
+	// Working agents first, then free
+	if !before(body, ">worker-1@node-online<", ">agent-free@node-online<") {
+		t.Errorf("working agent should be ordered before free agent")
+	}
 }
 
 func TestAgentDetailPageLocalAndRemote(t *testing.T) {
@@ -289,6 +294,11 @@ func TestDashboardFinishedRemoteJobsAndDoneBlue(t *testing.T) {
 	// Active remote job appears
 	mustContain(t, "/", body, "worker-1@node-online", `href="/jobs/job-active"`)
 
+	// Remote jobs do not offer stop button on the lead until round 4
+	if strings.Contains(body, `hx-post="/task/job-active/stop"`) {
+		t.Errorf("remote job should not offer stop button on lead until round 4")
+	}
+
 	// Recent done job appears and links to /jobs/job-recent-done
 	mustContain(t, "/", body, `href="/jobs/job-recent-done"`)
 
@@ -297,14 +307,34 @@ func TestDashboardFinishedRemoteJobsAndDoneBlue(t *testing.T) {
 		t.Errorf("remote job finished >24h ago should not appear on dashboard")
 	}
 
-	// CSS defines done as blue
+	// CSS defines done as blue for light and dark modes
 	css, err := os.ReadFile(filepath.Join("web", "static", "app.css"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(css)
-	// Light mode done blue
-	if !strings.Contains(s, "--done: #2563eb;") && !strings.Contains(s, "--done: var(--accent);") {
-		t.Errorf("app.css should define --done in blue")
+	if !strings.Contains(s, "--done: #2563eb;") {
+		t.Errorf("app.css should define light mode --done in blue (#2563eb)")
+	}
+	if !strings.Contains(s, "--done: #60a5fa;") {
+		t.Errorf("app.css should define dark mode --done in blue (#60a5fa)")
+	}
+}
+
+func TestDashboardProxyTaskDeduplication(t *testing.T) {
+	home := fixture(t)
+	setupRound1Bus(t, home)
+	// Add a proxy task on the lead representing job-active
+	writeFile(t, filepath.Join(home, "tasks", "T_PROXY", "meta.env"),
+		"ID=T_PROXY\nAGENT=worker-1@node-online\nSTATUS=running\nRUN=1\nKIND=remote-member\nJOB_ID=job-active\n")
+	_, ts := testServer(t, home)
+
+	_, body := get(t, ts, "/")
+
+	// job-active should appear as the local proxy task (/task/T_PROXY),
+	// not duplicated as a remote job row (/jobs/job-active)
+	mustContain(t, "/", body, `href="/task/T_PROXY"`)
+	if strings.Contains(body, `href="/jobs/job-active"`) {
+		t.Errorf("job-active should be represented by its proxy task, not duplicated as a remote job row")
 	}
 }

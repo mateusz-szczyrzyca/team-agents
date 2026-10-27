@@ -1,10 +1,11 @@
 {{define "content"}}{{with .Data}}
-<p><span class="tag">{{.J.State}}</span> on <b>{{.J.Node}}</b>{{if .Offline}} <span class="st-failed">node offline</span>{{end}} · agent <b>{{.Agent}}</b>{{if .Activity.Stage}} · {{.Activity.Stage}}{{end}}</p>
+<p><span class="tag">{{.J.State}}</span> on <b>{{if .NodeLink}}<a href="{{.NodeLink}}">{{.J.Node}}</a>{{else}}{{.J.Node}}{{end}}</b>{{if .Offline}} <span class="st-offline">node offline</span>{{end}} · agent <b>{{if .AgentLink}}<a href="{{.AgentLink}}">{{.Agent}}</a>{{else}}{{.Agent}}{{end}}</b>{{if .Activity.Stage}} · {{.Activity.Stage}}{{end}}</p>
 <table class="kv">
 <tr><th>Repository</th><td>{{.J.Request.Repository}}</td></tr>
 <tr><th>Requested</th><td>{{.J.Request.Selector}}{{range .J.Request.Requires}} <code>{{.}}</code>{{end}}</td></tr>
-<tr><th>Branch</th><td>{{if .J.Branch}}<code>{{.J.Branch}}</code>{{else}}<span class="dim">—</span>{{end}}</td></tr>
+<tr><th>Branch</th><td>{{if .BranchURL}}<code><a href="{{.BranchURL}}" hx-boost="false">{{.J.Branch}}</a></code>{{else if .J.Branch}}<code>{{.J.Branch}}</code>{{else}}<span class="dim">—</span>{{end}}</td></tr>
 {{if .J.PRURL}}<tr><th>PR</th><td><a href="{{.J.PRURL}}">{{.J.PRURL}}</a></td></tr>{{end}}
+{{if .RequesterTask}}<tr><th>Requester</th><td>{{if .RequesterTaskLink}}<a href="{{.RequesterTaskLink}}">{{.RequesterTask}}</a>{{else}}{{.RequesterTask}}{{end}}{{if .RequesterTeam}} <a class="tag" href="/team/{{.RequesterTeam}}">team {{.RequesterTeamShort}}</a>{{end}}</td></tr>{{end}}
 <tr><th>On the node</th><td>{{if .NodeURL}}<a href="{{.NodeURL}}">the task on {{.J.Node}}</a>{{else}}<span class="dim">no web address for {{.J.Node}} (AGENT_WEB_URL)</span>{{end}}</td></tr>
 </table>
 <h2>Latest activity</h2>
