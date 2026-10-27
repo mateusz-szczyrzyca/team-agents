@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -46,8 +47,8 @@ type JobTransition struct {
 
 // JobRequest is a submission, as the lead receives it. Every field is compared on resubmission.
 type JobRequest struct {
-	RepoURL       string   // optional canonical https://github.com/<owner>/<repo> link, data only
-	RequesterTask string   // optional delegating member task ID on the lead, data only
+	RepoURL       string   `json:",omitempty"` // optional canonical https://github.com/<owner>/<repo> link, data only
+	RequesterTask string   `json:",omitempty"` // optional delegating member task ID on the lead, data only
 	ID            string   // submitter-chosen idempotency key, validated before use
 	Repository    string   // logical repository name, resolved through the node's NODE_REPOS
 	BaseRef       string   // git ref name, validated before any git invocation
@@ -170,6 +171,13 @@ func (r *leadRegistry) submit(req JobRequest, now Timestamp) (Job, *LeadSubmitEr
 
 // validateJobRequest normalizes set-valued requirements before identity comparison, without mutating input.
 func validateJobRequest(req JobRequest) (JobRequest, *LeadSubmitError) {
+	if req.RepoURL != "" && !validJobRepoURL(req.RepoURL) {
+		return JobRequest{}, opErr(LeadSubmitInvalidRepoURL, "repository link must be https://github.com/<owner>/<repo>")
+	}
+	if req.RequesterTask != "" && !validJobIdentifier(req.RequesterTask) {
+		return JobRequest{}, opErr(LeadSubmitInvalidRequesterTask, "requester task must be a logical task identifier")
+	}
+
 	if req.Team != "" || req.Member != "" { // a member's job: "<selector>@<target>" of a team on the lead
 		agent, node, ok := strings.Cut(req.Member, "@")
 		if req.Team == "" || !ok || !validJobIdentifier(req.Team) || req.Target == "" || agent != req.Selector ||
@@ -683,4 +691,16 @@ func (r *leadRegistry) get(id string) (Job, *LeadGetJobError) {
 		return Job{}, opErr(LeadGetJobNoSuchJob, "no job %q", id)
 	}
 	return cloneJob(*job), nil
+}
+
+// jobRepoURLPattern limits links to a canonical GitHub repository, without URL controls.
+var jobRepoURLPattern = regexp.MustCompile(`^https://github[.]com/[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$`)
+
+// validJobRepoURL accepts data links only, never credentials, branch paths or URL suffixes.
+func validJobRepoURL(raw string) bool {
+	if !jobRepoURLPattern.MatchString(raw) || strings.HasSuffix(raw, ".git") {
+		return false
+	}
+	repo := raw[strings.LastIndex(raw, "/")+1:]
+	return repo != "." && repo != ".."
 }

@@ -778,6 +778,24 @@ last_team_id() { # the newest team of the repository in the current directory (o
   printf '%s' "$best"
 }
 
+# github_repo_url returns a canonical GitHub origin link, or empty for other/missing origins.
+github_repo_url() {
+  local url tail owner repo rc=0
+  url=$(git -C "$1" remote get-url origin 2>&1) || rc=$?
+  if ((rc == 2)); then return 0; fi # git reports a missing origin with exit 2
+  if ((rc != 0)); then log_warn job_origin_lookup_failed "repository=$1" "exit=$rc" "reason=${url:0:300}"; return 0; fi
+  case $url in
+    https://github.com/*) tail=${url#https://github.com/} ;;
+    git@github.com:*) tail=${url#git@github.com:} ;;
+    ssh://git@github.com/*) tail=${url#ssh://git@github.com/} ;;
+    *) return 0 ;;
+  esac
+  tail=${tail%.git}; owner=${tail%%/*}; repo=${tail#*/}
+  if [[ $tail == */* && $owner =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ && $repo =~ ^[A-Za-z0-9_.-]{1,100}$ && $repo != . && $repo != .. ]]; then
+    printf 'https://github.com/%s/%s' "$owner" "$repo"
+  fi
+}
+
 github_owner() { # repository root → the owner of its GitHub origin ("" when origin is not on GitHub)
   local url
   url=$(git -C "$1" remote get-url origin 2>/dev/null) || return 0   # no origin: no owner
@@ -3446,8 +3464,8 @@ remote_member_start() { # proxy-task — grants the remote member on the lead an
     || { log_error remote_member_grant_failed "member=$member"; return 1; }
   body=$(jq -n --arg id "$(task_field "$id" JOB_ID)" --arg repo "$(task_field "$id" REPO_NAME)" --arg base "$(task_field "$id" BASE)" \
     --arg sha "$(task_field "$id" BASE_SHA)" --arg agent "$agent" --arg node "$node" --rawfile task "$TASKS/$id/task.md" \
-    --arg team "$(task_field "$id" TEAM)" --arg member "$member" \
-    '{ID:$id, Repository:$repo, BaseRef:$base, BaseSHA:$sha, Selector:$agent, Target:$node, Task:$task, Requester:"human", Team:$team, Member:$member}')
+    --arg team "$(task_field "$id" TEAM)" --arg member "$member" --arg repo_url "$(github_repo_url "$(task_field "$id" REPO_ROOT)")" \
+    '{ID:$id, Repository:$repo, BaseRef:$base, BaseSHA:$sha, Selector:$agent, Target:$node, Task:$task, Requester:"human", Team:$team, Member:$member, RepoURL:$repo_url, RequesterTask:""}')
   if ! out=$(printf '%s' "$body" | bus node-request --url "$(lead_url)" --path /v1/jobs); then
     log_error remote_member_job_failed "member=$member" "reason=${out:0:300}"
     return 1
@@ -3570,8 +3588,8 @@ submit_remote_job() {
     --arg sel "$selector" \
     --arg target "$target_node" \
     --arg task "$task" \
-    --arg reqstr "human" \
-    '{ID:$id,Repository:$repo,BaseRef:$base,Requires:$req,Selector:$sel,Target:$target,Task:$task,Requester:$reqstr}')
+    --arg reqstr "human" --arg repo_url "$(github_repo_url "$root")" \
+    '{ID:$id,Repository:$repo,BaseRef:$base,Requires:$req,Selector:$sel,Target:$target,Task:$task,Requester:$reqstr,RepoURL:$repo_url,RequesterTask:""}')
   out=$(printf '%s' "$body" | bus node-request --url "$(lead_url)" --path /v1/jobs) || die "failed to submit job to lead: $out"
   state=$(jq -r '.State // "queued"' <<< "$out")
   echo "Job $job_id submitted to lead ($state)"
@@ -4125,7 +4143,8 @@ node_poll_remote_helpers() {
 
     if [[ -z $job_id ]]; then
       rc=0
-      req_json=$(bus helper-remote-prepare --dir "$BUS_DIR" --id "$hid" --instance "${INSTANCE_NAME:-node}" 2>&1) || rc=$?
+      req_json=$(bus helper-remote-prepare --dir "$BUS_DIR" --id "$hid" --instance "${INSTANCE_NAME:-node}" \
+        --repo-url "$(github_repo_url "$(jq -r .worktree <<< "$helper")")" 2>&1) || rc=$?
       if ((rc != 0)); then
         if ((rc == BUS_STORAGE)); then
           log_warn node_helper_prepare_storage_failed "helper=$hid" "exit=$rc"

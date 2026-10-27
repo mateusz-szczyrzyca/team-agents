@@ -7,9 +7,7 @@ load helpers
 attribution_functions() {
   local source="$BATS_TEST_DIRNAME/../../bin/agent"
   sed -n '/^submit_remote_job() {/,/^}/p' "$source" > "$HOME/attribution.sh"
-  if rg -q '^github_repo_url\(\)' "$source"; then
-    sed -n '/^github_repo_url() {/,/^}/p' "$source" >> "$HOME/attribution.sh"
-  fi
+  sed -n '/^github_repo_url() {/,/^}/p' "$source" >> "$HOME/attribution.sh"
 }
 
 @test "remote submissions attach canonical GitHub origin and no human requester task" {

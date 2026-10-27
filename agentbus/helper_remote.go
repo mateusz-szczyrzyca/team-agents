@@ -46,6 +46,7 @@ func remoteHelpers(b *Bus, capabilities []string) ([]*Helper, *HelperRemoteListE
 }
 
 // prepareRemoteHelper verifies the pushed snapshot and persists a retry-stable submission outside network calls.
+// The optional canonical repository link is supplied by the daemon; older callers may omit it.
 func prepareRemoteHelper(b *Bus, id int64, instance string, repoURL ...string) (JobRequest, *HelperRemotePrepareError) {
 	var h Helper // owned snapshot; Git never runs with bus.lock held
 	if err := transact(b, HelperRemotePrepareStorage, func(st *State) *HelperRemotePrepareError {
@@ -66,7 +67,10 @@ func prepareRemoteHelper(b *Bus, id int64, instance string, repoURL ...string) (
 	}
 	// Bind the idempotency key to the local request and creation, not a mutable branch tip.
 	key := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s:%s", instance, id, h.Created, h.FromTask)))
-	req := JobRequest{ID: fmt.Sprintf("delegate-%x", key[:16]), Repository: h.Repo, BaseRef: h.Branch, BaseSHA: h.BaseSHA, Requires: h.Requires, Selector: string(TierWorker), Task: h.Request, Requester: h.From + "@" + instance}
+	req := JobRequest{ID: fmt.Sprintf("delegate-%x", key[:16]), Repository: h.Repo, BaseRef: h.Branch, BaseSHA: h.BaseSHA, Requires: h.Requires, Selector: string(TierWorker), Task: h.Request, Requester: h.From + "@" + instance, RequesterTask: h.FromTask}
+	if len(repoURL) > 0 {
+		req.RepoURL = repoURL[0]
+	}
 	if h.Context != "" {
 		req.Task += "\n\nContext:\n" + h.Context
 	}
@@ -208,8 +212,9 @@ func cmdHelperRemotePrepare(args []string) {
 	dir := fs.String("dir", defaultDir(), "state directory")
 	id := fs.Int64("id", 0, "helper number")
 	instance := fs.String("instance", "", "requesting instance name")
+	repoURL := fs.String("repo-url", "", "optional canonical GitHub repository link")
 	parseFlags(fs, args)
-	req, err := prepareRemoteHelper(&Bus{dir: *dir}, *id, *instance)
+	req, err := prepareRemoteHelper(&Bus{dir: *dir}, *id, *instance, *repoURL)
 	if err != nil {
 		err.Message = err.CauseName() + ": " + err.Message
 		exitOn(err.asError())

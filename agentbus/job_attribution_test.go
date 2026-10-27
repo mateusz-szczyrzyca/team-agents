@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"errors"
 	"os"
 	"testing"
@@ -43,14 +44,15 @@ func TestJobAttributionRoundtrip(t *testing.T) {
 	})
 }
 
+// jobsBeforeAttribution preserves the preceding on-disk format without filesystem input.
+//
+//go:embed testdata/jobs-before-attribution.json
+var jobsBeforeAttribution []byte
+
 // TestJobsBeforeAttributionLoads preserves the immediately preceding jobs format.
 func TestJobsBeforeAttributionLoads(t *testing.T) {
-	data, err := os.ReadFile("testdata/jobs-before-attribution.json")
-	if err != nil {
-		t.Fatal(err)
-	}
 	b := newBus(t)
-	if err := os.WriteFile(b.path("jobs.json"), data, 0o600); err != nil {
+	if err := os.WriteFile(b.path("jobs.json"), jobsBeforeAttribution, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	r, serr := b.loadJobs()
@@ -66,12 +68,7 @@ func TestJobsBeforeAttributionLoads(t *testing.T) {
 func TestRemoteHelperAttribution(t *testing.T) {
 	b := newBus(t)
 	h := remoteHelperFixture(t, b)
-	stubNodeGit(t, func(_ string, args ...string) ([]byte, *ProcessError) {
-		if len(args) == 3 && args[0] == "config" && args[2] == "remote.origin.url" {
-			return []byte("git@github.com:acme/repo.git\n"), nil
-		}
-		return nil, nil
-	})
+	stubNodeGit(t, func(string, ...string) ([]byte, *ProcessError) { return nil, nil })
 	got, err := prepareRemoteHelper(b, h.ID, "node-a", "https://github.com/acme/repo")
 	if err != nil {
 		t.Fatal(err)
