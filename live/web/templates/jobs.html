@@ -1,5 +1,5 @@
 {{define "content"}}
-<p class="dim">Remote jobs registered on this lead. Agent shows the requested name or tier. Refreshes every 5 s.</p>
+<p class="dim">Remote jobs registered on this lead. Agent shows the chosen agent when known, otherwise the requested name or tier. Refreshes every 5 s.</p>
 <div id="remote-jobs" hx-get="/jobs" hx-trigger="every 5s" hx-select="#remote-jobs" hx-target="this" hx-swap="outerHTML">
 <div class="scroll"><table>
 <thead><tr><th>Job</th><th>State</th><th>Node</th><th>Agent</th><th>Branch / PR</th><th>Result</th></tr></thead>
