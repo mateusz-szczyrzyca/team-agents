@@ -40,9 +40,15 @@ func runLead(ctx context.Context, cfg leadConfig) *LeadServeError {
 	}
 	handler := newLeadHandler(&Bus{dir: cfg.dir}, cfg.node, cfg.allowed, cfg.ttl, cfg.notifyDir, cfg.notifyCmd)
 	servers := make([]*http.Server, 0, len(listeners))
+	// Requests live in a context that a shutdown cancels: the nodes' doorbell streams never end by themselves, and
+	// draining would otherwise wait for them until its deadline.
+	base, cancelRequests := context.WithCancel(context.Background())
+	defer cancelRequests()
 	stopped := make(chan *LeadServeError, len(listeners)) // one completion per server; shutdown cannot block a sender
 	for _, listener := range listeners {
-		server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024, ErrorLog: log.New(leadHTTPLogWriter{}, "", 0)}
+		server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024, ErrorLog: log.New(leadHTTPLogWriter{}, "", 0),
+			BaseContext: func(net.Listener) context.Context { return base }}
+		server.RegisterOnShutdown(cancelRequests)
 		servers = append(servers, server)
 		go func() {
 			if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {

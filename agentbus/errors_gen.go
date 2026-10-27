@@ -2417,3 +2417,31 @@ func (c LeadMCPCause) info() causeInfo { return leadMCPCauses[c] }
 
 // String returns the cause name.
 func (c LeadMCPCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/events
+
+// LeadEventsCause is a reason why a node's doorbell stream on the lead failed.
+type LeadEventsCause int
+
+const (
+	LeadEventsUnauthorized LeadEventsCause = iota // the socket peer is not an allowed node [Permission]
+	LeadEventsStorage                             // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadEventsError is the error of a node's doorbell stream on the lead.
+type LeadEventsError = OpError[LeadEventsCause]
+
+// leadEventsCauses describes the LeadEventsCause values (same order as the constants).
+var leadEventsCauses = [...]causeInfo{
+	{"Unauthorized", ClassPermission},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadEventsCause) op() string { return "lead/events" }
+
+// info implements opCause.
+func (c LeadEventsCause) info() causeInfo { return leadEventsCauses[c] }
+
+// String returns the cause name.
+func (c LeadEventsCause) String() string { return c.info().name }

@@ -1398,6 +1398,8 @@ func main() {
 		cmdTeamWaiting(os.Args[2:])
 	case "lead-member":
 		cmdLeadMember(os.Args[2:])
+	case "node-doorbell":
+		cmdNodeDoorbell(os.Args[2:])
 	case "team-list":
 		cmdTeamList(os.Args[2:])
 	case "notes":

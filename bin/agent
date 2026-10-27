@@ -3414,6 +3414,29 @@ remote_member_task() { # member task team base main-root ts — a remote member'
   printf '%s' "$id"
 }
 
+node_stop_doorbell() { # the node daemon ends: so does its doorbell (a coprocess would outlive it)
+  if [[ -n ${DOORBELL_PID:-} ]]; then
+    kill "$DOORBELL_PID" 2>/dev/null || log_info node_doorbell_already_gone   # it may have ended by itself
+  fi
+}
+
+cmd__remote_member() { # proxy status branch note — a remote member's change, handed over by the lead's bus: the
+  # proxy task's status (what the team's checks read), then the team's logic for it, as after a local member's run
+  local id status=${2:?} branch=${3:-} note=${4:-}
+  id=$(resolve_id "${1:?}")
+  meta_load "$id"
+  [[ ${KIND:-} == remote-member ]] || die "task $id is not a remote member's proxy task"
+  case $status in sleeping|running|done|failed|stopped) ;; *) die "unknown remote member status: $status" ;; esac
+  [[ -z $branch ]] || meta_set "$id" BRANCH "$branch"
+  meta_set "$id" STATUS "$status"
+  case $status in done|failed|stopped) meta_set "$id" FINISHED "$(date -Is)" ;; esac
+  act "$id" info "remote member $AGENT: $status${note:+ — ${note:0:200}}"
+  log_info remote_member_status "task=$id" "member=$AGENT" "status=$status"
+  [[ $status != running ]] || return 0
+  meta_load "$id"   # BRANCH for member_out
+  team_after_run "$id" "$status" "$note" "$note"
+}
+
 remote_member_start() { # proxy-task — grants the remote member on the lead and submits the job that runs it on its
   # node (its tools reach the team through the relay; its task text is the team's)
   local id=$1 member agent node body out
@@ -4190,9 +4213,21 @@ cmd_node() {
   node_lock
   log_info node_started "lead_url=$LEAD_URL" "poll_sec=$NODE_POLL_SEC"
   trap 'log_info node_stopped; exit 0' TERM INT
+  trap 'node_stop_doorbell' EXIT
+  local bell="" rc
+  if [[ ${1:-} != --once ]]; then   # the lead's doorbell: when it rings, the next poll comes at once
+    coproc DOORBELL { exec "$AGENTBUS_BIN" node-doorbell --url "$LEAD_URL" 8>&-; }
+    bell=${DOORBELL[0]}
+  fi
   while :; do
     node_poll
     [[ ${1:-} != --once ]] || break
+    if [[ -n $bell ]]; then
+      rc=0
+      read -r -t "$NODE_POLL_SEC" -u "$bell" _ || rc=$?
+      if ((rc == 0 || rc > 128)); then continue; fi   # rang, or the usual interval passed
+      log_warn node_doorbell_lost; bell=""             # the doorbell ended: plain polling from now on
+    fi
     sleep "$NODE_POLL_SEC" 8>&- &
     if wait $!; then :; else log_warn node_sleep_interrupted; fi
   done
@@ -4746,6 +4781,7 @@ main() {
     _dispatch-helpers) dispatch_helpers ;;
     notes)   cmd_notes "$@" ;;
     _wake)   cmd__wake "$@" ;;
+    _remote_member) cmd__remote_member "$@" ;;
     _supervise) cmd__supervise ;;
     _answers_saved) cmd__answers_saved "$@" ;;
     _authcheck) cmd__authcheck "$@" ;;

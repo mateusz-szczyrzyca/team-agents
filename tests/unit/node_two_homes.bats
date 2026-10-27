@@ -303,7 +303,8 @@ wait_member_state() {
   echo '{"solo": {"new": "commit-push"}}' > "$NODE/scenario.json"
   sleep 1   # the node's doorbell connects after its first heartbeat
   submit_job j-bell team-agents '["hw:rp2350"]' solo
-  wait_job j-bell 'done' 12
+  wait_job j-bell 'running|done' 12   # taken and started: the lead rang; its end is reported with a heartbeat
+  grep -q '"event":"doorbell_ring"' "$AGENTS_HOME"/logs/agentbus.jsonl
 }
 
 @test "a remote member that fails is out of its team on the lead: its items go back, the members are told" {

@@ -88,6 +88,15 @@ func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Durat
 			return publicLeadJob(job), err
 		})
 	})
+	mux.HandleFunc("GET /v1/events", func(w http.ResponseWriter, r *http.Request) {
+		peer, werr := identifyLeadPeer(r.RemoteAddr, localNode, allowed)
+		if werr != nil {
+			logWarn(LogLeadHTTPError, "operation", "lead/events", "cause", werr.Cause.String(), "error", werr.Message)
+			writeLeadError(w, opErr(LeadEventsUnauthorized, "socket peer is not an allowed node"))
+			return
+		}
+		a.doorbell(w, r, peer.Node)
+	})
 	mux.HandleFunc("POST /v1/mcp", func(w http.ResponseWriter, r *http.Request) {
 		serveLead(w, r, localNode, allowed, LeadMCPUnauthorized, func(peer leadIdentity) (any, *LeadMCPError) {
 			var body leadMCPBody // one remote member's JSON-RPC message

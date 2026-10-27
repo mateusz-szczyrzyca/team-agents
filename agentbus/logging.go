@@ -58,6 +58,7 @@ const (
 	LogLeadMCPCall        LogEvent = "lead_mcp_call"          // a remote member's MCP message ran on the lead
 	LogRemoteMemberEvent  LogEvent = "remote_member_event"    // a remote member's change handed to the agent script
 	LogDoorbellRing       LogEvent = "doorbell_ring"          // the lead rang a node: something waits for it
+	LogDoorbellLost       LogEvent = "doorbell_lost"          // a node's doorbell stream broke or was refused (it reconnects)
 	LogRelayLeadFailed    LogEvent = "relay_lead_failed"      // a remote member's relay could not reach the lead, or was refused
 	LogLeadStopped        LogEvent = "lead_stopped"           // the lead shut down its listeners
 	LogLeadHTTPError      LogEvent = "lead_http_error"        // net/http emitted a connection or handler diagnostic

@@ -9,8 +9,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
 	"sort"
 	"strings"
+	"time"
 )
 
 // remoteUnavailable are the tools a remote member does not get, and why (they are refused and not listed).
@@ -205,17 +210,23 @@ func (a *leadAPI) memberActivity(node string, act []JobActivity) ([]string, *Lea
 // applyMemberStage brings a remote member's state in its team in line with its task's stage on the node: asleep
 // (through setMemberState: a waiting message wakes it) or at work. Other stages leave it as it is.
 func (a *leadAPI) applyMemberStage(m RemoteMember, stage string) *LeadHeartbeatError {
+	var team Team      // the member's team, for the hand-over after the commit
+	var task string    // its task in the team\'s record (the proxy task), as wakes use it
+	var changed string // "sleeping" or "running" when the member's state changed
 	err := transact(a.bus, CmdTeamSetStorage, func(st *State) *CmdTeamSetError {
 		t := st.Teams[m.Team]
 		if t == nil || t.Members[m.Member] == nil || t.Done {
 			return nil // the team is gone or finished: nothing to keep in line
 		}
+		team, task = *t, t.Members[m.Member].Task
 		cur := t.Members[m.Member].State
 		switch {
 		case stage == "sleeping" && cur == MemberActive:
+			changed = "sleeping"
 			_, err := setMemberState(a.bus, st, m.Team, m.Member, MemberSleeping)
 			return err
 		case awake(stage) && (cur == MemberSleeping || cur == MemberWaking):
+			changed = "running"
 			_, err := setMemberState(a.bus, st, m.Team, m.Member, MemberActive)
 			return err
 		}
@@ -223,6 +234,9 @@ func (a *leadAPI) applyMemberStage(m RemoteMember, stage string) *LeadHeartbeatE
 	})
 	if err != nil {
 		return opErr(LeadHeartbeatStorage, "cannot keep remote member %s in line: %v", m.Member, err)
+	}
+	if changed != "" { // the proxy task's status and the team's checks (stuck, all finished) follow
+		remoteMemberFn(&team, task, changed, m.Branch, "")
 	}
 	return nil
 }
@@ -241,6 +255,9 @@ func (a *leadAPI) memberJobsChanged(ids []string) {
 			continue
 		}
 		job := *j
+		var team Team // the member's team, for the hand-over after the commit
+		var task string
+		ended := false
 		err := transact(a.bus, CmdTeamSetStorage, func(st *State) *CmdTeamSetError {
 			t := st.Teams[job.Request.Team]
 			if t == nil || t.Members[job.Request.Member] == nil {
@@ -253,24 +270,16 @@ func (a *leadAPI) memberJobsChanged(ids []string) {
 			if !isTerminalJob(job.State) || m.State == MemberDone {
 				return nil
 			}
-			if _, err := setMemberState(a.bus, st, job.Request.Team, job.Request.Member, MemberDone); err != nil {
-				return err
-			}
-			if t.Lead == "" {
-				return nil
-			}
-			notice := NoticeMemberFinished
-			if job.State != JobDone {
-				notice = NoticeMemberFailed
-			}
-			body := fmt.Sprintf("TEAM: member %s finished (%s) on %s, branch %s. %s", job.Request.Member, job.State, job.Node,
-				job.Branch, trunc(job.Result, 600))
-			_, serr := a.bus.post(st, "agentbus", t.Lead, EventScript{Notice: notice, Body: body,
-				Fields: map[string]string{"agent": job.Request.Member, "team": t.ID, "state": string(job.State)}})
-			return fromStorage(CmdTeamSetStorage, serr)
+			team, task, ended = *t, m.Task, true
+			_, err := setMemberState(a.bus, st, job.Request.Team, job.Request.Member, MemberDone)
+			return err
 		})
 		if err != nil {
 			warnSideEffect("update a remote member's team", err)
+			continue
+		}
+		if ended { // the team's logic tells the coordinator (member_finished) or puts the member out (member_out)
+			remoteMemberFn(&team, task, string(job.State), job.Branch, trunc(job.Result, 300))
 		}
 	}
 }
@@ -393,4 +402,151 @@ func cmdLeadMember(args []string) {
 		err = opErr(LeadMemberInvalidMember, "give exactly one of --add, --remove, --wake")
 	}
 	exitOn(err.asError())
+}
+
+// The doorbell: a node keeps GET /v1/events open; the lead rings it when something new waits for it — a wake of one
+// of its remote members, a stop of one of its jobs, a queued job — and the node polls at once. A ring carries no
+// data: the node's ordinary heartbeat fetches what waits, so a lost ring or a broken stream loses nothing.
+const (
+	doorbellPoll      = 250 * time.Millisecond // how often a stream looks at what waits for its node
+	doorbellKeepAlive = 20 * time.Second       // a comment line that keeps an idle stream open
+)
+
+// pendingFor describes what waits for a node ("" = nothing): the wakes of its members, the stops of its jobs, the
+// number of queued jobs. A ring follows a change of it, so that an ordinary heartbeat rings nothing.
+func (a *leadAPI) pendingFor(node string) string {
+	reg, serr := a.bus.loadJobs()
+	if serr != nil {
+		return "" // unreadable now: the node's own heartbeat still comes
+	}
+	var wakes, stops []string
+	queued := 0
+	for _, m := range reg.members {
+		if m.Node == node && m.Wake {
+			wakes = append(wakes, m.Job)
+		}
+	}
+	for id, j := range reg.jobs {
+		switch {
+		case j.Node == node && j.StopRequested:
+			stops = append(stops, id)
+		case j.State == JobQueued:
+			queued++
+		}
+	}
+	if len(wakes) == 0 && len(stops) == 0 && queued == 0 {
+		return ""
+	}
+	sort.Strings(wakes)
+	sort.Strings(stops)
+	return fmt.Sprintf("w:%s s:%s q:%d", strings.Join(wakes, ","), strings.Join(stops, ","), queued)
+}
+
+// doorbell serves a node's event stream: "event: ring" when what waits for it changes, a comment now and then.
+func (a *leadAPI) doorbell(w http.ResponseWriter, r *http.Request, node string) {
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil { // the stream outlives the server's write timeout
+		logWarn(LogLeadHTTPError, "operation", "lead/events", "node", node, "error", err.Error())
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	send := func(s string) bool {
+		if _, err := io.WriteString(w, s); err != nil {
+			return false
+		}
+		return rc.Flush() == nil
+	}
+	if !send(": connected\n\n") {
+		return
+	}
+	tick, keep := time.NewTicker(doorbellPoll), time.NewTicker(doorbellKeepAlive)
+	defer tick.Stop()
+	defer keep.Stop()
+	last := ""
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-keep.C:
+			if !send(": keepalive\n\n") {
+				return
+			}
+		case <-tick.C:
+			now := a.pendingFor(node)
+			if now == last {
+				continue
+			}
+			last = now
+			if now == "" {
+				continue
+			}
+			logInfo(LogDoorbellRing, "node", node, "pending", now)
+			if !send("event: ring\ndata: {}\n\n") {
+				return
+			}
+		}
+	}
+}
+
+// cmdNodeDoorbell — node-doorbell: the node's side of the doorbell; prints "ring" for every ring of the lead and
+// reconnects after a broken stream; ends when its output is closed (the node daemon is gone).
+//
+//	agentbus node-doorbell --url http://LEAD:PORT [--source IP]
+func cmdNodeDoorbell(args []string) {
+	fs := newFlagSet("node-doorbell")
+	base := fs.String("url", "", "the lead's URL")
+	source := fs.String("source", "", "an optional local source IP (isolated installations, as node-request)")
+	parseFlags(fs, args)
+	u, err := url.Parse(*base)
+	if err != nil || u.Scheme != "http" || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") ||
+		(*source != "" && net.ParseIP(*source) == nil) {
+		exitOn(opErr(NodeClientInvalidArgument, "--url must be a plain HTTP lead origin; --source an IP literal").asError())
+	}
+	for {
+		closed, lerr := listenDoorbell(strings.TrimSuffix(*base, "/"), *source, os.Stdout)
+		if closed {
+			return
+		}
+		if lerr != nil {
+			logWarn(LogDoorbellLost, "cause", lerr.Cause.String(), "error", lerr.Message)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+// listenDoorbell follows one event stream and writes "ring" lines; closed reports that the output is gone.
+func listenDoorbell(base, source string, out io.Writer) (closed bool, err *NodeClientError) {
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	if source != "" {
+		dialer.LocalAddr = &net.TCPAddr{IP: net.ParseIP(source)}
+	}
+	transport := &http.Transport{DialContext: dialer.DialContext, ResponseHeaderTimeout: 5 * time.Second}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }} // http.Client requires the plain interface error.
+	resp, gerr := client.Get(base + "/v1/events")
+	if gerr != nil {
+		return false, opErr(NodeClientUnreachable, "cannot reach the lead's doorbell: %v", gerr)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			logWarn(LogDoorbellLost, "error", cerr.Error())
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return false, opErr(NodeClientRejected, "the lead's doorbell answered HTTP %d", resp.StatusCode)
+	}
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		if sc.Text() != "event: ring" {
+			continue
+		}
+		if _, werr := io.WriteString(out, "ring\n"); werr != nil {
+			return true, nil
+		}
+	}
+	if serr := sc.Err(); serr != nil {
+		return false, opErr(NodeClientUnreachable, "the doorbell stream broke: %v", serr)
+	}
+	return false, opErr(NodeClientUnreachable, "the lead closed the doorbell stream")
 }

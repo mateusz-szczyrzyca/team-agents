@@ -1422,6 +1422,18 @@
      "doc": "no remote member of that name is granted"
     }
    ]
+  },
+  {
+   "type": "LeadEvents",
+   "op": "lead/events",
+   "what": "a node's doorbell stream on the lead",
+   "causes": [
+    {
+     "name": "Unauthorized",
+     "class": "Permission",
+     "doc": "the socket peer is not an allowed node"
+    }
+   ]
   }
  ]
 }
