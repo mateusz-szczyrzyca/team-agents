@@ -77,6 +77,20 @@ type Job struct {
 	StopRequested bool            // a local cancellation awaits the assigned node's terminal report
 }
 
+// NodeAgent is a configured agent of a node, declared in every heartbeat (non-secret fields only).
+type NodeAgent struct {
+	Name  string // the configured agent name on that node
+	Type  string // the agent CLI type (claude, codex, gemini, opencode)
+	Model string // the configured model name; empty means the CLI's default
+	Tier  Tier   // the tier of that agent (normal or worker)
+}
+
+// Limits of the agent declarations a heartbeat may carry.
+const (
+	nodeAgentsMax     = 128 // configured or free agents per heartbeat
+	nodeAgentModelMax = 256 // bytes in a configured model name
+)
+
 // FreeAgent is a configured agent of a node that is free at the time of a heartbeat.
 type FreeAgent struct {
 	Name string // the configured agent name on that node
@@ -87,6 +101,7 @@ type FreeAgent struct {
 type NodeHeartbeat struct {
 	Node         string        // the authenticated node name (the short device name)
 	Capabilities []string      // declared capabilities, validated like JobRequest.Requires
+	Agents       []NodeAgent   // all configured agents of the node (non-secret fields only)
 	FreeAgents   []FreeAgent   // configured agents that are free now; empty when none is free
 	WebURL       string        // the node's AGENT_WEB_URL, shown by the lead for waiting jobs; may be empty
 	Activity     []JobActivity // what the node's running jobs are doing now (kept only for jobs assigned to it)
@@ -259,6 +274,7 @@ func (r *leadRegistry) heartbeat(h NodeHeartbeat, now Timestamp) (*Job, *LeadHea
 		seen[agent.Name] = true
 	}
 	h.Capabilities = caps
+	h.Agents = nil
 	h.FreeAgents = slices.Clone(h.FreeAgents)
 	h.Activity = boundedActivity(h.Activity)
 	r.mu.Lock()
