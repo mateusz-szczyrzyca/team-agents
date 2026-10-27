@@ -2353,3 +2353,65 @@ func (c HelperRemoteFinishCause) info() causeInfo { return helperRemoteFinishCau
 
 // String returns the cause name.
 func (c HelperRemoteFinishCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/member
+
+// LeadMemberCause is a reason why a remote team member's grant on the lead failed.
+type LeadMemberCause int
+
+const (
+	LeadMemberInvalidMember LeadMemberCause = iota // the member, its agent, node, team, task or tier is not valid [InvalidArgument]
+	LeadMemberNoSuchMember                         // no remote member of that name is granted [NotFound]
+	LeadMemberStorage                              // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadMemberError is the error of a remote team member's grant on the lead.
+type LeadMemberError = OpError[LeadMemberCause]
+
+// leadMemberCauses describes the LeadMemberCause values (same order as the constants).
+var leadMemberCauses = [...]causeInfo{
+	{"InvalidMember", ClassInvalidArgument},
+	{"NoSuchMember", ClassNotFound},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadMemberCause) op() string { return "lead/member" }
+
+// info implements opCause.
+func (c LeadMemberCause) info() causeInfo { return leadMemberCauses[c] }
+
+// String returns the cause name.
+func (c LeadMemberCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/mcp
+
+// LeadMCPCause is a reason why a remote member's MCP message relayed to the lead failed.
+type LeadMCPCause int
+
+const (
+	LeadMCPMalformedBody LeadMCPCause = iota // the body is not a member name and one JSON-RPC message [InvalidArgument]
+	LeadMCPUnauthorized                      // the member does not work on the node the request comes from [Permission]
+	LeadMCPNotAMember                        // no remote member of that name is granted [NotFound]
+	LeadMCPStorage                           // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadMCPError is the error of a remote member's MCP message relayed to the lead.
+type LeadMCPError = OpError[LeadMCPCause]
+
+// leadMCPCauses describes the LeadMCPCause values (same order as the constants).
+var leadMCPCauses = [...]causeInfo{
+	{"MalformedBody", ClassInvalidArgument},
+	{"Unauthorized", ClassPermission},
+	{"NotAMember", ClassNotFound},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadMCPCause) op() string { return "lead/mcp" }
+
+// info implements opCause.
+func (c LeadMCPCause) info() causeInfo { return leadMCPCauses[c] }
+
+// String returns the cause name.
+func (c LeadMCPCause) String() string { return c.info().name }

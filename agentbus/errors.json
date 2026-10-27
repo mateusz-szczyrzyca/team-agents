@@ -1378,6 +1378,45 @@
      "doc": "the job result is not terminal"
     }
    ]
+  },
+  {
+   "type": "LeadMember",
+   "op": "lead/member",
+   "what": "a remote team member's grant on the lead",
+   "causes": [
+    {
+     "name": "InvalidMember",
+     "class": "InvalidArgument",
+     "doc": "the member, its agent, node, team, task or tier is not valid"
+    },
+    {
+     "name": "NoSuchMember",
+     "class": "NotFound",
+     "doc": "no remote member of that name is granted"
+    }
+   ]
+  },
+  {
+   "type": "LeadMCP",
+   "op": "lead/mcp",
+   "what": "a remote member's MCP message relayed to the lead",
+   "causes": [
+    {
+     "name": "MalformedBody",
+     "class": "InvalidArgument",
+     "doc": "the body is not a member name and one JSON-RPC message"
+    },
+    {
+     "name": "Unauthorized",
+     "class": "Permission",
+     "doc": "the member does not work on the node the request comes from"
+    },
+    {
+     "name": "NotAMember",
+     "class": "NotFound",
+     "doc": "no remote member of that name is granted"
+    }
+   ]
   }
  ]
 }
