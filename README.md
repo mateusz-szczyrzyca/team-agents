@@ -659,10 +659,61 @@ request from outside the tailnet — **Tailscale Funnel** or another proxy: neve
 interface itself (htmx header, same origin). Set `AGENT_WEB_URL` to the address you open, and notifications get
 direct links: `Answer: …/questions/<task>?max=1` for questions, `Open: …/task/<task>` otherwise.
 
-**Several instances.** Every installation stays independent: its own bus, tasks and web interface. One installation
-can be the **lead**, which keeps a job queue and the list of nodes; remote jobs are being built in nine rounds:
-[design and implementation plan](docs/multi-instance.md). Rounds 4–8 provide the lead's HTTP listener, the node
-daemon, remote job CLI commands, lead notifications and remote delegation. The Jobs and Instances web views (round 9) are described below the list:
+## Several instances
+
+Every installation stays independent: its own bus, tasks, notifications and web interface. One installation can be
+the **lead**: it keeps a queue of **jobs** — whole tasks — and the list of **nodes**, the machines that take them,
+the way a CI server hands jobs to its runners. A node pulls (a heartbeat every `NODE_POLL_SEC`, default 5 s), runs a
+job like `agent run` would, and reports its state, its activity and its result; results travel through git
+(the job's branch). Design: [docs/multi-instance.md](docs/multi-instance.md). Linux only for now.
+
+**Setting up a lead** (in its `agents.conf`, then `./install.sh`, which starts `agentlead.service`):
+
+```bash
+LEAD_LISTEN="100.x.y.z:7780"     # this machine's Tailscale address (tailscale ip -4) and a port
+LEAD_NODES="rpi5-x"              # the nodes' Tailscale device names or tag:…
+```
+
+The port must be reachable over the tailnet: a host firewall must let it in on `tailscale0` (unlike the web
+interface, which goes through `tailscale serve`), and the tailnet's access rules must allow the nodes to reach it.
+To let the lead take jobs itself, give it the node settings below too, with `LEAD_URL="http://127.0.0.1:7780"`.
+
+**Setting up a node** — another Linux machine on the tailnet, with team-agents installed, its own agents
+(`AGENT_TYPE`, `AGENT_MODEL`, their CLIs installed and logged in, `secrets.env` with the API keys and the agents'
+`GH_TOKEN`, `gh auth setup-git` once) and a clone of every repository it works on; in its `agents.conf`, then
+`./install.sh`, which starts `agentnode.service`:
+
+```bash
+LEAD_URL="http://100.x.y.z:7780"                   # the lead, as this machine reaches it
+INSTANCE_NAME="rpi5-x"                             # exactly this machine's Tailscale device name
+INSTANCE_CAPABILITIES=(os:linux arch:arm64 hw:rp2350)
+declare -A NODE_REPOS=([team-agents]=/home/me/src/team-agents)
+```
+
+**Checking it:** `agent authenticated` on the node (every agent `OK`); `agent nodes` on the lead (the node `online`,
+its capabilities and free agents); then a job only that node can take:
+
+```bash
+agent run --need hw:rp2350 <agent|normal|worker> "…"   # on the lead, in the repository
+agent jobs [<id>]                                        # its state, node, branch, result
+```
+
+**What the lead shows:** a running remote job sits on the dashboard as `agent@node`, with what it is doing (the
+node sends its latest activity lines with every heartbeat), like a local task; its page `/jobs/<id>` shows the
+latest activity, the result and — when the node has `AGENT_WEB_URL` — a link to the task on the node. Questions of
+a job stay on its node. The views Jobs and Instances list every job and node.
+
+**When something does not work:**
+
+- `heartbeat identity "a" differs from its socket peer "b"` in the node's log: set `INSTANCE_NAME` to the name the
+  message gives.
+- `socket peer is not an allowed node`: add the node's device name (or a tag) to `LEAD_NODES` on the lead.
+- A job fails at once with `CLI exit code: 127`: the agent's CLI is not where `agents.conf` says; the node no longer
+  offers an agent whose CLI is missing (`node_agent_cli_missing` in its log).
+- A job fails at `git push`, or git asks for a username: `GH_TOKEN` in the node's `secrets.env` and `gh auth
+  setup-git`.
+
+### Details
 
 - `LEAD_LISTEN` in `agents.conf` is the lead's Tailscale address, e.g. `100.101.102.103:7780`. Empty (the default)
   means the installation is not a lead and nothing changes. The lead serves that address and `127.0.0.1` on the
@@ -699,7 +750,7 @@ daemon, remote job CLI commands, lead notifications and remote delegation. The J
   - `INSTANCE_CAPABILITIES`: what this machine can do, declared by you, e.g.
     `(os:linux arch:arm64 hw:rp2350)`. Namespaces: `os`, `arch`, `build`, `test`, `hw`, `net`; values match
     `[a-z0-9._-]+`. An unknown namespace or a malformed value stops the daemon with `invalid capabilities: …`.
-  - `NODE_POLL_SEC` (default `10`): the heartbeat interval.
+  - `NODE_POLL_SEC` (default `5`): the heartbeat interval — how often the jobs' activity reaches the lead.
   - `NODE_REPOS`: the repositories this node runs jobs for; paths must be absolute.
 - `agent node` runs the node daemon in the foreground. `agent node --once` performs one recovery and poll cycle and
   exits; that cycle may send several heartbeat and report batches. It is a diagnostic. `install.sh` installs and starts `agentnode.service` only when `LEAD_URL` is set. A second daemon on
