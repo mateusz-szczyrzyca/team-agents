@@ -4,11 +4,11 @@
 <div class="scroll"><table>
 <thead><tr><th>Instance</th><th>Status</th><th>Capabilities</th><th>Free agents</th><th>Last heartbeat</th></tr></thead>
 <tbody>{{range .Data}}<tr>
-<td>{{if .URL}}<a href="{{.URL}}" hx-boost="false">{{.Name}}</a>{{else}}{{.Name}}{{end}}</td>
-<td>{{if .Offline}}<span class="st-stopped">offline</span>{{else}}<span class="st-done">online</span>{{end}}</td>
+<td><a href="/instances/{{.Name}}">{{.Name}}</a></td>
+<td>{{if .NeverSeen}}<span class="st-dim">never seen</span>{{else if .Offline}}<span class="st-offline">offline</span>{{else}}<span class="st-online">online</span>{{end}}</td>
 <td>{{join .Heartbeat.Capabilities ", "}}</td>
 <td>{{range .Heartbeat.FreeAgents}}<div>{{.Name}} <span class="dim">{{.Tier}}</span></div>{{else}}<span class="dim">none</span>{{end}}</td>
-<td class="num">{{if .Seen}}{{.Seen}}{{else}}unknown{{end}}</td>
+<td class="num">{{if .Seen}}{{.Seen}}{{else}}<span class="dim">unknown</span>{{end}}</td>
 </tr>{{else}}<tr><td colspan="5" class="dim">No nodes registered on this installation.</td></tr>{{end}}</tbody>
 </table></div></div>
 {{end}}

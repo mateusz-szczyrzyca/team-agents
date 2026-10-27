@@ -1,3 +1,36 @@
-{{define "content"}}
-<div class="instance">stub</div>
-{{end}}
+{{define "content"}}{{with .Data}}
+{{$node := .Name}}
+<p><a href="/instances">← All instances</a></p>
+<h2>Instance {{.Name}}</h2>
+<table class="kv">
+<tr><th>Status</th><td>{{if .NeverSeen}}<span class="st-dim">never seen</span>{{else if .Offline}}<span class="st-offline">offline</span>{{else}}<span class="st-online">online</span>{{end}}</td></tr>
+<tr><th>Last seen</th><td>{{if .Seen}}{{.Seen}}{{else}}<span class="dim">never</span>{{end}}</td></tr>
+{{if .URL}}<tr><th>Web interface</th><td><a href="{{.URL}}" hx-boost="false">{{.URL}}</a></td></tr>{{end}}
+<tr><th>Capabilities</th><td>{{if .Node.Heartbeat.Capabilities}}{{join .Node.Heartbeat.Capabilities ", "}}{{else}}<span class="dim">none</span>{{end}}</td></tr>
+</table>
+
+<h2>All agents</h2>
+<div class="scroll"><table>
+<thead><tr><th>Agent</th><th>Tier</th><th>CLI / Model</th></tr></thead>
+<tbody>{{range .AllAgents}}<tr>
+<td><a href="/agents/{{.Name}}@{{$node}}">{{.Name}}</a></td>
+<td><span class="tag">{{.Tier}}</span></td>
+<td>{{.Type}}{{if .Model}} · <span class="dim">{{.Model}}</span>{{end}}</td>
+</tr>{{else}}<tr><td colspan="3" class="dim">No agents declared.</td></tr>{{end}}</tbody>
+</table></div>
+
+<h2>Free agents</h2>
+<p>{{range .FreeAgents}}<span class="tag">{{.Name}} ({{.Tier}})</span> {{else}}<span class="dim">none</span>{{end}}</p>
+
+<h2>Assigned jobs</h2>
+<div class="scroll"><table>
+<thead><tr><th>Job</th><th>State</th><th>Agent</th><th>Branch</th><th>Result</th></tr></thead>
+<tbody>{{range .Jobs}}<tr>
+<td><a href="/jobs/{{.Request.ID}}">{{.Request.ID}}</a></td>
+<td><span class="{{statusClass .State}}">{{.State}}</span></td>
+<td>{{if .AgentLink}}<a href="{{.AgentLink}}">{{.AgentName}}</a>{{else}}{{.AgentName}}{{end}}</td>
+<td>{{if .BranchURL}}<code><a href="{{.BranchURL}}" hx-boost="false">{{.Branch}}</a></code>{{else if .Branch}}<code>{{.Branch}}</code>{{else}}<span class="dim">—</span>{{end}}</td>
+<td class="t">{{.Result}}</td>
+</tr>{{else}}<tr><td colspan="5" class="dim">No jobs assigned.</td></tr>{{end}}</tbody>
+</table></div>
+{{end}}{{end}}
