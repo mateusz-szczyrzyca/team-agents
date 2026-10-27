@@ -14,6 +14,7 @@ Actions:
   questions-norec writes a questions file without recommendations, STATUS: QUESTIONS
   review-majors   a --verify review result with two major findings, STATUS: DONE
   big-report      commits a 3500-line report under .agents/reports/ and one small file, STATUS: DONE
+  remote-hello    sends "hello from node2" to the coordinator "lead" over the bus, STATUS: SLEEPING
   capacity        exits 1: "Selected model is at capacity" (the provider is overloaded)
   team-lead-crash claims the coordinator role, then the CLI fails (exit 1, no STATUS)
   blocked         ends with STATUS: BLOCKED (not a status of the system)
@@ -101,6 +102,10 @@ if action == "big-report":
     subprocess.run(["git", "add", "-A"], check=True)
     subprocess.run(["git", "commit", "-q", "-m", "a small change and the team report"], check=True)
     finish("Done.\nSTATUS: DONE")
+if action == "remote-hello":
+    # a remote team member: its message goes through the relay to the team on the lead
+    call("send_message", to="lead", text="hello from node2")
+    finish("Said hello to the coordinator.\nSTATUS: SLEEPING")
 if action == "capacity":
     print("Selected model is at capacity. Please try a different model.", file=sys.stderr)
     sys.exit(1)

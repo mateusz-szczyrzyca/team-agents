@@ -1029,6 +1029,11 @@
      "name": "JobConflict",
      "class": "Conflict",
      "doc": "an existing job ID has different submission data"
+    },
+    {
+     "name": "InvalidMember",
+     "class": "InvalidArgument",
+     "doc": "a member job needs both a team and a member named <selector>@<target>"
     }
    ]
   },

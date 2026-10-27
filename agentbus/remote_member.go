@@ -47,6 +47,8 @@ type RemoteMember struct {
 	Tier   Tier   // its tier in the team
 	Repo   string // the repository name
 	Branch string // its branch, pushed to origin
+	Job    string // the job that runs it on its node
+	Wake   bool   // a wake request waits for its node (until its task runs)
 }
 
 // leadMCPBody is one MCP message of a remote member, relayed by its node.
@@ -110,6 +112,19 @@ func (a *leadAPI) mcp(node string, body leadMCPBody) (json.RawMessage, *LeadMCPE
 		return nil, nil // a notification: no reply
 	}
 	return json.RawMessage(reply), nil
+}
+
+// wakeMember asks the member's node to wake it: the request waits in the node's heartbeat replies until the member's
+// task runs again.
+func (a *leadAPI) wakeMember(_ string) *LeadMemberError {
+	return nil // not implemented yet: remote_team_test.go comes first
+}
+
+// memberActivity applies what a node says its remote members are doing (the stages of their jobs' tasks) to their
+// teams — a member going to sleep goes through the same logic as a local one — and returns the jobs whose members
+// the node must wake.
+func (a *leadAPI) memberActivity(_ string, _ []JobActivity) ([]string, *LeadHeartbeatError) {
+	return nil, nil // not implemented yet
 }
 
 // relayMCP is a remote member's MCP server on its node: every JSON-RPC line from the CLI goes to the lead, every

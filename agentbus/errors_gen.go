@@ -1872,6 +1872,7 @@ const (
 	LeadSubmitTaskTooLarge                               // the task text exceeds its size limit [InvalidArgument]
 	LeadSubmitMalformedBody                              // the submission body is malformed or exceeds its size limit [InvalidArgument]
 	LeadSubmitJobConflict                                // an existing job ID has different submission data [Conflict]
+	LeadSubmitInvalidMember                              // a member job needs both a team and a member named <selector>@<target> [InvalidArgument]
 	LeadSubmitStorage                                    // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1888,6 +1889,7 @@ var leadSubmitCauses = [...]causeInfo{
 	{"TaskTooLarge", ClassInvalidArgument},
 	{"MalformedBody", ClassInvalidArgument},
 	{"JobConflict", ClassConflict},
+	{"InvalidMember", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 

@@ -260,3 +260,32 @@ wait_heartbeats() {
   wait_jq 'select(.event == "node_checkout_failed" and .job == "j-unknown")' "$NODE/agents/logs/agent.jsonl" 20
   [[ -z $(ls -A "$NODE/agents/tasks") ]]
 }
+
+# wait_member_state member state seconds — a member of the lead's only team reaches a state
+wait_member_state() {
+  local i team
+  team=$(grep -h '^TEAM=' "$AGENTS_HOME"/tasks/*/meta.env | head -1 | cut -d= -f2)
+  for ((i = 0; i < $3 * 5; i++)); do
+    # team-get fails while the team is being created: that is "not yet", polled again
+    [[ $(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" 2>/dev/null | jq -r --arg m "$1" '.members[$m].state // empty') == "$2" ]] && return 0
+    sleep 0.2
+  done
+  echo "member $1 never became $2" >&2
+  return 1
+}
+
+@test "a remote member works in a team on the lead: its message reaches the team, a message wakes it on its node" {
+  LEAD_PORT=$(free_port)
+  setup_node
+  start_lead
+  start_node
+  echo '{"solo": {"new": "remote-hello", "resume": "done"}}' > "$NODE/scenario.json"
+  scenario '{"lead": {"new": "team-lead-slow"}}'
+  cd "$HOME/repo"
+  agent run --team lead,solo@node2 "team task"
+  wait_grep 'hello from node2' "$AGENTS_HOME/bus/messages.jsonl" 60
+  grep 'hello from node2' "$AGENTS_HOME/bus/messages.jsonl" | grep -q '"from":"solo@node2"'
+  wait_member_state solo@node2 sleeping 30
+  agent say solo@node2 "go on"
+  wait_member_state solo@node2 'done' 60
+}

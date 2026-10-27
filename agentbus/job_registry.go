@@ -55,6 +55,8 @@ type JobRequest struct {
 	Target     string   // optional node name the job is pinned to; empty means any node
 	Task       string   // task text, at most 65536 bytes
 	Requester  string   // "human" or "<agent>@<instance>", both parts valid identifiers; routing data only
+	Team       string   // optional: the team on the lead this job is a member's work for (with Member)
+	Member     string   // optional: the member's name in that team, "<Selector>@<Target>"
 }
 
 // Job is a registered job as the registry holds it.
