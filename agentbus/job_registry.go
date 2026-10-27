@@ -80,11 +80,29 @@ type FreeAgent struct {
 
 // NodeHeartbeat is what a node declares in one heartbeat. It replaces the node's previous declaration.
 type NodeHeartbeat struct {
-	Node         string      // the authenticated node name (the short device name)
-	Capabilities []string    // declared capabilities, validated like JobRequest.Requires
-	FreeAgents   []FreeAgent // configured agents that are free now; empty when none is free
-	WebURL       string      // the node's AGENT_WEB_URL, shown by the lead for waiting jobs; may be empty
+	Node         string        // the authenticated node name (the short device name)
+	Capabilities []string      // declared capabilities, validated like JobRequest.Requires
+	FreeAgents   []FreeAgent   // configured agents that are free now; empty when none is free
+	WebURL       string        // the node's AGENT_WEB_URL, shown by the lead for waiting jobs; may be empty
+	Activity     []JobActivity // what the node's running jobs are doing now (kept only for jobs assigned to it)
 }
+
+// JobActivity is what one running job is doing on its node, sent with every heartbeat: the lead shows it as it
+// shows a local task. Data only, bounded (jobActivityLines lines of at most jobActivityLineRunes).
+type JobActivity struct {
+	ID    string   // the job
+	Agent string   // the node's agent working on it
+	Stage string   // the task's status on the node (running, waiting, …)
+	Lines []string // its latest activity lines, oldest first
+}
+
+// Limits of the activity a heartbeat may carry.
+const (
+	jobActivityJobs       = 64  // jobs per heartbeat
+	jobActivityLines      = 20  // lines kept per job: the latest
+	jobActivityLineRunes  = 240 // runes kept per line
+	jobActivityStageRunes = 40  // runes kept of a stage
+)
 
 // JobReport is a state report sent by an assigned node for one job.
 type JobReport struct {
