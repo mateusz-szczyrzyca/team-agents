@@ -168,6 +168,13 @@ func (r *leadRegistry) submit(req JobRequest, now Timestamp) (Job, *LeadSubmitEr
 
 // validateJobRequest normalizes set-valued requirements before identity comparison, without mutating input.
 func validateJobRequest(req JobRequest) (JobRequest, *LeadSubmitError) {
+	if req.Team != "" || req.Member != "" { // a member's job: "<selector>@<target>" of a team on the lead
+		agent, node, ok := strings.Cut(req.Member, "@")
+		if req.Team == "" || !ok || !validJobIdentifier(req.Team) || req.Target == "" || agent != req.Selector ||
+			node != req.Target || Tier(req.Selector).Valid() || !validJobIdentifier(agent) {
+			return JobRequest{}, opErr(LeadSubmitInvalidMember, "a member job needs a team and a member named <selector>@<target>")
+		}
+	}
 	if req.ID == "" || req.Repository == "" || req.BaseRef == "" || req.Selector == "" ||
 		strings.TrimSpace(req.Task) == "" || req.Requester == "" {
 		return JobRequest{}, opErr(LeadSubmitMissingArgument, "id, repository, base ref, selector, task and requester are required")

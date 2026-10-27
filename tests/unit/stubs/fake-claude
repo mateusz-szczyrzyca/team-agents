@@ -15,6 +15,7 @@ Actions:
   review-majors   a --verify review result with two major findings, STATUS: DONE
   big-report      commits a 3500-line report under .agents/reports/ and one small file, STATUS: DONE
   remote-hello    sends "hello from node2" to the coordinator "lead" over the bus, STATUS: SLEEPING
+  team-lead-wait  claims the coordinator role and sleeps, keeping the team open (STATUS: SLEEPING)
   capacity        exits 1: "Selected model is at capacity" (the provider is overloaded)
   team-lead-crash claims the coordinator role, then the CLI fails (exit 1, no STATUS)
   blocked         ends with STATUS: BLOCKED (not a status of the system)
@@ -39,7 +40,10 @@ args = sys.argv[1:]
 prompt = args[-1]
 mode = "resume" if "--resume" in args else "new"
 cfg = json.load(open(args[args.index("--mcp-config") + 1]))["mcpServers"]["agentbus"]
-me = cfg["args"][cfg["args"].index("--agent") + 1]
+if "--agent" in cfg["args"]:
+    me = cfg["args"][cfg["args"].index("--agent") + 1]
+else:  # a remote team member: its MCP server relays to the lead; its scenario key is the node's agent name
+    me = cfg["args"][cfg["args"].index("--member") + 1].split("@")[0]
 home = os.environ["STUB_HOME"]
 scenario = json.load(open(os.path.join(home, "scenario.json"))).get(me, {})
 action = scenario.get(mode, scenario.get("new", "done"))
@@ -197,6 +201,10 @@ if action.startswith("pending:"):
 if action == "tool-done":
     call("list_agents")
     finish("STATUS: DONE")
+if action == "team-lead-wait":
+    # a coordinator that keeps its team open: it claims the role and sleeps (woken by its members' messages)
+    call("claim_lead")
+    finish("Coordinating; waiting for the members.\nSTATUS: SLEEPING\nRole: coordinator")
 if action == "team-lead-slow":
     call("claim_lead")
     time.sleep(5)

@@ -21,6 +21,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -1055,7 +1057,22 @@ func cmdServe(args []string) {
 	tier := fs.String("tier", "normal", "normal | worker")
 	agentCmd := fs.String("agent-cmd", "", "path to the agent script (worker requests)")
 	home := fs.String("home", agentsHome(), "AGENTS_HOME")
+	relay := fs.String("relay", "", "a remote team member: the lead's URL — every MCP message goes to the lead")
+	member := fs.String("member", "", "with --relay: the member's name in its team, <agent>@<node>")
+	source := fs.String("source", "", "with --relay: an optional local source IP (isolated installations, as node-request)")
 	parseFlags(fs, args)
+	if *relay != "" { // a remote member's MCP server: a relay to the lead, nothing local
+		setupLogging(*home, "serve-relay", "member", *member)
+		u, perr := url.Parse(*relay)
+		if *member == "" || perr != nil || u.Scheme != "http" || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") {
+			exitOn(opErr(NodeClientInvalidArgument, "--relay needs a plain HTTP lead URL and --member <agent>@<node>").asError())
+		}
+		if *source != "" && net.ParseIP(*source) == nil {
+			exitOn(opErr(NodeClientInvalidArgument, "--source must be a local IP literal").asError())
+		}
+		exitOn(relayMCP(nodeRequestConfig{url: strings.TrimSuffix(*relay, "/"), source: *source}, *member, os.Stdin, os.Stdout).asError())
+		return
+	}
 	if *agent == "" {
 		exitOn(opErr(CmdServeMissingAgent, "--agent is required").asError())
 	}
@@ -1379,6 +1396,8 @@ func main() {
 		cmdNodeRequest(os.Args[2:])
 	case "team-waiting":
 		cmdTeamWaiting(os.Args[2:])
+	case "lead-member":
+		cmdLeadMember(os.Args[2:])
 	case "team-list":
 		cmdTeamList(os.Args[2:])
 	case "notes":

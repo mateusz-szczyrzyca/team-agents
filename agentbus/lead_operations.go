@@ -115,6 +115,15 @@ func heartbeatReportError(err *LeadReportError) *LeadHeartbeatError {
 
 // report binds path and socket identities before invoking the shared report implementation.
 func (a *leadAPI) report(node, id string, rep JobReport) (Job, *LeadReportError) {
+	job, err := a.reportJob(node, id, rep)
+	if err == nil {
+		a.memberJobsChanged([]string{id}) // a member job's branch or end, for its team
+	}
+	return job, err
+}
+
+// reportJob applies one state report of the assigned node.
+func (a *leadAPI) reportJob(node, id string, rep JobReport) (Job, *LeadReportError) {
 	if rep.ID != "" && rep.ID != id {
 		return Job{}, opErr(LeadReportMalformedBody, "report ID differs from the route")
 	}

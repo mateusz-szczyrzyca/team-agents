@@ -126,6 +126,7 @@ start_node() {
 #!/usr/bin/env bash
 # Test wrapper: node-request leaves from 127.0.0.2, so the lead identifies this device as node2.
 if [[ \${1:-} == node-request ]]; then shift; exec "$NODE/.local/bin/agentbus" node-request --source 127.0.0.2 "\$@"; fi
+if [[ \${1:-} == serve && " \$* " == *" --relay "* ]]; then shift; exec "$NODE/.local/bin/agentbus" serve --source 127.0.0.2 "\$@"; fi
 exec "$NODE/.local/bin/agentbus" "\$@"
 WRAP
   chmod +x "$NODE/.local/bin/agentbus-node2"
@@ -277,15 +278,17 @@ wait_member_state() {
 @test "a remote member works in a team on the lead: its message reaches the team, a message wakes it on its node" {
   LEAD_PORT=$(free_port)
   setup_node
+  echo "NODE_REPOS[repo]=\"$NODE/repo\"" >> "$NODE/agents/agents.conf"   # the lead's repository is "repo" here
   start_lead
   start_node
   echo '{"solo": {"new": "remote-hello", "resume": "done"}}' > "$NODE/scenario.json"
-  scenario '{"lead": {"new": "team-lead-slow"}}'
+  scenario '{"lead": {"new": "team-lead-wait", "resume": "team-lead-wait"}}'
   cd "$HOME/repo"
   agent run --team lead,solo@node2 "team task"
   wait_grep 'hello from node2' "$AGENTS_HOME/bus/messages.jsonl" 60
   grep 'hello from node2' "$AGENTS_HOME/bus/messages.jsonl" | grep -q '"from":"solo@node2"'
-  wait_member_state solo@node2 sleeping 30
+  # it goes to sleep on its node; a message waiting for it (or this one) wakes it there, and it finishes
   agent say solo@node2 "go on"
   wait_member_state solo@node2 'done' 60
+  [[ $(grep '^RUN=' "$(node_task_meta solo)" | cut -d= -f2) -ge 2 ]]   # woken: a second run on the node
 }

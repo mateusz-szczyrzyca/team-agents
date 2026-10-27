@@ -113,10 +113,23 @@ func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Durat
 				v := publicLeadJob(*job)
 				view = &v
 			}
+			var wakes []string // jobs whose remote members the node must wake
+			if err == nil {
+				ids := make([]string, 0, len(body.Reports))
+				for _, rep := range body.Reports {
+					ids = append(ids, rep.ID)
+				}
+				a.memberJobsChanged(ids)
+				var werr *LeadHeartbeatError
+				if wakes, werr = a.memberActivity(peer.Node, body.Activity); werr != nil {
+					warnSideEffect("apply remote members' activity", werr)
+				}
+			}
 			return struct {
 				Job   *leadJobView  /* at most one assignment */
 				Stops []leadJobView /* bounded, durable stop requests for this authenticated node */
-			}{view, stops}, err
+				Wakes []string      /* jobs whose remote team members the node must wake */
+			}{view, stops, wakes}, err
 		})
 	})
 	mux.HandleFunc("POST /v1/jobs/{id}/state", func(w http.ResponseWriter, r *http.Request) {

@@ -71,12 +71,14 @@ func TestMemberJobRequestIsValidated(t *testing.T) {
 
 func TestRemoteMemberGoingToSleepIsWokenForAWaitingMessage(t *testing.T) {
 	b, a, woken, _ := remoteTeam(t)
+	var proxy string // the member's task in its team's record: its proxy task on the lead
+	mustWith(t, b, func(s *State) { proxy = s.Teams["T"].Members["solo@node2"].Task })
 	chk(t).ok(toolResult(server(b, "lead", inTeam("T")).send("solo@node2", "a question for you")))
 	if _, err := a.memberActivity("node2", []JobActivity{{ID: "job-m", Agent: "solo", Stage: "sleeping"}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(*woken) != 1 || (*woken)[0] != "p1" {
-		t.Fatalf("woken %v, want its proxy task p1", *woken)
+	if len(*woken) != 1 || (*woken)[0] != proxy {
+		t.Fatalf("woken %v, want its proxy task %s", *woken, proxy)
 	}
 }
 

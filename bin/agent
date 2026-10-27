@@ -511,6 +511,7 @@ render() { # template file → stdout, with {{KEY}} placeholders substituted fro
 }
 
 team_members_list() {
+  [[ ${REMOTE_TEAM:-} != 1 ]] || { printf '%s' "(see team_status)"; return 0; }   # the team lives on the lead
   [[ -n ${TEAM:-} ]] || return 0
   local a out=()
   while read -r a; do
@@ -585,6 +586,13 @@ finish_team() { # team reason — closes the team; sleeping members finish as do
   [[ $(team_done_flag "$team") == true ]] && return 0
   log_info team_finished "team=$team" "reason=$why"
   bus team-done --dir "$BUS_DIR" --team "$team"
+  for t in $(team_tasks "$team"); do   # remote members: their jobs end, their grants go
+    [[ $(task_field "$t" KIND) == remote-member ]] || continue
+    "$SELF" jobs --cancel "$(task_field "$t" JOB_ID)" >/dev/null 2>&1 \
+      || log_warn remote_member_cancel_failed "task=$t"   # a job that already ended cannot be cancelled: fine
+    try remote_member_revoke_failed bus lead-member --dir "$BUS_DIR" --remove --member "$(task_field "$t" AGENT)" >/dev/null
+    meta_set "$t" STATUS done
+  done
   for t in $(team_tasks "$team"); do
     if [[ $(task_field "$t" STATUS) == sleeping ]]; then
       meta_set "$t" STATUS done
@@ -861,6 +869,7 @@ request_review() { # coordinator task id — --verify: queue a PR review by an i
 
 team_after_run() { # id status final note — team logic after a member's run ends
   local id=$1 status=$2 final=$3 note=$4
+  [[ $(task_field "$id" REMOTE_TEAM) != 1 ]] || return 0   # its team lives on the lead, which follows its state
   local team=$TEAM lead state
   lead=$(team_lead "$team")
   case $status in
@@ -986,6 +995,17 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
   exec 8>"$TASKS/$id/wake.lock"
   flock -w 30 8 || exit 0
   meta_load "$id"
+  if [[ ${KIND:-} == remote-member ]]; then   # the member works on its node: the lead asks the node to wake it
+    try remote_wake_failed bus lead-member --dir "$BUS_DIR" --wake --member "$AGENT" >/dev/null
+    exit 0
+  fi
+  if [[ ${REMOTE_TEAM:-} == 1 ]]; then   # this node's member of a team on the lead: the lead woke it
+    if [[ $STATUS == sleeping ]]; then
+      meta_set "$id" WAKE_PENDING 1
+      start_runner "$id" resume || log_error resume_failed "task=$id" "reason=a wake from the lead"
+    fi
+    exit 0
+  fi
   if [[ $STATUS == paused ]]; then
     resume_paused "$id"
     exit 0
@@ -1417,6 +1437,10 @@ build_prompt() { # id mode qfile next_round
 }
 
 bus_args_json() { # id → JSON (also valid TOML) array of `agentbus serve` arguments
+  if [[ ${REMOTE_TEAM:-} == 1 ]]; then   # a remote team member: its tools run on the lead, through the relay
+    printf '%s\n' serve --relay "$JOB_LEAD" --member "$MEMBER" --home "$AGENTS_HOME" | jq -R . | jq -sc .
+    return 0
+  fi
   local peers
   peers=$(IFS=,; printf '%s' "${!AGENT_TYPE[*]}")
   local role=worker
@@ -2150,7 +2174,7 @@ cmd__runner() {
   meta_set "$id" SBOUNCE_PENDING ""
   meta_set "$id" PAUSE_RELEASED ""
   meta_set "$id" RBOUNCE_PENDING ""
-  if [[ -n ${TEAM:-} ]]; then
+  if [[ -n ${TEAM:-} && ${REMOTE_TEAM:-} != 1 ]]; then   # a remote member's state is set by the lead
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state active >/dev/null
   fi
 
@@ -2655,7 +2679,8 @@ prepare_job_task() {
   if ! {
     meta_set "$NEW_ID" JOB_ID "$job" &&
     { [[ -z ${7:-} ]] || meta_set "$NEW_ID" JOB_ASSIGNMENT "$7"; } &&
-    { [[ -z ${LEAD_URL:-} ]] || meta_set "$NEW_ID" JOB_LEAD "$LEAD_URL"; }
+    { [[ -z ${LEAD_URL:-} ]] || meta_set "$NEW_ID" JOB_LEAD "$LEAD_URL"; } &&
+    { [[ -z ${8:-} ]] || { meta_set "$NEW_ID" TEAM "$8" && meta_set "$NEW_ID" MEMBER "$9" && meta_set "$NEW_ID" REMOTE_TEAM 1 && meta_set "$NEW_ID" TIER "$(agent_tier "$name")"; }; }
   }; then
     NODE_PREPARE_ERROR="cannot record node job identity metadata"
     drop_unstarted_task "$root" "$AGENTS_HOME/worktrees/$(basename "$root")/$NEW_ID" "$BRANCH_PREFIX/$name/$ts" "$TASKS/$NEW_ID"
@@ -2942,13 +2967,23 @@ cmd_run() {
     shift
     members=("$name")
   fi
-  local m seen=" "
+  local m seen=" " locals=() remotes=()
   for m in "${members[@]}"; do
+    if [[ $m == *@* ]]; then   # a remote member, <agent>@<node>: it works on its node, in this lead's team
+      [[ $seen != *" $m "* ]] || die "agent $m is listed twice"
+      seen+="$m "; remotes+=("$m")
+      continue
+    fi
+    locals+=("$m")
     ! is_investigator "$m" || die "investigators are not started directly — agents request them (request_investigation)"
     [[ -n ${AGENT_TYPE[$m]:-} ]] || die "unknown agent '$m'. Configured: ${!AGENT_TYPE[*]}"
     [[ $seen != *" $m "* ]] || die "agent $m is listed twice"
     seen+="$m "
   done
+  if ((${#remotes[@]})); then
+    ((${#members[@]} > 1)) || die "a remote member works in a team: agent run --team <local agents>,<agent>@<node> …"
+    members=("${locals[@]}")
+  fi
 
   local task
   if [[ ${1:-} == -f ]]; then
@@ -2971,7 +3006,7 @@ cmd_run() {
   if ((${#members[@]} > 1)); then
     local has_normal=0
     for m in "${members[@]}"; do [[ $(agent_tier "$m") == normal ]] && has_normal=1; done
-    ((has_normal)) || die "a team needs at least one agent outside WORKER_AGENTS (workers cannot coordinate)"
+    ((has_normal)) || die "a team needs at least one local agent outside WORKER_AGENTS (workers cannot coordinate; remote members neither)"
   fi
   lock_task_ids
   local busy
@@ -2983,10 +3018,10 @@ cmd_run() {
 
   local ts base team="" ids=() roots=() repos=() with_team=0
   for m in "${members[@]}"; do roots+=("$root"); repos+=("$(basename "$main_root")"); done
-  ((${#members[@]} > 1)) && with_team=1
+  ((${#members[@]} + ${#remotes[@]} > 1)) && with_team=1
   ts=$(allocate_run_ids "$with_team" members roots repos)
   base=$(git -C "$root" symbolic-ref --quiet --short HEAD || git -C "$root" rev-parse --short HEAD)
-  ((${#members[@]} > 1)) && team="$ts-team"
+  ((${#members[@]} + ${#remotes[@]} > 1)) && team="$ts-team"
   for m in "${members[@]}"; do
     if ! create_task "$m" "$task" "$root" "$main_root" "$base" "$ts" "$team"; then
       abandon_run "could not create task for $m: ${CREATE_TASK_ERROR:-worktree creation failed}" "${ids[@]}"
@@ -3002,10 +3037,20 @@ cmd_run() {
                --arg tier "$(agent_tier "$(task_field "$i" AGENT)")" --arg prov "$(agent_provider "$(task_field "$i" AGENT)")" \
                '.[$a] = {agent:$a, task:$t, branch:$b, worktree:$w, state:"active", tier:$tier, provider:$prov}' <<< "$json")
     done
+    local r rid remote_ids=()
+    for r in "${remotes[@]}"; do   # a remote member: its proxy task here, a member like any other in the team
+      rid=$(remote_member_task "$r" "$task" "$team" "$base" "$main_root" "$ts") || abandon_run "could not prepare remote member $r" "${ids[@]}"
+      remote_ids+=("$rid")
+      json=$(jq --arg a "$r" --arg t "$rid" --arg w "remote:${r#*@}" --arg tier "$(task_field "$rid" TIER)" \
+               '.[$a] = {agent:$a, task:$t, branch:"", worktree:$w, state:"active", tier:$tier, provider:"remote"}' <<< "$json")
+    done
     jq -n --arg id "$team" --arg repo "$(basename "$main_root")" --arg wake "$SELF" --arg home "$AGENTS_HOME" \
       --argjson members "$json" '{id:$id, repo:$repo, wake_cmd:$wake, home:$home, members:$members}' \
       | bus team-create --dir "$BUS_DIR" ||
       abandon_run "could not create the team on the bus (see ~/agents/logs/agentbus.jsonl)" "${ids[@]}"
+    for rid in "${remote_ids[@]}"; do
+      remote_member_start "$rid" || abandon_run "could not start remote member $(task_field "$rid" AGENT)" "${ids[@]}"
+    done
   fi
 
   if [[ -n $(git -C "$root" status --porcelain 10>&-) ]]; then
@@ -3337,6 +3382,55 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
     fi
     notify "$id" failed "" "the runner died (no running unit) — the task is ended"
   done
+}
+
+remote_member_task() { # member task team base main-root ts — a remote member's proxy task on the lead (no worktree, no
+  # runner: the member runs on its node); checks first that this is a lead, the node is online with the agent free,
+  # and the base is on origin (the node starts from there). Prints the task ID.
+  local member=$1 task=$2 team=$3 base=$4 root=$5 ts=$6 agent node nodes row tier sha id
+  agent=${member%@*}; node=${member#*@}
+  [[ -n ${LEAD_LISTEN:-} ]] || die "remote member $member: this installation is not a lead (LEAD_LISTEN)"
+  nodes=$(bus node-request --url "$(lead_url)" --path /v1/nodes --get) || die "remote member $member: cannot list the nodes"
+  row=$(jq -c --arg n "$node" '.[] | select(.Node == $n)' <<< "$nodes")
+  [[ -n $row ]] || die "remote member $member: no node $node (agent nodes)"
+  [[ $(jq -r '.Offline // false' <<< "$row") != true ]] || die "remote member $member: node $node is offline"
+  tier=$(jq -r --arg a "$agent" '.FreeAgents // [] | .[] | select(.Name == $a) | .Tier' <<< "$row")
+  [[ -n $tier ]] || die "remote member $member: $agent is not a free agent of $node (agent nodes)"
+  git -C "$root" fetch -q origin "$base" 10>&- || die "remote member $member: cannot fetch $base from origin"
+  sha=$(git -C "$root" rev-parse HEAD 10>&-)
+  git -C "$root" merge-base --is-ancestor "$sha" "origin/$base" 10>&- \
+    || die "remote member $member starts from origin: push $base first (git push origin $base)"
+  id="$ts-$agent-at-$node"
+  mkdir -p "$TASKS/$id"
+  : > "$TASKS/$id/meta.env"
+  meta_set "$id" ID "$id"; meta_set "$id" AGENT "$member"; meta_set "$id" KIND remote-member
+  meta_set "$id" REMOTE_NODE "$node"; meta_set "$id" REMOTE_AGENT "$agent"; meta_set "$id" TEAM "$team"
+  meta_set "$id" TIER "$tier"; meta_set "$id" STATUS remote; meta_set "$id" CREATED "$(date -Is)"
+  meta_set "$id" REPO_NAME "$(basename "$root")"; meta_set "$id" REPO_ROOT "$root"
+  meta_set "$id" BASE "$base"; meta_set "$id" BASE_SHA "$sha"; meta_set "$id" BRANCH ""; meta_set "$id" WORKTREE ""
+  meta_set "$id" JOB_ID "member-$id"
+  printf '%s\n' "$task" > "$TASKS/$id/task.md"
+  act "$id" info "remote member $member: it works on $node, in team $team"
+  printf '%s' "$id"
+}
+
+remote_member_start() { # proxy-task — grants the remote member on the lead and submits the job that runs it on its
+  # node (its tools reach the team through the relay; its task text is the team's)
+  local id=$1 member agent node body out
+  member=$(task_field "$id" AGENT); agent=$(task_field "$id" REMOTE_AGENT); node=$(task_field "$id" REMOTE_NODE)
+  bus lead-member --dir "$BUS_DIR" --add --member "$member" --agent "$agent" --node "$node" --team "$(task_field "$id" TEAM)" \
+    --task "$id" --tier "$(task_field "$id" TIER)" --repo "$(task_field "$id" REPO_NAME)" --job "$(task_field "$id" JOB_ID)" >/dev/null \
+    || { log_error remote_member_grant_failed "member=$member"; return 1; }
+  body=$(jq -n --arg id "$(task_field "$id" JOB_ID)" --arg repo "$(task_field "$id" REPO_NAME)" --arg base "$(task_field "$id" BASE)" \
+    --arg sha "$(task_field "$id" BASE_SHA)" --arg agent "$agent" --arg node "$node" --rawfile task "$TASKS/$id/task.md" \
+    --arg team "$(task_field "$id" TEAM)" --arg member "$member" \
+    '{ID:$id, Repository:$repo, BaseRef:$base, BaseSHA:$sha, Selector:$agent, Target:$node, Task:$task, Requester:"human", Team:$team, Member:$member}')
+  if ! out=$(printf '%s' "$body" | bus node-request --url "$(lead_url)" --path /v1/jobs); then
+    log_error remote_member_job_failed "member=$member" "reason=${out:0:300}"
+    return 1
+  fi
+  meta_set "$id" STATUS remote
+  log_info remote_member_started "member=$member" "task=$id" "job=$(task_field "$id" JOB_ID)"
 }
 
 cmd_kick() { # <task> [from] — cuts an agent's current run short (the web interface's stop button): a team member
@@ -3958,6 +4052,11 @@ node_handle_reply() {
   for stop in $ids; do
     node_handle_stop "$stop" "$(jq -r --arg id "$stop" '.Stops[] | select(.Request.ID == $id) | .Assignment' <<< "$reply")"
   done
+  local wjid wtid   # wakes for this node's remote team members: each in its own process (_wake takes the task's lock)
+  for wjid in $(jq -r '.Wakes // [] | .[]' <<< "$reply"); do
+    wtid=$(jq -r --arg id "$wjid" '.jobs[$id].task_id // empty' <<< "$NODE_STATE")
+    if [[ -n $wtid ]]; then "$SELF" _wake "$wtid" || log_warn node_wake_failed "job=$wjid" "task=$wtid"; fi
+  done
   job=$(jq -c .Job <<< "$reply")
   [[ $job != null ]] || return 0
   jid=$(jq -r .Request.ID <<< "$job"); assignment=$(jq -r .Assignment <<< "$job")
@@ -3972,7 +4071,7 @@ node_handle_reply() {
     '.[1].jobs[$id]={assignment:$assignment,request:.[0].Request,agent:$agent,assigned_at:$at,task_id:"",branch:"",launched:false,start_acked:false,obsolete:false,pending:false,preparing:true,cursor:0} | .[1]'); node_save
   if [[ -z $agent ]]; then node_transition "$jid" failed '' 'no free local agent for assignment'; return; fi
   NODE_PREPARE_ERROR=''
-  if prepare_job_task "$jid" "$agent" "$(jq -r .Request.Repository <<< "$job")" "$(jq -r .Request.BaseRef <<< "$job")" "$(jq -r '.Request.BaseSHA // ""' <<< "$job")" "$(jq -r .Request.Task <<< "$job")" "$assignment"; then
+  if prepare_job_task "$jid" "$agent" "$(jq -r .Request.Repository <<< "$job")" "$(jq -r .Request.BaseRef <<< "$job")" "$(jq -r '.Request.BaseSHA // ""' <<< "$job")" "$(jq -r .Request.Task <<< "$job")" "$assignment" "$(jq -r '.Request.Team // ""' <<< "$job")" "$(jq -r '.Request.Member // ""' <<< "$job")"; then
     node_bind_task "$jid" "$NEW_ID"
   else
     NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].preparing=false' <<< "$NODE_STATE")

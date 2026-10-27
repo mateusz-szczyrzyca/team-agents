@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 )
 
@@ -116,15 +117,151 @@ func (a *leadAPI) mcp(node string, body leadMCPBody) (json.RawMessage, *LeadMCPE
 
 // wakeMember asks the member's node to wake it: the request waits in the node's heartbeat replies until the member's
 // task runs again.
-func (a *leadAPI) wakeMember(_ string) *LeadMemberError {
-	return nil // not implemented yet: remote_team_test.go comes first
+func (a *leadAPI) wakeMember(member string) *LeadMemberError {
+	return leadTransaction(a, LeadMemberStorage, "", func(r *leadRegistry, _ Timestamp) *LeadMemberError {
+		m, ok := r.members[member]
+		if !ok {
+			return opErr(LeadMemberNoSuchMember, "no remote member %q", member)
+		}
+		m.Wake = true
+		r.members[member] = m
+		return nil
+	})
+}
+
+// awake reports whether a task stage means its member is at work (a wake request has been carried out).
+func awake(stage string) bool {
+	switch stage {
+	case "starting", "running", "investigating", "waiting":
+		return true
+	}
+	return false
 }
 
 // memberActivity applies what a node says its remote members are doing (the stages of their jobs' tasks) to their
 // teams — a member going to sleep goes through the same logic as a local one — and returns the jobs whose members
 // the node must wake.
-func (a *leadAPI) memberActivity(_ string, _ []JobActivity) ([]string, *LeadHeartbeatError) {
-	return nil, nil // not implemented yet
+func (a *leadAPI) memberActivity(node string, act []JobActivity) ([]string, *LeadHeartbeatError) {
+	reg, serr := a.bus.loadJobs()
+	if serr != nil {
+		return nil, fromStorage(LeadHeartbeatStorage, serr)
+	}
+	stages := make(map[string]string, len(act)) // job → its task's stage on the node
+	for _, x := range act {
+		stages[x.ID] = x.Stage
+	}
+	names := make([]string, 0, len(reg.members))
+	for name := range reg.members {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var wakes, carried []string
+	for _, name := range names {
+		m := reg.members[name]
+		if m.Node != node || m.Job == "" {
+			continue
+		}
+		stage, reported := stages[m.Job]
+		if reported {
+			if err := a.applyMemberStage(m, stage); err != nil {
+				return nil, err
+			}
+		}
+		if m.Wake {
+			if reported && awake(stage) {
+				carried = append(carried, name)
+			} else {
+				wakes = append(wakes, m.Job)
+			}
+		}
+	}
+	if len(carried) > 0 {
+		if err := leadTransaction(a, LeadHeartbeatStorage, "", func(r *leadRegistry, _ Timestamp) *LeadHeartbeatError {
+			for _, name := range carried {
+				if m, ok := r.members[name]; ok {
+					m.Wake = false
+					r.members[name] = m
+				}
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return wakes, nil
+}
+
+// applyMemberStage brings a remote member's state in its team in line with its task's stage on the node: asleep
+// (through setMemberState: a waiting message wakes it) or at work. Other stages leave it as it is.
+func (a *leadAPI) applyMemberStage(m RemoteMember, stage string) *LeadHeartbeatError {
+	err := transact(a.bus, CmdTeamSetStorage, func(st *State) *CmdTeamSetError {
+		t := st.Teams[m.Team]
+		if t == nil || t.Members[m.Member] == nil || t.Done {
+			return nil // the team is gone or finished: nothing to keep in line
+		}
+		cur := t.Members[m.Member].State
+		switch {
+		case stage == "sleeping" && cur == MemberActive:
+			_, err := setMemberState(a.bus, st, m.Team, m.Member, MemberSleeping)
+			return err
+		case awake(stage) && (cur == MemberSleeping || cur == MemberWaking):
+			_, err := setMemberState(a.bus, st, m.Team, m.Member, MemberActive)
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return opErr(LeadHeartbeatStorage, "cannot keep remote member %s in line: %v", m.Member, err)
+	}
+	return nil
+}
+
+// memberJobsChanged records what the lead learnt about member jobs in their teams: a reported branch, and the end
+// of a job — the member is done and its coordinator is told.
+func (a *leadAPI) memberJobsChanged(ids []string) {
+	reg, serr := a.bus.loadJobs()
+	if serr != nil {
+		warnSideEffect("read member jobs", serr)
+		return
+	}
+	for _, id := range ids {
+		j := reg.jobs[id]
+		if j == nil || j.Request.Team == "" {
+			continue
+		}
+		job := *j
+		err := transact(a.bus, CmdTeamSetStorage, func(st *State) *CmdTeamSetError {
+			t := st.Teams[job.Request.Team]
+			if t == nil || t.Members[job.Request.Member] == nil {
+				return nil
+			}
+			m := t.Members[job.Request.Member]
+			if job.Branch != "" && m.Branch == "" {
+				m.Branch = job.Branch
+			}
+			if !isTerminalJob(job.State) || m.State == MemberDone {
+				return nil
+			}
+			if _, err := setMemberState(a.bus, st, job.Request.Team, job.Request.Member, MemberDone); err != nil {
+				return err
+			}
+			if t.Lead == "" {
+				return nil
+			}
+			notice := NoticeMemberFinished
+			if job.State != JobDone {
+				notice = NoticeMemberFailed
+			}
+			body := fmt.Sprintf("TEAM: member %s finished (%s) on %s, branch %s. %s", job.Request.Member, job.State, job.Node,
+				job.Branch, trunc(job.Result, 600))
+			_, serr := a.bus.post(st, "agentbus", t.Lead, EventScript{Notice: notice, Body: body,
+				Fields: map[string]string{"agent": job.Request.Member, "team": t.ID, "state": string(job.State)}})
+			return fromStorage(CmdTeamSetStorage, serr)
+		})
+		if err != nil {
+			warnSideEffect("update a remote member's team", err)
+		}
+	}
 }
 
 // relayMCP is a remote member's MCP server on its node: every JSON-RPC line from the CLI goes to the lead, every
@@ -205,4 +342,44 @@ func writeRPC(out io.Writer, msg map[string]any) *NodeClientError {
 		return opErr(NodeClientInvalidArgument, "cannot write to the CLI: %v", err)
 	}
 	return nil
+}
+
+// cmdLeadMember — lead-member: a remote team member's grant on the lead (the agent script, starting or ending a team
+// with remote members, and waking one).
+//
+//	agentbus lead-member --dir DIR --add --member a@node --agent a --node node --team T --task P --tier normal \
+//	    [--repo R] [--branch B] --job J
+//	agentbus lead-member --dir DIR --remove --member a@node
+//	agentbus lead-member --dir DIR --wake --member a@node
+func cmdLeadMember(args []string) {
+	fs := newFlagSet("lead-member")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	add := fs.Bool("add", false, "grant a remote member")
+	remove := fs.Bool("remove", false, "revoke a remote member's grant")
+	wake := fs.Bool("wake", false, "ask the member's node to wake it")
+	m := RemoteMember{}
+	fs.StringVar(&m.Member, "member", "", "the member: <agent>@<node>")
+	fs.StringVar(&m.Agent, "agent", "", "the node's agent")
+	fs.StringVar(&m.Node, "node", "", "the node")
+	fs.StringVar(&m.Team, "team", "", "the team")
+	fs.StringVar(&m.Task, "task", "", "its proxy task on the lead")
+	tier := fs.String("tier", string(TierNormal), "normal | worker")
+	fs.StringVar(&m.Repo, "repo", "", "the repository name")
+	fs.StringVar(&m.Branch, "branch", "", "its branch, if known")
+	fs.StringVar(&m.Job, "job", "", "the job that runs it on its node")
+	parseFlags(fs, args)
+	m.Tier = Tier(*tier)
+	a := &leadAPI{bus: &Bus{dir: *dir}}
+	var err *LeadMemberError
+	switch {
+	case *add && !*remove && !*wake:
+		err = a.grantMember(m)
+	case *remove && !*add && !*wake:
+		err = a.revokeMember(m.Member)
+	case *wake && !*add && !*remove:
+		err = a.wakeMember(m.Member)
+	default:
+		err = opErr(LeadMemberInvalidMember, "give exactly one of --add, --remove, --wake")
+	}
+	exitOn(err.asError())
 }

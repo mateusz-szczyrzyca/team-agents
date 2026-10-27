@@ -692,43 +692,55 @@ func cmdTeamSet(args []string) {
 	b := &Bus{dir: *dir}
 	var out cliWriter
 	exitOn(transact(b, CmdTeamSetStorage, func(st *State) *CmdTeamSetError {
-		t := st.Teams[*team]
-		if t == nil || t.Members[*agent] == nil {
-			return opErr(CmdTeamSetNoSuchMember, "no member %s in team %s", *agent, *team)
+		woke, err := setMemberState(b, st, *team, *agent, newState)
+		if err != nil {
+			return err
 		}
-		m := t.Members[*agent]
-		if m.State == MemberExcluded && newState != MemberDone {
-			return nil // exclusion is final
+		if woke != "" {
+			out.println(woke)
 		}
-		m.State = newState
-		if newState != MemberSleeping || t.Done {
-			return nil
-		}
-		msgs, serr := b.messages()
-		if serr != nil {
-			return fromStorage(CmdTeamSetStorage, serr)
-		}
-		cur := st.Cursors[*agent]
-		for _, msg := range msgs {
-			if msg.ID > cur && isForAgent(st, msg, *agent, false) {
-				m.State = MemberWaking
-				wakeFn(t, m.Task)
-				out.println("waking")
-				return fromStorage(CmdTeamSetStorage, out.err)
-			}
-		}
-		// Work for this member appeared on the board since it last looked (it may have been added while the member
-		// was finishing). Items it has already seen do not wake it again: a member that leaves an item alone (e.g.
-		// one the coordinator keeps for later) would otherwise be woken in an endless loop.
-		if t.BoardRev > m.BoardSeen && t.hasWorkFor(*agent, m) {
-			m.State = MemberWaking
-			m.BoardSeen = t.BoardRev
-			wakeFn(t, m.Task)
-			out.println("waking (board)")
-			return fromStorage(CmdTeamSetStorage, out.err)
-		}
-		return nil
+		return fromStorage(CmdTeamSetStorage, out.err)
 	}).asError())
+}
+
+// setMemberState sets a member's state inside a bus transaction. A member going to sleep while a message waits for
+// it, or new board work does, is woken at once (wakeFn) — the same logic for a local member (agentbus team-set) and
+// a remote one (its node's heartbeat on the lead). It returns "waking", "waking (board)" or "".
+func setMemberState(b *Bus, st *State, team, agent string, newState MemberState) (string, *CmdTeamSetError) {
+	t := st.Teams[team]
+	if t == nil || t.Members[agent] == nil {
+		return "", opErr(CmdTeamSetNoSuchMember, "no member %s in team %s", agent, team)
+	}
+	m := t.Members[agent]
+	if m.State == MemberExcluded && newState != MemberDone {
+		return "", nil // exclusion is final
+	}
+	m.State = newState
+	if newState != MemberSleeping || t.Done {
+		return "", nil
+	}
+	msgs, serr := b.messages()
+	if serr != nil {
+		return "", fromStorage(CmdTeamSetStorage, serr)
+	}
+	cur := st.Cursors[agent]
+	for _, msg := range msgs {
+		if msg.ID > cur && isForAgent(st, msg, agent, false) {
+			m.State = MemberWaking
+			wakeFn(t, m.Task)
+			return "waking", nil
+		}
+	}
+	// Work for this member appeared on the board since it last looked (it may have been added while the member
+	// was finishing). Items it has already seen do not wake it again: a member that leaves an item alone (e.g.
+	// one the coordinator keeps for later) would otherwise be woken in an endless loop.
+	if t.BoardRev > m.BoardSeen && t.hasWorkFor(agent, m) {
+		m.State = MemberWaking
+		m.BoardSeen = t.BoardRev
+		wakeFn(t, m.Task)
+		return "waking (board)", nil
+	}
+	return "", nil
 }
 
 // team-done: marks a team finished (nothing to do for an unknown or already finished team).
