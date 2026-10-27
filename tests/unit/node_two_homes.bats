@@ -323,3 +323,29 @@ wait_member_state() {
   [[ $(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.board.B1.status') == todo ]]
   [[ $(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.board.B1.previous') == solo@node2 ]]
 }
+
+@test "resuming a team with a remote member brings the member back on its node" {
+  LEAD_PORT=$(free_port)
+  setup_node
+  echo "NODE_REPOS[repo]=\"$NODE/repo\"" >> "$NODE/agents/agents.conf"   # the lead's repository is "repo" here
+  start_lead
+  start_node
+  echo '{"solo": {"new": "remote-hello"}}' > "$NODE/scenario.json"
+  scenario '{"lead": {"new": "team-lead-wait", "resume": "team-lead-wait"}}'
+  cd "$HOME/repo"
+  agent run --team lead,solo@node2 "team task"
+  wait_grep 'hello from node2' "$AGENTS_HOME/bus/messages.jsonl" 60
+  local old new
+  old=$(grep -h '^TEAM=' "$AGENTS_HOME"/tasks/*/meta.env | head -1 | cut -d= -f2)
+  agent stop "$(task_of lead)"
+  run agent run --last-team "go on" < /dev/null
+  [ "$status" -eq 0 ]
+  new=$(grep -h '^TEAM=' "$AGENTS_HOME"/tasks/*/meta.env | sort -u | grep -v "$old" | head -1 | cut -d= -f2)
+  [ -n "$new" ]
+  [[ $(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$new" | jq -r '.members["solo@node2"].provider') == remote ]]
+  for _ in $(seq 1 300); do   # the member runs again on its node: a second hello
+    [[ $(grep -c 'hello from node2' "$AGENTS_HOME/bus/messages.jsonl") -ge 2 ]] && break
+    sleep 0.2
+  done
+  [[ $(grep -c 'hello from node2' "$AGENTS_HOME/bus/messages.jsonl") -ge 2 ]]
+}
