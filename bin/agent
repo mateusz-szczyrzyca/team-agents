@@ -2758,6 +2758,11 @@ resume_run() {
   else
     olds=("$first")
   fi
+  local remote_olds=() local_olds=()
+  for t in "${olds[@]}"; do   # remote members come back on their nodes, through the lead — not as local tasks
+    if [[ $(task_field "$t" KIND) == remote-member ]]; then remote_olds+=("$t"); else local_olds+=("$t"); fi
+  done
+  olds=("${local_olds[@]}")
   for t in "${olds[@]}"; do
     case $(task_field "$t" STATUS) in
       new|starting|running|waiting|investigating|sleeping|paused)
@@ -2801,6 +2806,23 @@ resume_run() {
   [[ -n $old_team ]] && with_team=1
   ts=$(allocate_run_ids "$with_team" names roots repos)
   [[ -n $old_team ]] && new_team="$ts-team"
+  local remote_ids=() r rtext
+  for r in "${remote_olds[@]}"; do   # the old members' jobs end first: their agents must be free to come back
+    "$SELF" jobs --cancel "$(task_field "$r" JOB_ID)" >/dev/null 2>&1 \
+      || log_info remote_member_cancel_skipped "task=$r"   # a job that already ended cannot be cancelled
+    bus lead-member --dir "$BUS_DIR" --remove --member "$(task_field "$r" AGENT)" >/dev/null 2>&1 \
+      || log_info remote_member_revoke_skipped "task=$r"   # revoked already when its team finished
+    remote_agent_wait_free "$(task_field "$r" AGENT)" 60 \
+      || die "remote member $(task_field "$r" AGENT): its agent is still busy on its node — retry in a minute"
+  done
+  for r in "${remote_olds[@]}"; do   # node online, agent free, base on origin — before any local task exists
+    rtext=$(cat "$TASKS/$r/task.md"
+      if [[ -n ${add//[[:space:]]/} ]]; then
+        printf '\n\n## Addition from the human (resumed %s)\n\n%s\n' "$(date '+%Y-%m-%d %H:%M')" "$add"
+      fi)
+    remote_ids+=("$(remote_member_task "$(task_field "$r" AGENT)" "$rtext" "$new_team" "$(task_field "$r" BASE)" \
+      "$(task_field "$r" REPO_ROOT)" "$ts")")
+  done
   for old in "${olds[@]}"; do
     name=$(task_field "$old" AGENT); root=$(task_field "$old" REPO_ROOT)
     id="$ts-$name"; wt="$AGENTS_HOME/worktrees/$(task_field "$old" REPO_NAME)/$id"
@@ -2877,6 +2899,11 @@ resume_run() {
                --arg tier "$(agent_tier "$name")" --arg prov "$(agent_provider "$name")" \
                '.[$a] = {agent:$a, task:$t, branch:$b, worktree:$w, state:"active", tier:$tier, provider:$prov}' <<< "$json")
     done
+    for r in "${remote_ids[@]}"; do
+      json=$(jq --arg a "$(task_field "$r" AGENT)" --arg t "$r" --arg w "remote:$(task_field "$r" REMOTE_NODE)" \
+               --arg tier "$(task_field "$r" TIER)" \
+               '.[$a] = {agent:$a, task:$t, branch:"", worktree:$w, state:"active", tier:$tier, provider:"remote"}' <<< "$json")
+    done
     jq -n --arg id "$new_team" --arg repo "$(task_field "${ids[0]}" REPO_NAME)" --arg wake "$SELF" --arg home "$AGENTS_HOME" \
       --argjson members "$json" --arg lead "$lead" --arg from "$old_team" --argjson old "$tj" '
       {id:$id, repo:$repo, wake_cmd:$wake, home:$home, members:$members, lead:$lead, resumed_from:$from,
@@ -2884,6 +2911,9 @@ resume_run() {
        board: (($old.board // {}) | map_values(if .status == "claimed" then .status = "todo" | .assignee = "" else . end))}' \
       | bus team-create --dir "$BUS_DIR" || die "could not create the resumed team"
     try team_close_failed bus team-done --dir "$BUS_DIR" --team "$old_team"
+    for r in "${remote_ids[@]}"; do
+      remote_member_start "$r" || die "could not start remote member $(task_field "$r" AGENT) (see ~/agents/logs/agent.jsonl)"
+    done
     if [[ -f $BUS_DIR/checkpoints/team-$old_team.md ]]; then
       try checkpoint_copy_failed cp "$BUS_DIR/checkpoints/team-$old_team.md" "$BUS_DIR/checkpoints/team-$new_team.md"
     fi
@@ -3435,6 +3465,18 @@ cmd__remote_member() { # proxy status branch note — a remote member's change, 
   [[ $status != running ]] || return 0
   meta_load "$id"   # BRANCH for member_out
   team_after_run "$id" "$status" "$note" "$note"
+}
+
+remote_agent_wait_free() { # member seconds — waits until the node offers the member's agent as free again
+  local agent=${1%@*} node=${1#*@} i
+  for ((i = 0; i < $2; i++)); do
+    if bus node-request --url "$(lead_url)" --path /v1/nodes --get | jq -e --arg n "$node" --arg a "$agent" \
+         '.[] | select(.Node == $n) | .FreeAgents // [] | .[] | select(.Name == $a)' >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 remote_member_start() { # proxy-task — grants the remote member on the lead and submits the job that runs it on its
