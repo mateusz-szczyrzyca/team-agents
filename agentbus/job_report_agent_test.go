@@ -169,6 +169,43 @@ func TestReportAgentImmutable(t *testing.T) {
 	failsWith(t, LeadReportInvalidState)("mutated agent", err2)
 }
 
+func TestRequeueOfflineClearsAgent(t *testing.T) {
+	r := newLeadRegistry()
+	req := regRequest("job-requeue-agent")
+	req.Selector = "worker"
+	if _, err := r.submit(req, regAt(0)); err != nil {
+		t.Fatal(err)
+	}
+	assigned, herr := r.heartbeat(NodeHeartbeat{Node: "node-a", FreeAgents: []FreeAgent{{Name: "worker-1", Tier: TierWorker}}}, regAt(1))
+	if herr != nil || assigned == nil {
+		t.Fatalf("assigned=%+v, herr=%v", assigned, herr)
+	}
+	// Node reports early metadata with agent while assigned.
+	rep := JobReport{
+		ID:         "job-requeue-agent",
+		Node:       "node-a",
+		Assignment: assigned.Assignment,
+		State:      JobAssigned,
+		Agent:      "worker-1",
+		At:         regAt(1),
+	}
+	if _, err := r.report(rep, regAt(1)); err != nil {
+		t.Fatalf("assigned report: %v", err)
+	}
+	if r.jobs["job-requeue-agent"].Agent != "worker-1" {
+		t.Fatalf("expected recorded agent, got %q", r.jobs["job-requeue-agent"].Agent)
+	}
+
+	// Node goes offline and job is requeued; Agent must be reset.
+	requeued := r.requeueOffline(regAt(100), time.Minute)
+	if len(requeued) != 1 || requeued[0] != "job-requeue-agent" {
+		t.Fatalf("requeue: %+v", requeued)
+	}
+	if r.jobs["job-requeue-agent"].Agent != "" {
+		t.Fatalf("requeued job retained agent: %q", r.jobs["job-requeue-agent"].Agent)
+	}
+}
+
 // Rule: jobs.json snapshots written before Job.Agent existed load with empty Agent and attribution intact.
 func TestJobStoreLoadsJobsBeforeAgentField(t *testing.T) {
 	b := newBus(t)
