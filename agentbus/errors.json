@@ -982,6 +982,11 @@
      "name": "TerminalConflict",
      "class": "Conflict",
      "doc": "a report conflicts with an accepted terminal outcome"
+    },
+    {
+     "name": "InvalidAgent",
+     "class": "InvalidArgument",
+     "doc": "a reported chosen agent is not a logical identifier"
     }
    ]
   },
@@ -1081,6 +1086,11 @@
      "name": "TerminalConflict",
      "class": "Conflict",
      "doc": "the report conflicts with an accepted terminal outcome"
+    },
+    {
+     "name": "InvalidAgent",
+     "class": "InvalidArgument",
+     "doc": "the optional chosen agent is not a logical identifier"
     }
    ]
   },

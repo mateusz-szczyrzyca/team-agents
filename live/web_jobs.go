@@ -58,6 +58,7 @@ type webJob struct {
 	State   string             // lifecycle label, displayed without executing state transitions
 	Node    string             // assigned node, empty while queued
 	TaskID  string             // task ID on the assigned node
+	Agent   string             // actual chosen agent on the node; empty if unknown
 	Branch  string             // branch pushed by the task
 	PRURL   string             // optional pull request URL, sanitized before use as a link
 	Result  string             // final summary or provisioning diagnostic
