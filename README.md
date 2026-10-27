@@ -701,6 +701,7 @@ agent jobs [<id>]                                        # its state, node, bran
 **What the lead shows:** remote jobs appear on the dashboard as `agent@node`, with their latest heartbeat
 activity; finished jobs remain for 24 hours. `/jobs/<id>` shows activity and results. Jobs links to their
 instance and agent pages, and to the result branch when the submitter supplied a GitHub repository origin.
+Remote team member jobs link to their team and, when available, their proxy task on the lead.
 Instances links to `/instances/<node>` with capabilities, configured and free agents, jobs, last heartbeat,
 and the node's web interface when configured. Free agents link to their remote agent pages. The instance list
 hides offline nodes whose last heartbeat is more than 24 hours old; **Show all** restores them. Nodes never
