@@ -240,8 +240,10 @@ func (r *leadRegistry) heartbeat(h NodeHeartbeat, now Timestamp) (*Job, *LeadHea
 	}
 	h.Capabilities = caps
 	h.FreeAgents = slices.Clone(h.FreeAgents)
+	h.Activity = boundedActivity(h.Activity)
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	h.Activity = r.ownActivity(h.Node, h.Activity)
 	r.nodes[h.Node] = jobNode{Heartbeat: h, LastSeen: now}
 	if job := r.outstanding(h.Node); job != nil {
 		snapshot := cloneJob(*job)
@@ -396,6 +398,50 @@ func validTransition(from, to JobState) bool {
 }
 
 // isTerminalJob reports whether s is a terminal lifecycle state.
+// boundedActivity keeps what a heartbeat may carry: jobActivityJobs entries with valid IDs and agents, each with
+// its latest jobActivityLines lines of at most jobActivityLineRunes runes and a short stage.
+func boundedActivity(in []JobActivity) []JobActivity {
+	out := make([]JobActivity, 0, min(len(in), jobActivityJobs))
+	for _, a := range in {
+		if len(out) == jobActivityJobs {
+			break
+		}
+		if !validJobIdentifier(a.ID) || (a.Agent != "" && !validJobIdentifier(a.Agent)) {
+			continue
+		}
+		lines := a.Lines
+		if len(lines) > jobActivityLines {
+			lines = lines[len(lines)-jobActivityLines:]
+		}
+		kept := make([]string, 0, len(lines))
+		for _, l := range lines {
+			kept = append(kept, runePrefix(l, jobActivityLineRunes))
+		}
+		out = append(out, JobActivity{ID: a.ID, Agent: a.Agent, Stage: runePrefix(a.Stage, jobActivityStageRunes), Lines: kept})
+	}
+	return out
+}
+
+// runePrefix is s cut to at most n runes.
+func runePrefix(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
+}
+
+// ownActivity keeps the activity of the jobs assigned to node and not finished; the caller holds r.mu.
+func (r *leadRegistry) ownActivity(node string, in []JobActivity) []JobActivity {
+	out := make([]JobActivity, 0, len(in))
+	for _, a := range in {
+		if j := r.jobs[a.ID]; j != nil && j.Node == node && !isTerminalJob(j.State) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 func isTerminalJob(s JobState) bool {
 	return s == JobDone || s == JobFailed || s == JobStopped
 }

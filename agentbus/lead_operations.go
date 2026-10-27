@@ -41,7 +41,7 @@ func (a *leadAPI) submit(node string, local bool, req JobRequest) (Job, *LeadSub
 // When supplied, stopOut receives bounded, durable stop requests from the same transaction.
 func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody, stopOut ...*[]leadJobView) (*Job, *LeadHeartbeatError) {
 	if body.Node != "" && body.Node != node {
-		return nil, opErr(LeadHeartbeatUnauthorized, "heartbeat identity differs from its socket peer")
+		return nil, opErr(LeadHeartbeatUnauthorized, "heartbeat identity %q differs from its socket peer %q (set INSTANCE_NAME on the node to %q)", body.Node, node, node)
 	}
 	body.Node = node
 	var job *Job             // one assignment, or nil when no job matches

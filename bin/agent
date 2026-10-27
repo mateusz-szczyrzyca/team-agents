@@ -221,7 +221,7 @@ declare -p NODE_REPOS >/dev/null 2>&1 || declare -gA NODE_REPOS=()
 # ("" = not a node); NODE_POLL_SEC is how often the node sends its heartbeat; INSTANCE_CAPABILITIES declares what this node
 # can run (os:..., arch:..., build:..., test:..., hw:..., net:...).
 LEAD_URL="${LEAD_URL:-}"
-NODE_POLL_SEC="${NODE_POLL_SEC:-10}"
+NODE_POLL_SEC="${NODE_POLL_SEC:-5}"
 declare -p INSTANCE_CAPABILITIES >/dev/null 2>&1 || declare -ga INSTANCE_CAPABILITIES=()
 AUTH_MODEL_ANTHROPIC="${AUTH_MODEL_ANTHROPIC:-haiku}"
 AUTH_MODEL_OPENAI="${AUTH_MODEL_OPENAI:-gpt-6-luna}"
@@ -3583,16 +3583,60 @@ cmd_nodes() {
 }
 
 # node_heartbeat_json advertises locally configured capacity using the ordinary task admission rules.
+# agent_cli_present agent — is the CLI of the agent's type installed? (a missing one is not offered as free)
+agent_cli_present() {
+  local bin=""
+  case ${AGENT_TYPE[$1]:-} in
+    claude) bin=$CLAUDE_BIN ;; codex) bin=$CODEX_BIN ;; gemini) bin=$AGY_BIN ;; opencode) bin=$OPENCODE_BIN ;;
+  esac
+  [[ -n $bin && -x $bin ]] || command -v "$bin" >/dev/null 2>&1   # a name on PATH; its output is not needed
+}
+
+declare -A NODE_MISSING_CLI=()   # agents already reported as lacking their CLI (once per daemon)
+
+# node_activity_json — what the node's running jobs are doing: [{ID, Agent, Stage, Lines}], the latest 20 lines each
+node_activity_json() {
+  local jid tid lines out='[]'
+  for jid in $(jq -r '.jobs | to_entries[] | select(.value.launched and (.value.obsolete|not) and (.value.state // "" | test("^(done|failed|stopped)$") | not)) | .key' <<< "${NODE_STATE:-"{\"jobs\":{}}"}"); do
+    tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$NODE_STATE")
+    [[ -n $tid && -f $TASKS/$tid/meta.env ]] || continue
+    lines='[]'
+    if [[ -f $TASKS/$tid/activity.jsonl ]]; then
+      lines=$(tail -n 20 "$TASKS/$tid/activity.jsonl" | jq -sc '[.[] | ((.ts // "" | split(" ") | last) + " " + (.t // ""))]') \
+        || lines='[]'   # a line being written may be cut: the next heartbeat sends it whole
+    fi
+    out=$(jq -c --arg id "$jid" --arg agent "$(task_field "$tid" AGENT)" --arg stage "$(task_field "$tid" STATUS)" \
+      --argjson lines "$lines" '. + [{ID:$id, Agent:$agent, Stage:$stage, Lines:$lines}]' <<< "$out")
+  done
+  printf '%s' "$out"
+}
+
+# node_job_result task state — what a finished job reports: its final message, or the task's note when there is
+# none (a CLI that did not start leaves no final message: "CLI exit code: 127")
+node_job_result() {
+  local tid=$1 state=$2
+  [[ $state =~ ^(done|failed|stopped)$ ]] || return 0
+  if [[ -s $TASKS/$tid/final.md ]]; then cat "$TASKS/$tid/final.md"; return 0; fi
+  task_field "$tid" NOTE
+}
+
 node_heartbeat_json() {
   local a available_json='[]' caps='[]'
   for a in "${!AGENT_TYPE[@]}"; do
     is_investigator "$a" && continue
+    if ! agent_cli_present "$a"; then
+      if [[ -z ${NODE_MISSING_CLI[$a]:-} ]]; then
+        NODE_MISSING_CLI[$a]=1
+        log_error node_agent_cli_missing "agent=$a" "type=${AGENT_TYPE[$a]}"
+      fi
+      continue
+    fi
     if agent_running_task "$a" >/dev/null; then continue; fi # Exit 1 means the configured agent is free.
     available_json=$(jq -c --arg name "$a" --arg tier "$(agent_tier "$a")" '. + [{Name:$name,Tier:$tier}]' <<< "$available_json")
   done
   if ((${#INSTANCE_CAPABILITIES[@]})); then caps=$(printf '%s\n' "${INSTANCE_CAPABILITIES[@]}" | jq -R . | jq -s .); fi
   jq -cn --arg node "$INSTANCE_NAME" --argjson caps "$caps" --argjson free "$available_json" --arg web "$AGENT_WEB_URL" \
-    '{Node:$node,Capabilities:$caps,FreeAgents:$free,WebURL:$web}'
+    --argjson activity "$(node_activity_json)" '{Node:$node,Capabilities:$caps,FreeAgents:$free,WebURL:$web,Activity:$activity}'
 }
 
 # node_select_agent uses provider rotation for workers, otherwise the configured normal-agent order.
@@ -3842,8 +3886,7 @@ node_scan_tasks() {
       cursor=$((cursor+1))
       NODE_STATE=$(jq -c --arg id "$jid" --argjson cursor "$cursor" '.jobs[$id].cursor=$cursor' <<< "$NODE_STATE")
       if [[ ! $previous =~ ^(done|failed|stopped)$ ]]; then
-        result=''
-        if [[ $state =~ ^(done|failed|stopped)$ && -f $TASKS/$tid/final.md ]]; then result=$(<"$TASKS/$tid/final.md"); fi
+        result=$(node_job_result "$tid" "$state")
         if [[ $state != "$previous" || $state == waiting ]]; then node_transition "$jid" "$state" "$(jq -r .at <<< "$record")" "$result"; fi
       fi
       node_save
@@ -3852,7 +3895,7 @@ node_scan_tasks() {
     current=$(node_map_state "$(task_field "$tid" STATUS)")
     previous=$(jq -r --arg id "$jid" '.jobs[$id].state' <<< "$NODE_STATE")
     if [[ $current != "$previous" && ! $previous =~ ^(done|failed|stopped)$ ]]; then
-      result=''; if [[ $current =~ ^(done|failed|stopped)$ && -f $TASKS/$tid/final.md ]]; then result=$(<"$TASKS/$tid/final.md"); fi
+      result=$(node_job_result "$tid" "$current")
       node_transition "$jid" "$current" '' "$result"
     fi
   done

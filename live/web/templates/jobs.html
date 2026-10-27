@@ -4,7 +4,7 @@
 <div class="scroll"><table>
 <thead><tr><th>Job</th><th>State</th><th>Node</th><th>Agent</th><th>Branch / PR</th><th>Result</th></tr></thead>
 <tbody>{{range .Data}}<tr>
-<td><b>{{.Request.ID}}</b><div class="dim">{{.Request.Repository}}</div>{{if .Request.Requires}}<div class="dim">{{join .Request.Requires ", "}}</div>{{end}}</td>
+<td><b><a href="/jobs/{{.Request.ID}}">{{.Request.ID}}</a></b><div class="dim">{{.Request.Repository}}</div>{{if .Request.Requires}}<div class="dim">{{join .Request.Requires ", "}}</div>{{end}}</td>
 <td><span class="{{statusClass .State}}">{{.State}}</span></td>
 <td>{{if .NodeURL}}<a href="{{.NodeURL}}" hx-boost="false">{{.Node}}</a>{{else}}{{.Node}}{{end}}{{if .Offline}}<div class="st-stopped">node offline</div>{{end}}{{if .TaskID}}<div class="dim">{{.TaskID}}</div>{{end}}</td>
 <td>{{.Request.Selector}}</td>

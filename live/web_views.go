@@ -73,6 +73,7 @@ type taskRow struct {
 	Last        string // the latest activity (active tasks) or the final summary
 	LastIcon    string // the icon of the latest activity
 	Running     bool   // a run is going on (the dashboard offers to stop it)
+	Link        string // where the name links: the task's page, or a remote job's page
 }
 
 // makeRow builds a task's row exactly as the panel does (ui.go: row).
@@ -117,6 +118,7 @@ func finishedAt(t *Task) time.Time {
 
 func makeRow(snap *Snapshot, t *Task) taskRow {
 	r := taskRow{ID: t.ID, Name: t.Label(), Status: t.Status, Repo: t.Repo, Team: t.Team, TeamShort: strings.TrimSuffix(t.Team, "-team"), JobMarker: t.JobMarker()}
+	r.Link = "/task/" + t.ID
 	r.StatusLabel, _ = statusStyle(t.Status)
 	r.StatusClass = statusClass(t.Status)
 	r.Running = t.Status == "running" || t.Status == "starting"
@@ -168,6 +170,8 @@ func (s *webServer) dashboard(snap *Snapshot) dashData {
 	for _, t := range dashTasks(snap) {
 		d.Rows = append(d.Rows, makeRow(snap, t))
 	}
+	// the lead's remote jobs, as "agent@node", after the local active tasks' place in the table
+	d.Rows = append(remoteRows(s.cfg.busDir), d.Rows...)
 	return d
 }
 

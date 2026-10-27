@@ -1,5 +1,5 @@
 {{define "task-row"}}<tr class="{{.StatusClass}}">
-  <td class="name">{{if .Running}}<button type="button" class="icon stop" hx-post="/task/{{.ID}}/stop" hx-swap="none" hx-confirm="Stop {{.Name}}? Its current run is cut short; a team member only sleeps and can be woken again." title="Stop this run">■</button> {{end}}<a href="/task/{{.ID}}">{{.Name}}</a>{{if .Team}}{{if .Lead}}<span class="lead" title="coordinator">★</span>{{else}}<span class="dim">·</span>{{end}}{{end}}</td>
+  <td class="name">{{if .Running}}<button type="button" class="icon stop" hx-post="/task/{{.ID}}/stop" hx-swap="none" hx-confirm="Stop {{.Name}}? Its current run is cut short; a team member only sleeps and can be woken again." title="Stop this run">■</button> {{end}}<a href="{{.Link}}">{{.Name}}</a>{{if .Team}}{{if .Lead}}<span class="lead" title="coordinator">★</span>{{else}}<span class="dim">·</span>{{end}}{{end}}</td>
   <td class="status"><span class="st {{.StatusClass}}">{{.StatusLabel}}</span></td>
   <td class="since num">{{.Since}}</td>
   <td class="repo hide-narrow">{{.Repo}}</td>

@@ -1,0 +1,14 @@
+{{define "content"}}{{with .Data}}
+<p><span class="tag">{{.J.State}}</span> on <b>{{.J.Node}}</b>{{if .Offline}} <span class="st-failed">node offline</span>{{end}} · agent <b>{{.Agent}}</b>{{if .Activity.Stage}} · {{.Activity.Stage}}{{end}}</p>
+<table class="kv">
+<tr><th>Repository</th><td>{{.J.Request.Repository}}</td></tr>
+<tr><th>Requested</th><td>{{.J.Request.Selector}}{{range .J.Request.Requires}} <code>{{.}}</code>{{end}}</td></tr>
+<tr><th>Branch</th><td>{{if .J.Branch}}<code>{{.J.Branch}}</code>{{else}}<span class="dim">—</span>{{end}}</td></tr>
+{{if .J.PRURL}}<tr><th>PR</th><td><a href="{{.J.PRURL}}">{{.J.PRURL}}</a></td></tr>{{end}}
+<tr><th>On the node</th><td>{{if .NodeURL}}<a href="{{.NodeURL}}">the task on {{.J.Node}}</a>{{else}}<span class="dim">no web address for {{.J.Node}} (AGENT_WEB_URL)</span>{{end}}</td></tr>
+</table>
+<h2>Latest activity</h2>
+{{if .Activity.Lines}}<ol class="events">{{range .Activity.Lines}}<li>{{.}}</li>{{end}}</ol>{{else}}<p class="dim">Nothing reported yet.</p>{{end}}
+{{if .J.Result}}<h2>Result</h2><pre class="doc">{{.J.Result}}</pre>{{end}}
+<p><a class="btn" href="/jobs">All jobs</a></p>
+{{end}}{{end}}

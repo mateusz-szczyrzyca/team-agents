@@ -79,10 +79,86 @@ type webJobNode struct {
 
 // webJobHeartbeat contains the fields the lead may expose to a browser.
 type webJobHeartbeat struct {
-	Node         string        // authenticated node name
-	Capabilities []string      // capabilities declared by the operator
-	FreeAgents   []webJobAgent // agents free at the last accepted heartbeat
-	WebURL       string        // operator-supplied address of the node's web interface
+	Node         string           // authenticated node name
+	Capabilities []string         // capabilities declared by the operator
+	FreeAgents   []webJobAgent    // agents free at the last accepted heartbeat
+	WebURL       string           // operator-supplied address of the node's web interface
+	Activity     []webJobActivity // what the node's running jobs are doing (kept by the lead for its own jobs)
+}
+
+// webJobActivity is what one remote job is doing on its node.
+type webJobActivity struct {
+	ID    string   // the job
+	Agent string   // the node's agent working on it
+	Stage string   // the task's status on the node
+	Lines []string // its latest activity lines, oldest first
+}
+
+// activityOf is the latest activity a node reported for a job (zero value: none).
+func (s *webJobsSnapshot) activityOf(j webJob) webJobActivity {
+	for _, a := range s.Nodes[j.Node].Heartbeat.Activity {
+		if a.ID == j.Request.ID {
+			return a
+		}
+	}
+	return webJobActivity{}
+}
+
+// jobAgent names who works on a job: the node's agent if the node said, else the requested selector.
+func jobAgent(a webJobActivity, j webJob) string {
+	if a.Agent != "" {
+		return a.Agent
+	}
+	return j.Request.Selector
+}
+
+// remoteRows are the dashboard rows of the lead's remote jobs that are not finished: "agent@node", the job's state
+// and what it is doing, linked to its page. Nil when this installation is not a lead.
+func remoteRows(busDir string) []taskRow {
+	snap, err := readWebJobs(busDir)
+	if err != nil || snap == nil {
+		return nil // no lead here, or no readable registry: the dashboard shows the local tasks only
+	}
+	var rows []taskRow
+	for _, j := range snap.Jobs {
+		if j.Node == "" || j.State == "done" || j.State == "failed" || j.State == "stopped" {
+			continue
+		}
+		a := snap.activityOf(j)
+		r := taskRow{ID: j.Request.ID, Name: jobAgent(a, j) + "@" + j.Node, Status: j.State, Repo: j.Request.Repository,
+			Link: "/jobs/" + url.PathEscape(j.Request.ID)}
+		r.StatusLabel, r.StatusClass = j.State, statusClass(j.State)
+		if n := len(a.Lines); n > 0 {
+			r.Last = a.Lines[n-1]
+		} else if a.Stage != "" {
+			r.Last = a.Stage
+		}
+		rows = append(rows, r)
+	}
+	return rows
+}
+
+// viewJob (GET /jobs/{id}) is one remote job: its fields, its latest activity and a link to its task on the node.
+func (s *webServer) viewJob(w http.ResponseWriter, r *http.Request) {
+	snap, err := readWebJobs(s.cfg.busDir)
+	if err != nil {
+		viewError(s, w, r, err)
+		return
+	}
+	id := r.PathValue("id")
+	for _, j := range snap.Jobs {
+		if j.Request.ID != id {
+			continue
+		}
+		node := snap.Nodes[j.Node]
+		a := snap.activityOf(j)
+		j.PRURL = safeJobURL(j.PRURL)
+		s.render(w, r, http.StatusOK, "job", "Job "+id, s.snapshot(), map[string]any{
+			"J": j, "Agent": jobAgent(a, j), "Activity": a, "NodeURL": jobNodeURL(node.Heartbeat.WebURL, j.TaskID),
+			"Offline": j.Node != "" && webNodeOffline(node, time.Now(), s.cfg.nodeTTL)})
+		return
+	}
+	viewError(s, w, r, webErr(ViewNotFound, nil, "no job %q", id))
 }
 
 // webJobAgent identifies one configured free agent on the node.
