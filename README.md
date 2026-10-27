@@ -707,7 +707,7 @@ and the node's web interface when configured. Free agents link to their remote a
 hides offline nodes whose last heartbeat is more than 24 hours old; **Show all** restores them. Nodes never
 seen stay visible. Online is green, offline red, and unknown grey. Agents lists
 local and remote agents together and links to `/agents/<agent>` or `/agents/<agent>@<node>` for configuration
-and current/recent work. Completed (`done`) work is blue.
+and current/recent work. Completed (`done`) work is blue. Remote agent pages put current jobs before finished history; agent availability is shown as offline when the node heartbeat expires.
 
 The heartbeat's optional `Agents` list declares each configured agent's name, CLI type, model and tier;
 `FreeAgents` still controls routing. The new inventory is limited to `128` agents, with model names of at most
