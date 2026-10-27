@@ -44,6 +44,6 @@ install_here() {
 
 @test "agents.conf documents LEAD_URL, NODE_POLL_SEC and INSTANCE_CAPABILITIES with their defaults" {
   grep -qE '^LEAD_URL=""' "$REPO_ROOT/config/agents.conf"
-  grep -qE '^NODE_POLL_SEC=10$' "$REPO_ROOT/config/agents.conf"
+  grep -qE '^NODE_POLL_SEC=5$' "$REPO_ROOT/config/agents.conf"
   grep -qE '^INSTANCE_CAPABILITIES=\(\)' "$REPO_ROOT/config/agents.conf"
 }
