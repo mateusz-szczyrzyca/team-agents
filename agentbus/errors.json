@@ -1034,6 +1034,16 @@
      "name": "InvalidMember",
      "class": "InvalidArgument",
      "doc": "a member job needs both a team and a member named <selector>@<target>"
+    },
+    {
+     "name": "InvalidRepoURL",
+     "class": "InvalidArgument",
+     "doc": "the optional repository link is not a canonical GitHub HTTPS URL"
+    },
+    {
+     "name": "InvalidRequesterTask",
+     "class": "InvalidArgument",
+     "doc": "the optional requester task is not a logical identifier"
     }
    ]
   },

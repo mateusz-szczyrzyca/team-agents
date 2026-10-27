@@ -46,17 +46,19 @@ type JobTransition struct {
 
 // JobRequest is a submission, as the lead receives it. Every field is compared on resubmission.
 type JobRequest struct {
-	ID         string   // submitter-chosen idempotency key, validated before use
-	Repository string   // logical repository name, resolved through the node's NODE_REPOS
-	BaseRef    string   // git ref name, validated before any git invocation
-	BaseSHA    string   // exact commit (40 or 64 hex digits, either case); optional for "human", required for an agent
-	Requires   []string // capabilities the node must declare, all of them
-	Selector   string   // a tier (normal or worker) or one configured agent name
-	Target     string   // optional node name the job is pinned to; empty means any node
-	Task       string   // task text, at most 65536 bytes
-	Requester  string   // "human" or "<agent>@<instance>", both parts valid identifiers; routing data only
-	Team       string   // optional: the team on the lead this job is a member's work for (with Member)
-	Member     string   // optional: the member's name in that team, "<Selector>@<Target>"
+	RepoURL       string   // optional canonical https://github.com/<owner>/<repo> link, data only
+	RequesterTask string   // optional delegating member task ID on the lead, data only
+	ID            string   // submitter-chosen idempotency key, validated before use
+	Repository    string   // logical repository name, resolved through the node's NODE_REPOS
+	BaseRef       string   // git ref name, validated before any git invocation
+	BaseSHA       string   // exact commit (40 or 64 hex digits, either case); optional for "human", required for an agent
+	Requires      []string // capabilities the node must declare, all of them
+	Selector      string   // a tier (normal or worker) or one configured agent name
+	Target        string   // optional node name the job is pinned to; empty means any node
+	Task          string   // task text, at most 65536 bytes
+	Requester     string   // "human" or "<agent>@<instance>", both parts valid identifiers; routing data only
+	Team          string   // optional: the team on the lead this job is a member's work for (with Member)
+	Member        string   // optional: the member's name in that team, "<Selector>@<Target>"
 }
 
 // Job is a registered job as the registry holds it.

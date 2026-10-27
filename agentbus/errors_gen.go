@@ -1864,16 +1864,18 @@ func (c LeadHeartbeatCause) String() string { return c.info().name }
 type LeadSubmitCause int
 
 const (
-	LeadSubmitUnauthorized        LeadSubmitCause = iota // the caller or requester is not authorized [Permission]
-	LeadSubmitMissingArgument                            // a required job field is missing [InvalidArgument]
-	LeadSubmitInvalidID                                  // the submitter-chosen job ID is invalid [InvalidArgument]
-	LeadSubmitInvalidBase                                // the base ref or exact commit is invalid [InvalidArgument]
-	LeadSubmitInvalidCapabilities                        // a required capability is invalid [InvalidArgument]
-	LeadSubmitTaskTooLarge                               // the task text exceeds its size limit [InvalidArgument]
-	LeadSubmitMalformedBody                              // the submission body is malformed or exceeds its size limit [InvalidArgument]
-	LeadSubmitJobConflict                                // an existing job ID has different submission data [Conflict]
-	LeadSubmitInvalidMember                              // a member job needs both a team and a member named <selector>@<target> [InvalidArgument]
-	LeadSubmitStorage                                    // the shared state or a file could not be read or written [Storage]
+	LeadSubmitUnauthorized         LeadSubmitCause = iota // the caller or requester is not authorized [Permission]
+	LeadSubmitMissingArgument                             // a required job field is missing [InvalidArgument]
+	LeadSubmitInvalidID                                   // the submitter-chosen job ID is invalid [InvalidArgument]
+	LeadSubmitInvalidBase                                 // the base ref or exact commit is invalid [InvalidArgument]
+	LeadSubmitInvalidCapabilities                         // a required capability is invalid [InvalidArgument]
+	LeadSubmitTaskTooLarge                                // the task text exceeds its size limit [InvalidArgument]
+	LeadSubmitMalformedBody                               // the submission body is malformed or exceeds its size limit [InvalidArgument]
+	LeadSubmitJobConflict                                 // an existing job ID has different submission data [Conflict]
+	LeadSubmitInvalidMember                               // a member job needs both a team and a member named <selector>@<target> [InvalidArgument]
+	LeadSubmitInvalidRepoURL                              // the optional repository link is not a canonical GitHub HTTPS URL [InvalidArgument]
+	LeadSubmitInvalidRequesterTask                        // the optional requester task is not a logical identifier [InvalidArgument]
+	LeadSubmitStorage                                     // the shared state or a file could not be read or written [Storage]
 )
 
 // LeadSubmitError is the error of submission of a remote job.
@@ -1890,6 +1892,8 @@ var leadSubmitCauses = [...]causeInfo{
 	{"MalformedBody", ClassInvalidArgument},
 	{"JobConflict", ClassConflict},
 	{"InvalidMember", ClassInvalidArgument},
+	{"InvalidRepoURL", ClassInvalidArgument},
+	{"InvalidRequesterTask", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 

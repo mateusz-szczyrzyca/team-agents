@@ -46,7 +46,7 @@ func remoteHelpers(b *Bus, capabilities []string) ([]*Helper, *HelperRemoteListE
 }
 
 // prepareRemoteHelper verifies the pushed snapshot and persists a retry-stable submission outside network calls.
-func prepareRemoteHelper(b *Bus, id int64, instance string) (JobRequest, *HelperRemotePrepareError) {
+func prepareRemoteHelper(b *Bus, id int64, instance string, repoURL ...string) (JobRequest, *HelperRemotePrepareError) {
 	var h Helper // owned snapshot; Git never runs with bus.lock held
 	if err := transact(b, HelperRemotePrepareStorage, func(st *State) *HelperRemotePrepareError {
 		current := st.Helpers[helperKey(id)]
