@@ -423,3 +423,13 @@ each step; a failed step is a bug to report, not a reason to skip the rest.
 4. Lead restart during a job: restart `agentlead.service` on the lead while a job runs. After it is back, the job
    completes and its state reaches the Jobs view without duplicates.
 5. Web links: the node and PR links from the Jobs view open in a new navigation, not inside the htmx page.
+
+## Remote team members (a later change)
+
+A node's agent can be a member of a team on the lead, named `<agent>@<node>` — a deliberate reversal of "no
+`agent@instance` names inside teams" in the original decisions, decided by the human. It keeps the rest of the
+design: the team lives only on the lead's bus; the node relays the member's MCP calls (`POST /v1/mcp`, one
+generic relay, the lead running them with `Server.handle` — no per-tool reimplementation); the identity comes from
+the lead's grant for that node, never from the request; nodes still pull (a wake rides on the heartbeat reply);
+an unreachable lead is a tool error and the member sleeps (no queued calls, no outage accounting). The coordinator
+is always local. See README "Several instances".

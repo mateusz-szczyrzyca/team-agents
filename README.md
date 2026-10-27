@@ -703,6 +703,24 @@ node sends its latest activity lines with every heartbeat), like a local task; i
 latest activity, the result and — when the node has `AGENT_WEB_URL` — a link to the task on the node. Questions of
 a job stay on its node. The views Jobs and Instances list every job and node.
 
+**Remote team members.** A node's agent can be a full member of a team on the lead — on its board, in its
+messages, consultations and quiz:
+
+```bash
+agent run --team codex-1,gemini-1,gemini-2@rpi5-x "…"   # on the lead, in the repository
+```
+
+- The team lives on the lead's bus, the only one. The member works on its node; its node relays every MCP call to
+  the lead (`POST /v1/mcp`), which runs it with the same code as a local member's, as `gemini-2@rpi5-x`, and only
+  if it comes from `rpi5-x`.
+- The member starts from the base on `origin` (push it first) and pushes its branch, which its team records.
+- It sleeps and is woken like a local member: a message for it reaches its node with the next heartbeat
+  (`NODE_POLL_SEC`).
+- The coordinator is always local; a team needs at least one local agent outside `WORKER_AGENTS`. A remote member
+  does not get `reserve`/`release` (the lead's resources), `claim_lead`/`handover_lead`, `delegate`,
+  `request_investigation` or `wait_for_message` — the coordinator delegates and asks for investigations for it.
+- When the lead cannot be reached, the member's tool calls say so and it ends its turn as `SLEEPING`.
+
 **When something does not work:**
 
 - `heartbeat identity "a" differs from its socket peer "b"` in the node's log: set `INSTANCE_NAME` to the name the
