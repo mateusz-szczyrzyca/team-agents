@@ -54,21 +54,30 @@ type webJobsSnapshot struct {
 
 // webJob is a read-only subset of a persisted lead job; unknown fields remain compatible.
 type webJob struct {
-	Request webJobRequest // public request identity and requested agent selector
-	State   string        // lifecycle label, displayed without executing state transitions
-	Node    string        // assigned node, empty while queued
-	TaskID  string        // task ID on the assigned node
-	Branch  string        // branch pushed by the task
-	PRURL   string        // optional pull request URL, sanitized before use as a link
-	Result  string        // final summary or provisioning diagnostic
+	Request webJobRequest      // public request identity and requested agent selector
+	State   string             // lifecycle label, displayed without executing state transitions
+	Node    string             // assigned node, empty while queued
+	TaskID  string             // task ID on the assigned node
+	Branch  string             // branch pushed by the task
+	PRURL   string             // optional pull request URL, sanitized before use as a link
+	Result  string             // final summary or provisioning diagnostic
+	History []webJobTransition // state transitions recorded by the lead
+}
+
+// webJobTransition records when a job entered a state.
+type webJobTransition struct {
+	State string    // lifecycle state
+	At    time.Time // timestamp recorded by the lead
 }
 
 // webJobRequest holds public submission fields useful when scanning jobs.
 type webJobRequest struct {
-	ID         string   // submitter-chosen job ID
-	Repository string   // logical repository name
-	Selector   string   // requested configured agent name or tier
-	Requires   []string // required capabilities
+	ID            string   // submitter-chosen job ID
+	Repository    string   // logical repository name
+	Selector      string   // requested configured agent name or tier
+	Requires      []string // required capabilities
+	RepoURL       string   // canonical GitHub repository URL (https://github.com/<owner>/<repo>)
+	RequesterTask string   // optional task ID of the requesting agent on the lead
 }
 
 // webJobNode is the read-only declaration and trusted heartbeat receipt time.
@@ -77,10 +86,19 @@ type webJobNode struct {
 	LastSeen  time.Time       // precise lead receipt time in RFC3339Nano
 }
 
+// webNodeAgent identifies one configured agent declared by a node.
+type webNodeAgent struct {
+	Name  string // configured agent name
+	Type  string // CLI type
+	Model string // model name
+	Tier  string // declared tier
+}
+
 // webJobHeartbeat contains the fields the lead may expose to a browser.
 type webJobHeartbeat struct {
 	Node         string           // authenticated node name
 	Capabilities []string         // capabilities declared by the operator
+	Agents       []webNodeAgent   // all configured agents declared by the node
 	FreeAgents   []webJobAgent    // agents free at the last accepted heartbeat
 	WebURL       string           // operator-supplied address of the node's web interface
 	Activity     []webJobActivity // what the node's running jobs are doing (kept by the lead for its own jobs)

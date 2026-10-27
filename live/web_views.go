@@ -1287,3 +1287,13 @@ func str(rec map[string]any, k string) string {
 	}
 	return ""
 }
+
+// viewInstance (GET /instances/{node}) shows details of one registered node.
+func (s *webServer) viewInstance(w http.ResponseWriter, r *http.Request) {
+	http.NotFound(w, r)
+}
+
+// viewAgent (GET /agents/{id}) shows details of one local or remote agent.
+func (s *webServer) viewAgent(w http.ResponseWriter, r *http.Request) {
+	http.NotFound(w, r)
+}
