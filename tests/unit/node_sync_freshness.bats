@@ -3,6 +3,7 @@
 
 load helpers
 
+# setup_bus_stub intercepts node-request calls to /v1/heartbeat and /v1/sync.
 setup_bus_stub() {
   local real_bus="$HOME/.local/bin/agentbus"
   mv "$real_bus" "$HOME/.local/bin/real-agentbus"
@@ -41,6 +42,7 @@ STUB
   chmod +x "$real_bus"
 }
 
+# setup_test_env initializes configuration, bus state, and task directory for a job task.
 setup_test_env() {
   local tid=$1 jid=$2
   setup_bus_stub
@@ -67,10 +69,12 @@ EOF
   [ "$(< "$STUB_HOME/sync-count")" -eq 1 ]
   [ -z "$(jq -r '.Metadata.FINISHED // empty' "$STUB_HOME/sync-1.json")" ]
 
-  # Poll 2 must not fast-skip; pre-ACK mutation must be uploaded
+  # Poll 2 must not fast-skip; pre-ACK mutation (both FINISHED and final activity) must be uploaded
   agent node --once
   [ "$(< "$STUB_HOME/sync-count")" -eq 2 ]
   [ "$(jq -r '.Metadata.FINISHED // empty' "$STUB_HOME/sync-2.json")" = "2026-10-28T12:00:00" ]
+  activity_content=$(jq -r '.Files[] | select(.Name == "activity.jsonl") | .Content' "$STUB_HOME/sync-2.json")
+  [[ "$activity_content" == *"finished"* ]]
 
   # Poll 3 fast-skips unchanged terminal task
   agent node --once
@@ -85,12 +89,11 @@ EOF
 
   cat > "$HOME/.local/bin/mktemp" <<'SPY'
 #!/usr/bin/env bash
-target=$(/usr/bin/mktemp "$@")
 if [[ ${1:-} == *"sync_manifest.json.tmp"* ]] && [[ -f "$STUB_HOME/mutate-on-manifest-mktemp" ]]; then
   echo "late artifact" > "$AGENTS_HOME/tasks/T2/final.md"
   rm -f "$STUB_HOME/mutate-on-manifest-mktemp"
 fi
-echo "$target"
+exec /usr/bin/mktemp "$@"
 SPY
   chmod +x "$HOME/.local/bin/mktemp"
   touch "$STUB_HOME/mutate-on-manifest-mktemp"
