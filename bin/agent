@@ -4423,6 +4423,7 @@ node_read_meta() {
         log_warn node_sync_run_start_failed "task=$tid" "stage=temporary_file"
       fi
     fi
+    local STATUS="" RUN="" AGENT="" TYPE="" MODEL="" NOTE="" PAUSE_REASON="" WAKE_AT="" CREATED="" FINISHED="" JOB_ID="" RESTARTS=""
     # shellcheck source=/dev/null
     source "$meta_f"
     local job_id=${JOB_ID:-$jid}
