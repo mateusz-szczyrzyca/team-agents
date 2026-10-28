@@ -200,8 +200,8 @@ JOB_ID=job-1
 RESTARTS=0
 EOF
 
-  # Create 8 prompt files of 250 KiB each (forcing chunked requests)
-  for i in $(seq 1 8); do
+  # Create 9 prompt files of 250 KiB each (forcing chunked requests > 2 MiB aggregate)
+  for i in $(seq 1 9); do
     head -c 256000 < /dev/zero | tr '\0' 'A' > "$AGENTS_HOME/tasks/T1/prompt-$i.md"
   done
 
@@ -211,9 +211,10 @@ EOF
   run agent node --once
   [ "$status" -eq 0 ]
 
-  # Exactly 1 request was accepted
+  # Exactly 1 request was accepted and a second was attempted and failed
   [ -f "$STUB_HOME/sync-requests.jsonl" ]
   [ "$(wc -l < "$STUB_HOME/sync-requests.jsonl")" -eq 1 ]
+  [ "$(< "$STUB_HOME/sync-req-count")" -ge 2 ]
 
   first_file=$(head -n 1 "$STUB_HOME/sync-requests.jsonl" | jq -r '.Files[0].Name // empty')
   [ -n "$first_file" ]
@@ -256,7 +257,8 @@ EOF
   mkdir -p "$AGENTS_HOME/tasks/T1/sync_manifest.json"
 
   run agent node --once
-  # Must still exit cleanly and execute heartbeat
+  # Must still exit cleanly, log warning and execute heartbeat
   [ "$status" -eq 0 ]
   [ -f "$STUB_HOME/last-heartbeat.json" ]
+  grep -q '"event":"node_sync_save_failed"' "$AGENTS_HOME/logs/agent.jsonl"
 }
