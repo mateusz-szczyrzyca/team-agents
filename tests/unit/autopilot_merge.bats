@@ -46,7 +46,9 @@ pair_setup() {
   for _ in $(seq 1 300); do [ "$(leads | wc -l)" -ge 2 ] && break; sleep 0.2; done
   second=$(leads | sed -n 2p)
   [ -n "$second" ]
-  wait_status "$second" 'starting|running|sleeping|done'   # created in full (a directory comes before its fields)
+  # a resume makes the task's directory and its text before its meta.env: wait for that, then for its start
+  for _ in $(seq 1 300); do grep -q '^STATUS=' "$AGENTS_HOME/tasks/$second/meta.env" 2> /dev/null && break; sleep 0.2; done   # not there yet: polled again
+  wait_status "$second" 'starting|running|sleeping|done' 120
   [ "$(meta "$second" AUTOPILOT)" = 1 ]
   agent team "$(meta "$second" TEAM)" --close > /dev/null   # the next round's work is not part of this test
   sleep 3
