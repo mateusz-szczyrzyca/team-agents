@@ -365,3 +365,25 @@ wait_member_state() {
   done
   sleep 5
 }
+
+@test "a job whose task is paused on its node can be stopped (no unit runs it)" {
+  LEAD_PORT=$(free_port)
+  setup_node
+  start_lead
+  start_node
+  echo '{"solo": {"new": "capacity"}}' > "$NODE/scenario.json"
+  submit_job j-pause team-agents '["hw:rp2350"]' solo
+  for _ in $(seq 1 150); do   # the provider is overloaded: the task pauses
+    [[ -f "$(node_task_meta solo)" ]] && grep -qx 'STATUS=paused' "$(node_task_meta solo)" && break
+    sleep 0.2
+  done
+  grep -qx 'STATUS=paused' "$(node_task_meta solo)"
+  local pids=("$NODE"/units/agent-*-r1.service.pid)
+  for _ in $(seq 1 100); do   # its runner has ended: no unit runs the paused task (as hours after a pause)
+    kill -0 "$(cat "${pids[0]}")" 2> /dev/null || break   # "no such process" is the answer waited for
+    sleep 0.1
+  done
+  agent jobs --cancel j-pause
+  wait_job j-pause 'stopped' 20
+  grep -qx 'STATUS=stopped' "$(node_task_meta solo)"
+}
