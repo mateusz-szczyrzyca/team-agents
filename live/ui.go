@@ -330,6 +330,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setFlash("this task is not running")
 			return m, nil
 		}
+		if t.Node != "" {
+			m.setFlash("mirrored task cannot be stopped from lead")
+			return m, nil
+		}
 		m.mode, m.stopping = modeConfirmStop, t.ID
 	case "m", "M":
 		m.target = "all"
