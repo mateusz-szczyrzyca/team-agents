@@ -53,6 +53,7 @@ setup_test_env() {
 {"jobs":{"$jid":{"assignment":1,"task_id":"$tid","launched":true,"state":"done"}},"outbox":[]}
 EOF
   printf 'STATUS=done\nTYPE=claude\nMODEL=test\n' > "$AGENTS_HOME/tasks/$tid/meta.env"
+  unset AGENT
 }
 
 @test "M3: concurrent update before sync acknowledgement is uploaded on next poll" {
@@ -112,3 +113,15 @@ SPY
   agent node --once
   [ "$(< "$STUB_HOME/sync-count")" -eq 1 ]
 }
+
+@test "M4: ambient runner environment variables do not leak into task metadata" {
+  setup_test_env T3 job-3
+  cat > "$AGENTS_HOME/tasks/T3/sync_manifest.json" <<'EOF'
+{"metadata":{"STATUS":"done","TYPE":"claude","MODEL":"test","JOB_ID":"job-3","RESTARTS":"0"},"files":{}}
+EOF
+
+  AGENT=1 STATUS=ambient TYPE=ambient agent node --once
+  [ ! -f "$STUB_HOME/sync-count" ]
+  [ "$(jq -r '.complete // false' "$AGENTS_HOME/tasks/T3/sync_manifest.json")" = "true" ]
+}
+
