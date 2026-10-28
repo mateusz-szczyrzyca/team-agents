@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -106,4 +108,35 @@ func TestLogsViewWithNodeColumnAndFilter(t *testing.T) {
 		t.Errorf("GET /logs?node=local should not contain remote log entry remote_warn")
 	}
 }
+
+// TestMirroredTaskLiveSSE verifies that SSE stream /events/task/<id>@<node>
+// streams new activity entries appended to the mirror's activity.jsonl.
+func TestMirroredTaskLiveSSE(t *testing.T) {
+	home := setupMirroredTaskFixture(t)
+	_, ts := testServer(t, home)
+
+	actPath := filepath.Join(home, "bus", "remote", "node-a", "T-rem-1", "activity.jsonl")
+	st, err := os.Stat(actPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	br := openStream(t, ts, fmt.Sprintf("/events/task/T-rem-1@node-a?offset=%d", st.Size()))
+
+	f, err := os.OpenFile(actPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"ts":"2026-10-28 12:00:15","k":"text","t":"live update received"}` + "\n"); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	got := readEvent(t, br, "act")
+	if !strings.Contains(got, "live update received") {
+		t.Fatalf("expected SSE activity event with 'live update received', got: %q", got)
+	}
+}
+
 
