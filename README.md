@@ -740,13 +740,20 @@ together, so retries repair the log view without appending an identical accepted
 `lead_sync_rejected` with their operation cause. Node acknowledgements emit `node_sync_accepted`;
 transport and state-write failures emit `node_sync_failed`, `node_sync_invalid_reply`,
 `node_sync_payload_oversized`, `node_sync_save_failed`, `node_sync_cleanup_failed` or
-`node_sync_run_start_failed` or `node_sync_artifact_failed`. Invalid local data emits `node_sync_manifest_invalid`,
+`node_sync_run_start_failed`, `node_sync_artifact_failed` or `node_sync_scan_failed`. Invalid local data emits `node_sync_manifest_invalid`,
 `node_sync_cursor_invalid`, `node_sync_jobs_invalid` or `node_sync_log_malformed`; oversized records emit
 `node_sync_log_oversized` and are skipped so the cursor can progress.
 
-The node saves accepted metadata and file hashes in each task directory, and its log cursors on disk. Node-wide logs wait for a sync of an active or retained job;
-a failed sync logs a warning and retries on the next poll without stopping heartbeat delivery. Upgrade the
+The node saves accepted metadata and file hashes in each task directory, and its log cursors on disk.
+Scanned out-of-scope log records advance the cursor even when no upload is needed. Unchanged, fully synced
+terminal tasks skip artifact reads; later file changes are synced again, and new node/job logs still travel.
+A job refused as missing or unauthorized becomes obsolete locally and leaves the log scope; task IDs match
+exactly. Node-wide logs wait for a sync of an active or retained job; other failed syncs log a warning and
+retry on the next poll without stopping heartbeat delivery. Upgrade the
 lead before the node: the new endpoint is additive, and existing `jobs.json` files keep loading unchanged.
+For `agentbus node-request --path /v1/sync`, HTTP `400` is `NodeClientInvalidArgument` (exit `2`),
+so invalid log scope does not obsolete a valid assignment. Assignment rejections remain
+`NodeClientRejected` (exit `5`); other routes keep their existing rejection semantics.
 The mirror is storage only in this round: the web still shows heartbeat activity; mirror task tabs and node
 log views arrive in the next round. Questions of a job are still answered on its node.
 A lead with no nodes has no remote agent rows.

@@ -138,6 +138,11 @@ func nodeRequest(cfg nodeRequestConfig, input io.Reader) ([]byte, *NodeClientErr
 	if response.StatusCode >= 500 {
 		return nil, opErr(NodeClientServerError, "lead HTTP %d: %.1000s", response.StatusCode, out)
 	}
+	// Invalid sync data must remain retryable: another retained job's expired log
+	// scope can invalidate this batch without invalidating the submitting assignment.
+	if cfg.path == "/v1/sync" && response.StatusCode == http.StatusBadRequest {
+		return nil, opErr(NodeClientInvalidArgument, "lead rejected sync data: %.1000s", out)
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, opErr(NodeClientRejected, "lead HTTP %d: %.1000s", response.StatusCode, out)
 	}
