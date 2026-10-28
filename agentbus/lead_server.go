@@ -58,6 +58,21 @@ func runLead(ctx context.Context, cfg leadConfig) *LeadServeError {
 			stopped <- nil
 		}()
 	}
+	go func() { // remote members whose nodes stay away are put out of their teams (they may come back)
+		absent := &leadAPI{bus: &Bus{dir: cfg.dir}, ttl: cfg.ttl}
+		tick := time.NewTicker(30 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-base.Done():
+				return
+			case now := <-tick.C:
+				if err := absent.checkAbsentMembers(now, cfg.grace); err != nil {
+					warnSideEffect("check absent remote members", err)
+				}
+			}
+		}
+	}()
 	logInfo(LogLeadListening, "node", cfg.node, "listen", cfg.listen.String())
 	var failure *LeadServeError // first failure remains primary; cleanup failures are logged as side effects
 	remaining := len(servers)

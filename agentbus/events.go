@@ -525,6 +525,7 @@ const (
 	NoticeHelperResult       ScriptNotice = "helper_result"       // a worker request finished (result to the requester)
 	NoticeHelperStartFailure ScriptNotice = "helper_start_failed" // a worker request could not be started
 	NoticeMemberPaused       ScriptNotice = "member_paused"       // a member is paused (quota or wake-loop guard) until a given time
+	NoticeMemberBack         ScriptNotice = "member_back"         // a remote member is back after its node's restart or absence
 	NoticeMemberOut          ScriptNotice = "member_out"          // a member is out (failed, dead runner): its items are back on the board
 )
 
@@ -533,7 +534,7 @@ func (n ScriptNotice) Valid() bool {
 	switch n {
 	case NoticeMemberFinished, NoticeMemberFailed, NoticeMemberStopped, NoticeMemberQuestions, NoticeMemberNoStatus,
 		NoticeTeamStuck, NoticeWorkerHung, NoticeAgentHung, NoticeCoordinatorHung, NoticeHelperResult, NoticeHelperStartFailure,
-		NoticeMemberPaused, NoticeMemberOut:
+		NoticeMemberPaused, NoticeMemberOut, NoticeMemberBack:
 		return true
 	}
 	return false

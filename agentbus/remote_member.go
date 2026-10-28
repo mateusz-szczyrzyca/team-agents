@@ -179,6 +179,12 @@ func (a *leadAPI) memberActivity(node string, act []JobActivity) ([]string, *Lea
 			continue
 		}
 		stage, reported := stages[m.Job]
+		if reported && (m.Out || (stage == "interrupted" && !m.Wake)) { // back after a restart or an absence
+			if err := a.memberBack(m); err != nil {
+				return nil, err
+			}
+			m.Out, m.Wake = false, true
+		}
 		if reported {
 			if err := a.applyMemberStage(m, stage); err != nil {
 				return nil, err
@@ -287,8 +293,121 @@ func (a *leadAPI) memberJobsChanged(ids []string) {
 
 // checkAbsentMembers puts out of their teams the remote members whose nodes have been away (no heartbeat) longer
 // than grace — through the team's logic, as a failed member — once each; they may come back (memberActivity).
-func (a *leadAPI) checkAbsentMembers(_ time.Time, _ time.Duration) *LeadHeartbeatError {
-	return nil // not implemented yet: restart_test.go comes first
+func (a *leadAPI) checkAbsentMembers(now time.Time, grace time.Duration) *LeadHeartbeatError {
+	if grace <= 0 {
+		return nil // no grace configured: never put out for an absence
+	}
+	type absence struct {
+		m     RemoteMember // the member put out
+		since time.Time    // its node's last heartbeat
+	}
+	var outs []absence
+	err := leadTransaction(a, LeadHeartbeatStorage, "", func(r *leadRegistry, _ Timestamp) *LeadHeartbeatError {
+		for name, m := range r.members {
+			n, seen := r.nodes[m.Node]
+			if m.Out || !seen || now.Sub(n.LastSeen.Time) <= grace {
+				continue
+			}
+			m.Out = true
+			r.members[name] = m
+			outs = append(outs, absence{m, n.LastSeen.Time})
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if len(outs) == 0 {
+		return nil
+	}
+	st, serr := a.bus.load()
+	if serr != nil {
+		return fromStorage(LeadHeartbeatStorage, serr)
+	}
+	for _, o := range outs {
+		t := st.Teams[o.m.Team]
+		if t == nil || t.Done || t.Members[o.m.Member] == nil {
+			continue
+		}
+		team := *t
+		remoteMemberFn(&team, t.Members[o.m.Member].Task, "out", o.m.Branch,
+			fmt.Sprintf("its node %s has been away since %s (longer than %s)", o.m.Node, o.since.Format("15:04"), grace))
+	}
+	return nil
+}
+
+// memberBack takes a remote member back after its node's restart or absence: within the grace its items are still
+// its own; after being put out it rejoins as an active member, its items having gone to others. Either way it is
+// told so and woken (the wake rides on its node's heartbeat replies).
+func (a *leadAPI) memberBack(m RemoteMember) *LeadHeartbeatError {
+	if err := leadTransaction(a, LeadHeartbeatStorage, "", func(r *leadRegistry, _ Timestamp) *LeadHeartbeatError {
+		if cur, ok := r.members[m.Member]; ok {
+			cur.Out, cur.Wake = false, true
+			r.members[m.Member] = cur
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	var team Team   // the member's team, for the hand-over after the commit
+	var task string // its proxy task
+	err := transact(a.bus, CmdTeamSetStorage, func(st *State) *CmdTeamSetError {
+		t := st.Teams[m.Team]
+		if t == nil || t.Done || t.Members[m.Member] == nil {
+			return nil // its team is gone or finished: the team's end stops the member's job
+		}
+		mine, released := memberItems(t, m.Member)
+		var body string
+		if m.Out {
+			if _, err := setMemberState(a.bus, st, m.Team, m.Member, MemberActive); err != nil {
+				return err
+			}
+			team, task = *t, t.Members[m.Member].Task
+			body = fmt.Sprintf("TEAM: your node %s was away too long and you were out of the team; your board items went back to the board (%s). You are back as an available member: check the board and take new work.", m.Node, released)
+		} else {
+			body = fmt.Sprintf("TEAM: your node %s restarted under your last run. Your board items are still yours (%s): finish them.", m.Node, mine)
+		}
+		_, serr := a.bus.post(st, "agentbus", m.Member, EventScript{Notice: NoticeMemberBack, Body: body,
+			Fields: map[string]string{"agent": m.Member, "team": m.Team, "node": m.Node}})
+		return fromStorage(CmdTeamSetStorage, serr)
+	})
+	if err != nil {
+		return opErr(LeadHeartbeatStorage, "cannot take remote member %s back: %v", m.Member, err)
+	}
+	if task != "" { // its proxy task runs again (it was failed when the member was put out)
+		remoteMemberFn(&team, task, "running", m.Branch, "")
+	}
+	return nil
+}
+
+// memberItems lists a member's board items: those it holds, and those it held before they went back to the board
+// (with who holds them now), as text for a message.
+func memberItems(t *Team, member string) (mine, released string) {
+	var held, gone []string
+	ids := make([]string, 0, len(t.Board))
+	for id := range t.Board {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		it := t.Board[id]
+		switch {
+		case it.Assignee == member && it.Status == BoardClaimed:
+			held = append(held, id)
+		case it.Previous == member && it.Assignee != "" && it.Assignee != member:
+			gone = append(gone, id+" now "+it.Assignee+"'s")
+		case it.Previous == member:
+			gone = append(gone, id+" open")
+		}
+	}
+	mine, released = "none", "none"
+	if len(held) > 0 {
+		mine = strings.Join(held, ", ")
+	}
+	if len(gone) > 0 {
+		released = strings.Join(gone, ", ")
+	}
+	return mine, released
 }
 
 // relayMCP is a remote member's MCP server on its node: every JSON-RPC line from the CLI goes to the lead, every

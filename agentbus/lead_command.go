@@ -63,6 +63,7 @@ type leadConfig struct {
 	ttl       time.Duration  // how long a silent node stays online
 	notifyDir string         // directory where completion notification markdown files are written
 	notifyCmd string         // optional delivery command run with the notification file
+	grace     time.Duration  // how long a remote member's node may be away before the member is put out of its team
 }
 
 // leadDevices collects the repeated --allow flag.
@@ -89,6 +90,7 @@ func parseLeadConfig(args []string) (leadConfig, *LeadServeError) {
 	ttl := fs.Duration("ttl", 90*time.Second, "how long a silent node stays online")
 	notifyDir := fs.String("notify-dir", "", "directory where completion notification files are written")
 	notifyCmd := fs.String("notify-cmd", "", "optional delivery command run with the notification file")
+	grace := fs.Duration("member-grace", 10*time.Minute, "how long a remote member's node may be away before the member is put out of its team")
 	if err := fs.Parse(args); err != nil {
 		return leadConfig{}, opErr(LeadServeBadFlags, "%v", err)
 	}
@@ -108,7 +110,7 @@ func parseLeadConfig(args []string) (leadConfig, *LeadServeError) {
 	if *ttl <= 0 {
 		return leadConfig{}, opErr(LeadServeBadFlags, "--ttl %v must be a positive duration, e.g. 90s", *ttl)
 	}
-	return leadConfig{dir: *dir, listen: addr, node: *node, allowed: allow, ttl: *ttl, notifyDir: *notifyDir, notifyCmd: *notifyCmd}, nil
+	return leadConfig{dir: *dir, listen: addr, node: *node, allowed: allow, ttl: *ttl, notifyDir: *notifyDir, notifyCmd: *notifyCmd, grace: *grace}, nil
 }
 
 // leadCancelConfig is the parsed command line of `agentbus lead-cancel`.

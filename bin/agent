@@ -170,6 +170,8 @@ AGENT_WAKE_LOOP_PAUSE_MIN="${AGENT_WAKE_LOOP_PAUSE_MIN:-15}" # how long the guar
 AGENT_QUOTA_PAUSE_MIN="${AGENT_QUOTA_PAUSE_MIN:-30}"
 AGENT_RELEASE_PAUSE_MIN="${AGENT_RELEASE_PAUSE_MIN:-20}"     # a team member paused longer gives its board items back
 AGENT_SUPERVISE_GRACE_SEC="${AGENT_SUPERVISE_GRACE_SEC:-120}" # agent _supervise: a run this young may not have its unit yet
+AGENT_RESTART_MAX="${AGENT_RESTART_MAX:-2}"             # a task goes on after this many restarts of its machine; one more fails it
+AGENT_RESTART_GRACE_MIN="${AGENT_RESTART_GRACE_MIN:-10}" # lead: a remote member whose node is away longer is put out of its team
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_LIMIT_TAIL_LINES="${AGENT_LIMIT_TAIL_LINES:-30}"           # how much of the end of stderr shows a provider limit
 # Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
@@ -1022,7 +1024,7 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
     exit 0
   fi
   if [[ ${REMOTE_TEAM:-} == 1 ]]; then   # this node's member of a team on the lead: the lead woke it
-    if [[ $STATUS == sleeping ]]; then
+    if [[ $STATUS == sleeping || $STATUS == interrupted ]]; then   # interrupted: its machine restarted
       meta_set "$id" WAKE_PENDING 1
       start_runner "$id" resume || log_error resume_failed "task=$id" "reason=a wake from the lead"
     fi
@@ -1407,6 +1409,13 @@ build_prompt() { # id mode qfile next_round
     ((any)) && printf '\n---\n\n'
     R[BAD_STATUS]=$SBOUNCE_PENDING
     render "$PROMPTS/status-bounce.md"
+    printf '\n'
+    any=1
+  fi
+  if [[ -n ${RESTART_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    R[RESTARTED_AT]=$RESTART_PENDING
+    render "$PROMPTS/restart-resume.md"
     printf '\n'
     any=1
   fi
@@ -2196,6 +2205,8 @@ cmd__runner() {
   meta_set "$id" ANSWERS_PENDING ""
   meta_set "$id" INV_PENDING_DELIVERY ""
   meta_set "$id" WAKE_PENDING ""
+  meta_set "$id" RESTART_PENDING ""
+  meta_set "$id" RUN_BOOT "$(boot_id)"   # a later boot ID means its machine restarted under this run
   meta_set "$id" BOUNCE_PENDING ""
   meta_set "$id" QBOUNCE_PENDING ""
   meta_set "$id" SBOUNCE_PENDING ""
@@ -3429,8 +3440,9 @@ member_out() { # id reason — a team member is out of the team's work: its boar
   log_warn member_out "task=$id" "team=$team" "released=$released" "reason=${why:0:200}"
 }
 
-cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running or starting, but no unit is active
-  local d id st run
+cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running or starting, but no unit is active —
+  # unless their machine restarted under the run (restart_interrupted)
+  local d id st run rb
   for d in "$TASKS"/*/; do
     [[ -f $d/meta.env ]] || continue
     id=${d%/}; id=${id##*/}
@@ -3441,6 +3453,11 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
     (($(date +%s) - $(stat -c %Y "$d/meta.env") >= AGENT_SUPERVISE_GRACE_SEC)) || continue   # a fresh run: its unit may come
     run=$(task_field "$id" RUN)
     systemctl --user is-active --quiet "$(unit_name "$id" "$run").service" && continue   # inactive is the case looked for
+    rb=$(task_field "$id" RUN_BOOT)
+    if [[ -n $rb && $rb != "$(boot_id)" ]]; then   # its machine restarted under the run: not a dead runner
+      restart_interrupted "$id"
+      continue
+    fi
     meta_set "$id" STATUS failed
     act "$id" err "✗ the runner died (no running unit) — the task is ended"
     log_warn runner_died "task=$id" "run=$run"
@@ -3489,13 +3506,49 @@ node_stop_doorbell() { # the node daemon ends: so does its doorbell (a coprocess
   fi
 }
 
+boot_id() { # this machine's boot ID (another after each restart); AGENT_BOOT_ID_FILE in tests
+  local f=${AGENT_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
+  if [[ -r $f ]]; then cat "$f"; fi   # none where the system has no boot ID: restarts are not told apart then
+}
+
+restart_interrupted() { # id — a run its machine's restart interrupted: the task goes on, told what happened (a local
+  # task or a job's at once; a remote team member when its lead wakes it), up to AGENT_RESTART_MAX restarts
+  local id=$1 n note
+  n=$(task_field "$id" RESTARTS); n=$(( ${n:-0} + 1 ))
+  meta_set "$id" RESTARTS "$n"
+  if (( n > AGENT_RESTART_MAX )); then
+    note="its machine restarted $n times during this task (AGENT_RESTART_MAX=$AGENT_RESTART_MAX)"
+    meta_set "$id" STATUS failed
+    meta_set "$id" NOTE "$note"
+    act "$id" err "✗ $note — the task is ended"
+    log_warn restart_limit "task=$id" "restarts=$n"
+    if [[ -n $(task_field "$id" TEAM) && $(task_field "$id" REMOTE_TEAM) != 1 ]]; then
+      try team_state_failed bus team-set --dir "$BUS_DIR" --team "$(task_field "$id" TEAM)" --agent "$(task_field "$id" AGENT)" --state done >/dev/null
+      member_out "$id" "$note"
+    fi
+    notify "$id" failed "" "$note"
+    return 0
+  fi
+  meta_set "$id" STATUS interrupted
+  meta_set "$id" RESTART_PENDING "$(date '+%H:%M')"
+  meta_set "$id" NOTE "interrupted by a restart of its machine ($n/$AGENT_RESTART_MAX)"
+  act "$id" info "↻ interrupted by a restart of the machine ($n/$AGENT_RESTART_MAX)"
+  log_warn run_interrupted_by_restart "task=$id" "restarts=$n"
+  [[ $(task_field "$id" REMOTE_TEAM) != 1 ]] || return 0   # its lead decides, and wakes it (memberActivity)
+  start_runner "$id" resume || log_error resume_failed "task=$id" "reason=after a restart of its machine"
+}
+
 cmd__remote_member() { # proxy status branch note — a remote member's change, handed over by the lead's bus: the
   # proxy task's status (what the team's checks read), then the team's logic for it, as after a local member's run
   local id status=${2:?} branch=${3:-} note=${4:-}
   id=$(resolve_id "${1:?}")
   meta_load "$id"
   [[ ${KIND:-} == remote-member ]] || die "task $id is not a remote member's proxy task"
-  case $status in sleeping|running|done|failed|stopped) ;; *) die "unknown remote member status: $status" ;; esac
+  case $status in
+    sleeping|running|done|failed|stopped) ;;
+    out) status=failed ;;   # its node was away longer than the grace: out of its team, as a failed member
+    *) die "unknown remote member status: $status" ;;
+  esac
   [[ -z $branch ]] || meta_set "$id" BRANCH "$branch"
   meta_set "$id" STATUS "$status"
   case $status in done|failed|stopped) meta_set "$id" FINISHED "$(date -Is)" ;; esac
@@ -3605,6 +3658,7 @@ cmd_lead() { # runs the lead's listener in the foreground (agentlead.service run
   [[ -n $LEAD_LISTEN ]] || die "LEAD_LISTEN is not set in agents.conf — a lead needs its Tailscale address, e.g. 100.x.y.z:7780"
   local args=(lead --dir "$BUS_DIR" --listen "$LEAD_LISTEN" --node "$INSTANCE_NAME" --ttl "${NODE_TTL_SEC}s")
   [[ -n ${NOTIFY_DIR:-} ]] && args+=(--notify-dir "$NOTIFY_DIR")
+  args+=(--member-grace "${AGENT_RESTART_GRACE_MIN}m")
   [[ -n ${NOTIFY_CMD:-} ]] && args+=(--notify-cmd "$NOTIFY_CMD")
   local dev
   for dev in $LEAD_NODES; do args+=(--allow "$dev"); done
@@ -3908,7 +3962,7 @@ node_map_state() {
     done) printf done ;;
     failed|hung|excluded) printf failed ;;
     stopped) printf stopped ;;
-    new|starting|running|paused|investigating|sleeping) printf running ;;
+    new|starting|running|paused|investigating|sleeping|interrupted) printf running ;;
     *) die "unknown local task status: $1" ;;
   esac
 }
