@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -227,7 +228,7 @@ func (a *leadAPI) sync(node string, body leadSyncBody) *LeadSyncError {
 			if err := json.Unmarshal(raw, &entry); err != nil {
 				return opErr(LeadSyncInvalidLogs, "invalid structured log: %v", err)
 			}
-			if entry.Level == "warn" || entry.Level == "error" {
+			if entry.Level == strings.ToLower(slog.LevelWarn.String()) || entry.Level == strings.ToLower(slog.LevelError.String()) {
 				continue
 			}
 			owned := false
