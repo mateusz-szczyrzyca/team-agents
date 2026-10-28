@@ -55,6 +55,7 @@ type RemoteMember struct {
 	Branch string // its branch, pushed to origin
 	Job    string // the job that runs it on its node
 	Wake   bool   // a wake request waits for its node (until its task runs)
+	Out    bool   // put out of its team: its node was away longer than the grace (it may come back)
 }
 
 // leadMCPBody is one MCP message of a remote member, relayed by its node.
@@ -282,6 +283,12 @@ func (a *leadAPI) memberJobsChanged(ids []string) {
 			remoteMemberFn(&team, task, string(job.State), job.Branch, trunc(job.Result, 300))
 		}
 	}
+}
+
+// checkAbsentMembers puts out of their teams the remote members whose nodes have been away (no heartbeat) longer
+// than grace — through the team's logic, as a failed member — once each; they may come back (memberActivity).
+func (a *leadAPI) checkAbsentMembers(_ time.Time, _ time.Duration) *LeadHeartbeatError {
+	return nil // not implemented yet: restart_test.go comes first
 }
 
 // relayMCP is a remote member's MCP server on its node: every JSON-RPC line from the CLI goes to the lead, every
