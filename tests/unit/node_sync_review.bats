@@ -351,6 +351,16 @@ EOF
   [ "$valid_jid" = "job-a-valid" ]
   log_task=$(jq -r '.Logs[0].task' "$STUB_HOME/last-valid-sync.json")
   [ "$log_task" = "Tvalid" ]
+
+  # Cleaning the expired task must not prevent its job from being reconciled.
+  rm -r "$AGENTS_HOME/tasks/Tstale"
+  jq '.jobs["job-z-stale"].obsolete=false' "$AGENTS_HOME/bus/node-jobs.json" > "$STUB_HOME/reset-jobs.json"
+  mv "$STUB_HOME/reset-jobs.json" "$AGENTS_HOME/bus/node-jobs.json"
+  rm "$STUB_HOME/last-valid-sync.json"
+  echo '{"level":"info","task":"Tstale","event":"task_discarded"}' >> "$AGENTS_HOME/logs/agent.jsonl"
+  agent node --once
+  [ "$(jq -r '.jobs["job-z-stale"].obsolete' "$AGENTS_HOME/bus/node-jobs.json")" = true ]
+  [ "$(jq -r '.Job' "$STUB_HOME/last-valid-sync.json")" = job-a-valid ]
 }
 
 @test "m3: blank lines in log file advance cursor correctly without re-sending" {
