@@ -764,7 +764,7 @@ cmd_round_size() { # <task> — the size of a task's change and its round limits
 }
 
 last_team_id() { # the newest team of the repository in the current directory (outside one: the newest at all)
-  local root="" m t best=""
+  local root="" m t best="" ; local -A teams=()
   if root=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then   # fails outside a repository
     root=$(dirname "$root")
   fi
@@ -773,7 +773,11 @@ last_team_id() { # the newest team of the repository in the current directory (o
     t=$(sed -n 's/^TEAM=//p' "$m")
     [[ -n $t ]] || continue
     if [[ -n $root && $(sed -n 's/^REPO_ROOT=//p' "$m") != "$root" ]]; then continue; fi
-    if [[ $t > $best ]]; then best=$t; fi
+    teams[$t]=1
+  done
+  for t in $(printf '%s\n' "${!teams[@]}" | sort -r); do
+    # a team the bus does not know was left by a resume that failed: the next older one is meant
+    if bus team-get --dir "$BUS_DIR" --team "$t" >/dev/null 2>&1; then best=$t; break; fi
   done
   printf '%s' "$best"
 }
@@ -1161,6 +1165,11 @@ recent_run_starts() {
   for t in $1; do (( $2 - t < 600 )) && out+=("$t"); done
   out+=("$2")
   printf '%s' "${out[*]}"
+}
+
+wake_loop_applies() { # status — the wake-loop guard watches a local team member whose run ended SLEEPING; a remote
+  # member's work (its messages, its board items) is on the lead's bus, which its node cannot see
+  [[ $1 == sleeping && -n ${TEAM:-} && ${REMOTE_TEAM:-} != 1 ]]
 }
 
 # wake_loop_check id start head0 msgs0 — the wake-loop guard, for a team member whose run ended SLEEPING. When the
@@ -2352,7 +2361,7 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     status=failed; note="unrecognised STATUS: ${fst:-none}"
   fi
   # the wake-loop guard: a member that keeps waking up without doing anything is paused instead of put to sleep
-  if [[ $status == sleeping && -n ${TEAM:-} ]] && pause_secs=$(wake_loop_check "$id" "$run_start" "$run_head0" "$run_msgs0"); then
+  if wake_loop_applies "$status" && pause_secs=$(wake_loop_check "$id" "$run_start" "$run_head0" "$run_msgs0"); then
     status=paused; pause_reason=wake_loop
     note="woken again and again without anything to do (wake-loop guard) — paused until $(date -d "@$(( $(date +%s) + pause_secs ))" '+%H:%M')"
   fi
@@ -2833,6 +2842,8 @@ resume_run() {
     remote_agent_wait_free "$(task_field "$r" AGENT)" 60 \
       || die "remote member $(task_field "$r" AGENT): its agent is still busy on its node — retry in a minute"
   done
+  RESUME_NEW_IDS=(); RESUME_NEW_WT=()   # what this resume makes; removed again if it fails (resume_abandon)
+  trap 'resume_abandon' EXIT
   for r in "${remote_olds[@]}"; do   # node online, agent free, base on origin — before any local task exists
     rtext=$(cat "$TASKS/$r/task.md"
       if [[ -n ${add//[[:space:]]/} ]]; then
@@ -2841,9 +2852,11 @@ resume_run() {
     remote_ids+=("$(remote_member_task "$(task_field "$r" AGENT)" "$rtext" "$new_team" "$(task_field "$r" BASE)" \
       "$(task_field "$r" REPO_ROOT)" "$ts")")
   done
+  RESUME_NEW_IDS+=("${remote_ids[@]}")
   for old in "${olds[@]}"; do
     name=$(task_field "$old" AGENT); root=$(task_field "$old" REPO_ROOT)
     id="$ts-$name"; wt="$AGENTS_HOME/worktrees/$(task_field "$old" REPO_NAME)/$id"
+    RESUME_NEW_IDS+=("$id"); RESUME_NEW_WT[$id]=$wt
     mkdir -p "$(dirname "$wt")"
     # the same branch (with its commits and draft PR) — the old worktree releases it
     carry=""
@@ -2941,6 +2954,7 @@ resume_run() {
     fi
   fi
 
+  trap - EXIT; RESUME_NEW_IDS=()   # made: from here on the tasks run (a runner that fails to start is its own failure)
   unlock_task_ids
   for id in "${ids[@]}"; do start_runner "$id" new || exit 1; done
   log_info resumed "from=${old_team:-$first}" "new_team=$new_team" "tasks=${ids[*]}"
@@ -3502,6 +3516,39 @@ remote_agent_wait_free() { # member seconds — waits until the node offers the 
     sleep 1
   done
   return 1
+}
+
+RESUME_NEW_IDS=()           # the tasks a resume in progress has made (removed again if it fails)
+declare -A RESUME_NEW_WT=() # their worktrees, by task
+
+resume_abandon() { # a resume that failed: its new tasks go — changes it carried are committed (WIP) on their
+  # branch, their worktrees and task files removed, its remote members' jobs and grants ended — so nothing half-made
+  # blocks the branches or --last-team
+  local id wt name
+  ((${#RESUME_NEW_IDS[@]})) || return 0
+  for id in "${RESUME_NEW_IDS[@]}"; do
+    name=${id#*-}; name=${name#*-}   # <date>-<time>-<agent>
+    if [[ -f $TASKS/$id/meta.env && $(task_field "$id" KIND) == remote-member ]]; then
+      "$SELF" jobs --cancel "$(task_field "$id" JOB_ID)" >/dev/null 2>&1 \
+        || log_info remote_member_cancel_skipped "task=$id"   # its job may not have been submitted yet
+      bus lead-member --dir "$BUS_DIR" --remove --member "$(task_field "$id" AGENT)" >/dev/null 2>&1 \
+        || log_info remote_member_revoke_skipped "task=$id"   # nor granted
+    fi
+    wt=${RESUME_NEW_WT[$id]:-}
+    if [[ -n $wt && -d $wt ]]; then
+      if [[ -n $(git -C "$wt" status --porcelain) ]]; then
+        { git -C "$wt" add -A &&
+          GIT_AUTHOR_NAME="$name (team-agents)" GIT_AUTHOR_EMAIL="$name@team-agents.invalid" \
+          GIT_COMMITTER_NAME="$name (team-agents)" GIT_COMMITTER_EMAIL="$name@team-agents.invalid" \
+            git -C "$wt" commit -q -m "WIP: uncommitted work carried by an interrupted resume"; } \
+          || log_warn resume_wip_commit_failed "task=$id" "worktree=$wt"
+      fi
+      git -C "$wt" worktree remove --force "$wt" || log_warn resume_worktree_remove_failed "task=$id" "worktree=$wt"
+    fi
+    rm -rf "${TASKS:?}/$id"
+  done
+  log_warn resume_abandoned "tasks=${RESUME_NEW_IDS[*]}"
+  echo "agent: the resume failed — its new tasks were removed; changes it carried are committed (WIP) on their branches" >&2
 }
 
 remote_member_start() { # proxy-task — grants the remote member on the lead and submits the job that runs it on its
@@ -4118,7 +4165,7 @@ node_handle_stop() {
   state=$(task_field "$tid" STATUS)
   [[ ! $state =~ ^(done|failed|stopped|hung|excluded)$ ]] || return 0
   run=$(task_field "$tid" RUN)
-  if ((run > 0)); then
+  if ((run > 0)) && unit_active "$tid" "$run"; then   # a paused or sleeping task has no unit to stop
     touch "$TASKS/$tid/node-stop-requested"
     if ! detail=$(systemctl --user stop "$(unit_name "$tid" "$run").service" 2>&1); then
       rm -f "$TASKS/$tid/node-stop-requested"
