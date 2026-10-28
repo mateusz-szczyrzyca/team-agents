@@ -185,6 +185,21 @@ members' branches are merged); if something is missing the coordinator is sent b
 investigator reviews the PR and publishes a GitHub review (as a comment — GitHub does not let an author approve
 their own PR), and you get a notification with the recommendation.
 
+**Before the review.** The round goes to review only when its head passes two checks, run in their own unit once
+the team's members have settled: a change of code adds tests (new test cases; a round with documentation only is
+exempt), and the repository's gate (`AGENT_REVIEW_GATE`, `make gate` by default) passes at that head. Else the
+round goes back to the team with the reason — the gate's output — at most `AGENT_PRECHECK_MAX` (2) times, then
+you decide.
+
+**The verdict.** A review ends with `VERDICT: ready-to-merge | needs-fixes | incomplete`, and its notification
+shows it: ✅ ready to merge, 🔧 needs fixes, 🧩 incomplete, ❌ a review without a verdict. Critical or major
+findings outweigh a "ready-to-merge".
+
+**`--autopilot`** (it implies `--verify`) asks two investigators at once, each on its own — they do not read each
+other's review, and a re-review gets only its own previous one; it waits until two are free, never one. Both
+`ready-to-merge`: you get "✅✅ both reviews: ready to merge". Anything else: the team fixes what the reviews that
+found problems say (the fix loop below). Merging by itself and starting the next round come next.
+
 **The fix loop.** When the review finds critical or major problems, the team is woken with them: the review is
 added to its task ("Fix pass 1 of 2"), it fixes them (or disputes one on the PR) and finishes again — and the PR
 is reviewed again, a re-review that first checks the previous findings. After `VERIFY_MAX_FIX_PASSES` (2) fix
@@ -478,6 +493,7 @@ Then:
 | `AGENT_RATE_LIMIT_PAUSE_MIN`, `AGENT_LIMIT_TAIL_LINES` | pause after a rate limit (HTTP 429) without a time (default 5 min); how many last lines of stderr are read for provider limits (default 30) |
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
 | `VERIFY_MAX_FIX_PASSES`, `AGENT_HUMAN_GITHUB` | how many times a `--verify` review wakes the team to fix critical or major problems (default 2); who is then mentioned on the PR (default: the repository's GitHub owner) |
+| `AGENT_REVIEW_GATE`, `AGENT_REVIEW_GATE_MIN`, `AGENT_PRECHECK_MAX` | before a `--verify`/`--autopilot` review, the command a round's head must pass (`auto`: `make gate` where the repository has it; `off`: none), its time limit in minutes (30), and how many times a round goes back for its gate or its missing tests before you decide (2) |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) — the team reports of the protocol (`.agents/reports/`) are never counted, whatever it says |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
 | `QUESTIONS_EDITOR`, `VSCODE_SERVER_DIRS` | open new questions files in the connected VS Code window (`vscode`, default) or not (`off`); where VS Code servers live |

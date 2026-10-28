@@ -5778,7 +5778,8 @@ agent run --on <instance> <agent> "task"               submit a remote job pinne
 agent run --resume <team|task> --same-round  continue an unmerged round (e.g. review fixes) on the same branches
 agent run --last-team [--same-round] ["…"]  resume the newest team of this repository (no ID to look up)
 agent ack <id|all>                        acknowledge finished tasks (they leave the panel)
-agent run --team a,b[,c] [--verify] "task"  team; --verify: an investigator reviews the PR at the end
+agent run --team a,b[,c] [--verify|--autopilot] "task"  team; --verify: an investigator reviews the PR at the end;
+                                           --autopilot: two independent reviews (the merge and the next round: soon)
 agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
 agent team [id | --all]                   teams and their members
 agent team <id> --close                                close a team: stop its local members, end its remote ones' jobs
