@@ -4,6 +4,7 @@
 # starts. agent autopilot <team> off stops it; a review pair waiting long for investigators is reported.
 
 load helpers
+bats_require_minimum_version 1.5.0   # run ! (a command that must fail)
 
 # meta task key — a field of a task (as in verify_loop.bats)
 meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
