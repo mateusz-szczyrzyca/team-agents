@@ -27,6 +27,18 @@ if [[ ${1:-} == "node-request" ]]; then
     if [[ -f "$STUB_HOME/sync-fail" ]]; then
       exit 1
     fi
+    if [[ -f "$STUB_HOME/sync-fail-after-n" ]]; then
+      seen=0
+      if [[ -f "$STUB_HOME/sync-req-count" ]]; then
+        seen=$(< "$STUB_HOME/sync-req-count")
+      fi
+      seen=$((seen + 1))
+      printf '%d' "$seen" > "$STUB_HOME/sync-req-count"
+      limit=$(< "$STUB_HOME/sync-fail-after-n")
+      if (( seen > limit )); then
+        exit 1
+      fi
+    fi
     cat > "$STUB_HOME/last-sync.json"
     printf '{"OK":true}\n'
     exit 0
@@ -59,26 +71,26 @@ EOF
   rm -f "$STUB_HOME/last-sync.json"
 
   for i in {1..5}; do
-    echo "{\"ts\":\"2026-10-28T12:00:0$i\",\"level\":\"info\",\"event\":\"node_heartbeat_accepted\"}" >> "$AGENTS_HOME/logs/agent.jsonl"
+    echo "{\"ts\":\"2026-10-28T12:00:0$i\",\"level\":\"info\",\"event\":\"unselected_event\"}" >> "$AGENTS_HOME/logs/agentbus.jsonl"
   done
 
   agent node --once
   [ ! -f "$STUB_HOME/last-sync.json" ]
-  cursor=$(jq -r '.["agent.jsonl"] // 0' "$AGENTS_HOME/bus/sync_log_cursors.json")
+  cursor=$(jq -r '.["agentbus.jsonl"] // 0' "$AGENTS_HOME/bus/sync_log_cursors.json")
   [ "$cursor" -eq 5 ]
 
   for i in {6..9}; do
-    echo "{\"ts\":\"2026-10-28T12:00:0$i\",\"level\":\"info\",\"event\":\"node_heartbeat_accepted\"}" >> "$AGENTS_HOME/logs/agent.jsonl"
+    echo "{\"ts\":\"2026-10-28T12:00:0$i\",\"level\":\"info\",\"event\":\"unselected_event\"}" >> "$AGENTS_HOME/logs/agentbus.jsonl"
   done
-  echo "{\"ts\":\"2026-10-28T12:00:10\",\"level\":\"info\",\"event\":\"node_heartbeat_accepted\"}" >> "$AGENTS_HOME/logs/agent.jsonl"
+  echo "{\"ts\":\"2026-10-28T12:00:10\",\"level\":\"info\",\"event\":\"unselected_event\"}" >> "$AGENTS_HOME/logs/agentbus.jsonl"
 
   agent node --once
   [ ! -f "$STUB_HOME/last-sync.json" ]
-  cursor=$(jq -r '.["agent.jsonl"] // 0' "$AGENTS_HOME/bus/sync_log_cursors.json")
+  cursor=$(jq -r '.["agentbus.jsonl"] // 0' "$AGENTS_HOME/bus/sync_log_cursors.json")
   [ "$cursor" -eq 10 ]
 }
 
-@test "M1: finished unchanged task is fast-skipped without reading files while node logs still sync" {
+@test "M1: finished unchanged task with job transitions and locks fast-skips without reading artifacts" {
   setup_node_sync_bus_stub
   echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
   echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
@@ -95,6 +107,9 @@ TYPE=claude
 MODEL=test
 EOF
   echo "done" > "$AGENTS_HOME/tasks/T1/final.md"
+  # Include job transitions so node_scan_tasks creates and updates meta.env.lock
+  echo '{"state":"done","at":"2026-10-28T12:00:00"}' > "$AGENTS_HOME/tasks/T1/job_transitions.jsonl"
+  touch "$AGENTS_HOME/tasks/T1/meta.env.lock"
 
   agent node --once
   [ -f "$AGENTS_HOME/tasks/T1/sync_manifest.json" ]
@@ -102,11 +117,17 @@ EOF
   [ "$status" = "done" ]
   rm -f "$STUB_HOME/last-sync.json"
 
-  sleep 1
+  # Manifest is newer than task artifacts
+  touch -d '1 hour ago' "$AGENTS_HOME/tasks/T1/final.md"
   touch "$AGENTS_HOME/tasks/T1/sync_manifest.json"
 
-  # Fast-skip must not read or diff meta.env for finished unchanged task
-  chmod 000 "$AGENTS_HOME/tasks/T1/meta.env"
+  # Setup sha256sum spy to detect whether task artifacts are re-hashed
+  cat > "$HOME/.local/bin/sha256sum" <<'SPY'
+#!/usr/bin/env bash
+echo "$@" >> "$STUB_HOME/sha-calls.log"
+exec /usr/bin/sha256sum "$@"
+SPY
+  chmod +x "$HOME/.local/bin/sha256sum"
 
   echo '{"ts":"2026-10-28T12:00:00","level":"warn","event":"test_node_warn"}' >> "$AGENTS_HOME/logs/agent.jsonl"
 
@@ -116,10 +137,104 @@ EOF
   warn_event=$(jq -r '.Logs[0].event // empty' "$STUB_HOME/last-sync.json")
   [ "$warn_event" = "test_node_warn" ]
 
-  cursor=$(jq -r '.["agent.jsonl"] // 0' "$AGENTS_HOME/bus/sync_log_cursors.json")
-  [ "$cursor" -eq 1 ]
+  # Unchanged terminal task must NOT have re-hashed its artifacts
+  [ ! -f "$STUB_HOME/sha-calls.log" ]
+}
 
-  chmod 644 "$AGENTS_HOME/tasks/T1/meta.env"
+@test "M1: old manifest without complete field is promoted on clean scan" {
+  setup_node_sync_bus_stub
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
+
+  mkdir -p "$AGENTS_HOME/bus" "$AGENTS_HOME/tasks/T1" "$AGENTS_HOME/logs"
+  cat > "$AGENTS_HOME/bus/node-jobs.json" <<'EOF'
+{"jobs":{"job-1":{"assignment":1,"task_id":"T1","launched":true,"state":"done"}},"outbox":[]}
+EOF
+  cat > "$AGENTS_HOME/tasks/T1/meta.env" <<'EOF'
+STATUS=done
+RUN=1
+AGENT=solo
+TYPE=claude
+MODEL=test
+JOB_ID=job-1
+RESTARTS=0
+EOF
+  echo "final output" > "$AGENTS_HOME/tasks/T1/final.md"
+  final_sha=$(sha256sum "$AGENTS_HOME/tasks/T1/final.md" | awk '{print $1}')
+
+  # Write legacy manifest without complete field
+  cat > "$AGENTS_HOME/tasks/T1/sync_manifest.json" <<EOF
+{
+  "metadata": {
+    "STATUS": "done",
+    "RUN": "1",
+    "AGENT": "solo",
+    "TYPE": "claude",
+    "MODEL": "test",
+    "JOB_ID": "job-1",
+    "RESTARTS": "0"
+  },
+  "files": {
+    "final.md": {"sha": "$final_sha", "cut": false}
+  }
+}
+EOF
+
+  # Run poll: should see no changes and promote manifest to complete: true
+  agent node --once
+
+  promoted=$(jq -r '.complete // false' "$AGENTS_HOME/tasks/T1/sync_manifest.json")
+  [ "$promoted" = "true" ]
+}
+
+@test "M1: partial sync failure leaves complete=false so remaining older files are synced on next poll" {
+  setup_node_sync_bus_stub
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
+
+  mkdir -p "$AGENTS_HOME/bus" "$AGENTS_HOME/tasks/T1" "$AGENTS_HOME/logs"
+  cat > "$AGENTS_HOME/bus/node-jobs.json" <<'EOF'
+{"jobs":{"job-1":{"assignment":1,"task_id":"T1","launched":true,"state":"done"}},"outbox":[]}
+EOF
+  cat > "$AGENTS_HOME/tasks/T1/meta.env" <<'EOF'
+STATUS=done
+RUN=1
+AGENT=solo
+TYPE=claude
+MODEL=test
+EOF
+
+  # Create 9 prompt files of 250 KiB each (forcing chunked requests > 1.5 MiB budget)
+  for i in $(seq 1 9); do
+    head -c 256000 < /dev/zero | tr '\0' 'A' > "$AGENTS_HOME/tasks/T1/prompt-$i.md"
+  done
+
+  # Allow only 1 sync request to succeed, then fail on the second
+  echo 1 > "$STUB_HOME/sync-fail-after-n"
+
+  agent node --once || true
+
+  # Partial manifest must have been saved with complete: false
+  [ -f "$AGENTS_HOME/tasks/T1/sync_manifest.json" ]
+  complete_status=$(jq -r '.complete // false' "$AGENTS_HOME/tasks/T1/sync_manifest.json")
+  [ "$complete_status" = "false" ]
+
+  # Manifest is newer than files
+  touch "$AGENTS_HOME/tasks/T1/sync_manifest.json"
+
+  # Remove failure injection
+  rm -f "$STUB_HOME/sync-fail-after-n" "$STUB_HOME/sync-req-count" "$STUB_HOME/last-sync.json"
+
+  # Next poll must NOT fast-skip; it must send the remaining files
+  agent node --once
+
+  [ -f "$STUB_HOME/last-sync.json" ]
+  sent_name=$(jq -r '.Files[0].Name // empty' "$STUB_HOME/last-sync.json")
+  [ -n "$sent_name" ]
+
+  # Manifest now complete
+  complete_status=$(jq -r '.complete // false' "$AGENTS_HOME/tasks/T1/sync_manifest.json")
+  [ "$complete_status" = "true" ]
 }
 
 @test "M2: task ID exact match excludes local non-job task whose ID is a substring" {
@@ -152,7 +267,7 @@ EOF
   [ "$log_task" = "T10" ]
 }
 
-@test "M2: stale unknown job exits BUS_NOT_FOUND, is marked obsolete, and does not block valid job sync" {
+@test "M2: valid job before stale job recovers in second pass after stale job is marked obsolete" {
   local real_bus="$HOME/.local/bin/agentbus"
   mv "$real_bus" "$HOME/.local/bin/real-agentbus"
   cat > "$real_bus" <<'STUB'
@@ -174,10 +289,12 @@ if [[ ${1:-} == "node-request" ]]; then
     req_file="$STUB_HOME/req-$RANDOM.json"
     cat > "$req_file"
     jid=$(jq -r '.Job' "$req_file")
-    if [[ $jid == "job-stale" ]]; then
+    if [[ $jid == "job-z-stale" ]]; then
+      # Unknown to lead: exit 3 BUS_NOT_FOUND (or 5 BUS_PERMISSION)
       exit 3
     fi
-    has_stale_log=$(jq '[.Logs[] | select(.task == "Tstale")] | length' "$req_file")
+    # If the request contains unowned info logs for Tstale, lead returns exit 2 (LeadSyncInvalidLogs / InvalidArgument)
+    has_stale_log=$(jq '[.Logs[] | select((.level != "warn" and .level != "error") and .task == "Tstale")] | length' "$req_file")
     if (( has_stale_log > 0 )); then
       exit 2
     fi
@@ -194,12 +311,13 @@ STUB
   echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
   echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
 
+  # job-a-valid is lexicographically before job-z-stale
   mkdir -p "$AGENTS_HOME/bus" "$AGENTS_HOME/tasks/Tstale" "$AGENTS_HOME/tasks/Tvalid" "$AGENTS_HOME/logs"
   cat > "$AGENTS_HOME/bus/node-jobs.json" <<'EOF'
 {
   "jobs": {
-    "job-stale": {"assignment": 1, "task_id": "Tstale", "launched": true, "state": "done"},
-    "job-valid": {"assignment": 2, "task_id": "Tvalid", "launched": true, "state": "running"}
+    "job-a-valid": {"assignment": 2, "task_id": "Tvalid", "launched": true, "state": "running"},
+    "job-z-stale": {"assignment": 1, "task_id": "Tstale", "launched": true, "state": "done"}
   },
   "outbox": []
 }
@@ -224,12 +342,12 @@ EOF
 
   agent node --once
 
-  is_obsolete=$(jq -r '.jobs["job-stale"].obsolete // false' "$AGENTS_HOME/bus/node-jobs.json")
+  is_obsolete=$(jq -r '.jobs["job-z-stale"].obsolete // false' "$AGENTS_HOME/bus/node-jobs.json")
   [ "$is_obsolete" = "true" ]
 
   [ -f "$STUB_HOME/last-valid-sync.json" ]
   valid_jid=$(jq -r '.Job' "$STUB_HOME/last-valid-sync.json")
-  [ "$valid_jid" = "job-valid" ]
+  [ "$valid_jid" = "job-a-valid" ]
   log_task=$(jq -r '.Logs[0].task' "$STUB_HOME/last-valid-sync.json")
   [ "$log_task" = "Tvalid" ]
 }
@@ -253,17 +371,17 @@ EOF
   agent node --once
   rm -f "$STUB_HOME/last-sync.json"
 
-  echo '{"ts":"2026-10-28T12:00:00","level":"warn","event":"warn_1"}' >> "$AGENTS_HOME/logs/agent.jsonl"
-  echo '' >> "$AGENTS_HOME/logs/agent.jsonl"
-  echo '{"ts":"2026-10-28T12:00:02","level":"warn","event":"warn_2"}' >> "$AGENTS_HOME/logs/agent.jsonl"
+  echo '{"ts":"2026-10-28T12:00:00","level":"warn","event":"warn_1"}' >> "$AGENTS_HOME/logs/agentbus.jsonl"
+  echo '' >> "$AGENTS_HOME/logs/agentbus.jsonl"
+  echo '{"ts":"2026-10-28T12:00:02","level":"warn","event":"warn_2"}' >> "$AGENTS_HOME/logs/agentbus.jsonl"
 
   agent node --once
   [ -f "$STUB_HOME/last-sync.json" ]
   num_logs=$(jq '.Logs | length' "$STUB_HOME/last-sync.json")
   [ "$num_logs" -eq 2 ]
 
-  total_l=$(wc -l < "$AGENTS_HOME/logs/agent.jsonl")
-  cursor=$(jq -r '.["agent.jsonl"] // 0' "$AGENTS_HOME/bus/sync_log_cursors.json")
+  total_l=$(wc -l < "$AGENTS_HOME/logs/agentbus.jsonl")
+  cursor=$(jq -r '.["agentbus.jsonl"] // 0' "$AGENTS_HOME/bus/sync_log_cursors.json")
   [ "$cursor" -eq "$total_l" ]
 
   rm -f "$STUB_HOME/last-sync.json"
