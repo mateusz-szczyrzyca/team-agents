@@ -218,6 +218,10 @@ VERIFY_MAX_FIX_PASSES="${VERIFY_MAX_FIX_PASSES:-2}"
 AGENT_REVIEW_GATE="${AGENT_REVIEW_GATE:-auto}"        # the gate's command: auto = `make gate` where the repository has it; off = none
 AGENT_REVIEW_GATE_MIN="${AGENT_REVIEW_GATE_MIN:-30}"  # its time limit, in minutes
 AGENT_PRECHECK_MAX="${AGENT_PRECHECK_MAX:-2}"         # how many times a round goes back for its gate or its tests
+# --autopilot: after two ready-to-merge reviews the script merges — not a PR touching one of these paths (a directory
+# ends with /), nor one changing existing tests: those wait for the human
+AUTO_MERGE_HUMAN_PATHS="${AUTO_MERGE_HUMAN_PATHS-install.sh .github/ systemd/ AGENTS.md}"
+AGENT_REVIEW_WAIT_MIN="${AGENT_REVIEW_WAIT_MIN:-30}"  # a review pair waiting longer for two free investigators is reported
 AGENT_HUMAN_GITHUB="${AGENT_HUMAN_GITHUB:-}"
 ROUND_MAX_LINES="${ROUND_MAX_LINES:-3000}"
 ROUND_EXCLUDE="${ROUND_EXCLUDE:-*_gen.go go.sum package-lock.json vendor/}"
@@ -868,7 +872,122 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
 }
 
 merge_blockers() { # repo base head round-tests — what keeps --autopilot from merging by itself, one reason per line
-  : # not implemented yet: tests/unit/autopilot_merge.bats comes first
+  local repo=$1 base=$2 head=$3 tests=$4 f p changed
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    for p in $AUTO_MERGE_HUMAN_PATHS; do
+      # shellcheck disable=SC2053  # $p is unquoted on purpose: a pattern may be a glob
+      if [[ $p == */ && $f == "$p"* ]] || [[ $p != */ && $f == $p ]]; then
+        printf 'it touches %s (AUTO_MERGE_HUMAN_PATHS)\n' "$f"
+        break
+      fi
+    done
+  done < <(git -C "$repo" diff --name-only "$base" "$head")
+  changed=$(sed -n 's/.*changed=\([0-9]*\).*/\1/p' <<< "$tests")
+  if ((${changed:-0} > 0)); then printf 'it changes existing tests (%s file(s)): only you may allow that\n' "$changed"; fi
+}
+
+gate_at() { # repo rev log — runs the repository's gate at a revision in a temporary worktree; its exit status (0 when
+  # the repository has no gate)
+  local repo=$1 rev=$2 log=$3 gate wt rc=0
+  gate=$(review_gate_cmd "$repo")
+  [[ -n $gate ]] || return 0
+  wt=$(mktemp -d)
+  git -C "$repo" worktree add -q --detach "$wt" "$rev" 10>&- || { rmdir "$wt"; echo "cannot check out $rev" > "$log"; return 1; }
+  (cd "$wt" && timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") > "$log" 2>&1 10>&- || rc=$?
+  git -C "$repo" worktree remove --force "$wt" 10>&- || log_warn gate_worktree_left "worktree=$wt"
+  return "$rc"
+}
+
+start_task_unit() { # task subcommand — runs `agent <subcommand> <task>` in its own unit (it may take minutes)
+  systemd-run --user --quiet --collect --unit="agent-$1-${2#_}-$(date +%s)" \
+    --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+    "$SELF" "$2" "$1" 3>&- 7>&- 8>&- 9>&- 10>&-
+}
+
+cmd__merge() { # coordinator task — --autopilot after two ready-to-merge reviews: the merge (unless something needs the
+  # human), the gate on the merged base, then the next round of the plan
+  local id=$1 root branch base head mb url num why out wr wrs ref
+  root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH); base=$(task_field "$id" BASE); base=${base:-main}
+  url=$(task_field "$id" PR_URL); num=$(task_field "$id" PR_NUMBER)
+  if [[ $(task_field "$id" AUTOPILOT_OFF) == 1 ]]; then
+    notify "$id" approved "" "both reviews: ready to merge — the autopilot is off: merge PR #$num yourself: $url"
+    return 0
+  fi
+  git -C "$root" fetch -q origin 10>&- || log_warn merge_fetch_failed "task=$id"   # then the local refs are checked
+  head=$(git -C "$root" rev-parse -q --verify "origin/$branch^{commit}" 10>&-) || head=$(git -C "$root" rev-parse -q --verify "$branch^{commit}" 10>&-) || head=""
+  mb=$(git -C "$root" merge-base "origin/$base" "${head:-HEAD}" 10>&-) || mb=""
+  if [[ -n $head && -n $mb ]]; then why=$(merge_blockers "$root" "$mb" "$head" "$(task_field "$id" ROUND_TESTS)"); fi
+  if [[ -n $why ]]; then
+    notify "$id" approved "" "both reviews: ready to merge, but PR #$num waits for you — $(tr '\n' ';' <<< "$why") $url"
+    log_info autopilot_merge_held "task=$id" "reason=${why:0:200}"
+    return 0
+  fi
+  if [[ $(cd "$root" && gh pr view "$url" --json isDraft --jq .isDraft 2>/dev/null) == true ]]; then   # a draft is made ready first
+    (cd "$root" && try pr_ready_failed gh pr ready "$url" >/dev/null)
+  fi
+  if ! out=$(cd "$root" && gh pr merge "$url" --merge 2>&1); then
+    notify "$id" failed "" "⛔ autopilot stopped: merging PR #$num failed — your decision is needed: ${out:0:300} $url"
+    log_error autopilot_merge_failed "task=$id" "reason=${out:0:300}"
+    return 0
+  fi
+  log_info autopilot_merged "task=$id" "pr=$num"
+  act "$id" info "--autopilot: PR #$num merged (both reviews: ready to merge)"
+  git -C "$root" fetch -q origin "$base" 10>&- || log_warn merge_fetch_failed "task=$id" "base=$base"
+  if ! gate_at "$root" "origin/$base" "$TASKS/$id/postmerge.log"; then
+    notify "$id" failed "" "⛔ autopilot stopped: PR #$num is merged, but the gate fails on $base — your decision is needed: $(tail -n 15 "$TASKS/$id/postmerge.log" | tr '\n' ' ')"
+    log_warn autopilot_postmerge_gate_failed "task=$id" "base=$base"
+    return 0
+  fi
+  wr=$(task_field "$id" WORK_ROUND); wrs=$(task_field "$id" WORK_ROUNDS)
+  if [[ -z $wr || -z $wrs ]] || ((wr >= wrs)); then
+    notify "$id" merged "" "merged PR #$num — both reviews: ready to merge; ${wr:+round $wr/$wrs was the last: }the task is done"
+    return 0
+  fi
+  notify "$id" merged "" "merged PR #$num — both reviews: ready to merge; round $((wr + 1))/$wrs starts"
+  ref=$(task_field "$id" TEAM); ref=${ref:-$id}
+  if ! out=$(cd "$root" && "$SELF" run --resume "$ref" --autopilot \
+       "Round $((wr + 1)) of $wrs: the PR of round $wr (#$num) is merged — go on with the next round of the plan." </dev/null 2>&1); then
+    notify "$id" failed "" "⛔ autopilot stopped: round $((wr + 1))/$wrs could not start — your decision is needed: ${out:0:300}"
+    log_error autopilot_next_round_failed "task=$id" "reason=${out:0:300}"
+    return 0
+  fi
+  log_info autopilot_next_round "task=$id" "round=$((wr + 1))/$wrs" "output=${out:0:300}"
+}
+
+cmd_autopilot() { # team [on|off] — a team's --autopilot, shown or switched; off: its reviews go on, but nothing is
+  # merged nor started by itself (the human decides); on: the next round's reviews are a pair, and it merges again
+  local team=${1:-} t lead
+  [[ -n $team ]] || die "usage: agent autopilot <team> [on|off]"
+  bus team-get --dir "$BUS_DIR" --team "$team" >/dev/null || die "no team $team on the bus (agent team)"
+  case ${2:-} in
+    on|off)
+      for t in $(team_tasks "$team"); do
+        [[ $(task_field "$t" KIND) != remote-member ]] || continue
+        if [[ $2 == on ]]; then meta_set "$t" AUTOPILOT 1; meta_set "$t" AUTOPILOT_OFF ""; else meta_set "$t" AUTOPILOT_OFF 1; fi
+      done
+      log_info autopilot_switched "team=$team" "state=$2"
+      echo "Autopilot of team $team: $2." ;;
+    "")
+      lead=$(team_tasks "$team" | head -1)
+      if [[ $(task_field "$lead" AUTOPILOT) == 1 && $(task_field "$lead" AUTOPILOT_OFF) != 1 ]]; then echo "Autopilot of team $team: on."
+      else echo "Autopilot of team $team: off."; fi ;;
+    *) die "usage: agent autopilot <team> [on|off]" ;;
+  esac
+}
+
+supervise_review_waits() { # an --autopilot review pair waiting longer than AGENT_REVIEW_WAIT_MIN for two free
+  # investigators: the human is told once (it goes on waiting — never one reviewer instead of two)
+  local m id since
+  for m in "$TASKS"/*/meta.env; do
+    grep -qx 'REVIEW_PAIR_PENDING=1' "$m" || continue
+    id=${m%/meta.env}; id=${id##*/}
+    [[ -z $(task_field "$id" REVIEW_WAIT_TOLD) ]] || continue
+    since=$(task_field "$id" REVIEW_PAIR_SINCE)
+    (($(date +%s) - ${since:-0} >= AGENT_REVIEW_WAIT_MIN * 60)) || continue
+    notify "$id" review-wait "" "the two reviews of PR #$(task_field "$id" PR_NUMBER) wait for two free investigators (since $(date -d "@${since:-0}" '+%H:%M')): free one, or wait"
+    meta_set "$id" REVIEW_WAIT_TOLD 1   # after the notification: one that failed is sent again
+  done
 }
 
 review_gate_cmd() { # repo — the gate a round's head must pass before a review (nothing: none)
@@ -1031,7 +1150,11 @@ review_pair_done() { # review-task parent pair-dir verdict text — one review o
   log_info review_pair_done "task=$parent" "A=$va" "B=$vb"
   if [[ $va == ready-to-merge && $vb == ready-to-merge ]]; then
     meta_set "$parent" REVIEW_RESULT approved
-    notify "$parent" approved "" "both reviews: ready to merge — PR #$(task_field "$parent" PR_NUMBER): $(task_field "$parent" PR_URL)"
+    if start_task_unit "$parent" _merge; then   # the merge, the gate on the base, the next round: minutes
+      act "$parent" info "--autopilot: both reviews ready to merge — the merge started"
+    else
+      notify "$parent" approved "" "both reviews: ready to merge — the merge could not start: merge PR #$(task_field "$parent" PR_NUMBER) yourself: $(task_field "$parent" PR_URL)"
+    fi
     return 0
   fi
   if [[ $va == none || $vb == none ]]; then
@@ -1953,6 +2076,8 @@ notify() { # id status final note
     paused)  label="⏸ paused" ;;
     abandoned) label="⚠ team left without members" ;;
     approved) label="✅✅ both reviews: ready to merge" ;;
+    merged) label="🔀 merged" ;;
+    review-wait) label="⏳ reviews waiting" ;;
     *)       label=$status ;;
   esac
   if [[ ${REVIEW:-} == 1 && $status == done ]]; then   # a PR review: its verdict
@@ -3195,7 +3320,8 @@ resume_run() {
               "BRANCH=$branch" "PREV_BRANCH=$( ((fresh)) && echo "$prev")" "BASE=$(task_field "$old" BASE)" "SESSION_ID=$sid" \
               "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" "RESUMED_FROM=$old" "FIX_PASS=${AGENT_FIX_PASS:-0}" \
               "VERIFY=$( ((verify)) && echo 1 || task_field "$old" VERIFY)" \
-              "AUTOPILOT=$( ((${autopilot:-0})) && echo 1 || task_field "$old" AUTOPILOT)" "PRECHECK_PASS=${AGENT_PRECHECK_PASS:-0}"; do
+              "AUTOPILOT=$( ((${autopilot:-0})) && echo 1 || task_field "$old" AUTOPILOT)" "PRECHECK_PASS=${AGENT_PRECHECK_PASS:-0}" \
+              "AUTOPILOT_OFF=$( ((${autopilot:-0})) || task_field "$old" AUTOPILOT_OFF)"; do
       meta_set "$id" "${kv%%=*}" "${kv#*=}"
     done
     ids+=("$id")
@@ -3742,6 +3868,7 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
   done
   supervise_member_jobs
   supervise_teams
+  supervise_review_waits
 }
 
 supervise_member_jobs() { # the lead: a remote member's job whose team is closed or unknown to the bus is cancelled
@@ -5826,6 +5953,7 @@ main() {
     ack)     cmd_ack "$@" ;;
     authenticated) cmd_authenticated "$@" ;;
     team)    cmd_team "$@" ;;
+    autopilot) cmd_autopilot "$@" ;;
     helpers) cmd_helpers "$@" ;;
     transcript) cmd_transcript "$@" ;;
     archive) cmd_archive "$@" ;;
@@ -5835,6 +5963,7 @@ main() {
     _wake)   cmd__wake "$@" ;;
     _remote_member) cmd__remote_member "$@" ;;
     _precheck) cmd__precheck "$@" ;;
+    _merge) cmd__merge "$@" ;;
     _supervise) cmd__supervise ;;
     _answers_saved) cmd__answers_saved "$@" ;;
     _authcheck) cmd__authcheck "$@" ;;
