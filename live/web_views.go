@@ -55,7 +55,9 @@ func statusClass(s string) string {
 }
 
 // snapshot reads the current state (tasks and the bus).
-func (s *webServer) snapshot() *Snapshot { return loadSnapshot(s.cfg.home, s.cfg.busDir) }
+func (s *webServer) snapshot() *Snapshot {
+	return loadSnapshot(s.cfg.home, s.cfg.busDir, s.cfg.nodeTTL)
+}
 
 // ---------------------------------------------------------------- task rows (the panel's table)
 
@@ -119,7 +121,7 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	r.Link = "/task/" + t.ID
 	r.StatusLabel, _ = statusStyle(t.Status)
 	r.StatusClass = statusClass(t.Status)
-	r.Running = t.Status == "running" || t.Status == "starting"
+	r.Running = t.Node == "" && (t.Status == "running" || t.Status == "starting")
 	if t.Kind == "investigation" {
 		r.Name = fmt.Sprintf("investigator #%s (%s)", t.InvID, t.Agent)
 	}
@@ -134,8 +136,12 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	if p := snap.Agents[t.BusName()]; p != nil && p.Task == t.ID && p.Status != "" {
 		r.Stage = "„" + p.Status + "”"
 	}
-	if (t.Status == "running" || t.Status == "starting") && !t.Alive && !t.RunStart.IsZero() {
+	if t.Node == "" && (t.Status == "running" || t.Status == "starting") && !t.Alive && !t.RunStart.IsZero() {
 		r.StatusLabel, r.StatusClass = "✗ process is dead", statusClass("dead")
+	}
+	if t.NodeOffline {
+		r.StatusLabel += " (" + t.Status + "; node offline)"
+		r.StatusClass = statusClass("offline")
 	}
 	switch {
 	case !t.Active():
