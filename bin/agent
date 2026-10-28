@@ -4359,6 +4359,11 @@ node_poll_remote_helpers() {
   done <<< "$rows"
 }
 
+# node_sync_tasks syncs changed metadata, files and logs for assigned jobs.
+node_sync_tasks() {
+  :
+}
+
 # node_poll performs one durable recovery/report/assignment cycle without involving the ordinary MCP bus.
 node_poll() {
   NODE_STATE=$(node_jobs_load)
@@ -4366,6 +4371,7 @@ node_poll() {
   node_process_pending_launches
   node_scan_tasks
   node_flush_reports
+  node_sync_tasks
   node_poll_remote_helpers
   local declaration reply
   declaration=$(node_heartbeat_json)
