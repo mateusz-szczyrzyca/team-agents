@@ -82,6 +82,16 @@ func TestMirroredTaskPageTabs(t *testing.T) {
 	if strings.Contains(bodyWait, "Answer") {
 		t.Errorf("mirrored waiting task should not show Answer button on lead in round 3")
 	}
+
+	// Direct access to /questions/T-rem-1@node-a or /task/T-rem-1@node-a/stop must be rejected
+	postStatus, _ := post(t, ts, "/task/T-rem-1@node-a/stop", nil)
+	if postStatus != 403 {
+		t.Errorf("POST /task/T-rem-1@node-a/stop: want 403 Forbidden, got %d", postStatus)
+	}
+	qStatus, _ := get(t, ts, "/questions/T-rem-1@node-a")
+	if qStatus == 200 {
+		t.Errorf("GET /questions/T-rem-1@node-a: want error status, got %d", qStatus)
+	}
 }
 
 // TestLogsViewWithNodeColumnAndFilter verifies that /logs displays node entries from bus/remote/<node>/logs.jsonl

@@ -1103,7 +1103,7 @@ func (s *webServer) loadAnswer(snap *Snapshot, id string) (*Task, string, *quest
 	if t == nil {
 		return nil, "", nil, webErr(AnswerNoQuestions, nil, "no task %q", id)
 	}
-	if t.Status != "waiting" || t.Round < 1 {
+	if t.Node != "" || t.Status != "waiting" || t.Round < 1 {
 		return t, "", nil, webErr(AnswerNotWaiting, nil, "%s is %s — it does not wait for answers", t.ID, t.Status)
 	}
 	path := filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", t.Round))
@@ -1250,6 +1250,10 @@ func (s *webServer) postStop(w http.ResponseWriter, r *http.Request) {
 	t := findTask(s.snapshot(), r.PathValue("id"))
 	if t == nil {
 		http.Error(w, "no such task", http.StatusNotFound)
+		return
+	}
+	if t.Node != "" {
+		http.Error(w, "cannot stop mirrored task "+t.ID+" from the lead", http.StatusForbidden)
 		return
 	}
 	out, cerr := callAgent(s.cfg.agentCmd, "kick", t.ID, "web")
