@@ -109,3 +109,20 @@ latest() {
   [ "$status" -ne 0 ]
   [[ $output == *"all 2 rounds are done"* ]]
 }
+
+@test "the next round finds its PR on the branch of whoever ended the round, not only the last member's" {
+  scenario '{"lead": {"new": "round-done:1/2"}, "member": {"new": "done"}}'
+  agent run --team lead,member "task"
+  t=$(task_of lead); m=$(task_of member)
+  wait_status "$t" 'done'
+  wait_status "$m" 'done'
+  # as after a resumed round: every member's task has the round, the member's listed after the lead's
+  printf 'WORK_ROUND=1\nWORK_ROUNDS=2\n' >> "$AGENTS_HOME/tasks/$m/meta.env"
+  cd "$HOME/repo" && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "Merge round 1" && git push -q origin main
+  printf '[{"number": 5, "url": "https://github.com/o/r/pull/5", "state": "MERGED", "headRefName": "%s"}]\n' \
+    "$(meta "$t" BRANCH)" > "$HOME/gh-prs.json"
+  scenario '{"lead": {"new": "done"}, "member": {"new": "done"}}'
+  run agent run --resume "$(meta "$t" TEAM)" < /dev/null
+  [ "$status" -eq 0 ]
+  [[ $output != *"has no PR"* ]]
+}
