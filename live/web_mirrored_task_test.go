@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -71,3 +72,38 @@ func TestMirroredTaskPageTabs(t *testing.T) {
 	_, bodyNotes := get(t, ts, "/task/T-rem-1@node-a?tab=notebook")
 	mustContain(t, "/task/T-rem-1@node-a?tab=notebook", bodyNotes, "not mirrored to the lead")
 }
+
+// TestLogsViewWithNodeColumnAndFilter verifies that /logs displays node entries from bus/remote/<node>/logs.jsonl
+// with a Node column, task links to /task/<task>@<node>, and supports filtering by node.
+func TestLogsViewWithNodeColumnAndFilter(t *testing.T) {
+	home := fixture(t)
+	// Write remote node log
+	remoteLogDir := filepath.Join(home, "bus", "remote", "node-a")
+	writeFile(t, filepath.Join(remoteLogDir, "logs.jsonl"),
+		`{"ts":"2026-10-23T06:02:00Z","level":"warn","component":"agent","event":"remote_warn","task":"T-rem-1"}`+"\n")
+
+	_, ts := testServer(t, home)
+
+	// Default view: shows Node column, both local and remote entries
+	status, body := get(t, ts, "/logs")
+	if status != 200 {
+		t.Fatalf("GET /logs: want status 200, got %d", status)
+	}
+	mustContain(t, "/logs", body, "<th>Node</th>", "remote_warn", "notification_failed", "node-a")
+	mustContain(t, "/logs", body, `href="/task/T-rem-1@node-a"`)
+
+	// Filter by node=node-a
+	_, bodyNode := get(t, ts, "/logs?node=node-a")
+	mustContain(t, "/logs?node=node-a", bodyNode, "remote_warn", "node-a")
+	if strings.Contains(bodyNode, "notification_failed") {
+		t.Errorf("GET /logs?node=node-a should not contain local log entry notification_failed")
+	}
+
+	// Filter by node=local
+	_, bodyLocal := get(t, ts, "/logs?node=local")
+	mustContain(t, "/logs?node=local", bodyLocal, "notification_failed")
+	if strings.Contains(bodyLocal, "remote_warn") {
+		t.Errorf("GET /logs?node=local should not contain remote log entry remote_warn")
+	}
+}
+
