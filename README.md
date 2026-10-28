@@ -751,6 +751,18 @@ next heartbeat. A ring carries no data, so a lost ring or a broken stream loses 
 polling every `NODE_POLL_SEC` and reconnects. What a node reports (a task's end, a member going to sleep) still
 travels with its heartbeat.
 
+**A machine that restarts.** Every run records its machine's boot ID. When `agent _supervise` finds a task
+whose run is gone and whose machine has restarted since, it does not end it as a dead runner: the task is
+`interrupted`, and it goes on — told in its resume prompt that its machine restarted, its worktree as it was. A
+local task or a job's is resumed at once; a remote team member waits for its lead. A task interrupted more than
+`AGENT_RESTART_MAX` (2) times fails with the reason — so a machine that keeps restarting under a heavy task (an
+overheating Raspberry Pi, say) does not loop.
+
+On the lead, a remote member whose node has been away longer than `AGENT_RESTART_GRACE_MIN` (10) minutes is put
+out of its team like a failed member: its board items go back to the board, the others are told. When its node
+comes back the lead takes it back: within the grace it is told its items are still its own; after being put
+out it rejoins as an available member, told which of its items went to whom. Either way it is woken.
+
 **When something does not work:**
 
 - `heartbeat identity "a" differs from its socket peer "b"` in the node's log: set `INSTANCE_NAME` to the name the
