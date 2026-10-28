@@ -4380,14 +4380,17 @@ NODE_SYNC_MAX_LOG_ENTRIES=500
 # Maximum single log entry size in bytes (64 KiB).
 NODE_SYNC_MAX_LOG_ENTRY_BYTES=65536
 
-# node_sync_save_json atomically writes JSON content to target path, logging on failure without terminating node.
+# node_sync_save_json atomically writes JSON content to target path, optionally stamping mtime with ref_ts.
+# It logs on failure without terminating node.
 node_sync_save_json() {
-  local target=$1 content=$2
+  local target=$1 content=$2 ref_ts=${3:-}
   local tmpf
   # Suppress duplicate stderr diagnostics: the structured warning below reports a retryable save failure.
   # A sibling temporary file keeps replacement atomic even when the task directory is on another filesystem.
   if tmpf=$(mktemp "${target}.tmp.XXXXXX" 2>/dev/null); then
-    if printf '%s\n' "$content" > "$tmpf" 2>/dev/null && mv -fT "$tmpf" "$target" 2>/dev/null; then
+    if printf '%s\n' "$content" > "$tmpf" 2>/dev/null && \
+       { [[ -z $ref_ts ]] || touch -d "$ref_ts" "$tmpf" 2>/dev/null; } && \
+       mv -fT "$tmpf" "$target" 2>/dev/null; then
       return 0
     fi
     try node_sync_cleanup_failed rm -f "$tmpf"
@@ -4571,10 +4574,23 @@ node_sync_task() {
 
   prev_meta=$(jq -c '.metadata // {}' <<< "$prev_manifest")
 
+  local snapshot_ts="" tmp_b epoch
   if [[ $is_terminal_unchanged == "true" ]]; then
     current_meta="$prev_meta"
     new_manifest_files=$(jq -c '.files // {}' <<< "$prev_manifest")
   else
+    # Capture inode timestamp from sibling reference file before reading metadata or artifacts.
+    # A conservative 1-second margin avoids missing same-tick writes under strict find -newer comparison.
+    if tmp_b=$(mktemp "${manifest_file}.ref.XXXXXX" 2>/dev/null); then
+      if epoch=$(date +%s -r "$tmp_b" 2>/dev/null); then
+        snapshot_ts="@$((epoch - 1))"
+      fi
+      try node_sync_cleanup_failed rm -f "$tmp_b"
+    fi
+    if [[ -z $snapshot_ts ]]; then
+      log_warn node_sync_artifact_failed "task=$tid" "stage=boundary"
+      return 0
+    fi
     current_meta=$(node_read_meta "$tid" "$jid") || return 0
     meta_diff=$(jq -nc --argjson cur "$current_meta" --argjson prev "$prev_meta" '
       (($cur | to_entries | map(select($prev[.key] != .value))) +
@@ -4725,7 +4741,7 @@ node_sync_task() {
       local complete_manifest
       complete_manifest=$(jq -nc --argjson metadata "$current_meta" --argjson files "$accepted_manifest_files" \
         --argjson complete "$artifacts_complete" '{metadata: $metadata, files: $files, complete: $complete}')
-      node_sync_save_json "$manifest_file" "$complete_manifest"
+      node_sync_save_json "$manifest_file" "$complete_manifest" "$snapshot_ts"
     fi
     return 0
   fi
@@ -4747,7 +4763,7 @@ node_sync_task() {
         local final_manifest
         final_manifest=$(printf '%s\n%s\n' "$current_meta" "$accepted_manifest_files" | jq -s --argjson complete "$artifacts_complete" \
           '{metadata: .[0], files: .[1], complete: $complete}')
-        node_sync_save_json "$manifest_file" "$final_manifest"
+        node_sync_save_json "$manifest_file" "$final_manifest" "$snapshot_ts"
       fi
       if (( log_count > 0 )) || [[ $new_cursors != "$cursors" ]]; then
         node_sync_save_json "$log_cursor_file" "$new_cursors"
@@ -4784,7 +4800,7 @@ node_sync_task() {
         local partial_manifest
         partial_manifest=$(printf '%s\n%s\n' "$current_manifest_meta" "$accepted_manifest_files" | jq -s \
           '{metadata: .[0], files: .[1], complete: false}')
-        node_sync_save_json "$manifest_file" "$partial_manifest"
+        node_sync_save_json "$manifest_file" "$partial_manifest" "$snapshot_ts"
         if (( log_count > 0 )); then
           node_sync_save_json "$log_cursor_file" "$new_cursors"
           log_count=0
@@ -4824,7 +4840,7 @@ node_sync_task() {
       local final_manifest
       final_manifest=$(printf '%s\n%s\n' "$current_manifest_meta" "$accepted_manifest_files" | jq -s --argjson complete "$artifacts_complete" \
         '{metadata: .[0], files: .[1], complete: $complete}')
-      node_sync_save_json "$manifest_file" "$final_manifest"
+      node_sync_save_json "$manifest_file" "$final_manifest" "$snapshot_ts"
       if (( log_count > 0 )) || [[ $new_cursors != "$cursors" ]]; then
         node_sync_save_json "$log_cursor_file" "$new_cursors"
       fi
