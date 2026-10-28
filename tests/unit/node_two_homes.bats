@@ -387,3 +387,16 @@ wait_member_state() {
   wait_job j-pause 'stopped' 20
   grep -qx 'STATUS=stopped' "$(node_task_meta solo)"
 }
+
+@test "a remote member's job whose team the lead's bus does not know is cancelled by agent _supervise on the lead" {
+  LEAD_PORT=$(free_port)
+  setup_node
+  start_lead
+  start_node
+  echo '{"solo": {"new": "team-sleep"}}' > "$NODE/scenario.json"
+  lead_post /v1/jobs "$(jq -nc '{ID: "member-ghost", Repository: "team-agents", BaseRef: "main", Selector: "solo",
+    Target: "node2", Team: "ghost-team", Member: "solo@node2", Task: "a member of a team nobody knows", Requester: "human"}')" > /dev/null
+  wait_job member-ghost 'running' 30
+  AGENT_SUPERVISE_GRACE_SEC=0 agent _supervise
+  wait_job member-ghost 'stopped' 30
+}
