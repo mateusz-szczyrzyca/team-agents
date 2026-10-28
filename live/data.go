@@ -32,29 +32,29 @@ type Task struct {
 	NodeOffline bool      // the remote heartbeat expired; status remains the last known state
 	Note        string    // human-visible task note
 	Kind        string    // worker (a normal task) | investigation | helper (a worker request)
-	Type       string    // agent CLI: claude | codex | gemini | opencode
-	Model      string    // model as configured ("" = the CLI's default)
-	Repo       string    // repository name
-	Branch     string    // the task's git branch
-	Worktree   string    // the task's git worktree
-	Status     string    // new | starting | running | waiting | investigating | sleeping | done | failed | stopped | excluded | hung
-	InvID      string    // investigations: the investigation number
-	ParentTask string    // investigations/helpers: the task they work for
-	FromAgent  string    // investigations/helpers: the requesting agent
-	Team       string    // team ID ("" for a solo task)
-	HelperID   string    // helpers: the worker request number
-	Tier       string    // normal | worker
-	JobID      string    // remote job ID when started for a job
-	JobLead    string    // lead URL or instance name when started for a job
-	Round      int       // question rounds so far (questions-<Round>.md is the latest)
-	Run        int       // runs so far (prompt-<Run>.md is the latest)
-	Created    time.Time // when the task was created
-	Finished   time.Time // when the last run ended (zero while running)
-	RunStart   time.Time // when the current run started (from the runner process)
-	Dir        string    // task directory
-	Alive      bool      // the runner process is alive
-	Acked      bool      // a finished task was acknowledged (agent ack / x) and is hidden
-	Last       Activity  // latest activity entry
+	Type        string    // agent CLI: claude | codex | gemini | opencode
+	Model       string    // model as configured ("" = the CLI's default)
+	Repo        string    // repository name
+	Branch      string    // the task's git branch
+	Worktree    string    // the task's git worktree
+	Status      string    // new | starting | running | waiting | investigating | sleeping | done | failed | stopped | excluded | hung
+	InvID       string    // investigations: the investigation number
+	ParentTask  string    // investigations/helpers: the task they work for
+	FromAgent   string    // investigations/helpers: the requesting agent
+	Team        string    // team ID ("" for a solo task)
+	HelperID    string    // helpers: the worker request number
+	Tier        string    // normal | worker
+	JobID       string    // remote job ID when started for a job
+	JobLead     string    // lead URL or instance name when started for a job
+	Round       int       // question rounds so far (questions-<Round>.md is the latest)
+	Run         int       // runs so far (prompt-<Run>.md is the latest)
+	Created     time.Time // when the task was created
+	Finished    time.Time // when the last run ended (zero while running)
+	RunStart    time.Time // when the current run started (from the runner process)
+	Dir         string    // task directory
+	Alive       bool      // the runner process is alive
+	Acked       bool      // a finished task was acknowledged (agent ack / x) and is hidden
+	Last        Activity  // latest activity entry
 }
 
 // Presence is the part of agentbus' presence entry that the live view needs (see agentbus Presence).
@@ -304,6 +304,24 @@ func readMeta(path string) map[string]string {
 		if ok && k != "" {
 			m[k] = unquote(v)
 		}
+	}
+	return m
+}
+
+// readMetadataJSON parses a mirrored metadata.json file; a missing file gives an empty map.
+func readMetadataJSON(path string) map[string]string {
+	m := map[string]string{}
+	data, err := os.ReadFile(path) // #nosec G304 -- the path is built from configured bus remote root and directory names listed locally
+	if errors.Is(err, os.ErrNotExist) {
+		return m
+	}
+	if err != nil {
+		warnOnce("read-meta-json:"+path, LogFileReadFailed, storageErr(err, "cannot read %s", path), "file", path)
+		return m
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		warnOnce("decode-meta-json:"+path, LogMetaMalformed, valueWrap(err, "cannot decode %s", path), "file", path)
+		return m
 	}
 	return m
 }

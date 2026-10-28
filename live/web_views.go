@@ -555,9 +555,29 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 				Text: readFile(filepath.Join(t.Dir, fmt.Sprintf("prompt-%d.md", n))), Current: n == t.Run})
 		}
 	case "questions":
-		for n := t.Round; n >= 1; n-- {
-			d.Files = append(d.Files, fileText{Name: fmt.Sprintf("questions-%d.md (round %d)", n, n),
-				Text: readFile(filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", n))), Current: n == t.Round && t.Status == "waiting"})
+		if t.Node != "" {
+			matches, gerr := filepath.Glob(filepath.Join(t.Dir, "questions-*.md"))
+			if gerr != nil {
+				viewError(s, w, r, webErr(ViewStorage, gerr, "cannot list questions of %s", t.ID))
+				return
+			}
+			sort.Sort(sort.Reverse(sort.StringSlice(matches)))
+			for i, p := range matches {
+				base := filepath.Base(p)
+				var round int
+				if n, err := fmt.Sscanf(base, "questions-%d.md", &round); err == nil && n == 1 {
+					d.Files = append(d.Files, fileText{
+						Name:    fmt.Sprintf("questions-%d.md (round %d)", round, round),
+						Text:    readFile(p),
+						Current: i == 0 && t.Status == "waiting",
+					})
+				}
+			}
+		} else {
+			for n := t.Round; n >= 1; n-- {
+				d.Files = append(d.Files, fileText{Name: fmt.Sprintf("questions-%d.md (round %d)", n, n),
+					Text: readFile(filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", n))), Current: n == t.Round && t.Status == "waiting"})
+			}
 		}
 	case "investigations":
 		for _, inv := range snap.Invs {
@@ -582,18 +602,14 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 	case "notebook":
 		d.Notes = notebook(s.cfg.busDir, t.Repo)
 	case "meta":
-		if data, err := os.ReadFile(filepath.Join(t.Dir, "metadata.json")); err == nil {
-			var m map[string]string
-			if json.Unmarshal(data, &m) == nil {
-				for k, v := range m {
-					d.Meta = append(d.Meta, kv{k, v})
-				}
-			}
+		var m map[string]string
+		if t.Node != "" {
+			m = readMetadataJSON(filepath.Join(t.Dir, "metadata.json"))
 		} else {
-			m := readMeta(filepath.Join(t.Dir, "meta.env"))
-			for k, v := range m {
-				d.Meta = append(d.Meta, kv{k, v})
-			}
+			m = readMeta(filepath.Join(t.Dir, "meta.env"))
+		}
+		for k, v := range m {
+			d.Meta = append(d.Meta, kv{k, v})
 		}
 		sort.Slice(d.Meta, func(i, j int) bool { return d.Meta[i].Key < d.Meta[j].Key })
 	default:
@@ -1418,8 +1434,13 @@ func (s *webServer) viewLogs(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else if nodeFilter != "local" {
-		for _, l := range tailLines(filepath.Join(s.cfg.busDir, "remote", nodeFilter, "logs.jsonl"), n, 16*1024*1024) {
-			lines = append(lines, lineWithNode{line: l, node: nodeFilter})
+		for _, node := range allNodes {
+			if node == nodeFilter {
+				for _, l := range tailLines(filepath.Join(s.cfg.busDir, "remote", nodeFilter, "logs.jsonl"), n, 16*1024*1024) {
+					lines = append(lines, lineWithNode{line: l, node: nodeFilter})
+				}
+				break
+			}
 		}
 	}
 

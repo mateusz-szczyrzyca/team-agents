@@ -27,7 +27,8 @@ func setupMirroredTaskFixture(t *testing.T) string {
 }`)
 	writeFile(t, filepath.Join(dir, "activity.jsonl"), `{"ts":"2026-10-28 12:00:05","k":"cmd","t":"make gate"}`+"\n"+`{"ts":"2026-10-28 12:00:10","k":"text","t":"compilation successful"}`+"\n")
 	writeFile(t, filepath.Join(dir, "prompt-1.md"), "# Mirrored task prompt")
-	writeFile(t, filepath.Join(dir, "questions-1.md"), "# Mirrored questions")
+	writeFile(t, filepath.Join(dir, "questions-1.md"), "# Mirrored questions round 1")
+	writeFile(t, filepath.Join(dir, "questions-2.md"), "# Mirrored questions round 2")
 	writeFile(t, filepath.Join(dir, "final.md"), "# Mirrored final report")
 	writeFile(t, filepath.Join(dir, "err-1.log"), "mirror error log output")
 	return home
@@ -50,9 +51,9 @@ func TestMirroredTaskPageTabs(t *testing.T) {
 	_, bodyPrompt := get(t, ts, "/task/T-rem-1@node-a?tab=prompt")
 	mustContain(t, "/task/T-rem-1@node-a?tab=prompt", bodyPrompt, "Mirrored task prompt")
 
-	// Questions tab
+	// Questions tab: shows inferred rounds from filenames
 	_, bodyQ := get(t, ts, "/task/T-rem-1@node-a?tab=questions")
-	mustContain(t, "/task/T-rem-1@node-a?tab=questions", bodyQ, "Mirrored questions")
+	mustContain(t, "/task/T-rem-1@node-a?tab=questions", bodyQ, "Mirrored questions round 1", "Mirrored questions round 2", "round 1", "round 2")
 
 	// Report tab
 	_, bodyReport := get(t, ts, "/task/T-rem-1@node-a?tab=report")
@@ -73,6 +74,14 @@ func TestMirroredTaskPageTabs(t *testing.T) {
 	// Notebook tab: unmirrored notice
 	_, bodyNotes := get(t, ts, "/task/T-rem-1@node-a?tab=notebook")
 	mustContain(t, "/task/T-rem-1@node-a?tab=notebook", bodyNotes, "not mirrored to the lead")
+
+	// Waiting mirrored task must not show an Answer button on the lead in round 3
+	metaFile := filepath.Join(home, "bus", "remote", "node-a", "T-rem-1", "metadata.json")
+	writeFile(t, metaFile, `{"STATUS":"waiting","AGENT":"worker-1","TYPE":"worker"}`)
+	_, bodyWait := get(t, ts, "/task/T-rem-1@node-a")
+	if strings.Contains(bodyWait, "Answer") {
+		t.Errorf("mirrored waiting task should not show Answer button on lead in round 3")
+	}
 }
 
 // TestLogsViewWithNodeColumnAndFilter verifies that /logs displays node entries from bus/remote/<node>/logs.jsonl
@@ -107,6 +116,15 @@ func TestLogsViewWithNodeColumnAndFilter(t *testing.T) {
 	if strings.Contains(bodyLocal, "remote_warn") {
 		t.Errorf("GET /logs?node=local should not contain remote log entry remote_warn")
 	}
+
+	// Filter with invalid or traversal node parameter must not panic or read unexpected files
+	statusBad, bodyBad := get(t, ts, "/logs?node=../../etc")
+	if statusBad != 200 {
+		t.Fatalf("GET /logs?node=../../etc: want status 200, got %d", statusBad)
+	}
+	if strings.Contains(bodyBad, "remote_warn") {
+		t.Errorf("GET /logs?node=../../etc should not return remote logs of node-a")
+	}
 }
 
 // TestMirroredTaskLiveSSE verifies that SSE stream /events/task/<id>@<node>
@@ -123,7 +141,7 @@ func TestMirroredTaskLiveSSE(t *testing.T) {
 
 	br := openStream(t, ts, fmt.Sprintf("/events/task/T-rem-1@node-a?offset=%d", st.Size()))
 
-	f, err := os.OpenFile(actPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(actPath, os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 -- test fixture path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,5 +156,3 @@ func TestMirroredTaskLiveSSE(t *testing.T) {
 		t.Fatalf("expected SSE activity event with 'live update received', got: %q", got)
 	}
 }
-
-
