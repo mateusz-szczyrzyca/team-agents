@@ -1333,8 +1333,15 @@ func logFile(src string) (string, bool) {
 
 // logRow is one log record.
 type logRow struct {
-	TS, Level, Component, Event, Task string // time (local), level, component, event, task
-	Rest                              string // the other fields, "key=value …"
+	TS        string    // time (local)
+	Level     string    // log level
+	Node      string    // node name; empty for local log entries
+	Component string    // log component
+	Event     string    // log event name
+	Task      string    // task identifier
+	TaskLink  string    // link to task on lead (/task/<id> or /task/<id>@<node>)
+	Rest      string    // the other fields, "key=value …"
+	rawTime   time.Time // timestamp used for chronological sorting
 }
 
 // logLevelRank orders levels for the minimum-level filter.
@@ -1360,8 +1367,45 @@ func (s *webServer) viewLogs(w http.ResponseWriter, r *http.Request) {
 		n = 5000
 	}
 	minLevel, find := q.Get("level"), strings.ToLower(q.Get("q"))
+	nodeFilter := q.Get("node")
+
+	var allNodes []string
+	if remEntries, rerr := os.ReadDir(filepath.Join(s.cfg.busDir, "remote")); rerr == nil {
+		for _, e := range remEntries {
+			if e.IsDir() {
+				allNodes = append(allNodes, e.Name())
+			}
+		}
+		sort.Strings(allNodes)
+	}
+
+	type lineWithNode struct {
+		line string
+		node string
+	}
+	var lines []lineWithNode
+
+	if nodeFilter == "" || nodeFilter == "all" || nodeFilter == "local" {
+		for _, l := range tailLines(filepath.Join(s.cfg.home, "logs", file), n, 16*1024*1024) {
+			lines = append(lines, lineWithNode{line: l, node: ""})
+		}
+	}
+
+	if nodeFilter == "" || nodeFilter == "all" {
+		for _, node := range allNodes {
+			for _, l := range tailLines(filepath.Join(s.cfg.busDir, "remote", node, "logs.jsonl"), n, 16*1024*1024) {
+				lines = append(lines, lineWithNode{line: l, node: node})
+			}
+		}
+	} else if nodeFilter != "local" {
+		for _, l := range tailLines(filepath.Join(s.cfg.busDir, "remote", nodeFilter, "logs.jsonl"), n, 16*1024*1024) {
+			lines = append(lines, lineWithNode{line: l, node: nodeFilter})
+		}
+	}
+
 	var rows []logRow
-	for _, l := range tailLines(filepath.Join(s.cfg.home, "logs", file), n, 16*1024*1024) {
+	for _, item := range lines {
+		l := item.line
 		if find != "" && !strings.Contains(strings.ToLower(l), find) {
 			continue
 		}
@@ -1369,11 +1413,25 @@ func (s *webServer) viewLogs(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal([]byte(l), &rec) != nil {
 			continue
 		}
-		row := logRow{Level: str(rec, "level"), Component: str(rec, "component"), Event: str(rec, "event"), Task: str(rec, "task")}
+		row := logRow{
+			Level:     str(rec, "level"),
+			Node:      item.node,
+			Component: str(rec, "component"),
+			Event:     str(rec, "event"),
+			Task:      str(rec, "task"),
+		}
 		if minLevel != "" && logLevelRank[row.Level] < logLevelRank[minLevel] {
 			continue
 		}
+		if row.Task != "" {
+			if row.Node != "" {
+				row.TaskLink = "/task/" + url.PathEscape(row.Task+"@"+row.Node)
+			} else {
+				row.TaskLink = "/task/" + url.PathEscape(row.Task)
+			}
+		}
 		if ts, err := time.Parse(time.RFC3339, str(rec, "ts")); err == nil {
+			row.rawTime = ts
 			row.TS = ts.Local().Format("01-02 15:04:05")
 		} else {
 			row.TS = str(rec, "ts")
@@ -1394,11 +1452,22 @@ func (s *webServer) viewLogs(w http.ResponseWriter, r *http.Request) {
 		row.Rest = strings.Join(rest, " ")
 		rows = append(rows, row)
 	}
-	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
-		rows[i], rows[j] = rows[j], rows[i] // newest first
+
+	sort.SliceStable(rows, func(i, j int) bool {
+		if !rows[i].rawTime.Equal(rows[j].rawTime) {
+			return rows[i].rawTime.After(rows[j].rawTime)
+		}
+		return rows[i].TS > rows[j].TS
+	})
+
+	if len(rows) > n {
+		rows = rows[:n]
 	}
-	s.render(w, r, http.StatusOK, "logs", "Logs", nil, map[string]any{"Rows": rows, "Src": src, "Sources": logSources,
-		"Level": minLevel, "Q": q.Get("q"), "N": n, "Live": q.Get("live") == "1", "Query": r.URL.RawQuery})
+
+	s.render(w, r, http.StatusOK, "logs", "Logs", nil, map[string]any{
+		"Rows": rows, "Src": src, "Sources": logSources, "Nodes": allNodes, "Node": nodeFilter,
+		"Level": minLevel, "Q": q.Get("q"), "N": n, "Live": q.Get("live") == "1", "Query": r.URL.RawQuery,
+	})
 }
 
 // str returns a field of a decoded JSON record as a string.
