@@ -12,12 +12,19 @@ set -euo pipefail
 if [[ ${1:-} == node-request ]]; then
   shift
   route=/v1/heartbeat
+  validation=false
   while (($#)); do
     case $1 in
       --path) route=$2; shift 2 ;;
+      --validate) validation=true; shift ;;
       *) shift ;;
     esac
   done
+  if [[ $validation == true ]]; then
+    cat > /dev/null
+    printf '{}\n'
+    exit 0
+  fi
   if [[ $route == /v1/sync ]]; then
     cat > "$STUB_HOME/tail-sync.json"
     printf '{"OK":true}\n'
@@ -57,4 +64,30 @@ STUB
     digest=$(sha256sum < "$STUB_HOME/content")
     [ "${digest%% *}" = "$(jq -r --arg name "$name" '.Files[] | select(.Name == $name) | .SHA256' "$STUB_HOME/tail-sync.json")" ]
   done
+}
+
+@test "an artifact read failure is logged and does not stop the node heartbeat" {
+  sync_tails_stub
+  printf '\nLEAD_URL=http://127.0.0.1:7780\nINSTANCE_NAME=node-test\n' >> "$AGENTS_HOME/agents.conf"
+  local task="$AGENTS_HOME/tasks/T1"
+  mkdir -p "$task" "$AGENTS_HOME/bus"
+  printf '%s\n' '{"jobs":{"job-1":{"assignment":1,"task_id":"T1","launched":true,"state":"running"}},"outbox":[]}' > "$AGENTS_HOME/bus/node-jobs.json"
+  printf 'STATUS=running\nRUN=1\nAGENT=solo\nJOB_ID=job-1\n' > "$task/meta.env"
+  seq 1 2001 > "$task/activity.jsonl"
+  cat > "$HOME/.local/bin/tail" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+# Fail only the artifact tail; heartbeat's short activity summary still uses the real tool.
+if [[ ${1:-} == -n && ${2:-} == 2000 ]]; then
+  echo 'injected artifact read failure' >&2
+  exit 23
+fi
+exec /usr/bin/tail "$@"
+STUB
+  chmod +x "$HOME/.local/bin/tail"
+
+  run agent node --once
+  [ "$status" -eq 0 ]
+  jq -e 'select(.event == "node_sync_artifact_failed")' "$AGENTS_HOME/logs/agent.jsonl" > /dev/null
+  [ -f "$STUB_HOME/tail-heartbeat.json" ]
 }
