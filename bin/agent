@@ -2822,11 +2822,18 @@ resume_run() {
       round_head="Round $wr of $wrs continues: its PR is not merged — keep working on the same branches (e.g. on the review findings), then end with STATUS: ROUND_DONE $wr/$wrs again."
     else
       ((wr < wrs)) || die "all $wrs rounds are done (round $wr/$wrs was the last) — start a new task for more work"
-      local pr state url
-      pr=$(cd "$(task_field "$rtask" REPO_ROOT)" && gh pr list --head "$(task_field "$rtask" BRANCH)" --state all --json number,url,state --limit 1) \
-        || die "cannot check the PR of round $wr/$wrs (gh pr list failed) — merge it and retry, or continue the round: agent run --resume $ref --same-round"
-      state=$(jq -r '.[0].state // empty' <<< "$pr"); url=$(jq -r '.[0].url // empty' <<< "$pr")
-      [[ -n $url ]] || die "round $wr/$wrs has no PR (branch $(task_field "$rtask" BRANCH)) — open and merge it, or continue the round: agent run --resume $ref --same-round"
+      local pr state="" url="" t2 b heads=()
+      for t2 in "${olds[@]}"; do   # the round's PR was opened from the branch of whoever ended the round
+        b=$(task_field "$t2" BRANCH)
+        [[ -n $b ]] || continue
+        heads+=("$b")
+        pr=$(cd "$(task_field "$t2" REPO_ROOT)" && gh pr list --head "$b" --state all --json number,url,state --limit 1) \
+          || die "cannot check the PR of round $wr/$wrs (gh pr list failed) — merge it and retry, or continue the round: agent run --resume $ref --same-round"
+        [[ -n $(jq -r '.[0].url // empty' <<< "$pr") ]] || continue
+        state=$(jq -r '.[0].state // empty' <<< "$pr"); url=$(jq -r '.[0].url // empty' <<< "$pr")
+        [[ $state != MERGED ]] || break   # a merged PR of the round: the next one may start
+      done
+      [[ -n $url ]] || die "round $wr/$wrs has no PR (branches ${heads[*]}) — open and merge it, or continue the round: agent run --resume $ref --same-round"
       [[ $state == MERGED ]] || die "the PR of round $wr/$wrs ($url) is not merged yet ($state). Merge it and run this again — or keep working on round $wr (e.g. review fixes): agent run --resume $ref --same-round"
       fresh=1
     fi
