@@ -4550,11 +4550,11 @@ node_send_sync() {
 node_sync_task() {
   local jid=$1 tid=$2 assignment=$3
   local task_dir="$TASKS/$tid"
-  [[ -d $task_dir && -f $task_dir/meta.env ]] || return 0
-
   local manifest_file="$task_dir/sync_manifest.json"
   local prev_manifest='{"metadata":{},"files":{}}'
   local is_terminal_unchanged=false
+  # A cleaned task still needs log-only delivery or reconciliation of its retained job.
+  [[ -d $task_dir && -f $task_dir/meta.env ]] || is_terminal_unchanged=true
   if [[ -f $manifest_file ]]; then
     prev_manifest=$(jq_soft node_sync_manifest_invalid -c . "$manifest_file")
     [[ -n $prev_manifest ]] || prev_manifest='{"metadata":{},"files":{}}'
