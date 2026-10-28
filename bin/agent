@@ -954,6 +954,7 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
     return 0
   fi
   notify "$id" merged "" "merged PR #$num — both reviews: ready to merge; round $((wr + 1))/$wrs starts"
+  team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=next-round"   # a busy team cannot be resumed
   ref=$(task_field "$id" TEAM); ref=${ref:-$id}
   if ! out=$(cd "$root" && "$SELF" run --resume "$ref" --autopilot \
        "Round $((wr + 1)) of $wrs: the PR of round $wr (#$num) is merged — go on with the next round of the plan." </dev/null 2>&1); then
@@ -1020,21 +1021,27 @@ start_precheck() { # coordinator task — the checks before its review run in th
   fi
 }
 
-cmd__precheck() { # coordinator task — once its team's members have settled (10 minutes at most): the checks, then the
-  # review — or the round goes back to the team
-  local id=$1 team t active i
-  team=$(task_field "$id" TEAM)
+team_wait_settled() { # task — waits until the local members of its team have no run going (10 minutes at most): a
+  # team is resumed only then; 1 = still busy
+  local team t active i
+  team=$(task_field "$1" TEAM)
+  [[ -n $team ]] || return 0
   for ((i = 0; i < 120; i++)); do
     active=0
-    if [[ -n $team ]]; then
-      for t in $(team_tasks "$team"); do
-        [[ $(task_field "$t" KIND) != remote-member ]] || continue
-        case $(task_field "$t" STATUS) in starting|running|waiting|investigating) active=1 ;; esac
-      done
-    fi
-    ((active)) || break
+    for t in $(team_tasks "$team"); do
+      [[ $(task_field "$t" KIND) != remote-member ]] || continue
+      case $(task_field "$t" STATUS) in starting|running|waiting|investigating) active=1 ;; esac
+    done
+    ((active)) || return 0
     sleep 5
   done
+  return 1
+}
+
+cmd__precheck() { # coordinator task — once its team's members have settled: the checks, then the review — or the
+  # round goes back to the team
+  local id=$1
+  team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=precheck"
   if review_precheck "$id"; then
     request_review "$id"
     dispatch   # the review queued here starts on a free investigator now, not at some later run's end
@@ -1111,7 +1118,23 @@ review_followup() { # investigator-task-id final — after a --verify review: cr
   review_fix_pass "$parent" "$n" "$text"
 }
 
-review_fix_pass() { # parent findings text — the team goes on with the review(s) that found problems, VERIFY_MAX_FIX_PASSES
+review_fix_pass() { # parent findings text — the fix pass runs in its own unit, once the team's members have settled (a
+  # member woken by the team's last messages may still run when the reviews end, and a busy team cannot be resumed)
+  printf '%s' "$2" > "$TASKS/$1/fix-pass.n"
+  printf '%s' "$3" > "$TASKS/$1/fix-pass.md"
+  if start_task_unit "$1" _fixpass; then return 0; fi
+  log_error fix_pass_unit_failed "task=$1"   # then here
+  team_wait_settled "$1" || log_warn team_not_settled "task=$1" "before=fix-pass"
+  do_fix_pass "$1" "$2" "$3"
+}
+
+cmd__fixpass() { # coordinator task — the fix pass recorded by review_fix_pass, once the team's members have settled
+  local id=$1
+  team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=fix-pass"
+  do_fix_pass "$id" "$(<"$TASKS/$id/fix-pass.n")" "$(<"$TASKS/$id/fix-pass.md")"
+}
+
+do_fix_pass() { # parent findings text — the team goes on with the review(s) that found problems, VERIFY_MAX_FIX_PASSES
   # times at most; after that the human is mentioned on the PR and notified
   local parent=$1 n=$2 text=$3 pass ref repo root add out owner args=()
   pass=$(task_field "$parent" FIX_PASS); pass=${pass:-0}
@@ -1149,9 +1172,20 @@ review_pair_done() { # review-task parent pair-dir verdict text — one review o
   local id=$1 parent=$2 dir=$3 verdict=$4 text=$5 slot other va vb combined="" s n=0
   slot=A; [[ $(cat "$dir/B.inv" 2>/dev/null) != "$(task_field "$id" INV_ID)" ]] || slot=B   # A unless this is B's review
   other=B; [[ $slot == A ]] || other=A
-  printf '%s' "$verdict" > "$dir/$slot.verdict"
-  printf '%s' "$text" > "$dir/$slot.md"
-  if [[ ! -f $dir/$other.verdict ]]; then
+  # the two reviews end in two runners, often in the same second: recording a verdict and taking the decision are
+  # done under the pair's lock, so that exactly one of them decides (two merges or two fix passes would race)
+  local decide
+  if ! decide=$(
+      exec 9>"$dir/pair.lock"
+      flock -w 60 9 || exit 1
+      printf '%s' "$verdict" > "$dir/$slot.verdict"
+      printf '%s' "$text" > "$dir/$slot.md"
+      if [[ -f $dir/$other.verdict && ! -f $dir/decided ]]; then : > "$dir/decided"; printf yes; fi
+    ); then
+    log_error review_pair_lock_failed "task=$parent" "pair=$dir"
+    return 0
+  fi
+  if [[ $decide != yes ]]; then
     log_info review_pair_waiting "task=$parent" "done=$slot" "verdict=$verdict"
     return 0
   fi
@@ -1238,6 +1272,7 @@ $(head -c 6000 "$dir/$slot.md")"
     remember_investigator "$name"
     start_investigation "$j" "$name" || log_error investigation_start_failed "investigation=$inv" "investigator=$name"
   done
+  rm -f "$dir/decided"   # a new pair decides anew
   meta_set "$id" REVIEW_PAIR_PENDING ""
   meta_set "$id" REVIEW_PAIR "$dir"
   act "$id" info "--autopilot: two reviews of PR #$num started — $a and $b, each on its own"
@@ -3258,7 +3293,7 @@ resume_run() {
       || die "remote member $(task_field "$r" AGENT): its agent is still busy on its node — retry in a minute"
   done
   RESUME_NEW_IDS=(); RESUME_NEW_WT=()   # what this resume makes; removed again if it fails (resume_abandon)
-  trap 'resume_abandon' EXIT
+  trap 'resume_abandon "$?" "$BASH_COMMAND"' EXIT   # the status and the command that ended it, for the log
   for r in "${remote_olds[@]}"; do   # node online, agent free, base on origin — before any local task exists
     rtext=$(cat "$TASKS/$r/task.md"
       if [[ -n ${add//[[:space:]]/} ]]; then
@@ -4037,10 +4072,10 @@ remote_agent_wait_free() { # member seconds — waits until the node offers the 
 RESUME_NEW_IDS=()           # the tasks a resume in progress has made (removed again if it fails)
 declare -A RESUME_NEW_WT=() # their worktrees, by task
 
-resume_abandon() { # a resume that failed: its new tasks go — changes it carried are committed (WIP) on their
-  # branch, their worktrees and task files removed, its remote members' jobs and grants ended — so nothing half-made
-  # blocks the branches or --last-team
-  local id wt name
+resume_abandon() { # [status command] a resume that failed: its new tasks go — changes it carried are committed (WIP) on
+  # their branch, their worktrees and task files removed, its remote members' jobs and grants ended — so nothing
+  # half-made blocks the branches or --last-team
+  local id wt name status=${1:-} cmd=${2:-}
   ((${#RESUME_NEW_IDS[@]})) || return 0
   for id in "${RESUME_NEW_IDS[@]}"; do
     name=${id#*-}; name=${name#*-}   # <date>-<time>-<agent>
@@ -4063,7 +4098,7 @@ resume_abandon() { # a resume that failed: its new tasks go — changes it carri
     fi
     rm -rf "${TASKS:?}/$id"
   done
-  log_warn resume_abandoned "tasks=${RESUME_NEW_IDS[*]}"
+  log_warn resume_abandoned "tasks=${RESUME_NEW_IDS[*]}" "status=$status" "command=${cmd:0:300}"
   echo "agent: the resume failed — its new tasks were removed; changes it carried are committed (WIP) on their branches" >&2
 }
 
@@ -5974,6 +6009,7 @@ main() {
     _remote_member) cmd__remote_member "$@" ;;
     _precheck) cmd__precheck "$@" ;;
     _merge) cmd__merge "$@" ;;
+    _fixpass) cmd__fixpass "$@" ;;
     _supervise) cmd__supervise ;;
     _answers_saved) cmd__answers_saved "$@" ;;
     _authcheck) cmd__authcheck "$@" ;;
