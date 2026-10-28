@@ -827,6 +827,14 @@ findings_count() { # text — the critical (blocker) + major problems a review r
   echo $(( $(count_of "$plain" 'critical|blocker') + $(count_of "$plain" 'major') ))
 }
 
+review_verdict() { # text — the review's verdict (its last VERDICT line): ready-to-merge | needs-fixes | incomplete | nothing
+  : # not implemented yet: tests/unit/autopilot_review.bats comes first
+}
+
+round_test_changes() { # repo base head — what a round did to the tests: "code=0|1 added=N changed=N"
+  : # not implemented yet
+}
+
 review_followup() { # investigator-task-id final — after a --verify review: critical or major findings wake the team
   # with them (VERIFY_MAX_FIX_PASSES times at most); after that the human is mentioned on the PR and notified
   local id=$1 text=$2 parent n pass ref repo root add out owner args=()
