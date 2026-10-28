@@ -4359,6 +4359,42 @@ node_poll_remote_helpers() {
   done <<< "$rows"
 }
 
+# Maximum wire payload size for POST /v1/sync in bytes (2 MiB).
+NODE_SYNC_MAX_PAYLOAD_BYTES=2097152
+
+# Soft budget threshold for batching files and logs in a single sync request (1.5 MiB).
+NODE_SYNC_BATCH_BUDGET_BYTES=1500000
+
+# Maximum file size sent in POST /v1/sync before tail truncation (256 KiB).
+NODE_SYNC_MAX_FILE_BYTES=262144
+
+# Maximum line count for activity.jsonl in POST /v1/sync.
+NODE_SYNC_MAX_ACTIVITY_LINES=2000
+
+# Maximum line count for err-*.log in POST /v1/sync.
+NODE_SYNC_MAX_ERR_LOG_LINES=500
+
+# Maximum log entries per sync request.
+NODE_SYNC_MAX_LOG_ENTRIES=500
+
+# Maximum single log entry size in bytes (64 KiB).
+NODE_SYNC_MAX_LOG_ENTRY_BYTES=65536
+
+# node_sync_save_json atomically writes JSON content to target path, logging on failure without terminating node.
+node_sync_save_json() {
+  local target=$1 content=$2
+  local tmpf
+  if tmpf=$(mktemp "$BUS_DIR/sync_save.XXXXXX" 2>/dev/null); then
+    if printf '%s\n' "$content" > "$tmpf" 2>/dev/null && mv -f "$tmpf" "$target" 2>/dev/null; then
+      rm -f "$tmpf"
+      return 0
+    fi
+    rm -f "$tmpf"
+  fi
+  log_warn node_sync_save_failed "target=$target"
+  return 0
+}
+
 # node_read_meta returns JSON object of allowed display metadata fields for a task.
 node_read_meta() {
   local tid=$1 jid=$2
@@ -4369,12 +4405,13 @@ node_read_meta() {
     local run_start=""
     if [[ -f $task_dir/runner.pid ]]; then
       local errf rc=0
-      errf=$(mktemp)
-      run_start=$(date -Is -r "$task_dir/runner.pid" 2>"$errf") || rc=$?
-      if ((rc != 0)); then
-        run_start=""
+      if errf=$(mktemp); then
+        run_start=$(date -Is -r "$task_dir/runner.pid" 2>"$errf") || rc=$?
+        if ((rc != 0)); then
+          run_start=""
+        fi
+        rm -f "$errf"
       fi
-      rm -f "$errf"
     fi
     # shellcheck source=/dev/null
     source "$meta_f"
@@ -4392,7 +4429,7 @@ node_read_meta() {
       --arg FINISHED "${FINISHED:-}" \
       --arg RUN_START "$run_start" \
       --arg JOB_ID "$job_id" \
-      --arg RESTARTS "${RESTARTS:-}" \
+      --arg RESTARTS "${RESTARTS:-0}" \
       '{
         STATUS: $STATUS,
         RUN: $RUN,
@@ -4432,7 +4469,7 @@ node_send_sync() {
 
   local byte_len
   byte_len=$(printf '%s' "$payload" | wc -c)
-  if (( byte_len > 2097152 )); then
+  if (( byte_len > NODE_SYNC_MAX_PAYLOAD_BYTES )); then
     log_warn node_sync_payload_oversized "job=$jid" "task=$tid" "bytes=$byte_len"
     return 1
   fi
@@ -4479,6 +4516,7 @@ node_sync_task() {
   local changed_files='[]'
   local new_manifest_files='{}'
   local f fname cut byte_len sha256 prev_sha prev_cut base_num tmp_f tmp_cut file_obj total_l
+  local content_raw decoded_len
   for f in "$task_dir"/*; do
     [[ -f $f ]] || continue
     fname=$(basename "$f")
@@ -4496,17 +4534,17 @@ node_sync_task() {
     tmp_f=$(mktemp "$BUS_DIR/sync_file.XXXXXX")
     if [[ $fname == "activity.jsonl" ]]; then
       total_l=$(wc -l < "$f")
-      if (( total_l > 2000 )); then
+      if (( total_l > NODE_SYNC_MAX_ACTIVITY_LINES )); then
         cut=true
-        tail -n 2000 "$f" > "$tmp_f"
+        tail -n "$NODE_SYNC_MAX_ACTIVITY_LINES" "$f" > "$tmp_f"
       else
         cp "$f" "$tmp_f"
       fi
     elif [[ $fname =~ ^err-[1-9][0-9]*\.log$ ]]; then
       total_l=$(wc -l < "$f")
-      if (( total_l > 500 )); then
+      if (( total_l > NODE_SYNC_MAX_ERR_LOG_LINES )); then
         cut=true
-        tail -n 500 "$f" > "$tmp_f"
+        tail -n "$NODE_SYNC_MAX_ERR_LOG_LINES" "$f" > "$tmp_f"
       else
         cp "$f" "$tmp_f"
       fi
@@ -4515,22 +4553,36 @@ node_sync_task() {
     fi
 
     byte_len=$(wc -c < "$tmp_f")
-    if (( byte_len > 262144 )); then
+    if (( byte_len > NODE_SYNC_MAX_FILE_BYTES )); then
       cut=true
       tmp_cut=$(mktemp "$BUS_DIR/sync_file.XXXXXX")
-      tail -c 262144 "$tmp_f" | LC_ALL=C sed -e '1s/^[\x80-\xbf]*//' > "$tmp_cut"
+      tail -c "$NODE_SYNC_MAX_FILE_BYTES" "$tmp_f" | LC_ALL=C sed -e '1s/^[\x80-\xbf]*//' > "$tmp_cut"
       mv "$tmp_cut" "$tmp_f"
     fi
 
-    sha256=$(sha256sum < "$tmp_f" | awk '{print $1}')
+    content_raw=$(jq -Rs . < "$tmp_f")
+    decoded_len=$(printf '%s' "$content_raw" | jq -rj . | wc -c)
+    if (( decoded_len > NODE_SYNC_MAX_FILE_BYTES )); then
+      cut=true
+      tmp_cut=$(mktemp "$BUS_DIR/sync_file.XXXXXX")
+      printf '%s' "$content_raw" | jq -rj . | tail -c "$NODE_SYNC_MAX_FILE_BYTES" | LC_ALL=C sed -e '1s/^[\x80-\xbf]*//' > "$tmp_cut"
+      mv "$tmp_cut" "$tmp_f"
+      content_raw=$(jq -Rs . < "$tmp_f")
+    fi
+
+    if [[ $(wc -c < "$tmp_f") -ne $(printf '%s' "$content_raw" | jq -rj . | wc -c) ]]; then
+      cut=true
+    fi
+
+    sha256=$(printf '%s' "$content_raw" | jq -rj . | sha256sum | awk '{print $1}')
     new_manifest_files=$(jq -c --arg name "$fname" --arg sha "$sha256" --argjson cut "$cut" \
       '. + {($name): {sha: $sha, cut: $cut}}' <<< "$new_manifest_files")
 
     prev_sha=$(jq -r --arg name "$fname" '.files[$name].sha // .files[$name] // empty' <<< "$prev_manifest")
     prev_cut=$(jq -r --arg name "$fname" '.files[$name].cut // false' <<< "$prev_manifest")
     if [[ $sha256 != "$prev_sha" || "$cut" != "$prev_cut" ]]; then
-      file_obj=$(jq -Rs --arg name "$fname" --arg sha "$sha256" --argjson cut "$cut" \
-        '{Name: $name, Content: ., SHA256: $sha, Cut: $cut}' < "$tmp_f")
+      file_obj=$(printf '%s' "$content_raw" | jq -c --arg name "$fname" --arg sha "$sha256" --argjson cut "$cut" \
+        '{Name: $name, Content: ., SHA256: $sha, Cut: $cut}')
       changed_files=$(printf '%s\n%s\n' "$changed_files" "$file_obj" | jq -s '.[0] + [.[1]]')
     fi
     rm -f "$tmp_f"
@@ -4542,6 +4594,10 @@ node_sync_task() {
     cursors=$(jq_soft node_sync_cursor_invalid -c . "$log_cursor_file")
     [[ -n $cursors ]] || cursors='{}'
   fi
+
+  local all_tids_json
+  all_tids_json=$(jq_soft node_sync_jobs_invalid -c '[.jobs | to_entries[] | select((.value.obsolete|not) and .value.task_id) | .value.task_id]' <<< "$NODE_STATE")
+  [[ -n $all_tids_json ]] || all_tids_json='[]'
 
   local logs_payload='[]'
   local new_cursors="$cursors"
@@ -4560,14 +4616,14 @@ node_sync_task() {
       while IFS= read -r line; do
         [[ -n $line ]] || continue
         cur=$((cur + 1))
-        entry=$(jq_soft node_sync_log_malformed -c --arg tid "$tid" 'select(type == "object" and ((.level == "warn" or .level == "error") or .task == $tid))' <<< "$line")
+        entry=$(jq_soft node_sync_log_malformed -c --argjson tids "$all_tids_json" 'select(type == "object" and ((.level == "warn" or .level == "error") or (.task as $t | ($t != null and ($tids | contains([$t]))))))' <<< "$line")
         if [[ -n $entry ]]; then
           entry_len=$(printf '%s' "$entry" | wc -c)
-          if (( entry_len > 65536 )); then
+          if (( entry_len > NODE_SYNC_MAX_LOG_ENTRY_BYTES )); then
             log_warn node_sync_log_oversized "log=$f" "task=$tid"
             continue
           fi
-          if (( log_bytes + entry_len > 1500000 || log_count >= 500 )); then
+          if (( log_bytes + entry_len > NODE_SYNC_BATCH_BUDGET_BYTES || log_count >= NODE_SYNC_MAX_LOG_ENTRIES )); then
             cur=$((cur - 1))
             break
           fi
@@ -4577,11 +4633,16 @@ node_sync_task() {
         fi
       done < <(tail -n +"$((cur + 1))" "$log_p")
       new_cursors=$(jq -c --arg f "$f" --argjson c "$cur" '. + {($f): $c}' <<< "$new_cursors")
-      if (( log_count >= 500 || log_bytes > 1500000 )); then
+      if (( log_count >= NODE_SYNC_MAX_LOG_ENTRIES || log_bytes > NODE_SYNC_BATCH_BUDGET_BYTES )); then
         break
       fi
     fi
   done
+
+  local accepted_manifest_files
+  accepted_manifest_files=$(jq -c '.files // {}' <<< "$prev_manifest")
+  local current_manifest_meta
+  current_manifest_meta="$prev_meta"
 
   local meta_diff_count changed_files_count
   meta_diff_count=$(jq 'length' <<< "$meta_diff")
@@ -4591,22 +4652,24 @@ node_sync_task() {
     return 0
   fi
 
-  # Batch files in chunks <= 1.5 MiB
-  local chunk_files='[]' chunk_bytes=0 f_obj f_bytes num_files i
-  num_files=$(jq 'length' <<< "$changed_files")
+  local meta_len logs_len
+  meta_len=$(printf '%s' "$meta_diff" | wc -c)
+  logs_len=$(printf '%s' "$logs_payload" | wc -c)
+
+  local req_files='[]' req_bytes=$(( meta_len + logs_len ))
   local sync_meta="$meta_diff"
   local sync_logs="$logs_payload"
+  local num_files i f_obj f_bytes
+  num_files=$(jq 'length' <<< "$changed_files")
 
   if (( num_files == 0 )); then
     if node_send_sync "$jid" "$tid" "$assignment" "$sync_meta" "[]" "$sync_logs"; then
       local final_manifest
-      final_manifest=$(jq -nc \
-        --argjson meta "$current_meta" \
-        --argjson files "$new_manifest_files" \
-        '{metadata: $meta, files: $files}')
-      printf '%s\n' "$final_manifest" > "$manifest_file"
+      final_manifest=$(printf '%s\n%s\n' "$current_meta" "$accepted_manifest_files" | jq -s \
+        '{metadata: .[0], files: .[1]}')
+      node_sync_save_json "$manifest_file" "$final_manifest"
       if (( log_count > 0 )); then
-        printf '%s\n' "$new_cursors" > "$log_cursor_file"
+        node_sync_save_json "$log_cursor_file" "$new_cursors"
       fi
     fi
     return 0
@@ -4615,34 +4678,64 @@ node_sync_task() {
   for (( i=0; i<num_files; i++ )); do
     f_obj=$(jq -c --argjson idx "$i" '.[$idx]' <<< "$changed_files")
     f_bytes=$(printf '%s' "$f_obj" | wc -c)
-    if (( chunk_bytes + f_bytes > 1500000 && $(jq 'length' <<< "$chunk_files") > 0 )); then
-      if node_send_sync "$jid" "$tid" "$assignment" "$sync_meta" "$chunk_files" "$sync_logs"; then
-        sync_meta='{}'
-        sync_logs='[]'
+
+    # If adding this file would exceed budget and we already have items to send, flush current request
+    if (( req_bytes + f_bytes > NODE_SYNC_BATCH_BUDGET_BYTES && ($(jq 'length' <<< "$req_files") > 0 || meta_diff_count > 0 || log_count > 0) )); then
+      if node_send_sync "$jid" "$tid" "$assignment" "$sync_meta" "$req_files" "$sync_logs"; then
+        current_manifest_meta="$current_meta"
+        # Update accepted files from req_files
+        local sent_f s_name s_sha s_cut j num_sent
+        num_sent=$(jq 'length' <<< "$req_files")
+        for (( j=0; j<num_sent; j++ )); do
+          sent_f=$(jq -c --argjson idx "$j" '.[$idx]' <<< "$req_files")
+          s_name=$(jq -r '.Name' <<< "$sent_f")
+          s_sha=$(jq -r '.SHA256' <<< "$sent_f")
+          s_cut=$(jq -r '.Cut' <<< "$sent_f")
+          accepted_manifest_files=$(jq -c --arg n "$s_name" --arg s "$s_sha" --argjson c "$s_cut" \
+            '. + {($n): {sha: $s, cut: $c}}' <<< "$accepted_manifest_files")
+        done
+        local partial_manifest
+        partial_manifest=$(printf '%s\n%s\n' "$current_manifest_meta" "$accepted_manifest_files" | jq -s \
+          '{metadata: .[0], files: .[1]}')
+        node_sync_save_json "$manifest_file" "$partial_manifest"
         if (( log_count > 0 )); then
-          printf '%s\n' "$new_cursors" > "$log_cursor_file"
+          node_sync_save_json "$log_cursor_file" "$new_cursors"
           log_count=0
         fi
+        sync_meta='{}'
+        sync_logs='[]'
+        meta_diff_count=0
+        req_files='[]'
+        req_bytes=0
       else
         return 0
       fi
-      chunk_files='[]'
-      chunk_bytes=0
     fi
-    chunk_files=$(printf '%s\n%s\n' "$chunk_files" "$f_obj" | jq -s '.[0] + [.[1]]')
-    chunk_bytes=$((chunk_bytes + f_bytes))
+
+    req_files=$(printf '%s\n%s\n' "$req_files" "$f_obj" | jq -s '.[0] + [.[1]]')
+    req_bytes=$(( req_bytes + f_bytes ))
   done
 
-  if (( $(jq 'length' <<< "$chunk_files") > 0 || meta_diff_count > 0 || log_count > 0 )); then
-    if node_send_sync "$jid" "$tid" "$assignment" "$sync_meta" "$chunk_files" "$sync_logs"; then
-      local final_manifest
-      final_manifest=$(jq -nc \
-        --argjson meta "$current_meta" \
-        --argjson files "$new_manifest_files" \
-        '{metadata: $meta, files: $files}')
-      printf '%s\n' "$final_manifest" > "$manifest_file"
+  # Flush final chunk if any items remain
+  if (( $(jq 'length' <<< "$req_files") > 0 || meta_diff_count > 0 || log_count > 0 )); then
+    if node_send_sync "$jid" "$tid" "$assignment" "$sync_meta" "$req_files" "$sync_logs"; then
+      current_manifest_meta="$current_meta"
+      local sent_f s_name s_sha s_cut j num_sent
+      num_sent=$(jq 'length' <<< "$req_files")
+      for (( j=0; j<num_sent; j++ )); do
+        sent_f=$(jq -c --argjson idx "$j" '.[$idx]' <<< "$req_files")
+        s_name=$(jq -r '.Name' <<< "$sent_f")
+        s_sha=$(jq -r '.SHA256' <<< "$sent_f")
+        s_cut=$(jq -r '.Cut' <<< "$sent_f")
+        accepted_manifest_files=$(jq -c --arg n "$s_name" --arg s "$s_sha" --argjson c "$s_cut" \
+          '. + {($n): {sha: $s, cut: $c}}' <<< "$accepted_manifest_files")
+      done
+      local partial_manifest
+      partial_manifest=$(printf '%s\n%s\n' "$current_manifest_meta" "$accepted_manifest_files" | jq -s \
+        '{metadata: .[0], files: .[1]}')
+      node_sync_save_json "$manifest_file" "$partial_manifest"
       if (( log_count > 0 )); then
-        printf '%s\n' "$new_cursors" > "$log_cursor_file"
+        node_sync_save_json "$log_cursor_file" "$new_cursors"
       fi
     fi
   fi
@@ -4651,7 +4744,7 @@ node_sync_task() {
 # node_sync_tasks syncs changed metadata, files and logs for assigned jobs.
 node_sync_tasks() {
   local jid tid assignment ids
-  ids=$(jq -r '.jobs | to_entries[] | select((.value.obsolete|not) and .value.task_id and (.value.launched or .value.start_acked)) | .key' <<< "$NODE_STATE" 2>/dev/null || true)
+  ids=$(jq_soft node_sync_jobs_invalid -r '.jobs | to_entries[] | select((.value.obsolete|not) and .value.task_id and (.value.launched or .value.start_acked)) | .key' <<< "$NODE_STATE")
   for jid in $ids; do
     [[ -n $jid ]] || continue
     tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$NODE_STATE")
