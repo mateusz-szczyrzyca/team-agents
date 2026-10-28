@@ -124,6 +124,10 @@ func TestLeadSyncStoresIncrementalArtifacts(t *testing.T) {
 	if err := a.sync("node-a", b); err != nil {
 		t.Fatal(err)
 	}
+	meta, err = os.ReadFile(filepath.Join(dir, "metadata.json")) // #nosec G304 -- dir is built from newBus(t) and fixed test identifiers.
+	if err != nil || !strings.Contains(string(meta), `"RESTARTS":"2"`) || !strings.Contains(string(meta), `"STATUS":"done"`) {
+		t.Fatalf("metadata merge: %q %v", meta, err)
+	}
 	data, err = os.ReadFile(filepath.Join(dir, "prompt-1.md")) // #nosec G304 -- dir is built from newBus(t) and fixed test identifiers.
 	if err != nil || len(data) != 256*1024 {
 		t.Fatalf("unchanged prompt lost: %d %v", len(data), err)
@@ -152,6 +156,9 @@ func TestLeadSyncRetentionAndLogCap(t *testing.T) {
 	storeRun(t, a.bus, regAt(0), func(r *leadRegistry) {
 		j := r.jobs[b.Job]
 		j.State = JobDone
+		for i := range j.History {
+			j.History[i].At = Timestamp{old.Add(-time.Duration(len(j.History)-i) * time.Second)}
+		}
 		j.History = append(j.History, JobTransition{State: JobDone, At: old})
 	})
 	if _, err := a.listJobs(""); err != nil {
