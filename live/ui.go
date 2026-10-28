@@ -318,6 +318,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setFlash("this task is not waiting for your answers")
 			return m, nil
 		}
+		if t.Node != "" {
+			m.setFlash("mirrored task cannot be answered from lead")
+			return m, nil
+		}
 		c := exec.Command(m.cfg.agentCmd, "answer", t.ID) // #nosec G204 -- m.cfg.agentCmd is the operator's configured agent command; t.ID comes from the task listing
 		return m, tea.ExecProcess(c, func(err error) tea.Msg {
 			if err != nil {
@@ -649,8 +653,12 @@ func (m model) row(t *Task, width int) string {
 	if p := m.snap.Agents[t.BusName()]; p != nil && p.Task == t.ID && p.Status != "" {
 		stage = "„" + p.Status + "” "
 	}
-	if (t.Status == "running" || t.Status == "starting") && !t.Alive && !t.RunStart.IsZero() {
+	if t.Node == "" && (t.Status == "running" || t.Status == "starting") && !t.Alive && !t.RunStart.IsZero() {
 		label = "✗ process is dead"
+		st = stFailed
+	}
+	if t.NodeOffline {
+		label += " (" + t.Status + "; node offline)"
 		st = stFailed
 	}
 	last := ""
