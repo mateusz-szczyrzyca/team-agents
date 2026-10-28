@@ -213,6 +213,11 @@ ROUND_ALWAYS_EXCLUDE=".agents/reports/"
 # --verify: a review with critical or major findings wakes the team with them, at most VERIFY_MAX_FIX_PASSES
 # times; then the human (AGENT_HUMAN_GITHUB, default: the owner of the GitHub repository) is mentioned on the PR.
 VERIFY_MAX_FIX_PASSES="${VERIFY_MAX_FIX_PASSES:-2}"
+# Before a review (--verify, --autopilot): a round's head must pass the repository's gate and add tests for a change
+# of code; else the team goes on with the reason, at most AGENT_PRECHECK_MAX times, then the human decides.
+AGENT_REVIEW_GATE="${AGENT_REVIEW_GATE:-auto}"        # the gate's command: auto = `make gate` where the repository has it; off = none
+AGENT_REVIEW_GATE_MIN="${AGENT_REVIEW_GATE_MIN:-30}"  # its time limit, in minutes
+AGENT_PRECHECK_MAX="${AGENT_PRECHECK_MAX:-2}"         # how many times a round goes back for its gate or its tests
 AGENT_HUMAN_GITHUB="${AGENT_HUMAN_GITHUB:-}"
 ROUND_MAX_LINES="${ROUND_MAX_LINES:-3000}"
 ROUND_EXCLUDE="${ROUND_EXCLUDE:-*_gen.go go.sum package-lock.json vendor/}"
@@ -828,11 +833,126 @@ findings_count() { # text — the critical (blocker) + major problems a review r
 }
 
 review_verdict() { # text — the review's verdict (its last VERDICT line): ready-to-merge | needs-fixes | incomplete | nothing
-  : # not implemented yet: tests/unit/autopilot_review.bats comes first
+  sed 's/[*`_]//g' <<< "$1" | { grep -oiE 'verdict:[[:space:]]*(ready-to-merge|needs-fixes|incomplete)' || (($? == 1)); } \
+    | tail -1 | sed -E 's/^[^:]*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]'
 }
 
-round_test_changes() { # repo base head — what a round did to the tests: "code=0|1 added=N changed=N"
-  : # not implemented yet
+review_task_verdict() { # review-task final — its verdict; an old-style review (no VERDICT line) with critical or major
+  # findings needs fixes; findings outweigh a "ready-to-merge"; nothing when the review gives no verdict
+  local id=$1 text=$2 v n
+  [[ ! -s $TASKS/$id/result.md ]] || text+=$'\n'$(cat "$TASKS/$id/result.md")
+  v=$(review_verdict "$2"); [[ -n $v ]] || v=$(review_verdict "$text")
+  n=$(findings_count "$text")
+  if ((n > 0)) && [[ -z $v || $v == ready-to-merge ]]; then v=needs-fixes; fi
+  printf '%s' "$v"
+}
+
+# the paths of test files (git pathspecs) in the languages the repositories use
+TEST_PATHSPECS=(':(glob)**/*.bats' ':(glob)**/*_test.go' ':(glob)**/test_*.py' ':(glob)**/*_test.py'
+  ':(glob)**/*.test.[jt]s' ':(glob)**/*.spec.[jt]s' ':(glob)**/tests/**/*.rs')
+
+round_test_changes() { # repo base head — what a round did to the tests: "code=0|1 added=N changed=N" — code: a file
+  # other than documentation changed; added: new test cases; changed: existing test files with lines taken away
+  local repo=$1 base=$2 head=$3 f code=0 added changed
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    case $f in *.md|*.txt|*.rst|docs/*|LICENSE*) ;; *) code=1 ;; esac
+  done < <(git -C "$repo" diff --name-only "$base" "$head")
+  local plus minus diff
+  diff=$(git -C "$repo" diff -U0 "$base" "$head" -- "${TEST_PATHSPECS[@]}")
+  plus=$({ grep -cE '^\+[[:space:]]*(@test |func Test|def test_|#\[test\]|(it|test)\()' || (($? == 1)); } <<< "$diff")
+  minus=$({ grep -cE '^-[[:space:]]*(@test |func Test|def test_|#\[test\]|(it|test)\()' || (($? == 1)); } <<< "$diff")
+  added=$((plus > minus ? plus - minus : 0))   # a test whose declaring line changed is not a new one
+  changed=$(git -C "$repo" diff --numstat "$base" "$head" -- "${TEST_PATHSPECS[@]}" | awk '$2 > 0 { n++ } END { print n + 0 }')
+  printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
+}
+
+review_gate_cmd() { # repo — the gate a round's head must pass before a review (nothing: none)
+  case $AGENT_REVIEW_GATE in
+    off|"") ;;
+    auto) if make -C "$1" -n gate >/dev/null 2>&1; then printf 'make gate'; fi ;;   # a repository without a gate target: none
+    *) printf '%s' "$AGENT_REVIEW_GATE" ;;
+  esac
+}
+
+start_precheck() { # coordinator task — the checks before its review run in their own unit: the gate may take minutes,
+  # and the team's members must settle before the round can go back to them
+  local id=$1
+  if systemd-run --user --quiet --collect --unit="agent-$id-precheck-$(date +%s)" \
+       --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+       "$SELF" _precheck "$id" 3>&- 7>&- 8>&- 9>&- 10>&-; then
+    act "$id" info "before the review: the checks started"
+  else
+    log_error precheck_unit_failed "task=$id"   # then here, in this run
+    if review_precheck "$id"; then request_review "$id"; dispatch; fi
+  fi
+}
+
+cmd__precheck() { # coordinator task — once its team's members have settled (10 minutes at most): the checks, then the
+  # review — or the round goes back to the team
+  local id=$1 team t active i
+  team=$(task_field "$id" TEAM)
+  for ((i = 0; i < 120; i++)); do
+    active=0
+    if [[ -n $team ]]; then
+      for t in $(team_tasks "$team"); do
+        [[ $(task_field "$t" KIND) != remote-member ]] || continue
+        case $(task_field "$t" STATUS) in starting|running|waiting|investigating) active=1 ;; esac
+      done
+    fi
+    ((active)) || break
+    sleep 5
+  done
+  if review_precheck "$id"; then
+    request_review "$id"
+    dispatch   # the review queued here starts on a free investigator now, not at some later run's end
+  fi
+}
+
+review_precheck() { # coordinator task id — before a review: the round's head adds tests for a change of code and passes
+  # the gate; else the team goes on with the reason (AGENT_PRECHECK_MAX times), then the human decides. 0 = review it
+  local id=$1 root branch base head mb tc gate wt rc why="" pass ref repo args=() out
+  root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH); base=$(task_field "$id" BASE)
+  git -C "$root" fetch -q origin 10>&- || log_warn precheck_fetch_failed "task=$id"   # then the local refs are checked
+  head=$(git -C "$root" rev-parse -q --verify "origin/$branch^{commit}" 10>&-) \
+    || head=$(git -C "$root" rev-parse -q --verify "$branch^{commit}" 10>&-) \
+    || { log_warn precheck_no_head "task=$id" "branch=$branch"; return 0; }   # nothing to check: the review decides
+  mb=$(git -C "$root" merge-base "origin/${base:-main}" "$head" 10>&-) || mb=$(git -C "$root" merge-base "${base:-main}" "$head" 10>&-) \
+    || { log_warn precheck_no_base "task=$id" "base=$base"; return 0; }
+  tc=$(round_test_changes "$root" "$mb" "$head")
+  meta_set "$id" ROUND_TESTS "$tc"
+  [[ $tc != "code=1 added=0 "* ]] || why="the round changes code but adds no test — every change of behaviour needs its test, written first"
+  gate=$(review_gate_cmd "$root")
+  if [[ -z $why && -n $gate ]]; then
+    wt=$(mktemp -d)
+    git -C "$root" worktree add -q --detach "$wt" "$head" 10>&- || { log_warn precheck_worktree_failed "task=$id"; rmdir "$wt"; return 0; }
+    rc=0
+    (cd "$wt" && timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") > "$TASKS/$id/precheck.log" 2>&1 10>&- || rc=$?
+    git -C "$root" worktree remove --force "$wt" 10>&- || log_warn precheck_worktree_left "worktree=$wt"
+    act "$id" info "before the review: the gate ($gate) at ${head:0:7} — exit $rc"
+    ((rc == 0)) || why="the gate (\`$gate\`) fails at ${head:0:7} (exit $rc); its output ends with:
+\`\`\`
+$(tail -n 40 "$TASKS/$id/precheck.log")
+\`\`\`"
+  fi
+  [[ -n $why ]] || return 0
+  pass=$(task_field "$id" PRECHECK_PASS); pass=${pass:-0}
+  ref=$(task_field "$id" TEAM); ref=${ref:-$id}; repo=$(task_field "$id" REPO_NAME)
+  log_warn review_precheck_failed "task=$id" "pass=$pass" "reason=${why:0:200}"
+  if ((pass < AGENT_PRECHECK_MAX)); then
+    args=(run --resume "$ref" --same-round)
+    if [[ $(task_field "$id" AUTOPILOT) == 1 ]]; then args+=(--autopilot); else args+=(--verify); fi
+    if out=$(cd "$root" && AGENT_PRECHECK_PASS=$((pass + 1)) AGENT_FIX_PASS=$(task_field "$id" FIX_PASS) "$SELF" "${args[@]}" \
+         "Not reviewed yet ($((pass + 1)) of $AGENT_PRECHECK_MAX): $why
+Fix it on the same branches and finish as before; the round goes to review once its head passes." </dev/null 2>&1); then
+      act "$id" info "before the review: the team goes on ($((pass + 1)) of $AGENT_PRECHECK_MAX) — ${why:0:120}"
+    else
+      log_error review_precheck_resume_failed "task=$id" "reason=${out:0:500}"
+    fi
+    return 1
+  fi
+  notify "$id" failed "" "not reviewed: after $pass returns the round still fails before its review (the gate or its tests) — your decision is needed: ${why:0:400}"
+  return 1
 }
 
 review_followup() { # investigator-task-id final — after a --verify review: critical or major findings wake the team
@@ -848,9 +968,22 @@ review_followup() { # investigator-task-id final — after a --verify review: cr
     text=$(cat "$TASKS/$id/result.md")
   fi
   ((n2 > n)) && n=$n2
+  local verdict pair
+  verdict=$(review_task_verdict "$id" "$2")
+  meta_set "$id" REVIEW_VERDICT "${verdict:-none}"
   pass=$(task_field "$parent" FIX_PASS); pass=${pass:-0}
-  log_info review_findings "task=$parent" "review=$id" "critical_or_major=$n" "fix_pass=$pass"
-  ((n > 0)) || return 0
+  log_info review_findings "task=$parent" "review=$id" "critical_or_major=$n" "fix_pass=$pass" "verdict=${verdict:-none}"
+  pair=$(task_field "$parent" REVIEW_PAIR)
+  if [[ -n $pair ]]; then review_pair_done "$id" "$parent" "$pair" "${verdict:-none}" "$text"; return 0; fi
+  [[ $verdict == needs-fixes || $verdict == incomplete ]] || return 0
+  review_fix_pass "$parent" "$n" "$text"
+}
+
+review_fix_pass() { # parent findings text — the team goes on with the review(s) that found problems, VERIFY_MAX_FIX_PASSES
+  # times at most; after that the human is mentioned on the PR and notified
+  local parent=$1 n=$2 text=$3 pass ref repo root add out owner args=()
+  pass=$(task_field "$parent" FIX_PASS); pass=${pass:-0}
+  PR_NUMBER=$(task_field "$parent" PR_NUMBER); PR_URL=$(task_field "$parent" PR_URL)
   ref=$(task_field "$parent" TEAM); ref=${ref:-$parent}
   repo=$(task_field "$parent" REPO_NAME); root=$(task_field "$parent" REPO_ROOT)
   if ((pass < VERIFY_MAX_FIX_PASSES)); then
@@ -860,7 +993,8 @@ Fix every critical and major finding — or dispute one, with a justification, a
 The review:
 
 ${text:0:8000}"
-    args=(run --resume "$ref" --verify)
+    args=(run --resume "$ref")
+    if [[ $(task_field "$parent" AUTOPILOT) == 1 ]]; then args+=(--autopilot); else args+=(--verify); fi
     if [[ -n $(task_field "$parent" WORK_ROUND) ]]; then args+=(--same-round); fi
     if out=$(cd "$root" && AGENT_FIX_PASS=$((pass + 1)) "$SELF" "${args[@]}" "$add" </dev/null 2>&1); then
       act "$id" info "--verify: $n critical/major finding(s) — the team resumed for fix pass $((pass + 1))"
@@ -877,6 +1011,102 @@ ${text:0:8000}"
   log_warn review_fixes_exhausted "task=$parent" "passes=$pass" "findings=$n"
 }
 
+review_pair_done() { # review-task parent pair-dir verdict text — one review of an --autopilot pair has ended; when
+  # both have: both ready-to-merge = the PR is ready; a review without a verdict = the human decides; else the team
+  # goes on with the review(s) that found problems
+  local id=$1 parent=$2 dir=$3 verdict=$4 text=$5 slot other va vb combined="" s n=0
+  slot=A; [[ $(cat "$dir/B.inv" 2>/dev/null) != "$(task_field "$id" INV_ID)" ]] || slot=B   # A unless this is B's review
+  other=B; [[ $slot == A ]] || other=A
+  printf '%s' "$verdict" > "$dir/$slot.verdict"
+  printf '%s' "$text" > "$dir/$slot.md"
+  if [[ ! -f $dir/$other.verdict ]]; then
+    log_info review_pair_waiting "task=$parent" "done=$slot" "verdict=$verdict"
+    return 0
+  fi
+  va=$(<"$dir/A.verdict"); vb=$(<"$dir/B.verdict")
+  log_info review_pair_done "task=$parent" "A=$va" "B=$vb"
+  if [[ $va == ready-to-merge && $vb == ready-to-merge ]]; then
+    meta_set "$parent" REVIEW_RESULT approved
+    notify "$parent" approved "" "both reviews: ready to merge — PR #$(task_field "$parent" PR_NUMBER): $(task_field "$parent" PR_URL)"
+    return 0
+  fi
+  if [[ $va == none || $vb == none ]]; then
+    meta_set "$parent" REVIEW_RESULT failed
+    notify "$parent" failed "" "a review of PR #$(task_field "$parent" PR_NUMBER) gave no verdict — your decision is needed: $(task_field "$parent" PR_URL)"
+    return 0
+  fi
+  meta_set "$parent" REVIEW_RESULT fixes
+  for s in A B; do
+    [[ $(<"$dir/$s.verdict") != ready-to-merge ]] || continue
+    combined+="## Review by $(<"$dir/$s.agent") — $(<"$dir/$s.verdict")"$'\n\n'"$(<"$dir/$s.md")"$'\n\n'
+    n=$((n + $(findings_count "$(<"$dir/$s.md")")))
+  done
+  review_fix_pass "$parent" "$n" "$combined"
+}
+
+free_investigator_list() { # every free investigator (not working, not waiting for the human's answers), one per line
+  local inv d busy
+  while read -r inv; do
+    busy=0
+    for d in "$TASKS"/*/; do
+      [[ -f $d/meta.env ]] || continue
+      d=${d%/}; d=${d##*/}
+      [[ $(task_field "$d" AGENT) == "$inv" && $(task_field "$d" KIND) == investigation ]] || continue
+      case $(task_field "$d" STATUS) in new|starting|running|waiting) busy=1; break ;; esac
+    done
+    ((busy)) || printf '%s\n' "$inv"
+  done < <(investigator_names)
+}
+
+start_review_pairs() { # under the dispatch lock: a pending --autopilot review pair starts once two investigators are free
+  local m
+  for m in "$TASKS"/*/meta.env; do
+    grep -qx 'REVIEW_PAIR_PENDING=1' "$m" || continue
+    m=${m%/meta.env}
+    start_review_pair "${m##*/}" || return 0   # not two free investigators yet: the next dispatch tries again
+  done
+}
+
+start_review_pair() { # coordinator task — both reviews of its PR at once, on two different free investigators (the
+  # previous pair when free: each re-checks its own findings); 1 = not two free investigators yet
+  local id=$1 free=() dir a="" b="" pa="" pb="" f slot name inv j q num url
+  mapfile -t free < <(free_investigator_list)
+  ((${#free[@]} >= 2)) || return 1
+  num=$(task_field "$id" PR_NUMBER); url=$(task_field "$id" PR_URL)
+  dir="$AGENTS_HOME/reviews/$(task_field "$id" REPO_NAME)-$num"
+  mkdir -p "$dir"
+  [[ ! -f $dir/A.agent ]] || pa=$(<"$dir/A.agent")
+  [[ ! -f $dir/B.agent ]] || pb=$(<"$dir/B.agent")
+  for f in "${free[@]}"; do [[ $f != "$pa" ]] || a=$f; [[ $f != "$pb" ]] || b=$f; done
+  for f in "${free[@]}"; do
+    if [[ -z $a && $f != "$b" ]]; then a=$f; fi
+    if [[ -z $b && $f != "$a" ]]; then b=$f; fi
+  done
+  [[ -n $a && -n $b && $a != "$b" ]] || return 1
+  for slot in A B; do
+    name=$a; [[ $slot == A ]] || name=$b
+    q="Recenzja PR #$num ($url) — one of two independent reviews: do not read other reviews or review comments on this PR before your own is published."
+    if [[ -s $dir/$slot.md && -n $(task_field "$id" FIX_PASS) && $(task_field "$id" FIX_PASS) != 0 ]]; then
+      q+=" Re-review after fix pass $(task_field "$id" FIX_PASS): first check whether the findings of your previous review below are fixed (or disputed convincingly on the PR), then the rest of the change only for new problems.
+
+Your previous review:
+$(head -c 6000 "$dir/$slot.md")"
+    fi
+    inv=$(bus inv-add --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" --kind review \
+            --from-agent "$(task_field "$id" AGENT)" --from-task "$id" --repo "$(task_field "$id" REPO_NAME)" \
+            --branch "$(task_field "$id" BRANCH)" --tasks-dir "$TASKS" --question "$q" --pr-url "$url" --pr-number "$num") \
+      || { log_error review_pair_add_failed "task=$id" "slot=$slot"; return 1; }
+    bus inv-set --dir "$BUS_DIR" --id "$inv" --status starting >/dev/null || { log_error review_pair_start_failed "task=$id" "investigation=$inv"; return 1; }
+    j=$(bus inv-get --dir "$BUS_DIR" --id "$inv")
+    printf '%s' "$name" > "$dir/$slot.agent"; printf '%s' "$inv" > "$dir/$slot.inv"; rm -f "$dir/$slot.verdict"
+    remember_investigator "$name"
+    start_investigation "$j" "$name" || log_error investigation_start_failed "investigation=$inv" "investigator=$name"
+  done
+  meta_set "$id" REVIEW_PAIR_PENDING ""
+  meta_set "$id" REVIEW_PAIR "$dir"
+  act "$id" info "--autopilot: two reviews of PR #$num started — $a and $b, each on its own"
+}
+
 request_review() { # coordinator task id — --verify: queue a PR review by an investigator
   local id=$1 root branch pr url num inv
   root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH)
@@ -886,6 +1116,14 @@ request_review() { # coordinator task id — --verify: queue a PR review by an i
   if [[ -z $url ]]; then
     act "$id" err "--verify: no PR found for branch $branch — review skipped"
     push_text "$(task_field "$id" REPO_NAME)" "Team $(task_field "$id" TEAM): --verify — no PR found for branch $branch, investigator review skipped."
+    return 0
+  fi
+  meta_set "$id" PR_NUMBER "$num"; meta_set "$id" PR_URL "$url"
+  if [[ $(task_field "$id" AUTOPILOT) == 1 ]]; then   # two reviews at once, when two investigators are free
+    meta_set "$id" REVIEW_PAIR_PENDING 1
+    meta_set "$id" REVIEW_PAIR_SINCE "$(date +%s)"
+    act "$id" info "--autopilot: two reviews of PR #$num wait for two free investigators"
+    dispatch
     return 0
   fi
   local pass question
@@ -969,8 +1207,8 @@ team_after_run() { # id status final note — team logic after a member's run en
       done)
         finish_team "$team" "team task finished by the coordinator ($AGENT)"
         if [[ $status == done && $(task_field "$id" VERIFY) == 1 ]]; then
-          request_review "$id"
-          [[ -n $(task_field "$id" REVIEW_INV) ]] && note="${note:+$note; }PR review queued for an investigator (#$(task_field "$id" REVIEW_INV))"
+          start_precheck "$id"   # the checks before the review, then the review — in their own unit
+          note="${note:+$note; }the round goes to review once its head passes the checks"
         fi
         notify "$id" "$status" "$final" "${note:+$note; }team $team:
 $(team_summary "$team")" ;;
@@ -1710,8 +1948,17 @@ notify() { # id status final note
     hung)    label="⚠ hung (watchdog)" ;;
     paused)  label="⏸ paused" ;;
     abandoned) label="⚠ team left without members" ;;
+    approved) label="✅✅ both reviews: ready to merge" ;;
     *)       label=$status ;;
   esac
+  if [[ ${REVIEW:-} == 1 && $status == done ]]; then   # a PR review: its verdict
+    case $(review_task_verdict "$id" "$final") in
+      ready-to-merge) label="✅ ready to merge" ;;
+      needs-fixes) label="🔧 needs fixes" ;;
+      incomplete) label="🧩 incomplete" ;;
+      *) label="❌ review without a verdict" ;;
+    esac
+  fi
   [[ -n $final ]] || final="(no final message from the agent — see: agent log $id)"
   mkdir -p "$NOTIFY_DIR"
   local f="$NOTIFY_DIR/${id}-r${RUN}-summary.md"
@@ -1820,6 +2067,7 @@ dispatch() { # starts queued requests on free investigators
     exec 9>"$AGENTS_HOME/dispatch.lock"
     flock -w 120 9 || { log_warn dispatch_lock_timeout "lock=$AGENTS_HOME/dispatch.lock" "effect=queued investigations wait for the next dispatch"; exit 0; }
     local inv j
+    start_review_pairs
     while inv=$(free_investigator); do
       j=$(bus inv-next --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS") || break
       [[ -n $j ]] || break
@@ -2942,7 +3190,8 @@ resume_run() {
               "REPO_NAME=$(task_field "$old" REPO_NAME)" "REPO_ROOT=$root" "WORKTREE=$wt" \
               "BRANCH=$branch" "PREV_BRANCH=$( ((fresh)) && echo "$prev")" "BASE=$(task_field "$old" BASE)" "SESSION_ID=$sid" \
               "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" "RESUMED_FROM=$old" "FIX_PASS=${AGENT_FIX_PASS:-0}" \
-              "VERIFY=$( ((verify)) && echo 1 || task_field "$old" VERIFY)"; do
+              "VERIFY=$( ((verify)) && echo 1 || task_field "$old" VERIFY)" \
+              "AUTOPILOT=$( ((${autopilot:-0})) && echo 1 || task_field "$old" AUTOPILOT)" "PRECHECK_PASS=${AGENT_PRECHECK_PASS:-0}"; do
       meta_set "$id" "${kv%%=*}" "${kv#*=}"
     done
     ids+=("$id")
@@ -2995,8 +3244,8 @@ resume_run() {
 }
 
 cmd_run() {
-  local members=() verify=0 same_round=0 team_list="" resume_ref="" need_caps=() target_node=""
-  while [[ ${1:-} == --need || ${1:-} == --on || ${1:-} == --team || ${1:-} == --verify || ${1:-} == --resume || ${1:-} == --same-round || ${1:-} == --last-team ]]; do
+  local members=() verify=0 autopilot=0 same_round=0 team_list="" resume_ref="" need_caps=() target_node=""
+  while [[ ${1:-} == --need || ${1:-} == --on || ${1:-} == --team || ${1:-} == --verify || ${1:-} == --autopilot || ${1:-} == --resume || ${1:-} == --same-round || ${1:-} == --last-team ]]; do
     case $1 in
       --need)
         [[ -n ${2:-} && ${2:-} != --* ]] || die "usage: agent run --need cap1,cap2 <agent|normal|worker> \"task\""
@@ -3009,6 +3258,7 @@ cmd_run() {
         [[ -n $resume_ref ]] || die "--last-team: no team of this repository (outside a repository: no team at all)"
         shift ;;
       --verify) verify=1; shift ;;
+      --autopilot) verify=1; autopilot=1; shift ;;   # --verify, then the merge and the next round by themselves
       --same-round) same_round=1; shift ;;
       --resume)
         [[ -n ${2:-} ]] || die "usage: agent run --resume <team|task> [\"addition\" | -f file.md]"
@@ -3149,6 +3399,7 @@ cmd_run() {
   fi
   if ((verify)); then
     for i in "${ids[@]}"; do meta_set "$i" VERIFY 1; done
+    if ((autopilot)); then for i in "${ids[@]}"; do meta_set "$i" AUTOPILOT 1; done; fi
   fi
   unlock_task_ids
   for i in "${ids[@]}"; do
@@ -5578,6 +5829,7 @@ main() {
     notes)   cmd_notes "$@" ;;
     _wake)   cmd__wake "$@" ;;
     _remote_member) cmd__remote_member "$@" ;;
+    _precheck) cmd__precheck "$@" ;;
     _supervise) cmd__supervise ;;
     _answers_saved) cmd__answers_saved "$@" ;;
     _authcheck) cmd__authcheck "$@" ;;

@@ -75,7 +75,15 @@ STATUS: DONE | FAILED | QUESTIONS
 Answer: <the recommendation in one sentence: ready to merge / needs changes>
 Problems: <critical N, major N, minor N>
 Review: <html_url>
+VERDICT: ready-to-merge | needs-fixes | incomplete
 ```
+
+The verdict is one of three words, on its own line — the script reads it:
+
+- `ready-to-merge` — no critical or major problem; the change does what the task (or its round) asked; its tests pass
+  and cover the change.
+- `needs-fixes` — at least one critical or major problem.
+- `incomplete` — part of what the task (or its round) asked is missing.
 
 If something important cannot be established and it blocks a reliable review, write questions to
 `{{QUESTIONS_FILE}}` (each starting with `## N. `, with a `**Recommended:**` part and an empty `**Verdict:**` line) and end your turn with
