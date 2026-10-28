@@ -745,6 +745,8 @@ transport and state-write failures emit `node_sync_failed`, `node_sync_invalid_r
 `node_sync_log_oversized` and are skipped so the cursor can progress.
 
 The node saves accepted metadata and file hashes in each task directory, and its log cursors on disk.
+Ambient runner environment variables never leak into mirrored task metadata: fields are isolated and read
+only from `meta.env` (or assigned job defaults).
 Scanned out-of-scope log records advance the cursor even when no upload is needed. Unchanged, fully synced
 terminal tasks skip artifact reads; later file changes are synced again, and new node/job logs still travel.
 The accepted manifest retains a boundary from before the scan, so writes during scanning or upload remain eligible
