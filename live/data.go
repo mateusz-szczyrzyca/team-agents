@@ -24,7 +24,7 @@ type Activity struct {
 	Text string `json:"t"`  // human-readable summary of the step
 }
 
-// Task is one task directory (~/agents/tasks/<id>) as seen by the live view, built from its meta.env.
+// Task is a local task read from meta.env or a remote task read from mirrored metadata.json.
 type Task struct {
 	ID          string    // task ID: "<timestamp>-<agent>" (investigations/helpers have their own suffix)
 	Agent       string    // agent name
@@ -188,8 +188,11 @@ var activeStatuses = map[string]bool{"new": true, "starting": true, "running": t
 // Active reports whether the task has not finished yet (sleeping and waiting count as active).
 func (t *Task) Active() bool { return activeStatuses[t.Status] }
 
-// Label is the short name shown in the table (agent, inv#N or agent/HN).
+// Label is the short name shown in the table (agent, inv#N, agent/HN, or agent@node).
 func (t *Task) Label() string {
+	if t.Node != "" {
+		return t.Agent + "@" + t.Node
+	}
 	switch t.Kind {
 	case "investigation":
 		return "inv#" + t.InvID
@@ -411,8 +414,9 @@ func readActivity(dir string, n int) []Activity {
 	return out
 }
 
-// loadSnapshot reads all task directories and the bus state.
-func loadSnapshot(home, busDir string) *Snapshot {
+// loadSnapshot reads local tasks, mirrored tasks, and bus state. The optional heartbeat TTL
+// defaults to 90 seconds for panel callers; web callers supply their configured timeout.
+func loadSnapshot(home, busDir string, nodeTTL ...time.Duration) *Snapshot {
 	s := &Snapshot{At: time.Now(), All: map[string]*Task{}, Agents: map[string]*Presence{}}
 	tasksDir := filepath.Join(home, "tasks")
 	entries, err := os.ReadDir(tasksDir)
@@ -451,6 +455,11 @@ func loadSnapshot(home, busDir string) *Snapshot {
 			s.Tasks = append(s.Tasks, t)
 		}
 	}
+	ttl := 90 * time.Second
+	if len(nodeTTL) > 0 && nodeTTL[0] > 0 {
+		ttl = nodeTTL[0]
+	}
+	loadMirroredTasks(s, busDir, ttl)
 	sort.SliceStable(s.Tasks, func(i, j int) bool {
 		pi, pj := statusPrio(s.Tasks[i]), statusPrio(s.Tasks[j])
 		if pi != pj {
