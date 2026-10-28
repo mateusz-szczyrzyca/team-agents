@@ -79,6 +79,18 @@ func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Durat
 	}
 	a := &leadAPI{bus: bus, ttl: ttl, notifyDir: notifyDir, notifyCmd: notifyCmd}
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/sync", func(w http.ResponseWriter, r *http.Request) {
+		serveLead(w, r, localNode, allowed, LeadSyncUnauthorized, func(peer leadIdentity) (any, *LeadSyncError) {
+			body, err := decodeSyncBody(r)
+			if err != nil {
+				return nil, err
+			}
+			err = a.sync(peer.Node, body)
+			return struct {
+				OK bool /* all supplied changes were stored */
+			}{err == nil}, err
+		})
+	})
 	mux.HandleFunc("POST /v1/jobs", func(w http.ResponseWriter, r *http.Request) {
 		serveLead(w, r, localNode, allowed, LeadSubmitUnauthorized, func(peer leadIdentity) (any, *LeadSubmitError) {
 			var body JobRequest // untrusted submission, validated by the registry
@@ -226,6 +238,9 @@ func decodeLeadBody(r *http.Request, out any) *ValueError {
 
 // writeLeadError exposes stable operation/cause names without reconstructing Go errors from the wire.
 func writeLeadError[C opCause](w http.ResponseWriter, err *OpError[C]) {
+	if err.Cause.op() == LeadSyncStorage.op() {
+		logWarn(LogLeadSyncRejected, "cause", err.CauseName(), "error", err.Message)
+	}
 	status := http.StatusInternalServerError
 	switch err.Class() {
 	case ClassInvalidArgument:

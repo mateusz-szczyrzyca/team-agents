@@ -2453,3 +2453,53 @@ func (c LeadEventsCause) info() causeInfo { return leadEventsCauses[c] }
 
 // String returns the cause name.
 func (c LeadEventsCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/sync
+
+// LeadSyncCause is a reason why an assigned node syncing bounded job task data failed.
+type LeadSyncCause int
+
+const (
+	LeadSyncUnauthorized    LeadSyncCause = iota // the socket peer is not allowed or does not own the job [Permission]
+	LeadSyncMalformedBody                        // the request is not a single sync JSON object [InvalidArgument]
+	LeadSyncRequestTooLarge                      // the encoded request exceeds the sync byte limit [InvalidArgument]
+	LeadSyncInvalidNode                          // the authenticated node is not a logical identifier [InvalidArgument]
+	LeadSyncInvalidTask                          // the task is not a logical identifier or differs from its job [InvalidArgument]
+	LeadSyncNoSuchJob                            // the job does not exist [NotFound]
+	LeadSyncStaleAssignment                      // the assignment evidence is no longer current [Conflict]
+	LeadSyncInvalidMetadata                      // a metadata key is outside the closed list or its value is invalid [InvalidArgument]
+	LeadSyncInvalidFile                          // a filename is outside the closed list or repeated [InvalidArgument]
+	LeadSyncFileTooLarge                         // a file exceeds the byte or tail line limit [InvalidArgument]
+	LeadSyncInvalidDigest                        // a file does not match its SHA-256 [InvalidArgument]
+	LeadSyncInvalidLogs                          // logs exceed the count limit or include unrelated informational entries [InvalidArgument]
+	LeadSyncStorage                              // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadSyncError is the error of an assigned node syncing bounded job task data.
+type LeadSyncError = OpError[LeadSyncCause]
+
+// leadSyncCauses describes the LeadSyncCause values (same order as the constants).
+var leadSyncCauses = [...]causeInfo{
+	{"Unauthorized", ClassPermission},
+	{"MalformedBody", ClassInvalidArgument},
+	{"RequestTooLarge", ClassInvalidArgument},
+	{"InvalidNode", ClassInvalidArgument},
+	{"InvalidTask", ClassInvalidArgument},
+	{"NoSuchJob", ClassNotFound},
+	{"StaleAssignment", ClassConflict},
+	{"InvalidMetadata", ClassInvalidArgument},
+	{"InvalidFile", ClassInvalidArgument},
+	{"FileTooLarge", ClassInvalidArgument},
+	{"InvalidDigest", ClassInvalidArgument},
+	{"InvalidLogs", ClassInvalidArgument},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadSyncCause) op() string { return "lead/sync" }
+
+// info implements opCause.
+func (c LeadSyncCause) info() causeInfo { return leadSyncCauses[c] }
+
+// String returns the cause name.
+func (c LeadSyncCause) String() string { return c.info().name }

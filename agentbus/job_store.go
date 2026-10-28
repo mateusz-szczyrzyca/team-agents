@@ -62,7 +62,15 @@ func transactJobs[C opCause](b *Bus, storage C, now Timestamp, fn func(*leadRegi
 		if failure != nil {
 			return nil
 		}
-		return b.saveJobs(r)
+		if err := b.saveJobs(r); err != nil {
+			return err
+		}
+		// Cleanup is a retryable side effect: a mirror disk failure must not break heartbeats
+		// after their registry transaction has already committed.
+		if err := b.pruneMirrors(r); err != nil {
+			warnSideEffect("prune remote task mirrors", err)
+		}
+		return nil
 	})
 	if serr != nil {
 		return fromStorage(storage, serr)

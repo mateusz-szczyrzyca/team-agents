@@ -51,7 +51,7 @@ func nodeRouteAllowed(path string, get bool) bool {
 	if get && (path == "/v1/jobs" || path == "/v1/nodes") {
 		return true
 	}
-	if !get && (path == "/v1/heartbeat" || path == "/v1/jobs") {
+	if !get && (path == "/v1/heartbeat" || path == "/v1/jobs" || path == "/v1/sync") {
 		return true
 	}
 	rest, ok := strings.CutPrefix(path, "/v1/jobs/")
@@ -73,13 +73,16 @@ func nodeRequest(cfg nodeRequestConfig, input io.Reader) ([]byte, *NodeClientErr
 	if cfg.get && !cfg.validate {
 		input = strings.NewReader("")
 	}
-	const requestLimit = 256 * 1024 // lead's request envelope limit, including JSON escaping
-	data, err := io.ReadAll(io.LimitReader(input, requestLimit+1))
+	requestLimit := 256 * 1024 // ordinary lead request envelope, including JSON escaping
+	if cfg.path == "/v1/sync" {
+		requestLimit = syncRequestBytes
+	}
+	data, err := io.ReadAll(io.LimitReader(input, int64(requestLimit)+1))
 	if err != nil {
 		return nil, opErr(NodeClientInvalidArgument, "cannot read request: %v", err)
 	}
 	if len(data) > requestLimit {
-		return nil, opErr(NodeClientInvalidArgument, "request exceeds 262144 bytes; send smaller batches")
+		return nil, opErr(NodeClientInvalidArgument, "request exceeds %d bytes; send smaller batches", requestLimit)
 	}
 	if !cfg.get {
 		trimmed := bytes.TrimSpace(data)
