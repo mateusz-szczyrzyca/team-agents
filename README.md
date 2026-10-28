@@ -723,8 +723,28 @@ Existing stored jobs without these fields load with empty links and unknown chos
 `LeadSubmitInvalidRepoURL` or `LeadSubmitInvalidRequesterTask`. A failed origin lookup is logged as
 `job_origin_lookup_failed`; an absent or non-GitHub origin simply has no link.
 
-This round adds views without file mirroring: job prompts, questions and full task files remain on the node.
-Questions of a job are still answered on its node. A lead with no nodes has no remote agent rows.
+Nodes now push changed job-task data to authenticated `POST /v1/sync`. The lead stores it under
+`<bus>/remote/<node>/<task-id>/`: `metadata.json` contains only `STATUS`, `RUN`, `AGENT`, `TYPE`, `MODEL`,
+`NOTE`, `PAUSE_REASON`,
+`WAKE_AT`, `CREATED`, `FINISHED`, `RUN_START`, `JOB_ID` and `RESTARTS`; `interrupted` is preserved like any
+other task status. Task artifacts retain their original basenames. `sync.json` records content hashes and
+whether each artifact was cut. The closed artifact list is `activity.jsonl`, `prompt-<n>.md`,
+`questions-<n>.md`, `final.md`, `result.md`, and `err-<n>.log`. Activity retains at most `2,000` lines and
+error logs `500`; each file is at most `256 KiB`, each encoded sync at most `2 MiB`. File SHA-256 values are
+checked before writing; unknown keys, filenames, task IDs or assignment evidence are refused with typed
+`LeadSync` causes. Network data never selects shell code, configuration or paths outside this mirror.
+Mirrors expire with their jobs (`30` days after completion). Node `warn`/`error` records and job-task records
+are appended to `<bus>/remote/<node>/logs.jsonl`, at most `500` per request and `20,000` retained lines;
+each entry is limited to `64 KiB`. A node-level `logs-state.json` commits the tail and last batch digest
+together, so retries repair the log view without appending an identical accepted batch twice. Refused syncs emit
+`lead_sync_rejected` with their operation cause.
+
+The node saves accepted metadata and file hashes in each task directory, and its log cursors on disk. Node-wide logs wait for a sync of an active or retained job;
+a failed sync logs a warning and retries on the next poll without stopping heartbeat delivery. Upgrade the
+lead before the node: the new endpoint is additive, and existing `jobs.json` files keep loading unchanged.
+The mirror is storage only in this round: the web still shows heartbeat activity; mirror task tabs and node
+log views arrive in the next round. Questions of a job are still answered on its node.
+A lead with no nodes has no remote agent rows.
 
 **Remote team members.** A node's agent can be a full member of a team on the lead — on its board, in its
 messages, consultations and quiz:

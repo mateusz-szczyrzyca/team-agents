@@ -4359,6 +4359,308 @@ node_poll_remote_helpers() {
   done <<< "$rows"
 }
 
+# node_read_meta returns JSON object of allowed display metadata fields for a task.
+node_read_meta() {
+  local tid=$1 jid=$2
+  local task_dir="$TASKS/$tid"
+  local meta_f="$task_dir/meta.env"
+  [[ -f $meta_f ]] || return 1
+  (
+    local run_start=""
+    if [[ -f $task_dir/runner.pid ]]; then
+      local errf rc=0
+      errf=$(mktemp)
+      run_start=$(date -Is -r "$task_dir/runner.pid" 2>"$errf") || rc=$?
+      if ((rc != 0)); then
+        run_start=""
+      fi
+      rm -f "$errf"
+    fi
+    # shellcheck source=/dev/null
+    source "$meta_f"
+    local job_id=${JOB_ID:-$jid}
+    jq -n \
+      --arg STATUS "${STATUS:-}" \
+      --arg RUN "${RUN:-}" \
+      --arg AGENT "${AGENT:-}" \
+      --arg TYPE "${TYPE:-}" \
+      --arg MODEL "${MODEL:-}" \
+      --arg NOTE "${NOTE:-}" \
+      --arg PAUSE_REASON "${PAUSE_REASON:-}" \
+      --arg WAKE_AT "${WAKE_AT:-}" \
+      --arg CREATED "${CREATED:-}" \
+      --arg FINISHED "${FINISHED:-}" \
+      --arg RUN_START "$run_start" \
+      --arg JOB_ID "$job_id" \
+      --arg RESTARTS "${RESTARTS:-0}" \
+      '{
+        STATUS: $STATUS,
+        RUN: $RUN,
+        AGENT: $AGENT,
+        TYPE: $TYPE,
+        MODEL: $MODEL,
+        NOTE: $NOTE,
+        PAUSE_REASON: $PAUSE_REASON,
+        WAKE_AT: $WAKE_AT,
+        CREATED: $CREATED,
+        FINISHED: $FINISHED,
+        RUN_START: $RUN_START,
+        JOB_ID: $JOB_ID,
+        RESTARTS: $RESTARTS
+      } | with_entries(select(.value != ""))'
+  )
+}
+
+# node_send_sync sends one POST /v1/sync request payload bounded at 2 MiB.
+node_send_sync() {
+  local jid=$1 tid=$2 assignment=$3 meta_json=$4 files_json=$5 logs_json=$6
+  local payload
+  payload=$(jq -nc \
+    --arg job "$jid" \
+    --argjson assignment "$assignment" \
+    --arg task "$tid" \
+    --argjson meta "$meta_json" \
+    '{
+      Job: $job,
+      Assignment: $assignment,
+      TaskID: $task,
+      Metadata: $meta
+    }')
+
+  payload=$(printf '%s\n%s\n%s\n' "$payload" "$files_json" "$logs_json" | jq -s \
+    '.[0] + {Files: .[1], Logs: .[2]}')
+
+  local byte_len
+  byte_len=$(printf '%s' "$payload" | wc -c)
+  if (( byte_len > 2097152 )); then
+    log_warn node_sync_payload_oversized "job=$jid" "task=$tid" "bytes=$byte_len"
+    return 1
+  fi
+
+  local reply rc=0
+  if reply=$(printf '%s' "$payload" | node_request --path /v1/sync); then
+    if ! jq -e 'has("OK") or has("Accepted") or (type == "object")' <<< "$reply" >/dev/null; then
+      log_warn node_sync_invalid_reply "job=$jid" "task=$tid"
+      return 1
+    fi
+    log_info node_sync_accepted "job=$jid" "target_task=$tid"
+    return 0
+  else
+    rc=$?
+    log_warn node_sync_failed "job=$jid" "task=$tid" "exit=$rc"
+    return 1
+  fi
+}
+
+# node_sync_task sends incremental metadata, files and logs for one assigned job task.
+node_sync_task() {
+  local jid=$1 tid=$2 assignment=$3
+  local task_dir="$TASKS/$tid"
+  [[ -d $task_dir && -f $task_dir/meta.env ]] || return 0
+
+  local manifest_file="$task_dir/sync_manifest.json"
+  local prev_manifest='{"metadata":{},"files":{}}'
+  if [[ -f $manifest_file ]]; then
+    prev_manifest=$(jq_soft node_sync_manifest_invalid -c . "$manifest_file")
+    [[ -n $prev_manifest ]] || prev_manifest='{"metadata":{},"files":{}}'
+  fi
+
+  local current_meta
+  current_meta=$(node_read_meta "$tid" "$jid") || return 0
+  local prev_meta
+  prev_meta=$(jq -c '.metadata // {}' <<< "$prev_manifest")
+
+  local meta_diff
+  meta_diff=$(jq -nc --argjson cur "$current_meta" --argjson prev "$prev_meta" '
+    (($cur | to_entries | map(select($prev[.key] != .value))) +
+     ($prev | keys | map(select($cur[.] == null) | {key: ., value: ""}))) | from_entries
+  ')
+
+  local changed_files='[]'
+  local new_manifest_files='{}'
+  local f fname cut byte_len sha256 prev_sha prev_cut base_num tmp_f tmp_cut file_obj total_l
+  for f in "$task_dir"/*; do
+    [[ -f $f ]] || continue
+    fname=$(basename "$f")
+    case "$fname" in
+      activity.jsonl|final.md|result.md) ;;
+      prompt-[1-9]*.md|questions-[1-9]*.md|err-[1-9]*.log)
+        base_num=${fname#*-}
+        base_num=${base_num%.*}
+        [[ $base_num =~ ^[1-9][0-9]*$ ]] || continue
+        ;;
+      *) continue ;;
+    esac
+
+    cut=false
+    tmp_f=$(mktemp "$BUS_DIR/sync_file.XXXXXX")
+    if [[ $fname == "activity.jsonl" ]]; then
+      total_l=$(wc -l < "$f")
+      if (( total_l > 2000 )); then
+        cut=true
+        tail -n 2000 "$f" > "$tmp_f"
+      else
+        cp "$f" "$tmp_f"
+      fi
+    elif [[ $fname =~ ^err-[1-9][0-9]*\.log$ ]]; then
+      total_l=$(wc -l < "$f")
+      if (( total_l > 500 )); then
+        cut=true
+        tail -n 500 "$f" > "$tmp_f"
+      else
+        cp "$f" "$tmp_f"
+      fi
+    else
+      cp "$f" "$tmp_f"
+    fi
+
+    byte_len=$(wc -c < "$tmp_f")
+    if (( byte_len > 262144 )); then
+      cut=true
+      tmp_cut=$(mktemp "$BUS_DIR/sync_file.XXXXXX")
+      tail -c 262144 "$tmp_f" | LC_ALL=C sed -e '1s/^[\x80-\xbf]*//' > "$tmp_cut"
+      mv "$tmp_cut" "$tmp_f"
+    fi
+
+    sha256=$(sha256sum < "$tmp_f" | awk '{print $1}')
+    new_manifest_files=$(jq -c --arg name "$fname" --arg sha "$sha256" --argjson cut "$cut" \
+      '. + {($name): {sha: $sha, cut: $cut}}' <<< "$new_manifest_files")
+
+    prev_sha=$(jq -r --arg name "$fname" '.files[$name].sha // .files[$name] // empty' <<< "$prev_manifest")
+    prev_cut=$(jq -r --arg name "$fname" '.files[$name].cut // false' <<< "$prev_manifest")
+    if [[ $sha256 != "$prev_sha" || "$cut" != "$prev_cut" ]]; then
+      file_obj=$(jq -Rs --arg name "$fname" --arg sha "$sha256" --argjson cut "$cut" \
+        '{Name: $name, Content: ., SHA256: $sha, Cut: $cut}' < "$tmp_f")
+      changed_files=$(printf '%s\n%s\n' "$changed_files" "$file_obj" | jq -s '.[0] + [.[1]]')
+    fi
+    rm -f "$tmp_f"
+  done
+
+  local log_cursor_file="$BUS_DIR/sync_log_cursors.json"
+  local cursors='{}'
+  if [[ -f $log_cursor_file ]]; then
+    cursors=$(jq_soft node_sync_cursor_invalid -c . "$log_cursor_file")
+    [[ -n $cursors ]] || cursors='{}'
+  fi
+
+  local logs_payload='[]'
+  local new_cursors="$cursors"
+  local log_bytes=0 log_count=0
+  local log_p cur line entry entry_len
+  for f in agent.jsonl agentbus.jsonl agentlive.jsonl; do
+    log_p="$LOG_DIR/$f"
+    [[ -f $log_p ]] || continue
+    total_l=$(wc -l < "$log_p")
+    cur=$(jq -r --arg f "$f" '.[$f] // 0' <<< "$cursors")
+    [[ $cur =~ ^[0-9]+$ ]] || cur=0
+    if (( total_l < cur )); then
+      cur=0
+    fi
+    if (( total_l > cur )); then
+      while IFS= read -r line; do
+        [[ -n $line ]] || continue
+        cur=$((cur + 1))
+        entry=$(jq_soft node_sync_log_malformed -c --arg tid "$tid" 'select(type == "object" and ((.level == "warn" or .level == "error") or .task == $tid))' <<< "$line")
+        if [[ -n $entry ]]; then
+          entry_len=$(printf '%s' "$entry" | wc -c)
+          if (( entry_len > 65536 )); then
+            log_warn node_sync_log_oversized "log=$f" "task=$tid"
+            continue
+          fi
+          if (( log_bytes + entry_len > 1500000 || log_count >= 500 )); then
+            cur=$((cur - 1))
+            break
+          fi
+          logs_payload=$(printf '%s\n%s\n' "$logs_payload" "$entry" | jq -s '.[0] + [.[1]]')
+          log_bytes=$((log_bytes + entry_len))
+          log_count=$((log_count + 1))
+        fi
+      done < <(tail -n +"$((cur + 1))" "$log_p")
+      new_cursors=$(jq -c --arg f "$f" --argjson c "$cur" '. + {($f): $c}' <<< "$new_cursors")
+      if (( log_count >= 500 || log_bytes > 1500000 )); then
+        break
+      fi
+    fi
+  done
+
+  local meta_diff_count changed_files_count
+  meta_diff_count=$(jq 'length' <<< "$meta_diff")
+  changed_files_count=$(jq 'length' <<< "$changed_files")
+
+  if (( meta_diff_count == 0 && changed_files_count == 0 && log_count == 0 )); then
+    return 0
+  fi
+
+  # Batch files in chunks <= 1.5 MiB
+  local chunk_files='[]' chunk_bytes=0 f_obj f_bytes num_files i
+  num_files=$(jq 'length' <<< "$changed_files")
+  local sync_meta="$meta_diff"
+  local sync_logs="$logs_payload"
+
+  if (( num_files == 0 )); then
+    if node_send_sync "$jid" "$tid" "$assignment" "$sync_meta" "[]" "$sync_logs"; then
+      local final_manifest
+      final_manifest=$(jq -nc \
+        --argjson meta "$current_meta" \
+        --argjson files "$new_manifest_files" \
+        '{metadata: $meta, files: $files}')
+      printf '%s\n' "$final_manifest" > "$manifest_file"
+      if (( log_count > 0 )); then
+        printf '%s\n' "$new_cursors" > "$log_cursor_file"
+      fi
+    fi
+    return 0
+  fi
+
+  for (( i=0; i<num_files; i++ )); do
+    f_obj=$(jq -c --argjson idx "$i" '.[$idx]' <<< "$changed_files")
+    f_bytes=$(printf '%s' "$f_obj" | wc -c)
+    if (( chunk_bytes + f_bytes > 1500000 && $(jq 'length' <<< "$chunk_files") > 0 )); then
+      if node_send_sync "$jid" "$tid" "$assignment" "$sync_meta" "$chunk_files" "$sync_logs"; then
+        sync_meta='{}'
+        sync_logs='[]'
+        if (( log_count > 0 )); then
+          printf '%s\n' "$new_cursors" > "$log_cursor_file"
+          log_count=0
+        fi
+      else
+        return 0
+      fi
+      chunk_files='[]'
+      chunk_bytes=0
+    fi
+    chunk_files=$(printf '%s\n%s\n' "$chunk_files" "$f_obj" | jq -s '.[0] + [.[1]]')
+    chunk_bytes=$((chunk_bytes + f_bytes))
+  done
+
+  if (( $(jq 'length' <<< "$chunk_files") > 0 || meta_diff_count > 0 || log_count > 0 )); then
+    if node_send_sync "$jid" "$tid" "$assignment" "$sync_meta" "$chunk_files" "$sync_logs"; then
+      local final_manifest
+      final_manifest=$(jq -nc \
+        --argjson meta "$current_meta" \
+        --argjson files "$new_manifest_files" \
+        '{metadata: $meta, files: $files}')
+      printf '%s\n' "$final_manifest" > "$manifest_file"
+      if (( log_count > 0 )); then
+        printf '%s\n' "$new_cursors" > "$log_cursor_file"
+      fi
+    fi
+  fi
+}
+
+# node_sync_tasks syncs changed metadata, files and logs for assigned jobs.
+node_sync_tasks() {
+  local jid tid assignment ids
+  ids=$(jq -r '.jobs | to_entries[] | select((.value.obsolete|not) and .value.task_id and (.value.launched or .value.start_acked)) | .key' <<< "$NODE_STATE" 2>/dev/null || true)
+  for jid in $ids; do
+    [[ -n $jid ]] || continue
+    tid=$(jq -r --arg id "$jid" '.jobs[$id].task_id // empty' <<< "$NODE_STATE")
+    assignment=$(jq -r --arg id "$jid" '.jobs[$id].assignment // 0' <<< "$NODE_STATE")
+    [[ -n $tid && $assignment =~ ^[1-9][0-9]*$ ]] || continue
+    node_sync_task "$jid" "$tid" "$assignment"
+  done
+}
+
 # node_poll performs one durable recovery/report/assignment cycle without involving the ordinary MCP bus.
 node_poll() {
   NODE_STATE=$(node_jobs_load)
@@ -4366,6 +4668,7 @@ node_poll() {
   node_process_pending_launches
   node_scan_tasks
   node_flush_reports
+  node_sync_tasks
   node_poll_remote_helpers
   local declaration reply
   declaration=$(node_heartbeat_json)
