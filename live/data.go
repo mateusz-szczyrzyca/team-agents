@@ -26,9 +26,12 @@ type Activity struct {
 
 // Task is one task directory (~/agents/tasks/<id>) as seen by the live view, built from its meta.env.
 type Task struct {
-	ID         string    // task ID: "<timestamp>-<agent>" (investigations/helpers have their own suffix)
-	Agent      string    // agent name
-	Kind       string    // worker (a normal task) | investigation | helper (a worker request)
+	ID          string    // task ID: "<timestamp>-<agent>" (investigations/helpers have their own suffix)
+	Agent       string    // agent name
+	Node        string    // remote node name; empty for a local task
+	NodeOffline bool      // the remote heartbeat expired; status remains the last known state
+	Note        string    // human-visible task note
+	Kind        string    // worker (a normal task) | investigation | helper (a worker request)
 	Type       string    // agent CLI: claude | codex | gemini | opencode
 	Model      string    // model as configured ("" = the CLI's default)
 	Repo       string    // repository name
@@ -187,6 +190,9 @@ func (t *Task) Active() bool { return activeStatuses[t.Status] }
 
 // Label is the short name shown in the table (agent, inv#N or agent/HN).
 func (t *Task) Label() string {
+	if t.Node != "" {
+		return t.Agent + "@" + t.Node
+	}
 	switch t.Kind {
 	case "investigation":
 		return "inv#" + t.InvID

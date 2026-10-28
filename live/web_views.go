@@ -392,6 +392,17 @@ func (s *webServer) viewAgents(w http.ResponseWriter, r *http.Request) {
 						if !node.LastSeen.IsZero() && node.LastSeen.After(row.LastAt) {
 							row.LastAt = node.LastSeen
 						}
+						link := "/jobs/" + url.PathEscape(j.Request.ID)
+						if j.TaskID != "" && snap.All[j.TaskID+"@"+nodeName] != nil {
+							link = "/task/" + url.PathEscape(j.TaskID+"@"+nodeName)
+						} else {
+							for _, t := range snap.All {
+								if t.JobID != "" && t.JobID == j.Request.ID {
+									link = "/task/" + url.PathEscape(t.ID)
+									break
+								}
+							}
+						}
 						jRow := taskRow{
 							ID:          j.Request.ID,
 							Name:        fullName,
@@ -399,7 +410,7 @@ func (s *webServer) viewAgents(w http.ResponseWriter, r *http.Request) {
 							StatusLabel: j.State,
 							StatusClass: statusClass(j.State),
 							Repo:        j.Request.Repository,
-							Link:        "/jobs/" + url.PathEscape(j.Request.ID),
+							Link:        link,
 							Running:     j.State == "running",
 						}
 						if n := len(a.Lines); n > 0 {
@@ -571,9 +582,18 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 	case "notebook":
 		d.Notes = notebook(s.cfg.busDir, t.Repo)
 	case "meta":
-		m := readMeta(filepath.Join(t.Dir, "meta.env"))
-		for k, v := range m {
-			d.Meta = append(d.Meta, kv{k, v})
+		if data, err := os.ReadFile(filepath.Join(t.Dir, "metadata.json")); err == nil {
+			var m map[string]string
+			if json.Unmarshal(data, &m) == nil {
+				for k, v := range m {
+					d.Meta = append(d.Meta, kv{k, v})
+				}
+			}
+		} else {
+			m := readMeta(filepath.Join(t.Dir, "meta.env"))
+			for k, v := range m {
+				d.Meta = append(d.Meta, kv{k, v})
+			}
 		}
 		sort.Slice(d.Meta, func(i, j int) bool { return d.Meta[i].Key < d.Meta[j].Key })
 	default:
@@ -1640,6 +1660,17 @@ func (s *webServer) viewAgent(w http.ResponseWriter, r *http.Request) {
 					lastAt = node.LastSeen
 				}
 			}
+			link := "/jobs/" + url.PathEscape(j.Request.ID)
+			if j.TaskID != "" && snap.All[j.TaskID+"@"+nodeName] != nil {
+				link = "/task/" + url.PathEscape(j.TaskID+"@"+nodeName)
+			} else {
+				for _, t := range snap.All {
+					if t.JobID != "" && t.JobID == j.Request.ID {
+						link = "/task/" + url.PathEscape(t.ID)
+						break
+					}
+				}
+			}
 			jRow := taskRow{
 				ID:          j.Request.ID,
 				Name:        id,
@@ -1647,7 +1678,7 @@ func (s *webServer) viewAgent(w http.ResponseWriter, r *http.Request) {
 				StatusLabel: j.State,
 				StatusClass: statusClass(j.State),
 				Repo:        j.Request.Repository,
-				Link:        "/jobs/" + url.PathEscape(j.Request.ID),
+				Link:        link,
 				Running:     j.State == "running",
 				FinishedAt:  tFin,
 			}
