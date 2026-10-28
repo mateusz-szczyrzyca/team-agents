@@ -1,14 +1,14 @@
 {{define "content"}}
-<p class="dim">Remote jobs registered on this lead. Agent shows the requested name or tier. Refreshes every 5 s.</p>
+<p class="dim">Remote jobs registered on this lead. Agent shows the chosen agent when known, otherwise the requested name or tier. Refreshes every 5 s.</p>
 <div id="remote-jobs" hx-get="/jobs" hx-trigger="every 5s" hx-select="#remote-jobs" hx-target="this" hx-swap="outerHTML">
 <div class="scroll"><table>
 <thead><tr><th>Job</th><th>State</th><th>Node</th><th>Agent</th><th>Branch / PR</th><th>Result</th></tr></thead>
 <tbody>{{range .Data}}<tr>
-<td><b><a href="/jobs/{{.Request.ID}}">{{.Request.ID}}</a></b><div class="dim">{{.Request.Repository}}</div>{{if .Request.Requires}}<div class="dim">{{join .Request.Requires ", "}}</div>{{end}}</td>
+<td><b><a href="/jobs/{{.Request.ID}}">{{.Request.ID}}</a></b><div class="dim">{{.Request.Repository}}</div>{{if .Request.Requires}}<div class="dim">{{join .Request.Requires ", "}}</div>{{end}}{{if .RequesterTask}}<div class="dim">from {{if .RequesterTaskLink}}<a href="{{.RequesterTaskLink}}">{{.RequesterTask}}</a>{{else}}{{.RequesterTask}}{{end}}{{if .RequesterTeam}} <a class="tag" href="/team/{{.RequesterTeam}}">team {{.RequesterTeamShort}}</a>{{end}}</div>{{end}}{{if and (or .Team .ProxyTask) (not .RequesterTask)}}<div class="dim">{{if .ProxyTaskLink}}<a href="{{.ProxyTaskLink}}">{{.ProxyTask}}</a> {{else if .ProxyTask}}{{.ProxyTask}} {{end}}{{if .Team}}<a class="tag" href="/team/{{.Team}}">team {{.TeamShort}}</a>{{end}}</div>{{end}}</td>
 <td><span class="{{statusClass .State}}">{{.State}}</span></td>
-<td>{{if .NodeURL}}<a href="{{.NodeURL}}" hx-boost="false">{{.Node}}</a>{{else}}{{.Node}}{{end}}{{if .Offline}}<div class="st-stopped">node offline</div>{{end}}{{if .TaskID}}<div class="dim">{{.TaskID}}</div>{{end}}</td>
-<td>{{.Request.Selector}}</td>
-<td><code>{{.Branch}}</code>{{if .PRURL}}<div><a href="{{.PRURL}}" hx-boost="false">PR</a></div>{{end}}</td>
+<td>{{if .NodeLink}}<a href="{{.NodeLink}}">{{.Node}}</a>{{else if .NodeURL}}<a href="{{.NodeURL}}" hx-boost="false">{{.Node}}</a>{{else}}{{.Node}}{{end}}{{if .Offline}}<div class="st-offline">node offline</div>{{end}}{{if .TaskID}}<div class="dim">{{if .NodeURL}}<a href="{{.NodeURL}}" hx-boost="false">{{.TaskID}}</a>{{else}}{{.TaskID}}{{end}}</div>{{end}}</td>
+<td>{{if .AgentLink}}<a href="{{.AgentLink}}">{{.AgentName}}</a>{{else}}{{.Request.Selector}}{{end}}</td>
+<td>{{if .BranchURL}}<code><a href="{{.BranchURL}}" hx-boost="false">{{.Branch}}</a></code>{{else if .Branch}}<code>{{.Branch}}</code>{{end}}{{if .PRURL}}<div><a href="{{.PRURL}}" hx-boost="false">PR</a></div>{{end}}</td>
 <td class="t">{{.Result}}</td>
 </tr>{{else}}<tr><td colspan="6" class="dim">No jobs registered on this installation.</td></tr>{{end}}</tbody>
 </table></div></div>

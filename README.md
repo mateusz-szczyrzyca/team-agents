@@ -628,7 +628,7 @@ The menu on the left slides out on demand (`☰` or `m`). Every view can be maxi
 
 | View | What it shows |
 |---|---|
-| Dashboard | active tasks, then finished ones newest first (also acknowledged ones and investigations from the last 24 h; their time as \"… ago\") live, events as they happen, reserved resources; investigations as "investigator #N (agent)"; a ■ button on a running task cuts its run short (`agent kick`: a team member only sleeps and its team can wake it, a solo task is stopped); `stopped` in orange, failures in red |
+| Dashboard | active tasks, then finished ones newest first (also acknowledged ones and investigations from the last 24 h; their time as \"… ago\") live, events as they happen, reserved resources; investigations as "investigator #N (agent)"; `done` in blue; a ■ button on a running task cuts its run short (`agent kick`: a team member only sleeps and its team can wake it, a solo task is stopped); `stopped` in orange, failures in red |
 | Agents | the configured agents and investigators — working ones first, then by their last activity (shown) — tier, CLI, model, provider, what each is doing now, pauses (until when, why) |
 | Task | header (status, time, branch, team) and sections: live activity, the prompt of every run, question rounds, investigations, final message, error logs, the repository notebook, `meta.env` |
 | Teams / Team | the newest 20 teams (and "all"); a team: members and their states, the board (newest first, `for`, results), consultations, the quiz, the team's messages, the notebook; a finished team can be woken from its last task — this round or the next, with a prompt |
@@ -698,10 +698,33 @@ agent run --need hw:rp2350 <agent|normal|worker> "…"   # on the lead, in the r
 agent jobs [<id>]                                        # its state, node, branch, result
 ```
 
-**What the lead shows:** a running remote job sits on the dashboard as `agent@node`, with what it is doing (the
-node sends its latest activity lines with every heartbeat), like a local task; its page `/jobs/<id>` shows the
-latest activity, the result and — when the node has `AGENT_WEB_URL` — a link to the task on the node. Questions of
-a job stay on its node. The views Jobs and Instances list every job and node.
+**What the lead shows:** remote jobs appear on the dashboard as `agent@node`, with their latest heartbeat
+activity; finished jobs remain for 24 hours. `/jobs/<id>` shows activity and results. Jobs links to their
+instance and agent pages, and to the result branch when the submitter supplied a GitHub repository origin.
+Remote team member jobs link to their team and, when available, their proxy task on the lead.
+Instances links to `/instances/<node>` with capabilities, configured and free agents, jobs, last heartbeat,
+and the node's web interface when configured. Free agents link to their remote agent pages. The instance list
+hides offline nodes whose last heartbeat is more than 24 hours old; **Show all** restores them. Nodes never
+seen stay visible. Online is green, offline red, and unknown grey. Agents lists
+local and remote agents together and links to `/agents/<agent>` or `/agents/<agent>@<node>` for configuration
+and current/recent work. Completed (`done`) work is blue. Remote agent pages put current jobs before finished history; agent availability is shown as offline when the node heartbeat expires.
+
+The heartbeat's optional `Agents` list declares each configured agent's name, CLI type, model and tier;
+`FreeAgents` still controls routing. The new inventory is limited to `128` agents, with model names of at most
+`256` bytes and no control characters; invalid declarations are refused with `LeadHeartbeatMalformedBody`. Older nodes without that list remain compatible. Upgrade the lead before nodes: older lead versions reject
+these new heartbeat/submission fields. Job submissions may carry
+`RepoURL` (only `https://github.com/<owner>/<repo>`, otherwise empty) and `RequesterTask` (a delegating task ID).
+The submitter derives these from the origin and delegation context; these fields are links, never authority.
+Job reports also retain the chosen `Agent`, so a completed job requested as `normal` or `worker` still
+appears on the actual agent's page after its live activity expires. Older reports may omit it; an unknown
+legacy tier is shown without an agent link. Invalid chosen names are refused with `LeadReportInvalidAgent`
+or `LeadHeartbeatInvalidAgent`. This name is display data and never selects a CLI or configuration.
+Existing stored jobs without these fields load with empty links and unknown chosen-agent attribution. Invalid supplied values fail with
+`LeadSubmitInvalidRepoURL` or `LeadSubmitInvalidRequesterTask`. A failed origin lookup is logged as
+`job_origin_lookup_failed`; an absent or non-GitHub origin simply has no link.
+
+This round adds views without file mirroring: job prompts, questions and full task files remain on the node.
+Questions of a job are still answered on its node. A lead with no nodes has no remote agent rows.
 
 **Remote team members.** A node's agent can be a full member of a team on the lead — on its board, in its
 messages, consultations and quiz:

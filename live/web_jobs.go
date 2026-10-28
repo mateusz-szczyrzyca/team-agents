@@ -54,21 +54,33 @@ type webJobsSnapshot struct {
 
 // webJob is a read-only subset of a persisted lead job; unknown fields remain compatible.
 type webJob struct {
-	Request webJobRequest // public request identity and requested agent selector
-	State   string        // lifecycle label, displayed without executing state transitions
-	Node    string        // assigned node, empty while queued
-	TaskID  string        // task ID on the assigned node
-	Branch  string        // branch pushed by the task
-	PRURL   string        // optional pull request URL, sanitized before use as a link
-	Result  string        // final summary or provisioning diagnostic
+	Request webJobRequest      // public request identity and requested agent selector
+	State   string             // lifecycle label, displayed without executing state transitions
+	Node    string             // assigned node, empty while queued
+	TaskID  string             // task ID on the assigned node
+	Agent   string             // actual chosen agent on the node; empty if unknown
+	Branch  string             // branch pushed by the task
+	PRURL   string             // optional pull request URL, sanitized before use as a link
+	Result  string             // final summary or provisioning diagnostic
+	History []webJobTransition // state transitions recorded by the lead
+}
+
+// webJobTransition records when a job entered a state.
+type webJobTransition struct {
+	State string    // lifecycle state
+	At    time.Time // timestamp recorded by the lead
 }
 
 // webJobRequest holds public submission fields useful when scanning jobs.
 type webJobRequest struct {
-	ID         string   // submitter-chosen job ID
-	Repository string   // logical repository name
-	Selector   string   // requested configured agent name or tier
-	Requires   []string // required capabilities
+	ID            string   // submitter-chosen job ID
+	Repository    string   // logical repository name
+	Selector      string   // requested configured agent name or tier
+	Requires      []string // required capabilities
+	RepoURL       string   // canonical GitHub repository URL (https://github.com/<owner>/<repo>)
+	RequesterTask string   // optional task ID of the requesting agent on the lead
+	Team          string   // optional team on the lead for remote team member jobs
+	Member        string   // optional remote member name in that team
 }
 
 // webJobNode is the read-only declaration and trusted heartbeat receipt time.
@@ -77,10 +89,19 @@ type webJobNode struct {
 	LastSeen  time.Time       // precise lead receipt time in RFC3339Nano
 }
 
+// webNodeAgent identifies one configured agent declared by a node.
+type webNodeAgent struct {
+	Name  string // configured agent name
+	Type  string // CLI type
+	Model string // model name
+	Tier  string // declared tier
+}
+
 // webJobHeartbeat contains the fields the lead may expose to a browser.
 type webJobHeartbeat struct {
 	Node         string           // authenticated node name
 	Capabilities []string         // capabilities declared by the operator
+	Agents       []webNodeAgent   // all configured agents declared by the node
 	FreeAgents   []webJobAgent    // agents free at the last accepted heartbeat
 	WebURL       string           // operator-supplied address of the node's web interface
 	Activity     []webJobActivity // what the node's running jobs are doing (kept by the lead for its own jobs)
@@ -104,38 +125,111 @@ func (s *webJobsSnapshot) activityOf(j webJob) webJobActivity {
 	return webJobActivity{}
 }
 
-// jobAgent names who works on a job: the node's agent if the node said, else the requested selector.
+// jobAgent names who works on a job: the persisted chosen agent, or the node's live activity agent if reported,
+// or the requested selector when not a tier selector ("normal" or "worker") to avoid bogus agent links.
 func jobAgent(a webJobActivity, j webJob) string {
+	if j.Agent != "" {
+		return j.Agent
+	}
 	if a.Agent != "" {
 		return a.Agent
+	}
+	if j.Request.Selector == "normal" || j.Request.Selector == "worker" {
+		return ""
 	}
 	return j.Request.Selector
 }
 
-// remoteRows are the dashboard rows of the lead's remote jobs that are not finished: "agent@node", the job's state
-// and what it is doing, linked to its page. Nil when this installation is not a lead.
+// jobTerminal reports whether a remote job state is terminal.
+func jobTerminal(state string) bool {
+	return state == "done" || state == "failed" || state == "stopped"
+}
+
+// jobFinishedAt returns when a finished job ended, or zero if still active or unknown.
+func jobFinishedAt(j webJob) time.Time {
+	for i := len(j.History) - 1; i >= 0; i-- {
+		h := j.History[i]
+		if jobTerminal(h.State) {
+			if !h.At.IsZero() {
+				return h.At
+			}
+		}
+	}
+	return time.Time{}
+}
+
+// gitHubBranchURL returns a tree link when repoURL is a canonical GitHub URL and branch is set.
+func gitHubBranchURL(repoURL, branch string) string {
+	if branch == "" || !strings.HasPrefix(repoURL, "https://github.com/") {
+		return ""
+	}
+	u, err := url.Parse(repoURL)
+	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return ""
+	}
+	u.Path = "/" + parts[0] + "/" + parts[1] + "/tree/" + branch
+	u.RawPath = ""
+	return u.String()
+}
+
+// remoteRows are the dashboard rows of the lead's remote jobs: active jobs and jobs finished in the
+// last 24 hours, newest first, linked to their page. Nil when this installation is not a lead.
 func remoteRows(busDir string) []taskRow {
 	snap, err := readWebJobs(busDir)
 	if err != nil || snap == nil {
 		return nil // no lead here, or no readable registry: the dashboard shows the local tasks only
 	}
-	var rows []taskRow
+	var active, done []taskRow
+	now := time.Now()
 	for _, j := range snap.Jobs {
-		if j.Node == "" || j.State == "done" || j.State == "failed" || j.State == "stopped" {
+		if j.Node == "" {
 			continue
 		}
 		a := snap.activityOf(j)
-		r := taskRow{ID: j.Request.ID, Name: jobAgent(a, j) + "@" + j.Node, Status: j.State, Repo: j.Request.Repository,
-			Link: "/jobs/" + url.PathEscape(j.Request.ID)}
-		r.StatusLabel, r.StatusClass = j.State, statusClass(j.State)
-		if n := len(a.Lines); n > 0 {
-			r.Last = a.Lines[n-1]
-		} else if a.Stage != "" {
-			r.Last = a.Stage
+		agent := jobAgent(a, j)
+		displayAgent := agent
+		if displayAgent == "" {
+			displayAgent = j.Request.Selector
 		}
-		rows = append(rows, r)
+		r := taskRow{
+			ID:          j.Request.ID,
+			Name:        displayAgent + "@" + j.Node,
+			Status:      j.State,
+			StatusLabel: j.State,
+			StatusClass: statusClass(j.State),
+			Repo:        j.Request.Repository,
+			Link:        "/jobs/" + url.PathEscape(j.Request.ID),
+			Running:     false,
+		}
+		if j.State != "done" && j.State != "failed" && j.State != "stopped" {
+			if n := len(a.Lines); n > 0 {
+				r.Last = a.Lines[n-1]
+			} else if a.Stage != "" {
+				r.Last = a.Stage
+			}
+			active = append(active, r)
+		} else {
+			fin := jobFinishedAt(j)
+			if fin.IsZero() || now.Sub(fin) >= dashRecent {
+				continue
+			}
+			r.FinishedAt = fin
+			r.Since = human(now.Sub(fin)) + " ago"
+			r.Last = j.Result
+			done = append(done, r)
+		}
 	}
-	return rows
+	sort.SliceStable(done, func(i, j int) bool {
+		if !done[i].FinishedAt.Equal(done[j].FinishedAt) {
+			return done[i].FinishedAt.After(done[j].FinishedAt)
+		}
+		return done[i].ID > done[j].ID
+	})
+	return append(active, done...)
 }
 
 // viewJob (GET /jobs/{id}) is one remote job: its fields, its latest activity and a link to its task on the node.
@@ -150,12 +244,17 @@ func (s *webServer) viewJob(w http.ResponseWriter, r *http.Request) {
 		if j.Request.ID != id {
 			continue
 		}
-		node := snap.Nodes[j.Node]
 		a := snap.activityOf(j)
 		j.PRURL = safeJobURL(j.PRURL)
+		row := buildWebJobRow(j, snap, s.snapshot(), time.Now(), s.cfg.nodeTTL)
 		s.render(w, r, http.StatusOK, "job", "Job "+id, s.snapshot(), map[string]any{
-			"J": j, "Agent": jobAgent(a, j), "Activity": a, "NodeURL": jobNodeURL(node.Heartbeat.WebURL, j.TaskID),
-			"Offline": j.Node != "" && webNodeOffline(node, time.Now(), s.cfg.nodeTTL)})
+			"J": row.webJob, "Agent": row.AgentName, "Activity": a, "NodeURL": row.NodeURL,
+			"Offline": row.Offline, "NodeLink": row.NodeLink, "AgentLink": row.AgentLink,
+			"BranchURL": row.BranchURL, "RequesterTask": row.RequesterTask,
+			"RequesterTaskLink": row.RequesterTaskLink, "RequesterTeam": row.RequesterTeam,
+			"RequesterTeamShort": row.RequesterTeamShort,
+			"Team":               row.Team, "TeamShort": row.TeamShort,
+			"ProxyTask": row.ProxyTask, "ProxyTaskLink": row.ProxyTaskLink})
 		return
 	}
 	viewError(s, w, r, webErr(ViewNotFound, nil, "no job %q", id))
@@ -188,9 +287,81 @@ func readWebJobs(dir string) (*webJobsSnapshot, *OpError[ViewCause]) {
 
 // webJobRow adds safe browser links and heartbeat status to a public job record.
 type webJobRow struct {
-	webJob         // persisted public fields
-	NodeURL string // safe node web/task URL, empty if unavailable
-	Offline bool   // assigned node is missing or has reached its heartbeat deadline
+	webJob                    // persisted public fields
+	NodeURL            string // safe node web/task URL, empty if unavailable
+	Offline            bool   // assigned node is missing or has reached its heartbeat deadline
+	NodeLink           string // /instances/<node> link
+	AgentName          string // worker agent name or requested selector
+	AgentLink          string // /agents/<agent>@<node> link
+	BranchURL          string // canonical GitHub branch tree URL
+	RequesterTask      string // requester task ID
+	RequesterTaskLink  string // /task/<RequesterTask> link if task exists locally
+	RequesterTeam      string // team ID if requester task is in a team
+	RequesterTeamShort string // team ID without -team suffix
+	Team               string // team ID for remote team member jobs
+	TeamShort          string // team ID without -team suffix
+	ProxyTask          string // proxy task ID on the lead for remote team member jobs
+	ProxyTaskLink      string // /task/<ProxyTask> link if task exists locally
+}
+
+// buildWebJobRow constructs a webJobRow with links according to decision 7.
+func buildWebJobRow(j webJob, snapshot *webJobsSnapshot, snapLocal *Snapshot, now time.Time, ttl time.Duration) webJobRow {
+	node := snapshot.Nodes[j.Node]
+	a := snapshot.activityOf(j)
+	agent := jobAgent(a, j)
+	displayAgent := agent
+	if displayAgent == "" {
+		displayAgent = j.Request.Selector
+	}
+	j.PRURL = safeJobURL(j.PRURL)
+	row := webJobRow{
+		webJob:        j,
+		NodeURL:       jobNodeURL(node.Heartbeat.WebURL, j.TaskID),
+		Offline:       j.Node != "" && webNodeOffline(node, now, ttl),
+		AgentName:     displayAgent,
+		BranchURL:     gitHubBranchURL(j.Request.RepoURL, j.Branch),
+		RequesterTask: j.Request.RequesterTask,
+	}
+	if j.Node != "" {
+		row.NodeLink = "/instances/" + url.PathEscape(j.Node)
+		if agent != "" {
+			row.AgentLink = "/agents/" + url.PathEscape(agent+"@"+j.Node)
+		}
+	}
+	if row.RequesterTask != "" && snapLocal != nil {
+		for _, t := range snapLocal.All {
+			if t.ID == row.RequesterTask {
+				row.RequesterTaskLink = "/task/" + url.PathEscape(t.ID)
+				if t.Team != "" {
+					row.RequesterTeam = t.Team
+					row.RequesterTeamShort = strings.TrimSuffix(t.Team, "-team")
+				}
+				break
+			}
+		}
+	}
+	memberTeam := j.Request.Team
+	var proxyTask string
+	if snapLocal != nil {
+		for _, t := range snapLocal.All {
+			if t.JobID == j.Request.ID {
+				proxyTask = t.ID
+				if memberTeam == "" && t.Team != "" {
+					memberTeam = t.Team
+				}
+				break
+			}
+		}
+	}
+	if proxyTask != "" {
+		row.ProxyTask = proxyTask
+		row.ProxyTaskLink = "/task/" + url.PathEscape(proxyTask)
+	}
+	if memberTeam != "" {
+		row.Team = memberTeam
+		row.TeamShort = strings.TrimSuffix(memberTeam, "-team")
+	}
+	return row
 }
 
 // webInstanceRow adds a stable map key and safe web link to one node declaration.
@@ -199,6 +370,7 @@ type webInstanceRow struct {
 	Name       string // registry key, stable even if the declaration is incomplete
 	URL        string // safe node web URL, empty if unavailable
 	Offline    bool   // heartbeat age is greater than or equal to the configured timeout
+	NeverSeen  bool   // node was never seen (LastSeen is zero)
 	Seen       string // precise last heartbeat time, empty when not known
 }
 
@@ -239,13 +411,21 @@ func (s *webServer) viewJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := make([]webJobRow, 0, len(snapshot.Jobs))
 	now := time.Now()
+	localSnap := s.snapshot()
 	for _, job := range snapshot.Jobs {
-		node := snapshot.Nodes[job.Node]
-		job.PRURL = safeJobURL(job.PRURL)
-		rows = append(rows, webJobRow{webJob: job, NodeURL: jobNodeURL(node.Heartbeat.WebURL, job.TaskID), Offline: job.Node != "" && webNodeOffline(node, now, s.cfg.nodeTTL)})
+		rows = append(rows, buildWebJobRow(job, snapshot, localSnap, now, s.cfg.nodeTTL))
 	}
-	s.render(w, r, http.StatusOK, "jobs", "Jobs", s.snapshot(), rows)
+	s.render(w, r, http.StatusOK, "jobs", "Jobs", localSnap, rows)
 }
+
+// webInstanceList holds the filtered rows and preserves the operator's choice during refresh.
+type webInstanceList struct {
+	Rows    []webInstanceRow // visible nodes, sorted by name
+	ShowAll bool             // include nodes whose known heartbeat is older than the visibility window
+}
+
+// instanceVisibilityWindow limits clutter without removing nodes from the registry.
+const instanceVisibilityWindow = 24 * time.Hour
 
 // viewInstances renders node capabilities, free agents and current heartbeat liveness.
 func (s *webServer) viewInstances(w http.ResponseWriter, r *http.Request) {
@@ -255,14 +435,25 @@ func (s *webServer) viewInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := make([]webInstanceRow, 0, len(snapshot.Nodes))
+	showAll := r.URL.Query().Get("all") == "1"
 	now := time.Now()
 	for name, node := range snapshot.Nodes {
-		row := webInstanceRow{webJobNode: node, Name: name, URL: safeJobURL(node.Heartbeat.WebURL), Offline: webNodeOffline(node, now, s.cfg.nodeTTL)}
+		neverSeen := node.LastSeen.IsZero()
+		row := webInstanceRow{
+			webJobNode: node,
+			Name:       name,
+			URL:        safeJobURL(node.Heartbeat.WebURL),
+			NeverSeen:  neverSeen,
+			Offline:    !neverSeen && webNodeOffline(node, now, s.cfg.nodeTTL),
+		}
+		if !showAll && row.Offline && now.Sub(node.LastSeen) > instanceVisibilityWindow {
+			continue
+		}
 		if !node.LastSeen.IsZero() {
 			row.Seen = node.LastSeen.Format(time.RFC3339Nano)
 		}
 		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
-	s.render(w, r, http.StatusOK, "instances", "Instances", s.snapshot(), rows)
+	s.render(w, r, http.StatusOK, "instances", "Instances", s.snapshot(), webInstanceList{Rows: rows, ShowAll: showAll})
 }

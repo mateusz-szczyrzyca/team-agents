@@ -52,6 +52,7 @@ type leadJobView struct {
 	Assignment    uint64             // launch fencing evidence
 	History       []storedTransition // lossless transition times
 	TaskID        string             // node's local task
+	Agent         string             `json:",omitempty"` // optional actual chosen agent on the node
 	Branch        string             // result branch
 	PRURL         string             // optional pull request
 	Result        string             // result head or failure reason

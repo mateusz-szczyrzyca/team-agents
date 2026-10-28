@@ -1,0 +1,18 @@
+{
+  "Version": 1,
+  "Jobs": [],
+  "Nodes": {
+    "node-a": {
+      "Heartbeat": {
+        "Node": "node-a",
+        "Capabilities": ["arch:arm64", "os:linux"],
+        "FreeAgents": [{"Name": "alpha", "Tier": "normal"}],
+        "WebURL": "https://example.com/node-a/",
+        "Activity": []
+      },
+      "LastSeen": "2026-10-27T10:00:00Z"
+    }
+  },
+  "NextSequence": 1,
+  "NextAssignment": 1
+}

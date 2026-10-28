@@ -982,6 +982,11 @@
      "name": "TerminalConflict",
      "class": "Conflict",
      "doc": "a report conflicts with an accepted terminal outcome"
+    },
+    {
+     "name": "InvalidAgent",
+     "class": "InvalidArgument",
+     "doc": "a reported chosen agent is not a logical identifier"
     }
    ]
   },
@@ -1034,6 +1039,16 @@
      "name": "InvalidMember",
      "class": "InvalidArgument",
      "doc": "a member job needs both a team and a member named <selector>@<target>"
+    },
+    {
+     "name": "InvalidRepoURL",
+     "class": "InvalidArgument",
+     "doc": "the optional repository link is not a canonical GitHub HTTPS URL"
+    },
+    {
+     "name": "InvalidRequesterTask",
+     "class": "InvalidArgument",
+     "doc": "the optional requester task is not a logical identifier"
     }
    ]
   },
@@ -1071,6 +1086,11 @@
      "name": "TerminalConflict",
      "class": "Conflict",
      "doc": "the report conflicts with an accepted terminal outcome"
+    },
+    {
+     "name": "InvalidAgent",
+     "class": "InvalidArgument",
+     "doc": "the optional chosen agent is not a logical identifier"
     }
    ]
   },

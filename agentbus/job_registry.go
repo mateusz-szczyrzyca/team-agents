@@ -2,10 +2,12 @@ package main
 
 import (
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // The lead's pure in-memory model of jobs, nodes, routing and lifecycle operations.
@@ -46,17 +48,19 @@ type JobTransition struct {
 
 // JobRequest is a submission, as the lead receives it. Every field is compared on resubmission.
 type JobRequest struct {
-	ID         string   // submitter-chosen idempotency key, validated before use
-	Repository string   // logical repository name, resolved through the node's NODE_REPOS
-	BaseRef    string   // git ref name, validated before any git invocation
-	BaseSHA    string   // exact commit (40 or 64 hex digits, either case); optional for "human", required for an agent
-	Requires   []string // capabilities the node must declare, all of them
-	Selector   string   // a tier (normal or worker) or one configured agent name
-	Target     string   // optional node name the job is pinned to; empty means any node
-	Task       string   // task text, at most 65536 bytes
-	Requester  string   // "human" or "<agent>@<instance>", both parts valid identifiers; routing data only
-	Team       string   // optional: the team on the lead this job is a member's work for (with Member)
-	Member     string   // optional: the member's name in that team, "<Selector>@<Target>"
+	RepoURL       string   `json:",omitempty"` // optional canonical https://github.com/<owner>/<repo> link, data only
+	RequesterTask string   `json:",omitempty"` // optional delegating member task ID on the lead, data only
+	ID            string   // submitter-chosen idempotency key, validated before use
+	Repository    string   // logical repository name, resolved through the node's NODE_REPOS
+	BaseRef       string   // git ref name, validated before any git invocation
+	BaseSHA       string   // exact commit (40 or 64 hex digits, either case); optional for "human", required for an agent
+	Requires      []string // capabilities the node must declare, all of them
+	Selector      string   // a tier (normal or worker) or one configured agent name
+	Target        string   // optional node name the job is pinned to; empty means any node
+	Task          string   // task text, at most 65536 bytes
+	Requester     string   // "human" or "<agent>@<instance>", both parts valid identifiers; routing data only
+	Team          string   // optional: the team on the lead this job is a member's work for (with Member)
+	Member        string   // optional: the member's name in that team, "<Selector>@<Target>"
 }
 
 // Job is a registered job as the registry holds it.
@@ -68,11 +72,26 @@ type Job struct {
 	Assignment    uint64          // identity of the current assignment, greater than 0 once assigned, never reused
 	History       []JobTransition // every state entered, in order; queued first, then assigned
 	TaskID        string          // node's local task ID
+	Agent         string          `json:",omitempty"` // optional actual chosen agent on the node (e.g. for tier-selected jobs)
 	Branch        string          // branch pushed by the node
 	PRURL         string          // optional PR URL
 	Result        string          // final result text or failure reason
 	StopRequested bool            // a local cancellation awaits the assigned node's terminal report
 }
+
+// NodeAgent is a configured agent of a node, declared in every heartbeat (non-secret fields only).
+type NodeAgent struct {
+	Name  string // the configured agent name on that node
+	Type  string // the agent CLI type (claude, codex, gemini, opencode)
+	Model string // the configured model name; empty means the CLI's default
+	Tier  Tier   // the tier of that agent (normal or worker)
+}
+
+// Limits of the agent declarations a heartbeat may carry.
+const (
+	nodeAgentsMax     = 128 // configured agents per heartbeat; legacy FreeAgents remains unchanged
+	nodeAgentModelMax = 256 // bytes in a configured model name
+)
 
 // FreeAgent is a configured agent of a node that is free at the time of a heartbeat.
 type FreeAgent struct {
@@ -84,6 +103,7 @@ type FreeAgent struct {
 type NodeHeartbeat struct {
 	Node         string        // the authenticated node name (the short device name)
 	Capabilities []string      // declared capabilities, validated like JobRequest.Requires
+	Agents       []NodeAgent   `json:",omitempty"` // all configured agents of the node (non-secret fields only)
 	FreeAgents   []FreeAgent   // configured agents that are free now; empty when none is free
 	WebURL       string        // the node's AGENT_WEB_URL, shown by the lead for waiting jobs; may be empty
 	Activity     []JobActivity // what the node's running jobs are doing now (kept only for jobs assigned to it)
@@ -113,6 +133,7 @@ type JobReport struct {
 	Assignment  uint64          // assignment evidence the report belongs to
 	State       JobState        // target state being reported
 	TaskID      string          // node's local task ID
+	Agent       string          `json:",omitempty"` // optional actual chosen agent on the node
 	Branch      string          // branch pushed by the node
 	PRURL       string          // optional PR URL
 	Result      string          // final result text or failure reason
@@ -168,6 +189,13 @@ func (r *leadRegistry) submit(req JobRequest, now Timestamp) (Job, *LeadSubmitEr
 
 // validateJobRequest normalizes set-valued requirements before identity comparison, without mutating input.
 func validateJobRequest(req JobRequest) (JobRequest, *LeadSubmitError) {
+	if req.RepoURL != "" && !validJobRepoURL(req.RepoURL) {
+		return JobRequest{}, opErr(LeadSubmitInvalidRepoURL, "repository link must be https://github.com/<owner>/<repo>")
+	}
+	if req.RequesterTask != "" && !validJobIdentifier(req.RequesterTask) {
+		return JobRequest{}, opErr(LeadSubmitInvalidRequesterTask, "requester task must be a logical task identifier")
+	}
+
 	if req.Team != "" || req.Member != "" { // a member's job: "<selector>@<target>" of a team on the lead
 		agent, node, ok := strings.Cut(req.Member, "@")
 		if req.Team == "" || !ok || !validJobIdentifier(req.Team) || req.Target == "" || agent != req.Selector ||
@@ -241,6 +269,18 @@ func (r *leadRegistry) heartbeat(h NodeHeartbeat, now Timestamp) (*Job, *LeadHea
 	if err != nil {
 		return nil, opErr(LeadHeartbeatInvalidCapabilities, "%v", err)
 	}
+
+	if len(h.Agents) > nodeAgentsMax {
+		return nil, opErr(LeadHeartbeatMalformedBody, "configured agents exceed %d entries", nodeAgentsMax)
+	}
+	configuredSeen := make(map[string]bool, len(h.Agents))
+	for _, agent := range h.Agents {
+		if !validJobIdentifier(agent.Name) || !validJobIdentifier(agent.Type) || !agent.Tier.Valid() || configuredSeen[agent.Name] ||
+			len(agent.Model) > nodeAgentModelMax || strings.IndexFunc(agent.Model, unicode.IsControl) >= 0 {
+			return nil, opErr(LeadHeartbeatMalformedBody, "configured agents need unique logical names, CLI types, known tiers and bounded models without control characters")
+		}
+		configuredSeen[agent.Name] = true
+	}
 	seen := make(map[string]bool, len(h.FreeAgents))
 	for _, agent := range h.FreeAgents {
 		if !validJobIdentifier(agent.Name) || !agent.Tier.Valid() || seen[agent.Name] {
@@ -249,6 +289,7 @@ func (r *leadRegistry) heartbeat(h NodeHeartbeat, now Timestamp) (*Job, *LeadHea
 		seen[agent.Name] = true
 	}
 	h.Capabilities = caps
+	h.Agents = slices.Clone(h.Agents)
 	h.FreeAgents = slices.Clone(h.FreeAgents)
 	h.Activity = boundedActivity(h.Activity)
 	r.mu.Lock()
@@ -477,6 +518,10 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		return Job{}, opErr(LeadReportStaleAssignment, "job %q has a different assignment", rep.ID)
 	}
 
+	if rep.Agent != "" && !validJobIdentifier(rep.Agent) {
+		return Job{}, opErr(LeadReportInvalidAgent, "agent %q is not a valid identifier", rep.Agent)
+	}
+
 	// A cumulative report carries its own time, which must be the time of its last transition, so the first
 	// acceptance and an identical retry judge the same payload.
 	if len(rep.Transitions) > 0 && !rep.At.IsZero() && !rep.At.Equal(rep.Transitions[len(rep.Transitions)-1].At.Time) {
@@ -487,6 +532,7 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		lastTr := job.History[len(job.History)-1]
 		if job.State != rep.State || job.Result != rep.Result ||
 			(rep.TaskID != "" && job.TaskID != rep.TaskID) ||
+			(rep.Agent != "" && job.Agent != rep.Agent) ||
 			(rep.Branch != "" && job.Branch != rep.Branch) ||
 			(rep.PRURL != "" && job.PRURL != rep.PRURL) ||
 			(!rep.At.IsZero() && !rep.At.Equal(lastTr.At.Time)) {
@@ -591,10 +637,11 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 		}
 	}
 
-	// Branch and PR URL are immutable once recorded, in every state.
+	// Branch, Agent and PR URL are immutable once recorded, in every state.
 	if (rep.Branch != "" && job.Branch != "" && rep.Branch != job.Branch) ||
+		(rep.Agent != "" && job.Agent != "" && rep.Agent != job.Agent) ||
 		(rep.PRURL != "" && job.PRURL != "" && rep.PRURL != job.PRURL) {
-		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch or PR for job %q", rep.State, rep.ID)
+		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, agent or PR for job %q", rep.State, rep.ID)
 	}
 	// A report that leaves the state unchanged and adds no transition must not replace a task ID or result
 	// already recorded: an older retry would otherwise overwrite a newer payload (investigator #27, R2;
@@ -603,7 +650,7 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	// even when it ends in the recorded state.
 	historyExtended := len(newHistory) > len(job.History)
 	if targetState == prevState && !historyExtended && payloadConflicts(job, rep) {
-		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task, PR or result for job %q", rep.State, rep.ID)
+		return Job{}, opErr(LeadReportInvalidState, "state %s already records a different branch, task, agent, PR or result for job %q", rep.State, rep.ID)
 	}
 
 	job.State = targetState
@@ -615,6 +662,9 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 
 	if rep.TaskID != "" {
 		job.TaskID = rep.TaskID
+	}
+	if rep.Agent != "" {
+		job.Agent = rep.Agent
 	}
 	if rep.Branch != "" {
 		job.Branch = rep.Branch
@@ -630,11 +680,12 @@ func (r *leadRegistry) report(rep JobReport, now Timestamp) (Job, *LeadReportErr
 	return cloneJob(*job), nil
 }
 
-// payloadConflicts reports whether rep names a branch, task, PR or result that differs from the non-empty
+// payloadConflicts reports whether rep names a branch, task, agent, PR or result that differs from the non-empty
 // value already recorded on job. An empty field in rep never conflicts: it fills nothing and replaces nothing.
 func payloadConflicts(job *Job, rep JobReport) bool {
 	return (rep.Branch != "" && job.Branch != "" && rep.Branch != job.Branch) ||
 		(rep.TaskID != "" && job.TaskID != "" && rep.TaskID != job.TaskID) ||
+		(rep.Agent != "" && job.Agent != "" && rep.Agent != job.Agent) ||
 		(rep.PRURL != "" && job.PRURL != "" && rep.PRURL != job.PRURL) ||
 		(rep.Result != "" && job.Result != "" && rep.Result != job.Result)
 }
@@ -654,6 +705,7 @@ func (r *leadRegistry) requeueOffline(now Timestamp, ttl time.Duration) []string
 		if !ok || now.Sub(node.LastSeen.Time) >= ttl {
 			job.State = JobQueued
 			job.Node = ""
+			job.Agent = ""
 			job.History = append(job.History, JobTransition{State: JobQueued, At: atOrAfterLast(job, now)})
 			requeued = append(requeued, id)
 		}
@@ -681,4 +733,16 @@ func (r *leadRegistry) get(id string) (Job, *LeadGetJobError) {
 		return Job{}, opErr(LeadGetJobNoSuchJob, "no job %q", id)
 	}
 	return cloneJob(*job), nil
+}
+
+// jobRepoURLPattern limits links to a canonical GitHub repository, without URL controls.
+var jobRepoURLPattern = regexp.MustCompile(`^https://github[.]com/[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$`)
+
+// validJobRepoURL accepts data links only, never credentials, branch paths or URL suffixes.
+func validJobRepoURL(raw string) bool {
+	if !jobRepoURLPattern.MatchString(raw) || strings.HasSuffix(raw, ".git") {
+		return false
+	}
+	repo := raw[strings.LastIndex(raw, "/")+1:]
+	return repo != "." && repo != ".."
 }
