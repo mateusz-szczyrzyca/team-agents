@@ -747,6 +747,8 @@ transport and state-write failures emit `node_sync_failed`, `node_sync_invalid_r
 The node saves accepted metadata and file hashes in each task directory, and its log cursors on disk.
 Scanned out-of-scope log records advance the cursor even when no upload is needed. Unchanged, fully synced
 terminal tasks skip artifact reads; later file changes are synced again, and new node/job logs still travel.
+The accepted manifest retains a boundary from before the scan, so writes during scanning or upload remain eligible
+for the next poll, including when an old manifest is upgraded after an unchanged scan.
 A job refused as missing or unauthorized becomes obsolete locally and leaves the log scope; task IDs match
 exactly. Node-wide logs wait for a sync of an active or retained job; other failed syncs log a warning and
 retry on the next poll without stopping heartbeat delivery. Upgrade the
