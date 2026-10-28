@@ -224,3 +224,39 @@ EOF
   recorded_sha=$(jq -r --arg f "$first_file" '.files[$f].sha // empty' "$AGENTS_HOME/tasks/T1/sync_manifest.json")
   [ -n "$recorded_sha" ]
 }
+
+@test "node sync handles unwritable manifest without breaking heartbeat" {
+  setup_limits_sync_bus_stub
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
+
+  mkdir -p "$AGENTS_HOME/bus" "$AGENTS_HOME/tasks/T1" "$AGENTS_HOME/logs"
+  cat > "$AGENTS_HOME/bus/node-jobs.json" <<'EOF'
+{"jobs":{"job-1":{"assignment":1,"task_id":"T1","launched":true,"state":"running"}},"outbox":[]}
+EOF
+
+  cat > "$AGENTS_HOME/tasks/T1/meta.env" <<'EOF'
+STATUS=running
+RUN=1
+AGENT=solo
+TYPE=claude
+MODEL=claude-3-5
+NOTE='unwritable manifest'
+PAUSE_REASON=
+WAKE_AT=
+CREATED=2026-10-28T10:00:00Z
+FINISHED=
+JOB_ID=job-1
+RESTARTS=0
+EOF
+
+  printf 'hello prompt\n' > "$AGENTS_HOME/tasks/T1/prompt-1.md"
+
+  # Create sync_manifest.json as a directory so writing to it fails
+  mkdir -p "$AGENTS_HOME/tasks/T1/sync_manifest.json"
+
+  run agent node --once
+  # Must still exit cleanly and execute heartbeat
+  [ "$status" -eq 0 ]
+  [ -f "$STUB_HOME/last-heartbeat.json" ]
+}
