@@ -3,6 +3,7 @@
 
 load helpers
 
+# setup_node_sync_bus_stub intercepts node-request calls to /v1/heartbeat and /v1/sync.
 setup_node_sync_bus_stub() {
   local real_bus="$HOME/.local/bin/agentbus"
   mv "$real_bus" "$HOME/.local/bin/real-agentbus"
@@ -53,7 +54,7 @@ RUN=1
 AGENT=solo
 TYPE=claude
 MODEL=claude-3-5
-NOTE=doing sync
+NOTE='doing sync'
 PAUSE_REASON=quota
 WAKE_AT=1792735200
 CREATED=2026-10-28T10:00:00Z
@@ -100,7 +101,7 @@ EOF
 
   # Closed file list
   [ "$(jq -r '.Files | length' "$STUB_HOME/last-sync.json")" -eq 2 ]
-  [ "$(jq -r '.Files[] | select(.Name == "prompt-1.md") | .Content' "$STUB_HOME/last-sync.json")" = $'hello prompt\n' ]
+  [ "$(jq -c '.Files[] | select(.Name == "prompt-1.md") | .Content' "$STUB_HOME/last-sync.json")" = '"hello prompt\n"' ]
   [ "$(jq -r '.Files[] | select(.Name == "prompt-1.md") | .Cut' "$STUB_HOME/last-sync.json")" = "false" ]
   run jq -e '.Files[] | select(.Name == "unrelated.txt")' "$STUB_HOME/last-sync.json"
   [ "$status" -ne 0 ]
@@ -242,4 +243,31 @@ EOF
   [ "$status" -eq 0 ]
   [ -f "$STUB_HOME/last-sync.json" ]
   [ -f "$AGENTS_HOME/tasks/T1/sync_manifest.json" ]
+}
+
+@test "node sync marks Cut true when line tails truncate activity or err log" {
+  setup_node_sync_bus_stub
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  echo 'INSTANCE_NAME=node-test' >> "$AGENTS_HOME/agents.conf"
+
+  mkdir -p "$AGENTS_HOME/bus" "$AGENTS_HOME/tasks/T1"
+  cat > "$AGENTS_HOME/bus/node-jobs.json" <<'EOF'
+{"jobs":{"job-1":{"assignment":1,"task_id":"T1","launched":true,"state":"running"}},"outbox":[]}
+EOF
+
+  cat > "$AGENTS_HOME/tasks/T1/meta.env" <<'EOF'
+STATUS=running
+RUN=1
+JOB_ID=job-1
+EOF
+  # Generate 2005 lines of activity.jsonl
+  for i in $(seq 1 2005); do
+    printf '{"ts":"2026-10-28 10:00:00","k":"cmd","t":"step %d"}\n' "$i"
+  done > "$AGENTS_HOME/tasks/T1/activity.jsonl"
+
+  run agent node --once
+  [ "$status" -eq 0 ]
+  [ -f "$STUB_HOME/last-sync.json" ]
+  [ "$(jq -r '.Files[] | select(.Name == "activity.jsonl") | .Cut' "$STUB_HOME/last-sync.json")" = "true" ]
+  [ "$(jq -r '.Files[] | select(.Name == "activity.jsonl") | .Content | split("\n") | length - 1' "$STUB_HOME/last-sync.json")" -eq 2000 ]
 }
