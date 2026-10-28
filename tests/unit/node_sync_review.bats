@@ -388,3 +388,21 @@ EOF
   agent node --once
   [ ! -f "$STUB_HOME/last-sync.json" ]
 }
+
+@test "a terminal artifact read failure keeps the snapshot incomplete until retry" {
+  setup_node_sync_bus_stub
+  echo 'LEAD_URL=http://127.0.0.1:7780' >> "$AGENTS_HOME/agents.conf"
+  mkdir -p "$AGENTS_HOME/bus" "$AGENTS_HOME/tasks/T1"
+  echo '{"jobs":{"job-1":{"assignment":1,"task_id":"T1","launched":true,"state":"done"}},"outbox":[]}' > "$AGENTS_HOME/bus/node-jobs.json"
+  printf 'STATUS=done\nRUN=1\nAGENT=solo\nTYPE=claude\nMODEL=test\n' > "$AGENTS_HOME/tasks/T1/meta.env"
+  printf 'retry this final\n' > "$AGENTS_HOME/tasks/T1/final.md"
+  touch -d '2020-01-01 UTC' "$AGENTS_HOME/tasks/T1/final.md"
+  chmod 000 "$AGENTS_HOME/tasks/T1/final.md"
+  run agent node --once
+  chmod 644 "$AGENTS_HOME/tasks/T1/final.md"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.complete' "$AGENTS_HOME/tasks/T1/sync_manifest.json")" = false ]
+  agent node --once
+  [ "$(jq -r '.complete' "$AGENTS_HOME/tasks/T1/sync_manifest.json")" = true ]
+  [ "$(jq -r '.Files[] | select(.Name == "final.md") | .Content' "$STUB_HOME/last-sync.json")" = 'retry this final' ]
+}
