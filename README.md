@@ -198,7 +198,16 @@ findings outweigh a "ready-to-merge".
 **`--autopilot`** (it implies `--verify`) asks two investigators at once, each on its own — they do not read each
 other's review, and a re-review gets only its own previous one; it waits until two are free, never one. Both
 `ready-to-merge`: you get "✅✅ both reviews: ready to merge". Anything else: the team fixes what the reviews that
-found problems say (the fix loop below). Merging by itself and starting the next round come next.
+found problems say (the fix loop below).
+
+After two `ready-to-merge` reviews the script merges the PR (`gh pr merge --merge`, a merge commit: the red and
+green commits stay), runs the gate on the merged base and starts the next round of the plan — "🔀 merged" tells
+you each time; after the last round it stops. A PR waits for you instead when it touches a path in
+`AUTO_MERGE_HUMAN_PATHS` (`install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`) or changes
+existing tests. The gate failing on the merged base stops it ("⛔ autopilot stopped"; the merge is not undone).
+`agent autopilot <team> off` lets the round's reviews go on but merges nothing and starts nothing by itself;
+`on` turns it back on. Two reviews waiting longer than `AGENT_REVIEW_WAIT_MIN` (30) minutes for two free
+investigators are reported once — they go on waiting, never one reviewer instead of two.
 
 **The fix loop.** When the review finds critical or major problems, the team is woken with them: the review is
 added to its task ("Fix pass 1 of 2"), it fixes them (or disputes one on the PR) and finishes again — and the PR
@@ -494,6 +503,7 @@ Then:
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
 | `VERIFY_MAX_FIX_PASSES`, `AGENT_HUMAN_GITHUB` | how many times a `--verify` review wakes the team to fix critical or major problems (default 2); who is then mentioned on the PR (default: the repository's GitHub owner) |
 | `AGENT_REVIEW_GATE`, `AGENT_REVIEW_GATE_MIN`, `AGENT_PRECHECK_MAX` | before a `--verify`/`--autopilot` review, the command a round's head must pass (`auto`: `make gate` where the repository has it; `off`: none), its time limit in minutes (30), and how many times a round goes back for its gate or its missing tests before you decide (2) |
+| `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) — the team reports of the protocol (`.agents/reports/`) are never counted, whatever it says |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
 | `QUESTIONS_EDITOR`, `VSCODE_SERVER_DIRS` | open new questions files in the connected VS Code window (`vscode`, default) or not (`off`); where VS Code servers live |

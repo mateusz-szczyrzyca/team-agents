@@ -5910,7 +5910,8 @@ agent run --resume <team|task> --same-round  continue an unmerged round (e.g. re
 agent run --last-team [--same-round] ["…"]  resume the newest team of this repository (no ID to look up)
 agent ack <id|all>                        acknowledge finished tasks (they leave the panel)
 agent run --team a,b[,c] [--verify|--autopilot] "task"  team; --verify: an investigator reviews the PR at the end;
-                                           --autopilot: two independent reviews (the merge and the next round: soon)
+                                           --autopilot: two independent reviews, the merge, the next round
+agent autopilot <team> [on|off]            a team's --autopilot: shown, or switched (off: no merge nor next round by itself)
 agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
 agent team [id | --all]                   teams and their members
 agent team <id> --close                                close a team: stop its local members, end its remote ones' jobs
