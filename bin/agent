@@ -5522,6 +5522,7 @@ agent ack <id|all>                        acknowledge finished tasks (they leave
 agent run --team a,b[,c] [--verify] "task"  team; --verify: an investigator reviews the PR at the end
 agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
 agent team [id | --all]                   teams and their members
+agent team <id> --close                                close a team: stop its local members, end its remote ones' jobs
 agent helpers [--all]                     worker requests made by normal models
 agent transcript <id|team> [--raw]        full chronological log of a task/team (bus + activity)
 agent archive <id|team> | --finished      pack a finished task (with its resume chain) into tasks-archived/*.7z

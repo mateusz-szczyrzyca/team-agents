@@ -799,6 +799,13 @@ out of its team like a failed member: its board items go back to the board, the 
 comes back the lead takes it back: within the grace it is told its items are still its own; after being put
 out it rejoins as an available member, told which of its items went to whom. Either way it is woken.
 
+**Closing a team.** `agent team <id> --close` closes a team whatever its members do: the local ones still at
+work are stopped, the remote ones' jobs end and their grants are revoked. A team whose coordinator failed stays
+open for a resume; when no local member of an open team has been at work or asleep for `AGENT_TEAM_ABANDON_MIN`
+(60) minutes — its remote member may still sleep on its node, holding its agent — `agent _supervise` sends you
+one notification with the commands to resume or close it. On the lead it also cancels any remote member's job
+whose team is closed or unknown.
+
 **When something does not work:**
 
 - `heartbeat identity "a" differs from its socket peer "b"` in the node's log: set `INSTANCE_NAME` to the name the
