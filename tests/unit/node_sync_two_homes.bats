@@ -9,22 +9,34 @@ teardown() {
   for f in "$BATS_TEST_TMPDIR/node2/node.pid" "$HOME/lead.pid"; do
     [[ -f $f ]] || continue
     pid=$(cat "$f")
+    # A process already reaped by the test is an expected non-running answer (as in lead.bats).
     if kill -0 "$pid" 2> /dev/null; then
       kill -TERM "$pid"
       rc=0
       wait "$pid" || rc=$?
+      # 143 is the expected status of a process stopped by SIGTERM; anything else is a cleanup failure to show.
       if [[ $rc -ne 0 && $rc -ne 143 ]]; then
         echo "cleanup of $f: exit $rc" >&2
       fi
     fi
   done
   for p in "$BATS_TEST_TMPDIR"/node2/units/*.pid "$STUB_UNITS"/*.pid; do
-    [[ -f $p ]] && kill -TERM -- -"$(cat "$p")" 2> /dev/null
+    [[ -f $p ]] || continue
+    pid=$(cat "$p")
+    # A stub unit that already finished before teardown is an expected non-running answer ("no such process").
+    if kill -0 "$pid" 2> /dev/null; then
+      rc=0
+      kill -TERM -- -"$pid" 2> /dev/null || rc=$?
+      if [[ $rc -ne 0 ]] && kill -0 "$pid" 2> /dev/null; then
+        echo "cleanup of $p: exit $rc" >&2
+      fi
+    fi
   done
+  # A stopped run writes its state on the way out: wait for it so removal of the test's files does not race it.
   for p in "$BATS_TEST_TMPDIR"/node2/units/*.pid "$STUB_UNITS"/*.pid; do
     [[ -f $p ]] || continue
     for _ in $(seq 1 50); do
-      kill -0 "$(cat "$p")" 2> /dev/null || break
+      kill -0 "$(cat "$p")" 2> /dev/null || break   # gone: "no such process" is the answer waited for
       sleep 0.1
     done
   done
