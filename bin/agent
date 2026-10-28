@@ -172,6 +172,7 @@ AGENT_RELEASE_PAUSE_MIN="${AGENT_RELEASE_PAUSE_MIN:-20}"     # a team member pau
 AGENT_SUPERVISE_GRACE_SEC="${AGENT_SUPERVISE_GRACE_SEC:-120}" # agent _supervise: a run this young may not have its unit yet
 AGENT_RESTART_MAX="${AGENT_RESTART_MAX:-2}"             # a task goes on after this many restarts of its machine; one more fails it
 AGENT_RESTART_GRACE_MIN="${AGENT_RESTART_GRACE_MIN:-10}" # lead: a remote member whose node is away longer is put out of its team
+AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no local member at work or asleep this long is reported
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_LIMIT_TAIL_LINES="${AGENT_LIMIT_TAIL_LINES:-30}"           # how much of the end of stderr shows a provider limit
 # Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
@@ -584,14 +585,15 @@ team_summary() { # team — lines "agent: status (branch)"
 }
 
 finish_team() { # team reason — closes the team; sleeping members finish as done
-  local team=$1 why=$2 t
+  local team=$1 why=$2 t out
   [[ $(team_done_flag "$team") == true ]] && return 0
   log_info team_finished "team=$team" "reason=$why"
   bus team-done --dir "$BUS_DIR" --team "$team"
   for t in $(team_tasks "$team"); do   # remote members: their jobs end, their grants go
     [[ $(task_field "$t" KIND) == remote-member ]] || continue
-    "$SELF" jobs --cancel "$(task_field "$t" JOB_ID)" >/dev/null 2>&1 \
-      || log_warn remote_member_cancel_failed "task=$t"   # a job that already ended cannot be cancelled: fine
+    if ! out=$("$SELF" jobs --cancel "$(task_field "$t" JOB_ID)" 2>&1); then   # an ended job cannot be cancelled
+      log_warn remote_member_cancel_failed "task=$t" "job=$(task_field "$t" JOB_ID)" "reason=${out:0:300}"
+    fi
     try remote_member_revoke_failed bus lead-member --dir "$BUS_DIR" --remove --member "$(task_field "$t" AGENT)" >/dev/null
     meta_set "$t" STATUS done
   done
@@ -1699,6 +1701,7 @@ notify() { # id status final note
     failed)  label="❌ failed" ;;
     hung)    label="⚠ hung (watchdog)" ;;
     paused)  label="⏸ paused" ;;
+    abandoned) label="⚠ team left without members" ;;
     *)       label=$status ;;
   esac
   [[ -n $final ]] || final="(no final message from the agent — see: agent log $id)"
@@ -1708,9 +1711,9 @@ notify() { # id status final note
     printf '%s\n' "$REPO_NAME"                      # first line = title/thread
     printf 'Repo: %s\n' "$REPO_NAME"
     if [[ ${KIND:-worker} == investigation ]]; then
-      printf 'Agent: %s (%s%s) — investigation #%s for %s\n' "$AGENT" "$TYPE" "${MODEL:+, $MODEL}" "$INV_ID" "$FROM_AGENT"
+      printf 'Agent: %s (%s%s) — investigation #%s for %s\n' "${AGENT:-?}" "${TYPE:-?}" "${MODEL:+, $MODEL}" "$INV_ID" "$FROM_AGENT"
     else
-      printf 'Agent: %s (%s%s)\n' "$AGENT" "$TYPE" "${MODEL:+, $MODEL}"
+      printf 'Agent: %s (%s%s)\n' "${AGENT:-?}" "${TYPE:-?}" "${MODEL:+, $MODEL}"
     fi
     printf 'Time: %s\n' "$(date '+%Y-%m-%d %H:%M')"
     printf 'Task: %s\n' "$id"
@@ -1735,7 +1738,7 @@ notify() { # id status final note
     elif [[ -n $AGENT_WEB_URL ]]; then
       printf 'Open: %s/task/%s\n' "${AGENT_WEB_URL%/}" "$id"
     fi
-    if [[ -f $WORKTREE/.agents/reports/$id.md ]]; then
+    if [[ -n ${WORKTREE:-} && -f $WORKTREE/.agents/reports/$id.md ]]; then   # a proxy task has no worktree
       printf 'Report: .agents/reports/%s.md (branch %s)\n' "$id" "$BRANCH"
     fi
     if [[ ${KIND:-worker} == worker && $status != waiting ]]; then
@@ -3474,6 +3477,60 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
     fi
     notify "$id" failed "" "the runner died (no running unit) — the task is ended"
   done
+  supervise_member_jobs
+  supervise_teams
+}
+
+supervise_member_jobs() { # the lead: a remote member's job whose team is closed or unknown to the bus is cancelled
+  # (and its grant revoked) — whatever way its team ended without it
+  [[ -n ${LEAD_LISTEN:-} && -f $BUS_DIR/jobs.json ]] || return 0
+  local job team member out
+  while IFS=$'\t' read -r job team member; do
+    [[ -n $job ]] || continue
+    if bus team-get --dir "$BUS_DIR" --team "$team" >/dev/null 2>&1 && [[ $(team_done_flag "$team") != true ]]; then
+      continue   # its team goes on (a team the bus does not know fails team-get: it does not go on)
+    fi
+    if out=$("$SELF" jobs --cancel "$job" 2>&1); then
+      log_warn member_job_orphaned "job=$job" "team=$team" "member=$member"
+    else
+      log_warn member_job_cancel_failed "job=$job" "team=$team" "reason=${out:0:300}"
+    fi
+    bus lead-member --dir "$BUS_DIR" --remove --member "$member" >/dev/null 2>&1 \
+      || log_info member_grant_already_gone "member=$member"   # revoked when its team finished, or never granted
+  done < <(jq -r '.Jobs[] | select((.Request.Team // "") != "" and (.State | IN("queued", "assigned", "running", "waiting")))
+                  | [.Request.ID, .Request.Team, .Request.Member] | @tsv' "$BUS_DIR/jobs.json")
+}
+
+supervise_teams() { # an open team with no local member at work or asleep for AGENT_TEAM_ABANDON_MIN is reported to the
+  # human, once: it waits for a resume (a coordinator's failure keeps a team open) or to be closed — never by itself
+  local m team t alive last tm mark first
+  local -A seen=()
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    team=$(sed -n 's/^TEAM=//p' "$m")
+    [[ -n $team && -z ${seen[$team]:-} ]] || continue
+    seen[$team]=1
+    grep -qx 'REMOTE_TEAM=1' "$m" && continue                 # a remote member's task: its team lives on the lead
+    [[ $(team_done_flag "$team") == false ]] || continue        # closed, or unknown to the bus
+    mark="$BUS_DIR/abandoned-teams/$team"
+    [[ ! -e $mark ]] || continue                                # reported already
+    alive=0 last=0 first=""
+    for t in $(team_tasks "$team"); do
+      [[ $(task_field "$t" KIND) != remote-member ]] || continue
+      [[ -n $first ]] || first=$t
+      case $(task_field "$t" STATUS) in
+        new|starting|running|sleeping|waiting|paused|investigating|interrupted) alive=1 ;;
+      esac
+      tm=$(stat -c %Y "$TASKS/$t/meta.env")
+      ((tm <= last)) || last=$tm
+    done
+    ((alive == 0)) && [[ -n $first ]] || continue
+    (($(date +%s) - last >= AGENT_TEAM_ABANDON_MIN * 60)) || continue
+    log_warn team_abandoned "team=$team"
+    notify "$first" abandoned "" "team $team has no local member at work or asleep. Resume it: agent run --resume $team \"…\" — or close it: agent team $team --close"
+    mkdir -p "${mark%/*}"
+    : > "$mark"   # after the notification: one that failed is sent again at the next run
+  done
 }
 
 remote_member_task() { # member task team base main-root ts — a remote member's proxy task on the lead (no worktree, no
@@ -5172,13 +5229,33 @@ auth_providers() { # one quick request per provider (agent authenticated --provi
   rm -rf "$tmp"
 }
 
-cmd_team() { # [id] [--all]
+cmd_team() { # [id [--close]] [--all]
+  if [[ -n ${1:-} && $1 != --all && ${2:-} == --close ]]; then
+    team_close "$1"
+    return
+  fi
   if [[ -n ${1:-} && $1 != --all ]]; then
     bus team-get --dir "$BUS_DIR" --team "$1" | jq -r '"\(.id) repo \(.repo), coordinator \(.lead // "—"), finished: \(.done)"'
     team_summary "$1"
   else
     bus team-list --dir "$BUS_DIR" "$@"
   fi
+}
+
+team_close() { # team — closes a team whatever its members do: local ones still at work or waiting are stopped,
+  # then finish_team (sleeping ones done, its remote members' jobs ended, their grants revoked)
+  local team=$1 t
+  bus team-get --dir "$BUS_DIR" --team "$team" >/dev/null || die "no team $team on the bus (agent team)"
+  for t in $(team_tasks "$team"); do
+    [[ $(task_field "$t" KIND) != remote-member ]] || continue
+    case $(task_field "$t" STATUS) in
+      new|starting|running|waiting|investigating|paused|interrupted)
+        "$SELF" stop "$t" >/dev/null || log_warn team_close_stop_failed "task=$t" "team=$team" ;;
+    esac
+  done
+  finish_team "$team" "closed by the human (agent team $team --close)"
+  log_info team_closed "team=$team"
+  echo "Closed team $team."
 }
 
 cmd_notes() { # [repo] [--section S] [--search Q] [-n N]
