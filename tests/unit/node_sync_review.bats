@@ -212,7 +212,8 @@ EOF
   # Allow only 1 sync request to succeed, then fail on the second
   echo 1 > "$STUB_HOME/sync-fail-after-n"
 
-  agent node --once || true
+  run agent node --once
+  [ "$status" -eq 0 ]
 
   # Partial manifest must have been saved with complete: false
   [ -f "$AGENTS_HOME/tasks/T1/sync_manifest.json" ]
