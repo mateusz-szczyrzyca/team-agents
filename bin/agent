@@ -495,10 +495,15 @@ open_in_editor() {
     done
   done
   [[ -n $cli ]] || return 0      # no VS Code server on this host
-  local socks=()
-  for s in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"/vscode-ipc-*.sock /tmp/vscode-ipc-*.sock; do
-    if [[ -S $s && -O $s ]]; then socks+=("$s"); fi
+  local socks=() own=() fallback=() rundir=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+  for s in "$rundir"/vscode-ipc-*.sock; do   # this session's: where the server puts them
+    if [[ -S $s && -O $s ]]; then own+=("$s"); socks+=("$s"); fi
   done
+  if [[ $rundir != /tmp ]]; then
+    for s in /tmp/vscode-ipc-*.sock; do      # other sessions' (or a server without XDG_RUNTIME_DIR)
+      if [[ -S $s && -O $s ]]; then fallback+=("$s"); socks+=("$s"); fi
+    done
+  fi
   if ((${#socks[@]} == 0)); then
     log_info editor_not_connected "task=$id"
     return 0
@@ -509,7 +514,11 @@ open_in_editor() {
       return 0
     fi
     last=$out
-  done < <(for s in "${socks[@]}"; do printf '%s %s\n' "$(file_mtime "$s")" "$s"; done | sort -rn | cut -d' ' -f2-)
+  done < <(   # this session's sockets before the other ones, each newest first
+    {
+      for s in "${own[@]}"; do printf '0 %s %s\n' "$(file_mtime "$s")" "$s"; done
+      for s in "${fallback[@]}"; do printf '1 %s %s\n' "$(file_mtime "$s")" "$s"; done
+    } | sort -k1,1n -k2,2rn | cut -d' ' -f3-)
   log_info editor_open_failed "task=$id" "file=$f" "error=$last"
 }
 
