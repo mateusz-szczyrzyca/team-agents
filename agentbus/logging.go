@@ -54,6 +54,7 @@ const (
 	LogCorruptNoteLine    LogEvent = "corrupt_notebook_line"  // a line of a notebook log could not be decoded
 	LogNonJSONCLILine     LogEvent = "non_json_cli_line"      // the CLI event stream contained a non-JSON line
 	LogUnencodableInput   LogEvent = "tool_input_unencodable" // a tool input of a CLI event could not be encoded
+	LogLeadSyncRejected   LogEvent = "lead_sync_rejected"     // a task mirror sync was refused or could not be stored
 	LogLeadListening      LogEvent = "lead_listening"         // the lead started listening on an address
 	LogLeadMCPCall        LogEvent = "lead_mcp_call"          // a remote member's MCP message ran on the lead
 	LogRemoteMemberEvent  LogEvent = "remote_member_event"    // a remote member's change handed to the agent script

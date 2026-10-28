@@ -723,8 +723,44 @@ Existing stored jobs without these fields load with empty links and unknown chos
 `LeadSubmitInvalidRepoURL` or `LeadSubmitInvalidRequesterTask`. A failed origin lookup is logged as
 `job_origin_lookup_failed`; an absent or non-GitHub origin simply has no link.
 
-This round adds views without file mirroring: job prompts, questions and full task files remain on the node.
-Questions of a job are still answered on its node. A lead with no nodes has no remote agent rows.
+Nodes now push changed job-task data to authenticated `POST /v1/sync`. The lead stores it under
+`<bus>/remote/<node>/<task-id>/`: `metadata.json` contains only `STATUS`, `RUN`, `AGENT`, `TYPE`, `MODEL`,
+`NOTE`, `PAUSE_REASON`,
+`WAKE_AT`, `CREATED`, `FINISHED`, `RUN_START`, `JOB_ID` and `RESTARTS`; `interrupted` is preserved like any
+other task status. Task artifacts retain their original basenames. `sync.json` records content hashes and
+whether each artifact was cut. The closed artifact list is `activity.jsonl`, `prompt-<n>.md`,
+`questions-<n>.md`, `final.md`, `result.md`, and `err-<n>.log`. Activity retains at most `2,000` lines and
+error logs `500`; each file is at most `256 KiB`, each encoded sync at most `2 MiB`. File SHA-256 values are
+checked before writing; unknown keys, filenames, task IDs or assignment evidence are refused with typed
+`LeadSync` causes. Network data never selects shell code, configuration or paths outside this mirror.
+Mirrors expire with their jobs (`30` days after completion). Node `warn`/`error` records and job-task records
+are appended to `<bus>/remote/<node>/logs.jsonl`, at most `500` per request and `20,000` retained lines;
+each entry is limited to `64 KiB`. A node-level `logs-state.json` commits the tail and last batch digest
+together, so retries repair the log view without appending an identical accepted batch twice. Refused syncs emit
+`lead_sync_rejected` with their operation cause. Node acknowledgements emit `node_sync_accepted`;
+transport and state-write failures emit `node_sync_failed`, `node_sync_invalid_reply`,
+`node_sync_payload_oversized`, `node_sync_save_failed`, `node_sync_cleanup_failed` or
+`node_sync_run_start_failed`, `node_sync_artifact_failed` or `node_sync_scan_failed`. Invalid local data emits `node_sync_manifest_invalid`,
+`node_sync_cursor_invalid`, `node_sync_jobs_invalid` or `node_sync_log_malformed`; oversized records emit
+`node_sync_log_oversized` and are skipped so the cursor can progress.
+
+The node saves accepted metadata and file hashes in each task directory, and its log cursors on disk.
+Ambient runner environment variables never leak into mirrored task metadata: fields are isolated and read
+only from `meta.env` (or assigned job defaults).
+Scanned out-of-scope log records advance the cursor even when no upload is needed. Unchanged, fully synced
+terminal tasks skip artifact reads; later file changes are synced again, and new node/job logs still travel.
+The accepted manifest retains a boundary from before the scan, so writes during scanning or upload remain eligible
+for the next poll, including when an old manifest is upgraded after an unchanged scan.
+A job refused as missing or unauthorized becomes obsolete locally and leaves the log scope; task IDs match
+exactly. Node-wide logs wait for a sync of an active or retained job; other failed syncs log a warning and
+retry on the next poll without stopping heartbeat delivery. Upgrade the
+lead before the node: the new endpoint is additive, and existing `jobs.json` files keep loading unchanged.
+For `agentbus node-request --path /v1/sync`, HTTP `400` is `NodeClientInvalidArgument` (exit `2`),
+so invalid log scope does not obsolete a valid assignment. Assignment rejections remain
+`NodeClientRejected` (exit `5`); other routes keep their existing rejection semantics.
+The mirror is storage only in this round: the web still shows heartbeat activity; mirror task tabs and node
+log views arrive in the next round. Questions of a job are still answered on its node.
+A lead with no nodes has no remote agent rows.
 
 **Remote team members.** A node's agent can be a full member of a team on the lead — on its board, in its
 messages, consultations and quiz:

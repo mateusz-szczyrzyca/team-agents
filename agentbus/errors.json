@@ -1454,6 +1454,73 @@
      "doc": "the socket peer is not an allowed node"
     }
    ]
+  },
+  {
+   "type": "LeadSync",
+   "op": "lead/sync",
+   "what": "an assigned node syncing bounded job task data",
+   "causes": [
+    {
+     "name": "Unauthorized",
+     "class": "Permission",
+     "doc": "the socket peer is not allowed or does not own the job"
+    },
+    {
+     "name": "MalformedBody",
+     "class": "InvalidArgument",
+     "doc": "the request is not a single sync JSON object"
+    },
+    {
+     "name": "RequestTooLarge",
+     "class": "InvalidArgument",
+     "doc": "the encoded request exceeds the sync byte limit"
+    },
+    {
+     "name": "InvalidNode",
+     "class": "InvalidArgument",
+     "doc": "the authenticated node is not a logical identifier"
+    },
+    {
+     "name": "InvalidTask",
+     "class": "InvalidArgument",
+     "doc": "the task is not a logical identifier or differs from its job"
+    },
+    {
+     "name": "NoSuchJob",
+     "class": "NotFound",
+     "doc": "the job does not exist"
+    },
+    {
+     "name": "StaleAssignment",
+     "class": "Conflict",
+     "doc": "the assignment evidence is no longer current"
+    },
+    {
+     "name": "InvalidMetadata",
+     "class": "InvalidArgument",
+     "doc": "a metadata key is outside the closed list or its value is invalid"
+    },
+    {
+     "name": "InvalidFile",
+     "class": "InvalidArgument",
+     "doc": "a filename is outside the closed list or repeated"
+    },
+    {
+     "name": "FileTooLarge",
+     "class": "InvalidArgument",
+     "doc": "a file exceeds the byte or tail line limit"
+    },
+    {
+     "name": "InvalidDigest",
+     "class": "InvalidArgument",
+     "doc": "a file does not match its SHA-256"
+    },
+    {
+     "name": "InvalidLogs",
+     "class": "InvalidArgument",
+     "doc": "logs exceed the count limit or include unrelated informational entries"
+    }
+   ]
   }
  ]
 }
