@@ -27,6 +27,7 @@ Actions:
   stale-rate-limit  a retried 429 early on stderr, much more output, then a final message without STATUS
   commit-lines:N  commits a file of N lines, STATUS: DONE
   round-done:N/M  STATUS: ROUND_DONE N/M
+  team-lead-round:N/M  claim_lead, tell the team, STATUS: ROUND_DONE N/M (a coordinator ending a round)
   pending:K:N/M   commits a test skipped as "pending: parser, round K", STATUS: ROUND_DONE N/M
   no-status       a final message without a STATUS line
   hang            sleeps without output (the watchdog must kill it)
@@ -199,6 +200,11 @@ if action.startswith("commit-lines:"):
     n = int(action.split(":")[1])
     commit_file("big.txt", "".join(f"line {i}\n" for i in range(n)), f"Add {n} lines")
     finish("STATUS: DONE")
+if action.startswith("team-lead-round:"):
+    # a coordinator ending a round of a team: claim the role, tell the team, STATUS: ROUND_DONE N/M
+    call("claim_lead")
+    call("send_message", to="team", text="TEAM DONE")
+    finish("Round finished.\n\nSTATUS: ROUND_DONE " + action.split(":")[1] + "\nRole: coordinator")
 if action.startswith("round-done:"):
     finish("Round finished.\n\nSTATUS: ROUND_DONE " + action.split(":")[1])
 if action.startswith("pending:"):

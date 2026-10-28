@@ -867,6 +867,10 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
   printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
 }
 
+merge_blockers() { # repo base head round-tests — what keeps --autopilot from merging by itself, one reason per line
+  : # not implemented yet: tests/unit/autopilot_merge.bats comes first
+}
+
 review_gate_cmd() { # repo — the gate a round's head must pass before a review (nothing: none)
   case $AGENT_REVIEW_GATE in
     off|"") ;;
