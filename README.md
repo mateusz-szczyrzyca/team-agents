@@ -740,7 +740,7 @@ together, so retries repair the log view without appending an identical accepted
 `lead_sync_rejected` with their operation cause. Node acknowledgements emit `node_sync_accepted`;
 transport and state-write failures emit `node_sync_failed`, `node_sync_invalid_reply`,
 `node_sync_payload_oversized`, `node_sync_save_failed`, `node_sync_cleanup_failed` or
-`node_sync_run_start_failed`. Invalid local data emits `node_sync_manifest_invalid`,
+`node_sync_run_start_failed` or `node_sync_artifact_failed`. Invalid local data emits `node_sync_manifest_invalid`,
 `node_sync_cursor_invalid`, `node_sync_jobs_invalid` or `node_sync_log_malformed`; oversized records emit
 `node_sync_log_oversized` and are skipped so the cursor can progress.
 

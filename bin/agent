@@ -4362,7 +4362,7 @@ node_poll_remote_helpers() {
 # Maximum wire payload size for POST /v1/sync in bytes (2 MiB).
 NODE_SYNC_MAX_PAYLOAD_BYTES=2097152
 
-# Soft budget threshold for batching files and logs in a single sync request (1.5 MiB).
+# Soft budget threshold for batching files and logs in a single sync request (1,500,000 bytes).
 NODE_SYNC_BATCH_BUDGET_BYTES=1500000
 
 # Maximum file size sent in POST /v1/sync before tail truncation (256 KiB).
@@ -4523,7 +4523,7 @@ node_sync_task() {
   local changed_files='[]'
   local new_manifest_files='{}'
   local f fname cut byte_len sha256 prev_sha prev_cut base_num tmp_f tmp_cut file_obj total_l
-  local content_raw decoded_len
+  local content_raw decoded_len source_bytes
   for f in "$task_dir"/*; do
     [[ -f $f ]] || continue
     fname=$(basename "$f")
@@ -4538,33 +4538,33 @@ node_sync_task() {
     esac
 
     cut=false
-    tmp_f=$(mktemp "$BUS_DIR/sync_file.XXXXXX")
-    if [[ $fname == "activity.jsonl" ]]; then
-      total_l=$(wc -l < "$f")
-      if (( total_l > NODE_SYNC_MAX_ACTIVITY_LINES )); then
-        cut=true
-        tail -n "$NODE_SYNC_MAX_ACTIVITY_LINES" "$f" > "$tmp_f"
-      else
-        cp "$f" "$tmp_f"
-      fi
-    elif [[ $fname =~ ^err-[1-9][0-9]*\.log$ ]]; then
-      total_l=$(wc -l < "$f")
-      if (( total_l > NODE_SYNC_MAX_ERR_LOG_LINES )); then
-        cut=true
-        tail -n "$NODE_SYNC_MAX_ERR_LOG_LINES" "$f" > "$tmp_f"
-      else
-        cp "$f" "$tmp_f"
-      fi
-    else
-      cp "$f" "$tmp_f"
+    if ! source_bytes=$(wc -c < "$f"); then
+      log_warn node_sync_artifact_failed "task=$tid" "file=$fname" "stage=size"
+      continue
     fi
-
-    byte_len=$(wc -c < "$tmp_f")
-    if (( byte_len > NODE_SYNC_MAX_FILE_BYTES )); then
-      cut=true
-      tmp_cut=$(mktemp "$BUS_DIR/sync_file.XXXXXX")
-      tail -c "$NODE_SYNC_MAX_FILE_BYTES" "$tmp_f" | LC_ALL=C sed -e '1s/^[\x80-\xbf]*//' > "$tmp_cut"
-      mv "$tmp_cut" "$tmp_f"
+    if ! tmp_f=$(mktemp "$BUS_DIR/sync_file.XXXXXX"); then
+      log_warn node_sync_artifact_failed "task=$tid" "file=$fname" "stage=temporary_file"
+      return 0
+    fi
+    # tail counts a partial final line; always applying it avoids wc -l's newline-only count.
+    # Cap the stream before writing temporary data, then discard a split leading UTF-8 sequence.
+    if {
+      case $fname in
+        activity.jsonl)
+          tail -n "$NODE_SYNC_MAX_ACTIVITY_LINES" "$f" | tail -c "$NODE_SYNC_MAX_FILE_BYTES" | LC_ALL=C sed -e '1s/^[\x80-\xbf]*//' > "$tmp_f"
+          ;;
+        err-*.log)
+          tail -n "$NODE_SYNC_MAX_ERR_LOG_LINES" "$f" | tail -c "$NODE_SYNC_MAX_FILE_BYTES" | LC_ALL=C sed -e '1s/^[\x80-\xbf]*//' > "$tmp_f"
+          ;;
+        *) tail -c "$NODE_SYNC_MAX_FILE_BYTES" "$f" | LC_ALL=C sed -e '1s/^[\x80-\xbf]*//' > "$tmp_f" ;;
+      esac
+    }; then
+      byte_len=$(wc -c < "$tmp_f")
+      if (( byte_len != source_bytes )); then cut=true; fi
+    else
+      log_warn node_sync_artifact_failed "task=$tid" "file=$fname" "stage=read"
+      try node_sync_cleanup_failed rm -f "$tmp_f"
+      continue
     fi
 
     content_raw=$(jq -Rs . < "$tmp_f")
