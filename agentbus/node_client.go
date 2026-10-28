@@ -139,6 +139,9 @@ func nodeRequest(cfg nodeRequestConfig, input io.Reader) ([]byte, *NodeClientErr
 		return nil, opErr(NodeClientServerError, "lead HTTP %d: %.1000s", response.StatusCode, out)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if response.StatusCode == http.StatusBadRequest && cfg.path == "/v1/sync" {
+			return nil, opErr(NodeClientInvalidArgument, "lead HTTP %d: %.1000s", response.StatusCode, out)
+		}
 		return nil, opErr(NodeClientRejected, "lead HTTP %d: %.1000s", response.StatusCode, out)
 	}
 	if len(out) > replyLimit || !json.Valid(out) {
