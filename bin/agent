@@ -4384,12 +4384,13 @@ NODE_SYNC_MAX_LOG_ENTRY_BYTES=65536
 node_sync_save_json() {
   local target=$1 content=$2
   local tmpf
-  if tmpf=$(mktemp "$BUS_DIR/sync_save.XXXXXX" 2>/dev/null); then
-    if printf '%s\n' "$content" > "$tmpf" 2>/dev/null && mv -f "$tmpf" "$target" 2>/dev/null; then
-      rm -f "$tmpf"
+  # Suppress duplicate stderr diagnostics: the structured warning below reports a retryable save failure.
+  # A sibling temporary file keeps replacement atomic even when the task directory is on another filesystem.
+  if tmpf=$(mktemp "${target}.tmp.XXXXXX" 2>/dev/null); then
+    if printf '%s\n' "$content" > "$tmpf" 2>/dev/null && mv -fT "$tmpf" "$target" 2>/dev/null; then
       return 0
     fi
-    rm -f "$tmpf"
+    try node_sync_cleanup_failed rm -f "$tmpf"
   fi
   log_warn node_sync_save_failed "target=$target"
   return 0
@@ -4408,9 +4409,15 @@ node_read_meta() {
       if errf=$(mktemp); then
         run_start=$(date -Is -r "$task_dir/runner.pid" 2>"$errf") || rc=$?
         if ((rc != 0)); then
+          # A finished runner can remove runner.pid between the existence check and stat.
+          if [[ -e $task_dir/runner.pid ]]; then
+            log_warn node_sync_run_start_failed "task=$tid" "exit=$rc"
+          fi
           run_start=""
         fi
         rm -f "$errf"
+      else
+        log_warn node_sync_run_start_failed "task=$tid" "stage=temporary_file"
       fi
     fi
     # shellcheck source=/dev/null
