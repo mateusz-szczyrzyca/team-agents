@@ -41,3 +41,17 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
   wait_status "$t" failed
   wait_grep "unreachable 2 times in a row" "$HOME/notifications.log"   # the reason, as the human gets it
 }
+
+@test "a reset or refused connection is a network pause too; an ordinary error is not" {
+  source "$REPO_ROOT/bin/agent"
+  d=$BATS_TEST_TMPDIR/t
+  mkdir -p "$d"
+  printf 'Error: connection reset by peer\n' > "$d/err-1.log"
+  [ "$(limit_kind "$d" 1 "")" = network ]
+  [ "$(quota_reset_seconds "$d" 1 "")" = $(( AGENT_NETWORK_PAUSE_MIN * 60 + 60 )) ]
+  printf 'fetch failed: connect ECONNREFUSED 127.0.0.1:443\n' > "$d/err-1.log"
+  [ "$(limit_kind "$d" 1 "")" = network ]
+  printf 'Error: invalid argument\n' > "$d/err-1.log"
+  run limit_kind "$d" 1 ""
+  [ "$status" -eq 1 ]
+}
