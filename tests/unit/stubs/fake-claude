@@ -19,6 +19,7 @@ Actions:
   remote-hello    sends "hello from node2" to the coordinator "lead" over the bus, STATUS: SLEEPING
   team-lead-wait  claims the coordinator role and sleeps, keeping the team open (STATUS: SLEEPING)
   capacity        exits 1: "Selected model is at capacity" (the provider is overloaded)
+  network-down    exits 1: a network issue — the provider's host cannot be resolved (DNS i/o timeout), retryable
   team-lead-crash claims the coordinator role, then the CLI fails (exit 1, no STATUS)
   blocked         ends with STATUS: BLOCKED (not a status of the system)
   claim-fail / claim-quota / claim-rate-limit   add, claim and note progress on B1, then STATUS: FAILED / an
@@ -113,6 +114,14 @@ if action == "remote-hello":
     # a remote team member: its message goes through the relay to the team on the lead
     call("send_message", to="lead", text="hello from node2")
     finish("Said hello to the coordinator.\nSTATUS: SLEEPING")
+if action == "network-down":
+    # the network or the provider cannot be reached (a DNS timeout, as an ISP's night works cause it)
+    print("error: There was a network issue connecting to the server, please try again.", file=sys.stderr)
+    print('AGY_ERROR: {"short_error":"agent executor error: generating and executing: request failed: Post '
+          '\\"https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse\\": dial tcp: lookup '
+          'daily-cloudcode-pa.googleapis.com on 127.0.0.53:53: read udp 127.0.0.1:41211->127.0.0.53:53: i/o timeout",'
+          '"status":"UNKNOWN","error_code":2,"code_kind":"grpc","retryable":true}', file=sys.stderr)
+    sys.exit(1)
 if action == "capacity":
     print("Selected model is at capacity. Please try a different model.", file=sys.stderr)
     sys.exit(1)
