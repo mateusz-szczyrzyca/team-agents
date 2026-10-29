@@ -224,6 +224,15 @@ remote member's pause shows with its reason, and its failure with the CLI's exit
 merges only the commit that passed its checks and both reviews (`--match-head-commit`): anything pushed since stops
 the merge.
 
+**What the agents read on GitHub.** Only the trusted accounts (`AGENT_GITHUB_TRUSTED`) may steer the agents. Their
+CLI gets `agent-gh` as `gh` (installed next to `agent`): comments and reviews by anyone else — on open, closed and
+merged PRs and issues alike — are left out and logged (`github_comment_ignored`: "there is unknown comment from
+unknown user and it's ignored"), and so are the trusted accounts' own that begin with "ignore this mate", a way to
+check it on GitHub's real data (`github_comment_marked_ignored`). A fork's PR, or one opened by another account, is
+not shown at all, and a GraphQL query for comments or reviews is refused. This keeps other people's text from
+reaching an agent; it does not hold back an agent that bypasses `gh` with its token, so limit who may comment
+(the repository's interaction limits) and what the agents' token may do (a fine-grained token for this repository).
+
 **The fix loop.** When the review finds critical or major problems, the team is woken with them: the review is
 added to its task ("Fix pass 1 of 2"), it fixes them (or disputes one on the PR) and finishes again — and the PR
 is reviewed again, a re-review that first checks the previous findings. After `VERIFY_MAX_FIX_PASSES` (2) fix
