@@ -882,6 +882,10 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
   printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
 }
 
+pr_format_issues() { # body — what a PR description writes against the GitHub conventions, one item per line
+  : # not implemented yet: tests/unit/github_format.bats comes first
+}
+
 merge_blockers() { # repo base head round-tests — what keeps --autopilot from merging by itself, one reason per line
   local repo=$1 base=$2 head=$3 tests=$4 f p changed
   while IFS= read -r f; do
