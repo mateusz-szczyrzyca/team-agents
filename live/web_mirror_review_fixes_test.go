@@ -160,7 +160,9 @@ func TestMirrorDirectoriesReadErrorM8(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		_ = os.Chmod(unreadable, 0700)
+		if err := os.Remove(unreadable); err != nil {
+			t.Errorf("remove empty unreadable fixture: %v", err)
+		}
 	}()
 	dirs := mirrorDirectories(unreadable)
 	if dirs != nil {

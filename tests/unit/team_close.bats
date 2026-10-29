@@ -8,7 +8,7 @@ load helpers
 meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
 
 @test "agent team <id> --close closes a team whose members sleep" {
-  scenario '{"lead": {"new": "team-lead-wait"}, "member": {"new": "team-sleep"}}'
+  scenario '{"lead": {"new": "team-lead-wait-read"}, "member": {"new": "team-sleep-read"}}'
   agent run --team lead,member "task"
   t=$(task_of lead); m=$(task_of member)
   team=$(meta "$t" TEAM)

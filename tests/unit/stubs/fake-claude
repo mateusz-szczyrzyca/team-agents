@@ -34,6 +34,7 @@ Actions:
   sleep:N         works silently for N seconds, then DONE
   team-lead-done  claim_lead, checkpoint, tell the team, STATUS: DONE
   team-sleep      claim_lead (fails for non-leads), STATUS: SLEEPING
+  team-lead-wait-read, team-sleep-read  as team-lead-wait / team-sleep, reading their messages first (they stay asleep)
   team-lead-slow  claim_lead, work for 5 s, close the team, STATUS: DONE
 The agent's MCP config (--mcp-config) is used to call agentbus tools.
 """
@@ -223,6 +224,17 @@ if action == "team-lead-slow":
     time.sleep(5)
     call("send_message", to="team", text="TEAM DONE")
     finish("STATUS: DONE\nRole: coordinator")
+if action == "team-lead-wait-read":
+    # as team-lead-wait, but reads its messages first (as an agent does): with nothing unread, it stays asleep
+    call("claim_lead")
+    call("read_messages")
+    finish("Coordinating; waiting for the members.\nSTATUS: SLEEPING\nRole: coordinator")
+if action == "team-sleep-read":
+    # as team-sleep, but reads its messages first: with nothing unread, it stays asleep
+    time.sleep(1)
+    call("claim_lead")
+    call("read_messages")
+    finish("STATUS: SLEEPING")
 if action == "team-sleep":
     time.sleep(1)
     call("claim_lead")
