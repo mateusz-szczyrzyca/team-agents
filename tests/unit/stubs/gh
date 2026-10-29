@@ -19,6 +19,10 @@ if [[ "${1:-} ${2:-}" == "pr list" ]]; then
     echo '[]'
   fi
 fi
+if [[ "${1:-} ${2:-}" == "issue list" ]]; then   # issues: gh-issues.json, else none
+  cat "$STUB_HOME/gh-issues.json" 2>/dev/null || echo '[]'
+  exit 0
+fi
 if [[ "${1:-}" == api && "${2:-}" != user && -f $STUB_HOME/gh-api.json ]]; then   # comments and reviews: gh-api.json
   cat "$STUB_HOME/gh-api.json"
   exit 0
