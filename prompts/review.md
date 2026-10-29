@@ -78,6 +78,9 @@ Review: <html_url>
 VERDICT: ready-to-merge | needs-fixes | incomplete
 ```
 
+A PR description may have a section `## Decisions taken without the human` (questions the team answered itself in
+`--autopilot`): check each decision as a part of the change — a wrong or unsafe one is a finding like any other.
+
 The verdict is one of three words, on its own line — the script reads it:
 
 - `ready-to-merge` — no critical or major problem; the change does what the task (or its round) asked; its tests pass

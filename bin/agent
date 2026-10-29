@@ -1840,6 +1840,13 @@ build_prompt() { # id mode qfile next_round
     printf '\n'
     any=1
   fi
+  if [[ -n ${ABOUNCE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    R[DECIDED_FILE]=$ABOUNCE_PENDING
+    render "$PROMPTS/autopilot-questions.md"
+    printf '\n'
+    any=1
+  fi
   if [[ -n ${RESTART_PENDING:-} ]]; then
     ((any)) && printf '\n---\n\n'
     R[RESTARTED_AT]=$RESTART_PENDING
@@ -2647,6 +2654,7 @@ cmd__runner() {
   meta_set "$id" INV_PENDING_DELIVERY ""
   meta_set "$id" WAKE_PENDING ""
   meta_set "$id" RESTART_PENDING ""
+  meta_set "$id" ABOUNCE_PENDING ""
   meta_set "$id" RUN_BOOT "$(boot_id)"   # a later boot ID means its machine restarted under this run
   meta_set "$id" BOUNCE_PENDING ""
   meta_set "$id" QBOUNCE_PENDING ""
@@ -2770,6 +2778,8 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     fi
     if [[ -n $norec ]]; then
       status=qbounce
+    elif [[ ${AUTOPILOT:-} == 1 && ${AUTOPILOT_OFF:-} != 1 && $(task_field "$id" AUTOPILOT_QBOUNCED) != "$next_round" ]]; then
+      status=abounce   # --autopilot: nobody answers — the agent decides, once a round
     else
       meta_set "$id" ROUND "$next_round"
       status=waiting
@@ -2840,6 +2850,20 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     act "$id" info "↩ questions without a recommendation ($norec) — sent back to the agent once"
     log_info questions_bounced "task=$id" "questions=$norec"
     start_runner "$id" resume || log_error resume_failed "task=$id" "reason=questions without recommendations"
+    dispatch; dispatch_helpers
+    return 0
+  fi
+  # --autopilot: the questions go back to the agent once — it decides and lists its decisions in the PR; the file is
+  # put aside, so that the next run's end does not take the same questions for new ones
+  if [[ $status == abounce ]]; then
+    local decided="${qfile%.md}-decided.md"
+    mv "$qfile" "$decided"
+    meta_set "$id" AUTOPILOT_QBOUNCED "$next_round"
+    meta_set "$id" ABOUNCE_PENDING "$decided"
+    RUNNER_DONE=1
+    act "$id" info "↩ --autopilot: nobody answers questions — they go back to the agent once; it decides and lists its decisions in the PR"
+    log_info questions_autopilot_bounced "task=$id" "file=$decided"
+    start_runner "$id" resume || log_error resume_failed "task=$id" "reason=--autopilot questions"
     dispatch; dispatch_helpers
     return 0
   fi
