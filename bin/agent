@@ -700,7 +700,7 @@ skips_added() { # id → the skips this task's change adds against its base, "fi
 
 pr_skipped_section() { # id → the "## Skipped tests" section of the description of the task's PR (empty: none)
   local pr body
-  pr=$(cd "$(task_field "$1" REPO_ROOT)" && try pr_lookup_failed gh pr list --head "$(task_field "$1" BRANCH)" --state all --json body --limit 1)
+  pr=$(try pr_lookup_failed trusted_prs "$(task_field "$1" REPO_ROOT)" "$(task_field "$1" BRANCH)" all body)
   body=$(jq_soft pr_body_parse -r '.[0].body // empty' <<< "${pr:-[]}")
   awk '/^#+[[:space:]]*Skipped tests/ { on = 1; next } on && /^#+[[:space:]]/ { on = 0 } on { print }' <<< "$body"
 }
@@ -771,7 +771,7 @@ round_check() { # id → what keeps a finished round from closing, one "- …" l
 
 round_pr_url() { # id → the URL of the PR of the task's branch ("" when there is none)
   local pr
-  pr=$(cd "$(task_field "$1" REPO_ROOT)" && try pr_lookup_failed gh pr list --head "$(task_field "$1" BRANCH)" --state all --json url --limit 1)
+  pr=$(try pr_lookup_failed trusted_prs "$(task_field "$1" REPO_ROOT)" "$(task_field "$1" BRANCH)" all url)
   jq_soft pr_lookup_parse -r '.[0].url // empty' <<< "${pr:-[]}"
 }
 
@@ -882,6 +882,30 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
   printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
 }
 
+# github_trusted root — the GitHub accounts whose PRs and texts the round trusts, space-separated: AGENT_GITHUB_TRUSTED,
+# or by default the repository's owner and the account gh is logged in as (the agents')
+github_trusted() {
+  if [[ -n ${AGENT_GITHUB_TRUSTED:-} ]]; then printf '%s' "$AGENT_GITHUB_TRUSTED"; return 0; fi
+  if [[ -z ${GH_LOGIN_CACHE:-} ]]; then   # one question to GitHub per process; none answered: only the owner
+    GH_LOGIN_CACHE=$(cd "$1" 2>/dev/null && gh api user --jq .login 2>/dev/null) || GH_LOGIN_CACHE=""
+  fi
+  printf '%s %s' "$(github_owner "$1")" "$GH_LOGIN_CACHE"
+}
+
+# trusted_prs root branch state fields — the round's PRs of that branch, newest first, as a JSON array: from this
+# repository (a fork's PR with the same branch name is not — the agents' branch names are public) and opened by a
+# trusted account (github_trusted); the others are logged (pr_untrusted_ignored) and left out
+trusted_prs() {
+  local root=$1 branch=$2 state=$3 fields out trusted ignored
+  fields=$(printf '%s,number,isCrossRepository,author' "$4" | tr ',' '\n' | awk 'NF && !seen[$0]++' | paste -sd, -)
+  out=$(cd "$root" && gh pr list --head "$branch" --state "$state" --json "$fields" --limit 20) || return 1
+  trusted=$(github_trusted "$root" | jq -R 'split(" ") | map(select(. != ""))')
+  ignored=$(jq -r --argjson t "$trusted" '[.[] | select((.isCrossRepository // false) or ((.author.login // "") as $a | ($t | index($a)) == null))
+            | "#\(.number) (\(.author.login // "?"))"] | join(", ")' <<< "$out")
+  [[ -z $ignored ]] || log_warn pr_untrusted_ignored "branch=$branch" "prs=$ignored" "trusted=$(jq -r 'join(" ")' <<< "$trusted")"
+  jq -c --argjson t "$trusted" '[.[] | select((.isCrossRepository // false) == false and ((.author.login // "") as $a | ($t | index($a)) != null))]' <<< "$out"
+}
+
 pr_format_issues() { # body [repo-url] — what a PR description writes against the GitHub conventions, one item per
   # line: a commit or a PR in code format without a link (GitHub links neither inside backticks), a code block that
   # does not name its language, RED or GREEN as plain words. Nothing inside code blocks is checked.
@@ -968,7 +992,10 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
   if [[ $(cd "$root" && gh pr view "$url" --json isDraft --jq .isDraft 2>/dev/null) == true ]]; then   # a draft is made ready first
     (cd "$root" && try pr_ready_failed gh pr ready "$url" >/dev/null)
   fi
-  if ! out=$(cd "$root" && gh pr merge "$url" --merge 2>&1); then
+  local match=() checked   # only the commit the checks and the reviews had: anything pushed since stops the merge
+  checked=$(task_field "$id" PRECHECK_HEAD)
+  [[ -z $checked ]] || match=(--match-head-commit "$checked")
+  if ! out=$(cd "$root" && gh pr merge "$url" --merge "${match[@]}" 2>&1); then
     notify "$id" failed "" "⛔ autopilot stopped: merging PR #$num failed — your decision is needed: ${out:0:300} $url"
     log_error autopilot_merge_failed "task=$id" "reason=${out:0:300}"
     return 0
@@ -1089,6 +1116,7 @@ review_precheck() { # coordinator task id — before a review: the round's head 
   head=$(git -C "$root" rev-parse -q --verify "origin/$branch^{commit}" 10>&-) \
     || head=$(git -C "$root" rev-parse -q --verify "$branch^{commit}" 10>&-) \
     || { log_warn precheck_no_head "task=$id" "branch=$branch"; return 0; }   # nothing to check: the review decides
+  meta_set "$id" PRECHECK_HEAD "$head"   # the commit checked (and then reviewed): the only one --autopilot merges
   mb=$(git -C "$root" merge-base "origin/${base:-main}" "$head" 10>&-) || mb=$(git -C "$root" merge-base "${base:-main}" "$head" 10>&-) \
     || { log_warn precheck_no_base "task=$id" "base=$base"; return 0; }
   tc=$(round_test_changes "$root" "$mb" "$head")
@@ -1097,7 +1125,7 @@ review_precheck() { # coordinator task id — before a review: the round's head 
   local format_bounce pr_url body issues
   format_bounce=$(task_field "$id" FORMAT_BOUNCED)
   if [[ -z $why && $format_bounce != 1 ]]; then   # the PR description's form, once a round
-    pr_url=$(cd "$root" && gh pr list --head "$branch" --state open --json url | jq -r '.[0].url // empty') || pr_url=""
+    pr_url=$(trusted_prs "$root" "$branch" open url | jq -r '.[0].url // empty') || pr_url=""
     if [[ -n $pr_url ]]; then
       body=$(cd "$root" && gh pr view "$pr_url" --json body --jq .body) || body=""
       issues=$(pr_format_issues "$body" "$(github_repo_url "$root")")
@@ -1403,7 +1431,7 @@ $(head -c 6000 "$dir/$slot.md")"
 request_review() { # coordinator task id — --verify: queue a PR review by an investigator
   local id=$1 root branch pr url num inv
   root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH)
-  pr=$(cd "$root" && try pr_lookup_failed gh pr list --head "$branch" --state all --json number,url --limit 1)
+  pr=$(try pr_lookup_failed trusted_prs "$root" "$branch" all number,url)
   url=$(jq_soft pr_lookup_parse -r '.[0].url // empty' <<< "${pr:-[]}")
   num=$(jq_soft pr_lookup_parse -r '.[0].number // empty' <<< "${pr:-[]}")
   if [[ -z $url ]]; then
@@ -1889,6 +1917,7 @@ build_prompt() { # id mode qfile next_round
   declare -gA R=(
     [AGENT]=$AGENT [AGENT_TYPE]=$TYPE [TASK_ID]=$id [REPO]=$REPO_NAME
     [WORKTREE]=$WORKTREE [BRANCH]=$BRANCH [BASE]=$BASE [REPO_URL]="$(github_repo_url "$REPO_ROOT")"
+    [GITHUB_TRUSTED]="$(github_trusted "$REPO_ROOT")"
     [HARDWARE_FILE]="$ENV_NOTES_FILE" [PEERS]="$(peers_list)" [LANGUAGE]="$AGENT_LANGUAGE"
     [REPO_LANGUAGE]="$REPO_LANGUAGE" [COMMIT_TRAILERS]="$(commit_trailers "$id")"
     [GIT_NAME]="${GIT_NAME_FORMAT//%a/$AGENT}" [ATTRIBUTION]="\`$AGENT\` ($TYPE${MODEL:+, model $MODEL})"
@@ -2629,7 +2658,7 @@ pl_commits() { # number → "1 commit" / "N commits"
 verify_gaps() { # coordinator-id — gaps before closing a --verify team (empty = all good)
   local br=$BRANCH wt=$WORKTREE pr cnt m mb
   local errf; errf=$(mktemp)
-  if pr=$(cd "$wt" && gh pr list --head "$br" --state all --json number,isDraft,state --limit 1 2>"$errf"); then
+  if pr=$(trusted_prs "$wt" "$br" all number,isDraft,state 2>"$errf"); then
     if [[ $(jq_soft pr_lookup_parse 'length' <<< "$pr") == 0 ]]; then
       echo "- no PR from your branch $br — open it (gh pr create --base $BASE --head $br)"
     elif [[ $(jq -r '.[0].isDraft' <<< "$pr") == true ]]; then
@@ -3477,7 +3506,7 @@ resume_run() {
         b=$(task_field "$t2" BRANCH)
         [[ -n $b ]] || continue
         heads+=("$b")
-        pr=$(cd "$(task_field "$t2" REPO_ROOT)" && gh pr list --head "$b" --state all --json number,url,state --limit 1) \
+        pr=$(trusted_prs "$(task_field "$t2" REPO_ROOT)" "$b" all number,url,state) \
           || die "cannot check the PR of round $wr/$wrs (gh pr list failed) — merge it and retry, or continue the round: agent run --resume $ref --same-round"
         [[ -n $(jq -r '.[0].url // empty' <<< "$pr") ]] || continue
         state=$(jq -r '.[0].state // empty' <<< "$pr"); url=$(jq -r '.[0].url // empty' <<< "$pr")
