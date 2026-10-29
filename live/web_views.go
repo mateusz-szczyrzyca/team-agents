@@ -308,7 +308,7 @@ func (s *webServer) viewAgents(w http.ResponseWriter, r *http.Request) {
 		row := agentRow{agentEntry: a, State: "free", StateClass: "st-dim"}
 		best := 99
 		for _, t := range snap.All {
-			if t.Agent != a.Name {
+			if t.Node != "" || t.Agent != a.Name {
 				continue
 			}
 			if la := lastActivity(t); la.After(row.LastAt) {
@@ -513,12 +513,12 @@ type taskData struct {
 // findTask returns a task of the snapshot by its full ID or a unique prefix. It compares instead of indexing: the
 // request only selects one of the tasks that exist, it never becomes part of a path.
 func findTask(snap *Snapshot, id string) *Task {
+	if t, ok := snap.All[id]; ok {
+		return t
+	}
 	var hit *Task
 	for k, t := range snap.All {
-		switch {
-		case k == id:
-			return t
-		case strings.HasPrefix(k, id):
+		if strings.HasPrefix(k, id) {
 			if hit != nil {
 				return nil // ambiguous prefix
 			}
@@ -556,9 +556,37 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 			d.ActOffset = st.Size()
 		}
 	case "prompt":
-		for n := t.Run; n >= 1; n-- {
-			d.Files = append(d.Files, fileText{Name: fmt.Sprintf("prompt-%d.md (run %d)", n, n),
-				Text: readFile(filepath.Join(t.Dir, fmt.Sprintf("prompt-%d.md", n))), Current: n == t.Run})
+		if t.Node != "" {
+			matches, gerr := filepath.Glob(filepath.Join(t.Dir, "prompt-*.md"))
+			if gerr != nil {
+				viewError(s, w, r, webErr(ViewStorage, gerr, "cannot list prompts of %s", t.ID))
+				return
+			}
+			type promptRun struct {
+				path string
+				run  int
+			}
+			var runs []promptRun
+			for _, p := range matches {
+				base := filepath.Base(p)
+				var run int
+				if n, err := fmt.Sscanf(base, "prompt-%d.md", &run); err == nil && n == 1 {
+					runs = append(runs, promptRun{path: p, run: run})
+				}
+			}
+			sort.Slice(runs, func(i, j int) bool { return runs[i].run > runs[j].run })
+			for _, pr := range runs {
+				d.Files = append(d.Files, fileText{
+					Name:    fmt.Sprintf("prompt-%d.md (run %d)", pr.run, pr.run),
+					Text:    readFile(pr.path),
+					Current: pr.run == t.Run,
+				})
+			}
+		} else {
+			for n := t.Run; n >= 1; n-- {
+				d.Files = append(d.Files, fileText{Name: fmt.Sprintf("prompt-%d.md (run %d)", n, n),
+					Text: readFile(filepath.Join(t.Dir, fmt.Sprintf("prompt-%d.md", n))), Current: n == t.Run})
+			}
 		}
 	case "questions":
 		if t.Node != "" {
@@ -567,17 +595,25 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 				viewError(s, w, r, webErr(ViewStorage, gerr, "cannot list questions of %s", t.ID))
 				return
 			}
-			sort.Sort(sort.Reverse(sort.StringSlice(matches)))
-			for i, p := range matches {
+			type qRound struct {
+				path  string
+				round int
+			}
+			var rounds []qRound
+			for _, p := range matches {
 				base := filepath.Base(p)
 				var round int
 				if n, err := fmt.Sscanf(base, "questions-%d.md", &round); err == nil && n == 1 {
-					d.Files = append(d.Files, fileText{
-						Name:    fmt.Sprintf("questions-%d.md (round %d)", round, round),
-						Text:    readFile(p),
-						Current: i == 0 && t.Status == "waiting",
-					})
+					rounds = append(rounds, qRound{path: p, round: round})
 				}
+			}
+			sort.Slice(rounds, func(i, j int) bool { return rounds[i].round > rounds[j].round })
+			for i, qr := range rounds {
+				d.Files = append(d.Files, fileText{
+					Name:    fmt.Sprintf("questions-%d.md (round %d)", qr.round, qr.round),
+					Text:    readFile(qr.path),
+					Current: i == 0 && t.Status == "waiting",
+				})
 			}
 		} else {
 			for n := t.Round; n >= 1; n-- {
@@ -1075,6 +1111,9 @@ func (s *webServer) viewQuestions(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	var rows []waitingRow
 	for _, t := range snap.Waiting() {
+		if t.Node != "" {
+			continue
+		}
 		doc := parseQuestions(readFile(filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", t.Round))))
 		rows = append(rows, waitingRow{Row: makeRow(snap, t), Round: t.Round, Count: len(doc.Questions)})
 	}
@@ -1416,14 +1455,10 @@ func (s *webServer) viewLogs(w http.ResponseWriter, r *http.Request) {
 	nodeFilter := q.Get("node")
 
 	var allNodes []string
-	if remEntries, rerr := os.ReadDir(filepath.Join(s.cfg.busDir, "remote")); rerr == nil {
-		for _, e := range remEntries {
-			if e.IsDir() {
-				allNodes = append(allNodes, e.Name())
-			}
-		}
-		sort.Strings(allNodes)
+	for _, e := range mirrorDirectories(filepath.Join(s.cfg.busDir, "remote")) {
+		allNodes = append(allNodes, e.Name())
 	}
+	sort.Strings(allNodes)
 
 	type lineWithNode struct {
 		line string
@@ -1472,6 +1507,9 @@ func (s *webServer) viewLogs(w http.ResponseWriter, r *http.Request) {
 			Task:      str(rec, "task"),
 		}
 		if minLevel != "" && logLevelRank[row.Level] < logLevelRank[minLevel] {
+			continue
+		}
+		if item.node != "" && src != "" && row.Component != "" && row.Component != src {
 			continue
 		}
 		if row.Task != "" {
@@ -1771,7 +1809,7 @@ func (s *webServer) viewAgent(w http.ResponseWriter, r *http.Request) {
 	best := 99
 	var lastAt time.Time
 	for _, t := range snap.All {
-		if t.Agent != id {
+		if t.Node != "" || t.Agent != id {
 			continue
 		}
 		if la := lastActivity(t); la.After(lastAt) {

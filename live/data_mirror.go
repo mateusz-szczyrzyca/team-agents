@@ -75,8 +75,12 @@ func loadMirroredTasks(s *Snapshot, busDir string, ttl time.Duration) {
 			if activity := readActivity(dir, 1); len(activity) > 0 {
 				task.Last = activity[0]
 			}
+			_, aerr := os.Stat(filepath.Join(dir, "acked"))
+			task.Acked = aerr == nil
 			s.All[task.ID] = task
-			s.Tasks = append(s.Tasks, task)
+			if task.Active() || !task.Acked {
+				s.Tasks = append(s.Tasks, task)
+			}
 		}
 	}
 }

@@ -203,7 +203,12 @@ func (t *Task) Label() string {
 }
 
 // BusName: the name under which the agent appears on the bus.
-func (t *Task) BusName() string { return t.Agent }
+func (t *Task) BusName() string {
+	if t.Node != "" {
+		return t.Agent + "@" + t.Node
+	}
+	return t.Agent
+}
 
 // JobMarker returns the remote job marker ("job <id> from <lead>") when started for a job.
 func (t *Task) JobMarker() string {
@@ -568,7 +573,7 @@ func (s *Snapshot) QueueLine(queueMax int) string {
 func (s *Snapshot) Waiting() []*Task {
 	var out []*Task
 	for _, t := range s.Tasks {
-		if t.Status == "waiting" {
+		if t.Status == "waiting" && t.Node == "" {
 			out = append(out, t)
 		}
 	}
