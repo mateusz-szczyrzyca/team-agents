@@ -19,5 +19,7 @@ facts. Make the facts stand out:
 - **A commit is a link to it**, its short SHA in code format: [`b63e71e`]({{REPO_URL}}/commit/<its full SHA>) — a
   SHA in backticks alone is not linked by GitHub.
 - **Another PR is a link to it:** [#21]({{REPO_URL}}/pull/21).
+- **The same in your final message and reports:** a commit or a PR is a link to GitHub, as above — never a path on
+  this machine (`file:///…`), which nobody reading it elsewhere can open.
 - **RED and GREEN bold, in colour:** $\color{red}{\textbf{RED}}$ and $\color{green}{\textbf{GREEN}}$ (GitHub renders
   them so; in commit messages, which are plain text, write them as plain words).
