@@ -592,17 +592,19 @@ type Event struct {
 // Watcher polls snapshots and turns differences into events (status changes, new bus messages,
 // new activity entries, periodic reminders).
 type Watcher struct {
-	home, busDir string           // AGENTS_HOME and the bus directory
-	prev         *Snapshot        // previous snapshot (nil before the first poll)
-	lastMsg      int64            // last message ID already reported
-	offsets      map[string]int64 // read offset in each task's activity.jsonl
-	lastRemind   time.Time        // when the last reminder was emitted
-	remind       time.Duration    // reminder interval (0 = off)
+	home, busDir  string                           // AGENTS_HOME and the bus directory
+	prev          *Snapshot                        // previous snapshot (nil before the first poll)
+	lastMsg       int64                            // last message ID already reported
+	offsets       map[string]int64                 // read offset in each task's activity.jsonl
+	mirrorCursors map[string]*mirrorActivityCursor // last complete mirrored activity tail per qualified task
+	nodeTTL       time.Duration                    // heartbeat timeout; zero keeps the snapshot default
+	lastRemind    time.Time                        // when the last reminder was emitted
+	remind        time.Duration                    // reminder interval (0 = off)
 }
 
 // NewWatcher creates a watcher; the first Poll only records the baseline.
 func NewWatcher(home, busDir string, remind time.Duration) *Watcher {
-	return &Watcher{home: home, busDir: busDir, offsets: map[string]int64{}, remind: remind, lastRemind: time.Now()}
+	return &Watcher{home: home, busDir: busDir, offsets: map[string]int64{}, mirrorCursors: map[string]*mirrorActivityCursor{}, remind: remind, lastRemind: time.Now()}
 }
 
 // finalSummary returns the first lines of a task's last agent message (final.md) joined with " | ".
@@ -627,6 +629,18 @@ func finalSummary(dir string) string {
 // while the view is running — read the file from the beginning.
 func (w *Watcher) newActivity(t *Task, fromStart bool) []Activity {
 	path := filepath.Join(t.Dir, "activity.jsonl")
+	if t.Node != "" {
+		cursor := w.mirrorCursors[t.ID]
+		if cursor == nil {
+			cursor = &mirrorActivityCursor{}
+			w.mirrorCursors[t.ID] = cursor
+			if !fromStart {
+				cursor.baseline(path, -1)
+				return nil
+			}
+		}
+		return cursor.read(path)
+	}
 	if fromStart {
 		if _, seen := w.offsets[t.ID]; !seen {
 			w.offsets[t.ID] = 0
@@ -670,7 +684,7 @@ func (w *Watcher) newActivity(t *Task, fromStart bool) []Activity {
 
 // Poll loads a new snapshot and returns the events since the previous one.
 func (w *Watcher) Poll() (*Snapshot, []Event) {
-	cur := loadSnapshot(w.home, w.busDir)
+	cur := loadSnapshot(w.home, w.busDir, w.nodeTTL)
 	now := cur.At
 	var ev []Event
 	if w.prev == nil {

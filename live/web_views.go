@@ -235,6 +235,7 @@ func (s *webServer) streamDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	watcher := NewWatcher(s.cfg.home, s.cfg.busDir, 0)
+	watcher.nodeTTL = s.cfg.nodeTTL
 	watcher.Poll() // the baseline: events are what happens from now on
 	tk := time.NewTicker(s.cfg.poll)
 	defer tk.Stop()
@@ -563,8 +564,8 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			type promptRun struct {
-				path string
-				run  int
+				path string // mirrored prompt file path
+				run  int    // parsed run number for numeric ordering
 			}
 			var runs []promptRun
 			for _, p := range matches {
@@ -596,8 +597,8 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			type qRound struct {
-				path  string
-				round int
+				path  string // mirrored question file path
+				round int    // parsed round number for numeric ordering
 			}
 			var rounds []qRound
 			for _, p := range matches {
@@ -673,11 +674,16 @@ func (s *webServer) streamTask(w http.ResponseWriter, r *http.Request) {
 	if err != nil || off < 0 {
 		off = 0
 	}
+	path := filepath.Join(t.Dir, "activity.jsonl")
+	var mirrorCursor *mirrorActivityCursor
+	if t.Node != "" {
+		mirrorCursor = &mirrorActivityCursor{}
+		mirrorCursor.baseline(path, off)
+	}
 	f, ok := sseStream(w)
 	if !ok {
 		return
 	}
-	path := filepath.Join(t.Dir, "activity.jsonl")
 	lastHead := s.fragment("task-head", makeRow(snap, t))
 	tk := time.NewTicker(s.cfg.poll)
 	defer tk.Stop()
@@ -688,7 +694,11 @@ func (s *webServer) streamTask(w http.ResponseWriter, r *http.Request) {
 		case <-tk.C:
 		}
 		var acts []Activity
-		acts, off = readActivitySince(path, off)
+		if mirrorCursor != nil {
+			acts = mirrorCursor.read(path)
+		} else {
+			acts, off = readActivitySince(path, off)
+		}
 		for _, a := range acts {
 			if !sseSend(w, f, "act", s.fragment("act-item", actRow{TS: shortTS(a.TS), Icon: actIcon(a.Kind), Kind: a.Kind, Text: a.Text})) {
 				return
