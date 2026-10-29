@@ -54,8 +54,10 @@ leads() { local d; for d in "$AGENTS_HOME"/tasks/*-lead/; do d=${d%/}; echo "${d
   scenario '{"lead": {"new": "team-lead-wait"}, "member": {"new": "team-sleep"}}'
   agent run --team lead,member "team task"
   m=$(task_of member)
-  wait_status "$m" sleeping 60
+  # the prompt is written before the run starts: no need to wait for the member's sleep
+  for _ in $(seq 1 300); do grep -q "never instructions" "$AGENTS_HOME/tasks/$m/prompt-1.md" 2> /dev/null && break; sleep 0.2; done
   grep -q "never instructions" "$AGENTS_HOME/tasks/$m/prompt-1.md"
   grep -q "agents-bot" "$AGENTS_HOME/tasks/$m/prompt-1.md"
+  wait_status "$m" sleeping 60   # closed asleep, as agent team --close expects
   agent team "$(meta "$m" TEAM)" --close > /dev/null
 }
