@@ -56,6 +56,7 @@ type RemoteMember struct {
 	Job    string // the job that runs it on its node
 	Wake   bool   // a wake request waits for its node (until its task runs)
 	Out    bool   // put out of its team: its node was away longer than the grace (it may come back)
+	Paused bool   // its task on the node is paused (a provider's limit, the network): reported to the lead once
 }
 
 // leadMCPBody is one MCP message of a remote member, relayed by its node.
@@ -164,9 +165,14 @@ func (a *leadAPI) memberActivity(node string, act []JobActivity) ([]string, *Lea
 		return nil, fromStorage(LeadHeartbeatStorage, serr)
 	}
 	stages := make(map[string]string, len(act)) // job → its task's stage on the node
+	notes := make(map[string]string, len(act))  // job → its latest activity line (why it paused)
 	for _, x := range act {
 		stages[x.ID] = x.Stage
+		if n := len(x.Lines); n > 0 {
+			notes[x.ID] = trunc(strings.TrimSpace(x.Lines[n-1]), 300)
+		}
 	}
+	pauses := map[string]bool{} // members whose pause began (true) or ended (false)
 	names := make([]string, 0, len(reg.members))
 	for name := range reg.members {
 		names = append(names, name)
@@ -186,8 +192,17 @@ func (a *leadAPI) memberActivity(node string, act []JobActivity) ([]string, *Lea
 			m.Out, m.Wake = false, true
 		}
 		if reported {
-			if err := a.applyMemberStage(m, stage); err != nil {
+			pause := 0
+			if stage == "paused" && !m.Paused {
+				pause = 1
+			} else if m.Paused && awake(stage) {
+				pause = -1
+			}
+			if err := a.applyMemberStage(m, stage, pause, notes[m.Job]); err != nil {
 				return nil, err
+			}
+			if pause != 0 {
+				pauses[name] = pause > 0
 			}
 		}
 		if m.Wake {
@@ -196,6 +211,19 @@ func (a *leadAPI) memberActivity(node string, act []JobActivity) ([]string, *Lea
 			} else {
 				wakes = append(wakes, m.Job)
 			}
+		}
+	}
+	if len(pauses) > 0 {
+		if err := leadTransaction(a, LeadHeartbeatStorage, "", func(r *leadRegistry, _ Timestamp) *LeadHeartbeatError {
+			for name, p := range pauses {
+				if m, ok := r.members[name]; ok {
+					m.Paused = p
+					r.members[name] = m
+				}
+			}
+			return nil
+		}); err != nil {
+			return nil, err
 		}
 	}
 	if len(carried) > 0 {
@@ -215,8 +243,9 @@ func (a *leadAPI) memberActivity(node string, act []JobActivity) ([]string, *Lea
 }
 
 // applyMemberStage brings a remote member's state in its team in line with its task's stage on the node: asleep
-// (through setMemberState: a waiting message wakes it) or at work. Other stages leave it as it is.
-func (a *leadAPI) applyMemberStage(m RemoteMember, stage string) *LeadHeartbeatError {
+// (through setMemberState: a waiting message wakes it) or at work. Other stages leave it as it is. A pause that began
+// (pause > 0, with its reason) or ended (pause < 0) on the node is handed to the proxy task too.
+func (a *leadAPI) applyMemberStage(m RemoteMember, stage string, pause int, note string) *LeadHeartbeatError {
 	var team Team      // the member's team, for the hand-over after the commit
 	var task string    // its task in the team\'s record (the proxy task), as wakes use it
 	var changed string // "sleeping" or "running" when the member's state changed
@@ -241,6 +270,13 @@ func (a *leadAPI) applyMemberStage(m RemoteMember, stage string) *LeadHeartbeatE
 	})
 	if err != nil {
 		return opErr(LeadHeartbeatStorage, "cannot keep remote member %s in line: %v", m.Member, err)
+	}
+	switch {
+	case pause > 0 && task != "": // paused on its node: the proxy task and the human hear why, once
+		remoteMemberFn(&team, task, "paused", m.Branch, note)
+		return nil
+	case pause < 0 && changed == "" && task != "": // back at work after its pause
+		changed = "running"
 	}
 	if changed != "" { // the proxy task's status and the team's checks (stuck, all finished) follow
 		remoteMemberFn(&team, task, changed, m.Branch, "")
