@@ -9,16 +9,16 @@
 # archive) and fix whatever the new version reports.
 set -euo pipefail
 
-GOLANGCI_LINT_VERSION=2.13.2   # released 2026-08-27
-STATICCHECK_VERSION=2026.2.1   # module v0.8.1, released 2026-08-21
+GOLANGCI_LINT_VERSION=2.14.0   # released 2026-09-24 (2.13.2 cannot read the export data of Go 1.27.2 and later)
+STATICCHECK_VERSION=2026.2.2   # module v0.8.2, released 2026-10-12 (reads the export data of Go 1.27.2 and later)
 SHELLCHECK_VERSION=0.11.0      # released 2025-08-03
 
 # Checksums of the release archives, per architecture (amd64 = x86_64, arm64 = aarch64).
 declare -A SUM=(
-  [golangci-lint/amd64]=2277d43b98ec0054280f2ac26b53268bae97682444678a59a657dd565da021d6
-  [golangci-lint/arm64]=a2a4e0065aa41be71f7c5ac90f271b61751331e5d04314e62afe4027855f0893
-  [staticcheck/amd64]=91186205a78db3f2d40efb3c102749aef66f85c2204793de7488d163b655aa7c
-  [staticcheck/arm64]=594421f28ba620ea14b98377cb84a309cf73cc420ba0f52f30c7fa4d92fd2b0e
+  [golangci-lint/amd64]=ab90aeb7b066f92a33415b638a50fe5344bbb75a0d32ad30cc248d88f81032ab
+  [golangci-lint/arm64]=ee7ec5f3453d15ddf106fae5a4d6c71737712348a979d1fe9cd52ec7ea299bae
+  [staticcheck/amd64]=14c081e0f0d05b5a4d4c53fd3d357d4a5af9d20501465fefc9024ee828d3aa5c
+  [staticcheck/arm64]=ccbdaaf81c37eb246a6063f811ee3b89e02ff042cb068cd1ca73a7377e2f7045
   [shellcheck/amd64]=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
   [shellcheck/arm64]=12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588
 )
