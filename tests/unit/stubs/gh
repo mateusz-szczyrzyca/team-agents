@@ -11,6 +11,9 @@ if [[ "${1:-} ${2:-}" == "pr list" ]]; then
     echo '[]'
   fi
 fi
+if [[ "${1:-} ${2:-}" == "pr view" && " $* " == *" body "* ]]; then   # a PR's description: $STUB_HOME/gh-pr-body.md
+  cat "$STUB_HOME/gh-pr-body.md" 2>/dev/null || true
+fi
 if [[ "${1:-} ${2:-}" == "pr merge" && -f $STUB_HOME/gh-prs.json ]]; then   # as GitHub: the PR is merged
   jq -c --arg u "${3:-}" '[.[] | if .url == $u then .state = "MERGED" else . end]' "$STUB_HOME/gh-prs.json" > "$STUB_HOME/gh-prs.json.new"
   mv "$STUB_HOME/gh-prs.json.new" "$STUB_HOME/gh-prs.json"

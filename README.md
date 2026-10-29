@@ -191,6 +191,10 @@ exempt), and the repository's gate (`AGENT_REVIEW_GATE`, `make gate` by default)
 round goes back to the team with the reason — the gate's output — at most `AGENT_PRECHECK_MAX` (2) times, then
 you decide.
 
+**Texts on GitHub.** The agents write code in blocks that name their language, commits and PRs as links, and RED
+and GREEN bold in red and green (`prompts/writing.md`). Before an `--autopilot` review a PR description that does
+not goes back to the team once, with what to fix.
+
 **The verdict.** A review ends with `VERDICT: ready-to-merge | needs-fixes | incomplete`, and its notification
 shows it: ✅ ready to merge, 🔧 needs fixes, 🧩 incomplete, ❌ a review without a verdict. Critical or major
 findings outweigh a "ready-to-merge".
@@ -207,7 +211,16 @@ you each time; after the last round it stops. A PR waits for you instead when it
 existing tests. The gate failing on the merged base stops it ("⛔ autopilot stopped"; the merge is not undone).
 `agent autopilot <team> off` lets the round's reviews go on but merges nothing and starts nothing by itself;
 `on` turns it back on. Two reviews waiting longer than `AGENT_REVIEW_WAIT_MIN` (30) minutes for two free
-investigators are reported once — they go on waiting, never one reviewer instead of two.
+investigators are reported once — they go on waiting, never one reviewer instead of two. Nobody answers questions in
+`--autopilot`: an agent's questions go back to it once — it takes the option it recommends, or the simplest safe
+one, and lists its decisions in the PR under "Decisions taken without the human", which the reviewers check;
+questions asked again in the same round come to you. A review that ends without a verdict — its run
+failed, hung or was stopped, or its investigator's provider is out of quota — does not stop the pair: with the
+other review asking for changes the fix pass goes on with its findings; with the other ready to merge it is done
+again, once, by another free investigator (one out of quota is not chosen until its reset), and only then comes
+to you. A team closed because all its members finished — its coordinator out — goes to review too. A spent budget
+("Workspace monthly budget … exceeded") is a quota pause until its reset, also given as an ISO time. On the lead a
+remote member's pause shows with its reason, and its failure with the CLI's exit code and last error line.
 
 **The fix loop.** When the review finds critical or major problems, the team is woken with them: the review is
 added to its task ("Fix pass 1 of 2"), it fixes them (or disputes one on the PR) and finishes again — and the PR
@@ -500,6 +513,7 @@ Then:
 | `AGENT_QUOTA_PAUSE_MIN` | pause after an exhausted quota when the CLI does not say when it resets (default 30 min) |
 | `AGENT_RELEASE_PAUSE_MIN`, `AGENT_SUPERVISE_GRACE_SEC` | a team member paused longer than this gives its board items back (default 20 min); how young a run may be before `agent _supervise` checks its unit (default 120 s) |
 | `AGENT_RATE_LIMIT_PAUSE_MIN`, `AGENT_LIMIT_TAIL_LINES` | pause after a rate limit (HTTP 429) without a time (default 5 min); how many last lines of stderr are read for provider limits (default 30) |
+| `AGENT_NETWORK_PAUSE_MIN`, `AGENT_NETWORK_MAX_PAUSES` | a run that ends because the network or the provider's host is unreachable (DNS, a refused or reset connection, a timeout) pauses the task this many minutes, then goes on (15); this many such pauses in consecutive runs fail it, with the reason (12) |
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
 | `VERIFY_MAX_FIX_PASSES`, `AGENT_HUMAN_GITHUB` | how many times a `--verify` review wakes the team to fix critical or major problems (default 2); who is then mentioned on the PR (default: the repository's GitHub owner) |
 | `AGENT_REVIEW_GATE`, `AGENT_REVIEW_GATE_MIN`, `AGENT_PRECHECK_MAX` | before a `--verify`/`--autopilot` review, the command a round's head must pass (`auto`: `make gate` where the repository has it; `off`: none), its time limit in minutes (30), and how many times a round goes back for its gate or its missing tests before you decide (2) |

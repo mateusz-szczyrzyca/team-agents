@@ -174,6 +174,8 @@ AGENT_RESTART_MAX="${AGENT_RESTART_MAX:-2}"             # a task goes on after t
 AGENT_RESTART_GRACE_MIN="${AGENT_RESTART_GRACE_MIN:-10}" # lead: a remote member whose node is away longer is put out of its team
 AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no local member at work or asleep this long is reported
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
+AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
+AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
 AGENT_LIMIT_TAIL_LINES="${AGENT_LIMIT_TAIL_LINES:-30}"           # how much of the end of stderr shows a provider limit
 # Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
 declare -p INVESTIGATORS_TYPE &>/dev/null || declare -A INVESTIGATORS_TYPE=()
@@ -880,6 +882,37 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
   printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
 }
 
+pr_format_issues() { # body [repo-url] — what a PR description writes against the GitHub conventions, one item per
+  # line: a commit or a PR in code format without a link (GitHub links neither inside backticks), a code block that
+  # does not name its language, RED or GREEN as plain words. Nothing inside code blocks is checked.
+  local body=$1 url=${2:-https://github.com/<owner>/<repo>} line fence=0 lang rest m
+  local re_sha='(^|[^[])`([0-9a-f]{7,40})`(.*)$' re_pr='(^|[^[])`#([0-9]+)`(.*)$' re_tdd='(^|[^a-zA-Z{])(\*\*)?(RED|GREEN)(\*\*)?:'
+  while IFS= read -r line; do
+    if [[ $line =~ ^[[:space:]]*\`\`\`(.*)$ ]]; then
+      if ((fence)); then fence=0; continue; fi
+      fence=1
+      lang=${BASH_REMATCH[1]//[[:space:]]/}
+      [[ -n $lang ]] || printf 'a code block without its language: open it with ```go, ```bash, ```json…\n'
+      continue
+    fi
+    ((fence == 0)) || continue
+    rest=$line
+    while [[ $rest =~ $re_sha ]]; do
+      m=${BASH_REMATCH[2]}; rest=${BASH_REMATCH[3]}
+      [[ $m == *[a-f]* ]] || continue   # digits only: a number, not a commit
+      printf 'commit `%s` without a link: write [`%s`](%s/commit/<its full SHA>)\n' "$m" "${m:0:7}" "$url"
+    done
+    rest=$line
+    while [[ $rest =~ $re_pr ]]; do
+      m=${BASH_REMATCH[2]}; rest=${BASH_REMATCH[3]}
+      printf 'PR `#%s` without a link: write [#%s](%s/pull/%s)\n' "$m" "$m" "$url" "$m"
+    done
+    if [[ $line =~ $re_tdd && $line != *'\color'* ]]; then
+      printf '%s as a plain word: write $\\color{red}{\\textbf{RED}}$ and $\\color{green}{\\textbf{GREEN}}$ (bold, in colour)\n' "${BASH_REMATCH[3]}"
+    fi
+  done <<< "$body"
+}
+
 merge_blockers() { # repo base head round-tests — what keeps --autopilot from merging by itself, one reason per line
   local repo=$1 base=$2 head=$3 tests=$4 f p changed
   while IFS= read -r f; do
@@ -1061,6 +1094,20 @@ review_precheck() { # coordinator task id — before a review: the round's head 
   tc=$(round_test_changes "$root" "$mb" "$head")
   meta_set "$id" ROUND_TESTS "$tc"
   [[ $tc != "code=1 added=0 "* ]] || why="the round changes code but adds no test — every change of behaviour needs its test, written first"
+  local format_bounce pr_url body issues
+  format_bounce=$(task_field "$id" FORMAT_BOUNCED)
+  if [[ -z $why && $format_bounce != 1 ]]; then   # the PR description's form, once a round
+    pr_url=$(cd "$root" && gh pr list --head "$branch" --state open --json url | jq -r '.[0].url // empty') || pr_url=""
+    if [[ -n $pr_url ]]; then
+      body=$(cd "$root" && gh pr view "$pr_url" --json body --jq .body) || body=""
+      issues=$(pr_format_issues "$body" "$(github_repo_url "$root")")
+      if [[ -n $issues ]]; then
+        why="the PR description does not follow the conventions for texts on GitHub (sent back once) — fix:
+$issues"
+        format_bounce=1
+      fi
+    fi
+  fi
   gate=$(review_gate_cmd "$root")
   if [[ -z $why && -n $gate ]]; then
     wt=$(mktemp -d)
@@ -1081,7 +1128,8 @@ $(tail -n 40 "$TASKS/$id/precheck.log")
   if ((pass < AGENT_PRECHECK_MAX)); then
     args=(run --resume "$ref" --same-round)
     if [[ $(task_field "$id" AUTOPILOT) == 1 ]]; then args+=(--autopilot); else args+=(--verify); fi
-    if out=$(cd "$root" && AGENT_PRECHECK_PASS=$((pass + 1)) AGENT_FIX_PASS=$(task_field "$id" FIX_PASS) "$SELF" "${args[@]}" \
+    if out=$(cd "$root" && AGENT_PRECHECK_PASS=$((pass + 1)) AGENT_FIX_PASS=$(task_field "$id" FIX_PASS) \
+         AGENT_FORMAT_BOUNCED=$format_bounce "$SELF" "${args[@]}" \
          "Not reviewed yet ($((pass + 1)) of $AGENT_PRECHECK_MAX): $why
 Fix it on the same branches and finish as before; the round goes to review once its head passes." </dev/null 2>&1); then
       act "$id" info "before the review: the team goes on ($((pass + 1)) of $AGENT_PRECHECK_MAX) — ${why:0:120}"
@@ -1166,11 +1214,54 @@ ${text:0:8000}"
   log_warn review_fixes_exhausted "task=$parent" "passes=$pass" "findings=$n"
 }
 
+# team_lead_task team agent — the team's task of that agent (its coordinator), the newest; "" when there is none
+team_lead_task() {
+  local m d best=""
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    grep -qx "TEAM=$1" "$m" && grep -qx "AGENT=$2" "$m" || continue
+    d=${m%/meta.env}; best=${d##*/}
+  done
+  printf '%s' "$best"
+}
+
+# review_without_verdict review-task why — a review run ended without a verdict (failed, hung, stopped). In an
+# --autopilot pair it is a review with no verdict (review_pair_done decides what follows); a single review stays
+# the human's, as its notification says.
+review_without_verdict() {
+  local id=$1 why=$2 parent pair
+  parent=$(task_field "$id" PARENT_TASK); [[ -n $parent ]] || return 0
+  pair=$(task_field "$parent" REVIEW_PAIR); [[ -n $pair ]] || return 0
+  log_warn review_without_verdict "task=$parent" "review=$id" "reason=${why:0:200}"
+  review_pair_done "$id" "$parent" "$pair" none ""
+}
+
+# retry_review_slot parent pair-dir slot — that review again, by a free investigator other than the pair's two; with
+# none free it waits (REVIEW_SLOT_PENDING, started by a later dispatch)
+retry_review_slot() {
+  local parent=$1 dir=$2 slot=$3 name
+  name=$(free_investigator_list | { grep -vxF -e "$(cat "$dir/A.agent" 2>/dev/null)" -e "$(cat "$dir/B.agent" 2>/dev/null)" || (($? == 1)); } | head -n 1)
+  if [[ -z $name ]]; then
+    meta_set "$parent" REVIEW_SLOT_PENDING "$slot"
+    act "$parent" info "--autopilot: review $slot gave no verdict — it is done again once a third investigator is free"
+    return 0
+  fi
+  start_review_slot "$parent" "$dir" "$slot" "$name" fresh || return 1
+  meta_set "$parent" REVIEW_SLOT_PENDING ""
+  act "$parent" info "--autopilot: review $slot gave no verdict — done again by $name"
+}
+
 review_pair_done() { # review-task parent pair-dir verdict text — one review of an --autopilot pair has ended; when
   # both have: both ready-to-merge = the PR is ready; a review without a verdict = the human decides; else the team
   # goes on with the review(s) that found problems
   local id=$1 parent=$2 dir=$3 verdict=$4 text=$5 slot other va vb combined="" s n=0
-  slot=A; [[ $(cat "$dir/B.inv" 2>/dev/null) != "$(task_field "$id" INV_ID)" ]] || slot=B   # A unless this is B's review
+  local myinv; myinv=$(task_field "$id" INV_ID)
+  if [[ $(cat "$dir/A.inv" 2>/dev/null) == "$myinv" ]]; then slot=A
+  elif [[ $(cat "$dir/B.inv" 2>/dev/null) == "$myinv" ]]; then slot=B
+  else   # a review the pair no longer waits for (done again by another investigator since): not this pair's
+    log_warn review_pair_stale "task=$parent" "review=$id" "investigation=$myinv"
+    return 0
+  fi
   other=B; [[ $slot == A ]] || other=A
   # the two reviews end in two runners, often in the same second: recording a verdict and taking the decision are
   # done under the pair's lock, so that exactly one of them decides (two merges or two fix passes would race)
@@ -1179,7 +1270,7 @@ review_pair_done() { # review-task parent pair-dir verdict text — one review o
       exec 9>"$dir/pair.lock"
       flock -w 60 9 || exit 1
       printf '%s' "$verdict" > "$dir/$slot.verdict"
-      printf '%s' "$text" > "$dir/$slot.md"
+      [[ -z $text ]] || printf '%s' "$text" > "$dir/$slot.md"   # a run without a verdict leaves no review text
       if [[ -f $dir/$other.verdict && ! -f $dir/decided ]]; then : > "$dir/decided"; printf yes; fi
     ); then
     log_error review_pair_lock_failed "task=$parent" "pair=$dir"
@@ -1201,21 +1292,34 @@ review_pair_done() { # review-task parent pair-dir verdict text — one review o
     return 0
   fi
   if [[ $va == none || $vb == none ]]; then
-    meta_set "$parent" REVIEW_RESULT failed
-    notify "$parent" failed "" "a review of PR #$(task_field "$parent" PR_NUMBER) gave no verdict — your decision is needed: $(task_field "$parent" PR_URL)"
-    return 0
+    local fs=A vo=$vb   # the review without a verdict, and the other's verdict
+    [[ $va == none ]] || { fs=B; vo=$va; }
+    # the other ready to merge: the review without a verdict is done again, once, by another investigator
+    if [[ $vo == ready-to-merge && ! -f $dir/$fs.retried ]]; then
+      : > "$dir/$fs.retried"
+      rm -f "$dir/decided" "$dir/$fs.verdict"
+      if retry_review_slot "$parent" "$dir" "$fs"; then return 0; fi
+    fi
+    # the other asks for changes: that decides — the fix pass goes on with its findings
+    if [[ $vo != needs-fixes && $vo != incomplete ]]; then
+      meta_set "$parent" REVIEW_RESULT failed
+      notify "$parent" failed "" "a review of PR #$(task_field "$parent" PR_NUMBER) gave no verdict${vo:+ (the other: $vo)} — your decision is needed: $(task_field "$parent" PR_URL)"
+      return 0
+    fi
   fi
   meta_set "$parent" REVIEW_RESULT fixes
   for s in A B; do
-    [[ $(<"$dir/$s.verdict") != ready-to-merge ]] || continue
+    case $(<"$dir/$s.verdict") in ready-to-merge|none) continue ;; esac
     combined+="## Review by $(<"$dir/$s.agent") — $(<"$dir/$s.verdict")"$'\n\n'"$(<"$dir/$s.md")"$'\n\n'
     n=$((n + $(findings_count "$(<"$dir/$s.md")")))
   done
   review_fix_pass "$parent" "$n" "$combined"
 }
 
-free_investigator_list() { # every free investigator (not working, not waiting for the human's answers), one per line
-  local inv d busy
+free_investigator_list() { # every free investigator (not working, not waiting for the human's answers, its provider's
+  # quota not spent), one per line
+  local inv d busy qu now
+  now=$(date +%s)
   while read -r inv; do
     busy=0
     for d in "$TASKS"/*/; do
@@ -1223,6 +1327,8 @@ free_investigator_list() { # every free investigator (not working, not waiting f
       d=${d%/}; d=${d##*/}
       [[ $(task_field "$d" AGENT) == "$inv" && $(task_field "$d" KIND) == investigation ]] || continue
       case $(task_field "$d" STATUS) in new|starting|running|waiting) busy=1; break ;; esac
+      qu=$(task_field "$d" QUOTA_UNTIL)
+      if [[ -n $qu ]] && ((qu > now)); then busy=1; break; fi   # out of quota until then
     done
     ((busy)) || printf '%s\n' "$inv"
   done < <(investigator_names)
@@ -1231,6 +1337,12 @@ free_investigator_list() { # every free investigator (not working, not waiting f
 start_review_pairs() { # under the dispatch lock: a pending --autopilot review pair starts once two investigators are free
   local m
   for m in "$TASKS"/*/meta.env; do
+    if grep -qE '^REVIEW_SLOT_PENDING=[AB]$' "$m"; then   # one review of a pair to do again
+      m=${m%/meta.env}
+      retry_review_slot "${m##*/}" "$(task_field "${m##*/}" REVIEW_PAIR)" "$(task_field "${m##*/}" REVIEW_SLOT_PENDING)" \
+        || log_error review_retry_failed "task=${m##*/}"
+      continue
+    fi
     grep -qx 'REVIEW_PAIR_PENDING=1' "$m" || continue
     m=${m%/meta.env}
     start_review_pair "${m##*/}" || return 0   # not two free investigators yet: the next dispatch tries again
@@ -1255,8 +1367,23 @@ start_review_pair() { # coordinator task — both reviews of its PR at once, on 
   [[ -n $a && -n $b && $a != "$b" ]] || return 1
   for slot in A B; do
     name=$a; [[ $slot == A ]] || name=$b
+    rm -f "$dir/$slot.retried"   # a new pair: each review may be done again once
+    start_review_slot "$id" "$dir" "$slot" "$name" || return 1
+  done
+  rm -f "$dir/decided"   # a new pair decides anew
+  meta_set "$id" REVIEW_PAIR_PENDING ""
+  meta_set "$id" REVIEW_SLOT_PENDING ""
+  meta_set "$id" REVIEW_PAIR "$dir"
+  act "$id" info "--autopilot: two reviews of PR #$num started — $a and $b, each on its own"
+}
+
+# start_review_slot coordinator-task pair-dir slot investigator [fresh] — one review of the pair (A or B) on that
+# investigator; a re-review after a fix pass gets its slot's previous review, unless fresh (a review done again)
+start_review_slot() {
+  local id=$1 dir=$2 slot=$3 name=$4 fresh=${5:-} num url q inv j
+  num=$(task_field "$id" PR_NUMBER); url=$(task_field "$id" PR_URL)
     q="Recenzja PR #$num ($url) — one of two independent reviews: do not read other reviews or review comments on this PR before your own is published."
-    if [[ -s $dir/$slot.md && -n $(task_field "$id" FIX_PASS) && $(task_field "$id" FIX_PASS) != 0 ]]; then
+    if [[ -z $fresh && -s $dir/$slot.md && -n $(task_field "$id" FIX_PASS) && $(task_field "$id" FIX_PASS) != 0 ]]; then
       q+=" Re-review after fix pass $(task_field "$id" FIX_PASS): first check whether the findings of your previous review below are fixed (or disputed convincingly on the PR), then the rest of the change only for new problems.
 
 Your previous review:
@@ -1271,11 +1398,6 @@ $(head -c 6000 "$dir/$slot.md")"
     printf '%s' "$name" > "$dir/$slot.agent"; printf '%s' "$inv" > "$dir/$slot.inv"; rm -f "$dir/$slot.verdict"
     remember_investigator "$name"
     start_investigation "$j" "$name" || log_error investigation_start_failed "investigation=$inv" "investigator=$name"
-  done
-  rm -f "$dir/decided"   # a new pair decides anew
-  meta_set "$id" REVIEW_PAIR_PENDING ""
-  meta_set "$id" REVIEW_PAIR "$dir"
-  act "$id" info "--autopilot: two reviews of PR #$num started — $a and $b, each on its own"
 }
 
 request_review() { # coordinator task id — --verify: queue a PR review by an investigator
@@ -1412,6 +1534,12 @@ $(team_summary "$team")" ;;
   }
   if team_all done; then
     finish_team "$team" "all members finished"
+    local ltask
+    ltask=$(team_lead_task "$team" "$lead")
+    if [[ -n $ltask && $(task_field "$ltask" VERIFY) == 1 ]]; then   # its coordinator out: the round still goes to review
+      start_precheck "$ltask"
+      act "$ltask" info "all members finished — the round goes to review once its head passes the checks"
+    fi
     push_text "$REPO_NAME" "Team $team finished without being closed by its coordinator:" "$(team_summary "$team")"
   elif team_all sleep && ! team_waits_on_others "$team" && { sleep 3   # a pending wake-up gets a moment; re-check
          [[ $(team_done_flag "$team") != true ]] && team_all sleep && ! team_all done; }; then
@@ -1476,10 +1604,13 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
 # Words in a CLI error that mean the provider stopped the run because a quota or usage limit is exhausted.
 # Provider limits in a run's errors: an exhausted quota, usage limit or credits (a long pause until the reset), and
 # a rate limit — HTTP 429, the provider throttling requests (a short pause; credits may be fine).
-QUOTA_PATTERN='quota (reached|exceeded|exhausted)|usage limit|limit reached|resource[ _]exhausted|out of credits|insufficient (credits|balance)|(^|[^0-9])402([^0-9]|$)'
+QUOTA_PATTERN='quota (reached|exceeded|exhausted)|usage limit|limit reached|resource[ _]exhausted|out of credits|insufficient (credits|balance)|budget (of [^ ]+ )?(is )?(exceeded|exhausted|reached)|spend(ing)? limit (reached|exceeded)|(^|[^0-9])402([^0-9]|$)'
 RATE_LIMIT_PATTERN='rate[ _-]?limit|too many requests|(^|[^0-9])429([^0-9]|$)'
 # A model overloaded at the provider ("Selected model is at capacity", HTTP 503/529): a short pause like a rate limit.
 OVERLOAD_PATTERN='at capacity|overloaded|temporarily unavailable|(^|[^0-9])(503|529)([^0-9]|$)'
+# The network or the provider's host unreachable (DNS, a refused or reset connection, a timeout): nothing the agent did
+# — a pause of AGENT_NETWORK_PAUSE_MIN, then the run goes on.
+NETWORK_PATTERN='network (issue|error|is unreachable)|could not resolve|no such host|temporary failure in name resolution|name or service not known|lookup [^ ]+ on [^ ]+:[0-9]+|i/o timeout|dial tcp|connection (refused|reset|timed out)|tls handshake timeout|econnreset|econnrefused|etimedout|enotfound|eai_again|socket hang up|fetch failed'
 
 # limit_lines dir run final pattern — this run's error lines that match a pattern: the end of the CLI's stderr
 # (AGENT_LIMIT_TAIL_LINES lines: an early error the CLI retried does not count), the error events at the end of its
@@ -1504,6 +1635,13 @@ limit_lines() {
   fi
 }
 
+# last_error_line dir run — the CLI's last line on stderr in this run, its noise aside, at most 200 characters
+last_error_line() {
+  [[ -f $1/err-$2.log ]] || return 0
+  tail -n 30 "$1/err-$2.log" | sed -E 's/^[[:space:]]+//' \
+    | { grep -vE '^$|^Reading additional input from stdin' || (($? == 1)); } | tail -n 1 | cut -c1-200
+}
+
 # limit_kind dir run final — quota (an exhausted quota, usage limit or credits) or rate_limit (HTTP 429: the
 # provider throttles requests — not the same as running out); exit 1 when the run did not stop on a provider limit
 limit_kind() {
@@ -1513,6 +1651,8 @@ limit_kind() {
     echo rate_limit
   elif [[ -n $(limit_lines "$1" "$2" "$3" "$OVERLOAD_PATTERN" | tr -d '[:space:]') ]]; then
     echo overloaded
+  elif [[ -n $(limit_lines "$1" "$2" "$3" "$NETWORK_PATTERN" | tr -d '[:space:]') ]]; then
+    echo network
   else
     return 1
   fi
@@ -1523,6 +1663,7 @@ limit_line() {
   local pat=$QUOTA_PATTERN
   [[ $4 == rate_limit ]] && pat=$RATE_LIMIT_PATTERN
   [[ $4 == overloaded ]] && pat=$OVERLOAD_PATTERN
+  [[ $4 == network ]] && pat=$NETWORK_PATTERN
   limit_lines "$1" "$2" "$3" "$pat" | sed -E 's/^[[:space:]]+//' | { grep -m1 . || (($? == 1)); } | cut -c1-200
 }
 
@@ -1534,6 +1675,7 @@ quota_reset_seconds() {
   kind=$(limit_kind "$1" "$2" "$3") || return 1
   if [[ $kind == rate_limit ]]; then pat=$RATE_LIMIT_PATTERN; default=$AGENT_RATE_LIMIT_PAUSE_MIN; fi
   if [[ $kind == overloaded ]]; then pat=$OVERLOAD_PATTERN; default=$AGENT_RATE_LIMIT_PAUSE_MIN; fi
+  if [[ $kind == network ]]; then pat=$NETWORK_PATTERN; default=$AGENT_NETWORK_PAUSE_MIN; fi
   text=$(limit_lines "$1" "$2" "$3" "$pat")
 
   local secs=0 now at t epoch dur
@@ -1545,6 +1687,14 @@ quota_reset_seconds() {
   if ((secs == 0)); then
     dur=$(grep -ioE '(resets?|try again|retry|available again)( it)?( in| after)? [0-9][0-9hms ,:a-z]*' <<< "$text" | head -1 || (($? == 1)))
     [[ -n $dur ]] && secs=$(duration_seconds "$dur")
+  fi
+  # "resets 2026-11-01T00:00:00.000Z": the reset as an ISO time (before the clock times below read its year as one)
+  if ((secs == 0)); then
+    local iso
+    iso=$(grep -ioE 'resets? (at |on )?[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?(Z|[+-][0-9]{2}:?[0-9]{2})?' <<< "$text" \
+            | head -1 | sed -E 's/^resets? (at |on )?//I' || (($? == 1)))
+    # date reports an unparsable time on stderr; that only means the time is unknown (the default pause applies)
+    if [[ -n $iso ]] && t=$(date -d "$iso" +%s 2>/dev/null) && ((t > now)); then secs=$((t - now)); fi
   fi
   # "resets 3pm", "will reset at 15:30"
   if ((secs == 0)); then
@@ -1738,7 +1888,7 @@ build_prompt() { # id mode qfile next_round
   local id=$1 mode=$2 qfile=$3 next_round=$4
   declare -gA R=(
     [AGENT]=$AGENT [AGENT_TYPE]=$TYPE [TASK_ID]=$id [REPO]=$REPO_NAME
-    [WORKTREE]=$WORKTREE [BRANCH]=$BRANCH [BASE]=$BASE
+    [WORKTREE]=$WORKTREE [BRANCH]=$BRANCH [BASE]=$BASE [REPO_URL]="$(github_repo_url "$REPO_ROOT")"
     [HARDWARE_FILE]="$ENV_NOTES_FILE" [PEERS]="$(peers_list)" [LANGUAGE]="$AGENT_LANGUAGE"
     [REPO_LANGUAGE]="$REPO_LANGUAGE" [COMMIT_TRAILERS]="$(commit_trailers "$id")"
     [GIT_NAME]="${GIT_NAME_FORMAT//%a/$AGENT}" [ATTRIBUTION]="\`$AGENT\` ($TYPE${MODEL:+, model $MODEL})"
@@ -1828,6 +1978,13 @@ build_prompt() { # id mode qfile next_round
     ((any)) && printf '\n---\n\n'
     R[BAD_STATUS]=$SBOUNCE_PENDING
     render "$PROMPTS/status-bounce.md"
+    printf '\n'
+    any=1
+  fi
+  if [[ -n ${ABOUNCE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    R[DECIDED_FILE]=$ABOUNCE_PENDING
+    render "$PROMPTS/autopilot-questions.md"
     printf '\n'
     any=1
   fi
@@ -1958,6 +2115,11 @@ activity_progress() { # id — number of the agent's own activity entries (exclu
   jq_soft activity_parse -c 'select(.k != "info" and .k != "err")' "$TASKS/$1/activity.jsonl" | wc -l
 }
 
+# The CLI runs in a session (and process group) of its own: a CLI that signals its whole group on its way out —
+# some clean up their children so — does not take its runner with it; the runner sees its exit code.
+CLI_SESSION=()
+if command -v setsid > /dev/null 2>&1; then CLI_SESSION=(setsid -w); fi
+
 run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   local id=$1 mode=$2 n=$3 pf=$4 dir=$5
   jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
@@ -1970,7 +2132,7 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   args+=("${extra[@]}")
   RC=0
   ( cd "$WORKTREE" || exit 1
-    "$CLAUDE_BIN" "${args[@]}" "$(<"$pf")" </dev/null 2>"$dir/err-$n.log" \
+    "${CLI_SESSION[@]}" "$CLAUDE_BIN" "${args[@]}" "$(<"$pf")" </dev/null 2>"$dir/err-$n.log" \
       | tee "$dir/out-$n.jsonl" | "$AGENTBUS_BIN" normalize --type claude --full "$dir/activity-full.jsonl" >> "$dir/activity.jsonl"
     exit "${PIPESTATUS[0]}" ) &
   watch_run $! "$dir" "$n" || RC=$?
@@ -1995,7 +2157,7 @@ run_codex() { # id mode n prompt_file dir ; sets RC, FINAL
   args+=("$(<"$pf")")
   RC=0
   ( cd "$WORKTREE" || exit 1
-    "$CODEX_BIN" "${args[@]}" </dev/null 2>"$dir/err-$n.log" \
+    "${CLI_SESSION[@]}" "$CODEX_BIN" "${args[@]}" </dev/null 2>"$dir/err-$n.log" \
       | tee "$dir/events-$n.jsonl" | "$AGENTBUS_BIN" normalize --type codex --full "$dir/activity-full.jsonl" >> "$dir/activity.jsonl"
     exit "${PIPESTATUS[0]}" ) &
   watch_run $! "$dir" "$n" || RC=$?
@@ -2030,7 +2192,7 @@ run_gemini() { # id mode n prompt_file dir ; sets RC, FINAL  (Antigravity CLI: a
   if [[ $mode != new ]]; then args+=(--conversation "$SESSION_ID"); fi
   RC=0
   ( cd "$WORKTREE" || exit 1
-    "$AGY_BIN" "${args[@]}" -p "$(<"$pf")" </dev/null 2>"$dir/err-$n.log" \
+    "${CLI_SESSION[@]}" "$AGY_BIN" "${args[@]}" -p "$(<"$pf")" </dev/null 2>"$dir/err-$n.log" \
       | tee "$dir/out-$n.jsonl" | "$AGENTBUS_BIN" normalize --type gemini --full "$dir/activity-full.jsonl" >> "$dir/activity.jsonl"
     exit "${PIPESTATUS[0]}" ) &
   watch_run $! "$dir" "$n" || RC=$?
@@ -2082,7 +2244,7 @@ run_opencode() { # id mode n prompt_file dir ; sets RC, FINAL  (OpenRouter, Deep
   ( cd "$WORKTREE" || exit 1
     OPENCODE_CONFIG_CONTENT="$cfg" OPENCODE_DISABLE_AUTOUPDATE=1 \
     OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS="$OPENCODE_BASH_TIMEOUT_MS" \
-      "$OPENCODE_BIN" "${args[@]}" -- "$(<"$pf")" </dev/null 2>"$dir/err-$n.log" \
+      "${CLI_SESSION[@]}" "$OPENCODE_BIN" "${args[@]}" -- "$(<"$pf")" </dev/null 2>"$dir/err-$n.log" \
       | tee "$dir/out-$n.jsonl" | "$AGENTBUS_BIN" normalize --type opencode --full "$dir/activity-full.jsonl" >> "$dir/activity.jsonl"
     exit "${PIPESTATUS[0]}" ) &
   watch_run $! "$dir" "$n" || RC=$?
@@ -2152,7 +2314,13 @@ notify() { # id status final note
       local rref=${TEAM:-$id} rurl
       rurl=$(round_pr_url "$id")
       if [[ -n $rurl ]]; then printf 'PR: %s\n' "$rurl"; fi
-      if ((WORK_ROUND < WORK_ROUNDS)); then
+      if [[ $(task_field "$id" AUTOPILOT) == 1 && $(task_field "$id" AUTOPILOT_OFF) != 1 ]]; then
+        if ((WORK_ROUND < WORK_ROUNDS)); then
+          printf 'Next (--autopilot): the checks, then two reviews; with both ready to merge it merges it and starts round %s by itself — to stop that: agent autopilot %s off\n' $((WORK_ROUND + 1)) "$rref"
+        else
+          printf 'Next (--autopilot): the checks, then two reviews; with both ready to merge it merges it and the task is complete — to stop that: agent autopilot %s off\n' "$rref"
+        fi
+      elif ((WORK_ROUND < WORK_ROUNDS)); then
         printf 'Next: merge the PR of round %s, then: agent run --resume %s (round %s)\n' "$WORK_ROUND" "$rref" $((WORK_ROUND + 1))
         printf 'Review fixes on the same PR first: agent run --resume %s --same-round "…"\n' "$rref"
       else
@@ -2579,6 +2747,7 @@ runner_exit() {
   if [[ ${KIND:-worker} == investigation ]]; then
     try investigation_finish_failed inv_finish "$RUNNER_ID" failed "STATUS: FAILED
 Answer: investigation interrupted ($why)"
+    if [[ ${REVIEW:-} == 1 ]]; then try review_followup_failed review_without_verdict "$RUNNER_ID" "$why"; fi
   fi
   if [[ ${KIND:-worker} == helper ]]; then
     try helper_finish_failed helper_finish "$RUNNER_ID" failed "interrupted: $why"
@@ -2638,6 +2807,7 @@ cmd__runner() {
   meta_set "$id" INV_PENDING_DELIVERY ""
   meta_set "$id" WAKE_PENDING ""
   meta_set "$id" RESTART_PENDING ""
+  meta_set "$id" ABOUNCE_PENDING ""
   meta_set "$id" RUN_BOOT "$(boot_id)"   # a later boot ID means its machine restarted under this run
   meta_set "$id" BOUNCE_PENDING ""
   meta_set "$id" QBOUNCE_PENDING ""
@@ -2732,12 +2902,35 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     local why resume_at
     why=$(limit_line "$dir" "$nrun" "$FINAL" "$pause_reason")
     resume_at=$(date -d "@$(( $(date +%s) + pause_secs ))" '+%H:%M')
+    ((pause_secs <= 20 * 3600)) || resume_at=$(date -d "@$(( $(date +%s) + pause_secs ))" '+%d.%m %H:%M')
     if [[ $pause_reason == rate_limit ]]; then
       note="the provider is rate-limiting requests (HTTP 429) — not out of credits; resumes at $resume_at${why:+ — $why}"
     elif [[ $pause_reason == overloaded ]]; then
       note="the model is overloaded at the provider (at capacity) — not your account; resumes at $resume_at${why:+ — $why}"
+    elif [[ $pause_reason == network ]]; then
+      local np last
+      np=1
+      last=$(task_field "$id" NETWORK_RUN)
+      if [[ $last == "$((nrun - 1))" ]]; then   # the run before ended on the network too: in a row
+        np=$(task_field "$id" NETWORK_PAUSES); np=$(( ${np:-0} + 1 ))
+      fi
+      meta_set "$id" NETWORK_PAUSES "$np"
+      meta_set "$id" NETWORK_RUN "$nrun"
+      if ((np > AGENT_NETWORK_MAX_PAUSES)); then   # not a passing outage: the human looks
+        status=failed
+        note="the network or the provider has been unreachable $np times in a row (AGENT_NETWORK_MAX_PAUSES=$AGENT_NETWORK_MAX_PAUSES)${why:+ — $why}"
+      else
+        note="the network or the provider was unreachable — nothing the agent did; resumes at $resume_at (attempt $np of $AGENT_NETWORK_MAX_PAUSES)${why:+ — $why}"
+      fi
     else
       note="the provider's quota or usage limit is exhausted — resumes at $resume_at${why:+ — $why}"
+    fi
+    # an --autopilot pair does not wait days for one review: out of quota, it ends without a verdict (the pair has it
+    # done again by another investigator), and its investigator is not chosen until the quota resets (QUOTA_UNTIL)
+    if [[ ${REVIEW:-} == 1 && $pause_reason == quota && -n $(task_field "$(task_field "$id" PARENT_TASK)" REVIEW_PAIR) ]]; then
+      status=failed
+      meta_set "$id" QUOTA_UNTIL "$(( $(date +%s) + pause_secs ))"
+      note="the investigator's provider is out of quota until $resume_at — the review goes to another investigator${why:+ — $why}"
     fi
   elif [[ -s $qfile ]]; then
     # every question the agent wrote must carry a recommendation; without one it gets the file back once
@@ -2746,6 +2939,8 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     fi
     if [[ -n $norec ]]; then
       status=qbounce
+    elif [[ ${AUTOPILOT:-} == 1 && ${AUTOPILOT_OFF:-} != 1 && $(task_field "$id" AUTOPILOT_QBOUNCED) != "$next_round" ]]; then
+      status=abounce   # --autopilot: nobody answers — the agent decides, once a round
     else
       meta_set "$id" ROUND "$next_round"
       status=waiting
@@ -2782,7 +2977,11 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     status=failed; note="the agent reported INVESTIGATING but no investigation was accepted"
   elif ((RC != 0)) || [[ $fst == FAILED || -z ${FINAL//[[:space:]]/} ]]; then
     status=failed
-    ((RC != 0)) && note="CLI exit code: $RC"
+    if ((RC != 0)); then
+      note="CLI exit code: $RC"
+      local eline; eline=$(last_error_line "$dir" "$nrun")
+      [[ -z $eline ]] || note+=" — $eline"
+    fi
   elif [[ $fst == DONE || $fst == ROUND_DONE ]]; then
     status=done
     if [[ $fst == ROUND_DONE ]]; then   # "STATUS: ROUND_DONE N/M": round N of M is finished
@@ -2816,6 +3015,20 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     act "$id" info "↩ questions without a recommendation ($norec) — sent back to the agent once"
     log_info questions_bounced "task=$id" "questions=$norec"
     start_runner "$id" resume || log_error resume_failed "task=$id" "reason=questions without recommendations"
+    dispatch; dispatch_helpers
+    return 0
+  fi
+  # --autopilot: the questions go back to the agent once — it decides and lists its decisions in the PR; the file is
+  # put aside, so that the next run's end does not take the same questions for new ones
+  if [[ $status == abounce ]]; then
+    local decided="${qfile%.md}-decided.md"
+    mv "$qfile" "$decided"
+    meta_set "$id" AUTOPILOT_QBOUNCED "$next_round"
+    meta_set "$id" ABOUNCE_PENDING "$decided"
+    RUNNER_DONE=1
+    act "$id" info "↩ --autopilot: nobody answers questions — they go back to the agent once; it decides and lists its decisions in the PR"
+    log_info questions_autopilot_bounced "task=$id" "file=$decided"
+    start_runner "$id" resume || log_error resume_failed "task=$id" "reason=--autopilot questions"
     dispatch; dispatch_helpers
     return 0
   fi
@@ -2869,6 +3082,7 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
   [[ $status == paused ]] && pause_task "$id" "$pause_secs" "$pause_reason"
   # likewise the answering instructions, the watch and the editor before the task shows as waiting
   [[ $status == waiting ]] && questions_ready "$id" "$qfile"
+  meta_set "$id" NOTE "$note"   # what the run ended on, for the dashboard and for a node's report to its lead
   meta_set "$id" STATUS "$status"
   meta_set "$id" FINISHED "$(date -Is)"
   RUNNER_DELIVERED=0
@@ -2891,7 +3105,11 @@ Answer: the investigator hung ($AGENT_HANG_STRIKES times without progress) — n
         inv_finish "$id" "$status" "$FINAL"      # no push notification (the result goes to the requesting agent)…
         if [[ ${REVIEW:-} == 1 ]]; then          # …except PR reviews (--verify): those go to the human
           notify "$id" "$status" "$FINAL" "review of PR #$PR_NUMBER: $PR_URL"
-          [[ $status == done ]] && review_followup "$id" "$FINAL"
+          if [[ $status == done ]]; then
+            review_followup "$id" "$FINAL"
+          elif [[ $status =~ ^(failed|hung|stopped)$ ]]; then
+            review_without_verdict "$id" "the review run ended $status${note:+ ($note)}"
+          fi
         fi ;;
     esac
   elif [[ ${KIND:-worker} == helper && $status != waiting && $status != investigating && $status != paused ]]; then
@@ -3365,7 +3583,8 @@ resume_run() {
               "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" "RESUMED_FROM=$old" "FIX_PASS=${AGENT_FIX_PASS:-0}" \
               "VERIFY=$( ((verify)) && echo 1 || task_field "$old" VERIFY)" \
               "AUTOPILOT=$( ((${autopilot:-0})) && echo 1 || task_field "$old" AUTOPILOT)" "PRECHECK_PASS=${AGENT_PRECHECK_PASS:-0}" \
-              "AUTOPILOT_OFF=$( ((${autopilot:-0})) || task_field "$old" AUTOPILOT_OFF)"; do
+              "AUTOPILOT_OFF=$( ((${autopilot:-0})) || task_field "$old" AUTOPILOT_OFF)" \
+              "FORMAT_BOUNCED=${AGENT_FORMAT_BOUNCED:-$( ((fresh)) || task_field "$old" FORMAT_BOUNCED)}"; do
       meta_set "$id" "${kv%%=*}" "${kv#*=}"
     done
     ids+=("$id")
@@ -4043,15 +4262,20 @@ cmd__remote_member() { # proxy status branch note — a remote member's change, 
   meta_load "$id"
   [[ ${KIND:-} == remote-member ]] || die "task $id is not a remote member's proxy task"
   case $status in
-    sleeping|running|done|failed|stopped) ;;
+    sleeping|running|paused|done|failed|stopped) ;;
     out) status=failed ;;   # its node was away longer than the grace: out of its team, as a failed member
     *) die "unknown remote member status: $status" ;;
   esac
   [[ -z $branch ]] || meta_set "$id" BRANCH "$branch"
+  [[ -z $note ]] || meta_set "$id" NOTE "$note"   # what it stopped or ended on, for the dashboard
   meta_set "$id" STATUS "$status"
   case $status in done|failed|stopped) meta_set "$id" FINISHED "$(date -Is)" ;; esac
   act "$id" info "remote member $AGENT: $status${note:+ — ${note:0:200}}"
   log_info remote_member_status "task=$id" "member=$AGENT" "status=$status"
+  if [[ $status == paused ]]; then   # on its node, until its timer resumes it: the human hears why here
+    notify "$id" paused "" "remote member $AGENT${note:+: ${note:0:300}}"
+    return 0
+  fi
   [[ $status != running ]] || return 0
   meta_load "$id"   # BRANCH for member_out
   team_after_run "$id" "$status" "$note" "$note"
@@ -4398,7 +4622,8 @@ node_activity_json() {
 node_job_result() {
   local tid=$1 state=$2
   [[ $state =~ ^(done|failed|stopped)$ ]] || return 0
-  if [[ -s $TASKS/$tid/final.md ]]; then cat "$TASKS/$tid/final.md"; return 0; fi
+  # a final message of blanks only (a failed run leaves one) is none: the run's note says what it ended on
+  if [[ -f $TASKS/$tid/final.md && -n $(tr -d '[:space:]' < "$TASKS/$tid/final.md") ]]; then cat "$TASKS/$tid/final.md"; return 0; fi
   task_field "$tid" NOTE
 }
 

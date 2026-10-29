@@ -378,7 +378,7 @@ CONF
   secs=$(quota_reset_seconds "$d" 1 "")
   (( secs > 60 && secs <= 86400 + 60 ))
   # not a quota problem: no pause
-  printf 'Error: connection reset by peer\n' > "$d/err-1.log"
+  printf 'Error: invalid argument\n' > "$d/err-1.log"
   run quota_reset_seconds "$d" 1 ""
   [ "$status" -eq 1 ]
   # the agent's own report (with STATUS) is never read as a quota error
