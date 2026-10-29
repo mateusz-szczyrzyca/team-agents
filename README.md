@@ -791,7 +791,7 @@ sorted by descending round number, **report** (`final.md`), **errors** (`err-*.l
 (`metadata.json`). Unmirrored tabs (**investigations** and **notebook**) display clear notices that their contents
 reside on the worker node. The `/logs` view supports a `Node` selector (`all`, `local`, or specific nodes) and
 filters remote records by component (`agent`, `agentbus`, `agentlive`). When a remote node heartbeat expires
-beyond the configured timeout (`NODE_TIMEOUT`, default `90s`), its tasks and dashboard rows show `node offline`
+beyond the configured timeout (`NODE_TTL_SEC`, default `90s`), its tasks and dashboard rows show `node offline`
 while preserving their last-known state and metadata. In this round, mirrored tasks are display-only on the lead:
 stopping and question answering cannot be performed from the lead web interface or terminal panel (actions are
 safely rejected or hidden); questions are answered on the worker node.

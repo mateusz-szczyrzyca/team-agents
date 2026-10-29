@@ -75,8 +75,16 @@ func loadMirroredTasks(s *Snapshot, busDir string, ttl time.Duration) {
 			if activity := readActivity(dir, 1); len(activity) > 0 {
 				task.Last = activity[0]
 			}
-			_, aerr := os.Stat(filepath.Join(dir, "acked"))
-			task.Acked = aerr == nil
+			ackPath := filepath.Join(dir, "acked")
+			switch _, aerr := os.Stat(ackPath); {
+			case aerr == nil:
+				task.Acked = true
+			case errors.Is(aerr, os.ErrNotExist):
+				task.Acked = false
+			default:
+				task.Acked = false
+				warnOnce("mirror-acked-stat:"+ackPath, LogFileReadFailed, storageErr(aerr, "cannot stat %s", ackPath), "file", ackPath)
+			}
 			s.All[task.ID] = task
 			if task.Active() || !task.Acked {
 				s.Tasks = append(s.Tasks, task)
