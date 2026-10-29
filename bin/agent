@@ -1255,7 +1255,13 @@ review_pair_done() { # review-task parent pair-dir verdict text — one review o
   # both have: both ready-to-merge = the PR is ready; a review without a verdict = the human decides; else the team
   # goes on with the review(s) that found problems
   local id=$1 parent=$2 dir=$3 verdict=$4 text=$5 slot other va vb combined="" s n=0
-  slot=A; [[ $(cat "$dir/B.inv" 2>/dev/null) != "$(task_field "$id" INV_ID)" ]] || slot=B   # A unless this is B's review
+  local myinv; myinv=$(task_field "$id" INV_ID)
+  if [[ $(cat "$dir/A.inv" 2>/dev/null) == "$myinv" ]]; then slot=A
+  elif [[ $(cat "$dir/B.inv" 2>/dev/null) == "$myinv" ]]; then slot=B
+  else   # a review the pair no longer waits for (done again by another investigator since): not this pair's
+    log_warn review_pair_stale "task=$parent" "review=$id" "investigation=$myinv"
+    return 0
+  fi
   other=B; [[ $slot == A ]] || other=A
   # the two reviews end in two runners, often in the same second: recording a verdict and taking the decision are
   # done under the pair's lock, so that exactly one of them decides (two merges or two fix passes would race)
@@ -1310,8 +1316,10 @@ review_pair_done() { # review-task parent pair-dir verdict text — one review o
   review_fix_pass "$parent" "$n" "$combined"
 }
 
-free_investigator_list() { # every free investigator (not working, not waiting for the human's answers), one per line
-  local inv d busy
+free_investigator_list() { # every free investigator (not working, not waiting for the human's answers, its provider's
+  # quota not spent), one per line
+  local inv d busy qu now
+  now=$(date +%s)
   while read -r inv; do
     busy=0
     for d in "$TASKS"/*/; do
@@ -1319,6 +1327,8 @@ free_investigator_list() { # every free investigator (not working, not waiting f
       d=${d%/}; d=${d##*/}
       [[ $(task_field "$d" AGENT) == "$inv" && $(task_field "$d" KIND) == investigation ]] || continue
       case $(task_field "$d" STATUS) in new|starting|running|waiting) busy=1; break ;; esac
+      qu=$(task_field "$d" QUOTA_UNTIL)
+      if [[ -n $qu ]] && ((qu > now)); then busy=1; break; fi   # out of quota until then
     done
     ((busy)) || printf '%s\n' "$inv"
   done < <(investigator_names)
@@ -2914,6 +2924,13 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
       fi
     else
       note="the provider's quota or usage limit is exhausted — resumes at $resume_at${why:+ — $why}"
+    fi
+    # an --autopilot pair does not wait days for one review: out of quota, it ends without a verdict (the pair has it
+    # done again by another investigator), and its investigator is not chosen until the quota resets (QUOTA_UNTIL)
+    if [[ ${REVIEW:-} == 1 && $pause_reason == quota && -n $(task_field "$(task_field "$id" PARENT_TASK)" REVIEW_PAIR) ]]; then
+      status=failed
+      meta_set "$id" QUOTA_UNTIL "$(( $(date +%s) + pause_secs ))"
+      note="the investigator's provider is out of quota until $resume_at — the review goes to another investigator${why:+ — $why}"
     fi
   elif [[ -s $qfile ]]; then
     # every question the agent wrote must carry a recommendation; without one it gets the file back once
