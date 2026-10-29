@@ -177,7 +177,7 @@ func TestMirrorAckStatErrorLoggedR3(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "metadata.json"), `{"AGENT":"worker-1","STATUS":"running"}`)
 	ackPath := filepath.Join(dir, "acked")
 	if err := os.Symlink(ackPath, ackPath); err != nil {
-		t.Skipf("cannot create symlink loop: %v", err)
+		t.Fatal(err)
 	}
 	logs := captureLogs(t)
 	snap := loadSnapshot(home, filepath.Join(home, "bus"))
