@@ -174,6 +174,8 @@ AGENT_RESTART_MAX="${AGENT_RESTART_MAX:-2}"             # a task goes on after t
 AGENT_RESTART_GRACE_MIN="${AGENT_RESTART_GRACE_MIN:-10}" # lead: a remote member whose node is away longer is put out of its team
 AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no local member at work or asleep this long is reported
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
+AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
+AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
 AGENT_LIMIT_TAIL_LINES="${AGENT_LIMIT_TAIL_LINES:-30}"           # how much of the end of stderr shows a provider limit
 # Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
 declare -p INVESTIGATORS_TYPE &>/dev/null || declare -A INVESTIGATORS_TYPE=()
@@ -1480,6 +1482,9 @@ QUOTA_PATTERN='quota (reached|exceeded|exhausted)|usage limit|limit reached|reso
 RATE_LIMIT_PATTERN='rate[ _-]?limit|too many requests|(^|[^0-9])429([^0-9]|$)'
 # A model overloaded at the provider ("Selected model is at capacity", HTTP 503/529): a short pause like a rate limit.
 OVERLOAD_PATTERN='at capacity|overloaded|temporarily unavailable|(^|[^0-9])(503|529)([^0-9]|$)'
+# The network or the provider's host unreachable (DNS, a refused or reset connection, a timeout): nothing the agent did
+# — a pause of AGENT_NETWORK_PAUSE_MIN, then the run goes on.
+NETWORK_PATTERN='network (issue|error|is unreachable)|could not resolve|no such host|temporary failure in name resolution|name or service not known|lookup [^ ]+ on [^ ]+:[0-9]+|i/o timeout|dial tcp|connection (refused|reset|timed out)|tls handshake timeout|econnreset|econnrefused|etimedout|enotfound|eai_again|socket hang up|fetch failed'
 
 # limit_lines dir run final pattern — this run's error lines that match a pattern: the end of the CLI's stderr
 # (AGENT_LIMIT_TAIL_LINES lines: an early error the CLI retried does not count), the error events at the end of its
@@ -1513,6 +1518,8 @@ limit_kind() {
     echo rate_limit
   elif [[ -n $(limit_lines "$1" "$2" "$3" "$OVERLOAD_PATTERN" | tr -d '[:space:]') ]]; then
     echo overloaded
+  elif [[ -n $(limit_lines "$1" "$2" "$3" "$NETWORK_PATTERN" | tr -d '[:space:]') ]]; then
+    echo network
   else
     return 1
   fi
@@ -1523,6 +1530,7 @@ limit_line() {
   local pat=$QUOTA_PATTERN
   [[ $4 == rate_limit ]] && pat=$RATE_LIMIT_PATTERN
   [[ $4 == overloaded ]] && pat=$OVERLOAD_PATTERN
+  [[ $4 == network ]] && pat=$NETWORK_PATTERN
   limit_lines "$1" "$2" "$3" "$pat" | sed -E 's/^[[:space:]]+//' | { grep -m1 . || (($? == 1)); } | cut -c1-200
 }
 
@@ -1534,6 +1542,7 @@ quota_reset_seconds() {
   kind=$(limit_kind "$1" "$2" "$3") || return 1
   if [[ $kind == rate_limit ]]; then pat=$RATE_LIMIT_PATTERN; default=$AGENT_RATE_LIMIT_PAUSE_MIN; fi
   if [[ $kind == overloaded ]]; then pat=$OVERLOAD_PATTERN; default=$AGENT_RATE_LIMIT_PAUSE_MIN; fi
+  if [[ $kind == network ]]; then pat=$NETWORK_PATTERN; default=$AGENT_NETWORK_PAUSE_MIN; fi
   text=$(limit_lines "$1" "$2" "$3" "$pat")
 
   local secs=0 now at t epoch dur
@@ -2736,6 +2745,21 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
       note="the provider is rate-limiting requests (HTTP 429) — not out of credits; resumes at $resume_at${why:+ — $why}"
     elif [[ $pause_reason == overloaded ]]; then
       note="the model is overloaded at the provider (at capacity) — not your account; resumes at $resume_at${why:+ — $why}"
+    elif [[ $pause_reason == network ]]; then
+      local np last
+      np=1
+      last=$(task_field "$id" NETWORK_RUN)
+      if [[ $last == "$((nrun - 1))" ]]; then   # the run before ended on the network too: in a row
+        np=$(task_field "$id" NETWORK_PAUSES); np=$(( ${np:-0} + 1 ))
+      fi
+      meta_set "$id" NETWORK_PAUSES "$np"
+      meta_set "$id" NETWORK_RUN "$nrun"
+      if ((np > AGENT_NETWORK_MAX_PAUSES)); then   # not a passing outage: the human looks
+        status=failed
+        note="the network or the provider has been unreachable $np times in a row (AGENT_NETWORK_MAX_PAUSES=$AGENT_NETWORK_MAX_PAUSES)${why:+ — $why}"
+      else
+        note="the network or the provider was unreachable — nothing the agent did; resumes at $resume_at (attempt $np of $AGENT_NETWORK_MAX_PAUSES)${why:+ — $why}"
+      fi
     else
       note="the provider's quota or usage limit is exhausted — resumes at $resume_at${why:+ — $why}"
     fi
