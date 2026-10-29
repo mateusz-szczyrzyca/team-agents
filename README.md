@@ -214,7 +214,13 @@ existing tests. The gate failing on the merged base stops it ("⛔ autopilot sto
 investigators are reported once — they go on waiting, never one reviewer instead of two. Nobody answers questions in
 `--autopilot`: an agent's questions go back to it once — it takes the option it recommends, or the simplest safe
 one, and lists its decisions in the PR under "Decisions taken without the human", which the reviewers check;
-questions asked again in the same round come to you.
+questions asked again in the same round come to you. A review that ends without a verdict — its run
+failed, hung or was stopped, or its investigator's provider is out of quota — does not stop the pair: with the
+other review asking for changes the fix pass goes on with its findings; with the other ready to merge it is done
+again, once, by another free investigator (one out of quota is not chosen until its reset), and only then comes
+to you. A team closed because all its members finished — its coordinator out — goes to review too. A spent budget
+("Workspace monthly budget … exceeded") is a quota pause until its reset, also given as an ISO time. On the lead a
+remote member's pause shows with its reason, and its failure with the CLI's exit code and last error line.
 
 **The fix loop.** When the review finds critical or major problems, the team is woken with them: the review is
 added to its task ("Fix pass 1 of 2"), it fixes them (or disputes one on the PR) and finishes again — and the PR
