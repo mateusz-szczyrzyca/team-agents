@@ -784,8 +784,17 @@ lead before the node: the new endpoint is additive, and existing `jobs.json` fil
 For `agentbus node-request --path /v1/sync`, HTTP `400` is `NodeClientInvalidArgument` (exit `2`),
 so invalid log scope does not obsolete a valid assignment. Assignment rejections remain
 `NodeClientRejected` (exit `5`); other routes keep their existing rejection semantics.
-The mirror is storage only in this round: the web still shows heartbeat activity; mirror task tabs and node
-log views arrive in the next round. Questions of a job are still answered on its node.
+Mirrored tasks on the lead are accessible under node-qualified URLs (`/task/<id>@<node>`), linked from dashboard
+task lists, jobs, and agent detail views. The task page displays mirrored tabs: **activity** with live SSE
+streaming (`/events/task/<id>@<node>`), **prompt** runs enumerated from mirrored prompt files, **questions**
+sorted by descending round number, **report** (`final.md`), **errors** (`err-*.log`), and **details**
+(`metadata.json`). Unmirrored tabs (**investigations** and **notebook**) display clear notices that their contents
+reside on the worker node. The `/logs` view supports a `Node` selector (`all`, `local`, or specific nodes) and
+filters remote records by component (`agent`, `agentbus`, `agentlive`). When a remote node heartbeat expires
+beyond the configured timeout (`NODE_TIMEOUT`, default `90s`), its tasks and dashboard rows show `node offline`
+while preserving their last-known state and metadata. In this round, mirrored tasks are display-only on the lead:
+stopping and question answering cannot be performed from the lead web interface or terminal panel (actions are
+safely rejected or hidden); questions are answered on the worker node.
 A lead with no nodes has no remote agent rows.
 
 **Remote team members.** A node's agent can be a full member of a team on the lead — on its board, in its
