@@ -399,6 +399,7 @@ VERIFY_MAX_FIX_PASSES="${VERIFY_MAX_FIX_PASSES:-2}"
 # of code; else the team goes on with the reason, at most AGENT_PRECHECK_MAX times, then the human decides.
 AGENT_REVIEW_GATE="${AGENT_REVIEW_GATE:-auto}"        # the gate's command: auto = `make gate` where the repository has it; off = none
 AGENT_REVIEW_GATE_MIN="${AGENT_REVIEW_GATE_MIN:-30}"  # its time limit, in minutes
+AGENT_STAGE_POLL_SEC="${AGENT_STAGE_POLL_SEC:-2}"     # how often the gate's progress is shown on the dashboard
 AGENT_PRECHECK_MAX="${AGENT_PRECHECK_MAX:-2}"         # how many times a round goes back for its gate or its tests
 # --autopilot: after two ready-to-merge reviews the script merges — not a PR touching one of these paths (a directory
 # ends with /), nor one changing existing tests: those wait for the human
@@ -1173,14 +1174,17 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
   root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH); base=$(task_field "$id" BASE); base=${base:-main}
   url=$(task_field "$id" PR_URL); num=$(task_field "$id" PR_NUMBER)
   if [[ $(task_field "$id" AUTOPILOT_OFF) == 1 ]]; then
+    auto_stage "$id" "waits for you: the autopilot is off — merge the PR yourself"
     notify "$id" approved "" "both reviews: ready to merge — the autopilot is off: merge PR #$num yourself: $url"
     return 0
   fi
+  auto_stage "$id" "merging the round's PR (both reviews: ready to merge)"
   git -C "$root" fetch -q origin 10>&- || log_warn merge_fetch_failed "task=$id"   # then the local refs are checked
   head=$(git -C "$root" rev-parse -q --verify "origin/$branch^{commit}" 10>&-) || head=$(git -C "$root" rev-parse -q --verify "$branch^{commit}" 10>&-) || head=""
   mb=$(git -C "$root" merge-base "origin/$base" "${head:-HEAD}" 10>&-) || mb=""
   if [[ -n $head && -n $mb ]]; then why=$(merge_blockers "$root" "$mb" "$head" "$(task_field "$id" ROUND_TESTS)"); fi
   if [[ -n $why ]]; then
+    auto_stage "$id" "waits for you: PR #$num is yours to merge (both reviews: ready to merge)"
     notify "$id" approved "" "both reviews: ready to merge, but PR #$num waits for you — $(tr '\n' ';' <<< "$why") $url"
     log_info autopilot_merge_held "task=$id" "reason=${why:0:200}"
     return 0
@@ -1192,33 +1196,40 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
   checked=$(task_field "$id" PRECHECK_HEAD)
   [[ -z $checked ]] || match=(--match-head-commit "$checked")
   if ! out=$(cd "$root" && gh pr merge "$url" --merge "${match[@]}" 2>&1); then
+    auto_stage "$id" "waits for you: merging PR #$num failed"
     notify "$id" failed "" "⛔ autopilot stopped: merging PR #$num failed — your decision is needed: ${out:0:300} $url"
     log_error autopilot_merge_failed "task=$id" "reason=${out:0:300}"
     return 0
   fi
   log_info autopilot_merged "task=$id" "pr=$num"
+  auto_stage "$id" "PR #$num merged — the gate on the merged $base"
   act "$id" info "--autopilot: PR #$num merged (both reviews: ready to merge)"
   git -C "$root" fetch -q origin "$base" 10>&- || log_warn merge_fetch_failed "task=$id" "base=$base"
   if ! gate_at "$root" "origin/$base" "$TASKS/$id/postmerge.log"; then
+    auto_stage "$id" "waits for you: the gate fails on $base after the merge"
     notify "$id" failed "" "⛔ autopilot stopped: PR #$num is merged, but the gate fails on $base — your decision is needed: $(tail -n 15 "$TASKS/$id/postmerge.log" | tr '\n' ' ')"
     log_warn autopilot_postmerge_gate_failed "task=$id" "base=$base"
     return 0
   fi
   wr=$(task_field "$id" WORK_ROUND); wrs=$(task_field "$id" WORK_ROUNDS)
   if [[ -z $wr || -z $wrs ]] || ((wr >= wrs)); then
+    auto_stage "$id" ""   # the task is done
     notify "$id" merged "" "merged PR #$num — both reviews: ready to merge; ${wr:+round $wr/$wrs was the last: }the task is done"
     return 0
   fi
+  auto_stage "$id" "PR #$num merged — round $((wr + 1))/$wrs starts"
   notify "$id" merged "" "merged PR #$num — both reviews: ready to merge; round $((wr + 1))/$wrs starts"
   team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=next-round"   # a busy team cannot be resumed
   ref=$(task_field "$id" TEAM); ref=${ref:-$id}
   if ! out=$(cd "$root" && "$SELF" run --resume "$ref" --autopilot \
        "Round $((wr + 1)) of $wrs: the PR of round $wr (#$num) is merged — go on with the next round of the plan." </dev/null 2>&1); then
+    auto_stage "$id" "waits for you: round $((wr + 1))/$wrs could not start"
     notify "$id" failed "" "⛔ autopilot stopped: round $((wr + 1))/$wrs could not start — your decision is needed: ${out:0:300}"
     log_error autopilot_next_round_failed "task=$id" "reason=${out:0:300}"
     return 0
   fi
   log_info autopilot_next_round "task=$id" "round=$((wr + 1))/$wrs" "output=${out:0:300}"
+  auto_stage "$id" ""   # the next round's team has the work
 }
 
 cmd_autopilot() { # team [on|off] — a team's --autopilot, shown or switched; off: its reviews go on, but nothing is
@@ -1264,6 +1275,44 @@ review_gate_cmd() { # repo — the gate a round's head must pass before a review
   esac
 }
 
+# auto_stage task text — what --verify/--autopilot does for the round now, kept on its coordinator's task (AUTO_STAGE,
+# the dashboard's stage); "" once the work is back with the team, or with the human after "waits for you: …"
+auto_stage() {
+  [[ $(task_field "$1" AUTO_STAGE) == "$2" ]] || meta_set "$1" AUTO_STAGE "$2"
+}
+
+# gate_progress log — " — K of N steps passed (the last)" from tools/gate.sh's output so far, or " — <step> failed";
+# "" for another gate command, whose output has no such lines
+gate_progress() {
+  local n k last failed
+  n=$(sed -nE 's/^gate: ([0-9]+) steps?,.*/\1/p' "$1" 2>/dev/null | head -n 1)
+  [[ -n $n ]] || return 0
+  failed=$( { grep -E '^FAIL +[^ ]' "$1" || (($? == 1)); } | head -n 1 | awk '{print $2}')
+  if [[ -n $failed ]]; then printf ' — %s failed' "$failed"; return 0; fi
+  k=$(grep -cE '^ok +[^ ]' "$1" || (($? == 1)))   # grep -c prints 0 when none has passed yet
+  last=$( { grep -E '^ok +[^ ]' "$1" || (($? == 1)); } | tail -n 1 | awk '{print $2}')
+  printf ' — %s of %s steps passed%s' "$k" "$n" "${last:+ ($last)}"
+}
+
+# pair_stage pair-dir — the two reviews of an --autopilot pair, for the dashboard: each investigator with its
+# verdict (✅ 🔧 🧩 ❌), or its investigation's number while it works
+pair_stage() {
+  local s out="" a v
+  for s in A B; do
+    a=$(cat "$1/$s.agent" 2>/dev/null) || a="?"
+    v=$(cat "$1/$s.verdict" 2>/dev/null) || v=""
+    case $v in
+      ready-to-merge) v="✅" ;;
+      needs-fixes) v="🔧" ;;
+      incomplete) v="🧩" ;;
+      none) v="❌" ;;
+      *) v="(#$(cat "$1/$s.inv" 2>/dev/null || printf '?')) …" ;;
+    esac
+    out+="${out:+, }$a $v"
+  done
+  printf 'two reviews: %s' "$out"
+}
+
 start_precheck() { # coordinator task — the checks before its review run in their own unit: the gate may take minutes,
   # and the team's members must settle before the round can go back to them
   local id=$1
@@ -1271,6 +1320,7 @@ start_precheck() { # coordinator task — the checks before its review run in th
        --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
        "$SELF" _precheck "$id" 3>&- 7>&- 8>&- 9>&- 10>&-; then
     act "$id" info "before the review: the checks started"
+    auto_stage "$id" "checks before review: waiting for the team's runs to end"
   else
     log_error precheck_unit_failed "task=$id"   # then here, in this run
     if review_precheck "$id"; then request_review "$id"; dispatch; fi
@@ -1313,6 +1363,7 @@ review_precheck() { # coordinator task id — before a review: the round's head 
     || head=$(git -C "$root" rev-parse -q --verify "$branch^{commit}" 10>&-) \
     || { log_warn precheck_no_head "task=$id" "branch=$branch"; return 0; }   # nothing to check: the review decides
   meta_set "$id" PRECHECK_HEAD "$head"   # the commit checked (and then reviewed): the only one --autopilot merges
+  auto_stage "$id" "checks before review: the round's tests and its PR's description"
   mb=$(git -C "$root" merge-base "origin/${base:-main}" "$head" 10>&-) || mb=$(git -C "$root" merge-base "${base:-main}" "$head" 10>&-) \
     || { log_warn precheck_no_base "task=$id" "base=$base"; return 0; }
   tc=$(round_test_changes "$root" "$mb" "$head")
@@ -1337,7 +1388,14 @@ $issues"
     wt=$(mktemp -d)
     git -C "$root" worktree add -q --detach "$wt" "$head" 10>&- || { log_warn precheck_worktree_failed "task=$id"; rmdir "$wt"; return 0; }
     rc=0
-    (cd "$wt" && timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") > "$TASKS/$id/precheck.log" 2>&1 10>&- || rc=$?
+    auto_stage "$id" "checks before review: $gate"
+    (cd "$wt" && timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") > "$TASKS/$id/precheck.log" 2>&1 10>&- &
+    local gpid=$!
+    while kill -0 "$gpid" 2>/dev/null; do   # its progress on the dashboard while it runs ("no such process": it ended)
+      auto_stage "$id" "checks before review: $gate$(gate_progress "$TASKS/$id/precheck.log")"
+      sleep "$AGENT_STAGE_POLL_SEC"
+    done
+    wait "$gpid" || rc=$?
     git -C "$root" worktree remove --force "$wt" 10>&- || log_warn precheck_worktree_left "worktree=$wt"
     act "$id" info "before the review: the gate ($gate) at ${head:0:7} — exit $rc"
     ((rc == 0)) || why="the gate (\`$gate\`) fails at ${head:0:7} (exit $rc); its output ends with:
@@ -1357,11 +1415,13 @@ $(tail -n 40 "$TASKS/$id/precheck.log")
          "Not reviewed yet ($((pass + 1)) of $AGENT_PRECHECK_MAX): $why
 Fix it on the same branches and finish as before; the round goes to review once its head passes." </dev/null 2>&1); then
       act "$id" info "before the review: the team goes on ($((pass + 1)) of $AGENT_PRECHECK_MAX) — ${why:0:120}"
+      auto_stage "$id" ""   # the team has the work
     else
       log_error review_precheck_resume_failed "task=$id" "reason=${out:0:500}"
     fi
     return 1
   fi
+  auto_stage "$id" "waits for you: the round still fails its checks after $pass returns"
   notify "$id" failed "" "not reviewed: after $pass returns the round still fails before its review (the gate or its tests) — your decision is needed: ${why:0:400}"
   return 1
 }
@@ -1402,8 +1462,10 @@ review_fix_pass() { # parent findings text — the fix pass runs in its own unit
 
 cmd__fixpass() { # coordinator task — the fix pass recorded by review_fix_pass, once the team's members have settled
   local id=$1
+  auto_stage "$id" "fix pass: the team goes on with the reviews' findings once its runs end"
   team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=fix-pass"
   do_fix_pass "$id" "$(<"$TASKS/$id/fix-pass.n")" "$(<"$TASKS/$id/fix-pass.md")"
+  [[ $(task_field "$id" AUTO_STAGE) != "fix pass:"* ]] || auto_stage "$id" ""   # the team has the work, unless the human has
 }
 
 do_fix_pass() { # parent findings text — the team goes on with the review(s) that found problems, VERIFY_MAX_FIX_PASSES
@@ -1433,6 +1495,7 @@ ${text:0:8000}"
     return 0
   fi
   owner=${AGENT_HUMAN_GITHUB:-$(github_owner "$root")}
+  auto_stage "$parent" "waits for you: the reviews still find problems after $pass fix passes"
   (cd "$root" && try review_mention_failed gh pr comment "$PR_URL" --body "${owner:+@$owner }The fixes are still not done: after $pass fix passes the review still finds $n critical or major problem(s) (see the review above). The team has stopped; your decision is needed.")
   push_text "$repo" "--verify: PR #$PR_NUMBER still has $n critical or major problem(s) after $pass fix passes — your decision is needed: $PR_URL"
   log_warn review_fixes_exhausted "task=$parent" "passes=$pass" "findings=$n"
@@ -1468,11 +1531,13 @@ retry_review_slot() {
   if [[ -z $name ]]; then
     meta_set "$parent" REVIEW_SLOT_PENDING "$slot"
     act "$parent" info "--autopilot: review $slot gave no verdict — it is done again once a third investigator is free"
+    auto_stage "$parent" "two reviews: review $slot waits for a third free investigator"
     return 0
   fi
   start_review_slot "$parent" "$dir" "$slot" "$name" fresh || return 1
   meta_set "$parent" REVIEW_SLOT_PENDING ""
   act "$parent" info "--autopilot: review $slot gave no verdict — done again by $name"
+  auto_stage "$parent" "$(pair_stage "$dir")"
 }
 
 review_pair_done() { # review-task parent pair-dir verdict text — one review of an --autopilot pair has ended; when
@@ -1502,6 +1567,7 @@ review_pair_done() { # review-task parent pair-dir verdict text — one review o
   fi
   if [[ $decide != yes ]]; then
     log_info review_pair_waiting "task=$parent" "done=$slot" "verdict=$verdict"
+    auto_stage "$parent" "$(pair_stage "$dir")"
     return 0
   fi
   va=$(<"$dir/A.verdict"); vb=$(<"$dir/B.verdict")
@@ -1527,6 +1593,7 @@ review_pair_done() { # review-task parent pair-dir verdict text — one review o
     # the other asks for changes: that decides — the fix pass goes on with its findings
     if [[ $vo != needs-fixes && $vo != incomplete ]]; then
       meta_set "$parent" REVIEW_RESULT failed
+      auto_stage "$parent" "waits for you: a review gave no verdict"
       notify "$parent" failed "" "a review of PR #$(task_field "$parent" PR_NUMBER) gave no verdict${vo:+ (the other: $vo)} — your decision is needed: $(task_field "$parent" PR_URL)"
       return 0
     fi
@@ -1599,6 +1666,7 @@ start_review_pair() { # coordinator task — both reviews of its PR at once, on 
   meta_set "$id" REVIEW_SLOT_PENDING ""
   meta_set "$id" REVIEW_PAIR "$dir"
   act "$id" info "--autopilot: two reviews of PR #$num started — $a and $b, each on its own"
+  auto_stage "$id" "two reviews: $a (#$(cat "$dir/A.inv")), $b (#$(cat "$dir/B.inv"))"
 }
 
 # start_review_slot coordinator-task pair-dir slot investigator [fresh] — one review of the pair (A or B) on that
@@ -1638,6 +1706,7 @@ request_review() { # coordinator task id — --verify: queue a PR review by an i
   meta_set "$id" PR_NUMBER "$num"; meta_set "$id" PR_URL "$url"
   if [[ $(task_field "$id" AUTOPILOT) == 1 ]]; then   # two reviews at once, when two investigators are free
     meta_set "$id" REVIEW_PAIR_PENDING 1
+    auto_stage "$id" "two reviews: waiting for two free investigators"
     meta_set "$id" REVIEW_PAIR_SINCE "$(date +%s)"
     act "$id" info "--autopilot: two reviews of PR #$num wait for two free investigators"
     dispatch
@@ -1840,22 +1909,32 @@ NETWORK_PATTERN='network (issue|error|is unreachable)|could not resolve|no such 
 # (AGENT_LIMIT_TAIL_LINES lines: an early error the CLI retried does not count), the error events at the end of its
 # output, the last error entries of the activity, and the final message when it has no STATUS (the agent's own
 # report is never read as a provider error)
+# A local error of the machine — out of processes, memory or file descriptors, a full disk, a unix socket — is no
+# provider's limit nor a network failure, even when its words look like one ("Resource temporarily unavailable",
+# "read unix …: i/o timeout"): such lines are left out before the patterns are matched.
+LOCAL_ERROR_PATTERN='resource temporarily unavailable|fork: |cannot allocate memory|too many open files|no space left on device|(dial|read|write|connect) unix|unix:?[ /@]|[.]sock[: ]'
+
+# limit_keep pattern — the lines of stdin that match the pattern and are no local error of the machine
+limit_keep() {
+  { grep -iE "$1" || (($? == 1)); } | { grep -viE "$LOCAL_ERROR_PATTERN" || (($? == 1)); }   # 1: none matches
+}
+
 limit_lines() {
   local dir=$1 run=$2 final=$3 pat=$4 f
   # every grep below exits 1 when nothing matches — that is the expected "no limit"
   if [[ -f $dir/err-$run.log ]]; then
-    tail -n "$AGENT_LIMIT_TAIL_LINES" "$dir/err-$run.log" | { grep -iE "$pat" || (($? == 1)); }
+    tail -n "$AGENT_LIMIT_TAIL_LINES" "$dir/err-$run.log" | limit_keep "$pat"
   fi
   for f in "$dir/events-$run.jsonl" "$dir/out-$run.jsonl"; do
     [[ -f $f ]] || continue
     tail -n 200 "$f" | { grep -iE '"(type|level|subtype)": ?"[a-z_]*error|"is_error": ?true|"error":' || (($? == 1)); } \
-      | { grep -iE "$pat" || (($? == 1)); }
+      | limit_keep "$pat"
   done
   if [[ -f $dir/activity.jsonl ]]; then
-    tail -n 50 "$dir/activity.jsonl" | { grep -F '"k":"err"' || (($? == 1)); } | { grep -iE "$pat" || (($? == 1)); }
+    tail -n 50 "$dir/activity.jsonl" | { grep -F '"k":"err"' || (($? == 1)); } | limit_keep "$pat"
   fi
   if [[ -z $(final_status "$final") ]]; then
-    grep -iE "$pat" <<< "$final" || (($? == 1))
+    limit_keep "$pat" <<< "$final"
   fi
 }
 

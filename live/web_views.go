@@ -134,6 +134,9 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	if p := snap.Agents[t.BusName()]; p != nil && p.Task == t.ID && p.Status != "" {
 		r.Stage = "„" + p.Status + "”"
 	}
+	if t.AutoStage != "" { // the automation works on the round (its checks, reviews, merge): that is its stage now
+		r.Stage = "⚙ " + t.AutoStage
+	}
 	if (t.Status == "running" || t.Status == "starting") && !t.Alive && !t.RunStart.IsZero() {
 		r.StatusLabel, r.StatusClass = "✗ process is dead", statusClass("dead")
 	}
