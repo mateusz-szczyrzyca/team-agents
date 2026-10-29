@@ -169,3 +169,27 @@ func TestMirrorDirectoriesReadErrorM8(t *testing.T) {
 		t.Errorf("mirrorDirectories on unreadable directory: want nil, got %v", dirs)
 	}
 }
+
+// TestMirrorAckStatErrorLoggedR3 verifies that unexpected stat errors on the mirror acked marker are logged as warnings.
+func TestMirrorAckStatErrorLoggedR3(t *testing.T) {
+	home := fixture(t)
+	dir := filepath.Join(home, "bus", "remote", "node-a", "T-rem-1")
+	writeFile(t, filepath.Join(dir, "metadata.json"), `{"AGENT":"worker-1","STATUS":"running"}`)
+	ackPath := filepath.Join(dir, "acked")
+	if err := os.Symlink(ackPath, ackPath); err != nil {
+		t.Skipf("cannot create symlink loop: %v", err)
+	}
+	logs := captureLogs(t)
+	snap := loadSnapshot(home, filepath.Join(home, "bus"))
+	task := snap.All["T-rem-1@node-a"]
+	if task == nil {
+		t.Fatal("expected mirrored task T-rem-1@node-a")
+	}
+	if task.Acked {
+		t.Errorf("task should not be marked Acked on stat error")
+	}
+	logStr := logs.String()
+	if !strings.Contains(logStr, `"event":"file_read_failed"`) || !strings.Contains(logStr, ackPath) {
+		t.Fatalf("expected file_read_failed warning for %s, got logs: %s", ackPath, logStr)
+	}
+}
