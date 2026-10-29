@@ -10,7 +10,8 @@ shopt -u patsub_replacement 2>/dev/null || :   # bash < 5.2 has no such option (
 # accounts (AGENT_GITHUB_TRUSTED_RESOLVED, set by the runner). Comments and reviews by anyone else — and the trusted
 # accounts' own that begin with "ignore this mate" (a way to check this on GitHub's real data) — are left out and
 # logged, on open, closed and merged PRs and issues alike. A fork's PR, or one opened by an unknown account, is not
-# shown at all (its description, diff or checkout). A GraphQL query for comments or reviews is refused: the agents
+# shown at all (its description, diff or checkout), nor listed — the lists are the trusted accounts' PRs and issues
+# only. A GraphQL query for comments or reviews is refused: the agents
 # read them through the ways filtered here. Everything else goes to the real gh (AGENT_REAL_GH).
 agent_gh() {
   set +e   # each failure is handled where it happens
@@ -95,6 +96,44 @@ if [[ ${1:-} == api ]]; then
   fi
   if [[ -n $jqexpr ]]; then exec "$real" api "${args[@]}" --jq "$jqexpr"; fi
   exec "$real" api "${args[@]}"
+fi
+
+if [[ ${1:-} == pr || ${1:-} == issue ]] && [[ ${2:-} == list ]]; then   # the lists: the trusted accounts' only
+  kind=$1
+  shift 2
+  rest=() jsonf="" jqexpr=""
+  while (($#)); do
+    case $1 in
+      --json) jsonf=${2:-}; shift 2 ;;
+      --json=*) jsonf=${1#--json=}; shift ;;
+      --jq|-q) jqexpr=${2:-}; shift 2 ;;
+      --jq=*) jqexpr=${1#--jq=}; shift ;;
+      -t|--template|--template=*) echo "agent-gh: --template is not available to the agents; use --jq" >&2; exit 2 ;;
+      -w|--web) echo "agent-gh: --web is not available to the agents" >&2; exit 2 ;;
+      *) rest+=("$1"); shift ;;
+    esac
+  done
+  want=${jsonf:-number,title,state,url}
+  if [[ $kind == pr ]]; then
+    [[ -n $jsonf ]] || want+=,headRefName
+    want+=,author,isCrossRepository
+  else
+    want+=,author
+  fi
+  want=$(tr ',' '\n' <<< "$want" | awk 'NF && !seen[$0]++' | paste -sd, -)
+  out=$("$real" "$kind" list "${rest[@]}" --json "$want") || exit $?
+  while IFS=$'\t' read -r fork num author; do
+    if [[ $fork == true ]]; then
+      gh_log "github_${kind}_ignored" "there is a $kind from a fork and it's ignored" "author=$author" "number=$num"
+    else
+      gh_log "github_${kind}_ignored" "there is unknown $kind from unknown user and it's ignored" "author=$author" "number=$num"
+    fi
+  done < <(jq -r --argjson t "$trusted_json" '.[] | select((.isCrossRepository // false) or (((.author.login // "") as $a | $t | index($a)) == null))
+             | [((.isCrossRepository // false) | tostring), (.number | tostring), (.author.login // "")] | @tsv' <<< "$out")
+  out=$(jq -c --argjson t "$trusted_json" 'map(select(((.isCrossRepository // false) | not) and (((.author.login // "") as $a | $t | index($a)) != null)))' <<< "$out")
+  if [[ -n $jsonf ]]; then gh_show "$out" "$jqexpr"; exit 0; fi
+  jq -r '.[] | ["#\(.number)", (.title // ""), (.headRefName // ""), (.state // "")] | @tsv' <<< "$out"
+  exit 0
 fi
 
 if [[ ${1:-} == pr || ${1:-} == issue ]] && [[ ${2:-} == view || ${2:-} == diff || ${2:-} == checkout ]]; then
