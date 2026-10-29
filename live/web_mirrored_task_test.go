@@ -156,10 +156,14 @@ func TestMirroredTaskLiveSSE(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := f.WriteString(`{"ts":"2026-10-28 12:00:15","k":"text","t":"live update received"}` + "\n"); err != nil {
-		_ = f.Close()
+		if cerr := f.Close(); cerr != nil {
+			t.Logf("close error: %v", cerr)
+		}
 		t.Fatal(err)
 	}
-	_ = f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	got := readEvent(t, br, "act")
 	if !strings.Contains(got, "live update received") {
