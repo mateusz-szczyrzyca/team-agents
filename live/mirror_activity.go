@@ -58,25 +58,13 @@ func (c *mirrorActivityCursor) baseline(path string, off int64) {
 	}
 }
 
-// token identifies the last complete raw line consumed from the generation rendered on the page,
-// along with its context and occurrence count to guard against repeated events.
+// token identifies the last complete raw line consumed from the generation rendered on the page.
 // "start" represents an empty or not-yet-created log, so its first batch is never skipped.
 func (c *mirrorActivityCursor) token() string {
 	if len(c.previous) == 0 {
 		return "start"
 	}
-	last := c.previous[len(c.previous)-1]
-	count := 0
-	for _, line := range c.previous {
-		if line == last {
-			count++
-		}
-	}
-	penultHash := "start"
-	if len(c.previous) >= 2 {
-		penultHash = mirrorActivityToken(c.previous[len(c.previous)-2])
-	}
-	return fmt.Sprintf("%s:%s:%d", mirrorActivityToken(last), penultHash, count)
+	return mirrorActivityToken(c.previous[len(c.previous)-1])
 }
 
 // mirrorActivityToken hashes all event fields, preserving timestamps and unknown fields in the handoff.
@@ -95,41 +83,24 @@ func (c *mirrorActivityCursor) resume(path, token string) {
 	if !ok {
 		return
 	}
-	parts := strings.Split(token, ":")
-	hash := parts[0]
-	penultHash := ""
-	if len(parts) >= 2 {
-		penultHash = parts[1]
+	hash := token
+	if idx := strings.IndexByte(token, ':'); idx >= 0 {
+		hash = token[:idx]
 	}
 
-	var matches []int
+	matchCount := 0
+	matchIdx := -1
 	for i, line := range lines {
 		if mirrorActivityToken(line) == hash {
-			matches = append(matches, i)
+			matchCount++
+			matchIdx = i
 		}
 	}
-	if len(matches) == 0 {
-		return
-	}
-	if len(matches) == 1 {
-		c.previous = lines[:matches[0]+1]
-		return
-	}
-	if penultHash != "" {
-		var contextMatches []int
-		for _, idx := range matches {
-			if penultHash == "start" {
-				if idx == 0 {
-					contextMatches = append(contextMatches, idx)
-				}
-			} else if idx > 0 && mirrorActivityToken(lines[idx-1]) == penultHash {
-				contextMatches = append(contextMatches, idx)
-			}
-		}
-		if len(contextMatches) == 1 {
-			c.previous = lines[:contextMatches[0]+1]
-			return
-		}
+	// Unique match: unambiguous boundary.
+	// Multiple matches: ambiguous boundary in truncated/duplicate tail; replay available tail.
+	// Zero matches: rolled out boundary; replay available tail.
+	if matchCount == 1 {
+		c.previous = lines[:matchIdx+1]
 	}
 }
 
