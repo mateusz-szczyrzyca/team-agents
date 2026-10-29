@@ -132,7 +132,6 @@ echo "» building agentlive (the first build downloads Go modules: Bubble Tea, L
 
 echo "» installing agent"
 install -m 755 "$SRC/bin/agent" "$BIN/agent"
-install -m 755 "$SRC/bin/agent-gh" "$BIN/agent-gh"   # the agents' gh: GitHub's texts only from the trusted accounts
 
 echo "» prompts"
 for f in "$SRC"/prompts/*.md; do

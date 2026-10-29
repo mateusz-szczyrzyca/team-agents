@@ -16,7 +16,6 @@ setup() {
   export AGENTS_HOME="$HOME/agents"
   mkdir -p "$HOME/.local/bin" "$STUB_UNITS" "$AGENTS_HOME"/{tasks,worktrees,bus,prompts}
   install -m755 "$REPO_ROOT/bin/agent" "$HOME/.local/bin/agent"
-  install -m755 "$REPO_ROOT/bin/agent-gh" "$HOME/.local/bin/agent-gh"   # the agents' gh, next to agent (as install.sh puts it)
   cp "$BUILD_DIR/agentbus" "$HOME/.local/bin/agentbus"
   cp "$BATS_TEST_DIRNAME/stubs/fake-claude" "$HOME/.local/bin/claude"
   cp "$REPO_ROOT"/prompts/*.md "$AGENTS_HOME/prompts/"

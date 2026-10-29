@@ -6,6 +6,147 @@
 set -euo pipefail
 shopt -u patsub_replacement 2>/dev/null || :   # bash < 5.2 has no such option (nothing to disable)
 
+# agent as gh — the agents' gh: the runner puts a link named gh to this script first on their CLI's PATH. Text on GitHub reaches them only from the trusted
+# accounts (AGENT_GITHUB_TRUSTED_RESOLVED, set by the runner). Comments and reviews by anyone else — and the trusted
+# accounts' own that begin with "ignore this mate" (a way to check this on GitHub's real data) — are left out and
+# logged, on open, closed and merged PRs and issues alike. A fork's PR, or one opened by an unknown account, is not
+# shown at all (its description, diff or checkout). A GraphQL query for comments or reviews is refused: the agents
+# read them through the ways filtered here. Everything else goes to the real gh (AGENT_REAL_GH).
+agent_gh() {
+  set +e   # each failure is handled where it happens
+
+real=${AGENT_REAL_GH:-}
+[[ -n $real && -x $real ]] || { echo "agent-gh: the real gh is not known (AGENT_REAL_GH)" >&2; exit 127; }
+trusted_json=$(printf '%s' "${AGENT_GITHUB_TRUSTED_RESOLVED:-}" | jq -Rc 'split(" ") | map(select(. != ""))')
+LOG="${AGENTS_HOME:-$HOME/agents}/logs/agent.jsonl"
+
+# log event message key=value… — one warning line in the agents' log, as bin/agent writes them
+gh_log() {
+  local ev=$1 msg=$2; shift 2
+  jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg ev "$ev" --arg msg "$msg" \
+    '{ts: $ts, level: "warn", component: "agent-gh", event: $ev, message: $msg}
+     + ([$ARGS.positional[] | capture("^(?<k>[^=]+)=(?<v>.*)$"; "s") | {(.k): .v}] | add // {})' --args "$@" >> "$LOG" \
+    || echo "agent-gh: cannot write the log $LOG" >&2
+}
+
+# who wrote an entry; whether a trusted account marked it to be ignored; whether it is from a trusted account; kept
+JQDEF='def who: (.author.login // .user.login // "");
+def marked: ((.body // "") | test("^\\s*ignore this mate"; "i"));
+def trusted: (who as $w | $t | index($w)) != null;
+def keep: trusted and (marked | not);
+def entries: if type == "array" then .[]
+  elif type == "object" and has("body") and (has("user") or has("author")) and (has("comments") | not) then .
+  elif type == "object" then (.comments // [])[], (.reviews // [])[], (.latestReviews // [])[]
+  else empty end;'
+
+# report json — logs each comment or review that is left out
+gh_report() {
+  local kind author id
+  while IFS=$'\t' read -r kind author id; do
+    if [[ $kind == unknown ]]; then
+      gh_log github_comment_ignored "there is unknown comment from unknown user and it's ignored" "author=$author" "id=$id"
+    else
+      gh_log github_comment_marked_ignored "a comment that begins with \"ignore this mate\" is ignored" "author=$author" "id=$id"
+    fi
+  done < <(jq -r --argjson t "$trusted_json" "$JQDEF"'
+    entries | select(keep | not) | [(if trusted then "marked" else "unknown" end), who, ((.id // .databaseId // "") | tostring)] | @tsv' <<< "$1")
+}
+
+# filter json — the same JSON without what is left out
+gh_filter() {
+  jq -c --argjson t "$trusted_json" "$JQDEF"'
+    if type == "array" then map(select(keep))
+    elif type == "object" and has("body") and (has("user") or has("author")) and (has("comments") | not) then (if keep then . else empty end)
+    elif type == "object" then
+      (if has("comments") then .comments |= map(select(keep)) else . end)
+      | (if has("reviews") then .reviews |= map(select(keep)) else . end)
+      | (if has("latestReviews") then .latestReviews |= map(select(keep)) else . end)
+    else . end' <<< "$1"
+}
+
+# show json jq-expression — the filtered JSON, through the caller's --jq if any
+gh_show() {
+  if [[ -n $2 ]]; then jq -r "$2" <<< "$1"; else printf '%s\n' "$1"; fi
+}
+
+if [[ ${1:-} == api ]]; then
+  shift
+  args=() jqexpr="" path=""
+  while (($#)); do
+    case $1 in
+      --jq|-q) jqexpr=${2:-}; shift 2 ;;
+      --jq=*) jqexpr=${1#--jq=}; shift ;;
+      -t|--template|--template=*) echo "agent-gh: --template is not available to the agents; use --jq" >&2; exit 2 ;;
+      *) if [[ -z $path && $1 != -* ]]; then path=$1; fi; args+=("$1"); shift ;;
+    esac
+  done
+  if [[ $path == graphql ]]; then
+    if [[ " ${args[*]} " =~ (comments|reviews|reviewThreads|timelineItems|body) ]]; then
+      gh_log github_graphql_refused "a GraphQL query for comments, reviews or bodies is refused: the agents read them through gh pr view --json or gh api …/comments"
+      echo "agent-gh: a GraphQL query for comments, reviews or bodies is refused — use gh pr view --json comments,reviews or gh api …/comments" >&2
+      exit 1
+    fi
+  elif [[ $path =~ (^|/)(issues|pulls)/([0-9]+/)?(comments|reviews)(/|$|\?) || $path =~ /reviews/[0-9]+/comments ]]; then
+    out=$("$real" api "${args[@]}") || exit $?
+    out=$(jq -sc 'if length == 1 then .[0] elif all(.[]; type == "array") then add else .[0] end' <<< "$out")   # --paginate
+    gh_report "$out"
+    gh_show "$(gh_filter "$out")" "$jqexpr"
+    exit 0
+  fi
+  if [[ -n $jqexpr ]]; then exec "$real" api "${args[@]}" --jq "$jqexpr"; fi
+  exec "$real" api "${args[@]}"
+fi
+
+if [[ ${1:-} == pr || ${1:-} == issue ]] && [[ ${2:-} == view || ${2:-} == diff || ${2:-} == checkout ]]; then
+  kind=$1 verb=$2
+  shift 2
+  pos=() rest=() jsonf="" jqexpr="" comments=0
+  while (($#)); do
+    case $1 in
+      --json) jsonf=${2:-}; shift 2 ;;
+      --json=*) jsonf=${1#--json=}; shift ;;
+      --jq|-q) jqexpr=${2:-}; shift 2 ;;
+      --jq=*) jqexpr=${1#--jq=}; shift ;;
+      -t|--template|--template=*) echo "agent-gh: --template is not available to the agents; use --jq" >&2; exit 2 ;;
+      -c|--comments) comments=1; shift ;;
+      -R|--repo) rest+=("$1" "${2:-}"); shift 2 ;;
+      -*) rest+=("$1"); shift ;;
+      *) pos+=("$1"); shift ;;
+    esac
+  done
+  idf=author
+  [[ $kind == issue ]] || idf=author,isCrossRepository
+  who=$("$real" "$kind" view "${pos[@]}" "${rest[@]}" --json "$idf") || exit $?
+  if ! jq -e --argjson t "$trusted_json" '((.isCrossRepository // false) | not) and (((.author.login // "") as $a | $t | index($a)) != null)' <<< "$who" > /dev/null; then
+    gh_log pr_untrusted_ignored "a $kind from a fork or opened by an unknown account is not shown to the agents" \
+      "author=$(jq -r '.author.login // ""' <<< "$who")" "cross_repository=$(jq -r '.isCrossRepository // false' <<< "$who")" "ref=${pos[*]}"
+    echo "agent-gh: this $kind is from a fork or opened by an account that is not trusted — it is not shown" >&2
+    exit 1
+  fi
+  if [[ $verb != view ]]; then exec "$real" "$kind" "$verb" "${pos[@]}" "${rest[@]}"; fi
+  if [[ -n $jsonf ]]; then
+    out=$("$real" "$kind" view "${pos[@]}" "${rest[@]}" --json "$jsonf") || exit $?
+    gh_report "$out"
+    gh_show "$(gh_filter "$out")" "$jqexpr"
+    exit 0
+  fi
+  if ((comments)); then
+    "$real" "$kind" view "${pos[@]}" "${rest[@]}" || exit $?   # its description: a trusted account's
+    cf=comments
+    [[ $kind == issue ]] || cf=comments,reviews
+    out=$("$real" "$kind" view "${pos[@]}" "${rest[@]}" --json "$cf") || exit $?
+    gh_report "$out"
+    printf '\n-- comments and reviews (the trusted accounts'"'"' only) --\n'
+    jq -r '[(.comments // [])[], (.reviews // [])[] | select((.body // "") != "")] | .[] | "\(.author.login // .user.login): \(.body)\n"' <<< "$(gh_filter "$out")"
+    exit 0
+  fi
+  exec "$real" "$kind" view "${pos[@]}" "${rest[@]}"
+fi
+
+exec "$real" "$@"
+}
+if [[ ${0##*/} == gh ]]; then agent_gh "$@"; exit $?; fi
+
 AGENTS_HOME="${AGENTS_HOME:-$HOME/agents}"
 CONF="$AGENTS_HOME/agents.conf"
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
@@ -882,14 +1023,14 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
   printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
 }
 
-# agents_gh_env — the agents' CLI gets bin/agent-gh as its gh (first on its PATH): text on GitHub reaches it only from
+# agents_gh_env — the agents' CLI gets this script as its gh (a link named gh, first on its PATH: agent_gh): text on GitHub reaches it only from
 # the trusted accounts. AGENT_REAL_GH is the real gh; without gh there is nothing to put in front of
 agents_gh_env() {
   local real dir="$AGENTS_HOME/run/gh-trusted"
   real=$(command -v gh) || { log_warn agents_gh_missing "task=${RUNNER_ID:-}"; return 0; }
   [[ $real != "$dir/gh" ]] || real=${AGENT_REAL_GH:-}   # set already in this process
-  [[ -n $real && -x $(dirname "$SELF")/agent-gh ]] || return 1
-  mkdir -p "$dir" && ln -sfn "$(dirname "$SELF")/agent-gh" "$dir/gh" || return 1
+  [[ -n $real ]] || return 1
+  mkdir -p "$dir" && ln -sfn "$SELF" "$dir/gh" || return 1   # agent run as gh is the filter (agent_gh)
   export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED
   AGENT_GITHUB_TRUSTED_RESOLVED=$(github_trusted "${REPO_ROOT:-.}")
   [[ :$PATH: == *":$dir:"* ]] || export PATH="$dir:$PATH"
@@ -2872,7 +3013,7 @@ cmd__runner() {
   while :; do
     prog=$(activity_progress "$id")
     RC=0 FINAL="" HUNG=0
-    agents_gh_env || die "the agents' gh (bin/agent-gh) could not be set up: no run without it"
+    agents_gh_env || die "the agents' gh (agent as gh) could not be set up: no run without it"
     case $TYPE in
       claude) run_claude "$id" "$mode" "$nrun" "$pf" "$dir" ;;
       codex)  run_codex  "$id" "$mode" "$nrun" "$pf" "$dir" ;;

@@ -225,7 +225,7 @@ merges only the commit that passed its checks and both reviews (`--match-head-co
 the merge.
 
 **What the agents read on GitHub.** Only the trusted accounts (`AGENT_GITHUB_TRUSTED`) may steer the agents. Their
-CLI gets `agent-gh` as `gh` (installed next to `agent`): comments and reviews by anyone else — on open, closed and
+CLI gets `agent` itself as `gh` (a link named `gh`, first on its `PATH`, filters what it reads): comments and reviews by anyone else — on open, closed and
 merged PRs and issues alike — are left out and logged (`github_comment_ignored`: "there is unknown comment from
 unknown user and it's ignored"), and so are the trusted accounts' own that begin with "ignore this mate", a way to
 check it on GitHub's real data (`github_comment_marked_ignored`). A fork's PR, or one opened by another account, is
