@@ -7,7 +7,7 @@
 </div>
 <nav class="tabs" aria-label="Sections">{{$cur := .Tab}}{{$id := .T.ID}}{{range .Tabs}}<a href="/task/{{$id}}?tab={{.Key}}"{{if eq .Key $cur}} aria-current="page"{{end}}>{{.Value}}</a>{{end}}</nav>
 {{if eq .Tab "activity"}}
-  <div hx-ext="sse" sse-connect="/events/task/{{.T.ID}}?offset={{.ActOffset}}">
+  <div hx-ext="sse" sse-connect="/events/task/{{.T.ID}}?offset={{.ActOffset}}{{if .T.Node}}&amp;cursor={{.ActCursor}}{{end}}">
     <p class="dim live-head" sse-swap="head"></p>
     <ol class="acts" sse-swap="act" hx-swap="beforeend">{{range .Acts}}{{template "act-item" .}}{{else}}<li class="dim">(no activity yet)</li>{{end}}</ol>
   </div>

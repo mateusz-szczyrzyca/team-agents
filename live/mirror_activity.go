@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 )
@@ -52,6 +54,36 @@ func (c *mirrorActivityCursor) baseline(path string, off int64) {
 			break
 		}
 		c.previous = append(c.previous, line)
+	}
+}
+
+// token identifies the last complete raw line consumed from the generation rendered on the page.
+// "start" represents an empty or not-yet-created log, so its first batch is never skipped.
+func (c *mirrorActivityCursor) token() string {
+	if len(c.previous) == 0 {
+		return "start"
+	}
+	return mirrorActivityToken(c.previous[len(c.previous)-1])
+}
+
+// mirrorActivityToken hashes all event fields, preserving timestamps and unknown fields in the handoff.
+func mirrorActivityToken(line string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(line)))
+}
+
+// resume binds a page's content cursor to the current tail. If its boundary has rolled out,
+// replay the available tail rather than consuming unseen records using an obsolete byte offset.
+func (c *mirrorActivityCursor) resume(path, token string) {
+	c.previous = nil
+	lines, ok := mirrorActivityLines(path)
+	if !ok {
+		return
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if mirrorActivityToken(lines[i]) == token {
+			c.previous = lines[:i+1]
+			return
+		}
 	}
 }
 

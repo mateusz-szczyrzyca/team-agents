@@ -685,6 +685,12 @@ func (w *Watcher) newActivity(t *Task, fromStart bool) []Activity {
 // Poll loads a new snapshot and returns the events since the previous one.
 func (w *Watcher) Poll() (*Snapshot, []Event) {
 	cur := loadSnapshot(w.home, w.busDir, w.nodeTTL)
+	// Mirror retention removes tasks from disk; their bounded tails must leave the watcher too.
+	for id := range w.mirrorCursors {
+		if task := cur.All[id]; task == nil || task.Node == "" {
+			delete(w.mirrorCursors, id)
+		}
+	}
 	now := cur.At
 	var ev []Event
 	if w.prev == nil {

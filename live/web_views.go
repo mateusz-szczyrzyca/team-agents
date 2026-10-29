@@ -503,6 +503,7 @@ type taskData struct {
 	Tabs      []kv       // the sections (Key = key, Value = label)
 	Paused    string     // pause description (paused tasks)
 	Acts      []actRow   // activity (tab activity)
+	ActCursor string     // mirror content cursor from the same generation rendered in Acts
 	ActOffset int64      // size of activity.jsonl when rendered (the stream continues from there)
 	Files     []fileText // prompts, question rounds or error logs (other tabs)
 	Invs      []invRow   // investigations of the task (tab investigations)
@@ -550,11 +551,22 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 	}
 	switch tab {
 	case "activity":
-		for _, a := range readActivity(t.Dir, 500) {
-			d.Acts = append(d.Acts, actRow{TS: shortTS(a.TS), Icon: actIcon(a.Kind), Kind: a.Kind, Text: a.Text})
+		var activities []Activity
+		if t.Node != "" {
+			cursor := &mirrorActivityCursor{}
+			activities = cursor.read(filepath.Join(t.Dir, "activity.jsonl"))
+			d.ActCursor = cursor.token()
+			if len(activities) > 500 {
+				activities = activities[len(activities)-500:]
+			}
+		} else {
+			activities = readActivity(t.Dir, 500)
+			if st, err := os.Stat(filepath.Join(t.Dir, "activity.jsonl")); err == nil {
+				d.ActOffset = st.Size()
+			}
 		}
-		if st, err := os.Stat(filepath.Join(t.Dir, "activity.jsonl")); err == nil {
-			d.ActOffset = st.Size()
+		for _, a := range activities {
+			d.Acts = append(d.Acts, actRow{TS: shortTS(a.TS), Icon: actIcon(a.Kind), Kind: a.Kind, Text: a.Text})
 		}
 	case "prompt":
 		if t.Node != "" {
@@ -678,7 +690,12 @@ func (s *webServer) streamTask(w http.ResponseWriter, r *http.Request) {
 	var mirrorCursor *mirrorActivityCursor
 	if t.Node != "" {
 		mirrorCursor = &mirrorActivityCursor{}
-		mirrorCursor.baseline(path, off)
+		if token := r.URL.Query().Get("cursor"); token != "" {
+			mirrorCursor.resume(path, token)
+		} else {
+			// Older open pages and direct clients retain the existing offset interface.
+			mirrorCursor.baseline(path, off)
+		}
 	}
 	f, ok := sseStream(w)
 	if !ok {
