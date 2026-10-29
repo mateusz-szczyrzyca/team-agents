@@ -3091,6 +3091,9 @@ cmd__runner() {
   trap 'runner_exit $?' EXIT
   trap 'exit 143' TERM INT HUP
   rm -f "$dir/stop-requested"
+  # the boot ID before the run shows as running: a later boot ID means its machine restarted under this run, and a run
+  # seen as running without one would be taken for a dead runner after a restart at its very start
+  meta_set "$id" RUN_BOOT "$(boot_id)"
   meta_set "$id" STATUS running
   # for the wake-loop guard: when the run started, the commit it started from, the agent's bus messages so far
   local run_start run_head0 run_msgs0
@@ -3112,7 +3115,6 @@ cmd__runner() {
   meta_set "$id" WAKE_PENDING ""
   meta_set "$id" RESTART_PENDING ""
   meta_set "$id" ABOUNCE_PENDING ""
-  meta_set "$id" RUN_BOOT "$(boot_id)"   # a later boot ID means its machine restarted under this run
   meta_set "$id" BOUNCE_PENDING ""
   meta_set "$id" QBOUNCE_PENDING ""
   meta_set "$id" SBOUNCE_PENDING ""
