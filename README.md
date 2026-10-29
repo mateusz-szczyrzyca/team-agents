@@ -219,8 +219,23 @@ failed, hung or was stopped, or its investigator's provider is out of quota — 
 other review asking for changes the fix pass goes on with its findings; with the other ready to merge it is done
 again, once, by another free investigator (one out of quota is not chosen until its reset), and only then comes
 to you. A team closed because all its members finished — its coordinator out — goes to review too. A spent budget
-("Workspace monthly budget … exceeded") is a quota pause until its reset, also given as an ISO time. On the lead a
-remote member's pause shows with its reason, and its failure with the CLI's exit code and last error line.
+("Workspace monthly budget … exceeded") is a quota pause until its reset, also given as an ISO time. A local error of
+the machine (out of processes or memory, a unix socket) is no provider's limit nor a network failure. On the lead a
+remote member's pause shows with its reason, and its failure with the CLI's exit code and last error line. It
+merges only the commit that passed its checks and both reviews (`--match-head-commit`): anything pushed since stops
+the merge. What it does for a round shows on the dashboard as its coordinator's stage (⚙): the checks, with the gate's
+progress ("make gate — 2 of 6 steps passed"), the two reviews and their verdicts, the merge, the next round — or
+"waits for you: …" where you decide.
+
+**What the agents read on GitHub.** Only the trusted accounts (`AGENT_GITHUB_TRUSTED`) may steer the agents. Their
+CLI gets `agent` itself as `gh` (a link named `gh`, first on its `PATH`, filters what it reads): comments and reviews by anyone else — on open, closed and
+merged PRs and issues alike — are left out and logged (`github_comment_ignored`: "there is unknown comment from
+unknown user and it's ignored"), and so are the trusted accounts' own that begin with "ignore this mate", a way to
+check it on GitHub's real data (`github_comment_marked_ignored`). A fork's PR, or one opened by another account, is
+not shown at all; `gh pr list` and `gh issue list` give only the trusted accounts' PRs and issues (each left out is
+logged too); and a GraphQL query for comments or reviews is refused. This keeps other people's text from
+reaching an agent; it does not hold back an agent that bypasses `gh` with its token, so limit who may comment
+(the repository's interaction limits) and what the agents' token may do (a fine-grained token for this repository).
 
 **The fix loop.** When the review finds critical or major problems, the team is woken with them: the review is
 added to its task ("Fix pass 1 of 2"), it fixes them (or disputes one on the PR) and finishes again — and the PR
@@ -514,9 +529,11 @@ Then:
 | `AGENT_RELEASE_PAUSE_MIN`, `AGENT_SUPERVISE_GRACE_SEC` | a team member paused longer than this gives its board items back (default 20 min); how young a run may be before `agent _supervise` checks its unit (default 120 s) |
 | `AGENT_RATE_LIMIT_PAUSE_MIN`, `AGENT_LIMIT_TAIL_LINES` | pause after a rate limit (HTTP 429) without a time (default 5 min); how many last lines of stderr are read for provider limits (default 30) |
 | `AGENT_NETWORK_PAUSE_MIN`, `AGENT_NETWORK_MAX_PAUSES` | a run that ends because the network or the provider's host is unreachable (DNS, a refused or reset connection, a timeout) pauses the task this many minutes, then goes on (15); this many such pauses in consecutive runs fail it, with the reason (12) |
+| `AGENT_GITHUB_TRUSTED` | the GitHub accounts whose PRs are a round's and whose texts the agents take for more than data, space-separated; by default the repository's owner and the account `gh` is logged in as. A fork's PR with a round's branch name, or one opened by another account, is ignored (logged as `pr_untrusted_ignored`) |
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
 | `VERIFY_MAX_FIX_PASSES`, `AGENT_HUMAN_GITHUB` | how many times a `--verify` review wakes the team to fix critical or major problems (default 2); who is then mentioned on the PR (default: the repository's GitHub owner) |
 | `AGENT_REVIEW_GATE`, `AGENT_REVIEW_GATE_MIN`, `AGENT_PRECHECK_MAX` | before a `--verify`/`--autopilot` review, the command a round's head must pass (`auto`: `make gate` where the repository has it; `off`: none), its time limit in minutes (30), and how many times a round goes back for its gate or its missing tests before you decide (2) |
+| `AGENT_STAGE_POLL_SEC` | how often the gate's progress before a review is written to the coordinator's task, for the dashboard (2 seconds) |
 | `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) — the team reports of the protocol (`.agents/reports/`) are never counted, whatever it says |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
@@ -809,6 +826,8 @@ beyond the configured timeout (`NODE_TTL_SEC`, default `90s`), its tasks and das
 while preserving their last-known state and metadata. In this round, mirrored tasks are display-only on the lead:
 stopping and question answering cannot be performed from the lead web interface or terminal panel (actions are
 safely rejected or hidden); questions are answered on the worker node.
+Activity streams replay available records when repeated entries make a bounded-tail replacement ambiguous.
+An unchanged tail is consumed once; uncertain replacements can repeat previously displayed activity.
 A lead with no nodes has no remote agent rows.
 
 **Remote team members.** A node's agent can be a full member of a team on the lead — on its board, in its

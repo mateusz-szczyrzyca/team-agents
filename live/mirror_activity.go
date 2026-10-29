@@ -104,7 +104,7 @@ func (c *mirrorActivityCursor) resume(path, token string) {
 	}
 }
 
-// mirrorActivityOverlap finds the longest old suffix matching the new prefix in linear time.
+// mirrorActivityOverlap finds a content overlap in linear time, replaying repeated old boundaries.
 // Comparing raw lines preserves repeated text with distinct timestamps and unknown fields.
 func mirrorActivityOverlap(previous, next []string) int {
 	if len(next) == 0 {
@@ -132,7 +132,25 @@ func mirrorActivityOverlap(previous, next []string) int {
 			matched++
 		}
 	}
-	return matched
+	if matched == 0 || matched == len(previous) {
+		return matched
+	}
+	// An overlap repeated earlier in the old tail may instead be a new occurrence
+	// after complete rollover. Replay that ambiguous prefix so it remains visible.
+	overlap := matched
+	matched = 0
+	for _, line := range previous[:len(previous)-1] {
+		for matched > 0 && line != next[matched] {
+			matched = prefix[matched-1]
+		}
+		if line == next[matched] {
+			matched++
+		}
+		if matched == overlap {
+			return 0
+		}
+	}
+	return overlap
 }
 
 // read emits the new complete events; without overlap it emits the whole available tail.

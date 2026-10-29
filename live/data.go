@@ -41,6 +41,7 @@ type Task struct {
 	InvID       string    // investigations: the investigation number
 	ParentTask  string    // investigations/helpers: the task they work for
 	FromAgent   string    // investigations/helpers: the requesting agent
+	AutoStage   string    // what --verify/--autopilot does for the round now, on its coordinator's task (AUTO_STAGE)
 	Team        string    // team ID ("" for a solo task)
 	HelperID    string    // helpers: the worker request number
 	Tier        string    // normal | worker
@@ -459,7 +460,7 @@ func loadSnapshot(home, busDir string, nodeTTL ...time.Duration) *Snapshot {
 			ID: m["ID"], Agent: m["AGENT"], Kind: m["KIND"], Type: m["TYPE"], Model: m["MODEL"],
 			Repo: m["REPO_NAME"], Branch: m["BRANCH"], Worktree: m["WORKTREE"], Status: m["STATUS"],
 			InvID: m["INV_ID"], ParentTask: m["PARENT_TASK"], FromAgent: m["FROM_AGENT"], Team: m["TEAM"], HelperID: m["HELPER_ID"], Tier: m["TIER"],
-			JobID: m["JOB_ID"], JobLead: m["JOB_LEAD"],
+			JobID: m["JOB_ID"], JobLead: m["JOB_LEAD"], AutoStage: m["AUTO_STAGE"],
 			Created: parseTime(m["CREATED"]), Finished: parseTime(m["FINISHED"]), Dir: dir,
 		}
 		if t.Kind == "" {

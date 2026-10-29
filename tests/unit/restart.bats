@@ -70,3 +70,19 @@ first_boot() {
   wait_status "$t" 'done'
   grep -qi 'restart' "$AGENTS_HOME/tasks/$t/prompt-2.md"
 }
+
+@test "a run's boot ID is kept before the run shows as running: a restart at its very start is not taken for a dead runner" {
+  export AGENT_BOOT_ID_FILE="$BATS_TEST_TMPDIR/boot_id"
+  mkfifo "$AGENT_BOOT_ID_FILE"   # reading it waits for the test: a runner that reads it holds there
+  scenario '{"solo": {"new": "hang"}}'
+  agent run solo "a task"
+  t=$(task_of solo)
+  sleep 3   # the runner has started and waits for the boot ID
+  [ "$(meta "$t" STATUS)" != running ]   # not running yet: without its boot ID a restart would look like a death
+  echo boot-first > "$AGENT_BOOT_ID_FILE" &   # one boot ID for the one read at the run's start
+  wait_status "$t" running
+  rm -f "$AGENT_BOOT_ID_FILE"
+  echo boot-first > "$AGENT_BOOT_ID_FILE"   # a plain file again for whatever reads it later
+  [ "$(meta "$t" RUN_BOOT)" = boot-first ]
+  agent stop "$t" > /dev/null
+}

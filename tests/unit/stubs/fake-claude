@@ -14,14 +14,15 @@ Actions:
   questions-norec writes a questions file without recommendations, STATUS: QUESTIONS
   review-majors   a --verify review result with two major findings, STATUS: DONE
   review-ready    a review with no findings and VERDICT: ready-to-merge, STATUS: DONE
+  review-ready-slow  as review-ready, after six seconds
   review-fixes    a review with one major finding and VERDICT: needs-fixes, STATUS: DONE
   big-report      commits a 3500-line report under .agents/reports/ and one small file, STATUS: DONE
   remote-hello    sends "hello from node2" to the coordinator "lead" over the bus, STATUS: SLEEPING
-  team-lead-wait  claims the coordinator role and sleeps, keeping the team open (STATUS: SLEEPING)
+  team-lead-wait  claims the coordinator role, reads its messages and sleeps, keeping the team open (STATUS: SLEEPING)
   capacity        exits 1: "Selected model is at capacity" (the provider is overloaded)
   budget-spent    exits 1: the workspace budget is spent, it resets in three days (an ISO time)
+  which-gh        DONE with the gh it finds on PATH and AGENT_GITHUB_TRUSTED_RESOLVED
   kill-group      sends SIGTERM to its own process group (a CLI cleaning up its children), exits
-  budget-spent    exits 1: the workspace budget is spent, it resets in three days (an ISO time)
   cli-error       exits 1 with an error line on stderr ("Error: invalid argument --frobnicate")
   network-down    exits 1: a network issue — the provider's host cannot be resolved (DNS i/o timeout), retryable
   team-lead-crash claims the coordinator role, then the CLI fails (exit 1, no STATUS)
@@ -38,7 +39,7 @@ Actions:
   hang            sleeps without output (the watchdog must kill it)
   sleep:N         works silently for N seconds, then DONE
   team-lead-done  claim_lead, checkpoint, tell the team, STATUS: DONE
-  team-sleep      claim_lead (fails for non-leads), STATUS: SLEEPING
+  team-sleep      claim_lead (fails for non-leads), reads its messages, STATUS: SLEEPING
   team-lead-wait-read, team-sleep-read  as team-lead-wait / team-sleep, reading their messages first (they stay asleep)
   team-lead-slow  claim_lead, work for 5 s, close the team, STATUS: DONE
 The agent's MCP config (--mcp-config) is used to call agentbus tools.
@@ -126,6 +127,10 @@ if action == "budget-spent":
     print("Workspace monthly budget of $200.00 exceeded. Contact your org admin. $200.18 of $200.00 used; resets "
           + reset + ".", file=sys.stderr)
     sys.exit(1)
+if action == "which-gh":
+    # which gh the agent gets, and whom it trusts
+    import shutil
+    finish("STATUS: DONE\ngh=" + (shutil.which("gh") or "") + " trusted=" + os.environ.get("AGENT_GITHUB_TRUSTED_RESOLVED", ""))
 if action == "kill-group":
     # a CLI that, on its way out, sends SIGTERM to its whole process group (as some CLIs clean up their children)
     import signal
@@ -170,6 +175,9 @@ if action == "claim-rate-limit":
     claim_one()
     print("APIError: 429 Too Many Requests: rate limit exceeded", file=sys.stderr)
     sys.exit(1)
+if action == "review-ready-slow":   # as review-ready, after six seconds (a review that takes its time)
+    time.sleep(6)
+    action = "review-ready"
 if action == "review-ready":
     finish("Answer: the PR can be merged.\nProblems: critical 0, major 0, minor 0\n\nVERDICT: ready-to-merge\nSTATUS: DONE")
 if action == "review-fixes":
@@ -252,8 +260,10 @@ if action == "tool-done":
     call("list_agents")
     finish("STATUS: DONE")
 if action == "team-lead-wait":
-    # a coordinator that keeps its team open: it claims the role and sleeps (woken by its members' messages)
+    # a coordinator that keeps its team open: it claims the role and sleeps (woken by its members' messages); as an
+    # agent does before it sleeps, it reads what it was sent, which then no longer wakes it
     call("claim_lead")
+    call("read_messages")
     finish("Coordinating; waiting for the members.\nSTATUS: SLEEPING\nRole: coordinator")
 if action == "team-lead-slow":
     call("claim_lead")
@@ -274,5 +284,6 @@ if action == "team-sleep-read":
 if action == "team-sleep":
     time.sleep(1)
     call("claim_lead")
+    call("read_messages")   # as an agent does before it sleeps: what it was sent is read, and no longer wakes it
     finish("STATUS: SLEEPING")
 finish("STATUS: DONE\nDone: everything")
