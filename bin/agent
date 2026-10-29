@@ -882,8 +882,35 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
   printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
 }
 
-pr_format_issues() { # body — what a PR description writes against the GitHub conventions, one item per line
-  : # not implemented yet: tests/unit/github_format.bats comes first
+pr_format_issues() { # body [repo-url] — what a PR description writes against the GitHub conventions, one item per
+  # line: a commit or a PR in code format without a link (GitHub links neither inside backticks), a code block that
+  # does not name its language, RED or GREEN as plain words. Nothing inside code blocks is checked.
+  local body=$1 url=${2:-https://github.com/<owner>/<repo>} line fence=0 lang rest m
+  local re_sha='(^|[^[])`([0-9a-f]{7,40})`(.*)$' re_pr='(^|[^[])`#([0-9]+)`(.*)$' re_tdd='(^|[^a-zA-Z{])(\*\*)?(RED|GREEN)(\*\*)?:'
+  while IFS= read -r line; do
+    if [[ $line =~ ^[[:space:]]*\`\`\`(.*)$ ]]; then
+      if ((fence)); then fence=0; continue; fi
+      fence=1
+      lang=${BASH_REMATCH[1]//[[:space:]]/}
+      [[ -n $lang ]] || printf 'a code block without its language: open it with ```go, ```bash, ```json…\n'
+      continue
+    fi
+    ((fence == 0)) || continue
+    rest=$line
+    while [[ $rest =~ $re_sha ]]; do
+      m=${BASH_REMATCH[2]}; rest=${BASH_REMATCH[3]}
+      [[ $m == *[a-f]* ]] || continue   # digits only: a number, not a commit
+      printf 'commit `%s` without a link: write [`%s`](%s/commit/<its full SHA>)\n' "$m" "${m:0:7}" "$url"
+    done
+    rest=$line
+    while [[ $rest =~ $re_pr ]]; do
+      m=${BASH_REMATCH[2]}; rest=${BASH_REMATCH[3]}
+      printf 'PR `#%s` without a link: write [#%s](%s/pull/%s)\n' "$m" "$m" "$url" "$m"
+    done
+    if [[ $line =~ $re_tdd && $line != *'\color'* ]]; then
+      printf '%s as a plain word: write $\\color{red}{\\textbf{RED}}$ and $\\color{green}{\\textbf{GREEN}}$ (bold, in colour)\n' "${BASH_REMATCH[3]}"
+    fi
+  done <<< "$body"
 }
 
 merge_blockers() { # repo base head round-tests — what keeps --autopilot from merging by itself, one reason per line
@@ -1067,6 +1094,20 @@ review_precheck() { # coordinator task id — before a review: the round's head 
   tc=$(round_test_changes "$root" "$mb" "$head")
   meta_set "$id" ROUND_TESTS "$tc"
   [[ $tc != "code=1 added=0 "* ]] || why="the round changes code but adds no test — every change of behaviour needs its test, written first"
+  local format_bounce pr_url body issues
+  format_bounce=$(task_field "$id" FORMAT_BOUNCED)
+  if [[ -z $why && $format_bounce != 1 ]]; then   # the PR description's form, once a round
+    pr_url=$(cd "$root" && gh pr list --head "$branch" --state open --json url | jq -r '.[0].url // empty') || pr_url=""
+    if [[ -n $pr_url ]]; then
+      body=$(cd "$root" && gh pr view "$pr_url" --json body --jq .body) || body=""
+      issues=$(pr_format_issues "$body" "$(github_repo_url "$root")")
+      if [[ -n $issues ]]; then
+        why="the PR description does not follow the conventions for texts on GitHub (sent back once) — fix:
+$issues"
+        format_bounce=1
+      fi
+    fi
+  fi
   gate=$(review_gate_cmd "$root")
   if [[ -z $why && -n $gate ]]; then
     wt=$(mktemp -d)
@@ -1087,7 +1128,8 @@ $(tail -n 40 "$TASKS/$id/precheck.log")
   if ((pass < AGENT_PRECHECK_MAX)); then
     args=(run --resume "$ref" --same-round)
     if [[ $(task_field "$id" AUTOPILOT) == 1 ]]; then args+=(--autopilot); else args+=(--verify); fi
-    if out=$(cd "$root" && AGENT_PRECHECK_PASS=$((pass + 1)) AGENT_FIX_PASS=$(task_field "$id" FIX_PASS) "$SELF" "${args[@]}" \
+    if out=$(cd "$root" && AGENT_PRECHECK_PASS=$((pass + 1)) AGENT_FIX_PASS=$(task_field "$id" FIX_PASS) \
+         AGENT_FORMAT_BOUNCED=$format_bounce "$SELF" "${args[@]}" \
          "Not reviewed yet ($((pass + 1)) of $AGENT_PRECHECK_MAX): $why
 Fix it on the same branches and finish as before; the round goes to review once its head passes." </dev/null 2>&1); then
       act "$id" info "before the review: the team goes on ($((pass + 1)) of $AGENT_PRECHECK_MAX) — ${why:0:120}"
@@ -1751,7 +1793,7 @@ build_prompt() { # id mode qfile next_round
   local id=$1 mode=$2 qfile=$3 next_round=$4
   declare -gA R=(
     [AGENT]=$AGENT [AGENT_TYPE]=$TYPE [TASK_ID]=$id [REPO]=$REPO_NAME
-    [WORKTREE]=$WORKTREE [BRANCH]=$BRANCH [BASE]=$BASE
+    [WORKTREE]=$WORKTREE [BRANCH]=$BRANCH [BASE]=$BASE [REPO_URL]="$(github_repo_url "$REPO_ROOT")"
     [HARDWARE_FILE]="$ENV_NOTES_FILE" [PEERS]="$(peers_list)" [LANGUAGE]="$AGENT_LANGUAGE"
     [REPO_LANGUAGE]="$REPO_LANGUAGE" [COMMIT_TRAILERS]="$(commit_trailers "$id")"
     [GIT_NAME]="${GIT_NAME_FORMAT//%a/$AGENT}" [ATTRIBUTION]="\`$AGENT\` ($TYPE${MODEL:+, model $MODEL})"
@@ -3417,7 +3459,8 @@ resume_run() {
               "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" "RESUMED_FROM=$old" "FIX_PASS=${AGENT_FIX_PASS:-0}" \
               "VERIFY=$( ((verify)) && echo 1 || task_field "$old" VERIFY)" \
               "AUTOPILOT=$( ((${autopilot:-0})) && echo 1 || task_field "$old" AUTOPILOT)" "PRECHECK_PASS=${AGENT_PRECHECK_PASS:-0}" \
-              "AUTOPILOT_OFF=$( ((${autopilot:-0})) || task_field "$old" AUTOPILOT_OFF)"; do
+              "AUTOPILOT_OFF=$( ((${autopilot:-0})) || task_field "$old" AUTOPILOT_OFF)" \
+              "FORMAT_BOUNCED=${AGENT_FORMAT_BOUNCED:-$( ((fresh)) || task_field "$old" FORMAT_BOUNCED)}"; do
       meta_set "$id" "${kv%%=*}" "${kv#*=}"
     done
     ids+=("$id")
