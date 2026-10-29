@@ -1536,7 +1536,7 @@ func (s *webServer) viewLogs(w http.ResponseWriter, r *http.Request) {
 		if minLevel != "" && logLevelRank[row.Level] < logLevelRank[minLevel] {
 			continue
 		}
-		if item.node != "" && src != "" && row.Component != "" && row.Component != src {
+		if item.node != "" && row.Component != src {
 			continue
 		}
 		if row.Task != "" {

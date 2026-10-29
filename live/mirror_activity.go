@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // mirrorActivityCursor retains the last complete bounded tail, since sync replaces rather than appends it.
@@ -57,13 +58,25 @@ func (c *mirrorActivityCursor) baseline(path string, off int64) {
 	}
 }
 
-// token identifies the last complete raw line consumed from the generation rendered on the page.
+// token identifies the last complete raw line consumed from the generation rendered on the page,
+// along with its context and occurrence count to guard against repeated events.
 // "start" represents an empty or not-yet-created log, so its first batch is never skipped.
 func (c *mirrorActivityCursor) token() string {
 	if len(c.previous) == 0 {
 		return "start"
 	}
-	return mirrorActivityToken(c.previous[len(c.previous)-1])
+	last := c.previous[len(c.previous)-1]
+	count := 0
+	for _, line := range c.previous {
+		if line == last {
+			count++
+		}
+	}
+	penultHash := "start"
+	if len(c.previous) >= 2 {
+		penultHash = mirrorActivityToken(c.previous[len(c.previous)-2])
+	}
+	return fmt.Sprintf("%s:%s:%d", mirrorActivityToken(last), penultHash, count)
 }
 
 // mirrorActivityToken hashes all event fields, preserving timestamps and unknown fields in the handoff.
@@ -71,17 +84,50 @@ func mirrorActivityToken(line string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(line)))
 }
 
-// resume binds a page's content cursor to the current tail. If its boundary has rolled out,
-// replay the available tail rather than consuming unseen records using an obsolete byte offset.
+// resume binds a page's content cursor to the current tail. If its boundary has rolled out
+// or is ambiguous, replay the available tail rather than consuming unseen records using an obsolete byte offset.
 func (c *mirrorActivityCursor) resume(path, token string) {
 	c.previous = nil
+	if token == "" || token == "start" {
+		return
+	}
 	lines, ok := mirrorActivityLines(path)
 	if !ok {
 		return
 	}
-	for i := len(lines) - 1; i >= 0; i-- {
-		if mirrorActivityToken(lines[i]) == token {
-			c.previous = lines[:i+1]
+	parts := strings.Split(token, ":")
+	hash := parts[0]
+	penultHash := ""
+	if len(parts) >= 2 {
+		penultHash = parts[1]
+	}
+
+	var matches []int
+	for i, line := range lines {
+		if mirrorActivityToken(line) == hash {
+			matches = append(matches, i)
+		}
+	}
+	if len(matches) == 0 {
+		return
+	}
+	if len(matches) == 1 {
+		c.previous = lines[:matches[0]+1]
+		return
+	}
+	if penultHash != "" {
+		var contextMatches []int
+		for _, idx := range matches {
+			if penultHash == "start" {
+				if idx == 0 {
+					contextMatches = append(contextMatches, idx)
+				}
+			} else if idx > 0 && mirrorActivityToken(lines[idx-1]) == penultHash {
+				contextMatches = append(contextMatches, idx)
+			}
+		}
+		if len(contextMatches) == 1 {
+			c.previous = lines[:contextMatches[0]+1]
 			return
 		}
 	}
