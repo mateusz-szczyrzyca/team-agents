@@ -109,6 +109,40 @@ func TestMirrorPageStreamHandoffDuplicateBoundary(t *testing.T) {
 			t.Fatalf("handoff lost unseen event between repeated boundary lines; received: %v", events)
 		}
 	})
+
+	// Subtest 4 (codex-1): A,B on page, replaced with B,C,A,B before SSE. Unseen C must be delivered.
+	t.Run("repeated context with intermediate unseen event", func(t *testing.T) {
+		home := fixture(t)
+		dir := mirrorFixture(t, home)
+		path := filepath.Join(dir, "activity.jsonl")
+		a := mirrorActivityLine(1, "past-a")
+		b := mirrorActivityLine(2, "repeated-b")
+		c := mirrorActivityLine(3, "unseen-c")
+
+		writeFile(t, path, a+b)
+		_, ts := testServer(t, home)
+		_, body := get(t, ts, "/task/T1@node-a")
+		match := regexp.MustCompile(`sse-connect="([^"]+)"`).FindStringSubmatch(body)
+		if len(match) != 2 {
+			t.Fatal("activity page has no stream URL")
+		}
+
+		replaceMirrorActivity(t, path, b+c+a+b)
+		br := openStream(t, ts, html.UnescapeString(match[1]))
+		replaceMirrorActivity(t, path, b+c+a+b+mirrorActivityLine(4, "sentinel"))
+
+		var events []string
+		for {
+			got := readEvent(t, br, "act")
+			events = append(events, got)
+			if strings.Contains(got, "unseen-c") || strings.Contains(got, "sentinel") {
+				break
+			}
+		}
+		if !strings.Contains(events[len(events)-1], "unseen-c") {
+			t.Fatalf("handoff lost unseen event before repeated context; received: %v", events)
+		}
+	})
 }
 
 // TestMirrorLogsComponentlessRemoteFiltered verifies componentless remote records do not bypass src filtering.
