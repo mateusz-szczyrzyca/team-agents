@@ -882,6 +882,19 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
   printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
 }
 
+# agents_gh_env — the agents' CLI gets bin/agent-gh as its gh (first on its PATH): text on GitHub reaches it only from
+# the trusted accounts. AGENT_REAL_GH is the real gh; without gh there is nothing to put in front of
+agents_gh_env() {
+  local real dir="$AGENTS_HOME/run/gh-trusted"
+  real=$(command -v gh) || { log_warn agents_gh_missing "task=${RUNNER_ID:-}"; return 0; }
+  [[ $real != "$dir/gh" ]] || real=${AGENT_REAL_GH:-}   # set already in this process
+  [[ -n $real && -x $(dirname "$SELF")/agent-gh ]] || return 1
+  mkdir -p "$dir" && ln -sfn "$(dirname "$SELF")/agent-gh" "$dir/gh" || return 1
+  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED
+  AGENT_GITHUB_TRUSTED_RESOLVED=$(github_trusted "${REPO_ROOT:-.}")
+  [[ :$PATH: == *":$dir:"* ]] || export PATH="$dir:$PATH"
+}
+
 # github_trusted root — the GitHub accounts whose PRs and texts the round trusts, space-separated: AGENT_GITHUB_TRUSTED,
 # or by default the repository's owner and the account gh is logged in as (the agents')
 github_trusted() {
@@ -897,13 +910,16 @@ github_trusted() {
 # trusted account (github_trusted); the others are logged (pr_untrusted_ignored) and left out
 trusted_prs() {
   local root=$1 branch=$2 state=$3 fields out trusted ignored
-  fields=$(printf '%s,number,isCrossRepository,author' "$4" | tr ',' '\n' | awk 'NF && !seen[$0]++' | paste -sd, -)
+  fields=$(printf '%s,number,isCrossRepository,headRepositoryOwner,author' "$4" | tr ',' '\n' | awk 'NF && !seen[$0]++' | paste -sd, -)
   out=$(cd "$root" && gh pr list --head "$branch" --state "$state" --json "$fields" --limit 20) || return 1
   trusted=$(github_trusted "$root" | jq -R 'split(" ") | map(select(. != ""))')
-  ignored=$(jq -r --argjson t "$trusted" '[.[] | select((.isCrossRepository // false) or ((.author.login // "") as $a | ($t | index($a)) == null))
+  local owner; owner=$(github_owner "$root")   # its head in this repository: not a fork's, whatever GitHub's flag says
+  ignored=$(jq -r --argjson t "$trusted" --arg o "$owner" '[.[] | select((.isCrossRepository // false) or ($o != "" and (.headRepositoryOwner.login // $o) != $o)
+            or ((.author.login // "") as $a | ($t | index($a)) == null))
             | "#\(.number) (\(.author.login // "?"))"] | join(", ")' <<< "$out")
   [[ -z $ignored ]] || log_warn pr_untrusted_ignored "branch=$branch" "prs=$ignored" "trusted=$(jq -r 'join(" ")' <<< "$trusted")"
-  jq -c --argjson t "$trusted" '[.[] | select((.isCrossRepository // false) == false and ((.author.login // "") as $a | ($t | index($a)) != null))]' <<< "$out"
+  jq -c --argjson t "$trusted" --arg o "$owner" '[.[] | select((.isCrossRepository // false) == false and ($o == "" or (.headRepositoryOwner.login // $o) == $o)
+            and ((.author.login // "") as $a | ($t | index($a)) != null))]' <<< "$out"
 }
 
 pr_format_issues() { # body [repo-url] — what a PR description writes against the GitHub conventions, one item per
@@ -2856,6 +2872,7 @@ cmd__runner() {
   while :; do
     prog=$(activity_progress "$id")
     RC=0 FINAL="" HUNG=0
+    agents_gh_env || die "the agents' gh (bin/agent-gh) could not be set up: no run without it"
     case $TYPE in
       claude) run_claude "$id" "$mode" "$nrun" "$pf" "$dir" ;;
       codex)  run_codex  "$id" "$mode" "$nrun" "$pf" "$dir" ;;
