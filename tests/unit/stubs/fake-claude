@@ -14,6 +14,7 @@ Actions:
   questions-norec writes a questions file without recommendations, STATUS: QUESTIONS
   review-majors   a --verify review result with two major findings, STATUS: DONE
   review-ready    a review with no findings and VERDICT: ready-to-merge, STATUS: DONE
+  review-ready-slow  as review-ready, after six seconds
   review-fixes    a review with one major finding and VERDICT: needs-fixes, STATUS: DONE
   big-report      commits a 3500-line report under .agents/reports/ and one small file, STATUS: DONE
   remote-hello    sends "hello from node2" to the coordinator "lead" over the bus, STATUS: SLEEPING
@@ -173,6 +174,9 @@ if action == "claim-rate-limit":
     claim_one()
     print("APIError: 429 Too Many Requests: rate limit exceeded", file=sys.stderr)
     sys.exit(1)
+if action == "review-ready-slow":   # as review-ready, after six seconds (a review that takes its time)
+    time.sleep(6)
+    action = "review-ready"
 if action == "review-ready":
     finish("Answer: the PR can be merged.\nProblems: critical 0, major 0, minor 0\n\nVERDICT: ready-to-merge\nSTATUS: DONE")
 if action == "review-fixes":
