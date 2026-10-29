@@ -19,7 +19,9 @@ Actions:
   remote-hello    sends "hello from node2" to the coordinator "lead" over the bus, STATUS: SLEEPING
   team-lead-wait  claims the coordinator role and sleeps, keeping the team open (STATUS: SLEEPING)
   capacity        exits 1: "Selected model is at capacity" (the provider is overloaded)
+  budget-spent    exits 1: the workspace budget is spent, it resets in three days (an ISO time)
   kill-group      sends SIGTERM to its own process group (a CLI cleaning up its children), exits
+  budget-spent    exits 1: the workspace budget is spent, it resets in three days (an ISO time)
   cli-error       exits 1 with an error line on stderr ("Error: invalid argument --frobnicate")
   network-down    exits 1: a network issue — the provider's host cannot be resolved (DNS i/o timeout), retryable
   team-lead-crash claims the coordinator role, then the CLI fails (exit 1, no STATUS)
@@ -116,11 +118,25 @@ if action == "remote-hello":
     # a remote team member: its message goes through the relay to the team on the lead
     call("send_message", to="lead", text="hello from node2")
     finish("Said hello to the coordinator.\nSTATUS: SLEEPING")
+if action == "budget-spent":
+    # the provider's workspace budget is spent until its reset in three days (an ISO time, as OpenRouter gives it)
+    import datetime
+    reset = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    print("Workspace monthly budget of $200.00 exceeded. Contact your org admin. $200.18 of $200.00 used; resets "
+          + reset + ".", file=sys.stderr)
+    sys.exit(1)
 if action == "kill-group":
     # a CLI that, on its way out, sends SIGTERM to its whole process group (as some CLIs clean up their children)
     import signal
     os.killpg(os.getpgrp(), signal.SIGTERM)
     time.sleep(5)
+    sys.exit(1)
+if action == "budget-spent":
+    # the provider's workspace budget is spent until its reset, three days from now (an ISO time)
+    import datetime
+    reset = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3)
+    print("Workspace monthly budget of $200.00 exceeded. Contact your org admin. $200.18 of $200.00 used; resets "
+          + reset.strftime("%Y-%m-%dT%H:%M:%S.000Z") + ".", file=sys.stderr)
     sys.exit(1)
 if action == "cli-error":
     print("Error: invalid argument --frobnicate", file=sys.stderr)

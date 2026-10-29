@@ -58,3 +58,31 @@ review_by() { reviews | xargs -r grep -l "^AGENT=$1\$" | grep -q .; }
   wait_grep "merges it and starts round 2 by itself" "$HOME/notifications.log"
   run ! grep -q "Next: merge the PR of round" "$HOME/notifications.log"
 }
+
+@test "--autopilot: a review whose investigator is out of quota goes to another at once; that one is not chosen while it lasts" {
+  echo '[{"number": 7, "url": "https://github.com/o/r/pull/7", "state": "OPEN", "isDraft": false}]' > "$HOME/gh-prs.json"
+  printf 'INVESTIGATORS_TYPE[inv2]=claude\nINVESTIGATORS_TYPE[inv3]=claude\nAGENT_REVIEW_GATE=true\n' >> "$AGENTS_HOME/agents.conf"
+  scenario '{"lead": {"new": "team-lead-done"}, "member": {"new": "team-sleep"}, "inv": {"new": "review-ready"}, "inv2": {"new": "budget-spent"}, "inv3": {"new": "review-ready"}}'
+  agent run --team lead,member --autopilot "team task"
+  for _ in $(seq 1 750); do review_by inv3 && break; sleep 0.2; done
+  review_by inv3   # the review went to the third investigator, not waiting three days
+  m=$(reviews | xargs -r grep -l '^AGENT=inv2$' | head -n 1)
+  [ -n "$m" ]
+  for _ in $(seq 1 100); do grep -qx 'STATUS=failed' "$m" && break; sleep 0.1; done
+  grep -qx 'STATUS=failed' "$m"   # not paused until the reset
+  grep -q '^QUOTA_UNTIL=[0-9]' "$m"   # its investigator is out of quota until then
+  source "$REPO_ROOT/bin/agent"
+  run ! grep -qx inv2 <(free_investigator_list)   # and is not chosen for a review meanwhile
+}
+
+@test "--autopilot: a review whose investigator is out of quota for days goes to another investigator at once" {
+  echo '[{"number": 7, "url": "https://github.com/o/r/pull/7", "state": "OPEN", "isDraft": false}]' > "$HOME/gh-prs.json"
+  printf 'INVESTIGATORS_TYPE[inv2]=claude\nINVESTIGATORS_TYPE[inv3]=claude\nAGENT_REVIEW_GATE=true\n' >> "$AGENTS_HOME/agents.conf"
+  scenario '{"lead": {"new": "team-lead-done"}, "member": {"new": "team-sleep"}, "inv": {"new": "review-ready"}, "inv2": {"new": "budget-spent"}, "inv3": {"new": "review-ready"}}'
+  agent run --team lead,member --autopilot "team task"
+  for _ in $(seq 1 750); do review_by inv3 && break; sleep 0.2; done
+  review_by inv3   # not three days of waiting for inv2's review
+  m=$(reviews | xargs grep -l '^AGENT=inv2$')
+  grep -qx 'STATUS=failed' "$m"   # its review ended (no timer three days ahead)
+  grep -q '^QUOTA_UNTIL=' "$m"    # and its investigator is not chosen while its quota is spent
+}
