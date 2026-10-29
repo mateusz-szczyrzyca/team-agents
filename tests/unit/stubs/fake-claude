@@ -20,8 +20,8 @@ Actions:
   team-lead-wait  claims the coordinator role and sleeps, keeping the team open (STATUS: SLEEPING)
   capacity        exits 1: "Selected model is at capacity" (the provider is overloaded)
   budget-spent    exits 1: the workspace budget is spent, it resets in three days (an ISO time)
+  which-gh        DONE with the gh it finds on PATH and AGENT_GITHUB_TRUSTED_RESOLVED
   kill-group      sends SIGTERM to its own process group (a CLI cleaning up its children), exits
-  budget-spent    exits 1: the workspace budget is spent, it resets in three days (an ISO time)
   cli-error       exits 1 with an error line on stderr ("Error: invalid argument --frobnicate")
   network-down    exits 1: a network issue — the provider's host cannot be resolved (DNS i/o timeout), retryable
   team-lead-crash claims the coordinator role, then the CLI fails (exit 1, no STATUS)
@@ -125,6 +125,10 @@ if action == "budget-spent":
     print("Workspace monthly budget of $200.00 exceeded. Contact your org admin. $200.18 of $200.00 used; resets "
           + reset + ".", file=sys.stderr)
     sys.exit(1)
+if action == "which-gh":
+    # which gh the agent gets, and whom it trusts
+    import shutil
+    finish("STATUS: DONE\ngh=" + (shutil.which("gh") or "") + " trusted=" + os.environ.get("AGENT_GITHUB_TRUSTED_RESOLVED", ""))
 if action == "kill-group":
     # a CLI that, on its way out, sends SIGTERM to its whole process group (as some CLIs clean up their children)
     import signal

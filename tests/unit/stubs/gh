@@ -19,6 +19,17 @@ if [[ "${1:-} ${2:-}" == "pr list" ]]; then
     echo '[]'
   fi
 fi
+if [[ "${1:-}" == api && "${2:-}" != user && -f $STUB_HOME/gh-api.json ]]; then   # comments and reviews: gh-api.json
+  cat "$STUB_HOME/gh-api.json"
+  exit 0
+fi
+if [[ "${1:-}" == pr && ( "${2:-}" == view || "${2:-}" == diff ) && -f $STUB_HOME/gh-pr-view.json ]]; then   # one PR
+  if [[ "${2:-}" == diff ]]; then jq -r '.diff // "diff --git a/x b/x"' "$STUB_HOME/gh-pr-view.json"
+  elif [[ " $* " == *" --json "* ]]; then cat "$STUB_HOME/gh-pr-view.json"
+  else jq -r '"title:\t\(.title // "")\n\(.body // "")"' "$STUB_HOME/gh-pr-view.json"
+  fi
+  exit 0
+fi
 if [[ "${1:-} ${2:-}" == "pr view" && " $* " == *" body "* ]]; then   # a PR's description: $STUB_HOME/gh-pr-body.md
   cat "$STUB_HOME/gh-pr-body.md" 2>/dev/null || true
 fi
