@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# Test stub for gh: logs calls; `gh pr list` returns $STUB_HOME/gh-prs.json if present (filtered by --head), else [].
+# Test stub for gh: logs calls; `gh pr list` returns $STUB_HOME/gh-prs.json if present (filtered by --head; a PR
+# without isCrossRepository and author is from this repository, by $STUB_GH_LOGIN), else []; `gh api user` gives
+# $STUB_GH_LOGIN (agents-bot).
 echo "gh $*" >> "$STUB_HOME/gh.log"
+if [[ "${1:-} ${2:-}" == "api user" ]]; then   # the account gh is logged in as (the agents' one)
+  echo "${STUB_GH_LOGIN:-agents-bot}"
+  exit 0
+fi
 if [[ "${1:-} ${2:-}" == "pr list" ]]; then
   # --head picks the PRs of one branch; an entry without headRefName stands for any branch
   head=""; prev=""
   for a in "$@"; do [[ $prev == --head ]] && head=$a; prev=$a; done
   if [[ -f $STUB_HOME/gh-prs.json ]]; then
-    jq -c --arg h "$head" '[.[] | select($h == "" or (.headRefName // $h) == $h)]' "$STUB_HOME/gh-prs.json"
+    # a PR without them is the agents' own: from this repository, opened by the account gh is logged in as
+    jq -c --arg h "$head" --arg login "${STUB_GH_LOGIN:-agents-bot}" \
+      '[.[] | select($h == "" or (.headRefName // $h) == $h) | {isCrossRepository: false, author: {login: $login}} + .]' "$STUB_HOME/gh-prs.json"
   else
     echo '[]'
   fi
