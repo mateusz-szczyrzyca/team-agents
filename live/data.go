@@ -103,7 +103,14 @@ type BoardItem struct {
 	Assignee string `json:"assignee"` // who claimed it
 	For      string `json:"for"`      // the only member that may claim it ("" = anyone at its level)
 	Result   string `json:"result"`   // the submitted result
+	Progress string `json:"progress"` // the claimant's latest progress note (board_progress)
 }
+
+// The states of a board item, as agentbus writes them.
+const (
+	boardTodo    = "todo"    // on the board, nobody has taken it yet
+	boardClaimed = "claimed" // a member works on it
+)
 
 // QuizAnswerInfo is one member's quiz answer.
 type QuizAnswerInfo struct {

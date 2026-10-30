@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -120,6 +121,62 @@ func finishedAt(t *Task) time.Time {
 	return lastActivity(t)
 }
 
+// waitsForShown is how many board items a row's "waits for" names; the rest are counted.
+const waitsForShown = 3
+
+// waitsForProgress is how much of an item's latest progress note a row's "waits for" shows.
+const waitsForProgress = 80
+
+// waitsFor lists what a sleeping member of an open team waits for: the board items other members hold — who, what and
+// their latest progress — and those nobody has taken yet, in board order; "" for any other task.
+func waitsFor(snap *Snapshot, t *Task) string {
+	if t.Status != "sleeping" || t.Team == "" {
+		return ""
+	}
+	ti := snap.Teams[t.Team]
+	if ti == nil || ti.Done {
+		return ""
+	}
+	me := t.BusName()
+	var items []*BoardItem
+	for _, it := range ti.Board {
+		if (it.Status == boardClaimed && it.Assignee != "" && it.Assignee != me) || it.Status == boardTodo {
+			items = append(items, it)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool { return boardOrder(items[i].ID) < boardOrder(items[j].ID) })
+	var parts []string
+	for i, it := range items {
+		if i == waitsForShown {
+			parts = append(parts, fmt.Sprintf("and %d more", len(items)-i))
+			break
+		}
+		if it.Status == boardClaimed {
+			p := it.ID + " " + it.Assignee + ": " + it.Title
+			if it.Progress != "" {
+				p += " (" + trunc(it.Progress, waitsForProgress) + ")"
+			}
+			parts = append(parts, p)
+			continue
+		}
+		p := it.ID + " not taken yet"
+		if it.For != "" {
+			p += " (for " + it.For + ")"
+		}
+		parts = append(parts, p+": "+it.Title)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// boardOrder is a board item's place: its number (B2 before B10); an ID without one sorts last.
+func boardOrder(id string) int {
+	n, err := strconv.Atoi(strings.TrimPrefix(id, "B"))
+	if err != nil {
+		return math.MaxInt // not "B<n>": after the numbered ones
+	}
+	return n
+}
+
 func makeRow(snap *Snapshot, t *Task) taskRow {
 	r := taskRow{ID: t.ID, Name: t.Label(), Status: t.Status, Repo: t.Repo, Team: t.Team, TeamShort: strings.TrimSuffix(t.Team, "-team"), JobMarker: t.JobMarker(), FinishedAt: finishedAt(t)}
 	r.Link = "/task/" + t.ID
@@ -139,6 +196,9 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	}
 	if p := snap.Agents[t.BusName()]; p != nil && p.Task == t.ID && p.Status != "" {
 		r.Stage = "„" + p.Status + "”"
+	}
+	if w := waitsFor(snap, t); w != "" { // asleep in an open team: what it waits for on the board
+		r.Stage = "⏳ waits for: " + w
 	}
 	if t.AutoStage != "" { // the automation works on the round (its checks, reviews, merge): that is its stage now
 		r.Stage = "⚙ " + t.AutoStage
