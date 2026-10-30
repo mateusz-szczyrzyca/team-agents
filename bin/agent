@@ -6630,6 +6630,21 @@ agent say <agent|all|team:ID> "text"     message agents through the bus
 EOF
 }
 
+# node_apply_answer answer-json — bare signature for node rejection and receipt regressions.
+node_apply_answer() { return 0; }
+
+# node_apply_kick kick-json — bare signature for run-bound kick regressions.
+node_apply_kick() { return 0; }
+
+# node_handle_controls reply-json — bare signature for bounded incoming lists.
+node_handle_controls() { return 0; }
+
+# node_clear_control_acks sent-body — bare signature for scoped acknowledgement regressions.
+node_clear_control_acks() { return 0; }
+
+# supervise_remote_questions retries readiness and expires orphaned editable copies.
+supervise_remote_questions() { return 0; }
+
 main() {
   local cmd=${1:-help}; (($#)) && shift
   case $cmd in
