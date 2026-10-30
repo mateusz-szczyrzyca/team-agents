@@ -1221,6 +1221,8 @@ make integration   # real agent CLIs and accounts (costs usage)
   `shellcheck` from GitHub, verifies their SHA-256 checksums and installs them without sudo. `golangci-lint`
   runs the standard linters plus `errorlint`, `gosec`, `misspell`, `revive` and `unparam` (`.golangci.yml`);
   every Go module and every Bash script (bats files included) must pass with zero findings. CI runs the same.
+  ShellCheck checks each listed script in its own process to bound memory on small hosts; all files are
+  checked, and any failure makes the lint target fail.
 
 - **Unit tests** need no accounts: `agentbus` is tested in-process (queue capacity, quiz privacy, board rules,
   provider balancing, checkpoints, event normalization), and the `agent` script is tested with

@@ -39,7 +39,10 @@ lint: check-generated lint-shell lint-go lint-docs
 lint-shell:
 	@command -v shellcheck >/dev/null || { echo "shellcheck is missing: run make tools"; exit 1; }
 	bash -n bin/agent install.sh tools/install-linters.sh tests/integration/run.sh
-	shellcheck -S warning $(SHELL_SCRIPTS)
+	@# Release sourced ASTs between files so small hosts retain full lint coverage.
+	@lint_result=0; for script in $(SHELL_SCRIPTS); do \
+		shellcheck -S warning "$$script" || lint_result=1; \
+	done; exit "$$lint_result"
 
 lint-go:
 	@for t in golangci-lint staticcheck; do command -v $$t >/dev/null || { echo "$$t is missing: run make tools"; exit 1; }; done
