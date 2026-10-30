@@ -1,8 +1,10 @@
 #!/usr/bin/env bats
-# A remote member's pause reaches its team as a local member's does; a notification that cannot be delivered is
-# kept until one is (the dashboard warns); an answers watch is stopped once its task no longer waits for answers.
+# A remote member's pause reaches its team as a local member's does; notifications that cannot be delivered are kept
+# for a day with the process that sent them (the dashboard warns); an answers watch is stopped once its task no
+# longer waits for answers.
 
 load helpers
+bats_require_minimum_version 1.5.0   # run ! (a command that must fail)
 
 meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
 # member_state team member — the member's state on the bus
@@ -28,7 +30,7 @@ member_state() { agentbus team-get --dir "$AGENTS_HOME/bus" --team "$1" | jq -r 
   agent team "$team" --close > /dev/null
 }
 
-@test "a notification that cannot be delivered is kept (notify-failed.json, its error) until one is" {
+@test "notifications that cannot be delivered are kept for a day, with the process that sent them, whatever is delivered since" {
   cat > "$BATS_TEST_TMPDIR/ntfy.sh" <<'NTFY'
 #!/usr/bin/env bash
 echo "./ntfy.sh: line 11: NTFY_URL: set NTFY_URL" >&2
@@ -36,16 +38,25 @@ exit 1
 NTFY
   chmod 755 "$BATS_TEST_TMPDIR/ntfy.sh"
   printf 'NOTIFY_CMD=%q\n' "$BATS_TEST_TMPDIR/ntfy.sh" >> "$AGENTS_HOME/agents.conf"
+  f=$AGENTS_HOME/notify-failures.jsonl
   scenario '{"solo": {"new": "done"}}'
   agent run solo "a task"
   wait_status "$(task_of solo)" 'done'
-  for _ in $(seq 1 50); do [ -f "$AGENTS_HOME/notify-failed.json" ] && break; sleep 0.1; done
-  jq -e '(.error | test("NTFY_URL")) and (.since != "") and (.command | test("ntfy.sh"))' "$AGENTS_HOME/notify-failed.json"
-  sed -i 's|^NOTIFY_CMD=.*|NOTIFY_CMD=true|' "$AGENTS_HOME/agents.conf"   # delivered from now on
+  for _ in $(seq 1 50); do [ -s "$f" ] && break; sleep 0.1; done
+  jq -se 'length >= 1 and all(.[]; (.error | test("NTFY_URL")) and .from == "_runner" and (.command | test("ntfy.sh")))' "$f"
+  n=$(wc -l < "$f")
+  sed -i 's|^NOTIFY_CMD=.*|NOTIFY_CMD=true|' "$AGENTS_HOME/agents.conf"   # delivered from now on, by this process
   agent run solo "another task"
   wait_status "$(task_of solo)" 'done'
-  for _ in $(seq 1 50); do [ ! -f "$AGENTS_HOME/notify-failed.json" ] && break; sleep 0.1; done
-  [ ! -f "$AGENTS_HOME/notify-failed.json" ]
+  [ "$(wc -l < "$f")" -eq "$n" ]   # a delivery elsewhere does not hide the failures
+  # older than a day: left out with the next failure
+  jq -nc --argjson e "$(( $(date +%s) - 90000 ))" '{at: "old", epoch: $e, from: "_merge", command: "x", error: "old"}' >> "$f"
+  printf 'NOTIFY_CMD=%q\n' "$BATS_TEST_TMPDIR/ntfy.sh" >> "$AGENTS_HOME/agents.conf"
+  agent run solo "a third task"
+  wait_status "$(task_of solo)" 'done'
+  for _ in $(seq 1 50); do [ "$(wc -l < "$f")" -gt "$n" ] && ! grep -q '"error":"old"' "$f" && break; sleep 0.1; done
+  run ! grep -q '"error":"old"' "$f"
+  [ "$(wc -l < "$f")" -gt "$n" ]
 }
 
 @test "the supervisor stops an answers watch whose task no longer waits for answers, and keeps a waiting task's" {
