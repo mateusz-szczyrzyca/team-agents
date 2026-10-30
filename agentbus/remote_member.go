@@ -45,18 +45,19 @@ func withoutRemoteUnavailable(tools []map[string]any) []map[string]any {
 
 // RemoteMember is the lead's grant for a remote team member: who it is in the team and where it works.
 type RemoteMember struct {
-	Member string // its name in the team: "<agent>@<node>"
-	Agent  string // the node's agent
-	Node   string // the node it works on (the authenticated device name)
-	Team   string // the team it is a member of
-	Task   string // its task ID on the lead's bus (presence, the team's member record)
-	Tier   Tier   // its tier in the team
-	Repo   string // the repository name
-	Branch string // its branch, pushed to origin
-	Job    string // the job that runs it on its node
-	Wake   bool   // a wake request waits for its node (until its task runs)
-	Out    bool   // put out of its team: its node was away longer than the grace (it may come back)
-	Paused bool   // its task on the node is paused (a provider's limit, the network): reported to the lead once
+	Member  string // its name in the team: "<agent>@<node>"
+	Agent   string // the node's agent
+	Node    string // the node it works on (the authenticated device name)
+	Team    string // the team it is a member of
+	Task    string // its task ID on the lead's bus (presence, the team's member record)
+	Tier    Tier   // its tier in the team
+	Repo    string // the repository name
+	Branch  string // its branch, pushed to origin
+	Job     string // the job that runs it on its node
+	Wake    bool   // a wake request waits for its node (until its task runs)
+	WakeNow bool   // a request to resume its paused task now (agent wake) waits for its node (until its task runs)
+	Out     bool   // put out of its team: its node was away longer than the grace (it may come back)
+	Paused  bool   // its task on the node is paused (a provider's limit, the network): reported to the lead once
 }
 
 // leadMCPBody is one MCP message of a remote member, relayed by its node.
@@ -147,6 +148,37 @@ func (a *leadAPI) wakeMember(member string) *LeadMemberError {
 	})
 }
 
+// wakeMemberNow asks the member's node to resume its paused task now (agent wake on its proxy task): the request
+// waits in the node's heartbeat replies (WakesNow) until the member is reported at work again.
+func (a *leadAPI) wakeMemberNow(member string) *LeadMemberError {
+	return leadTransaction(a, LeadMemberStorage, "", func(r *leadRegistry, _ Timestamp) *LeadMemberError {
+		m, ok := r.members[member]
+		if !ok {
+			return opErr(LeadMemberNoSuchMember, "no remote member %q", member)
+		}
+		m.WakeNow = true
+		r.members[member] = m
+		return nil
+	})
+}
+
+// wakesNowFor lists the jobs of the node's members whose paused tasks its human resumes now.
+func (a *leadAPI) wakesNowFor(node string) []string {
+	reg, serr := a.bus.loadJobs()
+	if serr != nil {
+		warnSideEffect("list the node's resumes", serr)
+		return nil // unreadable now: the next heartbeat asks again
+	}
+	var jobs []string
+	for _, m := range reg.members {
+		if m.Node == node && m.WakeNow {
+			jobs = append(jobs, m.Job)
+		}
+	}
+	sort.Strings(jobs)
+	return jobs
+}
+
 // awake reports whether a task stage means its member is at work (a wake request has been carried out).
 func awake(stage string) bool {
 	switch stage {
@@ -173,6 +205,7 @@ func (a *leadAPI) memberActivity(node string, act []JobActivity) ([]string, *Lea
 		}
 	}
 	pauses := map[string]bool{} // members whose pause began (true) or ended (false)
+	var resumed []string        // members whose paused tasks were resumed on request (WakeNow done)
 	names := make([]string, 0, len(reg.members))
 	for name := range reg.members {
 		names = append(names, name)
@@ -211,6 +244,22 @@ func (a *leadAPI) memberActivity(node string, act []JobActivity) ([]string, *Lea
 			} else {
 				wakes = append(wakes, m.Job)
 			}
+		}
+		if m.WakeNow && reported && awake(stage) { // resumed: the request is done
+			resumed = append(resumed, name)
+		}
+	}
+	if len(resumed) > 0 {
+		if err := leadTransaction(a, LeadHeartbeatStorage, "", func(r *leadRegistry, _ Timestamp) *LeadHeartbeatError {
+			for _, name := range resumed {
+				if m, ok := r.members[name]; ok {
+					m.WakeNow = false
+					r.members[name] = m
+				}
+			}
+			return nil
+		}); err != nil {
+			return nil, err
 		}
 	}
 	if len(pauses) > 0 {
@@ -533,12 +582,14 @@ func writeRPC(out io.Writer, msg map[string]any) *NodeClientError {
 //	    [--repo R] [--branch B] --job J
 //	agentbus lead-member --dir DIR --remove --member a@node
 //	agentbus lead-member --dir DIR --wake --member a@node
+//	agentbus lead-member --dir DIR --wake-now --member a@node
 func cmdLeadMember(args []string) {
 	fs := newFlagSet("lead-member")
 	dir := fs.String("dir", defaultDir(), "state directory")
 	add := fs.Bool("add", false, "grant a remote member")
 	remove := fs.Bool("remove", false, "revoke a remote member's grant")
 	wake := fs.Bool("wake", false, "ask the member's node to wake it")
+	wakeNow := fs.Bool("wake-now", false, "ask the member's node to resume its paused task now")
 	m := RemoteMember{}
 	fs.StringVar(&m.Member, "member", "", "the member: <agent>@<node>")
 	fs.StringVar(&m.Agent, "agent", "", "the node's agent")
@@ -554,14 +605,16 @@ func cmdLeadMember(args []string) {
 	a := &leadAPI{bus: &Bus{dir: *dir}}
 	var err *LeadMemberError
 	switch {
-	case *add && !*remove && !*wake:
+	case *add && !*remove && !*wake && !*wakeNow:
 		err = a.grantMember(m)
-	case *remove && !*add && !*wake:
+	case *remove && !*add && !*wake && !*wakeNow:
 		err = a.revokeMember(m.Member)
-	case *wake && !*add && !*remove:
+	case *wake && !*add && !*remove && !*wakeNow:
 		err = a.wakeMember(m.Member)
+	case *wakeNow && !*add && !*remove && !*wake:
+		err = a.wakeMemberNow(m.Member)
 	default:
-		err = opErr(LeadMemberInvalidMember, "give exactly one of --add, --remove, --wake")
+		err = opErr(LeadMemberInvalidMember, "give exactly one of --add, --remove, --wake, --wake-now")
 	}
 	exitOn(err.asError())
 }
@@ -584,7 +637,7 @@ func (a *leadAPI) pendingFor(node string) string {
 	var wakes, stops []string
 	queued := 0
 	for _, m := range reg.members {
-		if m.Node == node && m.Wake {
+		if m.Node == node && (m.Wake || m.WakeNow) {
 			wakes = append(wakes, m.Job)
 		}
 	}

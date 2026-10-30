@@ -148,10 +148,11 @@ func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Durat
 				}
 			}
 			return struct {
-				Job   *leadJobView  /* at most one assignment */
-				Stops []leadJobView /* bounded, durable stop requests for this authenticated node */
-				Wakes []string      /* jobs whose remote team members the node must wake */
-			}{view, stops, wakes}, err
+				Job      *leadJobView  /* at most one assignment */
+				Stops    []leadJobView /* bounded, durable stop requests for this authenticated node */
+				Wakes    []string      /* jobs whose remote team members the node must wake */
+				WakesNow []string      /* jobs whose paused remote team members the node must resume now */
+			}{view, stops, wakes, a.wakesNowFor(peer.Node)}, err
 		})
 	})
 	mux.HandleFunc("POST /v1/jobs/{id}/state", func(w http.ResponseWriter, r *http.Request) {

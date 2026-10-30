@@ -4778,6 +4778,27 @@ remote_member_start() { # proxy-task — grants the remote member on the lead an
   log_info remote_member_started "member=$member" "task=$id" "job=$(task_field "$id" JOB_ID)"
 }
 
+cmd_wake() { # <task> — a paused task resumes now, not at its pause's end (its provider's limit lifted early, a bigger
+  # plan bought); a remote member's proxy task on the lead asks the member's node, which resumes it at once
+  local id
+  id=$(resolve_id "${1:?usage: agent wake <task>}")
+  meta_load "$id"
+  [[ ${STATUS:-} == paused ]] || die "task $id is not paused (status: ${STATUS:-unknown}) — nothing to resume"
+  if [[ ${KIND:-} == remote-member ]]; then
+    bus lead-member --dir "$BUS_DIR" --wake-now --member "$AGENT" > /dev/null \
+      || die "cannot ask ${AGENT#*@} to resume $AGENT: the lead's registry refused it"
+    act "$id" info "asked ${AGENT#*@} to resume $AGENT now (agent wake)"
+    log_info wake_now_requested "task=$id" "member=$AGENT"
+    echo "asked ${AGENT#*@} to resume $AGENT now: it starts as soon as the node hears its doorbell"
+    return 0
+  fi
+  meta_set "$id" WAKE_AT "$(date +%s)"
+  act "$id" info "■ resumed by hand before its pause's end (${PAUSE_REASON:-paused})"
+  log_info wake_by_hand "task=$id" "reason=${PAUSE_REASON:-}"
+  "$SELF" _wake "$id"
+  echo "resumed $id"
+}
+
 cmd_kick() { # <task> [from] — cuts an agent's current run short (the web interface's stop button): a team member
   # goes to sleep, so its team can wake it again, and the coordinator is told; a solo task is stopped
   local id run st team agent lead
@@ -5405,6 +5426,12 @@ node_handle_reply() {
   for wjid in $(jq -r '.Wakes // [] | .[]' <<< "$reply"); do
     wtid=$(jq -r --arg id "$wjid" '.jobs[$id].task_id // empty' <<< "$NODE_STATE")
     if [[ -n $wtid ]]; then "$SELF" _wake "$wtid" || log_warn node_wake_failed "job=$wjid" "task=$wtid"; fi
+  done
+  # paused members the lead's human resumes now (agent wake on its proxy task): each that is still paused
+  for wjid in $(jq -r '.WakesNow // [] | .[]' <<< "$reply"); do
+    wtid=$(jq -r --arg id "$wjid" '.jobs[$id].task_id // empty' <<< "$NODE_STATE")
+    [[ -n $wtid && $(task_field "$wtid" STATUS) == paused ]] || continue
+    "$SELF" wake "$wtid" > /dev/null || log_warn node_wake_now_failed "job=$wjid" "task=$wtid"
   done
   job=$(jq -c .Job <<< "$reply")
   [[ $job != null ]] || return 0
@@ -6605,6 +6632,7 @@ agent jobs [<id>]                         remote jobs on the lead (or this node'
 agent jobs --cancel <id>                  cancel a remote job on the lead
 agent nodes                               registered nodes on the lead
 agent kick <task>                         cut a run short: a team member sleeps (the team can wake it), solo: stopped
+agent wake <task>                         resume a paused task now, not at its pause's end (a remote member's: on its node)
 agent round-size <task>                   size of a task's change against the round limit (README "Rounds")
 agent run --need <caps> <agent|normal|worker> "task"   submit a remote job with required capabilities
 agent run --on <instance> <agent> "task"               submit a remote job pinned to an instance
@@ -6651,6 +6679,7 @@ main() {
     jobs)    cmd_jobs "$@" ;;
     nodes)   cmd_nodes ;;
     kick)    cmd_kick "$@" ;;
+    wake)    cmd_wake "$@" ;;
     round-size) cmd_round_size "$@" ;;
     _agents-json) cmd__agents_json ;;
     ack)     cmd_ack "$@" ;;
