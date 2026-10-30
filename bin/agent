@@ -1483,6 +1483,7 @@ Fix it on the same branches and finish as before; the round goes to review once 
       auto_stage "$id" ""   # the team has the work
     else
       log_error review_precheck_resume_failed "task=$id" "reason=${out:0:500}"
+      handover_failed "$id" "the round" "$out"
     fi
     return 1
   fi
@@ -1555,6 +1556,7 @@ ${text:0:8000}"
       log_info review_fix_pass "task=$parent" "pass=$((pass + 1))" "findings=$n"
     else
       log_error review_fix_resume_failed "task=$parent" "reason=${out:0:500}"
+      handover_failed "$parent" "the fix pass" "$out"
       push_text "$repo" "--verify: the review of PR #$PR_NUMBER found $n critical or major finding(s), but the team could not be resumed:" "${out:0:500}"
     fi
     return 0
@@ -1610,6 +1612,24 @@ supervise_answer_watches() {
     try answers_watch_reset_failed systemctl --user reset-failed "${u%.path}.service"
     log_info answers_watch_stopped "task=$tid" "unit=$u"
   done <<< "$units"
+}
+
+# remote_start_check root base — the lead's commit is on origin's base, where a new remote member starts on its node,
+# so that every member of a new team starts from the same commit
+remote_start_check() {
+  local sha
+  sha=$(git -C "$1" rev-parse HEAD 10>&-) || return 1
+  git -C "$1" merge-base --is-ancestor "$sha" "origin/$2" 10>&-
+}
+
+# handover_failed task what output — the team could not take its work back (its resume was refused): the human
+# decides, and hears why — the stage "waits for you: …" (also said on the PR, by auto_stage), and the notification
+handover_failed() {
+  local id=$1 what=$2 out=$3 why
+  why=$( { grep -m1 '^agent: ' <<< "$out" || (($? == 1)); } | sed 's/^agent: //' | cut -c1-200)   # the refusal's own words
+  [[ -n $why ]] || why=$(tail -n 1 <<< "$out" | cut -c1-200)
+  auto_stage "$id" "waits for you: $what could not go back to the team — $why"
+  notify "$id" failed "" "⛔ $what could not go back to the team: $why — once that is fixed: agent run --resume $(task_field "$id" TEAM) --same-round"
 }
 
 # team_lead_task team agent — the team's task of that agent (its coordinator), the newest; "" when there is none
@@ -3941,7 +3961,7 @@ resume_run() {
         printf '\n\n## Addition from the human (resumed %s)\n\n%s\n' "$(date '+%Y-%m-%d %H:%M')" "$add"
       fi)
     remote_ids+=("$(remote_member_task "$(task_field "$r" AGENT)" "$rtext" "$new_team" "$(task_field "$r" BASE)" \
-      "$(task_field "$r" REPO_ROOT)" "$ts")")
+      "$(task_field "$r" REPO_ROOT)" "$ts" resume)")
   done
   RESUME_NEW_IDS+=("${remote_ids[@]}")
   for old in "${olds[@]}"; do
@@ -4614,7 +4634,7 @@ supervise_teams() { # an open team with no local member at work or asleep for AG
 remote_member_task() { # member task team base main-root ts — a remote member's proxy task on the lead (no worktree, no
   # runner: the member runs on its node); checks first that this is a lead, the node is online with the agent free,
   # and the base is on origin (the node starts from there). Prints the task ID.
-  local member=$1 task=$2 team=$3 base=$4 root=$5 ts=$6 agent node nodes row tier sha id
+  local member=$1 task=$2 team=$3 base=$4 root=$5 ts=$6 resuming=${7:-} agent node nodes row tier sha id
   agent=${member%@*}; node=${member#*@}
   [[ -n ${LEAD_LISTEN:-} ]] || die "remote member $member: this installation is not a lead (LEAD_LISTEN)"
   nodes=$(bus node-request --url "$(lead_url)" --path /v1/nodes --get) || die "remote member $member: cannot list the nodes"
@@ -4624,9 +4644,14 @@ remote_member_task() { # member task team base main-root ts — a remote member'
   tier=$(jq -r --arg a "$agent" '.FreeAgents // [] | .[] | select(.Name == $a) | .Tier' <<< "$row")
   [[ -n $tier ]] || die "remote member $member: $agent is not a free agent of $node (agent nodes)"
   git -C "$root" fetch -q origin "$base" 10>&- || die "remote member $member: cannot fetch $base from origin"
-  sha=$(git -C "$root" rev-parse HEAD 10>&-)
-  git -C "$root" merge-base --is-ancestor "$sha" "origin/$base" 10>&- \
-    || die "remote member $member starts from origin: push $base first (git push origin $base)"
+  # a new team's members start from one commit; a member coming back on a resume continues its round, whatever the
+  # lead's own checkout holds just now
+  if [[ -z $resuming ]]; then
+    remote_start_check "$root" "$base" || die "remote member $member starts from origin: push $base first (git push origin $base)"
+    sha=$(git -C "$root" rev-parse HEAD 10>&-)
+  else
+    sha=$(git -C "$root" rev-parse "origin/$base" 10>&-) || die "remote member $member: no origin/$base to come back from"
+  fi
   id="$ts-$agent-at-$node"
   mkdir -p "$TASKS/$id"
   : > "$TASKS/$id/meta.env"
