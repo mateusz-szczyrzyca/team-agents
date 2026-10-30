@@ -30,6 +30,7 @@ type Task struct {
 	Agent       string    // agent name
 	Node        string    // remote node name; empty for a local task
 	NodeOffline bool      // the remote heartbeat expired; status remains the last known state
+	CanControl  bool      // this frontend is configured to queue controls on the lead
 	Note        string    // human-visible task note
 	Kind        string    // worker (a normal task) | investigation | helper (a worker request)
 	Type        string    // agent CLI: claude | codex | gemini | opencode

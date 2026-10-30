@@ -557,6 +557,10 @@ Then:
 | `AUTH_MODEL_*` | cheap models used by `agent authenticated --providers` (the per-agent check uses each agent's model) |
 | `BRANCH_PREFIX`, `CLAUDE_MAX_TURNS`, `AGY_PRINT_TIMEOUT`, `OPENCODE_BASH_TIMEOUT_MS` | misc |
 
+A paused task (a provider's limit, the network) resumes by itself at its pause's end; `agent wake <task>` resumes it
+now — say, after buying a bigger plan. On the lead, `agent wake` on a remote member's proxy task asks its node, which
+resumes the member as soon as it hears its doorbell.
+
 `~/agents/secrets.env` is loaded before every run: `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`,
 `CODEX_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, `GH_TOKEN` (the GitHub account the
 agents act as) and anything your notification hook needs.
@@ -642,6 +646,7 @@ agent run --resume <team|task> ["addition"]   resume from the last checkpoint (s
 agent run --resume <team|task> --same-round   continue an unmerged round on the same branches (e.g. review fixes)
 agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)
 agent kick <task>                             cut a run short: a team member sleeps (its team can wake it), solo: stopped
+agent wake <task>                             resume a paused task now, not at its pause's end (a remote member's: on its node)
 agent round-size <task>                       size of a task's change against the round limit
 agent status | agents | show <id>            overview, agents, task details
 agent log <id> [--raw]                        follow the runner log (structured records rendered; --raw: JSON)
@@ -834,10 +839,49 @@ sorted by descending round number, **report** (`final.md`), **errors** (`err-*.l
 reside on the worker node. The `/logs` view supports a `Node` selector (`all`, `local`, or specific nodes) and
 filters remote records by component (`agent`, `agentbus`, `agentlive`). When a remote node heartbeat expires
 beyond the configured timeout (`NODE_TTL_SEC`, default `90s`), its tasks and dashboard rows show `node offline`
-while preserving their last-known state and metadata. In this round, mirrored tasks are display-only on the lead:
-stopping and question answering cannot be performed from the lead web interface or terminal panel (actions are
-safely rejected or hidden); questions are answered on the worker node. Waiting notifications describe remote
-answers without suggesting local answer commands.
+while preserving their last-known state and metadata.
+
+**Answering and stopping through the lead.** A job's questions and notifications belong on the lead; the node
+syncs its questions without opening an editor or notifying locally. The lead opens an editable copy at
+`<AGENTS_HOME>/remote-questions/<node>/<task-id>/questions-<n>.md`, installs the ordinary save watch, and notifies
+with the qualified task ID and web link. Answer through `/questions`, the task page, VS Code (save with
+`**ANSWERED**` on the last nonempty line), or `agent answer <task-id>@<node>`. The read-only mirror is never
+edited. Editable copies expire when their task mirrors are removed.
+
+Answers queue durably on the lead even while its listener or the node is offline. Heartbeat replies carry
+`Answers: [{Job, TaskID, File, Content, SHA256}]`; the node writes only its assigned waiting task's current
+question file and uses `_answers_saved` to resume. Answers are UTF-8 text, at most `256 KiB`, with no binary
+control characters (tabs and line endings are allowed). Acknowledgements include the job, task, question
+filename and content digest, so identical answers to different tasks or rounds remain independent.
+
+The dashboard's ■ button and `agent kick <task-id>@<node>` queue a kick through the same heartbeat. The node
+uses `agent kick <task-id> lead`: a solo task stops, while a team member sleeps and can be woken. Kicks identify
+the intended run, so a delayed request does not stop a newer run. Both kinds of control remain queued until
+acknowledged and participate in the existing doorbell. They do not declare an offline task resumed or stopped.
+On the node, `LEAD_KICK_RUN` in the task metadata records the intended run before stopping its runner, so the
+exit trap preserves a solo stop or team sleep without reporting an intermediate failure.
+With no lead configured, the interface retains its read-only mirror guards and local tasks behave as before.
+Upgrade the lead before its nodes; old nodes can still poll, but applying these controls requires an upgraded node.
+The launcher enables `agentlive --remote-controls` for configured leads and supplies
+`agentbus lead --questions-cmd <agent-path>` for question readiness. Its internal `lead-answer` command reads
+the answer from stdin (`--node`, `--task`, `--file`); `lead-kick` takes `--node` and `--task`. Both accept `--dir`
+and `--ttl`. The additive `PendingAnswers` and `PendingKicks` arrays in `bus/jobs.json` retain pending controls;
+the node stores scoped `answer_ack` and `kick_ack` receipts in `bus/node-jobs.json` until a successful heartbeat.
+Its `answer_received` record preserves validated delivery before the saved-answer handler runs.
+Old registry files without these fields remain readable. Replies fit the existing `1 MiB` encoded limit,
+including assignments, stops and wake requests; acknowledgement lists contain at most `64` entries each.
+
+Remote-control diagnostics use these stable script event names:
+
+| Events | Meaning |
+|---|---|
+| `remote_questions_start_failed`, `remote_questions_lock_failed`, `remote_questions_retry_failed` | Copy/watch readiness needs retrying. |
+| `remote_questions_expired` | The editable copy expired with its mirror. |
+| `remote_answer_queued`, `remote_answer_rejected`, `remote_answer_stale`, `remote_answer_lock_failed` | Lead-side answer queuing result. |
+| `node_answer_applied`, `node_answer_stale`, `node_answer_rejected`, `node_answer_resume_failed` | Node-side answer validation and resume result. |
+| `node_kick_stale`, `node_kick_rejected`, `node_kick_failed` | Node-side kick validation or application result. |
+| `node_controls_rejected` | The heartbeat control lists exceed their limits or have the wrong shape. |
+
 Activity streams replay available records when repeated entries make a bounded-tail replacement ambiguous.
 An unchanged tail is consumed once; uncertain replacements can repeat previously displayed activity.
 A single retained boundary is deduplicated: a newly appended event identical in every JSON field to that boundary

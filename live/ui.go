@@ -249,6 +249,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modeConfirmStop:
 			m.mode = modeNormal
 			if strings.ToLower(msg.String()) == "t" || msg.String() == "y" {
+				if task := m.snap.All[m.stopping]; m.cfg.remoteControls && task != nil && (task.Node != "" || task.Kind == "remote-member") {
+					return m, runAgent(m.cfg, "kick", m.stopping, "live")
+				}
 				return m, runAgent(m.cfg, "stop", m.stopping)
 			}
 			m.setFlash("cancelled")
@@ -318,7 +321,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setFlash("this task is not waiting for your answers")
 			return m, nil
 		}
-		if t.Node != "" {
+		if t.Node != "" && !m.cfg.remoteControls {
 			m.setFlash("mirrored task cannot be answered from lead")
 			return m, nil
 		}
@@ -334,7 +337,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setFlash("this task is not running")
 			return m, nil
 		}
-		if t.Node != "" {
+		if t.Node != "" && !m.cfg.remoteControls {
 			m.setFlash("mirrored task cannot be stopped from lead")
 			return m, nil
 		}

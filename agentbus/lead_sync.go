@@ -203,7 +203,7 @@ func (a *leadAPI) sync(node string, body leadSyncBody) *LeadSyncError {
 	if err := validateSync(node, body); err != nil {
 		return err
 	}
-	return transactJobs(a.bus, LeadSyncStorage, Timestamp{time.Now().UTC()}, func(r *leadRegistry) *LeadSyncError {
+	err := transactJobs(a.bus, LeadSyncStorage, Timestamp{time.Now().UTC()}, func(r *leadRegistry) *LeadSyncError {
 		job, ok := r.jobs[body.Job]
 		if !ok {
 			return opErr(LeadSyncNoSuchJob, "job does not exist")
@@ -247,6 +247,23 @@ func (a *leadAPI) sync(node string, body leadSyncBody) *LeadSyncError {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	hasQuestions := false
+	for _, f := range body.Files {
+		if strings.HasPrefix(f.Name, "questions-") && strings.HasSuffix(f.Name, ".md") {
+			hasQuestions = true
+			break
+		}
+	}
+	isWaiting := body.Metadata[SyncStatus] == string(JobWaiting)
+	if (hasQuestions || isWaiting) && a.questionsCmd != "" {
+		if qerr := execQuestionsCmd(a.questionsCmd, body.TaskID+"@"+node); qerr != nil {
+			warnSideEffect("run lead questions command", qerr)
+		}
+	}
+	return nil
 }
 
 // readSyncJSON loads optional mirror-local JSON without silently resetting corrupt data.

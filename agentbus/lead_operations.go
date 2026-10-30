@@ -40,14 +40,45 @@ func (a *leadAPI) submit(node string, local bool, req JobRequest) (Job, *LeadSub
 // heartbeat applies one node's reports and declaration in one storage transaction.
 // When supplied, outputs receive bounded, durable stop requests, answers and kicks from the same transaction.
 func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody, outputs ...any) (*Job, *LeadHeartbeatError) {
+	if len(body.AnswerAcks) > 64 || len(body.KickAcks) > 64 {
+		return nil, opErr(LeadHeartbeatMalformedBody, "too many acks in heartbeat (limit 64)")
+	}
 	if body.Node != "" && body.Node != node {
 		return nil, opErr(LeadHeartbeatUnauthorized, "heartbeat identity %q differs from its socket peer %q (set INSTANCE_NAME on the node to %q)", body.Node, node, node)
 	}
 	body.Node = node
 	var job *Job             // one assignment, or nil when no job matches
 	stops := []leadJobView{} // at most 64 compact stop requests, retried until a terminal acknowledgement
-	var terminalJobs []Job   // newly terminal jobs to notify after transaction commits
+	var deliveredAnswers []LeadAnswer
+	var deliveredKicks []LeadKick
+	var terminalJobs []Job // newly terminal jobs to notify after transaction commits
 	err := leadTransaction(a, LeadHeartbeatStorage, node, func(r *leadRegistry, now Timestamp) *LeadHeartbeatError {
+		for _, ack := range body.AnswerAcks {
+			if j, ok := r.jobs[ack.Job]; ok && j.Node == node && j.TaskID == ack.TaskID {
+				var remaining []LeadAnswer
+				for _, ans := range j.PendingAnswers {
+					if ans.File == ack.File && ans.SHA256 == ack.SHA256 {
+						continue
+					}
+					remaining = append(remaining, ans)
+				}
+				j.PendingAnswers = remaining
+				r.jobs[ack.Job] = j
+			}
+		}
+		for _, ack := range body.KickAcks {
+			if j, ok := r.jobs[ack.Job]; ok && j.Node == node && j.TaskID == ack.TaskID {
+				var remaining []LeadKick
+				for _, kick := range j.PendingKicks {
+					if kick.Run == ack.Run && kick.SHA256 == ack.SHA256 {
+						continue
+					}
+					remaining = append(remaining, kick)
+				}
+				j.PendingKicks = remaining
+				r.jobs[ack.Job] = j
+			}
+		}
 		for _, rep := range body.Reports {
 			if rep.Node != "" && rep.Node != node {
 				return opErr(LeadHeartbeatUnauthorized, "report identity differs from its socket peer")
@@ -78,6 +109,29 @@ func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody, outputs ...any)
 				}
 			}
 		}
+		var candidateAnswers []LeadAnswer
+		var candidateKicks []LeadKick
+		for _, id := range r.order {
+			pending := r.jobs[id]
+			if pending.Node != node || pending.StopRequested || isTerminalJob(pending.State) {
+				continue
+			}
+			if pending.State == JobWaiting {
+				candidateAnswers = append(candidateAnswers, pending.PendingAnswers...)
+			}
+			candidateKicks = append(candidateKicks, pending.PendingKicks...)
+		}
+		var view *leadJobView
+		if job != nil {
+			v := publicLeadJob(*job)
+			view = &v
+		}
+		bounded, berr := boundHeartbeatControls(view, stops, nil, nil, candidateAnswers, candidateKicks)
+		if berr != nil {
+			return fromStorage(LeadHeartbeatStorage, berr)
+		}
+		deliveredAnswers = bounded.Answers
+		deliveredKicks = bounded.Kicks
 		return nil
 	})
 	if err == nil {
@@ -93,11 +147,11 @@ func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody, outputs ...any)
 			}
 		case *[]LeadAnswer:
 			if v != nil {
-				*v = nil
+				*v = deliveredAnswers
 			}
 		case *[]LeadKick:
 			if v != nil {
-				*v = nil
+				*v = deliveredKicks
 			}
 		}
 	}
