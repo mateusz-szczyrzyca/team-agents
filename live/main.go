@@ -21,11 +21,12 @@ import (
 
 // config holds the command-line settings of agentlive (passed by `agent live`).
 type config struct {
-	home     string        // AGENTS_HOME (tasks/, bus/)
-	busDir   string        // agentbus state directory (default <home>/bus)
-	agentCmd string        // path to the `agent` script, used for actions (answer, stop, say, ack)
-	remind   time.Duration // interval of "still working / waiting for you" reminders (0 = off)
-	queueMax int           // investigation queue limit, for the queue summary line
+	remoteControls bool          // lead-side answer and kick commands are configured by the launcher
+	home           string        // AGENTS_HOME (tasks/, bus/)
+	busDir         string        // agentbus state directory (default <home>/bus)
+	agentCmd       string        // path to the `agent` script, used for actions (answer, stop, say, ack)
+	remind         time.Duration // interval of "still working / waiting for you" reminders (0 = off)
+	queueMax       int           // investigation queue limit, for the queue summary line
 }
 
 // main parses flags and starts the panel, the feed or (agentlive web …) the web interface.
