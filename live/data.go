@@ -171,16 +171,42 @@ type busState struct {
 	Reservations   map[string]*Reservation   `json:"reservations"`   // taken resources by name
 }
 
+// NotifyFailure is the notification command's failure that agent keeps (notify-failed.json) until a notification is
+// delivered again: every page warns while it lasts.
+type NotifyFailure struct {
+	Since   string `json:"since"`   // when the first undelivered notification failed (local time, as agent wrote it)
+	Command string `json:"command"` // the notification command that failed
+	Error   string `json:"error"`   // its exit code and the end of its output
+}
+
+// loadNotifyFailure reads notify-failed.json: nil when there is none; a file that cannot be read is shown as such,
+// not left out.
+func loadNotifyFailure(home string) *NotifyFailure {
+	b, err := os.ReadFile(filepath.Join(home, "notify-failed.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return &NotifyFailure{Error: "notify-failed.json cannot be read: " + err.Error()}
+	}
+	var f NotifyFailure
+	if err := json.Unmarshal(b, &f); err != nil {
+		return &NotifyFailure{Error: "notify-failed.json cannot be read: " + err.Error()}
+	}
+	return &f
+}
+
 // Snapshot is the state of all tasks and the bus at one point in time.
 type Snapshot struct {
-	At     time.Time            // when the snapshot was taken
-	Tasks  []*Task              // visible: active + finished but not acknowledged, sorted by priority
-	All    map[string]*Task     // every task by ID
-	Agents map[string]*Presence // running agents (bus presence) by name
-	Invs   []*Investigation     // investigations sorted by ID
-	Msgs   []Message            // tail of messages.jsonl
-	Teams  map[string]*TeamInfo // teams by ID
-	Res    []*Reservation       // reserved resources, sorted by name
+	At           time.Time            // when the snapshot was taken
+	NotifyFailed *NotifyFailure       // notifications are not delivered since …: notify-failed.json
+	Tasks        []*Task              // visible: active + finished but not acknowledged, sorted by priority
+	All          map[string]*Task     // every task by ID
+	Agents       map[string]*Presence // running agents (bus presence) by name
+	Invs         []*Investigation     // investigations sorted by ID
+	Msgs         []Message            // tail of messages.jsonl
+	Teams        map[string]*TeamInfo // teams by ID
+	Res          []*Reservation       // reserved resources, sorted by name
 }
 
 // activeStatuses are task statuses of unfinished tasks (shown regardless of acknowledgement).
@@ -525,6 +551,7 @@ func loadSnapshot(home, busDir string, nodeTTL ...time.Duration) *Snapshot {
 			s.Msgs = append(s.Msgs, m)
 		}
 	}
+	s.NotifyFailed = loadNotifyFailure(home)
 	return s
 }
 

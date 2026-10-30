@@ -160,3 +160,6 @@ ol.msgs li.pair-8 { border-left-color: #a855f7; } ol.msgs li.pair-8 .route { col
 ol.msgs li.pair-9 { border-left-color: #f97316; } ol.msgs li.pair-9 .route { color: #f97316; }
 ol.msgs li.pair-10 { border-left-color: #14b8a6; } ol.msgs li.pair-10 .route { color: #14b8a6; }
 ol.msgs li.pair-11 { border-left-color: #6366f1; } ol.msgs li.pair-11 .route { color: #6366f1; }
+
+/* notifications are not delivered: a warning on every page until one is */
+.notify-failed { margin: 0 0 1em; padding: .5em .8em; border-left: 4px solid #d97706; background: rgba(217, 119, 6, .12); }

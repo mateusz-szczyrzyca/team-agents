@@ -33,6 +33,7 @@
 </nav>
 <div id="scrim" hidden></div>
 <main id="view" data-view="{{.View}}">
+{{with .NotifyFailed}}<p class="notify-failed">⚠ notifications are not delivered since {{.Since}} — {{.Error}}. Fix the notification command (NOTIFY_CMD); this warning goes with the next delivered notification.</p>{{end}}
   <div class="viewbar">
     <h1>{{.Title}}</h1>
     <span class="spacer"></span>
