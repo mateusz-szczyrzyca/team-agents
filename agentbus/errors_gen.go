@@ -1980,6 +1980,78 @@ func (c LeadCancelCause) info() causeInfo { return leadCancelCauses[c] }
 // String returns the cause name.
 func (c LeadCancelCause) String() string { return c.info().name }
 
+// ---------------------------------------------------------------- lead/answer
+
+// LeadAnswerCause is a reason why queueing an answer to a remote job's questions failed.
+type LeadAnswerCause int
+
+const (
+	LeadAnswerBadFlags        LeadAnswerCause = iota // flags or arguments to lead-answer are invalid [InvalidArgument]
+	LeadAnswerInvalidFile                            // the questions file name is not questions-<n>.md [InvalidArgument]
+	LeadAnswerContentTooLarge                        // the answer content exceeds 256 KiB [InvalidArgument]
+	LeadAnswerNotAnswered                            // the answer content does not end with **ANSWERED** [InvalidArgument]
+	LeadAnswerInvalidContent                         // the answer content contains non-printable control characters [InvalidArgument]
+	LeadAnswerNoSuchJob                              // the job or task does not exist [NotFound]
+	LeadAnswerInvalidState                           // the job is not waiting for answers [InvalidState]
+	LeadAnswerStorage                                // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadAnswerError is the error of queueing an answer to a remote job's questions.
+type LeadAnswerError = OpError[LeadAnswerCause]
+
+// leadAnswerCauses describes the LeadAnswerCause values (same order as the constants).
+var leadAnswerCauses = [...]causeInfo{
+	{"BadFlags", ClassInvalidArgument},
+	{"InvalidFile", ClassInvalidArgument},
+	{"ContentTooLarge", ClassInvalidArgument},
+	{"NotAnswered", ClassInvalidArgument},
+	{"InvalidContent", ClassInvalidArgument},
+	{"NoSuchJob", ClassNotFound},
+	{"InvalidState", ClassInvalidState},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadAnswerCause) op() string { return "lead/answer" }
+
+// info implements opCause.
+func (c LeadAnswerCause) info() causeInfo { return leadAnswerCauses[c] }
+
+// String returns the cause name.
+func (c LeadAnswerCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- lead/kick
+
+// LeadKickCause is a reason why queueing a kick request for a remote job failed.
+type LeadKickCause int
+
+const (
+	LeadKickBadFlags     LeadKickCause = iota // flags or arguments to lead-kick are invalid [InvalidArgument]
+	LeadKickNoSuchJob                         // the job or task does not exist [NotFound]
+	LeadKickInvalidState                      // the job is already terminal [InvalidState]
+	LeadKickStorage                           // the shared state or a file could not be read or written [Storage]
+)
+
+// LeadKickError is the error of queueing a kick request for a remote job.
+type LeadKickError = OpError[LeadKickCause]
+
+// leadKickCauses describes the LeadKickCause values (same order as the constants).
+var leadKickCauses = [...]causeInfo{
+	{"BadFlags", ClassInvalidArgument},
+	{"NoSuchJob", ClassNotFound},
+	{"InvalidState", ClassInvalidState},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LeadKickCause) op() string { return "lead/kick" }
+
+// info implements opCause.
+func (c LeadKickCause) info() causeInfo { return leadKickCauses[c] }
+
+// String returns the cause name.
+func (c LeadKickCause) String() string { return c.info().name }
+
 // ---------------------------------------------------------------- lead/list_jobs
 
 // LeadListJobsCause is a reason why listing remote jobs failed.

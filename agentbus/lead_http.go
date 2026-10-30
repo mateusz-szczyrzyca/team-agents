@@ -10,16 +10,19 @@ import (
 
 // leadAPI adapts authenticated operations to the durable registry without touching ordinary bus state.
 type leadAPI struct {
-	bus       *Bus          // registry storage and shared flock
-	ttl       time.Duration // maximum node silence before unstarted assignments expire
-	notifyDir string        // optional directory for completion notification files to human requesters
-	notifyCmd string        // optional delivery command run with the notification file path
+	bus          *Bus          // registry storage and shared flock
+	ttl          time.Duration // maximum node silence before unstarted assignments expire
+	notifyDir    string        // optional directory for completion notification files to human requesters
+	notifyCmd    string        // optional delivery command run with the notification file path
+	questionsCmd string        // optional command run with _remote_questions when questions arrive
 }
 
 // leadHeartbeatBody adds pending reports to the node's current declaration.
 type leadHeartbeatBody struct {
-	NodeHeartbeat             // declaration, with identity supplied by the socket peer
-	Reports       []JobReport // latest unacknowledged snapshots, applied atomically
+	NodeHeartbeat                 // declaration, with identity supplied by the socket peer
+	Reports       []JobReport     // latest unacknowledged snapshots, applied atomically
+	AnswerAcks    []LeadAnswerAck `json:",omitempty"` // answers acknowledged by the node
+	KickAcks      []LeadKickAck   `json:",omitempty"` // kicks acknowledged by the node
 }
 
 // MarshalJSON implements json.Marshaler; encoding/json supplies its interface error.
@@ -39,9 +42,11 @@ func (b leadHeartbeatBody) MarshalJSON() ([]byte, error) {
 		reports = append(reports, wireReport{JobReport: rep, At: jobTime{rep.At}, Transitions: transitions})
 	}
 	return json.Marshal(struct {
-		NodeHeartbeat              // current node declaration
-		Reports       []wireReport // snapshots with lossless times
-	}{b.NodeHeartbeat, reports})
+		NodeHeartbeat                 // current node declaration
+		Reports       []wireReport    // snapshots with lossless times
+		AnswerAcks    []LeadAnswerAck `json:",omitempty"`
+		KickAcks      []LeadKickAck   `json:",omitempty"`
+	}{b.NodeHeartbeat, reports, b.AnswerAcks, b.KickAcks})
 }
 
 // leadJobView exposes job data without registry counters or bus internals.
@@ -70,14 +75,17 @@ type leadNodeView struct {
 
 // newLeadHandler constructs the HTTP boundary shared by configured listeners.
 func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Duration, notify ...string) http.Handler {
-	var notifyDir, notifyCmd string
+	var notifyDir, notifyCmd, questionsCmd string
 	if len(notify) > 0 {
 		notifyDir = notify[0]
 	}
 	if len(notify) > 1 {
 		notifyCmd = notify[1]
 	}
-	a := &leadAPI{bus: bus, ttl: ttl, notifyDir: notifyDir, notifyCmd: notifyCmd}
+	if len(notify) > 2 {
+		questionsCmd = notify[2]
+	}
+	a := &leadAPI{bus: bus, ttl: ttl, notifyDir: notifyDir, notifyCmd: notifyCmd, questionsCmd: questionsCmd}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/sync", func(w http.ResponseWriter, r *http.Request) {
 		serveLead(w, r, localNode, allowed, LeadSyncUnauthorized, func(peer leadIdentity) (any, *LeadSyncError) {
