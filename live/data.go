@@ -195,7 +195,7 @@ const notifyFailureWindow = 24 * time.Hour
 // loadNotifyFailures sums up notify-failures.jsonl for the last day: nil when nothing failed in it; a file or a record
 // that cannot be read is shown as such, not left out.
 func loadNotifyFailures(home string, now time.Time) *NotifyFailures {
-	b, err := os.ReadFile(filepath.Join(home, "notify-failures.jsonl"))
+	b, err := os.ReadFile(filepath.Join(home, "notify-failures.jsonl")) // #nosec G304 -- the path is built from AGENTS_HOME and a fixed file name; no request text reaches it
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
