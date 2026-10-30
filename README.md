@@ -557,6 +557,10 @@ Then:
 | `AUTH_MODEL_*` | cheap models used by `agent authenticated --providers` (the per-agent check uses each agent's model) |
 | `BRANCH_PREFIX`, `CLAUDE_MAX_TURNS`, `AGY_PRINT_TIMEOUT`, `OPENCODE_BASH_TIMEOUT_MS` | misc |
 
+A paused task (a provider's limit, the network) resumes by itself at its pause's end; `agent wake <task>` resumes it
+now — say, after buying a bigger plan. On the lead, `agent wake` on a remote member's proxy task asks its node, which
+resumes the member as soon as it hears its doorbell.
+
 `~/agents/secrets.env` is loaded before every run: `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`,
 `CODEX_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, `GH_TOKEN` (the GitHub account the
 agents act as) and anything your notification hook needs.
@@ -642,6 +646,7 @@ agent run --resume <team|task> ["addition"]   resume from the last checkpoint (s
 agent run --resume <team|task> --same-round   continue an unmerged round on the same branches (e.g. review fixes)
 agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)
 agent kick <task>                             cut a run short: a team member sleeps (its team can wake it), solo: stopped
+agent wake <task>                             resume a paused task now, not at its pause's end (a remote member's: on its node)
 agent round-size <task>                       size of a task's change against the round limit
 agent status | agents | show <id>            overview, agents, task details
 agent log <id> [--raw]                        follow the runner log (structured records rendered; --raw: JSON)
