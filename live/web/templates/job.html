@@ -7,6 +7,7 @@
 {{if .J.PRURL}}<tr><th>PR</th><td><a href="{{.J.PRURL}}">{{.J.PRURL}}</a></td></tr>{{end}}
 {{if .RequesterTask}}<tr><th>Requester</th><td>{{if .RequesterTaskLink}}<a href="{{.RequesterTaskLink}}">{{.RequesterTask}}</a>{{else}}{{.RequesterTask}}{{end}}{{if .RequesterTeam}} <a class="tag" href="/team/{{.RequesterTeam}}">team {{.RequesterTeamShort}}</a>{{end}}</td></tr>{{end}}
 {{if and (or .Team .ProxyTask) (not .RequesterTask)}}<tr><th>Team</th><td>{{if .ProxyTaskLink}}<a href="{{.ProxyTaskLink}}">{{.ProxyTask}}</a> {{else if .ProxyTask}}{{.ProxyTask}} {{end}}{{if .Team}}<a class="tag" href="/team/{{.Team}}">team {{.TeamShort}}</a>{{end}}</td></tr>{{end}}
+{{if .MirrorTaskLink}}<tr><th>Mirror on lead</th><td><a href="{{.MirrorTaskLink}}">{{.MirrorTask}}</a></td></tr>{{end}}
 <tr><th>On the node</th><td>{{if .NodeURL}}<a href="{{.NodeURL}}">the task on {{.J.Node}}</a>{{else}}<span class="dim">no web address for {{.J.Node}} (AGENT_WEB_URL)</span>{{end}}</td></tr>
 </table>
 <h2>Latest activity</h2>

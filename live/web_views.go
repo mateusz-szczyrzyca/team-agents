@@ -55,7 +55,9 @@ func statusClass(s string) string {
 }
 
 // snapshot reads the current state (tasks and the bus).
-func (s *webServer) snapshot() *Snapshot { return loadSnapshot(s.cfg.home, s.cfg.busDir) }
+func (s *webServer) snapshot() *Snapshot {
+	return loadSnapshot(s.cfg.home, s.cfg.busDir, s.cfg.nodeTTL)
+}
 
 // ---------------------------------------------------------------- task rows (the panel's table)
 
@@ -89,7 +91,11 @@ const dashRecent = 24 * time.Hour
 // acknowledged, or finished within dashRecent.
 func dashTasks(snap *Snapshot) ([]*Task, []*Task) {
 	var active, done []*Task
+	proxies := localRemoteMemberProxies(snap)
 	for _, t := range snap.All {
+		if hasIndexedLocalProxy(proxies, t) {
+			continue
+		}
 		switch {
 		case t.Active():
 			active = append(active, t)
@@ -119,12 +125,12 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	r.Link = "/task/" + t.ID
 	r.StatusLabel, _ = statusStyle(t.Status)
 	r.StatusClass = statusClass(t.Status)
-	r.Running = t.Status == "running" || t.Status == "starting"
+	r.Running = t.Node == "" && (t.Status == "running" || t.Status == "starting")
 	if t.Kind == "investigation" {
 		r.Name = fmt.Sprintf("investigator #%s (%s)", t.InvID, t.Agent)
 	}
 	switch {
-	case t.Active() && t.Alive && !t.RunStart.IsZero():
+	case t.Active() && (t.Alive || t.Node != "") && !t.RunStart.IsZero():
 		r.Since = human(time.Since(t.RunStart))
 	case t.Active():
 		r.Since = human(time.Since(t.Created))
@@ -137,8 +143,12 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	if t.AutoStage != "" { // the automation works on the round (its checks, reviews, merge): that is its stage now
 		r.Stage = "⚙ " + t.AutoStage
 	}
-	if (t.Status == "running" || t.Status == "starting") && !t.Alive && !t.RunStart.IsZero() {
+	if t.Node == "" && (t.Status == "running" || t.Status == "starting") && !t.Alive && !t.RunStart.IsZero() {
 		r.StatusLabel, r.StatusClass = "✗ process is dead", statusClass("dead")
+	}
+	if t.NodeOffline {
+		r.StatusLabel += " (" + t.Status + "; node offline)"
+		r.StatusClass = statusClass("offline")
 	}
 	switch {
 	case !t.Active():
@@ -149,7 +159,7 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	if t.Kind == "investigation" {
 		r.Stage = strings.TrimSpace("for " + t.FromAgent + " " + r.Stage)
 	}
-	if ti := snap.Teams[t.Team]; ti != nil && ti.Lead == t.Agent {
+	if ti := snap.Teams[t.Team]; ti != nil && ti.Lead == t.BusName() {
 		r.Lead = true
 	}
 	return r
@@ -232,6 +242,7 @@ func (s *webServer) streamDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	watcher := NewWatcher(s.cfg.home, s.cfg.busDir, 0)
+	watcher.nodeTTL = s.cfg.nodeTTL
 	watcher.Poll() // the baseline: events are what happens from now on
 	tk := time.NewTicker(s.cfg.poll)
 	defer tk.Stop()
@@ -305,7 +316,7 @@ func (s *webServer) viewAgents(w http.ResponseWriter, r *http.Request) {
 		row := agentRow{agentEntry: a, State: "free", StateClass: "st-dim"}
 		best := 99
 		for _, t := range snap.All {
-			if t.Agent != a.Name {
+			if t.Node != "" || t.Agent != a.Name {
 				continue
 			}
 			if la := lastActivity(t); la.After(row.LastAt) {
@@ -395,6 +406,17 @@ func (s *webServer) viewAgents(w http.ResponseWriter, r *http.Request) {
 						if !node.LastSeen.IsZero() && node.LastSeen.After(row.LastAt) {
 							row.LastAt = node.LastSeen
 						}
+						link := "/jobs/" + url.PathEscape(j.Request.ID)
+						if j.TaskID != "" && snap.All[j.TaskID+"@"+nodeName] != nil {
+							link = "/task/" + url.PathEscape(j.TaskID+"@"+nodeName)
+						} else {
+							for _, t := range snap.All {
+								if t.JobID != "" && t.JobID == j.Request.ID {
+									link = "/task/" + url.PathEscape(t.ID)
+									break
+								}
+							}
+						}
 						jRow := taskRow{
 							ID:          j.Request.ID,
 							Name:        fullName,
@@ -402,7 +424,7 @@ func (s *webServer) viewAgents(w http.ResponseWriter, r *http.Request) {
 							StatusLabel: j.State,
 							StatusClass: statusClass(j.State),
 							Repo:        j.Request.Repository,
-							Link:        "/jobs/" + url.PathEscape(j.Request.ID),
+							Link:        link,
 							Running:     j.State == "running",
 						}
 						if n := len(a.Lines); n > 0 {
@@ -488,6 +510,7 @@ type taskData struct {
 	Tabs      []kv       // the sections (Key = key, Value = label)
 	Paused    string     // pause description (paused tasks)
 	Acts      []actRow   // activity (tab activity)
+	ActCursor string     // mirror content cursor from the same generation rendered in Acts
 	ActOffset int64      // size of activity.jsonl when rendered (the stream continues from there)
 	Files     []fileText // prompts, question rounds or error logs (other tabs)
 	Invs      []invRow   // investigations of the task (tab investigations)
@@ -499,12 +522,12 @@ type taskData struct {
 // findTask returns a task of the snapshot by its full ID or a unique prefix. It compares instead of indexing: the
 // request only selects one of the tasks that exist, it never becomes part of a path.
 func findTask(snap *Snapshot, id string) *Task {
+	if t, ok := snap.All[id]; ok {
+		return t
+	}
 	var hit *Task
 	for k, t := range snap.All {
-		switch {
-		case k == id:
-			return t
-		case strings.HasPrefix(k, id):
+		if strings.HasPrefix(k, id) {
 			if hit != nil {
 				return nil // ambiguous prefix
 			}
@@ -535,21 +558,88 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 	}
 	switch tab {
 	case "activity":
-		for _, a := range readActivity(t.Dir, 500) {
+		var activities []Activity
+		if t.Node != "" {
+			cursor := &mirrorActivityCursor{}
+			activities = cursor.read(filepath.Join(t.Dir, "activity.jsonl"))
+			d.ActCursor = cursor.token()
+			if len(activities) > 500 {
+				activities = activities[len(activities)-500:]
+			}
+		} else {
+			activities = readActivity(t.Dir, 500)
+			if st, err := os.Stat(filepath.Join(t.Dir, "activity.jsonl")); err == nil {
+				d.ActOffset = st.Size()
+			}
+		}
+		for _, a := range activities {
 			d.Acts = append(d.Acts, actRow{TS: shortTS(a.TS), Icon: actIcon(a.Kind), Kind: a.Kind, Text: a.Text})
 		}
-		if st, err := os.Stat(filepath.Join(t.Dir, "activity.jsonl")); err == nil {
-			d.ActOffset = st.Size()
-		}
 	case "prompt":
-		for n := t.Run; n >= 1; n-- {
-			d.Files = append(d.Files, fileText{Name: fmt.Sprintf("prompt-%d.md (run %d)", n, n),
-				Text: readFile(filepath.Join(t.Dir, fmt.Sprintf("prompt-%d.md", n))), Current: n == t.Run})
+		if t.Node != "" {
+			matches, gerr := filepath.Glob(filepath.Join(t.Dir, "prompt-*.md"))
+			if gerr != nil {
+				viewError(s, w, r, webErr(ViewStorage, gerr, "cannot list prompts of %s", t.ID))
+				return
+			}
+			type promptRun struct {
+				path string // mirrored prompt file path
+				run  int    // parsed run number for numeric ordering
+			}
+			var runs []promptRun
+			for _, p := range matches {
+				base := filepath.Base(p)
+				var run int
+				if n, err := fmt.Sscanf(base, "prompt-%d.md", &run); err == nil && n == 1 {
+					runs = append(runs, promptRun{path: p, run: run})
+				}
+			}
+			sort.Slice(runs, func(i, j int) bool { return runs[i].run > runs[j].run })
+			for _, pr := range runs {
+				d.Files = append(d.Files, fileText{
+					Name:    fmt.Sprintf("prompt-%d.md (run %d)", pr.run, pr.run),
+					Text:    readFile(pr.path),
+					Current: pr.run == t.Run,
+				})
+			}
+		} else {
+			for n := t.Run; n >= 1; n-- {
+				d.Files = append(d.Files, fileText{Name: fmt.Sprintf("prompt-%d.md (run %d)", n, n),
+					Text: readFile(filepath.Join(t.Dir, fmt.Sprintf("prompt-%d.md", n))), Current: n == t.Run})
+			}
 		}
 	case "questions":
-		for n := t.Round; n >= 1; n-- {
-			d.Files = append(d.Files, fileText{Name: fmt.Sprintf("questions-%d.md (round %d)", n, n),
-				Text: readFile(filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", n))), Current: n == t.Round && t.Status == "waiting"})
+		if t.Node != "" {
+			matches, gerr := filepath.Glob(filepath.Join(t.Dir, "questions-*.md"))
+			if gerr != nil {
+				viewError(s, w, r, webErr(ViewStorage, gerr, "cannot list questions of %s", t.ID))
+				return
+			}
+			type qRound struct {
+				path  string // mirrored question file path
+				round int    // parsed round number for numeric ordering
+			}
+			var rounds []qRound
+			for _, p := range matches {
+				base := filepath.Base(p)
+				var round int
+				if n, err := fmt.Sscanf(base, "questions-%d.md", &round); err == nil && n == 1 {
+					rounds = append(rounds, qRound{path: p, round: round})
+				}
+			}
+			sort.Slice(rounds, func(i, j int) bool { return rounds[i].round > rounds[j].round })
+			for i, qr := range rounds {
+				d.Files = append(d.Files, fileText{
+					Name:    fmt.Sprintf("questions-%d.md (round %d)", qr.round, qr.round),
+					Text:    readFile(qr.path),
+					Current: i == 0 && t.Status == "waiting",
+				})
+			}
+		} else {
+			for n := t.Round; n >= 1; n-- {
+				d.Files = append(d.Files, fileText{Name: fmt.Sprintf("questions-%d.md (round %d)", n, n),
+					Text: readFile(filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", n))), Current: n == t.Round && t.Status == "waiting"})
+			}
 		}
 	case "investigations":
 		for _, inv := range snap.Invs {
@@ -574,7 +664,12 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 	case "notebook":
 		d.Notes = notebook(s.cfg.busDir, t.Repo)
 	case "meta":
-		m := readMeta(filepath.Join(t.Dir, "meta.env"))
+		var m map[string]string
+		if t.Node != "" {
+			m = readMetadataJSON(filepath.Join(t.Dir, "metadata.json"))
+		} else {
+			m = readMeta(filepath.Join(t.Dir, "meta.env"))
+		}
 		for k, v := range m {
 			d.Meta = append(d.Meta, kv{k, v})
 		}
@@ -598,11 +693,21 @@ func (s *webServer) streamTask(w http.ResponseWriter, r *http.Request) {
 	if err != nil || off < 0 {
 		off = 0
 	}
+	path := filepath.Join(t.Dir, "activity.jsonl")
+	var mirrorCursor *mirrorActivityCursor
+	if t.Node != "" {
+		mirrorCursor = &mirrorActivityCursor{}
+		if token := r.URL.Query().Get("cursor"); token != "" {
+			mirrorCursor.resume(path, token)
+		} else {
+			// Older open pages and direct clients retain the existing offset interface.
+			mirrorCursor.baseline(path, off)
+		}
+	}
 	f, ok := sseStream(w)
 	if !ok {
 		return
 	}
-	path := filepath.Join(t.Dir, "activity.jsonl")
 	lastHead := s.fragment("task-head", makeRow(snap, t))
 	tk := time.NewTicker(s.cfg.poll)
 	defer tk.Stop()
@@ -613,7 +718,11 @@ func (s *webServer) streamTask(w http.ResponseWriter, r *http.Request) {
 		case <-tk.C:
 		}
 		var acts []Activity
-		acts, off = readActivitySince(path, off)
+		if mirrorCursor != nil {
+			acts = mirrorCursor.read(path)
+		} else {
+			acts, off = readActivitySince(path, off)
+		}
 		for _, a := range acts {
 			if !sseSend(w, f, "act", s.fragment("act-item", actRow{TS: shortTS(a.TS), Icon: actIcon(a.Kind), Kind: a.Kind, Text: a.Text})) {
 				return
@@ -1036,6 +1145,9 @@ func (s *webServer) viewQuestions(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	var rows []waitingRow
 	for _, t := range snap.Waiting() {
+		if t.Node != "" {
+			continue
+		}
 		doc := parseQuestions(readFile(filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", t.Round))))
 		rows = append(rows, waitingRow{Row: makeRow(snap, t), Round: t.Round, Count: len(doc.Questions)})
 	}
@@ -1070,7 +1182,7 @@ func (s *webServer) loadAnswer(snap *Snapshot, id string) (*Task, string, *quest
 	if t == nil {
 		return nil, "", nil, webErr(AnswerNoQuestions, nil, "no task %q", id)
 	}
-	if t.Status != "waiting" || t.Round < 1 {
+	if t.Node != "" || t.Status != "waiting" || t.Round < 1 {
 		return t, "", nil, webErr(AnswerNotWaiting, nil, "%s is %s — it does not wait for answers", t.ID, t.Status)
 	}
 	path := filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", t.Round))
@@ -1219,6 +1331,10 @@ func (s *webServer) postStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such task", http.StatusNotFound)
 		return
 	}
+	if t.Node != "" {
+		http.Error(w, "cannot stop mirrored task "+t.ID+" from the lead", http.StatusForbidden)
+		return
+	}
 	out, cerr := callAgent(s.cfg.agentCmd, "kick", t.ID, "web")
 	if cerr != nil {
 		logWarn(LogWebActionFailed, "action", "kick", "task", t.ID, "cause", cerr.Cause.String(), "error", cerr.Message)
@@ -1336,8 +1452,15 @@ func logFile(src string) (string, bool) {
 
 // logRow is one log record.
 type logRow struct {
-	TS, Level, Component, Event, Task string // time (local), level, component, event, task
-	Rest                              string // the other fields, "key=value …"
+	TS        string    // time (local)
+	Level     string    // log level
+	Node      string    // node name; empty for local log entries
+	Component string    // log component
+	Event     string    // log event name
+	Task      string    // task identifier
+	TaskLink  string    // link to task on lead (/task/<id> or /task/<id>@<node>)
+	Rest      string    // the other fields, "key=value …"
+	rawTime   time.Time // timestamp used for chronological sorting
 }
 
 // logLevelRank orders levels for the minimum-level filter.
@@ -1363,8 +1486,48 @@ func (s *webServer) viewLogs(w http.ResponseWriter, r *http.Request) {
 		n = 5000
 	}
 	minLevel, find := q.Get("level"), strings.ToLower(q.Get("q"))
+	nodeFilter := q.Get("node")
+
+	var allNodes []string
+	for _, e := range mirrorDirectories(filepath.Join(s.cfg.busDir, "remote")) {
+		allNodes = append(allNodes, e.Name())
+	}
+	sort.Strings(allNodes)
+
+	type lineWithNode struct {
+		line string
+		node string
+	}
+	var lines []lineWithNode
+
+	if nodeFilter == "" || nodeFilter == "all" || nodeFilter == "local" {
+		for _, l := range tailLines(filepath.Join(s.cfg.home, "logs", file), n, 16*1024*1024) {
+			lines = append(lines, lineWithNode{line: l, node: ""})
+		}
+	}
+
+	if nodeFilter == "" || nodeFilter == "all" {
+		for _, node := range allNodes {
+			for _, l := range tailLines(filepath.Join(s.cfg.busDir, "remote", node, "logs.jsonl"), n, 16*1024*1024) {
+				lines = append(lines, lineWithNode{line: l, node: node})
+			}
+		}
+	} else if nodeFilter != "local" {
+		for _, node := range allNodes {
+			if node == nodeFilter {
+				for _, l := range tailLines(filepath.Join(s.cfg.busDir, "remote", nodeFilter, "logs.jsonl"), n, 16*1024*1024) {
+					lines = append(lines, lineWithNode{line: l, node: nodeFilter})
+				}
+				break
+			}
+		}
+	}
+
 	var rows []logRow
-	for _, l := range tailLines(filepath.Join(s.cfg.home, "logs", file), n, 16*1024*1024) {
+	// Start with descending source order so stable timestamp sorting preserves ties.
+	for i := len(lines) - 1; i >= 0; i-- {
+		item := lines[i]
+		l := item.line
 		if find != "" && !strings.Contains(strings.ToLower(l), find) {
 			continue
 		}
@@ -1372,11 +1535,28 @@ func (s *webServer) viewLogs(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal([]byte(l), &rec) != nil {
 			continue
 		}
-		row := logRow{Level: str(rec, "level"), Component: str(rec, "component"), Event: str(rec, "event"), Task: str(rec, "task")}
+		row := logRow{
+			Level:     str(rec, "level"),
+			Node:      item.node,
+			Component: str(rec, "component"),
+			Event:     str(rec, "event"),
+			Task:      str(rec, "task"),
+		}
 		if minLevel != "" && logLevelRank[row.Level] < logLevelRank[minLevel] {
 			continue
 		}
+		if item.node != "" && row.Component != src {
+			continue
+		}
+		if row.Task != "" {
+			if row.Node != "" {
+				row.TaskLink = "/task/" + url.PathEscape(row.Task+"@"+row.Node)
+			} else {
+				row.TaskLink = "/task/" + url.PathEscape(row.Task)
+			}
+		}
 		if ts, err := time.Parse(time.RFC3339, str(rec, "ts")); err == nil {
+			row.rawTime = ts
 			row.TS = ts.Local().Format("01-02 15:04:05")
 		} else {
 			row.TS = str(rec, "ts")
@@ -1397,11 +1577,22 @@ func (s *webServer) viewLogs(w http.ResponseWriter, r *http.Request) {
 		row.Rest = strings.Join(rest, " ")
 		rows = append(rows, row)
 	}
-	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
-		rows[i], rows[j] = rows[j], rows[i] // newest first
+
+	sort.SliceStable(rows, func(i, j int) bool {
+		if !rows[i].rawTime.Equal(rows[j].rawTime) {
+			return rows[i].rawTime.After(rows[j].rawTime)
+		}
+		return rows[i].TS > rows[j].TS
+	})
+
+	if len(rows) > n {
+		rows = rows[:n]
 	}
-	s.render(w, r, http.StatusOK, "logs", "Logs", nil, map[string]any{"Rows": rows, "Src": src, "Sources": logSources,
-		"Level": minLevel, "Q": q.Get("q"), "N": n, "Live": q.Get("live") == "1", "Query": r.URL.RawQuery})
+
+	s.render(w, r, http.StatusOK, "logs", "Logs", nil, map[string]any{
+		"Rows": rows, "Src": src, "Sources": logSources, "Nodes": allNodes, "Node": nodeFilter,
+		"Level": minLevel, "Q": q.Get("q"), "N": n, "Live": q.Get("live") == "1", "Query": r.URL.RawQuery,
+	})
 }
 
 // str returns a field of a decoded JSON record as a string.
@@ -1574,6 +1765,17 @@ func (s *webServer) viewAgent(w http.ResponseWriter, r *http.Request) {
 					lastAt = node.LastSeen
 				}
 			}
+			link := "/jobs/" + url.PathEscape(j.Request.ID)
+			if j.TaskID != "" && snap.All[j.TaskID+"@"+nodeName] != nil {
+				link = "/task/" + url.PathEscape(j.TaskID+"@"+nodeName)
+			} else {
+				for _, t := range snap.All {
+					if t.JobID != "" && t.JobID == j.Request.ID {
+						link = "/task/" + url.PathEscape(t.ID)
+						break
+					}
+				}
+			}
 			jRow := taskRow{
 				ID:          j.Request.ID,
 				Name:        id,
@@ -1581,7 +1783,7 @@ func (s *webServer) viewAgent(w http.ResponseWriter, r *http.Request) {
 				StatusLabel: j.State,
 				StatusClass: statusClass(j.State),
 				Repo:        j.Request.Repository,
-				Link:        "/jobs/" + url.PathEscape(j.Request.ID),
+				Link:        link,
 				Running:     j.State == "running",
 				FinishedAt:  tFin,
 			}
@@ -1643,7 +1845,7 @@ func (s *webServer) viewAgent(w http.ResponseWriter, r *http.Request) {
 	best := 99
 	var lastAt time.Time
 	for _, t := range snap.All {
-		if t.Agent != id {
+		if t.Node != "" || t.Agent != id {
 			continue
 		}
 		if la := lastActivity(t); la.After(lastAt) {

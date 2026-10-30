@@ -24,35 +24,38 @@ type Activity struct {
 	Text string `json:"t"`  // human-readable summary of the step
 }
 
-// Task is one task directory (~/agents/tasks/<id>) as seen by the live view, built from its meta.env.
+// Task is a local task read from meta.env or a remote task read from mirrored metadata.json.
 type Task struct {
-	ID         string    // task ID: "<timestamp>-<agent>" (investigations/helpers have their own suffix)
-	Agent      string    // agent name
-	Kind       string    // worker (a normal task) | investigation | helper (a worker request)
-	Type       string    // agent CLI: claude | codex | gemini | opencode
-	Model      string    // model as configured ("" = the CLI's default)
-	Repo       string    // repository name
-	Branch     string    // the task's git branch
-	Worktree   string    // the task's git worktree
-	Status     string    // new | starting | running | waiting | investigating | sleeping | done | failed | stopped | excluded | hung
-	InvID      string    // investigations: the investigation number
-	ParentTask string    // investigations/helpers: the task they work for
-	FromAgent  string    // investigations/helpers: the requesting agent
-	AutoStage  string    // what --verify/--autopilot does for the round now, on its coordinator's task (AUTO_STAGE)
-	Team       string    // team ID ("" for a solo task)
-	HelperID   string    // helpers: the worker request number
-	Tier       string    // normal | worker
-	JobID      string    // remote job ID when started for a job
-	JobLead    string    // lead URL or instance name when started for a job
-	Round      int       // question rounds so far (questions-<Round>.md is the latest)
-	Run        int       // runs so far (prompt-<Run>.md is the latest)
-	Created    time.Time // when the task was created
-	Finished   time.Time // when the last run ended (zero while running)
-	RunStart   time.Time // when the current run started (from the runner process)
-	Dir        string    // task directory
-	Alive      bool      // the runner process is alive
-	Acked      bool      // a finished task was acknowledged (agent ack / x) and is hidden
-	Last       Activity  // latest activity entry
+	ID          string    // task ID: "<timestamp>-<agent>" (investigations/helpers have their own suffix)
+	Agent       string    // agent name
+	Node        string    // remote node name; empty for a local task
+	NodeOffline bool      // the remote heartbeat expired; status remains the last known state
+	Note        string    // human-visible task note
+	Kind        string    // worker (a normal task) | investigation | helper (a worker request)
+	Type        string    // agent CLI: claude | codex | gemini | opencode
+	Model       string    // model as configured ("" = the CLI's default)
+	Repo        string    // repository name
+	Branch      string    // the task's git branch
+	Worktree    string    // the task's git worktree
+	Status      string    // new | starting | running | waiting | investigating | sleeping | done | failed | stopped | excluded | hung
+	InvID       string    // investigations: the investigation number
+	ParentTask  string    // investigations/helpers: the task they work for
+	FromAgent   string    // investigations/helpers: the requesting agent
+	AutoStage   string    // what --verify/--autopilot does for the round now, on its coordinator's task (AUTO_STAGE)
+	Team        string    // team ID ("" for a solo task)
+	HelperID    string    // helpers: the worker request number
+	Tier        string    // normal | worker
+	JobID       string    // remote job ID when started for a job
+	JobLead     string    // lead URL or instance name when started for a job
+	Round       int       // question rounds so far (questions-<Round>.md is the latest)
+	Run         int       // runs so far (prompt-<Run>.md is the latest)
+	Created     time.Time // when the task was created
+	Finished    time.Time // when the last run ended (zero while running)
+	RunStart    time.Time // when the current run started (from the runner process)
+	Dir         string    // task directory
+	Alive       bool      // the runner process is alive
+	Acked       bool      // a finished task was acknowledged (agent ack / x) and is hidden
+	Last        Activity  // latest activity entry
 }
 
 // Presence is the part of agentbus' presence entry that the live view needs (see agentbus Presence).
@@ -186,8 +189,11 @@ var activeStatuses = map[string]bool{"new": true, "starting": true, "running": t
 // Active reports whether the task has not finished yet (sleeping and waiting count as active).
 func (t *Task) Active() bool { return activeStatuses[t.Status] }
 
-// Label is the short name shown in the table (agent, inv#N or agent/HN).
+// Label is the short name shown in the table (agent, inv#N, agent/HN, or agent@node).
 func (t *Task) Label() string {
+	if t.Node != "" {
+		return t.Agent + "@" + t.Node
+	}
 	switch t.Kind {
 	case "investigation":
 		return "inv#" + t.InvID
@@ -198,7 +204,12 @@ func (t *Task) Label() string {
 }
 
 // BusName: the name under which the agent appears on the bus.
-func (t *Task) BusName() string { return t.Agent }
+func (t *Task) BusName() string {
+	if t.Node != "" {
+		return t.Agent + "@" + t.Node
+	}
+	return t.Agent
+}
 
 // JobMarker returns the remote job marker ("job <id> from <lead>") when started for a job.
 func (t *Task) JobMarker() string {
@@ -299,6 +310,24 @@ func readMeta(path string) map[string]string {
 		if ok && k != "" {
 			m[k] = unquote(v)
 		}
+	}
+	return m
+}
+
+// readMetadataJSON parses a mirrored metadata.json file; a missing file gives an empty map.
+func readMetadataJSON(path string) map[string]string {
+	m := map[string]string{}
+	data, err := os.ReadFile(path) // #nosec G304 -- the path is built from configured bus remote root and directory names listed locally
+	if errors.Is(err, os.ErrNotExist) {
+		return m
+	}
+	if err != nil {
+		warnOnce("read-meta-json:"+path, LogFileReadFailed, storageErr(err, "cannot read %s", path), "file", path)
+		return m
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		warnOnce("decode-meta-json:"+path, LogMetaMalformed, valueWrap(err, "cannot decode %s", path), "file", path)
+		return m
 	}
 	return m
 }
@@ -409,8 +438,9 @@ func readActivity(dir string, n int) []Activity {
 	return out
 }
 
-// loadSnapshot reads all task directories and the bus state.
-func loadSnapshot(home, busDir string) *Snapshot {
+// loadSnapshot reads local tasks, mirrored tasks, and bus state. The optional heartbeat TTL
+// defaults to 90 seconds for panel callers; web callers supply their configured timeout.
+func loadSnapshot(home, busDir string, nodeTTL ...time.Duration) *Snapshot {
 	s := &Snapshot{At: time.Now(), All: map[string]*Task{}, Agents: map[string]*Presence{}}
 	tasksDir := filepath.Join(home, "tasks")
 	entries, err := os.ReadDir(tasksDir)
@@ -449,6 +479,11 @@ func loadSnapshot(home, busDir string) *Snapshot {
 			s.Tasks = append(s.Tasks, t)
 		}
 	}
+	ttl := 90 * time.Second
+	if len(nodeTTL) > 0 && nodeTTL[0] > 0 {
+		ttl = nodeTTL[0]
+	}
+	loadMirroredTasks(s, busDir, ttl)
 	sort.SliceStable(s.Tasks, func(i, j int) bool {
 		pi, pj := statusPrio(s.Tasks[i]), statusPrio(s.Tasks[j])
 		if pi != pj {
@@ -539,7 +574,7 @@ func (s *Snapshot) QueueLine(queueMax int) string {
 func (s *Snapshot) Waiting() []*Task {
 	var out []*Task
 	for _, t := range s.Tasks {
-		if t.Status == "waiting" {
+		if t.Status == "waiting" && t.Node == "" {
 			out = append(out, t)
 		}
 	}
@@ -558,17 +593,19 @@ type Event struct {
 // Watcher polls snapshots and turns differences into events (status changes, new bus messages,
 // new activity entries, periodic reminders).
 type Watcher struct {
-	home, busDir string           // AGENTS_HOME and the bus directory
-	prev         *Snapshot        // previous snapshot (nil before the first poll)
-	lastMsg      int64            // last message ID already reported
-	offsets      map[string]int64 // read offset in each task's activity.jsonl
-	lastRemind   time.Time        // when the last reminder was emitted
-	remind       time.Duration    // reminder interval (0 = off)
+	home, busDir  string                           // AGENTS_HOME and the bus directory
+	prev          *Snapshot                        // previous snapshot (nil before the first poll)
+	lastMsg       int64                            // last message ID already reported
+	offsets       map[string]int64                 // read offset in each task's activity.jsonl
+	mirrorCursors map[string]*mirrorActivityCursor // last complete mirrored activity tail per qualified task
+	nodeTTL       time.Duration                    // heartbeat timeout; zero keeps the snapshot default
+	lastRemind    time.Time                        // when the last reminder was emitted
+	remind        time.Duration                    // reminder interval (0 = off)
 }
 
 // NewWatcher creates a watcher; the first Poll only records the baseline.
 func NewWatcher(home, busDir string, remind time.Duration) *Watcher {
-	return &Watcher{home: home, busDir: busDir, offsets: map[string]int64{}, remind: remind, lastRemind: time.Now()}
+	return &Watcher{home: home, busDir: busDir, offsets: map[string]int64{}, mirrorCursors: map[string]*mirrorActivityCursor{}, remind: remind, lastRemind: time.Now()}
 }
 
 // finalSummary returns the first lines of a task's last agent message (final.md) joined with " | ".
@@ -593,6 +630,18 @@ func finalSummary(dir string) string {
 // while the view is running — read the file from the beginning.
 func (w *Watcher) newActivity(t *Task, fromStart bool) []Activity {
 	path := filepath.Join(t.Dir, "activity.jsonl")
+	if t.Node != "" {
+		cursor := w.mirrorCursors[t.ID]
+		if cursor == nil {
+			cursor = &mirrorActivityCursor{}
+			w.mirrorCursors[t.ID] = cursor
+			if !fromStart {
+				cursor.baseline(path, -1)
+				return nil
+			}
+		}
+		return cursor.read(path)
+	}
 	if fromStart {
 		if _, seen := w.offsets[t.ID]; !seen {
 			w.offsets[t.ID] = 0
@@ -636,7 +685,13 @@ func (w *Watcher) newActivity(t *Task, fromStart bool) []Activity {
 
 // Poll loads a new snapshot and returns the events since the previous one.
 func (w *Watcher) Poll() (*Snapshot, []Event) {
-	cur := loadSnapshot(w.home, w.busDir)
+	cur := loadSnapshot(w.home, w.busDir, w.nodeTTL)
+	// Mirror retention removes tasks from disk; their bounded tails must leave the watcher too.
+	for id := range w.mirrorCursors {
+		if task := cur.All[id]; task == nil || task.Node == "" {
+			delete(w.mirrorCursors, id)
+		}
+	}
 	now := cur.At
 	var ev []Event
 	if w.prev == nil {
@@ -676,11 +731,15 @@ func (w *Watcher) Poll() (*Snapshot, []Event) {
 					kind = "err"
 				}
 			case "waiting":
-				text += " — waiting for your answers (key a in the panel, or: agent answer " + t.ID + ")"
+				if t.Node == "" {
+					text += " — waiting for your answers (key a in the panel, or: agent answer " + t.ID + ")"
+				} else {
+					text += " — waiting for remote answers"
+				}
 			}
 			ev = append(ev, Event{now, kind, text})
 		}
-		if t.Active() || (p != nil && p.Active()) {
+		if t.Active() || (p != nil && p.Active()) || t.Node != "" {
 			for _, a := range w.newActivity(t, p == nil) {
 				ev = append(ev, Event{now, "act", fmt.Sprintf("%s %s %s", t.Label(), actIcon(a.Kind), a.Text)})
 			}
