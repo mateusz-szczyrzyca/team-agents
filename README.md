@@ -227,7 +227,8 @@ frees its board items). It
 merges only the commit that passed its checks and both reviews (`--match-head-commit`): anything pushed since stops
 the merge. What it does for a round shows on the dashboard as its coordinator's stage (⚙): the checks, with the gate's
 progress ("make gate — 2 of 6 steps passed"), the two reviews and their verdicts, the merge, the next round — or
-"waits for you: …" where you decide.
+"waits for you: …" where you decide. A team that cannot take its work back — a resume refused — waits for you the same way, with
+the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
 **Notifications that are not delivered.** When the notification command fails — say, a variable it needs is not
 set for the process that sends it —, every page of the dashboard counts the failures of the last 24 hours, with the
