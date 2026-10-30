@@ -676,7 +676,7 @@ func (m model) row(t *Task, width int) string {
 	}
 	name := t.Label()
 	if t.Team != "" {
-		if ti := m.snap.Teams[t.Team]; ti != nil && ti.Lead == t.Agent {
+		if ti := m.snap.Teams[t.Team]; ti != nil && ti.Lead == t.BusName() {
 			name += "★"
 		} else {
 			name += "·"

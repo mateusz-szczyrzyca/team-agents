@@ -91,7 +91,11 @@ const dashRecent = 24 * time.Hour
 // acknowledged, or finished within dashRecent.
 func dashTasks(snap *Snapshot) ([]*Task, []*Task) {
 	var active, done []*Task
+	proxies := localRemoteMemberProxies(snap)
 	for _, t := range snap.All {
+		if hasIndexedLocalProxy(proxies, t) {
+			continue
+		}
 		switch {
 		case t.Active():
 			active = append(active, t)
@@ -155,7 +159,7 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	if t.Kind == "investigation" {
 		r.Stage = strings.TrimSpace("for " + t.FromAgent + " " + r.Stage)
 	}
-	if ti := snap.Teams[t.Team]; ti != nil && ti.Lead == t.Agent {
+	if ti := snap.Teams[t.Team]; ti != nil && ti.Lead == t.BusName() {
 		r.Lead = true
 	}
 	return r

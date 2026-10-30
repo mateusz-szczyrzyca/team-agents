@@ -27,6 +27,44 @@ func mirrorDirectories(dir string) []os.DirEntry {
 	return dirs
 }
 
+// isLocalRemoteMemberProxy reports whether t is a local remote-member proxy task for jobID and team.
+func isLocalRemoteMemberProxy(t *Task, jobID, team string) bool {
+	if t == nil || jobID == "" || t.Node != "" || t.Kind != "remote-member" || t.JobID != jobID {
+		return false
+	}
+	return team == "" || t.Team == team
+}
+
+// localRemoteMemberProxies indexes local remote-member proxy tasks in s by their JobID.
+func localRemoteMemberProxies(s *Snapshot) map[string][]*Task {
+	if s == nil {
+		return nil
+	}
+	var proxies map[string][]*Task
+	for _, t := range s.All {
+		if t != nil && t.Node == "" && t.Kind == "remote-member" && t.JobID != "" {
+			if proxies == nil {
+				proxies = make(map[string][]*Task)
+			}
+			proxies[t.JobID] = append(proxies[t.JobID], t)
+		}
+	}
+	return proxies
+}
+
+// hasIndexedLocalProxy reports whether proxies contains a local remote-member proxy matching mirror.
+func hasIndexedLocalProxy(proxies map[string][]*Task, mirror *Task) bool {
+	if mirror == nil || mirror.Node == "" || mirror.JobID == "" {
+		return false
+	}
+	for _, p := range proxies[mirror.JobID] {
+		if isLocalRemoteMemberProxy(p, mirror.JobID, mirror.Team) {
+			return true
+		}
+	}
+	return false
+}
+
 // loadMirroredTasks reads display-only mirror metadata and joins jobs without executing node data.
 func loadMirroredTasks(s *Snapshot, busDir string, ttl time.Duration) {
 	root := filepath.Join(busDir, "remote")
@@ -34,6 +72,7 @@ func loadMirroredTasks(s *Snapshot, busDir string, ttl time.Duration) {
 	if len(nodes) == 0 {
 		return
 	}
+	proxies := localRemoteMemberProxies(s)
 	jobs, jerr := readWebJobs(busDir)
 	if jerr != nil {
 		warnOnce("mirror-jobs:"+busDir, LogBusStateUnreadable, storageErr(jerr, "cannot read mirror job registry"), "dir", busDir)
@@ -86,7 +125,7 @@ func loadMirroredTasks(s *Snapshot, busDir string, ttl time.Duration) {
 				warnOnce("mirror-acked-stat:"+ackPath, LogFileReadFailed, storageErr(aerr, "cannot stat %s", ackPath), "file", ackPath)
 			}
 			s.All[task.ID] = task
-			if task.Active() || !task.Acked {
+			if (task.Active() || !task.Acked) && !hasIndexedLocalProxy(proxies, task) {
 				s.Tasks = append(s.Tasks, task)
 			}
 		}

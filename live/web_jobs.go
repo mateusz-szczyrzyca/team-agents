@@ -344,12 +344,13 @@ func buildWebJobRow(j webJob, snapshot *webJobsSnapshot, snapLocal *Snapshot, no
 	var proxyTask string
 	if snapLocal != nil {
 		for _, t := range snapLocal.All {
-			if t.JobID == j.Request.ID {
-				proxyTask = t.ID
-				if memberTeam == "" && t.Team != "" {
-					memberTeam = t.Team
+			if isLocalRemoteMemberProxy(t, j.Request.ID, j.Request.Team) {
+				if proxyTask == "" || t.ID < proxyTask {
+					proxyTask = t.ID
+					if j.Request.Team == "" {
+						memberTeam = t.Team
+					}
 				}
-				break
 			}
 		}
 	}

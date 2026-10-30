@@ -58,13 +58,22 @@ func (c *mirrorActivityCursor) baseline(path string, off int64) {
 	}
 }
 
-// token identifies the last complete raw line consumed from the generation rendered on the page.
+// mirrorActivityPrefixDigest hashes the sequence of lines preceding the boundary.
+func mirrorActivityPrefixDigest(lines []string) string {
+	sum := sha256.Sum256([]byte(strings.Join(lines, "")))
+	return fmt.Sprintf("%x", sum)
+}
+
+// token identifies the last complete raw line consumed from the generation rendered on the page,
+// paired with a digest of preceding rendered lines to validate continuity across replacements.
 // "start" represents an empty or not-yet-created log, so its first batch is never skipped.
 func (c *mirrorActivityCursor) token() string {
 	if len(c.previous) == 0 {
 		return "start"
 	}
-	return mirrorActivityToken(c.previous[len(c.previous)-1])
+	boundary := mirrorActivityToken(c.previous[len(c.previous)-1])
+	prefixDigest := mirrorActivityPrefixDigest(c.previous[:len(c.previous)-1])
+	return boundary + ":" + prefixDigest
 }
 
 // mirrorActivityToken hashes all event fields, preserving timestamps and unknown fields in the handoff.
@@ -72,8 +81,9 @@ func mirrorActivityToken(line string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(line)))
 }
 
-// resume binds a page's content cursor to the current tail. If its boundary has rolled out
-// or is ambiguous, replay the available tail rather than consuming unseen records using an obsolete byte offset.
+// resume binds a page's content cursor to the current tail. If its boundary has rolled out,
+// is ambiguous, or context continuity cannot be validated, replay the available tail
+// rather than consuming unseen records using an obsolete byte offset.
 func (c *mirrorActivityCursor) resume(path, token string) {
 	c.previous = nil
 	if token == "" || token == "start" {
@@ -84,8 +94,10 @@ func (c *mirrorActivityCursor) resume(path, token string) {
 		return
 	}
 	hash := token
+	prefixDigest := ""
 	if idx := strings.IndexByte(token, ':'); idx >= 0 {
 		hash = token[:idx]
+		prefixDigest = token[idx+1:]
 	}
 
 	matchCount := 0
@@ -96,10 +108,15 @@ func (c *mirrorActivityCursor) resume(path, token string) {
 			matchIdx = i
 		}
 	}
-	// Unique match: unambiguous boundary.
+	// Unique match: unambiguous boundary candidate.
 	// Multiple matches: ambiguous boundary in truncated/duplicate tail; replay available tail.
 	// Zero matches: rolled out boundary; replay available tail.
 	if matchCount == 1 {
+		if matchIdx > 0 {
+			if prefixDigest == "" || mirrorActivityPrefixDigest(lines[:matchIdx]) != prefixDigest {
+				return
+			}
+		}
 		c.previous = lines[:matchIdx+1]
 	}
 }
@@ -153,15 +170,43 @@ func mirrorActivityOverlap(previous, next []string) int {
 	return overlap
 }
 
+// isCompleteActivity verifies whether a line is a valid JSON activity entry.
+func isCompleteActivity(line string) bool {
+	var a Activity
+	return json.Unmarshal([]byte(line), &a) == nil
+}
+
 // read emits the new complete events; without overlap it emits the whole available tail.
 func (c *mirrorActivityCursor) read(path string) []Activity {
 	lines, ok := mirrorActivityLines(path)
 	if !ok {
 		return nil
 	}
-	overlap := mirrorActivityOverlap(c.previous, lines)
+	leadingFragment := false
+	if len(lines) > 0 && !isCompleteActivity(lines[0]) {
+		leadingFragment = true
+		var a Activity
+		err := json.Unmarshal([]byte(lines[0]), &a)
+		warnOnce("activity:"+path+":"+lines[0], LogCorruptActivityLine, valueWrap(err, "corrupt line in %s", path), "file", path)
+	}
+
+	prevValid := c.previous
+	if len(prevValid) > 0 && !isCompleteActivity(prevValid[0]) {
+		prevValid = prevValid[1:]
+	}
+	nextValid := lines
+	if leadingFragment {
+		nextValid = nextValid[1:]
+	}
+
+	overlap := mirrorActivityOverlap(prevValid, nextValid)
+	emitStart := overlap
+	if leadingFragment {
+		emitStart = 1 + overlap
+	}
+
 	var activities []Activity
-	for _, line := range lines[overlap:] {
+	for _, line := range lines[emitStart:] {
 		var activity Activity
 		if err := json.Unmarshal([]byte(line), &activity); err != nil {
 			warnOnce("activity:"+path+":"+line, LogCorruptActivityLine, valueWrap(err, "corrupt line in %s", path), "file", path)
