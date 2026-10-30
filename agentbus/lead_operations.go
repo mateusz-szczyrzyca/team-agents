@@ -38,8 +38,8 @@ func (a *leadAPI) submit(node string, local bool, req JobRequest) (Job, *LeadSub
 }
 
 // heartbeat applies one node's reports and declaration in one storage transaction.
-// When supplied, stopOut receives bounded, durable stop requests from the same transaction.
-func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody, stopOut ...*[]leadJobView) (*Job, *LeadHeartbeatError) {
+// When supplied, outputs receive bounded, durable stop requests, answers and kicks from the same transaction.
+func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody, outputs ...any) (*Job, *LeadHeartbeatError) {
 	if body.Node != "" && body.Node != node {
 		return nil, opErr(LeadHeartbeatUnauthorized, "heartbeat identity %q differs from its socket peer %q (set INSTANCE_NAME on the node to %q)", body.Node, node, node)
 	}
@@ -85,8 +85,21 @@ func (a *leadAPI) heartbeat(node string, body leadHeartbeatBody, stopOut ...*[]l
 			a.notifyLead(tj)
 		}
 	}
-	if len(stopOut) > 0 {
-		*stopOut[0] = stops
+	for _, out := range outputs {
+		switch v := out.(type) {
+		case *[]leadJobView:
+			if v != nil {
+				*v = stops
+			}
+		case *[]LeadAnswer:
+			if v != nil {
+				*v = nil
+			}
+		case *[]LeadKick:
+			if v != nil {
+				*v = nil
+			}
+		}
 	}
 	return job, err
 }

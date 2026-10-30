@@ -65,18 +65,20 @@ type JobRequest struct {
 
 // Job is a registered job as the registry holds it.
 type Job struct {
-	Request       JobRequest      // the submitted fields, copied when stored and when returned
-	Seq           uint64          // submission order; the oldest queued job has the lowest value
-	State         JobState        // current lifecycle state
-	Node          string          // the node the job is assigned to; empty while queued
-	Assignment    uint64          // identity of the current assignment, greater than 0 once assigned, never reused
-	History       []JobTransition // every state entered, in order; queued first, then assigned
-	TaskID        string          // node's local task ID
-	Agent         string          `json:",omitempty"` // optional actual chosen agent on the node (e.g. for tier-selected jobs)
-	Branch        string          // branch pushed by the node
-	PRURL         string          // optional PR URL
-	Result        string          // final result text or failure reason
-	StopRequested bool            // a local cancellation awaits the assigned node's terminal report
+	Request        JobRequest      // the submitted fields, copied when stored and when returned
+	Seq            uint64          // submission order; the oldest queued job has the lowest value
+	State          JobState        // current lifecycle state
+	Node           string          // the node the job is assigned to; empty while queued
+	Assignment     uint64          // identity of the current assignment, greater than 0 once assigned, never reused
+	History        []JobTransition // every state entered, in order; queued first, then assigned
+	TaskID         string          // node's local task ID
+	Agent          string          `json:",omitempty"` // optional actual chosen agent on the node (e.g. for tier-selected jobs)
+	Branch         string          // branch pushed by the node
+	PRURL          string          // optional PR URL
+	Result         string          // final result text or failure reason
+	StopRequested  bool            // a local cancellation awaits the assigned node's terminal report
+	PendingAnswers []LeadAnswer    `json:",omitempty"` // queued answers waiting for node heartbeat delivery
+	PendingKicks   []LeadKick      `json:",omitempty"` // queued kicks waiting for node heartbeat delivery
 }
 
 // NodeAgent is a configured agent of a node, declared in every heartbeat (non-secret fields only).
@@ -255,6 +257,8 @@ func canonicalJobCapabilities(raw []string) ([]string, *CapsParseError) {
 func cloneJob(job Job) Job {
 	job.Request.Requires = slices.Clone(job.Request.Requires)
 	job.History = slices.Clone(job.History)
+	job.PendingAnswers = slices.Clone(job.PendingAnswers)
+	job.PendingKicks = slices.Clone(job.PendingKicks)
 	return job
 }
 

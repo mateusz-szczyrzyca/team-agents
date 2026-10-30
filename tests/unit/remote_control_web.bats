@@ -14,6 +14,7 @@ setup_file() {
 
 @test "web answers travel from the lead form to a waiting node and resume it once" {
   LEAD_PORT=$(free_port)
+  export LEAD_PORT
   setup_node
   echo '{"solo":{"new":"questions-file","resume":"done"}}' > "$NODE/scenario.json"
   start_lead
@@ -40,6 +41,6 @@ setup_file() {
   curl -fsS --noproxy '*' -H 'HX-Request: true' -H "Origin: $base" \
     --data 'action=send&c0=ok' "$base/questions/$tid@node2" > "$HOME/sent.html"
   grep -q 'Answers queued' "$HOME/sent.html"
-  wait_job j-web-answer done 30
+  wait_job j-web-answer "done" 30
   [ "$(grep -c 'solo resume done' "$NODE/calls.log")" -eq 1 ]
 }

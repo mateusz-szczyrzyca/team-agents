@@ -39,7 +39,22 @@ teardown() {
 
 # free_port — a free TCP port on 127.0.0.2 (the lead's address).
 free_port() {
-  python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.2", 0)); print(s.getsockname()[1])'
+  # The lead also binds loopback; probing both addresses avoids selecting an occupied local port.
+  python3 - <<'PORTS'
+import socket
+for _ in range(100):
+    with socket.socket() as node, socket.socket() as local:
+        node.bind(("127.0.0.2", 0))
+        port = node.getsockname()[1]
+        try:
+            local.bind(("127.0.0.1", port))
+        except OSError:
+            continue
+        print(port)
+        break
+else:
+    raise SystemExit("no unused port for both lead listener addresses")
+PORTS
 }
 
 # setup_node — creates the node installation under $BATS_TEST_TMPDIR/node2: its own HOME, agent and agentbus, a clone

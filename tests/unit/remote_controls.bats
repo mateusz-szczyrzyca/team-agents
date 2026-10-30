@@ -7,6 +7,7 @@ load remote_control_homes
 # ask_remote_job starts a question-producing job and returns its mirrored task ID in REMOTE_TASK.
 ask_remote_job() {
   LEAD_PORT=$(free_port)
+  export LEAD_PORT
   setup_node
   # Record every notification attempt independently in the node's own home.
   cp "$HOME/notify.sh" "$NODE/notify.sh"
@@ -34,7 +35,7 @@ complete_remote_copy() {
   complete_remote_copy "$copy"
   run agent _answers_saved "$REMOTE_TASK@node2" 1
   [ "$status" -eq 0 ]
-  wait_job j-question done 30
+  wait_job j-question "done" 30
   grep -q 'solo resume done' "$NODE/calls.log"
   grep -q '\*\*ANSWERED\*\*' "$NODE/agents/tasks/$REMOTE_TASK/questions-1.md"
 }
@@ -52,12 +53,13 @@ EDITOR
   run bash -c 'EDITOR="$HOME/answer-editor" agent answer "$1"' _ "$REMOTE_TASK@node2"
   [ "$status" -eq 0 ]
   start_lead
-  wait_job j-question done 30
+  wait_job j-question "done" 30
   [ "$(grep -c 'solo resume done' "$NODE/calls.log")" -eq 1 ]
 }
 
 @test "a qualified lead kick reaches the node through the durable heartbeat queue" {
   LEAD_PORT=$(free_port)
+  export LEAD_PORT
   setup_node
   echo '{"solo":{"new":"hang"}}' > "$NODE/scenario.json"
   start_lead

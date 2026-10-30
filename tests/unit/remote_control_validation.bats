@@ -88,6 +88,7 @@ PY
 @test "editable remote question copies expire with their retained task mirror" {
   control_fixture
   LEAD_LISTEN=127.0.0.1:1
+  export LEAD_LISTEN
   mkdir -p "$AGENTS_HOME/remote-questions/n1/T_OLD" "$AGENTS_HOME/remote-questions/n1/T_KEEP" "$BUS_DIR/remote/n1/T_KEEP"
   printf 'answer\n' > "$AGENTS_HOME/remote-questions/n1/T_OLD/questions-1.md"
   printf 'draft\n' > "$AGENTS_HOME/remote-questions/n1/T_KEEP/questions-1.md"
