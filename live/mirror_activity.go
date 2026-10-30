@@ -187,7 +187,7 @@ func (c *mirrorActivityCursor) read(path string) []Activity {
 		leadingFragment = true
 		var a Activity
 		err := json.Unmarshal([]byte(lines[0]), &a)
-		warnOnce("activity:"+path+":"+lines[0], LogCorruptActivityLine, valueWrap(err, "corrupt line in %s", path), "file", path)
+		warnOnce("activity:"+path+":leading-fragment", LogCorruptActivityLine, valueWrap(err, "corrupt line in %s", path), "file", path)
 	}
 
 	prevValid := c.previous

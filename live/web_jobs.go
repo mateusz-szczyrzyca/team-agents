@@ -254,7 +254,8 @@ func (s *webServer) viewJob(w http.ResponseWriter, r *http.Request) {
 			"RequesterTaskLink": row.RequesterTaskLink, "RequesterTeam": row.RequesterTeam,
 			"RequesterTeamShort": row.RequesterTeamShort,
 			"Team":               row.Team, "TeamShort": row.TeamShort,
-			"ProxyTask": row.ProxyTask, "ProxyTaskLink": row.ProxyTaskLink})
+			"ProxyTask": row.ProxyTask, "ProxyTaskLink": row.ProxyTaskLink,
+			"MirrorTask": row.MirrorTask, "MirrorTaskLink": row.MirrorTaskLink})
 		return
 	}
 	viewError(s, w, r, webErr(ViewNotFound, nil, "no job %q", id))
@@ -302,6 +303,8 @@ type webJobRow struct {
 	TeamShort          string // team ID without -team suffix
 	ProxyTask          string // proxy task ID on the lead for remote team member jobs
 	ProxyTaskLink      string // /task/<ProxyTask> link if task exists locally
+	MirrorTask         string // node-qualified task ID when its mirror exists on the lead
+	MirrorTaskLink     string // read-only /task/<MirrorTask> link, independent of any local proxy
 }
 
 // buildWebJobRow constructs a webJobRow with links according to decision 7.
@@ -338,6 +341,13 @@ func buildWebJobRow(j webJob, snapshot *webJobsSnapshot, snapLocal *Snapshot, no
 				}
 				break
 			}
+		}
+	}
+	if snapLocal != nil && j.Node != "" && j.TaskID != "" {
+		id := j.TaskID + "@" + j.Node
+		if task := snapLocal.All[id]; task != nil && task.Node == j.Node && task.JobID == j.Request.ID {
+			row.MirrorTask = id
+			row.MirrorTaskLink = "/task/" + url.PathEscape(id)
 		}
 	}
 	memberTeam := j.Request.Team

@@ -52,17 +52,19 @@ func localRemoteMemberProxies(s *Snapshot) map[string][]*Task {
 	return proxies
 }
 
-// hasIndexedLocalProxy reports whether proxies contains a local remote-member proxy matching mirror.
+// hasIndexedLocalProxy propagates heartbeat warnings to matching proxies and reports whether any exist.
 func hasIndexedLocalProxy(proxies map[string][]*Task, mirror *Task) bool {
 	if mirror == nil || mirror.Node == "" || mirror.JobID == "" {
 		return false
 	}
+	matched := false
 	for _, p := range proxies[mirror.JobID] {
 		if isLocalRemoteMemberProxy(p, mirror.JobID, mirror.Team) {
-			return true
+			p.NodeOffline = p.NodeOffline || mirror.NodeOffline
+			matched = true
 		}
 	}
-	return false
+	return matched
 }
 
 // loadMirroredTasks reads display-only mirror metadata and joins jobs without executing node data.
@@ -125,7 +127,8 @@ func loadMirroredTasks(s *Snapshot, busDir string, ttl time.Duration) {
 				warnOnce("mirror-acked-stat:"+ackPath, LogFileReadFailed, storageErr(aerr, "cannot stat %s", ackPath), "file", ackPath)
 			}
 			s.All[task.ID] = task
-			if (task.Active() || !task.Acked) && !hasIndexedLocalProxy(proxies, task) {
+			hasProxy := hasIndexedLocalProxy(proxies, task)
+			if (task.Active() || !task.Acked) && !hasProxy {
 				s.Tasks = append(s.Tasks, task)
 			}
 		}

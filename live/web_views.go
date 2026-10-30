@@ -130,7 +130,7 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 		r.Name = fmt.Sprintf("investigator #%s (%s)", t.InvID, t.Agent)
 	}
 	switch {
-	case t.Active() && t.Alive && !t.RunStart.IsZero():
+	case t.Active() && (t.Alive || t.Node != "") && !t.RunStart.IsZero():
 		r.Since = human(time.Since(t.RunStart))
 	case t.Active():
 		r.Since = human(time.Since(t.Created))
@@ -1524,7 +1524,9 @@ func (s *webServer) viewLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows []logRow
-	for _, item := range lines {
+	// Start with descending source order so stable timestamp sorting preserves ties.
+	for i := len(lines) - 1; i >= 0; i-- {
+		item := lines[i]
 		l := item.line
 		if find != "" && !strings.Contains(strings.ToLower(l), find) {
 			continue

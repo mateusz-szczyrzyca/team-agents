@@ -759,7 +759,8 @@ agent jobs [<id>]                                        # its state, node, bran
 activity; finished jobs remain for 24 hours. `/jobs/<id>` shows activity and results. Jobs links to their
 instance and agent pages, and to the result branch when the submitter supplied a GitHub repository origin.
 Remote team member jobs link to their team and, when available, their proxy task on the lead.
-When a local proxy represents a mirrored remote member, task lists show the proxy once; the mirrored task remains available through its direct link and activity stream.
+Both job views also link separately to an available read-only task mirror on the lead.
+When a local proxy represents a mirrored remote member, task lists show the proxy once, including the mirrored node's offline warning; the mirrored task remains available through its direct link and activity stream.
 Instances links to `/instances/<node>` with capabilities, configured and free agents, jobs, last heartbeat,
 and the node's web interface when configured. Free agents link to their remote agent pages. The instance list
 hides offline nodes whose last heartbeat is more than 24 hours old; **Show all** restores them. Nodes never
@@ -826,9 +827,14 @@ filters remote records by component (`agent`, `agentbus`, `agentlive`). When a r
 beyond the configured timeout (`NODE_TTL_SEC`, default `90s`), its tasks and dashboard rows show `node offline`
 while preserving their last-known state and metadata. In this round, mirrored tasks are display-only on the lead:
 stopping and question answering cannot be performed from the lead web interface or terminal panel (actions are
-safely rejected or hidden); questions are answered on the worker node.
+safely rejected or hidden); questions are answered on the worker node. Waiting notifications describe remote
+answers without suggesting local answer commands.
 Activity streams replay available records when repeated entries make a bounded-tail replacement ambiguous.
 An unchanged tail is consumed once; uncertain replacements can repeat previously displayed activity.
+A single retained boundary is deduplicated: a newly appended event identical in every JSON field to that boundary
+cannot be distinguished from the old event without producer occurrence IDs. Terminal mirrors continue to collect
+activity arriving after terminal metadata. The terminal questions tab lists available mirrored files read-only;
+active mirrors use the current run start for elapsed time. Log timestamp ties retain newest source entries first.
 A lead with no nodes has no remote agent rows.
 
 **Remote team members.** A node's agent can be a full member of a team on the lead — on its board, in its

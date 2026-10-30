@@ -452,14 +452,34 @@ func (m *model) detail(t *Task) string {
 		}
 		return stDim.Render(p) + "\n\n" + wrap.Render(c)
 	case 2: // questions
-		if t.Round == 0 {
+		var rounds []int
+		if t.Node != "" {
+			paths, err := filepath.Glob(filepath.Join(t.Dir, "questions-*.md"))
+			if err != nil {
+				warnOnce("mirror-questions:"+t.Dir, LogTasksListFailed, storageErr(err, "cannot list mirrored questions"), "dir", t.Dir)
+				return stDim.Render("(cannot list mirrored questions)")
+			}
+			for _, path := range paths {
+				var round int
+				base := filepath.Base(path)
+				if n, err := fmt.Sscanf(base, "questions-%d.md", &round); err == nil && n == 1 && round > 0 && base == fmt.Sprintf("questions-%d.md", round) {
+					rounds = append(rounds, round)
+				}
+			}
+			sort.Sort(sort.Reverse(sort.IntSlice(rounds)))
+		} else {
+			for r := t.Round; r >= 1; r-- {
+				rounds = append(rounds, r)
+			}
+		}
+		if len(rounds) == 0 {
 			return stDim.Render("(the agent asked no questions)")
 		}
 		var b strings.Builder
-		for r := t.Round; r >= 1; r-- {
+		for _, r := range rounds {
 			p := filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", r))
 			label := fmt.Sprintf("— round %d", r)
-			if r == t.Round && t.Status == "waiting" {
+			if t.Node == "" && r == t.Round && t.Status == "waiting" {
 				label += " (WAITING FOR ANSWERS — key a)"
 			}
 			b.WriteString(stSection.Render(label) + "  " + stDim.Render(p) + "\n\n" + wrap.Render(readFile(p)) + "\n\n")
@@ -642,7 +662,7 @@ func (m model) row(t *Task, width int) string {
 	label, st := statusStyle(t.Status)
 	var since string
 	switch {
-	case t.Active() && t.Alive && !t.RunStart.IsZero():
+	case t.Active() && (t.Alive || t.Node != "") && !t.RunStart.IsZero():
 		since = human(time.Since(t.RunStart))
 	case t.Active():
 		since = human(time.Since(t.Created))

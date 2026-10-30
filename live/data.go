@@ -731,11 +731,15 @@ func (w *Watcher) Poll() (*Snapshot, []Event) {
 					kind = "err"
 				}
 			case "waiting":
-				text += " — waiting for your answers (key a in the panel, or: agent answer " + t.ID + ")"
+				if t.Node == "" {
+					text += " — waiting for your answers (key a in the panel, or: agent answer " + t.ID + ")"
+				} else {
+					text += " — waiting for remote answers"
+				}
 			}
 			ev = append(ev, Event{now, kind, text})
 		}
-		if t.Active() || (p != nil && p.Active()) {
+		if t.Active() || (p != nil && p.Active()) || t.Node != "" {
 			for _, a := range w.newActivity(t, p == nil) {
 				ev = append(ev, Event{now, "act", fmt.Sprintf("%s %s %s", t.Label(), actIcon(a.Kind), a.Text)})
 			}
