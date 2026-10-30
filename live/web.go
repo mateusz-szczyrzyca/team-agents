@@ -340,15 +340,15 @@ func (s *webServer) checkAccess(r *http.Request) *OpError[AccessCause] {
 
 // page is what the layout renders around a view.
 type page struct {
-	Title        string         // the view's title (and the browser tab's)
-	View         string         // the view's name (menu highlighting)
-	Max          bool           // maximized: the view covers the menu (?max=1)
-	Host         string         // this host
-	AssetV       string         // version of the static files
-	Waiting      int            // tasks waiting for answers (shown in the menu)
-	NotifyFailed *NotifyFailure // notifications are not delivered: a warning on every page
-	Now          string         // when the page was rendered
-	Data         any            // the view's data
+	Title        string          // the view's title (and the browser tab's)
+	View         string          // the view's name (menu highlighting)
+	Max          bool            // maximized: the view covers the menu (?max=1)
+	Host         string          // this host
+	AssetV       string          // version of the static files
+	Waiting      int             // tasks waiting for answers (shown in the menu)
+	NotifyFailed *NotifyFailures // notifications not delivered in the last day: a warning on every page
+	Now          string          // when the page was rendered
+	Data         any             // the view's data
 }
 
 // render writes a full page; htmx picks the view out of it (hx-select), so every URL is also a full page.

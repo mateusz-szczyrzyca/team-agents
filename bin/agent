@@ -404,6 +404,8 @@ AGENT_PRECHECK_MAX="${AGENT_PRECHECK_MAX:-2}"         # how many times a round g
 # --autopilot: after two ready-to-merge reviews the script merges — not a PR touching one of these paths (a directory
 # ends with /), nor one changing existing tests: those wait for the human
 AUTO_MERGE_HUMAN_PATHS="${AUTO_MERGE_HUMAN_PATHS-install.sh .github/ systemd/ AGENTS.md}"
+# --autopilot leaves to the human a round that changes existing tests (yes), or merges it as any other (no)
+AUTO_MERGE_HOLD_TEST_CHANGES="${AUTO_MERGE_HOLD_TEST_CHANGES:-yes}"
 AGENT_REVIEW_WAIT_MIN="${AGENT_REVIEW_WAIT_MIN:-30}"  # a review pair waiting longer for two free investigators is reported
 AGENT_HUMAN_GITHUB="${AGENT_HUMAN_GITHUB:-}"
 ROUND_MAX_LINES="${ROUND_MAX_LINES:-3000}"
@@ -750,9 +752,8 @@ team_done_flag() { team_json "$1" | jq -r '.done // false'; }
 team_tasks() { team_json "$1" | jq -r '.members[]? | .task'; }
 
 notify_send() { # file — delivers a notification file (first line = title/thread, rest = body). A failure is logged
-  # and kept in $AGENTS_HOME/notify-failed.json (since when, the command, its error) — the dashboard warns — until a
-  # notification is delivered again
-  local f=$1 out rc=0 cmd since state="$AGENTS_HOME/notify-failed.json"
+  # and kept a day in $AGENTS_HOME/notify-failures.jsonl (notify_failure_keep): the dashboard counts them
+  local f=$1 out rc=0 cmd
   if [[ -n $NOTIFY_CMD ]]; then
     cmd=$NOTIFY_CMD
     out=$($NOTIFY_CMD "$f" 2>&1) || rc=$?
@@ -762,17 +763,24 @@ notify_send() { # file — delivers a notification file (first line = title/thre
   else
     return 0
   fi
-  if ((rc == 0)); then
-    rm -f "$state"
-    return 0
-  fi
+  ((rc != 0)) || return 0
   log_warn notification_failed "exit_code=$rc" "command=$cmd ${f##*/}" "stderr=${out:0:300}"
-  since=$(jq -r '.since // empty' "$state" 2>/dev/null) || since=""   # none kept yet: this failure is the first
-  jq -n --arg since "${since:-$(date '+%Y-%m-%d %H:%M')}" --arg command "$cmd" \
-    --arg error "exit $rc: $(tail -n 3 <<< "$out" | tr '\n' ' ' | cut -c1-300)" \
-    '{since: $since, command: $command, error: $error}' > "$state.tmp" && mv "$state.tmp" "$state" \
-    || log_warn notification_state_failed "file=$state"
+  notify_failure_keep "$cmd" "exit $rc: $(tail -n 3 <<< "$out" | tr '\n' ' ' | cut -c1-300)"
   return 0
+}
+
+# notify_failure_keep command error — the failure, with this process's subcommand, kept a day in notify-failures.jsonl
+# (older ones are left out on the way): a notification delivered by another process does not hide it
+notify_failure_keep() {
+  local f="$AGENTS_HOME/notify-failures.jsonl" now
+  now=$(date +%s)
+  (
+    flock -w 10 9 || exit 1
+    { if [[ -f $f ]]; then jq -c --argjson c "$((now - 86400))" 'select((.epoch // 0) > $c)' "$f"; fi
+      jq -nc --arg at "$(date '+%Y-%m-%d %H:%M')" --argjson e "$now" --arg from "$AGENT_SUBCOMMAND" --arg command "$1" \
+        --arg error "$2" '{at: $at, epoch: $e, from: $from, command: $command, error: $error}'; } > "$f.tmp.$$" \
+      && mv "$f.tmp.$$" "$f"
+  ) 9> "$f.lock" || log_warn notification_state_failed "file=$f"
 }
 
 # notice kind from to text [field=value ...] — publishes an event of this script on the bus (kinds: ScriptNotice in
@@ -1163,7 +1171,9 @@ merge_blockers() { # repo base head round-tests — what keeps --autopilot from 
     done
   done < <(git -C "$repo" diff --name-only "$base" "$head")
   changed=$(sed -n 's/.*changed=\([0-9]*\).*/\1/p' <<< "$tests")
-  if ((${changed:-0} > 0)); then printf 'it changes existing tests (%s file(s)): only you may allow that\n' "$changed"; fi
+  if [[ $AUTO_MERGE_HOLD_TEST_CHANGES == yes ]] && ((${changed:-0} > 0)); then
+    printf 'it changes existing tests (%s file(s)): only you may allow that\n' "$changed"
+  fi
 }
 
 gate_at() { # repo rev log — runs the repository's gate at a revision in a temporary worktree; its exit status (0 when
@@ -1293,8 +1303,47 @@ review_gate_cmd() { # repo — the gate a round's head must pass before a review
 
 # auto_stage task text — what --verify/--autopilot does for the round now, kept on its coordinator's task (AUTO_STAGE,
 # the dashboard's stage); "" once the work is back with the team, or with the human after "waits for you: …"
-auto_stage() {
-  [[ $(task_field "$1" AUTO_STAGE) == "$2" ]] || meta_set "$1" AUTO_STAGE "$2"
+auto_stage() { # task text [no-comment]
+  [[ $(task_field "$1" AUTO_STAGE) != "$2" ]] || return 0
+  meta_set "$1" AUTO_STAGE "$2"
+  # a decision handed to the human is said on the round's PR too: GitHub notifies them there, whatever becomes of the
+  # notification command
+  if [[ $2 == "waits for you:"* && -z ${3:-} ]]; then human_on_pr "$1" "$2"; fi
+}
+
+# human_on_pr task text — a comment on the task's PR to its repository's owner (mentioned, when on GitHub)
+human_on_pr() {
+  local url root owner
+  url=$(task_field "$1" PR_URL)
+  [[ -n $url ]] || return 0
+  root=$(task_field "$1" REPO_ROOT)
+  owner=$(github_owner "$root")
+  (cd "$root" && try handover_comment_failed gh pr comment "$url" --body "${owner:+@$owner }--autopilot $2") || return 0
+  log_info handover_commented "task=$1" "pr=$url"
+}
+
+# round_pr_of_team team — the round's PR its coordinator had: its PR_NUMBER, or the ROUND_PR it carried; "" for none
+round_pr_of_team() {
+  [[ -n $1 ]] || return 0
+  local lt p
+  lt=$(team_lead_task "$1" "$(team_lead "$1")")
+  [[ -n $lt ]] || return 0
+  p=$(task_field "$lt" PR_NUMBER)
+  printf '%s' "${p:-$(task_field "$lt" ROUND_PR)}"
+}
+
+# round_pr_supersede task pr-number pr-url — the round's PR is now this one (ROUND_PR); the round's earlier PR, when
+# another (a new coordinator's branch), is closed as superseded by it, and each links to the other
+round_pr_supersede() {
+  local id=$1 num=$2 url=$3 old root
+  old=$(task_field "$id" ROUND_PR)
+  meta_set "$id" ROUND_PR "$num"
+  [[ -n $old && $old != "$num" ]] || return 0
+  root=$(task_field "$id" REPO_ROOT)
+  (cd "$root" && try round_pr_close_failed gh pr close "$old" --comment "Superseded by #$num: the round's coordinator changed, and its work continues there ($url).") || return 0
+  (cd "$root" && try round_pr_link_failed gh pr comment "$num" --body "Continues #$old (closed as superseded by this PR).") || true
+  act "$id" info "PR #$old of this round closed: superseded by #$num"
+  log_info round_pr_superseded "task=$id" "old=$old" "new=$num"
 }
 
 # gate_progress log — " — K of N steps passed (the last)" from tools/gate.sh's output so far, or " — <step> failed";
@@ -1511,7 +1560,7 @@ ${text:0:8000}"
     return 0
   fi
   owner=${AGENT_HUMAN_GITHUB:-$(github_owner "$root")}
-  auto_stage "$parent" "waits for you: the reviews still find problems after $pass fix passes"
+  auto_stage "$parent" "waits for you: the reviews still find problems after $pass fix passes" no-comment   # the mention below says it
   (cd "$root" && try review_mention_failed gh pr comment "$PR_URL" --body "${owner:+@$owner }The fixes are still not done: after $pass fix passes the review still finds $n critical or major problem(s) (see the review above). The team has stopped; your decision is needed.")
   push_text "$repo" "--verify: PR #$PR_NUMBER still has $n critical or major problem(s) after $pass fix passes — your decision is needed: $PR_URL"
   log_warn review_fixes_exhausted "task=$parent" "passes=$pass" "findings=$n"
@@ -1766,6 +1815,7 @@ request_review() { # coordinator task id — --verify: queue a PR review by an i
     return 0
   fi
   meta_set "$id" PR_NUMBER "$num"; meta_set "$id" PR_URL "$url"
+  round_pr_supersede "$id" "$num" "$url"   # a round's earlier PR (another coordinator's) is closed for this one
   if [[ $(task_field "$id" AUTOPILOT) == 1 ]]; then   # two reviews at once, when two investigators are free
     meta_set "$id" REVIEW_PAIR_PENDING 1
     auto_stage "$id" "two reviews: waiting for two free investigators"
@@ -3957,7 +4007,8 @@ resume_run() {
               "VERIFY=$( ((verify)) && echo 1 || task_field "$old" VERIFY)" \
               "AUTOPILOT=$( ((${autopilot:-0})) && echo 1 || task_field "$old" AUTOPILOT)" "PRECHECK_PASS=${AGENT_PRECHECK_PASS:-0}" \
               "AUTOPILOT_OFF=$( ((${autopilot:-0})) || task_field "$old" AUTOPILOT_OFF)" \
-              "FORMAT_BOUNCED=${AGENT_FORMAT_BOUNCED:-$( ((fresh)) || task_field "$old" FORMAT_BOUNCED)}"; do
+              "FORMAT_BOUNCED=${AGENT_FORMAT_BOUNCED:-$( ((fresh)) || task_field "$old" FORMAT_BOUNCED)}" \
+              "ROUND_PR=$( ((fresh)) || round_pr_of_team "$old_team")"; do
       meta_set "$id" "${kv%%=*}" "${kv#*=}"
     done
     ids+=("$id")

@@ -230,9 +230,11 @@ progress ("make gate — 2 of 6 steps passed"), the two reviews and their verdic
 "waits for you: …" where you decide.
 
 **Notifications that are not delivered.** When the notification command fails — say, a variable it needs is not
-set for the process that sends it —, every page of the dashboard warns, with since when and the command's error,
-until a notification is delivered again (`$AGENTS_HOME/notify-failed.json`). Set what the command needs in
-`agents.conf` with `export`, so that every process of agent has it.
+set for the process that sends it —, every page of the dashboard counts the failures of the last 24 hours, with the
+last one's time, process (`_merge`, `_fixpass`, …) and error (`$AGENTS_HOME/notify-failures.jsonl`); one process's
+delivered notification does not hide another's failures. Set what the command needs in `agents.conf` with
+`export`, so that every process of agent has it. Where `--autopilot` hands a decision to you ("waits for you: …"),
+it also says so in a comment on the round's PR, mentioning the repository's owner, so GitHub notifies you there.
 
 **What the agents read on GitHub.** Only the trusted accounts (`AGENT_GITHUB_TRUSTED`) may steer the agents. Their
 CLI gets `agent` itself as `gh` (a link named `gh`, first on its `PATH`, filters what it reads): comments and reviews by anyone else — on open, closed and

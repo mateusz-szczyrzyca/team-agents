@@ -171,35 +171,64 @@ type busState struct {
 	Reservations   map[string]*Reservation   `json:"reservations"`   // taken resources by name
 }
 
-// NotifyFailure is the notification command's failure that agent keeps (notify-failed.json) until a notification is
-// delivered again: every page warns while it lasts.
-type NotifyFailure struct {
-	Since   string `json:"since"`   // when the first undelivered notification failed (local time, as agent wrote it)
-	Command string `json:"command"` // the notification command that failed
-	Error   string `json:"error"`   // its exit code and the end of its output
+// NotifyFailures sums up the notifications agent could not deliver in the last day (notify-failures.jsonl, one record
+// per failure, kept by agent with the process that sent it): every page warns while there are any.
+type NotifyFailures struct {
+	Count int    // failures in the last 24 hours
+	Last  string // when the last one happened (local time, as agent wrote it)
+	From  string // the agent subcommand whose notification failed last (_merge, _fixpass, …)
+	Error string // the last one's exit code and the end of its output
 }
 
-// loadNotifyFailure reads notify-failed.json: nil when there is none; a file that cannot be read is shown as such,
-// not left out.
-func loadNotifyFailure(home string) *NotifyFailure {
-	b, err := os.ReadFile(filepath.Join(home, "notify-failed.json"))
+// notifyFailure is one record of notify-failures.jsonl.
+type notifyFailure struct {
+	At      string `json:"at"`      // local time of the failure
+	Epoch   int64  `json:"epoch"`   // seconds since the epoch, for the 24-hour window
+	From    string `json:"from"`    // the agent subcommand that sent it
+	Command string `json:"command"` // the notification command
+	Error   string `json:"error"`   // its exit code and output
+}
+
+// notifyFailureWindow is how long an undelivered notification is warned of.
+const notifyFailureWindow = 24 * time.Hour
+
+// loadNotifyFailures sums up notify-failures.jsonl for the last day: nil when nothing failed in it; a file or a record
+// that cannot be read is shown as such, not left out.
+func loadNotifyFailures(home string, now time.Time) *NotifyFailures {
+	b, err := os.ReadFile(filepath.Join(home, "notify-failures.jsonl"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return &NotifyFailure{Error: "notify-failed.json cannot be read: " + err.Error()}
+		return &NotifyFailures{Count: 1, Error: "notify-failures.jsonl cannot be read: " + err.Error()}
 	}
-	var f NotifyFailure
-	if err := json.Unmarshal(b, &f); err != nil {
-		return &NotifyFailure{Error: "notify-failed.json cannot be read: " + err.Error()}
+	var out NotifyFailures
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var f notifyFailure
+		if err := json.Unmarshal([]byte(line), &f); err != nil {
+			out.Count++
+			out.Error = "a record of notify-failures.jsonl cannot be read: " + err.Error()
+			continue
+		}
+		if now.Sub(time.Unix(f.Epoch, 0)) > notifyFailureWindow {
+			continue
+		}
+		out.Count++
+		out.Last, out.From, out.Error = f.At, f.From, f.Error
 	}
-	return &f
+	if out.Count == 0 {
+		return nil
+	}
+	return &out
 }
 
 // Snapshot is the state of all tasks and the bus at one point in time.
 type Snapshot struct {
 	At           time.Time            // when the snapshot was taken
-	NotifyFailed *NotifyFailure       // notifications are not delivered since …: notify-failed.json
+	NotifyFailed *NotifyFailures      // notifications not delivered in the last day: notify-failures.jsonl
 	Tasks        []*Task              // visible: active + finished but not acknowledged, sorted by priority
 	All          map[string]*Task     // every task by ID
 	Agents       map[string]*Presence // running agents (bus presence) by name
@@ -551,7 +580,7 @@ func loadSnapshot(home, busDir string, nodeTTL ...time.Duration) *Snapshot {
 			s.Msgs = append(s.Msgs, m)
 		}
 	}
-	s.NotifyFailed = loadNotifyFailure(home)
+	s.NotifyFailed = loadNotifyFailures(home, s.At)
 	return s
 }
 

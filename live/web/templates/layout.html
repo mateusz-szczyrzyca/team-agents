@@ -33,7 +33,7 @@
 </nav>
 <div id="scrim" hidden></div>
 <main id="view" data-view="{{.View}}">
-{{with .NotifyFailed}}<p class="notify-failed">⚠ notifications are not delivered since {{.Since}} — {{.Error}}. Fix the notification command (NOTIFY_CMD); this warning goes with the next delivered notification.</p>{{end}}
+{{with .NotifyFailed}}<p class="notify-failed">⚠ {{.Count}} notification{{if ne .Count 1}}s{{end}} not delivered in the last 24 h — last at {{.Last}} from {{.From}}: {{.Error}}. A process of agent lacks what the notification command needs: export it in agents.conf.</p>{{end}}
   <div class="viewbar">
     <h1>{{.Title}}</h1>
     <span class="spacer"></span>
