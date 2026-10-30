@@ -221,11 +221,18 @@ again, once, by another free investigator (one out of quota is not chosen until 
 to you. A team closed because all its members finished — its coordinator out — goes to review too. A spent budget
 ("Workspace monthly budget … exceeded") is a quota pause until its reset, also given as an ISO time. A local error of
 the machine (out of processes or memory, a unix socket) is no provider's limit nor a network failure. On the lead a
-remote member's pause shows with its reason, and its failure with the CLI's exit code and last error line. It
+remote member's pause shows with its reason, and its failure with the CLI's exit code and last error line; its
+pause also reaches its team as a local member's does (the coordinator hears why and until when, and a long pause
+frees its board items). It
 merges only the commit that passed its checks and both reviews (`--match-head-commit`): anything pushed since stops
 the merge. What it does for a round shows on the dashboard as its coordinator's stage (⚙): the checks, with the gate's
 progress ("make gate — 2 of 6 steps passed"), the two reviews and their verdicts, the merge, the next round — or
 "waits for you: …" where you decide.
+
+**Notifications that are not delivered.** When the notification command fails — say, a variable it needs is not
+set for the process that sends it —, every page of the dashboard warns, with since when and the command's error,
+until a notification is delivered again (`$AGENTS_HOME/notify-failed.json`). Set what the command needs in
+`agents.conf` with `export`, so that every process of agent has it.
 
 **What the agents read on GitHub.** Only the trusted accounts (`AGENT_GITHUB_TRUSTED`) may steer the agents. Their
 CLI gets `agent` itself as `gh` (a link named `gh`, first on its `PATH`, filters what it reads): comments and reviews by anyone else — on open, closed and
