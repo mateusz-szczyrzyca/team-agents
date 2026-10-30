@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Test stub for `systemctl --user is-active|stop <unit>...` backed by the PIDs recorded by the systemd-run stub
 # (path units: by the files it records).
+# list-units [--all --plain --no-legend] <glob>: the recorded units that match, one per line (name first, as
+# systemctl prints them); reset-failed: nothing to reset
+if [[ " $* " == *" list-units "* ]]; then
+  pat=${*: -1}
+  for f in "$STUB_UNITS"/$pat; do [[ -e $f ]] && echo "${f##*/} loaded active waiting stub"; done
+  exit 0
+fi
+if [[ " $* " == *" reset-failed "* ]]; then exit 0; fi
 [[ ${1:-} == --user ]] && shift
 cmd=$1; shift
 for u in "$@"; do
