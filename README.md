@@ -237,6 +237,12 @@ delivered notification does not hide another's failures. Set what the command ne
 `export`, so that every process of agent has it. Where `--autopilot` hands a decision to you ("waits for you: …"),
 it also says so in a comment on the round's PR, mentioning the repository's owner, so GitHub notifies you there.
 
+**Wakes and reviews.** A message to a sleeping member wakes it, and a wake costs it a whole run: agents send
+progress and notes that need no reaction with `send_message` `wake: false`, read on the next run. Each wake is
+logged with its cause (`member_woken_by`: the message, an unread one, new work on the board). An investigator's
+review on GitHub begins with who wrote it — "Review by the team-agents investigator `inv-astra` (codex, model
+…), request #66." — as well as ending with it.
+
 **What the agents read on GitHub.** Only the trusted accounts (`AGENT_GITHUB_TRUSTED`) may steer the agents. Their
 CLI gets `agent` itself as `gh` (a link named `gh`, first on its `PATH`, filters what it reads): comments and reviews by anyone else — on open, closed and
 merged PRs and issues alike — are left out and logged (`github_comment_ignored`: "there is unknown comment from
