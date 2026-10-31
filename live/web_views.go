@@ -55,9 +55,36 @@ func statusClass(s string) string {
 	return "st-dim"
 }
 
+// applyRemoteControls enriches a private display snapshot, preserving the watcher's raw baseline.
+func (s *webServer) applyRemoteControls(snap *Snapshot) *Snapshot {
+	return applyDisplayRemoteControls(snap, s.cfg.busDir, s.cfg.remoteControls)
+}
+
 // snapshot reads the current state (tasks and the bus).
 func (s *webServer) snapshot() *Snapshot {
-	return loadSnapshot(s.cfg.home, s.cfg.busDir, s.cfg.nodeTTL)
+	snap := loadSnapshot(s.cfg.home, s.cfg.busDir, s.cfg.nodeTTL)
+	return s.applyRemoteControls(snap)
+}
+
+// mirrorQuestionRound finds the latest real question artifact; ROUND is not mirrored metadata.
+func mirrorQuestionRound(dir string) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		warnOnce("mirror-questions:"+dir, LogFileReadFailed, storageErr(err, "cannot list mirrored questions"), "dir", dir)
+		return 0
+	}
+	latest := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "questions-") || !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		round, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(name, "questions-"), ".md"))
+		if err == nil && round > latest && name == fmt.Sprintf("questions-%d.md", round) {
+			latest = round
+		}
+	}
+	return latest
 }
 
 // ---------------------------------------------------------------- task rows (the panel's table)
@@ -182,7 +209,7 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	r.Link = "/task/" + t.ID
 	r.StatusLabel, _ = statusStyle(t.Status)
 	r.StatusClass = statusClass(t.Status)
-	r.Running = t.Node == "" && (t.Status == "running" || t.Status == "starting")
+	r.Running = (t.Node == "" || t.CanControl) && (t.Status == "running" || t.Status == "starting")
 	if t.Kind == "investigation" {
 		r.Name = fmt.Sprintf("investigator #%s (%s)", t.InvID, t.Agent)
 	}
@@ -314,6 +341,7 @@ func (s *webServer) streamDashboard(w http.ResponseWriter, r *http.Request) {
 		case <-tk.C:
 		}
 		snap, evs := watcher.Poll()
+		snap = s.applyRemoteControls(snap)
 		d := s.dashboard(snap)
 		if table := s.fragment("dash-table", d); table != lastTable {
 			if !sseSend(w, f, "table", table) {
@@ -605,6 +633,19 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 		viewError(s, w, r, webErr(ViewNotFound, nil, "no task %q", r.PathValue("id")))
 		return
 	}
+	var mirror *Task
+	if s.cfg.remoteControls && t.Node == "" && t.Kind == "remote-member" {
+		mirror = resolveProxyMirror(snap, t)
+		if mirror != nil && mirror.Status == "waiting" {
+			tCopy := *t
+			tCopy.Status = "waiting"
+			tCopy.CanControl = true
+			if mirror.Round > 0 {
+				tCopy.Round = mirror.Round
+			}
+			t = &tCopy
+		}
+	}
 	tab := r.URL.Query().Get("tab")
 	if tab == "" {
 		tab = "activity"
@@ -669,8 +710,12 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "questions":
-		if t.Node != "" {
-			matches, gerr := filepath.Glob(filepath.Join(t.Dir, "questions-*.md"))
+		qDir := t.Dir
+		if mirror != nil {
+			qDir = mirror.Dir
+		}
+		if t.Node != "" || mirror != nil {
+			matches, gerr := filepath.Glob(filepath.Join(qDir, "questions-*.md"))
 			if gerr != nil {
 				viewError(s, w, r, webErr(ViewStorage, gerr, "cannot list questions of %s", t.ID))
 				return
@@ -1204,13 +1249,27 @@ type waitingRow struct {
 func (s *webServer) viewQuestions(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	var rows []waitingRow
-	for _, t := range snap.Waiting() {
-		if t.Node != "" {
+	mirroredJobs := map[string]bool{}
+	for _, task := range snap.All {
+		if task.CanControl && task.Status == "waiting" {
+			mirroredJobs[task.JobID] = true
+		}
+	}
+	for _, t := range snap.All {
+		if t.Status != "waiting" || (t.Node != "" && !s.cfg.remoteControls) {
 			continue
 		}
-		doc := parseQuestions(readFile(filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", t.Round))))
+		if t.Node == "" && t.Kind == "remote-member" && mirroredJobs[t.JobID] {
+			continue
+		}
+		path := s.answerPath(t)
+		doc := parseQuestions(readFile(path))
+		if t.Node != "" && len(doc.Questions) == 0 {
+			continue
+		}
 		rows = append(rows, waitingRow{Row: makeRow(snap, t), Round: t.Round, Count: len(doc.Questions)})
 	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Row.ID < rows[j].Row.ID })
 	s.render(w, r, http.StatusOK, "questions", "Questions", snap, rows)
 }
 
@@ -1242,10 +1301,25 @@ func (s *webServer) loadAnswer(snap *Snapshot, id string) (*Task, string, *quest
 	if t == nil {
 		return nil, "", nil, webErr(AnswerNoQuestions, nil, "no task %q", id)
 	}
-	if t.Node != "" || t.Status != "waiting" || t.Round < 1 {
+	if s.cfg.remoteControls && t.Node == "" && t.Kind == "remote-member" {
+		var mirror *Task // reject ambiguous retained mirrors rather than choosing map iteration order
+		for _, candidate := range snap.All {
+			if candidate.Node == "" || !isLocalRemoteMemberProxy(t, candidate.JobID, candidate.Team) {
+				continue
+			}
+			if mirror != nil {
+				return t, "", nil, webErr(AnswerNotWaiting, nil, "multiple mirrors for %s", t.ID)
+			}
+			mirror = candidate
+		}
+		if mirror != nil {
+			t = mirror
+		}
+	}
+	if (t.Node != "" && !s.cfg.remoteControls) || t.Status != "waiting" || t.Round < 1 {
 		return t, "", nil, webErr(AnswerNotWaiting, nil, "%s is %s — it does not wait for answers", t.ID, t.Status)
 	}
-	path := filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", t.Round))
+	path := s.answerPath(t)
 	data, err := os.ReadFile(path) // #nosec G304 -- the path is the questions file of a listed task (t.Dir + round); see insideDir
 	if err != nil {
 		return t, path, nil, webErr(AnswerNoQuestions, err, "cannot read %s", path)
@@ -1255,6 +1329,14 @@ func (s *webServer) loadAnswer(snap *Snapshot, id string) (*Task, string, *quest
 		return t, path, nil, webErr(AnswerNoQuestions, nil, "%s has no questions in the \"## N.\" format", path)
 	}
 	return t, path, doc, nil
+}
+
+// answerPath selects the editable lead copy for a mirror and the original file for a local task.
+func (s *webServer) answerPath(t *Task) string {
+	if t.Node != "" {
+		return filepath.Join(s.cfg.home, "remote-questions", t.Node, strings.TrimSuffix(t.ID, "@"+t.Node), fmt.Sprintf("questions-%d.md", t.Round))
+	}
+	return filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", t.Round))
 }
 
 // introOf returns the lines of a questions file above its first question, without the answering instructions.
@@ -1300,6 +1382,14 @@ func (s *webServer) postAnswer(w http.ResponseWriter, r *http.Request) {
 		viewError(s, w, r, webErr(ViewBadParameter, err, "the form"))
 		return
 	}
+	// Remote forms must identify the displayed round, including drafts and proxy routes.
+	if t.Node != "" {
+		rounds := r.PostForm["round"]
+		if len(rounds) != 1 || rounds[0] != strconv.Itoa(t.Round) {
+			viewError(s, w, r, webErr(AnswerNotWaiting, nil, "the question round changed or is missing — reload the answer form before saving or sending"))
+			return
+		}
+	}
 	send := r.PostFormValue("action") == "send"
 	d := answerData{Row: makeRow(snap, t), ID: t.ID, Round: t.Round, File: path, Intro: introOf(strings.Join(doc.lines, "\n"))}
 	verdicts := map[int]string{}
@@ -1322,7 +1412,11 @@ func (s *webServer) postAnswer(w http.ResponseWriter, r *http.Request) {
 		logWarn(LogWebAnswersFailed, "task", t.ID, "cause", e.Cause.String(), "error", e.Message)
 		d.Message, d.Failed, status = e.Message, true, e.Cause.HTTPStatus()
 	default:
-		if !insideDir(filepath.Join(s.cfg.home, "tasks"), path) {
+		root := filepath.Join(s.cfg.home, "tasks")
+		if t.Node != "" {
+			root = filepath.Join(s.cfg.home, "remote-questions")
+		}
+		if !insideDir(root, path) {
 			e := webErr(AnswerStorage, nil, "refusing to write %s: not inside the tasks directory", path)
 			logWarn(LogWebAnswersFailed, "task", t.ID, "cause", e.Cause.String(), "error", e.Message)
 			d.Message, d.Failed, status = e.Message, true, e.Cause.HTTPStatus()
@@ -1344,6 +1438,10 @@ func (s *webServer) postAnswer(w http.ResponseWriter, r *http.Request) {
 			e := webErr(AnswerResume, cerr, "the answers are saved, but sending them failed")
 			logWarn(LogWebAnswersFailed, "task", t.ID, "cause", e.Cause.String(), "error", e.Message, "output", out)
 			d.Message, d.Failed, status = e.Message, true, e.Cause.HTTPStatus()
+			break
+		}
+		if t.Node != "" {
+			d.Message, d.Sent = "Answers queued for "+t.Label()+" — delivery waits for the node.", true
 			break
 		}
 		st := readMeta(filepath.Join(t.Dir, "meta.env"))["STATUS"]
@@ -1391,7 +1489,7 @@ func (s *webServer) postStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such task", http.StatusNotFound)
 		return
 	}
-	if t.Node != "" {
+	if t.Node != "" && !s.cfg.remoteControls {
 		http.Error(w, "cannot stop mirrored task "+t.ID+" from the lead", http.StatusForbidden)
 		return
 	}

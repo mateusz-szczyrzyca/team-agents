@@ -26,6 +26,8 @@ type config struct {
 	agentCmd string        // path to the `agent` script, used for actions (answer, stop, say, ack)
 	remind   time.Duration // interval of "still working / waiting for you" reminders (0 = off)
 	queueMax int           // investigation queue limit, for the queue summary line
+
+	remoteControls bool // lead-side answer and kick commands are configured by the launcher
 }
 
 // main parses flags and starts the panel, the feed or (agentlive web …) the web interface.
@@ -43,6 +45,7 @@ func main() {
 	flag.StringVar(&cfg.home, "home", filepath.Join(home, "agents"), "AGENTS_HOME directory")
 	flag.StringVar(&cfg.busDir, "bus", "", "bus directory (default <home>/bus)")
 	flag.StringVar(&cfg.agentCmd, "agent", filepath.Join(home, ".local", "bin", "agent"), "path to the agent script")
+	flag.BoolVar(&cfg.remoteControls, "remote-controls", false, "enable lead-side remote answers and kicks")
 	remindMin := flag.Float64("remind", 1, "remind every N minutes who is still working (0 = off)")
 	flag.IntVar(&cfg.queueMax, "queue-max", 3, "investigation queue limit")
 	flag.IntVar(&InvSlots, "inv-slots", 1, "number of investigators")

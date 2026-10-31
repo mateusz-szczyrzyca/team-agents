@@ -6,6 +6,7 @@
 {{else}}
 {{if .Intro}}<pre class="doc intro">{{.Intro}}</pre>{{end}}
 <form method="post" action="/questions/{{.ID}}" class="answers">
+<input type="hidden" name="round" value="{{.Round}}">
 {{range .Qs}}<fieldset class="q{{if .Err}} has-err{{end}}">
   <legend>{{.Q.Num}}. {{.Q.Title}}</legend>
   {{if .Q.Body}}<pre class="doc">{{.Q.Body}}</pre>{{end}}

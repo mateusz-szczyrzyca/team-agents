@@ -856,14 +856,20 @@ while preserving their last-known state and metadata.
 **Answering and stopping through the lead.** A job's questions and notifications belong on the lead; the node
 syncs its questions without opening an editor or notifying locally. The lead opens an editable copy at
 `<AGENTS_HOME>/remote-questions/<node>/<task-id>/questions-<n>.md`, installs the ordinary save watch, and notifies
-with the qualified task ID and a task-view link. Answer through VS Code (save with
+with the qualified task ID and a task-view link. Answer through `/questions`, the task page, or VS Code (save with
 `**ANSWERED**` on the last nonempty line), or `agent answer <task-id>@<node>`. The read-only mirror is never
 edited. Editable copies expire when their task mirrors are removed. The interactive CLI validates all verdicts,
 asks for confirmation, and adds `**ANSWERED**` when you send; declining leaves an editable draft.
 An already marked file retains its explicit send intent and can be queued without another prompt.
-Waiting remote members can also be answered with `agent answer <proxy-task-id>`.
-The web interface and terminal panel retain read-only remote mirrors in this round; their answer and stop
-controls are planned for round 5, together with their preserved frontend regressions.
+Waiting remote members can also be answered through their retained lead proxy in the terminal or task page.
+Dashboard SSE updates retain the same remote controls and waiting counters as the initial page.
+Display-only status overrides leave the watcher baseline unchanged, avoiding false transition events.
+The terminal refreshes remote question counts with the same display state as the web interface.
+A retained proxy's web Questions tab reads its matching mirror's question files.
+
+Remote browser answer forms submit the displayed question round for both drafts and sends. A stale or
+missing round returns HTTP `409` before writing answers or queueing delivery; reload an open form after
+upgrading the lead. Direct remote form clients must include exactly one `round` field matching the displayed round.
 
 Answers queue durably on the lead even while its listener or the node is offline. Heartbeat replies carry
 `Answers: [{Job, TaskID, File, Content, SHA256}]`; the node writes only its assigned waiting task's current
@@ -871,7 +877,7 @@ question file and uses `_answers_saved` to resume. Answers are UTF-8 text, at mo
 control characters (tabs and line endings are allowed). Acknowledgements include the job, task, question
 filename and content digest, so identical answers to different tasks or rounds remain independent.
 
-`agent kick <task-id>@<node>` queues a kick through the same heartbeat. The node
+The dashboard's ■ button and `agent kick <task-id>@<node>` queue a kick through the same heartbeat. The node
 uses `agent kick <task-id> lead <expected-run>` internally: a solo task stops, while a team member sleeps and can be woken. Kicks identify
 the intended run, so a delayed request does not stop a newer run. Both kinds of control remain queued until
 acknowledged and participate in the existing doorbell. A failed unit stop reports failure and retains the kick
@@ -881,7 +887,8 @@ On the node, `LEAD_KICK_RUN` in the task metadata records the intended run befor
 exit trap preserves a solo stop or team sleep without reporting an intermediate failure.
 With no lead configured, the interface retains its read-only mirror guards and local tasks behave as before.
 Upgrade the lead before its nodes; old nodes can still poll, but applying these controls requires an upgraded node.
-The launcher supplies `agentbus lead --questions-cmd <agent-path>` for question readiness. Its internal `lead-answer` command reads
+The launcher enables `agentlive --remote-controls` for configured leads and supplies
+`agentbus lead --questions-cmd <agent-path>` for question readiness. Its internal `lead-answer` command reads
 the answer from stdin (`--node`, `--task`, `--file`); `lead-kick` takes `--node` and `--task`. Both accept `--dir`
 and `--ttl`. The additive `PendingAnswers` and `PendingKicks` arrays in `bus/jobs.json` retain pending controls;
 the node stores scoped `answer_ack` and `kick_ack` receipts in `bus/node-jobs.json` until a successful heartbeat.
