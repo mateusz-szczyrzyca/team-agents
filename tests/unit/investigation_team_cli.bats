@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Round 1 of investigation teams: `agent run --investigation` is parsed and every refusal is given before anything
 # starts. A valid request is refused in this round as "not available yet" (the entry point stays inactive), and no
-# task, branch or systemd unit is created in any case.
+# task, branch, worktree or systemd unit is created in any case.
 
 load helpers
 
@@ -11,10 +11,12 @@ configure_investigators() {
     "$AGENTS_HOME/agents.conf"
 }
 
-# no_side_effects asserts that a refused request left no task directory, no agent branch and no systemd unit.
+# no_side_effects asserts that a refused request left no task directory, no agent branch, no extra worktree and
+# no systemd unit.
 no_side_effects() {
   [[ -z $(ls -A "$AGENTS_HOME/tasks") ]]
   [[ -z $(git -C "$HOME/repo" branch --list 'agents/*') ]]
+  [[ $(git -C "$HOME/repo" worktree list | wc -l) == 1 ]]
   [[ -z $(ls -A "$STUB_UNITS") ]]
 }
 
@@ -23,6 +25,13 @@ no_side_effects() {
   run agent run --investigation "topic"
   [ "$status" -ne 0 ]
   [[ $output == *"--team"* ]]
+  no_side_effects
+}
+
+@test "--investigation with --team but no value is refused" {
+  configure_investigators
+  run agent run --investigation --team
+  [ "$status" -ne 0 ]
   no_side_effects
 }
 
@@ -35,11 +44,33 @@ no_side_effects() {
   no_side_effects
 }
 
-@test "a duplicate investigator in --team is refused" {
+@test "an empty --team value is refused" {
+  configure_investigators
+  run agent run --investigation --team "" "topic"
+  [ "$status" -ne 0 ]
+  [[ $output == *"two"* ]]
+  no_side_effects
+}
+
+@test "empty components in --team are refused" {
+  configure_investigators
+  run agent run --investigation --team "inv,,inv2" "topic"
+  [ "$status" -ne 0 ]
+  [[ -n $output ]]
+  run agent run --investigation --team "inv, inv2," "topic"
+  [ "$status" -ne 0 ]
+  [[ -n $output ]]
+  no_side_effects
+}
+
+@test "a duplicate investigator in --team is refused, also with spaces around the name" {
   configure_investigators
   run agent run --investigation --team "inv, inv" "topic"
   [ "$status" -ne 0 ]
-  [[ $output == *"duplicate"* ]]
+  [[ $output == *"listed twice"* ]]
+  run agent run --investigation --team "inv, inv " "topic"
+  [ "$status" -ne 0 ]
+  [[ $output == *"listed twice"* ]]
   no_side_effects
 }
 
@@ -52,19 +83,11 @@ no_side_effects() {
   no_side_effects
 }
 
-@test "an empty --team value is refused" {
-  configure_investigators
-  run agent run --investigation --team "" "topic"
-  [ "$status" -ne 0 ]
-  [[ $output == *"two"* ]]
-  no_side_effects
-}
-
-@test "--team with investigators but without --investigation is refused" {
+@test "--team with investigators but without --investigation keeps the existing refusal" {
   configure_investigators
   run agent run --team "inv, inv2" "topic"
   [ "$status" -ne 0 ]
-  [[ $output == *"--investigation"* ]]
+  [[ $output == *"investigators are not started directly"* ]]
   no_side_effects
 }
 
@@ -90,12 +113,36 @@ no_side_effects() {
   no_side_effects
 }
 
+@test "--investigation cannot be combined with --resume" {
+  configure_investigators
+  run agent run --investigation --team "inv, inv2" --resume some-task "topic"
+  [ "$status" -ne 0 ]
+  [[ $output == *"--resume"* ]]
+  no_side_effects
+}
+
+@test "an empty topic is refused for an investigation team" {
+  configure_investigators
+  run agent run --investigation --team "inv, inv2" "  "
+  [ "$status" -ne 0 ]
+  [[ $output == *"empty task"* ]]
+  no_side_effects
+}
+
 @test "a valid two-investigator list with spaces after the commas is accepted but refused as not available yet" {
   configure_investigators
   run agent run --investigation --team "inv, inv2" "topic"
   [ "$status" -ne 0 ]
   [[ $output == *"not available yet"* ]]
-  [[ $output != *"duplicate"* && $output != *"not a configured"* ]]
+  [[ $output != *"listed twice"* && $output != *"not a configured"* ]]
+  no_side_effects
+}
+
+@test "--team may come before --investigation, and the valid request is still refused as not available yet" {
+  configure_investigators
+  run agent run --team "inv, inv2" --investigation "topic"
+  [ "$status" -ne 0 ]
+  [[ $output == *"not available yet"* ]]
   no_side_effects
 }
 
@@ -122,4 +169,11 @@ no_side_effects() {
   [ "$status" -ne 0 ]
   [[ $output == *"missing.md"* ]]
   no_side_effects
+}
+
+@test "agent help documents --investigation and --team" {
+  run agent help
+  [ "$status" -eq 0 ]
+  [[ $output == *"--investigation"* ]]
+  [[ $output == *"not available yet"* ]]
 }
