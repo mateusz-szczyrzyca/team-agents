@@ -2720,12 +2720,29 @@ cli_prompt() {
   printf 'Your instructions for this run are too long for the command line (%s bytes). They are in the file .agent-prompt.md at the root of your working directory (%s). Read the whole file now, then follow it exactly, as if it were this message.\n' "$size" "$f"
 }
 
+# is_independent_investigation id — returns 0 if task is an independent investigator child in an investigation team
+is_independent_investigation() {
+  local id=${1:-}
+  if [[ ${KIND:-worker} == investigation && -n ${INVESTIGATION_TEAM:-} ]]; then
+    return 0
+  fi
+  if [[ -n $id && -d $TASKS/$id ]]; then
+    [[ $(task_field "$id" KIND) == investigation && -n $(task_field "$id" INVESTIGATION_TEAM) ]] && return 0
+  fi
+  return 1
+}
+
 run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   local id=$1 mode=$2 n=$3 pf=$4 dir=$5
-  jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
-    '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$dir/mcp.json"
   local args=(-p --output-format stream-json --verbose --dangerously-skip-permissions
               --mcp-config "$dir/mcp.json" --max-turns "$CLAUDE_MAX_TURNS")
+  if is_independent_investigation "$id"; then
+    echo '{"mcpServers":{}}' > "$dir/mcp.json"
+    args+=(--strict-mcp-config)
+  else
+    jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
+      '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$dir/mcp.json"
+  fi
   if [[ -n ${MODEL:-} ]]; then args+=(--model "$MODEL"); fi
   if [[ $mode == new ]]; then args+=(--session-id "$SESSION_ID"); else args+=(--resume "$SESSION_ID"); fi
   local extra=(); read -ra extra <<< "${EXTRA_ARGS:-}"
@@ -2746,10 +2763,14 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
 run_codex() { # id mode n prompt_file dir ; sets RC, FINAL
   local id=$1 mode=$2 n=$3 pf=$4 dir=$5
   local args=(exec --json --dangerously-bypass-approvals-and-sandbox
-              -C "$WORKTREE" -o "$dir/last-$n.md"
-              -c "mcp_servers.agentbus.command=\"$AGENTBUS_BIN\""
-              -c "mcp_servers.agentbus.args=$(bus_args_json "$id")"
-              -c "mcp_servers.agentbus.tool_timeout_sec=900")
+              -C "$WORKTREE" -o "$dir/last-$n.md")
+  if is_independent_investigation "$id"; then
+    args+=(-c "mcp_servers.agentbus.enabled=false")
+  else
+    args+=(-c "mcp_servers.agentbus.command=\"$AGENTBUS_BIN\""
+           -c "mcp_servers.agentbus.args=$(bus_args_json "$id")"
+           -c "mcp_servers.agentbus.tool_timeout_sec=900")
+  fi
   if [[ -n ${MODEL:-} ]]; then args+=(-m "$MODEL"); fi
   local extra=(); read -ra extra <<< "${EXTRA_ARGS:-}"
   args+=("${extra[@]}")
@@ -2776,8 +2797,12 @@ run_gemini() { # id mode n prompt_file dir ; sets RC, FINAL  (Antigravity CLI: a
   local id=$1 mode=$2 n=$3 pf=$4 dir=$5
   # agentbus MCP: workspace config (.agents/mcp_config.json), excluded from git locally
   mkdir -p "$WORKTREE/.agents"
-  jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
-    '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$WORKTREE/.agents/mcp_config.json"
+  if is_independent_investigation "$id"; then
+    echo '{"mcpServers":{}}' > "$WORKTREE/.agents/mcp_config.json"
+  else
+    jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
+      '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$WORKTREE/.agents/mcp_config.json"
+  fi
   local excl
   excl="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
   mkdir -p "$(dirname "$excl")"
@@ -2811,11 +2836,13 @@ run_gemini() { # id mode n prompt_file dir ; sets RC, FINAL  (Antigravity CLI: a
 }
 
 opencode_config() { # id — per-run configuration (agentbus MCP + providers)
-  jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$1")" --arg model "${MODEL:-}" '
+  local indep=false
+  is_independent_investigation "$1" && indep=true
+  jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$1")" --arg model "${MODEL:-}" --argjson indep "$indep" '
     {
       "$schema": "https://opencode.ai/config.json",
       autoupdate: false,
-      mcp: { agentbus: { type: "local", command: ([$cmd] + $args), enabled: true } },
+      mcp: (if $indep then { agentbus: { type: "local", enabled: false } } else { agentbus: { type: "local", command: ([$cmd] + $args), enabled: true } } end),
       provider: {
         openrouter: { options: { apiKey: "{env:OPENROUTER_API_KEY}" } },
         deepinfra: {
