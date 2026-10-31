@@ -1014,8 +1014,8 @@ whose team is closed or unknown.
 - Each heartbeat declares the capabilities, the free agents of the configured tiers and `AGENT_WEB_URL`. The lead
   answers with at most one job. The node starts it with the same runner as `agent run`; the task records `JOB_ID`,
   `JOB_ASSIGNMENT` and `JOB_LEAD` in its `meta.env`, and its transitions in `job_transitions.jsonl`. The node
-  reports every state change and the final result. Questions stay on the node: its notifications and web
-  interface, `agent answer` there.
+  reports every state change and the final result. Questions are mirrored for the lead-side notification,
+  web editor and `agent answer <task-id>@<node>` flow described above.
 - The node keeps the latest unreported state of each job in `bus/node-jobs.json` and sends it with the next
   heartbeat that reaches the lead. A lead outage delays the reports; running tasks continue.
   Cancellation preserves a completed task's outcome and local result notification; an unfinished cancelled
@@ -1064,7 +1064,8 @@ whose team is closed or unknown.
   `helper_remote_list_failed`, `helper_remote_list_parse_failed`. Submission and query failures retain pending
   requests; preparation failures return their diagnostic, while storage failures are retried.
 - **Jobs and Instances views** (round 9), in the web interface only (`/jobs`, `/instances`, served by `agent web`):
-  the lead's remote jobs (state, node, requested agent, branch, PR, result, a link to the node's web interface) and
+  the lead's remote jobs (state, node, requested agent, branch, PR, result, links to available task mirrors
+  and the node's web interface) and
   the nodes (capabilities, free agents, last heartbeat, online or offline). Both pages refresh every 5 seconds and
   read only the local `bus/jobs.json` on the host that serves them. A missing `jobs.json` means empty views. A
   malformed or unreadable `jobs.json` shows as an error page, never as an empty list. External links (node, task, PR) leave the
@@ -1072,7 +1073,9 @@ whose team is closed or unknown.
 - **Node offline threshold for the web views**: `agent web` passes `NODE_TTL_SEC` to `agentlive web --node-ttl`.
   The value uses the same syntax as the lead: a positive duration in seconds, e.g. `90`, `0.5` or `1m30`. Without
   it the views use 90 seconds. Zero, negative or unparsable values stop `agentlive web` with an error.
-- **Manual checks** on a real lead and node are listed in `docs/multi-instance.md`; they are not run by `make gate`.
+- **Manual checks** for routing, mirrors, lead-side answers/kicks, offline recovery and remote teams
+  are listed in [the human checklist](docs/multi-instance.md#manual-checklist-human-real-tailnet). Record real
+  deployment results separately; these checks are not run by `make gate`.
 
 ## MCP tools available to agents
 
