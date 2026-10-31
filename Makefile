@@ -23,6 +23,7 @@ SHELL_SCRIPTS += tests/unit/lint_shell_memory.bats tests/unit/remote_control_rev
 SHELL_SCRIPTS += tests/unit/review_byline.bats tests/unit/tokens.bats
 SHELL_SCRIPTS += tests/unit/investigation_team_cli.bats tests/unit/investigation_team_validation.bats \
 	tests/unit/investigation_team_isolation.bats
+SHELL_SCRIPTS += tests/unit/investigation_team_runtime.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 
