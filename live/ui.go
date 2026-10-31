@@ -133,6 +133,7 @@ func newModel(cfg config) model {
 	ti.CharLimit = 2000
 	w := NewWatcher(cfg.home, cfg.busDir, cfg.remind)
 	snap, _ := w.Poll() // the first poll only records the baseline: it has no events
+	snap = applyDisplayRemoteControls(snap, cfg.busDir, cfg.remoteControls)
 	m := model{cfg: cfg, w: w, snap: snap, input: ti, follow: true,
 		vp: viewport.New(80, 10), feed: viewport.New(80, 20)}
 	if len(snap.Tasks) > 0 {
@@ -211,7 +212,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		snap, ev := m.w.Poll()
-		m.snap = snap
+		m.snap = applyDisplayRemoteControls(snap, m.cfg.busDir, m.cfg.remoteControls)
 		m.events = append(m.events, ev...)
 		if len(m.events) > 2000 {
 			m.events = m.events[len(m.events)-2000:]

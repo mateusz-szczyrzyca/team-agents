@@ -45,6 +45,7 @@ type normalizer struct {
 	enc    *json.Encoder                // stdout: entries truncated to 600 characters (activity.jsonl)
 	full   *json.Encoder                // optional: untruncated entries (agent transcript --raw)
 	deltas map[float64]*strings.Builder // agy: response text assembled from text_delta chunks, per step
+	agyUse agyTokens                    // agy: the tokens of the run's finished steps, one usage line at its result
 	err    *StorageError                // the first write error on stdout; stops the normalizer
 }
 
@@ -235,6 +236,26 @@ func (n *normalizer) codex(ev map[string]any) {
 	}
 }
 
+// agyTokens sums the tokens agy reports for each finished step of a run.
+type agyTokens struct {
+	in     float64 // input: the new tokens and those the cache read
+	cached float64 // the input the cache read
+	out    float64 // output: the response and the thinking
+	seen   bool    // a step reported its usage
+}
+
+// add counts one finished step's usage.
+func (u *agyTokens) add(m map[string]any) {
+	in, _ := num(m, "input_tokens")          // absent = not reported (0)
+	cached, _ := num(m, "cache_read_tokens") // absent = not reported (0)
+	out, _ := num(m, "output_tokens")        // absent = not reported (0)
+	think, _ := num(m, "thinking_tokens")    // absent = not reported (0)
+	u.in += in + cached
+	u.cached += cached
+	u.out += out + think
+	u.seen = true
+}
+
 // agy handles Antigravity CLI stream-json events (init/step_update/result).
 func (n *normalizer) agy(ev map[string]any) {
 	switch ev["event"] {
@@ -243,6 +264,9 @@ func (n *normalizer) agy(ev map[string]any) {
 	case "step_update":
 		su := obj(ev, "step_update")
 		idx, _ := num(su, "step_index") // absent = step 0
+		if u := obj(su, "usage"); su["state"] == "DONE" && len(u) > 0 {
+			n.agyUse.add(u)
+		}
 		switch su["step_type"] {
 		case "agent_response":
 			b := n.deltas[idx]
@@ -273,6 +297,10 @@ func (n *normalizer) agy(ev map[string]any) {
 			n.emit(ActErr, e)
 		}
 		n.emit(ActInfo, msg)
+		if n.agyUse.seen {
+			n.emit(ActInfo, fmt.Sprintf("usage: in %d (cached %d), out %d", int(n.agyUse.in), int(n.agyUse.cached), int(n.agyUse.out)))
+			n.agyUse = agyTokens{}
+		}
 	}
 }
 

@@ -240,7 +240,7 @@ it also says so in a comment on the round's PR, mentioning the repository's owne
 **Wakes and reviews.** A message to a sleeping member wakes it, and a wake costs it a whole run: agents send
 progress and notes that need no reaction with `send_message` `wake: false`, read on the next run. Each wake is
 logged with its cause (`member_woken_by`: the message, an unread one, new work on the board). A message longer than 2000 characters reaches its readers
-cut, with `read_message id=N` to read it whole. The runs' token usage (claude, codex, opencode) is in their activity;
+cut, with `read_message id=N` to read it whole. The runs' token usage (claude, codex, gemini/agy, opencode) is in their activity;
 `agent tokens <team|task>` sums it. An investigator's
 review on GitHub begins with who wrote it — "Review by the team-agents investigator `inv-astra` (codex, model
 …), request #66." — as well as ending with it.
@@ -657,6 +657,7 @@ agent run --resume <team|task> --same-round   continue an unmerged round on the 
 agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)
 agent kick <task>                             cut a run short: a team member sleeps (its team can wake it), solo: stopped
 agent tokens <team|task>                      the tokens its runs used: per task (a team's helpers and investigations too), in all
+agent tokens --runs <task>                    a task's tokens per run, with its steps (tool calls): the costly runs
 agent wake <task>                             resume a paused task now, not at its pause's end (a remote member's: on its node)
 agent round-size <task>                       size of a task's change against the round limit
 agent status | agents | show <id>            overview, agents, task details
@@ -863,6 +864,12 @@ An already marked file retains its explicit send intent and can be queued withou
 Waiting remote members can also be answered through their retained lead proxy in the terminal or task page.
 Dashboard SSE updates retain the same remote controls and waiting counters as the initial page.
 Display-only status overrides leave the watcher baseline unchanged, avoiding false transition events.
+The terminal refreshes remote question counts with the same display state as the web interface.
+A retained proxy's web Questions tab reads its matching mirror's question files.
+
+Remote browser answer forms submit the displayed question round for both drafts and sends. A stale or
+missing round returns HTTP `409` before writing answers or queueing delivery; reload an open form after
+upgrading the lead. Direct remote form clients must include exactly one `round` field matching the displayed round.
 
 Answers queue durably on the lead even while its listener or the node is offline. Heartbeat replies carry
 `Answers: [{Job, TaskID, File, Content, SHA256}]`; the node writes only its assigned waiting task's current

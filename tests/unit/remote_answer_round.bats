@@ -38,13 +38,14 @@ setup_file() {
   sed -i 's/^ROUND=1$/ROUND=2/' "$NODE/agents/tasks/$tid/meta.env"
   wait_grep 'Which board?' "$copy/questions-2.md" 30
   cp "$copy/questions-2.md" "$HOME/round-two-before.md"
+  cp "$NODE/agents/tasks/$tid/questions-2.md" "$HOME/node-round-two-before.md"
   for action in draft send; do
     code=$(curl -sS --noproxy '*' -o "$HOME/rejected.html" -w '%{http_code}' \
       -H 'HX-Request: true' -H "Origin: $base" \
       --data "action=$action&round=1&c0=own&t0=stale-answer" "$base/questions/$tid@node2")
     [ "$code" = 409 ]
     cmp "$HOME/round-two-before.md" "$copy/questions-2.md"
-    cmp "$HOME/round-two-before.md" "$NODE/agents/tasks/$tid/questions-2.md"
+    cmp "$HOME/node-round-two-before.md" "$NODE/agents/tasks/$tid/questions-2.md"
     [ "$(job_field j-stale-form State)" = waiting ]
   done
   curl -fsS --noproxy '*' -H 'HX-Request: true' -H "Origin: $base" \

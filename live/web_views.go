@@ -57,38 +57,7 @@ func statusClass(s string) string {
 
 // applyRemoteControls enriches a private display snapshot, preserving the watcher's raw baseline.
 func (s *webServer) applyRemoteControls(snap *Snapshot) *Snapshot {
-	view := *snap
-	view.All = make(map[string]*Task, len(snap.All))
-	for id, task := range snap.All {
-		taskCopy := *task
-		view.All[id] = &taskCopy
-	}
-	view.Tasks = make([]*Task, len(snap.Tasks))
-	for i, task := range snap.Tasks {
-		view.Tasks[i] = view.All[task.ID]
-	}
-	snap = &view
-	for _, task := range snap.All {
-		task.CanControl = s.cfg.remoteControls && task.Node != ""
-		if task.CanControl {
-			task.Round = mirrorQuestionRound(task.Dir)
-		}
-	}
-	if s.cfg.remoteControls {
-		jobs, err := readWebJobs(s.cfg.busDir)
-		if err == nil {
-			for _, job := range jobs.Jobs {
-				task := snap.All[job.TaskID+"@"+job.Node]
-				// Reports can precede artifact sync; the accepted assignment determines answer eligibility.
-				if task != nil && task.CanControl && task.JobID == job.Request.ID && job.State == "waiting" && task.Round > 0 {
-					task.Status = "waiting"
-				}
-			}
-		} else {
-			warnOnce("control-jobs:"+s.cfg.busDir, LogBusStateUnreadable, storageErr(err, "cannot read remote control assignments"), "dir", s.cfg.busDir)
-		}
-	}
-	return snap
+	return applyDisplayRemoteControls(snap, s.cfg.busDir, s.cfg.remoteControls)
 }
 
 // snapshot reads the current state (tasks and the bus).
@@ -664,8 +633,9 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 		viewError(s, w, r, webErr(ViewNotFound, nil, "no task %q", r.PathValue("id")))
 		return
 	}
+	var mirror *Task
 	if s.cfg.remoteControls && t.Node == "" && t.Kind == "remote-member" {
-		mirror := resolveProxyMirror(snap, t)
+		mirror = resolveProxyMirror(snap, t)
 		if mirror != nil && mirror.Status == "waiting" {
 			tCopy := *t
 			tCopy.Status = "waiting"
@@ -740,8 +710,12 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "questions":
-		if t.Node != "" {
-			matches, gerr := filepath.Glob(filepath.Join(t.Dir, "questions-*.md"))
+		qDir := t.Dir
+		if mirror != nil {
+			qDir = mirror.Dir
+		}
+		if t.Node != "" || mirror != nil {
+			matches, gerr := filepath.Glob(filepath.Join(qDir, "questions-*.md"))
 			if gerr != nil {
 				viewError(s, w, r, webErr(ViewStorage, gerr, "cannot list questions of %s", t.ID))
 				return
@@ -1407,6 +1381,14 @@ func (s *webServer) postAnswer(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		viewError(s, w, r, webErr(ViewBadParameter, err, "the form"))
 		return
+	}
+	// Remote forms must identify the displayed round, including drafts and proxy routes.
+	if t.Node != "" {
+		rounds := r.PostForm["round"]
+		if len(rounds) != 1 || rounds[0] != strconv.Itoa(t.Round) {
+			viewError(s, w, r, webErr(AnswerNotWaiting, nil, "the question round changed or is missing — reload the answer form before saving or sending"))
+			return
+		}
 	}
 	send := r.PostFormValue("action") == "send"
 	d := answerData{Row: makeRow(snap, t), ID: t.ID, Round: t.Round, File: path, Intro: introOf(strings.Join(doc.lines, "\n"))}
