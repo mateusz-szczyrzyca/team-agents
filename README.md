@@ -850,10 +850,55 @@ sorted by descending round number, **report** (`final.md`), **errors** (`err-*.l
 reside on the worker node. The `/logs` view supports a `Node` selector (`all`, `local`, or specific nodes) and
 filters remote records by component (`agent`, `agentbus`, `agentlive`). When a remote node heartbeat expires
 beyond the configured timeout (`NODE_TTL_SEC`, default `90s`), its tasks and dashboard rows show `node offline`
-while preserving their last-known state and metadata. In this round, mirrored tasks are display-only on the lead:
-stopping and question answering cannot be performed from the lead web interface or terminal panel (actions are
-safely rejected or hidden); questions are answered on the worker node. Waiting notifications describe remote
-answers without suggesting local answer commands.
+while preserving their last-known state and metadata.
+
+**Answering and stopping through the lead.** A job's questions and notifications belong on the lead; the node
+syncs its questions without opening an editor or notifying locally. The lead opens an editable copy at
+`<AGENTS_HOME>/remote-questions/<node>/<task-id>/questions-<n>.md`, installs the ordinary save watch, and notifies
+with the qualified task ID and a task-view link. Answer through VS Code (save with
+`**ANSWERED**` on the last nonempty line), or `agent answer <task-id>@<node>`. The read-only mirror is never
+edited. Editable copies expire when their task mirrors are removed. The interactive CLI validates all verdicts,
+asks for confirmation, and adds `**ANSWERED**` when you send; declining leaves an editable draft.
+An already marked file retains its explicit send intent and can be queued without another prompt.
+Waiting remote members can also be answered with `agent answer <proxy-task-id>`.
+The web interface and terminal panel retain read-only remote mirrors in this round; their answer and stop
+controls are planned for round 5, together with their preserved frontend regressions.
+
+Answers queue durably on the lead even while its listener or the node is offline. Heartbeat replies carry
+`Answers: [{Job, TaskID, File, Content, SHA256}]`; the node writes only its assigned waiting task's current
+question file and uses `_answers_saved` to resume. Answers are UTF-8 text, at most `256 KiB`, with no binary
+control characters (tabs and line endings are allowed). Acknowledgements include the job, task, question
+filename and content digest, so identical answers to different tasks or rounds remain independent.
+
+`agent kick <task-id>@<node>` queues a kick through the same heartbeat. The node
+uses `agent kick <task-id> lead <expected-run>` internally: a solo task stops, while a team member sleeps and can be woken. Kicks identify
+the intended run, so a delayed request does not stop a newer run. Both kinds of control remain queued until
+acknowledged and participate in the existing doorbell. A failed unit stop reports failure and retains the kick
+for retry. Run checks guard the execution and locked metadata writes, including the old runner’s exit trap.
+They do not declare an offline task resumed or stopped.
+On the node, `LEAD_KICK_RUN` in the task metadata records the intended run before stopping its runner, so the
+exit trap preserves a solo stop or team sleep without reporting an intermediate failure.
+With no lead configured, the interface retains its read-only mirror guards and local tasks behave as before.
+Upgrade the lead before its nodes; old nodes can still poll, but applying these controls requires an upgraded node.
+The launcher supplies `agentbus lead --questions-cmd <agent-path>` for question readiness. Its internal `lead-answer` command reads
+the answer from stdin (`--node`, `--task`, `--file`); `lead-kick` takes `--node` and `--task`. Both accept `--dir`
+and `--ttl`. The additive `PendingAnswers` and `PendingKicks` arrays in `bus/jobs.json` retain pending controls;
+the node stores scoped `answer_ack` and `kick_ack` receipts in `bus/node-jobs.json` until a successful heartbeat.
+Its `answer_received` record preserves validated delivery before the saved-answer handler runs.
+Old registry files without these fields remain readable. Replies fit the existing `1 MiB` encoded limit,
+including assignments, stops and wake requests; acknowledgement lists contain at most `64` entries each.
+
+Remote-control diagnostics use these stable script event names:
+
+| Events | Meaning |
+|---|---|
+| `remote_questions_start_failed`, `remote_questions_lock_failed`, `remote_questions_retry_failed` | Copy/watch readiness needs retrying. |
+| `remote_questions_expired` | The editable copy expired with its mirror. |
+| `remote_answer_queued`, `remote_answer_rejected`, `remote_answer_stale`, `remote_answer_lock_failed` | Lead-side answer queuing result. |
+| `node_answer_applied`, `node_answer_stale`, `node_answer_rejected`, `node_answer_resume_failed` | Node-side answer validation and resume result. |
+| `node_kick_stale`, `node_kick_rejected`, `node_kick_failed` | Node-side kick validation or application result. |
+| `node_controls_rejected` | The heartbeat control lists exceed their limits or have the wrong shape. |
+
 Activity streams replay available records when repeated entries make a bounded-tail replacement ambiguous.
 An unchanged tail is consumed once; uncertain replacements can repeat previously displayed activity.
 A single retained boundary is deduplicated: a newly appended event identical in every JSON field to that boundary
@@ -1193,6 +1238,8 @@ make integration   # real agent CLIs and accounts (costs usage)
   `shellcheck` from GitHub, verifies their SHA-256 checksums and installs them without sudo. `golangci-lint`
   runs the standard linters plus `errorlint`, `gosec`, `misspell`, `revive` and `unparam` (`.golangci.yml`);
   every Go module and every Bash script (bats files included) must pass with zero findings. CI runs the same.
+  ShellCheck checks each listed script in its own process to bound memory on small hosts; all files are
+  checked, and any failure makes the lint target fail.
 
 - **Unit tests** need no accounts: `agentbus` is tested in-process (queue capacity, quiz privacy, board rules,
   provider balancing, checkpoints, event normalization), and the `agent` script is tested with

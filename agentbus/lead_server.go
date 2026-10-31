@@ -38,7 +38,7 @@ func runLead(ctx context.Context, cfg leadConfig) *LeadServeError {
 		}
 		listeners = append(listeners, listener)
 	}
-	handler := newLeadHandler(&Bus{dir: cfg.dir}, cfg.node, cfg.allowed, cfg.ttl, cfg.notifyDir, cfg.notifyCmd)
+	handler := newLeadHandler(&Bus{dir: cfg.dir}, cfg.node, cfg.allowed, cfg.ttl, cfg.notifyDir, cfg.notifyCmd, cfg.questionsCmd)
 	servers := make([]*http.Server, 0, len(listeners))
 	// Requests live in a context that a shutdown cancels: the nodes' doorbell streams never end by themselves, and
 	// draining would otherwise wait for them until its deadline.

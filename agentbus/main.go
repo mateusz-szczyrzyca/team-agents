@@ -1406,6 +1406,8 @@ func main() {
   agentbus node-request --url URL [--path PATH] [--get|--validate]   node HTTP transport
   agentbus node-checkout --repo NAME --base REF [--sha SHA] --repo-path NAME=PATH   resolve a node job base
   agentbus lead    --listen TAILSCALE:PORT --node NAME [--dir D] [--allow DEVICE]... [--ttl 90s]   the lead's HTTP listener (agent lead)
+  agentbus lead-answer [--dir D] --node N --task T --file F   queue an answer from stdin
+  agentbus lead-kick   [--dir D] --node N --task T            queue a kick request
   agentbus helper-list [--all] | helper-next|helper-set|helper-get|board-dump   (used by the agent script)
   agentbus checkpoint-get|cancel-pending|board-release-agent   (used by the agent script)`)
 		os.Exit(2)
@@ -1458,6 +1460,10 @@ func main() {
 		cmdLead(os.Args[2:])
 	case "lead-cancel":
 		cmdLeadCancel(os.Args[2:])
+	case "lead-answer":
+		cmdLeadAnswer(os.Args[2:])
+	case "lead-kick":
+		cmdLeadKick(os.Args[2:])
 	case "node-checkout":
 		cmdNodeCheckout(os.Args[2:])
 	case "node-request":

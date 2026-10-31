@@ -10,16 +10,19 @@ import (
 
 // leadAPI adapts authenticated operations to the durable registry without touching ordinary bus state.
 type leadAPI struct {
-	bus       *Bus          // registry storage and shared flock
-	ttl       time.Duration // maximum node silence before unstarted assignments expire
-	notifyDir string        // optional directory for completion notification files to human requesters
-	notifyCmd string        // optional delivery command run with the notification file path
+	bus          *Bus          // registry storage and shared flock
+	ttl          time.Duration // maximum node silence before unstarted assignments expire
+	notifyDir    string        // optional directory for completion notification files to human requesters
+	notifyCmd    string        // optional delivery command run with the notification file path
+	questionsCmd string        // optional command run with _remote_questions when questions arrive
 }
 
 // leadHeartbeatBody adds pending reports to the node's current declaration.
 type leadHeartbeatBody struct {
-	NodeHeartbeat             // declaration, with identity supplied by the socket peer
-	Reports       []JobReport // latest unacknowledged snapshots, applied atomically
+	NodeHeartbeat                 // declaration, with identity supplied by the socket peer
+	Reports       []JobReport     // latest unacknowledged snapshots, applied atomically
+	AnswerAcks    []LeadAnswerAck `json:",omitempty"` // answers acknowledged by the node
+	KickAcks      []LeadKickAck   `json:",omitempty"` // kicks acknowledged by the node
 }
 
 // MarshalJSON implements json.Marshaler; encoding/json supplies its interface error.
@@ -39,9 +42,87 @@ func (b leadHeartbeatBody) MarshalJSON() ([]byte, error) {
 		reports = append(reports, wireReport{JobReport: rep, At: jobTime{rep.At}, Transitions: transitions})
 	}
 	return json.Marshal(struct {
-		NodeHeartbeat              // current node declaration
-		Reports       []wireReport // snapshots with lossless times
-	}{b.NodeHeartbeat, reports})
+		NodeHeartbeat                 // current node declaration
+		Reports       []wireReport    // snapshots with lossless times
+		AnswerAcks    []LeadAnswerAck `json:",omitempty"`
+		KickAcks      []LeadKickAck   `json:",omitempty"`
+	}{b.NodeHeartbeat, reports, b.AnswerAcks, b.KickAcks})
+}
+
+// maxHeartbeatResponseBytes is the maximum encoded bytes of a heartbeat response (1 MiB).
+const maxHeartbeatResponseBytes = 1 << 20
+
+// leadHeartbeatResponse represents the wire payload returned by POST /v1/heartbeat.
+type leadHeartbeatResponse struct {
+	Job      *leadJobView  `json:"Job"`      // optional assignment for the node
+	Stops    []leadJobView `json:"Stops"`    // bounded stop requests for the node
+	Wakes    []string      `json:"Wakes"`    // jobs whose remote team members the node must wake
+	WakesNow []string      `json:"WakesNow"` // jobs whose paused remote team members the node must resume now
+	Answers  []LeadAnswer  `json:"Answers"`  // queued question answers for the node
+	Kicks    []LeadKick    `json:"Kicks"`    // queued kicks for the node
+}
+
+// boundedControls holds delivered answers and kicks that fit within the wire budget.
+type boundedControls struct {
+	Answers []LeadAnswer // delivered answers within the budget
+	Kicks   []LeadKick   // delivered kicks within the budget
+}
+
+// measureHeartbeatReplyBytes measures the encoded JSON length of a candidate heartbeat response.
+func measureHeartbeatReplyBytes(resp leadHeartbeatResponse) (int, *StorageError) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(resp); err != nil {
+		return 0, storageErr(err, "cannot encode heartbeat response")
+	}
+	return buf.Len(), nil
+}
+
+// boundHeartbeatControls selects queued answers and kicks that fit within the 1 MiB wire limit.
+func boundHeartbeatControls(view *leadJobView, stops []leadJobView, wakes, wakesNow []string, answers []LeadAnswer, kicks []LeadKick) (boundedControls, *StorageError) {
+	currentResp := leadHeartbeatResponse{
+		Job:      view,
+		Stops:    stops,
+		Wakes:    wakes,
+		WakesNow: wakesNow,
+	}
+	var deliveredAnswers []LeadAnswer
+	for _, ans := range answers {
+		if len(deliveredAnswers) >= MaxHeartbeatAnswers {
+			break
+		}
+		candidate := currentResp
+		candidate.Answers = append(candidate.Answers, ans)
+		size, err := measureHeartbeatReplyBytes(candidate)
+		if err != nil {
+			return boundedControls{}, err
+		}
+		if size <= maxHeartbeatResponseBytes {
+			currentResp = candidate
+			deliveredAnswers = append(deliveredAnswers, ans)
+		}
+	}
+	var deliveredKicks []LeadKick
+	for _, kick := range kicks {
+		if len(deliveredKicks) >= MaxHeartbeatKicks {
+			break
+		}
+		candidate := currentResp
+		candidate.Kicks = append(candidate.Kicks, kick)
+		size, err := measureHeartbeatReplyBytes(candidate)
+		if err != nil {
+			return boundedControls{}, err
+		}
+		if size <= maxHeartbeatResponseBytes {
+			currentResp = candidate
+			deliveredKicks = append(deliveredKicks, kick)
+		}
+	}
+	return boundedControls{
+		Answers: deliveredAnswers,
+		Kicks:   deliveredKicks,
+	}, nil
 }
 
 // leadJobView exposes job data without registry counters or bus internals.
@@ -70,14 +151,17 @@ type leadNodeView struct {
 
 // newLeadHandler constructs the HTTP boundary shared by configured listeners.
 func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Duration, notify ...string) http.Handler {
-	var notifyDir, notifyCmd string
+	var notifyDir, notifyCmd, questionsCmd string
 	if len(notify) > 0 {
 		notifyDir = notify[0]
 	}
 	if len(notify) > 1 {
 		notifyCmd = notify[1]
 	}
-	a := &leadAPI{bus: bus, ttl: ttl, notifyDir: notifyDir, notifyCmd: notifyCmd}
+	if len(notify) > 2 {
+		questionsCmd = notify[2]
+	}
+	a := &leadAPI{bus: bus, ttl: ttl, notifyDir: notifyDir, notifyCmd: notifyCmd, questionsCmd: questionsCmd}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/sync", func(w http.ResponseWriter, r *http.Request) {
 		serveLead(w, r, localNode, allowed, LeadSyncUnauthorized, func(peer leadIdentity) (any, *LeadSyncError) {
@@ -129,7 +213,9 @@ func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Durat
 				return nil, fromValue(LeadHeartbeatMalformedBody, err)
 			}
 			var stops []leadJobView // durable requests from the report/assignment transaction
-			job, err := a.heartbeat(peer.Node, body, &stops)
+			var answers []LeadAnswer
+			var kicks []LeadKick
+			job, err := a.heartbeat(peer.Node, body, &stops, &answers, &kicks)
 			var view *leadJobView // no assignment is represented by JSON null
 			if job != nil {
 				v := publicLeadJob(*job)
@@ -147,12 +233,19 @@ func newLeadHandler(bus *Bus, localNode string, allowed []string, ttl time.Durat
 					warnSideEffect("apply remote members' activity", werr)
 				}
 			}
-			return struct {
-				Job      *leadJobView  /* at most one assignment */
-				Stops    []leadJobView /* bounded, durable stop requests for this authenticated node */
-				Wakes    []string      /* jobs whose remote team members the node must wake */
-				WakesNow []string      /* jobs whose paused remote team members the node must resume now */
-			}{view, stops, wakes, a.wakesNowFor(peer.Node)}, err
+			wakesNow := a.wakesNowFor(peer.Node)
+			bounded, berr := boundHeartbeatControls(view, stops, wakes, wakesNow, answers, kicks)
+			if berr != nil {
+				return nil, fromStorage(LeadHeartbeatStorage, berr)
+			}
+			return leadHeartbeatResponse{
+				Job:      view,
+				Stops:    stops,
+				Wakes:    wakes,
+				WakesNow: wakesNow,
+				Answers:  bounded.Answers,
+				Kicks:    bounded.Kicks,
+			}, err
 		})
 	})
 	mux.HandleFunc("POST /v1/jobs/{id}/state", func(w http.ResponseWriter, r *http.Request) {
@@ -265,7 +358,9 @@ func writeLeadJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(body); err != nil {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(body); err != nil {
 		warnSideEffect("lead HTTP response", storageErr(err, "cannot write lead response"))
 	}
 }

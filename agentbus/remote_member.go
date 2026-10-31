@@ -628,13 +628,13 @@ const (
 )
 
 // pendingFor describes what waits for a node ("" = nothing): the wakes of its members, the stops of its jobs, the
-// number of queued jobs. A ring follows a change of it, so that an ordinary heartbeat rings nothing.
+// number of queued jobs, and pending answers and kicks. A ring follows a change of it, so that an ordinary heartbeat rings nothing.
 func (a *leadAPI) pendingFor(node string) string {
 	reg, serr := a.bus.loadJobs()
 	if serr != nil {
 		return "" // unreadable now: the node's own heartbeat still comes
 	}
-	var wakes, stops []string
+	var wakes, stops, answers, kicks []string
 	queued := 0
 	for _, m := range reg.members {
 		if m.Node == node && (m.Wake || m.WakeNow) {
@@ -642,6 +642,14 @@ func (a *leadAPI) pendingFor(node string) string {
 		}
 	}
 	for id, j := range reg.jobs {
+		if j.Node == node && !isTerminalJob(j.State) {
+			for _, ans := range j.PendingAnswers {
+				answers = append(answers, fmt.Sprintf("%s:%s", id, ans.SHA256))
+			}
+			for _, kick := range j.PendingKicks {
+				kicks = append(kicks, fmt.Sprintf("%s:%s", id, kick.SHA256))
+			}
+		}
 		switch {
 		case j.Node == node && j.StopRequested:
 			stops = append(stops, id)
@@ -649,12 +657,14 @@ func (a *leadAPI) pendingFor(node string) string {
 			queued++
 		}
 	}
-	if len(wakes) == 0 && len(stops) == 0 && queued == 0 {
+	if len(wakes) == 0 && len(stops) == 0 && queued == 0 && len(answers) == 0 && len(kicks) == 0 {
 		return ""
 	}
 	sort.Strings(wakes)
 	sort.Strings(stops)
-	return fmt.Sprintf("w:%s s:%s q:%d", strings.Join(wakes, ","), strings.Join(stops, ","), queued)
+	sort.Strings(answers)
+	sort.Strings(kicks)
+	return fmt.Sprintf("w:%s s:%s q:%d a:%s k:%s", strings.Join(wakes, ","), strings.Join(stops, ","), queued, strings.Join(answers, ","), strings.Join(kicks, ","))
 }
 
 // doorbell serves a node's event stream: "event: ring" when what waits for it changes, a comment now and then.

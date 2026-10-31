@@ -56,14 +56,15 @@ func leadListenAddrs(ap netip.AddrPort) []netip.AddrPort {
 
 // leadConfig is the parsed command line of `agentbus lead`.
 type leadConfig struct {
-	dir       string         // the bus directory holding the lead's job registry
-	listen    netip.AddrPort // the validated --listen address (Tailscale or loopback)
-	node      string         // this instance's name on the lead; the lead is also a node
-	allowed   []string       // devices allowed to take jobs: names or tag:…; loopback is always the lead's own node
-	ttl       time.Duration  // how long a silent node stays online
-	notifyDir string         // directory where completion notification markdown files are written
-	notifyCmd string         // optional delivery command run with the notification file
-	grace     time.Duration  // how long a remote member's node may be away before the member is put out of its team
+	dir          string         // the bus directory holding the lead's job registry
+	listen       netip.AddrPort // the validated --listen address (Tailscale or loopback)
+	node         string         // this instance's name on the lead; the lead is also a node
+	allowed      []string       // devices allowed to take jobs: names or tag:…; loopback is always the lead's own node
+	ttl          time.Duration  // how long a silent node stays online
+	notifyDir    string         // directory where completion notification markdown files are written
+	notifyCmd    string         // optional delivery command run with the notification file
+	grace        time.Duration  // how long a remote member's node may be away before the member is put out of its team
+	questionsCmd string         // optional command run with _remote_questions when questions arrive
 }
 
 // leadDevices collects the repeated --allow flag.
@@ -91,6 +92,7 @@ func parseLeadConfig(args []string) (leadConfig, *LeadServeError) {
 	notifyDir := fs.String("notify-dir", "", "directory where completion notification files are written")
 	notifyCmd := fs.String("notify-cmd", "", "optional delivery command run with the notification file")
 	grace := fs.Duration("member-grace", 10*time.Minute, "how long a remote member's node may be away before the member is put out of its team")
+	questionsCmd := fs.String("questions-cmd", "", "optional command run with _remote_questions <task>@<node> when questions arrive")
 	if err := fs.Parse(args); err != nil {
 		return leadConfig{}, opErr(LeadServeBadFlags, "%v", err)
 	}
@@ -110,7 +112,7 @@ func parseLeadConfig(args []string) (leadConfig, *LeadServeError) {
 	if *ttl <= 0 {
 		return leadConfig{}, opErr(LeadServeBadFlags, "--ttl %v must be a positive duration, e.g. 90s", *ttl)
 	}
-	return leadConfig{dir: *dir, listen: addr, node: *node, allowed: allow, ttl: *ttl, notifyDir: *notifyDir, notifyCmd: *notifyCmd, grace: *grace}, nil
+	return leadConfig{dir: *dir, listen: addr, node: *node, allowed: allow, ttl: *ttl, notifyDir: *notifyDir, notifyCmd: *notifyCmd, grace: *grace, questionsCmd: *questionsCmd}, nil
 }
 
 // leadCancelConfig is the parsed command line of `agentbus lead-cancel`.

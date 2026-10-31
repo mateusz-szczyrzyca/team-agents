@@ -456,11 +456,13 @@ stopping() {
 
 meta_file() { printf '%s/%s/meta.env' "$TASKS" "$1"; }
 
-meta_set() { # id key value — sets one KEY=value (printf %q) line; writers of one task are serialised by a lock
+meta_set() { # id key value [run] — sets KEY=value under the task lock; a stale optional run is a successful no-op
   local f; f=$(meta_file "$1")
   (
     # a run, agent stop and the bus's wake-ups write the same file: without the lock an update gets lost
     flock -w 30 9 || { log_error meta_lock_timeout "file=$f" "key=$2"; exit 1; }
+    # Check while holding the writer lock: an old kick or exit trap must not mutate a newer run.
+    if [[ -n ${4:-} && $(task_field "$1" RUN) != "${4:-}" ]]; then exit 0; fi
     # Each step reports its own failure: a failed write must never be moved over the old file. Inside the
     # conditional the subshell does not stop at the first error, so the status is checked explicitly.
     local tmp="$f.tmp.$$"
@@ -636,8 +638,9 @@ answers_marked() {
 
 # questions_note id file — puts the answering instructions under the title of a new questions file (once)
 questions_note() {
-  local id=$1 f=$2 note tmp
-  note="> Answer every question after **Verdict:** — \`ok\` accepts the recommendation. When you are done, put **ANSWERED** on the last line and save: the answers are sent at once (or run \`agent resume $id\`)."
+  local id=$1 f=$2 note tmp action=resume
+  [[ $id != *@* ]] || action=answer
+  note="> Answer every question after **Verdict:** — \`ok\` accepts the recommendation. When you are done, put **ANSWERED** on the last line and save: the answers are sent at once (or run \`agent $action $id\`)."
   grep -qF -- '**ANSWERED** on the last line' "$f" && return 0
   tmp=$(mktemp)
   awk -v note="$note" 'NR == 1 && /^# / { print; print ""; print note; next } NR == 1 { print note; print "" } { print }' "$f" > "$tmp"
@@ -657,8 +660,114 @@ questions_ready() {
   local id=$1 f=$2
   questions_note "$id" "$f"
   meta_set "$id" QUESTIONS_MTIME "$(file_mtime "$f")"
+  # A configured job receives its answers from the lead, through the same saved-answer handler.
+  if [[ -n $(task_field "$id" JOB_ID) && ( -n $(task_field "$id" JOB_LEAD) || -n $LEAD_URL ) ]]; then return 0; fi
   watch_answers "$id" "$f"
   open_in_editor "$id" "$f"
+}
+
+# remote_identity qualified-id — sets REMOTE_NODE and REMOTE_TASK to validated path components.
+remote_identity() {
+  [[ -n $LEAD_LISTEN && $1 =~ ^([A-Za-z0-9][A-Za-z0-9._-]{0,127})@([A-Za-z0-9][A-Za-z0-9._-]{0,127})$ ]] || return 1
+  REMOTE_TASK=${BASH_REMATCH[1]}; REMOTE_NODE=${BASH_REMATCH[2]}
+}
+
+# remote_question_context qualified-id — sets REMOTE_* for the current, assigned waiting mirror; 1 means stale.
+remote_question_context() {
+  local f n job
+  remote_identity "$1" || return 1
+  REMOTE_MIRROR="$BUS_DIR/remote/$REMOTE_NODE/$REMOTE_TASK"
+  [[ -f $REMOTE_MIRROR/metadata.json && -f $BUS_DIR/jobs.json ]] || return 1
+  job=$(jq -r '.JOB_ID // empty' "$REMOTE_MIRROR/metadata.json")
+  if ! REMOTE_REPO=$(jq -er --arg job "$job" --arg node "$REMOTE_NODE" --arg task "$REMOTE_TASK" \
+    '[.Jobs[] | select(.Request.ID==$job and .Node==$node and .TaskID==$task and .State=="waiting") | .Request.Repository] | select(length==1) | .[0]' "$BUS_DIR/jobs.json"); then return 1; fi
+  REMOTE_ROUND=0
+  for f in "$REMOTE_MIRROR"/questions-*.md; do
+    [[ -f $f && ${f##*/} =~ ^questions-([1-9][0-9]{0,8})\.md$ ]] || continue
+    n=${BASH_REMATCH[1]}
+    if ((n > REMOTE_ROUND)); then REMOTE_ROUND=$n; fi
+  done
+  ((REMOTE_ROUND > 0)) || return 1
+  REMOTE_DIR="$AGENTS_HOME/remote-questions/$REMOTE_NODE/$REMOTE_TASK"
+  REMOTE_FILE="$REMOTE_DIR/questions-$REMOTE_ROUND.md"
+}
+
+# cmd__remote_questions qualified-id — schedules readiness without making sync wait for an editor or notifier.
+cmd__remote_questions() {
+  remote_question_context "${1:?}" || return 0  # metadata and artifacts can arrive in separate syncs
+  local unit="agent-remote-questions-$REMOTE_TASK@$REMOTE_NODE"
+  if systemctl --user is-active --quiet "$unit.service"; then return 0; fi
+  systemd-run --user --quiet --collect --unit="$unit" \
+    --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+    "$SELF" _remote_questions_ready "$1" 3>&- 7>&- 8>&- 9>&- 10>&- \
+    || { log_warn remote_questions_start_failed "task=$1"; return 1; }
+}
+
+# cmd__remote_questions_ready qualified-id — its subshell owns the readiness lock until copy/watch setup ends.
+cmd__remote_questions_ready() (
+  local id=${1:?} marker
+  remote_question_context "$id" || return 0
+  mkdir -p "$REMOTE_DIR"
+  exec 7>"$REMOTE_DIR/ready.lock"
+  flock -w 30 7 || { log_warn remote_questions_lock_failed "task=$id"; return 1; }
+  remote_question_context "$id" || return 0
+  if [[ ! -f $REMOTE_FILE ]]; then
+    # Replace the node's local command in the instructions; the mirror itself remains untouched.
+    awk '!/^> Answer every question after /' "$REMOTE_MIRROR/questions-$REMOTE_ROUND.md" > "$REMOTE_FILE"
+    chmod 600 "$REMOTE_FILE"
+    questions_note "$id" "$REMOTE_FILE"
+  fi
+  if ! systemctl --user is-active --quiet "agent-$id-answers-$REMOTE_ROUND.path"; then
+    watch_answers "$id" "$REMOTE_FILE"
+  fi
+  marker="$REMOTE_DIR/questions-$REMOTE_ROUND.notified"
+  if [[ ! -f $marker ]]; then
+    open_in_editor "$id" "$REMOTE_FILE" 7>&-
+    notify "$id" waiting "Questions file: $REMOTE_FILE" 7>&-
+    touch "$marker"
+  fi
+)
+
+# supervise_remote_questions retries readiness after a failed sync side effect or a lead restart.
+supervise_remote_questions() {
+  [[ -n $LEAD_LISTEN ]] || return 0
+  local f dir task node
+  for f in "$BUS_DIR"/remote/*/*/metadata.json; do
+    [[ -f $f ]] || continue
+    dir=${f%/*}; task=${dir##*/}; dir=${dir%/*}; node=${dir##*/}
+    cmd__remote_questions_ready "$task@$node" || log_warn remote_questions_retry_failed "task=$task@$node"
+  done
+  # Editable files have the mirror's lifetime, including when the lead was down during retention cleanup.
+  for dir in "$AGENTS_HOME"/remote-questions/*/*; do
+    [[ -d $dir ]] || continue
+    task=${dir##*/}; f=${dir%/*}; node=${f##*/}
+    remote_identity "$task@$node" || continue
+    if [[ ! -f $BUS_DIR/remote/$node/$task/metadata.json ]]; then
+      rm -rf -- "$dir"
+      log_info remote_questions_expired "task=$task@$node"
+    fi
+  done
+}
+
+# remote_answers_saved qualified-id round — queues complete edited answers even while the listener is offline.
+remote_answers_saved() {
+  local id=$1 round=$2 out
+  remote_question_context "$id" || { log_warn remote_answer_stale "task=$id"; return 1; }
+  [[ $round == "$REMOTE_ROUND" && -f $REMOTE_FILE ]] || return 1
+  exec 8>"$REMOTE_DIR/answers.lock"
+  flock -w 30 8 || { log_warn remote_answer_lock_failed "task=$id"; return 1; }
+  answers_marked "$REMOTE_FILE" || return 0  # a draft save is not a send
+  validate_answers "$REMOTE_FILE" || return 1
+  if out=$(bus lead-answer --dir "$BUS_DIR" --ttl "${NODE_TTL_SEC}s" --node "$REMOTE_NODE" --task "$REMOTE_TASK" \
+    --file "questions-$round.md" < "$REMOTE_FILE" 7>&- 8>&- 2>&1); then
+    log_info remote_answer_queued "task=$id" "round=$round"
+    stop_answers_watch "$id" "$round"
+    echo "Answers queued for $id."
+  else
+    log_warn remote_answer_rejected "task=$id" "reason=$out"
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
 }
 
 # watch_answers id file — a systemd path unit runs `agent _answers_saved <id> <round>` whenever the file is saved
@@ -1633,6 +1742,7 @@ supervise_answer_watches() {
   while read -r u _; do
     [[ $u =~ ^agent-(.+)-answers-[0-9]+\.path$ ]] || continue
     tid=${BASH_REMATCH[1]}
+    if [[ $tid == *@* ]] && remote_question_context "$tid"; then continue; fi
     [[ -f $TASKS/$tid/meta.env && $(task_field "$tid" STATUS) == waiting ]] && continue
     try answers_watch_stop_failed systemctl --user stop "$u"
     try answers_watch_reset_failed systemctl --user reset-failed "${u%.path}.service"
@@ -2760,7 +2870,22 @@ run_opencode() { # id mode n prompt_file dir ; sets RC, FINAL  (OpenRouter, Deep
 notify() { # id status final note
   local id=$1 status=$2 final=$3 note=${4:-}
   stopping && return 0
-  meta_load "$id"
+  local question_path
+  if [[ $id == *@* ]]; then
+    remote_question_context "$id" || return 1
+    local REPO_NAME=$REMOTE_REPO AGENT TYPE MODEL RUN ROUND=$REMOTE_ROUND KIND=worker
+    local WORK_ROUND='' WORKTREE='' REVIEW=0 AGENTS_MD=''
+    AGENT="$(jq -r '.AGENT' "$REMOTE_MIRROR/metadata.json")@$REMOTE_NODE"
+    TYPE=$(jq -r '.TYPE // ""' "$REMOTE_MIRROR/metadata.json")
+    MODEL=$(jq -r '.MODEL // ""' "$REMOTE_MIRROR/metadata.json")
+    RUN=$(jq -r '.RUN // "0"' "$REMOTE_MIRROR/metadata.json")
+    question_path=$REMOTE_FILE
+  else
+    meta_load "$id"
+    # Jobs with a configured lead notify through their reports and mirrored questions, never twice.
+    if [[ -n ${JOB_ID:-} && -n ${JOB_LEAD:-${LEAD_URL:-}} ]]; then return 0; fi
+    question_path="$TASKS/$id/questions-${ROUND:-0}.md"
+  fi
   log_info notification "task=$id" "status=$status" "note=$note"
   local label
   case $status in
@@ -2819,8 +2944,13 @@ notify() { # id status final note
     fi
     if [[ $status == waiting ]]; then
       printf 'Questions: %s — answer with: agent answer %s\n' \
-        "$(count_questions "$TASKS/$id/questions-$ROUND.md")" "$id"
-      if [[ -n $AGENT_WEB_URL ]]; then printf 'Answer: %s/questions/%s?max=1\n' "${AGENT_WEB_URL%/}" "$id"; fi
+        "$(count_questions "$question_path")" "$id"
+      # A task link works with both read-only and interactive remote views.
+      if [[ -n $AGENT_WEB_URL && $id == *@* ]]; then
+        printf 'Open: %s/task/%s\n' "${AGENT_WEB_URL%/}" "$id"
+      elif [[ -n $AGENT_WEB_URL ]]; then
+        printf 'Answer: %s/questions/%s?max=1\n' "${AGENT_WEB_URL%/}" "$id"
+      fi
     elif [[ -n $AGENT_WEB_URL ]]; then
       printf 'Open: %s/task/%s\n' "${AGENT_WEB_URL%/}" "$id"
     fi
@@ -3205,6 +3335,16 @@ runner_exit() {
     try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
     try activity_write_failed act "$RUNNER_ID" info "■ stopped (agent stop --running)"
     log_info run_stopped "reason=agent stop --running"
+    return
+  fi
+  if [[ -n ${JOB_ID:-} && -n ${RUN:-} && $(task_field "$RUNNER_ID" LEAD_KICK_RUN) == "$RUN" ]]; then
+    # A lead kick owns this run's exit; never journal an intermediate failed outcome for the node.
+    local kick_state=stopped
+    [[ -z ${TEAM:-} ]] || kick_state=sleeping
+    try meta_write_failed meta_set "$RUNNER_ID" STATUS "$kick_state" "$RUN"
+    try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)" "$RUN"
+    log_info run_stopped "reason=lead_job_kick" "status=$kick_state"
+    RUNNER_DELIVERED=1
     return
   fi
   if [[ -n ${JOB_ID:-} && -f $TASKS/$RUNNER_ID/node-stop-requested ]]; then
@@ -4312,7 +4452,33 @@ cmd_run() {
 }
 
 cmd_answer() {
+  if [[ ${1:-} == *@* ]]; then
+    remote_question_context "$1" || die "no waiting mirrored task $1 on this lead"
+    [[ -f $REMOTE_FILE ]] || cmd__remote_questions_ready "$1"
+    "${EDITOR:-nano}" "$REMOTE_FILE"
+    # A path unit can deliver the save before the editor exits, just like an ordinary local answer.
+    if ! remote_question_context "$1"; then echo "$1 no longer waits for answers."; return 0; fi
+    if ! validate_answers "$REMOTE_FILE"; then
+      echo "Not all questions are answered. Complete them and run: agent answer $1"
+      return 1
+    fi
+    if ! answers_marked "$REMOTE_FILE"; then
+      local yn
+      read -rp "All questions are answered. Resume now? [Y/n] " yn || return 1
+      [[ ${yn,,} != n* ]] || return 0
+      printf '\n**ANSWERED**\n' >> "$REMOTE_FILE"
+    fi
+    remote_answers_saved "$1" "$REMOTE_ROUND"
+    return
+  fi
   local id; id=$(resolve_id "${1:?usage: agent answer <id>}")
+  if [[ $(task_field "$id" KIND) == remote-member && -n $LEAD_LISTEN ]]; then
+    local job target
+    job=$(task_field "$id" JOB_ID)
+    target=$(jq -er --arg job "$job" '.Jobs[] | select(.Request.ID==$job) | .TaskID+"@"+.Node' "$BUS_DIR/jobs.json")
+    cmd_answer "$target"
+    return
+  fi
   meta_load "$id"
   [[ $STATUS == waiting ]] || die "task $id has status '$STATUS' — it is not waiting for answers"
   local q="$TASKS/$id/questions-$ROUND.md"
@@ -4328,6 +4494,7 @@ cmd_answer() {
 
 cmd__answers_saved() { # id round — the human saved a questions file (systemd path unit)
   stopping && return 0
+  if [[ ${1:-} == *@* ]]; then remote_answers_saved "$1" "${2:?}"; return; fi
   local id; id=$(resolve_id "${1:?}")
   local round=${2:?} f out errs
   exec 8>"$TASKS/$id/answers.lock"
@@ -4338,7 +4505,8 @@ cmd__answers_saved() { # id round — the human saved a questions file (systemd 
     stop_answers_watch "$id" "$round"     # answered another way, or the task no longer waits
     return 0
   fi
-  [[ $(file_mtime "$f") != "${QUESTIONS_MTIME:-}" ]] || return 0   # not changed since the questions were asked
+  # Verified lead delivery is a save even when it shares the question's filesystem timestamp.
+  if [[ ${3:-} != lead && $(file_mtime "$f") == "${QUESTIONS_MTIME:-}" ]]; then return 0; fi
   if ! answers_marked "$f"; then
     log_info answers_saved "task=$id" "round=$round" "marked=false"
     return 0
@@ -4600,6 +4768,7 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
   # unless their machine restarted under the run (restart_interrupted)
   local d id st run rb
   supervise_answer_watches   # watches of answers nobody waits for any more
+  supervise_remote_questions
   for d in "$TASKS"/*/; do
     [[ -f $d/meta.env ]] || continue
     id=${d%/}; id=${id##*/}
@@ -4914,23 +5083,59 @@ cmd_wake() { # <task> — a paused task resumes now, not at its pause's end (its
   echo "resumed $id"
 }
 
-cmd_kick() { # <task> [from] — cuts an agent's current run short (the web interface's stop button): a team member
+cmd_kick() { # <task> [from] [expected-run] — cuts only the intended run short: a team member
   # goes to sleep, so its team can wake it again, and the coordinator is told; a solo task is stopped
-  local id run st team agent lead
+  local id run st team agent lead from_lead=0
+  if [[ ${1:-} == *@* ]]; then
+    remote_identity "$1" || die "remote kicks require a configured lead and <task>@<node>"
+    local attempt
+    # A start report precedes the first artifact sync. Wait outside all locks for actual run evidence.
+    for ((attempt=0; attempt<25; attempt++)); do
+      [[ ! -f $BUS_DIR/remote/$REMOTE_NODE/$REMOTE_TASK/metadata.json ]] || break
+      sleep 0.2
+    done
+    bus lead-kick --dir "$BUS_DIR" --ttl "${NODE_TTL_SEC}s" --node "$REMOTE_NODE" --task "$REMOTE_TASK" >/dev/null
+    echo "Kick queued for $1."
+    return
+  fi
   id=$(resolve_id "${1:?usage: agent kick <task>}")
+  if [[ $(task_field "$id" KIND) == remote-member && -n $LEAD_LISTEN ]]; then
+    local target job
+    job=$(task_field "$id" JOB_ID)
+    target=$(jq -er --arg job "$job" '.Jobs[] | select(.Request.ID==$job) | .TaskID+"@"+.Node' "$BUS_DIR/jobs.json")
+    cmd_kick "$target" "${2:-cli}"
+    return
+  fi
   run=$(task_field "$id" RUN); st=$(task_field "$id" STATUS); team=$(task_field "$id" TEAM); agent=$(task_field "$id" AGENT)
+  if [[ -n ${3:-} && $run != "${3:-}" ]]; then
+    log_info node_kick_stale "task=$id" "run=$3"
+    return 0
+  fi
   [[ $st == running || $st == starting ]] || die "task $id is not running ($st) — nothing to stop"
-  meta_set "$id" KICKED "$(date -Is)"
-  try unit_stop_failed systemctl --user stop "$(unit_name "$id" "$run").service"
+  if [[ ${2:-} == lead && -n $(task_field "$id" JOB_ID) ]]; then
+    # Persist intent before SIGTERM; the runner can exit before this command sets its final local status.
+    meta_set "$id" LEAD_KICK_RUN "$run" "$run"
+    from_lead=1
+  fi
+  # A stale guarded intent write must not stop an old unit without its exit marker.
+  [[ $(task_field "$id" RUN) == "$run" ]] || return 0
+  if ! systemctl --user stop "$(unit_name "$id" "$run").service"; then
+    log_warn unit_stop_failed "task=$id" "run=$run"
+    if ((from_lead)); then meta_set "$id" LEAD_KICK_RUN "" "$run"; fi
+    return 1
+  fi
+  # The captured unit is safe to stop, but a newer run owns its status and timestamps.
+  [[ $(task_field "$id" RUN) == "$run" ]] || return 0
+  meta_set "$id" KICKED "$(date -Is)" "$run"
   if [[ -n $team ]]; then
-    meta_set "$id" STATUS sleeping
+    [[ $(task_field "$id" STATUS) == sleeping ]] || meta_set "$id" STATUS sleeping "$run"
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state sleeping >/dev/null
     lead=$(team_lead "$team")
     if [[ -n $lead && $lead != "$agent" ]]; then
       notice member_stopped "${USER:-human}" "$lead" "TEAM: member $agent was stopped by the human (its current run only); it sleeps — wake it if its work is still needed." "agent=$agent" "team=$team"
     fi
   else
-    meta_set "$id" STATUS stopped
+    [[ $(task_field "$id" STATUS) == stopped ]] || meta_set "$id" STATUS stopped "$run"
   fi
   act "$id" info "■ stopped by the human${2:+ (from the $2 interface)}"
   log_info task_kicked "task=$id" "team=$team" "from=${2:-cli}"
@@ -4948,6 +5153,7 @@ cmd_web() { # runs the web interface in the foreground (agentweb.service runs th
 cmd_lead() { # runs the lead's listener in the foreground (agentlead.service runs this); needs LEAD_LISTEN
   [[ -n $LEAD_LISTEN ]] || die "LEAD_LISTEN is not set in agents.conf — a lead needs its Tailscale address, e.g. 100.x.y.z:7780"
   local args=(lead --dir "$BUS_DIR" --listen "$LEAD_LISTEN" --node "$INSTANCE_NAME" --ttl "${NODE_TTL_SEC}s")
+  args+=(--questions-cmd "$SELF")
   [[ -n ${NOTIFY_DIR:-} ]] && args+=(--notify-dir "$NOTIFY_DIR")
   args+=(--member-grace "${AGENT_RESTART_GRACE_MIN}m")
   [[ -n ${NOTIFY_CMD:-} ]] && args+=(--notify-cmd "$NOTIFY_CMD")
@@ -5214,8 +5420,15 @@ node_heartbeat_json() {
     available_json=$(jq -c --arg name "$a" --arg tier "$(agent_tier "$a")" '. + [{Name:$name,Tier:$tier}]' <<< "$available_json")
   done
   if ((${#INSTANCE_CAPABILITIES[@]})); then caps=$(printf '%s\n' "${INSTANCE_CAPABILITIES[@]}" | jq -R . | jq -s .); fi
-  jq -cn --arg node "$INSTANCE_NAME" --argjson caps "$caps" --argjson free "$available_json" --arg web "$AGENT_WEB_URL" \
-    --argjson agents "$configured_json" --argjson activity "$(node_activity_json)" '{Node:$node,Capabilities:$caps,Agents:($agents|sort_by(.Name)),FreeAgents:$free,WebURL:$web,Activity:$activity}'
+  local state_json='{"jobs":{}}'
+  [[ -z ${NODE_STATE:-} ]] || state_json=$NODE_STATE
+  printf '%s' "$state_json" | jq -c --arg node "$INSTANCE_NAME" --argjson caps "$caps" --argjson free "$available_json" --arg web "$AGENT_WEB_URL" \
+    --argjson agents "$configured_json" --argjson activity "$(node_activity_json)" '
+    [(.jobs//{})[] | select(.obsolete|not) | .answer_ack // empty][:64] as $answers |
+    [(.jobs//{})[] | select(.obsolete|not) | .kick_ack // empty][:64] as $kicks |
+    {Node:$node,Capabilities:$caps,Agents:($agents|sort_by(.Name)),FreeAgents:$free,WebURL:$web,Activity:$activity}
+    + (if ($answers|length)>0 then {AnswerAcks:$answers} else {} end)
+    + (if ($kicks|length)>0 then {KickAcks:$kicks} else {} end)'
 }
 
 # node_select_agent uses provider rotation for workers, otherwise the configured normal-agent order.
@@ -5488,18 +5701,119 @@ node_flush_reports() {
   ids=$(jq -r '.jobs | to_entries[] | select(.value.pending and (.value.obsolete|not) and (.value.launched or .value.task_id == "")) | .key' <<< "$NODE_STATE")
   for jid in $ids; do
     report=$(jq -c --arg id "$jid" '.jobs[$id].report' <<< "$NODE_STATE")
-    payload=$(jq -c --argjson report "$report" '.Reports=[$report]' <<< "$declaration")
+    # Cumulative history can exceed Linux's per-argument limit while still fitting the protocol envelope.
+    payload=$(printf '%s\n%s\n' "$declaration" "$report" | jq -cs '.[0] + {Reports:[.[1]]}')
+    if (($(printf '%s' "$payload" | wc -c) > 262144)); then
+      # Preserve both the report and receipts: the ordinary heartbeat sends these acknowledgements next.
+      payload=$(jq -c 'del(.AnswerAcks,.KickAcks)' <<< "$payload")
+    fi
     # Truncate only when constructing a transition, never after an attempted send: retries stay identical.
     if (($(printf '%s' "$payload" | wc -c) > 262144)); then die "job transition history exceeds heartbeat limit"; fi
     if reply=$(printf '%s' "$payload" | node_request --path /v1/heartbeat); then
       if ! jq -e 'has("Job") and (.Stops|type == "array")' <<< "$reply" >/dev/null; then log_warn node_reply_invalid "job=$jid"; continue; fi
       NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].pending=false' <<< "$NODE_STATE"); node_save
+      node_clear_control_acks "$payload"
       node_handle_reply "$reply"
     else
       rc=$?; log_warn node_report_failed "job=$jid" "exit=$rc"
       if ((rc == BUS_PERMISSION)); then node_reconcile "$jid"; fi
     fi
   done
+}
+
+# node_clear_control_acks sent-body — clears only the acknowledgements in a successful request.
+node_clear_control_acks() {
+  if ! jq -e '((.AnswerAcks//[])|length)+((.KickAcks//[])|length)>0' <<< "$1" >/dev/null; then return 0; fi
+  NODE_STATE=$(printf '%s\n%s\n' "$NODE_STATE" "$1" | jq -cs '
+    .[1] as $sent | .[0] |
+    reduce ($sent.AnswerAcks//[])[] as $ack (.;
+      if .jobs[$ack.Job].answer_ack==$ack then del(.jobs[$ack.Job].answer_ack) else . end) |
+    reduce ($sent.KickAcks//[])[] as $ack (.;
+      if .jobs[$ack.Job].kick_ack==$ack then del(.jobs[$ack.Job].kick_ack) else . end)')
+  node_save
+}
+
+# node_apply_answer answer-json — validates a closed payload and resumes only its assigned waiting task.
+node_apply_answer() {
+  local msg=$1 jid tid file sha round tmp digest state
+  if ! jq -e 'type=="object" and keys==["Content","File","Job","SHA256","TaskID"] and (.Job|type=="string") and (.TaskID|type=="string") and (.File|type=="string") and (.Content|type=="string") and (.SHA256|type=="string")' <<< "$msg" >/dev/null; then
+    log_warn node_answer_rejected cause=MalformedBody; return 0
+  fi
+  jid=$(jq -r .Job <<< "$msg"); tid=$(jq -r .TaskID <<< "$msg")
+  file=$(jq -r .File <<< "$msg"); sha=$(jq -r .SHA256 <<< "$msg")
+  if [[ ! $file =~ ^questions-([1-9][0-9]{0,8})\.md$ || ! $sha =~ ^[0-9a-f]{64}$ ]] || \
+    ! jq -e --arg file "$file" --arg sha "$sha" '.File==$file and .SHA256==$sha' <<< "$msg" >/dev/null; then
+    log_warn node_answer_rejected "job=$jid" cause=InvalidFile; return 0
+  fi
+  round=${file#questions-}; round=${round%.md}
+  if ! jq -e --arg job "$jid" --arg task "$tid" '.Job==$job and .TaskID==$task' <<< "$msg" >/dev/null || \
+    ! jq -e --arg job "$jid" --arg task "$tid" '.jobs[$job] | .task_id==$task and .launched and (.obsolete|not)' <<< "$NODE_STATE" >/dev/null; then
+    log_warn node_answer_rejected "job=$jid" cause=NoSuchJob; return 0
+  fi
+  # The path comes from the exact local assignment, never from an unchecked network identifier.
+  tid=$(jq -r --arg job "$jid" '.jobs[$job].task_id' <<< "$NODE_STATE")
+  if ! jq -e '.Content|utf8bytelength<=262144' <<< "$msg" >/dev/null; then
+    log_warn node_answer_rejected "job=$jid" cause=InvalidContent; return 0
+  fi
+  if ! digest=$(jq -jr .Content <<< "$msg" | sha256sum); then
+    log_warn node_answer_rejected "job=$jid" cause=Storage; return 0
+  fi
+  digest=${digest%% *}
+  if [[ $digest != "$sha" ]]; then log_warn node_answer_rejected "job=$jid" cause=InvalidContent; return 0; fi
+  state=$(task_field "$tid" STATUS)
+  if [[ $state == waiting && $(task_field "$tid" ROUND) == "$round" ]]; then
+    tmp=$(mktemp "$TASKS/$tid/lead-answer.XXXXXX")
+    jq -jr .Content <<< "$msg" > "$tmp"
+    if ! answers_marked "$tmp" || ! validate_answers "$tmp"; then
+      rm -f "$tmp"
+      log_warn node_answer_rejected "job=$jid" cause=InvalidContent; return 0
+    fi
+    mv "$tmp" "$TASKS/$tid/$file"
+    NODE_STATE=$(jq -c --arg job "$jid" --argjson receipt "$(jq -c '{Job,TaskID,File,SHA256}' <<< "$msg")" '.jobs[$job].answer_received=$receipt' <<< "$NODE_STATE")
+    node_save
+    if ! "$SELF" _answers_saved "$tid" "$round" lead 8>&-; then
+      log_warn node_answer_resume_failed "job=$jid"; return 0
+    fi
+    [[ $(task_field "$tid" STATUS) != waiting ]] || return 0  # a busy agent/session failure remains retryable
+    log_info node_answer_applied "job=$jid" "task=$tid"
+  else
+    # An owned delivery for an ended round is acknowledged without touching either question file.
+    log_info node_answer_stale "job=$jid" "task=$tid" "round=$round" "status=$state"
+  fi
+  NODE_STATE=$(jq -c --arg job "$jid" --argjson ack "$(jq -c '{Job,TaskID,File,SHA256}' <<< "$msg")" '.jobs[$job].answer_ack=$ack' <<< "$NODE_STATE")
+  node_save
+}
+
+# node_apply_kick kick-json — kicks only the requested local run and records a durable scoped receipt.
+node_apply_kick() {
+  local msg=$1 jid tid run sha
+  if ! jq -e 'type=="object" and keys==["Job","Run","SHA256","TaskID"] and (.Job|type=="string") and (.TaskID|type=="string") and (.Run|type=="number") and (.SHA256|type=="string")' <<< "$msg" >/dev/null; then
+    log_warn node_kick_rejected cause=MalformedBody; return 0
+  fi
+  jid=$(jq -r .Job <<< "$msg"); tid=$(jq -r .TaskID <<< "$msg"); run=$(jq -r .Run <<< "$msg"); sha=$(jq -r .SHA256 <<< "$msg")
+  if [[ ! $run =~ ^[1-9][0-9]{0,8}$ || ! $sha =~ ^[0-9a-f]{64}$ ]] || \
+    ! jq -e --arg job "$jid" --arg task "$tid" --arg sha "$sha" '.Job==$job and .TaskID==$task and .SHA256==$sha' <<< "$msg" >/dev/null || \
+    ! jq -e --arg job "$jid" --arg task "$tid" '.jobs[$job] | .task_id==$task and .launched and (.obsolete|not)' <<< "$NODE_STATE" >/dev/null; then
+    log_warn node_kick_rejected "job=$jid" cause=NoSuchJob; return 0
+  fi
+  tid=$(jq -r --arg job "$jid" '.jobs[$job].task_id' <<< "$NODE_STATE")
+  if [[ $(task_field "$tid" RUN) == "$run" && $(task_field "$tid" STATUS) =~ ^(running|starting)$ ]]; then
+    if ! "$SELF" kick "$tid" lead "$run" 8>&-; then log_warn node_kick_failed "job=$jid"; return 0; fi
+  else
+    log_info node_kick_stale "job=$jid" "run=$run"  # an ended run must not turn a later run into a stop
+  fi
+  NODE_STATE=$(jq -c --arg job "$jid" --argjson ack "$(jq -c '{Job,TaskID,Run,SHA256}' <<< "$msg")" '.jobs[$job].kick_ack=$ack' <<< "$NODE_STATE")
+  node_save
+}
+
+# node_handle_controls reply — consumes only bounded answer/kick arrays; unrelated heartbeat work continues.
+node_handle_controls() {
+  local msg
+  if ! jq -e '((.Answers//[])|type=="array" and length<=8) and ((.Kicks//[])|type=="array" and length<=64)' <<< "$1" >/dev/null; then
+    log_warn node_controls_rejected cause=MalformedBody; return 0
+  fi
+  while IFS= read -r msg; do node_apply_answer "$msg"; done < <(jq -c '.Answers//[] | .[]' <<< "$1")
+  while IFS= read -r msg; do node_apply_kick "$msg"; done < <(jq -c '.Kicks//[] | .[]' <<< "$1")
 }
 
 # node_handle_stop requires a successful local stop and keeps the actual result if completion won the race.
@@ -5537,6 +5851,7 @@ node_handle_reply() {
   for stop in $ids; do
     node_handle_stop "$stop" "$(jq -r --arg id "$stop" '.Stops[] | select(.Request.ID == $id) | .Assignment' <<< "$reply")"
   done
+  node_handle_controls "$reply"
   local wjid wtid   # wakes for this node's remote team members: each in its own process (_wake takes the task's lock)
   for wjid in $(jq -r '.Wakes // [] | .[]' <<< "$reply"); do
     wtid=$(jq -r --arg id "$wjid" '.jobs[$id].task_id // empty' <<< "$NODE_STATE")
@@ -6195,6 +6510,7 @@ node_poll() {
   if reply=$(printf '%s' "$declaration" | node_request --path /v1/heartbeat); then
     if jq -e 'has("Job") and (.Stops|type == "array")' <<< "$reply" >/dev/null; then
       log_info node_heartbeat_accepted
+      node_clear_control_acks "$declaration"
       node_handle_reply "$reply"
       node_process_pending_launches
     else log_warn node_reply_invalid; fi
@@ -6816,6 +7132,8 @@ main() {
     _fixpass) cmd__fixpass "$@" ;;
     _supervise) cmd__supervise ;;
     _answers_saved) cmd__answers_saved "$@" ;;
+    _remote_questions) cmd__remote_questions "$@" ;;
+    _remote_questions_ready) cmd__remote_questions_ready "$@" ;;
     _authcheck) cmd__authcheck "$@" ;;
     dispatch) cmd_dispatch ;;
     say)     cmd_say "$@" ;;
