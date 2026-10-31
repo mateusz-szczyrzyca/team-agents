@@ -104,6 +104,9 @@ func spawnWake(t *Team, task string) {
 
 // wakeFor wakes sleeping recipients after a message is appended (direct or "team:<id>").
 func (b *Bus) wakeFor(st *State, m Message) {
+	if m.Quiet { // sent with wake=false: read on the next run
+		return
+	}
 	for _, t := range st.Teams {
 		if t.Done {
 			continue
@@ -114,6 +117,7 @@ func (b *Bus) wakeFor(st *State, m Message) {
 			}
 			if m.To == name || m.To == teamRecipient(t.ID) {
 				mem.State = MemberWaking
+				logInfo(LogMemberWokenBy, "team", t.ID, "member", name, "cause", "message", "message_id", m.ID, "kind", m.Kind, "from", m.From)
 				wakeFn(t, mem.Task)
 			}
 		}
@@ -725,8 +729,9 @@ func setMemberState(b *Bus, st *State, team, agent string, newState MemberState)
 	}
 	cur := st.Cursors[agent]
 	for _, msg := range msgs {
-		if msg.ID > cur && isForAgent(st, msg, agent, false) {
+		if msg.ID > cur && !msg.Quiet && isForAgent(st, msg, agent, false) {
 			m.State = MemberWaking
+			logInfo(LogMemberWokenBy, "team", t.ID, "member", agent, "cause", "unread", "message_id", msg.ID, "kind", msg.Kind, "from", msg.From)
 			wakeFn(t, m.Task)
 			return "waking", nil
 		}
@@ -737,6 +742,7 @@ func setMemberState(b *Bus, st *State, team, agent string, newState MemberState)
 	if t.BoardRev > m.BoardSeen && t.hasWorkFor(agent, m) {
 		m.State = MemberWaking
 		m.BoardSeen = t.BoardRev
+		logInfo(LogMemberWokenBy, "team", t.ID, "member", agent, "cause", "board", "board_rev", t.BoardRev)
 		wakeFn(t, m.Task)
 		return "waking (board)", nil
 	}

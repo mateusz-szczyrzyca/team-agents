@@ -58,8 +58,8 @@ The task the team worked on is below. Check the PR's compliance with the reposit
      verified and how; recommendation: **"ready to merge"** or **"needs changes"** (with a list of what to fix).
    - `comments` — remarks attached to specific lines, ONLY on lines changed in the diff (side `RIGHT`, the line
      number in the new version of the file). General remarks go into `body`.
-   - The `body` ends with a signature line, so that readers see who reviewed:
-     `— Review by the team-agents investigator {{ATTRIBUTION}}, request #{{INV_ID}}.`
+   - The `body` begins with this line, so that readers see at once who reviewed, and ends with it again:
+     `Review by the team-agents investigator {{ATTRIBUTION}}, request #{{INV_ID}}.` (at the end after `— `)
 5. Publish: `gh api repos/{owner}/{repo}/pulls/{{PR_NUMBER}}/reviews --method POST --input review.json`
    (gh fills in `{owner}/{repo}` itself). If GitHub rejects a line comment (e.g. error 422 — a line outside
    the diff), move it into `body` and publish again. Note the review URL (`html_url` in the response).

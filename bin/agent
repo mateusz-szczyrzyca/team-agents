@@ -81,6 +81,19 @@ if [[ ${1:-} == api ]]; then
       *) if [[ -z $path && $1 != -* ]]; then path=$1; fi; args+=("$1"); shift ;;
     esac
   done
+  # an investigator's review says who wrote it at its very top too (AGENT_REVIEW_BYLINE, set for an investigation)
+  if [[ -n ${AGENT_REVIEW_BYLINE:-} && $path =~ /pulls/[0-9]+/reviews$ ]]; then
+    for i in "${!args[@]}"; do
+      [[ ${args[i]} == --input && -f ${args[i+1]:-} ]] || continue
+      first=$(jq -r '(.body // "") | ltrimstr("\n") | split("\n")[0]' "${args[i+1]}")
+      [[ $first != *"Review by the team-agents investigator"* ]] || continue
+      if jq --arg l "$AGENT_REVIEW_BYLINE" '.body = ($l + "\n\n" + (.body // ""))' "${args[i+1]}" > "${args[i+1]}.byline"; then
+        args[i+1]="${args[i+1]}.byline"
+      else
+        gh_log review_byline_failed "the byline could not be put at the top of the review" "file=${args[i+1]}"
+      fi
+    done
+  fi
   if [[ $path == graphql ]]; then
     if [[ " ${args[*]} " =~ (comments|reviews|reviewThreads|timelineItems|body) ]]; then
       gh_log github_graphql_refused "a GraphQL query for comments, reviews or bodies is refused: the agents read them through gh pr view --json or gh api …/comments"
@@ -1096,9 +1109,21 @@ agents_gh_env() {
   [[ $real != "$dir/gh" ]] || real=${AGENT_REAL_GH:-}   # set already in this process
   [[ -n $real ]] || return 1
   mkdir -p "$dir" && ln -sfn "$SELF" "$dir/gh" || return 1   # agent run as gh is the filter (agent_gh)
-  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED
+  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE=""
+  if [[ $(task_field "${RUNNER_ID:-}" KIND 2>/dev/null) == investigation ]]; then   # its reviews say who wrote them, first
+    AGENT_REVIEW_BYLINE=$(review_byline "$RUNNER_ID")
+  fi
   AGENT_GITHUB_TRUSTED_RESOLVED=$(github_trusted "${REPO_ROOT:-.}")
   [[ :$PATH: == *":$dir:"* ]] || export PATH="$dir:$PATH"
+}
+
+# review_byline task — who wrote an investigator's review: its first line on GitHub (put there by the agents' gh), and
+# its last (the review prompt's signature)
+review_byline() {
+  local model
+  model=$(task_field "$1" MODEL)
+  printf 'Review by the team-agents investigator `%s` (%s%s), request #%s.' "$(task_field "$1" AGENT)" "$(task_field "$1" TYPE)" \
+    "${model:+, model $model}" "$(task_field "$1" INV_ID)"
 }
 
 # github_trusted root — the GitHub accounts whose PRs and texts the round trusts, space-separated: AGENT_GITHUB_TRUSTED,

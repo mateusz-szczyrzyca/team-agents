@@ -49,14 +49,18 @@ const (
 
 // Message is one entry in the append-only message log (messages.jsonl).
 type Message struct {
-	ID   int64           `json:"id"`             // monotonically increasing; read cursors compare against it
-	TS   Timestamp       `json:"ts"`             // local time, "2006-01-02 15:04:05"
-	From string          `json:"from"`           // sender: agent name, "agentbus" for system notices, or the human's user name
-	To   string          `json:"to"`             // recipient: agent name, "all", or "team:<team id>"
-	Kind MessageKind     `json:"kind,omitempty"` // event type (see events.go); "" in messages of older versions = chat
-	Data json.RawMessage `json:"data,omitempty"` // the event's fields as JSON (for log pipelines and tools)
-	Text string          `json:"text"`           // the rendered text agents and humans read
+	ID    int64           `json:"id"`              // monotonically increasing; read cursors compare against it
+	TS    Timestamp       `json:"ts"`              // local time, "2006-01-02 15:04:05"
+	From  string          `json:"from"`            // sender: agent name, "agentbus" for system notices, or the human's user name
+	To    string          `json:"to"`              // recipient: agent name, "all", or "team:<team id>"
+	Kind  MessageKind     `json:"kind,omitempty"`  // event type (see events.go); "" in messages of older versions = chat
+	Data  json.RawMessage `json:"data,omitempty"`  // the event's fields as JSON (for log pipelines and tools)
+	Text  string          `json:"text"`            // the rendered text agents and humans read
+	Quiet bool            `json:"quiet,omitempty"` // wakes nobody (a chat sent with wake=false): read on the reader's next run
 }
+
+// quietEvent is an event that may ask to wake nobody (a chat sent with wake=false).
+type quietEvent interface{ quiet() bool }
 
 // Presence describes a currently running agent. It exists only while the process of the
 // agent's `agentbus serve` instance is alive (see alive and Bus.gc).
@@ -281,6 +285,9 @@ func (b *Bus) post(st *State, from, to string, ev busEvent) (Message, *StorageEr
 		return Message{}, storageErr(err, "cannot encode a %s event", ev.Kind())
 	}
 	m := Message{ID: st.NextID, TS: Now(), From: from, To: to, Kind: ev.Kind(), Data: data, Text: ev.Text()}
+	if q, ok := ev.(quietEvent); ok && q.quiet() {
+		m.Quiet = true
+	}
 	line, err := json.Marshal(m)
 	if err != nil {
 		return Message{}, storageErr(err, "cannot encode message #%d", m.ID)
@@ -470,6 +477,11 @@ func (s *Server) listAgents() (string, *ListAgentsError) {
 
 // send (MCP send_message) posts a message to an agent, "team" or "all".
 func (s *Server) send(to, text string) (string, *SendMessageError) {
+	return s.sendMessage(to, text, true)
+}
+
+// sendMessage sends a chat; with wake false it wakes nobody (progress, a note that needs no reaction).
+func (s *Server) sendMessage(to, text string, wake bool) (string, *SendMessageError) {
 	to, text = strings.TrimSpace(to), strings.TrimSpace(text)
 	if to == "" || text == "" {
 		return "", opErr(SendMessageMissingArgument, "%s", missing("to", "text"))
@@ -486,7 +498,7 @@ func (s *Server) send(to, text string) (string, *SendMessageError) {
 	var out string
 	err := transact(s.bus, SendMessageStorage, func(st *State) *SendMessageError {
 		s.touch(st)
-		m, serr := s.bus.post(st, s.me, to, EventChat{Body: text})
+		m, serr := s.bus.post(st, s.me, to, EventChat{Body: text, Quiet: !wake})
 		if serr != nil {
 			return fromStorage(SendMessageStorage, serr)
 		}
@@ -815,7 +827,8 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 	case "list_agents":
 		return toolResult(s.listAgents())
 	case "send_message":
-		return toolResult(s.send(a.str("to"), a.str("text")))
+		_, given := a["wake"] // absent: the message wakes its sleeping readers
+		return toolResult(s.sendMessage(a.str("to"), a.str("text"), !given || a.flag("wake")))
 	case "read_messages":
 		return toolResult(s.read(a.num("history")))
 	case "set_status":
@@ -900,7 +913,10 @@ func toolDefs() []map[string]any {
 		tool("list_agents", "Show active teammates (task, repo, branch, worktree, status) and configured but inactive agents.",
 			obj(map[string]any{})),
 		tool("send_message", "Send a message to another agent (by name) or to everyone ('all'). Use it to share findings and coordinate work.",
-			obj(map[string]any{"to": str("Agent name or 'all'"), "text": str("Message text — concise and specific")}, "to", "text")),
+			obj(map[string]any{"to": str("Agent name or 'all'"), "text": str("Message text — concise and specific"),
+				"wake": map[string]any{"type": "boolean", "description": "Whether it wakes a sleeping recipient (default: yes). " +
+					"false for progress and notes that need no reaction: they are read on the recipient's next run, and a wake costs a whole run"}},
+				"to", "text")),
 		tool("read_messages", "Read new messages addressed to you and to 'all' (marks them read). With history=N returns the last N messages of all agents without changing read state.",
 			obj(map[string]any{"history": num("Optional: how many latest messages to show (history)")})),
 		tool("set_status", "Set a short description of what you are doing now (visible to others in list_agents).",
