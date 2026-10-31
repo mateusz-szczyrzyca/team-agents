@@ -2842,7 +2842,7 @@ opencode_config() { # id — per-run configuration (agentbus MCP + providers)
     {
       "$schema": "https://opencode.ai/config.json",
       autoupdate: false,
-      mcp: (if $indep then { agentbus: { type: "local", enabled: false } } else { agentbus: { type: "local", command: ([$cmd] + $args), enabled: true } } end),
+      mcp: (if $indep then { agentbus: { enabled: false } } else { agentbus: { type: "local", command: ([$cmd] + $args), enabled: true } } end),
       provider: {
         openrouter: { options: { apiKey: "{env:OPENROUTER_API_KEY}" } },
         deepinfra: {
