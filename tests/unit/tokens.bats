@@ -55,3 +55,18 @@ act() { jq -nc --arg t "$2" '{ts: "2026-10-31 10:00:00", k: "info", t: $t}' >> "
   [[ $output == *$'\n'*"1"*"2"*"100"*"50"*"10"* ]]
   [[ $output == *"2"*"1"*"300"*"250"*"30"* ]]
 }
+
+@test "agent tokens --runs shows each run's input per step: about the size of its context" {
+  task S1 $'ID=S1\nAGENT=codex-1\nKIND=worker\n'
+  act S1 '▶ run 1 (new)'
+  jq -nc '{ts: "2026-10-31 10:00:01", k: "cmd", t: "make gate"}' >> "$AGENTS_HOME/tasks/S1/activity.jsonl"
+  jq -nc '{ts: "2026-10-31 10:00:02", k: "cmd", t: "git diff --stat"}' >> "$AGENTS_HOME/tasks/S1/activity.jsonl"
+  act S1 'usage: in 300000 (cached 290000), out 10'
+  act S1 '▶ run 2 (resume)'
+  act S1 'usage: in 500 (cached 0), out 5'
+  run agent tokens --runs S1
+  [ "$status" -eq 0 ]
+  [[ $output == *"IN/STEP"* ]]
+  [[ $(grep '^1 ' <<< "$output") == *" 150000"* ]]
+  [[ $(grep '^2 ' <<< "$output") == *" -"* ]]
+}
