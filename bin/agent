@@ -5025,10 +5025,10 @@ remote_member_start() { # proxy-task — grants the remote member on the lead an
 
 cmd_tokens() { # <team|task> — the tokens the runs used, from their activity's usage lines (and opencode's step lines):
   # per task — a team's members, and the helpers and investigations they asked for — and in all
-  local q=${1:?usage: agent tokens <team|task>} ids=() m d id team_ids=" "
+  local q=${1:?usage: agent tokens <team|task>} ids=() m d id team_ids=" " per
   if [[ $q == --runs ]]; then   # one task, per run: its steps (tool calls) and tokens
     id=$(resolve_id "${2:?usage: agent tokens --runs <task>}")
-    printf '%-5s %7s %12s %12s %10s %10s\n' RUN STEPS IN CACHED OUT COST
+    printf '%-5s %7s %12s %12s %10s %10s %10s\n' RUN STEPS IN CACHED OUT COST IN/STEP
     jq -rn '
       reduce inputs as $l ({run: 0, rows: {}};
         ($l.t // "") as $t
@@ -5047,7 +5047,9 @@ cmd_tokens() { # <team|task> — the tokens the runs used, from their activity's
       | .rows | to_entries | sort_by(.key | tonumber) | .[]
       | [.key, .value.steps, .value.in, .value.cached, .value.out, .value.cost] | @tsv' "$TASKS/$id/activity.jsonl" \
       | while IFS=$'\t' read -r run steps in cached out cost; do
-          printf '%-5s %7s %12s %12s %10s %10.4f\n' "$run" "$steps" "$in" "$cached" "$out" "$cost"
+          per=-   # the input per step: about the size of the run's context
+          ((steps > 0)) && per=$((in / steps))
+          printf '%-5s %7s %12s %12s %10s %10.4f %10s\n' "$run" "$steps" "$in" "$cached" "$out" "$cost" "$per"
         done
     return 0
   fi
@@ -7098,7 +7100,7 @@ agent jobs --cancel <id>                  cancel a remote job on the lead
 agent nodes                               registered nodes on the lead
 agent kick <task>                         cut a run short: a team member sleeps (the team can wake it), solo: stopped
 agent tokens <team|task>                  the tokens its runs used: per task (a team's helpers and investigations too), in all
-agent tokens --runs <task>                a task's tokens per run, with its steps (tool calls): the costly runs
+agent tokens --runs <task>                a task's tokens per run, its steps (tool calls) and input per step: the costly runs
 agent wake <task>                         resume a paused task now, not at its pause's end (a remote member's: on its node)
 agent round-size <task>                   size of a task's change against the round limit (README "Rounds")
 agent run --need <caps> <agent|normal|worker> "task"   submit a remote job with required capabilities

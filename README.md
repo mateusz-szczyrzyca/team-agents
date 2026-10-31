@@ -657,7 +657,7 @@ agent run --resume <team|task> --same-round   continue an unmerged round on the 
 agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)
 agent kick <task>                             cut a run short: a team member sleeps (its team can wake it), solo: stopped
 agent tokens <team|task>                      the tokens its runs used: per task (a team's helpers and investigations too), in all
-agent tokens --runs <task>                    a task's tokens per run, with its steps (tool calls): the costly runs
+agent tokens --runs <task>                    a task's tokens per run, its steps (tool calls) and input per step: the costly runs
 agent wake <task>                             resume a paused task now, not at its pause's end (a remote member's: on its node)
 agent round-size <task>                       size of a task's change against the round limit
 agent status | agents | show <id>            overview, agents, task details

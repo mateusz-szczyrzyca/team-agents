@@ -17,9 +17,15 @@ a major review finding. The rules in detail, with a worked example: `docs/tdd.md
 ## Keep tool output short
 
 Everything a command prints stays in your context and is read again at every later step: a long output is paid
-for many times. Use the quiet check target the repository offers (in team-agents: `make gate`), run single tests
-while you work, send long output to a file and read only what you need (`grep -n`, `tail -n 40`). Do not print
-whole logs, whole large files or full test listings.
+for many times — in a run of 300 steps, 1,000 tokens printed early cost some 300,000 tokens of input. Use the quiet
+check target the repository offers (in team-agents: `make gate`), run single tests while you work, send long output
+to a file and read only what you need (`grep -n`, `tail -n 40`). Do not print whole logs, whole large files or full
+test listings:
+
+- A large file (in team-agents: `bin/agent`, over 7,000 lines) is read in parts: find the place with `grep -n`, then
+  read some 150 lines around it (`sed -n '120,270p' <file>`). Do not read again what you have read and not changed
+  since: note what you learnt instead.
+- A diff is read in steps: `git diff --stat` first, then one file at a time (`git diff <base> -- <file>`).
 
 ## Rounds — every PR stays reviewable
 

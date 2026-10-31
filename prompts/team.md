@@ -60,6 +60,9 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
    - `level=easy` — simple, mechanical, cheap: listing and searching files, checking whether something
      exists or what a file contains, running a known command and summarising the output, collecting facts.
      Workers do these. **Normal models (you included) do not do such things themselves.**
+   - Code you have not read yet: have a worker's summary of it first (`level=easy`: the functions involved, their
+     lines, what each does, in some 40 lines), then read only the lines it points to. What you read yourself stays
+     in your context to the end of the run and is read again at every step; a worker reads it in a small context.
    - `level=normal` — work that needs reasoning: design, hard code, debugging, integration.
    Every item must say exactly what to do and in what form to return the result.
    - An item for one particular member: `board_add(..., for=<member>)` — only that member may claim it and
