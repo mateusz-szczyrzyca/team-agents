@@ -55,9 +55,19 @@ func statusClass(s string) string {
 	return "st-dim"
 }
 
-// snapshot reads the current state (tasks and the bus).
-func (s *webServer) snapshot() *Snapshot {
-	snap := loadSnapshot(s.cfg.home, s.cfg.busDir, s.cfg.nodeTTL)
+// applyRemoteControls enriches a private display snapshot, preserving the watcher's raw baseline.
+func (s *webServer) applyRemoteControls(snap *Snapshot) *Snapshot {
+	view := *snap
+	view.All = make(map[string]*Task, len(snap.All))
+	for id, task := range snap.All {
+		taskCopy := *task
+		view.All[id] = &taskCopy
+	}
+	view.Tasks = make([]*Task, len(snap.Tasks))
+	for i, task := range snap.Tasks {
+		view.Tasks[i] = view.All[task.ID]
+	}
+	snap = &view
 	for _, task := range snap.All {
 		task.CanControl = s.cfg.remoteControls && task.Node != ""
 		if task.CanControl {
@@ -79,6 +89,12 @@ func (s *webServer) snapshot() *Snapshot {
 		}
 	}
 	return snap
+}
+
+// snapshot reads the current state (tasks and the bus).
+func (s *webServer) snapshot() *Snapshot {
+	snap := loadSnapshot(s.cfg.home, s.cfg.busDir, s.cfg.nodeTTL)
+	return s.applyRemoteControls(snap)
 }
 
 // mirrorQuestionRound finds the latest real question artifact; ROUND is not mirrored metadata.
@@ -356,6 +372,7 @@ func (s *webServer) streamDashboard(w http.ResponseWriter, r *http.Request) {
 		case <-tk.C:
 		}
 		snap, evs := watcher.Poll()
+		snap = s.applyRemoteControls(snap)
 		d := s.dashboard(snap)
 		if table := s.fragment("dash-table", d); table != lastTable {
 			if !sseSend(w, f, "table", table) {
@@ -646,6 +663,18 @@ func (s *webServer) viewTask(w http.ResponseWriter, r *http.Request) {
 	if t == nil {
 		viewError(s, w, r, webErr(ViewNotFound, nil, "no task %q", r.PathValue("id")))
 		return
+	}
+	if s.cfg.remoteControls && t.Node == "" && t.Kind == "remote-member" {
+		mirror := resolveProxyMirror(snap, t)
+		if mirror != nil && mirror.Status == "waiting" {
+			tCopy := *t
+			tCopy.Status = "waiting"
+			tCopy.CanControl = true
+			if mirror.Round > 0 {
+				tCopy.Round = mirror.Round
+			}
+			t = &tCopy
+		}
 	}
 	tab := r.URL.Query().Get("tab")
 	if tab == "" {

@@ -443,11 +443,13 @@ stopping() {
 
 meta_file() { printf '%s/%s/meta.env' "$TASKS" "$1"; }
 
-meta_set() { # id key value — sets one KEY=value (printf %q) line; writers of one task are serialised by a lock
+meta_set() { # id key value [run] — sets KEY=value under the task lock; a stale optional run is a successful no-op
   local f; f=$(meta_file "$1")
   (
     # a run, agent stop and the bus's wake-ups write the same file: without the lock an update gets lost
     flock -w 30 9 || { log_error meta_lock_timeout "file=$f" "key=$2"; exit 1; }
+    # Check while holding the writer lock: an old kick or exit trap must not mutate a newer run.
+    if [[ -n ${4:-} && $(task_field "$1" RUN) != "${4:-}" ]]; then exit 0; fi
     # Each step reports its own failure: a failed write must never be moved over the old file. Inside the
     # conditional the subshell does not stop at the first error, so the status is checked explicitly.
     local tmp="$f.tmp.$$"
@@ -3309,8 +3311,8 @@ runner_exit() {
     # A lead kick owns this run's exit; never journal an intermediate failed outcome for the node.
     local kick_state=stopped
     [[ -z ${TEAM:-} ]] || kick_state=sleeping
-    try meta_write_failed meta_set "$RUNNER_ID" STATUS "$kick_state"
-    try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
+    try meta_write_failed meta_set "$RUNNER_ID" STATUS "$kick_state" "$RUN"
+    try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)" "$RUN"
     log_info run_stopped "reason=lead_job_kick" "status=$kick_state"
     RUNNER_DELIVERED=1
     return
@@ -4426,6 +4428,16 @@ cmd_answer() {
     "${EDITOR:-nano}" "$REMOTE_FILE"
     # A path unit can deliver the save before the editor exits, just like an ordinary local answer.
     if ! remote_question_context "$1"; then echo "$1 no longer waits for answers."; return 0; fi
+    if ! validate_answers "$REMOTE_FILE"; then
+      echo "Not all questions are answered. Complete them and run: agent answer $1"
+      return 1
+    fi
+    if ! answers_marked "$REMOTE_FILE"; then
+      local yn
+      read -rp "All questions are answered. Resume now? [Y/n] " yn || return 1
+      [[ ${yn,,} != n* ]] || return 0
+      printf '\n**ANSWERED**\n' >> "$REMOTE_FILE"
+    fi
     remote_answers_saved "$1" "$REMOTE_ROUND"
     return
   fi
@@ -5002,9 +5014,9 @@ cmd_wake() { # <task> — a paused task resumes now, not at its pause's end (its
   echo "resumed $id"
 }
 
-cmd_kick() { # <task> [from] — cuts an agent's current run short (the web interface's stop button): a team member
+cmd_kick() { # <task> [from] [expected-run] — cuts only the intended run short: a team member
   # goes to sleep, so its team can wake it again, and the coordinator is told; a solo task is stopped
-  local id run st team agent lead
+  local id run st team agent lead from_lead=0
   if [[ ${1:-} == *@* ]]; then
     remote_identity "$1" || die "remote kicks require a configured lead and <task>@<node>"
     local attempt
@@ -5026,22 +5038,35 @@ cmd_kick() { # <task> [from] — cuts an agent's current run short (the web inte
     return
   fi
   run=$(task_field "$id" RUN); st=$(task_field "$id" STATUS); team=$(task_field "$id" TEAM); agent=$(task_field "$id" AGENT)
+  if [[ -n ${3:-} && $run != "${3:-}" ]]; then
+    log_info node_kick_stale "task=$id" "run=$3"
+    return 0
+  fi
   [[ $st == running || $st == starting ]] || die "task $id is not running ($st) — nothing to stop"
   if [[ ${2:-} == lead && -n $(task_field "$id" JOB_ID) ]]; then
     # Persist intent before SIGTERM; the runner can exit before this command sets its final local status.
-    meta_set "$id" LEAD_KICK_RUN "$run"
+    meta_set "$id" LEAD_KICK_RUN "$run" "$run"
+    from_lead=1
   fi
-  meta_set "$id" KICKED "$(date -Is)"
-  try unit_stop_failed systemctl --user stop "$(unit_name "$id" "$run").service"
+  # A stale guarded intent write must not stop an old unit without its exit marker.
+  [[ $(task_field "$id" RUN) == "$run" ]] || return 0
+  if ! systemctl --user stop "$(unit_name "$id" "$run").service"; then
+    log_warn unit_stop_failed "task=$id" "run=$run"
+    if ((from_lead)); then meta_set "$id" LEAD_KICK_RUN "" "$run"; fi
+    return 1
+  fi
+  # The captured unit is safe to stop, but a newer run owns its status and timestamps.
+  [[ $(task_field "$id" RUN) == "$run" ]] || return 0
+  meta_set "$id" KICKED "$(date -Is)" "$run"
   if [[ -n $team ]]; then
-    [[ $(task_field "$id" STATUS) == sleeping ]] || meta_set "$id" STATUS sleeping
+    [[ $(task_field "$id" STATUS) == sleeping ]] || meta_set "$id" STATUS sleeping "$run"
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state sleeping >/dev/null
     lead=$(team_lead "$team")
     if [[ -n $lead && $lead != "$agent" ]]; then
       notice member_stopped "${USER:-human}" "$lead" "TEAM: member $agent was stopped by the human (its current run only); it sleeps — wake it if its work is still needed." "agent=$agent" "team=$team"
     fi
   else
-    [[ $(task_field "$id" STATUS) == stopped ]] || meta_set "$id" STATUS stopped
+    [[ $(task_field "$id" STATUS) == stopped ]] || meta_set "$id" STATUS stopped "$run"
   fi
   act "$id" info "■ stopped by the human${2:+ (from the $2 interface)}"
   log_info task_kicked "task=$id" "team=$team" "from=${2:-cli}"
@@ -5706,7 +5731,7 @@ node_apply_kick() {
   fi
   tid=$(jq -r --arg job "$jid" '.jobs[$job].task_id' <<< "$NODE_STATE")
   if [[ $(task_field "$tid" RUN) == "$run" && $(task_field "$tid" STATUS) =~ ^(running|starting)$ ]]; then
-    if ! "$SELF" kick "$tid" lead 8>&-; then log_warn node_kick_failed "job=$jid"; return 0; fi
+    if ! "$SELF" kick "$tid" lead "$run" 8>&-; then log_warn node_kick_failed "job=$jid"; return 0; fi
   else
     log_info node_kick_stale "job=$jid" "run=$run"  # an ended run must not turn a later run into a stop
   fi

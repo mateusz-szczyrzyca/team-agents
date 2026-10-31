@@ -13,7 +13,8 @@ SHELL_SCRIPTS += tests/unit/remote_controls.bats tests/unit/remote_control_homes
 	tests/unit/remote_control_validation.bats tests/unit/remote_control_web.bats \
 	tests/unit/remote_control_heartbeat_limits.bats tests/unit/remote_control_cancel_order.bats \
 	tests/unit/remote_control_proxy.bats tests/unit/remote_control_kick_exit.bats
-SHELL_SCRIPTS += tests/unit/lint_shell_memory.bats tests/unit/remote_control_review.bats
+SHELL_SCRIPTS += tests/unit/lint_shell_memory.bats tests/unit/remote_control_review.bats \
+	tests/unit/handover_failed.bats tests/unit/prompt_file.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 

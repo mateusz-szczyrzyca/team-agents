@@ -848,7 +848,12 @@ syncs its questions without opening an editor or notifying locally. The lead ope
 `<AGENTS_HOME>/remote-questions/<node>/<task-id>/questions-<n>.md`, installs the ordinary save watch, and notifies
 with the qualified task ID and web link. Answer through `/questions`, the task page, VS Code (save with
 `**ANSWERED**` on the last nonempty line), or `agent answer <task-id>@<node>`. The read-only mirror is never
-edited. Editable copies expire when their task mirrors are removed.
+edited. Editable copies expire when their task mirrors are removed. The interactive CLI validates all verdicts,
+asks for confirmation, and adds `**ANSWERED**` when you send; declining leaves an editable draft.
+An already marked file retains its explicit send intent and can be queued without another prompt.
+Waiting remote members can also be answered through their retained lead proxy in the terminal or task page.
+Dashboard SSE updates retain the same remote controls and waiting counters as the initial page.
+Display-only status overrides leave the watcher baseline unchanged, avoiding false transition events.
 
 Answers queue durably on the lead even while its listener or the node is offline. Heartbeat replies carry
 `Answers: [{Job, TaskID, File, Content, SHA256}]`; the node writes only its assigned waiting task's current
@@ -857,9 +862,11 @@ control characters (tabs and line endings are allowed). Acknowledgements include
 filename and content digest, so identical answers to different tasks or rounds remain independent.
 
 The dashboard's ■ button and `agent kick <task-id>@<node>` queue a kick through the same heartbeat. The node
-uses `agent kick <task-id> lead`: a solo task stops, while a team member sleeps and can be woken. Kicks identify
+uses `agent kick <task-id> lead <expected-run>` internally: a solo task stops, while a team member sleeps and can be woken. Kicks identify
 the intended run, so a delayed request does not stop a newer run. Both kinds of control remain queued until
-acknowledged and participate in the existing doorbell. They do not declare an offline task resumed or stopped.
+acknowledged and participate in the existing doorbell. A failed unit stop reports failure and retains the kick
+for retry. Run checks guard the execution and locked metadata writes, including the old runner’s exit trap.
+They do not declare an offline task resumed or stopped.
 On the node, `LEAD_KICK_RUN` in the task metadata records the intended run before stopping its runner, so the
 exit trap preserves a solo stop or team sleep without reporting an intermediate failure.
 With no lead configured, the interface retains its read-only mirror guards and local tasks behave as before.
