@@ -53,6 +53,18 @@
    "causes": []
   },
   {
+   "type": "ReadMessage",
+   "op": "read_message",
+   "what": "the MCP tool read_message",
+   "causes": [
+    {
+     "name": "NoSuchMessage",
+     "class": "NotFound",
+     "doc": "no message has that number"
+    }
+   ]
+  },
+  {
    "type": "SetStatus",
    "op": "set_status",
    "what": "the MCP tool set_status",

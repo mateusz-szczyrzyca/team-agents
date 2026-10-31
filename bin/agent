@@ -81,6 +81,19 @@ if [[ ${1:-} == api ]]; then
       *) if [[ -z $path && $1 != -* ]]; then path=$1; fi; args+=("$1"); shift ;;
     esac
   done
+  # an investigator's review says who wrote it at its very top too (AGENT_REVIEW_BYLINE, set for an investigation)
+  if [[ -n ${AGENT_REVIEW_BYLINE:-} && $path =~ /pulls/[0-9]+/reviews$ ]]; then
+    for i in "${!args[@]}"; do
+      [[ ${args[i]} == --input && -f ${args[i+1]:-} ]] || continue
+      first=$(jq -r '(.body // "") | ltrimstr("\n") | split("\n")[0]' "${args[i+1]}")
+      [[ $first != *"Review by the team-agents investigator"* ]] || continue
+      if jq --arg l "$AGENT_REVIEW_BYLINE" '.body = ($l + "\n\n" + (.body // ""))' "${args[i+1]}" > "${args[i+1]}.byline"; then
+        args[i+1]="${args[i+1]}.byline"
+      else
+        gh_log review_byline_failed "the byline could not be put at the top of the review" "file=${args[i+1]}"
+      fi
+    done
+  fi
   if [[ $path == graphql ]]; then
     if [[ " ${args[*]} " =~ (comments|reviews|reviewThreads|timelineItems|body) ]]; then
       gh_log github_graphql_refused "a GraphQL query for comments, reviews or bodies is refused: the agents read them through gh pr view --json or gh api …/comments"
@@ -1205,9 +1218,21 @@ agents_gh_env() {
   [[ $real != "$dir/gh" ]] || real=${AGENT_REAL_GH:-}   # set already in this process
   [[ -n $real ]] || return 1
   mkdir -p "$dir" && ln -sfn "$SELF" "$dir/gh" || return 1   # agent run as gh is the filter (agent_gh)
-  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED
+  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE=""
+  if [[ $(task_field "${RUNNER_ID:-}" KIND 2>/dev/null) == investigation ]]; then   # its reviews say who wrote them, first
+    AGENT_REVIEW_BYLINE=$(review_byline "$RUNNER_ID")
+  fi
   AGENT_GITHUB_TRUSTED_RESOLVED=$(github_trusted "${REPO_ROOT:-.}")
   [[ :$PATH: == *":$dir:"* ]] || export PATH="$dir:$PATH"
+}
+
+# review_byline task — who wrote an investigator's review: its first line on GitHub (put there by the agents' gh), and
+# its last (the review prompt's signature)
+review_byline() {
+  local model
+  model=$(task_field "$1" MODEL)
+  printf 'Review by the team-agents investigator `%s` (%s%s), request #%s.' "$(task_field "$1" AGENT)" "$(task_field "$1" TYPE)" \
+    "${model:+, model $model}" "$(task_field "$1" INV_ID)"
 }
 
 # github_trusted root — the GitHub accounts whose PRs and texts the round trusts, space-separated: AGENT_GITHUB_TRUSTED,
@@ -2920,7 +2945,12 @@ notify() { # id status final note
     if [[ $status == waiting ]]; then
       printf 'Questions: %s — answer with: agent answer %s\n' \
         "$(count_questions "$question_path")" "$id"
-      if [[ -n $AGENT_WEB_URL ]]; then printf 'Answer: %s/questions/%s?max=1\n' "${AGENT_WEB_URL%/}" "$id"; fi
+      # A task link works with both read-only and interactive remote views.
+      if [[ -n $AGENT_WEB_URL && $id == *@* ]]; then
+        printf 'Open: %s/task/%s\n' "${AGENT_WEB_URL%/}" "$id"
+      elif [[ -n $AGENT_WEB_URL ]]; then
+        printf 'Answer: %s/questions/%s?max=1\n' "${AGENT_WEB_URL%/}" "$id"
+      fi
     elif [[ -n $AGENT_WEB_URL ]]; then
       printf 'Open: %s/task/%s\n' "${AGENT_WEB_URL%/}" "$id"
     fi
@@ -4992,6 +5022,46 @@ remote_member_start() { # proxy-task — grants the remote member on the lead an
   log_info remote_member_started "member=$member" "task=$id" "job=$(task_field "$id" JOB_ID)"
 }
 
+cmd_tokens() { # <team|task> — the tokens the runs used, from their activity's usage lines (and opencode's step lines):
+  # per task — a team's members, and the helpers and investigations they asked for — and in all
+  local q=${1:?usage: agent tokens <team|task>} ids=() m d id team_ids=" "
+  if [[ $q == *-team ]]; then
+    for m in "$TASKS"/*/meta.env; do
+      [[ -f $m ]] || continue
+      grep -qx "TEAM=$q" "$m" || continue
+      d=${m%/meta.env}; ids+=("${d##*/}"); team_ids+="${d##*/} "
+    done
+    ((${#ids[@]})) || die "no task of team $q"
+    for m in "$TASKS"/*/meta.env; do   # what the members asked for
+      [[ -f $m ]] || continue
+      id=$(sed -n 's/^PARENT_TASK=//p' "$m")
+      [[ -n $id && $team_ids == *" $id "* ]] || continue
+      d=${m%/meta.env}; ids+=("${d##*/}")
+    done
+  else
+    ids=("$(resolve_id "$q")")
+  fi
+  local sums
+  sums=$(for id in "${ids[@]}"; do
+    [[ -f $TASKS/$id/activity.jsonl ]] || continue
+    jq -c --arg id "$id" --arg agent "$(task_field "$id" AGENT)" --arg kind "$(task_field "$id" KIND)" '
+      select(.k == "info") | .t
+      | (capture("^usage: in (?<in>[0-9]+) \\(cached (?<cached>[0-9]+)\\), out (?<out>[0-9]+)(, cost \\$(?<cost>[0-9.]+))?")
+         // capture("tokens in/out (?<in>[0-9]+)/(?<out>[0-9]+), cost \\$(?<cost>[0-9.]+)")
+         // empty)
+      | {id: $id, agent: $agent, kind: $kind, in: (.in | tonumber), cached: ((.cached // "0") | tonumber),
+         out: (.out | tonumber), cost: ((.cost // "0") | tonumber)}' "$TASKS/$id/activity.jsonl"
+  done | jq -s 'group_by(.id) | map({id: .[0].id, agent: .[0].agent, kind: .[0].kind, in: (map(.in) | add),
+      cached: (map(.cached) | add), out: (map(.out) | add), cost: (map(.cost) | add)})')
+  printf '%-40s %-24s %-13s %12s %12s %10s %10s\n' TASK AGENT KIND IN CACHED OUT COST
+  jq -r '.[] | [.id, .agent, (.kind // ""), .in, .cached, .out, .cost] | @tsv' <<< "$sums" \
+    | while IFS=$'\t' read -r id agent kind in cached out cost; do
+        printf '%-40s %-24s %-13s %12s %12s %10s %10.4f\n' "$id" "$agent" "${kind:--}" "$in" "$cached" "$out" "$cost"
+      done
+  jq -r '[(map(.in) | add // 0), (map(.cached) | add // 0), (map(.out) | add // 0), (map(.cost) | add // 0)] | @tsv' <<< "$sums" \
+    | { IFS=$'\t' read -r in cached out cost; printf '%-40s %-24s %-13s %12s %12s %10s %10.4f\n' total "" "" "$in" "$cached" "$out" "$cost"; }
+}
+
 cmd_wake() { # <task> — a paused task resumes now, not at its pause's end (its provider's limit lifted early, a bigger
   # plan bought); a remote member's proxy task on the lead asks the member's node, which resumes it at once
   local id
@@ -6993,6 +7063,7 @@ agent jobs [<id>]                         remote jobs on the lead (or this node'
 agent jobs --cancel <id>                  cancel a remote job on the lead
 agent nodes                               registered nodes on the lead
 agent kick <task>                         cut a run short: a team member sleeps (the team can wake it), solo: stopped
+agent tokens <team|task>                  the tokens its runs used: per task (a team's helpers and investigations too), in all
 agent wake <task>                         resume a paused task now, not at its pause's end (a remote member's: on its node)
 agent round-size <task>                   size of a task's change against the round limit (README "Rounds")
 agent run --need <caps> <agent|normal|worker> "task"   submit a remote job with required capabilities
@@ -7041,6 +7112,7 @@ main() {
     nodes)   cmd_nodes ;;
     kick)    cmd_kick "$@" ;;
     wake)    cmd_wake "$@" ;;
+    tokens)  cmd_tokens "$@" ;;
     round-size) cmd_round_size "$@" ;;
     _agents-json) cmd__agents_json ;;
     ack)     cmd_ack "$@" ;;

@@ -34,6 +34,11 @@ load helpers
   agent run solo "task"
   t=$(task_of solo)
   wait_status "$t" 'done'
+  pid=$(cat "$STUB_UNITS/agent-$t-r1.service.pid")
+  for _ in $(seq 1 100); do   # its runner has ended: it writes the task's fields until then
+    kill -0 "$pid" 2> /dev/null || break   # "no such process" is the answer waited for
+    sleep 0.1
+  done
   sed -i '/^KIND=/d' "$AGENTS_HOME/tasks/$t/meta.env"
   echo 'KIND=remote-member' >> "$AGENTS_HOME/tasks/$t/meta.env"   # as the lead's proxy task of a remote member
   agent _remote_member "$t" paused "" "the provider's quota or usage limit is exhausted — resumes at 01.11 00:01"

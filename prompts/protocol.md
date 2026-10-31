@@ -37,6 +37,8 @@ of the `agentbus` MCP server:
    so steps. Every agentbus reply shows the number of unread messages — do not ignore it.
 3. Share findings that may help others (device behaviour, toolchain errors, pitfalls in the code, changes
    to shared files) with `send_message` (to an agent name or `all`). Be brief and specific. Do not spam.
+   A message to a sleeping teammate wakes it, and every wake costs it a whole new run: progress notes and
+   updates that need no reaction go with `wake: false` — read on its next run. Wake it only when it must act.
 4. You may read your teammates' worktrees (paths from `list_agents`) but never write to them.
 5. Update `set_status` when you move to another stage.
 

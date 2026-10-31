@@ -114,6 +114,34 @@ func (c ReadMessagesCause) info() causeInfo { return readMessagesCauses[c] }
 // String returns the cause name.
 func (c ReadMessagesCause) String() string { return c.info().name }
 
+// ---------------------------------------------------------------- read_message
+
+// ReadMessageCause is a reason why the MCP tool read_message failed.
+type ReadMessageCause int
+
+const (
+	ReadMessageNoSuchMessage ReadMessageCause = iota // no message has that number [NotFound]
+	ReadMessageStorage                               // the shared state or a file could not be read or written [Storage]
+)
+
+// ReadMessageError is the error of the MCP tool read_message.
+type ReadMessageError = OpError[ReadMessageCause]
+
+// readMessageCauses describes the ReadMessageCause values (same order as the constants).
+var readMessageCauses = [...]causeInfo{
+	{"NoSuchMessage", ClassNotFound},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (ReadMessageCause) op() string { return "read_message" }
+
+// info implements opCause.
+func (c ReadMessageCause) info() causeInfo { return readMessageCauses[c] }
+
+// String returns the cause name.
+func (c ReadMessageCause) String() string { return c.info().name }
+
 // ---------------------------------------------------------------- set_status
 
 // SetStatusCause is a reason why the MCP tool set_status failed.

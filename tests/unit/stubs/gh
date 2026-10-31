@@ -3,6 +3,10 @@
 # without isCrossRepository and author is from this repository, by $STUB_GH_LOGIN), else []; `gh api user` gives
 # $STUB_GH_LOGIN (agents-bot).
 echo "gh $*" >> "$STUB_HOME/gh.log"
+prev=""; for a in "$@"; do   # a request body given with --input is kept for the tests: $STUB_HOME/gh-input.json
+  if [[ $prev == --input && -f $a ]]; then cp "$a" "$STUB_HOME/gh-input.json"; fi
+  prev=$a
+done
 if [[ "${1:-} ${2:-}" == "api user" ]]; then   # the account gh is logged in as (the agents' one)
   echo "${STUB_GH_LOGIN:-agents-bot}"
   exit 0

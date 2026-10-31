@@ -80,8 +80,11 @@ type busEvent interface {
 
 // EventChat is free text written by an agent (send_message) or a human (agent say / agentbus send).
 type EventChat struct {
-	Body string `json:"body"` // the message as written
+	Body  string `json:"body"`            // the message as written
+	Quiet bool   `json:"quiet,omitempty"` // sent with wake=false: it wakes nobody, it is read on the next run
 }
+
+func (e EventChat) quiet() bool { return e.Quiet } // quiet implements quietEvent.
 
 func (e EventChat) Kind() MessageKind { return KindChat } // Kind implements busEvent.
 func (e EventChat) Text() string      { return e.Body }   // Text implements busEvent.

@@ -237,6 +237,14 @@ delivered notification does not hide another's failures. Set what the command ne
 `export`, so that every process of agent has it. Where `--autopilot` hands a decision to you ("waits for you: …"),
 it also says so in a comment on the round's PR, mentioning the repository's owner, so GitHub notifies you there.
 
+**Wakes and reviews.** A message to a sleeping member wakes it, and a wake costs it a whole run: agents send
+progress and notes that need no reaction with `send_message` `wake: false`, read on the next run. Each wake is
+logged with its cause (`member_woken_by`: the message, an unread one, new work on the board). A message longer than 2000 characters reaches its readers
+cut, with `read_message id=N` to read it whole. The runs' token usage (claude, codex, opencode) is in their activity;
+`agent tokens <team|task>` sums it. An investigator's
+review on GitHub begins with who wrote it — "Review by the team-agents investigator `inv-astra` (codex, model
+…), request #66." — as well as ending with it.
+
 **What the agents read on GitHub.** Only the trusted accounts (`AGENT_GITHUB_TRUSTED`) may steer the agents. Their
 CLI gets `agent` itself as `gh` (a link named `gh`, first on its `PATH`, filters what it reads): comments and reviews by anyone else — on open, closed and
 merged PRs and issues alike — are left out and logged (`github_comment_ignored`: "there is unknown comment from
@@ -648,6 +656,7 @@ agent run --resume <team|task> ["addition"]   resume from the last checkpoint (s
 agent run --resume <team|task> --same-round   continue an unmerged round on the same branches (e.g. review fixes)
 agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)
 agent kick <task>                             cut a run short: a team member sleeps (its team can wake it), solo: stopped
+agent tokens <team|task>                      the tokens its runs used: per task (a team's helpers and investigations too), in all
 agent wake <task>                             resume a paused task now, not at its pause's end (a remote member's: on its node)
 agent round-size <task>                       size of a task's change against the round limit
 agent status | agents | show <id>            overview, agents, task details
@@ -846,7 +855,7 @@ while preserving their last-known state and metadata.
 **Answering and stopping through the lead.** A job's questions and notifications belong on the lead; the node
 syncs its questions without opening an editor or notifying locally. The lead opens an editable copy at
 `<AGENTS_HOME>/remote-questions/<node>/<task-id>/questions-<n>.md`, installs the ordinary save watch, and notifies
-with the qualified task ID. Answer through VS Code (save with
+with the qualified task ID and a task-view link. Answer through VS Code (save with
 `**ANSWERED**` on the last nonempty line), or `agent answer <task-id>@<node>`. The read-only mirror is never
 edited. Editable copies expire when their task mirrors are removed. The interactive CLI validates all verdicts,
 asks for confirmation, and adds `**ANSWERED**` when you send; declining leaves an editable draft.

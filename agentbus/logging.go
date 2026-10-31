@@ -45,6 +45,7 @@ const (
 	LogMessagePosted      LogEvent = "message_posted"         // a message was appended to the bus
 	LogAgentGone          LogEvent = "agent_gone"             // a presence of a dead agentbus process was removed
 	LogMemberWaking       LogEvent = "member_waking"          // a sleeping team member is being woken
+	LogMemberWokenBy      LogEvent = "member_woken_by"        // what woke a sleeping member: a message (its id, kind, sender), an unread one, new work on the board
 	LogSideEffectFailed   LogEvent = "side_effect_failed"     // an auxiliary step failed; the operation went on
 	LogCommandFailed      LogEvent = "command_failed"         // a CLI subcommand failed
 	LogJSONRPCError       LogEvent = "jsonrpc_error"          // a protocol-level error was sent to the MCP client
