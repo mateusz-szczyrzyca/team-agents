@@ -239,7 +239,9 @@ it also says so in a comment on the round's PR, mentioning the repository's owne
 
 **Wakes and reviews.** A message to a sleeping member wakes it, and a wake costs it a whole run: agents send
 progress and notes that need no reaction with `send_message` `wake: false`, read on the next run. Each wake is
-logged with its cause (`member_woken_by`: the message, an unread one, new work on the board). An investigator's
+logged with its cause (`member_woken_by`: the message, an unread one, new work on the board). A message longer than 2000 characters reaches its readers
+cut, with `read_message id=N` to read it whole. The runs' token usage (claude, codex, opencode) is in their activity;
+`agent tokens <team|task>` sums it. An investigator's
 review on GitHub begins with who wrote it — "Review by the team-agents investigator `inv-astra` (codex, model
 …), request #66." — as well as ending with it.
 
@@ -654,6 +656,7 @@ agent run --resume <team|task> ["addition"]   resume from the last checkpoint (s
 agent run --resume <team|task> --same-round   continue an unmerged round on the same branches (e.g. review fixes)
 agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)
 agent kick <task>                             cut a run short: a team member sleeps (its team can wake it), solo: stopped
+agent tokens <team|task>                      the tokens its runs used: per task (a team's helpers and investigations too), in all
 agent wake <task>                             resume a paused task now, not at its pause's end (a remote member's: on its node)
 agent round-size <task>                       size of a task's change against the round limit
 agent status | agents | show <id>            overview, agents, task details
