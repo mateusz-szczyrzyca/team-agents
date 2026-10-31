@@ -166,6 +166,12 @@ providers and accounts:
 
 ### Teams
 
+**Investigation teams (round 1/4):** `agent run --investigation --team "inv-a, inv-b" "topic"`
+validates investigator names and incompatible options, then reports that execution is not available yet.
+No investigation tasks start in this round. Names must come from `INVESTIGATORS_TYPE`; `-f topic.md` is also
+supported. See the [investigation-team design](docs/investigation-teams.md) for the planned independent work,
+merge, review, and human decision phases.
+
 `agent run --team a,b,c "task"` gives one task to several agents, each on its own branch:
 
 1. A normal member becomes the **coordinator** with `claim_lead` (the first one wins).
@@ -652,6 +658,7 @@ notifications in `AGENT_LANGUAGE`.
 ```
 agent run <agent> "task" | -f task.md         start a task (inside the repository)
 agent run --team a,b[,c] [--verify] "task"    start a team (optionally with a final PR review)
+agent run --investigation --team "A, B" "topic"  validate an investigator-only team (execution not available yet)
 agent run --resume <team|task> ["addition"]   resume from the last checkpoint (same branches; after a merged round: new ones)
 agent run --resume <team|task> --same-round   continue an unmerged round on the same branches (e.g. review fixes)
 agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)

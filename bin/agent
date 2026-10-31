@@ -4270,10 +4270,47 @@ resume_run() {
   return 0
 }
 
+# validate_investigation_team checks a comma-separated investigator list without allocating any run resources.
+validate_investigation_team() {
+  local remaining="$1," member configured seen=" " count=0
+  configured=$(investigator_names)
+  configured=${configured//$'\n'/, }
+  while [[ $remaining == *,* ]]; do
+    member=${remaining%%,*}; remaining=${remaining#*,}
+    member=${member#"${member%%[![:space:]]*}"}
+    member=${member%"${member##*[![:space:]]}"}
+    [[ -n $member ]] || die "--team needs at least two investigators and no empty names. Configured investigators: $configured"
+    [[ $member != *@* ]] || die "--investigation runs on the lead only; remote members are not allowed ($member)"
+    is_investigator "$member" || die "unknown investigator '$member'. Configured investigators: $configured"
+    [[ $seen != *" $member "* ]] || die "duplicate investigator $member is listed twice. Configured investigators: $configured"
+    seen+="$member "; count=$((count + 1))
+  done
+  ((count >= 2)) || die "an investigation team needs at least two investigators. Configured investigators: $configured"
+}
+
+# validate_investigation_topic checks argument, file or stdin topic text before the inactive round-one exit.
+validate_investigation_topic() {
+  local topic
+  if [[ ${1:-} == -f ]]; then
+    [[ -r ${2:-} ]] || die "file not found: ${2:-}"
+    topic=$(<"$2")
+  elif (($#)); then
+    topic="$*"
+  elif [[ ! -t 0 ]]; then
+    topic=$(cat)
+  else
+    die "give the task text (argument, -f file or stdin)"
+  fi
+  [[ -n ${topic//[[:space:]]/} ]] || die "empty task"
+}
+
+# cmd_run parses run options and starts ordinary runs; investigation-team execution stays inactive in round one.
 cmd_run() {
   local members=() verify=0 autopilot=0 same_round=0 team_list="" resume_ref="" need_caps=() target_node=""
-  while [[ ${1:-} == --need || ${1:-} == --on || ${1:-} == --team || ${1:-} == --verify || ${1:-} == --autopilot || ${1:-} == --resume || ${1:-} == --same-round || ${1:-} == --last-team ]]; do
+  local investigation=0 team_requested=0 last_team_requested=0 resolve_last_team=0
+  while [[ ${1:-} == --need || ${1:-} == --on || ${1:-} == --team || ${1:-} == --verify || ${1:-} == --autopilot || ${1:-} == --resume || ${1:-} == --same-round || ${1:-} == --last-team || ${1:-} == --investigation ]]; do
     case $1 in
+      --investigation) investigation=1; shift ;;
       --need)
         [[ -n ${2:-} && ${2:-} != --* ]] || die "usage: agent run --need cap1,cap2 <agent|normal|worker> \"task\""
         IFS=, read -ra need_caps <<< "$2"; shift 2 ;;
@@ -4281,20 +4318,36 @@ cmd_run() {
         [[ -n ${2:-} && ${2:-} != --* ]] || die "usage: agent run --on instance <agent> \"task\""
         target_node=$2; shift 2 ;;
       --last-team)
-        resume_ref=$(last_team_id)
-        [[ -n $resume_ref ]] || die "--last-team: no team of this repository (outside a repository: no team at all)"
+        last_team_requested=1; resolve_last_team=1
         shift ;;
       --verify) verify=1; shift ;;
       --autopilot) verify=1; autopilot=1; shift ;;   # --verify, then the merge and the next round by themselves
       --same-round) same_round=1; shift ;;
       --resume)
         [[ -n ${2:-} ]] || die "usage: agent run --resume <team|task> [\"addition\" | -f file.md]"
-        resume_ref=$2; shift 2 ;;
+        resume_ref=$2; resolve_last_team=0; shift 2 ;;
       --team)
-        [[ -n ${2:-} && ${2:-} != --* ]] || die "usage: agent run --team agent1,agent2[,...] [--verify] [-f file.md | \"task text\"]"
-        team_list=$2; shift 2 ;;
+        (($# >= 2)) && [[ $2 != --* ]] || die "usage: agent run --team agent1,agent2[,...] [--verify] [-f file.md | \"task text\"]"
+        team_requested=1; team_list=$2; shift 2 ;;
     esac
   done
+  if ((investigation)); then
+    ((autopilot == 0)) || die "--investigation cannot be combined with --autopilot"
+    ((verify == 0)) || die "--investigation cannot be combined with --verify"
+    ((${#need_caps[@]} == 0)) || die "--investigation cannot be combined with --need"
+    [[ -z $target_node ]] || die "--investigation cannot be combined with --on"
+    ((last_team_requested == 0)) || die "--investigation cannot be combined with --last-team"
+    [[ -z $resume_ref ]] || die "--investigation cannot be combined with --resume"
+    ((same_round == 0)) || die "--investigation cannot be combined with --same-round"
+    validate_investigation_team "$team_list"
+    validate_investigation_topic "$@"
+    die "Investigation teams are not available yet (round 1/4); no runs were started"
+  fi
+  if ((resolve_last_team)); then
+    resume_ref=$(last_team_id)
+    [[ -n $resume_ref ]] || die "--last-team: no team of this repository (outside a repository: no team at all)"
+  fi
+  ((team_requested == 0)) || [[ -n $team_list ]] || die "usage: agent run --team agent1,agent2[,...] [--verify] [-f file.md | \"task text\"]"
   if ((${#need_caps[@]} > 0)) || [[ -n $target_node ]]; then
     [[ -z $team_list ]] || die "--need/--on cannot be combined with --team"
     ((verify == 0)) || die "--need/--on cannot be combined with --verify"
@@ -4343,7 +4396,7 @@ cmd_run() {
       continue
     fi
     locals+=("$m")
-    ! is_investigator "$m" || die "investigators are not started directly — agents request them (request_investigation)"
+    ! is_investigator "$m" || die "investigators are not started directly — agents request them (request_investigation); --investigation --team validates investigation teams"
     [[ -n ${AGENT_TYPE[$m]:-} ]] || die "unknown agent '$m'. Configured: ${!AGENT_TYPE[*]}"
     [[ $seen != *" $m "* ]] || die "agent $m is listed twice"
     seen+="$m "
@@ -7110,6 +7163,7 @@ agent run --last-team [--same-round] ["…"]  resume the newest team of this rep
 agent ack <id|all>                        acknowledge finished tasks (they leave the panel)
 agent run --team a,b[,c] [--verify|--autopilot] "task"  team; --verify: an investigator reviews the PR at the end;
                                            --autopilot: two independent reviews, the merge, the next round
+agent run --investigation --team "A, B" "topic"  investigator-only validation (execution not available yet)
 agent autopilot <team> [on|off]            a team's --autopilot: shown, or switched (off: no merge nor next round by itself)
 agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
 agent team [id | --all]                   teams and their members

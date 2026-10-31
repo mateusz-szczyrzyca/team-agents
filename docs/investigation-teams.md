@@ -14,10 +14,10 @@ configured in `INVESTIGATORS_TYPE`.
    autonomously.
 2. **Strict independence during investigation.** Members work on isolated branches with no bus
    communication between them and without reading each other's worktrees.
-3. **Pull request on success.** When at least one Phase 1 run succeeds, the workflow culminates
-   in a unified pull request opened by a designated merger, followed by an independent review and
-   human hand-off. If all Phase 1 runs fail, the team transitions directly to human hand-off
-   without opening a PR.
+3. **Pull request on success.** A successful workflow produces a unified pull request opened by
+   a designated merger, followed by an independent review and human hand-off. Failures before
+   publication, including all Phase 1 runs failing or exhausted merger replacements, wait for
+   the human with the reason instead of claiming a PR was produced.
 4. **Human in control.** No code is ever merged automatically. The final stage always notifies
    and transfers control to the human.
 5. **No runtime side effects in Round 1.** During Round 1, the CLI validates flags, options, and
@@ -53,7 +53,7 @@ The command must be rejected immediately before any background task or worktree 
    - `--verify`: Refused (review is an intrinsic phase of investigation teams).
    - `--need` or `--on`: Refused (investigators run exclusively on the lead host).
    - Remote member specifications (`agent@node`): Refused.
-   - `--resume` or `--same-round`: Refused when combined with `--investigation` (resuming an
+   - `--resume`, `--last-team` or `--same-round`: Refused when combined with `--investigation` (resuming an
      investigation team uses `agent run --resume <team>` without `--investigation`).
 
 ## Lifecycle and phases
@@ -71,6 +71,8 @@ The command must be rejected immediately before any background task or worktree 
     Changes are committed and pushed to the investigator's branch; no PR is opened.
   - Non-code findings: Written to `docs/investigations/<topic-slug>/<investigator>.md`.
 - **Termination:** Each run concludes independently with `STATUS: DONE` or `STATUS: FAILED`.
+  A failed run or a run without a published code/findings result does not stop the others. Capture
+  the result commit and status before choosing the merger; a bare `DONE` without a result is not success.
 - **Dashboard stage:** `phase 1: N investigators working (A, B, C)`.
 
 ### Phase 2 — The merge
@@ -148,6 +150,10 @@ The command must be rejected immediately before any background task or worktree 
 1. **Resource occupation:** While an investigation team phase is actively running, it occupies its
    assigned investigators. Capacity leases are released when entering Phase 4 (waiting for human)
    so that investigators are not locked while waiting for human input.
+   Admission waits until all requested investigators can be reserved together, under the same
+   dispatch lock used by the queue and review pairs; it does not hold a partial set while waiting.
+   Ownership remains with the team between phases. Its own reservations do not make its candidates
+   externally busy when starting merge or review runs.
 2. **Queue interaction:** External review pairs waiting for free investigators observe occupied
    investigators as busy and wait in the queue per existing capacity mechanisms.
 3. **Queue policy on candidate unavailability:** (Adopted via consultation C1 and user autopilot approval)
@@ -180,17 +186,26 @@ Planned attributes stored in the orchestration task's `meta.env` and bus state:
 - `KIND=investigation_team`: Identifies the task as an investigation orchestration unit.
 - `INVESTIGATION_TEAM`: Comma-separated list of member investigators (e.g. `inv-astra,inv-gemini-argon`).
 - `INVESTIGATION_BASE_SHA`: Immutable base commit SHA from which all member branches branch.
-- `INVESTIGATION_TOPIC`: Original topic text.
+- `task.md`: Original topic text, using the existing task file convention for multiline input.
 - `INVESTIGATION_TOPIC_SLUG`: Sanitized topic string used for document paths.
 - `INVESTIGATION_PHASE`: Numeric phase identifier (`1`, `2`, `3`, `4`).
-- `INVESTIGATION_PHASE1_TASKS`: Mapping of investigator names to their Phase 1 task IDs, branches, and statuses.
+- `INVESTIGATION_PHASE1_TASKS`: Mapping of investigator names to their Phase 1 task IDs, branches,
+  published result commits, and statuses.
 - `INVESTIGATION_MERGER`: Name of the chosen merger.
 - `INVESTIGATION_REVIEWER`: Name of the chosen reviewer.
+- Merge/review task and branch references: Keep later phase runs separate from the Phase 1 results.
 - `INVESTIGATION_PR`: URL and number of the opened pull request.
 - `INVESTIGATION_SEED`: Seed used for deterministic selections.
 - `INVESTIGATION_MERGE_RETRIES`: Counter for merge precheck retries.
+- `INVESTIGATION_MERGER_REPLACEMENTS`: Separate counter for replacing a failed merger.
 - `INVESTIGATION_REVIEW_RETRIES`: Counter for reviewer replacement.
+- Resume review results: Track the task and verdict for each original investigator's advisory review.
+- Hand-off progress: Track PR comment and notification completion so restarts recover the same hand-off.
 - `AUTO_STAGE`: Human-readable stage displayed on the dashboard.
+
+These are logical fields; structured mappings need a versioned record rather than raw multiline values
+in `meta.env`. The runtime round must define the encoding, preserve existing task and bus formats,
+and add legacy-load fixtures whenever it extends a persisted type. No seed setting is read in Round 1.
 
 ## Reuse boundaries and system interfaces
 
