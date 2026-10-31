@@ -398,6 +398,7 @@ func fmtMsg(m Message) string {
 
 // Server is one `agentbus serve` instance — the MCP server of a single agent run.
 type Server struct {
+	taskDir  string        // the agent's task directory (--task-dir): a long-run mark there asks it to end its run
 	bus      *Bus          // shared state
 	me       string        // this agent's name
 	info     Presence      // presence template (task, repo, branch, worktree)
@@ -855,6 +856,9 @@ func (s *Server) call(name string, raw map[string]any) (string, error) {
 	}
 	start := time.Now()
 	out, err := s.callTool(name, raw)
+	if err == nil {
+		out += s.longRunNote()
+	}
 	attrs := []any{"tool", name, "duration_ms", time.Since(start).Milliseconds()}
 	if err != nil {
 		class, cause := classOf(err)
@@ -863,6 +867,20 @@ func (s *Server) call(name string, raw map[string]any) (string, error) {
 		logInfo(LogToolCall, attrs...)
 	}
 	return out, err
+}
+
+// longRunNote asks the agent to end a run its normalizer marked long ("" otherwise).
+func (s *Server) longRunNote() string {
+	if s.taskDir == "" {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(s.taskDir, "long-run")) // #nosec G304 -- the task's own directory, given by the runner
+	if err != nil {
+		return "" // no mark (or none readable): the run goes on
+	}
+	return fmt.Sprintf("\n\n[This run is long — %s steps. Finish the step you are on, note where you are (board_progress, "+
+		"set_status), and end this run: as a team member, with STATUS: SLEEPING. Your next run starts a fresh session "+
+		"with your report, and every step of it costs far fewer tokens.]", strings.TrimSpace(string(b)))
 }
 
 // callTool runs the handler of one MCP tool.
@@ -1113,6 +1131,7 @@ func cmdServe(args []string) {
 	dir := fs.String("dir", defaultDir(), "state directory")
 	agent := fs.String("agent", "", "this agent's name (required)")
 	task := fs.String("task", "", "task ID")
+	taskDir := fs.String("task-dir", "", "the task's directory: a long-run mark there asks the agent to end its run")
 	repo := fs.String("repo", "", "repository name")
 	branch := fs.String("branch", "", "agent's branch")
 	worktree := fs.String("worktree", "", "path to the agent's worktree")
@@ -1152,7 +1171,8 @@ func cmdServe(args []string) {
 	out := json.NewEncoder(os.Stdout)
 	out.SetEscapeHTML(false)
 	s := &Server{
-		bus: &Bus{dir: *dir}, me: *agent, out: out,
+		taskDir: *taskDir,
+		bus:     &Bus{dir: *dir}, me: *agent, out: out,
 		info:  Presence{Agent: *agent, Task: *task, Repo: *repo, Branch: *branch, Worktree: *worktree},
 		peers: strings.Split(*peers, ","),
 		role:  r, queueMax: *queueMax, tasksDir: *tasksDir, team: *team,
