@@ -278,6 +278,48 @@ func (b *Bus) gc(st *State) {
 // teamRecipient returns the message recipient that addresses every member of a team.
 func teamRecipient(teamID string) string { return "team:" + teamID }
 
+// messageTextMax is the longest message its readers get whole: a longer one is cut to messageTextShown characters,
+// with how to read it whole (read_message), and kept whole in messages-full/<id>.txt.
+const messageTextMax = 2000
+
+// messageTextShown is how much of a cut message its readers get.
+const messageTextShown = 1500
+
+// keepWhole stores a long message's whole text for read_message.
+func (b *Bus) keepWhole(id int64, text string) *StorageError {
+	dir := b.path("messages-full")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return storageErr(err, "cannot make %s", dir)
+	}
+	f := filepath.Join(dir, fmt.Sprintf("%d.txt", id))
+	if err := os.WriteFile(f, []byte(text), 0o600); err != nil {
+		return storageErr(err, "cannot keep message #%d whole in %s", id, f)
+	}
+	return nil
+}
+
+// readMessage gives one message whole by its number: a cut one from messages-full/, any other as it was posted.
+func (s *Server) readMessage(id int) (string, *ReadMessageError) {
+	f := filepath.Join(s.bus.path("messages-full"), fmt.Sprintf("%d.txt", id))
+	b, err := os.ReadFile(f) // #nosec G304 -- the bus's own directory and a number; no request text reaches the path
+	if err == nil {
+		return string(b), nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", fromStorage(ReadMessageStorage, storageErr(err, "cannot read %s", f))
+	}
+	msgs, serr := s.bus.messages()
+	if serr != nil {
+		return "", fromStorage(ReadMessageStorage, serr)
+	}
+	for _, m := range msgs {
+		if m.ID == int64(id) {
+			return fmtMsg(m), nil
+		}
+	}
+	return "", opErr(ReadMessageNoSuchMessage, "no message #%d", id)
+}
+
 // post appends an event to messages.jsonl (caller holds the lock) and wakes sleeping recipients.
 func (b *Bus) post(st *State, from, to string, ev busEvent) (Message, *StorageError) {
 	data, err := json.Marshal(ev)
@@ -287,6 +329,12 @@ func (b *Bus) post(st *State, from, to string, ev busEvent) (Message, *StorageEr
 	m := Message{ID: st.NextID, TS: Now(), From: from, To: to, Kind: ev.Kind(), Data: data, Text: ev.Text()}
 	if q, ok := ev.(quietEvent); ok && q.quiet() {
 		m.Quiet = true
+	}
+	if r := []rune(m.Text); len(r) > messageTextMax { // kept whole aside; its readers get its start and how to read it all
+		if serr := b.keepWhole(m.ID, m.Text); serr != nil {
+			return Message{}, serr
+		}
+		m.Text = fmt.Sprintf("%s\n… (%d more characters: read_message id=%d gives it whole)", string(r[:messageTextShown]), len(r)-messageTextShown, m.ID)
 	}
 	line, err := json.Marshal(m)
 	if err != nil {
@@ -831,6 +879,8 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 		return toolResult(s.sendMessage(a.str("to"), a.str("text"), !given || a.flag("wake")))
 	case "read_messages":
 		return toolResult(s.read(a.num("history")))
+	case "read_message":
+		return toolResult(s.readMessage(a.num("id")))
 	case "set_status":
 		return toolResult(s.setStatus(a.str("status")))
 	case "reserve":
@@ -919,6 +969,8 @@ func toolDefs() []map[string]any {
 				"to", "text")),
 		tool("read_messages", "Read new messages addressed to you and to 'all' (marks them read). With history=N returns the last N messages of all agents without changing read state.",
 			obj(map[string]any{"history": num("Optional: how many latest messages to show (history)")})),
+		tool("read_message", "Read one message whole by its number: a long message reaches its readers cut, and says its number.",
+			obj(map[string]any{"id": num("The message's number (\"read_message id=N\" in the cut message)")}, "id")),
 		tool("set_status", "Set a short description of what you are doing now (visible to others in list_agents).",
 			obj(map[string]any{"status": str("E.g. 'building firmware, flashing the board next'")}, "status")),
 		tool("reserve", "Reserve a shared resource (e.g. a debug probe, a serial port, a test host) before using it. The reservation is announced to everyone. With wait_seconds it waits for release (max 600 s).",

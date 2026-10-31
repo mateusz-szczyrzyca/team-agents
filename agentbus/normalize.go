@@ -178,6 +178,14 @@ func (n *normalizer) claude(ev map[string]any) {
 		}
 	case "result":
 		n.emit(ActInfo, fmt.Sprintf("result: %v, turns: %v", ev["subtype"], ev["num_turns"]))
+		if u := obj(ev, "usage"); len(u) > 0 { // the run's tokens: input with what the cache wrote and read, output, cost
+			in, _ := num(u, "input_tokens")                     // absent = not reported (0)
+			created, _ := num(u, "cache_creation_input_tokens") // absent = not reported (0)
+			read, _ := num(u, "cache_read_input_tokens")        // absent = not reported (0)
+			out, _ := num(u, "output_tokens")                   // absent = not reported (0)
+			cost, _ := num(ev, "total_cost_usd")                // absent = not reported (0)
+			n.emit(ActInfo, fmt.Sprintf("usage: in %d (cached %d), out %d, cost $%.4f", int(in+created+read), int(read), int(out), cost))
+		}
 	}
 }
 
@@ -212,6 +220,13 @@ func (n *normalizer) codex(ev map[string]any) {
 			n.emit(ActTool, "web_search "+str(item, "query"))
 		case "error":
 			n.emit(ActErr, str(item, "message"))
+		}
+	case typ == "turn.completed": // the turn's tokens: input (cached ones included), output
+		if u := obj(ev, "usage"); len(u) > 0 {
+			in, _ := num(u, "input_tokens")            // absent = not reported (0)
+			cached, _ := num(u, "cached_input_tokens") // absent = not reported (0)
+			out, _ := num(u, "output_tokens")          // absent = not reported (0)
+			n.emit(ActInfo, fmt.Sprintf("usage: in %d (cached %d), out %d", int(in), int(cached), int(out)))
 		}
 	case typ == "turn.failed":
 		n.emit(ActErr, str(obj(ev, "error"), "message"))
