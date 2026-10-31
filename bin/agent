@@ -356,6 +356,7 @@ AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no 
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
+AGENT_PROMPT_ARG_MAX="${AGENT_PROMPT_ARG_MAX:-100000}"           # a longer prompt (bytes) reaches the CLI through a file: Linux takes 128 KiB per argument
 AGENT_LIMIT_TAIL_LINES="${AGENT_LIMIT_TAIL_LINES:-30}"           # how much of the end of stderr shows a provider limit
 # Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
 declare -p INVESTIGATORS_TYPE &>/dev/null || declare -A INVESTIGATORS_TYPE=()
@@ -1590,6 +1591,7 @@ Fix it on the same branches and finish as before; the round goes to review once 
       auto_stage "$id" ""   # the team has the work
     else
       log_error review_precheck_resume_failed "task=$id" "reason=${out:0:500}"
+      handover_failed "$id" "the round" "$out"
     fi
     return 1
   fi
@@ -1662,6 +1664,7 @@ ${text:0:8000}"
       log_info review_fix_pass "task=$parent" "pass=$((pass + 1))" "findings=$n"
     else
       log_error review_fix_resume_failed "task=$parent" "reason=${out:0:500}"
+      handover_failed "$parent" "the fix pass" "$out"
       push_text "$repo" "--verify: the review of PR #$PR_NUMBER found $n critical or major finding(s), but the team could not be resumed:" "${out:0:500}"
     fi
     return 0
@@ -1718,6 +1721,24 @@ supervise_answer_watches() {
     try answers_watch_reset_failed systemctl --user reset-failed "${u%.path}.service"
     log_info answers_watch_stopped "task=$tid" "unit=$u"
   done <<< "$units"
+}
+
+# remote_start_check root base — the lead's commit is on origin's base, where a new remote member starts on its node,
+# so that every member of a new team starts from the same commit
+remote_start_check() {
+  local sha
+  sha=$(git -C "$1" rev-parse HEAD 10>&-) || return 1
+  git -C "$1" merge-base --is-ancestor "$sha" "origin/$2" 10>&-
+}
+
+# handover_failed task what output — the team could not take its work back (its resume was refused): the human
+# decides, and hears why — the stage "waits for you: …" (also said on the PR, by auto_stage), and the notification
+handover_failed() {
+  local id=$1 what=$2 out=$3 why
+  why=$( { grep -m1 '^agent: ' <<< "$out" || (($? == 1)); } | sed 's/^agent: //' | cut -c1-200)   # the refusal's own words
+  [[ -n $why ]] || why=$(tail -n 1 <<< "$out" | cut -c1-200)
+  auto_stage "$id" "waits for you: $what could not go back to the team — $why"
+  notify "$id" failed "" "⛔ $what could not go back to the team: $why — once that is fixed: agent run --resume $(task_field "$id" TEAM) --same-round"
 }
 
 # team_lead_task team agent — the team's task of that agent (its coordinator), the newest; "" when there is none
@@ -2648,6 +2669,30 @@ activity_progress() { # id — number of the agent's own activity entries (exclu
 CLI_SESSION=()
 if command -v setsid > /dev/null 2>&1; then CLI_SESSION=(setsid -w); fi
 
+# cli_prompt prompt-file — what the CLI gets as its prompt argument: the prompt itself, or, when it is too long for one
+# command-line argument (AGENT_PROMPT_ARG_MAX), a request to read it from .agent-prompt.md in the working directory,
+# where it is written and kept out of git (info/exclude)
+cli_prompt() {
+  local pf=$1 size f excl
+  size=$(wc -c < "$pf")
+  if ((size <= AGENT_PROMPT_ARG_MAX)); then
+    cat "$pf"
+    return 0
+  fi
+  f="$WORKTREE/.agent-prompt.md"
+  if ! cp "$pf" "$f"; then   # the prompt as it is: the CLI will say what is wrong with it
+    log_error prompt_file_failed "task=${RUNNER_ID:-}" "file=$f"
+    cat "$pf"
+    return 0
+  fi
+  excl="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+  if ! grep -qxF '/.agent-prompt.md' "$excl" 2>/dev/null; then   # not there yet ("no such file" included)
+    mkdir -p "$(dirname "$excl")" && echo '/.agent-prompt.md' >> "$excl" || log_warn prompt_file_exclude_failed "file=$excl"
+  fi
+  log_info prompt_by_file "task=${RUNNER_ID:-}" "bytes=$size"
+  printf 'Your instructions for this run are too long for the command line (%s bytes). They are in the file .agent-prompt.md at the root of your working directory (%s). Read the whole file now, then follow it exactly, as if it were this message.\n' "$size" "$f"
+}
+
 run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   local id=$1 mode=$2 n=$3 pf=$4 dir=$5
   jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
@@ -2660,7 +2705,7 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   args+=("${extra[@]}")
   RC=0
   ( cd "$WORKTREE" || exit 1
-    "${CLI_SESSION[@]}" "$CLAUDE_BIN" "${args[@]}" "$(<"$pf")" </dev/null 2>"$dir/err-$n.log" \
+    "${CLI_SESSION[@]}" "$CLAUDE_BIN" "${args[@]}" "$(cli_prompt "$pf")" </dev/null 2>"$dir/err-$n.log" \
       | tee "$dir/out-$n.jsonl" | "$AGENTBUS_BIN" normalize --type claude --full "$dir/activity-full.jsonl" >> "$dir/activity.jsonl"
     exit "${PIPESTATUS[0]}" ) &
   watch_run $! "$dir" "$n" || RC=$?
@@ -2682,7 +2727,7 @@ run_codex() { # id mode n prompt_file dir ; sets RC, FINAL
   local extra=(); read -ra extra <<< "${EXTRA_ARGS:-}"
   args+=("${extra[@]}")
   if [[ $mode == resume ]]; then args+=(resume "$SESSION_ID"); fi
-  args+=("$(<"$pf")")
+  args+=("$(cli_prompt "$pf")")
   RC=0
   ( cd "$WORKTREE" || exit 1
     "${CLI_SESSION[@]}" "$CODEX_BIN" "${args[@]}" </dev/null 2>"$dir/err-$n.log" \
@@ -2720,7 +2765,7 @@ run_gemini() { # id mode n prompt_file dir ; sets RC, FINAL  (Antigravity CLI: a
   if [[ $mode != new ]]; then args+=(--conversation "$SESSION_ID"); fi
   RC=0
   ( cd "$WORKTREE" || exit 1
-    "${CLI_SESSION[@]}" "$AGY_BIN" "${args[@]}" -p "$(<"$pf")" </dev/null 2>"$dir/err-$n.log" \
+    "${CLI_SESSION[@]}" "$AGY_BIN" "${args[@]}" -p "$(cli_prompt "$pf")" </dev/null 2>"$dir/err-$n.log" \
       | tee "$dir/out-$n.jsonl" | "$AGENTBUS_BIN" normalize --type gemini --full "$dir/activity-full.jsonl" >> "$dir/activity.jsonl"
     exit "${PIPESTATUS[0]}" ) &
   watch_run $! "$dir" "$n" || RC=$?
@@ -2772,7 +2817,7 @@ run_opencode() { # id mode n prompt_file dir ; sets RC, FINAL  (OpenRouter, Deep
   ( cd "$WORKTREE" || exit 1
     OPENCODE_CONFIG_CONTENT="$cfg" OPENCODE_DISABLE_AUTOUPDATE=1 \
     OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS="$OPENCODE_BASH_TIMEOUT_MS" \
-      "${CLI_SESSION[@]}" "$OPENCODE_BIN" "${args[@]}" -- "$(<"$pf")" </dev/null 2>"$dir/err-$n.log" \
+      "${CLI_SESSION[@]}" "$OPENCODE_BIN" "${args[@]}" -- "$(cli_prompt "$pf")" </dev/null 2>"$dir/err-$n.log" \
       | tee "$dir/out-$n.jsonl" | "$AGENTBUS_BIN" normalize --type opencode --full "$dir/activity-full.jsonl" >> "$dir/activity.jsonl"
     exit "${PIPESTATUS[0]}" ) &
   watch_run $! "$dir" "$n" || RC=$?
@@ -4074,7 +4119,7 @@ resume_run() {
         printf '\n\n## Addition from the human (resumed %s)\n\n%s\n' "$(date '+%Y-%m-%d %H:%M')" "$add"
       fi)
     remote_ids+=("$(remote_member_task "$(task_field "$r" AGENT)" "$rtext" "$new_team" "$(task_field "$r" BASE)" \
-      "$(task_field "$r" REPO_ROOT)" "$ts")")
+      "$(task_field "$r" REPO_ROOT)" "$ts" resume)")
   done
   RESUME_NEW_IDS+=("${remote_ids[@]}")
   for old in "${olds[@]}"; do
@@ -4767,7 +4812,7 @@ supervise_teams() { # an open team with no local member at work or asleep for AG
 remote_member_task() { # member task team base main-root ts — a remote member's proxy task on the lead (no worktree, no
   # runner: the member runs on its node); checks first that this is a lead, the node is online with the agent free,
   # and the base is on origin (the node starts from there). Prints the task ID.
-  local member=$1 task=$2 team=$3 base=$4 root=$5 ts=$6 agent node nodes row tier sha id
+  local member=$1 task=$2 team=$3 base=$4 root=$5 ts=$6 resuming=${7:-} agent node nodes row tier sha id
   agent=${member%@*}; node=${member#*@}
   [[ -n ${LEAD_LISTEN:-} ]] || die "remote member $member: this installation is not a lead (LEAD_LISTEN)"
   nodes=$(bus node-request --url "$(lead_url)" --path /v1/nodes --get) || die "remote member $member: cannot list the nodes"
@@ -4777,9 +4822,14 @@ remote_member_task() { # member task team base main-root ts — a remote member'
   tier=$(jq -r --arg a "$agent" '.FreeAgents // [] | .[] | select(.Name == $a) | .Tier' <<< "$row")
   [[ -n $tier ]] || die "remote member $member: $agent is not a free agent of $node (agent nodes)"
   git -C "$root" fetch -q origin "$base" 10>&- || die "remote member $member: cannot fetch $base from origin"
-  sha=$(git -C "$root" rev-parse HEAD 10>&-)
-  git -C "$root" merge-base --is-ancestor "$sha" "origin/$base" 10>&- \
-    || die "remote member $member starts from origin: push $base first (git push origin $base)"
+  # a new team's members start from one commit; a member coming back on a resume continues its round, whatever the
+  # lead's own checkout holds just now
+  if [[ -z $resuming ]]; then
+    remote_start_check "$root" "$base" || die "remote member $member starts from origin: push $base first (git push origin $base)"
+    sha=$(git -C "$root" rev-parse HEAD 10>&-)
+  else
+    sha=$(git -C "$root" rev-parse "origin/$base" 10>&-) || die "remote member $member: no origin/$base to come back from"
+  fi
   id="$ts-$agent-at-$node"
   mkdir -p "$TASKS/$id"
   : > "$TASKS/$id/meta.env"

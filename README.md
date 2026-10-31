@@ -227,7 +227,8 @@ frees its board items). It
 merges only the commit that passed its checks and both reviews (`--match-head-commit`): anything pushed since stops
 the merge. What it does for a round shows on the dashboard as its coordinator's stage (⚙): the checks, with the gate's
 progress ("make gate — 2 of 6 steps passed"), the two reviews and their verdicts, the merge, the next round — or
-"waits for you: …" where you decide.
+"waits for you: …" where you decide. A team that cannot take its work back — a resume refused — waits for you the same way, with
+the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
 **Notifications that are not delivered.** When the notification command fails — say, a variable it needs is not
 set for the process that sends it —, every page of the dashboard counts the failures of the last 24 hours, with the
@@ -543,6 +544,7 @@ Then:
 | `VERIFY_MAX_FIX_PASSES`, `AGENT_HUMAN_GITHUB` | how many times a `--verify` review wakes the team to fix critical or major problems (default 2); who is then mentioned on the PR (default: the repository's GitHub owner) |
 | `AGENT_REVIEW_GATE`, `AGENT_REVIEW_GATE_MIN`, `AGENT_PRECHECK_MAX` | before a `--verify`/`--autopilot` review, the command a round's head must pass (`auto`: `make gate` where the repository has it; `off`: none), its time limit in minutes (30), and how many times a round goes back for its gate or its missing tests before you decide (2) |
 | `AGENT_STAGE_POLL_SEC` | how often the gate's progress before a review is written to the coordinator's task, for the dashboard (2 seconds) |
+| `AGENT_PROMPT_ARG_MAX` | a longer prompt (bytes) reaches the agent's CLI through `.agent-prompt.md` in its working directory, kept out of git, which the CLI is asked to read: Linux takes at most 128 KiB per command-line argument, and a task's text grows with every resume (100000) |
 | `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) — the team reports of the protocol (`.agents/reports/`) are never counted, whatever it says |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
@@ -699,7 +701,7 @@ The menu on the left slides out on demand (`☰` or `m`). Every view can be maxi
 
 | View | What it shows |
 |---|---|
-| Dashboard | active tasks, then finished ones newest first (also acknowledged ones and investigations from the last 24 h; their time as \"… ago\") live, events as they happen, reserved resources; investigations as "investigator #N (agent)"; `done` in blue; a ■ button on a running task cuts its run short (`agent kick`: a team member only sleeps and its team can wake it, a solo task is stopped); `stopped` in orange, failures in red |
+| Dashboard | active tasks, then finished ones newest first (also acknowledged ones and investigations from the last 24 h; their time as \"… ago\") live, events as they happen, reserved resources; investigations as "investigator #N (agent)"; `done` in blue; a ■ button on a running task cuts its run short (`agent kick`: a team member only sleeps and its team can wake it, a solo task is stopped); a sleeping member of an open team shows what it waits for (`⏳ waits for: B36 gemini-2@rpi5-x: native gate (its latest progress)`, items nobody has taken yet); `stopped` in orange, failures in red |
 | Agents | the configured agents and investigators — working ones first, then by their last activity (shown) — tier, CLI, model, provider, what each is doing now, pauses (until when, why) |
 | Task | header (status, time, branch, team) and sections: live activity, the prompt of every run, question rounds, investigations, final message, error logs, the repository notebook, `meta.env` |
 | Teams / Team | the newest 20 teams (and "all"); a team: members and their states, the board (newest first, `for`, results), consultations, the quiz, the team's messages, the notebook; a finished team can be woken from its last task — this round or the next, with a prompt |
