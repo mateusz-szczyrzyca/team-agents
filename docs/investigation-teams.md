@@ -20,9 +20,13 @@ configured in `INVESTIGATORS_TYPE`.
    the human with the reason instead of claiming a PR was produced.
 4. **Human in control.** No code is ever merged automatically. The final stage always notifies
    and transfers control to the human.
-5. **No runtime side effects in Round 1.** During Round 1, the CLI validates flags, options, and
-   arguments, but execution is intentionally inactive ("Investigation teams are not available yet").
-   No tasks, worktrees, git branches, or systemd units are created for valid `--investigation` runs.
+5. **Runtime execution in Round 2 (Phase 1).** Phase 1 execution is implemented via an internal
+   runner (`_investigation-team`). The public CLI entry point (`agent run --investigation`) remains
+   inactive ("not available yet") until the complete end-to-end workflow (merger, PR, review, hand-off)
+   is delivered in Round 3, satisfying the core principle that a complete run produces a PR on GitHub.
+   During Phase 1, member runs execute concurrently on dedicated branches (`agents/<investigator>/<timestamp>`)
+   created from the frozen base commit, with prompt `prompts/inv-work.md`, strict MCP isolation,
+   and capacity overlay tracking.
 
 ## CLI invocation and validation
 
@@ -179,10 +183,25 @@ The command must be rejected immediately before any background task or worktree 
 ## Task metadata and data model (Planned)
 
 > [!NOTE]
-> Metadata fields below are planned for subsequent runtime rounds (Rounds 2–4). No schema or
-> state modifications are persisted in Round 1.
+> Round 2 implements Phase 1 task metadata and versioned storage (`phase1.json` v1). Fields for
+> subsequent phases (Phases 2–4) are planned for Rounds 3 and 4.
 
-Planned attributes stored in the orchestration task's `meta.env` and bus state:
+Task attributes stored in the orchestration task's `meta.env` and bus state for Phase 1:
+- `KIND=investigation_team`: Identifies the task as an investigation orchestration unit.
+- `AGENT=investigation-team`: Coordinator identity for the orchestration unit.
+- `INVESTIGATION_TEAM`: Comma-separated list of member investigators (e.g. `inv-astra,inv-gemini-argon`).
+- `INVESTIGATION_BASE_SHA`: Immutable base commit SHA from which all member branches branch.
+- `task.md`: Original topic text, using the existing task file convention for multiline input.
+- `INVESTIGATION_TOPIC_SLUG`: Sanitized topic string used for document paths and prompt placeholder `{{INVESTIGATION_TOPIC_SLUG}}`.
+- `INVESTIGATION_PHASE`: Numeric phase identifier (`1` during Phase 1).
+- `INVESTIGATION_PHASE1_TASKS`: Comma-separated list of child Phase 1 task IDs.
+- `phase1.json` (version 1): Structured JSON record storing Phase 1 member outcomes:
+  `{"version":1,"members":[{"agent":"...","task":"...","branch":"...","status":"...","commit":"..."}]}`.
+- Child investigator tasks: `KIND=investigation`, `INVESTIGATION_TEAM=<coordinator-task-id>` (no bus `TEAM`),
+  `BASE=<frozen-base-sha>`, prompt `prompts/inv-work.md`, no agentbus MCP tools.
+- `AUTO_STAGE`: Human-readable stage displayed on the dashboard (e.g. `phase 1: N investigators working (...)`).
+
+Attributes planned for subsequent runtime phases (Rounds 3–4):
 - `KIND=investigation_team`: Identifies the task as an investigation orchestration unit.
 - `INVESTIGATION_TEAM`: Comma-separated list of member investigators (e.g. `inv-astra,inv-gemini-argon`).
 - `INVESTIGATION_BASE_SHA`: Immutable base commit SHA from which all member branches branch.
@@ -226,16 +245,17 @@ When implementing future rounds, existing components have explicit boundaries:
 
 ## Four-round implementation roadmap
 
-1. **Round 1 (Current):**
+1. **Round 1 (Completed):**
    - Architectural design document (`docs/investigation-teams.md`).
    - `--investigation` CLI parsing and comprehensive refusal validations (`bin/agent`).
    - Explicit inactive execution stub ("Investigation teams are not available yet").
    - Help text and status entry in `README.md`.
-2. **Round 2 (Phase 1):**
+2. **Round 2 (Current — Phase 1):**
    - Concurrent launch of investigator runs on dedicated branches (`agents/<investigator>/<timestamp>`).
    - Prompt `prompts/inv-work.md` ensuring strict isolation and documentation conventions.
+   - Internal runner `_investigation-team` with public CLI entry remaining inactive.
    - Capacity tracking and dashboard stage updates.
-   - Phase 1 completion tracking and failure handling.
+   - Phase 1 completion tracking, versioned recording (`phase1.json`), and failure handling.
 3. **Round 3 (Phases 2–4):**
    - Uniform seeded selection of merger from DONE members.
    - Integration prompt `prompts/inv-merge.md`.

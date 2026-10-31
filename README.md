@@ -166,11 +166,12 @@ providers and accounts:
 
 ### Teams
 
-**Investigation teams (round 1/4):** `agent run --investigation --team "inv-a, inv-b" "topic"`
-validates investigator names and incompatible options, then reports that execution is not available yet.
-No investigation tasks start in this round. Names must come from `INVESTIGATORS_TYPE`; `-f topic.md` is also
-supported. See the [investigation-team design](docs/investigation-teams.md) for the planned independent work,
-merge, review, and human decision phases.
+**Investigation teams (round 2/4):** `agent run --investigation --team "inv-a, inv-b" "topic"`
+validates investigator names and options. Phase 1 runs investigators independently on isolated branches
+from an immutable base commit, saving non-code findings to `docs/investigations/<topic-slug>/<investigator>.md`
+and code following TDD. The public CLI entry point remains inactive until the end-to-end workflow (merger,
+PR, and review) is completed in Round 3; internal phase-1 execution is managed via `_investigation-team`.
+See the [investigation-team design](docs/investigation-teams.md) for details.
 
 `agent run --team a,b,c "task"` gives one task to several agents, each on its own branch:
 
