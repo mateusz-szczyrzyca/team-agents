@@ -186,7 +186,7 @@ The command must be rejected immediately before any background task or worktree 
 > Round 2 implements Phase 1 task metadata and versioned storage (`phase1.json` v1). Fields for
 > subsequent phases (Phases 2–4) are planned for Rounds 3 and 4.
 
-Task attributes stored in the orchestration task's `meta.env` and bus state for Phase 1:
+Task attributes stored in the orchestration task's `meta.env` and task files (no bus state changes) for Phase 1:
 - `KIND=investigation_team`: Identifies the task as an investigation orchestration unit.
 - `AGENT=investigation-team`: Coordinator identity for the orchestration unit.
 - `INVESTIGATION_TEAM`: Comma-separated list of member investigators (e.g. `inv-astra,inv-gemini-argon`).
@@ -208,8 +208,7 @@ Attributes planned for subsequent runtime phases (Rounds 3–4):
 - `task.md`: Original topic text, using the existing task file convention for multiline input.
 - `INVESTIGATION_TOPIC_SLUG`: Sanitized topic string used for document paths.
 - `INVESTIGATION_PHASE`: Numeric phase identifier (`1`, `2`, `3`, `4`).
-- `INVESTIGATION_PHASE1_TASKS`: Mapping of investigator names to their Phase 1 task IDs, branches,
-  published result commits, and statuses.
+- `INVESTIGATION_PHASE1_TASKS`: Comma-separated list of child Phase 1 task IDs (detailed per-member outcomes stored in `phase1.json`).
 - `INVESTIGATION_MERGER`: Name of the chosen merger.
 - `INVESTIGATION_REVIEWER`: Name of the chosen reviewer.
 - Merge/review task and branch references: Keep later phase runs separate from the Phase 1 results.
