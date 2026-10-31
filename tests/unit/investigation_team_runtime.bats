@@ -20,6 +20,15 @@ launch_phase_one() {
   [ -n "$PHASE_ONE" ]
 }
 
+# path_absent rejects a complete path or a file beneath it, allowing a sibling with a longer name.
+path_absent() {
+  python3 - "$1" "$2" <<'MATCH_PATH'
+import re
+import sys
+sys.exit(1 if re.search(re.escape(sys.argv[2]) + r"(?![\w.-])", sys.argv[1]) else 0)
+MATCH_PATH
+}
+
 # recorded_status checks the immutable terminal snapshot of one phase-one member.
 recorded_status() {
   jq -r --arg a "$2" '.members[] | select(.agent == $a) | .status' "$AGENTS_HOME/tasks/$1/phase1.json"
@@ -63,7 +72,7 @@ recorded_status() {
     [ "$(jq '.mcpServers | length' "$cfg")" -eq 0 ]
     prompt=$(cat "$HOME/independent-$a.prompt")
     [[ $prompt == *"$(field "$child" BRANCH)"* ]]
-    [[ $prompt != *"$(field "$peer" WORKTREE)"* ]]
+    path_absent "$prompt" "$(field "$peer" WORKTREE)"
     [[ $prompt != *"$(field "$peer" BRANCH)"* ]]
     [[ $prompt != *'read_messages'* && $prompt != *'claim_lead'* ]]
     [[ $prompt != *'{{'* ]]
@@ -109,7 +118,7 @@ recorded_status() {
   launch_phase_one
   local first=$PHASE_ONE
   wait_status "$(task_of inv)" 'done'
-  wait_grep 'phase 1:' "$AGENTS_HOME/tasks/$first/meta.env"
+  [[ $(field "$first" AUTO_STAGE) == 'phase 1:'* ]]
   launch_phase_one
   [ "$(field "$PHASE_ONE" AUTO_STAGE)" = 'waiting: capacity queue' ]
   [ "$(task_of inv)" = "$(field "$first" INVESTIGATION_PHASE1_TASKS | cut -d, -f1)" ]
