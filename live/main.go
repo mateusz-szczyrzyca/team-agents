@@ -45,6 +45,7 @@ func main() {
 	flag.StringVar(&cfg.home, "home", filepath.Join(home, "agents"), "AGENTS_HOME directory")
 	flag.StringVar(&cfg.busDir, "bus", "", "bus directory (default <home>/bus)")
 	flag.StringVar(&cfg.agentCmd, "agent", filepath.Join(home, ".local", "bin", "agent"), "path to the agent script")
+	flag.BoolVar(&cfg.remoteControls, "remote-controls", false, "enable lead-side remote answers and kicks")
 	remindMin := flag.Float64("remind", 1, "remind every N minutes who is still working (0 = off)")
 	flag.IntVar(&cfg.queueMax, "queue-max", 3, "investigation queue limit")
 	flag.IntVar(&InvSlots, "inv-slots", 1, "number of investigators")

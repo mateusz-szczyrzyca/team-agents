@@ -249,6 +249,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modeConfirmStop:
 			m.mode = modeNormal
 			if strings.ToLower(msg.String()) == "t" || msg.String() == "y" {
+				if task := m.snap.All[m.stopping]; m.cfg.remoteControls && task != nil && (task.Node != "" || task.Kind == "remote-member") {
+					return m, runAgent(m.cfg, "kick", m.stopping, "live")
+				}
 				return m, runAgent(m.cfg, "stop", m.stopping)
 			}
 			m.setFlash("cancelled")
@@ -314,11 +317,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.feed.GotoBottom()
 		return m, nil
 	case "a":
-		if t == nil || t.Status != "waiting" {
+		target := t
+		if m.cfg.remoteControls && target != nil && target.Kind == "remote-member" {
+			if mirror := resolveProxyMirror(m.snap, target); mirror != nil && mirror.Status == "waiting" {
+				target = mirror
+			}
+		}
+		if target == nil || target.Status != "waiting" {
 			m.setFlash("this task is not waiting for your answers")
 			return m, nil
 		}
-		if t.Node != "" {
+		if target.Node != "" && !m.cfg.remoteControls {
 			m.setFlash("mirrored task cannot be answered from lead")
 			return m, nil
 		}
@@ -334,7 +343,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setFlash("this task is not running")
 			return m, nil
 		}
-		if t.Node != "" {
+		if t.Node != "" && !m.cfg.remoteControls {
 			m.setFlash("mirrored task cannot be stopped from lead")
 			return m, nil
 		}
@@ -453,10 +462,20 @@ func (m *model) detail(t *Task) string {
 		return stDim.Render(p) + "\n\n" + wrap.Render(c)
 	case 2: // questions
 		var rounds []int
-		if t.Node != "" {
-			paths, err := filepath.Glob(filepath.Join(t.Dir, "questions-*.md"))
+		dir := t.Dir
+		isMirror := t.Node != ""
+		var mirror *Task // supplies the question files and waiting state of a retained proxy
+		if !isMirror && t.Kind == "remote-member" && m.cfg.remoteControls {
+			mirror = resolveProxyMirror(m.snap, t)
+			if mirror != nil {
+				dir = mirror.Dir
+				isMirror = true
+			}
+		}
+		if isMirror {
+			paths, err := filepath.Glob(filepath.Join(dir, "questions-*.md"))
 			if err != nil {
-				warnOnce("mirror-questions:"+t.Dir, LogTasksListFailed, storageErr(err, "cannot list mirrored questions"), "dir", t.Dir)
+				warnOnce("mirror-questions:"+dir, LogTasksListFailed, storageErr(err, "cannot list mirrored questions"), "dir", dir)
 				return stDim.Render("(cannot list mirrored questions)")
 			}
 			for _, path := range paths {
@@ -476,10 +495,18 @@ func (m *model) detail(t *Task) string {
 			return stDim.Render("(the agent asked no questions)")
 		}
 		var b strings.Builder
+		effectiveRound := t.Round
+		effectiveStatus := t.Status
+		if mirror != nil {
+			effectiveStatus = mirror.Status
+			if len(rounds) > 0 {
+				effectiveRound = rounds[0]
+			}
+		}
 		for _, r := range rounds {
-			p := filepath.Join(t.Dir, fmt.Sprintf("questions-%d.md", r))
+			p := filepath.Join(dir, fmt.Sprintf("questions-%d.md", r))
 			label := fmt.Sprintf("— round %d", r)
-			if t.Node == "" && r == t.Round && t.Status == "waiting" {
+			if r == effectiveRound && effectiveStatus == "waiting" {
 				label += " (WAITING FOR ANSWERS — key a)"
 			}
 			b.WriteString(stSection.Render(label) + "  " + stDim.Render(p) + "\n\n" + wrap.Render(readFile(p)) + "\n\n")
