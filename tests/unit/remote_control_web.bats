@@ -39,7 +39,7 @@ setup_file() {
   curl -fsS --noproxy '*' "$base/questions/$tid@node2" > "$HOME/form.html"
   grep -q 'Which board?' "$HOME/form.html"
   curl -fsS --noproxy '*' -H 'HX-Request: true' -H "Origin: $base" \
-    --data 'action=send&c0=ok' "$base/questions/$tid@node2" > "$HOME/sent.html"
+    --data 'action=send&round=1&c0=ok' "$base/questions/$tid@node2" > "$HOME/sent.html"
   grep -q 'Answers queued' "$HOME/sent.html"
   wait_job j-web-answer "done" 30
   [ "$(grep -c 'solo resume done' "$NODE/calls.log")" -eq 1 ]

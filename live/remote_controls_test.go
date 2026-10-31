@@ -40,7 +40,7 @@ func TestRemoteControlWebAnswers(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(body, "Proceed?") {
 		t.Fatalf("lead answer form: status=%d body=%.200s", code, body)
 	}
-	code, body = post(t, ts, "/questions/remote@node", url.Values{"action": {"send"}, "c0": {"ok"}})
+	code, body = post(t, ts, "/questions/remote@node", url.Values{"action": {"send"}, "round": {"2"}, "c0": {"ok"}})
 	if code != http.StatusOK || !strings.Contains(strings.ToLower(body), "queued") {
 		t.Fatalf("lead answer submission: status=%d body=%.200s", code, body)
 	}
