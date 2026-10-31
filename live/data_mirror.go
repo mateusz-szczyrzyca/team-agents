@@ -35,24 +35,6 @@ func isLocalRemoteMemberProxy(t *Task, jobID, team string) bool {
 	return team == "" || t.Team == team
 }
 
-// resolveProxyMirror finds the unambiguous mirrored task for proxy t, or nil if none or ambiguous.
-func resolveProxyMirror(snap *Snapshot, t *Task) *Task {
-	if snap == nil || t == nil || t.Node != "" || t.Kind != "remote-member" {
-		return nil
-	}
-	var mirror *Task // retain one candidate; a second makes the identity ambiguous
-	for _, candidate := range snap.All {
-		if candidate.Node == "" || !isLocalRemoteMemberProxy(t, candidate.JobID, candidate.Team) {
-			continue
-		}
-		if mirror != nil {
-			return nil
-		}
-		mirror = candidate
-	}
-	return mirror
-}
-
 // localRemoteMemberProxies indexes local remote-member proxy tasks in s by their JobID.
 func localRemoteMemberProxies(s *Snapshot) map[string][]*Task {
 	if s == nil {

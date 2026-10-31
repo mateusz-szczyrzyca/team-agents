@@ -4710,7 +4710,6 @@ cmd_live() {
     shift
   done
   [[ -x $AGENTLIVE_BIN ]] || die "$AGENTLIVE_BIN not found — run ./install.sh again"
-  [[ -z $LEAD_LISTEN ]] || feed+=(--remote-controls)
   exec "$AGENTLIVE_BIN" --home "$AGENTS_HOME" --bus "$BUS_DIR" --agent "$SELF" \
     --remind "$remind" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" "${feed[@]}"
 }
@@ -5075,12 +5074,10 @@ cmd_kick() { # <task> [from] [expected-run] — cuts only the intended run short
 
 cmd_web() { # runs the web interface in the foreground (agentweb.service runs this)
   [[ -x $AGENTLIVE_BIN ]] || die "$AGENTLIVE_BIN not found — run ./install.sh again"
-  local controls=()
-  [[ -z $LEAD_LISTEN ]] || controls+=(--remote-controls)
   exec "$AGENTLIVE_BIN" web --home "$AGENTS_HOME" --bus "$BUS_DIR" --agent "$SELF" \
     --listen "$AGENT_WEB_LISTEN" --users "$AGENT_WEB_USERS" --devices "$AGENT_WEB_DEVICES" \
     --tailscale "$(command -v tailscale || echo tailscale)" \
-    --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" --node-ttl "$NODE_TTL_SEC" "${controls[@]}"
+    --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" --node-ttl "$NODE_TTL_SEC"
 }
 
 cmd_lead() { # runs the lead's listener in the foreground (agentlead.service runs this); needs LEAD_LISTEN

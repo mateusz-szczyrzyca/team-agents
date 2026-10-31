@@ -30,7 +30,6 @@ type Task struct {
 	Agent       string    // agent name
 	Node        string    // remote node name; empty for a local task
 	NodeOffline bool      // the remote heartbeat expired; status remains the last known state
-	CanControl  bool      // this frontend is configured to queue controls on the lead
 	Note        string    // human-visible task note
 	Kind        string    // worker (a normal task) | investigation | helper (a worker request)
 	Type        string    // agent CLI: claude | codex | gemini | opencode
@@ -638,14 +637,8 @@ func (s *Snapshot) QueueLine(queueMax int) string {
 func (s *Snapshot) Waiting() []*Task {
 	var out []*Task
 	for _, t := range s.Tasks {
-		if t.Status == "waiting" && (t.Node == "" || (t.CanControl && t.Round > 0)) {
+		if t.Status == "waiting" && t.Node == "" {
 			out = append(out, t)
-			continue
-		}
-		if t.Node == "" && t.Kind == "remote-member" {
-			if m := resolveProxyMirror(s, t); m != nil && m.Status == "waiting" && (m.CanControl && m.Round > 0) {
-				out = append(out, t)
-			}
 		}
 	}
 	return out

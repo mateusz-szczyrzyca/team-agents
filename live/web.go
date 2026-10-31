@@ -109,7 +109,6 @@ func runWebCmd(args []string) {
 	fs.StringVar(&cfg.home, "home", filepath.Join(home, "agents"), "AGENTS_HOME directory")
 	fs.StringVar(&cfg.busDir, "bus", "", "bus directory (default <home>/bus)")
 	fs.StringVar(&cfg.agentCmd, "agent", filepath.Join(home, ".local", "bin", "agent"), "path to the agent script")
-	fs.BoolVar(&cfg.remoteControls, "remote-controls", false, "enable lead-side remote answers and kicks")
 	fs.StringVar(&cfg.listen, "listen", "127.0.0.1:8787", "loopback address to listen on")
 	users := fs.String("users", "", "Tailscale logins allowed through `tailscale serve` (comma or space separated)")
 	devices := fs.String("devices", "", "tailnet devices allowed through `tailscale serve`: names or tag:… (comma or space separated)")

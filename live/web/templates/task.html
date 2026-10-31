@@ -1,4 +1,4 @@
-{{define "tools"}}{{with .Data}}{{if and (eq .T.Status "waiting") (or (not .T.Node) .T.CanControl)}}<a class="btn primary" href="/questions/{{.T.ID}}">Answer</a>{{end}}{{end}}{{end}}
+{{define "tools"}}{{with .Data}}{{if and (eq .T.Status "waiting") (not .T.Node)}}<a class="btn primary" href="/questions/{{.T.ID}}">Answer</a>{{end}}{{end}}{{end}}
 {{define "content"}}{{with .Data}}
 <div class="task-meta">
   <p class="task-head" id="task-head">{{template "task-head" .Row}}{{if .Paused}} · {{.Paused}}{{end}}</p>
