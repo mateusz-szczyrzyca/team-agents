@@ -29,3 +29,29 @@ act() { jq -nc --arg t "$2" '{ts: "2026-10-31 10:00:00", k: "info", t: $t}' >> "
   [[ $output == *"total"*"19500"*"13000"*"670"*"0.0455"* ]]
   [[ $output != *"999999"* ]]
 }
+
+@test "agent tokens shows a task whose runs reported no usage, instead of leaving it out" {
+  task T2-lead $'ID=T2-lead\nAGENT=lead\nTEAM=T2-team\nKIND=worker\n'
+  act T2-lead 'usage: in 100 (cached 50), out 10'
+  task T2-member $'ID=T2-member\nAGENT=member\nTEAM=T2-team\nKIND=worker\n'
+  act T2-member 'something else'
+  run agent tokens T2-team
+  [ "$status" -eq 0 ]
+  [[ $output == *"T2-member"*"no usage reported"* ]]
+}
+
+@test "agent tokens --runs <task>: per run, its steps (tool calls) and tokens" {
+  task R1 $'ID=R1\nAGENT=codex-1\nTEAM=R-team\nKIND=worker\n'
+  act R1 '▶ run 1 (new)'
+  jq -nc '{ts: "2026-10-31 10:00:01", k: "cmd", t: "make gate"}' >> "$AGENTS_HOME/tasks/R1/activity.jsonl"
+  jq -nc '{ts: "2026-10-31 10:00:02", k: "mcp", t: "read_messages {}"}' >> "$AGENTS_HOME/tasks/R1/activity.jsonl"
+  act R1 'usage: in 100 (cached 50), out 10'
+  act R1 '▶ run 2 (resume)'
+  jq -nc '{ts: "2026-10-31 10:05:01", k: "tool", t: "Read x"}' >> "$AGENTS_HOME/tasks/R1/activity.jsonl"
+  act R1 'usage: in 300 (cached 250), out 30'
+  run agent tokens --runs R1
+  [ "$status" -eq 0 ]
+  echo "$output" >&3
+  [[ $output == *$'\n'*"1"*"2"*"100"*"50"*"10"* ]]
+  [[ $output == *"2"*"1"*"300"*"250"*"30"* ]]
+}
