@@ -70,3 +70,19 @@ act() { jq -nc --arg t "$2" '{ts: "2026-10-31 10:00:00", k: "info", t: $t}' >> "
   [[ $(grep '^1 ' <<< "$output") == *" 150000"* ]]
   [[ $(grep '^2 ' <<< "$output") == *" -"* ]]
 }
+
+@test "codex reports a resumed session's tokens cumulatively: a run's are its difference from the session's run before" {
+  task C1 $'ID=C1\nAGENT=codex-1\nTYPE=codex\nTEAM=C-team\nKIND=worker\n'
+  for r in "1 new 1000 800 10" "2 resume 1500 1200 15" "3 fresh 300 200 3" "4 resume 500 350 5"; do
+    read -r n mode in cached out <<< "$r"
+    act C1 "▶ run $n ($mode)"
+    jq -nc '{ts: "2026-10-31 10:00:01", k: "cmd", t: "ls"}' >> "$AGENTS_HOME/tasks/C1/activity.jsonl"
+    act C1 "usage: in $in (cached $cached), out $out"
+  done
+  run agent tokens --runs C1
+  [ "$status" -eq 0 ]
+  [[ $(grep '^2 ' <<< "$output") == *" 500 "*" 400 "* ]]
+  [[ $(grep '^4 ' <<< "$output") == *" 200 "*" 150 "* ]]
+  run agent tokens C-team
+  [[ $output == *"C1"*" 2000 "*" 1550 "* ]]
+}
