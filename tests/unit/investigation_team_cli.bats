@@ -1,7 +1,6 @@
 #!/usr/bin/env bats
-# Round 1 of investigation teams: `agent run --investigation` is parsed and every refusal is given before anything
-# starts. A valid request is refused in this round as "not available yet" (the entry point stays inactive), and no
-# task, branch or systemd unit is created in any case.
+# Investigation team public starts accept valid requests and reject invalid inputs
+# before creating any task, branch, or systemd unit.
 
 load helpers
 

@@ -154,3 +154,27 @@ META
     [ "$status" -eq 1 ]
   fi
 }
+
+@test "a merger PR targeting the wrong base never reaches checks or review" {
+  pipeline_setup
+  # Intercept only PR discovery; preserve the shared gh fixture and every other action.
+  export WRONG_BASE_GH="$BATS_TEST_DIRNAME/stubs/gh"
+  cat > "$HOME/pipeline-bin/gh" <<'WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ${1:-} == pr && ${2:-} == list ]]; then
+  "$WRONG_BASE_GH" "$@" | jq 'map(.baseRefName = "release")'
+else
+  exec "$WRONG_BASE_GH" "$@"
+fi
+WRAPPER
+  chmod +x "$HOME/pipeline-bin/gh"
+  launch_pipeline inv,inv2
+  wait_status "$PIPELINE_PARENT" '^waiting$' 60
+  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'waits for you: merge failed' ]]
+  [[ -z $(parent_field "$PIPELINE_PARENT" INVESTIGATION_PRECHECK_RUN) ]]
+  [[ $(jq -s '[.[] | select(.phase == "3")] | length' "$HOME/pipeline-calls.jsonl") == 0 ]]
+  [[ $(parent_field "$PIPELINE_PARENT" INVESTIGATION_MERGER_REPLACEMENTS) == 1 ]]
+  run grep -q 'gh pr merge' "$HOME/gh.log"
+  [ "$status" -eq 1 ]
+}

@@ -415,3 +415,64 @@ EOF
   [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
   [ "$(field "$id" AUTO_STAGE)" = "waits for you: phase 1 complete (merge not available yet)" ]
 }
+
+# orphan_role_recovery phase abandoned replacement checks interrupted admission and subsequent investigator reuse.
+orphan_role_recovery() {
+  local phase=$1 abandoned=$2 replacement=$3 base id child successor next
+  configure_three_investigators
+  scenario "{\"$replacement\":{\"new\":\"fail\"},\"$abandoned\":{\"new\":\"hold\"}}"
+  base=$(git -C "$HOME/repo" rev-parse HEAD)
+  id="20261101-00003$phase-investigation-team"
+  child="$id-abandoned"
+  create_parent_task "$id" 'inv,inv2,inv3' "$base"
+  printf '{"version":1,"members":[{"agent":"%s","status":"done","commit":"%s"},{"agent":"%s","status":"done","commit":"%s"}]}\n' \
+    "$abandoned" "$base" "$replacement" "$base" > "$AGENTS_HOME/tasks/$id/phase1.json"
+  mkdir -p "$AGENTS_HOME/tasks/$child"
+  cat > "$AGENTS_HOME/tasks/$child/meta.env" <<META
+ID=$child
+AGENT=$abandoned
+KIND=investigation
+INVESTIGATION_TEAM=$id
+INVESTIGATION_PHASE=$phase
+STATUS=new
+META
+  meta_put "$id" INVESTIGATION_PHASE "$phase"
+  if [[ $phase == 2 ]]; then
+    meta_put "$id" INVESTIGATION_MERGER "$abandoned"
+    meta_put "$id" INVESTIGATION_MERGER_TASK "$child"
+  else
+    meta_put "$id" INVESTIGATION_MERGER inv
+    meta_put "$id" INVESTIGATION_REVIEWER "$abandoned"
+    meta_put "$id" INVESTIGATION_REVIEWER_TASK "$child"
+  fi
+  run agent dispatch
+  [ "$status" -eq 0 ]
+  [ "$(field "$child" STATUS)" = failed ]
+  if [[ $phase == 2 ]]; then successor=$(field "$id" INVESTIGATION_MERGER_TASK)
+  else successor=$(field "$id" INVESTIGATION_REVIEWER_TASK); fi
+  [ "$(field "$successor" AGENT)" = "$replacement" ]
+  # The replacement also fails; the original investigator must remain reusable after handoff.
+  wait_status "$id" waiting 45
+  [ "$(field "$successor" STATUS)" = failed ]
+  [ "$(field "$id" STATUS)" = waiting ]
+  [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
+  next="$id-next"
+  create_parent_task "$next" "$abandoned,$replacement" "$base"
+  meta_put "$next" INVESTIGATION_PHASE 2
+  printf '{"version":1,"members":[{"agent":"%s","status":"done","commit":"%s"}]}\n' \
+    "$abandoned" "$base" > "$AGENTS_HOME/tasks/$next/phase1.json"
+  run agent dispatch
+  [ "$status" -eq 0 ]
+  [ "$(field "$next" INVESTIGATION_MERGER)" = "$abandoned" ]
+  [ -n "$(field "$next" INVESTIGATION_MERGER_TASK)" ]
+  touch "$HOME/release"
+  wait_status "$next" waiting 45
+}
+
+@test "unstarted merger is terminalized before replacement and its capacity is reusable" {
+  orphan_role_recovery 2 inv inv2
+}
+
+@test "unstarted reviewer is terminalized before replacement and its capacity is reusable" {
+  orphan_role_recovery 3 inv2 inv3
+}
