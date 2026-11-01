@@ -26,6 +26,9 @@ configure_three_investigators() {
 create_parent_task() {
   local id=$1 team=$2 base=$3
   local dir="$AGENTS_HOME/tasks/$id"
+  # commit-tree fixtures need an identity independent of the caller's environment.
+  git -C "$HOME/repo" config user.name 'Test'
+  git -C "$HOME/repo" config user.email 'test@example.com'
   mkdir -p "$dir"
   cat > "$dir/meta.env" << EOF
 ID=$id
