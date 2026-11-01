@@ -172,10 +172,13 @@ from an immutable base commit, saving non-code findings to `docs/investigations/
 and code following TDD. The public CLI entry point remains inactive until the end-to-end workflow (merger,
 PR, and review) is completed in Round 3; internal phase-1 execution is managed via `_investigation-team`.
 Phase-one task metadata and `phase1.json` are additive; existing task files and bus state remain readable.
-The cohort holds every member's capacity until all runs end. A quota failure records `QUOTA_UNTIL`
-without retrying that independent run; supervision admits queued cohorts after capacity returns.
-The `independent_run_finished` log event records each child's terminal status; the parent sends one
-completion notification and waits without creating a PR in this round.
+Admission writes the cohort manifest before setting `INVESTIGATION_LEASE`, and recovery reconstructs missing
+manifests (`investigation_manifest_recovered`) or fails unstarted children while live runs retain capacity.
+Completed runs verify publication on origin; transient transport errors retry (`investigation_publication_check_failed`,
+stage `verifying published results`) while holding member done status and lease, and only confirmed missing refs
+fail. A quota failure records `QUOTA_UNTIL` without retrying that run; supervision admits queued cohorts after
+capacity returns. The `independent_run_finished` log event records each child's terminal status; the parent sends
+one completion notification and waits with `no-comment` without creating a PR in this round.
 See the [investigation-team design](docs/investigation-teams.md) for details.
 
 `agent run --team a,b,c "task"` gives one task to several agents, each on its own branch:

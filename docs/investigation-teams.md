@@ -77,7 +77,18 @@ The command must be rejected immediately before any background task or worktree 
 - **Termination:** Each run concludes independently with `STATUS: DONE` or `STATUS: FAILED`.
   A failed run or a run without a published code/findings result does not stop the others. Capture
   the result commit and status before choosing the merger; a bare `DONE` without a result is not success.
-- **Dashboard stage:** `phase 1: N investigators working (A, B, C)`.
+- **Publication verification and retry:** When an investigator finishes `DONE`, the coordinator
+  verifies that the result commit descends from the base, changes code, and is present on `origin`.
+  Transient network or transport failures during verification (`git ls-remote`) do not permanently fail
+  the task: the child retains its `done` status, the snapshot member status is marked `verifying`, the
+  cohort lease is preserved, and verification is retried on subsequent dispatch cycles (logging
+  `investigation_publication_check_failed`). Only a confirmed missing or mismatched ref marks the
+  member failed.
+- **Dashboard stage:** `phase 1: N investigators working (A, B, C)` while runs are in progress,
+  `phase 1: verifying published results (...)` during publication retries, transitioning to
+  `waits for you: phase 1 complete (merge not available yet)` or `waits for you: all phase 1 runs failed`.
+  Phase 1 completion sets `no-comment` on `auto_stage`, preventing inheritance of caller `PR_URL` or
+  comments on unrelated PRs.
 
 ### Phase 2 — The merge
 
@@ -196,8 +207,14 @@ Task attributes stored in the orchestration task's `meta.env` and task files (no
 - `INVESTIGATION_PHASE`: Numeric phase identifier (`1` during Phase 1).
 - `INVESTIGATION_PHASE1_TASKS`: Comma-separated list of child Phase 1 task IDs.
 - `INVESTIGATION_LEASE`: `1` while the whole cohort owns its investigators; cleared only after every child ends.
+  Admission writes the initial `phase1.json` manifest skeleton with allocated task IDs before setting
+  `INVESTIGATION_LEASE 1` to prevent orphaned lease leaks if admission is interrupted.
 - `phase1.json` (version 1): Structured JSON record storing Phase 1 member outcomes:
   `{"version":1,"members":[{"agent":"...","task":"...","branch":"...","status":"...","commit":"..."}]}`.
+  During recovery or periodic supervision, unstarted children (status `new` without an active runner unit)
+  fail rather than hanging, while live running children hold capacity. If a legacy leased parent is
+  encountered without a manifest, `investigation_manifest_recovered` logs reconstruction from parent-listed
+  task IDs and child metadata, clearing orphaned leases if no children are running.
 - Child investigator tasks: `KIND=investigation`, `INVESTIGATION_TEAM=<coordinator-task-id>` (no bus `TEAM`),
   `BASE=<frozen-base-sha>`, prompt `prompts/inv-work.md`, no agentbus MCP tools.
 - `AUTO_STAGE`: Human-readable stage displayed on the dashboard (e.g. `phase 1: N investigators working (...)`).
