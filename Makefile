@@ -17,7 +17,7 @@ SHELL_SCRIPTS += tests/unit/remote_control_web.bats
 SHELL_SCRIPTS += tests/unit/remote_answer_round.bats tests/unit/remote_questions_atomic.bats \
 	tests/unit/remote_questions_preparation_retry.bats
 SHELL_SCRIPTS += tests/unit/handover_failed.bats tests/unit/prompt_file.bats tests/unit/review_byline.bats tests/unit/tokens.bats \
-	tests/unit/context_hygiene.bats tests/unit/fresh_session.bats tests/unit/review_pair_random.bats tests/unit/resume_members.bats tests/unit/prompt_checkpoints.bats tests/unit/long_run_cut.bats tests/unit/round_only.bats
+	tests/unit/context_hygiene.bats tests/unit/fresh_session.bats tests/unit/review_pair_random.bats tests/unit/resume_members.bats tests/unit/prompt_checkpoints.bats tests/unit/long_run_cut.bats tests/unit/round_only.bats tests/unit/fresh_relative.bats tests/unit/coordination.bats
 SHELL_SCRIPTS += tests/unit/remote_control_notifications.bats
 SHELL_SCRIPTS += tests/unit/lint_shell_memory.bats tests/unit/remote_control_review.bats \
 	tests/unit/handover_failed.bats tests/unit/prompt_file.bats
