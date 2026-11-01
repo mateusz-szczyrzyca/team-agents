@@ -20,6 +20,8 @@ configure_investigators() {
   bash -c 'source "$1"; [[ $KIND == investigation_team && $INVESTIGATION_TEAM == "$2" && $INVESTIGATION_PIPELINE == 1 ]]' \
     bash "$AGENTS_HOME/tasks/$parent/meta.env" "inv,inv2"
   [[ $(cat "$AGENTS_HOME/tasks/$parent/task.md") == "$expected" ]]
+  # Let independent child runners finish before Bats removes their temporary home.
+  wait_status "$parent" waiting
 }
 
 @test "stdin stream read failure fails before creating investigation team parent task" {
