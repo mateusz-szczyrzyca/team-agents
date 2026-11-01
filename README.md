@@ -965,6 +965,9 @@ local task or a job's is resumed at once; a remote team member waits for its lea
 `AGENT_RESTART_MAX` (2) times fails with the reason — so a machine that keeps restarting under a heavy task (an
 overheating Raspberry Pi, say) does not loop.
 
+For an independent investigation-team child, exhausting this limit records the child's failure. Once all its
+children have ended, the cohort finishes in the same supervision pass; its parent reports the cohort outcome.
+
 On the lead, a remote member whose node has been away longer than `AGENT_RESTART_GRACE_MIN` (10) minutes is put
 out of its team like a failed member: its board items go back to the board, the others are told. When its node
 comes back the lead takes it back: within the grace it is told its items are still its own; after being put

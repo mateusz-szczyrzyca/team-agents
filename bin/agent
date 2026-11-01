@@ -5308,7 +5308,9 @@ restart_interrupted() { # id — a run its machine's restart interrupted: the ta
       try team_state_failed bus team-set --dir "$BUS_DIR" --team "$(task_field "$id" TEAM)" --agent "$(task_field "$id" AGENT)" --state done >/dev/null
       member_out "$id" "$note"
     fi
-    notify "$id" failed "" "$note"
+    if ! is_independent_investigation "$id"; then
+      notify "$id" failed "" "$note"
+    fi
     return 0
   fi
   meta_set "$id" STATUS interrupted
