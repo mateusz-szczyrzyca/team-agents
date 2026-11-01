@@ -184,9 +184,10 @@ capacity returns. The `independent_run_finished` log event records each child's 
 (invoked via `_investigation-team` without `INVESTIGATION_PIPELINE=1`), the parent sends one completion notification
 and waits with `no-comment` without creating a PR. For full investigation pipelines (`INVESTIGATION_PIPELINE=1`),
 execution advances to Phase 2.
-Phase 2 selects a merger uniformly at random (seeded by non-negative decimal integer `AGENT_INVESTIGATION_SEED`, snapshotted into parent `INVESTIGATION_SEED` at team creation)
+Phase 2 selects a merger uniformly at random (seeded by non-negative decimal integer `AGENT_INVESTIGATION_SEED`, snapshotted into parent `INVESTIGATION_SEED` at team creation; an invalid seed or selection failure immediately hands off to the human as failed, releasing capacity leases)
 among investigators that finished `DONE`; the merger reconciles results using `prompts/inv-merge.md`, pushes
 its branch, and opens a pull request detailing per-investigator merge rationale.
+The PR must target the requested base branch before checks or review can start.
 The opened PR undergoes automated prechecks (`cmd__precheck`: gate, round tests, PR description conventions);
 check failures allow one bounce overall to the merger with diagnostics (stage `merging: <merger> (fix checks)`).
 A failed merger can be replaced once with another eligible `DONE` investigator. When the bounce and replacement
@@ -197,6 +198,8 @@ Phase 4 releases capacity leases, tracks pending PR comment and notification att
 and waits for human decision without auto-merging (`waits for you: review ready (#<pr-number>)`). A crash before
 recording an attempt can repeat that external action; the existing helpers provide best-effort delivery.
 All task metadata fields and manifests are additive; existing task files and bus state remain backwards-compatible.
+Stopping an investigation team cancels pending handoffs and stops active child tasks and checks before
+releasing its capacity lease. Recovery completes interrupted cleanup without advancing the stopped team.
 Resume on an open PR is planned for Round 4.
 See the [investigation-team design](docs/investigation-teams.md) for details, including the [newly logged events](docs/investigation-teams.md#newly-logged-events) and recovery contracts.
 

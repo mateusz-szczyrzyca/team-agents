@@ -49,6 +49,8 @@ and open (or update) a pull request on GitHub.
    - Preserve test-first history (do NOT squash RED/GREEN commit progressions).
    - Commit and push your changes to `origin {{BRANCH}}`.
 4. **Pull Request lifecycle (PR then precheck):**
+   - Only the human may merge or close the PR. Do NOT merge or close it, enable auto-merge,
+     or push to `{{INVESTIGATION_TARGET_BRANCH}}`; push only your assigned branch.
    - Opening: Open a pull request using `gh pr create --base {{INVESTIGATION_TARGET_BRANCH}} --head {{BRANCH}}`.
    - Bounce on failed prechecks: If your task is resumed with `# Checks to fix` appended to `task.md`,
      address the precheck issues, push fixes, and update the existing PR description or title with
@@ -57,6 +59,10 @@ and open (or update) a pull request on GitHub.
      - What was taken (with links to relevant commit SHAs).
      - What was dropped and why ("duplicate of X's ...", "superseded by Y's ...").
      - Any absent or failed results, documented factually.
+   - End the PR description with this attribution block exactly:
+
+{{ATTRIBUTION_BLOCK}}
+
 5. **Completion:**
    - When the PR is opened (or updated on bounce) and pushed, end your turn with:
      `STATUS: DONE`

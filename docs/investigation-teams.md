@@ -182,7 +182,9 @@ The command must be rejected immediately before any background task or worktree 
    `INVESTIGATION_SEED` is defined, selections use a deterministic pseudo-random generator seeded with
    this value, ensuring fully reproducible test runs. The seed must be a non-negative decimal integer
    matching `^[0-9]+$`. If non-decimal characters are present, a warning `investigation_seed_invalid` is
-   logged; if PRNG derivation fails, `investigation_seed_failed` is logged.
+   logged; if PRNG derivation fails, `investigation_seed_failed` is logged. A seed validation or selection
+   failure triggers an immediate failure handoff to the human (`waits for you: merge failed` or
+   `waits for you: review failed`), releasing capacity leases rather than misclassifying the team into the capacity queue.
 3. **Entropy:** When unset, cryptographically secure pseudo-random entropy (`/dev/urandom`) is used
    for unbiased selection. If reading random bytes fails, `investigation_random_failed` is logged.
 
@@ -205,6 +207,10 @@ The command must be rejected immediately before any background task or worktree 
      for an investigator to become free.
    - Immediate escalation to human waiting occurs only if no untried eligible candidate exists or
      if a replacement has already failed.
+4. **Cancellation and stop lifecycle:** When an investigation team is stopped (`agent stop <id>` or `agent stop --running`), pending handoffs are cancelled and active owned child tasks and prechecks are stopped before its capacity lease is released. Subsequent supervision ticks skip the stopped team; interrupted cleanup is retried outside the dispatch lock.
+
+An interrupted merger or reviewer admission marks its unstarted child `failed` before replacement,
+so the child cannot retain investigator capacity after the parent releases its lease.
 
 ## Failure handling and replacement matrix
 
@@ -213,7 +219,7 @@ The command must be rejected immediately before any background task or worktree 
 | Phase 1 partial failure | At least one investigator ends `DONE` | Other runs proceed normally; failed run excluded from merger selection | `phase 1: N investigators working (...)` |
 | Phase 1 total failure | Zero investigators end `DONE` | Skip merge and PR; notify human and wait | `waits for you: all phase 1 runs failed` |
 | Phase 2 precheck failure | Merger's PR fails `cmd__precheck` | Bounced back to merger once (`INVESTIGATION_MERGE_RETRIES=1`) with failure log appended to `task.md` | `merging: <merger> (fix checks)` |
-| Phase 2 merger abort | Merger crashes, fails, or cannot start | Replaced once (`INVESTIGATION_MERGER_REPLACEMENTS=1`) by another eligible `DONE` investigator; if none remain, wait for human | `merging: <merger-2>` or `waits for you: merge failed` |
+| Phase 2 merger abort | Merger crashes, fails, cannot start, or opens a PR against the wrong base | Replaced once (`INVESTIGATION_MERGER_REPLACEMENTS=1`) by another eligible `DONE` investigator; if none remain, wait for human | `merging: <merger-2>` or `waits for you: merge failed` |
 | Phase 2 precheck retry failure | Merger fails second precheck | Marks merger failed; triggers replacement if replacements remain (`INVESTIGATION_MERGER_REPLACEMENTS=1`); hands off to human if replacements exhausted | `merging: <merger-2>` or `waits for you: merge failed` |
 | Phase 3 review failure | Reviewer crashes, fails, or yields no explicit verdict | Replaced once (`INVESTIGATION_REVIEW_RETRIES=1`) by another eligible team member (excluding merger); if none remain, wait for human | `review: <reviewer-2> (#<pr-number>)` or `waits for you: review failed` |
 | Candidate temporarily busy | Candidate in `QUOTA_UNTIL` / queue | Pick another free candidate; queue if all eligible candidates are temporarily paused | `waiting: capacity queue` |

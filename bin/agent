@@ -1569,7 +1569,11 @@ cmd__precheck() { # coordinator task — once its team's members have settled: t
   # round goes back to the team
   local id=$1
   if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
-    if review_precheck "$id"; then meta_set "$id" INVESTIGATION_PRECHECK passed
+    [[ $(task_field "$id" STATUS) != stopped && ! -f $TASKS/$id/stop-requested ]] || return 0
+    local check_passed=0
+    if review_precheck "$id"; then check_passed=1; fi
+    [[ $(task_field "$id" STATUS) != stopped && ! -f $TASKS/$id/stop-requested ]] || return 0
+    if ((check_passed)); then meta_set "$id" INVESTIGATION_PRECHECK passed
     else meta_set "$id" INVESTIGATION_PRECHECK failed; fi
     dispatch
     return
@@ -3218,6 +3222,7 @@ investigation_phase1_recover() {
 # The caller owns dispatch.lock; results are task files, never bus investigations or peer messages.
 investigation_team_tick() {
   local parent=$1 member child state agent members='[]' active=0 successful=0 verifying=0 working="" checking="" stage base note commit rc
+  [[ $(task_field "$parent" STATUS) != stopped && ! -f $TASKS/$parent/stop-requested ]] || return 0
   if [[ $(investigation_field "$parent" INVESTIGATION_PIPELINE) == 1 && $(investigation_field "$parent" INVESTIGATION_PHASE) != 1 ]]; then
     investigation_pipeline_tick "$parent"
     return
@@ -3392,7 +3397,11 @@ $text"
 investigation_phase_choose() {
   local parent=$1 phase=$2
   if ! investigation_phase_pick "$parent" "$phase"; then
-    auto_stage "$parent" 'waiting: capacity queue'
+    if [[ $phase == 2 ]]; then
+      investigation_handoff "$parent" 'waits for you: merge failed' failed
+    else
+      investigation_handoff "$parent" 'waits for you: review failed' failed
+    fi
     return
   fi
   if [[ -n $INVESTIGATION_PICK ]]; then
@@ -3428,7 +3437,7 @@ investigation_phase_failed() {
 
 # investigation_pipeline_tick parent observes terminal independent runs and advances phases without automatic merging.
 investigation_pipeline_tick() {
-  local parent=$1 phase child state rc root branch prs url number check retries verdict text unit check_run
+  local parent=$1 phase child state rc root branch prs url number check retries verdict text unit check_run expected_base
   phase=$(investigation_field "$parent" INVESTIGATION_PHASE)
   if [[ $phase == 4 ]]; then
     investigation_handoff "$parent" "$(investigation_field "$parent" INVESTIGATION_HANDOFF_STAGE)" "$(investigation_field "$parent" INVESTIGATION_HANDOFF_RESULT)"
@@ -3442,6 +3451,10 @@ investigation_pipeline_tick() {
   case $state in
     starting|running|sleeping|waiting|paused|investigating|interrupted) return ;;
     done) ;;
+    new)
+      # Dispatch owns admission: this recorded child never reached its runner.
+      meta_set "$child" STATUS failed
+      investigation_phase_failed "$parent" "$phase"; return ;;
     *) investigation_phase_failed "$parent" "$phase"; return ;;
   esac
   if [[ $phase == 3 ]]; then
@@ -3494,10 +3507,12 @@ investigation_pipeline_tick() {
     investigation_phase_failed "$parent" 2; return
   fi
   root=$(task_field "$parent" REPO_ROOT); branch=$(task_field "$child" BRANCH)
-  if ! prs=$(trusted_prs "$root" "$branch" open 'url,number'); then
+  if ! prs=$(trusted_prs "$root" "$branch" open 'url,number,baseRefName'); then
     log_warn investigation_pr_lookup_failed "task=$parent" "child=$child"
     return
   fi
+  expected_base=$(task_field "$child" BASE)
+  prs=$(jq --arg base "$expected_base" '[.[] | select(.baseRefName == $base)]' <<< "$prs")
   url=$(jq -r '.[0].url // empty' <<< "$prs"); number=$(jq -r '.[0].number // empty' <<< "$prs")
   if [[ -z $url || -z $number ]]; then investigation_phase_failed "$parent" 2; return; fi
   meta_set "$parent" INVESTIGATION_PR "$url"
@@ -3653,13 +3668,86 @@ investigation_phase_pick() {
   INVESTIGATION_PICK=${available[idx]}
 }
 
-# investigation_teams_tick runs under dispatch.lock and finalizes each active independent cohort.
-investigation_teams_tick() {
-  local m parent
+# investigation_team_stop parent cancels owned work outside dispatch.lock and releases its lease last.
+investigation_team_stop() (
+  local parent=$1 child crun cst file precheck_unit stop_fd lock_rc=0
+  exec {stop_fd}>"$TASKS/$parent/stop.lock"
+  # A stopped child's exit handler dispatches again; the outer cleanup owns cancellation.
+  if flock -n "$stop_fd"; then lock_rc=0; else lock_rc=$?; fi
+  case $lock_rc in
+    0) ;;
+    1) return 0 ;; # Contention means another cleanup still owns the lease.
+    *) log_warn dispatch_lock_timeout "lock=$TASKS/$parent/stop.lock" "effect=retry investigation cleanup"; return 0 ;;
+  esac
+  precheck_unit=$(investigation_field "$parent" INVESTIGATION_PRECHECK_UNIT)
+  if [[ -n $precheck_unit ]]; then
+    try unit_stop_failed systemctl --user stop "$precheck_unit.service"
+    meta_set "$parent" INVESTIGATION_PRECHECK stopped
+  fi
+  local -A seen_tasks=()
+  local -a task_list=()
+  if [[ -f $TASKS/$parent/phase1.json ]]; then
+    while IFS= read -r child; do
+      [[ -n $child ]] && task_list+=("$child")
+    done < <(jq_soft investigation_phase_parse -r '.members[]?.task' "$TASKS/$parent/phase1.json")
+  fi
+  child=$(investigation_field "$parent" INVESTIGATION_MERGER_TASK)
+  [[ -n $child ]] && task_list+=("$child")
+  child=$(investigation_field "$parent" INVESTIGATION_REVIEWER_TASK)
+  [[ -n $child ]] && task_list+=("$child")
+  for file in "$TASKS"/*/meta.env; do
+    [[ -f $file ]] || continue
+    child=${file%/meta.env}; child=${child##*/}
+    if [[ $(investigation_field "$child" INVESTIGATION_TEAM) == "$parent" || $(investigation_field "$child" PARENT_TASK) == "$parent" ]]; then
+      task_list+=("$child")
+    fi
+  done
+  for child in "${task_list[@]}"; do
+    [[ -n $child && -z ${seen_tasks[$child]:-} && -f $TASKS/$child/meta.env ]] || continue
+    seen_tasks[$child]=1
+    cst=$(task_field "$child" STATUS)
+    case $cst in
+      new|starting|running|waiting|investigating|sleeping|paused|interrupted)
+        touch "$TASKS/$child/stop-requested"
+        crun=$(task_field "$child" RUN)
+        try unit_stop_failed systemctl --user stop "$(unit_name "$child" "$crun").service"
+        meta_set "$child" STATUS stopped
+        meta_set "$child" FINISHED "$(date -Is)"
+        act "$child" info "■ stopped (investigation team stopped)"
+        log_info task_stopped "task=$child" "parent=$parent"
+        ;;
+    esac
+  done
+  meta_set "$parent" INVESTIGATION_LEASE ""
+  meta_set "$parent" INVESTIGATION_HANDOFF_PENDING ""
+)
+
+# investigation_teams_cleanup cancels terminal cohorts before dispatch takes its global lock.
+investigation_teams_cleanup() {
+  local m parent st
   for m in "$TASKS"/*/meta.env; do
     [[ -f $m ]] || continue
     parent=${m%/meta.env}; parent=${parent##*/}
-    if [[ $(task_field "$parent" KIND) == investigation_team && ( $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ) ]]; then
+    [[ $(task_field "$parent" KIND) == investigation_team ]] || continue
+    st=$(task_field "$parent" STATUS)
+    if [[ $st =~ ^(stopped|done|failed)$ || -f $TASKS/$parent/stop-requested ]]; then
+      if [[ $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ]]; then
+        investigation_team_stop "$parent"
+      fi
+    fi
+  done
+}
+
+# investigation_teams_tick runs under dispatch.lock and finalizes each active independent cohort.
+investigation_teams_tick() {
+  local m parent st
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    parent=${m%/meta.env}; parent=${parent##*/}
+    [[ $(task_field "$parent" KIND) == investigation_team ]] || continue
+    st=$(task_field "$parent" STATUS)
+    if [[ $st =~ ^(stopped|done|failed)$ || -f $TASKS/$parent/stop-requested ]]; then continue; fi
+    if [[ $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ]]; then
       investigation_team_tick "$parent"
     fi
   done
@@ -3668,6 +3756,7 @@ investigation_teams_tick() {
 # investigation_team_admit parent reserves every requested investigator before creating or starting children.
 investigation_team_admit() {
   local parent=$1 names=() roots=() repos=() available=() launchable=() name root repo base stamp text child children="" members='[]' state branch kv
+  [[ $(task_field "$parent" STATUS) != stopped && ! -f $TASKS/$parent/stop-requested ]] || return 0
   # create_task deliberately reads these dynamically scoped arrays, so investigator configuration wins.
   local -A AGENT_TYPE=() AGENT_MODEL=() AGENT_EXTRA_ARGS=()
   IFS=, read -r -a names <<< "$(task_field "$parent" INVESTIGATION_TEAM)"
@@ -3785,6 +3874,7 @@ cmd__investigation_team() {
 
 dispatch() { # starts queued requests on free investigators
   stopping && return 0
+  investigation_teams_cleanup
   (
     exec 9>"$AGENTS_HOME/dispatch.lock"
     flock -w 120 9 || { log_warn dispatch_lock_timeout "lock=$AGENTS_HOME/dispatch.lock" "effect=queued investigations wait for the next dispatch"; exit 0; }
@@ -5544,6 +5634,9 @@ stop_all() { # agent stop --running: stops everything that is active, whatever i
   for d in "${stopped[@]}"; do   # a runner may have overwritten the status while stopping
     id=${d%% *}
     meta_set "$id" STATUS stopped
+    if [[ $(task_field "$id" KIND) == investigation_team ]]; then
+      investigation_team_stop "$id"
+    fi
     act "$id" info "■ stopped (agent stop --running)"
   done
   rm -f "$flag"
@@ -5571,6 +5664,15 @@ cmd_stop() {
   try unit_stop_failed systemctl --user stop "$(unit_name "$id" "$run").service"
   meta_set "$id" STATUS stopped
   meta_set "$id" FINISHED "$(date -Is)"
+  if [[ $(task_field "$id" KIND) == investigation_team ]]; then
+    # Wait for an in-flight admission, then release dispatch.lock before stopping children.
+    (
+      exec 9>"$AGENTS_HOME/dispatch.lock"
+      flock 9
+    )
+    meta_set "$id" STATUS stopped
+    investigation_team_stop "$id"
+  fi
   if [[ -n $team ]]; then
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state done >/dev/null
     if [[ $agent == "$(team_lead "$team")" ]]; then
