@@ -3670,7 +3670,7 @@ investigation_phase_pick() {
 
 # investigation_team_stop parent cancels owned work outside dispatch.lock and releases its lease last.
 investigation_team_stop() (
-  local parent=$1 child crun cst file precheck_unit stop_fd lock_rc=0
+  local parent=$1 child crun cst file precheck_unit stop_fd parent_status lock_rc=0
   exec {stop_fd}>"$TASKS/$parent/stop.lock"
   # A stopped child's exit handler dispatches again; the outer cleanup owns cancellation.
   if flock -n "$stop_fd"; then lock_rc=0; else lock_rc=$?; fi
@@ -3679,6 +3679,15 @@ investigation_team_stop() (
     1) return 0 ;; # Contention means another cleanup still owns the lease.
     *) log_warn dispatch_lock_timeout "lock=$TASKS/$parent/stop.lock" "effect=retry investigation cleanup"; return 0 ;;
   esac
+  parent_status=$(task_field "$parent" STATUS)
+  # Admission can still be creating children; release the barrier before cancelling units and their exit handlers.
+  (
+    exec 9>"$AGENTS_HOME/dispatch.lock"
+    flock 9
+  )
+  # An admission already in flight may have overwritten the terminal status while we waited.
+  if [[ -f $TASKS/$parent/stop-requested ]]; then parent_status=stopped; fi
+  meta_set "$parent" STATUS "$parent_status"
   precheck_unit=$(investigation_field "$parent" INVESTIGATION_PRECHECK_UNIT)
   if [[ -n $precheck_unit ]]; then
     try unit_stop_failed systemctl --user stop "$precheck_unit.service"
@@ -5665,12 +5674,6 @@ cmd_stop() {
   meta_set "$id" STATUS stopped
   meta_set "$id" FINISHED "$(date -Is)"
   if [[ $(task_field "$id" KIND) == investigation_team ]]; then
-    # Wait for an in-flight admission, then release dispatch.lock before stopping children.
-    (
-      exec 9>"$AGENTS_HOME/dispatch.lock"
-      flock 9
-    )
-    meta_set "$id" STATUS stopped
     investigation_team_stop "$id"
   fi
   if [[ -n $team ]]; then
@@ -5774,7 +5777,7 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
     kind=$(task_field "$id" KIND)
     if [[ $kind == investigation_team ]]; then
       # A coordinator has no runner; the timer also retries cohorts after quota expiry without a runner exit.
-      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 ]]; then phase1_pending=1; fi
+      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 || $(investigation_field "$id" INVESTIGATION_LEASE) == 1 ]]; then phase1_pending=1; fi
       continue
     fi
     [[ $st == running || $st == starting ]] || continue

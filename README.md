@@ -198,8 +198,10 @@ Phase 4 releases capacity leases, tracks pending PR comment and notification att
 and waits for human decision without auto-merging (`waits for you: review ready (#<pr-number>)`). A crash before
 recording an attempt can repeat that external action; the existing helpers provide best-effort delivery.
 All task metadata fields and manifests are additive; existing task files and bus state remain backwards-compatible.
-Stopping an investigation team cancels pending handoffs and stops active child tasks and checks before
-releasing its capacity lease. Recovery completes interrupted cleanup without advancing the stopped team.
+Stopping an investigation team (`agent stop <id>` or `agent stop --running`) synchronizes with in-flight
+admission under the dispatch lock, cancels pending handoffs, and stops active child tasks and checks before
+releasing its capacity lease. Supervisor recovery detects stopped leased parents to complete interrupted
+cleanup without advancing the stopped team.
 Resume on an open PR is planned for Round 4.
 See the [investigation-team design](docs/investigation-teams.md) for details, including the [newly logged events](docs/investigation-teams.md#newly-logged-events) and recovery contracts.
 

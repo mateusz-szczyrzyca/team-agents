@@ -207,7 +207,7 @@ The command must be rejected immediately before any background task or worktree 
      for an investigator to become free.
    - Immediate escalation to human waiting occurs only if no untried eligible candidate exists or
      if a replacement has already failed.
-4. **Cancellation and stop lifecycle:** When an investigation team is stopped (`agent stop <id>` or `agent stop --running`), pending handoffs are cancelled and active owned child tasks and prechecks are stopped before its capacity lease is released. Subsequent supervision ticks skip the stopped team; interrupted cleanup is retried outside the dispatch lock.
+4. **Cancellation and stop lifecycle:** When an investigation team is stopped (`agent stop <id>` or `agent stop --running`), stop handling waits for any in-flight cohort admission under `dispatch.lock` before stopping children, cancelling pending handoffs and prechecks, and releasing its capacity lease. If stop is interrupted before cleanup finishes, subsequent supervisor ticks detect the retained lease and trigger dispatch cleanup outside the lock without advancing the stopped team.
 
 An interrupted merger or reviewer admission marks its unstarted child `failed` before replacement,
 so the child cannot retain investigator capacity after the parent releases its lease.
