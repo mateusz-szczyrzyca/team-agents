@@ -878,6 +878,7 @@ with the qualified task ID and a task-view link. Answer through `/questions`, th
 `**ANSWERED**` on the last nonempty line), or `agent answer <task-id>@<node>`. The read-only mirror is never
 edited. Editable copies expire when their task mirrors are removed. The interactive CLI validates all verdicts,
 asks for confirmation, and adds `**ANSWERED**` when you send; declining leaves an editable draft.
+Each editable copy appears atomically with private permissions and complete answer instructions.
 An already marked file retains its explicit send intent and can be queued without another prompt.
 Waiting remote members can also be answered through their retained lead proxy in the terminal or task page.
 Dashboard SSE updates retain the same remote controls and waiting counters as the initial page.
@@ -919,6 +920,7 @@ Remote-control diagnostics use these stable script event names:
 | Events | Meaning |
 |---|---|
 | `remote_questions_start_failed`, `remote_questions_lock_failed`, `remote_questions_retry_failed` | Copy/watch readiness needs retrying. |
+| `remote_questions_cleanup_failed` | A failed copy left a temporary file that could not be removed. |
 | `remote_questions_expired` | The editable copy expired with its mirror. |
 | `remote_answer_queued`, `remote_answer_rejected`, `remote_answer_stale`, `remote_answer_lock_failed` | Lead-side answer queuing result. |
 | `node_answer_applied`, `node_answer_stale`, `node_answer_rejected`, `node_answer_resume_failed` | Node-side answer validation and resume result. |

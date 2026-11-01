@@ -707,17 +707,21 @@ cmd__remote_questions() {
 
 # cmd__remote_questions_ready qualified-id — its subshell owns the readiness lock until copy/watch setup ends.
 cmd__remote_questions_ready() (
-  local id=${1:?} marker
+  local id=${1:?} marker tmp
   remote_question_context "$id" || return 0
   mkdir -p "$REMOTE_DIR"
   exec 7>"$REMOTE_DIR/ready.lock"
   flock -w 30 7 || { log_warn remote_questions_lock_failed "task=$id"; return 1; }
   remote_question_context "$id" || return 0
   if [[ ! -f $REMOTE_FILE ]]; then
-    # Replace the node's local command in the instructions; the mirror itself remains untouched.
-    awk '!/^> Answer every question after /' "$REMOTE_MIRROR/questions-$REMOTE_ROUND.md" > "$REMOTE_FILE"
-    chmod 600 "$REMOTE_FILE"
-    questions_note "$id" "$REMOTE_FILE"
+    # Publish only the complete copy: readers must not see text before its answer instructions.
+    tmp=$(mktemp "$REMOTE_DIR/.questions-$REMOTE_ROUND.XXXXXX") || return 1
+    trap 'try remote_questions_cleanup_failed rm -f -- "$tmp"' EXIT
+    awk '!/^> Answer every question after /' "$REMOTE_MIRROR/questions-$REMOTE_ROUND.md" > "$tmp" || return 1
+    chmod 600 "$tmp" || return 1
+    questions_note "$id" "$tmp" || return 1
+    mv -fT -- "$tmp" "$REMOTE_FILE" || return 1
+    trap - EXIT
   fi
   if ! systemctl --user is-active --quiet "agent-$id-answers-$REMOTE_ROUND.path"; then
     watch_answers "$id" "$REMOTE_FILE"
