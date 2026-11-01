@@ -371,7 +371,8 @@ AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
 AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free)
 AGENT_PROMPT_CHECKPOINTS="${AGENT_PROMPT_CHECKPOINTS:-2}"       # a prompt's newest checkpoints (the rest: their file); 0 all
-AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}" # a run that read more a step is followed by a fresh session (0: never)
+AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}"
+AGENT_FRESH_SESSION_RATIO="${AGENT_FRESH_SESSION_RATIO:-2}"     # …and past this many times the task's own session starts (0: no such check) # a run that read more a step is followed by a fresh session (0: never)
 AGENT_LONG_RUN_STEPS="${AGENT_LONG_RUN_STEPS:-120}"
 AGENT_LONG_RUN_HARD="${AGENT_LONG_RUN_HARD:-200}"           # a team member's run of this many steps is ended by the runner (0: never)           # a team member's run of more tool calls is asked to end (0: never)
 AGENT_PROMPT_ARG_MAX="${AGENT_PROMPT_ARG_MAX:-100000}"           # a longer prompt (bytes) reaches the CLI through a file: Linux takes 128 KiB per argument
@@ -5511,13 +5512,16 @@ remote_member_start() { # proxy-task — grants the remote member on the lead an
   log_info remote_member_started "member=$member" "task=$id" "job=$(task_field "$id" JOB_ID)"
 }
 
-# runs_usage task — per run of the task, from its activity: run steps(tool calls) in cached out cost (tab-separated)
+# runs_usage task — per run of the task, from its activity: run steps(tool calls) in cached out cost mode (tab-separated;
+# mode: new, resume or fresh)
 runs_usage() {
   local id=$1
   jq -rn --arg cli "$(task_field "$id" TYPE)" '
     reduce inputs as $l ({run: 0, rows: {}, prev: {in: 0, cached: 0, out: 0}};
       ($l.t // "") as $t
-      | if $l.k == "info" and ($t | test("^▶ run [0-9]+")) then .run = ($t | capture("^▶ run (?<n>[0-9]+)").n | tonumber)
+      | if $l.k == "info" and ($t | test("^▶ run [0-9]+")) then
+          ($t | capture("^▶ run (?<n>[0-9]+)( \\((?<m>[a-z]+))?")) as $c
+          | .run = ($c.n | tonumber) | .modes[$c.n] = ($c.m // "?")
           | if ($t | test("\\(resume\\)")) then . else .prev = {in: 0, cached: 0, out: 0} end   # a new session: from zero
         elif $l.k == "info" then
           ((($t | capture("^usage: in (?<in>[0-9]+) \\(cached (?<cached>[0-9]+)\\), out (?<out>[0-9]+)(, cost \\$(?<cost>[0-9.]+))?"))
@@ -5534,8 +5538,9 @@ runs_usage() {
         elif ($l.k == "text" or $l.k == "err") then .
         else .rows[.run | tostring] |= ((. // {steps: 0, in: 0, cached: 0, out: 0, cost: 0}) | .steps += 1)
         end)
-    | .rows | to_entries | sort_by(.key | tonumber) | .[]
-    | [.key, .value.steps, .value.in, .value.cached, .value.out, .value.cost] | @tsv' "$TASKS/$id/activity.jsonl"
+    | .modes as $modes | .rows | to_entries | sort_by(.key | tonumber) | .[]
+    | [.key, .value.steps, .value.in, .value.cached, .value.out, .value.cost, ($modes[.key] // "?")] | @tsv' \
+    "$TASKS/$id/activity.jsonl"
 }
 
 # The marks of a task's text that is for one round only (its heading, what its checks and reviews sent back): the
@@ -5565,18 +5570,26 @@ checkpoints_latest() {
 # fresh_session_due task — its next run starts a fresh session (FRESH_WHY says why): its last run was marked long, or
 # read more than AGENT_FRESH_SESSION_TOKENS of context a step
 fresh_session_due() {
-  local id=$1 last steps in
+  local id=$1 rows last lrun steps in median
   FRESH_WHY=""
   if [[ $(task_field "$id" LONG_RUN) == 1 ]]; then
     FRESH_WHY="your last run was long, and you were asked to end it"
     return 0
   fi
   ((AGENT_FRESH_SESSION_TOKENS > 0)) || return 1
-  last=$(runs_usage "$id" | tail -n 1)
+  rows=$(runs_usage "$id")
+  last=$(tail -n 1 <<< "$rows")
   [[ -n $last ]] || return 1
-  IFS=$'\t' read -r _ steps in _ <<< "$last"
+  IFS=$'\t' read -r lrun steps in _ <<< "$last"
   ((steps > 0 && in / steps > AGENT_FRESH_SESSION_TOKENS)) || return 1
-  FRESH_WHY="your last run read some $((in / steps)) tokens of context a step"
+  # a fresh session reads much from its start: only a context grown past AGENT_FRESH_SESSION_RATIO times the median
+  # of the task's other session starts (its new and fresh runs) is worth leaving
+  median=$(awk -F'\t' -v last="$lrun" '$1 != last && ($7 == "new" || $7 == "fresh") && $2 > 0 && $3 > 0 {print int($3 / $2)}' \
+    <<< "$rows" | sort -n | awk '{v[NR] = $1} END {if (NR) print v[int((NR + 1) / 2)]}')
+  if [[ -n $median ]] && ((AGENT_FRESH_SESSION_RATIO > 0 && in / steps <= AGENT_FRESH_SESSION_RATIO * median)); then
+    return 1
+  fi
+  FRESH_WHY="your last run read some $((in / steps)) tokens of context a step${median:+ — over $AGENT_FRESH_SESSION_RATIO times the $median of a fresh session}"
 }
 
 # long_run_end task status — a run marked long (its long-run file) has ended: a team member gone to sleep is woken at
@@ -5597,12 +5610,12 @@ cmd_tokens() { # <team|task> — the tokens the runs used, from their activity's
   local q=${1:?usage: agent tokens <team|task>} ids=() m d id team_ids=" " per
   if [[ $q == --runs ]]; then   # one task, per run: its steps (tool calls) and tokens
     id=$(resolve_id "${2:?usage: agent tokens --runs <task>}")
-    printf '%-5s %7s %12s %12s %10s %10s %10s\n' RUN STEPS IN CACHED OUT COST IN/STEP
+    printf '%-5s %7s %12s %12s %10s %10s %10s  %s\n' RUN STEPS IN CACHED OUT COST IN/STEP MODE
     runs_usage "$id" \
-      | while IFS=$'\t' read -r run steps in cached out cost; do
+      | while IFS=$'\t' read -r run steps in cached out cost mode; do
           per=-   # the input per step: about the size of the run's context
           ((steps > 0)) && per=$((in / steps))
-          printf '%-5s %7s %12s %12s %10s %10.4f %10s\n' "$run" "$steps" "$in" "$cached" "$out" "$cost" "$per"
+          printf '%-5s %7s %12s %12s %10s %10.4f %10s  %s\n' "$run" "$steps" "$in" "$cached" "$out" "$cost" "$per" "$mode"
         done
     return 0
   fi
