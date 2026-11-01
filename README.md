@@ -172,6 +172,8 @@ from an immutable base commit, saving non-code findings to `docs/investigations/
 and code following TDD. `agent run --investigation` is active in Round 3 for the complete initial pipeline
 (phases 1–4: independent investigation, merge, PR, prechecks, review, and human hand-off); resume (`agent run --resume <team>`)
 remains inactive until Round 4. Internal execution is managed via `_investigation-team`.
+Topics can come from arguments, `-f topic.md`, or stdin; multiline stdin is read once before launch.
+A topic read failure stops before creating a team task.
 Phase-one task metadata and `phase1.json` are additive; existing task files and bus state remain readable.
 Admission writes the cohort manifest before setting `INVESTIGATION_LEASE`, and recovery reconstructs missing
 manifests (`investigation_manifest_recovered`) or fails unstarted children while live runs retain capacity.

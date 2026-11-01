@@ -3740,7 +3740,7 @@ investigation_teams_admit() {
   done
 }
 
-# cmd__investigation_team [--pipeline] --team names [-f topic-file] [topic] starts an independent cohort.
+# cmd__investigation_team [--pipeline] --team names [-f topic-file] [--] [topic] starts a cohort.
 cmd__investigation_team() {
   local csv="" file="" text="" root common repo base slug stamp parent kv pipeline=0 target
   local names=(investigation-team) roots=() repos=()
@@ -3749,6 +3749,7 @@ cmd__investigation_team() {
       --pipeline) pipeline=1; shift ;;
       --team) (($# >= 2)) || die "--team needs investigator names"; csv=$2; shift 2 ;;
       -f) (($# >= 2)) || die "-f needs a topic file"; file=$2; shift 2 ;;
+      --) shift; text="${text:+$text }$*"; break ;;
       *) text="${text:+$text }$1"; shift ;;
     esac
   done
@@ -5116,23 +5117,24 @@ validate_investigation_team() {
   ((count >= 2)) || die "an investigation team needs at least two investigators. Configured investigators: $configured"
 }
 
-# validate_investigation_topic checks argument, file or stdin topic text before the inactive round-one exit.
+# validate_investigation_topic prints validated argument, file or stdin text for one-time consumption.
 validate_investigation_topic() {
   local topic
   if [[ ${1:-} == -f ]]; then
     [[ -r ${2:-} ]] || die "file not found: ${2:-}"
-    topic=$(<"$2")
+    topic=$(<"$2") || die "cannot read topic file: ${2:-}"
   elif (($#)); then
     topic="$*"
   elif [[ ! -t 0 ]]; then
-    topic=$(cat)
+    topic=$(cat) || die "cannot read topic from stdin"
   else
     die "give the task text (argument, -f file or stdin)"
   fi
   [[ -n ${topic//[[:space:]]/} ]] || die "empty task"
+  printf '%s\n' "$topic"
 }
 
-# cmd_run parses run options and starts ordinary runs; investigation-team execution stays inactive in round one.
+# cmd_run parses run options and starts ordinary runs or the investigator-only pipeline.
 cmd_run() {
   local members=() verify=0 autopilot=0 same_round=0 team_list="" resume_ref="" need_caps=() target_node=""
   local investigation=0 team_requested=0 last_team_requested=0 resolve_last_team=0
@@ -5168,8 +5170,9 @@ cmd_run() {
     [[ -z $resume_ref ]] || die "--investigation cannot be combined with --resume"
     ((same_round == 0)) || die "--investigation cannot be combined with --same-round"
     validate_investigation_team "$team_list"
-    validate_investigation_topic "$@"
-    cmd__investigation_team --pipeline --team "$team_list" "$@"
+    local topic
+    topic=$(validate_investigation_topic "$@") || return
+    cmd__investigation_team --pipeline --team "$team_list" -- "$topic"
     return
   fi
   if ((resolve_last_team)); then
