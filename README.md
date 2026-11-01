@@ -263,7 +263,8 @@ merges only the commit that passed its checks and both reviews (`--match-head-co
 the merge. What it does for a round shows on the dashboard as its coordinator's stage (⚙): the checks, with the gate's
 progress ("make gate — 2 of 6 steps passed"), the two reviews and their verdicts, the merge, the next round — or
 "waits for you: …" where you decide. What a round's checks and reviews send back to its team (a fix pass, a bounce) is for that round only: the next
-round's task text leaves it out, and keeps your own additions. A team that cannot take its work back — a resume refused — waits for you the same way, with
+round's task text leaves it out, and keeps your own additions. A member's uncommitted work goes on into its resumed worktree (stashed; when git refuses it as it is — a file added
+with `--intent-to-add` — it is staged and stashed again). A team that cannot take its work back — a resume refused — waits for you the same way, with
 the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
 **Notifications that are not delivered.** When the notification command fails — say, a variable it needs is not
@@ -592,6 +593,7 @@ Then:
 | `AGENT_PROMPT_ARG_MAX` | a longer prompt (bytes) reaches the agent's CLI through `.agent-prompt.md` in its working directory, kept out of git, which the CLI is asked to read: Linux takes at most 128 KiB per command-line argument, and a task's text grows with every resume (100000) |
 | `AGENT_PROMPT_CHECKPOINTS` | a prompt carries the team's (or task's) newest checkpoints only, and says in which file the earlier ones are; `0` all (2) |
 | `AGENT_FRESH_SESSION_TOKENS` | a run that read more context a step (its input divided by its tool calls, as `agent tokens --runs` shows) is not resumed: the next run starts a fresh session — the full prompt, the last report, the files changed, the team's checkpoint, then why it was woken; `0` never (80000) |
+| `AGENT_FRESH_SESSION_RATIO` | …and only when that run read more than this many times the median of the task's own session starts (its new and fresh runs) — a fresh session reads much from its start, and a fixed threshold alone sent nearly every run to a new one; `0` no such check (2) |
 | `AGENT_LONG_RUN_STEPS` | a team member's run of more tool calls is asked, in every answer of its bus server, to end; it is woken again at once, in a fresh session; `0` never (120) |
 | `AGENT_LONG_RUN_HARD` | a team member's run of this many tool calls is ended by the runner — asked to end at `AGENT_LONG_RUN_STEPS`, an agent may go on —; it sleeps and is woken at once in a fresh session; `0` never (200) |
 | `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |

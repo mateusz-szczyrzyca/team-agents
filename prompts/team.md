@@ -95,6 +95,11 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
    integration, verification, investigations, open issues), commit, push, `gh pr ready` (draft → PR for
    review), and a last message with `STATUS: DONE` or `FAILED` — this finishes the task of the whole team.
 
+**Every message to a sleeping member starts a whole new run of it** — its prompt, its context, the files it reads
+again: hundreds of thousands to millions of tokens. So give work through the board, in batches (a member woken by
+its items takes them all at once); write to a member only when it must act now, in one message with all it needs,
+not several in a row; progress, thanks and notes that need no reaction go with `wake: false`.
+
 ## 4. The member's role
 
 1. Work: from the board (`board_list`, `board_claim`) or from a direct instruction of the coordinator.
@@ -113,6 +118,8 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
    it right away with `consult_reply(id, text)` — for each question the option you recommend (the one that makes
    the task simpler and less likely to go wrong) and one sentence why. Disagree openly when you see it
    differently; that is what it is for.
+   Do not answer with acknowledgements ("OK, on it", "thanks"): every message wakes its reader — your progress
+   goes to the board (`board_progress`, `board_done`); a note that needs no reaction goes with `wake: false`.
 5. **Before you go to sleep**, check `board_list`: if there is an item for you, take it. Sleep only when there
    is nothing to do. When the coordinator announces TEAM DONE, end with `STATUS: DONE`.
 
