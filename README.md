@@ -166,11 +166,20 @@ providers and accounts:
 
 ### Teams
 
-**Investigation teams (round 1/4):** `agent run --investigation --team "inv-a, inv-b" "topic"`
-validates investigator names and incompatible options, then reports that execution is not available yet.
-No investigation tasks start in this round. Names must come from `INVESTIGATORS_TYPE`; `-f topic.md` is also
-supported. See the [investigation-team design](docs/investigation-teams.md) for the planned independent work,
-merge, review, and human decision phases.
+**Investigation teams (round 2/4):** `agent run --investigation --team "inv-a, inv-b" "topic"`
+validates investigator names and options. Phase 1 runs investigators independently on isolated branches
+from an immutable base commit, saving non-code findings to `docs/investigations/<topic-slug>/<investigator>.md`
+and code following TDD. The public CLI entry point remains inactive until the end-to-end workflow (merger,
+PR, and review) is completed in Round 3; internal phase-1 execution is managed via `_investigation-team`.
+Phase-one task metadata and `phase1.json` are additive; existing task files and bus state remain readable.
+Admission writes the cohort manifest before setting `INVESTIGATION_LEASE`, and recovery reconstructs missing
+manifests (`investigation_manifest_recovered`) or fails unstarted children while live runs retain capacity.
+Completed runs verify publication on origin; transient transport errors retry (`investigation_publication_check_failed`,
+stage `verifying published results`) while preserving child `done` status and the lease. Invalid local results
+or a confirmed missing or mismatched ref fail verification. A quota failure records `QUOTA_UNTIL` without retrying that run; supervision admits queued cohorts after
+capacity returns. The `independent_run_finished` log event records each child's terminal status; the parent sends
+one completion notification and waits with `no-comment` without creating a PR in this round.
+See the [investigation-team design](docs/investigation-teams.md) for details.
 
 `agent run --team a,b,c "task"` gives one task to several agents, each on its own branch:
 
@@ -872,6 +881,10 @@ with the qualified task ID and a task-view link. Answer through `/questions`, th
 `**ANSWERED**` on the last nonempty line), or `agent answer <task-id>@<node>`. The read-only mirror is never
 edited. Editable copies expire when their task mirrors are removed. The interactive CLI validates all verdicts,
 asks for confirmation, and adds `**ANSWERED**` when you send; declining leaves an editable draft.
+Each editable copy appears atomically with private permissions and complete answer instructions.
+If preparing the instructions fails, readiness fails without publishing a copy and can be retried.
+The `questions_note_cleanup_failed` warning means a failed preparation also left a temporary file
+that could not be removed.
 An already marked file retains its explicit send intent and can be queued without another prompt.
 Waiting remote members can also be answered through their retained lead proxy in the terminal or task page.
 Dashboard SSE updates retain the same remote controls and waiting counters as the initial page.
@@ -913,6 +926,7 @@ Remote-control diagnostics use these stable script event names:
 | Events | Meaning |
 |---|---|
 | `remote_questions_start_failed`, `remote_questions_lock_failed`, `remote_questions_retry_failed` | Copy/watch readiness needs retrying. |
+| `remote_questions_cleanup_failed` | A failed copy left a temporary file that could not be removed. |
 | `remote_questions_expired` | The editable copy expired with its mirror. |
 | `remote_answer_queued`, `remote_answer_rejected`, `remote_answer_stale`, `remote_answer_lock_failed` | Lead-side answer queuing result. |
 | `node_answer_applied`, `node_answer_stale`, `node_answer_rejected`, `node_answer_resume_failed` | Node-side answer validation and resume result. |
@@ -958,6 +972,9 @@ whose run is gone and whose machine has restarted since, it does not end it as a
 local task or a job's is resumed at once; a remote team member waits for its lead. A task interrupted more than
 `AGENT_RESTART_MAX` (2) times fails with the reason — so a machine that keeps restarting under a heavy task (an
 overheating Raspberry Pi, say) does not loop.
+
+For an independent investigation-team child, exhausting this limit records the child's failure. Once all its
+children have ended, the cohort finishes in the same supervision pass; its parent reports the cohort outcome.
 
 On the lead, a remote member whose node has been away longer than `AGENT_RESTART_GRACE_MIN` (10) minutes is put
 out of its team like a failed member: its board items go back to the board, the others are told. When its node

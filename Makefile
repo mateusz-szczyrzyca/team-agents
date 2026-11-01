@@ -14,14 +14,20 @@ SHELL_SCRIPTS += tests/unit/remote_controls.bats tests/unit/remote_control_homes
 	tests/unit/remote_control_heartbeat_limits.bats tests/unit/remote_control_cancel_order.bats \
 	tests/unit/remote_control_proxy.bats tests/unit/remote_control_kick_exit.bats
 SHELL_SCRIPTS += tests/unit/remote_control_web.bats
-SHELL_SCRIPTS += tests/unit/remote_answer_round.bats
+SHELL_SCRIPTS += tests/unit/remote_answer_round.bats tests/unit/remote_questions_atomic.bats \
+	tests/unit/remote_questions_preparation_retry.bats
 SHELL_SCRIPTS += tests/unit/handover_failed.bats tests/unit/prompt_file.bats tests/unit/review_byline.bats tests/unit/tokens.bats \
 	tests/unit/context_hygiene.bats tests/unit/fresh_session.bats tests/unit/review_pair_random.bats tests/unit/resume_members.bats tests/unit/prompt_checkpoints.bats
 SHELL_SCRIPTS += tests/unit/remote_control_notifications.bats
 SHELL_SCRIPTS += tests/unit/lint_shell_memory.bats tests/unit/remote_control_review.bats \
 	tests/unit/handover_failed.bats tests/unit/prompt_file.bats
 SHELL_SCRIPTS += tests/unit/review_byline.bats tests/unit/tokens.bats
-SHELL_SCRIPTS += tests/unit/investigation_team_cli.bats tests/unit/investigation_team_validation.bats
+SHELL_SCRIPTS += tests/unit/investigation_team_cli.bats tests/unit/investigation_team_validation.bats \
+	tests/unit/investigation_team_isolation.bats tests/unit/investigation_team_opencode_schema.bats
+SHELL_SCRIPTS += tests/unit/investigation_team_runtime.bats tests/unit/investigation_team_supervision.bats \
+	tests/unit/investigation_team_regressions.bats
+SHELL_SCRIPTS += tests/unit/investigation_team_publication_retry.bats tests/unit/investigation_team_admission.bats \
+	tests/unit/investigation_team_reboot_regression.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 

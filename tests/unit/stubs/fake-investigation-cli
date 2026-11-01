@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Independent Claude fixture: never opens a bus or reads another worktree."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+
+def git(*args):
+    """Run a local fixture git command, failing the simulated CLI on error."""
+    return subprocess.check_output(["git", *args], text=True).strip()
+
+
+home = Path(os.environ["STUB_HOME"])
+branch = git("branch", "--show-current")
+agent = branch.split("/")[-2]
+prompt = sys.argv[-1]
+(home / f"independent-{agent}.prompt").write_text(prompt)
+action = json.loads((home / "scenario.json").read_text()).get(agent, {}).get("new", "publish")
+(home / f"started-{agent}").touch()
+if action in ("barrier", "hold"):
+    # The shared markers belong to the test harness, not to an investigator's worktree.
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        ready = (home / "release").exists() if action == "hold" else len(list(home.glob("started-*"))) >= 2
+        if ready:
+            break
+        time.sleep(0.05)
+    else:
+        sys.exit(7)
+if action == "budget-spent":
+    # the provider's workspace budget is spent until its reset in three days (an ISO time)
+    import datetime
+    reset = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    print("Workspace monthly budget of $200.00 exceeded. Contact your org admin. $200.18 of $200.00 used; resets "
+          + reset + ".", file=sys.stderr)
+    sys.exit(1)
+if action in ("publish", "barrier", "hold", "unpublished"):
+    Path(f"{agent}.md").write_text(f"Independent result by {agent}\n")
+    git("add", f"{agent}.md")
+    git("commit", "-qm", f"Publish {agent}'s investigation")
+    if action != "unpublished":
+        git("push", "-q", "-u", "origin", branch)
+final = "Independent findings" if action == "no-status" else "STATUS: DONE"
+if action == "fail":
+    final = "STATUS: FAILED"
+print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": final}), flush=True)
