@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -42,22 +44,42 @@ const (
 
 // normalizer turns the JSON event stream of one agent CLI into activity entries.
 type normalizer struct {
-	enc    *json.Encoder                // stdout: entries truncated to 600 characters (activity.jsonl)
-	full   *json.Encoder                // optional: untruncated entries (agent transcript --raw)
-	deltas map[float64]*strings.Builder // agy: response text assembled from text_delta chunks, per step
-	agyUse agyTokens                    // agy: the tokens of the run's finished steps, one usage line at its result
-	err    *StorageError                // the first write error on stdout; stops the normalizer
+	enc          *json.Encoder                // stdout: entries truncated to 600 characters (activity.jsonl)
+	full         *json.Encoder                // optional: untruncated entries (agent transcript --raw)
+	deltas       map[float64]*strings.Builder // agy: response text assembled from text_delta chunks, per step
+	agyUse       agyTokens                    // agy: the tokens of the run's finished steps, one usage line at its result
+	steps        int                          // the run's steps so far: its tool calls
+	longRunSteps int                          // after this many steps the run is long (0: never); AGENT_RUN_LONG_AT
+	longRunFlag  string                       // the file that marks it long: long-run in its task's directory
+	err          *StorageError                // the first write error on stdout; stops the normalizer
 }
 
 // emit writes one activity entry (truncated) and, if enabled, the full entry. A failure to write stdout is
 // recorded in n.err (the pipeline is broken); a failure of the optional full copy is logged and the copy is
 // switched off.
+// countStep counts one step of the run; at longRunSteps it marks the run long, once: the agent's bus server reads the
+// mark and asks it to end the run.
+func (n *normalizer) countStep() {
+	n.steps++
+	if n.longRunSteps <= 0 || n.steps != n.longRunSteps || n.longRunFlag == "" {
+		return
+	}
+	if err := os.WriteFile(n.longRunFlag, []byte(fmt.Sprintf("%d\n", n.steps)), 0o600); err != nil {
+		warnSideEffect("mark the run long", storageErr(err, "cannot write %s", n.longRunFlag))
+		return
+	}
+	n.emit(ActInfo, fmt.Sprintf("long run: %d steps — the agent is asked to end it", n.steps))
+}
+
 func (n *normalizer) emit(kind ActivityKind, text string) {
 	text = strings.TrimSpace(text)
 	if text == "" || n.err != nil {
 		return
 	}
 	ts := Now()
+	if kind == ActCmd || kind == ActMCP || kind == ActTool {
+		defer n.countStep()
+	}
 	if err := n.enc.Encode(activity{TS: ts, Kind: kind, Text: trunc(text, 600)}); err != nil {
 		n.err = storageErr(err, "cannot write the activity entry to stdout")
 		return
@@ -356,6 +378,9 @@ func cmdNormalize(args []string) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetEscapeHTML(false)
 	n := &normalizer{enc: enc, deltas: map[float64]*strings.Builder{}}
+	if at, err := strconv.Atoi(os.Getenv("AGENT_RUN_LONG_AT")); err == nil && *fullPath != "" { // unset or not a number: never
+		n.longRunSteps, n.longRunFlag = at, filepath.Join(filepath.Dir(*fullPath), "long-run")
+	}
 	if *fullPath != "" {
 		f, err := os.OpenFile(*fullPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {

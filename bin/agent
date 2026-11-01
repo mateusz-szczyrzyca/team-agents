@@ -369,6 +369,8 @@ AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no 
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
+AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}" # a run that read more a step is followed by a fresh session (0: never)
+AGENT_LONG_RUN_STEPS="${AGENT_LONG_RUN_STEPS:-120}"           # a team member's run of more tool calls is asked to end (0: never)
 AGENT_PROMPT_ARG_MAX="${AGENT_PROMPT_ARG_MAX:-100000}"           # a longer prompt (bytes) reaches the CLI through a file: Linux takes 128 KiB per argument
 AGENT_LIMIT_TAIL_LINES="${AGENT_LIMIT_TAIL_LINES:-30}"           # how much of the end of stderr shows a provider limit
 # Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
@@ -2492,6 +2494,23 @@ build_prompt() { # id mode qfile next_round
     render "$PROMPTS/inv-work.md"
     printf '\n# TOPIC\n\n'
     cat "$TASKS/$id/task.md"
+  fi
+  if [[ $mode == fresh ]]; then   # a fresh session: the new run's prompt, the handoff, then why it was woken
+    build_prompt "$id" new "$qfile" "$next_round"
+    printf '\n\n'
+    R[FRESH_WHY]=$FRESH_WHY
+    R[LAST_REPORT]="(none)"
+    [[ -s $TASKS/$id/final.md ]] && R[LAST_REPORT]=$(cat "$TASKS/$id/final.md")
+    local fork
+    fork=$(git -C "$WORKTREE" merge-base HEAD "${BASE:-main}" 10>&- 2>/dev/null) || fork=HEAD   # no base: nothing listed
+    R[CHANGED_FILES]=$(git -C "$WORKTREE" diff --stat "$fork" 10>&- 2>/dev/null | tail -n 40)
+    render "$PROMPTS/fresh-session.md"
+    if [[ -n ${TEAM:-} && -z ${RESUMED_FROM:-} ]]; then   # a resumed team's new prompt has its checkpoints already
+      printf '\n### The team'"'"'s checkpoint\n\n'
+      try checkpoint_read_failed bus checkpoint-get --dir "$BUS_DIR" --key "team-$TEAM"
+    fi
+    printf '\n\n---\n\n'
+    build_prompt "$id" resume "$qfile" "$next_round"
     return
   fi
   if [[ $mode == new ]]; then
@@ -2643,7 +2662,7 @@ bus_args_json() { # id → JSON (also valid TOML) array of `agentbus serve` argu
   peers=$(IFS=,; printf '%s' "${!AGENT_TYPE[*]}")
   local role=worker
   [[ ${KIND:-worker} == investigation ]] && role=investigator
-  printf '%s\n' serve --dir "$BUS_DIR" --agent "$AGENT" --task "$1" \
+  printf '%s\n' serve --dir "$BUS_DIR" --agent "$AGENT" --task "$1" --task-dir "$TASKS/$1" \
     --repo "$REPO_NAME" --branch "$BRANCH" --worktree "$WORKTREE" --peers "$peers,$(investigator_names | paste -sd,)" \
     --role "$role" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" --tasks-dir "$TASKS" \
     ${TEAM:+--team "$TEAM"} --tier "${TIER:-normal}" --agent-cmd "$SELF" --home "$AGENTS_HOME" \
@@ -3685,6 +3704,11 @@ cmd__runner() {
   RUNNER_ID=$id
   meta_load "$id"
   local n=$RUN
+  if [[ $mode == resume ]] && fresh_session_due "$id"; then   # not the old session: a fresh one with the handoff
+    mode=fresh
+    meta_set "$id" LONG_RUN ""
+    log_info fresh_session "task=$id" "reason=$FRESH_WHY"
+  fi
   log_info run_started "run=$n" "mode=$mode" "agent=$AGENT" "cli=$TYPE" "kind=${KIND:-worker}" "model=${MODEL:-}"
 
   if [[ -f $AGENTS_HOME/secrets.env ]]; then
@@ -3699,8 +3723,12 @@ cmd__runner() {
   # Bounce paths owe no delivery; normal finalization opens the delivery window below.
   RUNNER_ID=$id RUNNER_DONE=0 RUNNER_DELIVERED=1
   echo $$ > "$dir/runner.pid"
-  rm -f "$dir/acked"
+  rm -f "$dir/acked" "$dir/long-run"
   act "$id" info "▶ run $n ($mode)"
+  [[ $mode != fresh ]] || act "$id" info "■ fresh session: $FRESH_WHY"
+  AGENT_RUN_LONG_AT=0   # the steps after which a team member's run is long (the normalizer marks it)
+  [[ -n ${TEAM:-} && ${KIND:-worker} == worker ]] && AGENT_RUN_LONG_AT=$AGENT_LONG_RUN_STEPS
+  export AGENT_RUN_LONG_AT
   trap 'runner_exit $?' EXIT
   trap 'exit 143' TERM INT HUP
   rm -f "$dir/stop-requested"
@@ -3749,10 +3777,10 @@ cmd__runner() {
     RC=0 FINAL="" HUNG=0
     agents_gh_env || die "the agents' gh (agent as gh) could not be set up: no run without it"
     case $TYPE in
-      claude) run_claude "$id" "$mode" "$nrun" "$pf" "$dir" ;;
-      codex)  run_codex  "$id" "$mode" "$nrun" "$pf" "$dir" ;;
-      gemini) run_gemini "$id" "$mode" "$nrun" "$pf" "$dir" ;;
-      opencode) run_opencode "$id" "$mode" "$nrun" "$pf" "$dir" ;;
+      claude) run_claude "$id" "${mode/#fresh/new}" "$nrun" "$pf" "$dir" ;;
+      codex)  run_codex  "$id" "${mode/#fresh/new}" "$nrun" "$pf" "$dir" ;;
+      gemini) run_gemini "$id" "${mode/#fresh/new}" "$nrun" "$pf" "$dir" ;;
+      opencode) run_opencode "$id" "${mode/#fresh/new}" "$nrun" "$pf" "$dir" ;;
       *)      echo "unknown agent type: $TYPE"; RC=2 ;;
     esac
     log_info cli_finished "run=$nrun" "exit_code=$RC" "hung=$HUNG"
@@ -4021,6 +4049,7 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
   RUNNER_DONE=1
   act "$id" info "■ end of run $n: $status${note:+ ($note)}"
   log_info run_finished "run=$n" "status=$status" "note=$note"
+  long_run_end "$id" "$status"
 
   if is_independent_investigation "$id"; then
     # The parent snapshots the result and sends one notification after the whole cohort ends.
@@ -5388,29 +5417,65 @@ remote_member_start() { # proxy-task — grants the remote member on the lead an
   log_info remote_member_started "member=$member" "task=$id" "job=$(task_field "$id" JOB_ID)"
 }
 
+# runs_usage task — per run of the task, from its activity: run steps(tool calls) in cached out cost (tab-separated)
+runs_usage() {
+  local id=$1
+  jq -rn '
+    reduce inputs as $l ({run: 0, rows: {}};
+      ($l.t // "") as $t
+      | if $l.k == "info" and ($t | test("^▶ run [0-9]+")) then .run = ($t | capture("^▶ run (?<n>[0-9]+)").n | tonumber)
+        elif $l.k == "info" then
+          ((($t | capture("^usage: in (?<in>[0-9]+) \\(cached (?<cached>[0-9]+)\\), out (?<out>[0-9]+)(, cost \\$(?<cost>[0-9.]+))?"))
+            // ($t | capture("tokens in/out (?<in>[0-9]+)/(?<out>[0-9]+), cost \\$(?<cost>[0-9.]+)")) // null) as $u
+          | if $u == null then . else
+              .rows[.run | tostring] |= ((. // {steps: 0, in: 0, cached: 0, out: 0, cost: 0})
+                | .in += ($u.in | tonumber) | .cached += (($u.cached // "0") | tonumber)
+                | .out += ($u.out | tonumber) | .cost += (($u.cost // "0") | tonumber))
+            end)
+        elif ($l.k == "text" or $l.k == "err") then .
+        else .rows[.run | tostring] |= ((. // {steps: 0, in: 0, cached: 0, out: 0, cost: 0}) | .steps += 1)
+        end)
+    | .rows | to_entries | sort_by(.key | tonumber) | .[]
+    | [.key, .value.steps, .value.in, .value.cached, .value.out, .value.cost] | @tsv' "$TASKS/$id/activity.jsonl"
+}
+
+# fresh_session_due task — its next run starts a fresh session (FRESH_WHY says why): its last run was marked long, or
+# read more than AGENT_FRESH_SESSION_TOKENS of context a step
+fresh_session_due() {
+  local id=$1 last steps in
+  FRESH_WHY=""
+  if [[ $(task_field "$id" LONG_RUN) == 1 ]]; then
+    FRESH_WHY="your last run was long, and you were asked to end it"
+    return 0
+  fi
+  ((AGENT_FRESH_SESSION_TOKENS > 0)) || return 1
+  last=$(runs_usage "$id" | tail -n 1)
+  [[ -n $last ]] || return 1
+  IFS=$'\t' read -r _ steps in _ <<< "$last"
+  ((steps > 0 && in / steps > AGENT_FRESH_SESSION_TOKENS)) || return 1
+  FRESH_WHY="your last run read some $((in / steps)) tokens of context a step"
+}
+
+# long_run_end task status — a run marked long (its long-run file) has ended: a team member gone to sleep is woken at
+# once, and its next run starts a fresh session
+long_run_end() {
+  local id=$1 status=$2 f="$TASKS/$1/long-run"
+  [[ -f $f ]] || return 0
+  rm -f "$f"
+  [[ $status == sleeping ]] || return 0
+  meta_set "$id" LONG_RUN 1
+  log_info long_run_ended "task=$id"
+  act "$id" info "■ a long run ended on request: the next run starts a fresh session"
+  schedule_wake "$id" 5 || log_warn long_run_wake_failed "task=$id"
+}
+
 cmd_tokens() { # <team|task> — the tokens the runs used, from their activity's usage lines (and opencode's step lines):
   # per task — a team's members, and the helpers and investigations they asked for — and in all
   local q=${1:?usage: agent tokens <team|task>} ids=() m d id team_ids=" " per
   if [[ $q == --runs ]]; then   # one task, per run: its steps (tool calls) and tokens
     id=$(resolve_id "${2:?usage: agent tokens --runs <task>}")
     printf '%-5s %7s %12s %12s %10s %10s %10s\n' RUN STEPS IN CACHED OUT COST IN/STEP
-    jq -rn '
-      reduce inputs as $l ({run: 0, rows: {}};
-        ($l.t // "") as $t
-        | if $l.k == "info" and ($t | test("^▶ run [0-9]+")) then .run = ($t | capture("^▶ run (?<n>[0-9]+)").n | tonumber)
-          elif $l.k == "info" then
-            ((($t | capture("^usage: in (?<in>[0-9]+) \\(cached (?<cached>[0-9]+)\\), out (?<out>[0-9]+)(, cost \\$(?<cost>[0-9.]+))?"))
-              // ($t | capture("tokens in/out (?<in>[0-9]+)/(?<out>[0-9]+), cost \\$(?<cost>[0-9.]+)")) // null) as $u
-            | if $u == null then . else
-                .rows[.run | tostring] |= ((. // {steps: 0, in: 0, cached: 0, out: 0, cost: 0})
-                  | .in += ($u.in | tonumber) | .cached += (($u.cached // "0") | tonumber)
-                  | .out += ($u.out | tonumber) | .cost += (($u.cost // "0") | tonumber))
-              end)
-          elif ($l.k == "text" or $l.k == "err") then .
-          else .rows[.run | tostring] |= ((. // {steps: 0, in: 0, cached: 0, out: 0, cost: 0}) | .steps += 1)
-          end)
-      | .rows | to_entries | sort_by(.key | tonumber) | .[]
-      | [.key, .value.steps, .value.in, .value.cached, .value.out, .value.cost] | @tsv' "$TASKS/$id/activity.jsonl" \
+    runs_usage "$id" \
       | while IFS=$'\t' read -r run steps in cached out cost; do
           per=-   # the input per step: about the size of the run's context
           ((steps > 0)) && per=$((in / steps))
