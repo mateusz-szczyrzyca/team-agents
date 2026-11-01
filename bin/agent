@@ -5631,14 +5631,18 @@ stop_all() { # agent stop --running: stops everything that is active, whatever i
   if ((${#units[@]})); then
     try unit_stop_failed systemctl --user stop "${units[@]}"
   fi
-  for d in "${stopped[@]}"; do   # a runner may have overwritten the status while stopping
-    id=${d%% *}
-    meta_set "$id" STATUS stopped
-    if [[ $(task_field "$id" KIND) == investigation_team ]]; then
-      investigation_team_stop "$id"
-    fi
-    act "$id" info "■ stopped (agent stop --running)"
-  done
+  (
+    exec 9>"$AGENTS_HOME/dispatch.lock"
+    flock 9
+    for d in "${stopped[@]}"; do   # a runner may have overwritten the status while stopping
+      id=${d%% *}
+      meta_set "$id" STATUS stopped
+      if [[ $(task_field "$id" KIND) == investigation_team ]]; then
+        investigation_team_stop "$id"
+      fi
+      act "$id" info "■ stopped (agent stop --running)"
+    done
+  )
   rm -f "$flag"
   if ((${#stopped[@]})); then
     local n=${#stopped[@]} w=tasks
@@ -5774,7 +5778,7 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
     kind=$(task_field "$id" KIND)
     if [[ $kind == investigation_team ]]; then
       # A coordinator has no runner; the timer also retries cohorts after quota expiry without a runner exit.
-      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 ]]; then phase1_pending=1; fi
+      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 || $(investigation_field "$id" INVESTIGATION_LEASE) == 1 ]]; then phase1_pending=1; fi
       continue
     fi
     [[ $st == running || $st == starting ]] || continue

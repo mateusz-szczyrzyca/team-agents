@@ -1,7 +1,9 @@
 #!/usr/bin/env bats
-# Tests for review findings R1 and R5 (inv-kimi review):
+# Tests for review findings R1, R5, and fix-pass-2 findings (inv-astra M1, inv-kimi Major 1):
 # R1: Stopped investigation parents must release leases, stop owned work, and not tick.
 # R5: Non-decimal persisted seeds must hand off to human as failed instead of queueing indefinitely.
+# M1 (inv-astra fix-pass-2): Interrupted stop is recovered by supervisor with retained leases.
+# Major 1 (inv-kimi fix-pass-2): agent stop --running synchronizes with in-flight admission.
 
 load helpers
 
@@ -346,4 +348,78 @@ EOF
   touch "$HOME/release"
   wait_status "$child" '^(done|failed)$'
   wait_status "$id" waiting
+}
+
+@test "supervisor recovers stopped parent with retained lease and schedules cleanup" {
+  independent_setup
+  local id="20261101-000036-investigation-team"
+  local child="20261101-000036-inv"
+  local dir="$AGENTS_HOME/tasks/$id"
+  local base
+  base=$(git -C "$HOME/repo" rev-parse HEAD)
+  create_parent_task "$id" 'inv,inv2' "$base" 2
+  create_child_task "$child" "$id" 'inv' 'running'
+  # Simulate interrupted stop: STATUS=stopped recorded, but investigation_team_stop did not run
+  meta_put "$id" STATUS stopped
+  meta_put "$id" INVESTIGATION_LEASE 1
+
+  local c1 c2
+  c1=$(git -C "$HOME/repo" commit-tree -p "$base" -m "c1" "$base^{tree}")
+  c2=$(git -C "$HOME/repo" commit-tree -p "$base" -m "c2" "$base^{tree}")
+  cat > "$dir/phase1.json" << EOF2
+{"version":1,"members":[
+  {"agent":"inv","task":"$child","status":"running","commit":""},
+  {"agent":"inv2","task":"task-inv2","status":"done","commit":"$c2"}
+]}
+EOF2
+
+  # Dispatcher recognizes stopped parent with retained lease
+  run agent dispatch
+  [ "$status" -eq 0 ]
+
+  # Lease and handoff are cleared, child is stopped
+  [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
+  [ -z "$(field "$id" INVESTIGATION_HANDOFF_PENDING)" ]
+  [ "$(field "$child" STATUS)" = "stopped" ]
+
+  # Investigators are free for reuse
+  run free_investigators
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "inv" ]]
+  [[ "$output" =~ "inv2" ]]
+}
+
+@test "agent stop --running synchronizes with in-flight admission" {
+  independent_setup
+  local parent="20261101-000037-investigation-team"
+  local child="20261101-000037-inv"
+  local dir="$AGENTS_HOME/tasks/$parent"
+  local base
+  base=$(git -C "$HOME/repo" rev-parse HEAD)
+  # Start with parent in admission phase (INVESTIGATION_LEASE set, children predeclared)
+  create_parent_task "$parent" 'inv,inv2' "$base" 1
+  create_child_task "$child" "$parent" 'inv' 'new'
+  meta_put "$parent" INVESTIGATION_LEASE 1
+
+  cat > "$dir/phase1.json" << EOF2
+{"version":1,"members":[
+  {"agent":"inv","task":"$child","status":"new","commit":""},
+  {"agent":"inv2","task":"task-inv2","status":"new","commit":""}
+]}
+EOF2
+
+  # agent stop --running acquires dispatch.lock before cleanup
+  run agent stop --running
+  [ "$status" -eq 0 ]
+
+  # Parent and predeclared child are both stopped
+  [ "$(field "$parent" STATUS)" = "stopped" ]
+  [ "$(field "$child" STATUS)" = "stopped" ]
+
+  # Lease is released; investigators are free
+  [ -z "$(field "$parent" INVESTIGATION_LEASE)" ]
+  run free_investigators
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "inv" ]]
+  [[ "$output" =~ "inv2" ]]
 }
