@@ -1883,6 +1883,9 @@ free_investigator_list() { # every free investigator (not working, not waiting f
     for d in "$TASKS"/*/; do
       [[ -f $d/meta.env ]] || continue
       d=${d%/}; d=${d##*/}
+      if [[ $(task_field "$d" KIND) == investigation_team && $(task_field "$d" INVESTIGATION_LEASE) == 1 ]]; then
+        if [[ ,$(task_field "$d" INVESTIGATION_TEAM), == *",$inv,"* ]]; then busy=1; break; fi
+      fi
       [[ $(task_field "$d" AGENT) == "$inv" && $(task_field "$d" KIND) == investigation ]] || continue
       case $(task_field "$d" STATUS) in new|starting|running|waiting) busy=1; break ;; esac
       qu=$(task_field "$d" QUOTA_UNTIL)
@@ -2475,6 +2478,7 @@ build_prompt() { # id mode qfile next_round
     [REPORT_FILE]=".agents/reports/$id.md"
     [RESULT_FILE]="$TASKS/$id/result.md"
     [INV_ID]=${INV_ID:-} [PARENT_TASK]=${PARENT_TASK:-} [PARENT_WORKTREE]=${PARENT_WORKTREE:-}
+    [INVESTIGATION_TOPIC_SLUG]=${INVESTIGATION_TOPIC_SLUG:-topic}
     [FROM_AGENT]=${FROM_AGENT:-}
     [TEAM_ID]=${TEAM:-} [TEAM_MEMBERS]="$(team_members_list)"
     [ATTRIBUTION_BLOCK]="$(attribution_block "")" [TEAM_ATTRIBUTION_BLOCK]="$(attribution_block "   ")"
@@ -2484,6 +2488,12 @@ build_prompt() { # id mode qfile next_round
     [PR_URL]=${PR_URL:-} [PR_NUMBER]=${PR_NUMBER:-}
     [RESUMED_FROM]=${RESUMED_FROM:-} [HANG_MIN]=$AGENT_HANG_MIN
   )
+  if is_independent_investigation "$id"; then
+    render "$PROMPTS/inv-work.md"
+    printf '\n# TOPIC\n\n'
+    cat "$TASKS/$id/task.md"
+    return
+  fi
   if [[ $mode == new ]]; then
     if [[ ${KIND:-worker} == investigation && ${REVIEW:-} == 1 ]]; then
       render "$PROMPTS/review.md"
@@ -3033,20 +3043,212 @@ remember_investigator() { # name — the investigator that got the last request 
 }
 
 free_investigator() { # the next free investigator in the rotation (not working, not waiting for the human's answers)
-  local inv d busy free=() last=""
-  while read -r inv; do
-    busy=0
-    for d in "$TASKS"/*/; do
-      [[ -f $d/meta.env ]] || continue
-      d=${d%/}; d=${d##*/}
-      [[ $(task_field "$d" AGENT) == "$inv" && $(task_field "$d" KIND) == investigation ]] || continue
-      case $(task_field "$d" STATUS) in new|starting|running|waiting) busy=1; break ;; esac
-    done
-    ((busy)) || free+=("$inv")
-  done < <(investigator_names)
+  local free=() last=""
+  mapfile -t free < <(free_investigator_list)
   ((${#free[@]})) || return 1
   if [[ -f $AGENTS_HOME/last-investigator ]]; then last=$(<"$AGENTS_HOME/last-investigator"); fi
   pick_investigator "$last" "${free[@]}"
+}
+
+# investigation_phase1_write parent members-json atomically replaces the parent's outcome snapshot.
+investigation_phase1_write() {
+  local parent=$1 members=$2 tmp="$TASKS/$1/phase1.json.tmp.$$"
+  jq -n --argjson members "$members" '{version:1,members:$members}' > "$tmp"
+  mv "$tmp" "$TASKS/$parent/phase1.json"
+}
+
+# investigation_published child base verifies a nonempty descendant published on its assigned branch.
+# Sets INVESTIGATION_RESULT_COMMIT and INVESTIGATION_RESULT_ERROR for the parent's snapshot.
+investigation_published() {
+  local child=$1 base=$2 wt branch remote rc
+  wt=$(task_field "$child" WORKTREE)
+  branch=$(task_field "$child" BRANCH)
+  INVESTIGATION_RESULT_COMMIT=""
+  INVESTIGATION_RESULT_ERROR="the run has no published nonempty result on its assigned branch"
+  if ! INVESTIGATION_RESULT_COMMIT=$(git -C "$wt" rev-parse --verify HEAD 2>&1); then
+    INVESTIGATION_RESULT_COMMIT=""
+    return 1
+  fi
+  if ! git -C "$wt" merge-base --is-ancestor "$base" "$INVESTIGATION_RESULT_COMMIT"; then return 1; fi
+  if git -C "$wt" diff --quiet "$base" "$INVESTIGATION_RESULT_COMMIT" --; then
+    return 1
+  else
+    rc=$?
+    # A changed tree is diff's expected status 1; other failures cannot prove a result.
+    if ((rc != 1)); then return 1; fi
+  fi
+  if ! remote=$(git -C "$wt" ls-remote origin "refs/heads/$branch" 2>&1); then return 1; fi
+  [[ ${remote%%$'\t'*} == "$INVESTIGATION_RESULT_COMMIT" ]] || return 1
+  INVESTIGATION_RESULT_ERROR=""
+}
+
+# investigation_team_tick parent records terminal children and releases the cohort only after all end.
+# The caller owns dispatch.lock; results are task files, never bus investigations or peer messages.
+investigation_team_tick() {
+  local parent=$1 member child state agent members='[]' active=0 successful=0 working="" stage base note commit
+  [[ -f $TASKS/$parent/phase1.json ]] || return 0
+  base=$(task_field "$parent" INVESTIGATION_BASE_SHA)
+  while IFS= read -r member; do
+    state=$(jq -r .status <<< "$member")
+    agent=$(jq -r .agent <<< "$member")
+    if [[ $state != done && $state != failed ]]; then
+      child=$(jq -r .task <<< "$member")
+      note=""; commit=""
+      if [[ -f $TASKS/$child/meta.env ]]; then state=$(task_field "$child" STATUS); else state=failed; fi
+      case $state in
+        new|starting|running)
+          active=$((active + 1)); working="${working:+$working, }$agent" ;;
+        done)
+          if investigation_published "$child" "$base"; then
+            state=done
+          else
+            state=failed; note=$INVESTIGATION_RESULT_ERROR
+            meta_set "$child" NOTE "$note"
+            meta_set "$child" STATUS failed
+          fi
+          commit=$INVESTIGATION_RESULT_COMMIT ;;
+        *)
+          state=failed; note="the independent run ended without a successful result"
+          if [[ -f $TASKS/$child/meta.env ]]; then meta_set "$child" STATUS failed; fi ;;
+      esac
+      member=$(jq -c --arg status "$state" --arg commit "$commit" --arg note "$note" \
+        '.status=$status | .commit=$commit | .note=$note' <<< "$member")
+    fi
+    [[ $state != done ]] || successful=$((successful + 1))
+    members=$(jq -c --argjson member "$member" '. + [$member]' <<< "$members")
+  done < <(jq -c '.members[]' "$TASKS/$parent/phase1.json")
+  investigation_phase1_write "$parent" "$members"
+  if ((active)); then
+    auto_stage "$parent" "phase 1: $active investigators working ($working)"
+    return
+  fi
+  if ((successful)); then stage='waits for you: phase 1 complete (merge not available yet)'
+  else stage='waits for you: all phase 1 runs failed'; fi
+  meta_set "$parent" INVESTIGATION_LEASE ""
+  meta_set "$parent" FINISHED "$(date -Is)"
+  auto_stage "$parent" "$stage"
+  meta_set "$parent" STATUS waiting
+  if ((successful)); then notify "$parent" done "$stage" "Independent phase one finished; no merge or PR was attempted."
+  else notify "$parent" failed "$stage" "No investigator published a successful result."; fi
+}
+
+# investigation_teams_tick runs under dispatch.lock and finalizes each active independent cohort.
+investigation_teams_tick() {
+  local m parent
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    parent=${m%/meta.env}; parent=${parent##*/}
+    if [[ $(task_field "$parent" KIND) == investigation_team && $(task_field "$parent" INVESTIGATION_LEASE) == 1 ]]; then
+      investigation_team_tick "$parent"
+    fi
+  done
+}
+
+# investigation_team_admit parent reserves every requested investigator before creating or starting children.
+investigation_team_admit() {
+  local parent=$1 names=() roots=() repos=() available=() name root repo base stamp text child children="" members='[]' state branch kv
+  # create_task deliberately reads these dynamically scoped arrays, so investigator configuration wins.
+  local -A AGENT_TYPE=() AGENT_MODEL=() AGENT_EXTRA_ARGS=()
+  IFS=, read -r -a names <<< "$(task_field "$parent" INVESTIGATION_TEAM)"
+  mapfile -t available < <(free_investigator_list)
+  for name in "${names[@]}"; do
+    if ! is_one_of "$name" "${available[@]}"; then
+      auto_stage "$parent" 'waiting: capacity queue'
+      return 0
+    fi
+  done
+  root=$(task_field "$parent" REPO_ROOT); repo=$(task_field "$parent" REPO_NAME)
+  base=$(task_field "$parent" INVESTIGATION_BASE_SHA); text=$(<"$TASKS/$parent/task.md")
+  meta_set "$parent" INVESTIGATION_LEASE 1
+  meta_set "$parent" STATUS running
+  for name in "${names[@]}"; do
+    roots+=("$root"); repos+=("$repo")
+    AGENT_TYPE[$name]=${INVESTIGATORS_TYPE[$name]}
+    AGENT_MODEL[$name]=${INVESTIGATORS_MODEL[$name]:-}
+    AGENT_EXTRA_ARGS[$name]=${INVESTIGATORS_EXTRA_ARGS[$name]:-}
+  done
+  lock_task_ids
+  stamp=$(allocate_run_ids 0 names roots repos)
+  for name in "${names[@]}"; do
+    child="$stamp-$name"; state=new; branch="$BRANCH_PREFIX/$name/$stamp"
+    if create_task "$name" "$text" "$root" "$root" "$base" "$stamp" "" "$base"; then
+      for kv in 'KIND=investigation' "INVESTIGATION_TEAM=$parent" 'INVESTIGATION_PHASE=1' \
+          "PARENT_TASK=$parent" 'PARENT_WORKTREE=' 'INV_ID=' 'TEAM=' 'REVIEW=' 'TIER=normal' \
+          "INVESTIGATION_TOPIC_SLUG=$(task_field "$parent" INVESTIGATION_TOPIC_SLUG)"; do
+        meta_set "$child" "${kv%%=*}" "${kv#*=}"
+      done
+    else
+      state=failed
+      log_error investigation_start_failed "task=$parent" "investigator=$name" "reason=$CREATE_TASK_ERROR"
+    fi
+    children="${children:+$children,}$child"
+    members=$(jq -c --arg agent "$name" --arg task "$child" --arg branch "$branch" --arg status "$state" \
+      '. + [{agent:$agent,task:$task,branch:$branch,status:$status,commit:""}]' <<< "$members")
+  done
+  meta_set "$parent" INVESTIGATION_PHASE1_TASKS "$children"
+  investigation_phase1_write "$parent" "$members"
+  unlock_task_ids
+  # All worktrees and the complete snapshot exist before any independent CLI can inspect its task.
+  for name in "${names[@]}"; do
+    child="$stamp-$name"
+    if [[ -f $TASKS/$child/meta.env ]]; then
+      if ! start_runner "$child" new; then
+        meta_set "$child" STATUS failed
+        log_error investigation_start_failed "task=$parent" "investigator=$name" "reason=runner launch"
+      fi
+    fi
+  done
+  investigation_team_tick "$parent"
+}
+
+# investigation_teams_admit starts queued cohorts under dispatch.lock after existing review pairs.
+investigation_teams_admit() {
+  local m parent
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    parent=${m%/meta.env}; parent=${parent##*/}
+    if [[ $(task_field "$parent" KIND) == investigation_team && $(task_field "$parent" STATUS) == new \
+        && $(task_field "$parent" INVESTIGATION_PHASE) == 1 ]]; then
+      investigation_team_admit "$parent"
+    fi
+  done
+}
+
+# cmd__investigation_team --team names [-f topic-file] [topic] exercises phase one while public execution is inactive.
+cmd__investigation_team() {
+  local csv="" file="" text="" root common repo base slug stamp parent kv
+  local names=(investigation-team) roots=() repos=()
+  while (($#)); do
+    case $1 in
+      --team) (($# >= 2)) || die "--team needs investigator names"; csv=$2; shift 2 ;;
+      -f) (($# >= 2)) || die "-f needs a topic file"; file=$2; shift 2 ;;
+      *) text="${text:+$text }$1"; shift ;;
+    esac
+  done
+  validate_investigation_team "$csv"
+  csv=$(printf '%s' "$csv" | sed 's/[[:space:]]*,[[:space:]]*/,/g; s/^[[:space:]]*//; s/[[:space:]]*$//')
+  if [[ -n $file ]]; then text=$(cat "$file"); elif [[ -z $text && ! -t 0 ]]; then text=$(cat); fi
+  [[ -n ${text//[[:space:]]/} ]] || die "an investigation topic is required"
+  root=$(git rev-parse --show-toplevel)
+  common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)
+  root=$(dirname "$common"); repo=$(basename "$root")
+  base=$(git rev-parse HEAD)
+  slug=$(printf '%s\n' "${text%%$'\n'*}" | LC_ALL=C tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/--*/-/g; s/^-//; s/-$//' | cut -c1-64)
+  roots=("$root"); repos=("$repo")
+  lock_task_ids
+  stamp=$(allocate_run_ids 0 names roots repos); parent="$stamp-investigation-team"
+  : > "$TASKS/$parent/meta.env"
+  printf '%s\n' "$text" > "$TASKS/$parent/task.md"
+  for kv in "ID=$parent" 'AGENT=investigation-team' 'KIND=investigation_team' 'TYPE=internal' 'MODEL=' 'EXTRA_ARGS=' \
+      'TEAM=' 'TIER=normal' 'SESSION_ID=' 'ROUND=0' 'RUN=0' 'RUNNER_DONE=1' 'STATUS=new' "CREATED=$(date -Is)" \
+      "REPO_NAME=$repo" "REPO_ROOT=$root" "WORKTREE=$root" 'BRANCH=' "BASE=$base" \
+      'INVESTIGATION_PHASE=1' "INVESTIGATION_TEAM=$csv" "INVESTIGATION_BASE_SHA=$base" \
+      "INVESTIGATION_TOPIC_SLUG=${slug:-topic}" 'INVESTIGATION_PHASE1_TASKS=' 'INVESTIGATION_LEASE='; do
+    meta_set "$parent" "${kv%%=*}" "${kv#*=}"
+  done
+  unlock_task_ids
+  dispatch
+  printf '%s\n' "$parent"
 }
 
 dispatch() { # starts queued requests on free investigators
@@ -3055,7 +3257,9 @@ dispatch() { # starts queued requests on free investigators
     exec 9>"$AGENTS_HOME/dispatch.lock"
     flock -w 120 9 || { log_warn dispatch_lock_timeout "lock=$AGENTS_HOME/dispatch.lock" "effect=queued investigations wait for the next dispatch"; exit 0; }
     local inv j
+    investigation_teams_tick
     start_review_pairs
+    investigation_teams_admit
     while inv=$(free_investigator); do
       j=$(bus inv-next --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS") || break
       [[ -n $j ]] || break
@@ -3401,7 +3605,7 @@ runner_exit() {
   try meta_write_failed meta_set "$RUNNER_ID" STATUS failed
   try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
   try activity_write_failed act "$RUNNER_ID" err "■ $why"
-  if [[ ${KIND:-worker} == investigation ]]; then
+  if [[ ${KIND:-worker} == investigation ]] && ! is_independent_investigation "$RUNNER_ID"; then
     try investigation_finish_failed inv_finish "$RUNNER_ID" failed "STATUS: FAILED
 Answer: investigation interrupted ($why)"
     if [[ ${REVIEW:-} == 1 ]]; then try review_followup_failed review_without_verdict "$RUNNER_ID" "$why"; fi
@@ -3410,11 +3614,11 @@ Answer: investigation interrupted ($why)"
     try helper_finish_failed helper_finish "$RUNNER_ID" failed "interrupted: $why"
   elif [[ -n ${TEAM:-} ]]; then
     try team_update_failed team_after_run "$RUNNER_ID" failed "" "$why"
-  else
+  elif ! is_independent_investigation "$RUNNER_ID"; then
     try notification_failed notify "$RUNNER_ID" failed "" "$why"
   fi
   try dispatch_failed dispatch
-  try dispatch_failed dispatch_helpers
+  if ! is_independent_investigation "$RUNNER_ID"; then try dispatch_failed dispatch_helpers; fi
 }
 
 cmd__runner() {
@@ -3452,7 +3656,7 @@ cmd__runner() {
   local run_start run_head0 run_msgs0
   run_start=$(date +%s)
   run_head0=$(git -C "$WORKTREE" rev-parse HEAD) || run_head0="unknown"
-  run_msgs0=$(bus_messages_from "$AGENT")
+  if is_independent_investigation "$id"; then run_msgs0=0; else run_msgs0=$(bus_messages_from "$AGENT"); fi
   meta_set "$id" RUN_STARTS "$(recent_run_starts "$(task_field "$id" RUN_STARTS)" "$run_start")"
 
   if [[ $mode == new && -f $WORKTREE/.gitmodules ]]; then
@@ -3483,6 +3687,7 @@ cmd__runner() {
   local nrun=$n attempt=0 hangs=${HANGS:-0} prog hang_final=0
   local auto_resume=1
   [[ ${TIER:-normal} == worker && ( ${KIND:-worker} == helper || -n ${TEAM:-} ) ]] && auto_resume=0
+  if is_independent_investigation "$id"; then auto_resume=0; fi
   while :; do
     prog=$(activity_progress "$id")
     RC=0 FINAL="" HUNG=0
@@ -3519,7 +3724,7 @@ cmd__runner() {
 
   # A turn without STATUS (e.g. "may I continue?") does not mean the work is done: the human decides
   # (a team member asks the coordinator instead; a worker's text is returned as its result).
-  if [[ ! -s $qfile && -z $fst && -n ${FINAL//[[:space:]]/} && $RC == 0 && $HUNG == 0 && -z $pending ]]; then
+  if ! is_independent_investigation "$id" && [[ ! -s $qfile && -z $fst && -n ${FINAL//[[:space:]]/} && $RC == 0 && $HUNG == 0 && -z $pending ]]; then
     if ((is_member)); then
       member_ns=1
     elif [[ ${KIND:-worker} != helper ]]; then
@@ -3529,7 +3734,7 @@ cmd__runner() {
   fi
 
   # The agent asked its questions only in its last message (no file): do not lose them.
-  if [[ ! -s $qfile && $fst == QUESTIONS ]]; then
+  if ! is_independent_investigation "$id" && [[ ! -s $qfile && $fst == QUESTIONS ]]; then
     if ((is_member)); then
       member_q=1   # team member → questions go to the coordinator (below)
     elif [[ ${KIND:-worker} != helper ]]; then
@@ -3538,7 +3743,18 @@ cmd__runner() {
     fi
   fi
 
-  if ((HUNG)) && ((auto_resume == 0)); then
+  if is_independent_investigation "$id"; then
+    # An independent phase has one terminal outcome; it cannot ask peers or start helpers or retries.
+    status=failed; note="the independent run ended without DONE"
+    if [[ $fst == DONE && $RC == 0 && $HUNG == 0 && ! -s $qfile ]]; then
+      status=done; note=""
+    elif { ((RC != 0)) || [[ -z $fst ]]; } && [[ $(limit_kind "$dir" "$nrun" "$FINAL") == quota ]] \
+        && pause_secs=$(quota_reset_seconds "$dir" "$nrun" "$FINAL"); then
+      # End this independent attempt, but retain the provider's reset time for capacity admission.
+      meta_set "$id" QUOTA_UNTIL "$(( $(date +%s) + pause_secs ))"
+      note="the investigator exhausted its provider quota"
+    fi
+  elif ((HUNG)) && ((auto_resume == 0)); then
     # hung worker: stopped; normal models are told and can start it again
     if [[ ${KIND:-worker} == helper ]]; then
       status=failed; note="the worker hung"
@@ -3750,7 +3966,10 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
   act "$id" info "■ end of run $n: $status${note:+ ($note)}"
   log_info run_finished "run=$n" "status=$status" "note=$note"
 
-  if [[ ${KIND:-worker} == investigation ]]; then
+  if is_independent_investigation "$id"; then
+    # The parent snapshots the result and sends one notification after the whole cohort ends.
+    log_info independent_run_finished "task=$id" "status=$status"
+  elif [[ ${KIND:-worker} == investigation ]]; then
     case $status in
       paused)
         notify "$id" paused "$FINAL" "$note" ;;
@@ -3783,7 +4002,7 @@ Answer: the investigator hung ($AGENT_HANG_STRIKES times without progress) — n
   fi
   RUNNER_DELIVERED=1
   dispatch
-  dispatch_helpers
+  if ! is_independent_investigation "$id"; then dispatch_helpers; fi
 }
 
 start_runner() { # id mode
@@ -4646,8 +4865,9 @@ cmd_status() {
     (
       source "$d/meta.env"
       st=${STATUS:-?}
-      # a remote member's proxy task has no local unit: its member runs on its node
-      if [[ ${KIND:-worker} != remote-member && ( $st == running || $st == starting ) ]] && ! unit_active "${ID:-}" "${RUN:-0}"; then
+      # Remote proxies and internal investigation coordinators do not own local runner units.
+      if [[ ${KIND:-worker} != remote-member && ${KIND:-worker} != investigation_team \
+          && ( $st == running || $st == starting ) ]] && ! unit_active "${ID:-}" "${RUN:-0}"; then
         st="$st?"
       fi
       ag=${AGENT:-?}; [[ ${KIND:-worker} == investigation ]] && ag="inv#${INV_ID:-?}"
@@ -4847,13 +5067,19 @@ member_out() { # id reason — a team member is out of the team's work: its boar
 
 cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running or starting, but no unit is active —
   # unless their machine restarted under the run (restart_interrupted)
-  local d id st run rb
+  local d id st run rb kind phase1_pending=0
   supervise_answer_watches   # watches of answers nobody waits for any more
   supervise_remote_questions
   for d in "$TASKS"/*/; do
     [[ -f $d/meta.env ]] || continue
     id=${d%/}; id=${id##*/}
     st=$(task_field "$id" STATUS)
+    kind=$(task_field "$id" KIND)
+    if [[ $kind == investigation_team ]]; then
+      # A coordinator has no runner; the timer also retries cohorts after quota expiry without a runner exit.
+      if [[ $(task_field "$id" INVESTIGATION_PHASE) == 1 && ( $st == new || $st == running ) ]]; then phase1_pending=1; fi
+      continue
+    fi
     [[ $st == running || $st == starting ]] || continue
     # a remote member's proxy task has no local unit: its member runs on its node, followed through its heartbeat
     [[ $(task_field "$id" KIND) != remote-member ]] || continue
@@ -4877,6 +5103,7 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
   supervise_member_jobs
   supervise_teams
   supervise_review_waits
+  if ((phase1_pending)); then dispatch; fi
 }
 
 supervise_member_jobs() { # the lead: a remote member's job whose team is closed or unknown to the bus is cancelled
@@ -7256,6 +7483,7 @@ main() {
     dispatch) cmd_dispatch ;;
     say)     cmd_say "$@" ;;
     _runner) cmd__runner "$@" ;;
+    _investigation-team) cmd__investigation_team "$@" ;;
     help|-h|--help) usage ;;
     *) usage; exit 1 ;;
   esac

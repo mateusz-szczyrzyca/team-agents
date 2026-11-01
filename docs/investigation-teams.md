@@ -195,6 +195,7 @@ Task attributes stored in the orchestration task's `meta.env` and task files (no
 - `INVESTIGATION_TOPIC_SLUG`: Sanitized topic string used for document paths and prompt placeholder `{{INVESTIGATION_TOPIC_SLUG}}`.
 - `INVESTIGATION_PHASE`: Numeric phase identifier (`1` during Phase 1).
 - `INVESTIGATION_PHASE1_TASKS`: Comma-separated list of child Phase 1 task IDs.
+- `INVESTIGATION_LEASE`: `1` while the whole cohort owns its investigators; cleared only after every child ends.
 - `phase1.json` (version 1): Structured JSON record storing Phase 1 member outcomes:
   `{"version":1,"members":[{"agent":"...","task":"...","branch":"...","status":"...","commit":"..."}]}`.
 - Child investigator tasks: `KIND=investigation`, `INVESTIGATION_TEAM=<coordinator-task-id>` (no bus `TEAM`),

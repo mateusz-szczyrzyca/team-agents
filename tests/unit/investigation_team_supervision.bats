@@ -145,12 +145,8 @@ EOF
   [ "$status" -eq 0 ]
 
   local c1 c2
-  run task_of inv
-  [ "$status" -eq 0 ]
-  c1=$output
-  run task_of inv2
-  [ "$status" -eq 0 ]
-  c2=$output
+  c1=$(jq -r '.members[] | select(.agent == "inv") | .task' "$dir/phase1.json")
+  c2=$(jq -r '.members[] | select(.agent == "inv2") | .task' "$dir/phase1.json")
   [ -n "$c1" ]
   [ -n "$c2" ]
   wait_status "$c1" 'done'
@@ -159,6 +155,7 @@ EOF
   [ "$(recorded_status "$id" inv)" = 'done' ]
   [ "$(recorded_status "$id" inv2)" = 'done' ]
   [ -f "$AGENTS_HOME/tasks/old-inv/meta.env" ]
+  [ "$(status_of old-inv)" = failed ]
 }
 
 @test "an independent child hitting provider quota fails with QUOTA_UNTIL while peer succeeds and cohort waits" {

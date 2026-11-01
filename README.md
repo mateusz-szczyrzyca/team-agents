@@ -171,6 +171,11 @@ validates investigator names and options. Phase 1 runs investigators independent
 from an immutable base commit, saving non-code findings to `docs/investigations/<topic-slug>/<investigator>.md`
 and code following TDD. The public CLI entry point remains inactive until the end-to-end workflow (merger,
 PR, and review) is completed in Round 3; internal phase-1 execution is managed via `_investigation-team`.
+Phase-one task metadata and `phase1.json` are additive; existing task files and bus state remain readable.
+The cohort holds every member's capacity until all runs end. A quota failure records `QUOTA_UNTIL`
+without retrying that independent run; supervision admits queued cohorts after capacity returns.
+The `independent_run_finished` log event records each child's terminal status; the parent sends one
+completion notification and waits without creating a PR in this round.
 See the [investigation-team design](docs/investigation-teams.md) for details.
 
 `agent run --team a,b,c "task"` gives one task to several agents, each on its own branch:
