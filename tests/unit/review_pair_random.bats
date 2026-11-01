@@ -40,3 +40,7 @@ pair_of() {
   first=$(pair_of 9 1)
   [ "$(pair_of 9 7)" = "$first" ]
 }
+
+@test "AGENT_REVIEW_DRAW=list: the pair is the first two free investigators of the list, as before the draw" {
+  for s in 1 2 3 4 5; do [ "$(AGENT_REVIEW_DRAW=list pair_of "2$s" "$s")" = "inv-a inv-b" ]; done
+}
