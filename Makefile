@@ -28,6 +28,8 @@ SHELL_SCRIPTS += tests/unit/investigation_team_runtime.bats tests/unit/investiga
 	tests/unit/investigation_team_regressions.bats
 SHELL_SCRIPTS += tests/unit/investigation_team_publication_retry.bats tests/unit/investigation_team_admission.bats \
 	tests/unit/investigation_team_reboot_regression.bats
+SHELL_SCRIPTS += tests/unit/investigation_team_phase_selection.bats tests/unit/investigation_team_handoff.bats \
+	tests/unit/stubs/fake-investigation-git tests/unit/investigation_team_phase_queue.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 

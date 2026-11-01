@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Run isolated phase fixtures, preserving the existing phase-one fixture unchanged."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def git(*args):
+    """Run fixture Git operations against the current temporary worktree."""
+    return subprocess.check_output(["git", *args], text=True).strip()
+
+
+home = Path(os.environ["STUB_HOME"])
+task = Path.cwd().name
+metadata = home / "agents" / "tasks" / task / "meta.env"
+context = subprocess.check_output(
+    ["bash", "-c", 'source "$1"; printf "%s\n%s" "${INVESTIGATION_PHASE:-1}" "${INVESTIGATION_TEAM:-}"', "bash", str(metadata)],
+    text=True,
+).strip().splitlines()
+phase = context[0]
+if phase == "1":
+    original = home / ".local" / "bin" / "independent-fixture"
+    os.execv(str(original), [str(original), *sys.argv[1:]])
+branch = git("branch", "--show-current")
+agent = branch.split("/")[-2]
+scenario = json.loads((home / "scenario.json").read_text())
+action = scenario.get(agent, {}).get("phase" + phase, "publish" if phase == "2" else "review")
+(home / f"phase{phase}-{task}.prompt").write_text(sys.argv[-1])
+with (home / "pipeline-calls.jsonl").open("a") as stream:
+    stream.write(json.dumps({"task": task, "phase": phase, "agent": agent, "action": action}) + "\n")
+if phase == "2" and action == "publish":
+    manifest = home / "agents" / "tasks" / context[1] / "phase1.json"
+    for member in json.loads(manifest.read_text())["members"]:
+        if member["status"] == "done":
+            git("merge", "--no-edit", member["branch"])
+    Path("merged.md").write_text(f"Unified findings by {agent}\n" + (home / "pipeline-calls.jsonl").read_text())
+    git("add", "merged.md")
+    git("commit", "-qm", "Combine investigation findings")
+    git("push", "-q", "-u", "origin", branch)
+    subprocess.run(["gh", "pr", "create", "--base", "main", "--head", branch], check=True)
+    pr = {"number": 73, "url": "https://github.com/example/repo/pull/73", "state": "OPEN",
+          "headRefName": branch, "headRefOid": git("rev-parse", "HEAD"), "baseRefName": "main", "body": ""}
+    (home / "gh-prs.json").write_text(json.dumps([pr]))
+    (home / "gh-pr-view.json").write_text(json.dumps(pr))
+final = "STATUS: FAILED" if action == "fail" else "STATUS: DONE"
+if phase == "3" and action == "review":
+    final += "\nVERDICT: ready-to-merge"
+if phase == "3" and action == "findings-no-verdict":
+    final += "\nMajor: 1\nA finding without an explicit verdict."
+print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": final}), flush=True)
