@@ -370,6 +370,7 @@ AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (
 AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
 AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free)
+AGENT_PROMPT_CHECKPOINTS="${AGENT_PROMPT_CHECKPOINTS:-2}"       # a prompt's newest checkpoints (the rest: their file); 0 all
 AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}" # a run that read more a step is followed by a fresh session (0: never)
 AGENT_LONG_RUN_STEPS="${AGENT_LONG_RUN_STEPS:-120}"           # a team member's run of more tool calls is asked to end (0: never)
 AGENT_PROMPT_ARG_MAX="${AGENT_PROMPT_ARG_MAX:-100000}"           # a longer prompt (bytes) reaches the CLI through a file: Linux takes 128 KiB per argument
@@ -2511,7 +2512,7 @@ build_prompt() { # id mode qfile next_round
     render "$PROMPTS/fresh-session.md"
     if [[ -n ${TEAM:-} && -z ${RESUMED_FROM:-} ]]; then   # a resumed team's new prompt has its checkpoints already
       printf '\n### The team'"'"'s checkpoint\n\n'
-      try checkpoint_read_failed bus checkpoint-get --dir "$BUS_DIR" --key "team-$TEAM"
+      try checkpoint_read_failed checkpoints_latest "team-$TEAM"
     fi
     printf '\n\n---\n\n'
     build_prompt "$id" resume "$qfile" "$next_round"
@@ -2542,9 +2543,9 @@ build_prompt() { # id mode qfile next_round
     if [[ -n ${RESUMED_FROM:-} ]]; then
       printf '\n\n'
       render "$PROMPTS/resume-checkpoint.md"
-      printf '\n## Checkpoints (oldest first)\n'
+      printf '\n## Checkpoints (the newest, oldest first)\n'
       local ck="task-$id"; [[ -n ${TEAM:-} ]] && ck="team-$TEAM"
-      try checkpoint_read_failed bus checkpoint-get --dir "$BUS_DIR" --key "$ck"
+      try checkpoint_read_failed checkpoints_latest "$ck"
       if [[ -s $TASKS/$id/history.md ]]; then
         printf '\n## Earlier questions and answers from the human (settled — do not ask again)\n'
         cat "$TASKS/$id/history.md"
@@ -5157,23 +5158,42 @@ remote_member_start() { # proxy-task — grants the remote member on the lead an
 # runs_usage task — per run of the task, from its activity: run steps(tool calls) in cached out cost (tab-separated)
 runs_usage() {
   local id=$1
-  jq -rn '
-    reduce inputs as $l ({run: 0, rows: {}};
+  jq -rn --arg cli "$(task_field "$id" TYPE)" '
+    reduce inputs as $l ({run: 0, rows: {}, prev: {in: 0, cached: 0, out: 0}};
       ($l.t // "") as $t
       | if $l.k == "info" and ($t | test("^▶ run [0-9]+")) then .run = ($t | capture("^▶ run (?<n>[0-9]+)").n | tonumber)
+          | if ($t | test("\\(resume\\)")) then . else .prev = {in: 0, cached: 0, out: 0} end   # a new session: from zero
         elif $l.k == "info" then
           ((($t | capture("^usage: in (?<in>[0-9]+) \\(cached (?<cached>[0-9]+)\\), out (?<out>[0-9]+)(, cost \\$(?<cost>[0-9.]+))?"))
             // ($t | capture("tokens in/out (?<in>[0-9]+)/(?<out>[0-9]+), cost \\$(?<cost>[0-9.]+)")) // null) as $u
           | if $u == null then . else
-              .rows[.run | tostring] |= ((. // {steps: 0, in: 0, cached: 0, out: 0, cost: 0})
-                | .in += ($u.in | tonumber) | .cached += (($u.cached // "0") | tonumber)
-                | .out += ($u.out | tonumber) | .cost += (($u.cost // "0") | tonumber))
+              {in: ($u.in | tonumber), cached: (($u.cached // "0") | tonumber), out: ($u.out | tonumber)} as $v
+              | (if $cli == "codex" and $v.in >= .prev.in   # codex: the session so far — this run is the difference
+                 then {in: ($v.in - .prev.in), cached: ($v.cached - .prev.cached), out: ($v.out - .prev.out)}
+                 else $v end) as $d
+              | .prev = (if $cli == "codex" then $v else .prev end)
+              | .rows[.run | tostring] |= ((. // {steps: 0, in: 0, cached: 0, out: 0, cost: 0})
+                | .in += $d.in | .cached += $d.cached | .out += $d.out | .cost += (($u.cost // "0") | tonumber))
             end)
         elif ($l.k == "text" or $l.k == "err") then .
         else .rows[.run | tostring] |= ((. // {steps: 0, in: 0, cached: 0, out: 0, cost: 0}) | .steps += 1)
         end)
     | .rows | to_entries | sort_by(.key | tonumber) | .[]
     | [.key, .value.steps, .value.in, .value.cached, .value.out, .value.cost] | @tsv' "$TASKS/$id/activity.jsonl"
+}
+
+# checkpoints_latest key — the key's newest AGENT_PROMPT_CHECKPOINTS checkpoints (all: 0), and where the earlier ones are
+checkpoints_latest() {
+  local key=$1 all n skip
+  all=$(bus checkpoint-get --dir "$BUS_DIR" --key "$key") || return 1
+  n=$(grep -c '^## Checkpoint ' <<< "$all") || n=0   # none: grep's "no match" is the answer
+  if ((AGENT_PROMPT_CHECKPOINTS <= 0 || n <= AGENT_PROMPT_CHECKPOINTS)); then
+    printf '%s\n' "$all"
+    return 0
+  fi
+  skip=$((n - AGENT_PROMPT_CHECKPOINTS))
+  printf '\n(%d earlier checkpoints are in %s — read them only if you need them)\n' "$skip" "$BUS_DIR/checkpoints/$key.md"
+  awk -v skip="$skip" '/^## Checkpoint /{c++} c > skip' <<< "$all"
 }
 
 # fresh_session_due task — its next run starts a fresh session (FRESH_WHY says why): its last run was marked long, or
@@ -5237,17 +5257,11 @@ cmd_tokens() { # <team|task> — the tokens the runs used, from their activity's
     ids=("$(resolve_id "$q")")
   fi
   local sums
-  sums=$(for id in "${ids[@]}"; do
+  sums=$(for id in "${ids[@]}"; do   # per task: the sum of its runs (runs_usage — codex's per-run difference included)
     [[ -f $TASKS/$id/activity.jsonl ]] || continue
-    jq -c --arg id "$id" --arg agent "$(task_field "$id" AGENT)" --arg kind "$(task_field "$id" KIND)" '
-      select(.k == "info") | .t
-      | (capture("^usage: in (?<in>[0-9]+) \\(cached (?<cached>[0-9]+)\\), out (?<out>[0-9]+)(, cost \\$(?<cost>[0-9.]+))?")
-         // capture("tokens in/out (?<in>[0-9]+)/(?<out>[0-9]+), cost \\$(?<cost>[0-9.]+)")
-         // empty)
-      | {id: $id, agent: $agent, kind: $kind, in: (.in | tonumber), cached: ((.cached // "0") | tonumber),
-         out: (.out | tonumber), cost: ((.cost // "0") | tonumber)}' "$TASKS/$id/activity.jsonl"
-  done | jq -s 'group_by(.id) | map({id: .[0].id, agent: .[0].agent, kind: .[0].kind, in: (map(.in) | add),
-      cached: (map(.cached) | add), out: (map(.out) | add), cost: (map(.cost) | add)})')
+    runs_usage "$id" | awk -F'\t' -v id="$id" '{i += $3; c += $4; o += $5; k += $6}
+      END {if (i + o > 0) printf "{\"id\":\"%s\",\"in\":%d,\"cached\":%d,\"out\":%d,\"cost\":%.6f}\n", id, i, c, o, k}'
+  done | jq -s '.')
   local row
   printf '%-40s %-24s %-13s %12s %12s %10s %10s\n' TASK AGENT KIND IN CACHED OUT COST
   for id in "${ids[@]}"; do   # in the team's order; a task without usage says so
