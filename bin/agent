@@ -3058,6 +3058,7 @@ investigation_phase1_write() {
 }
 
 # investigation_published child base verifies a nonempty descendant published on its assigned branch.
+# Returns 0 for a verified result, 1 for an invalid result, or 2 when publication cannot be checked.
 # Sets INVESTIGATION_RESULT_COMMIT and INVESTIGATION_RESULT_ERROR for the parent's snapshot.
 investigation_published() {
   local child=$1 base=$2 wt branch remote rc
@@ -3077,16 +3078,51 @@ investigation_published() {
     # A changed tree is diff's expected status 1; other failures cannot prove a result.
     if ((rc != 1)); then return 1; fi
   fi
-  if ! remote=$(git -C "$wt" ls-remote origin "refs/heads/$branch" 2>&1); then return 1; fi
+  if ! remote=$(git -C "$wt" ls-remote origin "refs/heads/$branch" 2>&1); then
+    INVESTIGATION_RESULT_ERROR="publication lookup failed; verification will be retried"
+    log_warn investigation_publication_check_failed "task=$child" "reason=$remote"
+    return 2
+  fi
   [[ ${remote%%$'\t'*} == "$INVESTIGATION_RESULT_COMMIT" ]] || return 1
   INVESTIGATION_RESULT_ERROR=""
+}
+
+# investigation_phase1_recover parent reconstructs a missing legacy manifest under dispatch.lock.
+investigation_phase1_recover() {
+  local parent=$1 child file agent branch members='[]' recovered_tasks=()
+  local -A recovered_children=()
+  # Optional fields must not inherit metadata from the runner dispatching this recovery.
+  IFS=, read -r -a recovered_tasks <<< "$(INVESTIGATION_PHASE1_TASKS="" task_field "$parent" INVESTIGATION_PHASE1_TASKS)"
+  for file in "$TASKS"/*/meta.env; do
+    [[ -f $file ]] || continue
+    child=${file%/meta.env}; child=${child##*/}
+    [[ $(KIND="" task_field "$child" KIND) == investigation ]] || continue
+    if [[ $(INVESTIGATION_TEAM="" task_field "$child" INVESTIGATION_TEAM) == "$parent" ||
+          $(PARENT_TASK="" task_field "$child" PARENT_TASK) == "$parent" ]]; then
+      recovered_tasks+=("$child")
+    fi
+  done
+  for child in "${recovered_tasks[@]}"; do
+    [[ -n $child ]] || continue
+    [[ -z ${recovered_children[$child]:-} ]] || continue
+    recovered_children[$child]=1
+    agent=${child#*-}; agent=${agent#*-}; branch=""
+    if [[ -f $TASKS/$child/meta.env ]]; then
+      agent=$(AGENT="" task_field "$child" AGENT)
+      branch=$(BRANCH="" task_field "$child" BRANCH)
+    fi
+    members=$(jq -c --arg agent "$agent" --arg task "$child" --arg branch "$branch" \
+      '. + [{agent:$agent,task:$task,branch:$branch,status:"new",commit:""}]' <<< "$members")
+  done
+  investigation_phase1_write "$parent" "$members"
+  log_warn investigation_manifest_recovered "task=$parent" "children=${#recovered_children[@]}"
 }
 
 # investigation_team_tick parent records terminal children and releases the cohort only after all end.
 # The caller owns dispatch.lock; results are task files, never bus investigations or peer messages.
 investigation_team_tick() {
-  local parent=$1 member child state agent members='[]' active=0 successful=0 working="" stage base note commit
-  [[ -f $TASKS/$parent/phase1.json ]] || return 0
+  local parent=$1 member child state agent members='[]' active=0 successful=0 verifying=0 working="" checking="" stage base note commit rc
+  if [[ ! -f $TASKS/$parent/phase1.json ]]; then investigation_phase1_recover "$parent"; fi
   base=$(task_field "$parent" INVESTIGATION_BASE_SHA)
   while IFS= read -r member; do
     state=$(jq -r .status <<< "$member")
@@ -3096,17 +3132,25 @@ investigation_team_tick() {
       note=""; commit=""
       if [[ -f $TASKS/$child/meta.env ]]; then state=$(task_field "$child" STATUS); else state=failed; fi
       case $state in
-        new|starting|running)
+        new)
+          state=failed; note="admission was interrupted before the independent runner started"
+          meta_set "$child" NOTE "$note"
+          meta_set "$child" STATUS failed ;;
+        starting|running)
           active=$((active + 1)); working="${working:+$working, }$agent" ;;
         done)
           if investigation_published "$child" "$base"; then
-            state=done
+            state=done; commit=$INVESTIGATION_RESULT_COMMIT
           else
-            state=failed; note=$INVESTIGATION_RESULT_ERROR
-            meta_set "$child" NOTE "$note"
-            meta_set "$child" STATUS failed
-          fi
-          commit=$INVESTIGATION_RESULT_COMMIT ;;
+            rc=$?; note=$INVESTIGATION_RESULT_ERROR
+            if ((rc == 2)); then
+              state=verifying; verifying=$((verifying + 1)); checking="${checking:+$checking, }$agent"
+            else
+              state=failed
+              meta_set "$child" NOTE "$note"
+              meta_set "$child" STATUS failed
+            fi
+          fi ;;
         *)
           state=failed; note="the independent run ended without a successful result"
           if [[ -f $TASKS/$child/meta.env ]]; then meta_set "$child" STATUS failed; fi ;;
@@ -3118,15 +3162,21 @@ investigation_team_tick() {
     members=$(jq -c --argjson member "$member" '. + [$member]' <<< "$members")
   done < <(jq -c '.members[]' "$TASKS/$parent/phase1.json")
   investigation_phase1_write "$parent" "$members"
-  if ((active)); then
-    auto_stage "$parent" "phase 1: $active investigators working ($working)"
+  if ((active || verifying)); then
+    if ((active)); then
+      stage="phase 1: $active investigators working ($working)"
+      if ((verifying)); then stage+="; verifying published results ($checking)"; fi
+    else
+      stage="phase 1: verifying published results ($checking)"
+    fi
+    auto_stage "$parent" "$stage"
     return
   fi
   if ((successful)); then stage='waits for you: phase 1 complete (merge not available yet)'
   else stage='waits for you: all phase 1 runs failed'; fi
   meta_set "$parent" INVESTIGATION_LEASE ""
   meta_set "$parent" FINISHED "$(date -Is)"
-  auto_stage "$parent" "$stage"
+  auto_stage "$parent" "$stage" no-comment
   meta_set "$parent" STATUS waiting
   if ((successful)); then notify "$parent" done "$stage" "Independent phase one finished; no merge or PR was attempted."
   else notify "$parent" failed "$stage" "No investigator published a successful result."; fi
@@ -3146,7 +3196,7 @@ investigation_teams_tick() {
 
 # investigation_team_admit parent reserves every requested investigator before creating or starting children.
 investigation_team_admit() {
-  local parent=$1 names=() roots=() repos=() available=() name root repo base stamp text child children="" members='[]' state branch kv
+  local parent=$1 names=() roots=() repos=() available=() launchable=() name root repo base stamp text child children="" members='[]' state branch kv
   # create_task deliberately reads these dynamically scoped arrays, so investigator configuration wins.
   local -A AGENT_TYPE=() AGENT_MODEL=() AGENT_EXTRA_ARGS=()
   IFS=, read -r -a names <<< "$(task_field "$parent" INVESTIGATION_TEAM)"
@@ -3159,8 +3209,6 @@ investigation_team_admit() {
   done
   root=$(task_field "$parent" REPO_ROOT); repo=$(task_field "$parent" REPO_NAME)
   base=$(task_field "$parent" INVESTIGATION_BASE_SHA); text=$(<"$TASKS/$parent/task.md")
-  meta_set "$parent" INVESTIGATION_LEASE 1
-  meta_set "$parent" STATUS running
   for name in "${names[@]}"; do
     roots+=("$root"); repos+=("$repo")
     AGENT_TYPE[$name]=${INVESTIGATORS_TYPE[$name]}
@@ -3169,6 +3217,18 @@ investigation_team_admit() {
   done
   lock_task_ids
   stamp=$(allocate_run_ids 0 names roots repos)
+  # Predeclare every child before taking capacity, including tasks not yet initialized or tagged.
+  for name in "${names[@]}"; do
+    child="$stamp-$name"; branch="$BRANCH_PREFIX/$name/$stamp"
+    children="${children:+$children,}$child"
+    members=$(jq -c --arg agent "$name" --arg task "$child" --arg branch "$branch" \
+      '. + [{agent:$agent,task:$task,branch:$branch,status:"new",commit:""}]' <<< "$members")
+  done
+  meta_set "$parent" INVESTIGATION_PHASE1_TASKS "$children"
+  investigation_phase1_write "$parent" "$members"
+  meta_set "$parent" INVESTIGATION_LEASE 1
+  meta_set "$parent" STATUS running
+  members='[]'
   for name in "${names[@]}"; do
     child="$stamp-$name"; state=new; branch="$BRANCH_PREFIX/$name/$stamp"
     if create_task "$name" "$text" "$root" "$root" "$base" "$stamp" "" "$base"; then
@@ -3177,25 +3237,21 @@ investigation_team_admit() {
           "INVESTIGATION_TOPIC_SLUG=$(task_field "$parent" INVESTIGATION_TOPIC_SLUG)"; do
         meta_set "$child" "${kv%%=*}" "${kv#*=}"
       done
+      launchable+=("$child")
     else
       state=failed
       log_error investigation_start_failed "task=$parent" "investigator=$name" "reason=$CREATE_TASK_ERROR"
     fi
-    children="${children:+$children,}$child"
     members=$(jq -c --arg agent "$name" --arg task "$child" --arg branch "$branch" --arg status "$state" \
       '. + [{agent:$agent,task:$task,branch:$branch,status:$status,commit:""}]' <<< "$members")
   done
-  meta_set "$parent" INVESTIGATION_PHASE1_TASKS "$children"
   investigation_phase1_write "$parent" "$members"
   unlock_task_ids
   # All worktrees and the complete snapshot exist before any independent CLI can inspect its task.
-  for name in "${names[@]}"; do
-    child="$stamp-$name"
-    if [[ -f $TASKS/$child/meta.env ]]; then
-      if ! start_runner "$child" new; then
-        meta_set "$child" STATUS failed
-        log_error investigation_start_failed "task=$parent" "investigator=$name" "reason=runner launch"
-      fi
+  for child in "${launchable[@]}"; do
+    if ! start_runner "$child" new; then
+      meta_set "$child" STATUS failed
+      log_error investigation_start_failed "task=$parent" "investigator=$(task_field "$child" AGENT)" "reason=runner launch"
     fi
   done
   investigation_team_tick "$parent"
@@ -5098,7 +5154,9 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
       try team_state_failed bus team-set --dir "$BUS_DIR" --team "$(task_field "$id" TEAM)" --agent "$(task_field "$id" AGENT)" --state done >/dev/null
       member_out "$id" "its runner died (no running unit)"
     fi
-    notify "$id" failed "" "the runner died (no running unit) — the task is ended"
+    if ! is_independent_investigation "$id"; then
+      notify "$id" failed "" "the runner died (no running unit) — the task is ended"
+    fi
   done
   supervise_member_jobs
   supervise_teams
