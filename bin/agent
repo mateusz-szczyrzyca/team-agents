@@ -372,7 +372,8 @@ AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such
 AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free)
 AGENT_PROMPT_CHECKPOINTS="${AGENT_PROMPT_CHECKPOINTS:-2}"       # a prompt's newest checkpoints (the rest: their file); 0 all
 AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}" # a run that read more a step is followed by a fresh session (0: never)
-AGENT_LONG_RUN_STEPS="${AGENT_LONG_RUN_STEPS:-120}"           # a team member's run of more tool calls is asked to end (0: never)
+AGENT_LONG_RUN_STEPS="${AGENT_LONG_RUN_STEPS:-120}"
+AGENT_LONG_RUN_HARD="${AGENT_LONG_RUN_HARD:-200}"           # a team member's run of this many steps is ended by the runner (0: never)           # a team member's run of more tool calls is asked to end (0: never)
 AGENT_PROMPT_ARG_MAX="${AGENT_PROMPT_ARG_MAX:-100000}"           # a longer prompt (bytes) reaches the CLI through a file: Linux takes 128 KiB per argument
 AGENT_LIMIT_TAIL_LINES="${AGENT_LIMIT_TAIL_LINES:-30}"           # how much of the end of stderr shows a provider limit
 # Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
@@ -2721,7 +2722,9 @@ killtree() { # pid — kills a process and all its descendants
 watch_run() { # pid dir n — waits for a CLI run; kills it after AGENT_HANG_MIN min without any event (sets HUNG=1)
   local pid=$1 dir=$2 n=$3 last now f m
   local limit=${AGENT_HANG_SECS:-$((AGENT_HANG_MIN * 60))} poll=${AGENT_HANG_POLL:-15}
-  HUNG=0
+  local hard=${AGENT_RUN_HARD_AT:-0} from=0 steps   # a team member's step limit (0: none)
+  HUNG=0 LONG_CUT=0
+  if ((hard > 0)) && [[ -f $dir/activity.jsonl ]]; then from=$(wc -l < "$dir/activity.jsonl"); fi
   while kill -0 "$pid" 2>/dev/null; do   # kill -0 only asks whether the process still exists
     sleep "$poll"
     last=$(date +%s)
@@ -2738,6 +2741,18 @@ watch_run() { # pid dir n — waits for a CLI run; kills it after AGENT_HANG_MIN
       sleep 2
       killtree "$pid"
       break
+    fi
+    if ((hard > 0)) && [[ -f $dir/activity.jsonl ]]; then   # this run's steps: the activity since it started
+      steps=$(tail -n +"$((from + 1))" "$dir/activity.jsonl" \
+        | jq_soft activity_parse -c 'select(.k != "info" and .k != "text" and .k != "err")' | awk 'NF {n++} END {print n + 0}')
+      if ((steps >= hard)) && kill -0 "$pid" 2>/dev/null; then
+        LONG_CUT=1
+        act "$RUNNER_ID" info "■ the run reached its limit of $hard steps: the runner ends it, and the next starts a fresh session"
+        killtree "$pid"
+        sleep 2
+        killtree "$pid"
+        break
+      fi
     fi
   done
   wait "$pid"
@@ -3755,7 +3770,10 @@ cmd__runner() {
   act "$id" info "▶ run $n ($mode)"
   [[ $mode != fresh ]] || act "$id" info "■ fresh session: $FRESH_WHY"
   AGENT_RUN_LONG_AT=0   # the steps after which a team member's run is long (the normalizer marks it)
-  [[ -n ${TEAM:-} && ${KIND:-worker} == worker ]] && AGENT_RUN_LONG_AT=$AGENT_LONG_RUN_STEPS
+  AGENT_RUN_HARD_AT=0   # the steps at which the watchdog ends a team member's run
+  if [[ -n ${TEAM:-} && ${KIND:-worker} == worker ]]; then
+    AGENT_RUN_LONG_AT=$AGENT_LONG_RUN_STEPS AGENT_RUN_HARD_AT=$AGENT_LONG_RUN_HARD
+  fi
   export AGENT_RUN_LONG_AT
   trap 'runner_exit $?' EXIT
   trap 'exit 143' TERM INT HUP
@@ -3812,6 +3830,12 @@ cmd__runner() {
       *)      echo "unknown agent type: $TYPE"; RC=2 ;;
     esac
     log_info cli_finished "run=$nrun" "exit_code=$RC" "hung=$HUNG"
+    if ((LONG_CUT)); then   # ended at its step limit: it sleeps, and is woken at once in a fresh session (long_run_end)
+      RC=0
+      FINAL=$(printf 'STATUS: SLEEPING\nRole: member\nDone:\n- The run reached its limit of %s steps and was ended by the runner.\nNot done: what the checkpoint and the board say.\nUnclear: None.\n' "$AGENT_LONG_RUN_HARD")
+      [[ -f $dir/long-run ]] || echo "$AGENT_LONG_RUN_HARD" > "$dir/long-run"
+      log_info long_run_cut "task=$id" "steps=$AGENT_LONG_RUN_HARD"
+    fi
     if ((HUNG == 0)); then
       meta_set "$id" HANGS 0
       break
@@ -4584,11 +4608,16 @@ resume_run() {
         echo "  WARNING $name: the uncommitted changes of $old could not be applied — they stay in the stash: git stash apply $carry"
       fi
     fi
-    { cat "$TASKS/$old/task.md"
-      if [[ -n $round_head ]]; then
-        printf '\n\n## %s (resumed %s)\n\n%s\n' "$round_title" "$(date '+%Y-%m-%d %H:%M')" "$round_head"
+    { if ((fresh)); then round_text_strip < "$TASKS/$old/task.md"; else cat "$TASKS/$old/task.md"; fi
+      if [[ -n $round_head ]]; then   # this round's own heading: for this round only
+        printf '\n\n%s\n## %s (resumed %s)\n\n%s\n%s\n' "$ROUND_ONLY_OPEN" "$round_title" "$(date '+%Y-%m-%d %H:%M')" \
+          "$round_head" "$ROUND_ONLY_CLOSE"
       fi
-      if [[ -n ${add//[[:space:]]/} ]]; then
+      if [[ -n ${add//[[:space:]]/} ]] && ((${AGENT_FIX_PASS:-0} > 0 || ${AGENT_PRECHECK_PASS:-0} > 0)); then
+        # what the checks and the reviews send back (a fix pass, a bounce): for this round only
+        printf '\n\n%s\n## For this round only: from its checks and reviews (resumed %s)\n\n%s\n%s\n' "$ROUND_ONLY_OPEN" \
+          "$(date '+%Y-%m-%d %H:%M')" "$add" "$ROUND_ONLY_CLOSE"
+      elif [[ -n ${add//[[:space:]]/} ]]; then
         printf '\n\n## Addition from the human (resumed %s)\n\n%s\n' "$(date '+%Y-%m-%d %H:%M')" "$add"
       fi; } > "$TASKS/$id/task.md"
     for t in "${olds[@]}"; do resume_history "$t"; done > "$TASKS/$id/history.md"   # every member sees all answers
@@ -5507,6 +5536,16 @@ runs_usage() {
         end)
     | .rows | to_entries | sort_by(.key | tonumber) | .[]
     | [.key, .value.steps, .value.in, .value.cached, .value.out, .value.cost] | @tsv' "$TASKS/$id/activity.jsonl"
+}
+
+# The marks of a task's text that is for one round only (its heading, what its checks and reviews sent back): the
+# next round's text leaves it out (round_text_strip).
+ROUND_ONLY_OPEN="<!-- round only: left out of the next round -->"
+ROUND_ONLY_CLOSE="<!-- /round only -->"
+
+# round_text_strip — a task's text (stdin) without what was for its round only
+round_text_strip() {
+  awk -v op="$ROUND_ONLY_OPEN" -v cl="$ROUND_ONLY_CLOSE" '$0 == op {skip = 1; next} $0 == cl {skip = 0; next} !skip'
 }
 
 # checkpoints_latest key — the key's newest AGENT_PROMPT_CHECKPOINTS checkpoints (all: 0), and where the earlier ones are
