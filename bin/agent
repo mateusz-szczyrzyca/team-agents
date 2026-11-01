@@ -4571,8 +4571,9 @@ resume_run() {
     if [[ -z $joiner && -d $(task_field "$old" WORKTREE) ]]; then
       # uncommitted changes are never thrown away: they go to the stash and on into the new worktree
       if [[ -n $(git -C "$(task_field "$old" WORKTREE)" status --porcelain 10>&-) ]]; then
-        git -C "$(task_field "$old" WORKTREE)" stash push --include-untracked --quiet -m "agent resume of $old: uncommitted work" 10>&- \
-          || die "the worktree of $old has uncommitted changes that could not be stashed — commit them first"
+        local why
+        why=$(worktree_stash "$(task_field "$old" WORKTREE)" "agent resume of $old: uncommitted work" "$old") \
+          || die "the worktree of $old has uncommitted changes that git could not stash (${why:-no reason given}) — commit them first"
         carry=$(git -C "$root" rev-parse --verify --quiet refs/stash 10>&-)
       fi
       try worktree_remove_failed git -C "$root" worktree remove --force "$(task_field "$old" WORKTREE)" 10>&-
@@ -5541,6 +5542,19 @@ runs_usage() {
     | .modes as $modes | .rows | to_entries | sort_by(.key | tonumber) | .[]
     | [.key, .value.steps, .value.in, .value.cached, .value.out, .value.cost, ($modes[.key] // "?")] | @tsv' \
     "$TASKS/$id/activity.jsonl"
+}
+
+# worktree_stash worktree message task — the worktree's uncommitted changes (untracked files too) to the stash; when git
+# refuses them as they are — a file added with --intent-to-add: "Entry … not uptodate. Cannot merge" — they are
+# staged and stashed again (resume_stash_retry). Prints git's refusal when it still refuses.
+worktree_stash() {
+  local wt=$1 msg=$2 task=$3 err
+  err=$(git -C "$wt" stash push --include-untracked --quiet -m "$msg" 2>&1 10>&-) && return 0
+  log_warn resume_stash_retry "task=$task" "error=${err:0:300}"
+  if ! err=$(git -C "$wt" add -A 2>&1 10>&-) || ! err=$(git -C "$wt" stash push --include-untracked --quiet -m "$msg" 2>&1 10>&-); then
+    printf '%s' "$(head -n 2 <<< "$err" | tr '\n' ' ' | cut -c1-200)"
+    return 1
+  fi
 }
 
 # The marks of a task's text that is for one round only (its heading, what its checks and reviews sent back): the

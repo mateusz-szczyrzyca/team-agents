@@ -244,7 +244,8 @@ merges only the commit that passed its checks and both reviews (`--match-head-co
 the merge. What it does for a round shows on the dashboard as its coordinator's stage (⚙): the checks, with the gate's
 progress ("make gate — 2 of 6 steps passed"), the two reviews and their verdicts, the merge, the next round — or
 "waits for you: …" where you decide. What a round's checks and reviews send back to its team (a fix pass, a bounce) is for that round only: the next
-round's task text leaves it out, and keeps your own additions. A team that cannot take its work back — a resume refused — waits for you the same way, with
+round's task text leaves it out, and keeps your own additions. A member's uncommitted work goes on into its resumed worktree (stashed; when git refuses it as it is — a file added
+with `--intent-to-add` — it is staged and stashed again). A team that cannot take its work back — a resume refused — waits for you the same way, with
 the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
 **Notifications that are not delivered.** When the notification command fails — say, a variable it needs is not
