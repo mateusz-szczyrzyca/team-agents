@@ -4127,6 +4127,26 @@ resume_run() {
     if [[ $(task_field "$t" KIND) == remote-member ]]; then remote_olds+=("$t"); else local_olds+=("$t"); fi
   done
   olds=("${local_olds[@]}")
+  local joiners=() tpl="" m t2 found kept=() rkept=()
+  if ((${#RESUME_MEMBERS[@]})); then   # --team: these members only — the ones not listed are left out, new ones join
+    for t in "${olds[@]}"; do is_one_of "$(task_field "$t" AGENT)" "${RESUME_MEMBERS[@]}" && kept+=("$t"); done
+    for t in "${remote_olds[@]}"; do is_one_of "$(task_field "$t" AGENT)" "${RESUME_MEMBERS[@]}" && rkept+=("$t"); done
+    for m in "${RESUME_MEMBERS[@]}"; do
+      found=0
+      for t2 in "${olds[@]}" "${remote_olds[@]}"; do [[ $(task_field "$t2" AGENT) != "$m" ]] || found=1; done
+      ((found)) && continue
+      [[ $m != *@* ]] || die "--team: $m was not a member of the interrupted team — a remote member cannot join on a resume"
+      agent_running_task "$m" > /dev/null && die "agent $m is busy with another task"
+      joiners+=("+$m")
+    done
+    ((${#kept[@]})) || die "--team: none of the interrupted team's local members is listed — at least one goes on"
+    tpl=${kept[0]}   # a new member's template: the coordinator's task when it goes on
+    local lead_name=""
+    [[ -z ${tj:-} ]] || lead_name=$(jq -r '.lead // empty' <<< "$tj")
+    for t in "${kept[@]}"; do [[ $(task_field "$t" AGENT) != "$lead_name" ]] || tpl=$t; done
+    olds=("${kept[@]}")
+    remote_olds=("${rkept[@]}")
+  fi
   for t in "${olds[@]}"; do
     case $(task_field "$t" STATUS) in
       new|starting|running|waiting|investigating|sleeping|paused)
@@ -4197,14 +4217,17 @@ resume_run() {
       "$(task_field "$r" REPO_ROOT)" "$ts" resume)")
   done
   RESUME_NEW_IDS+=("${remote_ids[@]}")
-  for old in "${olds[@]}"; do
-    name=$(task_field "$old" AGENT); root=$(task_field "$old" REPO_ROOT)
+  for old in "${olds[@]}" "${joiners[@]}"; do
+    local joiner=""
+    if [[ $old == +* ]]; then joiner=${old#+}; old=$tpl; fi   # a new member: the coordinator's task is its template
+    name=${joiner:-$(task_field "$old" AGENT)}; root=$(task_field "$old" REPO_ROOT)
     id="$ts-$name"; wt="$AGENTS_HOME/worktrees/$(task_field "$old" REPO_NAME)/$id"
+    mkdir -p "$TASKS/$id"   # a new member's task directory (the others' exist already)
     RESUME_NEW_IDS+=("$id"); RESUME_NEW_WT[$id]=$wt
     mkdir -p "$(dirname "$wt")"
     # the same branch (with its commits and draft PR) — the old worktree releases it
     carry=""
-    if [[ -d $(task_field "$old" WORKTREE) ]]; then
+    if [[ -z $joiner && -d $(task_field "$old" WORKTREE) ]]; then
       # uncommitted changes are never thrown away: they go to the stash and on into the new worktree
       if [[ -n $(git -C "$(task_field "$old" WORKTREE)" status --porcelain 10>&-) ]]; then
         git -C "$(task_field "$old" WORKTREE)" stash push --include-untracked --quiet -m "agent resume of $old: uncommitted work" 10>&- \
@@ -4226,6 +4249,10 @@ resume_run() {
       sha=$(git -C "$root" rev-parse --short "$start")
       round_title="Round $((wr + 1)) of $wrs"
       round_head="Round $((wr + 1)) of $wrs. Round $wr is merged into $base: your branch $branch starts from there ($sha). Your previous branch $prev is kept — take from it only what the round plan puts into this round."
+    elif [[ -n $joiner ]]; then   # a new member: its own branch from the coordinator's, with the round's work so far
+      branch="$BRANCH_PREFIX/$name/$ts"
+      git -C "$root" worktree add --quiet -b "$branch" "$wt" "$prev" 10>&- || die "could not create branch $branch from $prev"
+      echo "  $name joins the team: branch $branch from $prev"
     else
       git -C "$root" worktree add --quiet "$wt" "$branch" 10>&- || die "could not recreate the worktree of branch $branch"
     fi
@@ -4271,6 +4298,7 @@ resume_run() {
   if [[ -n $old_team ]]; then
     local json='{}' lead
     lead=$(jq -r '.lead // empty' <<< "$tj")
+    if ((${#RESUME_MEMBERS[@]})) && ! is_one_of "$lead" "${RESUME_MEMBERS[@]}"; then lead=""; fi   # left out: a new coordinator
     [[ $(jq -r --arg l "$lead" '.members[$l].state // empty' <<< "$tj") == hung ]] && lead=""
     for id in "${ids[@]}"; do
       name=$(task_field "$id" AGENT)
@@ -4415,7 +4443,14 @@ cmd_run() {
   fi
   ((same_round == 0)) || [[ -n $resume_ref ]] || die "--same-round only works with --resume"
   if [[ -n $resume_ref ]]; then
-    [[ -z $team_list ]] || die "--resume takes the members from the interrupted task — do not combine it with --team"
+    RESUME_MEMBERS=()   # --team with --resume: the resumed team's members (the others are left out, new ones join)
+    if [[ -n $team_list ]]; then
+      local m
+      for m in ${team_list//,/ }; do   # "a, b,c": split on commas and spaces
+        [[ $m == *@* || -n ${AGENT_TYPE[$m]:-} ]] || die "--team: $m is not a configured agent (agents.conf: AGENT_TYPE)"
+        RESUME_MEMBERS+=("$m")
+      done
+    fi
     resume_run "$resume_ref" "$verify" "$same_round" "$@"
     return
   fi
