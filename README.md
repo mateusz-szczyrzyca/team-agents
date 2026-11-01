@@ -879,6 +879,9 @@ with the qualified task ID and a task-view link. Answer through `/questions`, th
 edited. Editable copies expire when their task mirrors are removed. The interactive CLI validates all verdicts,
 asks for confirmation, and adds `**ANSWERED**` when you send; declining leaves an editable draft.
 Each editable copy appears atomically with private permissions and complete answer instructions.
+If preparing the instructions fails, readiness fails without publishing a copy and can be retried.
+The `questions_note_cleanup_failed` warning means a failed preparation also left a temporary file
+that could not be removed.
 An already marked file retains its explicit send intent and can be queued without another prompt.
 Waiting remote members can also be answered through their retained lead proxy in the terminal or task page.
 Dashboard SSE updates retain the same remote controls and waiting counters as the initial page.

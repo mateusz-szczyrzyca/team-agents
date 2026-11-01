@@ -644,10 +644,18 @@ questions_note() {
   [[ $id != *@* ]] || action=answer
   note="> Answer every question after **Verdict:** — \`ok\` accepts the recommendation. When you are done, put **ANSWERED** on the last line and save: the answers are sent at once (or run \`agent $action $id\`)."
   grep -qF -- '**ANSWERED** on the last line' "$f" && return 0
-  tmp=$(mktemp)
-  awk -v note="$note" 'NR == 1 && /^# / { print; print ""; print note; next } NR == 1 { print note; print "" } { print }' "$f" > "$tmp"
-  cat "$tmp" > "$f"     # rewrite in place: the file keeps its inode
-  rm -f "$tmp"
+  # Callers may test our status, disabling errexit: propagate preparation failures explicitly.
+  tmp=$(mktemp) || return 1
+  if ! awk -v note="$note" 'NR == 1 && /^# / { print; print ""; print note; next } NR == 1 { print note; print "" } { print }' "$f" > "$tmp"; then
+    rm -f -- "$tmp" || log_warn questions_note_cleanup_failed "path=$tmp"
+    return 1
+  fi
+  # Rewrite in place so local question files keep the inode watched by the answer service.
+  if ! cat "$tmp" > "$f"; then
+    rm -f -- "$tmp" || log_warn questions_note_cleanup_failed "path=$tmp"
+    return 1
+  fi
+  rm -f -- "$tmp"
 }
 
 # file_mtime file — the modification time with sub-second precision
@@ -716,7 +724,8 @@ cmd__remote_questions_ready() (
   if [[ ! -f $REMOTE_FILE ]]; then
     # Publish only the complete copy: readers must not see text before its answer instructions.
     tmp=$(mktemp "$REMOTE_DIR/.questions-$REMOTE_ROUND.XXXXXX") || return 1
-    trap 'try remote_questions_cleanup_failed rm -f -- "$tmp"' EXIT
+    # Cleanup must still run if mktemp fails; try itself needs another temporary file.
+    trap 'rm -f -- "$tmp" || log_warn remote_questions_cleanup_failed "path=$tmp"' EXIT
     awk '!/^> Answer every question after /' "$REMOTE_MIRROR/questions-$REMOTE_ROUND.md" > "$tmp" || return 1
     chmod 600 "$tmp" || return 1
     questions_note "$id" "$tmp" || return 1
