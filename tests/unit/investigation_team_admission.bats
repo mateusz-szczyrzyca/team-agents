@@ -176,3 +176,62 @@ recorded_status() {
   [ "$child_now" = running ]
   [ "$snapshot_now" = yes ]
 }
+
+@test "stop --running waits for admission before releasing investigation capacity" {
+  configure_investigators
+  scenario '{"inv":{"new":"hold"},"inv2":{"new":"hold"}}'
+  mkfifo "$HOME/admission-release"
+  # Pause real worktree creation after admission has published its lease and child IDs.
+  cat > "$HOME/.local/bin/git" <<'GIT'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *' worktree add '* && ! -f $HOME/admission-paused ]]; then
+  printf 'ready\n' > "$HOME/admission-paused"
+  read -r release < "$HOME/admission-release"
+fi
+exec /usr/bin/git "$@"
+GIT
+  # Signal when stop reaches its admission barrier. On unfixed code, completion signals instead.
+  cat > "$HOME/.local/bin/flock" <<'FLOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -f $AGENTS_HOME/.stop-all && /proc/self/fd/9 -ef $AGENTS_HOME/dispatch.lock ]]; then
+  printf 'ready\n' > "$HOME/stop-observed"
+fi
+exec /usr/bin/flock "$@"
+FLOCK
+  chmod 755 "$HOME/.local/bin/git" "$HOME/.local/bin/flock"
+  systemd-run --user --unit=admission-controller bash -c \
+    'agent _investigation-team --team inv,inv2 -f "$HOME/topic.md" > "$HOME/admission.log" 2>&1; printf "done\n" > "$HOME/admission-ended"'
+  wait_grep ready "$HOME/admission-paused"
+  local parent
+  parent=$(task_of investigation-team)
+  [ "$(field "$parent" INVESTIGATION_LEASE)" = 1 ]
+  [ ! -f "$AGENTS_HOME/tasks/$(jq -r '.members[0].task' "$AGENTS_HOME/tasks/$parent/phase1.json")/meta.env" ]
+  systemd-run --user --unit=stop-controller bash -c \
+    'agent stop --running > "$HOME/stop.log" 2>&1; printf "ready\n" > "$HOME/stop-observed"; printf "done\n" > "$HOME/stop-ended"'
+  wait_grep ready "$HOME/stop-observed"
+  printf 'continue\n' > "$HOME/admission-release"
+  wait_grep "done" "$HOME/admission-ended"
+  wait_grep "done" "$HOME/stop-ended"
+
+  # Freeze the observed outcome before best-effort cleanup of the unfixed fixture's late runners.
+  local lease first second first_state second_state first_active second_active available
+  lease=$(field "$parent" INVESTIGATION_LEASE)
+  first=$(task_of inv); second=$(task_of inv2)
+  first_state=$(field "$first" STATUS); second_state=$(field "$second" STATUS)
+  run systemctl --user is-active --quiet "agent-$first-r$(field "$first" RUN).service"
+  first_active=$status
+  run systemctl --user is-active --quiet "agent-$second-r$(field "$second" RUN).service"
+  second_active=$status
+  available=$(bash -c 'source "$1"; free_investigator_list' _ "$REPO_ROOT/bin/agent")
+  run agent stop "$parent"
+  [ "$status" -eq 0 ]
+  [ "$(field "$parent" STATUS)" = stopped ]
+  [ -z "$lease" ]
+  [ "$first_state" = stopped ]
+  [ "$second_state" = stopped ]
+  [ "$first_active" -eq 3 ]
+  [ "$second_active" -eq 3 ]
+  [ "$available" = "$(printf 'inv\ninv2')" ]
+}

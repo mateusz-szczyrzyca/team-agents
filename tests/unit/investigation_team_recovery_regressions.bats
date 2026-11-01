@@ -347,3 +347,34 @@ EOF
   wait_status "$child" '^(done|failed)$'
   wait_status "$id" waiting
 }
+
+@test "_supervise cancels precheck and clears lease for stopped parent with lingering lease" {
+  independent_setup
+  local id="20261101-000038-investigation-team"
+  local base
+  base=$(git -C "$HOME/repo" rev-parse HEAD)
+  create_parent_task "$id" 'inv,inv2' "$base" 2
+  meta_put "$id" INVESTIGATION_PRECHECK running
+  meta_put "$id" INVESTIGATION_PRECHECK_UNIT "agent-$id-precheck-1"
+
+  # A live isolated unit verifies cancellation of work, beyond parent metadata changes.
+  systemd-run --user --unit="agent-$id-precheck-1" bash -c \
+    'printf "ready\n" > "$HOME/precheck-ready"; exec tail -f /dev/null'
+  wait_grep ready "$HOME/precheck-ready"
+  run systemctl --user is-active --quiet "agent-$id-precheck-1.service"
+  [ "$status" -eq 0 ]
+
+  meta_put "$id" STATUS stopped
+  run agent _supervise
+  [ "$status" -eq 0 ]
+  [ "$(field "$id" STATUS)" = stopped ]
+  [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
+  run systemctl --user is-active --quiet "agent-$id-precheck-1.service"
+  [ "$status" -eq 3 ]
+
+  # Cleanup releases both investigators for subsequent teams.
+  run free_investigators
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "inv" ]]
+  [[ "$output" =~ "inv2" ]]
+}
