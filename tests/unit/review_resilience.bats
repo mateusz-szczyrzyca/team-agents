@@ -31,7 +31,7 @@ review_by() { reviews | xargs -r grep -l "^AGENT=$1\$" | grep -q .; }
 
 @test "--autopilot: a review that ends without a verdict while the other is ready to merge is done again by another investigator" {
   echo '[{"number": 7, "url": "https://github.com/o/r/pull/7", "state": "OPEN", "isDraft": false}]' > "$HOME/gh-prs.json"
-  printf 'INVESTIGATORS_TYPE[inv2]=claude\nINVESTIGATORS_TYPE[inv3]=claude\nAGENT_REVIEW_GATE=true\n' >> "$AGENTS_HOME/agents.conf"
+  printf 'INVESTIGATORS_TYPE[inv2]=claude\nINVESTIGATORS_TYPE[inv3]=claude\nAGENT_REVIEW_DRAW=list\nAGENT_REVIEW_GATE=true\n' >> "$AGENTS_HOME/agents.conf"
   scenario '{"lead": {"new": "team-lead-done"}, "member": {"new": "team-sleep"}, "inv": {"new": "review-ready"}, "inv2": {"new": "cli-error"}, "inv3": {"new": "review-ready"}}'
   agent run --team lead,member --autopilot "team task"
   for _ in $(seq 1 750); do review_by inv2 && break; sleep 0.2; done
@@ -61,7 +61,7 @@ review_by() { reviews | xargs -r grep -l "^AGENT=$1\$" | grep -q .; }
 
 @test "--autopilot: a review whose investigator is out of quota goes to another at once; that one is not chosen while it lasts" {
   echo '[{"number": 7, "url": "https://github.com/o/r/pull/7", "state": "OPEN", "isDraft": false}]' > "$HOME/gh-prs.json"
-  printf 'INVESTIGATORS_TYPE[inv2]=claude\nINVESTIGATORS_TYPE[inv3]=claude\nAGENT_REVIEW_GATE=true\n' >> "$AGENTS_HOME/agents.conf"
+  printf 'INVESTIGATORS_TYPE[inv2]=claude\nINVESTIGATORS_TYPE[inv3]=claude\nAGENT_REVIEW_DRAW=list\nAGENT_REVIEW_GATE=true\n' >> "$AGENTS_HOME/agents.conf"
   scenario '{"lead": {"new": "team-lead-done"}, "member": {"new": "team-sleep"}, "inv": {"new": "review-ready"}, "inv2": {"new": "budget-spent"}, "inv3": {"new": "review-ready"}}'
   agent run --team lead,member --autopilot "team task"
   for _ in $(seq 1 750); do review_by inv3 && break; sleep 0.2; done
@@ -77,7 +77,7 @@ review_by() { reviews | xargs -r grep -l "^AGENT=$1\$" | grep -q .; }
 
 @test "--autopilot: a review whose investigator is out of quota for days goes to another investigator at once" {
   echo '[{"number": 7, "url": "https://github.com/o/r/pull/7", "state": "OPEN", "isDraft": false}]' > "$HOME/gh-prs.json"
-  printf 'INVESTIGATORS_TYPE[inv2]=claude\nINVESTIGATORS_TYPE[inv3]=claude\nAGENT_REVIEW_GATE=true\n' >> "$AGENTS_HOME/agents.conf"
+  printf 'INVESTIGATORS_TYPE[inv2]=claude\nINVESTIGATORS_TYPE[inv3]=claude\nAGENT_REVIEW_DRAW=list\nAGENT_REVIEW_GATE=true\n' >> "$AGENTS_HOME/agents.conf"
   scenario '{"lead": {"new": "team-lead-done"}, "member": {"new": "team-sleep"}, "inv": {"new": "review-ready"}, "inv2": {"new": "budget-spent"}, "inv3": {"new": "review-ready"}}'
   agent run --team lead,member --autopilot "team task"
   for _ in $(seq 1 750); do review_by inv3 && break; sleep 0.2; done

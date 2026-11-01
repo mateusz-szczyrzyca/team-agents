@@ -369,6 +369,7 @@ AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no 
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
+AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free)
 AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}" # a run that read more a step is followed by a fresh session (0: never)
 AGENT_LONG_RUN_STEPS="${AGENT_LONG_RUN_STEPS:-120}"           # a team member's run of more tool calls is asked to end (0: never)
 AGENT_PROMPT_ARG_MAX="${AGENT_PROMPT_ARG_MAX:-100000}"           # a longer prompt (bytes) reaches the CLI through a file: Linux takes 128 KiB per argument
@@ -1924,7 +1925,8 @@ start_review_pair() { # coordinator task — both reviews of its PR at once, on 
   for f in "${free[@]}"; do [[ $f == "$a" || $f == "$b" ]] || pool+=("$f"); done
   [[ -z ${AGENT_REVIEW_SEED:-} ]] || RANDOM=$AGENT_REVIEW_SEED   # a fixed draw, for the tests
   while [[ -z $a || -z $b ]] && ((${#pool[@]})); do
-    j=$((RANDOM % ${#pool[@]}))
+    j=0   # AGENT_REVIEW_DRAW=list: the first free one of the list
+    [[ $AGENT_REVIEW_DRAW == list ]] || j=$((RANDOM % ${#pool[@]}))
     f=${pool[j]}
     pool=("${pool[@]:0:j}" "${pool[@]:j+1}")
     if [[ -z $a ]]; then a=$f; else b=$f; fi
