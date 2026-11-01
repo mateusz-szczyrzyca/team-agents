@@ -166,20 +166,37 @@ providers and accounts:
 
 ### Teams
 
-**Investigation teams (round 2/4):** `agent run --investigation --team "inv-a, inv-b" "topic"`
+**Investigation teams (round 3/4):** `agent run --investigation --team "inv-a, inv-b" "topic"`
 validates investigator names and options. Phase 1 runs investigators independently on isolated branches
 from an immutable base commit, saving non-code findings to `docs/investigations/<topic-slug>/<investigator>.md`
-and code following TDD. The public CLI entry point remains inactive until the end-to-end workflow (merger,
-PR, and review) is completed in Round 3; internal phase-1 execution is managed via `_investigation-team`.
+and code following TDD. `agent run --investigation` is active in Round 3 for the complete initial pipeline
+(phases 1–4: independent investigation, merge, PR, prechecks, review, and human hand-off); resume (`agent run --resume <team>`)
+remains inactive until Round 4. Internal execution is managed via `_investigation-team`.
 Phase-one task metadata and `phase1.json` are additive; existing task files and bus state remain readable.
 Admission writes the cohort manifest before setting `INVESTIGATION_LEASE`, and recovery reconstructs missing
 manifests (`investigation_manifest_recovered`) or fails unstarted children while live runs retain capacity.
 Completed runs verify publication on origin; transient transport errors retry (`investigation_publication_check_failed`,
 stage `verifying published results`) while preserving child `done` status and the lease. Invalid local results
 or a confirmed missing or mismatched ref fail verification. A quota failure records `QUOTA_UNTIL` without retrying that run; supervision admits queued cohorts after
-capacity returns. The `independent_run_finished` log event records each child's terminal status; the parent sends
-one completion notification and waits with `no-comment` without creating a PR in this round.
-See the [investigation-team design](docs/investigation-teams.md) for details.
+capacity returns. The `independent_run_finished` log event records each child's terminal status. For legacy phase-1 runs
+(invoked via `_investigation-team` without `INVESTIGATION_PIPELINE=1`), the parent sends one completion notification
+and waits with `no-comment` without creating a PR. For full investigation pipelines (`INVESTIGATION_PIPELINE=1`),
+execution advances to Phase 2.
+Phase 2 selects a merger uniformly at random (seeded by non-negative decimal integer `AGENT_INVESTIGATION_SEED`, snapshotted into parent `INVESTIGATION_SEED` at team creation)
+among investigators that finished `DONE`; the merger reconciles results using `prompts/inv-merge.md`, pushes
+its branch, and opens a pull request detailing per-investigator merge rationale.
+The opened PR undergoes automated prechecks (`cmd__precheck`: gate, round tests, PR description conventions);
+check failures allow one bounce overall to the merger with diagnostics (stage `merging: <merger> (fix checks)`).
+A failed merger can be replaced once with another eligible `DONE` investigator. When the bounce and replacement
+are exhausted, the team hands off to the human (`waits for you: merge failed`).
+Phase 3 selects a reviewer among team members other than the merger to review the PR via `prompts/review.md`
+requiring an explicit verdict (`ready-to-merge`, `needs-fixes`, `incomplete`). A reviewer failure or missing verdict triggers one replacement by another eligible investigator; a second failure hands off to the human (`waits for you: review failed`).
+Phase 4 releases capacity leases, tracks pending PR comment and notification attempts (`INVESTIGATION_HANDOFF_PENDING`),
+and waits for human decision without auto-merging (`waits for you: review ready (#<pr-number>)`). A crash before
+recording an attempt can repeat that external action; the existing helpers provide best-effort delivery.
+All task metadata fields and manifests are additive; existing task files and bus state remain backwards-compatible.
+Resume on an open PR is planned for Round 4.
+See the [investigation-team design](docs/investigation-teams.md) for details, including the [newly logged events](docs/investigation-teams.md#newly-logged-events) and recovery contracts.
 
 `agent run --team a,b,c "task"` gives one task to several agents, each on its own branch:
 
@@ -558,6 +575,7 @@ Then:
 | `NORMAL_AGENTS`, `WORKER_AGENTS` | tiers (an agent in neither list is normal); worker order = delegation preference |
 | `INVESTIGATORS_TYPE/_MODEL/_EXTRA_ARGS[name]` | investigators (the legacy single `INVESTIGATOR_*` settings still work) |
 | `INVESTIGATION_QUEUE_MAX` | waiting investigation requests (default 3) |
+| `AGENT_INVESTIGATION_SEED` | optional non-negative decimal integer seed for deterministic merger and reviewer selection in investigation teams (snapshotted into parent `INVESTIGATION_SEED` at team creation; default unset: random) |
 | `AGENT_HANG_MIN`, `AGENT_HANG_STRIKES` | watchdog (default 30 min, 3 strikes) |
 | `AGENT_IDLE_RUN_SEC`, `AGENT_WAKE_LOOP_MAX`, `AGENT_WAKE_RATE_MAX`, `AGENT_WAKE_LOOP_PAUSE_MIN` | wake-loop guard (default 120 s, 4 idle runs, 30 runs / 10 min, 15 min pause) |
 | `AGENT_QUOTA_PAUSE_MIN` | pause after an exhausted quota when the CLI does not say when it resets (default 30 min) |
@@ -674,7 +692,7 @@ notifications in `AGENT_LANGUAGE`.
 ```
 agent run <agent> "task" | -f task.md         start a task (inside the repository)
 agent run --team a,b[,c] [--verify] "task"    start a team (optionally with a final PR review)
-agent run --investigation --team "A, B" "topic"  validate an investigator-only team (execution not available yet)
+agent run --investigation --team "A, B" "topic"  investigators create and review a PR; the human decides
 agent run --resume <team|task> ["addition"]   resume from the last checkpoint (same branches; after a merged round: new ones)
 agent run --resume <team|task> --same-round   continue an unmerged round on the same branches (e.g. review fixes)
 agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)
