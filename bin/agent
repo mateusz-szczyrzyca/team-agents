@@ -3126,7 +3126,7 @@ investigation_team_tick() {
   else stage='waits for you: all phase 1 runs failed'; fi
   meta_set "$parent" INVESTIGATION_LEASE ""
   meta_set "$parent" FINISHED "$(date -Is)"
-  auto_stage "$parent" "$stage"
+  auto_stage "$parent" "$stage" no-comment
   meta_set "$parent" STATUS waiting
   if ((successful)); then notify "$parent" done "$stage" "Independent phase one finished; no merge or PR was attempted."
   else notify "$parent" failed "$stage" "No investigator published a successful result."; fi
@@ -5098,7 +5098,9 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
       try team_state_failed bus team-set --dir "$BUS_DIR" --team "$(task_field "$id" TEAM)" --agent "$(task_field "$id" AGENT)" --state done >/dev/null
       member_out "$id" "its runner died (no running unit)"
     fi
-    notify "$id" failed "" "the runner died (no running unit) — the task is ended"
+    if ! is_independent_investigation "$id"; then
+      notify "$id" failed "" "the runner died (no running unit) — the task is ended"
+    fi
   done
   supervise_member_jobs
   supervise_teams
