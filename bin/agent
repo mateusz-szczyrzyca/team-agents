@@ -1909,8 +1909,8 @@ start_review_pairs() { # under the dispatch lock: a pending --autopilot review p
   done
 }
 
-start_review_pair() { # coordinator task — both reviews of its PR at once, on two different free investigators (the
-  # previous pair when free: each re-checks its own findings); 1 = not two free investigators yet
+start_review_pair() { # coordinator task — both reviews of its PR at once, on two different free investigators drawn at
+  # random (the previous pair of this PR when free: each re-checks its own findings); 1 = not two free ones yet
   local id=$1 free=() dir a="" b="" pa="" pb="" f slot name inv j q num url
   mapfile -t free < <(free_investigator_list)
   ((${#free[@]} >= 2)) || return 1
@@ -1920,10 +1920,21 @@ start_review_pair() { # coordinator task — both reviews of its PR at once, on 
   [[ ! -f $dir/A.agent ]] || pa=$(<"$dir/A.agent")
   [[ ! -f $dir/B.agent ]] || pb=$(<"$dir/B.agent")
   for f in "${free[@]}"; do [[ $f != "$pa" ]] || a=$f; [[ $f != "$pb" ]] || b=$f; done
-  for f in "${free[@]}"; do
-    if [[ -z $a && $f != "$b" ]]; then a=$f; fi
-    if [[ -z $b && $f != "$a" ]]; then b=$f; fi
+  local pool=()   # the others are drawn at random among the free ones: two different investigators
+  for f in "${free[@]}"; do [[ $f == "$a" || $f == "$b" ]] || pool+=("$f"); done
+  [[ -z ${AGENT_REVIEW_SEED:-} ]] || RANDOM=$AGENT_REVIEW_SEED   # a fixed draw, for the tests
+  while [[ -z $a || -z $b ]] && ((${#pool[@]})); do
+    j=$((RANDOM % ${#pool[@]}))
+    f=${pool[j]}
+    pool=("${pool[@]:0:j}" "${pool[@]:j+1}")
+    if [[ -z $a ]]; then a=$f; else b=$f; fi
   done
+  if [[ -z $pa$pb ]]; then   # both drawn: A and B in the list's order, as the slots always were
+    for f in "${free[@]}"; do
+      [[ $f != "$a" ]] || break
+      if [[ $f == "$b" ]]; then b=$a; a=$f; break; fi
+    done
+  fi
   [[ -n $a && -n $b && $a != "$b" ]] || return 1
   for slot in A B; do
     name=$a; [[ $slot == A ]] || name=$b

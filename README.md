@@ -205,7 +205,8 @@ not goes back to the team once, with what to fix.
 shows it: ✅ ready to merge, 🔧 needs fixes, 🧩 incomplete, ❌ a review without a verdict. Critical or major
 findings outweigh a "ready-to-merge".
 
-**`--autopilot`** (it implies `--verify`) asks two investigators at once, each on its own — they do not read each
+**`--autopilot`** (it implies `--verify`) asks two investigators at once — drawn at random among the free ones;
+the same pair re-checks a PR after its fixes —, each on its own — they do not read each
 other's review, and a re-review gets only its own previous one; it waits until two are free, never one. Both
 `ready-to-merge`: you get "✅✅ both reviews: ready to merge". Anything else: the team fixes what the reviews that
 found problems say (the fix loop below).
