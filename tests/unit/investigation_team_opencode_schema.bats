@@ -11,6 +11,7 @@ setup_isolation() {
   export AGENTBUS_BIN="$HOME/.local/bin/agentbus"
 }
 
+# create_isolation_task sets up a task directory and meta.env: id kind [inv_team] [type]
 create_isolation_task() {
   local id=$1 kind=$2 inv_team=${3:-} type=${4:-opencode}
   local dir="$AGENTS_HOME/tasks/$id"
