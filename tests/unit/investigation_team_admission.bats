@@ -57,7 +57,7 @@ recorded_status() {
   configure_investigators
   scenario '{"inv":{"new":"fail"},"inv2":{"new":"fail"}}'
   launch_phase_one
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$PHASE_ONE" failed
   # The crash window: admission took the lease and status, then died before writing the manifest.
   rm -f "$AGENTS_HOME/tasks/$PHASE_ONE/phase1.json"
   meta_put "$PHASE_ONE" INVESTIGATION_LEASE 1
@@ -65,14 +65,14 @@ recorded_status() {
   run agent _supervise
   [ "$status" -eq 0 ]
   [ "$(field "$PHASE_ONE" INVESTIGATION_LEASE)" != 1 ]
-  [ "$(field "$PHASE_ONE" STATUS)" = waiting ]
+  [ "$(field "$PHASE_ONE" STATUS)" = failed ]
 }
 
 @test "a legacy leased parent with neither manifest nor children releases its lease" {
   configure_investigators
   scenario '{"inv":{"new":"fail"},"inv2":{"new":"fail"}}'
   launch_phase_one
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$PHASE_ONE" failed
   # Written before any child existed: no phase1.json and no child task is left to inspect.
   rm -f "$AGENTS_HOME/tasks/$PHASE_ONE/phase1.json"
   rm -rf "$AGENTS_HOME/tasks/$(task_of inv)" "$AGENTS_HOME/tasks/$(task_of inv2)"
@@ -83,14 +83,14 @@ recorded_status() {
   run agent _supervise
   [ "$status" -eq 0 ]
   [ "$(field "$PHASE_ONE" INVESTIGATION_LEASE)" != 1 ]
-  [ "$(field "$PHASE_ONE" STATUS)" = waiting ]
+  [ "$(field "$PHASE_ONE" STATUS)" = failed ]
 }
 
 @test "a manifest member whose child metadata is missing is failed and releases the lease" {
   configure_investigators
   scenario '{"inv":{"new":"fail"},"inv2":{"new":"fail"}}'
   launch_phase_one
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$PHASE_ONE" failed
   local child_inv2
   child_inv2=$(task_of inv2)
   # Interrupted before inv2's child task was written: the manifest names it, its metadata does not exist.
@@ -110,7 +110,7 @@ recorded_status() {
   configure_investigators
   scenario '{"inv":{"new":"fail"},"inv2":{"new":"fail"}}'
   launch_phase_one
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$PHASE_ONE" failed
   # Created by admission but never handed to start_runner: no unit, status still new.
   local child_inv2
   child_inv2=$(task_of inv2)
@@ -137,7 +137,7 @@ recorded_status() {
   [ "$status" -eq 0 ]
   [ "$(field "$PHASE_ONE" INVESTIGATION_LEASE)" = 1 ]
   touch "$HOME/release"
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$PHASE_ONE" 'done'
 }
 
 @test "the manifest is written before the parent takes its investigator lease" {
@@ -145,7 +145,7 @@ recorded_status() {
   install_mv_probe
   scenario '{"inv":{"new":"fail"},"inv2":{"new":"fail"}}'
   launch_phase_one
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$PHASE_ONE" failed
   # A lease published before phase1.json exists is exactly the window a crash turns into a leak.
   [ ! -e "$HOME/lease-before-manifest" ]
 }

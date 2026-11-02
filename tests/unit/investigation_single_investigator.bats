@@ -2,6 +2,7 @@
 # Tests for allowing a single investigator in investigation teams.
 
 load helpers
+load investigation_pipeline_fixture
 
 # configure_investigators configures inv, inv2 and inv3 in temporary agents.conf.
 configure_investigators() {
@@ -21,6 +22,7 @@ no_side_effects() {
 
 @test "single investigator is accepted and investigation-team task is created" {
   configure_investigators
+  single_pipeline_setup
   run agent run --investigation --team "inv" "single investigator task"
   [ "$status" -eq 0 ]
   local parent
@@ -34,6 +36,7 @@ no_side_effects() {
 
 @test "single investigator with whitespace is trimmed and accepted" {
   configure_investigators
+  single_pipeline_setup
   run agent run --investigation --team "  inv  " "topic"
   [ "$status" -eq 0 ]
   local parent

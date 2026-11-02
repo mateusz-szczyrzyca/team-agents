@@ -124,6 +124,9 @@ func dashTasks(snap *Snapshot) ([]*Task, []*Task) {
 		if hasIndexedLocalProxy(proxies, t) {
 			continue
 		}
+		if isInvestigationTeam(t) {
+			continue
+		}
 		switch {
 		case t.Active():
 			active = append(active, t)

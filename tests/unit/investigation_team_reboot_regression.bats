@@ -104,8 +104,8 @@ EOF
   (source "$AGENTS_HOME/tasks/$child1/meta.env" && [[ $NOTE == *"restarted 3 times"* ]])
   [ "$(recorded_status "$parent" inv)" = "failed" ]
   [ "$(recorded_status "$parent" inv2)" = "failed" ]
-  [ "$(field "$parent" STATUS)" = "waiting" ]
-  [ "$(field "$parent" AUTO_STAGE)" = 'waits for you: all phase 1 runs failed' ]
+  [ "$(field "$parent" STATUS)" = "failed" ]
+  [ "$(field "$parent" AUTO_STAGE)" = 'failed: all phase 1 runs failed' ]
   [ "$(field "$parent" INVESTIGATION_LEASE)" != 1 ]
 }
 

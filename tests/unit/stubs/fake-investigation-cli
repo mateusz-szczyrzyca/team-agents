@@ -20,6 +20,21 @@ prompt = sys.argv[-1]
 (home / f"independent-{agent}.prompt").write_text(prompt)
 action = json.loads((home / "scenario.json").read_text()).get(agent, {}).get("new", "publish")
 (home / f"started-{agent}").touch()
+if action == "questions":
+    if "--resume" in sys.argv:
+        action = "publish"
+    else:
+        final = """STATUS: QUESTIONS
+## 1. Which cache is in scope?
+a) memory cache — investigate memory use
+b) disk cache — investigate storage use
+
+**Recommended:** a) — the topic concerns memory.
+
+**Verdict:**
+"""
+        print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": final}), flush=True)
+        sys.exit(0)
 if action in ("barrier", "hold"):
     # The shared markers belong to the test harness, not to an investigator's worktree.
     deadline = time.monotonic() + 20

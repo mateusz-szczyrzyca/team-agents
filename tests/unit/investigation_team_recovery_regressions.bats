@@ -299,8 +299,8 @@ EOF
 
   # Must not be stuck in waiting: capacity queue
   [ "$(field "$id" AUTO_STAGE)" != "waiting: capacity queue" ]
-  [ "$(field "$id" AUTO_STAGE)" = "waits for you: merge failed" ]
-  [ "$(field "$id" STATUS)" = "waiting" ]
+  [ "$(field "$id" AUTO_STAGE)" = "failed: merge failed" ]
+  [ "$(field "$id" STATUS)" = "failed" ]
   [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
 
   # Capacity is released, investigators are free
