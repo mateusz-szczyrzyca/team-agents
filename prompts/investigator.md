@@ -50,8 +50,8 @@ PRs, do not write into the agent's worktree or the main repository directory.
 
 ## Questions for the human
 
-The CLARIFICATION RULES (at the end) apply throughout the investigation. If something important is unclear
-and cannot be established empirically, write your questions to `{{QUESTIONS_FILE}}` in this format:
+The CLARIFICATION RULES (at the end) apply throughout the investigation. If the subject is unclear or may
+indicate multiple interpretations, write your questions to `{{QUESTIONS_FILE}}` in this format:
 
 ```
 # Questions — {{TASK_ID}} (round {{ROUND}})
@@ -69,7 +69,7 @@ b) <option> — <how it changes the result>
 `**Verdict:**` line; the labels stay in English; `ok` as the verdict means the human accepts the
 recommendation), release your
 reservations and end your turn immediately with `STATUS: QUESTIONS`. Your investigator slot stays blocked
-until the human answers — ask only about what really blocks you.
+until the human answers.
 
 ## Result
 
