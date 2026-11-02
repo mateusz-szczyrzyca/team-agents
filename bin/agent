@@ -2602,11 +2602,7 @@ build_prompt() { # id mode qfile next_round
     printf '\n# TOPIC\n\n'
     cat "$TASKS/$id/task.md"
     if [[ $mode == resume && -n ${ANSWERS_PENDING:-} ]]; then
-      R[ANSWERED_ROUND]=$ANSWERS_PENDING
-      R[ANSWERED_FILE]="$TASKS/$id/questions-$ANSWERS_PENDING.md"
-      printf '\n\n'
-      render "$PROMPTS/resume.md"
-      printf '\n---\n\n'
+      printf '\n---\n\n## The human'"'"'s clarification answers\n\n'
       expand_answers "$TASKS/$id/questions-$ANSWERS_PENDING.md"
     fi
     if [[ $mode == resume && -s $TASKS/$id/note-$RUN.md ]]; then
