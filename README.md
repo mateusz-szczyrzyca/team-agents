@@ -1312,6 +1312,11 @@ make test          # Go unit tests (agentbus, agentlive) + bats tests of the age
 make integration   # real agent CLIs and accounts (costs usage)
 ```
 
+- **Bats in parallel.** With GNU `parallel` installed (`apt install parallel`; once,
+  `mkdir -p ~/.parallel && touch ~/.parallel/will-cite`) the Bats tests run `BATS_JOBS` at once (default: the
+  number of processors), apart from the files of `BATS_SERIAL` in the `Makefile` — they start servers on local
+  ports —, which run one after another afterwards. `make unit-bats BATS_JOBS=1` runs every file one after another;
+  `BATS_FILES="tests/unit/x.bats …"` runs only those files.
 - **Linters.** `tools/install-linters.sh` downloads pinned release binaries of `golangci-lint`, `staticcheck` and
   `shellcheck` from GitHub, verifies their SHA-256 checksums and installs them without sudo. `golangci-lint`
   runs the standard linters plus `errorlint`, `gosec`, `misspell`, `revive` and `unparam` (`.golangci.yml`);
