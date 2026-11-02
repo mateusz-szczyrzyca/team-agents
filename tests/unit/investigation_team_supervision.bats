@@ -158,11 +158,11 @@ EOF
   [ "$(status_of old-inv)" = failed ]
 }
 
-@test "an independent child hitting provider quota fails with QUOTA_UNTIL while peer succeeds and cohort waits" {
+@test "an independent child hitting provider quota fails with QUOTA_UNTIL while peer succeeds and cohort finishes" {
   independent_setup
   scenario '{"inv":{"new":"budget-spent"},"inv2":{"new":"publish"}}'
   launch_phase_one
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$PHASE_ONE" 'done'
   [ "$(status_of "$(task_of inv)")" = "failed" ]
   local quota
   quota=$(field "$(task_of inv)" QUOTA_UNTIL)
@@ -171,6 +171,6 @@ EOF
   [ "$(recorded_status "$PHASE_ONE" inv)" = "failed" ]
   [ "$(recorded_status "$PHASE_ONE" inv2)" = "done" ]
   [ "$(field "$PHASE_ONE" INVESTIGATION_LEASE)" != 1 ]
-  [ "$(field "$PHASE_ONE" AUTO_STAGE)" = 'waits for you: phase 1 complete (merge not available yet)' ]
+  [ "$(field "$PHASE_ONE" AUTO_STAGE)" = 'complete: phase 1 complete (merge not available yet)' ]
 }
 

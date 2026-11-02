@@ -388,7 +388,7 @@ EOF
   [[ "$(field "$id" AUTO_STAGE)" == *"waits for you: review failed"* ]]
 }
 
-@test "legacy parent without INVESTIGATION_PIPELINE retains phase1 waiting behavior" {
+@test "legacy parent without INVESTIGATION_PIPELINE finishes phase 1 as done without decision wait" {
   configure_three_investigators
   local base id dir c1 c2
   base=$(git -C "$HOME/repo" rev-parse HEAD)
@@ -411,9 +411,9 @@ EOF
 
   run agent dispatch
   [ "$status" -eq 0 ]
-  [ "$(field "$id" STATUS)" = "waiting" ]
+  [ "$(field "$id" STATUS)" = "done" ]
   [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
-  [ "$(field "$id" AUTO_STAGE)" = "waits for you: phase 1 complete (merge not available yet)" ]
+  [ "$(field "$id" AUTO_STAGE)" = "complete: phase 1 complete (merge not available yet)" ]
 }
 
 # orphan_role_recovery phase abandoned replacement checks interrupted admission and subsequent investigator reuse.
