@@ -2,6 +2,7 @@
 # Independent investigator resume prompt omits contradictory agentbus instructions.
 
 load helpers
+bats_require_minimum_version 1.5.0
 
 @test "independent investigator resume prompt omits agentbus tools and coordination instructions" {
   sed -i 's/^declare -A INVESTIGATORS_TYPE=.*/declare -A INVESTIGATORS_TYPE=([inv]=claude [inv2]=claude)/' "$AGENTS_HOME/agents.conf"
