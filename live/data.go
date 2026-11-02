@@ -286,6 +286,11 @@ func (t *Task) JobMarker() string {
 	return fmt.Sprintf("job %s from %s", t.JobID, lead)
 }
 
+// isInvestigationTeam reports whether t is a synthetic investigation team task rather than an individual agent.
+func isInvestigationTeam(t *Task) bool {
+	return t != nil && (t.Kind == "investigation_team" || t.Agent == "investigation-team" || t.Agent == "investigator-team")
+}
+
 // ---------------------------------------------------------------- reading state
 
 // unquote reverses bash `printf %q` (values in meta.env).
@@ -538,7 +543,7 @@ func loadSnapshot(home, busDir string, nodeTTL ...time.Duration) *Snapshot {
 			t.Last = a[0]
 		}
 		s.All[t.ID] = t
-		if t.Active() || !t.Acked {
+		if (t.Active() || !t.Acked) && !isInvestigationTeam(t) {
 			s.Tasks = append(s.Tasks, t)
 		}
 	}
