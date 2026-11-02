@@ -19,6 +19,8 @@ func mustNotContainSubstr(t *testing.T, where, body string, unwanted ...string) 
 
 // TestSyntheticTeamVisibleOnTeamsPage verifies that an investigation team record
 // is listed on the /teams page and details page, while remaining excluded from the main dashboard (GET /).
+// Note: /teams displays bus-registered teams from bus/state.json; synthetic investigation team tasks
+// (KIND=investigation_team) are retained in snap.All without cluttering the main dashboard.
 func TestSyntheticTeamVisibleOnTeamsPage(t *testing.T) {
 	home := fixture(t)
 	now := time.Now()
