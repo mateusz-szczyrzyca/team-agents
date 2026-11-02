@@ -291,6 +291,9 @@ so the child cannot retain investigator capacity after the parent releases its l
 > [!NOTE]
 > Round 4 finalizes the full investigation lifecycle, adding Phase 5 resume metadata, advisory review tracking, and manual verification procedures.
 > Task attributes are additive; existing task files, metadata, and bus state remain backwards-compatible. Old Phase 4 tasks lacking Phase 5 fields or having legacy status `waiting` load and resume normally.
+> Supervision and dispatch finish legacy Phase 4 decision waits using the recorded `done` or `failed` handoff
+> result, even when the lease and pending-delivery flag were already cleared. Recorded delivery flags prevent
+> repeat notifications and PR comments. Missing or unknown results are not guessed.
 
 Task attributes stored in the orchestration task's `meta.env` and task files (no bus state changes):
 
@@ -420,7 +423,7 @@ When implementing future rounds, existing components have explicit boundaries:
    - Pull request creation and PR description verification.
    - Uniform seeded selection of reviewer and execution of `prompts/review.md`.
    - Single replacement logic for failed mergers and reviewers.
-   - Phase 4 human notification and transition to idle wait.
+   - Phase 4 human notification and terminal completion without a decision wait.
 4. **Round 4 (Completed — Resume and Polish):**
    - Resume handler on open PR (`agent run --resume <team>`) triggering all-investigator Phase 5 advisory reviews without auto-merging.
    - Immediate refusal of resume on merged or closed PRs ("the PR is merged — a new topic is a new run" or "the PR is closed — a new topic is a new run").

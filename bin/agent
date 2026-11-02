@@ -1467,14 +1467,15 @@ auto_stage() { # task text [no-comment]
   if [[ $2 == "waits for you:"* && -z ${3:-} ]]; then human_on_pr "$1" "$2"; fi
 }
 
-# human_on_pr task text — a comment on the task's PR to its repository's owner (mentioned, when on GitHub)
+# human_on_pr task text [mode] — a comment on the task's PR to its repository's owner (mentioned, when on GitHub),
+# after the mode that wrote it (default --autopilot)
 human_on_pr() {
-  local url root owner
+  local url root owner mode=${3:---autopilot}
   url=$(task_field "$1" PR_URL)
   [[ -n $url ]] || return 0
   root=$(task_field "$1" REPO_ROOT)
   owner=$(github_owner "$root")
-  (cd "$root" && try handover_comment_failed gh pr comment "$url" --body "${owner:+@$owner }--autopilot $2") || return 0
+  (cd "$root" && try handover_comment_failed gh pr comment "$url" --body "${owner:+@$owner }$mode $2") || return 0
   log_info handover_commented "task=$1" "pr=$url"
 }
 
@@ -3521,6 +3522,17 @@ investigation_team_tick() {
 # investigation_field task key reads optional metadata without inheriting the dispatching task's value.
 investigation_field() { ( unset "$2"; task_field "$1" "$2"; ) }
 
+# investigation_completed_wait parent identifies an old completed handoff still marked waiting.
+# Only a recorded terminal result in Phase 4 proves completion; clarification and capacity waits stay active.
+investigation_completed_wait() {
+  local parent=$1 result
+  [[ $(task_field "$parent" STATUS) == waiting \
+    && $(investigation_field "$parent" INVESTIGATION_PIPELINE) == 1 \
+    && $(investigation_field "$parent" INVESTIGATION_PHASE) == 4 ]] || return 1
+  result=$(investigation_field "$parent" INVESTIGATION_HANDOFF_RESULT)
+  [[ $result == done || $result == failed ]]
+}
+
 # investigation_handoff parent stage result records terminal completion and delivers the PR summary once.
 investigation_handoff() {
   local parent=$1 stage=$2 result=$3 PR_URL='' REVIEW=0 WORK_ROUND='' WORK_ROUNDS='' JOB_ID='' JOB_LEAD='' LEAD_URL=''
@@ -3537,7 +3549,7 @@ investigation_handoff() {
   auto_stage "$parent" "$stage" no-comment
   meta_set "$parent" INVESTIGATION_LEASE ""
   if [[ $(investigation_field "$parent" INVESTIGATION_COMMENTED) != 1 ]]; then
-    human_on_pr "$parent" "$stage; investigation finished; nothing was merged"
+    human_on_pr "$parent" "$stage; investigation finished; nothing was merged" --investigation
     meta_set "$parent" INVESTIGATION_COMMENTED 1
   fi
   if [[ $(investigation_field "$parent" INVESTIGATION_NOTIFIED) != 1 ]]; then
@@ -3992,7 +4004,8 @@ investigation_teams_tick() {
     [[ $(task_field "$parent" KIND) == investigation_team ]] || continue
     st=$(task_field "$parent" STATUS)
     if [[ $st =~ ^(stopped|done|failed)$ || -f $TASKS/$parent/stop-requested ]]; then continue; fi
-    if [[ $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ]]; then
+    if [[ $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ]] \
+        || investigation_completed_wait "$parent"; then
       investigation_team_tick "$parent"
     fi
   done
@@ -5838,6 +5851,7 @@ cmd_status() {
   for d in "$TASKS"/*/; do
     [[ -f $d/meta.env ]] || continue
     (
+      INVESTIGATION_TEAM=''   # older tasks lack it: never inherit it from the caller
       source "$d/meta.env"
       st=${STATUS:-?}
       # Remote proxies and internal investigation coordinators do not own local runner units.
@@ -5845,7 +5859,8 @@ cmd_status() {
           && ( $st == running || $st == starting ) ]] && ! unit_active "${ID:-}" "${RUN:-0}"; then
         st="$st?"
       fi
-      ag=${AGENT:-?}; [[ ${KIND:-worker} == investigation ]] && ag="inv#${INV_ID:-?}"
+      # an investigator of an --investigation team has no investigation number: it is shown by its name
+      ag=${AGENT:-?}; [[ ${KIND:-worker} == investigation && -z $INVESTIGATION_TEAM ]] && ag="inv#${INV_ID:-?}"
       d=${d%/}
       printf '%-30s %-12s %-13s %-6s %-5s %s\n' "${ID:-${d##*/}}" "$ag" "$st" "${ROUND:--}" "${RUN:--}" "${REPO_NAME:-}"
     )
@@ -5865,6 +5880,9 @@ cmd_show() {
   if [[ ${KIND:-worker} == worker ]]; then
     local invs; invs=$(try inv_list_failed bus inv-list --dir "$BUS_DIR" --task "$id")
     if [[ -n $invs ]]; then echo; echo "== investigations"; printf '%s\n' "$invs"; fi
+  elif is_independent_investigation "$id"; then
+    echo; echo "== investigation team $(task_field "$id" INVESTIGATION_TEAM) (phase $(investigation_field "$id" INVESTIGATION_PHASE))"
+    [[ -s $dir/result.md ]] && echo "   result: $dir/result.md"
   else
     echo; echo "== investigation #$INV_ID for $FROM_AGENT (task $PARENT_TASK)"
     [[ -s $dir/result.md ]] && echo "   result: $dir/result.md"
@@ -6058,7 +6076,8 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
     kind=$(task_field "$id" KIND)
     if [[ $kind == investigation_team ]]; then
       # A coordinator has no runner; the timer also retries cohorts after quota expiry without a runner exit.
-      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 || $(investigation_field "$id" INVESTIGATION_LEASE) == 1 ]]; then phase1_pending=1; fi
+      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 || $(investigation_field "$id" INVESTIGATION_LEASE) == 1 ]] \
+          || investigation_completed_wait "$id"; then phase1_pending=1; fi
       continue
     fi
     [[ $st == running || $st == starting ]] || continue
@@ -8486,7 +8505,7 @@ agent run --last-team [--same-round] ["…"]  resume the newest team of this rep
 agent ack <id|all>                        acknowledge finished tasks (they leave the panel)
 agent run --team a,b[,c] [--verify|--autopilot] "task"  team; --verify: an investigator reviews the PR at the end;
                                            --autopilot: two independent reviews, the merge, the next round
-agent run --investigation --team "A, B" "topic"  investigators create and review a PR; the human decides
+agent run --investigation --team "A" "topic"     one or more investigators create and review a PR, then finish
 agent autopilot <team> [on|off]            a team's --autopilot: shown, or switched (off: no merge nor next round by itself)
 agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
 agent team [id | --all]                   teams and their members
