@@ -166,8 +166,8 @@ providers and accounts:
 
 ### Teams
 
-**Investigation teams:** `agent run --investigation --team "inv-a, inv-b" "topic"`
-validates investigator names and options. Phase 1 runs investigators independently on isolated branches
+**Investigation teams:** `agent run --investigation --team "inv-a[, inv-b]" "topic"`
+validates investigator names and options. At least one investigator must be specified. Phase 1 runs investigators independently on isolated branches
 from an immutable base commit, saving non-code findings to `docs/investigations/<topic-slug>/<investigator>.md`
 and code following TDD. `agent run --investigation` runs the complete initial pipeline
 (phases 1–4: independent investigation, merge, PR, prechecks, review, and human hand-off).
