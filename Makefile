@@ -101,6 +101,8 @@ integration:
 	AGENT_IT=1 tests/integration/run.sh
 
 build:
+	mkdir -p build
+	cd agent && go build -o ../build/agent-go .
 	cd agentbus && go build -o ../build/agentbus .
 	cd live && go build -o ../build/agentlive .
 
