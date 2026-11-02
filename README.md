@@ -170,14 +170,15 @@ providers and accounts:
 validates investigator names and options. At least one investigator must be specified. Phase 1 runs investigators independently on isolated branches
 from an immutable base commit, saving non-code findings to `docs/investigations/<topic-slug>/<investigator>.md`
 and code following TDD. `agent run --investigation` runs the complete initial pipeline
-(phases 1–4: independent investigation, merge, PR, prechecks, review, and human hand-off).
+(phases 1–4: independent investigation, merge, PR, prechecks, review, and terminal completion).
+On successful completion, the PR is ready for normal review and merge; failed investigations are reported as failures only for real flow issues (failed merge, review, or prechecks).
 Resuming an investigation team with an open PR (`agent run --resume <team>`) runs Phase 5 advisory reviews
 across all team investigators concurrently proposing improvements without applying changes or auto-merging (`review: N investigators reviewing (#<pr>)`).
 Resuming an investigation team whose PR is already merged or closed is refused (`the PR is merged — a new topic is a new run` or `the PR is closed — a new topic is a new run`).
 Resume manages Phase 5 advisory reviews using a separate manifest (`resume.json` version 1) and pass tracking
 metadata (`INVESTIGATION_RESUME_TASKS`, `INVESTIGATION_RESUME_HEAD`, `INVESTIGATION_RESUME_COUNT`) to distinguish repeated passes.
 Admission reserves all team investigators under `dispatch.lock` after persisting the manifest and child IDs; missing or unstarted child slots fail while live runs retain capacity without replacements.
-Upon completion of advisory reviews, the parent returns to Phase 4 human hand-off (`waits for you: advisory reviews ready (#<pr>)`, suffixed with failure counts if slots failed or lacked verdicts).
+Upon completion of advisory reviews, the parent reaches Phase 4 terminal completion (status `done` with stage message `advisory reviews complete (#<pr>)`, suffixed with failure counts if slots failed or lacked verdicts). The PR is ready for independent human review and decision.
 Internal execution is managed via `_investigation-team`.
 Topics can come from arguments, `-f topic.md`, or stdin; multiline stdin is read once before launch.
 A topic read failure stops before creating a team task.
@@ -189,7 +190,7 @@ stage `verifying published results`) while preserving child `done` status and th
 or a confirmed missing or mismatched ref fail verification. A quota failure records `QUOTA_UNTIL` without retrying that run; supervision admits queued cohorts after
 capacity returns. The `independent_run_finished` log event records each child's terminal status. For legacy phase-1 runs
 (invoked via `_investigation-team` without `INVESTIGATION_PIPELINE=1`), the parent sends one completion notification
-and waits with `no-comment` without creating a PR. For full investigation pipelines (`INVESTIGATION_PIPELINE=1`),
+and terminates (status `done`) without creating a PR. For full investigation pipelines (`INVESTIGATION_PIPELINE=1`),
 execution advances to Phase 2.
 Phase 2 selects a merger uniformly at random (seeded by non-negative decimal integer `AGENT_INVESTIGATION_SEED`, snapshotted into parent `INVESTIGATION_SEED` at team creation; an invalid seed or selection failure immediately hands off to the human as failed, releasing capacity leases)
 among investigators that finished `DONE`; the merger reconciles results using `prompts/inv-merge.md`, pushes
