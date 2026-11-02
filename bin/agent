@@ -1478,6 +1478,39 @@ human_on_pr() {
   log_info handover_commented "task=$1" "pr=$url"
 }
 
+# round_open_prs task — the open PRs (trusted) of its team's branches: "#N (branch) url" lines
+round_open_prs() {
+  local id=$1 team root m b out
+  team=$(task_field "$id" TEAM); root=$(task_field "$id" REPO_ROOT)
+  [[ -n $team ]] || return 0
+  for m in "$TASKS"/*/meta.env; do
+    grep -qx "TEAM=$team" "$m" || continue
+    b=$(sed -n 's/^BRANCH=//p' "$m")
+    [[ -n $b ]] || continue
+    out=$(try pr_lookup_failed trusted_prs "$root" "$b" open number,url,headRefName,state) || continue
+    jq_soft pr_lookup_parse -r '.[] | select((.state // "OPEN") == "OPEN") | "#\(.number) (\(.headRefName)) \(.url)"' <<< "${out:-[]}"
+  done | sort -u
+}
+
+# round_pr_note task… — what a resumed round's text says of its PR, from the round's tasks: which it is (the PR_NUMBER of
+# the task that opened it, or the ROUND_PR carried), and where the round's commits go
+round_pr_note() {
+  local t p num="" branch=""
+  for t in "$@"; do
+    p=$(task_field "$t" PR_NUMBER)
+    if [[ -n $p ]]; then num=$p; branch=$(task_field "$t" BRANCH); break; fi
+  done
+  if [[ -z $num ]]; then
+    for t in "$@"; do
+      p=$(task_field "$t" ROUND_PR)
+      if [[ -n $p ]]; then num=$p; break; fi
+    done
+  fi
+  [[ -n $num ]] || return 0
+  printf "This round's PR is #%s%s. Every commit of this round goes there: a member — or a new coordinator — merges %s into its own branch and pushes it there (git push origin HEAD:%s). Never open another PR for this round: the checks send a round with two open PRs back.\n" \
+    "$num" "${branch:+ (branch $branch)}" "${branch:+origin/$branch}" "${branch:-<its branch>}"
+}
+
 # round_pr_of_team team — the round's PR its coordinator had: its PR_NUMBER, or the ROUND_PR it carried; "" for none
 round_pr_of_team() {
   [[ -n $1 ]] || return 0
@@ -1608,6 +1641,14 @@ review_precheck() { # coordinator task id — before a review: the round's head 
   tc=$(round_test_changes "$root" "$mb" "$head")
   meta_set "$id" ROUND_TESTS "$tc"
   [[ $tc != "code=1 added=0 "* ]] || why="the round changes code but adds no test — every change of behaviour needs its test, written first"
+  if [[ -z $why ]]; then   # a round has one PR: the others' commits belong on the round's PR branch
+    local round_prs n_prs
+    round_prs=$(round_open_prs "$id")
+    n_prs=$(grep -c . <<< "$round_prs") || n_prs=0   # none: grep's "no match"
+    if ((n_prs > 1)); then
+      why="the round has $n_prs open PRs ($(paste -sd, <<< "$round_prs" | sed 's/,/, /g')) — a round has one PR: bring the others' commits onto the round's PR branch (the coordinator's), push it, and close the others with a link to it"
+    fi
+  fi
   local format_bounce pr_url body issues
   format_bounce=$(task_field "$id" FORMAT_BOUNCED)
   if [[ -z $why && $format_bounce != 1 ]]; then   # the PR description's form, once a round
@@ -5203,19 +5244,24 @@ resume_run() {
       round_head="Round $wr of $wrs continues: its PR is not merged — keep working on the same branches (e.g. on the review findings), then end with STATUS: ROUND_DONE $wr/$wrs again."
     else
       ((wr < wrs)) || die "all $wrs rounds are done (round $wr/$wrs was the last) — start a new task for more work"
-      local pr state="" url="" t2 b heads=()
+      local pr state="" url="" t2 b heads=() open=() st u
       for t2 in "${olds[@]}"; do   # the round's PR was opened from the branch of whoever ended the round
         b=$(task_field "$t2" BRANCH)
         [[ -n $b ]] || continue
         heads+=("$b")
         pr=$(trusted_prs "$(task_field "$t2" REPO_ROOT)" "$b" all number,url,state) \
           || die "cannot check the PR of round $wr/$wrs (gh pr list failed) — merge it and retry, or continue the round: agent run --resume $ref --same-round"
-        [[ -n $(jq -r '.[0].url // empty' <<< "$pr") ]] || continue
-        state=$(jq -r '.[0].state // empty' <<< "$pr"); url=$(jq -r '.[0].url // empty' <<< "$pr")
-        [[ $state != MERGED ]] || break   # a merged PR of the round: the next one may start
+        while IFS=$'\t' read -r st u; do   # every PR of the round's branches: one merged, and none left open
+          [[ -n $u ]] || continue
+          if [[ $st == MERGED ]]; then state=MERGED; url=$u
+          elif [[ $state != MERGED && -z $url ]]; then state=$st; url=$u
+          fi
+          [[ $st != OPEN ]] || open+=("$u")
+        done < <(jq -r '.[] | [(.state // ""), (.url // "")] | @tsv' <<< "$pr")
       done
       [[ -n $url ]] || die "round $wr/$wrs has no PR (branches ${heads[*]}) — open and merge it, or continue the round: agent run --resume $ref --same-round"
       [[ $state == MERGED ]] || die "the PR of round $wr/$wrs ($url) is not merged yet ($state). Merge it and run this again — or keep working on round $wr (e.g. review fixes): agent run --resume $ref --same-round"
+      ((${#open[@]} == 0)) || die "round $wr/$wrs still has an open PR (${open[*]}) — a round has one PR: merge or close it first; or finish the round: agent run --resume $ref --same-round"
       fresh=1
     fi
   elif ((same_round)); then   # no round was ended: resuming keeps the branches anyway
@@ -5252,6 +5298,8 @@ resume_run() {
       "$(task_field "$r" REPO_ROOT)" "$ts" resume)")
   done
   RESUME_NEW_IDS+=("${remote_ids[@]}")
+  local round_pr_text=""   # the same round: which is its PR, said to every member
+  ((fresh)) || round_pr_text=$(round_pr_note "${olds[@]}")
   for old in "${olds[@]}" "${joiners[@]}"; do
     local joiner=""
     if [[ $old == +* ]]; then joiner=${old#+}; old=$tpl; fi   # a new member: the coordinator's task is its template
@@ -5308,6 +5356,9 @@ resume_run() {
       if [[ -n $round_head ]]; then   # this round's own heading: for this round only
         printf '\n\n%s\n## %s (resumed %s)\n\n%s\n%s\n' "$ROUND_ONLY_OPEN" "$round_title" "$(date '+%Y-%m-%d %H:%M')" \
           "$round_head" "$ROUND_ONLY_CLOSE"
+      fi
+      if [[ -n $round_pr_text ]]; then
+        printf '\n\n%s\n## The round'"'"'s PR\n\n%s\n%s\n' "$ROUND_ONLY_OPEN" "$round_pr_text" "$ROUND_ONLY_CLOSE"
       fi
       if [[ -n ${add//[[:space:]]/} ]] && ((${AGENT_FIX_PASS:-0} > 0 || ${AGENT_PRECHECK_PASS:-0} > 0)); then
         # what the checks and the reviews send back (a fix pass, a bounce): for this round only
