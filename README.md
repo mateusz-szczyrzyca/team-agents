@@ -172,6 +172,7 @@ from an immutable base commit, saving non-code findings to `docs/investigations/
 and code following TDD. `agent run --investigation` runs the complete initial pipeline
 (phases 1–4: independent investigation, merge, PR, prechecks, review, and terminal completion).
 On successful completion, the PR is ready for normal review and merge without waiting for a human decision; failed investigations are reported as failures only for real flow issues (failed merge, review, or prechecks).
+For single-investigator teams, the same investigator performs merge (Phase 2) and review (Phase 3) roles sequentially; reviewer independence is relaxed to allow self-review completion.
 Investigators and mergers can ask clarification questions if the subject matter is unclear or may be interpreted multiple ways (ending with `STATUS: QUESTIONS`); clarification answers are handled by the human through questions files.
 Resuming an investigation team with an open PR (`agent run --resume <team>`) runs Phase 5 advisory reviews
 across all team investigators concurrently proposing improvements without applying changes or auto-merging (`review: N investigators reviewing (#<pr>)`).

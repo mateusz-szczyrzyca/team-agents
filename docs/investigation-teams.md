@@ -410,8 +410,8 @@ Follow this checklist to verify an investigation team run and resume manually:
    Confirm that:
    - The investigator starts in an isolated worktree (`phase 1: 1 investigator working`).
    - The same investigator then merges the results (`merging: <merger>`), opens a PR, and prechecks run.
-   - The merger cannot review their own results (review is skipped with single investigator).
-   - Final stage transitions to `advisory reviews complete` (if resumed) and status becomes `done`.
+   - The investigator performs self-review (`review: <reviewer> (#<pr>)`), reviewing their own PR results.
+   - Final stage transitions to `complete: review ready (#<pr>)` and status becomes `done`.
    - No human decision wait is required; the PR is ready for independent review and merge.
    
    With multiple investigators:
