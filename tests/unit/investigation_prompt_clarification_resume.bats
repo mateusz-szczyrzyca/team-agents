@@ -9,7 +9,8 @@ load helpers
   scenario '{"inv":{"new":"questions"},"inv2":{"new":"publish"}}'
   run agent _investigation-team --team inv,inv2 'Investigate the cache'
   [ "$status" -eq 0 ]
-  local child qfile
+  local parent child qfile
+  parent=$(task_of investigation-team)
   child=$(task_of inv)
   wait_status "$child" waiting
   qfile=$(find "$AGENTS_HOME/tasks/$child" -name 'questions-*.md' | head -n 1)
@@ -23,6 +24,8 @@ load helpers
   grep -q 'memory cache' "$HOME/independent-inv.prompt"
   grep -q 'Additional note from the human' "$HOME/independent-inv.prompt"
   grep -q 'Investigate only LRU cache eviction' "$HOME/independent-inv.prompt"
+  agent dispatch > "$HOME/clarification-dispatch.log" 2>&1
+  wait_status "$parent" 'done'
 }
 
 @test "independent investigator fresh session prompt does not duplicate answered questions" {
@@ -31,7 +34,8 @@ load helpers
   scenario '{"inv":{"new":"questions"},"inv2":{"new":"publish"}}'
   run agent _investigation-team --team inv,inv2 'Investigate the cache'
   [ "$status" -eq 0 ]
-  local child qfile
+  local parent child qfile
+  parent=$(task_of investigation-team)
   child=$(task_of inv)
   wait_status "$child" waiting
   qfile=$(find "$AGENTS_HOME/tasks/$child" -name 'questions-*.md' | head -n 1)
@@ -60,4 +64,10 @@ load helpers
   local count
   count=$(grep -c "# THE HUMAN'S ANSWERS" <<< "$output")
   [ "$count" -eq 1 ]
+
+  run agent resume "$child"
+  [ "$status" -eq 0 ]
+  wait_status "$child" 'done'
+  agent dispatch > "$HOME/dispatch-teardown.log" 2>&1
+  wait_status "$parent" 'done'
 }
