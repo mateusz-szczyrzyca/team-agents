@@ -9,8 +9,7 @@ load helpers
   scenario '{"inv":{"new":"questions"},"inv2":{"new":"publish"}}'
   run agent _investigation-team --team inv,inv2 'Investigate the cache'
   [ "$status" -eq 0 ]
-  local parent child qfile
-  parent=$(task_of investigation-team)
+  local child qfile
   child=$(task_of inv)
   wait_status "$child" waiting
   qfile=$(find "$AGENTS_HOME/tasks/$child" -name 'questions-*.md' | head -n 1)
@@ -45,7 +44,6 @@ load helpers
     echo "ANSWERS_PENDING=1" >> "$AGENTS_HOME/tasks/$child/meta.env"
   fi
 
-  local prompt_out="$BATS_TEST_TMPDIR/fresh-prompt.md"
   run bash -c "
     export AGENTS_HOME='$AGENTS_HOME'
     export TASKS='$AGENTS_HOME/tasks'
@@ -58,7 +56,8 @@ load helpers
   "
   [ "$status" -eq 0 ]
   # Count occurrences of answered question text in rendered prompt
+  # Count occurrences of resume answer header in rendered prompt
   local count
-  count=$(grep -c 'Which cache is in scope' <<< "$output")
+  count=$(grep -c "# THE HUMAN'S ANSWERS" <<< "$output")
   [ "$count" -eq 1 ]
 }
