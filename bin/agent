@@ -3489,14 +3489,18 @@ investigation_team_tick() {
     investigation_handoff "$parent" 'waits for you: all phase 1 runs failed' failed
     return
   fi
-  if ((successful)); then stage='waits for you: phase 1 complete (merge not available yet)'
-  else stage='waits for you: all phase 1 runs failed'; fi
+  if ((successful)); then stage='complete: phase 1 complete (merge not available yet)'
+  else stage='failed: all phase 1 runs failed'; fi
   meta_set "$parent" INVESTIGATION_LEASE ""
   meta_set "$parent" FINISHED "$(date -Is)"
   auto_stage "$parent" "$stage" no-comment
-  meta_set "$parent" STATUS waiting
-  if ((successful)); then notify "$parent" done "$stage" "Independent phase one finished; no merge or PR was attempted."
-  else notify "$parent" failed "$stage" "No investigator published a successful result."; fi
+  if ((successful)); then
+    meta_set "$parent" STATUS done
+    notify "$parent" done "$stage" "Independent phase one finished; no merge or PR was attempted."
+  else
+    meta_set "$parent" STATUS failed
+    notify "$parent" failed "$stage" "No investigator published a successful result."
+  fi
 }
 
 # investigation_field task key reads optional metadata without inheriting the dispatching task's value.

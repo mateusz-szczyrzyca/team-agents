@@ -151,7 +151,7 @@ EOF
   [ -n "$c2" ]
   wait_status "$c1" 'done'
   wait_status "$c2" 'done'
-  wait_status "$id" waiting
+  wait_status "$id" 'done'
   [ "$(recorded_status "$id" inv)" = 'done' ]
   [ "$(recorded_status "$id" inv2)" = 'done' ]
   [ -f "$AGENTS_HOME/tasks/old-inv/meta.env" ]
