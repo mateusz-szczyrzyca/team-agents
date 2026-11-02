@@ -29,6 +29,7 @@ no_side_effects() {
   bash -c 'source "$1"; [[ $KIND == investigation_team && $INVESTIGATION_TEAM == "$2" && $INVESTIGATION_PIPELINE == 1 ]]' \
     bash "$AGENTS_HOME/tasks/$parent/meta.env" "inv"
   [[ $(cat "$AGENTS_HOME/tasks/$parent/task.md") == "single investigator task" ]]
+  wait_status "$parent" '^done$'
 }
 
 @test "single investigator with whitespace is trimmed and accepted" {
@@ -40,5 +41,5 @@ no_side_effects() {
   [[ -n $parent ]]
   bash -c 'source "$1"; [[ $KIND == investigation_team && $INVESTIGATION_TEAM == "$2" ]]' \
     bash "$AGENTS_HOME/tasks/$parent/meta.env" "inv"
+  wait_status "$parent" '^done$'
 }
-
