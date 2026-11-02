@@ -1,0 +1,743 @@
+From f8d7e9d5e62cf9614c6f56f3ee9ae26511c6a811 Mon Sep 17 00:00:00 2001
+From: "inv-opus (team-agents)" <inv-opus@team-agents.invalid>
+Date: Mon, 2 Nov 2026 20:21:21 +0100
+Subject: [PATCH 1/4] RED: Test names of independent investigators and hand-off
+ label
+
+The investigators of an --investigation team have no investigation
+number and work for no agent. The dashboard still labels them like
+request_investigation runs: "investigator # (inv-opus)" on the web page,
+"inv#" in the panel and in `agent status`, a dangling "for" stage, and
+`agent show` prints "investigation # for  (task ...)". The PR hand-off
+comment says "--autopilot" although the run is --investigation.
+
+RED: go test -run 'TestIndependentInvestigatorsShowTheirNames|TestWatcherNamesNewIndependentInvestigators' ./live
+  Label(20261102-201616-inv-opus) = "inv#", want "inv-opus"
+RED: bats tests/unit/investigation_independent_labels.bats
+  `[[ $output != *'inv#'* ]]' failed
+
+Agent: inv-opus
+Agent-Model: claude/opus
+Task: 20261102-201619-inv-opus
+---
+ Makefile                                      |  1 +
+ .../web_dash_independent_investigator_test.go | 70 +++++++++++++++++++
+ .../investigation_independent_labels.bats     | 40 +++++++++++
+ 3 files changed, 111 insertions(+)
+ create mode 100644 live/web_dash_independent_investigator_test.go
+ create mode 100644 tests/unit/investigation_independent_labels.bats
+
+diff --git a/Makefile b/Makefile
+index 1401a3f..9a7517b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -41,6 +41,7 @@ SHELL_SCRIPTS += tests/unit/investigation_single_investigator.bats tests/unit/in
+ SHELL_SCRIPTS += tests/unit/investigation_single_pipeline.bats tests/unit/investigation_pipeline_fixture.bash \
+ 	tests/unit/investigation_independent_resume_prompt.bats
+ SHELL_SCRIPTS += tests/unit/investigation_resume_independence.bats
++SHELL_SCRIPTS += tests/unit/investigation_independent_labels.bats
+ # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
+ export PATH := $(HOME)/.local/bin:$(PATH)
+ 
+diff --git a/live/web_dash_independent_investigator_test.go b/live/web_dash_independent_investigator_test.go
+new file mode 100644
+index 0000000..6ea0591
+--- /dev/null
++++ b/live/web_dash_independent_investigator_test.go
+@@ -0,0 +1,70 @@
++package main
++
++import (
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++)
++
++// TestIndependentInvestigatorsShowTheirNames verifies that the investigators of an --investigation team appear on the
++// dashboard and in the panel under their own names: they have no investigation number and work for no agent, so the
++// legacy "investigator #N (name)" / "inv#N" labels and the "for <agent>" stage do not apply to them.
++func TestIndependentInvestigatorsShowTheirNames(t *testing.T) {
++	home := fixture(t)
++	now := time.Now().Format(time.RFC3339)
++	parent := "20261102-201616-investigation-team"
++	addTask(t, home, parent, "AGENT=investigation-team\nKIND=investigation_team\nSTATUS=running\nRUN=0\nCREATED="+now+"\n")
++	// Phase 1: no INV_ID at all; phase 2: INV_ID is the child's own task ID.
++	addTask(t, home, "20261102-201616-inv-opus", "AGENT=inv-opus\nKIND=investigation\nINV_ID=\nINVESTIGATION_TEAM="+parent+
++		"\nINVESTIGATION_PHASE=1\nPARENT_TASK="+parent+"\nSTATUS=running\nRUN=1\nCREATED="+now+"\n")
++	addTask(t, home, "20261102-211616-inv-astra", "AGENT=inv-astra\nKIND=investigation\nINV_ID=20261102-211616-inv-astra\nINVESTIGATION_TEAM="+parent+
++		"\nINVESTIGATION_PHASE=2\nPARENT_TASK="+parent+"\nSTATUS=running\nRUN=1\nCREATED="+now+"\n")
++	// A legacy investigation requested by an agent keeps its number and requester.
++	addTask(t, home, "TLEGACY", "AGENT=claude-inv\nKIND=investigation\nINV_ID=10\nFROM_AGENT=solo\nSTATUS=running\nRUN=1\nCREATED="+now+"\n")
++
++	_, ts := testServer(t, home)
++	_, body := get(t, ts, "/")
++	mustContain(t, "/", body, `/task/20261102-201616-inv-opus">inv-opus</a>`, `/task/20261102-211616-inv-astra">inv-astra</a>`,
++		"investigator #10 (claude-inv)", `<span class="stage">for solo</span>`)
++	mustNotContain(t, "/", body, "investigator # (", "investigator #20261102-211616-inv-astra", `<span class="stage">for</span>`,
++		"investigation-team")
++
++	snap := loadSnapshot(home, filepath.Join(home, "bus"))
++	for id, want := range map[string]string{"20261102-201616-inv-opus": "inv-opus", "20261102-211616-inv-astra": "inv-astra", "TLEGACY": "inv#10"} {
++		task := snap.All[id]
++		if task == nil {
++			t.Fatalf("snap.All misses %s", id)
++		}
++		if got := task.Label(); got != want {
++			t.Errorf("Label(%s) = %q, want %q", id, got, want)
++		}
++	}
++	panel := (model{snap: snap}).row(snap.All["20261102-201616-inv-opus"], 160)
++	if !strings.Contains(panel, "inv-opus") || strings.Contains(panel, "inv#") || strings.Contains(panel, "for ") {
++		t.Errorf("panel row of an independent investigator: %q", panel)
++	}
++}
++
++// TestWatcherNamesNewIndependentInvestigators verifies that the panel's event line for a new independent investigator
++// names it and does not say it works "for" an agent.
++func TestWatcherNamesNewIndependentInvestigators(t *testing.T) {
++	home := fixture(t)
++	w := NewWatcher(home, filepath.Join(home, "bus"), 0)
++	w.Poll() // the first poll only records the baseline
++	addTask(t, home, "20261102-201616-inv-opus", "AGENT=inv-opus\nKIND=investigation\nINV_ID=\nINVESTIGATION_TEAM=20261102-201616-investigation-team\nSTATUS=starting\nRUN=1\n")
++	writeFile(t, filepath.Join(home, "tasks", "20261102-201616-inv-opus", "task.md"), "Fix the investigation option\n")
++	_, events := w.Poll()
++	found := false
++	for _, ev := range events {
++		if strings.Contains(ev.Text, "new task inv-opus [repo]: Fix the investigation option") {
++			found = true
++		}
++		if strings.Contains(ev.Text, "inv#") || strings.Contains(ev.Text, "for : ") {
++			t.Errorf("event names an independent investigator as a legacy one: %q", ev.Text)
++		}
++	}
++	if !found {
++		t.Errorf("no event for the new independent investigator: %+v", events)
++	}
++}
+diff --git a/tests/unit/investigation_independent_labels.bats b/tests/unit/investigation_independent_labels.bats
+new file mode 100644
+index 0000000..8c85097
+--- /dev/null
++++ b/tests/unit/investigation_independent_labels.bats
+@@ -0,0 +1,40 @@
++#!/usr/bin/env bats
++# Independent investigators are shown under their own names, and the investigation hand-off is not called --autopilot.
++
++load helpers
++
++load investigation_pipeline_fixture
++
++# labels_field parent key reads shell-quoted metadata from this test's temporary home.
++labels_field() {
++  bash -c 'source "$1"; printf "%s" "${!2-}"' bash "$AGENTS_HOME/tasks/$1/meta.env" "$2"
++}
++
++@test "agent status and show name independent investigators and the PR comment names --investigation" {
++  single_pipeline_setup
++  run agent run --investigation --team inv 'Investigate a temporary fixture'
++  [ "$status" -eq 0 ]
++  local parent phase1 merger
++  parent=$(task_of investigation-team)
++  wait_status "$parent" '^done$' 45
++  phase1=$(labels_field "$parent" INVESTIGATION_PHASE1_TASKS)
++  merger=$(labels_field "$parent" INVESTIGATION_MERGER_TASK)
++
++  run agent status
++  [ "$status" -eq 0 ]
++  [[ $output != *'inv#'* ]]
++  grep -E "^$phase1 +inv +done " <<< "$output"
++  grep -E "^$merger +inv +done " <<< "$output"
++
++  run agent show "$phase1"
++  [ "$status" -eq 0 ]
++  [[ $output == *"== investigation team $parent (phase 1)"* ]]
++  [[ $output != *'investigation # for'* ]]
++  run agent show "$merger"
++  [ "$status" -eq 0 ]
++  [[ $output == *"== investigation team $parent (phase 2)"* ]]
++
++  grep -q -- '--body @example --investigation complete: review ready (#73)' "$HOME/gh.log"
++  run grep -q -- '--autopilot' "$HOME/gh.log"
++  [ "$status" -eq 1 ]
++}
+-- 
+2.53.0
+
+
+From 080c684fa3600984d9f15409d692ba4350a61b79 Mon Sep 17 00:00:00 2001
+From: "inv-opus (team-agents)" <inv-opus@team-agents.invalid>
+Date: Mon, 2 Nov 2026 20:25:10 +0100
+Subject: [PATCH 2/4] Name independent investigators and label the
+ investigation hand-off
+
+Investigators of an --investigation team have KIND=investigation but no
+investigation number (phase 1) or their own task ID as INV_ID (phases
+2/3), and no requesting agent. The dashboard, the panel, the watcher's
+events and `agent status`/`agent show` treated them like
+request_investigation runs, so the main page showed
+"investigator # (inv-opus)", "inv#" and a dangling "for" instead of the
+real agent.
+
+live reads INVESTIGATION_TEAM into Task.InvestigationTeam; Label() and
+the web row show the agent's name for those tasks, and the "for <agent>"
+stage is added only when an agent requested the investigation. Legacy
+investigations keep "investigator #N (agent)" and "inv#N".
+
+human_on_pr hard-coded "--autopilot"; it now takes the mode, and the
+investigation hand-off says "--investigation complete: ...".
+
+make lint test: 0 issues, all tests pass.
+
+Agent: inv-opus
+Agent-Model: claude/opus
+Task: 20261102-201619-inv-opus
+---
+ README.md         |  8 +++-
+ bin/agent         | 16 +++++---
+ live/data.go      | 94 ++++++++++++++++++++++++++++-------------------
+ live/ui.go        |  4 +-
+ live/web_views.go |  6 +--
+ 5 files changed, 78 insertions(+), 50 deletions(-)
+
+diff --git a/README.md b/README.md
+index a008fe8..d4f52b8 100644
+--- a/README.md
++++ b/README.md
+@@ -209,7 +209,11 @@ if no replacement is available or it fails, the team finishes as `failed` (`fail
+ Phase 4 releases capacity leases, tracks pending PR comment and notification attempts (`INVESTIGATION_HANDOFF_PENDING`),
+ and finishes as `done` without waiting for a decision or auto-merging (`complete: review ready (#<pr-number>)`). A crash before
+ recording an attempt can repeat that external action; the existing helpers provide best-effort delivery.
+-Existing metadata fields and manifests remain readable; interrupted hand-offs normalize old `waits for you:` stages on recovery. Resume accepts completed `done`/`failed` parents and legacy `waiting` parents. The main dashboard shows real investigators only, filtering out synthetic investigation team tasks.
++Existing metadata fields and manifests remain readable; interrupted hand-offs normalize old `waits for you:` stages on recovery. Resume accepts completed `done`/`failed` parents and legacy `waiting` parents. The main dashboard shows real investigators only, filtering out synthetic investigation team tasks. Investigators of an
++investigation team appear under their own names on the dashboard, in `agent live` and in `agent status` (not as
++`investigator #N` / `inv#N`, which name investigations requested by an agent), and `agent show` names their team and
++phase (`== investigation team <id> (phase N)`). The hand-off comment on the PR mentions the owner and starts with
++`--investigation`.
+ Stopping an investigation team (`agent stop <id>` or `agent stop --running`) synchronizes with in-flight
+ admission under the dispatch lock, cancels pending handoffs, and stops active child tasks and checks before
+ releasing its capacity lease. Supervisor recovery detects stopped leased parents to complete interrupted
+@@ -775,7 +779,7 @@ The menu on the left slides out on demand (`☰` or `m`). Every view can be maxi
+ 
+ | View | What it shows |
+ |---|---|
+-| Dashboard | active tasks, then finished ones newest first (also acknowledged ones and investigations from the last 24 h; their time as \"… ago\") live, events as they happen, reserved resources; investigations as "investigator #N (agent)"; `done` in blue; a ■ button on a running task cuts its run short (`agent kick`: a team member only sleeps and its team can wake it, a solo task is stopped); a sleeping member of an open team shows what it waits for (`⏳ waits for: B36 gemini-2@rpi5-x: native gate (its latest progress)`, items nobody has taken yet); `stopped` in orange, failures in red |
++| Dashboard | active tasks, then finished ones newest first (also acknowledged ones and investigations from the last 24 h; their time as \"… ago\") live, events as they happen, reserved resources; investigations as "investigator #N (agent)" (the investigators of an `--investigation` team by their names); `done` in blue; a ■ button on a running task cuts its run short (`agent kick`: a team member only sleeps and its team can wake it, a solo task is stopped); a sleeping member of an open team shows what it waits for (`⏳ waits for: B36 gemini-2@rpi5-x: native gate (its latest progress)`, items nobody has taken yet); `stopped` in orange, failures in red |
+ | Agents | the configured agents and investigators — working ones first, then by their last activity (shown) — tier, CLI, model, provider, what each is doing now, pauses (until when, why) |
+ | Task | header (status, time, branch, team) and sections: live activity, the prompt of every run, question rounds, investigations, final message, error logs, the repository notebook, `meta.env` |
+ | Teams / Team | the newest 20 teams (and "all"); a team: members and their states, the board (newest first, `for`, results), consultations, the quiz, the team's messages, the notebook; a finished team can be woken from its last task — this round or the next, with a prompt |
+diff --git a/bin/agent b/bin/agent
+index 53cf06f..605f974 100755
+--- a/bin/agent
++++ b/bin/agent
+@@ -1467,14 +1467,15 @@ auto_stage() { # task text [no-comment]
+   if [[ $2 == "waits for you:"* && -z ${3:-} ]]; then human_on_pr "$1" "$2"; fi
+ }
+ 
+-# human_on_pr task text — a comment on the task's PR to its repository's owner (mentioned, when on GitHub)
++# human_on_pr task text [mode] — a comment on the task's PR to its repository's owner (mentioned, when on GitHub),
++# after the mode that wrote it (default --autopilot)
+ human_on_pr() {
+-  local url root owner
++  local url root owner mode=${3:---autopilot}
+   url=$(task_field "$1" PR_URL)
+   [[ -n $url ]] || return 0
+   root=$(task_field "$1" REPO_ROOT)
+   owner=$(github_owner "$root")
+-  (cd "$root" && try handover_comment_failed gh pr comment "$url" --body "${owner:+@$owner }--autopilot $2") || return 0
++  (cd "$root" && try handover_comment_failed gh pr comment "$url" --body "${owner:+@$owner }$mode $2") || return 0
+   log_info handover_commented "task=$1" "pr=$url"
+ }
+ 
+@@ -3537,7 +3538,7 @@ investigation_handoff() {
+   auto_stage "$parent" "$stage" no-comment
+   meta_set "$parent" INVESTIGATION_LEASE ""
+   if [[ $(investigation_field "$parent" INVESTIGATION_COMMENTED) != 1 ]]; then
+-    human_on_pr "$parent" "$stage; investigation finished; nothing was merged"
++    human_on_pr "$parent" "$stage; investigation finished; nothing was merged" --investigation
+     meta_set "$parent" INVESTIGATION_COMMENTED 1
+   fi
+   if [[ $(investigation_field "$parent" INVESTIGATION_NOTIFIED) != 1 ]]; then
+@@ -5838,6 +5839,7 @@ cmd_status() {
+   for d in "$TASKS"/*/; do
+     [[ -f $d/meta.env ]] || continue
+     (
++      INVESTIGATION_TEAM=''   # older tasks lack it: never inherit it from the caller
+       source "$d/meta.env"
+       st=${STATUS:-?}
+       # Remote proxies and internal investigation coordinators do not own local runner units.
+@@ -5845,7 +5847,8 @@ cmd_status() {
+           && ( $st == running || $st == starting ) ]] && ! unit_active "${ID:-}" "${RUN:-0}"; then
+         st="$st?"
+       fi
+-      ag=${AGENT:-?}; [[ ${KIND:-worker} == investigation ]] && ag="inv#${INV_ID:-?}"
++      # an investigator of an --investigation team has no investigation number: it is shown by its name
++      ag=${AGENT:-?}; [[ ${KIND:-worker} == investigation && -z $INVESTIGATION_TEAM ]] && ag="inv#${INV_ID:-?}"
+       d=${d%/}
+       printf '%-30s %-12s %-13s %-6s %-5s %s\n' "${ID:-${d##*/}}" "$ag" "$st" "${ROUND:--}" "${RUN:--}" "${REPO_NAME:-}"
+     )
+@@ -5865,6 +5868,9 @@ cmd_show() {
+   if [[ ${KIND:-worker} == worker ]]; then
+     local invs; invs=$(try inv_list_failed bus inv-list --dir "$BUS_DIR" --task "$id")
+     if [[ -n $invs ]]; then echo; echo "== investigations"; printf '%s\n' "$invs"; fi
++  elif is_independent_investigation "$id"; then
++    echo; echo "== investigation team $(task_field "$id" INVESTIGATION_TEAM) (phase $(investigation_field "$id" INVESTIGATION_PHASE))"
++    [[ -s $dir/result.md ]] && echo "   result: $dir/result.md"
+   else
+     echo; echo "== investigation #$INV_ID for $FROM_AGENT (task $PARENT_TASK)"
+     [[ -s $dir/result.md ]] && echo "   result: $dir/result.md"
+diff --git a/live/data.go b/live/data.go
+index 0f5eab4..7d54164 100644
+--- a/live/data.go
++++ b/live/data.go
+@@ -26,37 +26,38 @@ type Activity struct {
+ 
+ // Task is a local task read from meta.env or a remote task read from mirrored metadata.json.
+ type Task struct {
+-	ID          string    // task ID: "<timestamp>-<agent>" (investigations/helpers have their own suffix)
+-	Agent       string    // agent name
+-	Node        string    // remote node name; empty for a local task
+-	NodeOffline bool      // the remote heartbeat expired; status remains the last known state
+-	CanControl  bool      // this frontend is configured to queue controls on the lead
+-	Note        string    // human-visible task note
+-	Kind        string    // worker (a normal task) | investigation | helper (a worker request)
+-	Type        string    // agent CLI: claude | codex | gemini | opencode
+-	Model       string    // model as configured ("" = the CLI's default)
+-	Repo        string    // repository name
+-	Branch      string    // the task's git branch
+-	Worktree    string    // the task's git worktree
+-	Status      string    // new | starting | running | waiting | investigating | sleeping | done | failed | stopped | excluded | hung
+-	InvID       string    // investigations: the investigation number
+-	ParentTask  string    // investigations/helpers: the task they work for
+-	FromAgent   string    // investigations/helpers: the requesting agent
+-	AutoStage   string    // what --verify/--autopilot does for the round now, on its coordinator's task (AUTO_STAGE)
+-	Team        string    // team ID ("" for a solo task)
+-	HelperID    string    // helpers: the worker request number
+-	Tier        string    // normal | worker
+-	JobID       string    // remote job ID when started for a job
+-	JobLead     string    // lead URL or instance name when started for a job
+-	Round       int       // question rounds so far (questions-<Round>.md is the latest)
+-	Run         int       // runs so far (prompt-<Run>.md is the latest)
+-	Created     time.Time // when the task was created
+-	Finished    time.Time // when the last run ended (zero while running)
+-	RunStart    time.Time // when the current run started (from the runner process)
+-	Dir         string    // task directory
+-	Alive       bool      // the runner process is alive
+-	Acked       bool      // a finished task was acknowledged (agent ack / x) and is hidden
+-	Last        Activity  // latest activity entry
++	ID                string    // task ID: "<timestamp>-<agent>" (investigations/helpers have their own suffix)
++	Agent             string    // agent name
++	Node              string    // remote node name; empty for a local task
++	NodeOffline       bool      // the remote heartbeat expired; status remains the last known state
++	CanControl        bool      // this frontend is configured to queue controls on the lead
++	Note              string    // human-visible task note
++	Kind              string    // worker (a normal task) | investigation | helper (a worker request)
++	Type              string    // agent CLI: claude | codex | gemini | opencode
++	Model             string    // model as configured ("" = the CLI's default)
++	Repo              string    // repository name
++	Branch            string    // the task's git branch
++	Worktree          string    // the task's git worktree
++	Status            string    // new | starting | running | waiting | investigating | sleeping | done | failed | stopped | excluded | hung
++	InvID             string    // investigations: the investigation number
++	ParentTask        string    // investigations/helpers: the task they work for
++	FromAgent         string    // investigations/helpers: the requesting agent
++	InvestigationTeam string    // independent investigators of an --investigation team: the team's task ID ("" otherwise)
++	AutoStage         string    // what --verify/--autopilot does for the round now, on its coordinator's task (AUTO_STAGE)
++	Team              string    // team ID ("" for a solo task)
++	HelperID          string    // helpers: the worker request number
++	Tier              string    // normal | worker
++	JobID             string    // remote job ID when started for a job
++	JobLead           string    // lead URL or instance name when started for a job
++	Round             int       // question rounds so far (questions-<Round>.md is the latest)
++	Run               int       // runs so far (prompt-<Run>.md is the latest)
++	Created           time.Time // when the task was created
++	Finished          time.Time // when the last run ended (zero while running)
++	RunStart          time.Time // when the current run started (from the runner process)
++	Dir               string    // task directory
++	Alive             bool      // the runner process is alive
++	Acked             bool      // a finished task was acknowledged (agent ack / x) and is hidden
++	Last              Activity  // latest activity entry
+ }
+ 
+ // Presence is the part of agentbus' presence entry that the live view needs (see agentbus Presence).
+@@ -252,20 +253,37 @@ var activeStatuses = map[string]bool{"new": true, "starting": true, "running": t
+ // Active reports whether the task has not finished yet (sleeping and waiting count as active).
+ func (t *Task) Active() bool { return activeStatuses[t.Status] }
+ 
+-// Label is the short name shown in the table (agent, inv#N, agent/HN, or agent@node).
++// Label is the short name shown in the table (agent, inv#N, agent/HN, or agent@node); an investigator of an
++// --investigation team is shown by its name.
+ func (t *Task) Label() string {
+ 	if t.Node != "" {
+ 		return t.Agent + "@" + t.Node
+ 	}
+-	switch t.Kind {
+-	case "investigation":
++	switch {
++	case t.Independent():
++		return t.Agent
++	case t.Kind == "investigation":
+ 		return "inv#" + t.InvID
+-	case "helper":
++	case t.Kind == "helper":
+ 		return t.Agent + "/H" + t.HelperID
+ 	}
+ 	return t.Agent
+ }
+ 
++// Independent reports whether t is an investigator of an --investigation team: a real agent working on its own
++// branch, with no investigation number and no requesting agent.
++func (t *Task) Independent() bool {
++	return t.Kind == "investigation" && t.InvestigationTeam != ""
++}
++
++// forAgent is the "for <agent>" stage prefix of an investigation requested by an agent ("" when nobody requested it).
++func (t *Task) forAgent() string {
++	if t.Kind != "investigation" || t.FromAgent == "" {
++		return ""
++	}
++	return "for " + t.FromAgent
++}
++
+ // BusName: the name under which the agent appears on the bus.
+ func (t *Task) BusName() string {
+ 	if t.Node != "" {
+@@ -533,7 +551,7 @@ func loadSnapshot(home, busDir string, nodeTTL ...time.Duration) *Snapshot {
+ 		t := &Task{
+ 			ID: m["ID"], Agent: m["AGENT"], Kind: m["KIND"], Type: m["TYPE"], Model: m["MODEL"],
+ 			Repo: m["REPO_NAME"], Branch: m["BRANCH"], Worktree: m["WORKTREE"], Status: m["STATUS"],
+-			InvID: m["INV_ID"], ParentTask: m["PARENT_TASK"], FromAgent: m["FROM_AGENT"], Team: m["TEAM"], HelperID: m["HELPER_ID"], Tier: m["TIER"],
++			InvID: m["INV_ID"], ParentTask: m["PARENT_TASK"], FromAgent: m["FROM_AGENT"], InvestigationTeam: m["INVESTIGATION_TEAM"], Team: m["TEAM"], HelperID: m["HELPER_ID"], Tier: m["TIER"],
+ 			JobID: m["JOB_ID"], JobLead: m["JOB_LEAD"], AutoStage: m["AUTO_STAGE"],
+ 			Created: parseTime(m["CREATED"]), Finished: parseTime(m["FINISHED"]), Dir: dir,
+ 		}
+@@ -799,8 +817,8 @@ func (w *Watcher) Poll() (*Snapshot, []Event) {
+ 		switch {
+ 		case p == nil:
+ 			what := firstLine(filepath.Join(t.Dir, "task.md"))
+-			if t.Kind == "investigation" {
+-				what = "for " + t.FromAgent + ": " + what
++			if f := t.forAgent(); f != "" {
++				what = f + ": " + what
+ 			}
+ 			ev = append(ev, Event{now, "info", fmt.Sprintf("new task %s [%s]: %s", t.Label(), t.Repo, what)})
+ 		case p.Status != t.Status:
+diff --git a/live/ui.go b/live/ui.go
+index 7969bfe..869ce60 100644
+--- a/live/ui.go
++++ b/live/ui.go
+@@ -716,8 +716,8 @@ func (m model) row(t *Task, width int) string {
+ 	case t.Last.Text != "":
+ 		last = shortTS(t.Last.TS) + " " + actIcon(t.Last.Kind) + " " + t.Last.Text
+ 	}
+-	if t.Kind == "investigation" {
+-		stage = "for " + t.FromAgent + " " + stage
++	if f := t.forAgent(); f != "" {
++		stage = f + " " + stage
+ 	}
+ 	if t.Team != "" {
+ 		stage = "[team " + strings.TrimSuffix(t.Team, "-team") + "] " + stage
+diff --git a/live/web_views.go b/live/web_views.go
+index 3a092bb..d7a266e 100644
+--- a/live/web_views.go
++++ b/live/web_views.go
+@@ -213,7 +213,7 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
+ 	r.StatusLabel, _ = statusStyle(t.Status)
+ 	r.StatusClass = statusClass(t.Status)
+ 	r.Running = (t.Node == "" || t.CanControl) && (t.Status == "running" || t.Status == "starting")
+-	if t.Kind == "investigation" {
++	if t.Kind == "investigation" && !t.Independent() {
+ 		r.Name = fmt.Sprintf("investigator #%s (%s)", t.InvID, t.Agent)
+ 	}
+ 	switch {
+@@ -246,8 +246,8 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
+ 	case t.Last.Text != "":
+ 		r.Last, r.LastIcon = shortTS(t.Last.TS)+" "+t.Last.Text, actIcon(t.Last.Kind)
+ 	}
+-	if t.Kind == "investigation" {
+-		r.Stage = strings.TrimSpace("for " + t.FromAgent + " " + r.Stage)
++	if f := t.forAgent(); f != "" {
++		r.Stage = strings.TrimSpace(f + " " + r.Stage)
+ 	}
+ 	if ti := snap.Teams[t.Team]; ti != nil && ti.Lead == t.BusName() {
+ 		r.Lead = true
+-- 
+2.53.0
+
+
+From 449536295e18508f61b80a419d1a8d320038306d Mon Sep 17 00:00:00 2001
+From: "inv-astra (team-agents)" <inv-astra@team-agents.invalid>
+Date: Mon, 2 Nov 2026 20:20:32 +0100
+Subject: [PATCH 3/4] Test recovery of completed legacy investigation handoffs
+
+Old Phase 4 records have waiting status but neither a lease nor pending
+handoff work. Cover supervision and dispatch, preserve recorded failures,
+and exclude unknown outcomes, unfinished phases, and stopped tasks.
+
+RED: bats tests/unit/investigation_completed_legacy.bats
+not ok 1 supervisor finalizes an already delivered legacy success without another decision or notification
+not ok 2 dispatch finalizes an already delivered legacy failure with its recorded result
+Both remain waiting. The two defensive tests pass.
+
+make gate: all existing tests pass; only these two new tests fail.
+Initial ShellCheck quoting findings in the new test were corrected;
+make -s lint-shell then passed with zero findings. Other gate steps pass.
+
+Agent: inv-astra
+Agent-Model: codex/gpt-6-astra
+Task: 20261102-201619-inv-astra
+---
+ Makefile                                      |   1 +
+ .../unit/investigation_completed_legacy.bats  | 102 ++++++++++++++++++
+ 2 files changed, 103 insertions(+)
+ create mode 100644 tests/unit/investigation_completed_legacy.bats
+
+diff --git a/Makefile b/Makefile
+index 9a7517b..9ce9600 100644
+--- a/Makefile
++++ b/Makefile
+@@ -42,6 +42,7 @@ SHELL_SCRIPTS += tests/unit/investigation_single_pipeline.bats tests/unit/invest
+ 	tests/unit/investigation_independent_resume_prompt.bats
+ SHELL_SCRIPTS += tests/unit/investigation_resume_independence.bats
+ SHELL_SCRIPTS += tests/unit/investigation_independent_labels.bats
++SHELL_SCRIPTS += tests/unit/investigation_completed_legacy.bats
+ # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
+ export PATH := $(HOME)/.local/bin:$(PATH)
+ 
+diff --git a/tests/unit/investigation_completed_legacy.bats b/tests/unit/investigation_completed_legacy.bats
+new file mode 100644
+index 0000000..51fec51
+--- /dev/null
++++ b/tests/unit/investigation_completed_legacy.bats
+@@ -0,0 +1,102 @@
++#!/usr/bin/env bats
++# Completed handoffs from older installations must not wait forever after upgrade.
++
++load helpers
++
++# legacy_completion result creates the metadata written after an old Phase 4 handoff.
++legacy_completion() {
++  LEGACY_PARENT=20261101-000001-investigation-team
++  mkdir -p "$AGENTS_HOME/tasks/$LEGACY_PARENT"
++  cat > "$AGENTS_HOME/tasks/$LEGACY_PARENT/meta.env" <<META
++ID=$LEGACY_PARENT
++AGENT=investigation-team
++KIND=investigation_team
++TYPE=internal
++STATUS=waiting
++TEAM=
++RUN=0
++ROUND=0
++REPO_NAME=repo
++REPO_ROOT=$HOME/repo
++WORKTREE=$HOME/repo
++INVESTIGATION_PIPELINE=1
++INVESTIGATION_PHASE=4
++INVESTIGATION_LEASE=
++INVESTIGATION_HANDOFF_PENDING=
++INVESTIGATION_HANDOFF_STAGE=waits\\ for\\ you:\\ review\\ ready\\ \\(#73\\)
++INVESTIGATION_HANDOFF_RESULT=$1
++INVESTIGATION_COMMENTED=1
++INVESTIGATION_NOTIFIED=1
++PR_URL=https://github.com/example/repo/pull/73
++PR_NUMBER=73
++META
++}
++
++# legacy_field key reads the parent's shell-quoted metadata without inheriting caller values.
++legacy_field() {
++  bash -c 'source "$1"; printf "%s" "${!2-}"' bash "$AGENTS_HOME/tasks/$LEGACY_PARENT/meta.env" "$1"
++}
++
++# assert_no_legacy_delivery checks that recovery neither re-notifies nor starts an agent.
++assert_no_legacy_delivery() {
++  [ ! -e "$HOME/notifications.log" ]
++  [ ! -e "$HOME/gh.log" ]
++  [ "$(find "$AGENTS_HOME/tasks" -name meta.env | wc -l)" -eq 1 ]
++  [ -z "$(ls -A "$STUB_UNITS")" ]
++}
++
++@test "supervisor finalizes an already delivered legacy success without another decision or notification" {
++  legacy_completion 'done'
++  run agent _supervise
++  [ "$status" -eq 0 ]
++  [ "$(status_of "$LEGACY_PARENT")" = 'done' ]
++  [ "$(legacy_field AUTO_STAGE)" = 'complete: review ready (#73)' ]
++  [ -z "$(legacy_field INVESTIGATION_HANDOFF_PENDING)" ]
++  assert_no_legacy_delivery
++  run agent _supervise
++  [ "$status" -eq 0 ]
++  [ "$(status_of "$LEGACY_PARENT")" = 'done' ]
++  assert_no_legacy_delivery
++}
++
++@test "dispatch finalizes an already delivered legacy failure with its recorded result" {
++  legacy_completion failed
++  run agent dispatch
++  [ "$status" -eq 0 ]
++  [ "$(status_of "$LEGACY_PARENT")" = failed ]
++  [ "$(legacy_field AUTO_STAGE)" = 'failed: review ready (#73)' ]
++  assert_no_legacy_delivery
++}
++
++@test "legacy completion recovery does not guess a missing or invalid result" {
++  local result
++  for result in "" unknown; do
++    legacy_completion "$result"
++    run agent _supervise
++    [ "$status" -eq 0 ]
++    run agent dispatch
++    [ "$status" -eq 0 ]
++    [ "$(status_of "$LEGACY_PARENT")" = waiting ]
++    assert_no_legacy_delivery
++  done
++}
++
++@test "legacy completion recovery preserves unfinished phases and stopped parents" {
++  local phase
++  for phase in 1 2 3 5; do
++    legacy_completion 'done'
++    sed -i "s/^INVESTIGATION_PHASE=4$/INVESTIGATION_PHASE=$phase/" "$AGENTS_HOME/tasks/$LEGACY_PARENT/meta.env"
++    run agent dispatch
++    [ "$status" -eq 0 ]
++    [ "$(status_of "$LEGACY_PARENT")" = waiting ]
++    assert_no_legacy_delivery
++  done
++  legacy_completion 'done'
++  sed -i 's/^STATUS=waiting$/STATUS=stopped/' "$AGENTS_HOME/tasks/$LEGACY_PARENT/meta.env"
++  run agent _supervise
++  [ "$status" -eq 0 ]
++  run agent dispatch
++  [ "$status" -eq 0 ]
++  [ "$(status_of "$LEGACY_PARENT")" = stopped ]
++  assert_no_legacy_delivery
++}
+-- 
+2.53.0
+
+
+From cbe6869bec26791e8a32662d3f1f865561654ba9 Mon Sep 17 00:00:00 2001
+From: "inv-opus (team-agents)" <inv-opus@team-agents.invalid>
+Date: Mon, 2 Nov 2026 20:29:33 +0100
+Subject: [PATCH 4/4] Finalize completed legacy investigation handoffs
+
+Old delivered Phase 4 handoffs have neither a lease nor pending delivery, so
+supervision and dispatch never revisit their waiting status. Recognize an
+explicit recorded terminal result and reuse the idempotent handoff path.
+Preserve unfinished waits and existing delivery markers.
+
+Integrated from inv-astra's 02813a2 (GREEN for 26c122d). The README
+paragraph was merged with inv-opus's naming paragraph; inv-astra's
+per-investigator patch file is replaced by the combined patch.
+
+Agent: inv-opus
+Agent-Model: claude/opus
+Task: 20261102-202838-inv-opus
+Investigation: #20261102-202838-inv-opus
+---
+ README.md                   |  6 +++++-
+ bin/agent                   | 19 ++++++++++++++++---
+ docs/investigation-teams.md |  5 ++++-
+ 3 files changed, 25 insertions(+), 5 deletions(-)
+
+diff --git a/README.md b/README.md
+index d4f52b8..9cb26cb 100644
+--- a/README.md
++++ b/README.md
+@@ -214,6 +214,10 @@ investigation team appear under their own names on the dashboard, in `agent live
+ `investigator #N` / `inv#N`, which name investigations requested by an agent), and `agent show` names their team and
+ phase (`== investigation team <id> (phase N)`). The hand-off comment on the PR mentions the owner and starts with
+ `--investigation`.
++Supervision and `agent dispatch` also finalize already-delivered legacy Phase 4 handoffs left as `waiting`,
++using their recorded `INVESTIGATION_HANDOFF_RESULT` (`done` or `failed`). Existing delivery flags prevent
++duplicate notifications and PR comments. Clarification waits and unfinished phases are unaffected; an absent
++or unknown recorded result is not treated as proof of completion.
+ Stopping an investigation team (`agent stop <id>` or `agent stop --running`) synchronizes with in-flight
+ admission under the dispatch lock, cancels pending handoffs, and stops active child tasks and checks before
+ releasing its capacity lease. Supervisor recovery detects stopped leased parents to complete interrupted
+@@ -719,7 +723,7 @@ notifications in `AGENT_LANGUAGE`.
+ ```
+ agent run <agent> "task" | -f task.md         start a task (inside the repository)
+ agent run --team a,b[,c] [--verify] "task"    start a team (optionally with a final PR review)
+-agent run --investigation --team "A, B" "topic"  investigators create and review a PR; the human decides
++agent run --investigation --team "A" "topic"     one or more investigators create and review a PR, then finish
+ agent run --resume <team|task> ["addition"]   resume from the last checkpoint (same branches; after a merged round: new ones)
+ agent run --resume <team|task> --same-round   continue an unmerged round on the same branches (e.g. review fixes)
+ agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)
+diff --git a/bin/agent b/bin/agent
+index 605f974..39ef7d2 100755
+--- a/bin/agent
++++ b/bin/agent
+@@ -3522,6 +3522,17 @@ investigation_team_tick() {
+ # investigation_field task key reads optional metadata without inheriting the dispatching task's value.
+ investigation_field() { ( unset "$2"; task_field "$1" "$2"; ) }
+ 
++# investigation_completed_wait parent identifies an old completed handoff still marked waiting.
++# Only a recorded terminal result in Phase 4 proves completion; clarification and capacity waits stay active.
++investigation_completed_wait() {
++  local parent=$1 result
++  [[ $(task_field "$parent" STATUS) == waiting \
++    && $(investigation_field "$parent" INVESTIGATION_PIPELINE) == 1 \
++    && $(investigation_field "$parent" INVESTIGATION_PHASE) == 4 ]] || return 1
++  result=$(investigation_field "$parent" INVESTIGATION_HANDOFF_RESULT)
++  [[ $result == done || $result == failed ]]
++}
++
+ # investigation_handoff parent stage result records terminal completion and delivers the PR summary once.
+ investigation_handoff() {
+   local parent=$1 stage=$2 result=$3 PR_URL='' REVIEW=0 WORK_ROUND='' WORK_ROUNDS='' JOB_ID='' JOB_LEAD='' LEAD_URL=''
+@@ -3993,7 +4004,8 @@ investigation_teams_tick() {
+     [[ $(task_field "$parent" KIND) == investigation_team ]] || continue
+     st=$(task_field "$parent" STATUS)
+     if [[ $st =~ ^(stopped|done|failed)$ || -f $TASKS/$parent/stop-requested ]]; then continue; fi
+-    if [[ $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ]]; then
++    if [[ $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ]] \
++        || investigation_completed_wait "$parent"; then
+       investigation_team_tick "$parent"
+     fi
+   done
+@@ -6064,7 +6076,8 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
+     kind=$(task_field "$id" KIND)
+     if [[ $kind == investigation_team ]]; then
+       # A coordinator has no runner; the timer also retries cohorts after quota expiry without a runner exit.
+-      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 || $(investigation_field "$id" INVESTIGATION_LEASE) == 1 ]]; then phase1_pending=1; fi
++      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 || $(investigation_field "$id" INVESTIGATION_LEASE) == 1 ]] \
++          || investigation_completed_wait "$id"; then phase1_pending=1; fi
+       continue
+     fi
+     [[ $st == running || $st == starting ]] || continue
+@@ -8492,7 +8505,7 @@ agent run --last-team [--same-round] ["…"]  resume the newest team of this rep
+ agent ack <id|all>                        acknowledge finished tasks (they leave the panel)
+ agent run --team a,b[,c] [--verify|--autopilot] "task"  team; --verify: an investigator reviews the PR at the end;
+                                            --autopilot: two independent reviews, the merge, the next round
+-agent run --investigation --team "A, B" "topic"  investigators create and review a PR; the human decides
++agent run --investigation --team "A" "topic"     one or more investigators create and review a PR, then finish
+ agent autopilot <team> [on|off]            a team's --autopilot: shown, or switched (off: no merge nor next round by itself)
+ agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
+ agent team [id | --all]                   teams and their members
+diff --git a/docs/investigation-teams.md b/docs/investigation-teams.md
+index b61aed9..0ea6a85 100644
+--- a/docs/investigation-teams.md
++++ b/docs/investigation-teams.md
+@@ -291,6 +291,9 @@ so the child cannot retain investigator capacity after the parent releases its l
+ > [!NOTE]
+ > Round 4 finalizes the full investigation lifecycle, adding Phase 5 resume metadata, advisory review tracking, and manual verification procedures.
+ > Task attributes are additive; existing task files, metadata, and bus state remain backwards-compatible. Old Phase 4 tasks lacking Phase 5 fields or having legacy status `waiting` load and resume normally.
++> Supervision and dispatch finish legacy Phase 4 decision waits using the recorded `done` or `failed` handoff
++> result, even when the lease and pending-delivery flag were already cleared. Recorded delivery flags prevent
++> repeat notifications and PR comments. Missing or unknown results are not guessed.
+ 
+ Task attributes stored in the orchestration task's `meta.env` and task files (no bus state changes):
+ 
+@@ -420,7 +423,7 @@ When implementing future rounds, existing components have explicit boundaries:
+    - Pull request creation and PR description verification.
+    - Uniform seeded selection of reviewer and execution of `prompts/review.md`.
+    - Single replacement logic for failed mergers and reviewers.
+-   - Phase 4 human notification and transition to idle wait.
++   - Phase 4 human notification and terminal completion without a decision wait.
+ 4. **Round 4 (Completed — Resume and Polish):**
+    - Resume handler on open PR (`agent run --resume <team>`) triggering all-investigator Phase 5 advisory reviews without auto-merging.
+    - Immediate refusal of resume on merged or closed PRs ("the PR is merged — a new topic is a new run" or "the PR is closed — a new topic is a new run").
+-- 
+2.53.0
+
