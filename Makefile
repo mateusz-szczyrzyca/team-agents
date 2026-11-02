@@ -7,7 +7,7 @@
 # Go modules of this repository (each has its own go.mod).
 GO_MODULES := agentbus live tools/doccheck tools/errgen
 # Bash scripts checked with shellcheck (bats files included: shellcheck understands @test blocks).
-SHELL_SCRIPTS := bin/agent install.sh tools/install-linters.sh tools/update-web-vendor.sh tests/integration/run.sh examples/notify/*.sh \
+SHELL_SCRIPTS := bin/agent install.sh tools/install-linters.sh tools/unit-bats.sh tools/update-web-vendor.sh tests/integration/run.sh examples/notify/*.sh \
 	tests/unit/helpers.bash tests/unit/node_agents.bats tests/unit/node_report_agent.bats tests/unit/node_sync.bats tests/unit/node_sync_limits.bats tests/unit/node_sync_review.bats tests/unit/node_sync_state.bats tests/unit/node_sync_tails.bats tests/unit/node_sync_two_homes.bats tests/unit/node_sync_freshness.bats tests/unit/job_attribution.bats tests/unit/job_attribution_paths.bats tests/unit/web_jobs.bats tests/unit/lead.bats tests/unit/lead_cli.bats tests/unit/lead_cli_context.bats tests/unit/lead_install.bats tests/unit/agent.bats tests/unit/web.bats tests/unit/rounds.bats tests/unit/identity.bats tests/unit/limits.bats tests/unit/gate.bats tests/unit/skips.bats tests/unit/meta.bats tests/unit/authenticated.bats tests/unit/verify_loop.bats tests/unit/kick.bats tests/unit/findings.bats tests/unit/rotation.bats tests/unit/member_out.bats tests/unit/resilience.bats tests/unit/remote_proxy.bats tests/unit/remote_fixes.bats tests/unit/restart.bats tests/unit/team_close.bats tests/unit/autopilot_review.bats tests/unit/autopilot_merge.bats tests/unit/network.bats tests/unit/autopilot_questions.bats tests/unit/github_format.bats tests/unit/review_resilience.bats tests/unit/run_notes.bats tests/unit/github_trust.bats tests/unit/agent_gh.bats tests/unit/auto_stage.bats tests/unit/pause_notify.bats tests/unit/round_handover.bats tests/unit/wake_cmd.bats tests/unit/round_reports.bats tests/unit/node_activity.bats tools/gate.sh tests/unit/resume_alloc.bats tests/unit/node_checkout.bats tests/unit/node_install.bats tests/unit/node_two_homes.bats tests/unit/node_daemon.bats tests/unit/node_helper_hooks.bats tests/unit/node_large_assignment.bats tests/unit/delegate_jobs.bats tests/unit/node_safety.bats tests/unit/node_prelaunch_cancel.bats tests/unit/node_cancel_exit.bats tests/unit/node_recovery_fence.bats tests/unit/node_review_boundaries.bats tests/unit/stubs/systemd-run tests/unit/stubs/systemctl tests/unit/stubs/gh tests/unit/stubs/tailscale
 SHELL_SCRIPTS += tests/unit/remote_controls.bats tests/unit/remote_control_homes.bash \
 	tests/unit/remote_control_validation.bats \
@@ -46,8 +46,27 @@ unit-go:
 	cd agentbus && go vet ./... && go test ./...
 	cd live && go vet ./... && go test ./...
 
+# The Bats tests run in parallel — BATS_JOBS at once (GNU parallel; default: the number of processors) —, apart
+# from the files of BATS_SERIAL: they start servers on local ports (a lead, a node, the web interface) and run one
+# after another once the others are done. Both groups always run; the step fails when either does. BATS_JOBS=1, or
+# no GNU parallel: all of them one after another, as before. BATS_FILES narrows the run (e.g. while working).
+BATS_JOBS ?= $(shell nproc 2>/dev/null || echo 1)
+BATS_FILES ?= $(wildcard tests/unit/*.bats)
+BATS_SERIAL ?= tests/unit/agent_gh.bats tests/unit/authenticated.bats tests/unit/delegate_jobs.bats \
+	tests/unit/handover_failed.bats tests/unit/job_attribution.bats tests/unit/lead.bats tests/unit/lead_cli.bats \
+	tests/unit/lead_cli_context.bats tests/unit/lead_install.bats tests/unit/network.bats \
+	tests/unit/node_daemon.bats tests/unit/node_helper_hooks.bats tests/unit/node_install.bats \
+	tests/unit/node_large_assignment.bats tests/unit/node_sync.bats tests/unit/node_sync_freshness.bats \
+	tests/unit/node_sync_limits.bats tests/unit/node_sync_review.bats tests/unit/node_sync_state.bats \
+	tests/unit/node_sync_tails.bats tests/unit/node_sync_two_homes.bats tests/unit/node_two_homes.bats \
+	tests/unit/remote_answer_round.bats tests/unit/remote_control_notifications.bats \
+	tests/unit/remote_control_proxy.bats tests/unit/remote_control_review.bats \
+	tests/unit/remote_control_validation.bats tests/unit/remote_control_web.bats tests/unit/remote_controls.bats \
+	tests/unit/remote_questions_atomic.bats tests/unit/remote_questions_preparation_retry.bats \
+	tests/unit/restart.bats tests/unit/wake_cmd.bats tests/unit/web.bats tests/unit/web_jobs.bats
+
 unit-bats:
-	bats tests/unit
+	BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/unit-bats.sh
 
 tools:
 	tools/install-linters.sh
