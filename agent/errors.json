@@ -1,0 +1,17 @@
+[
+  {
+    "op": "Run",
+    "causes": [
+      {
+        "name": "UnknownCommand",
+        "class": "InvalidArgument",
+        "comment": "UnknownCommand is returned when the command is not recognized."
+      },
+      {
+        "name": "Storage",
+        "class": "Storage",
+        "comment": "Storage is a catch-all for file system and I/O errors."
+      }
+    ]
+  }
+]
