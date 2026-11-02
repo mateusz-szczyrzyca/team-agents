@@ -5449,13 +5449,13 @@ validate_investigation_team() {
     member=${remaining%%,*}; remaining=${remaining#*,}
     member=${member#"${member%%[![:space:]]*}"}
     member=${member%"${member##*[![:space:]]}"}
-    [[ -n $member ]] || die "--team needs at least two investigators and no empty names. Configured investigators: $configured"
+    [[ -n $member ]] || die "--team needs at least one investigator and no empty names. Configured investigators: $configured"
     [[ $member != *@* ]] || die "--investigation runs on the lead only; remote members are not allowed ($member)"
     is_investigator "$member" || die "unknown investigator '$member'. Configured investigators: $configured"
     [[ $seen != *" $member "* ]] || die "duplicate investigator $member is listed twice. Configured investigators: $configured"
     seen+="$member "; count=$((count + 1))
   done
-  ((count >= 2)) || die "an investigation team needs at least two investigators. Configured investigators: $configured"
+  ((count >= 1)) || die "an investigation team needs at least one investigator. Configured investigators: $configured"
 }
 
 # validate_investigation_topic prints validated argument, file or stdin text for one-time consumption.
@@ -5498,7 +5498,7 @@ cmd_run() {
         [[ -n ${2:-} ]] || die "usage: agent run --resume <team|task> [\"addition\" | -f file.md]"
         resume_ref=$2; resolve_last_team=0; shift 2 ;;
       --team)
-        (($# >= 2)) && [[ $2 != --* ]] || die "usage: agent run --team agent1,agent2[,...] [--verify] [-f file.md | \"task text\"]"
+        (($# >= 2)) && [[ $2 != --* ]] || die "usage: agent run --team agent1[,agent2,...] [--verify] [-f file.md | \"task text\"]"
         team_requested=1; team_list=$2; shift 2 ;;
     esac
   done
