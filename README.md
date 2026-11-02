@@ -209,7 +209,11 @@ if no replacement is available or it fails, the team finishes as `failed` (`fail
 Phase 4 releases capacity leases, tracks pending PR comment and notification attempts (`INVESTIGATION_HANDOFF_PENDING`),
 and finishes as `done` without waiting for a decision or auto-merging (`complete: review ready (#<pr-number>)`). A crash before
 recording an attempt can repeat that external action; the existing helpers provide best-effort delivery.
-Existing metadata fields and manifests remain readable; interrupted hand-offs normalize old `waits for you:` stages on recovery. Resume accepts completed `done`/`failed` parents and legacy `waiting` parents. The main dashboard shows real investigators only, filtering out synthetic investigation team tasks.
+Existing metadata fields and manifests remain readable; interrupted hand-offs normalize old `waits for you:` stages on recovery. Resume accepts completed `done`/`failed` parents and legacy `waiting` parents. The main dashboard shows real investigators only, filtering out synthetic investigation team tasks. Investigators of an
+investigation team appear under their own names on the dashboard, in `agent live` and in `agent status` (not as
+`investigator #N` / `inv#N`, which name investigations requested by an agent), and `agent show` names their team and
+phase (`== investigation team <id> (phase N)`). The hand-off comment on the PR mentions the owner and starts with
+`--investigation`.
 Stopping an investigation team (`agent stop <id>` or `agent stop --running`) synchronizes with in-flight
 admission under the dispatch lock, cancels pending handoffs, and stops active child tasks and checks before
 releasing its capacity lease. Supervisor recovery detects stopped leased parents to complete interrupted
@@ -775,7 +779,7 @@ The menu on the left slides out on demand (`☰` or `m`). Every view can be maxi
 
 | View | What it shows |
 |---|---|
-| Dashboard | active tasks, then finished ones newest first (also acknowledged ones and investigations from the last 24 h; their time as \"… ago\") live, events as they happen, reserved resources; investigations as "investigator #N (agent)"; `done` in blue; a ■ button on a running task cuts its run short (`agent kick`: a team member only sleeps and its team can wake it, a solo task is stopped); a sleeping member of an open team shows what it waits for (`⏳ waits for: B36 gemini-2@rpi5-x: native gate (its latest progress)`, items nobody has taken yet); `stopped` in orange, failures in red |
+| Dashboard | active tasks, then finished ones newest first (also acknowledged ones and investigations from the last 24 h; their time as \"… ago\") live, events as they happen, reserved resources; investigations as "investigator #N (agent)" (the investigators of an `--investigation` team by their names); `done` in blue; a ■ button on a running task cuts its run short (`agent kick`: a team member only sleeps and its team can wake it, a solo task is stopped); a sleeping member of an open team shows what it waits for (`⏳ waits for: B36 gemini-2@rpi5-x: native gate (its latest progress)`, items nobody has taken yet); `stopped` in orange, failures in red |
 | Agents | the configured agents and investigators — working ones first, then by their last activity (shown) — tier, CLI, model, provider, what each is doing now, pauses (until when, why) |
 | Task | header (status, time, branch, team) and sections: live activity, the prompt of every run, question rounds, investigations, final message, error logs, the repository notebook, `meta.env` |
 | Teams / Team | the newest 20 teams (and "all"); a team: members and their states, the board (newest first, `for`, results), consultations, the quiz, the team's messages, the notebook; a finished team can be woken from its last task — this round or the next, with a prompt |
