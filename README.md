@@ -166,15 +166,22 @@ providers and accounts:
 
 ### Teams
 
-**Investigation teams (round 3/4):** `agent run --investigation --team "inv-a, inv-b" "topic"`
+**Investigation teams:** `agent run --investigation --team "inv-a, inv-b" "topic"`
 validates investigator names and options. Phase 1 runs investigators independently on isolated branches
 from an immutable base commit, saving non-code findings to `docs/investigations/<topic-slug>/<investigator>.md`
-and code following TDD. `agent run --investigation` is active in Round 3 for the complete initial pipeline
-(phases 1–4: independent investigation, merge, PR, prechecks, review, and human hand-off); resume (`agent run --resume <team>`)
-remains inactive until Round 4. Internal execution is managed via `_investigation-team`.
+and code following TDD. `agent run --investigation` runs the complete initial pipeline
+(phases 1–4: independent investigation, merge, PR, prechecks, review, and human hand-off).
+Resuming an investigation team with an open PR (`agent run --resume <team>`) runs Phase 5 advisory reviews
+across all team investigators concurrently proposing improvements without applying changes or auto-merging (`review: N investigators reviewing (#<pr>)`).
+Resuming an investigation team whose PR is already merged or closed is refused (`the PR is merged — a new topic is a new run` or `the PR is closed — a new topic is a new run`).
+Resume manages Phase 5 advisory reviews using a separate manifest (`resume.json` version 1) and pass tracking
+metadata (`INVESTIGATION_RESUME_TASKS`, `INVESTIGATION_RESUME_HEAD`, `INVESTIGATION_RESUME_COUNT`) to distinguish repeated passes.
+Admission reserves all team investigators under `dispatch.lock` after persisting the manifest and child IDs; missing or unstarted child slots fail while live runs retain capacity without replacements.
+Upon completion of advisory reviews, the parent returns to Phase 4 human hand-off (`waits for you: advisory reviews ready (#<pr>)`, suffixed with failure counts if slots failed or lacked verdicts).
+Internal execution is managed via `_investigation-team`.
 Topics can come from arguments, `-f topic.md`, or stdin; multiline stdin is read once before launch.
 A topic read failure stops before creating a team task.
-Phase-one task metadata and `phase1.json` are additive; existing task files and bus state remain readable.
+Phase-one task metadata, `phase1.json`, and `resume.json` are additive; existing task files, metadata, and bus state remain backwards-compatible, and legacy Phase 4 tasks lacking Phase 5 fields load normally.
 Admission writes the cohort manifest before setting `INVESTIGATION_LEASE`, and recovery reconstructs missing
 manifests (`investigation_manifest_recovered`) or fails unstarted children while live runs retain capacity.
 Completed runs verify publication on origin; transient transport errors retry (`investigation_publication_check_failed`,
@@ -202,7 +209,7 @@ Stopping an investigation team (`agent stop <id>` or `agent stop --running`) syn
 admission under the dispatch lock, cancels pending handoffs, and stops active child tasks and checks before
 releasing its capacity lease. Supervisor recovery detects stopped leased parents to complete interrupted
 cleanup without advancing the stopped team.
-Resume on an open PR is planned for Round 4.
+See the [human manual checklist](docs/investigation-teams.md#manual-checklist-human) for verification procedures.
 See the [investigation-team design](docs/investigation-teams.md) for details, including the [newly logged events](docs/investigation-teams.md#newly-logged-events) and recovery contracts.
 
 `agent run --team a,b,c "task"` gives one task to several agents, each on its own branch:

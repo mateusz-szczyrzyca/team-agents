@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""Capture advisory prompts and rendezvous all reviewers without changing Git."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+home = Path(os.environ["STUB_HOME"])
+task = Path.cwd().name
+agent = subprocess.check_output(
+    ["git", "branch", "--show-current"], text=True
+).strip().split("/")[-2]
+(home / f"advisory-{task}.prompt").write_text(sys.argv[-1])
+with (home / "advisory-calls.jsonl").open("a") as stream:
+    stream.write(json.dumps({"task": task, "agent": agent, "args": sys.argv[1:]}) + "\n")
+# The first resume cannot complete until every original investigator has started.
+deadline = time.monotonic() + 20
+while len(list(home.glob("advisory-*.prompt"))) < 3:
+    if time.monotonic() >= deadline:
+        raise RuntimeError("advisory cohort never started together")
+    time.sleep(0.02)
+print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+                  "result": "STATUS: DONE\nVERDICT: needs-fixes\nMajor: 1\nAdvisory suggestion only."}), flush=True)

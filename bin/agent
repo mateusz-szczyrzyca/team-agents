@@ -2555,7 +2555,7 @@ build_prompt() { # id mode qfile next_round
         R[INVESTIGATION_TARGET_BRANCH]=${INVESTIGATION_TARGET_BRANCH:-main}
         R[INVESTIGATION_PHASE1_MANIFEST]=${INVESTIGATION_PHASE1_MANIFEST:-}
         render "$PROMPTS/inv-merge.md" ;;
-      3) render "$PROMPTS/review.md" ;;
+      3|5) render "$PROMPTS/review.md" ;;
       *) render "$PROMPTS/inv-work.md" ;;
     esac
     printf '\n# TOPIC\n\n'
@@ -3150,6 +3150,160 @@ free_investigator() { # the next free investigator in the rotation (not working,
   pick_investigator "$last" "${free[@]}"
 }
 
+# investigation_resume_write parent members-json atomically records advisory outcomes separately from phase one.
+investigation_resume_write() {
+  local parent=$1 members=$2 tmp="$TASKS/$1/resume.json.tmp.$$"
+  jq -n --argjson members "$members" '{version:1,members:$members}' > "$tmp"
+  mv "$tmp" "$TASKS/$parent/resume.json"
+}
+
+# investigation_resume_tick parent recovers interrupted admission and waits for every advisory reviewer.
+investigation_resume_tick() {
+  local parent=$1 child member state verdict text members='[]' active=0 failed=0 stage ids=() names=() i
+  if [[ ! -f $TASKS/$parent/resume.json ]]; then
+    IFS=, read -r -a ids <<< "$(investigation_field "$parent" INVESTIGATION_RESUME_TASKS)"
+    IFS=, read -r -a names <<< "$(task_field "$parent" INVESTIGATION_TEAM)"
+    for i in "${!ids[@]}"; do
+      [[ -n ${ids[i]} ]] || continue
+      members=$(jq -c --arg agent "${names[i]:-unknown}" --arg task "${ids[i]}" \
+        '. + [{agent:$agent,task:$task,status:"new",verdict:""}]' <<< "$members")
+    done
+    investigation_resume_write "$parent" "$members"
+  fi
+  members='[]'
+  while IFS= read -r member; do
+    child=$(jq -r .task <<< "$member"); verdict=''; text=''
+    state=failed
+    if [[ -f $TASKS/$child/meta.env ]]; then state=$(task_field "$child" STATUS); fi
+    case $state in
+      starting|running|waiting|sleeping|paused|interrupted|investigating) active=$((active + 1)) ;;
+      done)
+        [[ ! -f $TASKS/$child/final.md ]] || text=$(<"$TASKS/$child/final.md")
+        [[ ! -f $TASKS/$child/result.md ]] || text+=$'\n'$(<"$TASKS/$child/result.md")
+        # Advisory review requires an explicit verdict; legacy findings-only inference is insufficient.
+        verdict=$(review_verdict "$text")
+        if [[ -n $verdict ]]; then verdict=$(review_task_verdict "$child" "$text"); else state=failed; fi ;;
+      *) state=failed ;;
+    esac
+    if [[ $state == failed ]]; then
+      failed=$((failed + 1))
+      if [[ -f $TASKS/$child/meta.env ]]; then meta_set "$child" STATUS failed; fi
+    fi
+    member=$(jq -c --arg status "$state" --arg verdict "$verdict" '.status=$status | .verdict=$verdict' <<< "$member")
+    members=$(jq -c --argjson member "$member" '. + [$member]' <<< "$members")
+  done < <(jq -c '.members[]' "$TASKS/$parent/resume.json")
+  investigation_resume_write "$parent" "$members"
+  if ((active)); then
+    auto_stage "$parent" "review: $active investigators reviewing (#$(investigation_field "$parent" PR_NUMBER))" no-comment
+    return
+  fi
+  stage="waits for you: advisory reviews ready (#$(investigation_field "$parent" PR_NUMBER)"
+  if ((failed)); then stage+=", $failed failed"; fi
+  stage+=')'
+  if ((failed)); then investigation_handoff "$parent" "$stage" failed
+  else investigation_handoff "$parent" "$stage" done; fi
+}
+
+# investigation_resume_admit parent reserves the whole original cohort before creating all review worktrees.
+investigation_resume_admit() {
+  local parent=$1 names=() roots=() repos=() available=() launchable=() name root repo base stamp text child children='' members='[]' state kv target
+  local -A AGENT_TYPE=() AGENT_MODEL=() AGENT_EXTRA_ARGS=()
+  IFS=, read -r -a names <<< "$(task_field "$parent" INVESTIGATION_TEAM)"
+  mapfile -t available < <(free_investigator_list)
+  for name in "${names[@]}"; do
+    if ! is_one_of "$name" "${available[@]}"; then
+      auto_stage "$parent" 'waiting: capacity queue' no-comment
+      return 0
+    fi
+  done
+  root=$(task_field "$parent" REPO_ROOT); repo=$(task_field "$parent" REPO_NAME)
+  base=$(investigation_field "$parent" INVESTIGATION_RESUME_HEAD)
+  target=$(task_field "$parent" BRANCH)
+  text="Advisory review of the existing PR: propose improvements and other points of view, with an explicit VERDICT. Do not apply changes, commit suggestions, merge, delegate, or contact other investigators. The human decides what to apply.
+$(cat "$TASKS/$parent/task.md")"
+  if [[ -f $TASKS/$parent/resume-request.md ]]; then text+=$'\n\n'$(<"$TASKS/$parent/resume-request.md"); fi
+  for name in "${names[@]}"; do
+    roots+=("$root"); repos+=("$repo")
+    AGENT_TYPE[$name]=${INVESTIGATORS_TYPE[$name]}
+    AGENT_MODEL[$name]=${INVESTIGATORS_MODEL[$name]:-}
+    AGENT_EXTRA_ARGS[$name]=${INVESTIGATORS_EXTRA_ARGS[$name]:-}
+  done
+  lock_task_ids
+  stamp=$(allocate_run_ids 0 names roots repos)
+  for name in "${names[@]}"; do
+    child="$stamp-$name"; children="${children:+$children,}$child"
+    members=$(jq -c --arg agent "$name" --arg task "$child" \
+      '. + [{agent:$agent,task:$task,status:"new",verdict:""}]' <<< "$members")
+  done
+  meta_set "$parent" INVESTIGATION_RESUME_TASKS "$children"
+  investigation_resume_write "$parent" "$members"
+  meta_set "$parent" INVESTIGATION_LEASE 1
+  meta_set "$parent" STATUS running
+  for name in "${names[@]}"; do
+    child="$stamp-$name"
+    if create_task "$name" "$text" "$root" "$root" "$target" "$stamp" "" "$base"; then
+      for kv in 'KIND=investigation' "INVESTIGATION_TEAM=$parent" 'INVESTIGATION_PHASE=5' \
+          "PARENT_TASK=$parent" 'PARENT_WORKTREE=' "INV_ID=$child" 'TEAM=' 'TIER=normal' 'REVIEW=1' \
+          "PR_URL=$(investigation_field "$parent" PR_URL)" "PR_NUMBER=$(investigation_field "$parent" PR_NUMBER)"; do
+        meta_set "$child" "${kv%%=*}" "${kv#*=}"
+      done
+      launchable+=("$child")
+    else
+      log_error investigation_start_failed "task=$parent" "investigator=$name" "reason=$CREATE_TASK_ERROR"
+    fi
+  done
+  unlock_task_ids
+  for child in "${launchable[@]}"; do
+    if ! start_runner "$child" new; then meta_set "$child" STATUS failed; fi
+  done
+  investigation_resume_tick "$parent"
+}
+
+# investigation_resume parent verify same-round addition validates the recorded PR before scheduling advisory reviews.
+investigation_resume() {
+  local parent=$1 verify=$2 same_round=$3 addition=$4 root branch url prs pr state head count resume_fd
+  ((verify == 0 && same_round == 0)) || die 'investigation resume cannot use --verify or --same-round'
+  ((${#RESUME_MEMBERS[@]} == 0)) || die 'investigation resume uses every original investigator; --team cannot change membership'
+  exec {resume_fd}>"$AGENTS_HOME/dispatch.lock"
+  flock "$resume_fd"
+  [[ $(task_field "$parent" STATUS) == waiting && $(investigation_field "$parent" INVESTIGATION_LEASE) != 1 \
+    && $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) != 1 ]] || die 'investigation team is still active; resume its PR only after the human hand-off'
+  validate_investigation_team "$(task_field "$parent" INVESTIGATION_TEAM)"
+  root=$(task_field "$parent" REPO_ROOT); branch=$(task_field "$parent" BRANCH)
+  url=$(investigation_field "$parent" PR_URL)
+  [[ -n $url && -n $branch ]] || die 'investigation team has no pull request; a new topic is a new run'
+  prs=$(trusted_prs "$root" "$branch" all 'url,state,headRefOid,headRefName') || die 'cannot verify investigation PR; retry resume later'
+  pr=$(jq -c --arg url "$url" --arg branch "$branch" '.[] | select(.url==$url and .headRefName==$branch)' <<< "$prs")
+  [[ -n $pr ]] || die 'recorded investigation PR is missing or untrusted; a new topic is a new run'
+  state=$(jq -r .state <<< "$pr")
+  case $state in
+    MERGED) die 'investigation PR is merged; a new topic is a new run' ;;
+    CLOSED) die 'investigation PR is closed; a new topic is a new run' ;;
+    OPEN) ;;
+    *) die 'cannot verify investigation PR state; retry resume later' ;;
+  esac
+  head=$(jq -r .headRefOid <<< "$pr")
+  [[ $head =~ ^[0-9a-f]{40}$ ]] || die 'cannot verify investigation PR head; retry resume later'
+  git -C "$root" fetch origin "$branch" || die 'cannot fetch investigation PR; retry resume later'
+  git -C "$root" cat-file -e "$head^{commit}" || die 'investigation PR head is unavailable; retry resume later'
+  count=$(investigation_field "$parent" INVESTIGATION_RESUME_COUNT); count=${count:-0}
+  printf '%s\n' "$addition" > "$TASKS/$parent/resume-request.md"
+  meta_set "$parent" INVESTIGATION_RESUME_COUNT "$((count + 1))"
+  meta_set "$parent" INVESTIGATION_RESUME_HEAD "$head"
+  meta_set "$parent" INVESTIGATION_COMMENTED ''
+  meta_set "$parent" INVESTIGATION_NOTIFIED ''
+  meta_set "$parent" INVESTIGATION_HANDOFF_PENDING ''
+  meta_set "$parent" INVESTIGATION_HANDOFF_STAGE ''
+  meta_set "$parent" INVESTIGATION_HANDOFF_RESULT ''
+  meta_set "$parent" INVESTIGATION_PHASE 5
+  rm -f "$TASKS/$parent/stop-requested"
+  meta_set "$parent" STATUS new
+  flock -u "$resume_fd"
+  exec {resume_fd}>&-
+  dispatch
+  printf '%s\n' "$parent"
+}
+
 # investigation_phase1_write parent members-json atomically replaces the parent's outcome snapshot.
 investigation_phase1_write() {
   local parent=$1 members=$2 tmp="$TASKS/$1/phase1.json.tmp.$$"
@@ -3224,7 +3378,8 @@ investigation_team_tick() {
   local parent=$1 member child state agent members='[]' active=0 successful=0 verifying=0 working="" checking="" stage base note commit rc
   [[ $(task_field "$parent" STATUS) != stopped && ! -f $TASKS/$parent/stop-requested ]] || return 0
   if [[ $(investigation_field "$parent" INVESTIGATION_PIPELINE) == 1 && $(investigation_field "$parent" INVESTIGATION_PHASE) != 1 ]]; then
-    investigation_pipeline_tick "$parent"
+    if [[ $(investigation_field "$parent" INVESTIGATION_PHASE) == 5 ]]; then investigation_resume_tick "$parent"
+    else investigation_pipeline_tick "$parent"; fi
     return
   fi
   if [[ ! -f $TASKS/$parent/phase1.json ]]; then investigation_phase1_recover "$parent"; fi
@@ -3700,6 +3855,14 @@ investigation_team_stop() (
       [[ -n $child ]] && task_list+=("$child")
     done < <(jq_soft investigation_phase_parse -r '.members[]?.task' "$TASKS/$parent/phase1.json")
   fi
+  if [[ -f $TASKS/$parent/resume.json ]]; then
+    while IFS= read -r child; do
+      [[ -n $child ]] && task_list+=("$child")
+    done < <(jq_soft investigation_phase_parse -r '.members[]?.task' "$TASKS/$parent/resume.json")
+  fi
+  local resume_tasks=()
+  IFS=, read -r -a resume_tasks <<< "$(investigation_field "$parent" INVESTIGATION_RESUME_TASKS)"
+  task_list+=("${resume_tasks[@]}")
   child=$(investigation_field "$parent" INVESTIGATION_MERGER_TASK)
   [[ -n $child ]] && task_list+=("$child")
   child=$(investigation_field "$parent" INVESTIGATION_REVIEWER_TASK)
@@ -3833,8 +3996,11 @@ investigation_teams_admit() {
     [[ -f $m ]] || continue
     parent=${m%/meta.env}; parent=${parent##*/}
     if [[ $(task_field "$parent" KIND) == investigation_team && $(task_field "$parent" STATUS) == new \
-        && $(task_field "$parent" INVESTIGATION_PHASE) == 1 ]]; then
-      investigation_team_admit "$parent"
+        ]]; then
+      case $(task_field "$parent" INVESTIGATION_PHASE) in
+        1) investigation_team_admit "$parent" ;;
+        5) investigation_resume_admit "$parent" ;;
+      esac
     fi
   done
 }
@@ -4958,6 +5124,22 @@ resume_run() {
 
   lock_task_ids
 
+  # Investigation parents have a separate advisory resume protocol and never recreate normal teams.
+  local candidate parent_ref=''
+  for candidate in "$TASKS"/*/meta.env; do
+    [[ -f $candidate ]] || continue
+    candidate=${candidate%/meta.env}; candidate=${candidate##*/}
+    [[ $candidate == "$ref" ]] || continue
+    if [[ $(task_field "$candidate" KIND) == investigation_team ]]; then parent_ref=$candidate
+    elif [[ -n $(investigation_field "$candidate" INVESTIGATION_TEAM) ]]; then
+      parent_ref=$(investigation_field "$candidate" INVESTIGATION_TEAM)
+    fi
+  done
+  if [[ -n $parent_ref ]]; then
+    unlock_task_ids
+    investigation_resume "$parent_ref" "$verify" "$same_round" "$add"
+    return
+  fi
   # find the interrupted team (by team ID or a member's task ID) or a single task
   local d first="" old_team=""
   for d in "$TASKS"/*/; do
