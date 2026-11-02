@@ -91,18 +91,25 @@ no_side_effects() {
 @test "whitespace around valid distinct names is trimmed and accepted" {
   configure_investigators
   run agent run --investigation --team "  inv  ,  inv2  " "topic"
-  [ "$status" -ne 0 ]
-  [[ $output == *"not available yet"* ]]
-  [[ $output != *"duplicate"* && $output != *"unknown"* ]]
-  no_side_effects
+  [ "$status" -eq 0 ]
+  local parent
+  parent=$(task_of investigation-team)
+  [[ -n $parent ]]
+  bash -c 'source "$1"; [[ $KIND == investigation_team && $INVESTIGATION_TEAM == "$2" && $INVESTIGATION_PIPELINE == 1 ]]' \
+    bash "$AGENTS_HOME/tasks/$parent/meta.env" "inv,inv2"
+  [[ $(cat "$AGENTS_HOME/tasks/$parent/task.md") == "topic" ]]
 }
 
 @test "reverse flag order --team before --investigation is accepted" {
   configure_investigators
   run agent run --team "inv, inv2" --investigation "topic"
-  [ "$status" -ne 0 ]
-  [[ $output == *"not available yet"* ]]
-  no_side_effects
+  [ "$status" -eq 0 ]
+  local parent
+  parent=$(task_of investigation-team)
+  [[ -n $parent ]]
+  bash -c 'source "$1"; [[ $KIND == investigation_team && $INVESTIGATION_TEAM == "$2" && $INVESTIGATION_PIPELINE == 1 ]]' \
+    bash "$AGENTS_HOME/tasks/$parent/meta.env" "inv,inv2"
+  [[ $(cat "$AGENTS_HOME/tasks/$parent/task.md") == "topic" ]]
 }
 
 @test "empty topic string argument is refused" {

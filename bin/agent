@@ -351,6 +351,8 @@ INVESTIGATOR_TYPE="${INVESTIGATOR_TYPE:-claude}"
 INVESTIGATOR_MODEL="${INVESTIGATOR_MODEL:-}"
 INVESTIGATOR_EXTRA_ARGS="${INVESTIGATOR_EXTRA_ARGS:-}"
 INVESTIGATION_QUEUE_MAX="${INVESTIGATION_QUEUE_MAX:-3}"
+# An empty seed draws from OS entropy; a decimal seed reproduces the phase choices.
+AGENT_INVESTIGATION_SEED="${AGENT_INVESTIGATION_SEED:-}"
 AGENT_HANG_MIN="${AGENT_HANG_MIN:-30}"          # watchdog: this many minutes without any activity = hang
 AGENT_HANG_STRIKES="${AGENT_HANG_STRIKES:-3}"    # this many consecutive hangs without progress = agent is hung
 # Wake-loop guard: a team member that keeps being woken without doing anything is paused (see wake_loop_check).
@@ -1566,6 +1568,16 @@ team_wait_settled() { # task — waits until the local members of its team have 
 cmd__precheck() { # coordinator task — once its team's members have settled: the checks, then the review — or the
   # round goes back to the team
   local id=$1
+  if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
+    [[ $(task_field "$id" STATUS) != stopped && ! -f $TASKS/$id/stop-requested ]] || return 0
+    local check_passed=0
+    if review_precheck "$id"; then check_passed=1; fi
+    [[ $(task_field "$id" STATUS) != stopped && ! -f $TASKS/$id/stop-requested ]] || return 0
+    if ((check_passed)); then meta_set "$id" INVESTIGATION_PRECHECK passed
+    else meta_set "$id" INVESTIGATION_PRECHECK failed; fi
+    dispatch
+    return
+  fi
   team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=precheck"
   if review_precheck "$id"; then
     request_review "$id"
@@ -1580,11 +1592,19 @@ review_precheck() { # coordinator task id — before a review: the round's head 
   git -C "$root" fetch -q origin 10>&- || log_warn precheck_fetch_failed "task=$id"   # then the local refs are checked
   head=$(git -C "$root" rev-parse -q --verify "origin/$branch^{commit}" 10>&-) \
     || head=$(git -C "$root" rev-parse -q --verify "$branch^{commit}" 10>&-) \
-    || { log_warn precheck_no_head "task=$id" "branch=$branch"; return 0; }   # nothing to check: the review decides
+    || { log_warn precheck_no_head "task=$id" "branch=$branch"; if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
+      meta_set "$id" INVESTIGATION_PRECHECK_REASON "The published merge branch is unavailable for checks."
+      return 1
+    fi
+    return 0; }   # nothing to check: the review decides
   meta_set "$id" PRECHECK_HEAD "$head"   # the commit checked (and then reviewed): the only one --autopilot merges
   auto_stage "$id" "checks before review: the round's tests and its PR's description"
   mb=$(git -C "$root" merge-base "origin/${base:-main}" "$head" 10>&-) || mb=$(git -C "$root" merge-base "${base:-main}" "$head" 10>&-) \
-    || { log_warn precheck_no_base "task=$id" "base=$base"; return 0; }
+    || { log_warn precheck_no_base "task=$id" "base=$base"; if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
+      meta_set "$id" INVESTIGATION_PRECHECK_REASON "The target base is unavailable for checks."
+      return 1
+    fi
+    return 0; }
   tc=$(round_test_changes "$root" "$mb" "$head")
   meta_set "$id" ROUND_TESTS "$tc"
   [[ $tc != "code=1 added=0 "* ]] || why="the round changes code but adds no test — every change of behaviour needs its test, written first"
@@ -1605,7 +1625,11 @@ $issues"
   gate=$(review_gate_cmd "$root")
   if [[ -z $why && -n $gate ]]; then
     wt=$(mktemp -d)
-    git -C "$root" worktree add -q --detach "$wt" "$head" 10>&- || { log_warn precheck_worktree_failed "task=$id"; rmdir "$wt"; return 0; }
+    git -C "$root" worktree add -q --detach "$wt" "$head" 10>&- || { log_warn precheck_worktree_failed "task=$id"; rmdir "$wt"; if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
+      meta_set "$id" INVESTIGATION_PRECHECK_REASON "The isolated check worktree could not be created."
+      return 1
+    fi
+    return 0; }
     rc=0
     auto_stage "$id" "checks before review: $gate"
     (cd "$wt" && timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") > "$TASKS/$id/precheck.log" 2>&1 10>&- &
@@ -1623,6 +1647,11 @@ $(tail -n 40 "$TASKS/$id/precheck.log")
 \`\`\`"
   fi
   [[ -n $why ]] || return 0
+  if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
+    meta_set "$id" INVESTIGATION_PRECHECK_REASON "$why"
+    log_warn review_precheck_failed "task=$id" "reason=${why:0:200}"
+    return 1
+  fi
   pass=$(task_field "$id" PRECHECK_PASS); pass=${pass:-0}
   ref=$(task_field "$id" TEAM); ref=${ref:-$id}; repo=$(task_field "$id" REPO_NAME)
   log_warn review_precheck_failed "task=$id" "pass=$pass" "reason=${why:0:200}"
@@ -2520,7 +2549,15 @@ build_prompt() { # id mode qfile next_round
     [RESUMED_FROM]=${RESUMED_FROM:-} [HANG_MIN]=$AGENT_HANG_MIN
   )
   if [[ $mode != fresh ]] && is_independent_investigation "$id"; then
-    render "$PROMPTS/inv-work.md"
+    case ${INVESTIGATION_PHASE:-1} in
+      2)
+        R[INVESTIGATION_BASE_SHA]=${INVESTIGATION_BASE_SHA:-}
+        R[INVESTIGATION_TARGET_BRANCH]=${INVESTIGATION_TARGET_BRANCH:-main}
+        R[INVESTIGATION_PHASE1_MANIFEST]=${INVESTIGATION_PHASE1_MANIFEST:-}
+        render "$PROMPTS/inv-merge.md" ;;
+      3) render "$PROMPTS/review.md" ;;
+      *) render "$PROMPTS/inv-work.md" ;;
+    esac
     printf '\n# TOPIC\n\n'
     cat "$TASKS/$id/task.md"
     return
@@ -3185,6 +3222,11 @@ investigation_phase1_recover() {
 # The caller owns dispatch.lock; results are task files, never bus investigations or peer messages.
 investigation_team_tick() {
   local parent=$1 member child state agent members='[]' active=0 successful=0 verifying=0 working="" checking="" stage base note commit rc
+  [[ $(task_field "$parent" STATUS) != stopped && ! -f $TASKS/$parent/stop-requested ]] || return 0
+  if [[ $(investigation_field "$parent" INVESTIGATION_PIPELINE) == 1 && $(investigation_field "$parent" INVESTIGATION_PHASE) != 1 ]]; then
+    investigation_pipeline_tick "$parent"
+    return
+  fi
   if [[ ! -f $TASKS/$parent/phase1.json ]]; then investigation_phase1_recover "$parent"; fi
   base=$(task_field "$parent" INVESTIGATION_BASE_SHA)
   while IFS= read -r member; do
@@ -3235,6 +3277,15 @@ investigation_team_tick() {
     auto_stage "$parent" "$stage"
     return
   fi
+  if ((successful)) && [[ $(investigation_field "$parent" INVESTIGATION_PIPELINE) == 1 ]]; then
+    meta_set "$parent" INVESTIGATION_PHASE 2
+    investigation_phase_choose "$parent" 2
+    return
+  fi
+  if [[ $(investigation_field "$parent" INVESTIGATION_PIPELINE) == 1 ]]; then
+    investigation_handoff "$parent" 'waits for you: all phase 1 runs failed' failed
+    return
+  fi
   if ((successful)); then stage='waits for you: phase 1 complete (merge not available yet)'
   else stage='waits for you: all phase 1 runs failed'; fi
   meta_set "$parent" INVESTIGATION_LEASE ""
@@ -3245,13 +3296,467 @@ investigation_team_tick() {
   else notify "$parent" failed "$stage" "No investigator published a successful result."; fi
 }
 
-# investigation_teams_tick runs under dispatch.lock and finalizes each active independent cohort.
-investigation_teams_tick() {
-  local m parent
+# investigation_field task key reads optional metadata without inheriting the dispatching task's value.
+investigation_field() { ( unset "$2"; task_field "$1" "$2"; ) }
+
+# investigation_handoff parent stage result ends the lease and asks the human to assess the PR.
+investigation_handoff() {
+  local parent=$1 stage=$2 result=$3 PR_URL='' REVIEW=0 WORK_ROUND='' WORK_ROUNDS='' JOB_ID='' JOB_LEAD='' LEAD_URL=''
+  meta_set "$parent" INVESTIGATION_HANDOFF_STAGE "$stage"
+  meta_set "$parent" INVESTIGATION_HANDOFF_RESULT "$result"
+  meta_set "$parent" INVESTIGATION_HANDOFF_PENDING 1
+  meta_set "$parent" INVESTIGATION_PHASE 4
+  meta_set "$parent" FINISHED "$(date -Is)"
+  auto_stage "$parent" "$stage" no-comment
+  meta_set "$parent" INVESTIGATION_LEASE ""
+  if [[ $(investigation_field "$parent" INVESTIGATION_COMMENTED) != 1 ]]; then
+    human_on_pr "$parent" "$stage; assess this investigation PR; nothing was merged"
+    meta_set "$parent" INVESTIGATION_COMMENTED 1
+  fi
+  if [[ $(investigation_field "$parent" INVESTIGATION_NOTIFIED) != 1 ]]; then
+    ( notify "$parent" "$result" "$stage" 'Investigation results are ready for your decision. Nothing was merged automatically.' )
+    meta_set "$parent" INVESTIGATION_NOTIFIED 1
+  fi
+  # Waiting is the completion boundary: observers can read the delivered hand-off when they see it.
+  meta_set "$parent" STATUS waiting
+  meta_set "$parent" INVESTIGATION_HANDOFF_PENDING ""
+}
+
+# investigation_phase_start parent phase investigator creates a recoverable independent merger or review run.
+investigation_phase_start() {
+  local parent=$1 phase=$2 name=$3 root repo base stamp child text key kv target merger checked rc
+  local names=("$name") roots=() repos=()
+  local -A AGENT_TYPE=() AGENT_MODEL=() AGENT_EXTRA_ARGS=()
+  root=$(task_field "$parent" REPO_ROOT); repo=$(task_field "$parent" REPO_NAME)
+  base=$(task_field "$parent" INVESTIGATION_BASE_SHA)
+  target=$(investigation_field "$parent" INVESTIGATION_TARGET_BRANCH); target=${target:-main}
+  text="Investigate the topic independently."
+  if [[ -f $TASKS/$parent/task.md ]]; then text=$(<"$TASKS/$parent/task.md"); fi
+  key=MERGER
+  if [[ $phase == 3 ]]; then
+    checked=$(investigation_field "$parent" PRECHECK_HEAD)
+    merger=$(investigation_field "$parent" INVESTIGATION_MERGER_TASK)
+    # Capacity may have delayed review admission; the published result must still match the checked head.
+    if [[ -n $checked && -n $merger ]]; then
+      if investigation_published "$merger" "$(task_field "$parent" INVESTIGATION_BASE_SHA)"; then
+        if [[ $INVESTIGATION_RESULT_COMMIT != "$checked" ]]; then
+          meta_set "$parent" INVESTIGATION_PHASE 2
+          meta_set "$parent" INVESTIGATION_PRECHECK_REASON 'The published merger result changed after its checks.'
+          meta_set "$parent" INVESTIGATION_PRECHECK failed
+          return
+        fi
+      else
+        rc=$?
+        if ((rc != 2)); then
+          meta_set "$parent" INVESTIGATION_PHASE 2
+          meta_set "$parent" INVESTIGATION_PRECHECK_REASON 'The published merger result no longer matches its checks.'
+          meta_set "$parent" INVESTIGATION_PRECHECK failed
+        fi
+        return
+      fi
+    fi
+    key=REVIEWER
+    target=$(investigation_field "$parent" BRANCH); target=${target:-main}
+    base=$(investigation_field "$parent" PRECHECK_HEAD); base=${base:-$(task_field "$parent" INVESTIGATION_BASE_SHA)}
+    text="Review this PR independently. Propose improvements or other points of view and publish your verdict using the review protocol. Do not apply changes, merge, delegate, or contact other investigators.
+$text"
+  fi
+  AGENT_TYPE[$name]=${INVESTIGATORS_TYPE[$name]}
+  AGENT_MODEL[$name]=${INVESTIGATORS_MODEL[$name]:-}
+  AGENT_EXTRA_ARGS[$name]=${INVESTIGATORS_EXTRA_ARGS[$name]:-}
+  roots=("$root"); repos=("$repo")
+  lock_task_ids
+  stamp=$(allocate_run_ids 0 names roots repos); child="$stamp-$name"
+  # A crash after this record leaves an unstarted child that the next dispatch can fail and replace.
+  meta_set "$parent" "INVESTIGATION_${key}" "$name"
+  meta_set "$parent" "INVESTIGATION_${key}_TASK" "$child"
+  if create_task "$name" "$text" "$root" "$root" "$target" "$stamp" "" "$base"; then
+    for kv in 'KIND=investigation' "INVESTIGATION_TEAM=$parent" "INVESTIGATION_PHASE=$phase" \
+        "PARENT_TASK=$parent" 'PARENT_WORKTREE=' "INV_ID=$child" 'TEAM=' 'TIER=normal' \
+        "REVIEW=$(if [[ $phase == 3 ]]; then printf 1; fi)" \
+        "PR_URL=$(investigation_field "$parent" PR_URL)" "PR_NUMBER=$(investigation_field "$parent" PR_NUMBER)" \
+        "INVESTIGATION_BASE_SHA=$(task_field "$parent" INVESTIGATION_BASE_SHA)" \
+        "INVESTIGATION_TARGET_BRANCH=$target" "INVESTIGATION_PHASE1_MANIFEST=$TASKS/$parent/phase1.json" \
+        "INVESTIGATION_TOPIC_SLUG=$(task_field "$parent" INVESTIGATION_TOPIC_SLUG)"; do
+      meta_set "$child" "${kv%%=*}" "${kv#*=}"
+    done
+    if [[ $phase == 2 ]]; then meta_set "$parent" INVESTIGATION_MERGER_BRANCH "$(task_field "$child" BRANCH)"; fi
+    unlock_task_ids
+    if ! start_runner "$child" new; then meta_set "$child" STATUS failed; fi
+  else
+    unlock_task_ids
+    log_error investigation_start_failed "task=$parent" "investigator=$name" "reason=$CREATE_TASK_ERROR"
+    auto_stage "$parent" "waiting: $name could not start phase $phase"
+    return
+  fi
+  if [[ $phase == 2 ]]; then auto_stage "$parent" "merging: $name"
+  else auto_stage "$parent" "review: $name (#$(investigation_field "$parent" PR_NUMBER))"; fi
+}
+
+# investigation_phase_choose parent phase starts one available candidate, queues capacity, or hands off exhausted work.
+investigation_phase_choose() {
+  local parent=$1 phase=$2
+  if ! investigation_phase_pick "$parent" "$phase"; then
+    if [[ $phase == 2 ]]; then
+      investigation_handoff "$parent" 'waits for you: merge failed' failed
+    else
+      investigation_handoff "$parent" 'waits for you: review failed' failed
+    fi
+    return
+  fi
+  if [[ -n $INVESTIGATION_PICK ]]; then
+    investigation_phase_start "$parent" "$phase" "$INVESTIGATION_PICK"
+  elif ((INVESTIGATION_ELIGIBLE)); then
+    auto_stage "$parent" 'waiting: capacity queue'
+  elif [[ $phase == 2 ]]; then
+    investigation_handoff "$parent" 'waits for you: merge failed' failed
+  else
+    investigation_handoff "$parent" 'waits for you: review failed' failed
+  fi
+}
+
+# investigation_phase_failed parent phase permits one different investigator to replace a failed run.
+investigation_phase_failed() {
+  local parent=$1 phase=$2 key count role prior tried
+  if [[ $phase == 2 ]]; then key=INVESTIGATION_MERGER_REPLACEMENTS; role=MERGER
+  else key=INVESTIGATION_REVIEW_RETRIES; role=REVIEWER; fi
+  count=$(investigation_field "$parent" "$key")
+  if ((${count:-0} >= 1)); then
+    if [[ $phase == 2 ]]; then investigation_handoff "$parent" 'waits for you: merge failed' failed
+    else investigation_handoff "$parent" 'waits for you: review failed' failed; fi
+    return
+  fi
+  meta_set "$parent" "$key" 1
+  prior=$(investigation_field "$parent" "INVESTIGATION_$role")
+  tried=$(investigation_field "$parent" "INVESTIGATION_TRIED_${role}S")
+  meta_set "$parent" "INVESTIGATION_TRIED_${role}S" "${tried:+$tried,}$prior"
+  meta_set "$parent" "INVESTIGATION_${role}_TASK" ""
+  meta_set "$parent" INVESTIGATION_PRECHECK ""
+  investigation_phase_choose "$parent" "$phase"
+}
+
+# investigation_pipeline_tick parent observes terminal independent runs and advances phases without automatic merging.
+investigation_pipeline_tick() {
+  local parent=$1 phase child state rc root branch prs url number check retries verdict text unit check_run expected_base
+  phase=$(investigation_field "$parent" INVESTIGATION_PHASE)
+  if [[ $phase == 4 ]]; then
+    investigation_handoff "$parent" "$(investigation_field "$parent" INVESTIGATION_HANDOFF_STAGE)" "$(investigation_field "$parent" INVESTIGATION_HANDOFF_RESULT)"
+    return
+  fi
+  if [[ $phase == 2 ]]; then child=$(investigation_field "$parent" INVESTIGATION_MERGER_TASK)
+  else child=$(investigation_field "$parent" INVESTIGATION_REVIEWER_TASK); fi
+  if [[ -z $child ]]; then investigation_phase_choose "$parent" "$phase"; return; fi
+  state=failed
+  if [[ -f $TASKS/$child/meta.env ]]; then state=$(task_field "$child" STATUS); fi
+  case $state in
+    starting|running|sleeping|waiting|paused|investigating|interrupted) return ;;
+    done) ;;
+    new)
+      # Dispatch owns admission: this recorded child never reached its runner.
+      meta_set "$child" STATUS failed
+      investigation_phase_failed "$parent" "$phase"; return ;;
+    *) investigation_phase_failed "$parent" "$phase"; return ;;
+  esac
+  if [[ $phase == 3 ]]; then
+    text=""
+    if [[ -s $TASKS/$child/final.md ]]; then text=$(<"$TASKS/$child/final.md"); fi
+    if [[ -s $TASKS/$child/result.md ]]; then text+=$'\n'$(cat "$TASKS/$child/result.md"); fi
+    # This pipeline requires an explicit verdict; legacy finding-only reviews cannot complete it.
+    verdict=$(review_verdict "$text")
+    if [[ -n $verdict ]]; then verdict=$(review_task_verdict "$child" "$text"); fi
+    case $verdict in
+      ready-to-merge|needs-fixes|incomplete)
+        meta_set "$parent" INVESTIGATION_VERDICT "$verdict"
+        investigation_handoff "$parent" "waits for you: review ready (#$(investigation_field "$parent" PR_NUMBER))" done ;;
+      *) investigation_phase_failed "$parent" 3 ;;
+    esac
+    return
+  fi
+  check=$(investigation_field "$parent" INVESTIGATION_PRECHECK)
+  case $check in
+    running)
+      unit=$(investigation_field "$parent" INVESTIGATION_PRECHECK_UNIT)
+      if [[ -n $unit ]] && systemctl --user is-active --quiet "$unit.service"; then return; fi
+      # Dispatch owns the admission lock, so an inactive recorded unit cannot still be launching.
+      meta_set "$parent" INVESTIGATION_PRECHECK_REASON 'The check runner was interrupted before recording its result.'
+      meta_set "$parent" INVESTIGATION_PRECHECK failed
+      log_warn investigation_precheck_interrupted "task=$parent" "unit=$unit"
+      return ;;
+    passed)
+      meta_set "$parent" INVESTIGATION_PHASE 3
+      investigation_phase_choose "$parent" 3
+      return ;;
+    failed)
+      retries=$(investigation_field "$parent" INVESTIGATION_MERGE_RETRIES)
+      if ((${retries:-0} == 0)); then
+        meta_set "$parent" INVESTIGATION_MERGE_RETRIES 1
+        meta_set "$parent" INVESTIGATION_PRECHECK ""
+        printf '\n# Checks to fix\n\n%s\n' "$(investigation_field "$parent" INVESTIGATION_PRECHECK_REASON)" >> "$TASKS/$child/task.md"
+        if ! start_runner "$child" resume; then meta_set "$child" STATUS failed; fi
+        auto_stage "$parent" "merging: $(task_field "$child" AGENT) (fix checks)"
+      else
+        investigation_phase_failed "$parent" 2
+      fi
+      return ;;
+  esac
+  if investigation_published "$child" "$(task_field "$parent" INVESTIGATION_BASE_SHA)"; then
+    meta_set "$parent" PRECHECK_HEAD "$INVESTIGATION_RESULT_COMMIT"
+  else
+    rc=$?
+    if ((rc == 2)); then return; fi
+    investigation_phase_failed "$parent" 2; return
+  fi
+  root=$(task_field "$parent" REPO_ROOT); branch=$(task_field "$child" BRANCH)
+  if ! prs=$(trusted_prs "$root" "$branch" open 'url,number,baseRefName'); then
+    log_warn investigation_pr_lookup_failed "task=$parent" "child=$child"
+    return
+  fi
+  expected_base=$(task_field "$child" BASE)
+  prs=$(jq --arg base "$expected_base" '[.[] | select(.baseRefName == $base)]' <<< "$prs")
+  url=$(jq -r '.[0].url // empty' <<< "$prs"); number=$(jq -r '.[0].number // empty' <<< "$prs")
+  if [[ -z $url || -z $number ]]; then investigation_phase_failed "$parent" 2; return; fi
+  meta_set "$parent" INVESTIGATION_PR "$url"
+  meta_set "$parent" PR_URL "$url"; meta_set "$parent" PR_NUMBER "$number"
+  meta_set "$parent" BRANCH "$branch"
+  meta_set "$parent" BASE "$(task_field "$child" BASE)"
+  check_run=$(investigation_field "$parent" INVESTIGATION_PRECHECK_RUN)
+  check_run=$((${check_run:-0} + 1))
+  unit="agent-$parent-precheck-$check_run"
+  meta_set "$parent" INVESTIGATION_PRECHECK_RUN "$check_run"
+  meta_set "$parent" INVESTIGATION_PRECHECK_UNIT "$unit"
+  meta_set "$parent" INVESTIGATION_PRECHECK running
+  if ! systemd-run --user --quiet --collect --unit="$unit" \
+      --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+      "$SELF" _precheck "$parent" 3>&- 7>&- 8>&- 9>&- 10>&-; then
+    meta_set "$parent" INVESTIGATION_PRECHECK_REASON 'The check runner could not start.'
+    meta_set "$parent" INVESTIGATION_PRECHECK failed
+    log_error precheck_unit_failed "task=$parent"
+  fi
+}
+
+# Helpers for investigation team phase 2 (merger) and phase 3 (reviewer) candidate selection.
+
+# _investigator_is_busy parent agent now checks if investigator is held by an external lease, active, or quota-paused.
+_investigator_is_busy() {
+  local parent=$1 inv=$2 now=$3 d tid ext_team st qu
+  for d in "$TASKS"/*/; do
+    [[ -f $d/meta.env ]] || continue
+    tid=${d%/}; tid=${tid##*/}
+    if [[ $tid != "$parent" && $(task_field "$tid" KIND) == investigation_team && $(investigation_field "$tid" INVESTIGATION_LEASE) == 1 ]]; then
+      ext_team=$(investigation_field "$tid" INVESTIGATION_TEAM)
+      if [[ ,${ext_team}, == *",$inv,"* ]]; then return 0; fi
+    fi
+    [[ $(task_field "$tid" AGENT) == "$inv" && $(task_field "$tid" KIND) == investigation ]] || continue
+    st=$(task_field "$tid" STATUS)
+    case $st in new|starting|running|sleeping|waiting|paused|investigating|interrupted) return 0 ;; esac
+    qu=$(investigation_field "$tid" QUOTA_UNTIL)
+    if [[ -n $qu ]] && (( qu > now )); then return 0; fi
+  done
+  return 1
+}
+
+# investigation_phase_pick parent phase selects an eligible investigator for phase 2 (merger) or phase 3 (reviewer).
+# Sets shell globals INVESTIGATION_PICK (chosen name or empty) and INVESTIGATION_ELIGIBLE (count of untried candidates).
+investigation_phase_pick() {
+  local parent=$1 phase=$2
+  INVESTIGATION_PICK=""
+  INVESTIGATION_ELIGIBLE=0
+
+  local eligible=() m file
+  if [[ $phase -eq 2 ]]; then
+    file="$TASKS/$parent/phase1.json"
+    [[ -f $file ]] || return 0
+    local p1_done=()
+    mapfile -t p1_done < <(jq_soft investigation_phase_parse -r '.members[] | select(.status == "done") | .agent' "$file")
+    local team_raw cur_merger tried_mergers
+    team_raw=$(investigation_field "$parent" INVESTIGATION_TEAM)
+    cur_merger=$(investigation_field "$parent" INVESTIGATION_MERGER)
+    tried_mergers=$(investigation_field "$parent" INVESTIGATION_TRIED_MERGERS)
+    tried_mergers+=",${cur_merger:-}"
+    for m in "${p1_done[@]}"; do
+      [[ -n $m ]] || continue
+      [[ -n ${INVESTIGATORS_TYPE[$m]:-} ]] || continue
+      [[ ,${team_raw}, == *",$m,"* ]] || continue
+      [[ ,${tried_mergers}, == *",$m,"* ]] && continue
+      eligible+=("$m")
+    done
+  elif [[ $phase -eq 3 ]]; then
+    local team_raw cur_merger cur_reviewer tried_reviewers
+    team_raw=$(investigation_field "$parent" INVESTIGATION_TEAM)
+    cur_merger=$(investigation_field "$parent" INVESTIGATION_MERGER)
+    cur_reviewer=$(investigation_field "$parent" INVESTIGATION_REVIEWER)
+    tried_reviewers=$(investigation_field "$parent" INVESTIGATION_TRIED_REVIEWERS)
+    tried_reviewers+=",${cur_reviewer:-}"
+    local raw_members=()
+    IFS=, read -r -a raw_members <<< "$team_raw"
+    for m in "${raw_members[@]}"; do
+      m=$(echo "$m" | tr -d ' ')
+      [[ -n $m ]] || continue
+      [[ -n ${INVESTIGATORS_TYPE[$m]:-} ]] || continue
+      [[ $m == "$cur_merger" ]] && continue
+      [[ ,${tried_reviewers}, == *",$m,"* ]] && continue
+      eligible+=("$m")
+    done
+  else
+    return 1
+  fi
+
+  # Sort eligible candidates for reproducibility
+  mapfile -t eligible < <(printf '%s\n' "${eligible[@]}" | sort -u | sed '/^$/d')
+  INVESTIGATION_ELIGIBLE=${#eligible[@]}
+  (( INVESTIGATION_ELIGIBLE )) || return 0
+
+  # Filter eligible candidates for capacity: exclude external leases, active children, and quota pauses
+  local now available=()
+  now=$(date +%s)
+  for m in "${eligible[@]}"; do
+    _investigator_is_busy "$parent" "$m" "$now" && continue
+    available+=("$m")
+  done
+
+  local n=${#available[@]}
+  (( n )) || return 0
+
+  local seed attempt idx=0 limit=$(( (4294967296 / n) * n ))
+  seed=$(investigation_field "$parent" INVESTIGATION_SEED)
+  [[ -n $seed ]] || seed=${AGENT_INVESTIGATION_SEED:-}
+
+  if [[ $phase -eq 2 ]]; then
+    attempt=$(investigation_field "$parent" INVESTIGATION_MERGER_REPLACEMENTS)
+  else
+    attempt=$(investigation_field "$parent" INVESTIGATION_REVIEW_RETRIES)
+  fi
+  attempt=${attempt:-0}
+
+  if [[ -n $seed ]]; then
+    if [[ ! $seed =~ ^[0-9]+$ ]]; then
+      log_warn investigation_seed_invalid "task=$parent" "phase=$phase" "seed=$seed"
+      return 1
+    fi
+    local state r
+    if ! state=$(printf '%s:%s:%s' "$seed" "$phase" "$attempt" | cksum | awk '{print $1}') || [[ -z $state ]]; then
+      log_warn investigation_seed_failed "task=$parent" "phase=$phase" "seed=$seed"
+      return 1
+    fi
+    # Linear congruential generator (LCG) with multiplier 1664525, increment 1013904223, and modulus 2^32.
+    # By Hull-Dobell theorem, increment is coprime to modulus and (multiplier-1) is divisible by 4, guaranteeing full period 2^32.
+    # Discard samples >= limit = (2^32 / n) * n to eliminate modulo bias across n candidates.
+    while :; do
+      state=$(( (1664525 * state + 1013904223) & 0xffffffff ))
+      r=$state
+      if (( r < limit )); then
+        idx=$(( r % n ))
+        break
+      fi
+    done
+  else
+    local r
+    # Rejection sampling with /dev/urandom: discard samples >= limit to eliminate modulo bias across n candidates.
+    while :; do
+      r=$(od -An -N4 -tu4 /dev/urandom | tr -d ' ') || r=""
+      if [[ -z $r ]]; then
+        log_warn investigation_random_failed "task=$parent" "phase=$phase"
+        return 1
+      fi
+      if (( r < limit )); then
+        idx=$(( r % n ))
+        break
+      fi
+    done
+  fi
+
+  INVESTIGATION_PICK=${available[idx]}
+}
+
+# investigation_team_stop parent cancels owned work outside dispatch.lock and releases its lease last.
+investigation_team_stop() (
+  local parent=$1 child crun cst file precheck_unit stop_fd parent_status lock_rc=0
+  exec {stop_fd}>"$TASKS/$parent/stop.lock"
+  # A stopped child's exit handler dispatches again; the outer cleanup owns cancellation.
+  if flock -n "$stop_fd"; then lock_rc=0; else lock_rc=$?; fi
+  case $lock_rc in
+    0) ;;
+    1) return 0 ;; # Contention means another cleanup still owns the lease.
+    *) log_warn dispatch_lock_timeout "lock=$TASKS/$parent/stop.lock" "effect=retry investigation cleanup"; return 0 ;;
+  esac
+  parent_status=$(task_field "$parent" STATUS)
+  # Admission can still be creating children; release the barrier before cancelling units and their exit handlers.
+  (
+    exec 9>"$AGENTS_HOME/dispatch.lock"
+    flock 9
+  )
+  # An admission already in flight may have overwritten the terminal status while we waited.
+  if [[ -f $TASKS/$parent/stop-requested ]]; then parent_status=stopped; fi
+  meta_set "$parent" STATUS "$parent_status"
+  precheck_unit=$(investigation_field "$parent" INVESTIGATION_PRECHECK_UNIT)
+  if [[ -n $precheck_unit ]]; then
+    try unit_stop_failed systemctl --user stop "$precheck_unit.service"
+    meta_set "$parent" INVESTIGATION_PRECHECK stopped
+  fi
+  local -A seen_tasks=()
+  local -a task_list=()
+  if [[ -f $TASKS/$parent/phase1.json ]]; then
+    while IFS= read -r child; do
+      [[ -n $child ]] && task_list+=("$child")
+    done < <(jq_soft investigation_phase_parse -r '.members[]?.task' "$TASKS/$parent/phase1.json")
+  fi
+  child=$(investigation_field "$parent" INVESTIGATION_MERGER_TASK)
+  [[ -n $child ]] && task_list+=("$child")
+  child=$(investigation_field "$parent" INVESTIGATION_REVIEWER_TASK)
+  [[ -n $child ]] && task_list+=("$child")
+  for file in "$TASKS"/*/meta.env; do
+    [[ -f $file ]] || continue
+    child=${file%/meta.env}; child=${child##*/}
+    if [[ $(investigation_field "$child" INVESTIGATION_TEAM) == "$parent" || $(investigation_field "$child" PARENT_TASK) == "$parent" ]]; then
+      task_list+=("$child")
+    fi
+  done
+  for child in "${task_list[@]}"; do
+    [[ -n $child && -z ${seen_tasks[$child]:-} && -f $TASKS/$child/meta.env ]] || continue
+    seen_tasks[$child]=1
+    cst=$(task_field "$child" STATUS)
+    case $cst in
+      new|starting|running|waiting|investigating|sleeping|paused|interrupted)
+        touch "$TASKS/$child/stop-requested"
+        crun=$(task_field "$child" RUN)
+        try unit_stop_failed systemctl --user stop "$(unit_name "$child" "$crun").service"
+        meta_set "$child" STATUS stopped
+        meta_set "$child" FINISHED "$(date -Is)"
+        act "$child" info "■ stopped (investigation team stopped)"
+        log_info task_stopped "task=$child" "parent=$parent"
+        ;;
+    esac
+  done
+  meta_set "$parent" INVESTIGATION_LEASE ""
+  meta_set "$parent" INVESTIGATION_HANDOFF_PENDING ""
+)
+
+# investigation_teams_cleanup cancels terminal cohorts before dispatch takes its global lock.
+investigation_teams_cleanup() {
+  local m parent st
   for m in "$TASKS"/*/meta.env; do
     [[ -f $m ]] || continue
     parent=${m%/meta.env}; parent=${parent##*/}
-    if [[ $(task_field "$parent" KIND) == investigation_team && $(task_field "$parent" INVESTIGATION_LEASE) == 1 ]]; then
+    [[ $(task_field "$parent" KIND) == investigation_team ]] || continue
+    st=$(task_field "$parent" STATUS)
+    if [[ $st =~ ^(stopped|done|failed)$ || -f $TASKS/$parent/stop-requested ]]; then
+      if [[ $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ]]; then
+        investigation_team_stop "$parent"
+      fi
+    fi
+  done
+}
+
+# investigation_teams_tick runs under dispatch.lock and finalizes each active independent cohort.
+investigation_teams_tick() {
+  local m parent st
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    parent=${m%/meta.env}; parent=${parent##*/}
+    [[ $(task_field "$parent" KIND) == investigation_team ]] || continue
+    st=$(task_field "$parent" STATUS)
+    if [[ $st =~ ^(stopped|done|failed)$ || -f $TASKS/$parent/stop-requested ]]; then continue; fi
+    if [[ $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ]]; then
       investigation_team_tick "$parent"
     fi
   done
@@ -3260,6 +3765,7 @@ investigation_teams_tick() {
 # investigation_team_admit parent reserves every requested investigator before creating or starting children.
 investigation_team_admit() {
   local parent=$1 names=() roots=() repos=() available=() launchable=() name root repo base stamp text child children="" members='[]' state branch kv
+  [[ $(task_field "$parent" STATUS) != stopped && ! -f $TASKS/$parent/stop-requested ]] || return 0
   # create_task deliberately reads these dynamically scoped arrays, so investigator configuration wins.
   local -A AGENT_TYPE=() AGENT_MODEL=() AGENT_EXTRA_ARGS=()
   IFS=, read -r -a names <<< "$(task_field "$parent" INVESTIGATION_TEAM)"
@@ -3333,14 +3839,16 @@ investigation_teams_admit() {
   done
 }
 
-# cmd__investigation_team --team names [-f topic-file] [topic] exercises phase one while public execution is inactive.
+# cmd__investigation_team [--pipeline] --team names [-f topic-file] [--] [topic] starts a cohort.
 cmd__investigation_team() {
-  local csv="" file="" text="" root common repo base slug stamp parent kv
+  local csv="" file="" text="" root common repo base slug stamp parent kv pipeline=0 target
   local names=(investigation-team) roots=() repos=()
   while (($#)); do
     case $1 in
+      --pipeline) pipeline=1; shift ;;
       --team) (($# >= 2)) || die "--team needs investigator names"; csv=$2; shift 2 ;;
       -f) (($# >= 2)) || die "-f needs a topic file"; file=$2; shift 2 ;;
+      --) shift; text="${text:+$text }$*"; break ;;
       *) text="${text:+$text }$1"; shift ;;
     esac
   done
@@ -3352,6 +3860,7 @@ cmd__investigation_team() {
   common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)
   root=$(dirname "$common"); repo=$(basename "$root")
   base=$(git rev-parse HEAD)
+  target=$(git symbolic-ref --quiet --short HEAD) || target=main
   slug=$(printf '%s\n' "${text%%$'\n'*}" | LC_ALL=C tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/--*/-/g; s/^-//; s/-$//' | cut -c1-64)
   roots=("$root"); repos=("$repo")
   lock_task_ids
@@ -3362,7 +3871,9 @@ cmd__investigation_team() {
       'TEAM=' 'TIER=normal' 'SESSION_ID=' 'ROUND=0' 'RUN=0' 'RUNNER_DONE=1' 'STATUS=new' "CREATED=$(date -Is)" \
       "REPO_NAME=$repo" "REPO_ROOT=$root" "WORKTREE=$root" 'BRANCH=' "BASE=$base" \
       'INVESTIGATION_PHASE=1' "INVESTIGATION_TEAM=$csv" "INVESTIGATION_BASE_SHA=$base" \
-      "INVESTIGATION_TOPIC_SLUG=${slug:-topic}" 'INVESTIGATION_PHASE1_TASKS=' 'INVESTIGATION_LEASE='; do
+      "INVESTIGATION_TOPIC_SLUG=${slug:-topic}" 'INVESTIGATION_PHASE1_TASKS=' 'INVESTIGATION_LEASE=' 'PR_URL=' 'PR_NUMBER=' \
+      "INVESTIGATION_PIPELINE=$pipeline" "INVESTIGATION_SEED=${AGENT_INVESTIGATION_SEED:-}" \
+      "INVESTIGATION_TARGET_BRANCH=$target"; do
     meta_set "$parent" "${kv%%=*}" "${kv#*=}"
   done
   unlock_task_ids
@@ -3372,6 +3883,7 @@ cmd__investigation_team() {
 
 dispatch() { # starts queued requests on free investigators
   stopping && return 0
+  investigation_teams_cleanup
   (
     exec 9>"$AGENTS_HOME/dispatch.lock"
     flock -w 120 9 || { log_warn dispatch_lock_timeout "lock=$AGENTS_HOME/dispatch.lock" "effect=queued investigations wait for the next dispatch"; exit 0; }
@@ -4706,23 +5218,24 @@ validate_investigation_team() {
   ((count >= 2)) || die "an investigation team needs at least two investigators. Configured investigators: $configured"
 }
 
-# validate_investigation_topic checks argument, file or stdin topic text before the inactive round-one exit.
+# validate_investigation_topic prints validated argument, file or stdin text for one-time consumption.
 validate_investigation_topic() {
   local topic
   if [[ ${1:-} == -f ]]; then
     [[ -r ${2:-} ]] || die "file not found: ${2:-}"
-    topic=$(<"$2")
+    topic=$(<"$2") || die "cannot read topic file: ${2:-}"
   elif (($#)); then
     topic="$*"
   elif [[ ! -t 0 ]]; then
-    topic=$(cat)
+    topic=$(cat) || die "cannot read topic from stdin"
   else
     die "give the task text (argument, -f file or stdin)"
   fi
   [[ -n ${topic//[[:space:]]/} ]] || die "empty task"
+  printf '%s\n' "$topic"
 }
 
-# cmd_run parses run options and starts ordinary runs; investigation-team execution stays inactive in round one.
+# cmd_run parses run options and starts ordinary runs or the investigator-only pipeline.
 cmd_run() {
   local members=() verify=0 autopilot=0 same_round=0 team_list="" resume_ref="" need_caps=() target_node=""
   local investigation=0 team_requested=0 last_team_requested=0 resolve_last_team=0
@@ -4758,8 +5271,10 @@ cmd_run() {
     [[ -z $resume_ref ]] || die "--investigation cannot be combined with --resume"
     ((same_round == 0)) || die "--investigation cannot be combined with --same-round"
     validate_investigation_team "$team_list"
-    validate_investigation_topic "$@"
-    die "Investigation teams are not available yet (round 1/4); no runs were started"
+    local topic
+    topic=$(validate_investigation_topic "$@") || return
+    cmd__investigation_team --pipeline --team "$team_list" -- "$topic"
+    return
   fi
   if ((resolve_last_team)); then
     resume_ref=$(last_team_id)
@@ -5128,6 +5643,9 @@ stop_all() { # agent stop --running: stops everything that is active, whatever i
   for d in "${stopped[@]}"; do   # a runner may have overwritten the status while stopping
     id=${d%% *}
     meta_set "$id" STATUS stopped
+    if [[ $(task_field "$id" KIND) == investigation_team ]]; then
+      investigation_team_stop "$id"
+    fi
     act "$id" info "■ stopped (agent stop --running)"
   done
   rm -f "$flag"
@@ -5155,6 +5673,9 @@ cmd_stop() {
   try unit_stop_failed systemctl --user stop "$(unit_name "$id" "$run").service"
   meta_set "$id" STATUS stopped
   meta_set "$id" FINISHED "$(date -Is)"
+  if [[ $(task_field "$id" KIND) == investigation_team ]]; then
+    investigation_team_stop "$id"
+  fi
   if [[ -n $team ]]; then
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state done >/dev/null
     if [[ $agent == "$(team_lead "$team")" ]]; then
@@ -5256,7 +5777,7 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
     kind=$(task_field "$id" KIND)
     if [[ $kind == investigation_team ]]; then
       # A coordinator has no runner; the timer also retries cohorts after quota expiry without a runner exit.
-      if [[ $(task_field "$id" INVESTIGATION_PHASE) == 1 && ( $st == new || $st == running ) ]]; then phase1_pending=1; fi
+      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 || $(investigation_field "$id" INVESTIGATION_LEASE) == 1 ]]; then phase1_pending=1; fi
       continue
     fi
     [[ $st == running || $st == starting ]] || continue
@@ -7684,7 +8205,7 @@ agent run --last-team [--same-round] ["…"]  resume the newest team of this rep
 agent ack <id|all>                        acknowledge finished tasks (they leave the panel)
 agent run --team a,b[,c] [--verify|--autopilot] "task"  team; --verify: an investigator reviews the PR at the end;
                                            --autopilot: two independent reviews, the merge, the next round
-agent run --investigation --team "A, B" "topic"  investigator-only validation (execution not available yet)
+agent run --investigation --team "A, B" "topic"  investigators create and review a PR; the human decides
 agent autopilot <team> [on|off]            a team's --autopilot: shown, or switched (off: no merge nor next round by itself)
 agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
 agent team [id | --all]                   teams and their members

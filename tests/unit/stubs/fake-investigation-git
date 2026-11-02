@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Fake git fixture for round-3 pipeline tests. "git [-C dir] remote get-url origin" prints the canonical GitHub URL so owner helpers see the rewritten remote;
+# every other git call is exec'd at $PIPELINE_REAL_GIT (test sets it before the PATH wrapper).
+set -euo pipefail
+original_args=("$@")
+[[ ${1:-} == "-C" ]] && shift 2
+if [[ ${1:-} == "remote" && ${2:-} == "get-url" && ${3:-} == "origin" ]]; then
+    printf '%s\n' "https://github.com/example/repo.git"
+    exit 0
+fi
+if [[ -z ${PIPELINE_REAL_GIT:-} ]]; then
+    echo "fake-git: PIPELINE_REAL_GIT is not set for ${*:-<no args>}" >&2
+    exit 1
+fi
+exec "${PIPELINE_REAL_GIT}" "${original_args[@]}"

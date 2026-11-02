@@ -1,7 +1,6 @@
 #!/usr/bin/env bats
-# Round 1 of investigation teams: `agent run --investigation` is parsed and every refusal is given before anything
-# starts. A valid request is refused in this round as "not available yet" (the entry point stays inactive), and no
-# task, branch or systemd unit is created in any case.
+# Investigation team public starts accept valid requests and reject invalid inputs
+# before creating any task, branch, or systemd unit.
 
 load helpers
 
@@ -90,30 +89,41 @@ no_side_effects() {
   no_side_effects
 }
 
-@test "a valid two-investigator list with spaces after the commas is accepted but refused as not available yet" {
+@test "a valid two-investigator list with spaces starts an investigation team" {
   configure_investigators
   run agent run --investigation --team "inv, inv2" "topic"
-  [ "$status" -ne 0 ]
-  [[ $output == *"not available yet"* ]]
-  [[ $output != *"duplicate"* && $output != *"not a configured"* ]]
-  no_side_effects
+  [ "$status" -eq 0 ]
+  local parent
+  parent=$(task_of investigation-team)
+  [[ -n $parent ]]
+  bash -c 'source "$1"; [[ $KIND == investigation_team && $INVESTIGATION_TEAM == "$2" && $INVESTIGATION_PIPELINE == 1 ]]' \
+    bash "$AGENTS_HOME/tasks/$parent/meta.env" "inv,inv2"
+  [[ $(cat "$AGENTS_HOME/tasks/$parent/task.md") == "topic" ]]
 }
 
-@test "three configured investigators are accepted and refused as not available yet" {
+@test "three configured investigators start an investigation team" {
   configure_investigators
   run agent run --investigation --team "inv, inv2, inv3" "topic"
-  [ "$status" -ne 0 ]
-  [[ $output == *"not available yet"* ]]
-  no_side_effects
+  [ "$status" -eq 0 ]
+  local parent
+  parent=$(task_of investigation-team)
+  [[ -n $parent ]]
+  bash -c 'source "$1"; [[ $KIND == investigation_team && $INVESTIGATION_TEAM == "$2" && $INVESTIGATION_PIPELINE == 1 ]]' \
+    bash "$AGENTS_HOME/tasks/$parent/meta.env" "inv,inv2,inv3"
+  [[ $(cat "$AGENTS_HOME/tasks/$parent/task.md") == "topic" ]]
 }
 
 @test "the topic can be given as a file with -f" {
   configure_investigators
   echo "topic from a file" > "$HOME/topic.md"
   run agent run --investigation --team "inv, inv2" -f "$HOME/topic.md"
-  [ "$status" -ne 0 ]
-  [[ $output == *"not available yet"* ]]
-  no_side_effects
+  [ "$status" -eq 0 ]
+  local parent
+  parent=$(task_of investigation-team)
+  [[ -n $parent ]]
+  bash -c 'source "$1"; [[ $KIND == investigation_team && $INVESTIGATION_TEAM == "$2" && $INVESTIGATION_PIPELINE == 1 ]]' \
+    bash "$AGENTS_HOME/tasks/$parent/meta.env" "inv,inv2"
+  [[ $(cat "$AGENTS_HOME/tasks/$parent/task.md") == "topic from a file" ]]
 }
 
 @test "a missing topic file given with -f is refused" {
