@@ -716,8 +716,8 @@ func (m model) row(t *Task, width int) string {
 	case t.Last.Text != "":
 		last = shortTS(t.Last.TS) + " " + actIcon(t.Last.Kind) + " " + t.Last.Text
 	}
-	if t.Kind == "investigation" {
-		stage = "for " + t.FromAgent + " " + stage
+	if f := t.forAgent(); f != "" {
+		stage = f + " " + stage
 	}
 	if t.Team != "" {
 		stage = "[team " + strings.TrimSuffix(t.Team, "-team") + "] " + stage

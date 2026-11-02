@@ -26,37 +26,38 @@ type Activity struct {
 
 // Task is a local task read from meta.env or a remote task read from mirrored metadata.json.
 type Task struct {
-	ID          string    // task ID: "<timestamp>-<agent>" (investigations/helpers have their own suffix)
-	Agent       string    // agent name
-	Node        string    // remote node name; empty for a local task
-	NodeOffline bool      // the remote heartbeat expired; status remains the last known state
-	CanControl  bool      // this frontend is configured to queue controls on the lead
-	Note        string    // human-visible task note
-	Kind        string    // worker (a normal task) | investigation | helper (a worker request)
-	Type        string    // agent CLI: claude | codex | gemini | opencode
-	Model       string    // model as configured ("" = the CLI's default)
-	Repo        string    // repository name
-	Branch      string    // the task's git branch
-	Worktree    string    // the task's git worktree
-	Status      string    // new | starting | running | waiting | investigating | sleeping | done | failed | stopped | excluded | hung
-	InvID       string    // investigations: the investigation number
-	ParentTask  string    // investigations/helpers: the task they work for
-	FromAgent   string    // investigations/helpers: the requesting agent
-	AutoStage   string    // what --verify/--autopilot does for the round now, on its coordinator's task (AUTO_STAGE)
-	Team        string    // team ID ("" for a solo task)
-	HelperID    string    // helpers: the worker request number
-	Tier        string    // normal | worker
-	JobID       string    // remote job ID when started for a job
-	JobLead     string    // lead URL or instance name when started for a job
-	Round       int       // question rounds so far (questions-<Round>.md is the latest)
-	Run         int       // runs so far (prompt-<Run>.md is the latest)
-	Created     time.Time // when the task was created
-	Finished    time.Time // when the last run ended (zero while running)
-	RunStart    time.Time // when the current run started (from the runner process)
-	Dir         string    // task directory
-	Alive       bool      // the runner process is alive
-	Acked       bool      // a finished task was acknowledged (agent ack / x) and is hidden
-	Last        Activity  // latest activity entry
+	ID                string    // task ID: "<timestamp>-<agent>" (investigations/helpers have their own suffix)
+	Agent             string    // agent name
+	Node              string    // remote node name; empty for a local task
+	NodeOffline       bool      // the remote heartbeat expired; status remains the last known state
+	CanControl        bool      // this frontend is configured to queue controls on the lead
+	Note              string    // human-visible task note
+	Kind              string    // worker (a normal task) | investigation | helper (a worker request)
+	Type              string    // agent CLI: claude | codex | gemini | opencode
+	Model             string    // model as configured ("" = the CLI's default)
+	Repo              string    // repository name
+	Branch            string    // the task's git branch
+	Worktree          string    // the task's git worktree
+	Status            string    // new | starting | running | waiting | investigating | sleeping | done | failed | stopped | excluded | hung
+	InvID             string    // investigations: the investigation number
+	ParentTask        string    // investigations/helpers: the task they work for
+	FromAgent         string    // investigations/helpers: the requesting agent
+	InvestigationTeam string    // independent investigators of an --investigation team: the team's task ID ("" otherwise)
+	AutoStage         string    // what --verify/--autopilot does for the round now, on its coordinator's task (AUTO_STAGE)
+	Team              string    // team ID ("" for a solo task)
+	HelperID          string    // helpers: the worker request number
+	Tier              string    // normal | worker
+	JobID             string    // remote job ID when started for a job
+	JobLead           string    // lead URL or instance name when started for a job
+	Round             int       // question rounds so far (questions-<Round>.md is the latest)
+	Run               int       // runs so far (prompt-<Run>.md is the latest)
+	Created           time.Time // when the task was created
+	Finished          time.Time // when the last run ended (zero while running)
+	RunStart          time.Time // when the current run started (from the runner process)
+	Dir               string    // task directory
+	Alive             bool      // the runner process is alive
+	Acked             bool      // a finished task was acknowledged (agent ack / x) and is hidden
+	Last              Activity  // latest activity entry
 }
 
 // Presence is the part of agentbus' presence entry that the live view needs (see agentbus Presence).
@@ -252,18 +253,35 @@ var activeStatuses = map[string]bool{"new": true, "starting": true, "running": t
 // Active reports whether the task has not finished yet (sleeping and waiting count as active).
 func (t *Task) Active() bool { return activeStatuses[t.Status] }
 
-// Label is the short name shown in the table (agent, inv#N, agent/HN, or agent@node).
+// Label is the short name shown in the table (agent, inv#N, agent/HN, or agent@node); an investigator of an
+// --investigation team is shown by its name.
 func (t *Task) Label() string {
 	if t.Node != "" {
 		return t.Agent + "@" + t.Node
 	}
-	switch t.Kind {
-	case "investigation":
+	switch {
+	case t.Independent():
+		return t.Agent
+	case t.Kind == "investigation":
 		return "inv#" + t.InvID
-	case "helper":
+	case t.Kind == "helper":
 		return t.Agent + "/H" + t.HelperID
 	}
 	return t.Agent
+}
+
+// Independent reports whether t is an investigator of an --investigation team: a real agent working on its own
+// branch, with no investigation number and no requesting agent.
+func (t *Task) Independent() bool {
+	return t.Kind == "investigation" && t.InvestigationTeam != ""
+}
+
+// forAgent is the "for <agent>" stage prefix of an investigation requested by an agent ("" when nobody requested it).
+func (t *Task) forAgent() string {
+	if t.Kind != "investigation" || t.FromAgent == "" {
+		return ""
+	}
+	return "for " + t.FromAgent
 }
 
 // BusName: the name under which the agent appears on the bus.
@@ -533,7 +551,7 @@ func loadSnapshot(home, busDir string, nodeTTL ...time.Duration) *Snapshot {
 		t := &Task{
 			ID: m["ID"], Agent: m["AGENT"], Kind: m["KIND"], Type: m["TYPE"], Model: m["MODEL"],
 			Repo: m["REPO_NAME"], Branch: m["BRANCH"], Worktree: m["WORKTREE"], Status: m["STATUS"],
-			InvID: m["INV_ID"], ParentTask: m["PARENT_TASK"], FromAgent: m["FROM_AGENT"], Team: m["TEAM"], HelperID: m["HELPER_ID"], Tier: m["TIER"],
+			InvID: m["INV_ID"], ParentTask: m["PARENT_TASK"], FromAgent: m["FROM_AGENT"], InvestigationTeam: m["INVESTIGATION_TEAM"], Team: m["TEAM"], HelperID: m["HELPER_ID"], Tier: m["TIER"],
 			JobID: m["JOB_ID"], JobLead: m["JOB_LEAD"], AutoStage: m["AUTO_STAGE"],
 			Created: parseTime(m["CREATED"]), Finished: parseTime(m["FINISHED"]), Dir: dir,
 		}
@@ -799,8 +817,8 @@ func (w *Watcher) Poll() (*Snapshot, []Event) {
 		switch {
 		case p == nil:
 			what := firstLine(filepath.Join(t.Dir, "task.md"))
-			if t.Kind == "investigation" {
-				what = "for " + t.FromAgent + ": " + what
+			if f := t.forAgent(); f != "" {
+				what = f + ": " + what
 			}
 			ev = append(ev, Event{now, "info", fmt.Sprintf("new task %s [%s]: %s", t.Label(), t.Repo, what)})
 		case p.Status != t.Status:

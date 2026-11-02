@@ -213,7 +213,7 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	r.StatusLabel, _ = statusStyle(t.Status)
 	r.StatusClass = statusClass(t.Status)
 	r.Running = (t.Node == "" || t.CanControl) && (t.Status == "running" || t.Status == "starting")
-	if t.Kind == "investigation" {
+	if t.Kind == "investigation" && !t.Independent() {
 		r.Name = fmt.Sprintf("investigator #%s (%s)", t.InvID, t.Agent)
 	}
 	switch {
@@ -246,8 +246,8 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 	case t.Last.Text != "":
 		r.Last, r.LastIcon = shortTS(t.Last.TS)+" "+t.Last.Text, actIcon(t.Last.Kind)
 	}
-	if t.Kind == "investigation" {
-		r.Stage = strings.TrimSpace("for " + t.FromAgent + " " + r.Stage)
+	if f := t.forAgent(); f != "" {
+		r.Stage = strings.TrimSpace(f + " " + r.Stage)
 	}
 	if ti := snap.Teams[t.Team]; ti != nil && ti.Lead == t.BusName() {
 		r.Lead = true
