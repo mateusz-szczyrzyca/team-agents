@@ -36,7 +36,7 @@ no_side_effects() {
     bash "$AGENTS_HOME/tasks/$parent/meta.env"
   [[ $(cat "$AGENTS_HOME/tasks/$parent/task.md") == topic ]]
   # Let independent runners finish before Bats removes their temporary home.
-  wait_status "$parent" '^(done|failed)$'
+  wait_status "$parent" '^done$'
 }
 
 @test "a duplicate investigator in --team is refused" {
