@@ -26,4 +26,10 @@ load helpers
   agent dispatch > "$HOME/clarification-dispatch.log" 2>&1
   [ "$(jq -r '.members[] | select(.agent=="inv") | .status' "$AGENTS_HOME/tasks/$parent/phase1.json")" = 'done' ]
   grep -q 'memory cache' "$HOME/independent-inv.prompt"
+  # Verify resumed prompt does not contain generic agentbus instructions for independent investigators
+  ! grep -q 'read_messages\|set_status' "$HOME/independent-inv.prompt" || {
+    echo "ERROR: Independent investigator prompt contains disabled agentbus tool instructions"
+    cat "$HOME/independent-inv.prompt"
+    return 1
+  }
 }
