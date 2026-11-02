@@ -35,30 +35,16 @@ launch_pipeline() {
   PIPELINE_PARENT=$(task_of investigation-team)
 }
 
-# wait_field parent key timeout polls until parent metadata field is non-empty.
-wait_field() {
-  local deadline=$((SECONDS + ${3:-20}))
-  while (( SECONDS < deadline )); do
-    local val
-    val=$(parent_field "$1" "$2")
-    if [[ -n $val ]]; then
-      printf '%s' "$val"
-      return 0
-    fi
-    sleep 0.1
-  done
-  return 1
-}
-
 @test "a merger asks clarification questions and resumes without being replaced" {
   pipeline_setup
   scenario '{"inv": {"phase2": "questions"}, "inv2": {"phase2": "questions"}, "inv3": {"phase2": "questions"}}'
   launch_pipeline inv,inv2
   local merger merger_task qfile
-  merger=$(wait_field "$PIPELINE_PARENT" INVESTIGATION_MERGER 20)
-  [ -n "$merger" ]
-  merger_task=$(wait_field "$PIPELINE_PARENT" INVESTIGATION_MERGER_TASK 20)
+  wait_grep 'INVESTIGATION_MERGER_TASK=20' "$AGENTS_HOME/tasks/$PIPELINE_PARENT/meta.env" 20
+  merger_task=$(parent_field "$PIPELINE_PARENT" INVESTIGATION_MERGER_TASK)
   [ -n "$merger_task" ]
+  merger=$(parent_field "$PIPELINE_PARENT" INVESTIGATION_MERGER)
+  [ -n "$merger" ]
   wait_status "$merger_task" waiting 20
   [ "$(status_of "$PIPELINE_PARENT")" = running ]
   [ "$(parent_field "$PIPELINE_PARENT" INVESTIGATION_MERGER_REPLACEMENTS)" -eq 0 ]
@@ -77,10 +63,11 @@ wait_field() {
   scenario '{"inv": {"phase3": "questions"}, "inv2": {"phase3": "questions"}, "inv3": {"phase3": "questions"}}'
   launch_pipeline inv,inv2
   local reviewer reviewer_task qfile
-  reviewer=$(wait_field "$PIPELINE_PARENT" INVESTIGATION_REVIEWER 20)
-  [ -n "$reviewer" ]
-  reviewer_task=$(wait_field "$PIPELINE_PARENT" INVESTIGATION_REVIEWER_TASK 20)
+  wait_grep 'INVESTIGATION_REVIEWER_TASK=20' "$AGENTS_HOME/tasks/$PIPELINE_PARENT/meta.env" 20
+  reviewer_task=$(parent_field "$PIPELINE_PARENT" INVESTIGATION_REVIEWER_TASK)
   [ -n "$reviewer_task" ]
+  reviewer=$(parent_field "$PIPELINE_PARENT" INVESTIGATION_REVIEWER)
+  [ -n "$reviewer" ]
   wait_status "$reviewer_task" waiting 20
   [ "$(status_of "$PIPELINE_PARENT")" = running ]
   [ "$(parent_field "$PIPELINE_PARENT" INVESTIGATION_REVIEW_RETRIES)" -eq 0 ]
