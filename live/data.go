@@ -288,7 +288,13 @@ func (t *Task) JobMarker() string {
 
 // isInvestigationTeam reports whether t is a synthetic investigation team task rather than an individual agent.
 func isInvestigationTeam(t *Task) bool {
-	return t != nil && (t.Kind == "investigation_team" || t.Agent == "investigation-team" || t.Agent == "investigator-team")
+	if t == nil {
+		return false
+	}
+	if t.Kind != "" {
+		return t.Kind == "investigation_team"
+	}
+	return t.Agent == "investigation-team" || t.Agent == "investigator-team"
 }
 
 // ---------------------------------------------------------------- reading state

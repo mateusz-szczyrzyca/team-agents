@@ -291,9 +291,6 @@ func (s *webServer) dashboard(snap *Snapshot) dashData {
 		if hasProxy {
 			continue
 		}
-		if strings.HasPrefix(r.Name, "investigation-team") || strings.HasPrefix(r.Name, "investigator-team") {
-			continue
-		}
 		if r.Status == "done" || r.Status == "failed" || r.Status == "stopped" {
 			remoteDone = append(remoteDone, r)
 		} else {
