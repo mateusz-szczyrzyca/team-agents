@@ -15,9 +15,10 @@ configured in `INVESTIGATORS_TYPE`.
 2. **Strict independence during investigation.** Members work on isolated branches with no bus
    communication between them and without reading each other's worktrees.
 3. **Pull request on success.** A successful workflow produces a unified pull request opened by
-   a designated merger, followed by an independent review and terminal completion. Failures before
+   a designated merger, followed by review and terminal completion. Multi-investigator cohorts use an
+   independent reviewer; a sole investigator reviews their own PR in a separate child run. Failures before
    publication or review, including all Phase 1 runs failing, exhausted merger replacements, or
-   lack of an eligible independent reviewer, terminate as failures (`STATUS: failed`) with the reason
+   lack of an eligible reviewer, terminate as failures (`STATUS: failed`) with the reason
    instead of claiming a PR was produced.
 4. **Human in control without decision waits.** No code is ever merged automatically. The final stage
    notifies the human upon completion (`STATUS: done` on healthy runs, `STATUS: failed` on execution
@@ -30,7 +31,7 @@ configured in `INVESTIGATORS_TYPE`.
    `agent run --investigation --team "A"` or `agent run --investigation --team "A, B"` runs the end-to-end pipeline
    (concurrent Phase 1 investigations on isolated branches, Phase 2 merger selection, integration
    prompt `prompts/inv-merge.md`, PR creation, automated prechecks with single retry bounce `cmd__precheck`, Phase 3
-   reviewer selection preserving reviewer independence, advisory review `prompts/review.md`, and Phase 4
+   reviewer selection preserving independence for multi-investigator cohorts, advisory review `prompts/review.md`, and Phase 4
    terminal completion). Resuming an open PR (`agent run --resume <team>`) conducts Phase 5 advisory reviews across all
    team investigators proposing improvements without applying changes or auto-merging.
    During Phase 1, member runs execute concurrently on dedicated branches (`agents/<investigator>/<timestamp>`)
@@ -140,15 +141,14 @@ The command must be rejected immediately before any background task or worktree 
   the merger's published integration branch is re-validated against `PRECHECK_HEAD`. A transient transport
   or lookup error retries; a confirmed changed or unavailable branch triggers Phase 2 precheck failure
   handling following the same global bounce and replacement rules.
-- **Candidate eligibility:** Any investigator in the team *other than* the selected merger.
+- **Candidate eligibility:** Any investigator in the team *other than* the selected merger, unless the
+  cohort has only one investigator, who may also review their own merge.
   Investigators whose Phase 1 run failed or timed out remain eligible to review, ensuring multi-member
   teams can proceed even if one investigator encountered a Phase 1 failure.
-- **Reviewer independence:** Reviewer independence is strictly preserved: a merger cannot review their
-  own PR (`[[ $m == "$cur_merger" ]]` is excluded from candidate eligibility). While single-investigator
-  teams are accepted at launch, the workflow does not skip review. A single-investigator pipeline reaches Phase 3
-  with no eligible non-merger candidates (`INVESTIGATION_ELIGIBLE == 0`) and terminates with status `failed`
-  (`failed: review failed`). Full pipeline review requires an independent team member.
-- **Selection:** Chosen uniformly at random from eligible candidates (excluding merger), sorted and
+- **Reviewer independence:** In multi-investigator cohorts, the merger is excluded from reviewer
+  eligibility. In a one-investigator cohort, the sole investigator performs Phase 3 in a separate review
+  child run. Review is never skipped, and a healthy single-investigator pipeline finishes as `done`.
+- **Selection:** Chosen uniformly at random from eligible candidates (excluding the merger in multi-investigator cohorts), sorted and
   drawn via `AGENT_INVESTIGATION_SEED` or parent `INVESTIGATION_SEED`.
 - **Review protocol:** Executes `prompts/review.md` without modification. The review evaluates the
   PR, suggests improvements, and concludes with an explicit verdict (`ready-to-merge`, `needs-fixes`, `incomplete`).
@@ -279,7 +279,7 @@ so the child cannot retain investigator capacity after the parent releases its l
 | Phase 2 precheck failure | Merger's PR fails `cmd__precheck` | Bounced back to merger once (`INVESTIGATION_MERGE_RETRIES=1`) with failure log appended to `task.md` | `merging: <merger> (fix checks)` | active |
 | Phase 2 merger abort | Merger crashes, fails, cannot start, or opens a PR against the wrong base | Replaced once (`INVESTIGATION_MERGER_REPLACEMENTS=1`) by another eligible `DONE` investigator; if none remain, terminate | `merging: <merger-2>` or `failed: merge failed` | active / `failed` |
 | Phase 2 precheck retry failure | Merger fails second precheck | Marks merger failed; triggers replacement if replacements remain (`INVESTIGATION_MERGER_REPLACEMENTS=1`); terminates if replacements exhausted | `merging: <merger-2>` or `failed: merge failed` | active / `failed` |
-| Phase 3 review failure / no reviewer | Reviewer crashes, fails, yields no explicit verdict, or single-investigator team has no independent non-merger reviewer | Replaced once (`INVESTIGATION_REVIEW_RETRIES=1`) by another eligible team member (excluding merger); if none remain, terminate | `review: <reviewer-2> (#<pr-number>)` or `failed: review failed` | active / `failed` |
+| Phase 3 review failure / no reviewer | Reviewer crashes, fails, yields no explicit verdict, or no eligible untried reviewer remains | Replaced once (`INVESTIGATION_REVIEW_RETRIES=1`) by another eligible team member (excluding the merger in multi-investigator cohorts); if none remain, terminate | `review: <reviewer-2> (#<pr-number>)` or `failed: review failed` | active / `failed` |
 | Candidate temporarily busy | Candidate in `QUOTA_UNTIL` / queue | Pick another free candidate; queue if all eligible candidates are temporarily paused | `waiting: capacity queue` | `waiting` |
 | Resume on merged/closed PR | Target PR is merged or closed on GitHub | Refuse command immediately before creating tasks or taking capacity | Exit 1 with explanatory message | refused |
 | Resume capacity contention | Any team investigator busy or in `QUOTA_UNTIL` | Queue entire cohort under `dispatch.lock`; no partial starts | `waiting: capacity queue` | `waiting` |
@@ -437,14 +437,14 @@ When implementing future rounds, existing components have explicit boundaries:
 Follow this checklist to verify an investigation team run and resume manually:
 
 1. **Configuration**:
-   Verify that `agents.conf` defines at least one investigator under `INVESTIGATORS_TYPE` (at least two for full review pipeline).
+   Verify that `agents.conf` defines at least one investigator under `INVESTIGATORS_TYPE`.
 2. **Initial investigation start (single investigator)**:
    Run `agent run --investigation --team "inv1" "Topic text"`.
    Confirm that:
    - The investigator starts in an isolated worktree (`phase 1: 1 investigators working (inv1)`).
    - The investigator completes Phase 1 (`DONE`), is selected as merger in Phase 2 (`merging: inv1`), opens a PR, and passes prechecks.
-   - In Phase 3, reviewer independence is enforced: the merger cannot review their own PR, and no other eligible team member exists.
-   - The flow terminates with status `failed` and stage `failed: review failed` (because full pipeline review requires an independent reviewer).
+   - In Phase 3, the sole investigator reviews the PR in a separate child run and returns an explicit verdict.
+   - The healthy flow terminates with status `done` and stage `complete: review ready (#<pr-number>)`, without waiting for a decision.
 3. **Initial investigation start (multiple investigators)**:
    Run `agent run --investigation --team "inv1, inv2" "Topic text"`.
    Confirm that:

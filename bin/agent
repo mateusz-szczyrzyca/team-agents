@@ -2601,13 +2601,17 @@ build_prompt() { # id mode qfile next_round
     esac
     printf '\n# TOPIC\n\n'
     cat "$TASKS/$id/task.md"
-    if [[ -n ${ANSWERS_PENDING:-} ]]; then
+    if [[ $mode == resume && -n ${ANSWERS_PENDING:-} ]]; then
       R[ANSWERED_ROUND]=$ANSWERS_PENDING
       R[ANSWERED_FILE]="$TASKS/$id/questions-$ANSWERS_PENDING.md"
       printf '\n\n'
       render "$PROMPTS/resume.md"
       printf '\n---\n\n'
       expand_answers "$TASKS/$id/questions-$ANSWERS_PENDING.md"
+    fi
+    if [[ $mode == resume && -s $TASKS/$id/note-$RUN.md ]]; then
+      printf '\n---\n\n## Additional note from the human\n\n'
+      cat "$TASKS/$id/note-$RUN.md"
     fi
     return
   fi
@@ -3816,7 +3820,8 @@ investigation_phase_pick() {
       m=$(echo "$m" | tr -d ' ')
       [[ -n $m ]] || continue
       [[ -n ${INVESTIGATORS_TYPE[$m]:-} ]] || continue
-      [[ $m == "$cur_merger" ]] && continue
+      # A sole investigator still reviews; larger cohorts use an independent reviewer.
+      [[ ${#raw_members[@]} -gt 1 && $m == "$cur_merger" ]] && continue
       [[ ,${tried_reviewers}, == *",$m,"* ]] && continue
       eligible+=("$m")
     done

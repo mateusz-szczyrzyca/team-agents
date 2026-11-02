@@ -45,6 +45,8 @@ launch_pipeline() {
   [ -n "$merger_task" ]
   merger=$(parent_field "$PIPELINE_PARENT" INVESTIGATION_MERGER)
   [ -n "$merger" ]
+  # The parent records the child ID before create_task publishes its metadata.
+  wait_grep 'STATUS=' "$AGENTS_HOME/tasks/$merger_task/meta.env" 20
   wait_status "$merger_task" waiting 20
   [ "$(status_of "$PIPELINE_PARENT")" = running ]
   local merger_replacements
@@ -70,6 +72,8 @@ launch_pipeline() {
   [ -n "$reviewer_task" ]
   reviewer=$(parent_field "$PIPELINE_PARENT" INVESTIGATION_REVIEWER)
   [ -n "$reviewer" ]
+  # The parent records the child ID before create_task publishes its metadata.
+  wait_grep 'STATUS=' "$AGENTS_HOME/tasks/$reviewer_task/meta.env" 20
   wait_status "$reviewer_task" waiting 20
   [ "$(status_of "$PIPELINE_PARENT")" = running ]
   local review_retries

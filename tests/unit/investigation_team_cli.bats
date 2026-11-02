@@ -3,6 +3,7 @@
 # before creating any task, branch, or systemd unit.
 
 load helpers
+load investigation_pipeline_fixture
 
 # configure_investigators makes inv, inv2 and inv3 configured investigators in the temporary agents.conf.
 configure_investigators() {
@@ -27,6 +28,7 @@ no_side_effects() {
 
 @test "--team with a single investigator starts the requested investigation cohort" {
   configure_investigators
+  single_pipeline_setup
   run agent run --investigation --team "inv" "topic"
   [ "$status" -eq 0 ]
   local parent

@@ -201,8 +201,11 @@ The opened PR undergoes automated prechecks (`cmd__precheck`: gate, round tests,
 check failures allow one bounce overall to the merger with diagnostics (stage `merging: <merger> (fix checks)`).
 A failed merger can be replaced once with another eligible `DONE` investigator. When the bounce and replacement
 are exhausted, the team finishes as `failed` (`failed: merge failed`).
-Phase 3 selects a reviewer among team members other than the merger to review the PR via `prompts/review.md`
-requiring an explicit verdict (`ready-to-merge`, `needs-fixes`, `incomplete`). A reviewer failure or missing verdict triggers one replacement by another eligible investigator; a second failure finishes as `failed` (`failed: review failed`). The reviewer must differ from the merger: a one-investigator run is accepted, but finishes with a review failure when no independent reviewer is available.
+Phase 3 selects a reviewer among team members other than the merger to review the PR via `prompts/review.md`.
+In a one-investigator cohort, the sole investigator also performs this review in a separate child run;
+all four phases still execute. The review requires an explicit verdict (`ready-to-merge`, `needs-fixes`,
+`incomplete`). A reviewer failure or missing verdict triggers one replacement by another eligible investigator;
+if no replacement is available or it fails, the team finishes as `failed` (`failed: review failed`).
 Phase 4 releases capacity leases, tracks pending PR comment and notification attempts (`INVESTIGATION_HANDOFF_PENDING`),
 and finishes as `done` without waiting for a decision or auto-merging (`complete: review ready (#<pr-number>)`). A crash before
 recording an attempt can repeat that external action; the existing helpers provide best-effort delivery.

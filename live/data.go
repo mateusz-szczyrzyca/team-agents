@@ -792,6 +792,9 @@ func (w *Watcher) Poll() (*Snapshot, []Event) {
 	sort.Strings(ids)
 	for _, id := range ids {
 		t := cur.All[id]
+		if isInvestigationTeam(t) {
+			continue
+		}
 		p := w.prev.All[id]
 		switch {
 		case p == nil:
