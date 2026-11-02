@@ -166,12 +166,13 @@ providers and accounts:
 
 ### Teams
 
-**Investigation teams:** `agent run --investigation --team "inv-a[, inv-b]" "topic"`
-validates investigator names and options. At least one investigator must be specified. Phase 1 runs investigators independently on isolated branches
+**Investigation teams:** `agent run --investigation --team "inv-a" "topic"` or with multiple investigators `agent run --investigation --team "inv-a, inv-b" "topic"`.
+At least one investigator must be specified. Phase 1 runs investigators independently on isolated branches
 from an immutable base commit, saving non-code findings to `docs/investigations/<topic-slug>/<investigator>.md`
 and code following TDD. `agent run --investigation` runs the complete initial pipeline
 (phases 1–4: independent investigation, merge, PR, prechecks, review, and terminal completion).
-On successful completion, the PR is ready for normal review and merge; failed investigations are reported as failures only for real flow issues (failed merge, review, or prechecks).
+On successful completion, the PR is ready for normal review and merge without waiting for a human decision; failed investigations are reported as failures only for real flow issues (failed merge, review, or prechecks).
+Investigators and mergers can ask clarification questions if the subject matter is unclear or may be interpreted multiple ways (ending with `STATUS: QUESTIONS`); clarification answers are handled by the human through questions files.
 Resuming an investigation team with an open PR (`agent run --resume <team>`) runs Phase 5 advisory reviews
 across all team investigators concurrently proposing improvements without applying changes or auto-merging (`review: N investigators reviewing (#<pr>)`).
 Resuming an investigation team whose PR is already merged or closed is refused (`the PR is merged — a new topic is a new run` or `the PR is closed — a new topic is a new run`).
