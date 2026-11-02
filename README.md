@@ -214,6 +214,10 @@ investigation team appear under their own names on the dashboard, in `agent live
 `investigator #N` / `inv#N`, which name investigations requested by an agent), and `agent show` names their team and
 phase (`== investigation team <id> (phase N)`). The hand-off comment on the PR mentions the owner and starts with
 `--investigation`.
+Supervision and `agent dispatch` also finalize already-delivered legacy Phase 4 handoffs left as `waiting`,
+using their recorded `INVESTIGATION_HANDOFF_RESULT` (`done` or `failed`). Existing delivery flags prevent
+duplicate notifications and PR comments. Clarification waits and unfinished phases are unaffected; an absent
+or unknown recorded result is not treated as proof of completion.
 Stopping an investigation team (`agent stop <id>` or `agent stop --running`) synchronizes with in-flight
 admission under the dispatch lock, cancels pending handoffs, and stops active child tasks and checks before
 releasing its capacity lease. Supervisor recovery detects stopped leased parents to complete interrupted
@@ -719,7 +723,7 @@ notifications in `AGENT_LANGUAGE`.
 ```
 agent run <agent> "task" | -f task.md         start a task (inside the repository)
 agent run --team a,b[,c] [--verify] "task"    start a team (optionally with a final PR review)
-agent run --investigation --team "A, B" "topic"  investigators create and review a PR; the human decides
+agent run --investigation --team "A" "topic"     one or more investigators create and review a PR, then finish
 agent run --resume <team|task> ["addition"]   resume from the last checkpoint (same branches; after a merged round: new ones)
 agent run --resume <team|task> --same-round   continue an unmerged round on the same branches (e.g. review fixes)
 agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)

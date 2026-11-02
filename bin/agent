@@ -3522,6 +3522,17 @@ investigation_team_tick() {
 # investigation_field task key reads optional metadata without inheriting the dispatching task's value.
 investigation_field() { ( unset "$2"; task_field "$1" "$2"; ) }
 
+# investigation_completed_wait parent identifies an old completed handoff still marked waiting.
+# Only a recorded terminal result in Phase 4 proves completion; clarification and capacity waits stay active.
+investigation_completed_wait() {
+  local parent=$1 result
+  [[ $(task_field "$parent" STATUS) == waiting \
+    && $(investigation_field "$parent" INVESTIGATION_PIPELINE) == 1 \
+    && $(investigation_field "$parent" INVESTIGATION_PHASE) == 4 ]] || return 1
+  result=$(investigation_field "$parent" INVESTIGATION_HANDOFF_RESULT)
+  [[ $result == done || $result == failed ]]
+}
+
 # investigation_handoff parent stage result records terminal completion and delivers the PR summary once.
 investigation_handoff() {
   local parent=$1 stage=$2 result=$3 PR_URL='' REVIEW=0 WORK_ROUND='' WORK_ROUNDS='' JOB_ID='' JOB_LEAD='' LEAD_URL=''
@@ -3993,7 +4004,8 @@ investigation_teams_tick() {
     [[ $(task_field "$parent" KIND) == investigation_team ]] || continue
     st=$(task_field "$parent" STATUS)
     if [[ $st =~ ^(stopped|done|failed)$ || -f $TASKS/$parent/stop-requested ]]; then continue; fi
-    if [[ $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ]]; then
+    if [[ $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ]] \
+        || investigation_completed_wait "$parent"; then
       investigation_team_tick "$parent"
     fi
   done
@@ -6064,7 +6076,8 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
     kind=$(task_field "$id" KIND)
     if [[ $kind == investigation_team ]]; then
       # A coordinator has no runner; the timer also retries cohorts after quota expiry without a runner exit.
-      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 || $(investigation_field "$id" INVESTIGATION_LEASE) == 1 ]]; then phase1_pending=1; fi
+      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 || $(investigation_field "$id" INVESTIGATION_LEASE) == 1 ]] \
+          || investigation_completed_wait "$id"; then phase1_pending=1; fi
       continue
     fi
     [[ $st == running || $st == starting ]] || continue
@@ -8492,7 +8505,7 @@ agent run --last-team [--same-round] ["…"]  resume the newest team of this rep
 agent ack <id|all>                        acknowledge finished tasks (they leave the panel)
 agent run --team a,b[,c] [--verify|--autopilot] "task"  team; --verify: an investigator reviews the PR at the end;
                                            --autopilot: two independent reviews, the merge, the next round
-agent run --investigation --team "A, B" "topic"  investigators create and review a PR; the human decides
+agent run --investigation --team "A" "topic"     one or more investigators create and review a PR, then finish
 agent autopilot <team> [on|off]            a team's --autopilot: shown, or switched (off: no merge nor next round by itself)
 agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
 agent team [id | --all]                   teams and their members
