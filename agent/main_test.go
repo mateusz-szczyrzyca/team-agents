@@ -70,9 +70,10 @@ func TestTypedNilError(t *testing.T) {
 		t.Errorf("nil RunError.Error() = %q, want empty string", msg)
 	}
 
-	// Nil error should default to Storage cause
-	if cause := err.Cause(); cause != RunStorage {
-		t.Errorf("nil RunError.Cause() = %v, want RunStorage", cause)
+	// Nil error should return zero-value cause (RunUnknownCommand = iota = 0)
+	// This is the default/zero value of RunCause
+	if cause := err.Cause(); cause != 0 {
+		t.Errorf("nil RunError.Cause() = %v, want 0 (zero value)", cause)
 	}
 }
 

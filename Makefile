@@ -104,12 +104,15 @@ build:
 	cd agentbus && go build -o ../build/agentbus .
 	cd live && go build -o ../build/agentlive .
 
-# Regenerates agentbus/errors_gen.go from agentbus/errors.json.
+# Regenerates errors_gen.go files from errors.json.
 generate:
+	cd agent && go generate ./...
 	cd agentbus && go generate ./...
 
 # Fails when errors_gen.go is out of date with errors.json.
 check-generated:
 	mkdir -p build
+	cd tools/errgen && go run . -spec ../../agent/errors.json -out ../../build/agent_errors_gen.go
+	cmp -s build/agent_errors_gen.go agent/errors_gen.go || { echo "agent/errors_gen.go is out of date: run make generate"; exit 1; }
 	cd tools/errgen && go run . -spec ../../agentbus/errors.json -out ../../build/errors_gen.go
 	cmp -s build/errors_gen.go agentbus/errors_gen.go || { echo "agentbus/errors_gen.go is out of date: run make generate"; exit 1; }
