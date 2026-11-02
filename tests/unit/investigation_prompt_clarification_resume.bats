@@ -59,10 +59,10 @@ load helpers
     build_prompt '$child' fresh '$qfile' 2
   "
   [ "$status" -eq 0 ]
-  # Count occurrences of answered question text in rendered prompt
-  # Count occurrences of resume answer header in rendered prompt
+  # For independent investigators, clarification answers are shown without generic resume.md
+  # So check for our custom heading instead of the generic resume heading
   local count
-  count=$(grep -c "# THE HUMAN'S ANSWERS" <<< "$output")
+  count=$(grep -c "The human's clarification answers" <<< "$output")
   [ "$count" -eq 1 ]
 
   run agent resume "$child"
