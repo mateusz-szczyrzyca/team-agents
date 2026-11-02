@@ -41,7 +41,7 @@ recorded_status() {
   scenario '{"inv":{"new":"barrier"},"inv2":{"new":"barrier"}}'
   launch_phase_one
   parent=$PHASE_ONE
-  wait_status "$parent" waiting
+  wait_status "$parent" 'done'
   [ "$(field "$parent" INVESTIGATION_BASE_SHA)" = "$base" ]
   [ "$(field "$parent" INVESTIGATION_TEAM)" = 'inv,inv2' ]
   for agent in inv inv2; do
@@ -63,7 +63,7 @@ recorded_status() {
 @test "independent prompts and MCP configurations reveal no peer worktree or bus tools" {
   independent_setup
   launch_phase_one
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$PHASE_ONE" 'done'
   local a b child peer cfg prompt
   for a in inv inv2; do
     b=inv; [ "$a" = inv ] && b=inv2
@@ -83,20 +83,20 @@ recorded_status() {
   independent_setup
   scenario '{"inv":{"new":"no-status"},"inv2":{"new":"publish"}}'
   launch_phase_one
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$PHASE_ONE" 'done'
   [ "$(recorded_status "$PHASE_ONE" inv)" = failed ]
   [ "$(recorded_status "$PHASE_ONE" inv2)" = 'done' ]
-  [ "$(field "$PHASE_ONE" AUTO_STAGE)" = 'waits for you: phase 1 complete (merge not available yet)' ]
+  [ "$(field "$PHASE_ONE" AUTO_STAGE)" = 'complete: phase 1 complete (merge not available yet)' ]
 }
 
 @test "unpublished commits and bare DONE are failures and notify the human without a PR" {
   independent_setup
   scenario '{"inv":{"new":"unpublished"},"inv2":{"new":"empty"}}'
   launch_phase_one
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$PHASE_ONE" 'failed'
   [ "$(recorded_status "$PHASE_ONE" inv)" = failed ]
   [ "$(recorded_status "$PHASE_ONE" inv2)" = failed ]
-  [ "$(field "$PHASE_ONE" AUTO_STAGE)" = 'waits for you: all phase 1 runs failed' ]
+  [ "$(field "$PHASE_ONE" AUTO_STAGE)" = 'failed: all phase 1 runs failed' ]
   wait_grep "$PHASE_ONE" "$HOME/notifications.log"
   [ -z "$(field "$PHASE_ONE" PR_URL)" ]
   [ -z "$(git ls-remote origin 'refs/heads/agents/*')" ]
@@ -106,7 +106,7 @@ recorded_status() {
   independent_setup
   scenario '{"inv":{"new":"fail"},"inv2":{"new":"no-status"}}'
   launch_phase_one
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$PHASE_ONE" 'failed'
   [ "$(field "$PHASE_ONE" INVESTIGATION_LEASE)" != 1 ]
   [ "$(recorded_status "$PHASE_ONE" inv)" = failed ]
   [ "$(recorded_status "$PHASE_ONE" inv2)" = failed ]
@@ -123,8 +123,8 @@ recorded_status() {
   [ "$(field "$PHASE_ONE" AUTO_STAGE)" = 'waiting: capacity queue' ]
   [ "$(task_of inv)" = "$(field "$first" INVESTIGATION_PHASE1_TASKS | cut -d, -f1)" ]
   touch "$HOME/release"
-  wait_status "$first" waiting
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$first" 'done'
+  wait_status "$PHASE_ONE" 'done'
 }
 
 @test "quota-paused investigators queue the whole cohort without partial admission" {
@@ -151,5 +151,5 @@ recorded_status() {
   [ "$status" -eq 1 ]
   [ ! -d "$AGENTS_HOME/reviews" ]
   touch "$HOME/release"
-  wait_status "$parent" waiting
+  wait_status "$parent" 'done'
 }

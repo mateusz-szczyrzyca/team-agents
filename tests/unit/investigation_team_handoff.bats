@@ -38,7 +38,7 @@ launch_pipeline() {
 @test "a completed pipeline opens a PR and uses the unchanged review prompt" {
   pipeline_setup
   launch_pipeline inv,inv2
-  wait_status "$PIPELINE_PARENT" '^waiting$' 45
+  wait_status "$PIPELINE_PARENT" '^done$' 45
   [[ $(parent_field "$PIPELINE_PARENT" INVESTIGATION_PHASE) == 4 ]]
   [[ $(parent_field "$PIPELINE_PARENT" INVESTIGATION_PR) == https://github.com/example/repo/pull/73 ]]
   [[ $(parent_field "$PIPELINE_PARENT" INVESTIGATION_REVIEWER) != "$(parent_field "$PIPELINE_PARENT" INVESTIGATION_MERGER)" ]]
@@ -55,8 +55,8 @@ launch_pipeline() {
 @test "handoff records the stage comments mentions the owner and never merges" {
   pipeline_setup
   launch_pipeline inv,inv2
-  wait_status "$PIPELINE_PARENT" '^waiting$' 45
-  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'waits for you: review ready (#73)' ]]
+  wait_status "$PIPELINE_PARENT" '^done$' 45
+  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'complete: review ready (#73)' ]]
   [[ -z $(parent_field "$PIPELINE_PARENT" INVESTIGATION_LEASE) ]]
   grep -q 'gh pr comment https://github.com/example/repo/pull/73' "$HOME/gh.log"
   grep -q " --body @example " "$HOME/gh.log"
@@ -67,14 +67,14 @@ launch_pipeline() {
   [[ $(grep -c 'gh pr comment' "$HOME/gh.log") == 1 ]]
 }
 
-@test "failed checks bounce once then replace the merger once and wait" {
+@test "failed checks bounce once then replace the merger once and finish as failed" {
   pipeline_setup
   printf '\nAGENT_REVIEW_GATE=false\n' >> "$AGENTS_HOME/agents.conf"
   launch_pipeline inv,inv2
-  wait_status "$PIPELINE_PARENT" '^waiting$' 60
+  wait_status "$PIPELINE_PARENT" '^failed$' 60
   [[ $(parent_field "$PIPELINE_PARENT" INVESTIGATION_MERGE_RETRIES) == 1 ]]
   [[ $(parent_field "$PIPELINE_PARENT" INVESTIGATION_MERGER_REPLACEMENTS) == 1 ]]
-  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'waits for you: merge failed' ]]
+  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'failed: merge failed' ]]
   [[ $(jq -s '[.[] | select(.phase == "2")] | length' "$HOME/pipeline-calls.jsonl") == 3 ]]
   [[ $(jq -s '[.[] | select(.phase == "3")] | length' "$HOME/pipeline-calls.jsonl") == 0 ]]
   run grep -q 'gh pr merge' "$HOME/gh.log"
@@ -85,9 +85,9 @@ launch_pipeline() {
   pipeline_setup
   scenario '{"inv":{"phase3":"no-verdict"},"inv2":{"phase3":"no-verdict"},"inv3":{"phase3":"no-verdict"}}'
   launch_pipeline inv,inv2,inv3
-  wait_status "$PIPELINE_PARENT" '^waiting$' 60
+  wait_status "$PIPELINE_PARENT" '^failed$' 60
   [[ $(parent_field "$PIPELINE_PARENT" INVESTIGATION_REVIEW_RETRIES) == 1 ]]
-  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'waits for you: review failed' ]]
+  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'failed: review failed' ]]
   [[ $(jq -s '[.[] | select(.phase == "3")] | length' "$HOME/pipeline-calls.jsonl") == 2 ]]
   [[ $(jq -s '[.[] | select(.phase == "3")] | map(.agent) | unique | length' "$HOME/pipeline-calls.jsonl") == 2 ]]
   run grep -q 'gh pr merge' "$HOME/gh.log"
@@ -98,9 +98,9 @@ launch_pipeline() {
   pipeline_setup
   scenario '{"inv":{"phase3":"findings-no-verdict"},"inv2":{"phase3":"findings-no-verdict"},"inv3":{"phase3":"findings-no-verdict"}}'
   launch_pipeline inv,inv2,inv3
-  wait_status "$PIPELINE_PARENT" '^waiting$' 60
+  wait_status "$PIPELINE_PARENT" '^failed$' 60
   [[ $(parent_field "$PIPELINE_PARENT" INVESTIGATION_REVIEW_RETRIES) == 1 ]]
-  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'waits for you: review failed' ]]
+  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'failed: review failed' ]]
   [[ $(jq -s '[.[] | select(.phase == "3")] | length' "$HOME/pipeline-calls.jsonl") == 2 ]]
 }
 
@@ -131,6 +131,7 @@ PR_NUMBER=73
 META
   run agent _supervise
   [ "$status" -eq 0 ]
+  [[ $(parent_field "$parent" STATUS) == 'done' ]]
   [[ -z $(parent_field "$parent" INVESTIGATION_HANDOFF_PENDING) ]]
   grep -q 'gh pr comment https://github.com/example/repo/pull/73' "$HOME/gh.log"
   grep -q "$parent" "$HOME/notifications.log"
@@ -138,13 +139,13 @@ META
   [[ $(grep -c 'gh pr comment' "$HOME/gh.log") == 1 ]]
 }
 
-@test "a pipeline with no successful phase one result goes directly to human decision" {
+@test "a pipeline with no successful phase one result finishes as failed without waiting for a decision" {
   pipeline_setup
   scenario '{"inv":{"new":"fail"},"inv2":{"new":"fail"}}'
   launch_pipeline inv,inv2
-  wait_status "$PIPELINE_PARENT" '^waiting$' 45
+  wait_status "$PIPELINE_PARENT" '^failed$' 45
   [[ $(parent_field "$PIPELINE_PARENT" INVESTIGATION_PHASE) == 4 ]]
-  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'waits for you: all phase 1 runs failed' ]]
+  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'failed: all phase 1 runs failed' ]]
   [[ -z $(parent_field "$PIPELINE_PARENT" INVESTIGATION_LEASE) ]]
   [[ -z $(parent_field "$PIPELINE_PARENT" PR_URL) ]]
   grep -q "$PIPELINE_PARENT" "$HOME/notifications.log"
@@ -170,8 +171,8 @@ fi
 WRAPPER
   chmod +x "$HOME/pipeline-bin/gh"
   launch_pipeline inv,inv2
-  wait_status "$PIPELINE_PARENT" '^waiting$' 60
-  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'waits for you: merge failed' ]]
+  wait_status "$PIPELINE_PARENT" '^failed$' 60
+  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'failed: merge failed' ]]
   [[ -z $(parent_field "$PIPELINE_PARENT" INVESTIGATION_PRECHECK_RUN) ]]
   [[ $(jq -s '[.[] | select(.phase == "3")] | length' "$HOME/pipeline-calls.jsonl") == 0 ]]
   [[ $(parent_field "$PIPELINE_PARENT" INVESTIGATION_MERGER_REPLACEMENTS) == 1 ]]

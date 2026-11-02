@@ -15,15 +15,25 @@ configured in `INVESTIGATORS_TYPE`.
 2. **Strict independence during investigation.** Members work on isolated branches with no bus
    communication between them and without reading each other's worktrees.
 3. **Pull request on success.** A successful workflow produces a unified pull request opened by
-   a designated merger, followed by an independent review and human hand-off. Failures before
-   publication, including all Phase 1 runs failing or exhausted merger replacements, wait for
-   the human with the reason instead of claiming a PR was produced.
-4. **Human in control.** No code is ever merged automatically. The final stage always notifies
-   and transfers control to the human.
-5. **Runtime execution (Phases 1–4 and Resume).** The complete investigation workflow and resume are implemented and active:
-   `agent run --investigation --team "A, B" "topic"` runs the end-to-end pipeline (concurrent Phase 1 investigations on isolated branches, Phase 2 merger selection, integration
-   prompt `prompts/inv-merge.md`, PR creation, automated prechecks with single retry bounce `cmd__precheck`, Phase 3 reviewer selection, advisory review `prompts/review.md`, and Phase 4
-   human hand-off). Resuming an open PR (`agent run --resume <team>`) conducts Phase 5 advisory reviews across all team investigators proposing improvements without applying changes or auto-merging.
+   a designated merger, followed by review and terminal completion. Multi-investigator cohorts use an
+   independent reviewer; a sole investigator reviews their own PR in a separate child run. Failures before
+   publication or review, including all Phase 1 runs failing, exhausted merger replacements, or
+   lack of an eligible reviewer, terminate as failures (`STATUS: failed`) with the reason
+   instead of claiming a PR was produced.
+4. **Human in control without decision waits.** No code is ever merged automatically. The final stage
+   notifies the human upon completion (`STATUS: done` on healthy runs, `STATUS: failed` on execution
+   failures); no agent waits for a human decision once the flow finishes.
+5. **Clarification questions permitted.** Investigators and mergers are allowed to ask clarification
+   questions when a topic is ambiguous, underspecified, or could indicate multiple interpretations
+   (`STATUS: QUESTIONS`). Questions are surfaced in task question files and the child run pauses until
+   answers are provided, without failing the investigation run.
+6. **Runtime execution (Phases 1–4 and Resume).** The complete investigation workflow and resume are implemented and active:
+   `agent run --investigation --team "A"` or `agent run --investigation --team "A, B"` runs the end-to-end pipeline
+   (concurrent Phase 1 investigations on isolated branches, Phase 2 merger selection, integration
+   prompt `prompts/inv-merge.md`, PR creation, automated prechecks with single retry bounce `cmd__precheck`, Phase 3
+   reviewer selection preserving independence for multi-investigator cohorts, advisory review `prompts/review.md`, and Phase 4
+   terminal completion). Resuming an open PR (`agent run --resume <team>`) conducts Phase 5 advisory reviews across all
+   team investigators proposing improvements without applying changes or auto-merging.
    During Phase 1, member runs execute concurrently on dedicated branches (`agents/<investigator>/<timestamp>`)
    created from the frozen base commit, with prompt `prompts/inv-work.md`, strict MCP isolation,
    and capacity overlay tracking.
@@ -33,6 +43,7 @@ configured in `INVESTIGATORS_TYPE`.
 ### Command syntax
 
 ```bash
+agent run --investigation --team "A" "topic text"
 agent run --investigation --team "A, B, C" "topic text"
 agent run --investigation --team "A, B, C" -f topic.md
 ```
@@ -40,20 +51,20 @@ agent run --investigation --team "A, B, C" -f topic.md
 ### Options and argument rules
 
 - `--investigation`: Activates investigation team mode.
-- `--team`: Required argument listing at least two distinct investigator names separated by commas.
-  Spaces following commas (e.g. `--team "inv-astra, inv-gemini-argon"`) are accepted and trimmed.
+- `--team`: Required argument listing at least one configured investigator name (or multiple distinct names
+  separated by commas). Spaces following commas (e.g. `--team "inv-astra, inv-gemini-argon"`) are accepted and trimmed.
 - Topic specification: Provided as positional arguments, via `-f <file>`, or through standard input.
 
 ### Refusal rules (fail-fast validation)
 
 The command must be rejected immediately before any background task or worktree is created when:
 1. `--team` is omitted or empty.
-2. `--team` contains fewer than two names.
+2. `--team` contains fewer than one name.
 3. `--team` contains duplicate names.
 4. Any name in `--team` is not a configured investigator in `INVESTIGATORS_TYPE` of `agents.conf`.
    The refusal message lists all configured investigators.
 5. `--investigation` is combined with incompatible flags:
-   - `--autopilot`: Refused (investigation teams manage their own review and hand-off lifecycle).
+   - `--autopilot`: Refused (investigation teams manage their own review and completion lifecycle).
    - `--verify`: Refused (review is an intrinsic phase of investigation teams).
    - `--need` or `--on`: Refused (investigators run exclusively on the lead host).
    - Remote member specifications (`agent@node`): Refused.
@@ -74,9 +85,9 @@ The command must be rejected immediately before any background task or worktree 
   - Code changes: Follow full repository rules (`AGENTS.md`, test-first / TDD, gate verification).
     Changes are committed and pushed to the investigator's branch; no PR is opened.
   - Non-code findings: Written to `docs/investigations/<topic-slug>/<investigator>.md`.
-- **Termination:** Each run concludes independently with `STATUS: DONE` or `STATUS: FAILED`.
-  A failed run or a run without a published code/findings result does not stop the others. Capture
-  the result commit and status before choosing the merger; a bare `DONE` without a result is not success.
+- **Termination:** Each run concludes independently with `STATUS: DONE` or `STATUS: FAILED` (or pauses with `STATUS: QUESTIONS`
+  when clarifying ambiguities). A failed run or a run without a published code/findings result does not stop the others.
+  Capture the result commit and status before choosing the merger; a bare `DONE` without a result is not success.
 - **Publication verification and retry:** When an investigator finishes `DONE`, the coordinator
   verifies that the result commit descends from the base, changes code, and is present on `origin`.
   Transient network or transport failures during verification (`git ls-remote`) do not permanently fail
@@ -86,9 +97,9 @@ The command must be rejected immediately before any background task or worktree 
   member failed.
 - **Dashboard stage:** `phase 1: N investigators working (A, B, C)` while runs are in progress,
   `phase 1: verifying published results (...)` during publication retries. For legacy phase-1 runs (without
-  `INVESTIGATION_PIPELINE=1`), transitioning to `waits for you: phase 1 complete (merge not available yet)`
-  or `waits for you: all phase 1 runs failed`. In the full pipeline (`INVESTIGATION_PIPELINE=1`), advancing
-  directly to Phase 2 (or `waits for you: all phase 1 runs failed` if no phase 1 child completed `DONE`).
+  `INVESTIGATION_PIPELINE=1`), transitioning to `complete: phase 1 complete (merge not available yet)` (status `done`)
+  or `failed: all phase 1 runs failed` (status `failed`). In the full pipeline (`INVESTIGATION_PIPELINE=1`), advancing
+  directly to Phase 2 (or `failed: all phase 1 runs failed` with status `failed` if no phase 1 child completed `DONE`).
   Phase 1 completion sets `no-comment` on `auto_stage`, preventing inheritance of caller `PR_URL` or
   comments on unrelated PRs.
 
@@ -97,10 +108,11 @@ The command must be rejected immediately before any background task or worktree 
 - **Trigger:** All Phase 1 investigator runs have terminated.
 - **Candidate eligibility:** Only investigators whose Phase 1 run concluded with `STATUS: DONE`
   are eligible to serve as the merger. If no Phase 1 run ended `DONE`, merge is skipped, and the
-  team transitions to Phase 4 waiting for the human.
+  team transitions to Phase 4 terminal completion with status `failed` (`failed: all phase 1 runs failed`).
 - **Selection:** One investigator is chosen uniformly at random among eligible candidates.
   Names of eligible candidates are sorted, and selection is made via an unbiased draw seeded by
   `AGENT_INVESTIGATION_SEED` or parent `INVESTIGATION_SEED` (falling back to `/dev/urandom` when unseeded).
+  With a single investigator in `--team`, that investigator is chosen directly if Phase 1 succeeded.
 - **Execution:** The selected merger creates a new integration branch from the frozen base commit.
   It inspects the branches of all Phase 1 runs:
   - Preserves unique findings and implementations.
@@ -117,8 +129,8 @@ The command must be rejected immediately before any background task or worktree 
   - A second precheck failure or a merger failure (crash, non-zero exit, or cannot start) marks that merger failed
     and triggers one replacement (`INVESTIGATION_MERGER_REPLACEMENTS=1`) by another eligible `DONE` investigator
     (supporting up to 3 total Phase 2 merger runs when an initial merger bounces and fails prechecks before replacement).
-  - If the replacement merger fails, or if prechecks fail with replacements exhausted, the team hands off to the human
-    (`waits for you: merge failed`).
+  - If the replacement merger fails, or if prechecks fail with replacements exhausted, the team terminates with status
+    `failed` (`failed: merge failed`).
 - **Dashboard stage:** `merging: <merger>` during merge execution, `merging: <merger> (fix checks)` during
   precheck fix retries.
 
@@ -129,19 +141,25 @@ The command must be rejected immediately before any background task or worktree 
   the merger's published integration branch is re-validated against `PRECHECK_HEAD`. A transient transport
   or lookup error retries; a confirmed changed or unavailable branch triggers Phase 2 precheck failure
   handling following the same global bounce and replacement rules.
-- **Candidate eligibility:** Any investigator in the team *other than* the selected merger.
-  Investigators whose Phase 1 run failed or timed out remain eligible to review, ensuring two-member
+- **Candidate eligibility:** Any investigator in the team *other than* the selected merger, unless the
+  cohort has only one investigator, who may also review their own merge.
+  Investigators whose Phase 1 run failed or timed out remain eligible to review, ensuring multi-member
   teams can proceed even if one investigator encountered a Phase 1 failure.
-- **Selection:** Chosen uniformly at random from eligible candidates (excluding merger), sorted and
+- **Reviewer independence:** In multi-investigator cohorts, the merger is excluded from reviewer
+  eligibility. In a one-investigator cohort, the sole investigator performs Phase 3 in a separate review
+  child run. Review is never skipped, and a healthy single-investigator pipeline finishes as `done`.
+- **Selection:** Chosen uniformly at random from eligible candidates (excluding the merger in multi-investigator cohorts), sorted and
   drawn via `AGENT_INVESTIGATION_SEED` or parent `INVESTIGATION_SEED`.
 - **Review protocol:** Executes `prompts/review.md` without modification. The review evaluates the
   PR, suggests improvements, and concludes with an explicit verdict (`ready-to-merge`, `needs-fixes`, `incomplete`).
+  A `needs-fixes` or `incomplete` verdict still represents a successfully completed review pass.
 - **Replacement on failure:** If the reviewer crashes, exits non-zero, or yields no explicit verdict, it is replaced
   once (`INVESTIGATION_REVIEW_RETRIES=1`) by another eligible team investigator (excluding the merger).
-  If the replacement reviewer also fails, the team hands off to the human (`waits for you: review failed`).
+  If the replacement reviewer also fails (or no eligible candidate exists), the team terminates with status `failed`
+  (`failed: review failed`).
 - **Dashboard stage:** `review: <reviewer> (#<pr-number>)`.
 
-### Phase 4 — Human decision and hand-off
+### Phase 4 — Terminal completion
 
 - **Trigger:** Completion of Phase 3 review (or total failure in Phase 1 / exhausted retries).
 - **Actions:**
@@ -151,30 +169,37 @@ The command must be rejected immediately before any background task or worktree 
     `JOB_ID=`, `JOB_LEAD=`, `LEAD_URL=`, `PR_URL=`) to prevent inheritance from the dispatching runner.
   - External actions use existing best-effort helpers (`human_on_pr`, `notify`) executed at least once:
     - If a PR was opened, `human_on_pr` comments on the PR and records `INVESTIGATION_COMMENTED=1`.
-    - Human notification is sent via `notify` and records `INVESTIGATION_NOTIFIED=1`.
+    - Human notification is sent via `notify` with terminal status (`done` on healthy workflows, `failed` on
+      flow issues) and records `INVESTIGATION_NOTIFIED=1`.
     - Note that flags record completed local invocation attempts rather than guaranteeing external network delivery;
       a crash or process restart before flag persistence may re-execute an external action.
   - Sets `INVESTIGATION_HANDOFF_PENDING=""` once external actions complete.
   - If interrupted during hand-off, subsequent supervisor dispatch resumes hand-off and completes
     pending external actions (guaranteeing recovery even after capacity leases have been cleared).
-  - The team enters status `waiting` (establishing the readiness boundary for human intervention) after external notification attempts and flags are recorded. No code is ever merged automatically.
-- **Dashboard stages:**
-  - `waits for you: review ready (#<pr-number>)` (on review completion)
-  - `waits for you: all phase 1 runs failed` (if no phase 1 child completed `DONE`)
-  - `waits for you: merge failed` (if merge replacements or precheck retries exhausted)
-  - `waits for you: review failed` (if reviewer replacement failed)
+  - The team enters terminal status (`done` on success, `failed` on flow failure). No code is ever merged
+    automatically; the PR is available for independent human review and decision. No agent waits for a human
+    decision once the flow finishes.
+- **Terminal completion stages:**
+  - `complete: review ready (#<pr-number>)` (on review completion, status `done`)
+  - `failed: all phase 1 runs failed` (if no phase 1 child completed `DONE`, status `failed`)
+  - `failed: merge failed` (if merge replacements or precheck retries exhausted, status `failed`)
+  - `failed: review failed` (if reviewer replacement failed or no eligible reviewer exists, status `failed`)
+  - Legacy Phase 1 stages (when `INVESTIGATION_PIPELINE` is unset):
+    - `complete: phase 1 complete (merge not available yet)` (status `done`)
+    - `failed: all phase 1 runs failed` (status `failed`)
 
 ### Resume lifecycle (`agent run --resume <team>`)
 
-- **Open PR:** When resumed with an open PR, every investigator in the team (A, B, and C) performs
+- **Open PR:** When resumed with an open PR, every investigator in the team performs
   an advisory review of the existing PR. Reviews provide constructive critique, GitHub suggestions
   (```` ```suggestion ````), or unified diffs (```` ```diff ````). No changes are automatically
-  applied by the agents. The team releases investigator capacity leases and returns to Phase 4
-  waiting for the human.
+  applied by the agents. The team releases investigator capacity leases and reaches Phase 4
+  terminal completion (status `done`, or `failed` if advisory reviews fail).
 - **Merged or closed PR:** Resuming an investigation team whose PR is already merged or closed is
   refused with an explanatory message ("the PR is merged — a new topic is a new run" or
   "the PR is closed — a new topic is a new run") before creating any background tasks or worktrees.
-- **Refusal checks:** Resume requires a completed human hand-off (`waiting`) with no active lease or pending hand-off.
+- **Refusal checks:** Resume requires a completed investigation run (accepting status `done`, `failed`, or
+  legacy `waiting`) with no active lease or pending hand-off.
   Incompatible flags (`--same-round`, `--verify`) and teams without an open PR are rejected fail-fast.
 - **All-investigator cohort admission:** Admission reserves all team investigators together under
   `dispatch.lock`. If any team investigator is temporarily unavailable (running in another task or in `QUOTA_UNTIL` pause),
@@ -194,11 +219,13 @@ The command must be rejected immediately before any background task or worktree 
   cohort because all team investigators participate simultaneously. Any child crash, non-zero exit, or missing
   verdict is recorded in `resume.json`. During supervisor recovery, missing or unstarted child slots (status `new`
   without an active runner unit) fail while live running child slots retain their capacity lease.
-- **Phase 4 hand-off:** When all advisory reviews reach terminal states, `INVESTIGATION_LEASE` is cleared and the
-  team returns to Phase 4 human hand-off. The stage transitions to `waits for you: advisory reviews ready (#<pr-number>)`
-  (or `waits for you: advisory reviews ready (#<pr-number>, N failed)` if any reviewer failed or omitted an explicit
-  verdict). The PR receives a comment via `human_on_pr`, the human is notified via `notify`, and the parent returns
-  to `waiting`. Repeated resumes can be run on subsequent updates to the PR, tracking each pass with `INVESTIGATION_RESUME_COUNT`.
+- **Phase 4 terminal completion on resume:** When all advisory reviews reach terminal states, `INVESTIGATION_LEASE`
+  is cleared and the team returns to Phase 4 terminal completion. The stage transitions to
+  `complete: advisory reviews ready (#<pr-number>)` (status `done`) or
+  `failed: advisory reviews ready (#<pr-number>, N failed)` (status `failed` if any reviewer failed or omitted
+  an explicit verdict). The PR receives a comment via `human_on_pr`, the human is notified via `notify`
+  (`done` or `failed`), and the parent reaches terminal completion without waiting for human decision.
+  Repeated resumes can be run on subsequent updates to the PR, tracking each pass with `INVESTIGATION_RESUME_COUNT`.
 
 ## Random selection and reproducibility
 
@@ -209,16 +236,16 @@ The command must be rejected immediately before any background task or worktree 
    this value, ensuring fully reproducible test runs. The seed must be a non-negative decimal integer
    matching `^[0-9]+$`. If non-decimal characters are present, a warning `investigation_seed_invalid` is
    logged; if PRNG derivation fails, `investigation_seed_failed` is logged. A seed validation or selection
-   failure triggers an immediate failure handoff to the human (`waits for you: merge failed` or
-   `waits for you: review failed`), releasing capacity leases rather than misclassifying the team into the capacity queue.
+   failure triggers an immediate failure termination (`failed: merge failed` or `failed: review failed`),
+   releasing capacity leases rather than misclassifying the team into the capacity queue.
 3. **Entropy:** When unset, cryptographically secure pseudo-random entropy (`/dev/urandom`) is used
    for unbiased selection. If reading random bytes fails, `investigation_random_failed` is logged.
 
 ## Capacity, concurrency, and queue policy
 
 1. **Resource occupation:** While an investigation team phase is actively running, it occupies its
-   assigned investigators. Capacity leases are released when entering Phase 4 (waiting for human)
-   so that investigators are not locked while waiting for human input.
+   assigned investigators. Capacity leases are released when entering Phase 4 (terminal completion)
+   so that investigators are not locked once execution has finished.
    Admission waits until all requested investigators can be reserved together, under the same
    dispatch lock used by the queue and review pairs; it does not hold a partial set while waiting.
    Ownership remains with the team between phases. Its own reservations do not make its candidates
@@ -231,33 +258,39 @@ The command must be rejected immediately before any background task or worktree 
    - If other eligible candidates are currently free, an available candidate is selected immediately.
    - If *all* eligible candidates are temporarily unavailable, the team waits in the capacity queue
      for an investigator to become free.
-   - Immediate escalation to human waiting occurs only if no untried eligible candidate exists or
+   - Immediate failure termination occurs only if no untried eligible candidate exists or
      if a replacement has already failed.
-4. **Cancellation and stop lifecycle:** When an investigation team is stopped (`agent stop <id>` or `agent stop --running`), stop handling waits for any in-flight cohort admission under `dispatch.lock` before stopping children, cancelling pending handoffs and prechecks, and releasing its capacity lease. If stop is interrupted before cleanup finishes, subsequent supervisor ticks detect the retained lease and trigger dispatch cleanup outside the lock without advancing the stopped team.
+4. **Cancellation and stop lifecycle:** When an investigation team is stopped (`agent stop <id>` or `agent stop --running`),
+   stop handling waits for any in-flight cohort admission under `dispatch.lock` before stopping children, cancelling
+   pending handoffs and prechecks, and releasing its capacity lease. If stop is interrupted before cleanup finishes,
+   subsequent supervisor ticks detect the retained lease and trigger dispatch cleanup outside the lock without
+   advancing the stopped team.
 
 An interrupted merger or reviewer admission marks its unstarted child `failed` before replacement,
 so the child cannot retain investigator capacity after the parent releases its lease.
 
 ## Failure handling and replacement matrix
 
-| Scenario | Condition | System Action | Stage Display |
-|---|---|---|---|
-| Phase 1 partial failure | At least one investigator ends `DONE` | Other runs proceed normally; failed run excluded from merger selection | `phase 1: N investigators working (...)` |
-| Phase 1 total failure | Zero investigators end `DONE` | Skip merge and PR; notify human and wait | `waits for you: all phase 1 runs failed` |
-| Phase 2 precheck failure | Merger's PR fails `cmd__precheck` | Bounced back to merger once (`INVESTIGATION_MERGE_RETRIES=1`) with failure log appended to `task.md` | `merging: <merger> (fix checks)` |
-| Phase 2 merger abort | Merger crashes, fails, cannot start, or opens a PR against the wrong base | Replaced once (`INVESTIGATION_MERGER_REPLACEMENTS=1`) by another eligible `DONE` investigator; if none remain, wait for human | `merging: <merger-2>` or `waits for you: merge failed` |
-| Phase 2 precheck retry failure | Merger fails second precheck | Marks merger failed; triggers replacement if replacements remain (`INVESTIGATION_MERGER_REPLACEMENTS=1`); hands off to human if replacements exhausted | `merging: <merger-2>` or `waits for you: merge failed` |
-| Phase 3 review failure | Reviewer crashes, fails, or yields no explicit verdict | Replaced once (`INVESTIGATION_REVIEW_RETRIES=1`) by another eligible team member (excluding merger); if none remain, wait for human | `review: <reviewer-2> (#<pr-number>)` or `waits for you: review failed` |
-| Candidate temporarily busy | Candidate in `QUOTA_UNTIL` / queue | Pick another free candidate; queue if all eligible candidates are temporarily paused | `waiting: capacity queue` |
-| Resume on merged/closed PR | Target PR is merged or closed on GitHub | Refuse command immediately before creating tasks or taking capacity | Exit 1 with explanatory message (`the PR is merged — a new topic is a new run` or `the PR is closed — a new topic is a new run`) |
-| Resume capacity contention | Any team investigator busy or in `QUOTA_UNTIL` | Queue entire cohort under `dispatch.lock`; no partial starts | `waiting: capacity queue` |
-| Resume advisory review failure | One or more advisory reviewers crash, fail, or omit explicit verdict | No replacements in advisory cohort; failed/missing verdict slots recorded in `resume.json`; handoff still transfers to human with failure count | `waits for you: advisory reviews ready (#<pr-number>, N failed)` |
+| Scenario | Condition | System Action | Stage Display | Status |
+|---|---|---|---|---|
+| Phase 1 partial failure | At least one investigator ends `DONE` | Other runs proceed normally; failed run excluded from merger selection | `phase 1: N investigators working (...)` | active |
+| Phase 1 total failure | Zero investigators end `DONE` | Skip merge and PR; notify human and terminate | `failed: all phase 1 runs failed` | `failed` |
+| Clarification question | Child investigator or merger encounters ambiguous topic | Conductor pauses child and records questions file; resumes child when answered | child `waiting: questions` | active / child paused |
+| Phase 2 precheck failure | Merger's PR fails `cmd__precheck` | Bounced back to merger once (`INVESTIGATION_MERGE_RETRIES=1`) with failure log appended to `task.md` | `merging: <merger> (fix checks)` | active |
+| Phase 2 merger abort | Merger crashes, fails, cannot start, or opens a PR against the wrong base | Replaced once (`INVESTIGATION_MERGER_REPLACEMENTS=1`) by another eligible `DONE` investigator; if none remain, terminate | `merging: <merger-2>` or `failed: merge failed` | active / `failed` |
+| Phase 2 precheck retry failure | Merger fails second precheck | Marks merger failed; triggers replacement if replacements remain (`INVESTIGATION_MERGER_REPLACEMENTS=1`); terminates if replacements exhausted | `merging: <merger-2>` or `failed: merge failed` | active / `failed` |
+| Phase 3 review failure / no reviewer | Reviewer crashes, fails, yields no explicit verdict, or no eligible untried reviewer remains | Replaced once (`INVESTIGATION_REVIEW_RETRIES=1`) by another eligible team member (excluding the merger in multi-investigator cohorts); if none remain, terminate | `review: <reviewer-2> (#<pr-number>)` or `failed: review failed` | active / `failed` |
+| Candidate temporarily busy | Candidate in `QUOTA_UNTIL` / queue | Pick another free candidate; queue if all eligible candidates are temporarily paused | `waiting: capacity queue` | `waiting` |
+| Resume on merged/closed PR | Target PR is merged or closed on GitHub | Refuse command immediately before creating tasks or taking capacity | Exit 1 with explanatory message | refused |
+| Resume capacity contention | Any team investigator busy or in `QUOTA_UNTIL` | Queue entire cohort under `dispatch.lock`; no partial starts | `waiting: capacity queue` | `waiting` |
+| Resume advisory review success | All advisory reviewers conclude with explicit verdicts | Complete advisory pass, comment on PR, notify human and terminate | `complete: advisory reviews ready (#<pr-number>)` | `done` |
+| Resume advisory review failure | One or more advisory reviewers crash, fail, or omit explicit verdict | No replacements in advisory cohort; failed/missing verdict slots recorded in `resume.json`; notify human with failure count | `failed: advisory reviews ready (#<pr-number>, N failed)` | `failed` |
 
 ## Task metadata and data model
 
 > [!NOTE]
 > Round 4 finalizes the full investigation lifecycle, adding Phase 5 resume metadata, advisory review tracking, and manual verification procedures.
-> Task attributes are additive; existing task files, metadata, and bus state remain backwards-compatible. Old Phase 4 tasks lacking Phase 5 fields load normally.
+> Task attributes are additive; existing task files, metadata, and bus state remain backwards-compatible. Old Phase 4 tasks lacking Phase 5 fields or having legacy status `waiting` load and resume normally.
 
 Task attributes stored in the orchestration task's `meta.env` and task files (no bus state changes):
 
@@ -323,14 +356,14 @@ Child merger/reviewer task fields:
 
 ### Phase 5 resume metadata (Round 4)
 Parent orchestration task fields:
-- `INVESTIGATION_PHASE`: Set to `5` while advisory reviews run, returning to `4` at human hand-off.
+- `INVESTIGATION_PHASE`: Set to `5` while advisory reviews run, returning to `4` at terminal completion.
 - `INVESTIGATION_RESUME_TASKS`: Comma-separated list of child advisory review task IDs for the current resume pass.
 - `INVESTIGATION_RESUME_HEAD`: Commit SHA of the PR branch when the resume pass was initiated.
 - `INVESTIGATION_RESUME_COUNT`: Numeric counter tracking the number of resume passes performed on the team (e.g. `1`, `2`, ...).
 - `resume.json` (version 1): Structured JSON record storing Phase 5 member outcomes:
   `{"version":1,"members":[{"agent":"...","task":"...","status":"...","verdict":"..."}]}`
   (where `verdict` is a string: `ready-to-merge`, `needs-fixes`, `incomplete`, or empty if missing/failed).
-- Admission & Recovery: Admission writes the complete `resume.json` manifest skeleton with allocated task IDs and sets `INVESTIGATION_RESUME_TASKS` before setting `INVESTIGATION_LEASE 1`. All-investigator admission occurs under `dispatch.lock`. During supervisor recovery, missing or unstarted child slots (status `new` without an active runner unit) fail while live running child slots retain the capacity lease. No replacements are attempted in the advisory cohort. Old Phase 4 tasks lacking these fields load normally without error.
+- Admission & Recovery: Admission writes the complete `resume.json` manifest skeleton with allocated task IDs and sets `INVESTIGATION_RESUME_TASKS` before setting `INVESTIGATION_LEASE 1`. All-investigator admission occurs under `dispatch.lock`. During supervisor recovery, missing or unstarted child slots (status `new` without an active runner unit) fail while live running child slots retain the capacity lease. No replacements are attempted in the advisory cohort. Old Phase 4 tasks lacking these fields or with status `waiting` load normally without error.
 
 Child advisory review task fields:
 - `KIND=investigation`: Identifies child as an investigation task.
@@ -393,7 +426,7 @@ When implementing future rounds, existing components have explicit boundaries:
    - Immediate refusal of resume on merged or closed PRs ("the PR is merged — a new topic is a new run" or "the PR is closed — a new topic is a new run").
    - Dedicated `resume.json` version 1 manifest and pass tracking metadata (`INVESTIGATION_RESUME_TASKS`, `INVESTIGATION_RESUME_HEAD`, `INVESTIGATION_RESUME_COUNT`).
    - All-investigator admission and recovery under `dispatch.lock`, with live slot lease retention and no replacements in advisory cohorts.
-   - Return to Phase 4 human hand-off (`waits for you: advisory reviews ready (#<pr-number>)` or failure count suffix).
+   - Return to Phase 4 terminal completion (`complete: advisory reviews ready (#<pr-number>)` or failure count suffix `failed: advisory reviews ready (#<pr-number>, N failed)`).
    - Comprehensive README updates, compatibility guarantees for legacy Phase 4 tasks, and human verification checklist.
 
 ## Manual checklist (human)
@@ -404,21 +437,28 @@ When implementing future rounds, existing components have explicit boundaries:
 Follow this checklist to verify an investigation team run and resume manually:
 
 1. **Configuration**:
-   Verify that `agents.conf` defines at least two investigators under `INVESTIGATORS_TYPE`.
-2. **Initial investigation start**:
+   Verify that `agents.conf` defines at least one investigator under `INVESTIGATORS_TYPE`.
+2. **Initial investigation start (single investigator)**:
+   Run `agent run --investigation --team "inv1" "Topic text"`.
+   Confirm that:
+   - The investigator starts in an isolated worktree (`phase 1: 1 investigators working (inv1)`).
+   - The investigator completes Phase 1 (`DONE`), is selected as merger in Phase 2 (`merging: inv1`), opens a PR, and passes prechecks.
+   - In Phase 3, the sole investigator reviews the PR in a separate child run and returns an explicit verdict.
+   - The healthy flow terminates with status `done` and stage `complete: review ready (#<pr-number>)`, without waiting for a decision.
+3. **Initial investigation start (multiple investigators)**:
    Run `agent run --investigation --team "inv1, inv2" "Topic text"`.
    Confirm that:
-   - Both investigators start concurrently in isolated worktrees (`phase 1: 2 investigators working`).
+   - Both investigators start concurrently in isolated worktrees (`phase 1: 2 investigators working (inv1, inv2)`).
    - One investigator is chosen to merge (`merging: <merger>`), opens a PR, and prechecks run.
    - The other investigator reviews the PR (`review: <reviewer> (#<pr>)`).
-   - Final stage transitions to `waits for you: review ready (#<pr>)` and human notification is delivered.
-3. **Advisory resume on open PR**:
+   - Final stage transitions to `complete: review ready (#<pr>)` and status becomes `done` without waiting for a human decision.
+4. **Advisory resume on open PR**:
    With the PR open, run `agent run --resume <team-id> "Additional check"`.
    Confirm that:
-   - All team investigators review the open PR concurrently (`review: 2 investigators reviewing (#<pr>)`).
+   - All team investigators review the open PR concurrently (`review: N investigators reviewing (#<pr>)`).
    - Reviews are posted to GitHub as comments/suggestions without altering code or merging.
-   - Stage transitions to `waits for you: advisory reviews ready (#<pr>)` and status returns to `waiting`.
-4. **Refusal on merged or closed PR**:
+   - Stage transitions to `complete: advisory reviews ready (#<pr>)` and status reaches terminal `done`.
+5. **Refusal on merged or closed PR**:
    Merge or close the PR (`gh pr merge` or `gh pr close`).
    Run `agent run --resume <team-id>`.
    Confirm immediate refusal (`the PR is merged — a new topic is a new run` or `the PR is closed — a new topic is a new run`) without creating tasks or worktrees.

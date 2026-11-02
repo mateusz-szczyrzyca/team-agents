@@ -81,23 +81,29 @@ EOF
   setup_isolation
   export STUB_CLI_LOG="$HOME/codex_cli.log"
 
-  # 1. Investigation team task: codex args must not configure active agentbus command
+  # 1. Investigation team task: codex provides server command with enabled=false and no active args
   create_isolation_task "inv-child-codex" "investigation" "team-parent-1" "codex"
   meta_load "inv-child-codex"
   local child_dir="$AGENTS_HOME/tasks/inv-child-codex"
   : > "$STUB_CLI_LOG"
   run_codex "inv-child-codex" new 1 "$child_dir/prompt-1.md" "$child_dir"
-  run grep -q "mcp_servers\.agentbus\.command" "$STUB_CLI_LOG"
+  grep -q "mcp_servers\.agentbus\.command" "$STUB_CLI_LOG"
+  grep -q "mcp_servers\.agentbus\.enabled=false" "$STUB_CLI_LOG"
+  run grep -q "mcp_servers\.agentbus\.args" "$STUB_CLI_LOG"
+  [ "$status" -ne 0 ]
+  run grep -q "mcp_servers\.agentbus\.tool_timeout_sec" "$STUB_CLI_LOG"
   [ "$status" -ne 0 ]
 
-  # 2. Legacy investigator task: codex args must contain mcp_servers.agentbus.command
+  # 2. Legacy investigator task: codex args must contain active mcp_servers.agentbus command and args
   create_isolation_task "inv-legacy-codex" "investigation" "" "codex"
   meta_load "inv-legacy-codex"
   local legacy_dir="$AGENTS_HOME/tasks/inv-legacy-codex"
   : > "$STUB_CLI_LOG"
   run_codex "inv-legacy-codex" new 1 "$legacy_dir/prompt-1.md" "$legacy_dir"
-  run grep -q "mcp_servers\.agentbus\.command" "$STUB_CLI_LOG"
-  [ "$status" -eq 0 ]
+  grep -q "mcp_servers\.agentbus\.command" "$STUB_CLI_LOG"
+  grep -q "mcp_servers\.agentbus\.args" "$STUB_CLI_LOG"
+  run grep -q "mcp_servers\.agentbus\.enabled=false" "$STUB_CLI_LOG"
+  [ "$status" -ne 0 ]
 }
 
 @test "gemini mcp config excludes agentbus for investigation team task but includes it for legacy investigator" {

@@ -45,5 +45,25 @@ Investigate the topic described below in the TOPIC section independently and tho
 3. **Completion:**
    - When finished and your results are pushed, end your turn with a final message containing:
      `STATUS: DONE`
-   - If blocked, record questions and blockers in your findings file, push, and end with:
-     `STATUS: FAILED` (the human will decide).
+   - If the task subject is unclear or may indicate multiple interpretations, ask for clarification:
+     write questions to `{{QUESTIONS_FILE}}` in the format shown below, push, and end with `STATUS: QUESTIONS`.
+   - If blocked or unable to complete the investigation, record blockers in your findings file, push, and end with:
+     `STATUS: FAILED`
+
+## Questions for clarification
+
+If something about the task is unclear or could be interpreted in multiple ways, write your questions in this format:
+
+```
+# Questions — {{TASK_ID}}
+
+## 1. <a short, specific question>
+a) <option> — <how it changes your investigation>
+b) <option> — <how it changes your investigation>
+
+**Recommended:** a) — <why: simpler, less likely to go wrong> (investigator)
+
+**Verdict:**
+```
+
+(every question starts with `## <number>. ` and has exactly one `**Recommended:**` part and one empty `**Verdict:**` line)

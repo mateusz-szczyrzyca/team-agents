@@ -21,7 +21,7 @@ configure_investigators() {
     bash "$AGENTS_HOME/tasks/$parent/meta.env" "inv,inv2"
   [[ $(cat "$AGENTS_HOME/tasks/$parent/task.md") == "$expected" ]]
   # Let independent child runners finish before Bats removes their temporary home.
-  wait_status "$parent" waiting
+  wait_status "$parent" 'done|failed'
 }
 
 @test "stdin stream read failure fails before creating investigation team parent task" {

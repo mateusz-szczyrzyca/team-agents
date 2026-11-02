@@ -25,11 +25,25 @@ if phase == "1":
     os.execv(str(original), [str(original), *sys.argv[1:]])
 branch = git("branch", "--show-current")
 agent = branch.split("/")[-2]
+is_resume = "--resume" in sys.argv
 scenario = json.loads((home / "scenario.json").read_text())
 action = scenario.get(agent, {}).get("phase" + phase, "publish" if phase == "2" else "review")
+if is_resume and action == "questions":
+    action = "publish" if phase == "2" else "review"
 (home / f"phase{phase}-{task}.prompt").write_text(sys.argv[-1])
 with (home / "pipeline-calls.jsonl").open("a") as stream:
     stream.write(json.dumps({"task": task, "phase": phase, "agent": agent, "action": action}) + "\n")
+if action == "questions":
+    final = (
+        "## 1. Ambiguous investigation direction\n"
+        "a) Focus on unit tests — faster feedback\n"
+        "b) Focus on e2e tests — broad coverage\n\n"
+        "**Recommended:** a) — simpler and faster\n\n"
+        "**Verdict:**\n\n"
+        "STATUS: QUESTIONS\n"
+    )
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": final}), flush=True)
+    sys.exit(0)
 if phase == "2" and action == "publish":
     manifest = home / "agents" / "tasks" / context[1] / "phase1.json"
     for member in json.loads(manifest.read_text())["members"]:

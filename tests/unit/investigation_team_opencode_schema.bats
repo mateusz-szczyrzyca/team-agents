@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# Tests that opencode disabled MCP configuration matches official schema:
-# When disabled, McpConfig requires { enabled: false } with no additional properties.
+# Tests that opencode disabled MCP configuration defines a full disabled local server
+# (type local, command, and enabled false) so opencode has transport details.
 
 load helpers
 
@@ -35,12 +35,20 @@ EOF
   touch "$dir/prompt-1.md"
 }
 
-@test "opencode config for independent investigation emits strictly valid disabled mcp object with enabled false only" {
+@test "opencode config for independent investigation defines disabled local agentbus server with transport command" {
   setup_isolation
   create_isolation_task "inv-child-opencode-schema" "investigation" "team-parent-1" "opencode"
   meta_load "inv-child-opencode-schema"
   run opencode_config "inv-child-opencode-schema"
   [ "$status" -eq 0 ]
-  run jq -e '.mcp.agentbus | keys == ["enabled"] and .enabled == false' <<< "$output"
+  run jq -e --arg bin "$AGENTBUS_BIN" '
+    .mcp.agentbus |
+    .type == "local" and
+    .enabled == false and
+    .command[0] == $bin and
+    (.command | index("serve") != null) and
+    (.command | index("--task") != null) and
+    (.command | index("inv-child-opencode-schema") != null)
+  ' <<< "$output"
   [ "$status" -eq 0 ]
 }

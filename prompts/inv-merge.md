@@ -66,5 +66,25 @@ and open (or update) a pull request on GitHub.
 5. **Completion:**
    - When the PR is opened (or updated on bounce) and pushed, end your turn with:
      `STATUS: DONE`
-   - If blocked or unable to resolve, record blockers and end with:
+   - If merging the independent results raises questions about the subject matter or approach, ask for clarification:
+     write questions to `{{QUESTIONS_FILE}}` in the format shown below, push, and end with `STATUS: QUESTIONS`.
+   - If blocked or unable to resolve the merge, record blockers and end with:
      `STATUS: FAILED`
+
+## Questions for clarification
+
+If something about merging these results is unclear or could be interpreted in multiple ways, write your questions in this format:
+
+```
+# Questions — {{TASK_ID}}
+
+## 1. <a short, specific question>
+a) <option> — <how it changes the merge>
+b) <option> — <how it changes the merge>
+
+**Recommended:** a) — <why: simpler, less likely to go wrong> (merger)
+
+**Verdict:**
+```
+
+(every question starts with `## <number>. ` and has exactly one `**Recommended:**` part and one empty `**Verdict:**` line)
