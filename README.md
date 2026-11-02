@@ -1319,8 +1319,9 @@ make integration   # real agent CLIs and accounts (costs usage)
 
 - **Bats in parallel.** With GNU `parallel` installed (`apt install parallel`; once,
   `mkdir -p ~/.parallel && touch ~/.parallel/will-cite`) the Bats tests run `BATS_JOBS` at once (default: the
-  number of processors); the files of `BATS_SERIAL` in the `Makefile` — they start servers on local ports — run one
-  after another beside them, and their output follows the others'. The slowest files start first: each run records
+  number of processors); a file listed in `BATS_SERIAL` in the `Makefile` runs one after another with the other
+  listed ones, beside them (four files bound to timings a loaded machine misses), and their output follows the
+  others'. The slowest files start first: each run records
   every file's time in `build/bats-timings.txt`. `make unit-bats BATS_JOBS=1` runs every file one after another;
   `BATS_FILES="tests/unit/x.bats …"` runs only those files.
 - **Linters.** `tools/install-linters.sh` downloads pinned release binaries of `golangci-lint`, `staticcheck` and
