@@ -1,0 +1,182 @@
+diff --git a/Makefile b/Makefile
+index 1401a3f..1b852b0 100644
+--- a/Makefile
++++ b/Makefile
+@@ -43,2 +43,3 @@ SHELL_SCRIPTS += tests/unit/investigation_single_pipeline.bats tests/unit/invest
+ SHELL_SCRIPTS += tests/unit/investigation_resume_independence.bats
++SHELL_SCRIPTS += tests/unit/investigation_completed_legacy.bats
+ # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
+diff --git a/README.md b/README.md
+index a008fe8..fbdecea 100644
+--- a/README.md
++++ b/README.md
+@@ -212,2 +212,6 @@ recording an attempt can repeat that external action; the existing helpers provi
+ Existing metadata fields and manifests remain readable; interrupted hand-offs normalize old `waits for you:` stages on recovery. Resume accepts completed `done`/`failed` parents and legacy `waiting` parents. The main dashboard shows real investigators only, filtering out synthetic investigation team tasks.
++Supervision and `agent dispatch` also finalize already-delivered legacy Phase 4 handoffs left as `waiting`,
++using their recorded `INVESTIGATION_HANDOFF_RESULT` (`done` or `failed`). Existing delivery flags prevent
++duplicate notifications and PR comments. Clarification waits and unfinished phases are unaffected; an absent
++or unknown recorded result is not treated as proof of completion.
+ Stopping an investigation team (`agent stop <id>` or `agent stop --running`) synchronizes with in-flight
+@@ -717,3 +721,3 @@ agent run <agent> "task" | -f task.md         start a task (inside the repositor
+ agent run --team a,b[,c] [--verify] "task"    start a team (optionally with a final PR review)
+-agent run --investigation --team "A, B" "topic"  investigators create and review a PR; the human decides
++agent run --investigation --team "A" "topic"     one or more investigators create and review a PR, then finish
+ agent run --resume <team|task> ["addition"]   resume from the last checkpoint (same branches; after a merged round: new ones)
+diff --git a/bin/agent b/bin/agent
+index 53cf06f..1cbc382 100755
+--- a/bin/agent
++++ b/bin/agent
+@@ -3523,2 +3523,13 @@ investigation_field() { ( unset "$2"; task_field "$1" "$2"; ) }
+
++# investigation_completed_wait parent identifies an old completed handoff still marked waiting.
++# Only a recorded terminal result in Phase 4 proves completion; clarification and capacity waits stay active.
++investigation_completed_wait() {
++  local parent=$1 result
++  [[ $(task_field "$parent" STATUS) == waiting \
++    && $(investigation_field "$parent" INVESTIGATION_PIPELINE) == 1 \
++    && $(investigation_field "$parent" INVESTIGATION_PHASE) == 4 ]] || return 1
++  result=$(investigation_field "$parent" INVESTIGATION_HANDOFF_RESULT)
++  [[ $result == done || $result == failed ]]
++}
++
+ # investigation_handoff parent stage result records terminal completion and delivers the PR summary once.
+@@ -3994,3 +4005,4 @@ investigation_teams_tick() {
+     if [[ $st =~ ^(stopped|done|failed)$ || -f $TASKS/$parent/stop-requested ]]; then continue; fi
+-    if [[ $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ]]; then
++    if [[ $(investigation_field "$parent" INVESTIGATION_LEASE) == 1 || $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) == 1 ]] \
++        || investigation_completed_wait "$parent"; then
+       investigation_team_tick "$parent"
+@@ -6060,3 +6072,4 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
+       # A coordinator has no runner; the timer also retries cohorts after quota expiry without a runner exit.
+-      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 || $(investigation_field "$id" INVESTIGATION_LEASE) == 1 ]]; then phase1_pending=1; fi
++      if [[ $st == new || $st == running || $(investigation_field "$id" INVESTIGATION_HANDOFF_PENDING) == 1 || $(investigation_field "$id" INVESTIGATION_LEASE) == 1 ]] \
++          || investigation_completed_wait "$id"; then phase1_pending=1; fi
+       continue
+@@ -8488,3 +8501,3 @@ agent run --team a,b[,c] [--verify|--autopilot] "task"  team; --verify: an inves
+                                            --autopilot: two independent reviews, the merge, the next round
+-agent run --investigation --team "A, B" "topic"  investigators create and review a PR; the human decides
++agent run --investigation --team "A" "topic"     one or more investigators create and review a PR, then finish
+ agent autopilot <team> [on|off]            a team's --autopilot: shown, or switched (off: no merge nor next round by itself)
+diff --git a/docs/investigation-teams.md b/docs/investigation-teams.md
+index b61aed9..0ea6a85 100644
+--- a/docs/investigation-teams.md
++++ b/docs/investigation-teams.md
+@@ -293,2 +293,5 @@ so the child cannot retain investigator capacity after the parent releases its l
+ > Task attributes are additive; existing task files, metadata, and bus state remain backwards-compatible. Old Phase 4 tasks lacking Phase 5 fields or having legacy status `waiting` load and resume normally.
++> Supervision and dispatch finish legacy Phase 4 decision waits using the recorded `done` or `failed` handoff
++> result, even when the lease and pending-delivery flag were already cleared. Recorded delivery flags prevent
++> repeat notifications and PR comments. Missing or unknown results are not guessed.
+
+@@ -422,3 +425,3 @@ When implementing future rounds, existing components have explicit boundaries:
+    - Single replacement logic for failed mergers and reviewers.
+-   - Phase 4 human notification and transition to idle wait.
++   - Phase 4 human notification and terminal completion without a decision wait.
+ 4. **Round 4 (Completed — Resume and Polish):**
+diff --git a/tests/unit/investigation_completed_legacy.bats b/tests/unit/investigation_completed_legacy.bats
+new file mode 100644
+index 0000000..51fec51
+--- /dev/null
++++ b/tests/unit/investigation_completed_legacy.bats
+@@ -0,0 +1,102 @@
++#!/usr/bin/env bats
++# Completed handoffs from older installations must not wait forever after upgrade.
++
++load helpers
++
++# legacy_completion result creates the metadata written after an old Phase 4 handoff.
++legacy_completion() {
++  LEGACY_PARENT=20261101-000001-investigation-team
++  mkdir -p "$AGENTS_HOME/tasks/$LEGACY_PARENT"
++  cat > "$AGENTS_HOME/tasks/$LEGACY_PARENT/meta.env" <<META
++ID=$LEGACY_PARENT
++AGENT=investigation-team
++KIND=investigation_team
++TYPE=internal
++STATUS=waiting
++TEAM=
++RUN=0
++ROUND=0
++REPO_NAME=repo
++REPO_ROOT=$HOME/repo
++WORKTREE=$HOME/repo
++INVESTIGATION_PIPELINE=1
++INVESTIGATION_PHASE=4
++INVESTIGATION_LEASE=
++INVESTIGATION_HANDOFF_PENDING=
++INVESTIGATION_HANDOFF_STAGE=waits\\ for\\ you:\\ review\\ ready\\ \\(#73\\)
++INVESTIGATION_HANDOFF_RESULT=$1
++INVESTIGATION_COMMENTED=1
++INVESTIGATION_NOTIFIED=1
++PR_URL=https://github.com/example/repo/pull/73
++PR_NUMBER=73
++META
++}
++
++# legacy_field key reads the parent's shell-quoted metadata without inheriting caller values.
++legacy_field() {
++  bash -c 'source "$1"; printf "%s" "${!2-}"' bash "$AGENTS_HOME/tasks/$LEGACY_PARENT/meta.env" "$1"
++}
++
++# assert_no_legacy_delivery checks that recovery neither re-notifies nor starts an agent.
++assert_no_legacy_delivery() {
++  [ ! -e "$HOME/notifications.log" ]
++  [ ! -e "$HOME/gh.log" ]
++  [ "$(find "$AGENTS_HOME/tasks" -name meta.env | wc -l)" -eq 1 ]
++  [ -z "$(ls -A "$STUB_UNITS")" ]
++}
++
++@test "supervisor finalizes an already delivered legacy success without another decision or notification" {
++  legacy_completion 'done'
++  run agent _supervise
++  [ "$status" -eq 0 ]
++  [ "$(status_of "$LEGACY_PARENT")" = 'done' ]
++  [ "$(legacy_field AUTO_STAGE)" = 'complete: review ready (#73)' ]
++  [ -z "$(legacy_field INVESTIGATION_HANDOFF_PENDING)" ]
++  assert_no_legacy_delivery
++  run agent _supervise
++  [ "$status" -eq 0 ]
++  [ "$(status_of "$LEGACY_PARENT")" = 'done' ]
++  assert_no_legacy_delivery
++}
++
++@test "dispatch finalizes an already delivered legacy failure with its recorded result" {
++  legacy_completion failed
++  run agent dispatch
++  [ "$status" -eq 0 ]
++  [ "$(status_of "$LEGACY_PARENT")" = failed ]
++  [ "$(legacy_field AUTO_STAGE)" = 'failed: review ready (#73)' ]
++  assert_no_legacy_delivery
++}
++
++@test "legacy completion recovery does not guess a missing or invalid result" {
++  local result
++  for result in "" unknown; do
++    legacy_completion "$result"
++    run agent _supervise
++    [ "$status" -eq 0 ]
++    run agent dispatch
++    [ "$status" -eq 0 ]
++    [ "$(status_of "$LEGACY_PARENT")" = waiting ]
++    assert_no_legacy_delivery
++  done
++}
++
++@test "legacy completion recovery preserves unfinished phases and stopped parents" {
++  local phase
++  for phase in 1 2 3 5; do
++    legacy_completion 'done'
++    sed -i "s/^INVESTIGATION_PHASE=4$/INVESTIGATION_PHASE=$phase/" "$AGENTS_HOME/tasks/$LEGACY_PARENT/meta.env"
++    run agent dispatch
++    [ "$status" -eq 0 ]
++    [ "$(status_of "$LEGACY_PARENT")" = waiting ]
++    assert_no_legacy_delivery
++  done
++  legacy_completion 'done'
++  sed -i 's/^STATUS=waiting$/STATUS=stopped/' "$AGENTS_HOME/tasks/$LEGACY_PARENT/meta.env"
++  run agent _supervise
++  [ "$status" -eq 0 ]
++  run agent dispatch
++  [ "$status" -eq 0 ]
++  [ "$(status_of "$LEGACY_PARENT")" = stopped ]
++  assert_no_legacy_delivery
++}
