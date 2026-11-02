@@ -1,10 +1,28 @@
 // cli.go implements command-line interface parsing and dispatch.
 package main
 
+import (
+	"fmt"
+)
+
 // dispatchCommand processes the command-line arguments and dispatches to the appropriate handler.
 // It returns a RunError if the command is invalid or execution fails.
 func dispatchCommand(argv []string) *RunError {
-	return nil
+	if len(argv) == 0 {
+		// No arguments: show status or help placeholder
+		return nil
+	}
+
+	cmd := argv[0]
+
+	// Handle help flags
+	if cmd == "-h" || cmd == "--help" || cmd == "help" {
+		fmt.Println(usageText())
+		return nil
+	}
+
+	// Unknown command
+	return NewRunError(RunUnknownCommand, fmt.Sprintf("unknown command: %s", cmd))
 }
 
 // usageText returns the full help text for the agent command.

@@ -14,7 +14,7 @@ func main() {
 	}
 }
 
-// run executes the agent command with the given arguments and returns an error.
+// run executes the agent command with the given arguments and returns a RunError.
 func run(argv []string) *RunError {
-	return nil
+	return dispatchCommand(argv)
 }

@@ -8,8 +8,9 @@ import (
 // App owns the dependencies of the agent CLI: paths, configuration, output streams,
 // process execution, clock, random source, and runner log sink.
 type App struct {
-	// stdout and stderr are the output streams for the application.
+	// stdout is the standard output stream for the application.
 	stdout io.Writer
+	// stderr is the standard error stream for the application.
 	stderr io.Writer
 }
 

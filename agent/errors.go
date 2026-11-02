@@ -3,8 +3,10 @@ package main
 
 // RunError is an operation error for the Run operation. It wraps a RunCause.
 type RunError struct {
+	// cause is the reason for the error.
 	cause RunCause
-	msg   string
+	// msg is the error message.
+	msg string
 }
 
 // RunCause is an enum representing the possible failure causes of the Run operation.
