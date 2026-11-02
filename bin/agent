@@ -2605,7 +2605,7 @@ build_prompt() { # id mode qfile next_round
       R[ANSWERED_ROUND]=$ANSWERS_PENDING
       R[ANSWERED_FILE]="$TASKS/$id/questions-$ANSWERS_PENDING.md"
       printf '\n\n'
-      render "$PROMPTS/resume.md"
+      render "$PROMPTS/inv-resume.md"
       printf '\n---\n\n'
       expand_answers "$TASKS/$id/questions-$ANSWERS_PENDING.md"
     fi

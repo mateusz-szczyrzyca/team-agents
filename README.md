@@ -209,7 +209,7 @@ if no replacement is available or it fails, the team finishes as `failed` (`fail
 Phase 4 releases capacity leases, tracks pending PR comment and notification attempts (`INVESTIGATION_HANDOFF_PENDING`),
 and finishes as `done` without waiting for a decision or auto-merging (`complete: review ready (#<pr-number>)`). A crash before
 recording an attempt can repeat that external action; the existing helpers provide best-effort delivery.
-Existing metadata fields and manifests remain readable; interrupted hand-offs normalize old `waits for you:` stages on recovery. Resume accepts completed `done`/`failed` parents and legacy `waiting` parents. The main dashboard shows real investigators only; synthetic investigation parents remain available on the teams pages.
+Existing metadata fields and manifests remain readable; interrupted hand-offs normalize old `waits for you:` stages on recovery. Resume accepts completed `done`/`failed` parents and legacy `waiting` parents. The main dashboard shows real investigators only, filtering out synthetic investigation team tasks.
 Stopping an investigation team (`agent stop <id>` or `agent stop --running`) synchronizes with in-flight
 admission under the dispatch lock, cancels pending handoffs, and stops active child tasks and checks before
 releasing its capacity lease. Supervisor recovery detects stopped leased parents to complete interrupted
