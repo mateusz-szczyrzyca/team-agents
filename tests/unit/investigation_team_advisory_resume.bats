@@ -72,7 +72,7 @@ assert_advisory_cohort() {
     git -C "$(advisory_field "$child" WORKTREE)" diff --quiet HEAD
   done
   [ -z "$(advisory_field "$parent" INVESTIGATION_LEASE)" ]
-  [[ $(advisory_field "$parent" AUTO_STAGE) == *'waits for you: advisory reviews ready'* ]]
+  [[ $(advisory_field "$parent" AUTO_STAGE) == *'complete: advisory reviews ready'* ]]
 }
 
 @test "open investigation PR resumes all original investigators including merger as advisory reviewers" {
@@ -81,7 +81,7 @@ assert_advisory_cohort() {
   head_before=$(git rev-parse agents/inv/original)
   run agent run --resume "$parent" 'Check memory limits'
   [ "$status" -eq 0 ]
-  wait_status "$parent" waiting
+  wait_status "$parent" 'done'
   assert_advisory_cohort
   [ "$(git rev-parse agents/inv/original)" = "$head_before" ]
   grep -q 'Check memory limits' "$HOME"/advisory-*.prompt
@@ -112,17 +112,17 @@ assert_advisory_cohort() {
   [ ! -f "$HOME/advisory-calls.jsonl" ]
 }
 
-@test "a waiting investigation PR can receive another complete advisory pass" {
+@test "a completed investigation PR can receive another complete advisory pass" {
   advisory_parent OPEN
   run agent run --resume "$parent"
   [ "$status" -eq 0 ]
-  wait_status "$parent" waiting
+  wait_status "$parent" 'done'
   assert_advisory_cohort
   local previous
   previous=$(advisory_field "$parent" INVESTIGATION_RESUME_TASKS)
   run agent run --resume "$parent"
   [ "$status" -eq 0 ]
-  wait_status "$parent" waiting
+  wait_status "$parent" 'done'
   assert_advisory_cohort
   [ "$(advisory_field "$parent" INVESTIGATION_RESUME_TASKS)" != "$previous" ]
   [ "$(wc -l < "$HOME/advisory-calls.jsonl")" -eq 6 ]
