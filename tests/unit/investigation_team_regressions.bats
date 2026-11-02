@@ -105,8 +105,8 @@ EOF
   [ "$(field "$child1" STATUS)" = "failed" ]
   [ "$(recorded_status "$parent" inv)" = "failed" ]
   [ "$(recorded_status "$parent" inv2)" = "failed" ]
-  [ "$(field "$parent" STATUS)" = "waiting" ]
-  [ "$(field "$parent" AUTO_STAGE)" = 'waits for you: all phase 1 runs failed' ]
+  [ "$(field "$parent" STATUS)" = "failed" ]
+  [ "$(field "$parent" AUTO_STAGE)" = 'failed: all phase 1 runs failed' ]
 }
 
 @test "phase one completion does not inherit caller PR_URL or comment on unrelated PR" {
@@ -114,7 +114,7 @@ EOF
   export PR_URL="https://github.com/example/unrelated/pull/999"
   scenario '{"inv":{"new":"publish"},"inv2":{"new":"publish"}}'
   launch_phase_one
-  wait_status "$PHASE_ONE" waiting
+  wait_status "$PHASE_ONE" 'done'
   [ -f "$STUB_HOME/gh.log" ] || touch "$STUB_HOME/gh.log"
   run grep "pr comment" "$STUB_HOME/gh.log"
   [ "$status" -eq 1 ]

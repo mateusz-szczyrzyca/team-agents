@@ -2601,6 +2601,14 @@ build_prompt() { # id mode qfile next_round
     esac
     printf '\n# TOPIC\n\n'
     cat "$TASKS/$id/task.md"
+    if [[ -n ${ANSWERS_PENDING:-} ]]; then
+      R[ANSWERED_ROUND]=$ANSWERS_PENDING
+      R[ANSWERED_FILE]="$TASKS/$id/questions-$ANSWERS_PENDING.md"
+      printf '\n\n'
+      render "$PROMPTS/resume.md"
+      printf '\n---\n\n'
+      expand_answers "$TASKS/$id/questions-$ANSWERS_PENDING.md"
+    fi
     return
   fi
   if [[ $mode == fresh ]]; then   # a fresh session: the new run's prompt, the handoff, then why it was woken
@@ -3100,7 +3108,7 @@ notify() { # id status final note
   {
     printf '%s\n' "$REPO_NAME"                      # first line = title/thread
     printf 'Repo: %s\n' "$REPO_NAME"
-    if [[ ${KIND:-worker} == investigation ]]; then
+    if [[ ${KIND:-worker} == investigation ]] && ! is_independent_investigation "$id"; then
       printf 'Agent: %s (%s%s) — investigation #%s for %s\n' "${AGENT:-?}" "${TYPE:-?}" "${MODEL:+, $MODEL}" "$INV_ID" "$FROM_AGENT"
     else
       printf 'Agent: %s (%s%s)\n' "${AGENT:-?}" "${TYPE:-?}" "${MODEL:+, $MODEL}"
@@ -3314,8 +3322,11 @@ investigation_resume() {
   ((${#RESUME_MEMBERS[@]} == 0)) || die 'investigation resume uses every original investigator; --team cannot change membership'
   exec {resume_fd}>"$AGENTS_HOME/dispatch.lock"
   flock "$resume_fd"
-  [[ $(task_field "$parent" STATUS) == waiting && $(investigation_field "$parent" INVESTIGATION_LEASE) != 1 \
-    && $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) != 1 ]] || die 'investigation team is still active; resume its PR only after the human hand-off'
+  local parent_status
+  parent_status=$(task_field "$parent" STATUS)
+  [[ ( $parent_status == done || $parent_status == failed || $parent_status == waiting ) \
+    && $(investigation_field "$parent" INVESTIGATION_LEASE) != 1 \
+    && $(investigation_field "$parent" INVESTIGATION_HANDOFF_PENDING) != 1 ]] || die 'investigation team is still active; resume its PR only after the investigation finishes'
   validate_investigation_team "$(task_field "$parent" INVESTIGATION_TEAM)"
   root=$(task_field "$parent" REPO_ROOT); branch=$(task_field "$parent" BRANCH)
   url=$(investigation_field "$parent" PR_URL)
@@ -3444,7 +3455,7 @@ investigation_team_tick() {
           state=failed; note="admission was interrupted before the independent runner started"
           meta_set "$child" NOTE "$note"
           meta_set "$child" STATUS failed ;;
-        starting|running)
+        starting|running|waiting)
           active=$((active + 1)); working="${working:+$working, }$agent" ;;
         done)
           if investigation_published "$child" "$base"; then
@@ -3489,22 +3500,31 @@ investigation_team_tick() {
     investigation_handoff "$parent" 'waits for you: all phase 1 runs failed' failed
     return
   fi
-  if ((successful)); then stage='waits for you: phase 1 complete (merge not available yet)'
-  else stage='waits for you: all phase 1 runs failed'; fi
+  if ((successful)); then stage='complete: phase 1 complete (merge not available yet)'
+  else stage='failed: all phase 1 runs failed'; fi
   meta_set "$parent" INVESTIGATION_LEASE ""
   meta_set "$parent" FINISHED "$(date -Is)"
   auto_stage "$parent" "$stage" no-comment
-  meta_set "$parent" STATUS waiting
-  if ((successful)); then notify "$parent" done "$stage" "Independent phase one finished; no merge or PR was attempted."
-  else notify "$parent" failed "$stage" "No investigator published a successful result."; fi
+  if ((successful)); then
+    meta_set "$parent" STATUS done
+    notify "$parent" done "$stage" "Independent phase one finished; no merge or PR was attempted."
+  else
+    meta_set "$parent" STATUS failed
+    notify "$parent" failed "$stage" "No investigator published a successful result."
+  fi
 }
 
 # investigation_field task key reads optional metadata without inheriting the dispatching task's value.
 investigation_field() { ( unset "$2"; task_field "$1" "$2"; ) }
 
-# investigation_handoff parent stage result ends the lease and asks the human to assess the PR.
+# investigation_handoff parent stage result records terminal completion and delivers the PR summary once.
 investigation_handoff() {
   local parent=$1 stage=$2 result=$3 PR_URL='' REVIEW=0 WORK_ROUND='' WORK_ROUNDS='' JOB_ID='' JOB_LEAD='' LEAD_URL=''
+  # Older interrupted hand-offs persist a decision-wait stage; normalize it on recovery too.
+  stage="${stage#waits for you: }"
+  if [[ $stage != complete:* && $stage != failed:* ]]; then
+    if [[ $result == done ]]; then stage="complete: $stage"; else stage="failed: $stage"; fi
+  fi
   meta_set "$parent" INVESTIGATION_HANDOFF_STAGE "$stage"
   meta_set "$parent" INVESTIGATION_HANDOFF_RESULT "$result"
   meta_set "$parent" INVESTIGATION_HANDOFF_PENDING 1
@@ -3513,15 +3533,15 @@ investigation_handoff() {
   auto_stage "$parent" "$stage" no-comment
   meta_set "$parent" INVESTIGATION_LEASE ""
   if [[ $(investigation_field "$parent" INVESTIGATION_COMMENTED) != 1 ]]; then
-    human_on_pr "$parent" "$stage; assess this investigation PR; nothing was merged"
+    human_on_pr "$parent" "$stage; investigation finished; nothing was merged"
     meta_set "$parent" INVESTIGATION_COMMENTED 1
   fi
   if [[ $(investigation_field "$parent" INVESTIGATION_NOTIFIED) != 1 ]]; then
-    ( notify "$parent" "$result" "$stage" 'Investigation results are ready for your decision. Nothing was merged automatically.' )
+    ( notify "$parent" "$result" "$stage" 'Investigation finished. Nothing was merged automatically.' )
     meta_set "$parent" INVESTIGATION_NOTIFIED 1
   fi
-  # Waiting is the completion boundary: observers can read the delivered hand-off when they see it.
-  meta_set "$parent" STATUS waiting
+  # Publish the terminal status only after delivery, so interrupted completion remains recoverable.
+  meta_set "$parent" STATUS "$result"
   meta_set "$parent" INVESTIGATION_HANDOFF_PENDING ""
 }
 
@@ -4597,20 +4617,34 @@ cmd__runner() {
   fi
 
   # The agent asked its questions only in its last message (no file): do not lose them.
-  if ! is_independent_investigation "$id" && [[ ! -s $qfile && $fst == QUESTIONS ]]; then
+  if [[ ! -s $qfile && $fst == QUESTIONS ]]; then
     if ((is_member)); then
       member_q=1   # team member → questions go to the coordinator (below)
     elif [[ ${KIND:-worker} != helper ]]; then
-      questions_from_final "$FINAL" "$id" "$next_round" > "$qfile"; qgen=1
+      local question_final=$FINAL
+      if is_independent_investigation "$id"; then
+        # Independent final messages may put STATUS before their questions; retain the questions too.
+        question_final=$(sed '/^STATUS:/d' <<< "$FINAL")
+      fi
+      if is_independent_investigation "$id" && grep -qE '^##[[:space:]]+[0-9]+\.' <<< "$question_final"; then
+        # Keep already formatted questions and their recommendations/verdict slots intact.
+        printf '# Questions — %s (round %s)\n\n%s\n' "$id" "$next_round" "$question_final" > "$qfile"
+      else
+        questions_from_final "$question_final" "$id" "$next_round" > "$qfile"
+      fi
+      qgen=1
       act "$id" info "questions from the last message moved to $qfile"
     fi
   fi
 
   if is_independent_investigation "$id"; then
-    # An independent phase has one terminal outcome; it cannot ask peers or start helpers or retries.
+    # Independent phases may pause for clarification, but cannot ask peers or start helpers or retries.
     status=failed; note="the independent run ended without DONE"
     if [[ $fst == DONE && $RC == 0 && $HUNG == 0 && ! -s $qfile ]]; then
       status=done; note=""
+    elif [[ $fst == QUESTIONS && $RC == 0 && $HUNG == 0 && -s $qfile ]]; then
+      status=waiting; note="the investigator needs clarification"
+      meta_set "$id" ROUND "$next_round"
     elif { ((RC != 0)) || [[ -z $fst ]]; } && [[ $(limit_kind "$dir" "$nrun" "$FINAL") == quota ]] \
         && pause_secs=$(quota_reset_seconds "$dir" "$nrun" "$FINAL"); then
       # End this independent attempt, but retain the provider's reset time for capacity admission.
@@ -4831,7 +4865,8 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
   long_run_end "$id" "$status"
 
   if is_independent_investigation "$id"; then
-    # The parent snapshots the result and sends one notification after the whole cohort ends.
+    # Clarifications need an immediate answer; completed results are notified once by the parent.
+    if [[ $status == waiting ]]; then notify "$id" waiting "$FINAL" "$note"; fi
     log_info independent_run_finished "task=$id" "status=$status"
   elif [[ ${KIND:-worker} == investigation ]]; then
     case $status in
@@ -5784,7 +5819,8 @@ cmd_resume() {
     if busy=$(agent_running_task "$AGENT"); then
       die "agent $AGENT is busy with $busy — resume when it finishes"
     fi
-  else
+  elif ! is_independent_investigation "$id"; then
+    # Independent cohort members have no queued-investigation bus ID.
     bus inv-set --dir "$BUS_DIR" --id "$INV_ID" --status running
   fi
   start_runner "$id" resume || exit 1

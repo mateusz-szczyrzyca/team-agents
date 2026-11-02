@@ -20,7 +20,7 @@ load helpers
   [ -s "$qfile" ]
   grep -q 'Which cache is in scope' "$qfile"
   sed -i 's/^\*\*Verdict:\*\*$/\*\*Verdict:\*\* a)/' "$qfile"
-  run agent answer "$child"
+  run agent resume "$child"
   [ "$status" -eq 0 ]
   wait_status "$child" 'done'
   agent dispatch > "$HOME/clarification-dispatch.log" 2>&1

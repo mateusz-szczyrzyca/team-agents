@@ -295,9 +295,9 @@ EOF
 
   run agent dispatch
   [ "$status" -eq 0 ]
-  [ "$(field "$id" STATUS)" = "waiting" ]
+  [ "$(field "$id" STATUS)" = "failed" ]
   [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
-  [[ "$(field "$id" AUTO_STAGE)" == *"waits for you: merge failed"* ]]
+  [[ "$(field "$id" AUTO_STAGE)" == *"failed: merge failed"* ]]
 }
 
 @test "failed reviewer is replaced once by another eligible team member excluding the merger" {
@@ -383,12 +383,12 @@ EOF
 
   run agent dispatch
   [ "$status" -eq 0 ]
-  [ "$(field "$id" STATUS)" = "waiting" ]
+  [ "$(field "$id" STATUS)" = "failed" ]
   [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
-  [[ "$(field "$id" AUTO_STAGE)" == *"waits for you: review failed"* ]]
+  [[ "$(field "$id" AUTO_STAGE)" == *"failed: review failed"* ]]
 }
 
-@test "legacy parent without INVESTIGATION_PIPELINE retains phase1 waiting behavior" {
+@test "legacy parent without INVESTIGATION_PIPELINE finishes phase 1 as done without decision wait" {
   configure_three_investigators
   local base id dir c1 c2
   base=$(git -C "$HOME/repo" rev-parse HEAD)
@@ -411,9 +411,9 @@ EOF
 
   run agent dispatch
   [ "$status" -eq 0 ]
-  [ "$(field "$id" STATUS)" = "waiting" ]
+  [ "$(field "$id" STATUS)" = "done" ]
   [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
-  [ "$(field "$id" AUTO_STAGE)" = "waits for you: phase 1 complete (merge not available yet)" ]
+  [ "$(field "$id" AUTO_STAGE)" = "complete: phase 1 complete (merge not available yet)" ]
 }
 
 # orphan_role_recovery phase abandoned replacement checks interrupted admission and subsequent investigator reuse.
@@ -452,9 +452,9 @@ META
   else successor=$(field "$id" INVESTIGATION_REVIEWER_TASK); fi
   [ "$(field "$successor" AGENT)" = "$replacement" ]
   # The replacement also fails; the original investigator must remain reusable after handoff.
-  wait_status "$id" waiting 45
+  wait_status "$id" failed 45
   [ "$(field "$successor" STATUS)" = failed ]
-  [ "$(field "$id" STATUS)" = waiting ]
+  [ "$(field "$id" STATUS)" = failed ]
   [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
   next="$id-next"
   create_parent_task "$next" "$abandoned,$replacement" "$base"
@@ -466,7 +466,7 @@ META
   [ "$(field "$next" INVESTIGATION_MERGER)" = "$abandoned" ]
   [ -n "$(field "$next" INVESTIGATION_MERGER_TASK)" ]
   touch "$HOME/release"
-  wait_status "$next" waiting 45
+  wait_status "$next" failed 45
 }
 
 @test "unstarted merger is terminalized before replacement and its capacity is reusable" {

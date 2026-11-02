@@ -85,7 +85,7 @@ GIT
   rm "$HOME/publication-offline"
   run agent _supervise
   [ "$status" -eq 0 ]
-  [ "$(status_of "$PUBLICATION_PARENT")" = waiting ]
+  [ "$(status_of "$PUBLICATION_PARENT")" = 'done' ]
   [ "$(jq -r '.members[0].status' "$AGENTS_HOME/tasks/$PUBLICATION_PARENT/phase1.json")" = 'done' ]
   [ "$(jq -r '.members[0].commit' "$AGENTS_HOME/tasks/$PUBLICATION_PARENT/phase1.json")" = "$(git rev-parse HEAD)" ]
 }
@@ -96,6 +96,6 @@ GIT
   run agent _supervise
   [ "$status" -eq 0 ]
   [ "$(status_of "$PUBLICATION_CHILD")" = failed ]
-  [ "$(status_of "$PUBLICATION_PARENT")" = waiting ]
+  [ "$(status_of "$PUBLICATION_PARENT")" = failed ]
   [ "$(jq -r '.members[0].status' "$AGENTS_HOME/tasks/$PUBLICATION_PARENT/phase1.json")" = failed ]
 }

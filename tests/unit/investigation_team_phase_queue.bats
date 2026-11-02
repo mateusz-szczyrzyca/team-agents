@@ -238,6 +238,6 @@ EOF
   grep -q '# Checks to fix' "$AGENTS_HOME/tasks/$child/task.md"
   grep -q "Checks to fix" "$AGENTS_HOME/tasks/$child/task.md"
   [ "$(field "$child" RUN)" = "1" ]
-  # Wait for the resumed runner and parent handoff before teardown removes their logs.
-  wait_status "$id" waiting
+  # Wait for terminal failure after the fixture cannot publish a valid merger result.
+  wait_status "$id" failed
 }

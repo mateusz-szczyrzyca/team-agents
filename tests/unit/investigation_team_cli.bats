@@ -25,13 +25,18 @@ no_side_effects() {
   no_side_effects
 }
 
-@test "--team with a single investigator is refused and the configured ones are listed" {
+@test "--team with a single investigator starts the requested investigation cohort" {
   configure_investigators
   run agent run --investigation --team "inv" "topic"
-  [ "$status" -ne 0 ]
-  [[ $output == *"two"* ]]
-  [[ $output == *"inv2"* && $output == *"inv3"* ]]
-  no_side_effects
+  [ "$status" -eq 0 ]
+  local parent
+  parent=$(task_of investigation-team)
+  [[ -n $parent ]]
+  bash -c 'source "$1"; [[ $KIND == investigation_team && $INVESTIGATION_TEAM == inv && $INVESTIGATION_PIPELINE == 1 ]]' \
+    bash "$AGENTS_HOME/tasks/$parent/meta.env"
+  [[ $(cat "$AGENTS_HOME/tasks/$parent/task.md") == topic ]]
+  # Let independent runners finish before Bats removes their temporary home.
+  wait_status "$parent" '^(done|failed)$'
 }
 
 @test "a duplicate investigator in --team is refused" {
@@ -55,7 +60,7 @@ no_side_effects() {
   configure_investigators
   run agent run --investigation --team "" "topic"
   [ "$status" -ne 0 ]
-  [[ $output == *"two"* ]]
+  [[ $output == *"at least one investigator"* ]]
   no_side_effects
 }
 
