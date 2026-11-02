@@ -2911,17 +2911,24 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   fi
 }
 
+# codex_mcp_args task — codex's settings of the agentbus server, one a line: the server; for an independent investigator
+# the same server switched off — codex refuses a server it is told of without its command ("invalid transport")
+codex_mcp_args() {
+  printf '%s\n' -c "mcp_servers.agentbus.command=\"$AGENTBUS_BIN\""
+  if is_independent_investigation "$1"; then
+    printf '%s\n' -c "mcp_servers.agentbus.enabled=false"
+  else
+    printf '%s\n' -c "mcp_servers.agentbus.args=$(bus_args_json "$1")" -c "mcp_servers.agentbus.tool_timeout_sec=900"
+  fi
+}
+
 run_codex() { # id mode n prompt_file dir ; sets RC, FINAL
   local id=$1 mode=$2 n=$3 pf=$4 dir=$5
   local args=(exec --json --dangerously-bypass-approvals-and-sandbox
               -C "$WORKTREE" -o "$dir/last-$n.md")
-  if is_independent_investigation "$id"; then
-    args+=(-c "mcp_servers.agentbus.enabled=false")
-  else
-    args+=(-c "mcp_servers.agentbus.command=\"$AGENTBUS_BIN\""
-           -c "mcp_servers.agentbus.args=$(bus_args_json "$id")"
-           -c "mcp_servers.agentbus.tool_timeout_sec=900")
-  fi
+  local mcp=()
+  mapfile -t mcp < <(codex_mcp_args "$id")
+  args+=("${mcp[@]}")
   if [[ -n ${MODEL:-} ]]; then args+=(-m "$MODEL"); fi
   local extra=(); read -ra extra <<< "${EXTRA_ARGS:-}"
   args+=("${extra[@]}")
@@ -2993,7 +3000,7 @@ opencode_config() { # id — per-run configuration (agentbus MCP + providers)
     {
       "$schema": "https://opencode.ai/config.json",
       autoupdate: false,
-      mcp: (if $indep then { agentbus: { enabled: false } } else { agentbus: { type: "local", command: ([$cmd] + $args), enabled: true } } end),
+      mcp: { agentbus: { type: "local", command: ([$cmd] + $args), enabled: ($indep | not) } },   # off: still whole, as opencode wants
       provider: {
         openrouter: { options: { apiKey: "{env:OPENROUTER_API_KEY}" } },
         deepinfra: {
