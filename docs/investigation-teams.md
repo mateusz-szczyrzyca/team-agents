@@ -97,7 +97,7 @@ The command must be rejected immediately before any background task or worktree 
 - **Trigger:** All Phase 1 investigator runs have terminated.
 - **Candidate eligibility:** Only investigators whose Phase 1 run concluded with `STATUS: DONE`
   are eligible to serve as the merger. If no Phase 1 run ended `DONE`, merge is skipped, and the
-  team transitions to Phase 4 waiting for the human.
+  team transitions to Phase 4 terminal completion (status `done`) as a failure.
 - **Selection:** One investigator is chosen uniformly at random among eligible candidates.
   Names of eligible candidates are sorted, and selection is made via an unbiased draw seeded by
   `AGENT_INVESTIGATION_SEED` or parent `INVESTIGATION_SEED` (falling back to `/dev/urandom` when unseeded).
@@ -141,7 +141,7 @@ The command must be rejected immediately before any background task or worktree 
   If the replacement reviewer also fails, the team hands off to the human (`waits for you: review failed`).
 - **Dashboard stage:** `review: <reviewer> (#<pr-number>)`.
 
-### Phase 4 — Human decision and hand-off
+### Phase 4 — Terminal completion
 
 - **Trigger:** Completion of Phase 3 review (or total failure in Phase 1 / exhausted retries).
 - **Actions:**
@@ -157,20 +157,20 @@ The command must be rejected immediately before any background task or worktree 
   - Sets `INVESTIGATION_HANDOFF_PENDING=""` once external actions complete.
   - If interrupted during hand-off, subsequent supervisor dispatch resumes hand-off and completes
     pending external actions (guaranteeing recovery even after capacity leases have been cleared).
-  - The team enters status `waiting` (establishing the readiness boundary for human intervention) after external notification attempts and flags are recorded. No code is ever merged automatically.
-- **Dashboard stages:**
-  - `waits for you: review ready (#<pr-number>)` (on review completion)
-  - `waits for you: all phase 1 runs failed` (if no phase 1 child completed `DONE`)
-  - `waits for you: merge failed` (if merge replacements or precheck retries exhausted)
-  - `waits for you: review failed` (if reviewer replacement failed)
+  - The team enters status `done` (terminal completion) after external notification attempts and flags are recorded. No code is ever merged automatically; the PR is available for independent human review and decision.
+- **Terminal completion stages:**
+  - `advisory reviews complete (#<pr-number>)` (on successful advisory review pass)
+  - `all phase 1 runs failed` (if no phase 1 child completed `DONE`)
+  - `merge failed` (if merge replacements or precheck retries exhausted)
+  - `review failed` (if reviewer replacement failed)
 
 ### Resume lifecycle (`agent run --resume <team>`)
 
 - **Open PR:** When resumed with an open PR, every investigator in the team (A, B, and C) performs
   an advisory review of the existing PR. Reviews provide constructive critique, GitHub suggestions
   (```` ```suggestion ````), or unified diffs (```` ```diff ````). No changes are automatically
-  applied by the agents. The team releases investigator capacity leases and returns to Phase 4
-  waiting for the human.
+  applied by the agents. The team releases investigator capacity leases and reaches Phase 4
+  terminal completion (status `done`).
 - **Merged or closed PR:** Resuming an investigation team whose PR is already merged or closed is
   refused with an explanatory message ("the PR is merged — a new topic is a new run" or
   "the PR is closed — a new topic is a new run") before creating any background tasks or worktrees.
@@ -404,14 +404,23 @@ When implementing future rounds, existing components have explicit boundaries:
 Follow this checklist to verify an investigation team run and resume manually:
 
 1. **Configuration**:
-   Verify that `agents.conf` defines at least two investigators under `INVESTIGATORS_TYPE`.
-2. **Initial investigation start**:
+   Verify that `agents.conf` defines at least one investigator under `INVESTIGATORS_TYPE`.
+2. **Initial investigation start (single investigator)**:
+   Run `agent run --investigation --team "inv1" "Topic text"`.
+   Confirm that:
+   - The investigator starts in an isolated worktree (`phase 1: 1 investigator working`).
+   - The same investigator then merges the results (`merging: <merger>`), opens a PR, and prechecks run.
+   - The merger cannot review their own results (review is skipped with single investigator).
+   - Final stage transitions to `advisory reviews complete` (if resumed) and status becomes `done`.
+   - No human decision wait is required; the PR is ready for independent review and merge.
+   
+   With multiple investigators:
    Run `agent run --investigation --team "inv1, inv2" "Topic text"`.
    Confirm that:
    - Both investigators start concurrently in isolated worktrees (`phase 1: 2 investigators working`).
    - One investigator is chosen to merge (`merging: <merger>`), opens a PR, and prechecks run.
    - The other investigator reviews the PR (`review: <reviewer> (#<pr>)`).
-   - Final stage transitions to `waits for you: review ready (#<pr>)` and human notification is delivered.
+   - Final stage transitions to terminal completion and status becomes `done`.
 3. **Advisory resume on open PR**:
    With the PR open, run `agent run --resume <team-id> "Additional check"`.
    Confirm that:
