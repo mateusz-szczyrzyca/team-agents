@@ -116,12 +116,12 @@ EOF
   run agent dispatch
   [ "$status" -eq 0 ]
 
-  # Parent transitions to waiting without spawning replacements; lease released
-  [ "$(field "$parent" STATUS)" = "waiting" ]
+  # Parent transitions to failed without spawning replacements; lease released
+  [ "$(field "$parent" STATUS)" = "failed" ]
   [ "$(field "$parent" INVESTIGATION_LEASE)" != "1" ]
 
   # Stage includes exact failure suffix
-  [[ "$(field "$parent" AUTO_STAGE)" == *"advisory reviews ready (#42, 1 failed)"* ]]
+  [[ "$(field "$parent" AUTO_STAGE)" == *"failed: advisory reviews ready (#42, 1 failed)"* ]]
 
   # Manifest records individual member status and verdict
   [ "$(recorded_member_json "$parent" inv status)" = "done" ]

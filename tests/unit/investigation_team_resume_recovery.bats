@@ -225,8 +225,8 @@ EOF
   run agent dispatch
   [ "$status" -eq 0 ]
 
-  # After all terminal, lease must be released and parent enters waiting
+  # After all terminal, lease must be released and parent enters terminal status
   [ "$(field "$parent" INVESTIGATION_LEASE)" != "1" ]
-  [ "$(field "$parent" STATUS)" = "waiting" ]
-  [[ "$(field "$parent" AUTO_STAGE)" == *"advisory reviews ready"* ]]
+  [ "$(field "$parent" STATUS)" = "failed" ]
+  [[ "$(field "$parent" AUTO_STAGE)" == *"failed: advisory reviews ready"* ]]
 }

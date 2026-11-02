@@ -295,9 +295,9 @@ EOF
 
   run agent dispatch
   [ "$status" -eq 0 ]
-  [ "$(field "$id" STATUS)" = "waiting" ]
+  [ "$(field "$id" STATUS)" = "failed" ]
   [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
-  [[ "$(field "$id" AUTO_STAGE)" == *"waits for you: merge failed"* ]]
+  [[ "$(field "$id" AUTO_STAGE)" == *"failed: merge failed"* ]]
 }
 
 @test "failed reviewer is replaced once by another eligible team member excluding the merger" {
@@ -383,9 +383,9 @@ EOF
 
   run agent dispatch
   [ "$status" -eq 0 ]
-  [ "$(field "$id" STATUS)" = "waiting" ]
+  [ "$(field "$id" STATUS)" = "failed" ]
   [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
-  [[ "$(field "$id" AUTO_STAGE)" == *"waits for you: review failed"* ]]
+  [[ "$(field "$id" AUTO_STAGE)" == *"failed: review failed"* ]]
 }
 
 @test "legacy parent without INVESTIGATION_PIPELINE finishes phase 1 as done without decision wait" {
@@ -452,9 +452,9 @@ META
   else successor=$(field "$id" INVESTIGATION_REVIEWER_TASK); fi
   [ "$(field "$successor" AGENT)" = "$replacement" ]
   # The replacement also fails; the original investigator must remain reusable after handoff.
-  wait_status "$id" waiting 45
+  wait_status "$id" failed 45
   [ "$(field "$successor" STATUS)" = failed ]
-  [ "$(field "$id" STATUS)" = waiting ]
+  [ "$(field "$id" STATUS)" = failed ]
   [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
   next="$id-next"
   create_parent_task "$next" "$abandoned,$replacement" "$base"
