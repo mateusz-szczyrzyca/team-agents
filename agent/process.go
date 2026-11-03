@@ -49,7 +49,7 @@ func (s *streamErrorWriter) Write(p []byte) (int, error) {
 	n, err := s.w.Write(p)
 	if err != nil && s.err == nil {
 		s.err = err
-	} else if err == nil && n < len(p) && s.err == nil {
+	} else if err == nil && n != len(p) && s.err == nil {
 		s.err = io.ErrShortWrite
 	}
 	return n, err
