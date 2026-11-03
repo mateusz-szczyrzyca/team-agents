@@ -10,11 +10,23 @@ type App struct {
 }
 
 // newApp fills omitted boundaries without granting command execution permission.
-func newApp(_ Executor, _ Clock, _ Random) *App {
-	return &App{}
+func newApp(executor Executor, clock Clock, random Random) *App {
+	if executor == nil {
+		executor = newDeniedExecutor()
+	}
+	if clock == nil {
+		clock = newClock()
+	}
+	if random == nil {
+		random = newRandom(clock.Now().UnixNano())
+	}
+	return &App{Executor: executor, Clock: clock, Random: random}
 }
 
 // execute runs through the owned boundary, denying unconfigured execution.
-func (a *App) execute(_ context.Context, _ Command) (CommandResult, *ExecuteError) {
-	return CommandResult{}, nil
+func (a *App) execute(ctx context.Context, cmd Command) (CommandResult, *ExecuteError) {
+	if a.Executor == nil {
+		return newDeniedExecutor().Execute(ctx, cmd)
+	}
+	return a.Executor.Execute(ctx, cmd)
 }
