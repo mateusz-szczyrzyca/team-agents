@@ -1,0 +1,13 @@
+{
+ "operations": [
+  {
+   "type": "Command",
+   "op": "command",
+   "what": "local command dispatch",
+   "causes": [
+    {"name": "UnknownCommand", "class": "InvalidArgument", "doc": "the requested command is not implemented"},
+    {"name": "InvalidArgument", "class": "InvalidArgument", "doc": "a command argument is missing or invalid"}
+   ]
+  }
+ ]
+}

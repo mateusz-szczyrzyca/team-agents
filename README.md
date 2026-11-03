@@ -1334,13 +1334,14 @@ for human contributors): architecture, conventions, checks, and what must never 
 ```bash
 make tools         # installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
 make lint          # shellcheck, gofmt, golangci-lint, staticcheck, doccheck, generated-code check
-make test          # Go unit tests (agentbus, agentlive), bats suite, and test-map harness
+make test          # Go unit tests (agent, agentbus, agentlive), bats suite, and test-map harness
+make build-agent   # builds the Go agent CLI binary to build/agent-go
 make harness       # test harness suite (tests/harness/*.bats: test map and gate checks)
 make integration   # real agent CLIs and accounts (costs usage)
 ```
 
 - **Go rewrite parity tracking and ledger validation.**
-  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 480 Bats unit test cases (359 black-box, 121 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
+  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 490 Bats unit test cases (361 black-box, 129 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
   tools/check-agent-test-map.sh              # validates tests/agent-go-map.tsv and prints summary counts
   tools/check-agent-test-map.sh --quiet      # (-q) suppresses summary output, exits 0 on success or 1 on error
