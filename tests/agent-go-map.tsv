@@ -489,3 +489,11 @@ tests/unit/review_pair_rotate.bats	rotate: three investigators — the third pai
 tests/unit/review_pair_rotate.bats	rotate: a re-review by another investigator gets the slot's previous review as someone else's	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: the supervise timer dispatches a waiting review pair, which no run's end may do	source	R33	-	planned
 tests/unit/round_discipline.bats	the prompts say never to start the next round's work; a member out of items sleeps instead	blackbox	R31	-	planned
+tests/unit/review_pair_repeat.bats	default draw: a PR's second review is done by the other two investigators, its third by a mixed pair	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	default draw: across PRs A+B is followed by C+D, then by a mixed pair	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	default draw: only the PR's previous pair free — it waits AGENT_REVIEW_ROTATE_WAIT_MIN, then repeats it	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	default draw: one investigator of the previous pair busy — a new pair with the free ones, at once	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	default draw: with two investigators their pair reviews again at once — the autopilot does not stall	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	rotate: a PR's previous pair is not taken again, even when other PRs were reviewed since	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	list: a PR's second review goes to the first free investigators outside its previous pair	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	the supervise timer dispatches a pair that waits so as not to repeat its PR's pair (default draw)	source	R33	-	planned

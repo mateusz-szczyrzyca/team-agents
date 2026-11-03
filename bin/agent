@@ -372,7 +372,7 @@ AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (
 AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
 AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free) | rotate (every investigator in turn)
-AGENT_REVIEW_ROTATE_WAIT_MIN="${AGENT_REVIEW_ROTATE_WAIT_MIN:-20}" # rotate: how long a pair waits for a busy investigator rather than repeat one of the last two pairs
+AGENT_REVIEW_ROTATE_WAIT_MIN="${AGENT_REVIEW_ROTATE_WAIT_MIN:-20}" # how long a pair waits for a busy investigator rather than repeat a PR's pair (or, random and rotate, one of the last two)
 REVIEW_HISTORY_MAX=100   # how many review pairs $AGENTS_HOME/reviews/history keeps (the rotation reads its last ones)
 AGENT_PROMPT_CHECKPOINTS="${AGENT_PROMPT_CHECKPOINTS:-2}"       # a prompt's newest checkpoints (the rest: their file); 0 all
 AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}"
@@ -2004,14 +2004,20 @@ review_history_add() {
 # review_pair_key a b — a pair as the history writes it: its two names in name order, "a b"
 review_pair_key() { if [[ $1 < $2 ]]; then printf '%s %s\n' "$1" "$2"; else printf '%s %s\n' "$2" "$1"; fi; }
 
-# review_pair_pick strict|any name... — the rotation's best pair of those investigators (given in list order), from
-# the review history: strict = never one of the last two pairs; then the fewest members of the last pair, the pair
-# used least recently (or never), its members' reviews least recent, the list's order. Prints "a b" in list order;
-# 1 = no such pair.
-review_pair_pick() {
-  local mode=$1 hist=() n i j k a b key last="" prev="" ov pl ma mb score best="" pick=""
-  shift
-  [[ ! -f $AGENTS_HOME/reviews/history ]] || mapfile -t hist < "$AGENTS_HOME/reviews/history"
+# review_pair_reviewed pair-dir — 0 when the PR's last pair has reviewed it (a verdict of its last pass is there, as
+# review_pair_done writes it): that pair does not review the PR again while another pair can
+review_pair_reviewed() { [[ -f $1/A.verdict || -f $1/B.verdict ]]; }
+
+# review_pair_candidates level avoid name... — the pairs of those investigators (given in list order) that a review
+# may take at that level, one "ov pl ms a b" line each, in list order: strict = neither avoid (the pair that reviewed
+# the PR last, "a b" in name order; empty: none) nor, except AGENT_REVIEW_DRAW=list, one of the last two pairs of the
+# review history; avoid = not avoid; any = every pair. ov = its members in avoid or in the history's last pair, pl =
+# the newest history line (1-based) with the pair, ms = the sum of the newest lines with each member (0 = never).
+# AGENT_REVIEW_DRAW=list reads no history.
+review_pair_candidates() {
+  local level=$1 avoid=$2 hist=() n i j k a b key last="" prev="" ov pl ma mb
+  shift 2
+  if [[ $AGENT_REVIEW_DRAW != list && -f $AGENTS_HOME/reviews/history ]]; then mapfile -t hist < "$AGENTS_HOME/reviews/history"; fi
   n=${#hist[@]}
   ((n < 1)) || last=${hist[n - 1]}
   ((n < 2)) || prev=${hist[n - 2]}
@@ -2019,39 +2025,66 @@ review_pair_pick() {
     for ((j = i + 1; j <= $#; j++)); do
       a=${!i} b=${!j}
       key=$(review_pair_key "$a" "$b")
-      [[ $mode != strict || ($key != "$last" && $key != "$prev") ]] || continue
+      [[ $level == any || $key != "$avoid" ]] || continue
+      [[ $level != strict || ($key != "$last" && $key != "$prev") ]] || continue
       ov=0
-      [[ " $last " != *" $a "* ]] || ov=$((ov + 1))
-      [[ " $last " != *" $b "* ]] || ov=$((ov + 1))
-      pl=0 ma=0 mb=0   # the newest line (1-based) with the pair, with each member; 0 = never
+      [[ " $last $avoid " != *" $a "* ]] || ov=$((ov + 1))
+      [[ " $last $avoid " != *" $b "* ]] || ov=$((ov + 1))
+      pl=0 ma=0 mb=0
       for ((k = 0; k < n; k++)); do
         [[ ${hist[k]} != "$key" ]] || pl=$((k + 1))
         [[ " ${hist[k]} " != *" $a "* ]] || ma=$((k + 1))
         [[ " ${hist[k]} " != *" $b "* ]] || mb=$((k + 1))
       done
-      score=$(printf '%d%05d%05d' "$ov" "$pl" $((ma + mb)))   # same width: compared as strings, the lowest wins
-      if [[ -z $best || $score < $best ]]; then best=$score; pick="$a $b"; fi
+      printf '%d %d %d %s %s\n' "$ov" "$pl" $((ma + mb)) "$a" "$b"
     done
   done
-  [[ -n $pick ]] || return 1
-  printf '%s\n' "$pick"
 }
 
-# review_pair_rotate coordinator-task free-investigator... — AGENT_REVIEW_DRAW=rotate: the next pair among the free
-# investigators, never one of the last two pairs; when only a busy investigator makes such a pair, it waits
-# (1) AGENT_REVIEW_ROTATE_WAIT_MIN from the pair's request, then takes the best free pair; with no such pair at all
-# (two investigators) the best free pair at once
-review_pair_rotate() {
-  local id=$1 all=() since
-  shift
-  review_pair_pick strict "$@" && return 0
+# review_pair_select level avoid name... — the pair of those investigators a review takes at that level
+# (review_pair_candidates), "a b" in list order; 1 = none. Of the pairs with the fewest members of the last pair:
+# AGENT_REVIEW_DRAW=rotate the pair used least recently (or never), then its members' reviews least recent, then the
+# list's order; random one drawn at random (AGENT_REVIEW_SEED fixes the draw, for the tests); list the first.
+review_pair_select() {
+  local lines=() tops=() min line a b
+  mapfile -t lines < <(review_pair_candidates "$@")
+  ((${#lines[@]})) || return 1
+  if [[ $AGENT_REVIEW_DRAW == rotate ]]; then
+    line=$(printf '%s\n' "${lines[@]}" | sort -s -n -k1,1 -k2,2 -k3,3 | head -n 1)
+  else
+    min=$(printf '%s\n' "${lines[@]}" | cut -d' ' -f1 | sort -n | head -n 1)
+    for line in "${lines[@]}"; do [[ ${line%% *} != "$min" ]] || tops+=("$line"); done
+    line=${tops[0]}
+    if [[ $AGENT_REVIEW_DRAW == random ]]; then
+      [[ -z ${AGENT_REVIEW_SEED:-} ]] || RANDOM=$AGENT_REVIEW_SEED
+      line=${tops[RANDOM % ${#tops[@]}]}
+    fi
+  fi
+  read -r _ _ _ a b <<< "$line"
+  printf '%s %s\n' "$a" "$b"
+}
+
+# review_pair_next coordinator-task avoid free-investigator... — the next pair among the free investigators: never the
+# pair that reviewed the PR last (avoid) nor (rotate, random) one of the last two pairs. When only a busy investigator
+# makes such a pair it waits (1) AGENT_REVIEW_ROTATE_WAIT_MIN from the pair's request, then takes the best free pair
+# (logged as review_pair_repeated); with no such pair at all (two investigators) the best free pair at once
+review_pair_next() {
+  local id=$1 avoid=$2 all=() since level pair
+  shift 2
   mapfile -t all < <(investigator_names)
-  if review_pair_pick strict "${all[@]}" > /dev/null; then
+  for level in strict avoid; do
+    if pair=$(review_pair_select "$level" "$avoid" "$@"); then
+      [[ $level == strict ]] || log_warn review_pair_repeated "task=$id" "free=$*"
+      printf '%s\n' "$pair"
+      return 0
+    fi
+    review_pair_select "$level" "$avoid" "${all[@]}" > /dev/null || continue
     since=$(task_field "$id" REVIEW_PAIR_SINCE)
     (($(date +%s) - ${since:-0} >= AGENT_REVIEW_ROTATE_WAIT_MIN * 60)) || return 1
-  fi
+    break
+  done
   log_warn review_pair_repeated "task=$id" "free=$*"
-  review_pair_pick any "$@"
+  review_pair_select avoid "$avoid" "$@" || review_pair_select any "$avoid" "$@"
 }
 
 start_review_pairs() { # under the dispatch lock: a pending --autopilot review pair starts once two investigators are free
@@ -2069,40 +2102,35 @@ start_review_pairs() { # under the dispatch lock: a pending --autopilot review p
   done
 }
 
-start_review_pair() { # coordinator task — both reviews of its PR at once, on two different free investigators drawn at
-  # random (the previous pair of this PR when free: each re-checks its own findings) or, AGENT_REVIEW_DRAW=rotate, the
-  # rotation's next pair (review_pair_rotate); 1 = not two free ones yet, or the rotation waits for a busy one
-  local id=$1 free=() dir a="" b="" pa="" pb="" f slot name inv j q num url
+start_review_pair() { # coordinator task — both reviews of its PR at once, on two different free investigators: the
+  # next pair (review_pair_next: never the pair that reviewed this PR last, nor one of the last two pairs; drawn at
+  # random, the first free ones of the list, or AGENT_REVIEW_DRAW=rotate the rotation's next). A pass whose pair never
+  # ended its reviews keeps it, when free (random, list). 1 = not two free ones yet, or the pair waits for a busy one
+  local id=$1 free=() dir a="" b="" pa="" pb="" avoid="" f slot name j num
   mapfile -t free < <(free_investigator_list)
   ((${#free[@]} >= 2)) || return 1
-  num=$(task_field "$id" PR_NUMBER); url=$(task_field "$id" PR_URL)
-  if [[ $AGENT_REVIEW_DRAW == rotate ]]; then   # both chosen: nothing is kept nor drawn below, only put in list order
-    f=$(review_pair_rotate "$id" "${free[@]}") || return 1
-    read -r a b <<< "$f"
-  fi
+  num=$(task_field "$id" PR_NUMBER)
   dir="$AGENTS_HOME/reviews/$(task_field "$id" REPO_NAME)-$num"
+  [[ ! -f $dir/A.agent ]] || pa=$(<"$dir/A.agent")
+  [[ ! -f $dir/B.agent ]] || pb=$(<"$dir/B.agent")
+  if [[ -n $pa && -n $pb ]] && review_pair_reviewed "$dir"; then avoid=$(review_pair_key "$pa" "$pb"); fi
+  if [[ $AGENT_REVIEW_DRAW != rotate && -z $avoid ]]; then
+    for f in "${free[@]}"; do [[ $f != "$pa" ]] || a=$f; [[ $f != "$pb" ]] || b=$f; done
+  fi
+  if [[ -z $a && -z $b ]]; then   # both chosen, in list order
+    f=$(review_pair_next "$id" "$avoid" "${free[@]}") || return 1
+    read -r a b <<< "$f"
+  else   # one kept: the other is drawn at random among the free ones (list: the first)
+    local pool=()
+    for f in "${free[@]}"; do [[ $f == "$a" || $f == "$b" ]] || pool+=("$f"); done
+    [[ -z ${AGENT_REVIEW_SEED:-} ]] || RANDOM=$AGENT_REVIEW_SEED   # a fixed draw, for the tests
+    if ((${#pool[@]})) && [[ -z $a || -z $b ]]; then
+      j=0
+      [[ $AGENT_REVIEW_DRAW == list ]] || j=$((RANDOM % ${#pool[@]}))
+      if [[ -z $a ]]; then a=${pool[j]}; else b=${pool[j]}; fi
+    fi
+  fi
   mkdir -p "$dir"
-  if [[ $AGENT_REVIEW_DRAW != rotate ]]; then
-    [[ ! -f $dir/A.agent ]] || pa=$(<"$dir/A.agent")
-    [[ ! -f $dir/B.agent ]] || pb=$(<"$dir/B.agent")
-  fi
-  for f in "${free[@]}"; do [[ $f != "$pa" ]] || a=$f; [[ $f != "$pb" ]] || b=$f; done
-  local pool=()   # the others are drawn at random among the free ones: two different investigators
-  for f in "${free[@]}"; do [[ $f == "$a" || $f == "$b" ]] || pool+=("$f"); done
-  [[ -z ${AGENT_REVIEW_SEED:-} ]] || RANDOM=$AGENT_REVIEW_SEED   # a fixed draw, for the tests
-  while [[ -z $a || -z $b ]] && ((${#pool[@]})); do
-    j=0   # AGENT_REVIEW_DRAW=list: the first free one of the list
-    [[ $AGENT_REVIEW_DRAW == list ]] || j=$((RANDOM % ${#pool[@]}))
-    f=${pool[j]}
-    pool=("${pool[@]:0:j}" "${pool[@]:j+1}")
-    if [[ -z $a ]]; then a=$f; else b=$f; fi
-  done
-  if [[ -z $pa$pb ]]; then   # both drawn: A and B in the list's order, as the slots always were
-    for f in "${free[@]}"; do
-      [[ $f != "$a" ]] || break
-      if [[ $f == "$b" ]]; then b=$a; a=$f; break; fi
-    done
-  fi
   [[ -n $a && -n $b && $a != "$b" ]] || return 1
   for slot in A B; do
     name=$a; [[ $slot == A ]] || name=$b
@@ -6194,14 +6222,17 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
   if ((phase1_pending)) || review_rotation_waits; then dispatch; fi
 }
 
-# review_rotation_waits — 0 when AGENT_REVIEW_DRAW=rotate and a review pair waits: the timer's dispatch starts it once
-# its busy investigator is free or AGENT_REVIEW_ROTATE_WAIT_MIN has passed, with no run ending to dispatch it
+# review_rotation_waits — 0 when a review pair may wait for a busy investigator (AGENT_REVIEW_DRAW=rotate: any pending
+# pair; random and list: one whose PR's last pair has reviewed it): the timer's dispatch starts it once its busy
+# investigator is free or AGENT_REVIEW_ROTATE_WAIT_MIN has passed, with no run ending to dispatch it
 review_rotation_waits() {
-  [[ $AGENT_REVIEW_DRAW == rotate ]] || return 1
-  local m
+  local m id
   for m in "$TASKS"/*/meta.env; do
     [[ -f $m ]] || continue
-    if grep -qx 'REVIEW_PAIR_PENDING=1' "$m"; then return 0; fi
+    grep -qx 'REVIEW_PAIR_PENDING=1' "$m" || continue
+    [[ $AGENT_REVIEW_DRAW != rotate ]] || return 0
+    id=${m%/meta.env}; id=${id##*/}
+    if review_pair_reviewed "$AGENTS_HOME/reviews/$(task_field "$id" REPO_NAME)-$(task_field "$id" PR_NUMBER)"; then return 0; fi
   done
   return 1
 }
