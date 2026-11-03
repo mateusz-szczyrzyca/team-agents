@@ -27,7 +27,10 @@ facts. Make the facts stand out:
   [`agentbus/errors.go`]({{REPO_URL}}/blob/<full SHA>/agentbus/errors.go) — a line `#L42`, lines `#L42-L50` at the
   end. The SHA is a pushed commit that has the file (a review: the PR's `headRefOid`; a PR description: its branch's
   last pushed commit), so the link keeps working after a merge. Every file a text names, each time — a path in
-  backticks alone is not linked by GitHub. (A review's line comment is on its file already.)
+  backticks alone is not linked by GitHub. (A review's line comment is on its file already.) A directory:
+  `/tree/<full SHA>/<dir>`; a file the change deleted: the base commit, which still has it; a path with spaces or
+  other special characters URL-encoded (`%20`). Never link inside a code block, a path that commit does not have, or
+  a path on this machine.
 - **No signature of your CLI:** no `Co-Authored-By` trailer, no "Generated with …" line — a commit ends with the
   trailers you were given, a PR with the attribution block you were given.
 - **The same in your final message and reports:** a commit or a PR is a link to GitHub, as above — never a path on

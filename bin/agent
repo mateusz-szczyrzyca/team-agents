@@ -1161,9 +1161,9 @@ skip_note() { # id — the skipped tests of the task's repository, appended to e
   sed -E 's/^([^:]+:[0-9]+):[[:space:]]*(.*)$/- `\1`: \2/' <<< "$list"
 }
 
-agent_desc() { # agent → "`name` (type, model `model`)" for attributions
-  local model=${AGENT_MODEL[$1]:-}
-  printf '`%s` (%s%s)' "$1" "${AGENT_TYPE[$1]:-?}" "${model:+, model \`$model\`}"
+agent_desc() { # agent → "`name` (type, model `model`)" for attributions; an investigator from INVESTIGATORS_TYPE
+  local type=${AGENT_TYPE[$1]:-${INVESTIGATORS_TYPE[$1]:-?}} model=${AGENT_MODEL[$1]:-${INVESTIGATORS_MODEL[$1]:-}}
+  printf '`%s` (%s%s)' "$1" "$type" "${model:+, model \`$model\`}"
 }
 
 # agent_github_colors — "name=#RRGGBB …": the colour of every configured agent's name on GitHub (gh_colour_names), from
@@ -2124,19 +2124,30 @@ review_pair_key() { if [[ $1 < $2 ]]; then printf '%s %s\n' "$1" "$2"; else prin
 # review_pair_done writes it): that pair does not review the PR again while another pair can
 review_pair_reviewed() { [[ -f $1/A.verdict || -f $1/B.verdict ]]; }
 
+# review_model_key name — an investigator's CLI and model ("codex/gpt-6-astra"), so that a pair can avoid the models
+# of the last one; a name the configuration does not have (an old history's): "name:<name>", its own model
+review_model_key() {
+  if [[ -n ${INVESTIGATORS_TYPE[$1]:-} ]]; then
+    printf '%s/%s\n' "${INVESTIGATORS_TYPE[$1]}" "${INVESTIGATORS_MODEL[$1]:-default}"
+  else
+    printf 'name:%s\n' "$1"
+  fi
+}
+
 # review_pair_candidates level avoid name... — the pairs of those investigators (given in list order) that a review
-# may take at that level, one "ov pl ms a b" line each, in list order: strict = neither avoid (the pair that reviewed
-# the PR last, "a b" in name order; empty: none) nor, except AGENT_REVIEW_DRAW=list, one of the last two pairs of the
-# review history; avoid = not avoid; any = every pair. ov = its members in avoid or in the history's last pair, pl =
-# the newest history line (1-based) with the pair, ms = the sum of the newest lines with each member (0 = never).
-# AGENT_REVIEW_DRAW=list reads no history.
+# may take at that level, one "ov mo pl ms a b" line each, in list order: strict = neither avoid (the pair that
+# reviewed the PR last, "a b" in name order; empty: none) nor, except AGENT_REVIEW_DRAW=list, one of the last two
+# pairs of the review history; avoid = not avoid; any = every pair. ov = its members in avoid or in the history's last
+# pair, mo = its members whose model (review_model_key) one of those has, pl = the newest history line (1-based) with
+# the pair, ms = the sum of the newest lines with each member (0 = never). AGENT_REVIEW_DRAW=list reads no history.
 review_pair_candidates() {
-  local level=$1 avoid=$2 hist=() n i j k a b key last="" prev="" ov pl ma mb
+  local level=$1 avoid=$2 hist=() n i j k a b key last="" prev="" ov mo pl ma mb x used=" "
   shift 2
   if [[ $AGENT_REVIEW_DRAW != list && -f $AGENTS_HOME/reviews/history ]]; then mapfile -t hist < "$AGENTS_HOME/reviews/history"; fi
   n=${#hist[@]}
   ((n < 1)) || last=${hist[n - 1]}
   ((n < 2)) || prev=${hist[n - 2]}
+  for x in $last $avoid; do used+="$(review_model_key "$x") "; done
   for ((i = 1; i <= $#; i++)); do
     for ((j = i + 1; j <= $#; j++)); do
       a=${!i} b=${!j}
@@ -2146,37 +2157,41 @@ review_pair_candidates() {
       ov=0
       [[ " $last $avoid " != *" $a "* ]] || ov=$((ov + 1))
       [[ " $last $avoid " != *" $b "* ]] || ov=$((ov + 1))
+      mo=0
+      [[ $used != *" $(review_model_key "$a") "* ]] || mo=$((mo + 1))
+      [[ $used != *" $(review_model_key "$b") "* ]] || mo=$((mo + 1))
       pl=0 ma=0 mb=0
       for ((k = 0; k < n; k++)); do
         [[ ${hist[k]} != "$key" ]] || pl=$((k + 1))
         [[ " ${hist[k]} " != *" $a "* ]] || ma=$((k + 1))
         [[ " ${hist[k]} " != *" $b "* ]] || mb=$((k + 1))
       done
-      printf '%d %d %d %s %s\n' "$ov" "$pl" $((ma + mb)) "$a" "$b"
+      printf '%d %d %d %d %s %s\n' "$ov" "$mo" "$pl" $((ma + mb)) "$a" "$b"
     done
   done
 }
 
 # review_pair_select level avoid name... — the pair of those investigators a review takes at that level
-# (review_pair_candidates), "a b" in list order; 1 = none. Of the pairs with the fewest members of the last pair:
-# AGENT_REVIEW_DRAW=rotate the pair used least recently (or never), then its members' reviews least recent, then the
-# list's order; random one drawn at random (AGENT_REVIEW_SEED fixes the draw, for the tests); list the first.
+# (review_pair_candidates), "a b" in list order; 1 = none. Of the pairs with the fewest members of the last pair, then
+# the fewest of its models: AGENT_REVIEW_DRAW=rotate the pair used least recently (or never), then its members' reviews
+# least recent, then the list's order; random one drawn at random (AGENT_REVIEW_SEED fixes the draw, for the tests);
+# list the first.
 review_pair_select() {
   local lines=() tops=() min line a b
   mapfile -t lines < <(review_pair_candidates "$@")
   ((${#lines[@]})) || return 1
   if [[ $AGENT_REVIEW_DRAW == rotate ]]; then
-    line=$(printf '%s\n' "${lines[@]}" | sort -s -n -k1,1 -k2,2 -k3,3 | head -n 1)
+    line=$(printf '%s\n' "${lines[@]}" | sort -s -n -k1,1 -k2,2 -k3,3 -k4,4 | head -n 1)
   else
-    min=$(printf '%s\n' "${lines[@]}" | cut -d' ' -f1 | sort -n | head -n 1)
-    for line in "${lines[@]}"; do [[ ${line%% *} != "$min" ]] || tops+=("$line"); done
+    min=$(printf '%s\n' "${lines[@]}" | sort -s -n -k1,1 -k2,2 | head -n 1 | cut -d' ' -f1,2)
+    for line in "${lines[@]}"; do [[ $(cut -d' ' -f1,2 <<< "$line") != "$min" ]] || tops+=("$line"); done
     line=${tops[0]}
     if [[ $AGENT_REVIEW_DRAW == random ]]; then
       [[ -z ${AGENT_REVIEW_SEED:-} ]] || RANDOM=$AGENT_REVIEW_SEED
       line=${tops[RANDOM % ${#tops[@]}]}
     fi
   fi
-  read -r _ _ _ a b <<< "$line"
+  read -r _ _ _ _ a b <<< "$line"
   printf '%s %s\n' "$a" "$b"
 }
 

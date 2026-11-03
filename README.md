@@ -328,15 +328,17 @@ reaching an agent; it does not hold back an agent that bypasses `gh` with its to
 review it again while another pair can — its re-review after a fix pass goes to other investigators, who get the
 slot's previous review, "by" its author, to check its findings first. With four investigators A, B, C and D a PR
 reviewed by A+B is re-reviewed by C+D, then by a mixed pair (A+C, B+D, …). `random` and `rotate` also never take one
-of the last two pairs of any PR and prefer investigators outside the last pair; `random` draws among the best pairs,
-`list` takes the first free ones. When only a busy investigator makes such a pair, the pair waits for it
+of the last two pairs of any PR and prefer investigators outside the last pair. Every mode then prefers
+investigators whose model (CLI and model, `INVESTIGATORS_TYPE` / `INVESTIGATORS_MODEL`) the last pair did not use;
+`random` draws among the best pairs, `list` takes the first free ones. When only a busy investigator makes such a pair, the pair waits for it
 `AGENT_REVIEW_ROTATE_WAIT_MIN` (20) minutes, then takes the best free pair (logged as `review_pair_repeated`); with
 two investigators their pair reviews every time. (A pass whose reviews never ended keeps its pair in `random` and
 `list`: it has not reviewed yet.)
 
 **The review rotation.** With `AGENT_REVIEW_DRAW=rotate` the two reviewers rotate through every investigator: a
 new pair is never one of the last two pairs — a PR's re-review after a fix pass included —, and among the free
-investigators it prefers those outside the last pair, then the pair that reviewed least recently (or never), then
+investigators it prefers those outside the last pair, then those of other models, then the pair that reviewed
+least recently (or never), then
 the investigators that reviewed least recently. With four investigators A, B, C and D: A+B, C+D, A+C, B+D, A+D, B+C.
 The history is `~/agents/reviews/history` (one pair a line, oldest first, the last 100), shared by every repository
 and written in every mode. It waits for a busy investigator as above.
@@ -743,7 +745,8 @@ Team: 20261020-140312-team
 ```
 
 `Opened by team-agents: team …, coordinator claude-1 (claude, model sonnet), members: …` at the end of a PR,
-`— Review by the team-agents investigator inv-opus (claude, model opus), request #7.` at the end of a review.
+`— Review by the team-agents investigator inv-opus (claude, model opus), request #7.` at the end of a review. A PR
+an investigator opens (an investigation's merge) names its CLI and model the same way (`INVESTIGATORS_TYPE`).
 On GitHub every agent's name in those lines is **bold, in a colour of its own** that stays the same in every round:
 the agents' `gh` colours it on the way out (a PR's description or comment, a review), from `AGENT_GITHUB_COLORS` in
 the configuration's order — the team agents (`NORMAL_AGENTS`, `WORKER_AGENTS`, the others by name) and, apart, the
