@@ -1475,7 +1475,14 @@ agents_gh_env() {
   real=$(command -v gh) || { log_warn agents_gh_missing "task=${RUNNER_ID:-}"; return 0; }
   [[ $real != "$dir/gh" ]] || real=${AGENT_REAL_GH:-}   # set already in this process
   [[ -n $real ]] || return 1
-  mkdir -p "$dir" && ln -sfn "$SELF" "$dir/gh" || return 1   # agent run as gh is the filter (agent_gh)
+  mkdir -p "$dir" || return 1
+  if [[ $(readlink "$dir/gh") != "$SELF" ]]; then   # agent run as gh is the filter (agent_gh)
+    # replaced in one step (a rename), never missing: runs that start at once (a review pair's) do this together
+    if ! { ln -s "$SELF" "$dir/gh.$BASHPID" && mv -Tf "$dir/gh.$BASHPID" "$dir/gh"; }; then
+      rm -f "$dir/gh.$BASHPID"
+      return 1
+    fi
+  fi
   export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE="" AGENT_GITHUB_COLORS
   local names=()
   mapfile -t names < <(run_github_names)
