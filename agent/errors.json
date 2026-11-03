@@ -8,6 +8,18 @@
     {"name": "UnknownCommand", "class": "InvalidArgument", "doc": "the requested command is not implemented"},
     {"name": "InvalidArgument", "class": "InvalidArgument", "doc": "a command argument is missing or invalid"}
    ]
+  },
+  {
+   "type": "Execute",
+   "op": "execute",
+   "what": "subprocess execution",
+   "causes": [
+    {"name": "InvalidCommand", "class": "InvalidArgument", "doc": "the command specification is invalid"},
+    {"name": "Denied", "class": "Permission", "doc": "command execution is denied by policy"},
+    {"name": "Start", "class": "Process", "doc": "the subprocess could not be started"},
+    {"name": "Wait", "class": "Process", "doc": "the subprocess could not be waited for"}
+   ],
+   "noStorage": true
   }
  ]
 }
