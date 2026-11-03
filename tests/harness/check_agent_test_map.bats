@@ -7,15 +7,16 @@ setup() {
 }
 
 @test "check-agent-test-map validates repository ledger successfully" {
-  local expected_tests
+  local expected_tests expected_planned
   expected_tests=$(grep -c '^[[:space:]]*@test[[:space:]]' "$REPO_ROOT"/tests/unit/*.bats | awk -F: '{s+=$2} END {print s}')
+  expected_planned=$(awk -F '\t' '$6 == "planned" {n++} END {print n+0}' "$REPO_ROOT/tests/agent-go-map.tsv")
   run "$TOOL" "$REPO_ROOT/tests/agent-go-map.tsv"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "check-agent-test-map: OK" ]]
   [[ "$output" =~ "total tests:    "$expected_tests ]]
   [[ "$output" =~ "blackbox cases: "[0-9]+ ]]
   [[ "$output" =~ "source cases:   "[0-9]+ ]]
-  [[ "$output" =~ "planned:        "$expected_tests ]]
+  [[ "$output" =~ "planned:        "$expected_planned ]]
 }
 
 @test "check-agent-test-map supports planned, active, and done status transitions" {
