@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -41,3 +42,31 @@ func TestUnknownCommandExitsOneWithUsage(t *testing.T) {
 		t.Fatalf("run([\"unknown-cmd\"]) stdout does not contain usage: %q", stdout.String())
 	}
 }
+
+func TestDispatchUnknownCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := dispatch("unknown-cmd", nil, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("dispatch(\"unknown-cmd\") returned nil error, want CommandUnknownCommand")
+	}
+	if err.Cause != CommandUnknownCommand {
+		t.Fatalf("dispatch(\"unknown-cmd\") cause = %v, want CommandUnknownCommand", err.Cause)
+	}
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("dispatch(\"unknown-cmd\") error does not unwrap to ErrInvalidArgument")
+	}
+}
+
+func TestDispatchHelp(t *testing.T) {
+	for _, cmd := range []string{"help", "-h", "--help"} {
+		var stdout, stderr bytes.Buffer
+		err := dispatch(cmd, nil, &stdout, &stderr)
+		if err != nil {
+			t.Fatalf("dispatch(%q) returned error = %v, want nil", cmd, err)
+		}
+		if !strings.Contains(stdout.String(), "agent run <agent> \"task\"") {
+			t.Fatalf("dispatch(%q) stdout does not contain usage", cmd)
+		}
+	}
+}
+
