@@ -231,7 +231,7 @@ if [[ $LANE == "candidate" ]]; then
 
     filter_expr=""
     if (( ${#regex_parts[@]} > 0 )); then
-      filter_expr="^("
+      filter_expr="("
       for i in "${!regex_parts[@]}"; do
         if (( i > 0 )); then
           filter_expr+="|"

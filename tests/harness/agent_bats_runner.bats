@@ -206,6 +206,59 @@ EOF
   [[ "$output" == *"executed count (0) does not match selected count (1)"* ]]
 }
 
+@test "agent-bats exact filter anchoring isolates active test from prefix and suffix matches" {
+  local mock_repo="$BATS_TEST_TMPDIR/mock_repo_anchoring"
+  mkdir -p "$mock_repo/tests/unit" "$mock_repo/build" "$mock_repo/tools"
+  cp "$TOOL" "$mock_repo/tools/"
+  cp "$REPO_ROOT/tools/unit-bats.sh" "$mock_repo/tools/"
 
+  cat > "$mock_repo/tests/agent-go-map.tsv" <<'EOF'
+bats_file	test_name	classification	implementation_round	go_test_or_subtests	state
+tests/unit/sample.bats	foo	blackbox	R04	TestFoo	active
+tests/unit/sample.bats	prefix foo	blackbox	R04	TestPrefixFoo	planned
+tests/unit/sample.bats	foo suffix	blackbox	R04	TestFooSuffix	planned
+EOF
 
+  cat > "$mock_repo/tests/unit/sample.bats" <<'EOF'
+@test "foo" {
+  true
+}
 
+@test "prefix foo" {
+  false
+}
+
+@test "foo suffix" {
+  false
+}
+EOF
+
+  cat > "$mock_repo/build/agent-go" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$mock_repo/build/agent-go"
+
+  run env CHECK_ROOT="$mock_repo" "$mock_repo/tools/agent-bats.sh" --repo-root "$mock_repo"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok 1 foo"* ]]
+  [[ "$output" != *"prefix foo"* ]]
+  [[ "$output" != *"foo suffix"* ]]
+}
+
+@test "agent-bats rejects in-repository TMPDIR to prevent recursive staging" {
+  local mock_repo="$BATS_TEST_TMPDIR/mock_repo_tmpdir"
+  mkdir -p "$mock_repo/tests/unit" "$mock_repo/build" "$mock_repo/tools" "$mock_repo/tmp"
+  cp "$TOOL" "$mock_repo/tools/"
+  cp "$REPO_ROOT/tools/unit-bats.sh" "$mock_repo/tools/"
+
+  cat > "$mock_repo/build/agent-go" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$mock_repo/build/agent-go"
+
+  run env TMPDIR="$mock_repo/tmp" "$mock_repo/tools/agent-bats.sh" --repo-root "$mock_repo"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"TMPDIR cannot be inside repository root"* ]]
+}
