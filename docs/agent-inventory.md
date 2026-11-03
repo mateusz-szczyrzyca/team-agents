@@ -227,7 +227,7 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **reviews/<repo>-<PR-number>/pair.lock** — lock serializing verdict recording and completion decision for a review pair.
 - **reviews/<repo>-<PR-number>/A.verdict**, **B.verdict** — recorded verdicts for review slots A and B.
 - **reviews/<repo>-<PR-number>/A.md**, **B.md** — review commentary and findings.
-- **reviews/<repo>-<PR-number>/A.inv**, **B.inv** — investigator request/assignment IDs for review slots A and B.
+- **reviews/<repo>-<PR-number>/A.inv**, **B.inv** — investigator request/assignment IDs for review slots A and B. Written at `bin/agent:2062` during `start_review_slot`, read at `bin/agent:1905-1906` to determine slot assignment in `retry_review_slot`, displayed at `bin/agent:2041` in board messages.
 - **reviews/<repo>-<PR-number>/decided** — marker indicating one reviewer completed the pair decision.
 - **reviews/<repo>-<PR-number>/A.agent**, **B.agent** — assigned investigator names for slots A and B.
 - **reviews/<repo>-<PR-number>/A.retried**, **B.retried** — slot retry tracking markers.
@@ -254,16 +254,16 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **prompt-$n.md** — fully rendered prompt provided to the CLI for run `$n`.
 - **mcp.json** / **opencode-config.json** — provider-specific MCP configuration files in task directory (Claude Code, OpenCode). Note: Gemini/Antigravity uses `.agents/mcp_config.json` created in the working tree (`$WORKTREE/.agents/mcp_config.json`).
 - **questions-$round.md** / **questions.md** — questions submitted to human for round `$round`.
-- **fix-pass.n** — fix-pass number (numeric index for retry cycle).
-- **fix-pass.md** — fix-pass review findings and instructions for follow-up run.
+- **fix-pass.n** — fix-pass number (numeric index for retry cycle). Written at `bin/agent:1746` during `review_fix_pass`, read at `bin/agent:1758` in `do_fix_pass` to retrieve the retry count.
+- **fix-pass.md** — fix-pass review findings and instructions for follow-up run. Written at `bin/agent:1747` alongside fix-pass.n.
 - **history.md** — accumulated history of round progress, questions, and decisions.
 - **postmerge.log** / **precheck.log** — gate check and test logs during verification.
 - **phase1.json** — manifest of accepted cohort member tasks in independent investigation.
 - **resume.json** — manifest of resumed investigation review tasks.
 - **resume-request.md** — advisory resume request instructions.
-- **sync_manifest.json** — node-side sync state including completion status and log cursors.
-- **acked** — marker file indicating task has been acknowledged (seen by human).
-- **long-run** — stores soft step limit for long-running tasks to trigger wrap-up reminder.
+- **sync_manifest.json** — node-side sync state including completion status and log cursors for remote node task synchronization. Read at `bin/agent:7516` in `node_sync_has_new_logs` to check completion status, written and queried at `bin/agent:7594-7600` in `node_sync_task` during sync cycles.
+- **acked** — marker file (empty or timestamp) indicating task has been acknowledged by human. Written at `bin/agent:8005` and `bin/agent:8012` in `cmd_ack` callbacks; removed at `bin/agent:4534` during task finalization in `runner_exit`.
+- **long-run** — stores soft step limit (default from `$AGENT_LONG_RUN_HARD`) to trigger wrap-up reminder for long-running tasks. Written at `bin/agent:4601` in `runner_exit` when duration exceeds threshold, read at `bin/agent:6433` in `long_run_end` callback, cleared at `bin/agent:4534` on task completion.
 - **answers.lock** — exclusive lock serializing question saving, editing, and answers watch.
 - **wake.lock** — exclusive lock serializing scheduled task wake-ups.
 - **stop-requested** / **node-stop-requested** — lifecycle stop marker files.
