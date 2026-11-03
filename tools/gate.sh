@@ -14,7 +14,7 @@ ROOT=${GATE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}   # the repository (tests: 
 LOGS=${GATE_LOG_DIR:-$ROOT/build/gate}                 # where the full logs go
 MAX_LINES=${GATE_MAX_LINES:-25}                        # at most this many lines of a failed step are shown
 STEPS=(check-generated lint-shell lint-go lint-docs unit-go unit-bats harness)
-if grep -q '^[[:space:]]*unit-agent-bats:' "$ROOT/Makefile" 2>/dev/null || grep -q '^\.PHONY:.*unit-agent-bats' "$ROOT/Makefile" 2>/dev/null; then
+if grep -q '^[[:space:]]*unit-agent-bats:' "$ROOT/Makefile" || grep -q '^\.PHONY:.*unit-agent-bats' "$ROOT/Makefile"; then
   STEPS+=(unit-agent-bats)
 fi
 if (($# > 0)); then STEPS=("$@"); fi
