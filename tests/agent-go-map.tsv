@@ -523,3 +523,9 @@ tests/unit/review_pair_cycle.bats	default draw: one PR's six passes take all six
 tests/unit/review_pair_cycle.bats	default draw: six PRs in a row take all six pairs, each once	source	R33	-	planned
 tests/unit/review_pair_cycle.bats	rotate: one PR's six passes take all six pairs, each once	source	R33	-	planned
 tests/unit/review_pair_cycle.bats	default draw: a PR's pass never repeats the pair of its pass before, whichever three are free	source	R33	-	planned
+tests/unit/github_name_registry.bats	a team's names keep their colours when NORMAL_AGENTS changes between rounds	source	R12	-	planned
+tests/unit/github_name_registry.bats	the coordinator, the members and every investigator each get a colour nobody else has	source	R12	-	planned
+tests/unit/github_name_registry.bats	the colours are remembered in github-colors, one name a line; a later team adds its new names only	source	R12	-	planned
+tests/unit/github_name_registry.bats	a palette used up: a new name gets the colour the fewest names have	source	R12	-	planned
+tests/unit/github_name_registry.bats	two runs starting at once never give two names one colour	source	R12	-	planned
+tests/unit/github_name_registry.bats	AGENT_GITHUB_COLORS=none: no colours, nothing remembered	source	R12	-	planned
