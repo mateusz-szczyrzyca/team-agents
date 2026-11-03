@@ -460,9 +460,9 @@ AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no 
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
-# the colours of the agents' names on GitHub (#RRGGBB, readable on light and dark backgrounds), given in the
-# configuration's order; none = plain names
-AGENT_GITHUB_COLORS="${AGENT_GITHUB_COLORS:-#0969DA #BC4C00 #8250DF #1B7C83 #BF3989 #9A6700 #57606A}"
+# the colours of the agents' names on GitHub (#RRGGBB, readable on light and dark backgrounds), given out in this order
+# and remembered per name (github_colour_register); none = plain names
+AGENT_GITHUB_COLORS="${AGENT_GITHUB_COLORS:-#0969DA #BC4C00 #8250DF #1B7C83 #BF3989 #9A6700 #57606A #953800 #3192AA #A475F9}"
 AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free) | rotate (every investigator in turn)
 AGENT_REVIEW_ROTATE_WAIT_MIN="${AGENT_REVIEW_ROTATE_WAIT_MIN:-20}" # how long a pair waits for a busy investigator rather than repeat a PR's pair (or, random and rotate, one of the last two)
 REVIEW_HISTORY_MAX=100   # how many review pairs $AGENTS_HOME/reviews/history keeps (the rotation reads its last ones)
@@ -1187,6 +1187,68 @@ agent_github_colors() {
   printf '%s' "${out% }"
 }
 
+# github_colour_register name... — gives each of those names that has no colour yet one of AGENT_GITHUB_COLORS in
+# $AGENTS_HOME/github-colors ("name #RRGGBB" a line, kept for good, so that a name's colour never changes with the
+# configuration's order): the palette's first colour no name has, else the one the fewest names have. Under the
+# file's lock (runs start at once). A failure is logged: the names then get the configuration's order's colours.
+github_colour_register() {
+  local f="$AGENTS_HOME/github-colors" palette=()
+  [[ $AGENT_GITHUB_COLORS != none ]] || return 0
+  read -ra palette <<< "$AGENT_GITHUB_COLORS"
+  ((${#palette[@]} && $#)) || return 0
+  (
+    flock -w 10 9 || exit 1
+    local -A have=() uses=()
+    local n c p best
+    if [[ -f $f ]]; then
+      while read -r n c; do
+        [[ $n =~ ^[A-Za-z0-9._@-]+$ && $c =~ ^#[0-9A-Fa-f]{6}$ ]] || continue   # a line not ours: no colour from it
+        have[$n]=$c; uses[$c]=$((${uses[$c]:-0} + 1))
+      done < "$f"
+    fi
+    for n in "$@"; do
+      [[ $n =~ ^[A-Za-z0-9._@-]+$ && -z ${have[$n]:-} ]] || continue
+      best=""
+      for p in "${palette[@]}"; do
+        if [[ -z $best ]] || ((${uses[$p]:-0} < ${uses[$best]:-0})); then best=$p; fi
+      done
+      printf '%s %s\n' "$n" "$best" >> "$f" || exit 1
+      have[$n]=$best; uses[$best]=$((${uses[$best]:-0} + 1))
+    done
+  ) 9>> "$f.lock" || log_warn github_colors_failed "file=$f"
+}
+
+# github_name_colors — "name=#RRGGBB …", the colours the agents' gh gives the names (AGENT_GITHUB_NAME_COLORS): those
+# remembered in github-colors, then for every other configured agent its colour from the configuration's order
+# (agent_github_colors); none = nothing
+github_name_colors() {
+  local f="$AGENTS_HOME/github-colors" n c e out=""
+  local -A have=()
+  [[ $AGENT_GITHUB_COLORS != none ]] || return 0
+  if [[ -f $f ]]; then
+    while read -r n c; do
+      [[ $n =~ ^[A-Za-z0-9._@-]+$ && $c =~ ^#[0-9A-Fa-f]{6}$ && -z ${have[$n]:-} ]] || continue
+      have[$n]=1; out+="$n=$c "
+    done < "$f"
+  fi
+  for e in $(agent_github_colors); do [[ -n ${have[${e%%=*}]:-} ]] || out+="$e "; done
+  printf '%s' "${out% }"
+}
+
+# run_github_names — the names a run can publish on GitHub, one a line: every investigator (a review's byline), the
+# run's agent and, in a team, every agent of the team (the attribution's coordinator and members, from their task files)
+run_github_names() {
+  local m a
+  investigator_names
+  [[ -z ${AGENT:-} ]] || printf '%s\n' "$AGENT"
+  [[ -n ${TEAM:-} ]] || return 0
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] && grep -qxF "TEAM=$TEAM" "$m" || continue
+    a=$(sed -n 's/^AGENT=//p' "$m")
+    [[ -z $a ]] || printf '%s\n' "$a"
+  done
+}
+
 attribution_block() { # indent — the lines that end the description of a PR: the agent, or the team, its coordinator and its members
   local ind=$1 a
   printf '%sOpened by team-agents:\n' "$ind"
@@ -1356,7 +1418,10 @@ agents_gh_env() {
   [[ -n $real ]] || return 1
   mkdir -p "$dir" && ln -sfn "$SELF" "$dir/gh" || return 1   # agent run as gh is the filter (agent_gh)
   export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE="" AGENT_GITHUB_COLORS
-  AGENT_GITHUB_NAME_COLORS=$(agent_github_colors)
+  local names=()
+  mapfile -t names < <(run_github_names)
+  github_colour_register "${names[@]}"
+  AGENT_GITHUB_NAME_COLORS=$(github_name_colors)
   export AGENT_GITHUB_NAME_COLORS
   if [[ $(task_field "${RUNNER_ID:-}" KIND 2>/dev/null) == investigation ]]; then   # its reviews say who wrote them, first
     AGENT_REVIEW_BYLINE=$(review_byline "$RUNNER_ID")
