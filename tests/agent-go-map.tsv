@@ -1,0 +1,481 @@
+bats_file	test_name	classification	implementation_round	go_test_or_subtests	state
+tests/unit/agent.bats	a solo task finishes with STATUS: DONE and sends a notification	blackbox	R23	-	planned
+tests/unit/agent.bats	questions in a file: waiting → answer → resume	blackbox	R24	-	planned
+tests/unit/agent.bats	questions asked only in the final message are moved to a questions file	blackbox	R23	-	planned
+tests/unit/agent.bats	a turn without STATUS is passed to the human as a question	blackbox	R23	-	planned
+tests/unit/agent.bats	the watchdog kills a hung run and resumes the session	blackbox	R25	-	planned
+tests/unit/agent.bats	agent stop --running stops everything without notifications	blackbox	R28	-	planned
+tests/unit/agent.bats	a team: the coordinator closes the team and its checkpoint is saved	blackbox	R29	-	planned
+tests/unit/agent.bats	a team made only of workers is rejected	blackbox	R28	-	planned
+tests/unit/agent.bats	agent run --resume continues a stopped team on the same branches	blackbox	R30	-	planned
+tests/unit/agent.bats	agent transcript merges bus messages and activity	blackbox	R53	-	planned
+tests/unit/agent.bats	agent archive packs a finished task and removes it from tasks/	blackbox	R52	-	planned
+tests/unit/agent.bats	every run writes structured JSON log records	blackbox	R23	-	planned
+tests/unit/agent.bats	agent log renders structured records and --raw shows them unchanged	blackbox	R53	-	planned
+tests/unit/agent.bats	a failing notification command is logged, not ignored	blackbox	R23	-	planned
+tests/unit/agent.bats	script events are published as typed bus notices	blackbox	R23	-	planned
+tests/unit/agent.bats	the prompt tells the agent whether it may install missing tools	blackbox	R23	-	planned
+tests/unit/agent.bats	commits carry the agent's identity, signature and trailers; languages are set per audience	blackbox	R23	-	planned
+tests/unit/agent.bats	without GIT_EMAIL commits still carry the agent's name	blackbox	R23	-	planned
+tests/unit/agent.bats	a repository without AGENTS.md: warning at start, log record, note in the notification, prompt text	blackbox	R23	-	planned
+tests/unit/agent.bats	a repository with AGENTS.md: the prompt makes it binding and forbids changing it	blackbox	R23	-	planned
+tests/unit/agent.bats	a team starts on a bus state written by the previous version (empty tiers)	blackbox	R28	-	planned
+tests/unit/agent.bats	a team that cannot be created on the bus leaves no tasks, branches or worktrees behind	blackbox	R28	-	planned
+tests/unit/agent.bats	agent discard removes a task that never started and refuses one that ran	blackbox	R52	-	planned
+tests/unit/agent.bats	a run stopped by an exhausted quota pauses the task and a timer resumes it	blackbox	R25	-	planned
+tests/unit/agent.bats	a team member stopped by an exhausted quota is paused, not dropped, and the team is told	blackbox	R29	-	planned
+tests/unit/agent.bats	the wake-loop guard pauses a member that keeps waking up without doing anything	blackbox	R29	-	planned
+tests/unit/agent.bats	quota reset times are read from the messages of the CLIs	source	R25	-	planned
+tests/unit/agent.bats	questions without a recommendation are sent back to the agent once	blackbox	R23	-	planned
+tests/unit/agent.bats	saving the questions file marked ANSWERED sends the answers; ok accepts the recommendation	blackbox	R24	-	planned
+tests/unit/agent.bats	a new questions file opens in the VS Code window connected to this host	blackbox	R23	-	planned
+tests/unit/agent_gh.bats	agent-gh api: unknown accounts' comments, and the trusted accounts' 'ignore this mate' ones, never reach the agent; each is logged	blackbox	R11	-	planned
+tests/unit/agent_gh.bats	agent-gh pr view --json comments,reviews keeps only the trusted accounts' ones, on open, closed and merged PRs	blackbox	R11	-	planned
+tests/unit/agent_gh.bats	agent-gh pr view --comments shows only the trusted accounts' comments	blackbox	R11	-	planned
+tests/unit/agent_gh.bats	agent-gh: a fork's PR, or one opened by an unknown account, is not shown — neither its description nor its diff	blackbox	R11	-	planned
+tests/unit/agent_gh.bats	agent-gh: a GraphQL query for comments or reviews is refused (only the filtered ways read them)	blackbox	R11	-	planned
+tests/unit/agent_gh.bats	the agents' CLI gets agent-gh as gh, with the trusted accounts	blackbox	R23	-	planned
+tests/unit/agent_gh.bats	agent-gh pr list and issue list show only the trusted accounts' PRs and issues, a PR only from this repository; the others are logged	blackbox	R11	-	planned
+tests/unit/authenticated.bats	each agent is checked with its own model; a failure shows the HTTP code, the model and the provider's message	blackbox	R51	-	planned
+tests/unit/authenticated.bats	a rejected key is 'needs authentication', with the provider's message	blackbox	R51	-	planned
+tests/unit/authenticated.bats	an agent name that is not configured is refused	blackbox	R51	-	planned
+tests/unit/auto_stage.bats	--autopilot: the coordinator's task shows the checks with the gate's progress, then the two reviews, then nothing once the next round starts	blackbox	R34	-	planned
+tests/unit/auto_stage.bats	a local error of the machine is neither a provider's limit nor a network failure; the provider's own are	source	R21	-	planned
+tests/unit/autopilot_merge.bats	merge_blockers: a path the human merges, and changed existing tests, keep the PR for the human	source	R34	-	planned
+tests/unit/autopilot_merge.bats	--autopilot: both reviews ready-to-merge — the PR is merged, the gate passes on the base, the next round starts	blackbox	R34	-	planned
+tests/unit/autopilot_merge.bats	agent autopilot <team> off: after two ready-to-merge reviews the PR is not merged — the human is told	blackbox	R34	-	planned
+tests/unit/autopilot_merge.bats	--autopilot: the gate fails on the merged base — the autopilot stops; no next round	blackbox	R34	-	planned
+tests/unit/autopilot_merge.bats	a review pair waiting for two free investigators longer than AGENT_REVIEW_WAIT_MIN is reported, once	blackbox	R33	-	planned
+tests/unit/autopilot_questions.bats	--autopilot: questions go back to the agent once; it decides and lists its decisions in the PR; nobody waits	blackbox	R34	-	planned
+tests/unit/autopilot_questions.bats	--autopilot: questions asked again in the same round go to the human	blackbox	R34	-	planned
+tests/unit/autopilot_review.bats	review_verdict reads a review's verdict in its usual forms; the last one counts	source	R32	-	planned
+tests/unit/autopilot_review.bats	round_test_changes: code without new tests, documentation only, a new test, a changed existing test	source	R31	-	planned
+tests/unit/autopilot_review.bats	--autopilot: a round whose head fails the gate goes back to the team with the gate's output; no review starts	blackbox	R32	-	planned
+tests/unit/autopilot_review.bats	--autopilot: two reviews start together on two investigators; both ready-to-merge — the PR is ready	blackbox	R33	-	planned
+tests/unit/autopilot_review.bats	--autopilot: one review needs fixes — the team goes on with that review's findings	blackbox	R33	-	planned
+tests/unit/autopilot_review.bats	--verify: a review's notification shows its verdict	blackbox	R32	-	planned
+tests/unit/context_hygiene.bats	a team member's prompt says what output costs, how to read large files and diffs; the coordinator asks a worker first	blackbox	R29	-	planned
+tests/unit/context_hygiene.bats	the review prompt reads the PR file by file, not its whole diff at once	blackbox	R16	-	planned
+tests/unit/coordination.bats	the team prompt says what a message to a sleeping member costs, and how to spare it	blackbox	R29	-	planned
+tests/unit/delegate_jobs.bats	delegated job uses the pushed SHA, capable node, git branch and ordinary requester message	blackbox	R50	-	planned
+tests/unit/delegate_jobs.bats	locally satisfied requirements keep the existing local helper flow	blackbox	R50	-	planned
+tests/unit/delegate_jobs.bats	an unpushed SHA fails with a push instruction before creating any job	blackbox	R50	-	planned
+tests/unit/delegate_jobs.bats	lead outage retains one frozen submission across requesting node restarts	blackbox	R50	-	planned
+tests/unit/delegate_jobs.bats	failed destination checkout returns a failed helper result without starting a task	blackbox	R50	-	planned
+tests/unit/delegate_jobs.bats	requester commits after delegation cannot change the submitted base	blackbox	R50	-	planned
+tests/unit/delegate_jobs.bats	maximum-size escaped helper task is accepted by the real lead and tracked after POST	blackbox	R50	-	planned
+tests/unit/findings.bats	the critical and major findings of a review are counted in every usual form	source	R21	-	planned
+tests/unit/fresh_relative.bats	a resumed run starts a fresh session only past twice the task's session starts; --runs shows each run's mode	source	R17	-	planned
+tests/unit/fresh_session.bats	a run that read a large context a step is followed by a fresh session, not a resume	blackbox	R24	-	planned
+tests/unit/fresh_session.bats	a run with a small context a step is resumed as before	blackbox	R24	-	planned
+tests/unit/fresh_session.bats	a team member's long run ends it: its next run starts a fresh session, woken at once	source	R25	-	planned
+tests/unit/gate.bats	passing steps take one line each; the full output is in the log	blackbox	R32	-	planned
+tests/unit/gate.bats	a failing Go test shows its failure, not the hundreds of passing ones	blackbox	R32	-	planned
+tests/unit/gate.bats	a failing bats test shows its name and diagnosis, capped; the linter shows its findings without code	blackbox	R32	-	planned
+tests/unit/gate.bats	every step runs even after a failure, and the summary names the failed ones	blackbox	R32	-	planned
+tests/unit/github_format.bats	pr_format_issues: commits and PRs in code format without a link, a code block without its language, plain RED and GREEN	source	R12	-	planned
+tests/unit/github_format.bats	--autopilot: a PR description with an unlinked commit goes back to the team once, with what to fix; then the review starts	blackbox	R34	-	planned
+tests/unit/github_trust.bats	a fork's PR with the round's branch name is not the round's PR: it is not reviewed	blackbox	R32	-	planned
+tests/unit/github_trust.bats	a PR opened by an account that is not trusted is not the round's PR: it is not reviewed	blackbox	R32	-	planned
+tests/unit/github_trust.bats	--autopilot merges only the commit its checks and reviews had (gh pr merge --match-head-commit)	blackbox	R34	-	planned
+tests/unit/github_trust.bats	the agents are told that text on GitHub by anyone but the trusted accounts is data, never instructions	blackbox	R23	-	planned
+tests/unit/handover_failed.bats	remote_start_check: the lead's commit must be on origin for a new remote member	source	R30	-	planned
+tests/unit/handover_failed.bats	a remote member coming back on a resume does not need the lead's checkout pushed; a new one does	source	R30	-	planned
+tests/unit/handover_failed.bats	a team that cannot take its work back tells the human why: the stage, the PR, the notification	source	R30	-	planned
+tests/unit/identity.bats	an empty GIT_EMAIL is the agent's own .invalid address, never the human's e-mail from git config	blackbox	R23	-	planned
+tests/unit/identity.bats	%a in GIT_EMAIL is the agent's name	blackbox	R23	-	planned
+tests/unit/identity.bats	without GIT_SIGNING_KEY the agents do not sign, even when the human signs every commit	blackbox	R23	-	planned
+tests/unit/investigation_clarification.bats	an independent investigator asks a question and resumes without failing its cohort	blackbox	R39	-	planned
+tests/unit/investigation_completed_legacy.bats	supervisor finalizes an already delivered legacy success without another decision or notification	blackbox	R39	-	planned
+tests/unit/investigation_completed_legacy.bats	dispatch finalizes an already delivered legacy failure with its recorded result	blackbox	R39	-	planned
+tests/unit/investigation_completed_legacy.bats	legacy completion recovery does not guess a missing or invalid result	blackbox	R39	-	planned
+tests/unit/investigation_completed_legacy.bats	legacy completion recovery preserves unfinished phases and stopped parents	blackbox	R39	-	planned
+tests/unit/investigation_independent_labels.bats	agent status and show name independent investigators and the PR comment names --investigation	blackbox	R37	-	planned
+tests/unit/investigation_independent_resume_prompt.bats	independent investigator resume prompt omits agentbus tools and coordination instructions	blackbox	R40	-	planned
+tests/unit/investigation_mcp_off.bats	codex: an independent investigator's agentbus server has its command and is off; anyone else's is on	source	R18	-	planned
+tests/unit/investigation_mcp_off.bats	opencode: an independent investigator's agentbus server says how to reach it, and is off	source	R19	-	planned
+tests/unit/investigation_pipeline_clarification.bats	a merger asks clarification questions and resumes without being replaced	blackbox	R39	-	planned
+tests/unit/investigation_pipeline_clarification.bats	a reviewer asks clarification questions and resumes without being replaced	blackbox	R39	-	planned
+tests/unit/investigation_prompt_clarification_resume.bats	independent investigator resume incorporates human note along with answered questions	blackbox	R40	-	planned
+tests/unit/investigation_prompt_clarification_resume.bats	independent investigator fresh session prompt does not duplicate answered questions	source	R40	-	planned
+tests/unit/investigation_resume_independence.bats	answered investigator clarification resumes without requiring disabled agentbus tools	blackbox	R40	-	planned
+tests/unit/investigation_single_investigator.bats	single investigator is accepted and investigation-team task is created	blackbox	R39	-	planned
+tests/unit/investigation_single_investigator.bats	single investigator with whitespace is trimmed and accepted	blackbox	R39	-	planned
+tests/unit/investigation_single_pipeline.bats	sole investigator completes merge review and notification without a decision wait	blackbox	R39	-	planned
+tests/unit/investigation_single_pipeline.bats	sole investigator review without a verdict still fails the completed flow	blackbox	R39	-	planned
+tests/unit/investigation_team_admission.bats	a leased parent without phase1.json releases its lease when the supervisor runs	blackbox	R37	-	planned
+tests/unit/investigation_team_admission.bats	a legacy leased parent with neither manifest nor children releases its lease	blackbox	R37	-	planned
+tests/unit/investigation_team_admission.bats	a manifest member whose child metadata is missing is failed and releases the lease	blackbox	R37	-	planned
+tests/unit/investigation_team_admission.bats	a child that never started (status new, no unit) counts as failed and releases the lease	blackbox	R37	-	planned
+tests/unit/investigation_team_admission.bats	a genuinely running investigator keeps the cohort lease while the supervisor runs	blackbox	R37	-	planned
+tests/unit/investigation_team_admission.bats	the manifest is written before the parent takes its investigator lease	blackbox	R36	-	planned
+tests/unit/investigation_team_admission.bats	a leased parent without manifest keeps the lease while its tagged child is still running	blackbox	R37	-	planned
+tests/unit/investigation_team_admission.bats	stop --running waits for admission before releasing investigation capacity	source	R36	-	planned
+tests/unit/investigation_team_advisory_resume.bats	open investigation PR resumes all original investigators including merger as advisory reviewers	blackbox	R40	-	planned
+tests/unit/investigation_team_advisory_resume.bats	merged investigation PR resume is refused with reason before creating tasks	blackbox	R40	-	planned
+tests/unit/investigation_team_advisory_resume.bats	closed investigation PR resume is refused with reason before creating tasks	blackbox	R40	-	planned
+tests/unit/investigation_team_advisory_resume.bats	a completed investigation PR can receive another complete advisory pass	blackbox	R40	-	planned
+tests/unit/investigation_team_cli.bats	--investigation without --team is refused before anything starts	blackbox	R36	-	planned
+tests/unit/investigation_team_cli.bats	--team with a single investigator starts the requested investigation cohort	blackbox	R39	-	planned
+tests/unit/investigation_team_cli.bats	a duplicate investigator in --team is refused	blackbox	R36	-	planned
+tests/unit/investigation_team_cli.bats	a name that is not a configured investigator is refused with the configured ones listed	blackbox	R36	-	planned
+tests/unit/investigation_team_cli.bats	an empty --team value is refused	blackbox	R36	-	planned
+tests/unit/investigation_team_cli.bats	--team with investigators but without --investigation is refused	blackbox	R36	-	planned
+tests/unit/investigation_team_cli.bats	--investigation cannot be combined with --autopilot or --verify	blackbox	R36	-	planned
+tests/unit/investigation_team_cli.bats	--investigation cannot be combined with --need or --on (investigators run on the lead only)	blackbox	R36	-	planned
+tests/unit/investigation_team_cli.bats	a valid two-investigator list with spaces starts an investigation team	blackbox	R39	-	planned
+tests/unit/investigation_team_cli.bats	three configured investigators start an investigation team	blackbox	R39	-	planned
+tests/unit/investigation_team_cli.bats	the topic can be given as a file with -f	blackbox	R39	-	planned
+tests/unit/investigation_team_cli.bats	a missing topic file given with -f is refused	blackbox	R36	-	planned
+tests/unit/investigation_team_handoff.bats	a completed pipeline opens a PR and uses the unchanged review prompt	blackbox	R39	-	planned
+tests/unit/investigation_team_handoff.bats	handoff records the stage comments mentions the owner and never merges	blackbox	R39	-	planned
+tests/unit/investigation_team_handoff.bats	failed checks bounce once then replace the merger once and finish as failed	blackbox	R39	-	planned
+tests/unit/investigation_team_handoff.bats	a review without a verdict is replaced only once before human handoff	blackbox	R39	-	planned
+tests/unit/investigation_team_handoff.bats	findings without an explicit verdict still fail the investigation review	blackbox	R39	-	planned
+tests/unit/investigation_team_handoff.bats	supervision completes an interrupted phase four handoff only once	blackbox	R39	-	planned
+tests/unit/investigation_team_handoff.bats	a pipeline with no successful phase one result finishes as failed without waiting for a decision	blackbox	R39	-	planned
+tests/unit/investigation_team_handoff.bats	a merger PR targeting the wrong base never reaches checks or review	blackbox	R39	-	planned
+tests/unit/investigation_team_isolation.bats	claude mcp config excludes agentbus for investigation team task but includes it for legacy investigator	source	R18	-	planned
+tests/unit/investigation_team_isolation.bats	codex invocation excludes agentbus args for investigation team task but includes them for legacy investigator	source	R18	-	planned
+tests/unit/investigation_team_isolation.bats	gemini mcp config excludes agentbus for investigation team task but includes it for legacy investigator	source	R19	-	planned
+tests/unit/investigation_team_isolation.bats	opencode config excludes agentbus for investigation team task but includes it for legacy investigator	source	R19	-	planned
+tests/unit/investigation_team_opencode_schema.bats	opencode config for independent investigation defines disabled local agentbus server with transport command	source	R19	-	planned
+tests/unit/investigation_team_phase_queue.bats	cmd__supervise triggers dispatch to resume phase 2 when quota expires	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_queue.bats	cmd__supervise leaves phase 2 queued while quota remains active	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_queue.bats	cmd__supervise triggers dispatch to resume phase 3 reviewer when quota expires	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_queue.bats	dispatch recovers from dead precheck unit and bounces to merger with retry count 1	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_selection.bats	deterministic seed selection is reproducible across runs with same seed and candidate pool	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_selection.bats	investigator with failed phase1 status is never eligible for merger selection	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_selection.bats	quota-paused investigator is excluded from merger selection even if in DONE pool	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_selection.bats	when all eligible merger candidates are quota-paused the team waits in capacity queue	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_selection.bats	failed merger is replaced once by another eligible done investigator	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_selection.bats	second merger failure transitions parent task to waiting for human	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_selection.bats	failed reviewer is replaced once by another eligible team member excluding the merger	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_selection.bats	second reviewer failure transitions parent task to waiting for human	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_selection.bats	legacy parent without INVESTIGATION_PIPELINE finishes phase 1 as done without decision wait	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_selection.bats	unstarted merger is terminalized before replacement and its capacity is reusable	blackbox	R38	-	planned
+tests/unit/investigation_team_phase_selection.bats	unstarted reviewer is terminalized before replacement and its capacity is reusable	blackbox	R38	-	planned
+tests/unit/investigation_team_publication_retry.bats	publication transport failure preserves DONE and retries until the published branch can be verified	blackbox	R37	-	planned
+tests/unit/investigation_team_publication_retry.bats	a successful lookup confirming a missing published branch still fails the independent result	blackbox	R37	-	planned
+tests/unit/investigation_team_reboot_regression.bats	inactive independent investigation child with exhausted restarts fails without crashing supervision	blackbox	R37	-	planned
+tests/unit/investigation_team_reboot_regression.bats	ordinary investigation with exhausted restarts notifies caller and marks task failed	blackbox	R37	-	planned
+tests/unit/investigation_team_recovery_regressions.bats	agent stop on investigation team releases lease and stops active owned work	source	R39	-	planned
+tests/unit/investigation_team_recovery_regressions.bats	stopped investigation parent with lingering lease does not tick and clears lease	source	R39	-	planned
+tests/unit/investigation_team_recovery_regressions.bats	agent stop on investigation team stops precheck unit	blackbox	R39	-	planned
+tests/unit/investigation_team_recovery_regressions.bats	dispatch cancels a stopped parent precheck before taking its lock	blackbox	R39	-	planned
+tests/unit/investigation_team_recovery_regressions.bats	control: running investigation parent ticks and claims capacity	source	R39	-	planned
+tests/unit/investigation_team_recovery_regressions.bats	non-decimal persisted seed fails with handoff instead of queueing indefinitely	source	R39	-	planned
+tests/unit/investigation_team_recovery_regressions.bats	control: valid decimal persisted seed succeeds in picking merger	blackbox	R39	-	planned
+tests/unit/investigation_team_recovery_regressions.bats	_supervise cancels precheck and clears lease for stopped parent with lingering lease	source	R39	-	planned
+tests/unit/investigation_team_regressions.bats	dead independent runner supervision marks child failed and runs dispatch without crashing	blackbox	R37	-	planned
+tests/unit/investigation_team_regressions.bats	phase one completion does not inherit caller PR_URL or comment on unrelated PR	blackbox	R37	-	planned
+tests/unit/investigation_team_resume_boundaries.bats	mixed done verdict and failed advisory reviewer formats stage with failure count and no replacement	blackbox	R40	-	planned
+tests/unit/investigation_team_resume_boundaries.bats	resuming an investigation team without a pull request is refused fail-fast	blackbox	R40	-	planned
+tests/unit/investigation_team_resume_boundaries.bats	agent stop on phase 5 parent stops untagged child referenced by resume manifest before releasing lease	blackbox	R40	-	planned
+tests/unit/investigation_team_resume_recovery.bats	busy member queues whole resume cohort without partial starts	blackbox	R40	-	planned
+tests/unit/investigation_team_resume_recovery.bats	quota-paused member queues whole resume cohort without partial starts	blackbox	R40	-	planned
+tests/unit/investigation_team_resume_recovery.bats	recovered phase 5 leased parent fails uncreated child slots but retains lease while live reviewer runs	blackbox	R40	-	planned
+tests/unit/investigation_team_resume_recovery.bats	after all resume reviewers reach terminal state handoff reports result and releases lease	blackbox	R40	-	planned
+tests/unit/investigation_team_runtime.bats	phase one launches the whole cohort concurrently from one frozen commit	blackbox	R37	-	planned
+tests/unit/investigation_team_runtime.bats	independent prompts and MCP configurations reveal no peer worktree or bus tools	blackbox	R37	-	planned
+tests/unit/investigation_team_runtime.bats	one failed investigator does not cancel a published independent result	blackbox	R37	-	planned
+tests/unit/investigation_team_runtime.bats	unpublished commits and bare DONE are failures and notify the human without a PR	blackbox	R37	-	planned
+tests/unit/investigation_team_runtime.bats	a failed cohort releases its capacity lease after every run ends	blackbox	R37	-	planned
+tests/unit/investigation_team_runtime.bats	a cohort holds all investigator leases until its slowest run ends	blackbox	R37	-	planned
+tests/unit/investigation_team_runtime.bats	quota-paused investigators queue the whole cohort without partial admission	blackbox	R37	-	planned
+tests/unit/investigation_team_runtime.bats	an existing review pair waits for investigators held by a phase-one lease	source	R37	-	planned
+tests/unit/investigation_team_stdin.bats	piped topic from stdin starts an investigation team and preserves multiline content	blackbox	R39	-	planned
+tests/unit/investigation_team_stdin.bats	stdin stream read failure fails before creating investigation team parent task	blackbox	R36	-	planned
+tests/unit/investigation_team_supervision.bats	cmd__supervise does not treat a running investigation_team coordinator task as a dead runner	blackbox	R37	-	planned
+tests/unit/investigation_team_supervision.bats	cmd_status does not append question mark to running investigation_team coordinator task	blackbox	R37	-	planned
+tests/unit/investigation_team_supervision.bats	cmd__supervise triggers dispatch to admit a queued cohort when quota expires	blackbox	R38	-	planned
+tests/unit/investigation_team_supervision.bats	an independent child hitting provider quota fails with QUOTA_UNTIL while peer succeeds and cohort finishes	blackbox	R37	-	planned
+tests/unit/investigation_team_validation.bats	remote investigator specification is refused with explicit remote reason	blackbox	R36	-	planned
+tests/unit/investigation_team_validation.bats	--investigation cannot be combined with --resume	blackbox	R36	-	planned
+tests/unit/investigation_team_validation.bats	--investigation cannot be combined with --same-round	blackbox	R36	-	planned
+tests/unit/investigation_team_validation.bats	--investigation cannot be combined with --last-team even with no prior team	blackbox	R36	-	planned
+tests/unit/investigation_team_validation.bats	leading empty CSV component in --team is refused	blackbox	R36	-	planned
+tests/unit/investigation_team_validation.bats	interior empty CSV component in --team is refused	blackbox	R36	-	planned
+tests/unit/investigation_team_validation.bats	trailing empty CSV component in --team is refused	blackbox	R36	-	planned
+tests/unit/investigation_team_validation.bats	whitespace around names is trimmed and duplicate is detected	blackbox	R36	-	planned
+tests/unit/investigation_team_validation.bats	whitespace around valid distinct names is trimmed and accepted	blackbox	R36	-	planned
+tests/unit/investigation_team_validation.bats	reverse flag order --team before --investigation is accepted	blackbox	R36	-	planned
+tests/unit/investigation_team_validation.bats	empty topic string argument is refused	blackbox	R36	-	planned
+tests/unit/investigation_team_validation.bats	blank-only topic string argument is refused	blackbox	R36	-	planned
+tests/unit/investigation_team_validation.bats	empty topic file given with -f is refused	blackbox	R36	-	planned
+tests/unit/investigation_terminal_completion.bats	successful legacy handoff finishes done and notifies completion exactly once	blackbox	R39	-	planned
+tests/unit/investigation_terminal_completion.bats	failed legacy handoff finishes failed and preserves its failure notification	blackbox	R39	-	planned
+tests/unit/job_attribution.bats	remote submissions attach canonical GitHub origin and no human requester task	source	R41	-	planned
+tests/unit/job_attribution.bats	non-GitHub origins do not become repository links	source	R41	-	planned
+tests/unit/job_attribution_paths.bats	repository attribution uses the first origin URL like existing GitHub operations	source	R12	-	planned
+tests/unit/job_attribution_paths.bats	the node passes normalized origin attribution into frozen helper preparation	source	R50	-	planned
+tests/unit/kick.bats	kicking a solo task stops its run and records it	blackbox	R25	-	planned
+tests/unit/kick.bats	kicking a team member ends its run without leaving the team: it sleeps or is woken again, the coordinator is told	blackbox	R25	-	planned
+tests/unit/kick.bats	kicking a task that does not run is refused	blackbox	R25	-	planned
+tests/unit/lead.bats	agent lead needs LEAD_LISTEN and says how to set it	blackbox	R41	-	planned
+tests/unit/lead.bats	agent lead refuses a public listen address (agentbus lead decides)	blackbox	R41	-	planned
+tests/unit/lead.bats	agent lead serves its API on its address and on 127.0.0.1, and stops on SIGTERM	blackbox	R41	-	planned
+tests/unit/lead_cli.bats	agent jobs and nodes require LEAD_URL or LEAD_LISTEN	blackbox	R41	-	planned
+tests/unit/lead_cli.bats	agent run --need and --on submit remote jobs to lead	blackbox	R41	-	planned
+tests/unit/lead_cli.bats	agent nodes lists registered nodes	blackbox	R41	-	planned
+tests/unit/lead_cli.bats	agent lead and agent jobs --cancel deliver terminal notifications to NOTIFY_DIR	blackbox	R41	-	planned
+tests/unit/lead_cli_context.bats	remote job from linked worktree uses main clone repository name and current branch	blackbox	R41	-	planned
+tests/unit/lead_cli_context.bats	remote job refuses branch lookup failure without submitting a fallback main job	blackbox	R41	-	planned
+tests/unit/lead_cli_context.bats	remote job refuses common directory lookup failure without submitting a job	blackbox	R41	-	planned
+tests/unit/lead_cli_context.bats	remote job deliberately uses main for detached HEAD	blackbox	R41	-	planned
+tests/unit/lead_cli_context.bats	agent nodes renders a registered node including exact last seen heartbeat	blackbox	R41	-	planned
+tests/unit/lead_install.bats	install.sh installs no lead unit when LEAD_LISTEN is empty	blackbox	R55	-	planned
+tests/unit/lead_install.bats	install.sh writes agentlead.service running agent lead, and starts it, when LEAD_LISTEN is set	blackbox	R55	-	planned
+tests/unit/limits.bats	a rate limit (HTTP 429) is a short pause, not an exhausted quota, and the notification shows its line	blackbox	R25	-	planned
+tests/unit/limits.bats	an exhausted quota still pauses until its reset and names the line that said so	blackbox	R25	-	planned
+tests/unit/limits.bats	a 429 the CLI retried long before the run ended does not pause the task	blackbox	R25	-	planned
+tests/unit/lint_shell_memory.bats	lint-shell bounds each process and checks every file before reporting failure	blackbox	R55	-	planned
+tests/unit/long_run_cut.bats	the watchdog ends a run at its step limit and says so	source	R20	-	planned
+tests/unit/long_run_cut.bats	a run under its step limit is not ended	source	R20	-	planned
+tests/unit/member_out.bats	an unknown STATUS goes back to the agent once, with the statuses it may use	blackbox	R29	-	planned
+tests/unit/member_out.bats	a second unknown STATUS fails the run	blackbox	R29	-	planned
+tests/unit/member_out.bats	a failed member's items go back with its progress notes, and the team is told where its work is	blackbox	R29	-	planned
+tests/unit/member_out.bats	a long pause gives the member's items back; a short one keeps them	blackbox	R29	-	planned
+tests/unit/member_out.bats	a short pause (a rate limit) keeps the member's items	blackbox	R29	-	planned
+tests/unit/member_out.bats	agent _supervise finds a task whose runner died and ends it	blackbox	R29	-	planned
+tests/unit/meta.bats	concurrent meta_set calls of different keys all survive, and none fails	source	R07	-	planned
+tests/unit/network.bats	a network failure pauses the task for AGENT_NETWORK_PAUSE_MIN; its timer resumes it	blackbox	R25	-	planned
+tests/unit/network.bats	a network failing again and again fails the task after AGENT_NETWORK_MAX_PAUSES, with the reason	blackbox	R25	-	planned
+tests/unit/network.bats	a reset or refused connection is a network pause too; an ordinary error is not	source	R25	-	planned
+tests/unit/node_activity.bats	the heartbeat carries what the node's running jobs are doing	source	R42	-	planned
+tests/unit/node_activity.bats	an agent whose CLI is missing is not offered as free	source	R42	-	planned
+tests/unit/node_activity.bats	a failed job without a final message reports its task's note	source	R45	-	planned
+tests/unit/node_agents.bats	heartbeat inventories busy and missing-CLI agents without offering them as free	source	R42	-	planned
+tests/unit/node_cancel_exit.bats	node cancellation preserves each terminal outcome and its final result notification	source	R44	-	planned
+tests/unit/node_cancel_exit.bats	node cancellation of an unfinished runner notifies locally as stopped	source	R44	-	planned
+tests/unit/node_cancel_exit.bats	node stop preserves every local terminal task status	source	R44	-	planned
+tests/unit/node_cancel_exit.bats	node cancellation completes undelivered finalization after RUNNER_DONE	source	R44	-	planned
+tests/unit/node_checkout.bats	create_task starts the worktree at the given commit, not at HEAD	source	R14	-	planned
+tests/unit/node_checkout.bats	a job naming a repository outside NODE_REPOS is refused before any task exists	source	R43	-	planned
+tests/unit/node_checkout.bats	a job whose base ref does not exist fails with a logged reason and starts nothing	source	R43	-	planned
+tests/unit/node_checkout.bats	a job pinned to a commit starts its worktree at that commit even when the branch moved on	source	R43	-	planned
+tests/unit/node_checkout.bats	prepare_job_task refuses an unknown agent without creating task or worktree	source	R43	-	planned
+tests/unit/node_checkout.bats	prepare_job_task refuses an investigator agent without creating task or worktree	source	R43	-	planned
+tests/unit/node_checkout.bats	prepare_job_task refuses an agent busy with another task	source	R43	-	planned
+tests/unit/node_checkout.bats	prepare_job_task fails cleanly when worktree creation fails	source	R43	-	planned
+tests/unit/node_checkout.bats	create_task fails and leaves no task when the worktree directory cannot be created	source	R14	-	planned
+tests/unit/node_checkout.bats	create_task fails and leaves no task when git cannot add the worktree	source	R14	-	planned
+tests/unit/node_checkout.bats	a job whose task worktree cannot be created fails with node_checkout_failed and starts nothing	source	R43	-	planned
+tests/unit/node_checkout.bats	a job for an unknown agent is refused without an unbound-variable crash	source	R43	-	planned
+tests/unit/node_checkout.bats	meta_set fails and keeps the old metadata when writing the new line fails	source	R07	-	planned
+tests/unit/node_checkout.bats	meta_set fails and keeps the old metadata when reading the file fails	source	R07	-	planned
+tests/unit/node_checkout.bats	create_task fails and leaves no task when a metadata write fails	source	R14	-	planned
+tests/unit/node_checkout.bats	create_task fails and leaves no task when the task text cannot be written	source	R14	-	planned
+tests/unit/node_checkout.bats	create_task fails and leaves no task when meta.env cannot be created	source	R14	-	planned
+tests/unit/node_checkout.bats	a job is refused when its agent becomes busy during the checkout, and creates nothing	source	R43	-	planned
+tests/unit/node_daemon.bats	agent node requires LEAD_URL and says how to set it	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	agent node validates capabilities on startup	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	agent node logs node_started and exits cleanly on SIGTERM	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	prepare_job_task tags created task with JOB_ID and JOB_ASSIGNMENT	source	R43	-	planned
+tests/unit/node_daemon.bats	agent node polls heartbeat, prepares assigned job, acks running state before launching	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	second agent node daemon fails immediately when another daemon is running	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	agent node fails closed on corrupt node-jobs.json without overwriting it	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	agent node handles checkout failure by reporting failed and marking nothing started	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	agent node restart recovery does not duplicate launch	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	agent node stops active task on stop request in heartbeat	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	agent node preserves done outcome when completion wins race against stop request	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	agent node preserves outbox when lead returns malformed reply	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	agent node retries exact start report snapshot on lost ACK without duplicate runner or altered timestamp	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	agent node consumes cumulative task transitions from journal for heartbeat reports	blackbox	R50	-	planned
+tests/unit/node_daemon.bats	agent node reconciles stale assignment on Rejected report and refuses to launch	blackbox	R50	-	planned
+tests/unit/node_helper_hooks.bats	dispatch_helpers passes capabilities to helper-next	blackbox	R50	-	planned
+tests/unit/node_helper_hooks.bats	dispatch_helpers fails queued remote helpers when LEAD_URL is unset	blackbox	R50	-	planned
+tests/unit/node_helper_hooks.bats	dispatch_helpers fails queued remote helpers when WORKER_AGENTS is empty and LEAD_URL is unset	blackbox	R50	-	planned
+tests/unit/node_helper_hooks.bats	dispatch_helpers preserves queued remote helpers when LEAD_URL is set	blackbox	R50	-	planned
+tests/unit/node_helper_hooks.bats	node_poll submits queued remote helpers to lead and retains on outage	blackbox	R50	-	planned
+tests/unit/node_helper_hooks.bats	node_poll polls terminal helper results and delivers ordinary helper result	blackbox	R50	-	planned
+tests/unit/node_helper_hooks.bats	node_poll rejects mismatched job response and retains remote helper	blackbox	R50	-	planned
+tests/unit/node_helper_hooks.bats	node_poll rejects mismatched POST job response and retains queued helper	blackbox	R50	-	planned
+tests/unit/node_helper_hooks.bats	node_poll fails remote helper when helper-remote-prepare reports unpushed commit	blackbox	R50	-	planned
+tests/unit/node_helper_hooks.bats	node_poll retries remote helper when helper-remote-prepare fails with storage error	blackbox	R50	-	planned
+tests/unit/node_helper_hooks.bats	node_poll logs error on GET transport failure and retains remote helper	blackbox	R50	-	planned
+tests/unit/node_helper_hooks.bats	maximum-size escaped helper task delivers its terminal GET result	blackbox	R50	-	planned
+tests/unit/node_install.bats	install.sh installs no node unit when LEAD_URL is empty	blackbox	R55	-	planned
+tests/unit/node_install.bats	install.sh writes agentnode.service running agent node, and starts it, when LEAD_URL is set	blackbox	R55	-	planned
+tests/unit/node_install.bats	install.sh installs no lead unit for a node that is not a lead	blackbox	R55	-	planned
+tests/unit/node_install.bats	agents.conf documents LEAD_URL, NODE_POLL_SEC and INSTANCE_CAPABILITIES with their defaults	blackbox	R55	-	planned
+tests/unit/node_large_assignment.bats	maximum-size escaped task persists assignment state and prepares runner task	blackbox	R50	-	planned
+tests/unit/node_prelaunch_cancel.bats	a terminal prepared job is never launched after cancellation	source	R43	-	planned
+tests/unit/node_prelaunch_cancel.bats	failed job identity metadata prevents preparation and removes the unstarted checkout	source	R43	-	planned
+tests/unit/node_recovery_fence.bats	recovery marks inactive RUN=1 STATUS=new task as failed	source	R44	-	planned
+tests/unit/node_recovery_fence.bats	final launch fence prevents start_runner when task was stopped during start ACK delay	source	R43	-	planned
+tests/unit/node_recovery_fence.bats	crash between separate JOB_* writes recovers partial task and does not orphan agent reservation	source	R44	-	planned
+tests/unit/node_recovery_fence.bats	cmd_stop synchronizes with task ID lock to fence pending launches	source	R43	-	planned
+tests/unit/node_recovery_fence.bats	recovery completes missing JOB_LEAD on matched task	source	R44	-	planned
+tests/unit/node_recovery_fence.bats	stop marker persists stopped on unstarted task so reports transition to stopped	source	R44	-	planned
+tests/unit/node_report_agent.bats	node reports carry the chosen agent from start through completion	source	R45	-	planned
+tests/unit/node_review_boundaries.bats	ambiguous unstarted tasks fail recovery without reserving either agent	source	R44	-	planned
+tests/unit/node_review_boundaries.bats	partial identity recovery preserves another assignment's task	source	R44	-	planned
+tests/unit/node_review_boundaries.bats	active recovery preserves its reservation with stop markers and missing worktrees	source	R44	-	planned
+tests/unit/node_review_boundaries.bats	job stop waits for admission and releases admission before stopping its unit	source	R44	-	planned
+tests/unit/node_review_boundaries.bats	recovery binds a unique started task instead of an unstarted duplicate	source	R44	-	planned
+tests/unit/node_review_boundaries.bats	multiple started matches stop recovery without destroying running tasks	source	R44	-	planned
+tests/unit/node_review_boundaries.bats	a missing prepared worktree fails the local task and releases its agent	source	R43	-	planned
+tests/unit/node_safety.bats	node state rejects malformed JSON and invalid shapes without replacing the file	source	R44	-	planned
+tests/unit/node_safety.bats	a non-file node state path is a storage failure rather than empty state	source	R44	-	planned
+tests/unit/node_safety.bats	the daemon lifetime lock rejects a second node process	source	R44	-	planned
+tests/unit/node_safety.bats	a prepared job reserves its agent while the node waits for the start acknowledgement	source	R43	-	planned
+tests/unit/node_sync.bats	node sync sends closed metadata and closed files on first poll, recording sync manifest	blackbox	R50	-	planned
+tests/unit/node_sync.bats	node sync only sends changed files and metadata on subsequent sync	blackbox	R50	-	planned
+tests/unit/node_sync.bats	node sync cuts files exceeding 256KiB and sets Cut: true	blackbox	R50	-	planned
+tests/unit/node_sync.bats	node sync sends warn/error logs and job task logs advancing cursor	blackbox	R50	-	planned
+tests/unit/node_sync.bats	node sync retries on failed sync without breaking heartbeat	blackbox	R50	-	planned
+tests/unit/node_sync.bats	node sync marks Cut true when line tails truncate activity or err log	blackbox	R50	-	planned
+tests/unit/node_sync_freshness.bats	M3: concurrent update before sync acknowledgement is uploaded on next poll	blackbox	R50	-	planned
+tests/unit/node_sync_freshness.bats	M3: concurrent mutation during clean legacy promotion is uploaded on next poll	blackbox	R50	-	planned
+tests/unit/node_sync_freshness.bats	M4: ambient runner environment variables do not leak into task metadata	blackbox	R50	-	planned
+tests/unit/node_sync_limits.bats	node sync handles >2MiB aggregate files and logs via bounded requests <= 2MiB	blackbox	R50	-	planned
+tests/unit/node_sync_limits.bats	node sync survives shared log cursor across multiple job task IDs and log files	blackbox	R50	-	planned
+tests/unit/node_sync_limits.bats	node sync persists partial batch ACK hashes when subsequent request fails	blackbox	R50	-	planned
+tests/unit/node_sync_limits.bats	node sync handles unwritable manifest without breaking heartbeat	blackbox	R50	-	planned
+tests/unit/node_sync_review.bats	C1: idle node advances log cursor across unselected info entries without sending sync	blackbox	R50	-	planned
+tests/unit/node_sync_review.bats	M1: finished unchanged task with job transitions and locks fast-skips without reading artifacts	blackbox	R50	-	planned
+tests/unit/node_sync_review.bats	M1: old manifest without complete field is promoted on clean scan	blackbox	R50	-	planned
+tests/unit/node_sync_review.bats	M1: partial sync failure leaves complete=false so remaining older files are synced on next poll	blackbox	R50	-	planned
+tests/unit/node_sync_review.bats	M2: task ID exact match excludes local non-job task whose ID is a substring	blackbox	R50	-	planned
+tests/unit/node_sync_review.bats	M2: valid job before stale job recovers in second pass after stale job is marked obsolete	blackbox	R50	-	planned
+tests/unit/node_sync_review.bats	m3: blank lines in log file advance cursor correctly without re-sending	blackbox	R50	-	planned
+tests/unit/node_sync_review.bats	a terminal artifact read failure keeps the snapshot incomplete until retry	blackbox	R50	-	planned
+tests/unit/node_sync_state.bats	a directory at the sync manifest path warns without accumulating temporary files	blackbox	R50	-	planned
+tests/unit/node_sync_tails.bats	node sync counts partial final lines in activity and error tails	blackbox	R50	-	planned
+tests/unit/node_sync_tails.bats	an artifact read failure is logged and does not stop the node heartbeat	blackbox	R50	-	planned
+tests/unit/node_sync_two_homes.bats	a node mirrors its job task metadata, files and logs to the lead under bus/remote/<node>/<task-id>	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	a job with requires is taken by the node that declares the capability, and its commit is on the branch	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	a job whose required capability the node lacks stays queued and says why	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	a lead stopped while a job runs: the node finishes it and reports after the lead returns	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	a job whose checkout fails is failed with the typed cause, and nothing is recorded as started	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	a job naming a repository that is not in NODE_REPOS is refused before any work	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	a remote member works in a team on the lead: its message reaches the team, a message wakes it on its node	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	the doorbell starts a job on its node at once, long before the next heartbeat	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	a remote member that fails is out of its team on the lead: its items go back, the members are told	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	resuming a team with a remote member brings the member back on its node	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	a job whose task is paused on its node can be stopped (no unit runs it)	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	a remote member's job whose team the lead's bus does not know is cancelled by agent _supervise on the lead	blackbox	R50	-	planned
+tests/unit/one_pr_per_round.bats	the next round does not start while another PR of the round is open, though one of its PRs is merged	blackbox	R34	-	planned
+tests/unit/one_pr_per_round.bats	round_open_prs lists the open PRs of the team's branches, and only those	source	R31	-	planned
+tests/unit/one_pr_per_round.bats	a round resumed says which is its PR, and that every commit of the round goes there	blackbox	R31	-	planned
+tests/unit/pause_notify.bats	a remote member's pause reaches its team: the coordinator hears why and until when; back at work it is active again	blackbox	R46	-	planned
+tests/unit/pause_notify.bats	notifications that cannot be delivered are kept for a day, with the process that sent them, whatever is delivered since	blackbox	R23	-	planned
+tests/unit/pause_notify.bats	the supervisor stops an answers watch whose task no longer waits for answers, and keeps a waiting task's	blackbox	R26	-	planned
+tests/unit/prompt_checkpoints.bats	the prompt gets the newest checkpoints and where the earlier ones are	source	R17	-	planned
+tests/unit/prompt_file.bats	a prompt too long for the command line reaches the CLI through a file in its working directory, kept out of git	blackbox	R23	-	planned
+tests/unit/prompt_file.bats	a prompt that fits is passed as before, without a file	blackbox	R23	-	planned
+tests/unit/remote_answer_round.bats	an old remote browser form cannot write or resume a newer question round	blackbox	R47	-	planned
+tests/unit/remote_control_cancel_order.bats	node processes cancellation before an answer from the same heartbeat	source	R46	-	planned
+tests/unit/remote_control_heartbeat_limits.bats	node sends at most 64 acknowledgement receipts and retains the remainder	source	R46	-	planned
+tests/unit/remote_control_heartbeat_limits.bats	node fits valid reports and defers acknowledgements without losing them	source	R46	-	planned
+tests/unit/remote_control_heartbeat_limits.bats	a stale answer is acknowledged without overwriting a different waiting round	source	R46	-	planned
+tests/unit/remote_control_kick_exit.bats	kicking a solo job records stopped without journaling a failed runner exit	source	R46	-	planned
+tests/unit/remote_control_kick_exit.bats	kicking a team member job records sleeping without journaling a failed runner exit	source	R46	-	planned
+tests/unit/remote_control_kick_exit.bats	an older kick does not mask an interrupted runner exit on a later run	source	R46	-	planned
+tests/unit/remote_control_notifications.bats	remote question notifications link to the task view and qualified answer command	source	R47	-	planned
+tests/unit/remote_control_proxy.bats	agent answer on a local remote-member proxy uses the mirrored editable copy	blackbox	R47	-	planned
+tests/unit/remote_control_review.bats	a kick carries the expected run across command execution	source	R46	-	planned
+tests/unit/remote_control_review.bats	a completed old kick and runner exit do not overwrite a newer run	source	R46	-	planned
+tests/unit/remote_control_review.bats	a failed stop retains the remote kick for retry without claiming a stop	source	R46	-	planned
+tests/unit/remote_control_review.bats	interactive remote answers validate confirm and queue filled unmarked verdicts	source	R47	-	planned
+tests/unit/remote_control_review.bats	declining remote answer submission leaves an editable unqueued draft	source	R47	-	planned
+tests/unit/remote_control_review.bats	interactive remote answers diagnose incomplete verdicts without queueing	source	R47	-	planned
+tests/unit/remote_control_review.bats	ShellCheck retains the incoming handover and prompt-file coverage	blackbox	R55	-	planned
+tests/unit/remote_control_validation.bats	node refuses an answer for another assigned task without changing questions	source	R47	-	planned
+tests/unit/remote_control_validation.bats	node refuses question path traversal and unknown control fields	source	R47	-	planned
+tests/unit/remote_control_validation.bats	node refuses answers with a mismatched digest or content over 256 KiB	source	R47	-	planned
+tests/unit/remote_control_validation.bats	node bounds incoming answer and kick lists before processing any entries	source	R46	-	planned
+tests/unit/remote_control_validation.bats	a stale kick is acknowledged without stopping the newer run	source	R46	-	planned
+tests/unit/remote_control_validation.bats	successful heartbeat clears only matching acknowledgements that were sent	source	R46	-	planned
+tests/unit/remote_control_validation.bats	editable remote question copies expire with their retained task mirror	source	R48	-	planned
+tests/unit/remote_control_web.bats	web answers travel from the lead form to a waiting node and resume it once	blackbox	R53	-	planned
+tests/unit/remote_controls.bats	job questions notify only the lead and its answer resumes the node	blackbox	R53	-	planned
+tests/unit/remote_controls.bats	lead answers queue while its listener is down and survive its restart	blackbox	R53	-	planned
+tests/unit/remote_controls.bats	a qualified lead kick reaches the node through the durable heartbeat queue	blackbox	R50	-	planned
+tests/unit/remote_fixes.bats	the wake-loop guard watches local team members, not remote ones (their work is on the lead's bus)	source	R25	-	planned
+tests/unit/remote_fixes.bats	--last-team skips a team the bus does not know (left by a resume that failed)	blackbox	R30	-	planned
+tests/unit/remote_fixes.bats	a resume that fails leaves no task or worktree behind; carried changes are committed on their branch	blackbox	R30	-	planned
+tests/unit/remote_proxy.bats	agent status lists a remote member's proxy task	blackbox	R41	-	planned
+tests/unit/remote_proxy.bats	agent _supervise leaves a remote member's proxy task alone	blackbox	R41	-	planned
+tests/unit/remote_questions_atomic.bats	remote questions are staged and published atomically with instructions and permissions	blackbox	R47	-	planned
+tests/unit/remote_questions_preparation_retry.bats	questions preparation fails and cleans up staging without publishing when inner mktemp fails, then retries cleanly	blackbox	R47	-	planned
+tests/unit/remote_questions_preparation_retry.bats	questions preparation fails and cleans up staging without publishing when inner awk fails, then retries cleanly	blackbox	R47	-	planned
+tests/unit/remote_questions_preparation_retry.bats	questions preparation fails and cleans up staging without publishing when inner cat copy fails, then retries cleanly	blackbox	R47	-	planned
+tests/unit/resilience.bats	a model at capacity (the provider overloaded) is a short pause, not a failure	blackbox	R25	-	planned
+tests/unit/resilience.bats	a coordinator's failed run does not close the team; the members hear that it is out	blackbox	R29	-	planned
+tests/unit/resilience.bats	resuming carries a task's uncommitted changes into its new worktree	blackbox	R27	-	planned
+tests/unit/restart.bats	a run interrupted by a restart of its machine is resumed, and the agent is told what happened	blackbox	R26	-	planned
+tests/unit/restart.bats	a task interrupted by more restarts than AGENT_RESTART_MAX fails, with the reason	blackbox	R26	-	planned
+tests/unit/restart.bats	a remote team member interrupted by a restart waits for its lead; the lead's wake resumes it	blackbox	R50	-	planned
+tests/unit/restart.bats	a run's boot ID is kept before the run shows as running: a restart at its very start is not taken for a dead runner	blackbox	R26	-	planned
+tests/unit/resume_alloc.bats	same-second team resume allocates fresh IDs and preserves predecessor task metadata	blackbox	R30	-	planned
+tests/unit/resume_alloc.bats	team resume advances past taskdir, worktree, branch, and team registry collisions	blackbox	R30	-	planned
+tests/unit/resume_alloc.bats	same-second solo task resume allocates fresh ID and preserves predecessor	blackbox	R27	-	planned
+tests/unit/resume_alloc.bats	two resumed teams with disjoint agents avoid colliding on the same new team ID under concurrency	blackbox	R30	-	planned
+tests/unit/resume_alloc.bats	team creation advances past an orphaned task directory with different member name	blackbox	R28	-	planned
+tests/unit/resume_members.bats	agent run --resume --team: the listed go on, a new member joins from the coordinator's branch, the others are left out	blackbox	R30	-	planned
+tests/unit/resume_members.bats	agent run --resume --team refuses a name that is not a configured agent	blackbox	R30	-	planned
+tests/unit/resume_stash.bats	a resume carries a member's changes on though one of its files was added with --intent-to-add	blackbox	R30	-	planned
+tests/unit/review_byline.bats	an investigator's review gets its byline at the top; the one at the end stays; none is doubled	blackbox	R12	-	planned
+tests/unit/review_byline.bats	a review posted by anyone but an investigator is left as it is	blackbox	R12	-	planned
+tests/unit/review_byline.bats	review_byline: the investigator, its CLI and model, the request	source	R12	-	planned
+tests/unit/review_pair_random.bats	a review pair is drawn at random: over eight PRs each of four free investigators reviews, never twice in a pair	source	R33	-	planned
+tests/unit/review_pair_random.bats	with two free investigators the pair keeps the list's order: A the first, B the second	source	R33	-	planned
+tests/unit/review_pair_random.bats	a PR's next review pass keeps its pair	source	R33	-	planned
+tests/unit/review_pair_random.bats	AGENT_REVIEW_DRAW=list: the pair is the first two free investigators of the list, as before the draw	source	R33	-	planned
+tests/unit/review_resilience.bats	--verify: a team closed because all its members finished (its coordinator out) still goes to review	blackbox	R33	-	planned
+tests/unit/review_resilience.bats	--autopilot: a review that ends without a verdict does not stop the pair: the other's needs-fixes starts the fix pass	blackbox	R33	-	planned
+tests/unit/review_resilience.bats	--autopilot: a review that ends without a verdict while the other is ready to merge is done again by another investigator	blackbox	R33	-	planned
+tests/unit/review_resilience.bats	a CLI that kills its own process group does not take its runner with it: the run fails with the CLI's exit code	blackbox	R23	-	planned
+tests/unit/review_resilience.bats	--autopilot: a round's notification says what comes by itself, not to merge the PR and resume	blackbox	R34	-	planned
+tests/unit/review_resilience.bats	--autopilot: a review whose investigator is out of quota goes to another at once; that one is not chosen while it lasts	source	R33	-	planned
+tests/unit/review_resilience.bats	--autopilot: a review whose investigator is out of quota for days goes to another investigator at once	blackbox	R33	-	planned
+tests/unit/rotation.bats	the next investigator follows the last one, preferring another provider	source	R33	-	planned
+tests/unit/rotation.bats	the last investigator is remembered, and the next free one is picked after it	source	R33	-	planned
+tests/unit/round_handover.bats	a same-round resume carries the round's PR to the new team	blackbox	R31	-	planned
+tests/unit/round_handover.bats	a new coordinator's PR closes the round's earlier PR as superseded, and links back to it	source	R31	-	planned
+tests/unit/round_handover.bats	--autopilot hands a decision to the human on the PR too: a comment says what waits for them	blackbox	R34	-	planned
+tests/unit/round_handover.bats	AUTO_MERGE_HOLD_TEST_CHANGES=no: changed existing tests no longer keep --autopilot from merging	source	R34	-	planned
+tests/unit/round_only.bats	a fix pass's text is for its round only; the human's addition is not	blackbox	R31	-	planned
+tests/unit/round_only.bats	the next round's text leaves out what was for the round before only	source	R17	-	planned
+tests/unit/round_reports.bats	a report under .agents/reports/ does not count towards the round size	blackbox	R31	-	planned
+tests/unit/rounds.bats	a change over the round limit goes back to be split; after the allowed corrections it passes with a warning	blackbox	R31	-	planned
+tests/unit/rounds.bats	a repository can have no round limit	blackbox	R31	-	planned
+tests/unit/rounds.bats	agent round-size shows the size of a task's change and its limit	blackbox	R31	-	planned
+tests/unit/rounds.bats	ROUND_DONE N/M finishes a round and tells the human how to continue	blackbox	R31	-	planned
+tests/unit/rounds.bats	a skip added in a round goes back while the PR does not list it — whatever round its marker names	blackbox	R31	-	planned
+tests/unit/rounds.bats	resuming a round whose PR is not merged stops; --same-round continues on the same branch	blackbox	R31	-	planned
+tests/unit/rounds.bats	after a merged round the next one starts on a fresh branch from the updated base; after the last one, no more	blackbox	R31	-	planned
+tests/unit/rounds.bats	the next round finds its PR on the branch of whoever ended the round, not only the last member's	blackbox	R31	-	planned
+tests/unit/run_notes.bats	a spent workspace budget is a quota pause until its reset, read from an ISO time	source	R25	-	planned
+tests/unit/run_notes.bats	a failed run keeps its note: the CLI's exit code and its last error line, for the lead to show	source	R45	-	planned
+tests/unit/run_notes.bats	agent _remote_member: a remote member's pause, with its reason, reaches the proxy task and the human	blackbox	R46	-	planned
+tests/unit/skips.bats	a skipped test added in a round goes back unless the PR lists it under Skipped tests	blackbox	R31	-	planned
+tests/unit/skips.bats	a skipped test listed with its reason in the PR's Skipped tests section passes	blackbox	R31	-	planned
+tests/unit/skips.bats	every run's prompt lists the skipped tests of the repository	blackbox	R23	-	planned
+tests/unit/skips.bats	the PR attribution of a solo task names the agent in code format	blackbox	R23	-	planned
+tests/unit/skips.bats	the PR attribution of a team has one line per team, coordinator and member, in code format	blackbox	R29	-	planned
+tests/unit/skips.bats	skip detection counts skip statements of each kind of test file — not assertions, comments, strings or Markdown	source	R31	-	planned
+tests/unit/team_close.bats	agent team <id> --close closes a team whose members sleep	blackbox	R29	-	planned
+tests/unit/team_close.bats	closing a team ends its remote member's job; a failure to end it is logged with its reason	blackbox	R29	-	planned
+tests/unit/team_close.bats	an open team with no local member left is reported to the human, once, with how to resume or close it	blackbox	R29	-	planned
+tests/unit/tokens.bats	agent tokens sums what a team's runs used: per task, with its helpers and investigations, and in all	blackbox	R53	-	planned
+tests/unit/tokens.bats	agent tokens shows a task whose runs reported no usage, instead of leaving it out	blackbox	R53	-	planned
+tests/unit/tokens.bats	agent tokens --runs <task>: per run, its steps (tool calls) and tokens	blackbox	R53	-	planned
+tests/unit/tokens.bats	agent tokens --runs shows each run's input per step: about the size of its context	blackbox	R53	-	planned
+tests/unit/tokens.bats	codex reports a resumed session's tokens cumulatively: a run's are its difference from the session's run before	blackbox	R53	-	planned
+tests/unit/verify_loop.bats	--last-team resumes the newest team of the repository	blackbox	R32	-	planned
+tests/unit/verify_loop.bats	--same-round on a team that did not end a round continues on the same branches	blackbox	R32	-	planned
+tests/unit/verify_loop.bats	a review with major findings wakes the team with them, twice at most; then the human is called on the PR	blackbox	R32	-	planned
+tests/unit/wake_cmd.bats	agent wake: a paused task resumes now, not at its pause's end	blackbox	R25	-	planned
+tests/unit/wake_cmd.bats	agent wake refuses a task that is not paused	blackbox	R25	-	planned
+tests/unit/wake_cmd.bats	agent wake on a remote member's proxy task asks its node to resume it	blackbox	R46	-	planned
+tests/unit/wake_cmd.bats	a node resumes its paused member at once when the lead asks (WakesNow)	source	R46	-	planned
+tests/unit/web.bats	agent _agents-json lists every configured agent and investigator	blackbox	R09	-	planned
+tests/unit/web.bats	the web interface shows the tasks, the agents and a task's activity	blackbox	R53	-	planned
+tests/unit/web.bats	answering in the browser resumes the task; ok accepts the recommendation	blackbox	R53	-	planned
+tests/unit/web.bats	the web interface refuses proxied requests without an identity and changes from elsewhere	blackbox	R53	-	planned
+tests/unit/web.bats	tagged devices are let in by name through tailscale serve; other devices are told what to add	blackbox	R53	-	planned
+tests/unit/web.bats	agent web refuses to listen on a non-loopback address	blackbox	R53	-	planned
+tests/unit/web_jobs.bats	agent web passes the configured node heartbeat timeout	blackbox	R53	-	planned
