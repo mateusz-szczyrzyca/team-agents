@@ -371,7 +371,9 @@ AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no 
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
-AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free)
+# a review pair: random among the free investigators | list (the first two free) | rotate (every investigator in
+# turn: never either of the two pairs before, the least recently used first; README "Two reviews")
+AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"
 AGENT_PROMPT_CHECKPOINTS="${AGENT_PROMPT_CHECKPOINTS:-2}"       # a prompt's newest checkpoints (the rest: their file); 0 all
 AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}"
 AGENT_FRESH_SESSION_RATIO="${AGENT_FRESH_SESSION_RATIO:-2}"     # …and past this many times the task's own session starts (0: no such check) # a run that read more a step is followed by a fresh session (0: never)
@@ -2001,15 +2003,20 @@ start_review_pairs() { # under the dispatch lock: a pending --autopilot review p
 }
 
 start_review_pair() { # coordinator task — both reviews of its PR at once, on two different free investigators drawn at
-  # random (the previous pair of this PR when free: each re-checks its own findings); 1 = not two free ones yet
+  # random (the previous pair of this PR when free: each re-checks its own findings) or, with AGENT_REVIEW_DRAW=rotate,
+  # the next pair of the rotation; 1 = not two free ones yet
   local id=$1 free=() dir a="" b="" pa="" pb="" f slot name inv j q num url
   mapfile -t free < <(free_investigator_list)
   ((${#free[@]} >= 2)) || return 1
   num=$(task_field "$id" PR_NUMBER); url=$(task_field "$id" PR_URL)
   dir="$AGENTS_HOME/reviews/$(task_field "$id" REPO_NAME)-$num"
   mkdir -p "$dir"
-  [[ ! -f $dir/A.agent ]] || pa=$(<"$dir/A.agent")
-  [[ ! -f $dir/B.agent ]] || pb=$(<"$dir/B.agent")
+  if [[ $AGENT_REVIEW_DRAW == rotate ]]; then
+    read -r a b < <(rotate_review_pair "${free[@]}")
+    pa=-; pb=-   # not drawn again below, nor reordered: rotate_review_pair gives them in the list's order
+  fi
+  [[ -n $pa || ! -f $dir/A.agent ]] || pa=$(<"$dir/A.agent")
+  [[ -n $pb || ! -f $dir/B.agent ]] || pb=$(<"$dir/B.agent")
   for f in "${free[@]}"; do [[ $f != "$pa" ]] || a=$f; [[ $f != "$pb" ]] || b=$f; done
   local pool=()   # the others are drawn at random among the free ones: two different investigators
   for f in "${free[@]}"; do [[ $f == "$a" || $f == "$b" ]] || pool+=("$f"); done
@@ -2034,6 +2041,7 @@ start_review_pair() { # coordinator task — both reviews of its PR at once, on 
     start_review_slot "$id" "$dir" "$slot" "$name" || return 1
   done
   rm -f "$dir/decided"   # a new pair decides anew
+  remember_review_pair "$a" "$b"
   meta_set "$id" REVIEW_PAIR_PENDING ""
   meta_set "$id" REVIEW_SLOT_PENDING ""
   meta_set "$id" REVIEW_PAIR "$dir"
@@ -2041,17 +2049,78 @@ start_review_pair() { # coordinator task — both reviews of its PR at once, on 
   auto_stage "$id" "two reviews: $a (#$(cat "$dir/A.inv")), $b (#$(cat "$dir/B.inv"))"
 }
 
+# REVIEW_PAIRS_KEPT — how many of the last review pairs $AGENTS_HOME/review-pairs keeps (the rotation reads them)
+REVIEW_PAIRS_KEPT=20
+
+# review_pair_history — the last review pairs started, oldest first: "a b" per line; none before the first
+review_pair_history() {
+  [[ ! -f $AGENTS_HOME/review-pairs ]] || tail -n "$REVIEW_PAIRS_KEPT" "$AGENTS_HOME/review-pairs"
+}
+
+# remember_review_pair a b — a review pair has started: appended to the history (called under the dispatch lock;
+# the file is written whole, then renamed, so a reader never sees half of it)
+remember_review_pair() {
+  local tmp="$AGENTS_HOME/review-pairs.tmp.$$"
+  { review_pair_history; printf '%s %s\n' "$1" "$2"; } | tail -n "$REVIEW_PAIRS_KEPT" > "$tmp"
+  mv "$tmp" "$AGENTS_HOME/review-pairs"
+}
+
+# rotate_review_pair free... — AGENT_REVIEW_DRAW=rotate: the next review pair among the free investigators (two at
+# least, in the list's order), printed "a b" in that order. Never the pair of either of the two reviews before while
+# another pair is possible (the one before last sooner than the last); then the two that reviewed least recently;
+# then the pair not seen for the longest (never seen first); then the list's order.
+rotate_review_pair() {
+  local hist=() x y line n=0 i j tier score best="" best_score="" prev1="" prev2=""
+  local -A last=() pair_last=()
+  mapfile -t hist < <(review_pair_history)
+  for line in "${hist[@]}"; do
+    n=$((n + 1))
+    read -r x y <<< "$line"
+    last[$x]=$n; last[$y]=$n
+    pair_last["$x $y"]=$n; pair_last["$y $x"]=$n
+    prev2=$prev1; prev1="$x $y"
+  done
+  for ((i = 1; i <= $#; i++)); do
+    for ((j = i + 1; j <= $#; j++)); do
+      x=${!i}; y=${!j}
+      tier=0
+      if [[ -n $prev2 ]] && same_review_pair "$x $y" "$prev2"; then tier=1; fi
+      if [[ -n $prev1 ]] && same_review_pair "$x $y" "$prev1"; then tier=2; fi
+      # the tier first, then how recently the two reviewed, then the pair itself (each below 1000: 20 pairs kept)
+      score=$((tier * 1000000 + (${last[$x]:-0} + ${last[$y]:-0}) * 1000 + ${pair_last["$x $y"]:-0}))
+      if [[ -z $best_score ]] || ((score < best_score)); then best="$x $y"; best_score=$score; fi
+    done
+  done
+  [[ -n $best ]] || return 1
+  printf '%s\n' "$best"
+}
+
+# same_review_pair "a b" "c d" — exit 0 when both are the same two investigators, in either order
+same_review_pair() {
+  local a b c d
+  read -r a b <<< "$1"; read -r c d <<< "$2"
+  [[ ($a == "$c" && $b == "$d") || ($a == "$d" && $b == "$c") ]]
+}
+
 # start_review_slot coordinator-task pair-dir slot investigator [fresh] — one review of the pair (A or B) on that
 # investigator; a re-review after a fix pass gets its slot's previous review, unless fresh (a review done again)
 start_review_slot() {
-  local id=$1 dir=$2 slot=$3 name=$4 fresh=${5:-} num url q inv j
+  local id=$1 dir=$2 slot=$3 name=$4 fresh=${5:-} num url q inv j prev=""
   num=$(task_field "$id" PR_NUMBER); url=$(task_field "$id" PR_URL)
     q="Recenzja PR #$num ($url) — one of two independent reviews: do not read other reviews or review comments on this PR before your own is published."
+    [[ ! -f $dir/$slot.agent ]] || prev=$(<"$dir/$slot.agent")   # who wrote the slot's previous review
     if [[ -z $fresh && -s $dir/$slot.md && -n $(task_field "$id" FIX_PASS) && $(task_field "$id" FIX_PASS) != 0 ]]; then
-      q+=" Re-review after fix pass $(task_field "$id" FIX_PASS): first check whether the findings of your previous review below are fixed (or disputed convincingly on the PR), then the rest of the change only for new problems.
+      if [[ $prev == "$name" ]]; then
+        q+=" Re-review after fix pass $(task_field "$id" FIX_PASS): first check whether the findings of your previous review below are fixed (or disputed convincingly on the PR), then the rest of the change only for new problems.
 
 Your previous review:
 $(head -c 6000 "$dir/$slot.md")"
+      else   # AGENT_REVIEW_DRAW=rotate: another investigator's review — its findings, not who wrote them, are checked
+        q+=" Re-review after fix pass $(task_field "$id" FIX_PASS): first check whether the findings of the previous review below are fixed (or disputed convincingly on the PR), then the rest of the change only for new problems — your own review, not a copy of that one.
+
+The previous review of this PR, by $prev:
+$(head -c 6000 "$dir/$slot.md")"
+      fi
     fi
     inv=$(bus inv-add --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" --kind review \
             --from-agent "$(task_field "$id" AGENT)" --from-task "$id" --repo "$(task_field "$id" REPO_NAME)" \
