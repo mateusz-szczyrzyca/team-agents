@@ -28,7 +28,7 @@ options:
   --repo-root <dir>           repository root directory (default: repo containing this script)
   --candidate-bin <path>      path to Go candidate binary (default: <repo-root>/build/agent-go)
   --map-file <path>           path to agent-go-map.tsv (default: <repo-root>/tests/agent-go-map.tsv)
-  --evidence <path>           path to write JSON execution evidence (default: <repo-root>/build/agent-bats-evidence.json)
+  --evidence <path>           candidate-only JSON evidence (default: <repo-root>/build/agent-bats-evidence.json)
   --jobs <N>                  number of parallel jobs (default: BATS_JOBS or 1)
   -h, --help                  show this help message
 USAGE
@@ -78,7 +78,13 @@ done
 
 CANDIDATE_BIN=${CANDIDATE_BIN:-$REPO_ROOT/build/agent-go}
 MAP_FILE=${MAP_FILE:-$REPO_ROOT/tests/agent-go-map.tsv}
-EVIDENCE_FILE=${EVIDENCE_FILE:-$REPO_ROOT/build/agent-bats-evidence.json}
+if [[ $LANE == "oracle" && -n $EVIDENCE_FILE ]]; then
+  echo "agent-bats: --evidence is valid only for candidate lane" >&2
+  exit 1
+fi
+if [[ $LANE == "candidate" ]]; then
+  EVIDENCE_FILE=${EVIDENCE_FILE:-$REPO_ROOT/build/agent-bats-evidence.json}
+fi
 
 if [[ $LANE != "candidate" && $LANE != "oracle" ]]; then
   echo "agent-bats: invalid lane '$LANE' (must be 'candidate' or 'oracle')" >&2
@@ -111,11 +117,9 @@ stage_repository() {
   done
 }
 
-# escape_regex str — escapes all extended-regex metacharacters for Bats --filter exact anchored matching
+# escape_regex str — escapes regular expression metacharacters for Bats --filter
 escape_regex() {
-  printf '%s\n' "$1" | sed -e 's/\\/\\\\/g' -e 's/|/\\|/g' -e 's/{/\\{/g' -e 's/}/\\}/g' \
-    -e 's/(/\\(/g' -e 's/)/\\)/g' -e 's/+/\\+/g' -e 's/*/\\*/g' -e 's/\^/\\^/g' \
-    -e 's/\$/\\$/g' -e 's/?/\\?/g' -e 's/\./\\./g' -e 's/\[/\\[/g' -e 's/\]/\\]/g'
+  printf '%s\n' "$1" | sed -e 's/[][(){}|+*^$?.\]/\\&/g'
 }
 
 # compute_map_hash — calculates sha256 of the map file
@@ -179,7 +183,16 @@ if [[ $LANE == "candidate" ]]; then
 
   STAGED_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/staged-agent-XXXXXX")
   REPORTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/agent-bats-reports-XXXXXX")
-  trap 'pkill -f -- "$STAGED_ROOT" 2>/dev/null || true; rm -rf "$STAGED_ROOT" "$REPORTS_DIR"' EXIT
+  cleanup_candidate_root() {
+    local pkill_rc=0
+    pkill -f -- "$STAGED_ROOT" 2>&1 || pkill_rc=$?
+    # pkill returns 1 when no matching processes were found, which is normal on exit.
+    if (( pkill_rc != 0 && pkill_rc != 1 )); then
+      echo "agent-bats: warning: pkill exited with status $pkill_rc" >&2
+    fi
+    rm -rf "$STAGED_ROOT" "$REPORTS_DIR"
+  }
+  trap cleanup_candidate_root EXIT
 
   stage_repository "$STAGED_ROOT"
 
@@ -245,7 +258,7 @@ if [[ $LANE == "candidate" ]]; then
 
   # Verify executed count vs selected count and gather outcomes
   report_files=()
-  mapfile -t report_files < <(compgen -G "$REPORTS_DIR/*/report.xml" || true)
+  mapfile -t report_files < <(compgen -G "$REPORTS_DIR/*/report.xml" || (($? == 1)))
   if ((${#report_files[@]} == 0)); then
     echo "agent-bats: no JUnit XML reports generated in $REPORTS_DIR" >&2
     exit 1
@@ -280,12 +293,26 @@ if [[ $LANE == "candidate" ]]; then
     exit 1
   fi
 
+  if (( failures_count > 0 || skips_count > 0 )); then
+    echo "agent-bats: selected contracts have failures=$failures_count skips=$skips_count" >&2
+    exit 1
+  fi
+
   exit "$run_rc"
 
 else
   # Lane A: Oracle execution
   STAGED_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/staged-oracle-XXXXXX")
-  trap 'pkill -f -- "$STAGED_ROOT" 2>/dev/null || true; rm -rf "$STAGED_ROOT"' EXIT
+  cleanup_oracle_root() {
+    local pkill_rc=0
+    pkill -f -- "$STAGED_ROOT" 2>&1 || pkill_rc=$?
+    # pkill returns 1 when no matching processes were found, which is normal on exit.
+    if (( pkill_rc != 0 && pkill_rc != 1 )); then
+      echo "agent-bats: warning: pkill exited with status $pkill_rc" >&2
+    fi
+    rm -rf "$STAGED_ROOT"
+  }
+  trap cleanup_oracle_root EXIT
 
   stage_repository "$STAGED_ROOT"
   mkdir -p "$STAGED_ROOT/bin"
@@ -312,26 +339,13 @@ else
     if (( ${#FILES[@]} > 0 )); then
       bats_files="${FILES[*]}"
     else
-      mapfile -t all_unit < <(compgen -G "$STAGED_ROOT/tests/unit/*.bats" || true)
+      mapfile -t all_unit < <(cd "$STAGED_ROOT" && { compgen -G "tests/unit/*.bats" || (($? == 1)); })
       bats_files="${all_unit[*]}"
     fi
   fi
+  serial_files="${BATS_SERIAL:-tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/unit/restart.bats tests/unit/review_resilience.bats tests/unit/wake_cmd.bats tests/unit/autopilot_review_cap.bats}"
   oracle_rc=0
-  (cd "$STAGED_ROOT" && BATS_JOBS="$JOBS" BATS_FILES="$bats_files" "$STAGED_ROOT/tools/unit-bats.sh") || oracle_rc=$?
-
-  if [[ -n $EVIDENCE_FILE ]]; then
-    mkdir -p "$(dirname "$EVIDENCE_FILE")"
-    map_hash=$(compute_map_hash)
-    tests_hash=$(compute_tests_hash)
-    jq -n \
-      --arg lane "$LANE" \
-      --arg map_file "$MAP_FILE" \
-      --arg map_sha256 "$map_hash" \
-      --arg tests_sha256 "$tests_hash" \
-      --arg candidate_bin "" \
-      --argjson failures "$oracle_rc" \
-      '{lane: $lane, map_file: $map_file, map_sha256: $map_sha256, tests_sha256: $tests_sha256, candidate_bin: $candidate_bin, selected_count: 0, executed_count: 0, failures: $failures, skips: 0}' > "$EVIDENCE_FILE"
-  fi
+  (cd "$STAGED_ROOT" && BATS_JOBS="$JOBS" BATS_SERIAL="$serial_files" BATS_FILES="$bats_files" "$STAGED_ROOT/tools/unit-bats.sh") || oracle_rc=$?
 
   exit "$oracle_rc"
 fi

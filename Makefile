@@ -46,8 +46,8 @@ SHELL_SCRIPTS += tests/unit/investigation_resume_independence.bats
 SHELL_SCRIPTS += tests/unit/investigation_independent_labels.bats
 SHELL_SCRIPTS += tests/unit/investigation_completed_legacy.bats
 SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats \
-	tools/agent-bats.sh tests/harness/agent_bats.bats \
-	tools/check-agent-parity.sh tests/harness/check_agent_parity.bats
+	tools/agent-bats.sh tests/harness/agent_bats.bats tests/harness/agent_bats_runner.bats \
+	tools/check-agent-parity.sh tests/harness/check_agent_parity.bats tests/harness/agent_parity_gate.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 
@@ -73,7 +73,7 @@ BATS_SERIAL ?= tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/
 	tests/unit/review_resilience.bats tests/unit/wake_cmd.bats tests/unit/autopilot_review_cap.bats
 
 unit-bats:
-	BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/unit-bats.sh
+	BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/agent-bats.sh --lane oracle
 
 tools:
 	tools/install-linters.sh
@@ -115,6 +115,7 @@ build-agent:
 # Lane B: active/done rows of the Bats test suite against the real Go executable.
 unit-agent-bats: build-agent
 	tools/agent-bats.sh
+	tools/check-agent-parity.sh --evidence build/agent-bats-evidence.json
 
 # Verifies parity ledger, classifications, mapping, and hashes.
 check-agent-parity:
