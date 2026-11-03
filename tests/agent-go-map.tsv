@@ -491,4 +491,6 @@ tests/unit/review_pair_rotate.bats	rotate: the only new pair has a busy investig
 tests/unit/review_pair_rotate.bats	rotate: three investigators — the third pair is the one not used yet	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: a re-review by another investigator gets the slot's previous review as someone else's	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: the supervise timer dispatches a waiting review pair, which no run's end may do	source	R33	-	planned
+tests/unit/review_pair_rotate.bats	default draw and legacy random config prohibit same pair on second review and rotate A,B then C,D then mixed pairs	source	R33	-	planned
+tests/unit/review_pair_rotate.bats	rotate: a PR's second review prohibits its first pair even when other PRs were reviewed in between or history was missing	source	R33	-	planned
 tests/unit/round_discipline.bats	the prompts say never to start the next round's work; a member out of items sleeps instead	blackbox	R31	-	planned

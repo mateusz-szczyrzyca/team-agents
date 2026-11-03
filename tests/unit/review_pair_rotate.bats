@@ -99,3 +99,38 @@ pair_of() {
   out=$( source "$REPO_ROOT/bin/agent"; dispatch() { echo dispatched; }; cmd__supervise )
   [[ $out != *dispatched* ]]   # random and list: as before, a run's end dispatches
 }
+
+
+@test "default draw and legacy random config prohibit same pair on second review and rotate A,B then C,D then mixed pairs" {
+  grep -qx 'AGENT_REVIEW_DRAW=rotate' "$REPO_ROOT/config/agents.conf"
+  local id="T47" d="$AGENTS_HOME/reviews/repo-47" p1 p2 p3
+  mkdir -p "$AGENTS_HOME/tasks/$id"
+  printf 'ID=%s\nREPO_NAME=repo\nPR_NUMBER=47\nPR_URL=https://github.com/o/r/pull/47\nREVIEW_PAIR_SINCE=%s\n' \
+    "$id" "$(date +%s)" > "$AGENTS_HOME/tasks/$id/meta.env"
+  run_pass() {
+    ( source "$REPO_ROOT/bin/agent"
+      free_investigator_list() { printf '%s\n' inv-a inv-b inv-c inv-d; }
+      investigator_names() { printf '%s\n' inv-a inv-b inv-c inv-d; }
+      start_review_slot() { echo "$4" > "$2/$3.agent"; echo 1 > "$2/$3.inv"; }
+      act() { :; }
+      auto_stage() { :; }
+      AGENT_REVIEW_DRAW=random start_review_pair "$id" > /dev/null || exit 1
+      echo "$(cat "$d/A.agent") $(cat "$d/B.agent")" )
+  }
+  p1=$(run_pass)
+  p2=$(run_pass)
+  p3=$(run_pass)
+  [ "$p1" = "inv-a inv-b" ]
+  [ "$p2" = "inv-c inv-d" ]
+  [ "$p3" != "$p1" ] && [ "$p3" != "$p2" ]
+  [[ "$p3" =~ ^(inv-a inv-c|inv-b inv-d|inv-a inv-d|inv-b inv-c)$ ]]
+}
+
+@test "rotate: a PR's second review prohibits its first pair even when other PRs were reviewed in between or history was missing" {
+  local dir="$AGENTS_HOME/reviews/repo-47"
+  mkdir -p "$dir" "$AGENTS_HOME/reviews"
+  echo inv-a > "$dir/A.agent"
+  echo inv-b > "$dir/B.agent"
+  printf 'inv-a inv-b\ninv-a inv-c\ninv-a inv-d\n' > "$AGENTS_HOME/reviews/history"
+  [ "$(pair_of 47)" = "inv-c inv-d" ]
+}
