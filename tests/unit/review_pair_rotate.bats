@@ -96,6 +96,6 @@ pair_of() {
   printf 'ID=T1\nSTATUS=done\nREVIEW_PAIR_PENDING=1\nREVIEW_PAIR_SINCE=%s\n' "$(date +%s)" > "$AGENTS_HOME/tasks/T1/meta.env"
   out=$( source "$REPO_ROOT/bin/agent"; dispatch() { echo dispatched; }; AGENT_REVIEW_DRAW=rotate cmd__supervise )
   [[ $out == *dispatched* ]]
-  out=$( source "$REPO_ROOT/bin/agent"; dispatch() { echo dispatched; }; cmd__supervise )
+  out=$( source "$REPO_ROOT/bin/agent"; dispatch() { echo dispatched; }; AGENT_REVIEW_DRAW=random cmd__supervise )
   [[ $out != *dispatched* ]]   # random and list: as before, a run's end dispatches
 }

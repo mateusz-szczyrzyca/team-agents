@@ -48,7 +48,7 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
   agent run solo "task"
   t=$(task_of solo)
   wait_status "$t" done
-  grep -q '^- agent: `solo` (claude' "$AGENTS_HOME/tasks/$t/prompt-1.md"
+  grep '^- agent:' "$AGENTS_HOME/tasks/$t/prompt-1.md" | grep -qF '\textbf{solo}}$ (claude'
 }
 
 @test "the PR attribution of a team has one line per team, coordinator and member, in code format" {
@@ -57,8 +57,8 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
   t=$(task_of lead)
   wait_grep 'Opened by team-agents' "$AGENTS_HOME/tasks/$t/prompt-1.md"
   grep -q '^   - team: `[0-9-]*team`$' "$AGENTS_HOME/tasks/$t/prompt-1.md"
-  grep -q '^   - coordinator: `lead` (claude' "$AGENTS_HOME/tasks/$t/prompt-1.md"
-  grep -q '^   - member: `member` (claude' "$AGENTS_HOME/tasks/$t/prompt-1.md"
+  grep '^   - coordinator:' "$AGENTS_HOME/tasks/$t/prompt-1.md" | grep -qF '\textbf{lead}}$ (claude'
+  grep '^   - member:' "$AGENTS_HOME/tasks/$t/prompt-1.md" | grep -qF '\textbf{member}}$ (claude'
 }
 
 @test "skip detection counts skip statements of each kind of test file — not assertions, comments, strings or Markdown" {

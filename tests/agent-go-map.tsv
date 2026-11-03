@@ -489,3 +489,14 @@ tests/unit/review_pair_rotate.bats	rotate: three investigators — the third pai
 tests/unit/review_pair_rotate.bats	rotate: a re-review by another investigator gets the slot's previous review as someone else's	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: the supervise timer dispatches a waiting review pair, which no run's end may do	source	R33	-	planned
 tests/unit/round_discipline.bats	the prompts say never to start the next round's work; a member out of items sleeps instead	blackbox	R31	-	planned
+tests/unit/github_revision.bats	default review selection rotates the same PR across processes and exhausts all six pairs	source	R12	-	planned
+tests/unit/github_revision.bats	GitHub identities are bold distinct and stable across model and roster changes	source	R12	-	planned
+tests/unit/github_revision.bats	runner GitHub byline and review prompt use the same colored identity	source	R12	-	planned
+tests/unit/github_revision.bats	every publishing route receives file permalinks and vendor attribution rules once	source	R12	-	planned
+tests/unit/github_revision.bats	review recommendation leads the body with the notification icons and colored bold verdicts	source	R12	-	planned
+tests/unit/github_revision.bats	independent fresh prompts include their base once and no unavailable notebook or reservation calls	source	R12	-	planned
+tests/unit/github_revision.bats	helper prompt does not expand the request to unrelated skipped tests	source	R12	-	planned
+tests/unit/github_revision.bats	review task retains independence and previous findings from the queued request	source	R12	-	planned
+tests/unit/github_revision.bats	Claude disables vendor PR and commit attribution in new and resumed sessions	source	R12	-	planned
+tests/unit/github_revision.bats	rotation prefers models absent from the previous pair when member overlap ties	source	R33	-	planned
+tests/unit/github_revision.bats	remote helper jobs retain restricted helper scope and deliver only through the job	source	R12	-	planned

@@ -4,7 +4,7 @@
 
 load helpers
 
-BYLINE='Review by the team-agents investigator `inv-astra` (codex, model gpt-6-astra), request #66.'
+BYLINE='Review by the team-agents investigator $\color{#252981}{\textbf{inv-astra}}$ (codex, model gpt-6-astra), request #66.'
 
 setup_gh() {
   mkdir -p "$BATS_TEST_TMPDIR/ghw"

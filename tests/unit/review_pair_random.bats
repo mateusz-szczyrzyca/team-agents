@@ -17,7 +17,7 @@ pair_of() {
     start_review_slot() { echo "$4" > "$2/$3.agent"; echo 1 > "$2/$3.inv"; }
     act() { :; }
     auto_stage() { :; }
-    AGENT_REVIEW_SEED=$2 start_review_pair "$id" > /dev/null
+    AGENT_REVIEW_DRAW=${AGENT_REVIEW_DRAW:-random} AGENT_REVIEW_SEED=$2 start_review_pair "$id" > /dev/null
     d=$AGENTS_HOME/reviews/repo-$1
     echo "$(cat "$d/A.agent") $(cat "$d/B.agent")" )
 }
