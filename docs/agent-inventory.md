@@ -255,7 +255,7 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **prompt-$n.md** — fully rendered prompt provided to the CLI for run `$n`.
 - **mcp.json** / **opencode-config.json** — provider-specific MCP configuration files in task directory (Claude Code, OpenCode). Note: Gemini/Antigravity uses `.agents/mcp_config.json` created in the working tree (`$WORKTREE/.agents/mcp_config.json`).
 - **questions-$round.md** / **questions.md** — questions submitted to human for round `$round`.
-- **fix-pass.n** — fix-pass number (numeric index for retry cycle). Written at `bin/agent:1746` during `review_fix_pass`, read at `bin/agent:1758` in `do_fix_pass` to retrieve the retry count.
+- **fix-pass.n** — stores the number of critical/major findings from a review. Written at `bin/agent:1744–1746` by `review_fix_pass` with the findings count; read at `bin/agent:1758` by `do_fix_pass`. The separate `FIX_PASS` metadata field (`meta.env`) tracks the actual retry index.
 - **fix-pass.md** — fix-pass review findings and instructions for follow-up run. Written at `bin/agent:1747` alongside fix-pass.n.
 - **note-$RUN.md** — resume notes passed to the agent CLI for run $RUN. Written at `bin/agent:5824` by runner to save member notes; read at `bin/agent:2615` and `bin/agent:2768` during prompt construction to include prior run notes in resume/fresh sessions.
 - **history.md** — accumulated history of round progress, questions, and decisions.
@@ -263,9 +263,9 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **phase1.json** — manifest of accepted cohort member tasks in independent investigation.
 - **resume.json** — manifest of resumed investigation review tasks.
 - **resume-request.md** — advisory resume request instructions.
-- **sync_manifest.json** — node-side sync state including completion status and log cursors for remote node task synchronization. Read at `bin/agent:7516` in `node_sync_has_new_logs` to check completion status, written and queried at `bin/agent:7594-7600` in `node_sync_task` during sync cycles.
-- **acked** — marker file (empty or timestamp) indicating task has been acknowledged by human. Written at `bin/agent:8005` and `bin/agent:8012` in `cmd_ack` callbacks; removed at `bin/agent:4534` during task finalization in `runner_exit`.
-- **long-run** — stores soft step limit (default from `$AGENT_LONG_RUN_HARD`) to trigger wrap-up reminder for long-running tasks. Written at `bin/agent:4601` in `runner_exit` when duration exceeds threshold, read at `bin/agent:6433` in `long_run_end` callback, cleared at `bin/agent:4534` on task completion.
+- **sync_manifest.json** — node-side sync manifest containing metadata, per-file entries with sha and cut fields, and completion status for remote node task synchronization. Written and queried at `bin/agent:7879–7881` for structure inspection, and at `bin/agent:7594–7600` during sync cycles. Log cursors are stored separately in `bus/sync_log_cursors.json`. Read by `node_sync_terminal_unchanged` at `bin/agent:7513` to check completion status.
+- **acked** — empty marker file indicating task has been acknowledged by human. Written by `cmd_ack` callbacks at `bin/agent:8005` and `bin/agent:8012`; removed by `cmd__runner` at `bin/agent:4534` when the next run starts, not during finalization.
+- **long-run** — stores the observed step count at the soft threshold to signal a long-running task approaching limits. Written normally by `normalizer.countStep` in `agentbus/normalize.go:62–71` when the soft step limit (configured at `bin/agent:4537–4542`) is reached; also written with a hard-cut fallback at `bin/agent:4601` in `cmd__runner`. Consumed by `long_run_end` callback at `bin/agent:6433–6435`; cleared at `bin/agent:4534` at startup.
 - **answers.lock** — exclusive lock serializing question saving, editing, and answers watch.
 - **wake.lock** — exclusive lock serializing scheduled task wake-ups.
 - **stop-requested** / **node-stop-requested** — lifecycle stop marker files.
