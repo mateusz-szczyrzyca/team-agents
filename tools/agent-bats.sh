@@ -228,7 +228,7 @@ if [[ $LANE == "candidate" ]]; then
 
     out_dir="$REPORTS_DIR/run_$run_idx"
     mkdir -p "$out_dir"
-    
+
     # Run bats in staged root context
     bats_cmd=(bats --report-formatter junit --output "$out_dir")
     if [[ -n $filter_expr ]]; then
