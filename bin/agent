@@ -1073,6 +1073,9 @@ agent_desc() { # agent → "`name` (type, model `model`)" for attributions
   printf '`%s` (%s%s)' "$1" "${AGENT_TYPE[$1]:-?}" "${model:+, model \`$model\`}"
 }
 
+# agent_github_colors — "name=#RRGGBB …": the colour of every configured agent's name on GitHub (not yet)
+agent_github_colors() { :; }
+
 attribution_block() { # indent — the lines that end the description of a PR: the agent, or the team, its coordinator and its members
   local ind=$1 a
   printf '%sOpened by team-agents:\n' "$ind"

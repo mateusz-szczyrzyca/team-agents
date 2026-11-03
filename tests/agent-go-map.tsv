@@ -497,3 +497,11 @@ tests/unit/review_pair_repeat.bats	default draw: with two investigators their pa
 tests/unit/review_pair_repeat.bats	rotate: a PR's previous pair is not taken again, even when other PRs were reviewed since	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	list: a PR's second review goes to the first free investigators outside its previous pair	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	the supervise timer dispatches a pair that waits so as not to repeat its PR's pair (default draw)	source	R33	-	planned
+tests/unit/github_names.bats	gh pr create --body: the coordinator and the members are bold, each in its own colour	source	R12	-	planned
+tests/unit/github_names.bats	gh pr edit --body-file: the same colours as in the PR's first round	source	R12	-	planned
+tests/unit/github_names.bats	an investigator's review: its byline at the top and at the end, bold in the investigator's colour	source	R12	-	planned
+tests/unit/github_names.bats	two names of one text with the same colour: the second gets the next colour nobody in it has	source	R12	-	planned
+tests/unit/github_names.bats	a name the map does not know gets a colour of the palette from its name, the same every time	source	R12	-	planned
+tests/unit/github_names.bats	with no colours known the text goes out as it is	source	R12	-	planned
+tests/unit/github_names.bats	agent_github_colors: the agents in the configuration's order, each its own colour; investigators apart	source	R12	-	planned
+tests/unit/github_names.bats	the runner gives the agents' gh the colours of every agent	source	R12	-	planned
