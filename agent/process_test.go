@@ -427,8 +427,55 @@ func TestExecuteWriterFailure(t *testing.T) {
 	if !errors.Is(err, ErrProcess) {
 		t.Fatalf("expected ErrProcess, got %v", err)
 	}
+}
+
+// TestExecuteStdoutWriterErrorRetained tests that underlying writer errors on stdout
+// are retained via errors.Is.
+func TestExecuteStdoutWriterErrorRetained(t *testing.T) {
+	exec := OSExecutor{}
+
+	writerErr := errors.New("broken stdout pipe")
+	cmd := helperCmd("large-output")
+	cmd.Stdout = failWriter{err: writerErr}
+
+	_, err := exec.Execute(context.Background(), cmd)
+	if err == nil {
+		t.Fatal("expected error on failing writer, got nil")
+	}
 	if !errors.Is(err, writerErr) {
 		t.Fatalf("expected underlying writer error, got %v", err)
+	}
+}
+
+// sliceWriter implements io.Writer directly on a non-comparable slice type.
+type sliceWriter []string
+
+func (s sliceWriter) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+// TestExecuteNonComparableWriter tests that non-comparable io.Writer implementations
+// (such as slice types) do not cause a runtime panic during equality checks.
+func TestExecuteNonComparableWriter(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Execute panicked for valid writer: %v", r)
+		}
+	}()
+
+	exec := OSExecutor{}
+
+	sw := sliceWriter{"seed"}
+	cmd := helperCmd("echo-args", "noncomparable", "output")
+	cmd.Stdout = sw
+	cmd.Stderr = sw
+
+	res, err := exec.Execute(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", res.ExitCode)
 	}
 }
 
