@@ -505,3 +505,11 @@ tests/unit/github_names.bats	a name the map does not know gets a colour of the p
 tests/unit/github_names.bats	with no colours known the text goes out as it is	source	R12	-	planned
 tests/unit/github_names.bats	agent_github_colors: the agents in the configuration's order, each its own colour; investigators apart	source	R12	-	planned
 tests/unit/github_names.bats	the runner gives the agents' gh the colours of every agent	source	R12	-	planned
+tests/unit/prompt_delivery.bats	a reviewer's task gives its review request: independence, the re-review and the previous review	source	R12	-	planned
+tests/unit/prompt_delivery.bats	a plain review request is not repeated; an investigation request keeps its question and context	source	R12	-	planned
+tests/unit/prompt_delivery.bats	a reviewer gets the rules for writing on GitHub: files and commits as links	source	R12	-	planned
+tests/unit/prompt_delivery.bats	independent investigators get the writing rules in every phase, the review's recommendation first	source	R12	-	planned
+tests/unit/prompt_delivery.bats	an independent investigator's resume does not repeat its first prompt; a fresh session has it once	source	R12	-	planned
+tests/unit/prompt_delivery.bats	a helper is not told to fill the repository's skipped tests; a solo task is	source	R12	-	planned
+tests/unit/prompt_delivery.bats	Claude Code runs with its own attribution off: no Co-Authored-By, no 'Generated with Claude Code'	source	R12	-	planned
+tests/unit/prompt_delivery.bats	the agents' gh leaves out a 'Generated with Claude Code' line from what it publishes	source	R12	-	planned

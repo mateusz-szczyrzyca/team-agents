@@ -4366,6 +4366,9 @@ dispatch() { # starts queued requests on free investigators
   )
 }
 
+# investigation_task_text job-json from-task from-agent — the task.md of an investigation or a review (not yet)
+investigation_task_text() { :; }
+
 start_investigation() { # request-json (status "starting") investigator-name
   local j=$1 iname=$2 inv_id from_task from_agent
   inv_id=$(jq -r .id <<< "$j"); from_task=$(jq -r .from_task <<< "$j"); from_agent=$(jq -r .from_agent <<< "$j")
