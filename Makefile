@@ -2,7 +2,7 @@
 #   make tools   installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
 #   make lint    every static check; fails when a linter is missing (run make tools)
 #   make test    unit tests: Go (agent, agentbus, agentlive) and bats (the agent script)
-.PHONY: gate test unit-go unit-bats harness lint lint-go lint-shell lint-docs tools integration build generate check-generated build-agent
+.PHONY: gate test unit-go unit-bats unit-agent-bats check-agent-parity harness lint lint-go lint-shell lint-docs tools integration build generate check-generated build-agent
 
 # Go modules of this repository (each has its own go.mod).
 GO_MODULES := agentbus live agent tools/doccheck tools/errgen
@@ -72,6 +72,14 @@ BATS_SERIAL ?= tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/
 
 unit-bats:
 	BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/unit-bats.sh
+
+# Lane B: run active/done blackbox Bats cases against the real Go binary.
+unit-agent-bats:
+	@echo "unit-agent-bats: not yet implemented (R04 in progress)"
+
+# Validate the Bats-to-Go test mapping ledger and hashes.
+check-agent-parity:
+	bash tools/check-agent-test-map.sh
 
 tools:
 	tools/install-linters.sh
