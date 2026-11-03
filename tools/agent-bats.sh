@@ -28,7 +28,7 @@ options:
   --repo-root <dir>           repository root directory (default: repo containing this script)
   --candidate-bin <path>      path to Go candidate binary (default: <repo-root>/build/agent-go)
   --map-file <path>           path to agent-go-map.tsv (default: <repo-root>/tests/agent-go-map.tsv)
-  --evidence <path>           path to write JSON execution evidence (default: <repo-root>/build/agent-bats-evidence.json)
+  --evidence <path>           candidate-only JSON evidence (default: <repo-root>/build/agent-bats-evidence.json)
   --jobs <N>                  number of parallel jobs (default: BATS_JOBS or 1)
   -h, --help                  show this help message
 USAGE
@@ -78,7 +78,13 @@ done
 
 CANDIDATE_BIN=${CANDIDATE_BIN:-$REPO_ROOT/build/agent-go}
 MAP_FILE=${MAP_FILE:-$REPO_ROOT/tests/agent-go-map.tsv}
-EVIDENCE_FILE=${EVIDENCE_FILE:-$REPO_ROOT/build/agent-bats-evidence.json}
+if [[ $LANE == "oracle" && -n $EVIDENCE_FILE ]]; then
+  echo "agent-bats: --evidence is valid only for candidate lane" >&2
+  exit 1
+fi
+if [[ $LANE == "candidate" ]]; then
+  EVIDENCE_FILE=${EVIDENCE_FILE:-$REPO_ROOT/build/agent-bats-evidence.json}
+fi
 
 if [[ $LANE != "candidate" && $LANE != "oracle" ]]; then
   echo "agent-bats: invalid lane '$LANE' (must be 'candidate' or 'oracle')" >&2
@@ -287,6 +293,11 @@ if [[ $LANE == "candidate" ]]; then
     exit 1
   fi
 
+  if (( failures_count > 0 || skips_count > 0 )); then
+    echo "agent-bats: selected contracts have failures=$failures_count skips=$skips_count" >&2
+    exit 1
+  fi
+
   exit "$run_rc"
 
 else
@@ -335,20 +346,6 @@ else
   serial_files="${BATS_SERIAL:-tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/unit/restart.bats tests/unit/review_resilience.bats tests/unit/wake_cmd.bats tests/unit/autopilot_review_cap.bats}"
   oracle_rc=0
   (cd "$STAGED_ROOT" && BATS_JOBS="$JOBS" BATS_SERIAL="$serial_files" BATS_FILES="$bats_files" "$STAGED_ROOT/tools/unit-bats.sh") || oracle_rc=$?
-
-  if [[ -n $EVIDENCE_FILE ]]; then
-    mkdir -p "$(dirname "$EVIDENCE_FILE")"
-    map_hash=$(compute_map_hash)
-    tests_hash=$(compute_tests_hash)
-    jq -n \
-      --arg lane "$LANE" \
-      --arg map_file "$MAP_FILE" \
-      --arg map_sha256 "$map_hash" \
-      --arg tests_sha256 "$tests_hash" \
-      --arg candidate_bin "" \
-      --argjson failures "$oracle_rc" \
-      '{lane: $lane, map_file: $map_file, map_sha256: $map_sha256, tests_sha256: $tests_sha256, candidate_bin: $candidate_bin, selected_count: 0, executed_count: 0, failures: $failures, skips: 0}' > "$EVIDENCE_FILE"
-  fi
 
   exit "$oracle_rc"
 fi
