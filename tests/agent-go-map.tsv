@@ -98,6 +98,9 @@ tests/unit/investigation_pipeline_clarification.bats	a merger asks clarification
 tests/unit/investigation_pipeline_clarification.bats	a reviewer asks clarification questions and resumes without being replaced	blackbox	R39	-	planned
 tests/unit/investigation_prompt_clarification_resume.bats	independent investigator resume incorporates human note along with answered questions	blackbox	R40	-	planned
 tests/unit/investigation_prompt_clarification_resume.bats	independent investigator fresh session prompt does not duplicate answered questions	source	R40	-	planned
+tests/unit/investigation_prompt_clarification_resume.bats	independent investigator fresh session prompt renders base prompt and topic only once and omits bus tools	source	R40	-	planned
+tests/unit/investigation_prompt_clarification_resume.bats	start_investigation review task delivers review request question and re-review context	source	R40	-	planned
+tests/unit/investigation_prompt_clarification_resume.bats	helper prompt uses English Context heading and omits repository skipped-tests note	source	R40	-	planned
 tests/unit/investigation_resume_independence.bats	answered investigator clarification resumes without requiring disabled agentbus tools	blackbox	R40	-	planned
 tests/unit/investigation_single_investigator.bats	single investigator is accepted and investigation-team task is created	blackbox	R39	-	planned
 tests/unit/investigation_single_investigator.bats	single investigator with whitespace is trimmed and accepted	blackbox	R39	-	planned
