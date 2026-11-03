@@ -147,5 +147,65 @@ EOF
   [[ "$output" == *"tools/agent-bats.sh --lane oracle"* ]]
 }
 
+@test "agent-bats Lane A supports sourcing and function extraction from staged oracle" {
+  local mock_repo="$BATS_TEST_TMPDIR/mock_repo_src_extract"
+  mkdir -p "$mock_repo/tests/unit" "$mock_repo/bin" "$mock_repo/tools"
+  cp "$TOOL" "$mock_repo/tools/"
+  cp "$REPO_ROOT/tools/unit-bats.sh" "$mock_repo/tools/"
+
+  cat > "$mock_repo/bin/agent" <<'EOF'
+#!/bin/sh
+node_transition() {
+  echo "oracle_transition_ok"
+}
+EOF
+  chmod +x "$mock_repo/bin/agent"
+
+  cat > "$mock_repo/tests/unit/source_extract.bats" <<'EOF'
+@test "extract and source" {
+  extracted=$(sed -n '/^node_transition() {/,/^}/p' "$BATS_TEST_DIRNAME/../../bin/agent")
+  eval "$extracted"
+  [ "$(node_transition)" = "oracle_transition_ok" ]
+
+  REPO_ROOT=$(cd "$BATS_TEST_DIRNAME/../.." && pwd)
+  source "$REPO_ROOT/bin/agent"
+  [ "$(node_transition)" = "oracle_transition_ok" ]
+}
+EOF
+
+  run "$mock_repo/tools/agent-bats.sh" --lane oracle --repo-root "$mock_repo" tests/unit/source_extract.bats
+  [ "$status" -eq 0 ]
+}
+
+@test "agent-bats fails when executed count differs from selected count" {
+  local mock_repo="$BATS_TEST_TMPDIR/mock_repo_count_mismatch"
+  mkdir -p "$mock_repo/tests/unit" "$mock_repo/build" "$mock_repo/tools"
+  cp "$TOOL" "$mock_repo/tools/"
+  cp "$REPO_ROOT/tools/unit-bats.sh" "$mock_repo/tools/"
+
+  # Map file selects a test that does not exist in sample.bats
+  cat > "$mock_repo/tests/agent-go-map.tsv" <<'EOF'
+bats_file	test_name	classification	implementation_round	go_test_or_subtests	state
+tests/unit/sample.bats	nonexistent test title	blackbox	R04	TestNonexistent	active
+EOF
+
+  cat > "$mock_repo/tests/unit/sample.bats" <<'EOF'
+@test "existing other test" {
+  true
+}
+EOF
+
+  cat > "$mock_repo/build/agent-go" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$mock_repo/build/agent-go"
+
+  run env CHECK_ROOT="$mock_repo" "$mock_repo/tools/agent-bats.sh" --repo-root "$mock_repo"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"executed count (0) does not match selected count (1)"* ]]
+}
+
+
 
 
