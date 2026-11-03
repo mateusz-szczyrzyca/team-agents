@@ -432,6 +432,28 @@ func TestExecuteWriterFailure(t *testing.T) {
 	}
 }
 
+// TestExecuteSharedStdoutStderr tests that using the same writer for stdout and stderr
+// works safely without race or corruption.
+func TestExecuteSharedStdoutStderr(t *testing.T) {
+	exec := OSExecutor{}
+
+	var buf bytes.Buffer
+	cmd := helperCmd("echo-args", "shared", "output")
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+
+	res, err := exec.Execute(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", res.ExitCode)
+	}
+	if !strings.Contains(buf.String(), "shared") {
+		t.Fatalf("expected shared output, got %q", buf.String())
+	}
+}
+
 // TestExecuteStderrWriterFailure tests that a failing stderr writer returns ExecuteWait
 // even when the child exits unsuccessfully.
 func TestExecuteStderrWriterFailure(t *testing.T) {
