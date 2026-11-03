@@ -206,6 +206,48 @@ EOF
   [[ "$output" == *"executed count (0) does not match selected count (1)"* ]]
 }
 
+@test "exact-filter anchoring prevents partial test name matches" {
+  local mock_repo="$BATS_TEST_TMPDIR/mock_repo_anchor"
+  mkdir -p "$mock_repo/tests/unit" "$mock_repo/build" "$mock_repo/tools"
+  cp "$TOOL" "$mock_repo/tools/"
+  cp "$REPO_ROOT/tools/unit-bats.sh" "$mock_repo/tools/"
 
+  # Active test is "foo"; planned tests are "foo suffix" and "prefix foo".
+  # Without anchoring (^...$), the filter ^(foo)$ without anchors would match partial strings.
+  # This test verifies that only the exact "foo" is executed, not the partial matches.
+  cat > "$mock_repo/tests/agent-go-map.tsv" <<'EOF'
+bats_file	test_name	classification	implementation_round	go_test_or_subtests	state
+tests/unit/sample.bats	foo	blackbox	R04	TestFoo	active
+tests/unit/sample.bats	foo suffix	blackbox	R04	TestFooSuffix	planned
+tests/unit/sample.bats	prefix foo	blackbox	R04	TestPrefixFoo	planned
+EOF
 
+  cat > "$mock_repo/tests/unit/sample.bats" <<'EOF'
+@test "foo" {
+  true
+}
 
+@test "foo suffix" {
+  echo "should not execute"
+  false
+}
+
+@test "prefix foo" {
+  echo "should not execute"
+  false
+}
+EOF
+
+  cat > "$mock_repo/build/agent-go" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$mock_repo/build/agent-go"
+
+  run env CHECK_ROOT="$mock_repo" "$mock_repo/tools/agent-bats.sh" --repo-root "$mock_repo"
+  # Should succeed because only "foo" is executed; "foo suffix" and "prefix foo" are not.
+  [ "$status" -eq 0 ]
+  # TAP output shows "1..1" meaning exactly 1 test was selected and executed (not 3)
+  [[ "$output" == *"1..1"* ]]
+  [[ "$output" == *"ok 1 foo"* ]]
+}
