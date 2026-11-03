@@ -47,7 +47,12 @@ disjoint() {
     [ "${#pairs[@]}" -eq 6 ]
     [ "$(printf '%s\n' "${pairs[@]}" | sort -u | wc -l)" -eq 6 ]
     disjoint "${pairs[0]}" "${pairs[1]}"
-    for k in 2 3 4 5; do ! disjoint "${pairs[k]}" "${pairs[0]}" && ! disjoint "${pairs[k]}" "${pairs[1]}"; done
+    for k in 2 3 4 5; do
+      run disjoint "${pairs[k]}" "${pairs[0]}"
+      [ "$status" -ne 0 ]
+      run disjoint "${pairs[k]}" "${pairs[1]}"
+      [ "$status" -ne 0 ]
+    done
   done
 }
 
