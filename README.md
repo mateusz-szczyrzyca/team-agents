@@ -260,7 +260,12 @@ findings outweigh a "ready-to-merge".
 
 **`--autopilot`** (it implies `--verify`) asks two investigators at once — drawn at random among the free ones;
 the same pair re-checks a PR after its fixes —, each on its own — they do not read each
-other's review, and a re-review gets only its own previous one; it waits until two are free, never one. Both
+other's review, and a re-review gets only its slot's previous one; it waits until two are free, never one. With
+`AGENT_REVIEW_DRAW=rotate` (the template's setting) every investigator takes its turn instead: a pair is never the
+pair of either of the two reviews before it — a fix pass's re-review included, which then gets the previous review
+named as another investigator's — while the free investigators can make another; the two that reviewed least
+recently come first, then a pair not seen yet. With four investigators A–D: A+B, C+D, A+C, B+D, A+D, B+C. The last
+20 pairs are kept in `~/agents/review-pairs`. Both
 `ready-to-merge`: you get "✅✅ both reviews: ready to merge". Anything else: the team fixes what the reviews that
 found problems say (the fix loop below).
 
@@ -323,7 +328,10 @@ reaching an agent; it does not hold back an agent that bypasses `gh` with its to
 added to its task ("Fix pass 1 of 2"), it fixes them (or disputes one on the PR) and finishes again — and the PR
 is reviewed again, a re-review that first checks the previous findings. After `VERIFY_MAX_FIX_PASSES` (2) fix
 passes with critical or major problems still found, the team is not woken again: the human is mentioned on the
-PR (`AGENT_HUMAN_GITHUB`, default the GitHub owner of the repository) and notified. The review gives, for each
+PR (`AGENT_HUMAN_GITHUB`, default the GitHub owner of the repository) and notified. So a round has at most
+`VERIFY_MAX_FIX_PASSES` + 1 reviews (with 2: work → review → fix → review → fix → review, then you decide; under
+`--autopilot` each is a pair). A review done again because it gave no verdict and a return for the gate are not
+counted. Resuming the team yourself (`agent run --resume … --autopilot`) is your decision: it starts the count anew. The review gives, for each
 problem, the simplest fix that resolves it.
 
 ### When a member drops out
@@ -624,7 +632,7 @@ Then:
 | `AGENT_LONG_RUN_STEPS` | a team member's run of more tool calls is asked, in every answer of its bus server, to end; it is woken again at once, in a fresh session; `0` never (120) |
 | `AGENT_LONG_RUN_HARD` | a team member's run of this many tool calls is ended by the runner — asked to end at `AGENT_LONG_RUN_STEPS`, an agent may go on —; it sleeps and is woken at once in a fresh session; `0` never (200) |
 | `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |
-| `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `random` — two different investigators drawn among the free ones — or `list` — the first two free ones of the list (random) |
+| `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `random` — two different investigators drawn among the free ones, the same pair for a PR's re-reviews —, `list` — the first two free ones of the list — or `rotate` — every investigator in turn, never either of the two pairs before (default `random`; the template sets `rotate`) |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) — the team reports of the protocol (`.agents/reports/`) are never counted, whatever it says |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
 | `QUESTIONS_EDITOR`, `VSCODE_SERVER_DIRS` | open new questions files in the connected VS Code window (`vscode`, default) or not (`off`); where VS Code servers live |
@@ -1186,6 +1194,8 @@ whose team is closed or unknown.
   bus/state.json  bus/messages.jsonl         agentbus state and message log
   bus/notebooks/<repo>/                      repository notebooks
   bus/checkpoints/                           checkpoints (team-<id>.md, task-<id>.md)
+  reviews/<repo>-<PR>/                       --autopilot's review pair of a PR: each slot's investigator, review, verdict
+  review-pairs                               the last 20 review pairs started ("a b" per line; AGENT_REVIEW_DRAW=rotate)
   tasks-archived/*.7z                        archives (agent archive)
   notifications/                             notification files
   logs/agent.jsonl                           structured log of the agent script (JSON lines)
