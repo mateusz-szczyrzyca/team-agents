@@ -1,6 +1,9 @@
 package main
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 //go:generate sh -c "cd ../tools/errgen && go run . -spec ../../agent/errors.json -out ../../agent/errors_gen.go"
 
@@ -10,7 +13,7 @@ type ErrorClass int
 const (
 	// ClassInvalidArgument: a required argument is missing or has an invalid value.
 	ClassInvalidArgument ErrorClass = iota
-	// ClassNotFound: the referenced team, member, board item, investigation or worker request does not exist.
+	// ClassNotFound: the referenced object does not exist.
 	ClassNotFound
 	// ClassNotInTeam: a team-only operation was called by an agent that is not in a team.
 	ClassNotInTeam
@@ -22,17 +25,27 @@ const (
 	ClassInvalidState
 	// ClassStorage: reading or writing the state directory, a log file or stdout failed.
 	ClassStorage
-	// ClassUnknownTool: the MCP client called a tool that agent does not provide.
+	// ClassUnknownTool: the requested tool does not exist.
 	ClassUnknownTool
-	// ClassProcess: a helper process (wake-up, dispatcher) could not be started or failed.
+	// ClassProcess: a required external command could not be started or failed.
 	ClassProcess
 )
 
+// classNames is a read-only table of diagnostic class names, indexed by ErrorClass.
+var classNames = [...]string{
+	"InvalidArgument", "NotFound", "NotInTeam", "Permission", "Conflict", "InvalidState", "Storage", "UnknownTool", "Process",
+}
+
 // String returns the class name, e.g. "NotFound".
-func (c ErrorClass) String() string { return "" }
+func (c ErrorClass) String() string {
+	if c < 0 || int(c) >= len(classNames) {
+		return fmt.Sprintf("ErrorClass(%d)", int(c))
+	}
+	return classNames[c]
+}
 
 // ExitCode preserves the agent CLI's generic failure status; operations with special exits map them explicitly.
-func (c ErrorClass) ExitCode() int { return 0 }
+func (c ErrorClass) ExitCode() int { return 1 }
 
 // Sentinel errors, one per class: every typed error of agent unwraps to the sentinel of its class.
 var (
@@ -47,17 +60,41 @@ var (
 	ErrProcess         = errors.New("process failed")   // sentinel of ClassProcess
 )
 
+// sentinels is a read-only table mapping every class to its stable sentinel error.
+var sentinels = [...]error{
+	ErrInvalidArgument, ErrNotFound, ErrNotInTeam, ErrPermission, ErrConflict, ErrInvalidState, ErrStorage, ErrUnknownTool, ErrProcess,
+}
+
 // Sentinel returns the sentinel error of the class.
-func (c ErrorClass) Sentinel() error { return nil }
+func (c ErrorClass) Sentinel() error {
+	if c < 0 || int(c) >= len(sentinels) {
+		return errors.New(c.String())
+	}
+	return sentinels[c]
+}
+
+// classified is implemented by every typed error of agent; logging and exit codes use it.
+type classified interface {
+	error
+	Class() ErrorClass // the category of the failure
+	CauseName() string // the precise cause (e.g. "UnknownCommand"; the class name for low-level errors)
+}
 
 // classOf returns the class and cause name of err (empty for errors that are not typed agent errors).
-func classOf(_ error) (class, cause string) { return "", "" }
+func classOf(err error) (class, cause string) {
+	// c captures a typed failure through any standard wrapping layers.
+	var c classified
+	if errors.As(err, &c) {
+		return c.Class().String(), c.CauseName()
+	}
+	return "", ""
+}
 
 // ---------------------------------------------------------------- per-operation errors
 
 // causeInfo describes one value of a per-operation cause enum (generated in errors_gen.go).
 type causeInfo struct {
-	name  string     // cause name, e.g. "NotCoordinator"
+	name  string     // cause name, e.g. "UnknownCommand"
 	class ErrorClass // its class
 }
 
@@ -69,7 +106,7 @@ type opCause interface {
 }
 
 // OpError is the error of one operation. C is the operation's cause enum, so a function returning
-// *OpError[QuizStartCause] (alias QuizStartError) can only fail with a QuizStartCause.
+// *OpError[CommandCause] (alias CommandError) can only fail with a CommandCause.
 type OpError[C opCause] struct {
 	Cause   C      // why the operation failed
 	Message string // what went wrong and, where possible, what to do instead (agents read it)
@@ -77,19 +114,26 @@ type OpError[C opCause] struct {
 }
 
 // Error returns "operation: message".
-func (e *OpError[C]) Error() string { return "" }
+func (e *OpError[C]) Error() string { return e.Cause.op() + ": " + e.Message }
 
 // Unwrap exposes the class sentinel and any underlying error.
-func (e *OpError[C]) Unwrap() error { return nil }
+func (e *OpError[C]) Unwrap() error { return e.Err }
 
 // Class returns the class of the cause.
-func (e *OpError[C]) Class() ErrorClass { return 0 }
+func (e *OpError[C]) Class() ErrorClass { return e.Cause.info().class }
 
 // CauseName returns the name of the cause.
-func (e *OpError[C]) CauseName() string { return "" }
+func (e *OpError[C]) CauseName() string { return e.Cause.info().name }
 
 // asError returns e as an error value, or a nil error when e is nil (never a non-nil interface holding nil).
-func (e *OpError[C]) asError() error { return nil }
+func (e *OpError[C]) asError() error {
+	if e == nil {
+		return nil
+	}
+	return e
+}
 
 // opErr builds an operation error with a formatted message.
-func opErr[C opCause](_ C, _ string, _ ...any) *OpError[C] { return nil }
+func opErr[C opCause](c C, format string, args ...any) *OpError[C] {
+	return &OpError[C]{Cause: c, Message: fmt.Sprintf(format, args...), Err: c.info().class.Sentinel()}
+}
