@@ -227,9 +227,11 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **reviews/<repo>-<PR-number>/pair.lock** — lock serializing verdict recording and completion decision for a review pair.
 - **reviews/<repo>-<PR-number>/A.verdict**, **B.verdict** — recorded verdicts for review slots A and B.
 - **reviews/<repo>-<PR-number>/A.md**, **B.md** — review commentary and findings.
+- **reviews/<repo>-<PR-number>/A.inv**, **B.inv** — investigator request/assignment IDs for review slots A and B. Written at `bin/agent:2062` during `start_review_slot`, read at `bin/agent:1905-1906` to determine slot assignment in `retry_review_slot`, displayed at `bin/agent:2041` in board messages.
 - **reviews/<repo>-<PR-number>/decided** — marker indicating one reviewer completed the pair decision.
 - **reviews/<repo>-<PR-number>/A.agent**, **B.agent** — assigned investigator names for slots A and B.
 - **reviews/<repo>-<PR-number>/A.retried**, **B.retried** — slot retry tracking markers.
+- **tasks/.team-<team>.stuck** — timestamp marker tracking when a team became stuck (all members done or sleeping without coordinator closure; line 2193).
 - **remote-questions/<node>/<task>/ready.lock** — lock serializing remote question readiness staging and watch setup.
 - **remote-questions/<node>/<task>/answers.lock** — lock serializing remote answer validation and forwarding.
 - **remote-questions/<node>/<task>/questions-<round>.md** — staged questions files for remote tasks.
@@ -253,12 +255,17 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **prompt-$n.md** — fully rendered prompt provided to the CLI for run `$n`.
 - **mcp.json** / **opencode-config.json** — provider-specific MCP configuration files in task directory (Claude Code, OpenCode). Note: Gemini/Antigravity uses `.agents/mcp_config.json` created in the working tree (`$WORKTREE/.agents/mcp_config.json`).
 - **questions-$round.md** / **questions.md** — questions submitted to human for round `$round`.
-- **fix-pass.md** — fix-pass review findings and instructions for follow-up run.
+- **fix-pass.n** — fix-pass number (numeric index for retry cycle). Written at `bin/agent:1746` during `review_fix_pass`, read at `bin/agent:1758` in `do_fix_pass` to retrieve the retry count.
+- **fix-pass.md** — fix-pass review findings and instructions for follow-up run. Written at `bin/agent:1747` alongside fix-pass.n.
+- **note-$RUN.md** — resume notes passed to the agent CLI for run $RUN. Written at `bin/agent:5824` by runner to save member notes; read at `bin/agent:2615` and `bin/agent:2768` during prompt construction to include prior run notes in resume/fresh sessions.
 - **history.md** — accumulated history of round progress, questions, and decisions.
 - **postmerge.log** / **precheck.log** — gate check and test logs during verification.
 - **phase1.json** — manifest of accepted cohort member tasks in independent investigation.
 - **resume.json** — manifest of resumed investigation review tasks.
 - **resume-request.md** — advisory resume request instructions.
+- **sync_manifest.json** — node-side sync state including completion status and log cursors for remote node task synchronization. Read at `bin/agent:7516` in `node_sync_has_new_logs` to check completion status, written and queried at `bin/agent:7594-7600` in `node_sync_task` during sync cycles.
+- **acked** — marker file (empty or timestamp) indicating task has been acknowledged by human. Written at `bin/agent:8005` and `bin/agent:8012` in `cmd_ack` callbacks; removed at `bin/agent:4534` during task finalization in `runner_exit`.
+- **long-run** — stores soft step limit (default from `$AGENT_LONG_RUN_HARD`) to trigger wrap-up reminder for long-running tasks. Written at `bin/agent:4601` in `runner_exit` when duration exceeds threshold, read at `bin/agent:6433` in `long_run_end` callback, cleared at `bin/agent:4534` on task completion.
 - **answers.lock** — exclusive lock serializing question saving, editing, and answers watch.
 - **wake.lock** — exclusive lock serializing scheduled task wake-ups.
 - **stop-requested** / **node-stop-requested** — lifecycle stop marker files.
@@ -286,7 +293,7 @@ Inter-agent messages posted via `agentbus` with typed kinds:
 
 ### 3. Structured Log Records (`logs/agent.jsonl` & `runner.log`)
 JSON objects emitted via `log_event()` with schema `{ts, level, component: "agent", event, pid, subcommand, task, ...}`.
-There are **245 distinct structured log events** in `bin/agent`: 198 direct event names emitted via `log_info`, `log_warn`, and `log_error`, plus 47 additional events emitted exclusively through `try` and `jq_soft` helper wrappers (which log warnings via `log_warn` upon command failure or JSON parse error).
+There are **246 distinct structured log events** in `bin/agent`: 198 direct event names emitted via `log_info`, `log_warn`, and `log_error`, plus 48 additional events emitted exclusively through `try` and `jq_soft` helper wrappers (which log warnings via `log_warn` upon command failure or JSON parse error).
 
 **Direct Log Events (198 names):**
 `agents_gh_missing`, `agents_md_missing`, `answers_incomplete`, `answers_resume_failed`, `answers_saved`, `answers_sent`,
@@ -323,7 +330,7 @@ There are **245 distinct structured log events** in `bin/agent`: 198 direct even
 `team_waiting`, `transcript_bus_unreadable`, `transcript_failed`, `unit_stop_failed`, `verify_member_branch_missing`, `verify_pr_check_failed`,
 `waiting_for_investigation`, `wake_by_hand`, `wake_deferred`, `wake_loop_detected`, `wake_now_requested`, `wake_requested`.
 
-**Wrapper-Emitted Events via `try` and `jq_soft` (47 names):**
+**Wrapper-Emitted Events via `try` and `jq_soft` (48 names):**
 `activity_parse`, `activity_write_failed`, `answers_watch_reset_failed`, `answers_watch_stop_failed`, `auth_check_parse`,
 `board_release_failed`, `cancel_pending_failed`, `checkpoint_copy_failed`, `checkpoint_read_failed`, `cli_result_parse`,
 `discard_branch_failed`, `discard_worktree_failed`, `dispatch_failed`, `event_scan_failed`, `handover_comment_failed`,
@@ -331,7 +338,7 @@ There are **245 distinct structured log events** in `bin/agent`: 198 direct even
 `node_sync_cleanup_failed`, `node_sync_cursor_invalid`, `node_sync_jobs_invalid`, `node_sync_log_malformed`, `node_sync_manifest_invalid`,
 `notice_failed`, `opencode_export_failed`, `opencode_export_parse`, `peers_parse`, `peers_unavailable`,
 `pr_body_parse`, `pr_lookup_failed`, `pr_lookup_parse`, `pr_ready_failed`, `remote_member_revoke_failed`,
-`remote_wake_failed`, `review_mention_failed`, `round_fetch_failed`, `round_pr_close_failed`, `round_pr_link_failed`,
+`remote_wake_failed`, `review_followup_failed`, `review_mention_failed`, `round_fetch_failed`, `round_pr_close_failed`, `round_pr_link_failed`,
 `submodule_update_failed`, `team_close_failed`, `team_state_failed`, `team_update_failed`, `team_waiting_parse`,
 `worktree_prune_failed`, `worktree_remove_failed`.
 
