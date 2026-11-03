@@ -33,8 +33,8 @@ func newClock() Clock {
 
 // mutexRandom implements Random with a mutex-protected math/rand.Source.
 type mutexRandom struct {
-	mu sync.Mutex
-	s  rand.Source
+	mu sync.Mutex  // guards s for concurrent Int63 calls.
+	s  rand.Source // seeded random source.
 }
 
 // Int63 returns a nonnegative random int64 value.
