@@ -1,36 +1,48 @@
 # GitHub presentation, reviewer rotation, and prompt audit — inv-astra
 
-Status: awaiting the human's decision required by `AGENTS.md`, Never rule 1.
+Status: awaiting the second clarification required by `AGENTS.md`, Never rule 1.
 Audited base: `9575b28cb48d9e96b91644b8c882e426c254d435`.
-No implementation or existing test was changed. This report does not satisfy the requested
-merge-ready implementation of points 1–6. The question is in this task's `questions-1.md`;
-its decision options are also recorded below so they travel with the branch.
+No implementation or test changes are included in this checkpoint. This report does not
+satisfy the requested merge-ready implementation of points 1–6. The new question is in
+this task's `questions-2.md`; its decision options are recorded below so they travel
+with the branch.
 
-## Blocking contract conflict (point 4)
+## Accepted first-round decisions
 
-`tests/unit/review_pair_random.bats` explicitly tests **"a PR's next review pass keeps its pair"**.
-Its fixture does not set the draw mode: it exercises the default. Changing the default to
-rotation or prohibiting repeated pairs makes that existing assertion fail. The same file
-explicitly tests the first-two-free behavior of `AGENT_REVIEW_DRAW=list`.
-`tests/unit/review_pair_rotate.bats` also expects the default supervisor not to dispatch
-a waiting rotation, and explicitly permits repeated pairs with two investigators and
-after a busy-investigator timeout.
+The human answered **a** to all three questions in `questions-1.md`:
 
-The binding repository instruction says: "If the task requires behaviour that an existing
-test forbids, stop and ask the human in your questions file; wait for the answer."
-The task asks for new regression tests but does not explicitly authorize changing existing ones.
-I stopped implementation rather than weaken tests, disguise a default as an explicit legacy
-setting, or claim the critical bug was fixed through an unused optional path.
+1. Make rotation the default and authorize updating obsolete default pair-retention and
+   supervisor expectations; preserve explicitly configured legacy `random`/`list` modes.
+2. Retain the existing limited-pool and busy-timeout exceptions. Rotate whenever an
+   alternative pair is available; document and log exceptions.
+3. Investigate the unrelated baseline lease-test failure without weakening its test.
 
-Decision requested:
+These decisions resolve the original selection-contract blocker. Existing installations
+that explicitly configure `random` or `list` will need to select `rotate` to obtain the
+new behavior; a default change alone cannot override their explicit configuration.
 
-1. Authorize updating the obsolete pair-retention/default-supervision expectations and
-   changing the default to rotation; preserve explicitly selected legacy `random`/`list`
-   modes, document their behavior, and add default-mode regressions (recommended); or
-   require rotation in every mode, authorizing the corresponding compatibility and test changes.
-2. Keep the existing limited-pool/timeout exceptions, but require a different pair whenever
-   available (recommended); or prohibit repeats absolutely and wait for another eligible pair,
-   including indefinitely when only two investigators exist.
+## New blocking test conflict (point 1)
+
+Two additional existing tests require the old plain-name presentation:
+
+- `tests/unit/skips.bats:60–61` anchors coordinator/member attribution to backticked names.
+- `tests/unit/review_byline.bats:44` requires the exact plain investigator byline.
+
+The requested bold colored identities conflict with those assertions. The first approval
+covers reviewer-selection expectations, not these presentation tests. `AGENTS.md`, Never
+rule 1 says: "If the task requires behaviour that an existing test forbids, stop and ask
+the human in your questions file; wait for the answer."
+
+The second clarification file asks for one of these decisions:
+
+- **a (recommended):** authorize updating these obsolete attribution assertions, retaining
+  identity/model and nonduplicated-byline checks, and add stable-color regressions.
+- **b:** preserve the assertions and canonical plain attribution; restrict colored identities
+  to additional presentation, leaving part of point 1 unmet.
+
+No answer has been received. Do not preserve redundant plain attribution lines or introduce
+unused legacy rendering paths merely to evade the existing tests. Implementation is paused
+at this newly discovered conflict, as required by the human's clarification instructions.
 
 ## Findings and proposed fixes
 
@@ -100,7 +112,7 @@ it as the default. Global name-pair history is shared across repositories; it tr
 not provider/model identities. Renaming an investigator or changing its configured model
 does not provide model-aware fairness.
 
-After resolving the question, test default-mode six-pair coverage, the same PR and resumed
+Under the accepted first-round decision, test default-mode six-pair coverage, the same PR and resumed
 coordinator tasks, explicit compatibility modes, busy/quota-limited candidates, history
 reload, and dispatch after capacity becomes available. If model diversity is added, use
 configured provider/model identity as a tie-breaker while preserving distinct investigator names.
@@ -151,15 +163,34 @@ that test. Keep phase 1/2 code-writing rules separate from phase 3/5 read-only r
 
 - Only this worktree was inspected. No coordination, bus tools, other worktrees, hardware,
   real agent CLIs, installation changes, PR creation, or GitHub comments were used.
-- `bats tests/unit/review_pair_random.bats tests/unit/review_pair_rotate.bats`: **12/12 passed**,
-  including the obsolete default pair-retention assertion.
-- `make gate`: **6/7 steps passed**. Generated-code, shell lint, Go lint, declaration comments,
-  Go tests/vet, and harness passed. The Bats step failed on the unchanged test
+- Before clarification, `bats tests/unit/review_pair_random.bats tests/unit/review_pair_rotate.bats`
+  passed **12/12**, including the obsolete default pair-retention assertion.
+- The first baseline `make gate` passed **6/7** steps and failed the unchanged test
   `a leased parent without manifest keeps the lease while its tagged child is still running`
-  in `tests/unit/investigation_team_admission.bats:175`: `[ "$lease_now" = 1 ]` failed.
-  Full local log: `build/gate/unit-bats.log`. No retry, test edit, or workaround was applied;
-  the cause has not been established. This is an additional baseline validation blocker for
-  implementation, reported to the human in question 3. Only this findings document is pushed.
-- This is a documentation-only checkpoint. No new behavior or tests were added, no lint
-  suppressions were added, and no persisted format or public interface changed.
+  at `tests/unit/investigation_team_admission.bats:175`: `[ "$lease_now" = 1 ]` failed.
+- After the human authorized investigation, the same lease test **passed in isolation**.
+  It also did not fail in the subsequent full run with draft regressions. The fixture has
+  a 20-second child deadline and the suite uses 32 parallel jobs here, but a simple timeout
+  does not explain why the original run reached the lease assertion after waiting for the
+  child to finish successfully. No root cause has been established. No production change,
+  timeout workaround, or test weakening was applied.
+- Draft regression coverage was prepared for default rotation, model diversity, identities,
+  shared GitHub/file-link instructions, recommendation order, independent fresh prompts,
+  helper scope, queued review requests, Claude settings, and MCP capability guidance.
+  Against unchanged production code, the run failed on the new Bats and Go assertions;
+  the draft also initially had shell-lint findings, corrected before saving. Some tests
+  still need refinement, and the last model-diversity test was not run. These drafts are
+  not a completed or committed RED cycle and are not part of the pushed change.
+- The draft tracked-file patch, two new test files, and that gate's logs are saved locally
+  at `/tmp/inv-astra-resume-20261103-z5ec1w4r` for resumption after approval. All draft test
+  and build-list changes were removed from this worktree before the final baseline gate.
+- Final baseline `make gate` after restoring drafts: **6/7 passed**. The lease test passed,
+  but the unchanged `independent investigator fresh session prompt does not duplicate
+  answered questions` test failed at `tests/unit/investigation_prompt_clarification_resume.bats:65`:
+  `grep -c "# THE HUMAN'S ANSWERS"` found no header. It **passed immediately in isolation**.
+  This second intermittent failure is also unresolved; a clean full gate has not been
+  demonstrated. Logs are preserved in the local draft directory under `gate-baseline`.
+  No failing implementation is being pushed; this commit contains findings only.
+- This is a documentation-only checkpoint. No lint suppressions, persisted format changes,
+  public interface changes, or implementation fixes are included.
 - Point 7 remains pending. The merger must not present this report as a completed fix set.
