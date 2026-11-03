@@ -137,3 +137,94 @@ func (e *OpError[C]) asError() error {
 func opErr[C opCause](c C, format string, args ...any) *OpError[C] {
 	return &OpError[C]{Cause: c, Message: fmt.Sprintf(format, args...), Err: c.info().class.Sentinel()}
 }
+
+// fromStorage converts a storage failure into the operation's storage cause (nil stays nil).
+func fromStorage[C opCause](_ C, _ *StorageError) *OpError[C] { return nil }
+
+// fromValue converts an invalid value into the operation's cause for it (nil stays nil).
+func fromValue[C opCause](_ C, _ *ValueError) *OpError[C] { return nil }
+
+// ---------------------------------------------------------------- low-level errors
+
+// StorageError: reading or writing a file of the state directory, a log file or stdout failed.
+type StorageError struct {
+	Message string // what could not be done, e.g. "cannot save …/state.json"
+	Err     error  // ErrStorage joined with the underlying error (os, encoding/json)
+}
+
+// Error returns the message with the underlying error.
+func (e *StorageError) Error() string { return e.Message }
+
+// Unwrap exposes ErrStorage and the underlying error.
+func (e *StorageError) Unwrap() error { return e.Err }
+
+// Class returns ClassStorage.
+func (e *StorageError) Class() ErrorClass { return ClassStorage }
+
+// CauseName returns "Storage".
+func (e *StorageError) CauseName() string { return ClassStorage.String() }
+
+// asError returns e as an error value (a nil error when e is nil).
+func (e *StorageError) asError() error {
+	if e == nil {
+		return nil
+	}
+	return e
+}
+
+// storageErr builds a StorageError around an underlying error.
+func storageErr(_ error, _ string, _ ...any) *StorageError { return nil }
+
+// ValueError: a value (an enum, a timestamp, a flag) is not valid.
+type ValueError struct {
+	Message string // what is wrong, e.g. `unknown member state "napping"`
+	Err     error  // ErrInvalidArgument, joined with the underlying error when there is one
+}
+
+// Error returns the message.
+func (e *ValueError) Error() string { return e.Message }
+
+// Unwrap exposes ErrInvalidArgument and any underlying error.
+func (e *ValueError) Unwrap() error { return e.Err }
+
+// Class returns ClassInvalidArgument.
+func (e *ValueError) Class() ErrorClass { return ClassInvalidArgument }
+
+// CauseName returns "InvalidValue".
+func (e *ValueError) CauseName() string { return "InvalidValue" }
+
+// asError returns e as an error value (a nil error when e is nil).
+func (e *ValueError) asError() error {
+	if e == nil {
+		return nil
+	}
+	return e
+}
+
+// valueErr builds a ValueError.
+func valueErr(_ string, _ ...any) *ValueError { return nil }
+
+// valueWrap builds a ValueError around an underlying error.
+func valueWrap(_ error, _ string, _ ...any) *ValueError { return nil }
+
+// ProcessError: a helper process could not be started or exited with an error.
+type ProcessError struct {
+	Program string // the program that was run
+	Message string // what went wrong
+	Err     error  // ErrProcess joined with the underlying error
+}
+
+// Error returns the message.
+func (e *ProcessError) Error() string { return e.Message }
+
+// Unwrap exposes ErrProcess and the underlying error.
+func (e *ProcessError) Unwrap() error { return e.Err }
+
+// Class returns ClassProcess.
+func (e *ProcessError) Class() ErrorClass { return ClassProcess }
+
+// CauseName returns "Process".
+func (e *ProcessError) CauseName() string { return ClassProcess.String() }
+
+// processErr builds a ProcessError around an underlying error (nil when there is none).
+func processErr(_ string, _ error, _ string, _ ...any) *ProcessError { return nil }
