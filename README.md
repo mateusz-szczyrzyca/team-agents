@@ -1387,17 +1387,23 @@ This repository is developed mostly by its own agents; [`AGENTS.md`](AGENTS.md) 
 for human contributors): architecture, conventions, checks, and what must never be done.
 
 ```bash
-make tools         # installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
-make lint          # shellcheck, gofmt, golangci-lint, staticcheck, doccheck, generated-code check
-make test          # Go unit tests (agent, agentbus, agentlive), bats suite, and test-map harness
-make build-agent   # builds the Go agent CLI binary to build/agent-go
-make harness       # test harness suite (tests/harness/*.bats: test map and gate checks)
-make integration   # real agent CLIs and accounts (costs usage)
+make tools              # installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
+make lint               # shellcheck, gofmt, golangci-lint, staticcheck, doccheck, generated-code check
+make test               # Go unit tests (agent, agentbus, agentlive), bats suite, and test-map harness
+make build-agent        # builds the Go agent CLI binary to build/agent-go
+make unit-agent-bats    # Lane B: active/done blackbox Bats tests against staged real Go binary
+make check-agent-parity # validates parity ledger, classifications, mapping, and test digests
+make harness            # test harness suite (tests/harness/*.bats: test map, runner, and gate checks)
+make integration        # real agent CLIs and accounts (costs usage)
 ```
 
 - **Go candidate boundaries (R03).** The Go application (`agent/`) owns injected executor, clock and
   random boundaries; unconfigured execution is denied. Subprocess execution covers argv, env, dir,
   stream error retention (`ExecuteWait`), cancellation, and serialized shared output streams.
+- **Staged test migration lanes and parity checker (R04).** Test execution is partitioned into explicit lanes preserving baseline test immutability:
+  - **Lane A (legacy oracle):** `tools/agent-bats.sh --lane oracle` stages the tracked Bash CLI at `STAGED_ROOT/bin/agent` in an isolated private root and executes the complete legacy Bats suite.
+  - **Lane B (real Go candidate):** `make unit-agent-bats` (or `tools/agent-bats.sh --lane candidate`) stages the compiled candidate binary (`build/agent-go`) at `STAGED_ROOT/bin/agent` and executes only `active` or `done` rows classified as `blackbox` in `tests/agent-go-map.tsv`. For mixed files, exact regex filters are applied; `planned` cases are never activated. Real executable copies, multi-home setups, self-callbacks, and `gh` invocations execute without symlinks or bridges. Execution generates machine-readable evidence (`build/agent-bats-evidence.json`) with SHA-256 digests of the map file and `tests/unit` directory.
+  - **Parity checker:** `make check-agent-parity` (`tools/check-agent-parity.sh`) verifies the ledger via `tools/check-agent-test-map.sh`, validates execution counts and SHA-256 digests against candidate evidence, and enforces valid Go test mappings (`TestName[/subtest]`) for active/done rows.
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 520 Bats unit test cases (361 black-box, 159 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
