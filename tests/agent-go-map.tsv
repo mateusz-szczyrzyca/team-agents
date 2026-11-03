@@ -479,3 +479,13 @@ tests/unit/web.bats	the web interface refuses proxied requests without an identi
 tests/unit/web.bats	tagged devices are let in by name through tailscale serve; other devices are told what to add	blackbox	R53	-	planned
 tests/unit/web.bats	agent web refuses to listen on a non-loopback address	blackbox	R53	-	planned
 tests/unit/web_jobs.bats	agent web passes the configured node heartbeat timeout	blackbox	R53	-	planned
+tests/unit/autopilot_review_cap.bats	--autopilot: after three pairs of reviews with findings the autopilot stops and waits for the human	blackbox	R34	-	planned
+tests/unit/review_pair_rotate.bats	rotate: A,B then C,D; every new pair differs from the last two; four investigators make all six pairs	source	R33	-	planned
+tests/unit/review_pair_rotate.bats	rotate: a PR's re-review after a fix pass is done by another pair, not the one before	source	R33	-	planned
+tests/unit/review_pair_rotate.bats	rotate: the history is shared by every PR and repository	source	R33	-	planned
+tests/unit/review_pair_rotate.bats	rotate: with two investigators their pair reviews again — the autopilot does not stall	source	R33	-	planned
+tests/unit/review_pair_rotate.bats	rotate: the only new pair has a busy investigator — it waits AGENT_REVIEW_ROTATE_WAIT_MIN, then repeats a pair	source	R33	-	planned
+tests/unit/review_pair_rotate.bats	rotate: three investigators — the third pair is the one not used yet	source	R33	-	planned
+tests/unit/review_pair_rotate.bats	rotate: a re-review by another investigator gets the slot's previous review as someone else's	source	R33	-	planned
+tests/unit/review_pair_rotate.bats	rotate: the supervise timer dispatches a waiting review pair, which no run's end may do	source	R33	-	planned
+tests/unit/round_discipline.bats	the prompts say never to start the next round's work; a member out of items sleeps instead	blackbox	R31	-	planned
