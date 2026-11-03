@@ -330,9 +330,12 @@ slot's previous review, "by" its author, to check its findings first. With four 
 reviewed by A+B is re-reviewed by C+D, then by a mixed pair (A+C, B+D, …). `random` and `rotate` also never take one
 of the last two pairs of any PR and prefer investigators outside the last pair. Every mode then prefers
 investigators whose model (CLI and model, `INVESTIGATORS_TYPE` / `INVESTIGATORS_MODEL`) the last pair did not use;
-`random` draws among the best pairs used least recently (or never) — so four investigators make all six pairs, A+B, C+D, then A+C, B+D, A+D, B+C in some order, before one repeats —, `list` takes the first free ones. When only a busy investigator makes such a pair, the pair waits for it
-`AGENT_REVIEW_ROTATE_WAIT_MIN` (20) minutes, then takes the best free pair (logged as `review_pair_repeated`); with
-two investigators their pair reviews every time. (A pass whose reviews never ended keeps its pair in `random` and
+`random` draws among the best pairs used least recently (or never) — so four investigators make all six pairs, A+B, C+D, then A+C, B+D, A+D, B+C in some order, before one repeats —, `list` takes the first free ones. When only a busy investigator (working, waiting for your answers or out of quota) makes such a pair, the pair
+waits for it: with three or more investigators the PR's previous pair **never** reviews it again — the review waits
+until another investigator is free, however long that takes (after `AGENT_REVIEW_WAIT_MIN` you are told once), then
+starts at once with a partly new pair (A+C, …). Only one of the last two pairs of other PRs is taken again, after
+`AGENT_REVIEW_ROTATE_WAIT_MIN` (20) minutes (logged as `review_pair_repeated`). With two investigators their pair
+reviews every time (also logged as `review_pair_repeated`). (A pass whose reviews never ended keeps its pair in `random` and
 `list`: it has not reviewed yet.)
 
 **The review rotation.** With `AGENT_REVIEW_DRAW=rotate` the two reviewers rotate through every investigator: a
@@ -654,7 +657,7 @@ Then:
 | `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |
 | `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `random` — two different investigators drawn among the free ones, outside the last two pairs —, `list` — the first two free ones of the list —, or `rotate` — every investigator in turn (see "The review rotation" under [Teams](#teams)); in every mode a PR's re-review goes to another pair (random) |
 | `AGENT_GITHUB_COLORS` | the colours (`#RRGGBB`, space-separated) of the agents' names on GitHub, given out in this order and remembered per name (`~/agents/github-colors`); `none` = plain names (`#0969DA #BC4C00 #8250DF #1B7C83 #BF3989 #9A6700 #57606A #953800 #3192AA #A475F9`) |
-| `AGENT_REVIEW_ROTATE_WAIT_MIN` | `rotate`: how long a review pair waits for a busy investigator when only it makes a pair not among the last two, before a free pair is repeated (20 minutes) |
+| `AGENT_REVIEW_ROTATE_WAIT_MIN` | `random`, `rotate`: how long a review pair waits for a busy investigator when only it makes a pair not among the last two, before one of those pairs is repeated (20 minutes). A PR's own previous pair is never repeated while three or more investigators exist, whatever this says |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) — the team reports of the protocol (`.agents/reports/`) are never counted, whatever it says |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
 | `QUESTIONS_EDITOR`, `VSCODE_SERVER_DIRS` | open new questions files in the connected VS Code window (`vscode`, default) or not (`off`); where VS Code servers live |

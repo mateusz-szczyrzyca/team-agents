@@ -523,7 +523,7 @@ AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such
 # and remembered per name (github_colour_register); none = plain names
 AGENT_GITHUB_COLORS="${AGENT_GITHUB_COLORS:-#0969DA #BC4C00 #8250DF #1B7C83 #BF3989 #9A6700 #57606A #953800 #3192AA #A475F9}"
 AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free) | rotate (every investigator in turn)
-AGENT_REVIEW_ROTATE_WAIT_MIN="${AGENT_REVIEW_ROTATE_WAIT_MIN:-20}" # how long a pair waits for a busy investigator rather than repeat a PR's pair (or, random and rotate, one of the last two)
+AGENT_REVIEW_ROTATE_WAIT_MIN="${AGENT_REVIEW_ROTATE_WAIT_MIN:-20}" # random and rotate: how long a pair waits for a busy investigator rather than repeat one of the last two pairs (a PR's own pair it never repeats while another exists)
 REVIEW_HISTORY_MAX=100   # how many review pairs $AGENTS_HOME/reviews/history keeps (the rotation reads its last ones)
 # Serena (an MCP server that finds code through language servers): its command, e.g. serena; empty = not used
 AGENT_SERENA="${AGENT_SERENA:-}"
@@ -2333,7 +2333,8 @@ review_pair_select() {
 # review_pair_next coordinator-task avoid free-investigator... — the next pair among the free investigators: never the
 # pair that reviewed the PR last (avoid) nor (rotate, random) one of the last two pairs. When only a busy investigator
 # makes such a pair it waits (1) AGENT_REVIEW_ROTATE_WAIT_MIN from the pair's request, then takes the best free pair
-# (logged as review_pair_repeated); with no such pair at all (two investigators) the best free pair at once
+# that is not the PR's (logged as review_pair_repeated). The PR's own pair it waits for as long as it takes: with
+# three or more investigators the PR's pair never reviews it again. With two investigators their pair at once
 review_pair_next() {
   local id=$1 avoid=$2 all=() since level pair
   shift 2
@@ -2345,12 +2346,12 @@ review_pair_next() {
       return 0
     fi
     review_pair_select "$level" "$avoid" "${all[@]}" > /dev/null || continue
+    [[ $level == strict ]] || return 1   # a pair other than the PR's exists, with a busy investigator: wait for it
     since=$(task_field "$id" REVIEW_PAIR_SINCE)
     (($(date +%s) - ${since:-0} >= AGENT_REVIEW_ROTATE_WAIT_MIN * 60)) || return 1
-    break
   done
-  log_warn review_pair_repeated "task=$id" "free=$*"
-  review_pair_select avoid "$avoid" "$@" || review_pair_select any "$avoid" "$@"
+  log_warn review_pair_repeated "task=$id" "free=$*"   # no pair but the PR's own: two investigators
+  review_pair_select any "$avoid" "$@"
 }
 
 start_review_pairs() { # under the dispatch lock: a pending --autopilot review pair starts once two investigators are free
@@ -6566,7 +6567,8 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
 
 # review_rotation_waits — 0 when a review pair may wait for a busy investigator (AGENT_REVIEW_DRAW=rotate: any pending
 # pair; random and list: one whose PR's last pair has reviewed it): the timer's dispatch starts it once its busy
-# investigator is free or AGENT_REVIEW_ROTATE_WAIT_MIN has passed, with no run ending to dispatch it
+# investigator is free or (one of the last two pairs) AGENT_REVIEW_ROTATE_WAIT_MIN has passed, with no run ending to
+# dispatch it
 review_rotation_waits() {
   local m id
   for m in "$TASKS"/*/meta.env; do
