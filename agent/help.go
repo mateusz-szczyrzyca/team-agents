@@ -1,3 +1,4 @@
+// Package main implements the command-line interface for the agent tool.
 package main
 
 import (
@@ -56,6 +57,7 @@ agent say <agent|all|team:ID> "text"     message agents through the bus
 `
 
 // printUsage writes the CLI usage instructions to the given writer.
-func printUsage(w io.Writer) {
-	fmt.Fprint(w, usageText)
+func printUsage(w io.Writer) error {
+	_, err := fmt.Fprint(w, usageText)
+	return err
 }
