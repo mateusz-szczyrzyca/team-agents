@@ -529,3 +529,9 @@ tests/unit/github_name_registry.bats	the colours are remembered in github-colors
 tests/unit/github_name_registry.bats	a palette used up: a new name gets the colour the fewest names have	source	R12	-	planned
 tests/unit/github_name_registry.bats	two runs starting at once never give two names one colour	source	R12	-	planned
 tests/unit/github_name_registry.bats	AGENT_GITHUB_COLORS=none: no colours, nothing remembered	source	R12	-	planned
+tests/unit/github_recommendation.bats	a Recommendation heading's line: needs changes in red, bold, with 🔧	source	R12	-	planned
+tests/unit/github_recommendation.bats	an inline recommendation as inv-astra wrote it on PR #50: the words become the coloured ones	source	R12	-	planned
+tests/unit/github_recommendation.bats	ready to merge in green, bold, with ✅; an icon already there is not doubled	source	R12	-	planned
+tests/unit/github_recommendation.bats	incomplete: red with 🧩	source	R12	-	planned
+tests/unit/github_recommendation.bats	a recommendation already in colour goes out as it is	source	R12	-	planned
+tests/unit/github_recommendation.bats	a PR comment is not a review: its words stay	source	R12	-	planned
