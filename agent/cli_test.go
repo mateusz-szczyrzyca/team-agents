@@ -69,4 +69,3 @@ func TestDispatchHelp(t *testing.T) {
 		}
 	}
 }
-
