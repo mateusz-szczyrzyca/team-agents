@@ -244,7 +244,7 @@ members' branches are merged); if something is missing the coordinator is sent b
 investigator reviews the PR and publishes a GitHub review (as a comment — GitHub does not let an author approve
 their own PR), and you get a notification with the recommendation. The review begins with it, right after the
 byline: `## Recommendation` with ✅ **Ready to merge** in green, or 🔧 **Needs changes** (🧩 when incomplete) in red
-and the list of what to fix — the icons of the notifications. The reviewer gets its request as it was made (one of
+and the list of what to fix — the icons of the notifications. The agents' `gh` makes sure of the colours: in a review it publishes, the words of the recommendation's line (a line that begins "Recommendation", or the first line under that heading — "ready to merge", "needs changes", "needs fixes", in any case) become the bold, coloured ones with their icon, unless the line is in colour already. The reviewer gets its request as it was made (one of
 two independent reviews; a re-review after a fix pass, with the previous review) and the rules for writing on
 GitHub, as every run that writes there does (an independent investigator's too): commits, PRs **and files** are
 links — a file to its blob at a pushed commit, `…/blob/<SHA>/path#L42`.
@@ -330,9 +330,12 @@ slot's previous review, "by" its author, to check its findings first. With four 
 reviewed by A+B is re-reviewed by C+D, then by a mixed pair (A+C, B+D, …). `random` and `rotate` also never take one
 of the last two pairs of any PR and prefer investigators outside the last pair. Every mode then prefers
 investigators whose model (CLI and model, `INVESTIGATORS_TYPE` / `INVESTIGATORS_MODEL`) the last pair did not use;
-`random` draws among the best pairs, `list` takes the first free ones. When only a busy investigator makes such a pair, the pair waits for it
-`AGENT_REVIEW_ROTATE_WAIT_MIN` (20) minutes, then takes the best free pair (logged as `review_pair_repeated`); with
-two investigators their pair reviews every time. (A pass whose reviews never ended keeps its pair in `random` and
+`random` draws among the best pairs used least recently (or never) — so four investigators make all six pairs, A+B, C+D, then A+C, B+D, A+D, B+C in some order, before one repeats —, `list` takes the first free ones. When only a busy investigator (working, waiting for your answers or out of quota) makes such a pair, the pair
+waits for it: with three or more investigators the PR's previous pair **never** reviews it again — the review waits
+until another investigator is free, however long that takes (after `AGENT_REVIEW_WAIT_MIN` you are told once), then
+starts at once with a partly new pair (A+C, …). Only one of the last two pairs of other PRs is taken again, after
+`AGENT_REVIEW_ROTATE_WAIT_MIN` (20) minutes (logged as `review_pair_repeated`). With two investigators their pair
+reviews every time (also logged as `review_pair_repeated`). (A pass whose reviews never ended keeps its pair in `random` and
 `list`: it has not reviewed yet.)
 
 **The review rotation.** With `AGENT_REVIEW_DRAW=rotate` the two reviewers rotate through every investigator: a
@@ -645,6 +648,7 @@ Then:
 | `AGENT_REVIEW_GATE`, `AGENT_REVIEW_GATE_MIN`, `AGENT_PRECHECK_MAX` | before a `--verify`/`--autopilot` review, the command a round's head must pass (`auto`: `make gate` where the repository has it; `off`: none), its time limit in minutes (30), and how many times a round goes back for its gate or its missing tests before you decide (2) |
 | `AGENT_STAGE_POLL_SEC` | how often the gate's progress before a review is written to the coordinator's task, for the dashboard (2 seconds) |
 | `AGENT_PROMPT_ARG_MAX` | a longer prompt (bytes) reaches the agent's CLI through `.agent-prompt.md` in its working directory, kept out of git, which the CLI is asked to read: Linux takes at most 128 KiB per command-line argument, and a task's text grows with every resume (100000) |
+| `AGENT_SERENA` | the command of [Serena](https://github.com/oraios/serena) (e.g. `serena`, on `RUN_PATH`, or a full path): every run gets a `serena` MCP server for finding code — see [Serena](#serena); empty = not used (empty) |
 | `AGENT_PROMPT_CHECKPOINTS` | a prompt carries the team's (or task's) newest checkpoints only, and says in which file the earlier ones are; `0` all (2) |
 | `AGENT_FRESH_SESSION_TOKENS` | a run that read more context a step (its input divided by its tool calls, as `agent tokens --runs` shows) is not resumed: the next run starts a fresh session — the full prompt, the last report, the files changed, the team's checkpoint, then why it was woken; `0` never (80000) |
 | `AGENT_FRESH_SESSION_RATIO` | …and only when that run read more than this many times the median of the task's own session starts (its new and fresh runs) — a fresh session reads much from its start, and a fixed threshold alone sent nearly every run to a new one; `0` no such check (2) |
@@ -652,8 +656,8 @@ Then:
 | `AGENT_LONG_RUN_HARD` | a team member's run of this many tool calls is ended by the runner — asked to end at `AGENT_LONG_RUN_STEPS`, an agent may go on —; it sleeps and is woken at once in a fresh session; `0` never (200) |
 | `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |
 | `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `random` — two different investigators drawn among the free ones, outside the last two pairs —, `list` — the first two free ones of the list —, or `rotate` — every investigator in turn (see "The review rotation" under [Teams](#teams)); in every mode a PR's re-review goes to another pair (random) |
-| `AGENT_GITHUB_COLORS` | the colours (`#RRGGBB`, space-separated) of the agents' names on GitHub, given in the configuration's order; `none` = plain names (`#0969DA #BC4C00 #8250DF #1B7C83 #BF3989 #9A6700 #57606A`) |
-| `AGENT_REVIEW_ROTATE_WAIT_MIN` | `rotate`: how long a review pair waits for a busy investigator when only it makes a pair not among the last two, before a free pair is repeated (20 minutes) |
+| `AGENT_GITHUB_COLORS` | the colours (`#RRGGBB`, space-separated) of the agents' names on GitHub, given out in this order and remembered per name (`~/agents/github-colors`); `none` = plain names (`#0969DA #BC4C00 #8250DF #1B7C83 #BF3989 #9A6700 #57606A #953800 #3192AA #A475F9`) |
+| `AGENT_REVIEW_ROTATE_WAIT_MIN` | `random`, `rotate`: how long a review pair waits for a busy investigator when only it makes a pair not among the last two, before one of those pairs is repeated (20 minutes). A PR's own previous pair is never repeated while three or more investigators exist, whatever this says |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) — the team reports of the protocol (`.agents/reports/`) are never counted, whatever it says |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
 | `QUESTIONS_EDITOR`, `VSCODE_SERVER_DIRS` | open new questions files in the connected VS Code window (`vscode`, default) or not (`off`); where VS Code servers live |
@@ -748,9 +752,15 @@ Team: 20261020-140312-team
 `— Review by the team-agents investigator inv-opus (claude, model opus), request #7.` at the end of a review. A PR
 an investigator opens (an investigation's merge) names its CLI and model the same way (`INVESTIGATORS_TYPE`).
 On GitHub every agent's name in those lines is **bold, in a colour of its own** that stays the same in every round:
-the agents' `gh` colours it on the way out (a PR's description or comment, a review), from `AGENT_GITHUB_COLORS` in
-the configuration's order — the team agents (`NORMAL_AGENTS`, `WORKER_AGENTS`, the others by name) and, apart, the
-investigators; two names of one text never share a colour while the palette has another. GitHub renders the colour
+the agents' `gh` colours it on the way out (a PR's description or comment, a review). The first time a run can
+publish a name — every investigator, the run's agent and its team's coordinator and members — the runner gives it
+the first colour of `AGENT_GITHUB_COLORS` that no name has yet (when every colour is taken: the one the fewest names
+have) and remembers it in `~/agents/github-colors` (`name #RRGGBB`, one a line). A remembered colour never changes,
+whatever you do later to `NORMAL_AGENTS`, the teams or the palette; delete a line (or the file) to give a name a new
+one. Investigators and team agents never share a colour while the palette has a free one. A configured agent that has
+no remembered colour yet gets one from the configuration's order (`NORMAL_AGENTS`, `WORKER_AGENTS`, the others by name;
+the investigators apart), and two names of one text never share a colour while the palette has another. A failure
+to write the file is logged as `github_colors_failed`; the names then get the configuration's order's colours. GitHub renders the colour
 from math (`$\color{#0969DA}{\textbf{codex-1}}$`); the prompts and your files keep the plain names (a description file that cannot be coloured — no temporary file — goes out plain, logged as `github_names_failed`).
 Commit messages, PRs, reviews and reports are written in `REPO_LANGUAGE` (default English); questions and
 notifications in `AGENT_LANGUAGE`.
@@ -1194,6 +1204,26 @@ whose team is closed or unknown.
   are listed in [the human checklist](docs/multi-instance.md#manual-checklist-human-real-tailnet). Record real
   deployment results separately; these checks are not run by `make gate`.
 
+## Serena
+
+[Serena](https://github.com/oraios/serena) finds code through language servers: a file's symbols, a symbol's
+definition, the code that uses it. With `AGENT_SERENA="serena"` in `agents.conf` (Serena installed, e.g. with
+`uv tool install`, and on `RUN_PATH`) every run — solo, team, helper, investigator, reviewer, an independent
+investigator too — gets an MCP server `serena` next to `agentbus`, started as
+`serena start-mcp-server --context <client> --project <the run's worktree> --open-web-dashboard false`. The context is
+Serena's for the CLI: `claude-code` (claude), `codex` (codex, with a 120 s start-up time for the language servers),
+`antigravity` (gemini) and `ide` (opencode). The project is the run's own worktree, not a checkout Serena knows from
+elsewhere, so the agent sees its own branch. The prompt gets a short part that says to use it first and to fall back
+to the shell when it fails. Everything else comes from Serena's own configuration (`~/.serena/serena_config.yml`:
+its tools interface, dashboard, language servers).
+
+- Serena keeps a project folder `.serena/` in each worktree (its cache and memories). It is excluded from git in the
+  repository's `.git/info/exclude`, so no agent commits it.
+- Serena adds every worktree it opens to the `projects:` list of its global configuration. Remove old ones with
+  `serena project remove <path>`; nothing in team-agents reads that list.
+- A worktree is indexed when Serena first needs it (the index of your own checkout is not reused); a run's first
+  searches may be slower.
+
 ## MCP tools available to agents
 
 | Tool | Purpose |
@@ -1219,6 +1249,7 @@ whose team is closed or unknown.
                                              activity.jsonl, activity-full.jsonl, questions-N.md, final.md,
                                              result.md (investigations), investigations/
   task-ids.lock                             serializes ordinary start/resume ID reservations
+  github-colors                             each agent's colour on GitHub, kept for good ("name #RRGGBB")
   worktrees/<repo>/<task id>/                git worktrees
   bus/state.json  bus/messages.jsonl         agentbus state and message log
   bus/notebooks/<repo>/                      repository notebooks

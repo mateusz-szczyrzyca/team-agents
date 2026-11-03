@@ -491,12 +491,16 @@ tests/unit/review_pair_rotate.bats	rotate: the supervise timer dispatches a wait
 tests/unit/round_discipline.bats	the prompts say never to start the next round's work; a member out of items sleeps instead	blackbox	R31	-	planned
 tests/unit/review_pair_repeat.bats	default draw: a PR's second review is done by the other two investigators, its third by a mixed pair	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	default draw: across PRs A+B is followed by C+D, then by a mixed pair	source	R33	-	planned
-tests/unit/review_pair_repeat.bats	default draw: only the PR's previous pair free — it waits AGENT_REVIEW_ROTATE_WAIT_MIN, then repeats it	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	default draw: only the PR's previous pair free — it waits, and does not repeat it after AGENT_REVIEW_ROTATE_WAIT_MIN	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	default draw: one investigator of the previous pair busy — a new pair with the free ones, at once	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	default draw: with two investigators their pair reviews again at once — the autopilot does not stall	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	rotate: a PR's previous pair is not taken again, even when other PRs were reviewed since	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	list: a PR's second review goes to the first free investigators outside its previous pair	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	the supervise timer dispatches a pair that waits so as not to repeat its PR's pair (default draw)	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	four investigators, only the PR's previous pair free: a day later it still does not review the PR again	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	three investigators: the PR's previous pair waits; once the third is free a partly new pair takes it at once	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	rotate and list: only the PR's previous pair free, after AGENT_REVIEW_ROTATE_WAIT_MIN — no review	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	after AGENT_REVIEW_ROTATE_WAIT_MIN a pending pass whose PR's pair is all that is free stays pending for the timer	source	R33	-	planned
 tests/unit/github_names.bats	gh pr create --body: the coordinator and the members are bold, each in its own colour	source	R12	-	planned
 tests/unit/github_names.bats	gh pr edit --body-file: the same colours as in the PR's first round	source	R12	-	planned
 tests/unit/github_names.bats	an investigator's review: its byline at the top and at the end, bold in the investigator's colour	source	R12	-	planned
@@ -519,3 +523,28 @@ tests/unit/review_pair_models.bats	investigators of one model: the model does no
 tests/unit/github_attribution.bats	an investigator's attribution names its CLI and model, not (?)	source	R12	-	planned
 tests/unit/github_attribution.bats	a team agent's attribution still comes from AGENT_TYPE	source	R12	-	planned
 tests/unit/github_attribution.bats	the file-link rule: deleted files at the base commit, directories as tree, encoded paths, no invented links	source	R12	-	planned
+tests/unit/review_pair_cycle.bats	default draw: one PR's six passes take all six pairs of A, B, C, D, each once — A+B, C+D, then the mixed ones	source	R33	-	planned
+tests/unit/review_pair_cycle.bats	default draw: six PRs in a row take all six pairs, each once	source	R33	-	planned
+tests/unit/review_pair_cycle.bats	rotate: one PR's six passes take all six pairs, each once	source	R33	-	planned
+tests/unit/review_pair_cycle.bats	default draw: a PR's pass never repeats the pair of its pass before, whichever three are free	source	R33	-	planned
+tests/unit/github_name_registry.bats	a team's names keep their colours when NORMAL_AGENTS changes between rounds	source	R12	-	planned
+tests/unit/github_name_registry.bats	the coordinator, the members and every investigator each get a colour nobody else has	source	R12	-	planned
+tests/unit/github_name_registry.bats	the colours are remembered in github-colors, one name a line; a later team adds its new names only	source	R12	-	planned
+tests/unit/github_name_registry.bats	a palette used up: a new name gets the colour the fewest names have	source	R12	-	planned
+tests/unit/github_name_registry.bats	two runs starting at once never give two names one colour	source	R12	-	planned
+tests/unit/github_name_registry.bats	AGENT_GITHUB_COLORS=none: no colours, nothing remembered	source	R12	-	planned
+tests/unit/github_recommendation.bats	a Recommendation heading's line: needs changes in red, bold, with 🔧	source	R12	-	planned
+tests/unit/github_recommendation.bats	an inline recommendation as inv-astra wrote it on PR #50: the words become the coloured ones	source	R12	-	planned
+tests/unit/github_recommendation.bats	ready to merge in green, bold, with ✅; an icon already there is not doubled	source	R12	-	planned
+tests/unit/github_recommendation.bats	incomplete: red with 🧩	source	R12	-	planned
+tests/unit/github_recommendation.bats	a recommendation already in colour goes out as it is	source	R12	-	planned
+tests/unit/github_recommendation.bats	a PR comment is not a review: its words stay	source	R12	-	planned
+tests/unit/agents_gh_race.bats	runs setting up the agents' gh at once all succeed, and the link is the script	source	R12	-	planned
+tests/unit/serena.bats	Serena off by default: no serena server for any CLI	source	R12	-	planned
+tests/unit/serena.bats	claude: a serena server on the run's worktree, context claude-code, next to agentbus	source	R12	-	planned
+tests/unit/serena.bats	claude: an independent investigator gets serena, still without agentbus	source	R12	-	planned
+tests/unit/serena.bats	codex: serena with context codex and a startup time for its language servers	source	R12	-	planned
+tests/unit/serena.bats	gemini (Antigravity): serena in the workspace's MCP file, context antigravity	source	R12	-	planned
+tests/unit/serena.bats	opencode: serena as a local server, context ide, on	source	R12	-	planned
+tests/unit/serena.bats	Serena's project folder in a worktree is never committed: .serena/ is excluded	source	R12	-	planned
+tests/unit/serena.bats	the prompt tells the agent to navigate with Serena only when it is on	source	R12	-	planned
