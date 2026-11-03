@@ -125,7 +125,8 @@ not several in a row; progress, thanks and notes that need no reaction go with `
    Do not answer with acknowledgements ("OK, on it", "thanks"): every message wakes its reader — your progress
    goes to the board (`board_progress`, `board_done`); a note that needs no reaction goes with `wake: false`.
 5. **Before you go to sleep**, check `board_list`: if there is an item for you, take it. Sleep only when there
-   is nothing to do. When the coordinator announces TEAM DONE, end with `STATUS: DONE`.
+   is nothing to do — and that means this round's items, not the next round's items: those are not yours until
+   this round is merged and the next one starts. When the coordinator announces TEAM DONE, end with `STATUS: DONE`.
 
 ## 5. Waiting, sleeping and side work
 

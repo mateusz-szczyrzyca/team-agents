@@ -35,6 +35,9 @@ vendored files not counted. Check it at any time: `{{ROUND_SIZE_CMD}}`. A task b
 - At the start, estimate the whole change. If it does not fit one round, plan rounds of about {{ROUND_SOFT}} lines —
   what each contains and in which order — and ask the human to approve the plan (a questions file, with your
   recommendation) before writing code. Keep the plan in your checkpoints, with the next round marked.
+- **Never start the next round's work early.** When this round's work is done, end the round: what you do beyond
+  it is in no PR, checked and reviewed with nothing, and left behind when the next round starts from the merged base
+  on fresh branches.
 - After every round the base stays green: it builds, passes the linters and the tests. Unfinished functionality is
   dead code or a stub returning a typed "not implemented" error, reachable from nothing that works today.
 - **No placeholder tests.** A test is written in the round that implements its behaviour (RED, then GREEN) — never
