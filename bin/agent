@@ -99,6 +99,59 @@ gh_colour_names() {
   printf '%s' "${out%$'\n'}"
 }
 
+# gh_colour_recommendation text — an investigator's review as published: on its recommendation's line (a line that
+# begins "Recommendation", or the first line below a "Recommendation" heading) the verdict's words ("Ready to merge",
+# "Needs changes", "needs fixes"; any case, bold or not) bold, ✅ green or 🔧 red (🧩 red when the line says
+# incomplete): the notifications' icons. A recommendation in colour already, and every other line, stay as they are.
+gh_colour_recommendation() {
+  local line out="" state=0 low w i best=-1 word="" pre post bold icon colour
+  local head='^[[:space:]]*(#{1,6}[[:space:]]*)?[*_]{0,2}[Rr]ecommendation([^[:alpha:]]|$)'
+  while IFS= read -r line; do
+    if ((state == 0)) && [[ $line =~ $head ]]; then state=1; fi
+    if ((state == 1)) && [[ -n ${line//[[:space:]]/} ]]; then
+      low=${line,,} best=-1
+      for w in "ready to merge" "needs changes" "needs fixes"; do
+        i=${low%%"$w"*}
+        if [[ $i != "$low" ]] && ((best < 0 || ${#i} < best)); then best=${#i} word=$w; fi
+      done
+      if [[ $line == *'\color{'* ]]; then
+        state=2
+      elif ((best >= 0)); then
+        pre=${line:0:best} post=${line:best+${#word}} bold=""
+        if [[ $pre == *'**' || $pre == *'__' ]]; then bold=${pre: -2}; pre=${pre%??}; fi
+        pre=${pre%"${pre##*[![:space:]]}"}
+        pre=${pre%✅}; pre=${pre%🔧}; pre=${pre%🧩}
+        pre=${pre%"${pre##*[![:space:]]}"}
+        [[ -z $bold ]] || post=${post/"$bold"/}
+        if [[ $word == "ready to merge" ]]; then
+          icon="✅" colour='$\color{green}{\textbf{Ready to merge}}$'
+        else
+          icon="🔧" colour='$\color{red}{\textbf{Needs changes}}$'
+          [[ $low != *incomplete* ]] || icon="🧩"
+        fi
+        line="${pre:+$pre }$icon $colour$post"
+        state=2
+      elif [[ ! $line =~ $head ]]; then
+        state=2   # the heading's first line names no verdict: nothing to colour
+      fi
+    fi
+    out+=$line$'\n'
+  done <<< "$1"
+  printf '%s' "${out%$'\n'}"
+}
+
+# colour_json_recommendation file — a copy of that JSON review request (file.rec) with its body's recommendation in
+# colour (gh_colour_recommendation); prints the file to send: the copy, or the file itself when nothing changed or it
+# is no JSON
+colour_json_recommendation() {
+  local body new
+  if ! body=$(jq -er '(.body // empty) + "."' "$1" 2>/dev/null); then printf '%s' "$1"; return 0; fi   # no body
+  body=${body%.}
+  new=$(gh_colour_recommendation "$body"; printf .); new=${new%.}
+  if [[ $new != "$body" ]] && jq --arg b "$new" '.body = $b' "$1" > "$1.rec"; then printf '%s' "$1.rec"; return 0; fi
+  printf '%s' "$1"
+}
+
 # gh_publish_text text — the text as the agents publish it on GitHub: without Claude Code's own "Generated with
 # Claude Code" line (and the blank line after it) — the attribution is the script's —, the names coloured
 # (gh_colour_names)
@@ -152,6 +205,12 @@ if [[ ${1:-} == api ]]; then
       else
         gh_log review_byline_failed "the byline could not be put at the top of the review" "file=${args[i+1]}"
       fi
+    done
+  fi
+  if [[ $path =~ /pulls/[0-9]+/reviews$ ]]; then   # a review's recommendation in colour, whatever words it is in
+    for i in "${!args[@]}"; do
+      [[ ${args[i]} == --input && -f ${args[i+1]:-} ]] || continue
+      args[i+1]=$(colour_json_recommendation "${args[i+1]}")
     done
   fi
   if [[ $path =~ /(pulls|issues)(/[0-9]+)?(/reviews|/comments)?$ ]]; then   # a description, comment or review
@@ -460,12 +519,14 @@ AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no 
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
-# the colours of the agents' names on GitHub (#RRGGBB, readable on light and dark backgrounds), given in the
-# configuration's order; none = plain names
-AGENT_GITHUB_COLORS="${AGENT_GITHUB_COLORS:-#0969DA #BC4C00 #8250DF #1B7C83 #BF3989 #9A6700 #57606A}"
+# the colours of the agents' names on GitHub (#RRGGBB, readable on light and dark backgrounds), given out in this order
+# and remembered per name (github_colour_register); none = plain names
+AGENT_GITHUB_COLORS="${AGENT_GITHUB_COLORS:-#0969DA #BC4C00 #8250DF #1B7C83 #BF3989 #9A6700 #57606A #953800 #3192AA #A475F9}"
 AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free) | rotate (every investigator in turn)
-AGENT_REVIEW_ROTATE_WAIT_MIN="${AGENT_REVIEW_ROTATE_WAIT_MIN:-20}" # how long a pair waits for a busy investigator rather than repeat a PR's pair (or, random and rotate, one of the last two)
+AGENT_REVIEW_ROTATE_WAIT_MIN="${AGENT_REVIEW_ROTATE_WAIT_MIN:-20}" # random and rotate: how long a pair waits for a busy investigator rather than repeat one of the last two pairs (a PR's own pair it never repeats while another exists)
 REVIEW_HISTORY_MAX=100   # how many review pairs $AGENTS_HOME/reviews/history keeps (the rotation reads its last ones)
+# Serena (an MCP server that finds code through language servers): its command, e.g. serena; empty = not used
+AGENT_SERENA="${AGENT_SERENA:-}"
 AGENT_PROMPT_CHECKPOINTS="${AGENT_PROMPT_CHECKPOINTS:-2}"       # a prompt's newest checkpoints (the rest: their file); 0 all
 AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}"
 AGENT_FRESH_SESSION_RATIO="${AGENT_FRESH_SESSION_RATIO:-2}"     # …and past this many times the task's own session starts (0: no such check) # a run that read more a step is followed by a fresh session (0: never)
@@ -1187,6 +1248,68 @@ agent_github_colors() {
   printf '%s' "${out% }"
 }
 
+# github_colour_register name... — gives each of those names that has no colour yet one of AGENT_GITHUB_COLORS in
+# $AGENTS_HOME/github-colors ("name #RRGGBB" a line, kept for good, so that a name's colour never changes with the
+# configuration's order): the palette's first colour no name has, else the one the fewest names have. Under the
+# file's lock (runs start at once). A failure is logged: the names then get the configuration's order's colours.
+github_colour_register() {
+  local f="$AGENTS_HOME/github-colors" palette=()
+  [[ $AGENT_GITHUB_COLORS != none ]] || return 0
+  read -ra palette <<< "$AGENT_GITHUB_COLORS"
+  ((${#palette[@]} && $#)) || return 0
+  (
+    flock -w 10 9 || exit 1
+    local -A have=() uses=()
+    local n c p best
+    if [[ -f $f ]]; then
+      while read -r n c; do
+        [[ $n =~ ^[A-Za-z0-9._@-]+$ && $c =~ ^#[0-9A-Fa-f]{6}$ ]] || continue   # a line not ours: no colour from it
+        have[$n]=$c; uses[$c]=$((${uses[$c]:-0} + 1))
+      done < "$f"
+    fi
+    for n in "$@"; do
+      [[ $n =~ ^[A-Za-z0-9._@-]+$ && -z ${have[$n]:-} ]] || continue
+      best=""
+      for p in "${palette[@]}"; do
+        if [[ -z $best ]] || ((${uses[$p]:-0} < ${uses[$best]:-0})); then best=$p; fi
+      done
+      printf '%s %s\n' "$n" "$best" >> "$f" || exit 1
+      have[$n]=$best; uses[$best]=$((${uses[$best]:-0} + 1))
+    done
+  ) 9>> "$f.lock" || log_warn github_colors_failed "file=$f"
+}
+
+# github_name_colors — "name=#RRGGBB …", the colours the agents' gh gives the names (AGENT_GITHUB_NAME_COLORS): those
+# remembered in github-colors, then for every other configured agent its colour from the configuration's order
+# (agent_github_colors); none = nothing
+github_name_colors() {
+  local f="$AGENTS_HOME/github-colors" n c e out=""
+  local -A have=()
+  [[ $AGENT_GITHUB_COLORS != none ]] || return 0
+  if [[ -f $f ]]; then
+    while read -r n c; do
+      [[ $n =~ ^[A-Za-z0-9._@-]+$ && $c =~ ^#[0-9A-Fa-f]{6}$ && -z ${have[$n]:-} ]] || continue
+      have[$n]=1; out+="$n=$c "
+    done < "$f"
+  fi
+  for e in $(agent_github_colors); do [[ -n ${have[${e%%=*}]:-} ]] || out+="$e "; done
+  printf '%s' "${out% }"
+}
+
+# run_github_names — the names a run can publish on GitHub, one a line: every investigator (a review's byline), the
+# run's agent and, in a team, every agent of the team (the attribution's coordinator and members, from their task files)
+run_github_names() {
+  local m a
+  investigator_names
+  [[ -z ${AGENT:-} ]] || printf '%s\n' "$AGENT"
+  [[ -n ${TEAM:-} ]] || return 0
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] && grep -qxF "TEAM=$TEAM" "$m" || continue
+    a=$(sed -n 's/^AGENT=//p' "$m")
+    [[ -z $a ]] || printf '%s\n' "$a"
+  done
+}
+
 attribution_block() { # indent — the lines that end the description of a PR: the agent, or the team, its coordinator and its members
   local ind=$1 a
   printf '%sOpened by team-agents:\n' "$ind"
@@ -1354,9 +1477,19 @@ agents_gh_env() {
   real=$(command -v gh) || { log_warn agents_gh_missing "task=${RUNNER_ID:-}"; return 0; }
   [[ $real != "$dir/gh" ]] || real=${AGENT_REAL_GH:-}   # set already in this process
   [[ -n $real ]] || return 1
-  mkdir -p "$dir" && ln -sfn "$SELF" "$dir/gh" || return 1   # agent run as gh is the filter (agent_gh)
+  mkdir -p "$dir" || return 1
+  if [[ $(readlink "$dir/gh") != "$SELF" ]]; then   # agent run as gh is the filter (agent_gh)
+    # replaced in one step (a rename), never missing: runs that start at once (a review pair's) do this together
+    if ! { ln -s "$SELF" "$dir/gh.$BASHPID" && mv -Tf "$dir/gh.$BASHPID" "$dir/gh"; }; then
+      rm -f "$dir/gh.$BASHPID"
+      return 1
+    fi
+  fi
   export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE="" AGENT_GITHUB_COLORS
-  AGENT_GITHUB_NAME_COLORS=$(agent_github_colors)
+  local names=()
+  mapfile -t names < <(run_github_names)
+  github_colour_register "${names[@]}"
+  AGENT_GITHUB_NAME_COLORS=$(github_name_colors)
   export AGENT_GITHUB_NAME_COLORS
   if [[ $(task_field "${RUNNER_ID:-}" KIND 2>/dev/null) == investigation ]]; then   # its reviews say who wrote them, first
     AGENT_REVIEW_BYLINE=$(review_byline "$RUNNER_ID")
@@ -2174,17 +2307,19 @@ review_pair_candidates() {
 # review_pair_select level avoid name... — the pair of those investigators a review takes at that level
 # (review_pair_candidates), "a b" in list order; 1 = none. Of the pairs with the fewest members of the last pair, then
 # the fewest of its models: AGENT_REVIEW_DRAW=rotate the pair used least recently (or never), then its members' reviews
-# least recent, then the list's order; random one drawn at random (AGENT_REVIEW_SEED fixes the draw, for the tests);
+# least recent, then the list's order; random of the pairs used least recently (or never) one drawn at random
+# (AGENT_REVIEW_SEED fixes the draw, for the tests), so that four investigators make all six pairs before one repeats;
 # list the first.
 review_pair_select() {
-  local lines=() tops=() min line a b
+  local lines=() tops=() min line a b keys=1,2
   mapfile -t lines < <(review_pair_candidates "$@")
   ((${#lines[@]})) || return 1
+  [[ $AGENT_REVIEW_DRAW != random ]] || keys=1-3   # random: the pair's recency too
   if [[ $AGENT_REVIEW_DRAW == rotate ]]; then
     line=$(printf '%s\n' "${lines[@]}" | sort -s -n -k1,1 -k2,2 -k3,3 -k4,4 | head -n 1)
   else
-    min=$(printf '%s\n' "${lines[@]}" | sort -s -n -k1,1 -k2,2 | head -n 1 | cut -d' ' -f1,2)
-    for line in "${lines[@]}"; do [[ $(cut -d' ' -f1,2 <<< "$line") != "$min" ]] || tops+=("$line"); done
+    min=$(printf '%s\n' "${lines[@]}" | sort -s -n -k1,1 -k2,2 -k3,3 | head -n 1 | cut -d' ' -f"$keys")
+    for line in "${lines[@]}"; do [[ $(cut -d' ' -f"$keys" <<< "$line") != "$min" ]] || tops+=("$line"); done
     line=${tops[0]}
     if [[ $AGENT_REVIEW_DRAW == random ]]; then
       [[ -z ${AGENT_REVIEW_SEED:-} ]] || RANDOM=$AGENT_REVIEW_SEED
@@ -2198,7 +2333,8 @@ review_pair_select() {
 # review_pair_next coordinator-task avoid free-investigator... — the next pair among the free investigators: never the
 # pair that reviewed the PR last (avoid) nor (rotate, random) one of the last two pairs. When only a busy investigator
 # makes such a pair it waits (1) AGENT_REVIEW_ROTATE_WAIT_MIN from the pair's request, then takes the best free pair
-# (logged as review_pair_repeated); with no such pair at all (two investigators) the best free pair at once
+# that is not the PR's (logged as review_pair_repeated). The PR's own pair it waits for as long as it takes: with
+# three or more investigators the PR's pair never reviews it again. With two investigators their pair at once
 review_pair_next() {
   local id=$1 avoid=$2 all=() since level pair
   shift 2
@@ -2210,12 +2346,12 @@ review_pair_next() {
       return 0
     fi
     review_pair_select "$level" "$avoid" "${all[@]}" > /dev/null || continue
+    [[ $level == strict ]] || return 1   # a pair other than the PR's exists, with a busy investigator: wait for it
     since=$(task_field "$id" REVIEW_PAIR_SINCE)
     (($(date +%s) - ${since:-0} >= AGENT_REVIEW_ROTATE_WAIT_MIN * 60)) || return 1
-    break
   done
-  log_warn review_pair_repeated "task=$id" "free=$*"
-  review_pair_select avoid "$avoid" "$@" || review_pair_select any "$avoid" "$@"
+  log_warn review_pair_repeated "task=$id" "free=$*"   # no pair but the PR's own: two investigators
+  review_pair_select any "$avoid" "$@"
 }
 
 start_review_pairs() { # under the dispatch lock: a pending --autopilot review pair starts once two investigators are free
@@ -2810,6 +2946,13 @@ peers_list() {
   local IFS=,; printf '%s' "${out[*]}" | sed 's/,/, /g'
 }
 
+# serena_note — the prompt's part on navigating code with Serena, when AGENT_SERENA is set (prompts/serena.md)
+serena_note() {
+  [[ -n $AGENT_SERENA && -f $PROMPTS/serena.md ]] || return 0
+  printf '\n'
+  render "$PROMPTS/serena.md"
+}
+
 build_prompt() { # id mode qfile next_round
   local id=$1 mode=$2 qfile=$3 next_round=$4
   declare -gA R=(
@@ -2848,6 +2991,7 @@ build_prompt() { # id mode qfile next_round
         *) render "$PROMPTS/inv-work.md" ;;
       esac
       render "$PROMPTS/writing.md"
+      serena_note
       printf '\n# TOPIC\n\n'
       cat "$TASKS/$id/task.md"
       return
@@ -2929,6 +3073,7 @@ build_prompt() { # id mode qfile next_round
     elif [[ ${KIND:-worker} != helper && -f $PROMPTS/ask-solo.md ]]; then
       render "$PROMPTS/ask-solo.md"
     fi
+    serena_note
     skip_note "$id"
     return
   fi
@@ -3150,6 +3295,44 @@ is_independent_investigation() {
   return 1
 }
 
+# serena_args cli — the arguments of Serena's MCP server for that CLI (claude, codex, gemini, opencode), a JSON array:
+# on the run's own worktree (not the checkout Serena may know from elsewhere), with Serena's context for that client
+# (which tools it leaves to the CLI), no browser opened for its dashboard
+serena_args() {
+  local ctx
+  case $1 in
+    claude) ctx=claude-code ;;
+    codex) ctx=codex ;;
+    gemini) ctx=antigravity ;;
+    *) ctx=ide ;;
+  esac
+  jq -nc --arg c "$ctx" --arg w "$WORKTREE" '["start-mcp-server", "--context", $c, "--project", $w, "--open-web-dashboard", "false"]'
+}
+
+# worktree_exclude path — that path of the worktree never committed: a line in the repository's info/exclude (shared
+# by its worktrees), added once
+worktree_exclude() {
+  local excl
+  excl="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude" || return 1
+  mkdir -p "$(dirname "$excl")"
+  if [[ ! -f $excl ]] || ! grep -qxF "$1" "$excl"; then
+    echo "$1" >> "$excl"
+  fi
+}
+
+# mcp_add_serena file cli — Serena added to that MCP file ({"mcpServers": …}, claude's and Antigravity's format) when
+# AGENT_SERENA is set; its project folder (.serena/ in the worktree) excluded from git. A failure is logged: the run
+# goes on without Serena
+mcp_add_serena() {
+  [[ -n $AGENT_SERENA ]] || return 0
+  try serena_exclude_failed worktree_exclude .serena/
+  if ! jq --arg c "$AGENT_SERENA" --argjson a "$(serena_args "$2")" '.mcpServers.serena = {command: $c, args: $a}' "$1" > "$1.tmp" \
+    || ! mv "$1.tmp" "$1"; then
+    rm -f "$1.tmp"
+    log_warn serena_config_failed "task=${RUNNER_ID:-}" "file=$1"
+  fi
+}
+
 run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   local id=$1 mode=$2 n=$3 pf=$4 dir=$5
   local args=(-p --output-format stream-json --verbose --dangerously-skip-permissions
@@ -3161,6 +3344,7 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
     jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
       '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$dir/mcp.json"
   fi
+  mcp_add_serena "$dir/mcp.json" claude
   # Claude Code's own attribution off: the commit trailers and the PR's attribution are the script's
   echo '{"includeCoAuthoredBy": false, "attribution": {"commit": "", "pr": ""}}' > "$dir/claude-settings.json"
   args+=(--settings "$dir/claude-settings.json")
@@ -3182,7 +3366,8 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
 }
 
 # codex_mcp_args task — codex's settings of the agentbus server, one a line: the server; for an independent investigator
-# the same server switched off — codex refuses a server it is told of without its command ("invalid transport")
+# the same server switched off — codex refuses a server it is told of without its command ("invalid transport"). Then
+# Serena's, when AGENT_SERENA is set
 codex_mcp_args() {
   printf '%s\n' -c "mcp_servers.agentbus.command=\"$AGENTBUS_BIN\""
   if is_independent_investigation "$1"; then
@@ -3190,6 +3375,12 @@ codex_mcp_args() {
   else
     printf '%s\n' -c "mcp_servers.agentbus.args=$(bus_args_json "$1")" -c "mcp_servers.agentbus.tool_timeout_sec=900"
   fi
+  [[ -n $AGENT_SERENA ]] || return 0
+  try serena_exclude_failed worktree_exclude .serena/
+  # Serena starts its language servers first: more than codex's default 10 s
+  printf '%s\n' -c "mcp_servers.serena.command=$(jq -nc --arg c "$AGENT_SERENA" '$c')" \
+    -c "mcp_servers.serena.args=$(serena_args codex)" -c "mcp_servers.serena.startup_timeout_sec=120" \
+    -c "mcp_servers.serena.tool_timeout_sec=300"
 }
 
 run_codex() { # id mode n prompt_file dir ; sets RC, FINAL
@@ -3231,12 +3422,8 @@ run_gemini() { # id mode n prompt_file dir ; sets RC, FINAL  (Antigravity CLI: a
     jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
       '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$WORKTREE/.agents/mcp_config.json"
   fi
-  local excl
-  excl="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
-  mkdir -p "$(dirname "$excl")"
-  if [[ ! -f $excl ]] || ! grep -qxF '.agents/mcp_config.json' "$excl"; then
-    echo '.agents/mcp_config.json' >> "$excl"
-  fi
+  worktree_exclude .agents/mcp_config.json
+  mcp_add_serena "$WORKTREE/.agents/mcp_config.json" gemini
 
   local args=(--output-format stream-json --dangerously-skip-permissions --print-timeout "$AGY_PRINT_TIMEOUT")
   if [[ -n ${MODEL:-} ]]; then args+=(--model "$MODEL"); fi
@@ -3263,10 +3450,15 @@ run_gemini() { # id mode n prompt_file dir ; sets RC, FINAL  (Antigravity CLI: a
   fi
 }
 
-opencode_config() { # id — per-run configuration (agentbus MCP + providers)
-  local indep=false
+opencode_config() { # id — per-run configuration (agentbus MCP, Serena when AGENT_SERENA is set, providers)
+  local indep=false sargs=null
   is_independent_investigation "$1" && indep=true
-  jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$1")" --arg model "${MODEL:-}" --argjson indep "$indep" '
+  if [[ -n $AGENT_SERENA ]]; then
+    sargs=$(serena_args opencode)
+    try serena_exclude_failed worktree_exclude .serena/
+  fi
+  jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$1")" --arg model "${MODEL:-}" --argjson indep "$indep" \
+    --arg serena "$AGENT_SERENA" --argjson sargs "$sargs" '
     {
       "$schema": "https://opencode.ai/config.json",
       autoupdate: false,
@@ -3283,7 +3475,8 @@ opencode_config() { # id — per-run configuration (agentbus MCP + providers)
     | ($model | split("/")) as $p
     | if ($p | length) > 1 and (.provider[$p[0]] != null)
       then .provider[$p[0]].models[($p[1:] | join("/"))] = { name: ($p[1:] | join("/")) }
-      else . end'
+      else . end
+    | if $serena != "" then .mcp.serena = { type: "local", command: ([$serena] + $sargs), enabled: true } else . end'
 }
 
 run_opencode() { # id mode n prompt_file dir ; sets RC, FINAL  (OpenRouter, DeepInfra and other API providers)
@@ -6374,7 +6567,8 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
 
 # review_rotation_waits — 0 when a review pair may wait for a busy investigator (AGENT_REVIEW_DRAW=rotate: any pending
 # pair; random and list: one whose PR's last pair has reviewed it): the timer's dispatch starts it once its busy
-# investigator is free or AGENT_REVIEW_ROTATE_WAIT_MIN has passed, with no run ending to dispatch it
+# investigator is free or (one of the last two pairs) AGENT_REVIEW_ROTATE_WAIT_MIN has passed, with no run ending to
+# dispatch it
 review_rotation_waits() {
   local m id
   for m in "$TASKS"/*/meta.env; do
