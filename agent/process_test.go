@@ -66,6 +66,12 @@ func TestHelperProcess(_ *testing.T) {
 			os.Exit(1)
 		}
 		os.Exit(0)
+	case "consume-stdin-exit":
+		if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+			fmt.Fprintf(os.Stderr, "stdin copy: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(42)
 	case "write-stderr":
 		fmt.Fprint(os.Stderr, args[1])
 		os.Exit(0)
