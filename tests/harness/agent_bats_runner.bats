@@ -141,4 +141,11 @@ EOF
   [[ "$output" == *"pkill exited with status 2"* || "$output" == *"pkill: simulated error"* ]]
 }
 
+@test "make unit-bats executes through staged oracle lane" {
+  run make -n unit-bats
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tools/agent-bats.sh --lane oracle"* ]]
+}
+
+
 

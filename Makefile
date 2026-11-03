@@ -73,7 +73,7 @@ BATS_SERIAL ?= tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/
 	tests/unit/review_resilience.bats tests/unit/wake_cmd.bats tests/unit/autopilot_review_cap.bats
 
 unit-bats:
-	BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/unit-bats.sh
+	BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/agent-bats.sh --lane oracle
 
 tools:
 	tools/install-linters.sh
