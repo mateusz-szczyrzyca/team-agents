@@ -14,6 +14,7 @@ SHELL_SCRIPTS += tests/unit/remote_controls.bats tests/unit/remote_control_homes
 	tests/unit/remote_control_heartbeat_limits.bats tests/unit/remote_control_cancel_order.bats \
 	tests/unit/remote_control_proxy.bats tests/unit/remote_control_kick_exit.bats
 SHELL_SCRIPTS += tests/unit/remote_control_web.bats
+SHELL_SCRIPTS += tests/unit/review_pair_models.bats tests/unit/github_attribution.bats
 SHELL_SCRIPTS += tests/unit/remote_answer_round.bats tests/unit/remote_questions_atomic.bats \
 	tests/unit/remote_questions_preparation_retry.bats
 SHELL_SCRIPTS += tests/unit/handover_failed.bats tests/unit/prompt_file.bats tests/unit/review_byline.bats tests/unit/tokens.bats \
