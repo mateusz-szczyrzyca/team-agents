@@ -87,7 +87,7 @@ lint: check-generated lint-shell lint-go lint-docs
 
 lint-shell:
 	@command -v shellcheck >/dev/null || { echo "shellcheck is missing: run make tools"; exit 1; }
-	bash -n bin/agent install.sh tools/install-linters.sh tools/check-agent-test-map.sh tests/integration/run.sh
+	bash -n bin/agent install.sh tools/install-linters.sh tools/check-agent-test-map.sh tools/agent-bats.sh tools/check-agent-parity.sh tests/integration/run.sh
 	@# Release sourced ASTs between files so small hosts retain full lint coverage.
 	@lint_result=0; for script in $(SHELL_SCRIPTS); do \
 		shellcheck -S warning "$$script" || lint_result=1; \
