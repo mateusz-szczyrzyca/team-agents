@@ -2,7 +2,7 @@
 #   make tools   installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
 #   make lint    every static check; fails when a linter is missing (run make tools)
 #   make test    unit tests: Go (agentbus, agentlive) and bats (the agent script)
-.PHONY: gate test unit-go unit-bats lint lint-go lint-shell lint-docs tools integration build generate check-generated
+.PHONY: gate test unit-go unit-bats harness lint lint-go lint-shell lint-docs tools integration build generate check-generated
 
 # Go modules of this repository (each has its own go.mod).
 GO_MODULES := agentbus live tools/doccheck tools/errgen
@@ -43,14 +43,18 @@ SHELL_SCRIPTS += tests/unit/investigation_single_pipeline.bats tests/unit/invest
 SHELL_SCRIPTS += tests/unit/investigation_resume_independence.bats
 SHELL_SCRIPTS += tests/unit/investigation_independent_labels.bats
 SHELL_SCRIPTS += tests/unit/investigation_completed_legacy.bats
+SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 
-test: unit-go unit-bats
+test: unit-go unit-bats harness
 
 unit-go:
 	cd agentbus && go vet ./... && go test ./...
 	cd live && go vet ./... && go test ./...
+
+harness:
+	bats tests/harness/*.bats
 
 # The Bats tests run in parallel, BATS_JOBS at once (GNU parallel; default: the number of processors), the slowest
 # files first (tools/unit-bats.sh). A file listed in BATS_SERIAL runs one after another with the other listed ones,
@@ -77,7 +81,7 @@ lint: check-generated lint-shell lint-go lint-docs
 
 lint-shell:
 	@command -v shellcheck >/dev/null || { echo "shellcheck is missing: run make tools"; exit 1; }
-	bash -n bin/agent install.sh tools/install-linters.sh tests/integration/run.sh
+	bash -n bin/agent install.sh tools/install-linters.sh tools/check-agent-test-map.sh tests/integration/run.sh
 	@# Release sourced ASTs between files so small hosts retain full lint coverage.
 	@lint_result=0; for script in $(SHELL_SCRIPTS); do \
 		shellcheck -S warning "$$script" || lint_result=1; \
