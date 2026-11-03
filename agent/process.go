@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"reflect"
 	"sync"
 	"syscall"
 )
@@ -52,16 +53,6 @@ func (s *streamErrorWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// error returns the recorded write error, if any.
-func (s *streamErrorWriter) error() error {
-	if s == nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.err
-}
-
 // streamErrorReader tracks errors occurring during reads from an underlying io.Reader.
 type streamErrorReader struct {
 	r   io.Reader  // underlying reader source
@@ -82,35 +73,47 @@ func (s *streamErrorReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// error returns the recorded read error, if any.
-func (s *streamErrorReader) error() error {
-	if s == nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.err
-}
-
-// streamError collects any stream errors captured during process execution.
-func streamError(stdin *streamErrorReader, stdout, stderr *streamErrorWriter) error {
+// collectStreamError collects any stream errors captured during process execution as a *ProcessError.
+func collectStreamError(program string, stdin *streamErrorReader, stdout, stderr *streamErrorWriter) *ProcessError {
 	var errs []error
 	if stdin != nil {
-		if err := stdin.error(); err != nil {
-			errs = append(errs, err)
+		stdin.mu.Lock()
+		if stdin.err != nil {
+			errs = append(errs, stdin.err)
 		}
+		stdin.mu.Unlock()
 	}
 	if stdout != nil {
-		if err := stdout.error(); err != nil {
-			errs = append(errs, err)
+		stdout.mu.Lock()
+		if stdout.err != nil {
+			errs = append(errs, stdout.err)
 		}
+		stdout.mu.Unlock()
 	}
 	if stderr != nil && stderr != stdout {
-		if err := stderr.error(); err != nil {
-			errs = append(errs, err)
+		stderr.mu.Lock()
+		if stderr.err != nil {
+			errs = append(errs, stderr.err)
 		}
+		stderr.mu.Unlock()
 	}
-	return errors.Join(errs...)
+	if len(errs) == 0 {
+		return nil
+	}
+	return processErr(program, errors.Join(errs...), "stream I/O failed for %s", program)
+}
+
+// sameWriter reports whether two writers are equal, avoiding panics if dynamic types are non-comparable.
+func sameWriter(a, b io.Writer) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	tA := reflect.TypeOf(a)
+	tB := reflect.TypeOf(b)
+	if tA != tB || !tA.Comparable() {
+		return false
+	}
+	return a == b
 }
 
 // Execute executes the command synchronously using os/exec.
@@ -139,7 +142,7 @@ func (OSExecutor) Execute(ctx context.Context, cmd Command) (CommandResult, *Exe
 
 	var stdoutTracker *streamErrorWriter
 	var stderrTracker *streamErrorWriter
-	if cmd.Stdout != nil && cmd.Stdout == cmd.Stderr {
+	if cmd.Stdout != nil && sameWriter(cmd.Stdout, cmd.Stderr) {
 		if _, ok := cmd.Stdout.(*os.File); ok {
 			c.Stdout = cmd.Stdout
 			c.Stderr = cmd.Stderr
@@ -177,8 +180,8 @@ func (OSExecutor) Execute(ctx context.Context, cmd Command) (CommandResult, *Exe
 	if ctx.Err() != nil {
 		return CommandResult{}, fromProcess(ExecuteWait, processErr(cmd.Name, ctx.Err(), "command canceled: %s", cmd.Name))
 	}
-	if streamErr := streamError(stdinTracker, stdoutTracker, stderrTracker); streamErr != nil {
-		return CommandResult{}, fromProcess(ExecuteWait, processErr(cmd.Name, streamErr, "stream I/O failed for %s", cmd.Name))
+	if streamErr := collectStreamError(cmd.Name, stdinTracker, stdoutTracker, stderrTracker); streamErr != nil {
+		return CommandResult{}, fromProcess(ExecuteWait, streamErr)
 	}
 	if err != nil {
 		var exitErr *exec.ExitError

@@ -427,6 +427,21 @@ func TestExecuteWriterFailure(t *testing.T) {
 	if !errors.Is(err, ErrProcess) {
 		t.Fatalf("expected ErrProcess, got %v", err)
 	}
+}
+
+// TestExecuteStdoutWriterErrorRetained tests that underlying writer errors on stdout
+// are retained via errors.Is.
+func TestExecuteStdoutWriterErrorRetained(t *testing.T) {
+	exec := OSExecutor{}
+
+	writerErr := errors.New("broken stdout pipe")
+	cmd := helperCmd("large-output")
+	cmd.Stdout = failWriter{err: writerErr}
+
+	_, err := exec.Execute(context.Background(), cmd)
+	if err == nil {
+		t.Fatal("expected error on failing writer, got nil")
+	}
 	if !errors.Is(err, writerErr) {
 		t.Fatalf("expected underlying writer error, got %v", err)
 	}
@@ -442,6 +457,12 @@ func (s sliceWriter) Write(p []byte) (int, error) {
 // TestExecuteNonComparableWriter tests that non-comparable io.Writer implementations
 // (such as slice types) do not cause a runtime panic during equality checks.
 func TestExecuteNonComparableWriter(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Execute panicked for valid writer: %v", r)
+		}
+	}()
+
 	exec := OSExecutor{}
 
 	sw := sliceWriter{"seed"}
