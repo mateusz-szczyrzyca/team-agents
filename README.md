@@ -330,7 +330,7 @@ slot's previous review, "by" its author, to check its findings first. With four 
 reviewed by A+B is re-reviewed by C+D, then by a mixed pair (A+C, B+D, …). `random` and `rotate` also never take one
 of the last two pairs of any PR and prefer investigators outside the last pair. Every mode then prefers
 investigators whose model (CLI and model, `INVESTIGATORS_TYPE` / `INVESTIGATORS_MODEL`) the last pair did not use;
-`random` draws among the best pairs, `list` takes the first free ones. When only a busy investigator makes such a pair, the pair waits for it
+`random` draws among the best pairs used least recently (or never) — so four investigators make all six pairs, A+B, C+D, then A+C, B+D, A+D, B+C in some order, before one repeats —, `list` takes the first free ones. When only a busy investigator makes such a pair, the pair waits for it
 `AGENT_REVIEW_ROTATE_WAIT_MIN` (20) minutes, then takes the best free pair (logged as `review_pair_repeated`); with
 two investigators their pair reviews every time. (A pass whose reviews never ended keeps its pair in `random` and
 `list`: it has not reviewed yet.)

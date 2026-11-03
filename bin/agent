@@ -2174,17 +2174,19 @@ review_pair_candidates() {
 # review_pair_select level avoid name... — the pair of those investigators a review takes at that level
 # (review_pair_candidates), "a b" in list order; 1 = none. Of the pairs with the fewest members of the last pair, then
 # the fewest of its models: AGENT_REVIEW_DRAW=rotate the pair used least recently (or never), then its members' reviews
-# least recent, then the list's order; random one drawn at random (AGENT_REVIEW_SEED fixes the draw, for the tests);
+# least recent, then the list's order; random of the pairs used least recently (or never) one drawn at random
+# (AGENT_REVIEW_SEED fixes the draw, for the tests), so that four investigators make all six pairs before one repeats;
 # list the first.
 review_pair_select() {
-  local lines=() tops=() min line a b
+  local lines=() tops=() min line a b keys=1,2
   mapfile -t lines < <(review_pair_candidates "$@")
   ((${#lines[@]})) || return 1
+  [[ $AGENT_REVIEW_DRAW != random ]] || keys=1-3   # random: the pair's recency too
   if [[ $AGENT_REVIEW_DRAW == rotate ]]; then
     line=$(printf '%s\n' "${lines[@]}" | sort -s -n -k1,1 -k2,2 -k3,3 -k4,4 | head -n 1)
   else
-    min=$(printf '%s\n' "${lines[@]}" | sort -s -n -k1,1 -k2,2 | head -n 1 | cut -d' ' -f1,2)
-    for line in "${lines[@]}"; do [[ $(cut -d' ' -f1,2 <<< "$line") != "$min" ]] || tops+=("$line"); done
+    min=$(printf '%s\n' "${lines[@]}" | sort -s -n -k1,1 -k2,2 -k3,3 | head -n 1 | cut -d' ' -f"$keys")
+    for line in "${lines[@]}"; do [[ $(cut -d' ' -f"$keys" <<< "$line") != "$min" ]] || tops+=("$line"); done
     line=${tops[0]}
     if [[ $AGENT_REVIEW_DRAW == random ]]; then
       [[ -z ${AGENT_REVIEW_SEED:-} ]] || RANDOM=$AGENT_REVIEW_SEED
