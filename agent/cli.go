@@ -20,9 +20,13 @@ func dispatch(cmd string, _ []string, stdout, _ io.Writer) *CommandError {
 	}
 }
 
-// run executes the agent CLI command with the given arguments, writing output to stdout
-// and diagnostics to stderr. It returns the process exit code.
+// run provides the CLI test entry point with external execution denied by default.
 func run(args []string, stdout, stderr io.Writer) int {
+	return newApp(nil, nil, nil).run(args, stdout, stderr)
+}
+
+// run routes the CLI within an owned application and preserves numeric exit codes.
+func (*App) run(args []string, stdout, stderr io.Writer) int {
 	cmd := "help"
 	var cmdArgs []string
 	if len(args) > 0 {

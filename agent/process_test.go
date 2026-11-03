@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -69,10 +70,11 @@ func TestHelperProcess(_ *testing.T) {
 		fmt.Fprint(os.Stderr, args[1])
 		os.Exit(0)
 	case "large-output":
+		signal.Ignore(syscall.SIGPIPE)
 		chunk := strings.Repeat("A", 64*1024)
 		for i := 0; i < 16; i++ { // 1 MB total
 			if _, err := os.Stdout.WriteString(chunk); err != nil {
-				os.Exit(1)
+				break
 			}
 		}
 		os.Exit(0)
@@ -206,6 +208,7 @@ func TestExecuteEnvironment(t *testing.T) {
 
 	// Case 1: nil inherits current environment
 	t.Run("nil inherits", func(t *testing.T) {
+		t.Setenv(helperEnvKey, "1")
 		t.Setenv("TEST_INHERITED_VAR", "inherited_val_123")
 		var stdout bytes.Buffer
 		cmd := helperCmd("print-env", "TEST_INHERITED_VAR")
@@ -413,9 +416,9 @@ func TestExecuteWriterFailure(t *testing.T) {
 	cmd := helperCmd("large-output")
 	cmd.Stdout = failWriter{err: writerErr}
 
-	_, err := exec.Execute(context.Background(), cmd)
+	res, err := exec.Execute(context.Background(), cmd)
 	if err == nil {
-		t.Fatal("expected error on failing writer, got nil")
+		t.Fatalf("expected error on failing writer, got nil: res=%+v", res)
 	}
 	if err.Cause != ExecuteWait {
 		t.Fatalf("expected cause ExecuteWait, got %v", err.Cause)
