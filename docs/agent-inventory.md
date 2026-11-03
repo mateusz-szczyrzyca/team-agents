@@ -8,7 +8,7 @@
 
 The 33 primary CLI entry points dispatched in `main()` (`bin/agent:8526–8578`) and documented in `usage()` (`bin/agent:8475–8524`):
 
-1. **run** — start a task (`cmd_run`): `agent run <agent> "task"` or `-f file.md`. Flags: `--team`, `--verify`, `--autopilot`, `--investigation`, `--need <caps>`, `--on <instance>`, `--resume <team|task>`, `--same-round`, `--last-team`, `--help`.
+1. **run** — start a task (`cmd_run`): `agent run <agent> "task"` or `-f file.md`. Flags: `--team`, `--verify`, `--autopilot`, `--investigation`, `--need <caps>`, `--on <instance>`, `--resume <team|task>`, `--same-round`, `--last-team`. Note: flag `--help` is not an option of `cmd_run`; help is provided via `agent help`.
 2. **status | ls** — task list (`cmd_status`). Note: invoking `bin/agent` with no arguments defaults `$cmd` to `help` (`main()`: `local cmd=${1:-help}`), not `status`.
 3. **agents** — configured agents and whether they are busy (`cmd_agents`).
 4. **show** — task details and last message (`cmd_show <id>`).
@@ -22,7 +22,7 @@ The 33 primary CLI entry points dispatched in `main()` (`bin/agent:8526–8578`)
 12. **live** — interactive terminal dashboard panel (`cmd_live [--feed] [--remind MIN]`).
 13. **web** — web interface in foreground (`cmd_web`; normally runs as `agentweb.service`).
 14. **lead** — lead instance job listener in foreground (`cmd_lead`; normally runs as `agentlead.service`).
-15. **node** — node daemon in foreground (`cmd_node`; normally runs as `agentnode.service`).
+15. **node** — node daemon in foreground (`cmd_node [--once]`; normally runs as `agentnode.service`).
 16. **jobs** — list or manage remote jobs on lead or node (`cmd_jobs [<id>]` or `--cancel <id>`).
 17. **nodes** — list registered worker nodes on lead (`cmd_nodes`).
 18. **kick** — cut run short (`cmd_kick <task>`).
@@ -60,31 +60,33 @@ Internal entry points and callbacks dispatched by `main()`:
 12. **_remote_questions <task>** — remote questions staging and preparation (`cmd__remote_questions`, line 712).
 13. **_remote_questions_ready <task>** — mark remote questions as ready for pickup (`cmd__remote_questions_ready`, line 723).
 14. **_authcheck <provider|--agent NAME>** — run single provider probe for authentication verification (`cmd__authcheck`, line 8064).
-15. **_investigation-team <name> <topic...>** — launch and supervise independent investigation team with topic arguments (`cmd__investigation_team`, line 4095).
+15. **_investigation-team [--pipeline] --team names [-f topic-file] [--] [topic]** — launch and supervise independent investigation cohort (`cmd__investigation_team`, line 4095).
 
 ## Function Families
 
-All 319 unique bash functions declared in `bin/agent` (320 total declarations including 1 duplicate `check`) grouped by operational domain with source line anchors and planned round ownership:
+All 318 bash functions declared in `bin/agent` grouped by operational domain with source line anchors and planned round ownership:
 
 - **GitHub CLI Filter (`agent as gh`) [R10, R11, R12]:** `agent_gh` (16), `gh_log` (25), `gh_report` (44), `gh_filter` (57), `gh_show` (69), `count_of` (1182), `findings_count` (1191), `agents_gh_env` (1236), `review_byline` (1252), `github_trusted` (1261), `trusted_prs` (1272), `pr_format_issues` (1286), `merge_blockers` (1317), `github_repo_url` (1159), `github_owner` (1176).
+- **Git Identity & Commit Trailers [R10]:** `git_identity` (2498), `commit_trailers` (2523).
 - **Structured Logging, Side Effects & Error Handling [R08]:** `log_event` (221), `log_info` (251), `log_warn` (252), `log_error` (253), `try` (258), `jq_soft` (272), `die` (284), `act` (2795), `last_event` (2802), `render_log` (5898).
 - **Agent Roster & Providers [R05, R51]:** `agent_provider` (294), `agent_tier` (304), `investigator_names` (392), `is_investigator` (393), `agent_running_task` (543), `agent_desc` (1069), `agent_cli_present` (6799).
 - **Bus MCP Bridge & Communication [R08]:** `bus` (455), `notice` (932), `push_text` (940), `bus_messages_from` (2406), `bus_args_json` (2777).
 - **Task Metadata, Identification & Lock Serialization [R06, R07, R14]:** `meta_file` (465), `meta_set` (467), `meta_load` (513), `task_field` (522), `resolve_id` (524), `lock_task_ids` (4946), `unlock_task_ids` (4956), `allocate_run_ids` (4963), `create_task` (5033), `drop_unstarted_task` (5091), `job_refusal` (5104), `prepare_job_task` (5124), `discard_task` (5180), `abandon_run` (5197), `boot_id` (6205).
 - **Systemd & Process Management [R15, R20]:** `unit_name` (536), `unit_active` (538), `start_task_unit` (1347), `killtree` (2807), `watch_run` (2814), `activity_progress` (2853), `runner_exit` (4440), `cmd__runner` (4507), `start_runner` (4925).
 - **Questions, Answers & Notifications [R23, R24]:** `count_questions` (568), `validate_answers` (580), `questions_missing_recommendations` (605), `expand_answers` (618), `answers_marked` (643), `questions_note` (648), `file_mtime` (668), `questions_ready` (675), `watch_answers` (795), `stop_answers_watch` (807), `open_in_editor` (817), `notify_send` (898), `notify_failure_keep` (918), `notify` (3068), `questions_from_nostatus` (4398), `questions_from_final` (4406), `cmd_answer` (5740), `cmd__answers_saved` (5781), `supervise_answer_watches` (1828).
-- **Prompt Construction & Session Hygiene [R16, R17]:** `render` (856), `git_identity` (2498), `commit_trailers` (2523), `agents_md_text` (2531), `privileges_text` (2552), `peers_list` (2561), `build_prompt` (2567), `cli_prompt` (2866), `round_text_strip` (6387), `checkpoints_latest` (6392), `fresh_session_due` (6407).
+- **Prompt Construction & Session Hygiene [R16, R17]:** `render` (856), `agents_md_text` (2531), `privileges_text` (2552), `peers_list` (2561), `build_prompt` (2567), `cli_prompt` (2866), `round_text_strip` (6387), `checkpoints_latest` (6392), `fresh_session_due` (6407).
 - **Provider CLI Execution Adapters [R18, R19]:** `run_claude` (2899), `codex_mcp_args` (2929), `run_codex` (2938), `run_gemini` (2967), `opencode_config` (3009), `run_opencode` (3032).
 - **Watchdog, Limits, Quotas & Wake Control [R20, R21, R25]:** `stopping` (458), `cmd__wake` (2233), `limit_keep` (2295), `limit_lines` (2299), `last_error_line` (2319), `limit_kind` (2327), `limit_line` (2342), `quota_reset_seconds` (2353), `duration_seconds` (2393), `recent_run_starts` (2414), `wake_loop_applies` (2421), `wake_loop_check` (2430), `schedule_wake` (2454), `pause_task` (2463), `resume_paused` (2476), `pause_until_from_note` (1798), `pause_reason_from_note` (1816), `pl_commits` (4358), `verify_gaps` (4363), `final_status` (4393), `stop_all` (5921), `cmd_stop` (5962), `cmd_clean` (5990), `cmd__supervise` (6067), `long_run_end` (6432), `cmd_wake` (6494), `cmd_kick` (6515).
 - **Team Coordination & Board [R28, R29]:** `team_members_list` (863), `team_json` (884), `team_lead` (894), `team_done_flag` (895), `team_tasks` (896), `team_summary` (949), `finish_team` (956), `team_waits_on_others` (984), `last_team_id` (1139), `team_lead_task` (1862), `team_after_run` (2101), `team_all` (2194), `supervise_teams` (6131), `cmd_team` (8213), `team_close` (8226).
 - **Rounds, Precheck, Review Pairs & Autopilot [R31, R32, R33, R34]:** `round_limit` (991), `round_limit_text` (995), `round_soft` (1004), `round_base_ref` (1009), `skips_in_repo` (1033), `skips_added` (1040), `pr_skipped_section` (1050), `skip_note` (1057), `attribution_block` (1074), `round_check` (1092), `round_pr_url` (1121), `cmd_round_size` (1127), `review_verdict` (1199), `review_task_verdict` (1204), `round_test_changes` (1218), `cmd__merge` (1353), `cmd_autopilot` (1417), `supervise_review_waits` (1438), `review_gate_cmd` (1452), `auto_stage` (1462), `human_on_pr` (1472), `round_open_prs` (1483), `round_pr_note` (1498), `round_pr_of_team` (1516), `round_pr_supersede` (1527), `gate_at` (1335), `gate_progress` (1541), `pair_stage` (1554), `start_precheck` (1571), `team_wait_settled` (1585), `cmd__precheck` (1602), `review_precheck` (1622), `review_followup` (1720), `review_fix_pass` (1744), `cmd__fixpass` (1754), `do_fix_pass` (1762), `review_without_verdict` (1875), `retry_review_slot` (1885), `review_pair_done` (1900), `free_investigator_list` (1967), `start_review_pairs` (1988), `start_review_pair` (2003), `start_review_slot` (2046), `request_review` (2067).
 - **Investigation Teams & Single Pipeline [R35, R36, R37, R38, R39, R40]:** `is_independent_investigation` (2888), `pick_investigator` (3170), `is_one_of` (3194), `remember_investigator` (3201), `free_investigator` (3206), `investigation_resume_write` (3215), `investigation_resume_tick` (3222), `investigation_resume_admit` (3269), `investigation_resume` (3324), `investigation_phase1_write` (3372), `investigation_published` (3381), `investigation_phase1_recover` (3409), `investigation_team_tick` (3441), `investigation_field` (3523), `investigation_completed_wait` (3527), `investigation_handoff` (3537), `investigation_phase_start` (3565), `investigation_phase_choose` (3636), `investigation_phase_failed` (3658), `investigation_pipeline_tick` (3678), `_investigator_is_busy` (3779), `investigation_phase_pick` (3799), `investigation_team_stop` (3912), `investigation_teams_cleanup` (3983), `investigation_teams_tick` (3999), `investigation_team_admit` (4015), `investigation_teams_admit` (4079), `cmd__investigation_team` (4095), `dispatch` (4136), `start_investigation` (4155), `inv_finish` (4211), `validate_investigation_team` (5497), `validate_investigation_topic` (5515), `cmd_inv` (6015), `cmd_dispatch` (6028).
 - **Worker Helper Delegation [R35, R50]:** `maybe_resume_worker` (4233), `free_worker` (4249), `dispatch_helpers` (4269), `start_helper` (4305), `helper_finish` (4346), `cmd_helpers` (8255).
-- **Task Lifecycle, Run Admission & Resume [R13, R26, R27, R30]:** `resume_history` (5207), `resume_run` (5218), `cmd_run` (5532), `cmd_resume` (5816), `cmd_status` (5848), `cmd_show` (5870), `cmd_log` (5909), `cmd_agents` (6002), `member_out` (6047), `restart_interrupted` (6210), `resume_abandon` (6288), `worktree_stash` (6371), `cmd_ack` (7999), `cmd__agents_json` (7984).
+- **Task Lifecycle, Run Admission & Resume [R13, R26, R27, R30]:** `resume_history` (5207), `resume_run` (5218), `cmd_run` (5532), `cmd_resume` (5816), `member_out` (6047), `restart_interrupted` (6210), `resume_abandon` (6288), `worktree_stash` (6371).
+- **Read & Status Inspection [R09]:** `cmd_status` (5848), `cmd_show` (5870), `cmd_agents` (6002), `cmd_ack` (7999), `cmd__agents_json` (7984).
 - **Multi-Instance Lead & Node Networking [R41, R42, R43, R44, R45, R46, R47, R48, R49, R50]:** `remote_identity` (686), `remote_question_context` (692), `cmd__remote_questions` (712), `cmd__remote_questions_ready` (723), `supervise_remote_questions` (753), `remote_answers_saved` (774), `remote_start_check` (1845), `handover_failed` (1853), `supervise_member_jobs` (6111), `remote_member_task` (6163), `node_stop_doorbell` (6199), `cmd__remote_member` (6239), `remote_agent_wait_free` (6273), `remote_member_start` (6318), `cmd_lead` (6584), `node_jobs_file` (6597), `node_jobs_load` (6600), `node_jobs_save` (6612), `node_save` (6622), `node_lock` (6625), `lead_url` (6632), `node_request` (6643), `submit_remote_job` (6646), `cmd_jobs` (6678), `cmd_nodes` (6771), `node_activity_json` (6810), `node_job_result` (6828), `node_heartbeat_json` (6837), `node_select_agent` (6866), `node_time` (6884), `node_map_state` (6895), `node_transition` (6907), `node_reconcile` (6924), `node_start_ack` (6945), `node_process_pending_launches` (6961), `node_recover_tasks` (7031), `node_bind_task` (7083), `node_scan_tasks` (7091), `node_flush_reports` (7128), `node_clear_control_acks` (7156), `node_apply_answer` (7168), `node_apply_kick` (7219), `node_handle_controls` (7241), `node_handle_stop` (7251), `node_handle_reply` (7279), `node_poll_remote_helpers` (7320), `node_sync_save_json` (7422), `node_read_meta` (7440), `node_mark_job_obsolete` (7500), `node_sync_terminal_unchanged` (7513), `node_sync_has_new_logs` (7528), `node_send_sync` (7550), `node_sync_task` (7591), `node_sync_tasks` (7898), `node_poll` (7931), `cmd_node` (7952).
 - **Authentication Probing [R51]:** `auth_classify` (8020), `api_error_text` (8038), `agent_auth_target` (8046), `cmd__authcheck` (8064), `auth_probe` (8082), `opencode_model_for` (8149), `cmd_authenticated` (8158), `auth_providers` (8192).
 - **Archives & Discards [R52]:** `archive_index` (8336), `archive_group` (8348), `sevenzip` (8366), `archive_one` (8368), `cmd_discard` (8428), `cmd_archive` (8440).
-- **Interactive UI, Reporting, Notes, Bus CLI & Dispatch Dispatcher [R02, R09, R53]:** `cmd_live` (6030), `runs_usage` (6339), `cmd_tokens` (6443), `cmd_web` (6574), `cmd_notes` (8242), `cmd_transcript` (8257), `cmd_bus` (8466), `cmd_say` (8468), `usage` (8475), `main` (8526).
+- **Interactive UI, Reporting, Notes, Bus CLI & Dispatch Dispatcher [R02, R53]:** `cmd_live` (6030), `cmd_log` (5909), `runs_usage` (6339), `cmd_tokens` (6443), `cmd_web` (6574), `cmd_notes` (8242), `cmd_transcript` (8257), `cmd_bus` (8466), `cmd_say` (8468), `usage` (8475), `main` (8526).
 
 ## Configuration Variables
 
@@ -145,8 +147,8 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 
 ### Prompt Context & CLI Limits
 - `AGENT_PROMPT_CHECKPOINTS` (number of recent checkpoints embedded in prompt; default: `2`)
-- `AGENT_FRESH_SESSION_TOKENS` (token threshold triggering fresh session; default: `80000`)
-- `AGENT_FRESH_SESSION_RATIO` (read ratio threshold triggering fresh session; default: `2`)
+- `AGENT_FRESH_SESSION_TOKENS` (threshold for input tokens per step triggering fresh session: `in / steps > AGENT_FRESH_SESSION_TOKENS`; default: `80000`)
+- `AGENT_FRESH_SESSION_RATIO` (threshold ratio comparing input tokens per step `in / steps` against the median of earlier session starts `new` or `fresh`: `in / steps > AGENT_FRESH_SESSION_RATIO * median`; default: `2`)
 - `AGENT_LONG_RUN_STEPS` (soft step limit prompting worker to wrap up; default: `120`)
 - `AGENT_LONG_RUN_HARD` (hard step limit terminating worker run; default: `200`)
 - `AGENT_PROMPT_ARG_MAX` (byte threshold before passing prompt via file; default: `100000`)
@@ -159,6 +161,7 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - `CONF` (path to `agents.conf`; default: `$AGENTS_HOME/agents.conf`)
 - `TASKS` (`$AGENTS_HOME/tasks`), `PROMPTS` (`$AGENTS_HOME/prompts`), `BUS_DIR` (`$AGENTS_HOME/bus`), `LOG_DIR` (`$AGENTS_HOME/logs`)
 - `RUN_PATH` (execution PATH passed to runners)
+- `XDG_RUNTIME_DIR` (user runtime directory used by systemd --user and transient units)
 - `CLAUDE_BIN`, `CODEX_BIN`, `AGENTBUS_BIN`, `AGENTLIVE_BIN`, `AGY_BIN`, `OPENCODE_BIN`
 - `AGENT_LANGUAGE` (human-facing language; default: `English`)
 - `REPO_LANGUAGE` (repo-facing language; default: `English`)
@@ -221,9 +224,18 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **.stop-all** — timestamp marker file active during `agent stop --running`.
 - **tasks-archived/*.7z** — compressed archives of completed tasks.
 - **notifications/* — notification message files.
-- **remote-questions/<node>/<task>/ready** — marker file indicating remote questions are staged and ready.
-- **remote-questions/<node>/<task>/ready.lock** — lock serializing remote questions readiness.
+- **reviews/<repo>-<PR-number>/pair.lock** — lock serializing verdict recording and completion decision for a review pair.
+- **reviews/<repo>-<PR-number>/A.verdict**, **B.verdict** — recorded verdicts for review slots A and B.
+- **reviews/<repo>-<PR-number>/A.md**, **B.md** — review commentary and findings.
+- **reviews/<repo>-<PR-number>/A.inv**, **B.inv** — investigator request/assignment IDs for review slots A and B. Written at `bin/agent:2062` during `start_review_slot`, read at `bin/agent:1905-1906` to determine slot assignment in `retry_review_slot`, displayed at `bin/agent:2041` in board messages.
+- **reviews/<repo>-<PR-number>/decided** — marker indicating one reviewer completed the pair decision.
+- **reviews/<repo>-<PR-number>/A.agent**, **B.agent** — assigned investigator names for slots A and B.
+- **reviews/<repo>-<PR-number>/A.retried**, **B.retried** — slot retry tracking markers.
+- **tasks/.team-<team>.stuck** — timestamp marker tracking when a team became stuck (all members done or sleeping without coordinator closure; line 2193).
+- **remote-questions/<node>/<task>/ready.lock** — lock serializing remote question readiness staging and watch setup.
+- **remote-questions/<node>/<task>/answers.lock** — lock serializing remote answer validation and forwarding.
 - **remote-questions/<node>/<task>/questions-<round>.md** — staged questions files for remote tasks.
+- **remote-questions/<node>/<task>/questions-<round>.notified** — marker indicating human editor and notifications were triggered.
 
 ### Per-Task Files in `~/agents/tasks/<id>/`
 - **meta.env** — task metadata formatted with shell `%q` quoting.
@@ -241,24 +253,23 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **err-$n.log** — stderr capture for run `$n`.
 - **last-$n.md** — agent turn output for run `$n` (Codex).
 - **prompt-$n.md** — fully rendered prompt provided to the CLI for run `$n`.
-- **mcp.json** / **.agents/mcp_config.json** / **opencode-config.json** — provider-specific MCP configurations.
+- **mcp.json** / **opencode-config.json** — provider-specific MCP configuration files in task directory (Claude Code, OpenCode). Note: Gemini/Antigravity uses `.agents/mcp_config.json` created in the working tree (`$WORKTREE/.agents/mcp_config.json`).
 - **questions-$round.md** / **questions.md** — questions submitted to human for round `$round`.
-- **fix-pass.md** — fix-pass review findings and instructions for follow-up run.
+- **fix-pass.n** — fix-pass number (numeric index for retry cycle). Written at `bin/agent:1746` during `review_fix_pass`, read at `bin/agent:1758` in `do_fix_pass` to retrieve the retry count.
+- **fix-pass.md** — fix-pass review findings and instructions for follow-up run. Written at `bin/agent:1747` alongside fix-pass.n.
+- **note-$RUN.md** — resume notes passed to the agent CLI for run $RUN. Written at `bin/agent:5824` by runner to save member notes; read at `bin/agent:2615` and `bin/agent:2768` during prompt construction to include prior run notes in resume/fresh sessions.
 - **history.md** — accumulated history of round progress, questions, and decisions.
 - **postmerge.log** / **precheck.log** — gate check and test logs during verification.
 - **phase1.json** — manifest of accepted cohort member tasks in independent investigation.
 - **resume.json** — manifest of resumed investigation review tasks.
 - **resume-request.md** — advisory resume request instructions.
-- **remote_questions_ready** / **remote_questions_ready.lock** — remote questions readiness marker and lock.
-- **remote_answer_round.lock** — lock serializing answer ingestion for remote tasks.
+- **sync_manifest.json** — node-side sync state including completion status and log cursors for remote node task synchronization. Read at `bin/agent:7516` in `node_sync_has_new_logs` to check completion status, written and queried at `bin/agent:7594-7600` in `node_sync_task` during sync cycles.
+- **acked** — marker file (empty or timestamp) indicating task has been acknowledged by human. Written at `bin/agent:8005` and `bin/agent:8012` in `cmd_ack` callbacks; removed at `bin/agent:4534` during task finalization in `runner_exit`.
+- **long-run** — stores soft step limit (default from `$AGENT_LONG_RUN_HARD`) to trigger wrap-up reminder for long-running tasks. Written at `bin/agent:4601` in `runner_exit` when duration exceeds threshold, read at `bin/agent:6433` in `long_run_end` callback, cleared at `bin/agent:4534` on task completion.
 - **answers.lock** — exclusive lock serializing question saving, editing, and answers watch.
 - **wake.lock** — exclusive lock serializing scheduled task wake-ups.
 - **stop-requested** / **node-stop-requested** — lifecycle stop marker files.
 - **stop.lock** — exclusive lock serializing investigation team cancellation.
-- **reviews/<round>/<pair_id>/pair.lock** — review pair mutex serializing verdict recording.
-- **reviews/<round>/<pair_id>/A.verdict**, **B.verdict** — recorded verdicts for review slots A and B.
-- **reviews/<round>/<pair_id>/A.md**, **B.md** — review commentary and findings.
-- **reviews/<round>/<pair_id>/decided** — marker indicating one reviewer completed pair decision.
 
 ## Event Streams (Distinct Contracts)
 
@@ -282,8 +293,9 @@ Inter-agent messages posted via `agentbus` with typed kinds:
 
 ### 3. Structured Log Records (`logs/agent.jsonl` & `runner.log`)
 JSON objects emitted via `log_event()` with schema `{ts, level, component: "agent", event, pid, subcommand, task, ...}`.
-All 198 distinct direct event names emitted in `bin/agent` across `log_info`, `log_warn`, and `log_error`:
+There are **246 distinct structured log events** in `bin/agent`: 198 direct event names emitted via `log_info`, `log_warn`, and `log_error`, plus 48 additional events emitted exclusively through `try` and `jq_soft` helper wrappers (which log warnings via `log_warn` upon command failure or JSON parse error).
 
+**Direct Log Events (198 names):**
 `agents_gh_missing`, `agents_md_missing`, `answers_incomplete`, `answers_resume_failed`, `answers_saved`, `answers_sent`,
 `answers_watch_failed`, `answers_watch_list_failed`, `answers_watch_stopped`, `archived`, `auth_check_failed`, `autopilot_merge_failed`,
 `autopilot_merge_held`, `autopilot_merged`, `autopilot_next_round`, `autopilot_next_round_failed`, `autopilot_postmerge_gate_failed`, `autopilot_switched`,
@@ -318,6 +330,18 @@ All 198 distinct direct event names emitted in `bin/agent` across `log_info`, `l
 `team_waiting`, `transcript_bus_unreadable`, `transcript_failed`, `unit_stop_failed`, `verify_member_branch_missing`, `verify_pr_check_failed`,
 `waiting_for_investigation`, `wake_by_hand`, `wake_deferred`, `wake_loop_detected`, `wake_now_requested`, `wake_requested`.
 
+**Wrapper-Emitted Events via `try` and `jq_soft` (48 names):**
+`activity_parse`, `activity_write_failed`, `answers_watch_reset_failed`, `answers_watch_stop_failed`, `auth_check_parse`,
+`board_release_failed`, `cancel_pending_failed`, `checkpoint_copy_failed`, `checkpoint_read_failed`, `cli_result_parse`,
+`discard_branch_failed`, `discard_worktree_failed`, `dispatch_failed`, `event_scan_failed`, `handover_comment_failed`,
+`helper_finish_failed`, `helper_state_failed`, `inv_list_failed`, `investigation_finish_failed`, `investigation_phase_parse`,
+`node_sync_cleanup_failed`, `node_sync_cursor_invalid`, `node_sync_jobs_invalid`, `node_sync_log_malformed`, `node_sync_manifest_invalid`,
+`notice_failed`, `opencode_export_failed`, `opencode_export_parse`, `peers_parse`, `peers_unavailable`,
+`pr_body_parse`, `pr_lookup_failed`, `pr_lookup_parse`, `pr_ready_failed`, `remote_member_revoke_failed`,
+`remote_wake_failed`, `review_followup_failed`, `review_mention_failed`, `round_fetch_failed`, `round_pr_close_failed`, `round_pr_link_failed`,
+`submodule_update_failed`, `team_close_failed`, `team_state_failed`, `team_update_failed`, `team_waiting_parse`,
+`worktree_prune_failed`, `worktree_remove_failed`.
+
 ## Linux Locks
 
 All interprocess locks in `bin/agent` are Linux `flock` locks. Below is the complete inventory of all 17 `flock` call sites in `bin/agent` plus `agentbus` `bus.lock`:
@@ -325,25 +349,25 @@ All interprocess locks in `bin/agent` are Linux `flock` locks. Below is the comp
 | Call Site | Lock File Path | FD | Arguments | Timeout | Acquisition Scope & Contention Policy |
 |---|---|---|---|---|---|
 | `bin/agent:471` | `$TASKS/$id/meta.env.lock` | 9 | `flock -w 30 9` | 30s | Exclusive metadata write lock in `meta_set`. Exits with code 1 on timeout after logging `meta_lock_timeout`. |
-| `bin/agent:728` | `$TASKS/$id/remote_questions_ready.lock` | 7 | `flock -w 30 7` | 30s | Exclusive lock in `cmd__remote_questions_ready`. Returns 1 on timeout after logging `remote_questions_lock_failed`. |
-| `bin/agent:779` | `$TASKS/$id/remote_answer_round.lock` | 8 | `flock -w 30 8` | 30s | Exclusive lock in `cmd__remote_answer_round`. Returns 1 on timeout after logging `remote_answer_lock_failed`. |
+| `bin/agent:728` | `$AGENTS_HOME/remote-questions/$node/$task/ready.lock` | 7 | `flock -w 30 7` | 30s | Exclusive lock in `cmd__remote_questions_ready` serializing remote questions readiness and answer watch initialization. Returns 1 on timeout after logging `remote_questions_lock_failed`. |
+| `bin/agent:779` | `$AGENTS_HOME/remote-questions/$node/$task/answers.lock` | 8 | `flock -w 30 8` | 30s | Exclusive lock in `remote_answers_saved` serializing remote answer validation and queueing to lead. Returns 1 on timeout after logging `remote_answer_lock_failed`. |
 | `bin/agent:922` | `$AGENTS_HOME/notify-failures.jsonl.lock` | 9 | `flock -w 10 9` | 10s | Exclusive lock in `notify_failure_keep`. Exits with code 1 on contention timeout. |
-| `bin/agent:1917` | `$dir/pair.lock` (`$TASKS/<parent>/reviews/<round>/<pair_id>/pair.lock`) | 9 | `flock -w 60 9` | 60s | Exclusive lock in `review_pair_done` ensuring exactly one reviewer records verdict/decision. Logs `review_pair_lock_failed` on timeout. |
+| `bin/agent:1917` | `$AGENTS_HOME/reviews/<repo>-<PR-number>/pair.lock` | 9 | `flock -w 60 9` | 60s | Exclusive lock in `review_pair_done` ensuring exactly one reviewer records verdict/decision across slots A and B. Logs `review_pair_lock_failed` on timeout. |
 | `bin/agent:2237` | `$TASKS/$id/wake.lock` | 8 | `flock -w 30 8` | 30s | Exclusive lock in `cmd__wake` serializing scheduled or message wake actions. Exits cleanly (0) on timeout. |
-| `bin/agent:3329` | `$AGENTS_HOME/dispatch.lock` | `$resume_fd` | `flock "$resume_fd"` | None (blocking) | Blocking exclusive lock in `investigation_resume` validating PR before scheduling advisory reviews. |
+| `bin/agent:3329` | `$AGENTS_HOME/dispatch.lock` | `$resume_fd` | `flock "$resume_fd"` | None (blocking) | Blocking exclusive lock in `investigation_resume` held across PR validation and advisory review admission, including external `gh` and `git` subprocesses, until explicitly unlocked at line 3365. |
 | `bin/agent:3365` | `$AGENTS_HOME/dispatch.lock` | `$resume_fd` | `flock -u "$resume_fd"` | None (release) | Explicit unlock in `investigation_resume` releasing dispatch lock descriptor. |
 | `bin/agent:3916` | `$TASKS/$parent/stop.lock` | `$stop_fd` | `flock -n "$stop_fd"` | 0s (non-blocking) | Non-blocking lock in `investigation_team_stop`. If contended, returns 0 immediately as another cleanup owns cancellation. |
-| `bin/agent:3926` | `$AGENTS_HOME/dispatch.lock` | 9 | `flock 9` | None (blocking) | Blocking barrier in subshell in `investigation_team_stop` waiting for any in-flight admission to finish. |
+| `bin/agent:3926` | `$AGENTS_HOME/dispatch.lock` | 9 | `flock 9` | None (blocking) | Blocking barrier in subshell in `investigation_team_stop` waiting for any in-flight admission to finish before terminating team. |
 | `bin/agent:4141` | `$AGENTS_HOME/dispatch.lock` | 9 | `flock -w 120 9` | 120s | Exclusive lock in `dispatch` serializing investigation admission. Logs `dispatch_lock_timeout` and exits 0 on timeout. |
 | `bin/agent:4273` | `$AGENTS_HOME/helpers.lock` | 7 | `flock -w 60 7` | 60s | Exclusive lock in `dispatch_helpers` assigning queued worker helper requests. Exits 0 on timeout. |
-| `bin/agent:4952` | `$AGENTS_HOME/task-ids.lock` | 10 | `flock -w 60 10` | 60s | Exclusive lock in `lock_task_ids` serializing task ID allocation. Calls `die` on timeout. |
+| `bin/agent:4952` | `$AGENTS_HOME/task-ids.lock` | 10 | `flock -w 60 10` | 60s | Exclusive lock in `lock_task_ids` serializing task ID allocation across runs. Calls `die` on timeout. |
 | `bin/agent:4957` | `$AGENTS_HOME/task-ids.lock` | 10 | `flock -u 10` | None (release) | Explicit unlock in `unlock_task_ids` releasing task ID allocation descriptor. |
-| `bin/agent:5787` | `$TASKS/$id/answers.lock` | 8 | `flock -w 30 8` | 30s | Exclusive lock in `cmd__answers_saved` serializing answer consumption. Exits 0 on timeout. |
-| `bin/agent:6628` | `$BUS_DIR/node-daemon.lock` | 8 | `flock -n 8` | 0s (non-blocking) | Non-blocking lock in `node_lock`. Calls `die` immediately if another node daemon process holds descriptor 8. |
-| `bin/agent:7101` | `$TASKS/$tid/meta.env.lock` | 9 | `flock -s 9` | None (blocking shared) | Shared read lock in `node_scan_tasks` (`node_report`) reading `job_transitions.jsonl` safely against concurrent writers. |
-| `agentbus` | `$BUS_DIR/bus.lock` | Go FD | `flock` (exclusive) | Polled | Exclusive interprocess file lock in `agentbus` guarding `bus/state.json` and `bus/messages.jsonl` under `flock` during transactions. |
+| `bin/agent:5787` | `$TASKS/$id/answers.lock` | 8 | `flock -w 30 8` | 30s | Exclusive lock in `cmd__answers_saved` serializing answer validation and task resumption. Exits 0 on timeout. |
+| `bin/agent:6628` | `$BUS_DIR/node-daemon.lock` | 8 | `flock -n 8` | 0s (non-blocking) | Non-blocking lock in `node_lock`. Held continuously across the entire node daemon polling loop. Calls `die` immediately if another daemon holds descriptor 8. |
+| `bin/agent:7101` | `$TASKS/$tid/meta.env.lock` | 9 | `flock -s 9` | None (blocking shared) | Shared read lock in `node_scan_tasks` (`node_report`) reading `job_transitions.jsonl` safely against concurrent writers. Dies on failure. |
+| `agentbus` | `$BUS_DIR/bus.lock` | Go FD | `flock` (exclusive) | None (blocking) | Exclusive interprocess file lock via `syscall.Flock(fd, syscall.LOCK_EX)` guarding `bus/state.json` and `bus/messages.jsonl` under exclusive lock during atomic transactions. |
 
-**Contention & Safety Policy:** Descriptors are closed on exec (`CLOEXEC`) or explicitly closed before child invocation (`10>&-`). Never hold locks while waiting on external processes or polling.
+**Descriptor & Contention Policy:** In Bash, file descriptors are inherited by child processes by default unless explicitly closed (`exec 10>&-` or `3>&- 7>&- 8>&- 9>&- 10>&-` before subprocess launches). While short-lived operations close descriptors before long-running subshells, specific long-lived processes retain locks by design: the node daemon holds `node-daemon.lock` throughout its polling loop, and `investigation_resume` holds `dispatch.lock` across GitHub API and Git subprocesses.
 
 ## Bats Test Baseline
 

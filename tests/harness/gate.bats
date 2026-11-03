@@ -51,6 +51,7 @@ harness:
 	@echo "not ok 2 ledger validation failed"
 	@echo "# (in test file tests/harness/check_agent_test_map.bats, line 10)"
 	@echo "#   \`check-agent-test-map' failed"
+	@for i in $$(seq 1 30); do echo "noise line $$i"; done
 	@exit 1
 MK
   run env GATE_ROOT="$ROOT" "$REPO_ROOT/tools/gate.sh" harness

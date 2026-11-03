@@ -1322,7 +1322,7 @@ for human contributors): architecture, conventions, checks, and what must never 
 make tools         # installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
 make lint          # shellcheck, gofmt, golangci-lint, staticcheck, doccheck, generated-code check
 make test          # Go unit tests (agentbus, agentlive), bats suite, and test-map harness
-make harness       # ledger verification harness (tests/harness/check_agent_test_map.bats)
+make harness       # test harness suite (tests/harness/*.bats: test map and gate checks)
 make integration   # real agent CLIs and accounts (costs usage)
 ```
 
@@ -1331,9 +1331,9 @@ make integration   # real agent CLIs and accounts (costs usage)
   ```bash
   tools/check-agent-test-map.sh              # validates tests/agent-go-map.tsv and prints summary counts
   tools/check-agent-test-map.sh --quiet      # (-q) suppresses summary output, exits 0 on success or 1 on error
-  make harness                              # runs the test-map harness (tests/harness/check_agent_test_map.bats)
+  make harness                              # runs the test harness suite (tests/harness/*.bats)
   ```
-  The validator enforces 1:1 coverage against `tests/unit/*.bats`, valid round assignments (`R01`–`R56`), and lifecycle statuses (`planned`, `active`, `done`). In Round R01, all cases remain `planned` and no Go behavioral parity is claimed yet.
+  The validator enforces 1:1 coverage against `tests/unit/*.bats`, valid round assignments (`R01`–`R56`), and lifecycle statuses (`planned`, `active`, `done`). The harness checks repository validation after activating and completing a row in temporary ledger copies. In Round R01, all cases remain `planned` and no Go behavioral parity is claimed yet.
 - **Bats in parallel.** With GNU `parallel` installed (`apt install parallel`; once,
   `mkdir -p ~/.parallel && touch ~/.parallel/will-cite`) the Bats tests run `BATS_JOBS` at once (default: the
   number of processors); a file listed in `BATS_SERIAL` in the `Makefile` runs one after another with the other
