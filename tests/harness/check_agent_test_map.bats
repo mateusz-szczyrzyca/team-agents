@@ -185,3 +185,31 @@ setup() {
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
+
+@test "repository ledger validation accepts activation and completion" {
+  local staged_root="$BATS_TEST_TMPDIR/repository"
+  mkdir -p "$staged_root/tests/unit" "$staged_root/tests/harness" "$staged_root/tools"
+  cp "$REPO_ROOT"/tests/unit/*.bats "$staged_root/tests/unit/"
+  cp "$TOOL" "$staged_root/tools/"
+  cp "$BATS_TEST_FILENAME" "$staged_root/tests/harness/"
+
+  local lifecycle_status
+  for lifecycle_status in active 'done'; do
+    # Change one real row while preserving every exact repository test key.
+    awk -F '\t' -v OFS='\t' -v state="$lifecycle_status" '
+      !changed && $6 ~ /^(planned|active|done)$/ { $5 = "TestMigrationLifecycle"; $6 = state; changed = 1 }
+      { print }
+      END { if (!changed) exit 1 }
+    ' "$REPO_ROOT/tests/agent-go-map.tsv" > "$staged_root/tests/agent-go-map.tsv"
+
+    run env CHECK_ROOT="$staged_root" "$staged_root/tools/check-agent-test-map.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "$lifecycle_status:"[[:space:]]+[1-9][0-9]* ]]
+
+    run bats --filter '^check-agent-test-map validates repository ledger successfully$' \
+      "$staged_root/tests/harness/check_agent_test_map.bats"
+    printf '%s\n' "$output"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ok 1 check-agent-test-map validates repository ledger successfully"* ]]
+  done
+}
