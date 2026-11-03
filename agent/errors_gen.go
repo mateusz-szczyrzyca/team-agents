@@ -10,6 +10,7 @@ type CommandCause int
 const (
 	CommandUnknownCommand  CommandCause = iota // the requested command is not implemented [InvalidArgument]
 	CommandInvalidArgument                     // a command argument is missing or invalid [InvalidArgument]
+	CommandStorage                             // the shared state or a file could not be read or written [Storage]
 )
 
 // CommandError is the error of local command dispatch.
@@ -19,6 +20,7 @@ type CommandError = OpError[CommandCause]
 var commandCauses = [...]causeInfo{
 	{"UnknownCommand", ClassInvalidArgument},
 	{"InvalidArgument", ClassInvalidArgument},
+	{"Storage", ClassStorage},
 }
 
 // op implements opCause.

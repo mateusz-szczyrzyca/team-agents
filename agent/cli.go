@@ -9,11 +9,13 @@ func dispatch(cmd string, _ []string, stdout, _ io.Writer) *CommandError {
 	switch cmd {
 	case "help", "-h", "--help":
 		if err := printUsage(stdout); err != nil {
-			return opErr(CommandInvalidArgument, "failed to print help: %v", err)
+			return fromStorage(CommandStorage, err)
 		}
 		return nil
 	default:
-		_ = printUsage(stdout)
+		if err := printUsage(stdout); err != nil {
+			return fromStorage(CommandStorage, err)
+		}
 		return opErr(CommandUnknownCommand, "unknown command %q", cmd)
 	}
 }
