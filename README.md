@@ -644,6 +644,7 @@ Then:
 | `AGENT_LONG_RUN_HARD` | a team member's run of this many tool calls is ended by the runner — asked to end at `AGENT_LONG_RUN_STEPS`, an agent may go on —; it sleeps and is woken at once in a fresh session; `0` never (200) |
 | `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |
 | `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `random` — two different investigators drawn among the free ones, outside the last two pairs —, `list` — the first two free ones of the list —, or `rotate` — every investigator in turn (see "The review rotation" under [Teams](#teams)); in every mode a PR's re-review goes to another pair (random) |
+| `AGENT_GITHUB_COLORS` | the colours (`#RRGGBB`, space-separated) of the agents' names on GitHub, given in the configuration's order; `none` = plain names (`#0969DA #BC4C00 #8250DF #1B7C83 #BF3989 #9A6700 #57606A`) |
 | `AGENT_REVIEW_ROTATE_WAIT_MIN` | `rotate`: how long a review pair waits for a busy investigator when only it makes a pair not among the last two, before a free pair is repeated (20 minutes) |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) — the team reports of the protocol (`.agents/reports/`) are never counted, whatever it says |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
@@ -735,6 +736,11 @@ Team: 20261020-140312-team
 
 `Opened by team-agents: team …, coordinator claude-1 (claude, model sonnet), members: …` at the end of a PR,
 `— Review by the team-agents investigator inv-opus (claude, model opus), request #7.` at the end of a review.
+On GitHub every agent's name in those lines is **bold, in a colour of its own** that stays the same in every round:
+the agents' `gh` colours it on the way out (a PR's description or comment, a review), from `AGENT_GITHUB_COLORS` in
+the configuration's order — the team agents (`NORMAL_AGENTS`, `WORKER_AGENTS`, the others by name) and, apart, the
+investigators; two names of one text never share a colour while the palette has another. GitHub renders the colour
+from math (`$\color{#0969DA}{\textbf{codex-1}}$`); the prompts and your files keep the plain names (a description file that cannot be coloured — no temporary file — goes out plain, logged as `github_names_failed`).
 Commit messages, PRs, reviews and reports are written in `REPO_LANGUAGE` (default English); questions and
 notifications in `AGENT_LANGUAGE`.
 
