@@ -15,6 +15,7 @@ REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 LANE="candidate"
 CANDIDATE_BIN=""
 MAP_FILE=""
+EVIDENCE_FILE=""
 JOBS=${BATS_JOBS:-1}
 
 # show_usage — prints usage information
@@ -27,6 +28,7 @@ options:
   --repo-root <dir>           repository root directory (default: repo containing this script)
   --candidate-bin <path>      path to Go candidate binary (default: <repo-root>/build/agent-go)
   --map-file <path>           path to agent-go-map.tsv (default: <repo-root>/tests/agent-go-map.tsv)
+  --evidence <path>           path to write JSON execution evidence (default: <repo-root>/build/agent-bats-evidence.json)
   --jobs <N>                  number of parallel jobs (default: BATS_JOBS or 1)
   -h, --help                  show this help message
 USAGE
@@ -51,6 +53,10 @@ while [[ $# -gt 0 ]]; do
       MAP_FILE="$2"
       shift 2
       ;;
+    --evidence)
+      EVIDENCE_FILE="$2"
+      shift 2
+      ;;
     --jobs)
       JOBS="$2"
       shift 2
@@ -72,6 +78,7 @@ done
 
 CANDIDATE_BIN=${CANDIDATE_BIN:-$REPO_ROOT/build/agent-go}
 MAP_FILE=${MAP_FILE:-$REPO_ROOT/tests/agent-go-map.tsv}
+EVIDENCE_FILE=${EVIDENCE_FILE:-$REPO_ROOT/build/agent-bats-evidence.json}
 
 if [[ $LANE != "candidate" && $LANE != "oracle" ]]; then
   echo "agent-bats: invalid lane '$LANE' (must be 'candidate' or 'oracle')" >&2
@@ -109,15 +116,22 @@ escape_regex() {
   printf '%s\n' "$1" | sed -e 's/[][()+*^$?.\]/\\&/g'
 }
 
-# count_junit_cases dir — counts total <testcase elements across report.xml files
-count_junit_cases() {
-  local report_dir=$1
-  local count=0
-  if compgen -G "$report_dir/*/report.xml" > /dev/null || [[ -f "$report_dir/report.xml" ]]; then
-    count=$(grep -c '<testcase ' "$report_dir"/*/report.xml "$report_dir"/report.xml 2>/dev/null \
-      | awk -F: '{s+=$NF} END {print s+0}')
+# compute_map_hash — calculates sha256 of the map file
+compute_map_hash() {
+  if [[ -f $MAP_FILE ]]; then
+    sha256sum "$MAP_FILE" | awk '{print $1}'
+  else
+    echo ""
   fi
-  printf '%d\n' "$count"
+}
+
+# compute_tests_hash — calculates deterministic sha256 digest of all files in tests/unit
+compute_tests_hash() {
+  if [[ -d "$REPO_ROOT/tests/unit" ]]; then
+    (cd "$REPO_ROOT" && find tests/unit -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
+  else
+    echo ""
+  fi
 }
 
 if [[ $LANE == "candidate" ]]; then
@@ -146,6 +160,14 @@ if [[ $LANE == "candidate" ]]; then
 
   if (( total_selected == 0 )); then
     echo "agent-bats: 0 active/done blackbox tests in $MAP_FILE (nothing to run)"
+    if [[ -n $EVIDENCE_FILE ]]; then
+      mkdir -p "$(dirname "$EVIDENCE_FILE")"
+      map_hash=$(compute_map_hash)
+      tests_hash=$(compute_tests_hash)
+      cat > "$EVIDENCE_FILE" <<EOF
+{"lane":"$LANE","map_file":"$MAP_FILE","map_sha256":"$map_hash","tests_sha256":"$tests_hash","candidate_bin":"$CANDIDATE_BIN","selected_count":0,"executed_count":0,"failures":0,"skips":0}
+EOF
+    fi
     exit 0
   fi
 
@@ -215,8 +237,24 @@ if [[ $LANE == "candidate" ]]; then
     fi
   done
 
-  # Verify executed count vs selected count
-  executed_count=$(count_junit_cases "$REPORTS_DIR")
+  # Verify executed count vs selected count and gather outcomes
+  counts=$(awk '
+    /<testcase / { t++ }
+    /<failure /  { f++ }
+    /<skipped/   { s++ }
+    END { printf "%d %d %d\n", t+0, f+0, s+0 }
+  ' "$REPORTS_DIR"/*/report.xml 2>/dev/null || echo "0 0 0")
+  read -r executed_count failures_count skips_count <<< "$counts"
+
+  if [[ -n $EVIDENCE_FILE ]]; then
+    mkdir -p "$(dirname "$EVIDENCE_FILE")"
+    map_hash=$(compute_map_hash)
+    tests_hash=$(compute_tests_hash)
+    cat > "$EVIDENCE_FILE" <<EOF
+{"lane":"$LANE","map_file":"$MAP_FILE","map_sha256":"$map_hash","tests_sha256":"$tests_hash","candidate_bin":"$CANDIDATE_BIN","selected_count":$total_selected,"executed_count":$executed_count,"failures":$failures_count,"skips":$skips_count}
+EOF
+  fi
+
   if (( executed_count != total_selected )); then
     echo "agent-bats: executed count ($executed_count) does not match selected count ($total_selected)" >&2
     exit 1
@@ -258,6 +296,17 @@ else
       bats_files="${all_unit[*]}"
     fi
   fi
-  (cd "$STAGED_ROOT" && BATS_JOBS="$JOBS" BATS_FILES="$bats_files" "$STAGED_ROOT/tools/unit-bats.sh")
-  exit $?
+  oracle_rc=0
+  (cd "$STAGED_ROOT" && BATS_JOBS="$JOBS" BATS_FILES="$bats_files" "$STAGED_ROOT/tools/unit-bats.sh") || oracle_rc=$?
+
+  if [[ -n $EVIDENCE_FILE ]]; then
+    mkdir -p "$(dirname "$EVIDENCE_FILE")"
+    map_hash=$(compute_map_hash)
+    tests_hash=$(compute_tests_hash)
+    cat > "$EVIDENCE_FILE" <<EOF
+{"lane":"$LANE","map_file":"$MAP_FILE","map_sha256":"$map_hash","tests_sha256":"$tests_hash","candidate_bin":"","selected_count":0,"executed_count":0,"failures":$oracle_rc,"skips":0}
+EOF
+  fi
+
+  exit "$oracle_rc"
 fi
