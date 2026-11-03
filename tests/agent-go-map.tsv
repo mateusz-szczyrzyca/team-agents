@@ -75,6 +75,10 @@ tests/unit/gate.bats	a failing bats test shows its name and diagnosis, capped; t
 tests/unit/gate.bats	every step runs even after a failure, and the summary names the failed ones	blackbox	R32	-	planned
 tests/unit/github_format.bats	pr_format_issues: commits and PRs in code format without a link, a code block without its language, plain RED and GREEN	source	R12	-	planned
 tests/unit/github_format.bats	--autopilot: a PR description with an unlinked commit goes back to the team once, with what to fix; then the review starts	blackbox	R34	-	planned
+tests/unit/github_format.bats	model and investigator names use distinct consistent bold colors across rounds in attributions and review bylines	source	R12	-	planned
+tests/unit/github_format.bats	agent-gh links repository filenames in PR descriptions, comments and reviews to their GitHub file contents	blackbox	R12	-	planned
+tests/unit/github_format.bats	investigator review puts Recommendation at the top with bold green Ready to merge and bold red Needs changes icons	blackbox	R12	-	planned
+tests/unit/github_format.bats	Claude Code attribution clause is disabled in run_claude and stripped by agent-gh and flagged by pr_format_issues	source	R12	-	planned
 tests/unit/github_trust.bats	a fork's PR with the round's branch name is not the round's PR: it is not reviewed	blackbox	R32	-	planned
 tests/unit/github_trust.bats	a PR opened by an account that is not trusted is not the round's PR: it is not reviewed	blackbox	R32	-	planned
 tests/unit/github_trust.bats	--autopilot merges only the commit its checks and reviews had (gh pr merge --match-head-commit)	blackbox	R34	-	planned
