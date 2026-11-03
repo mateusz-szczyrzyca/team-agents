@@ -1049,6 +1049,42 @@ func (s *Server) fail(id json.RawMessage, code int, msg string) {
 
 // handle processes one JSON-RPC line (initialize, ping, tools/list, tools/call). Notifications are ignored.
 // Every tool result gets an unread-messages footer so agents notice new messages.
+// tools are the tool definitions this run gets: by its role, team, tier and whether it is a remote member.
+func (s *Server) tools() []map[string]any {
+	tools := append(toolDefs(), invToolDefs(s.role)...)
+	tools = append(tools, teamToolDefs(s.team != "")...)
+	if s.role != RoleInvestigator {
+		tools = append(tools, collabToolDefs(s.team != "", s.tier)...)
+		tools = append(tools, consultToolDefs(s.team != "")...)
+	}
+	if s.remote != "" {
+		tools = withoutRemoteUnavailable(tools)
+	}
+	return tools
+}
+
+// instructions is the initialize text: who the run is and how to start; it names only the tools the run has (an
+// investigator has no request_investigation, a remote member no reserve or release).
+func (s *Server) instructions() string {
+	has := map[string]bool{}
+	for _, t := range s.tools() {
+		if name, ok := t["name"].(string); ok {
+			has[name] = true
+		}
+	}
+	text := "Agent communication bus on this host. You are " + s.me + ". At start call list_agents and read_messages."
+	if has["reserve"] && has["release"] {
+		text += " Reserve shared resources before use and release them right after."
+	}
+	if has["request_investigation"] {
+		text += " A hard problem can be handed to an investigator: request_investigation."
+	}
+	if has["notebook_read"] {
+		text += " Persistent repository knowledge: notebook_read."
+	}
+	return text
+}
+
 func (s *Server) handle(line []byte) {
 	var req rpcReq
 	if err := json.Unmarshal(line, &req); err != nil {
@@ -1077,23 +1113,12 @@ func (s *Server) handle(line []byte) {
 			"protocolVersion": pv,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]any{"name": "agentbus", "version": version},
-			"instructions": "Agent communication bus on this host. You are " + s.me +
-				". At start call list_agents and read_messages; reserve shared resources before use and release them right after." +
-				" A hard problem can be handed to an investigator: request_investigation. Persistent repository knowledge: notebook_read.",
+			"instructions":    s.instructions(),
 		})
 	case "ping":
 		s.reply(req.ID, map[string]any{})
 	case "tools/list":
-		tools := append(toolDefs(), invToolDefs(s.role)...)
-		tools = append(tools, teamToolDefs(s.team != "")...)
-		if s.role != RoleInvestigator {
-			tools = append(tools, collabToolDefs(s.team != "", s.tier)...)
-			tools = append(tools, consultToolDefs(s.team != "")...)
-		}
-		if s.remote != "" {
-			tools = withoutRemoteUnavailable(tools)
-		}
-		s.reply(req.ID, map[string]any{"tools": tools})
+		s.reply(req.ID, map[string]any{"tools": s.tools()})
 	case "tools/call":
 		var p struct {
 			Name      string         `json:"name"`      // tool name

@@ -65,6 +65,66 @@ gh_filter() {
     else . end' <<< "$1"
 }
 
+# gh_colour_names text — the text as it goes to GitHub: each agent's name in a PR's attribution ("- coordinator: `x`
+# (", "- member: …", "- agent: …") and in an investigator's review byline bold, in its colour (AGENT_GITHUB_NAME_COLORS
+# "name=#RRGGBB …", set by the runner; a name it does not know: a colour of AGENT_GITHUB_COLORS from the name's
+# checksum). Two names of one text never share a colour while the palette has another. No colours known: unchanged.
+gh_colour_names() {
+  local text=$1 line out="" pre name post c p e
+  [[ -n ${AGENT_GITHUB_NAME_COLORS:-} ]] || { printf '%s' "$text"; return 0; }
+  local -A cmap=() given=() holder=()
+  local palette=()
+  read -ra palette <<< "${AGENT_GITHUB_COLORS:-}"
+  for e in $AGENT_GITHUB_NAME_COLORS; do cmap[${e%%=*}]=${e#*=}; done
+  local re='^([[:space:]]*-[[:space:]]+(agent|coordinator|member):[[:space:]]+|.*Review by the team-agents investigator )`([A-Za-z0-9._@-]+)`( \(.*)$'
+  while IFS= read -r line; do
+    if [[ $line =~ $re ]]; then
+      pre=${BASH_REMATCH[1]} name=${BASH_REMATCH[3]} post=${BASH_REMATCH[4]}
+      c=${given[$name]:-}
+      if [[ -z $c ]]; then
+        c=${cmap[$name]:-}
+        if [[ -z $c ]] && ((${#palette[@]})); then
+          read -r e _ < <(printf '%s' "$name" | cksum)
+          c=${palette[e % ${#palette[@]}]}
+        fi
+        if [[ -n $c && -n ${holder[$c]:-} ]]; then   # taken in this text by another name: the palette's next free one
+          for p in "${palette[@]}"; do [[ -n ${holder[$p]:-} ]] || { c=$p; break; }; done
+        fi
+        if [[ -n $c ]]; then given[$name]=$c; holder[$c]=$name; fi
+      fi
+      [[ -z $c ]] || line="$pre\$\\color{$c}{\\textbf{${name//_/\\_}}}\$$post"
+    fi
+    out+=$line$'\n'
+  done <<< "$text"
+  printf '%s' "${out%$'\n'}"
+}
+
+# gh_publish_text text — the text as the agents publish it on GitHub: without Claude Code's own "Generated with
+# Claude Code" line (and the blank line after it) — the attribution is the script's —, the names coloured
+# (gh_colour_names)
+gh_publish_text() {
+  local line out="" drop=0
+  local re='^[[:space:]]*(🤖[[:space:]]*)?Generated with \[?Claude Code\]?(\([^)]*\))?[[:space:]]*$'
+  while IFS= read -r line; do
+    if [[ $line =~ $re ]]; then drop=1; continue; fi
+    if ((drop)) && [[ -z ${line//[[:space:]]/} ]]; then drop=0; continue; fi
+    drop=0
+    out+=$line$'\n'
+  done <<< "$1"
+  gh_colour_names "${out%$'\n'}"
+}
+
+# colour_json_body file — a copy of that JSON request file (file.names) with its body as published
+# (gh_publish_text); prints the file to send: the copy, or the file itself when nothing changed or it is no JSON
+colour_json_body() {
+  local body new
+  if ! body=$(jq -er '(.body // empty) + "."' "$1" 2>/dev/null); then printf '%s' "$1"; return 0; fi   # no body
+  body=${body%.}
+  new=$(gh_publish_text "$body"; printf .); new=${new%.}
+  if [[ $new != "$body" ]] && jq --arg b "$new" '.body = $b' "$1" > "$1.names"; then printf '%s' "$1.names"; return 0; fi
+  printf '%s' "$1"
+}
+
 # show json jq-expression — the filtered JSON, through the caller's --jq if any
 gh_show() {
   if [[ -n $2 ]]; then jq -r "$2" <<< "$1"; else printf '%s\n' "$1"; fi
@@ -92,6 +152,12 @@ if [[ ${1:-} == api ]]; then
       else
         gh_log review_byline_failed "the byline could not be put at the top of the review" "file=${args[i+1]}"
       fi
+    done
+  fi
+  if [[ $path =~ /(pulls|issues)(/[0-9]+)?(/reviews|/comments)?$ ]]; then   # a description, comment or review
+    for i in "${!args[@]}"; do
+      [[ ${args[i]} == --input && -f ${args[i+1]:-} ]] || continue
+      args[i+1]=$(colour_json_body "${args[i+1]}")
     done
   fi
   if [[ $path == graphql ]]; then
@@ -147,6 +213,29 @@ if [[ ${1:-} == pr || ${1:-} == issue ]] && [[ ${2:-} == list ]]; then   # the l
   if [[ -n $jsonf ]]; then gh_show "$out" "$jqexpr"; exit 0; fi
   jq -r '.[] | ["#\(.number)", (.title // ""), (.headRefName // ""), (.state // "")] | @tsv' <<< "$out"
   exit 0
+fi
+
+if [[ ${1:-} == pr || ${1:-} == issue ]] && [[ ${2:-} == create || ${2:-} == edit || ${2:-} == comment ]]; then
+  # a text the agents publish: as gh_publish_text makes it
+  args=("$@") tmp=""
+  for i in "${!args[@]}"; do
+    case ${args[i]} in
+      --body|-b) args[i+1]=$(gh_publish_text "${args[i+1]:-}") ;;
+      --body=*) args[i]="--body=$(gh_publish_text "${args[i]#--body=}")" ;;
+      --body-file|-F)
+        [[ -z $tmp ]] || continue
+        tmp=$(mktemp) || { gh_log github_names_failed "the names could not be coloured: no temporary file"; break; }
+        if [[ ${args[i+1]:-} == - ]]; then text=$(cat && printf .); else text=$(cat -- "${args[i+1]:-}" && printf .); fi
+        if [[ $text != *. ]] || ! gh_publish_text "${text%.}" > "$tmp"; then   # unreadable: gh says so itself
+          rm -f "$tmp"; tmp=""; continue
+        fi
+        args[i+1]=$tmp ;;
+    esac
+  done
+  "$real" "${args[@]}"
+  rc=$?
+  [[ -z $tmp ]] || rm -f "$tmp"
+  exit "$rc"
 fi
 
 if [[ ${1:-} == pr || ${1:-} == issue ]] && [[ ${2:-} == view || ${2:-} == diff || ${2:-} == checkout ]]; then
@@ -371,8 +460,11 @@ AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no 
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
+# the colours of the agents' names on GitHub (#RRGGBB, readable on light and dark backgrounds), given in the
+# configuration's order; none = plain names
+AGENT_GITHUB_COLORS="${AGENT_GITHUB_COLORS:-#0969DA #BC4C00 #8250DF #1B7C83 #BF3989 #9A6700 #57606A}"
 AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free) | rotate (every investigator in turn)
-AGENT_REVIEW_ROTATE_WAIT_MIN="${AGENT_REVIEW_ROTATE_WAIT_MIN:-20}" # rotate: how long a pair waits for a busy investigator rather than repeat one of the last two pairs
+AGENT_REVIEW_ROTATE_WAIT_MIN="${AGENT_REVIEW_ROTATE_WAIT_MIN:-20}" # how long a pair waits for a busy investigator rather than repeat a PR's pair (or, random and rotate, one of the last two)
 REVIEW_HISTORY_MAX=100   # how many review pairs $AGENTS_HOME/reviews/history keeps (the rotation reads its last ones)
 AGENT_PROMPT_CHECKPOINTS="${AGENT_PROMPT_CHECKPOINTS:-2}"       # a prompt's newest checkpoints (the rest: their file); 0 all
 AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}"
@@ -1056,8 +1148,9 @@ pr_skipped_section() { # id → the "## Skipped tests" section of the descriptio
   awk '/^#+[[:space:]]*Skipped tests/ { on = 1; next } on && /^#+[[:space:]]/ { on = 0 } on { print }' <<< "$body"
 }
 
-skip_note() { # id — the skipped tests of the task's repository, appended to every run's prompt (nothing if none)
-  [[ $(task_field "$1" KIND) != investigation ]] || return 0
+skip_note() { # id — the skipped tests of the task's repository, appended to every run's prompt (nothing if none; not
+  # for investigators and helpers)
+  case $(task_field "$1" KIND) in investigation|helper) return 0 ;; esac   # a helper does exactly what was asked
   local wt list
   wt=$(task_field "$1" WORKTREE)
   [[ -d $wt ]] || return 0
@@ -1068,9 +1161,30 @@ skip_note() { # id — the skipped tests of the task's repository, appended to e
   sed -E 's/^([^:]+:[0-9]+):[[:space:]]*(.*)$/- `\1`: \2/' <<< "$list"
 }
 
-agent_desc() { # agent → "`name` (type, model `model`)" for attributions
-  local model=${AGENT_MODEL[$1]:-}
-  printf '`%s` (%s%s)' "$1" "${AGENT_TYPE[$1]:-?}" "${model:+, model \`$model\`}"
+agent_desc() { # agent → "`name` (type, model `model`)" for attributions; an investigator from INVESTIGATORS_TYPE
+  local type=${AGENT_TYPE[$1]:-${INVESTIGATORS_TYPE[$1]:-?}} model=${AGENT_MODEL[$1]:-${INVESTIGATORS_MODEL[$1]:-}}
+  printf '`%s` (%s%s)' "$1" "$type" "${model:+, model \`$model\`}"
+}
+
+# agent_github_colors — "name=#RRGGBB …": the colour of every configured agent's name on GitHub (gh_colour_names), from
+# AGENT_GITHUB_COLORS in the configuration's order, so that it stays the same in every round: the team agents
+# (NORMAL_AGENTS, WORKER_AGENTS, then the others by name) and, apart, the investigators (by name)
+agent_github_colors() {
+  local palette=() names=() others=() a i out=""
+  local -A listed=()
+  [[ $AGENT_GITHUB_COLORS != none ]] || return 0
+  read -ra palette <<< "$AGENT_GITHUB_COLORS"
+  ((${#palette[@]})) || return 0
+  mapfile -t others < <(printf '%s\n' "${!AGENT_TYPE[@]}" | sort)
+  for a in "${NORMAL_AGENTS[@]}" "${WORKER_AGENTS[@]}" "${others[@]}"; do
+    [[ -n $a ]] || continue
+    [[ -z ${listed[$a]:-} ]] || continue
+    listed[$a]=1; names+=("$a")
+  done
+  for i in "${!names[@]}"; do out+="${names[i]}=${palette[i % ${#palette[@]}]} "; done
+  mapfile -t names < <(investigator_names)
+  for i in "${!names[@]}"; do out+="${names[i]}=${palette[i % ${#palette[@]}]} "; done
+  printf '%s' "${out% }"
 }
 
 attribution_block() { # indent — the lines that end the description of a PR: the agent, or the team, its coordinator and its members
@@ -1241,7 +1355,9 @@ agents_gh_env() {
   [[ $real != "$dir/gh" ]] || real=${AGENT_REAL_GH:-}   # set already in this process
   [[ -n $real ]] || return 1
   mkdir -p "$dir" && ln -sfn "$SELF" "$dir/gh" || return 1   # agent run as gh is the filter (agent_gh)
-  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE=""
+  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE="" AGENT_GITHUB_COLORS
+  AGENT_GITHUB_NAME_COLORS=$(agent_github_colors)
+  export AGENT_GITHUB_NAME_COLORS
   if [[ $(task_field "${RUNNER_ID:-}" KIND 2>/dev/null) == investigation ]]; then   # its reviews say who wrote them, first
     AGENT_REVIEW_BYLINE=$(review_byline "$RUNNER_ID")
   fi
@@ -2004,54 +2120,102 @@ review_history_add() {
 # review_pair_key a b — a pair as the history writes it: its two names in name order, "a b"
 review_pair_key() { if [[ $1 < $2 ]]; then printf '%s %s\n' "$1" "$2"; else printf '%s %s\n' "$2" "$1"; fi; }
 
-# review_pair_pick strict|any name... — the rotation's best pair of those investigators (given in list order), from
-# the review history: strict = never one of the last two pairs; then the fewest members of the last pair, the pair
-# used least recently (or never), its members' reviews least recent, the list's order. Prints "a b" in list order;
-# 1 = no such pair.
-review_pair_pick() {
-  local mode=$1 hist=() n i j k a b key last="" prev="" ov pl ma mb score best="" pick=""
-  shift
-  [[ ! -f $AGENTS_HOME/reviews/history ]] || mapfile -t hist < "$AGENTS_HOME/reviews/history"
+# review_pair_reviewed pair-dir — 0 when the PR's last pair has reviewed it (a verdict of its last pass is there, as
+# review_pair_done writes it): that pair does not review the PR again while another pair can
+review_pair_reviewed() { [[ -f $1/A.verdict || -f $1/B.verdict ]]; }
+
+# review_model_key name — an investigator's CLI and model ("codex/gpt-6-astra"), so that a pair can avoid the models
+# of the last one; a name the configuration does not have (an old history's): "name:<name>", its own model
+review_model_key() {
+  if [[ -n ${INVESTIGATORS_TYPE[$1]:-} ]]; then
+    printf '%s/%s\n' "${INVESTIGATORS_TYPE[$1]}" "${INVESTIGATORS_MODEL[$1]:-default}"
+  else
+    printf 'name:%s\n' "$1"
+  fi
+}
+
+# review_pair_candidates level avoid name... — the pairs of those investigators (given in list order) that a review
+# may take at that level, one "ov mo pl ms a b" line each, in list order: strict = neither avoid (the pair that
+# reviewed the PR last, "a b" in name order; empty: none) nor, except AGENT_REVIEW_DRAW=list, one of the last two
+# pairs of the review history; avoid = not avoid; any = every pair. ov = its members in avoid or in the history's last
+# pair, mo = its members whose model (review_model_key) one of those has, pl = the newest history line (1-based) with
+# the pair, ms = the sum of the newest lines with each member (0 = never). AGENT_REVIEW_DRAW=list reads no history.
+review_pair_candidates() {
+  local level=$1 avoid=$2 hist=() n i j k a b key last="" prev="" ov mo pl ma mb x used=" "
+  shift 2
+  if [[ $AGENT_REVIEW_DRAW != list && -f $AGENTS_HOME/reviews/history ]]; then mapfile -t hist < "$AGENTS_HOME/reviews/history"; fi
   n=${#hist[@]}
   ((n < 1)) || last=${hist[n - 1]}
   ((n < 2)) || prev=${hist[n - 2]}
+  for x in $last $avoid; do used+="$(review_model_key "$x") "; done
   for ((i = 1; i <= $#; i++)); do
     for ((j = i + 1; j <= $#; j++)); do
       a=${!i} b=${!j}
       key=$(review_pair_key "$a" "$b")
-      [[ $mode != strict || ($key != "$last" && $key != "$prev") ]] || continue
+      [[ $level == any || $key != "$avoid" ]] || continue
+      [[ $level != strict || ($key != "$last" && $key != "$prev") ]] || continue
       ov=0
-      [[ " $last " != *" $a "* ]] || ov=$((ov + 1))
-      [[ " $last " != *" $b "* ]] || ov=$((ov + 1))
-      pl=0 ma=0 mb=0   # the newest line (1-based) with the pair, with each member; 0 = never
+      [[ " $last $avoid " != *" $a "* ]] || ov=$((ov + 1))
+      [[ " $last $avoid " != *" $b "* ]] || ov=$((ov + 1))
+      mo=0
+      [[ $used != *" $(review_model_key "$a") "* ]] || mo=$((mo + 1))
+      [[ $used != *" $(review_model_key "$b") "* ]] || mo=$((mo + 1))
+      pl=0 ma=0 mb=0
       for ((k = 0; k < n; k++)); do
         [[ ${hist[k]} != "$key" ]] || pl=$((k + 1))
         [[ " ${hist[k]} " != *" $a "* ]] || ma=$((k + 1))
         [[ " ${hist[k]} " != *" $b "* ]] || mb=$((k + 1))
       done
-      score=$(printf '%d%05d%05d' "$ov" "$pl" $((ma + mb)))   # same width: compared as strings, the lowest wins
-      if [[ -z $best || $score < $best ]]; then best=$score; pick="$a $b"; fi
+      printf '%d %d %d %d %s %s\n' "$ov" "$mo" "$pl" $((ma + mb)) "$a" "$b"
     done
   done
-  [[ -n $pick ]] || return 1
-  printf '%s\n' "$pick"
 }
 
-# review_pair_rotate coordinator-task free-investigator... — AGENT_REVIEW_DRAW=rotate: the next pair among the free
-# investigators, never one of the last two pairs; when only a busy investigator makes such a pair, it waits
-# (1) AGENT_REVIEW_ROTATE_WAIT_MIN from the pair's request, then takes the best free pair; with no such pair at all
-# (two investigators) the best free pair at once
-review_pair_rotate() {
-  local id=$1 all=() since
-  shift
-  review_pair_pick strict "$@" && return 0
+# review_pair_select level avoid name... — the pair of those investigators a review takes at that level
+# (review_pair_candidates), "a b" in list order; 1 = none. Of the pairs with the fewest members of the last pair, then
+# the fewest of its models: AGENT_REVIEW_DRAW=rotate the pair used least recently (or never), then its members' reviews
+# least recent, then the list's order; random one drawn at random (AGENT_REVIEW_SEED fixes the draw, for the tests);
+# list the first.
+review_pair_select() {
+  local lines=() tops=() min line a b
+  mapfile -t lines < <(review_pair_candidates "$@")
+  ((${#lines[@]})) || return 1
+  if [[ $AGENT_REVIEW_DRAW == rotate ]]; then
+    line=$(printf '%s\n' "${lines[@]}" | sort -s -n -k1,1 -k2,2 -k3,3 -k4,4 | head -n 1)
+  else
+    min=$(printf '%s\n' "${lines[@]}" | sort -s -n -k1,1 -k2,2 | head -n 1 | cut -d' ' -f1,2)
+    for line in "${lines[@]}"; do [[ $(cut -d' ' -f1,2 <<< "$line") != "$min" ]] || tops+=("$line"); done
+    line=${tops[0]}
+    if [[ $AGENT_REVIEW_DRAW == random ]]; then
+      [[ -z ${AGENT_REVIEW_SEED:-} ]] || RANDOM=$AGENT_REVIEW_SEED
+      line=${tops[RANDOM % ${#tops[@]}]}
+    fi
+  fi
+  read -r _ _ _ _ a b <<< "$line"
+  printf '%s %s\n' "$a" "$b"
+}
+
+# review_pair_next coordinator-task avoid free-investigator... — the next pair among the free investigators: never the
+# pair that reviewed the PR last (avoid) nor (rotate, random) one of the last two pairs. When only a busy investigator
+# makes such a pair it waits (1) AGENT_REVIEW_ROTATE_WAIT_MIN from the pair's request, then takes the best free pair
+# (logged as review_pair_repeated); with no such pair at all (two investigators) the best free pair at once
+review_pair_next() {
+  local id=$1 avoid=$2 all=() since level pair
+  shift 2
   mapfile -t all < <(investigator_names)
-  if review_pair_pick strict "${all[@]}" > /dev/null; then
+  for level in strict avoid; do
+    if pair=$(review_pair_select "$level" "$avoid" "$@"); then
+      [[ $level == strict ]] || log_warn review_pair_repeated "task=$id" "free=$*"
+      printf '%s\n' "$pair"
+      return 0
+    fi
+    review_pair_select "$level" "$avoid" "${all[@]}" > /dev/null || continue
     since=$(task_field "$id" REVIEW_PAIR_SINCE)
     (($(date +%s) - ${since:-0} >= AGENT_REVIEW_ROTATE_WAIT_MIN * 60)) || return 1
-  fi
+    break
+  done
   log_warn review_pair_repeated "task=$id" "free=$*"
-  review_pair_pick any "$@"
+  review_pair_select avoid "$avoid" "$@" || review_pair_select any "$avoid" "$@"
 }
 
 start_review_pairs() { # under the dispatch lock: a pending --autopilot review pair starts once two investigators are free
@@ -2069,40 +2233,35 @@ start_review_pairs() { # under the dispatch lock: a pending --autopilot review p
   done
 }
 
-start_review_pair() { # coordinator task — both reviews of its PR at once, on two different free investigators drawn at
-  # random (the previous pair of this PR when free: each re-checks its own findings) or, AGENT_REVIEW_DRAW=rotate, the
-  # rotation's next pair (review_pair_rotate); 1 = not two free ones yet, or the rotation waits for a busy one
-  local id=$1 free=() dir a="" b="" pa="" pb="" f slot name inv j q num url
+start_review_pair() { # coordinator task — both reviews of its PR at once, on two different free investigators: the
+  # next pair (review_pair_next: never the pair that reviewed this PR last, nor one of the last two pairs; drawn at
+  # random, the first free ones of the list, or AGENT_REVIEW_DRAW=rotate the rotation's next). A pass whose pair never
+  # ended its reviews keeps it, when free (random, list). 1 = not two free ones yet, or the pair waits for a busy one
+  local id=$1 free=() dir a="" b="" pa="" pb="" avoid="" f slot name j num
   mapfile -t free < <(free_investigator_list)
   ((${#free[@]} >= 2)) || return 1
-  num=$(task_field "$id" PR_NUMBER); url=$(task_field "$id" PR_URL)
-  if [[ $AGENT_REVIEW_DRAW == rotate ]]; then   # both chosen: nothing is kept nor drawn below, only put in list order
-    f=$(review_pair_rotate "$id" "${free[@]}") || return 1
-    read -r a b <<< "$f"
-  fi
+  num=$(task_field "$id" PR_NUMBER)
   dir="$AGENTS_HOME/reviews/$(task_field "$id" REPO_NAME)-$num"
+  [[ ! -f $dir/A.agent ]] || pa=$(<"$dir/A.agent")
+  [[ ! -f $dir/B.agent ]] || pb=$(<"$dir/B.agent")
+  if [[ -n $pa && -n $pb ]] && review_pair_reviewed "$dir"; then avoid=$(review_pair_key "$pa" "$pb"); fi
+  if [[ $AGENT_REVIEW_DRAW != rotate && -z $avoid ]]; then
+    for f in "${free[@]}"; do [[ $f != "$pa" ]] || a=$f; [[ $f != "$pb" ]] || b=$f; done
+  fi
+  if [[ -z $a && -z $b ]]; then   # both chosen, in list order
+    f=$(review_pair_next "$id" "$avoid" "${free[@]}") || return 1
+    read -r a b <<< "$f"
+  else   # one kept: the other is drawn at random among the free ones (list: the first)
+    local pool=()
+    for f in "${free[@]}"; do [[ $f == "$a" || $f == "$b" ]] || pool+=("$f"); done
+    [[ -z ${AGENT_REVIEW_SEED:-} ]] || RANDOM=$AGENT_REVIEW_SEED   # a fixed draw, for the tests
+    if ((${#pool[@]})) && [[ -z $a || -z $b ]]; then
+      j=0
+      [[ $AGENT_REVIEW_DRAW == list ]] || j=$((RANDOM % ${#pool[@]}))
+      if [[ -z $a ]]; then a=${pool[j]}; else b=${pool[j]}; fi
+    fi
+  fi
   mkdir -p "$dir"
-  if [[ $AGENT_REVIEW_DRAW != rotate ]]; then
-    [[ ! -f $dir/A.agent ]] || pa=$(<"$dir/A.agent")
-    [[ ! -f $dir/B.agent ]] || pb=$(<"$dir/B.agent")
-  fi
-  for f in "${free[@]}"; do [[ $f != "$pa" ]] || a=$f; [[ $f != "$pb" ]] || b=$f; done
-  local pool=()   # the others are drawn at random among the free ones: two different investigators
-  for f in "${free[@]}"; do [[ $f == "$a" || $f == "$b" ]] || pool+=("$f"); done
-  [[ -z ${AGENT_REVIEW_SEED:-} ]] || RANDOM=$AGENT_REVIEW_SEED   # a fixed draw, for the tests
-  while [[ -z $a || -z $b ]] && ((${#pool[@]})); do
-    j=0   # AGENT_REVIEW_DRAW=list: the first free one of the list
-    [[ $AGENT_REVIEW_DRAW == list ]] || j=$((RANDOM % ${#pool[@]}))
-    f=${pool[j]}
-    pool=("${pool[@]:0:j}" "${pool[@]:j+1}")
-    if [[ -z $a ]]; then a=$f; else b=$f; fi
-  done
-  if [[ -z $pa$pb ]]; then   # both drawn: A and B in the list's order, as the slots always were
-    for f in "${free[@]}"; do
-      [[ $f != "$a" ]] || break
-      if [[ $f == "$b" ]]; then b=$a; a=$f; break; fi
-    done
-  fi
   [[ -n $a && -n $b && $a != "$b" ]] || return 1
   for slot in A B; do
     name=$a; [[ $slot == A ]] || name=$b
@@ -2622,7 +2781,8 @@ in the directories you work in (the nearest one applies to its directory). They 
 conventions and how to build, lint and test it; they are binding. Where they conflict with these instructions,
 these instructions decide how you communicate with the human and the other agents, and `AGENTS.md` decides how
 the code is written and checked; if unsure, ask. Do not change any `AGENTS.md` (or `CLAUDE.md`, `GEMINI.md`)
-unless the task explicitly asks for it — record what you learned in the repository notebook (`notebook_append`).
+unless the task explicitly asks for it — record what you learned in the repository notebook (`notebook_append`;
+without the agentbus tools: in your report).
 TXT
   else
     cat <<'TXT'
@@ -2677,29 +2837,36 @@ build_prompt() { # id mode qfile next_round
     [RESUMED_FROM]=${RESUMED_FROM:-} [HANG_MIN]=$AGENT_HANG_MIN
   )
   if [[ $mode != fresh ]] && is_independent_investigation "$id"; then
-    case ${INVESTIGATION_PHASE:-1} in
-      2)
-        R[INVESTIGATION_BASE_SHA]=${INVESTIGATION_BASE_SHA:-}
-        R[INVESTIGATION_TARGET_BRANCH]=${INVESTIGATION_TARGET_BRANCH:-main}
-        R[INVESTIGATION_PHASE1_MANIFEST]=${INVESTIGATION_PHASE1_MANIFEST:-}
-        render "$PROMPTS/inv-merge.md" ;;
-      3|5) render "$PROMPTS/review.md" ;;
-      *) render "$PROMPTS/inv-work.md" ;;
-    esac
-    printf '\n# TOPIC\n\n'
-    cat "$TASKS/$id/task.md"
-    if [[ $mode == resume && -n ${ANSWERS_PENDING:-} ]]; then
+    if [[ $mode == new ]]; then   # a later run's session has this already: it gets only what is new
+      case ${INVESTIGATION_PHASE:-1} in
+        2)
+          R[INVESTIGATION_BASE_SHA]=${INVESTIGATION_BASE_SHA:-}
+          R[INVESTIGATION_TARGET_BRANCH]=${INVESTIGATION_TARGET_BRANCH:-main}
+          R[INVESTIGATION_PHASE1_MANIFEST]=${INVESTIGATION_PHASE1_MANIFEST:-}
+          render "$PROMPTS/inv-merge.md" ;;
+        3|5) render "$PROMPTS/review.md" ;;
+        *) render "$PROMPTS/inv-work.md" ;;
+      esac
+      render "$PROMPTS/writing.md"
+      printf '\n# TOPIC\n\n'
+      cat "$TASKS/$id/task.md"
+      return
+    fi
+    local said=0
+    if [[ -n ${ANSWERS_PENDING:-} ]]; then
       R[ANSWERED_ROUND]=$ANSWERS_PENDING
       R[ANSWERED_FILE]="$TASKS/$id/questions-$ANSWERS_PENDING.md"
-      printf '\n\n'
       render "$PROMPTS/inv-resume.md"
       printf '\n---\n\n'
       expand_answers "$TASKS/$id/questions-$ANSWERS_PENDING.md"
+      said=1
     fi
-    if [[ $mode == resume && -s $TASKS/$id/note-$RUN.md ]]; then
+    if [[ -s $TASKS/$id/note-$RUN.md ]]; then
       printf '\n---\n\n## Additional note from the human\n\n'
       cat "$TASKS/$id/note-$RUN.md"
+      said=1
     fi
+    ((said)) || printf 'Continue task %s following the rules from the first message of this session.\n' "$id"
     return
   fi
   if [[ $mode == fresh ]]; then   # a fresh session: the new run's prompt, the handoff, then why it was woken
@@ -2723,6 +2890,7 @@ build_prompt() { # id mode qfile next_round
   if [[ $mode == new ]]; then
     if [[ ${KIND:-worker} == investigation && ${REVIEW:-} == 1 ]]; then
       render "$PROMPTS/review.md"
+      render "$PROMPTS/writing.md"
       printf '\n# PR REVIEW REQUEST #%s\n\n' "$PR_NUMBER"
     elif [[ ${KIND:-worker} == investigation ]]; then
       render "$PROMPTS/investigator.md"
@@ -2993,6 +3161,9 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
     jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
       '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$dir/mcp.json"
   fi
+  # Claude Code's own attribution off: the commit trailers and the PR's attribution are the script's
+  echo '{"includeCoAuthoredBy": false, "attribution": {"commit": "", "pr": ""}}' > "$dir/claude-settings.json"
+  args+=(--settings "$dir/claude-settings.json")
   if [[ -n ${MODEL:-} ]]; then args+=(--model "$MODEL"); fi
   if [[ $mode == new ]]; then args+=(--session-id "$SESSION_ID"); else args+=(--resume "$SESSION_ID"); fi
   local extra=(); read -ra extra <<< "${EXTRA_ARGS:-}"
@@ -4238,6 +4409,24 @@ dispatch() { # starts queued requests on free investigators
   )
 }
 
+# investigation_task_text job-json from-task from-agent — the task.md of an investigation or a review: a review gets
+# its PR, its request when it says more than "Review PR #N (url)" (one of two independent reviews, a re-review after
+# a fix pass with the previous review) and the team's task; an investigation its question and context
+investigation_task_text() {
+  local j=$1 from_task=$2 from_agent=$3 pr_url pr_num q
+  if [[ $(jq -r '.kind // empty' <<< "$j") == review ]]; then
+    pr_url=$(jq -r '.pr_url // empty' <<< "$j"); pr_num=$(jq -r '.pr_number // empty' <<< "$j")
+    q=$(jq -r '.question // empty' <<< "$j")
+    printf '## Review PR #%s\n\n%s\n\n' "$pr_num" "$pr_url"
+    if [[ -n $q && $q != "Review PR #$pr_num ($pr_url)" ]]; then printf '## The request\n\n%s\n\n' "$q"; fi
+    printf '## The task the team worked on\n\n'
+    if [[ -f $TASKS/$from_task/task.md ]]; then cat "$TASKS/$from_task/task.md"; else echo "—"; fi
+    return 0
+  fi
+  printf '## Question from %s\n\n%s\n\n' "$from_agent" "$(jq -r .question <<< "$j")"
+  printf '## Context from the agent\n\n%s\n' "$(jq -r '.context // "—"' <<< "$j")"
+}
+
 start_investigation() { # request-json (status "starting") investigator-name
   local j=$1 iname=$2 inv_id from_task from_agent
   inv_id=$(jq -r .id <<< "$j"); from_task=$(jq -r .from_task <<< "$j"); from_agent=$(jq -r .from_agent <<< "$j")
@@ -4260,18 +4449,7 @@ start_investigation() { # request-json (status "starting") investigator-name
   fi
   local kind pr_url pr_num
   kind=$(jq -r '.kind // empty' <<< "$j"); pr_url=$(jq -r '.pr_url // empty' <<< "$j"); pr_num=$(jq -r '.pr_number // empty' <<< "$j")
-  if [[ $kind == review ]]; then
-    {
-      printf '## Review PR #%s\n\n%s\n\n' "$pr_num" "$pr_url"
-      printf '## The task the team worked on\n\n'
-      if [[ -f $TASKS/$from_task/task.md ]]; then cat "$TASKS/$from_task/task.md"; else echo "—"; fi
-    } > "$dir/task.md"
-  else
-    {
-      printf '## Question from %s\n\n%s\n\n' "$from_agent" "$(jq -r .question <<< "$j")"
-      printf '## Context from the agent\n\n%s\n' "$(jq -r '.context // "—"' <<< "$j")"
-    } > "$dir/task.md"
-  fi
+  investigation_task_text "$j" "$from_task" "$from_agent" > "$dir/task.md"
   : > "$dir/meta.env"
   local sid=""
   [[ ${INVESTIGATORS_TYPE[$iname]} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
@@ -6194,14 +6372,17 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
   if ((phase1_pending)) || review_rotation_waits; then dispatch; fi
 }
 
-# review_rotation_waits — 0 when AGENT_REVIEW_DRAW=rotate and a review pair waits: the timer's dispatch starts it once
-# its busy investigator is free or AGENT_REVIEW_ROTATE_WAIT_MIN has passed, with no run ending to dispatch it
+# review_rotation_waits — 0 when a review pair may wait for a busy investigator (AGENT_REVIEW_DRAW=rotate: any pending
+# pair; random and list: one whose PR's last pair has reviewed it): the timer's dispatch starts it once its busy
+# investigator is free or AGENT_REVIEW_ROTATE_WAIT_MIN has passed, with no run ending to dispatch it
 review_rotation_waits() {
-  [[ $AGENT_REVIEW_DRAW == rotate ]] || return 1
-  local m
+  local m id
   for m in "$TASKS"/*/meta.env; do
     [[ -f $m ]] || continue
-    if grep -qx 'REVIEW_PAIR_PENDING=1' "$m"; then return 0; fi
+    grep -qx 'REVIEW_PAIR_PENDING=1' "$m" || continue
+    [[ $AGENT_REVIEW_DRAW != rotate ]] || return 0
+    id=${m%/meta.env}; id=${id##*/}
+    if review_pair_reviewed "$AGENTS_HOME/reviews/$(task_field "$id" REPO_NAME)-$(task_field "$id" PR_NUMBER)"; then return 0; fi
   done
   return 1
 }

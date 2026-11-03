@@ -242,7 +242,12 @@ See the [investigation-team design](docs/investigation-teams.md) for details, in
 With `--verify` the coordinator's DONE is checked first (PR exists and is not a draft, everything is pushed,
 members' branches are merged); if something is missing the coordinator is sent back once with the list. Then an
 investigator reviews the PR and publishes a GitHub review (as a comment — GitHub does not let an author approve
-their own PR), and you get a notification with the recommendation.
+their own PR), and you get a notification with the recommendation. The review begins with it, right after the
+byline: `## Recommendation` with ✅ **Ready to merge** in green, or 🔧 **Needs changes** (🧩 when incomplete) in red
+and the list of what to fix — the icons of the notifications. The reviewer gets its request as it was made (one of
+two independent reviews; a re-review after a fix pass, with the previous review) and the rules for writing on
+GitHub, as every run that writes there does (an independent investigator's too): commits, PRs **and files** are
+links — a file to its blob at a pushed commit, `…/blob/<SHA>/path#L42`.
 
 **Before the review.** The round goes to review only when its head passes two checks, run in their own unit once
 the team's members have settled: a change of code adds tests (new test cases; a round with documentation only is
@@ -319,15 +324,24 @@ logged too); and a GraphQL query for comments or reviews is refused. This keeps 
 reaching an agent; it does not hold back an agent that bypasses `gh` with its token, so limit who may comment
 (the repository's interaction limits) and what the agents' token may do (a fine-grained token for this repository).
 
+**A PR's next review is another pair's.** In every `AGENT_REVIEW_DRAW` mode, the pair that reviewed a PR does not
+review it again while another pair can — its re-review after a fix pass goes to other investigators, who get the
+slot's previous review, "by" its author, to check its findings first. With four investigators A, B, C and D a PR
+reviewed by A+B is re-reviewed by C+D, then by a mixed pair (A+C, B+D, …). `random` and `rotate` also never take one
+of the last two pairs of any PR and prefer investigators outside the last pair. Every mode then prefers
+investigators whose model (CLI and model, `INVESTIGATORS_TYPE` / `INVESTIGATORS_MODEL`) the last pair did not use;
+`random` draws among the best pairs, `list` takes the first free ones. When only a busy investigator makes such a pair, the pair waits for it
+`AGENT_REVIEW_ROTATE_WAIT_MIN` (20) minutes, then takes the best free pair (logged as `review_pair_repeated`); with
+two investigators their pair reviews every time. (A pass whose reviews never ended keeps its pair in `random` and
+`list`: it has not reviewed yet.)
+
 **The review rotation.** With `AGENT_REVIEW_DRAW=rotate` the two reviewers rotate through every investigator: a
 new pair is never one of the last two pairs — a PR's re-review after a fix pass included —, and among the free
-investigators it prefers those outside the last pair, then the pair that reviewed least recently (or never), then
+investigators it prefers those outside the last pair, then those of other models, then the pair that reviewed
+least recently (or never), then
 the investigators that reviewed least recently. With four investigators A, B, C and D: A+B, C+D, A+C, B+D, A+D, B+C.
 The history is `~/agents/reviews/history` (one pair a line, oldest first, the last 100), shared by every repository
-and written in every mode. When only a busy investigator makes such a pair, the pair waits for it
-`AGENT_REVIEW_ROTATE_WAIT_MIN` (20) minutes, then takes the best free pair (logged as `review_pair_repeated`); with
-two investigators their pair reviews every time. A re-review by another investigator than the slot's last one gets
-that review, "by" its author, to check its findings first.
+and written in every mode. It waits for a busy investigator as above.
 
 **The fix loop.** When the review finds critical or major problems, the team is woken with them: the review is
 added to its task ("Fix pass 1 of 2"), it fixes them (or disputes one on the PR) and finishes again — and the PR
@@ -389,7 +403,8 @@ PR each:
   rounds and asks you to approve the plan. After each round `main` stays green: unfinished work is dead code or a
   stub. No test is written ahead of its round: a skipped test is an exception with a reason outside the code
   (a missing tool or device), listed in the PR description's `## Skipped tests` section (`docs/tdd.md`). Every
-  run's prompt lists the repository's skipped tests, so they get filled.
+  run's prompt lists the repository's skipped tests, so they get filled — except an investigator's and a helper's,
+  which do exactly what they were asked.
 - A round ends with `STATUS: ROUND_DONE N/M`. If its change is over the limit, or it adds a skipped test the
   PR does not list under `## Skipped tests`, it goes back to the agent to be split (at most `ROUND_BOUNCES` times, default 2; then it closes with a
   warning in the notification).
@@ -636,7 +651,8 @@ Then:
 | `AGENT_LONG_RUN_STEPS` | a team member's run of more tool calls is asked, in every answer of its bus server, to end; it is woken again at once, in a fresh session; `0` never (120) |
 | `AGENT_LONG_RUN_HARD` | a team member's run of this many tool calls is ended by the runner — asked to end at `AGENT_LONG_RUN_STEPS`, an agent may go on —; it sleeps and is woken at once in a fresh session; `0` never (200) |
 | `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |
-| `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `random` — two different investigators drawn among the free ones; a PR's re-review after a fix pass keeps its pair —, `list` — the first two free ones of the list —, or `rotate` — every investigator in turn (see "The review rotation" under [Teams](#teams)) (random) |
+| `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `random` — two different investigators drawn among the free ones, outside the last two pairs —, `list` — the first two free ones of the list —, or `rotate` — every investigator in turn (see "The review rotation" under [Teams](#teams)); in every mode a PR's re-review goes to another pair (random) |
+| `AGENT_GITHUB_COLORS` | the colours (`#RRGGBB`, space-separated) of the agents' names on GitHub, given in the configuration's order; `none` = plain names (`#0969DA #BC4C00 #8250DF #1B7C83 #BF3989 #9A6700 #57606A`) |
 | `AGENT_REVIEW_ROTATE_WAIT_MIN` | `rotate`: how long a review pair waits for a busy investigator when only it makes a pair not among the last two, before a free pair is repeated (20 minutes) |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) — the team reports of the protocol (`.agents/reports/`) are never counted, whatever it says |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
@@ -715,7 +731,9 @@ whatever credentials the agents find. To keep all of it off your account, create
 You review and merge as yourself. (The investigator's reviews come from the same account that opened the PR, so
 they stay comments — GitHub does not let an account approve its own PR.)
 
-Every commit message also ends with trailers, and pull requests and reviews end with a signature line:
+Claude Code runs with its own attribution off (`--settings`: no `Co-Authored-By: Claude`, no "Generated with Claude
+Code"), and the agents' `gh` leaves such a line out of what it publishes: a commit ends with the trailers below,
+a PR with the attribution block. Every commit message also ends with trailers, and pull requests and reviews end with a signature line:
 
 ```
 Fix debounce of the button on GPIO 15
@@ -727,7 +745,13 @@ Team: 20261020-140312-team
 ```
 
 `Opened by team-agents: team …, coordinator claude-1 (claude, model sonnet), members: …` at the end of a PR,
-`— Review by the team-agents investigator inv-opus (claude, model opus), request #7.` at the end of a review.
+`— Review by the team-agents investigator inv-opus (claude, model opus), request #7.` at the end of a review. A PR
+an investigator opens (an investigation's merge) names its CLI and model the same way (`INVESTIGATORS_TYPE`).
+On GitHub every agent's name in those lines is **bold, in a colour of its own** that stays the same in every round:
+the agents' `gh` colours it on the way out (a PR's description or comment, a review), from `AGENT_GITHUB_COLORS` in
+the configuration's order — the team agents (`NORMAL_AGENTS`, `WORKER_AGENTS`, the others by name) and, apart, the
+investigators; two names of one text never share a colour while the palette has another. GitHub renders the colour
+from math (`$\color{#0969DA}{\textbf{codex-1}}$`); the prompts and your files keep the plain names (a description file that cannot be coloured — no temporary file — goes out plain, logged as `github_names_failed`).
 Commit messages, PRs, reviews and reports are written in `REPO_LANGUAGE` (default English); questions and
 notifications in `AGENT_LANGUAGE`.
 

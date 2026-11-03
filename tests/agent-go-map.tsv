@@ -489,3 +489,33 @@ tests/unit/review_pair_rotate.bats	rotate: three investigators — the third pai
 tests/unit/review_pair_rotate.bats	rotate: a re-review by another investigator gets the slot's previous review as someone else's	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: the supervise timer dispatches a waiting review pair, which no run's end may do	source	R33	-	planned
 tests/unit/round_discipline.bats	the prompts say never to start the next round's work; a member out of items sleeps instead	blackbox	R31	-	planned
+tests/unit/review_pair_repeat.bats	default draw: a PR's second review is done by the other two investigators, its third by a mixed pair	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	default draw: across PRs A+B is followed by C+D, then by a mixed pair	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	default draw: only the PR's previous pair free — it waits AGENT_REVIEW_ROTATE_WAIT_MIN, then repeats it	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	default draw: one investigator of the previous pair busy — a new pair with the free ones, at once	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	default draw: with two investigators their pair reviews again at once — the autopilot does not stall	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	rotate: a PR's previous pair is not taken again, even when other PRs were reviewed since	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	list: a PR's second review goes to the first free investigators outside its previous pair	source	R33	-	planned
+tests/unit/review_pair_repeat.bats	the supervise timer dispatches a pair that waits so as not to repeat its PR's pair (default draw)	source	R33	-	planned
+tests/unit/github_names.bats	gh pr create --body: the coordinator and the members are bold, each in its own colour	source	R12	-	planned
+tests/unit/github_names.bats	gh pr edit --body-file: the same colours as in the PR's first round	source	R12	-	planned
+tests/unit/github_names.bats	an investigator's review: its byline at the top and at the end, bold in the investigator's colour	source	R12	-	planned
+tests/unit/github_names.bats	two names of one text with the same colour: the second gets the next colour nobody in it has	source	R12	-	planned
+tests/unit/github_names.bats	a name the map does not know gets a colour of the palette from its name, the same every time	source	R12	-	planned
+tests/unit/github_names.bats	with no colours known the text goes out as it is	source	R12	-	planned
+tests/unit/github_names.bats	agent_github_colors: the agents in the configuration's order, each its own colour; investigators apart	source	R12	-	planned
+tests/unit/github_names.bats	the runner gives the agents' gh the colours of every agent	source	R12	-	planned
+tests/unit/prompt_delivery.bats	a reviewer's task gives its review request: independence, the re-review and the previous review	source	R12	-	planned
+tests/unit/prompt_delivery.bats	a plain review request is not repeated; an investigation request keeps its question and context	source	R12	-	planned
+tests/unit/prompt_delivery.bats	a reviewer gets the rules for writing on GitHub: files and commits as links	source	R12	-	planned
+tests/unit/prompt_delivery.bats	independent investigators get the writing rules in every phase, the review's recommendation first	source	R12	-	planned
+tests/unit/prompt_delivery.bats	an independent investigator's resume does not repeat its first prompt; a fresh session has it once	source	R12	-	planned
+tests/unit/prompt_delivery.bats	a helper is not told to fill the repository's skipped tests; a solo task is	source	R12	-	planned
+tests/unit/prompt_delivery.bats	Claude Code runs with its own attribution off: no Co-Authored-By, no 'Generated with Claude Code'	source	R12	-	planned
+tests/unit/prompt_delivery.bats	the agents' gh leaves out a 'Generated with Claude Code' line from what it publishes	source	R12	-	planned
+tests/unit/review_pair_models.bats	rotate: of the pairs without a member of the last pair, the one without its models	source	R33	-	planned
+tests/unit/review_pair_models.bats	random: of the pairs without a member of the last pair, the one without its models, whatever the draw	source	R33	-	planned
+tests/unit/review_pair_models.bats	investigators of one model: the model does not narrow the draw	source	R33	-	planned
+tests/unit/github_attribution.bats	an investigator's attribution names its CLI and model, not (?)	source	R12	-	planned
+tests/unit/github_attribution.bats	a team agent's attribution still comes from AGENT_TYPE	source	R12	-	planned
+tests/unit/github_attribution.bats	the file-link rule: deleted files at the base commit, directories as tree, encoded paths, no invented links	source	R12	-	planned
