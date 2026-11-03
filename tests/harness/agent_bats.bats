@@ -247,3 +247,66 @@ TEST
   run "$mock_repo/tools/agent-bats.sh" --lane oracle --repo-root "$mock_repo" tests/unit/oracle.bats
   [ "$status" -eq 0 ]
 }
+
+@test "agent-bats control: working candidate invoked as staged binary succeeds" {
+  local mock_repo="$BATS_TEST_TMPDIR/mock_repo_control_working"
+  mkdir -p "$mock_repo/tests/unit" "$mock_repo/build" "$mock_repo/tools"
+  cp "$TOOL" "$mock_repo/tools/"
+  cp "$REPO_ROOT/tools/unit-bats.sh" "$mock_repo/tools/"
+
+  cat > "$mock_repo/tests/agent-go-map.tsv" <<'EOF'
+bats_file	test_name	classification	implementation_round	go_test_or_subtests	state
+tests/unit/positive.bats	working candidate test	blackbox	R04	TestWorkingCandidate	active
+EOF
+
+  cat > "$mock_repo/tests/unit/positive.bats" <<'EOF'
+@test "working candidate test" {
+  local agent_bin="$BATS_TEST_DIRNAME/../../bin/agent"
+  run "$agent_bin" --working-control
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"working-candidate"* ]]
+}
+EOF
+
+  cat > "$mock_repo/build/agent-go" <<'EOF'
+#!/bin/sh
+if [ "$1" = "--working-control" ]; then
+  echo "working-candidate"
+  exit 0
+fi
+exit 0
+EOF
+  chmod +x "$mock_repo/build/agent-go"
+
+  run "$mock_repo/tools/agent-bats.sh" --repo-root "$mock_repo"
+  [ "$status" -eq 0 ]
+}
+
+@test "agent-bats control: broken candidate properly detected when assertion fails" {
+  local mock_repo="$BATS_TEST_TMPDIR/mock_repo_control_broken"
+  mkdir -p "$mock_repo/tests/unit" "$mock_repo/build" "$mock_repo/tools"
+  cp "$TOOL" "$mock_repo/tools/"
+  cp "$REPO_ROOT/tools/unit-bats.sh" "$mock_repo/tools/"
+
+  cat > "$mock_repo/tests/agent-go-map.tsv" <<'EOF'
+bats_file	test_name	classification	implementation_round	go_test_or_subtests	state
+tests/unit/negative.bats	broken candidate test	blackbox	R04	TestBrokenCandidate	active
+EOF
+
+  cat > "$mock_repo/tests/unit/negative.bats" <<'EOF'
+@test "broken candidate test" {
+  local agent_bin="$BATS_TEST_DIRNAME/../../bin/agent"
+  run "$agent_bin" --test-command
+  [ "$status" -eq 0 ]
+}
+EOF
+
+  cat > "$mock_repo/build/agent-go" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+  chmod +x "$mock_repo/build/agent-go"
+
+  run "$mock_repo/tools/agent-bats.sh" --repo-root "$mock_repo"
+  [ "$status" -ne 0 ]
+}
