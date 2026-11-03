@@ -1371,8 +1371,11 @@ make integration   # real agent CLIs and accounts (costs usage)
   the test executable in temporary fixtures, covering argv, environment, working
   directory, streams, exits, cancellation and child reaping. A nil environment
   inherits the parent environment; a non-nil environment replaces it. Callers own
-  the supplied streams. Random draws are for selection, not cryptographic use.
-  Watchdog pipelines and descendant process groups remain later-round work.
+  the supplied streams. Output-copy failures take priority over ordinary child
+  exit results and retain their underlying error as `ExecuteWait`. Comparable
+  shared output writers remain serialized. Random draws are for selection, not
+  cryptographic use. Watchdog pipelines and descendant process groups remain
+  later-round work.
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 520 Bats unit test cases (361 black-box, 159 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
