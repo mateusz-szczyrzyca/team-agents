@@ -48,6 +48,7 @@ type JobTransition struct {
 
 // JobRequest is a submission, as the lead receives it. Every field is compared on resubmission.
 type JobRequest struct {
+	Helper        bool     `json:",omitempty"` // delegated helper scope; omitted in older requests, which retain worker semantics
 	RepoURL       string   `json:",omitempty"` // optional canonical https://github.com/<owner>/<repo> link, data only
 	RequesterTask string   `json:",omitempty"` // optional delegating member task ID on the lead, data only
 	ID            string   // submitter-chosen idempotency key, validated before use

@@ -251,16 +251,36 @@ round goes back to the team with the reason — the gate's output — at most `A
 you decide.
 
 **Texts on GitHub.** The agents write code in blocks that name their language, commits and PRs as links, and RED
-and GREEN bold in red and green (`prompts/writing.md`). Before an `--autopilot` review a PR description that does
+and GREEN bold in red and green (`prompts/writing.md`). Agent identities in PR attributions and investigator
+bylines are bold MathJax labels, with the first six hexadecimal SHA-256 digits of the configured name as their
+color. The color stays stable across rounds, roles and model changes. The full name remains visible; color alone
+is not an identifier. GitHub supports math in PR descriptions and reviews; plain-text clients show the markup.
+All publishing prompts share `prompts/github-writing.md`: repository file references in prose use verified
+commit permalinks, including a base-commit link for deleted files, URL-encoded paths and optional line anchors.
+This guidance applies to inline comments too and leaves code samples intact. Claude invocations disable the
+vendor PR/commit attribution with per-run settings; shared instructions prohibit vendor-generated comment
+footers while preserving team-agents attribution and task trailers. Before an `--autopilot` review a PR description that does
 not goes back to the team once, with what to fix.
 
 **The verdict.** A review ends with `VERDICT: ready-to-merge | needs-fixes | incomplete`, and its notification
 shows it: ✅ ready to merge, 🔧 needs fixes, 🧩 incomplete, ❌ a review without a verdict. Critical or major
-findings outweigh a "ready-to-merge".
+findings outweigh a "ready-to-merge". On GitHub, the first section after the investigator byline is
+**Recommendation**, with ✅ **Ready to merge** in green or 🔧 **Needs changes** in red, followed by the
+assessment, findings and checks. An incomplete review remains explicitly incomplete.
 
-**`--autopilot`** (it implies `--verify`) asks two investigators at once — drawn at random among the free ones;
-the same pair re-checks a PR after its fixes —, each on its own — they do not read each
-other's review, and a re-review gets only its own previous one; it waits until two are free, never one. Both
+**`--autopilot`** (it implies `--verify`) asks two investigators at once, rotating by default across PRs,
+rounds and fix passes. They work independently, do not read each other's current review, and each receives the
+previous findings for its assigned slot. With four available investigators A, B, C, D, the initial pairs are
+A+B, C+D, then mixed pairs, exhausting all six before reuse. The last two pairs are excluded; selection then
+prefers fewer members from the last pair, the least recently used pair, fewer models from the last pair, and
+least recently used members. Model identity uses the current provider/model configuration; old history files
+remain readable without migration. It waits until two investigators are free, never one.
+
+Set `AGENT_REVIEW_DRAW=rotate` explicitly in an existing configuration to adopt rotation. Explicit legacy
+`random` and `list` modes remain supported and retain a PR's available previous pair. Rotation may repeat a
+pair if no alternative exists in the configured pool (e.g. only two investigators), or after
+`AGENT_REVIEW_ROTATE_WAIT_MIN` (20 minutes) waiting for a busy alternative. Repeats emit
+`review_pair_repeated`; they are capacity exceptions, not the normal four-investigator flow. Both
 `ready-to-merge`: you get "✅✅ both reviews: ready to merge". Anything else: the team fixes what the reviews that
 found problems say (the fix loop below).
 
@@ -322,7 +342,7 @@ reaching an agent; it does not hold back an agent that bypasses `gh` with its to
 **The review rotation.** With `AGENT_REVIEW_DRAW=rotate` the two reviewers rotate through every investigator: a
 new pair is never one of the last two pairs — a PR's re-review after a fix pass included —, and among the free
 investigators it prefers those outside the last pair, then the pair that reviewed least recently (or never), then
-the investigators that reviewed least recently. With four investigators A, B, C and D: A+B, C+D, A+C, B+D, A+D, B+C.
+models absent from the previous pair, then the investigators that reviewed least recently. With four investigators A, B, C and D: A+B, C+D, A+C, B+D, A+D, B+C.
 The history is `~/agents/reviews/history` (one pair a line, oldest first, the last 100), shared by every repository
 and written in every mode. When only a busy investigator makes such a pair, the pair waits for it
 `AGENT_REVIEW_ROTATE_WAIT_MIN` (20) minutes, then takes the best free pair (logged as `review_pair_repeated`); with
@@ -636,7 +656,7 @@ Then:
 | `AGENT_LONG_RUN_STEPS` | a team member's run of more tool calls is asked, in every answer of its bus server, to end; it is woken again at once, in a fresh session; `0` never (120) |
 | `AGENT_LONG_RUN_HARD` | a team member's run of this many tool calls is ended by the runner — asked to end at `AGENT_LONG_RUN_STEPS`, an agent may go on —; it sleeps and is woken at once in a fresh session; `0` never (200) |
 | `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |
-| `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `random` — two different investigators drawn among the free ones; a PR's re-review after a fix pass keeps its pair —, `list` — the first two free ones of the list —, or `rotate` — every investigator in turn (see "The review rotation" under [Teams](#teams)) (random) |
+| `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `random` — two different investigators drawn among the free ones; a PR's re-review after a fix pass keeps its pair —, `list` — the first two free ones of the list —, or `rotate` — every investigator in turn (see "The review rotation" under [Teams](#teams)) (rotate) |
 | `AGENT_REVIEW_ROTATE_WAIT_MIN` | `rotate`: how long a review pair waits for a busy investigator when only it makes a pair not among the last two, before a free pair is repeated (20 minutes) |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) — the team reports of the protocol (`.agents/reports/`) are never counted, whatever it says |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
@@ -1169,6 +1189,22 @@ whose team is closed or unknown.
 - **Manual checks** for routing, mirrors, lead-side answers/kicks, offline recovery and remote teams
   are listed in [the human checklist](docs/multi-instance.md#manual-checklist-human-real-tailnet). Record real
   deployment results separately; these checks are not run by `make gate`.
+
+### Prompt scope and delegated jobs
+
+Independent fresh sessions render their phase instructions and topic once, followed by the handoff,
+answers and human notes. Their prompts do not recommend unavailable notebook or reservation tools.
+Review requests retain the queued independence and previous-findings text. Helpers receive only their
+assigned scope, guidance for available investigation/checkpoint tools, and no instruction to fill unrelated
+skipped tests. MCP startup guidance reflects investigator and remote-member capabilities.
+
+New delegated remote jobs carry optional `Helper: true` in the existing job request. The node records
+`KIND=helper`, the job ID as `HELPER_ID`, and the remote requester as `FROM_AGENT`; its helper prompt does not
+authorize commits or pushes unless requested. A remote requester has no local worktree or direct local-bus
+question channel: missing context returns `UNCLEAR`, and the job delivers the result. Node-side completion
+does not update an unrelated local helper record. Deploy the update on the submitting host, lead and
+destination node to obtain this behavior. Old requests without `Helper` keep their worker meaning; already frozen
+remote-helper requests remain unchanged for idempotent retries and need a new request to adopt helper scope.
 
 ## MCP tools available to agents
 

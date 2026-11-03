@@ -1077,9 +1077,7 @@ func (s *Server) handle(line []byte) {
 			"protocolVersion": pv,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]any{"name": "agentbus", "version": version},
-			"instructions": "Agent communication bus on this host. You are " + s.me +
-				". At start call list_agents and read_messages; reserve shared resources before use and release them right after." +
-				" A hard problem can be handed to an investigator: request_investigation. Persistent repository knowledge: notebook_read.",
+			"instructions":    s.startupInstructions(),
 		})
 	case "ping":
 		s.reply(req.ID, map[string]any{})
@@ -1517,4 +1515,17 @@ func main() {
 	default:
 		exitOn(opErr(CliUnknownSubcommand, "unknown subcommand %q (run agentbus without arguments for the list)", os.Args[1]).asError())
 	}
+}
+
+// startupInstructions advertises only capabilities available to this connection's role.
+func (s *Server) startupInstructions() string {
+	instructions := "Agent communication bus. You are " + s.me + ". At start call list_agents and read_messages. Persistent repository knowledge: notebook_read."
+	if s.remote != "" {
+		return instructions + " Ask the coordinator for assistance. End your turn with STATUS: SLEEPING when awaiting a reply."
+	}
+	instructions += " Use reserve before shared resources and release them right after."
+	if s.role != RoleInvestigator {
+		instructions += " A hard problem can be handed to an investigator: request_investigation."
+	}
+	return instructions
 }

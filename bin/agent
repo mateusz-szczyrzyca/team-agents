@@ -371,7 +371,7 @@ AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no 
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
-AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free) | rotate (every investigator in turn)
+AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-rotate}"               # a review pair: random among the free investigators | list (the first two free) | rotate (every investigator in turn)
 AGENT_REVIEW_ROTATE_WAIT_MIN="${AGENT_REVIEW_ROTATE_WAIT_MIN:-20}" # rotate: how long a pair waits for a busy investigator rather than repeat one of the last two pairs
 REVIEW_HISTORY_MAX=100   # how many review pairs $AGENTS_HOME/reviews/history keeps (the rotation reads its last ones)
 AGENT_PROMPT_CHECKPOINTS="${AGENT_PROMPT_CHECKPOINTS:-2}"       # a prompt's newest checkpoints (the rest: their file); 0 all
@@ -1057,7 +1057,7 @@ pr_skipped_section() { # id → the "## Skipped tests" section of the descriptio
 }
 
 skip_note() { # id — the skipped tests of the task's repository, appended to every run's prompt (nothing if none)
-  [[ $(task_field "$1" KIND) != investigation ]] || return 0
+  case $(task_field "$1" KIND) in investigation|helper) return 0 ;; esac
   local wt list
   wt=$(task_field "$1" WORKTREE)
   [[ -d $wt ]] || return 0
@@ -1068,9 +1068,18 @@ skip_note() { # id — the skipped tests of the task's repository, appended to e
   sed -E 's/^([^:]+:[0-9]+):[[:space:]]*(.*)$/- `\1`: \2/' <<< "$list"
 }
 
-agent_desc() { # agent → "`name` (type, model `model`)" for attributions
+# github_identity name — stable bold MathJax identity, independent of roster, model and round.
+# Names are configured identifiers; escape underscores for TeX text mode.
+github_identity() {
+  local name=$1 hash
+  hash=$(printf '%s' "$name" | sha256sum) || return 1
+  name=${name//_/\\_}
+  printf '$\\color{#%s}{\\textbf{%s}}$' "${hash:0:6}" "$name"
+}
+
+agent_desc() { # agent → colored name and CLI/model details for attributions
   local model=${AGENT_MODEL[$1]:-}
-  printf '`%s` (%s%s)' "$1" "${AGENT_TYPE[$1]:-?}" "${model:+, model \`$model\`}"
+  printf '%s (%s%s)' "$(github_identity "$1")" "${AGENT_TYPE[$1]:-?}" "${model:+, model \`$model\`}"
 }
 
 attribution_block() { # indent — the lines that end the description of a PR: the agent, or the team, its coordinator and its members
@@ -1254,7 +1263,7 @@ agents_gh_env() {
 review_byline() {
   local model
   model=$(task_field "$1" MODEL)
-  printf 'Review by the team-agents investigator `%s` (%s%s), request #%s.' "$(task_field "$1" AGENT)" "$(task_field "$1" TYPE)" \
+  printf 'Review by the team-agents investigator %s (%s%s), request #%s.' "$(github_identity "$(task_field "$1" AGENT)")" "$(task_field "$1" TYPE)" \
     "${model:+, model $model}" "$(task_field "$1" INV_ID)"
 }
 
@@ -2004,17 +2013,29 @@ review_history_add() {
 # review_pair_key a b — a pair as the history writes it: its two names in name order, "a b"
 review_pair_key() { if [[ $1 < $2 ]]; then printf '%s %s\n' "$1" "$2"; else printf '%s %s\n' "$2" "$1"; fi; }
 
+# review_model_key name — configured provider/model identity, falling back to the name for old histories.
+review_model_key() {
+  if [[ -n $1 && -n ${INVESTIGATORS_TYPE[$1]:-} ]]; then
+    printf '%s/%s' "${INVESTIGATORS_TYPE[$1]}" "${INVESTIGATORS_MODEL[$1]:-default}"
+  else
+    printf 'name:%s' "$1"
+  fi
+}
+
 # review_pair_pick strict|any name... — the rotation's best pair of those investigators (given in list order), from
 # the review history: strict = never one of the last two pairs; then the fewest members of the last pair, the pair
-# used least recently (or never), its members' reviews least recent, the list's order. Prints "a b" in list order;
+# used least recently (or never), fewest models from the last pair, members' reviews least recent, list order. Prints "a b" in list order;
 # 1 = no such pair.
 review_pair_pick() {
-  local mode=$1 hist=() n i j k a b key last="" prev="" ov pl ma mb score best="" pick=""
+  local mode=$1 hist=() n i j k a b key last="" prev="" ov pl ma mb score best="" pick="" mo model last_a last_b model_a model_b
   shift
   [[ ! -f $AGENTS_HOME/reviews/history ]] || mapfile -t hist < "$AGENTS_HOME/reviews/history"
   n=${#hist[@]}
   ((n < 1)) || last=${hist[n - 1]}
   ((n < 2)) || prev=${hist[n - 2]}
+  read -r last_a last_b <<< "$last"
+  model_a=$(review_model_key "${last_a:-}")
+  model_b=$(review_model_key "${last_b:-}")
   for ((i = 1; i <= $#; i++)); do
     for ((j = i + 1; j <= $#; j++)); do
       a=${!i} b=${!j}
@@ -2029,7 +2050,11 @@ review_pair_pick() {
         [[ " ${hist[k]} " != *" $a "* ]] || ma=$((k + 1))
         [[ " ${hist[k]} " != *" $b "* ]] || mb=$((k + 1))
       done
-      score=$(printf '%d%05d%05d' "$ov" "$pl" $((ma + mb)))   # same width: compared as strings, the lowest wins
+      mo=0
+      for model in "$(review_model_key "$a")" "$(review_model_key "$b")"; do
+        [[ $model != "$model_a" && $model != "$model_b" ]] || mo=$((mo + 1))
+      done
+      score=$(printf '%d%05d%d%05d' "$ov" "$pl" "$mo" $((ma + mb)))   # same width: compared as strings, the lowest wins
       if [[ -z $best || $score < $best ]]; then best=$score; pick="$a $b"; fi
     done
   done
@@ -2622,8 +2647,13 @@ in the directories you work in (the nearest one applies to its directory). They 
 conventions and how to build, lint and test it; they are binding. Where they conflict with these instructions,
 these instructions decide how you communicate with the human and the other agents, and `AGENTS.md` decides how
 the code is written and checked; if unsure, ask. Do not change any `AGENTS.md` (or `CLAUDE.md`, `GEMINI.md`)
-unless the task explicitly asks for it — record what you learned in the repository notebook (`notebook_append`).
+unless the task explicitly asks for it.
 TXT
+    if is_independent_investigation; then
+      echo 'Record instruction gaps in your findings or review; no repository notebook tool is available.'
+    else
+      echo 'Record what you learned in the repository notebook (`notebook_append`).'
+    fi
   else
     cat <<'TXT'
 **Repository instructions.** This repository has no `AGENTS.md`. Follow the conventions you see in the existing
@@ -2658,7 +2688,7 @@ build_prompt() { # id mode qfile next_round
     [GITHUB_TRUSTED]="$(github_trusted "$REPO_ROOT")"
     [HARDWARE_FILE]="$ENV_NOTES_FILE" [PEERS]="$(peers_list)" [LANGUAGE]="$AGENT_LANGUAGE"
     [REPO_LANGUAGE]="$REPO_LANGUAGE" [COMMIT_TRAILERS]="$(commit_trailers "$id")"
-    [GIT_NAME]="${GIT_NAME_FORMAT//%a/$AGENT}" [ATTRIBUTION]="\`$AGENT\` ($TYPE${MODEL:+, model $MODEL})"
+    [GIT_NAME]="${GIT_NAME_FORMAT//%a/$AGENT}" [ATTRIBUTION]="$(github_identity "$AGENT") ($TYPE${MODEL:+, model $MODEL})"
     [PRIVILEGES]="$(privileges_text)" [AGENTS_MD]="$(agents_md_text)"
     [QUESTIONS_FILE]=$qfile [ROUND]=$next_round [CONSULT_MIN]=$AGENT_CONSULT_MIN
     [ROUND_LIMIT_TEXT]="$(round_limit_text "$REPO_NAME")" [ROUND_SOFT]="$(round_soft "$REPO_NAME")"
@@ -2676,18 +2706,35 @@ build_prompt() { # id mode qfile next_round
     [PR_URL]=${PR_URL:-} [PR_NUMBER]=${PR_NUMBER:-}
     [RESUMED_FROM]=${RESUMED_FROM:-} [HANG_MIN]=$AGENT_HANG_MIN
   )
+  R[REVIEW_RESOURCES]='Shared resources require `reserve`/`release`.'
+  R[REVIEW_INDEPENDENCE]=''
+  R[HELPER_REQUESTER_WORKTREE]="The requester's worktree (READ-ONLY; includes uncommitted changes): \`${PARENT_WORKTREE:-}\`"
+  R[HELPER_QUESTIONS]="Send questions to \`${FROM_AGENT:-requester}\` with \`send_message\`, then \`wait_for_message\`. If unanswered, finish with \`UNCLEAR: <what is missing>\`."
+  R[HELPER_TOOLS]='Within the assigned scope, use `request_investigation` for a hard question and `checkpoint` to preserve progress; do not commit unless authorized.'
+  if [[ ${KIND:-worker} == helper && -n ${JOB_ID:-} ]]; then
+    R[HELPER_REQUESTER_WORKTREE]='The requester is on another host; its uncommitted worktree is unavailable. Use only the supplied commit and context.'
+    R[HELPER_QUESTIONS]='If required context is missing, finish with `UNCLEAR: <what is missing>`. The job delivers your result to the requester.'
+  fi
+  if is_independent_investigation "$id"; then
+    R[REVIEW_RESOURCES]='Do not use shared resources; use only isolated local tests.'
+    R[REVIEW_INDEPENDENCE]='Work independently. No agentbus tools are available. Do not contact investigators, delegate, or read other worktrees. Keep the review checkout read-only.'
+  fi
   if [[ $mode != fresh ]] && is_independent_investigation "$id"; then
-    case ${INVESTIGATION_PHASE:-1} in
-      2)
-        R[INVESTIGATION_BASE_SHA]=${INVESTIGATION_BASE_SHA:-}
-        R[INVESTIGATION_TARGET_BRANCH]=${INVESTIGATION_TARGET_BRANCH:-main}
-        R[INVESTIGATION_PHASE1_MANIFEST]=${INVESTIGATION_PHASE1_MANIFEST:-}
-        render "$PROMPTS/inv-merge.md" ;;
-      3|5) render "$PROMPTS/review.md" ;;
-      *) render "$PROMPTS/inv-work.md" ;;
-    esac
-    printf '\n# TOPIC\n\n'
-    cat "$TASKS/$id/task.md"
+    if [[ ${PROMPT_FOLLOWUP_ONLY:-0} != 1 ]]; then
+      case ${INVESTIGATION_PHASE:-1} in
+        2)
+          R[INVESTIGATION_BASE_SHA]=${INVESTIGATION_BASE_SHA:-}
+          R[INVESTIGATION_TARGET_BRANCH]=${INVESTIGATION_TARGET_BRANCH:-main}
+          R[INVESTIGATION_PHASE1_MANIFEST]=${INVESTIGATION_PHASE1_MANIFEST:-}
+          render "$PROMPTS/inv-merge.md" ;;
+        3|5) render "$PROMPTS/review.md" ;;
+        *) render "$PROMPTS/inv-work.md" ;;
+      esac
+      printf '\n# TOPIC\n\n'
+      cat "$TASKS/$id/task.md"
+      printf '\n\n'
+      render "$PROMPTS/github-writing.md"
+    fi
     if [[ $mode == resume && -n ${ANSWERS_PENDING:-} ]]; then
       R[ANSWERED_ROUND]=$ANSWERS_PENDING
       R[ANSWERED_FILE]="$TASKS/$id/questions-$ANSWERS_PENDING.md"
@@ -2717,7 +2764,7 @@ build_prompt() { # id mode qfile next_round
       try checkpoint_read_failed checkpoints_latest "team-$TEAM"
     fi
     printf '\n\n---\n\n'
-    build_prompt "$id" resume "$qfile" "$next_round"
+    PROMPT_FOLLOWUP_ONLY=1 build_prompt "$id" resume "$qfile" "$next_round"
     return
   fi
   if [[ $mode == new ]]; then
@@ -2742,6 +2789,8 @@ build_prompt() { # id mode qfile next_round
       printf '\n# TASK\n\n'
     fi
     cat "$TASKS/$id/task.md"
+    printf '\n\n'
+    render "$PROMPTS/github-writing.md"
     if [[ -n ${RESUMED_FROM:-} ]]; then
       printf '\n\n'
       render "$PROMPTS/resume-checkpoint.md"
@@ -2985,6 +3034,7 @@ is_independent_investigation() {
 run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   local id=$1 mode=$2 n=$3 pf=$4 dir=$5
   local args=(-p --output-format stream-json --verbose --dangerously-skip-permissions
+              --settings '{"attribution":{"commit":"","pr":""}}'
               --mcp-config "$dir/mcp.json" --max-turns "$CLAUDE_MAX_TURNS")
   if is_independent_investigation "$id"; then
     echo '{"mcpServers":{}}' > "$dir/mcp.json"
@@ -4263,6 +4313,7 @@ start_investigation() { # request-json (status "starting") investigator-name
   if [[ $kind == review ]]; then
     {
       printf '## Review PR #%s\n\n%s\n\n' "$pr_num" "$pr_url"
+      printf '## Review instructions\n\n%s\n\n' "$(jq -r '.question // empty' <<< "$j")"
       printf '## The task the team worked on\n\n'
       if [[ -f $TASKS/$from_task/task.md ]]; then cat "$TASKS/$from_task/task.md"; else echo "—"; fi
     } > "$dir/task.md"
@@ -4431,6 +4482,8 @@ start_helper() { # request-json worker
 
 helper_finish() { # worker-task-id status text — the result goes back to the requester as a message
   local id=$1 status=$2 text=$3
+  # Remote helper results belong to the durable job, not this host's unrelated helper IDs.
+  [[ -z $(task_field "$id" JOB_ID) ]] || return 0
   local hid from
   hid=$(task_field "$id" HELPER_ID); from=$(task_field "$id" FROM_AGENT)
   [[ -n $text ]] || text="(no result — see: agent log $id)"
@@ -5201,7 +5254,7 @@ job_refusal() {
   return 0
 }
 
-# prepare_job_task job agent repo base sha task — prepares a node job's task: the agent must be free (job_refusal),
+# prepare_job_task job agent repo base sha task [assignment team member helper requester] prepares a node job's task: the agent must be free (job_refusal),
 # agentbus node-checkout resolves the repository (NODE_REPOS allow-list) and the commit, then create_task starts the
 # worktree there, as agent run does. Sets NEW_ID. On failure nothing is created, the reason is logged, returns 1.
 # The admission check runs twice: before the checkout and again under the task-ID lock before the task is created,
@@ -5248,6 +5301,7 @@ prepare_job_task() {
   fi
   if ! {
     meta_set "$NEW_ID" JOB_ID "$job" &&
+    { [[ ${10:-false} != true ]] || { meta_set "$NEW_ID" KIND helper && meta_set "$NEW_ID" HELPER_ID "$job" && meta_set "$NEW_ID" FROM_AGENT "${11:-}"; }; } &&
     { [[ -z ${7:-} ]] || meta_set "$NEW_ID" JOB_ASSIGNMENT "$7"; } &&
     { [[ -z ${LEAD_URL:-} ]] || meta_set "$NEW_ID" JOB_LEAD "$LEAD_URL"; } &&
     { [[ -z ${8:-} ]] || { meta_set "$NEW_ID" TEAM "$8" && meta_set "$NEW_ID" MEMBER "$9" && meta_set "$NEW_ID" REMOTE_TEAM 1 && meta_set "$NEW_ID" TIER "$(agent_tier "$name")"; }; }
@@ -7406,7 +7460,7 @@ node_handle_reply() {
     '.[1].jobs[$id]={assignment:$assignment,request:.[0].Request,agent:$agent,assigned_at:$at,task_id:"",branch:"",launched:false,start_acked:false,obsolete:false,pending:false,preparing:true,cursor:0} | .[1]'); node_save
   if [[ -z $agent ]]; then node_transition "$jid" failed '' 'no free local agent for assignment'; return; fi
   NODE_PREPARE_ERROR=''
-  if prepare_job_task "$jid" "$agent" "$(jq -r .Request.Repository <<< "$job")" "$(jq -r .Request.BaseRef <<< "$job")" "$(jq -r '.Request.BaseSHA // ""' <<< "$job")" "$(jq -r .Request.Task <<< "$job")" "$assignment" "$(jq -r '.Request.Team // ""' <<< "$job")" "$(jq -r '.Request.Member // ""' <<< "$job")"; then
+  if prepare_job_task "$jid" "$agent" "$(jq -r .Request.Repository <<< "$job")" "$(jq -r .Request.BaseRef <<< "$job")" "$(jq -r '.Request.BaseSHA // ""' <<< "$job")" "$(jq -r .Request.Task <<< "$job")" "$assignment" "$(jq -r '.Request.Team // ""' <<< "$job")" "$(jq -r '.Request.Member // ""' <<< "$job")" "$(jq -r '.Request.Helper // false' <<< "$job")" "$(jq -r '.Request.Requester // ""' <<< "$job")"; then
     node_bind_task "$jid" "$NEW_ID"
   else
     NODE_STATE=$(jq -c --arg id "$jid" '.jobs[$id].preparing=false' <<< "$NODE_STATE")

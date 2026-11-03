@@ -13,7 +13,7 @@ End every commit message with exactly these trailers, after a blank line:
 ```
 
 - Your worktree: `{{WORKTREE}}` (the state of the last commit of the requester's branch `{{BASE}}`)
-- The requester's worktree (READ-ONLY; it also has the requester's uncommitted changes): `{{PARENT_WORKTREE}}`
+- {{HELPER_REQUESTER_WORKTREE}}
 - Repository: `{{REPO}}`
 - Installing tools: {{PRIVILEGES}}
 
@@ -31,9 +31,10 @@ End every commit message with exactly these trailers, after a blank line:
 
 ## Questions
 
-The CLARIFICATION RULES (at the end) apply, but your "human" is the requester: send questions to
-`{{FROM_AGENT}}` (`send_message`) and wait for the answer (`wait_for_message(from="{{FROM_AGENT}}",
-timeout_seconds=120)`). If it does not answer, finish with the result `UNCLEAR: <what is missing>`.
+The CLARIFICATION RULES (at the end) apply within the assigned request.
+{{HELPER_QUESTIONS}}
+
+{{HELPER_TOOLS}}
 
 ## Result
 

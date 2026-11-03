@@ -67,7 +67,7 @@ func prepareRemoteHelper(b *Bus, id int64, instance string, repoURL ...string) (
 	}
 	// Bind the idempotency key to the local request and creation, not a mutable branch tip.
 	key := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s:%s", instance, id, h.Created, h.FromTask)))
-	req := JobRequest{ID: fmt.Sprintf("delegate-%x", key[:16]), Repository: h.Repo, BaseRef: h.Branch, BaseSHA: h.BaseSHA, Requires: h.Requires, Selector: string(TierWorker), Task: h.Request, Requester: h.From + "@" + instance, RequesterTask: h.FromTask}
+	req := JobRequest{Helper: true, ID: fmt.Sprintf("delegate-%x", key[:16]), Repository: h.Repo, BaseRef: h.Branch, BaseSHA: h.BaseSHA, Requires: h.Requires, Selector: string(TierWorker), Task: h.Request, Requester: h.From + "@" + instance, RequesterTask: h.FromTask}
 	if len(repoURL) > 0 {
 		req.RepoURL = repoURL[0]
 	}

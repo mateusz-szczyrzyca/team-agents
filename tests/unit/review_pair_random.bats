@@ -7,7 +7,7 @@ load helpers
 # pair_of pr seed — the pair start_review_pair starts for a coordinator task of that PR, among the free investigators
 # in FREE (four by default), with the draw fixed by the seed; prints "A B"
 pair_of() {
-  local id="T$1"
+  local id="T$1" draw=${AGENT_REVIEW_DRAW:-random}
   mkdir -p "$AGENTS_HOME/tasks/$id"
   printf 'ID=%s\nREPO_NAME=repo\nPR_NUMBER=%s\nPR_URL=https://github.com/o/r/pull/%s\n' "$id" "$1" "$1" \
     > "$AGENTS_HOME/tasks/$id/meta.env"
@@ -17,7 +17,7 @@ pair_of() {
     start_review_slot() { echo "$4" > "$2/$3.agent"; echo 1 > "$2/$3.inv"; }
     act() { :; }
     auto_stage() { :; }
-    AGENT_REVIEW_DRAW=${AGENT_REVIEW_DRAW:-random} AGENT_REVIEW_SEED=$2 start_review_pair "$id" > /dev/null
+    AGENT_REVIEW_DRAW=$draw AGENT_REVIEW_SEED=$2 start_review_pair "$id" > /dev/null
     d=$AGENTS_HOME/reviews/repo-$1
     echo "$(cat "$d/A.agent") $(cat "$d/B.agent")" )
 }

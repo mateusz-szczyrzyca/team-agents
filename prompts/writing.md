@@ -4,8 +4,9 @@
 PR descriptions, PR comments, reviews, reports, checkpoints and questions are read by a person scanning for the
 facts. Make the facts stand out:
 
-- **Identifiers in code format:** agent names (`codex-1`), team and task IDs, branches, file paths, commands,
-  configuration variables, error causes, test names — but commits and PRs as links (below).
+- **Identifiers in code format:** team and task IDs, branches, commands,
+  configuration variables, error causes, test names — but commits, PRs and file paths as links (below and in GitHub publication).
+  Preserve the supplied bold colored agent attributions verbatim.
 - **Numbers that matter in code format**, the unit outside: `1,727` lines (`+1,714` / `−13`) in `13` files,
   `54/54` bats tests, `0` lint findings.
 - **One item per line:** one agent, one commit, one finding, one skipped test per line — a list, not a sentence of
