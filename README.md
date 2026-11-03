@@ -645,6 +645,7 @@ Then:
 | `AGENT_REVIEW_GATE`, `AGENT_REVIEW_GATE_MIN`, `AGENT_PRECHECK_MAX` | before a `--verify`/`--autopilot` review, the command a round's head must pass (`auto`: `make gate` where the repository has it; `off`: none), its time limit in minutes (30), and how many times a round goes back for its gate or its missing tests before you decide (2) |
 | `AGENT_STAGE_POLL_SEC` | how often the gate's progress before a review is written to the coordinator's task, for the dashboard (2 seconds) |
 | `AGENT_PROMPT_ARG_MAX` | a longer prompt (bytes) reaches the agent's CLI through `.agent-prompt.md` in its working directory, kept out of git, which the CLI is asked to read: Linux takes at most 128 KiB per command-line argument, and a task's text grows with every resume (100000) |
+| `AGENT_SERENA` | the command of [Serena](https://github.com/oraios/serena) (e.g. `serena`, on `RUN_PATH`, or a full path): every run gets a `serena` MCP server for finding code — see [Serena](#serena); empty = not used (empty) |
 | `AGENT_PROMPT_CHECKPOINTS` | a prompt carries the team's (or task's) newest checkpoints only, and says in which file the earlier ones are; `0` all (2) |
 | `AGENT_FRESH_SESSION_TOKENS` | a run that read more context a step (its input divided by its tool calls, as `agent tokens --runs` shows) is not resumed: the next run starts a fresh session — the full prompt, the last report, the files changed, the team's checkpoint, then why it was woken; `0` never (80000) |
 | `AGENT_FRESH_SESSION_RATIO` | …and only when that run read more than this many times the median of the task's own session starts (its new and fresh runs) — a fresh session reads much from its start, and a fixed threshold alone sent nearly every run to a new one; `0` no such check (2) |
@@ -1199,6 +1200,26 @@ whose team is closed or unknown.
 - **Manual checks** for routing, mirrors, lead-side answers/kicks, offline recovery and remote teams
   are listed in [the human checklist](docs/multi-instance.md#manual-checklist-human-real-tailnet). Record real
   deployment results separately; these checks are not run by `make gate`.
+
+## Serena
+
+[Serena](https://github.com/oraios/serena) finds code through language servers: a file's symbols, a symbol's
+definition, the code that uses it. With `AGENT_SERENA="serena"` in `agents.conf` (Serena installed, e.g. with
+`uv tool install`, and on `RUN_PATH`) every run — solo, team, helper, investigator, reviewer, an independent
+investigator too — gets an MCP server `serena` next to `agentbus`, started as
+`serena start-mcp-server --context <client> --project <the run's worktree> --open-web-dashboard false`. The context is
+Serena's for the CLI: `claude-code` (claude), `codex` (codex, with a 120 s start-up time for the language servers),
+`antigravity` (gemini) and `ide` (opencode). The project is the run's own worktree, not a checkout Serena knows from
+elsewhere, so the agent sees its own branch. The prompt gets a short part that says to use it first and to fall back
+to the shell when it fails. Everything else comes from Serena's own configuration (`~/.serena/serena_config.yml`:
+its tools interface, dashboard, language servers).
+
+- Serena keeps a project folder `.serena/` in each worktree (its cache and memories). It is excluded from git in the
+  repository's `.git/info/exclude`, so no agent commits it.
+- Serena adds every worktree it opens to the `projects:` list of its global configuration. Remove old ones with
+  `serena project remove <path>`; nothing in team-agents reads that list.
+- A worktree is indexed when Serena first needs it (the index of your own checkout is not reused); a run's first
+  searches may be slower.
 
 ## MCP tools available to agents
 

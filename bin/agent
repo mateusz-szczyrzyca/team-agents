@@ -525,6 +525,8 @@ AGENT_GITHUB_COLORS="${AGENT_GITHUB_COLORS:-#0969DA #BC4C00 #8250DF #1B7C83 #BF3
 AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free) | rotate (every investigator in turn)
 AGENT_REVIEW_ROTATE_WAIT_MIN="${AGENT_REVIEW_ROTATE_WAIT_MIN:-20}" # how long a pair waits for a busy investigator rather than repeat a PR's pair (or, random and rotate, one of the last two)
 REVIEW_HISTORY_MAX=100   # how many review pairs $AGENTS_HOME/reviews/history keeps (the rotation reads its last ones)
+# Serena (an MCP server that finds code through language servers): its command, e.g. serena; empty = not used
+AGENT_SERENA="${AGENT_SERENA:-}"
 AGENT_PROMPT_CHECKPOINTS="${AGENT_PROMPT_CHECKPOINTS:-2}"       # a prompt's newest checkpoints (the rest: their file); 0 all
 AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}"
 AGENT_FRESH_SESSION_RATIO="${AGENT_FRESH_SESSION_RATIO:-2}"     # …and past this many times the task's own session starts (0: no such check) # a run that read more a step is followed by a fresh session (0: never)
@@ -2943,6 +2945,13 @@ peers_list() {
   local IFS=,; printf '%s' "${out[*]}" | sed 's/,/, /g'
 }
 
+# serena_note — the prompt's part on navigating code with Serena, when AGENT_SERENA is set (prompts/serena.md)
+serena_note() {
+  [[ -n $AGENT_SERENA && -f $PROMPTS/serena.md ]] || return 0
+  printf '\n'
+  render "$PROMPTS/serena.md"
+}
+
 build_prompt() { # id mode qfile next_round
   local id=$1 mode=$2 qfile=$3 next_round=$4
   declare -gA R=(
@@ -2981,6 +2990,7 @@ build_prompt() { # id mode qfile next_round
         *) render "$PROMPTS/inv-work.md" ;;
       esac
       render "$PROMPTS/writing.md"
+      serena_note
       printf '\n# TOPIC\n\n'
       cat "$TASKS/$id/task.md"
       return
@@ -3062,6 +3072,7 @@ build_prompt() { # id mode qfile next_round
     elif [[ ${KIND:-worker} != helper && -f $PROMPTS/ask-solo.md ]]; then
       render "$PROMPTS/ask-solo.md"
     fi
+    serena_note
     skip_note "$id"
     return
   fi
@@ -3283,6 +3294,44 @@ is_independent_investigation() {
   return 1
 }
 
+# serena_args cli — the arguments of Serena's MCP server for that CLI (claude, codex, gemini, opencode), a JSON array:
+# on the run's own worktree (not the checkout Serena may know from elsewhere), with Serena's context for that client
+# (which tools it leaves to the CLI), no browser opened for its dashboard
+serena_args() {
+  local ctx
+  case $1 in
+    claude) ctx=claude-code ;;
+    codex) ctx=codex ;;
+    gemini) ctx=antigravity ;;
+    *) ctx=ide ;;
+  esac
+  jq -nc --arg c "$ctx" --arg w "$WORKTREE" '["start-mcp-server", "--context", $c, "--project", $w, "--open-web-dashboard", "false"]'
+}
+
+# worktree_exclude path — that path of the worktree never committed: a line in the repository's info/exclude (shared
+# by its worktrees), added once
+worktree_exclude() {
+  local excl
+  excl="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude" || return 1
+  mkdir -p "$(dirname "$excl")"
+  if [[ ! -f $excl ]] || ! grep -qxF "$1" "$excl"; then
+    echo "$1" >> "$excl"
+  fi
+}
+
+# mcp_add_serena file cli — Serena added to that MCP file ({"mcpServers": …}, claude's and Antigravity's format) when
+# AGENT_SERENA is set; its project folder (.serena/ in the worktree) excluded from git. A failure is logged: the run
+# goes on without Serena
+mcp_add_serena() {
+  [[ -n $AGENT_SERENA ]] || return 0
+  try serena_exclude_failed worktree_exclude .serena/
+  if ! jq --arg c "$AGENT_SERENA" --argjson a "$(serena_args "$2")" '.mcpServers.serena = {command: $c, args: $a}' "$1" > "$1.tmp" \
+    || ! mv "$1.tmp" "$1"; then
+    rm -f "$1.tmp"
+    log_warn serena_config_failed "task=${RUNNER_ID:-}" "file=$1"
+  fi
+}
+
 run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   local id=$1 mode=$2 n=$3 pf=$4 dir=$5
   local args=(-p --output-format stream-json --verbose --dangerously-skip-permissions
@@ -3294,6 +3343,7 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
     jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
       '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$dir/mcp.json"
   fi
+  mcp_add_serena "$dir/mcp.json" claude
   # Claude Code's own attribution off: the commit trailers and the PR's attribution are the script's
   echo '{"includeCoAuthoredBy": false, "attribution": {"commit": "", "pr": ""}}' > "$dir/claude-settings.json"
   args+=(--settings "$dir/claude-settings.json")
@@ -3315,7 +3365,8 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
 }
 
 # codex_mcp_args task — codex's settings of the agentbus server, one a line: the server; for an independent investigator
-# the same server switched off — codex refuses a server it is told of without its command ("invalid transport")
+# the same server switched off — codex refuses a server it is told of without its command ("invalid transport"). Then
+# Serena's, when AGENT_SERENA is set
 codex_mcp_args() {
   printf '%s\n' -c "mcp_servers.agentbus.command=\"$AGENTBUS_BIN\""
   if is_independent_investigation "$1"; then
@@ -3323,6 +3374,12 @@ codex_mcp_args() {
   else
     printf '%s\n' -c "mcp_servers.agentbus.args=$(bus_args_json "$1")" -c "mcp_servers.agentbus.tool_timeout_sec=900"
   fi
+  [[ -n $AGENT_SERENA ]] || return 0
+  try serena_exclude_failed worktree_exclude .serena/
+  # Serena starts its language servers first: more than codex's default 10 s
+  printf '%s\n' -c "mcp_servers.serena.command=$(jq -nc --arg c "$AGENT_SERENA" '$c')" \
+    -c "mcp_servers.serena.args=$(serena_args codex)" -c "mcp_servers.serena.startup_timeout_sec=120" \
+    -c "mcp_servers.serena.tool_timeout_sec=300"
 }
 
 run_codex() { # id mode n prompt_file dir ; sets RC, FINAL
@@ -3364,12 +3421,8 @@ run_gemini() { # id mode n prompt_file dir ; sets RC, FINAL  (Antigravity CLI: a
     jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
       '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$WORKTREE/.agents/mcp_config.json"
   fi
-  local excl
-  excl="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
-  mkdir -p "$(dirname "$excl")"
-  if [[ ! -f $excl ]] || ! grep -qxF '.agents/mcp_config.json' "$excl"; then
-    echo '.agents/mcp_config.json' >> "$excl"
-  fi
+  worktree_exclude .agents/mcp_config.json
+  mcp_add_serena "$WORKTREE/.agents/mcp_config.json" gemini
 
   local args=(--output-format stream-json --dangerously-skip-permissions --print-timeout "$AGY_PRINT_TIMEOUT")
   if [[ -n ${MODEL:-} ]]; then args+=(--model "$MODEL"); fi
@@ -3396,10 +3449,15 @@ run_gemini() { # id mode n prompt_file dir ; sets RC, FINAL  (Antigravity CLI: a
   fi
 }
 
-opencode_config() { # id — per-run configuration (agentbus MCP + providers)
-  local indep=false
+opencode_config() { # id — per-run configuration (agentbus MCP, Serena when AGENT_SERENA is set, providers)
+  local indep=false sargs=null
   is_independent_investigation "$1" && indep=true
-  jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$1")" --arg model "${MODEL:-}" --argjson indep "$indep" '
+  if [[ -n $AGENT_SERENA ]]; then
+    sargs=$(serena_args opencode)
+    try serena_exclude_failed worktree_exclude .serena/
+  fi
+  jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$1")" --arg model "${MODEL:-}" --argjson indep "$indep" \
+    --arg serena "$AGENT_SERENA" --argjson sargs "$sargs" '
     {
       "$schema": "https://opencode.ai/config.json",
       autoupdate: false,
@@ -3416,7 +3474,8 @@ opencode_config() { # id — per-run configuration (agentbus MCP + providers)
     | ($model | split("/")) as $p
     | if ($p | length) > 1 and (.provider[$p[0]] != null)
       then .provider[$p[0]].models[($p[1:] | join("/"))] = { name: ($p[1:] | join("/")) }
-      else . end'
+      else . end
+    | if $serena != "" then .mcp.serena = { type: "local", command: ([$serena] + $sargs), enabled: true } else . end'
 }
 
 run_opencode() { # id mode n prompt_file dir ; sets RC, FINAL  (OpenRouter, DeepInfra and other API providers)
