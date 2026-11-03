@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 )
 
@@ -32,6 +34,85 @@ type Executor interface {
 // OSExecutor executes commands via the operating system using os/exec.
 type OSExecutor struct{}
 
+// streamErrorWriter tracks errors occurring during writes to an underlying io.Writer.
+type streamErrorWriter struct {
+	w   io.Writer  // underlying writer destination
+	mu  sync.Mutex // guards access to err and writes
+	err error      // first write error encountered
+}
+
+// Write writes to the underlying writer while recording any error.
+func (s *streamErrorWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n, err := s.w.Write(p)
+	if err != nil && s.err == nil {
+		s.err = err
+	}
+	return n, err
+}
+
+// error returns the recorded write error, if any.
+func (s *streamErrorWriter) error() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
+}
+
+// streamErrorReader tracks errors occurring during reads from an underlying io.Reader.
+type streamErrorReader struct {
+	r   io.Reader  // underlying reader source
+	mu  sync.Mutex // guards access to err
+	err error      // first read error encountered (excluding EOF)
+}
+
+// Read reads from the underlying reader while recording any non-EOF error.
+func (s *streamErrorReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		s.mu.Lock()
+		if s.err == nil {
+			s.err = err
+		}
+		s.mu.Unlock()
+	}
+	return n, err
+}
+
+// error returns the recorded read error, if any.
+func (s *streamErrorReader) error() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
+}
+
+// streamError collects any stream errors captured during process execution.
+func streamError(stdin *streamErrorReader, stdout, stderr *streamErrorWriter) error {
+	var errs []error
+	if stdin != nil {
+		if err := stdin.error(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if stdout != nil {
+		if err := stdout.error(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if stderr != nil && stderr != stdout {
+		if err := stderr.error(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // Execute executes the command synchronously using os/exec.
 func (OSExecutor) Execute(ctx context.Context, cmd Command) (CommandResult, *ExecuteError) {
 	if cmd.Name == "" {
@@ -45,9 +126,48 @@ func (OSExecutor) Execute(ctx context.Context, cmd Command) (CommandResult, *Exe
 	if cmd.Dir != "" {
 		c.Dir = cmd.Dir
 	}
-	c.Stdin = cmd.Stdin
-	c.Stdout = cmd.Stdout
-	c.Stderr = cmd.Stderr
+
+	var stdinTracker *streamErrorReader
+	if cmd.Stdin != nil {
+		if _, ok := cmd.Stdin.(*os.File); ok {
+			c.Stdin = cmd.Stdin
+		} else {
+			stdinTracker = &streamErrorReader{r: cmd.Stdin}
+			c.Stdin = stdinTracker
+		}
+	}
+
+	var stdoutTracker *streamErrorWriter
+	var stderrTracker *streamErrorWriter
+	if cmd.Stdout != nil && cmd.Stdout == cmd.Stderr {
+		if _, ok := cmd.Stdout.(*os.File); ok {
+			c.Stdout = cmd.Stdout
+			c.Stderr = cmd.Stderr
+		} else {
+			tracker := &streamErrorWriter{w: cmd.Stdout}
+			stdoutTracker = tracker
+			stderrTracker = tracker
+			c.Stdout = tracker
+			c.Stderr = tracker
+		}
+	} else {
+		if cmd.Stdout != nil {
+			if _, ok := cmd.Stdout.(*os.File); ok {
+				c.Stdout = cmd.Stdout
+			} else {
+				stdoutTracker = &streamErrorWriter{w: cmd.Stdout}
+				c.Stdout = stdoutTracker
+			}
+		}
+		if cmd.Stderr != nil {
+			if _, ok := cmd.Stderr.(*os.File); ok {
+				c.Stderr = cmd.Stderr
+			} else {
+				stderrTracker = &streamErrorWriter{w: cmd.Stderr}
+				c.Stderr = stderrTracker
+			}
+		}
+	}
 
 	if err := c.Start(); err != nil {
 		return CommandResult{}, fromProcess(ExecuteStart, processErr(cmd.Name, err, "failed to start %s", cmd.Name))
@@ -56,6 +176,9 @@ func (OSExecutor) Execute(ctx context.Context, cmd Command) (CommandResult, *Exe
 	err := c.Wait()
 	if ctx.Err() != nil {
 		return CommandResult{}, fromProcess(ExecuteWait, processErr(cmd.Name, ctx.Err(), "command canceled: %s", cmd.Name))
+	}
+	if streamErr := streamError(stdinTracker, stdoutTracker, stderrTracker); streamErr != nil {
+		return CommandResult{}, fromProcess(ExecuteWait, processErr(cmd.Name, streamErr, "stream I/O failed for %s", cmd.Name))
 	}
 	if err != nil {
 		var exitErr *exec.ExitError
