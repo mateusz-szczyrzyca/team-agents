@@ -60,13 +60,11 @@ on its own, never file paths, so the model must write the link; the rule says ho
 - **Not verified with the real CLIs** (AGENTS.md rule 4): whether each CLI starts the server and uses it. The
   generated configurations are covered by tests.
 
-## Open question (`questions-1.md`)
+## Question (`questions-1.md`) — answered a), done in task `20261103-173238-inv-opus`
 
-One way a PR's pair can still repeat in `main` and on this branch: when the only free investigators are exactly the
-PR's previous pair (C and D busy or out of quota), the pair waits `AGENT_REVIEW_ROTATE_WAIT_MIN` (20 min), then
-reviews again (`review_pair_repeated`). The existing test `review_pair_repeat.bats:64` requires this, so changing it
-needs your permission (rule 1). Recommended: never repeat with 3 or more investigators; wait until any of the
-others is free.
+A PR's pair could still repeat after `AGENT_REVIEW_ROTATE_WAIT_MIN` when only that pair was free. You chose a): with
+3 or more investigators it never repeats. See
+`docs/investigations/please-continue-work-on-your-task-20261103-161254-inv-opus-as-yo/inv-opus.md`.
 
 ## Not changed
 
