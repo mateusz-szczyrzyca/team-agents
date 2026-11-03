@@ -96,6 +96,17 @@ func TestHelperProcess(_ *testing.T) {
 	case "sleep":
 		time.Sleep(10 * time.Second)
 		os.Exit(0)
+	case "write-both-streams":
+		chunk := strings.Repeat("S", 8*1024)
+		for i := 0; i < 4; i++ {
+			if _, err := os.Stdout.WriteString(chunk); err != nil {
+				os.Exit(1)
+			}
+			if _, err := os.Stderr.WriteString(chunk); err != nil {
+				os.Exit(1)
+			}
+		}
+		os.Exit(0)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown helper command: %s\n", cmd)
 		os.Exit(2)
@@ -549,5 +560,58 @@ func TestFromProcessConversion(t *testing.T) {
 	}
 	if fromProcess(ExecuteStart, nil) != nil {
 		t.Fatal("nil ProcessError should convert to nil OpError")
+	}
+}
+
+// stdinErrorReader returns io.ErrUnexpectedEOF on every read.
+type stdinErrorReader struct{}
+
+func (stdinErrorReader) Read(_ []byte) (int, error) {
+	return 0, io.ErrUnexpectedEOF
+}
+
+// TestExecuteStdinErrorRetained verifies stdin errors are retained and reported in ExecuteWait.
+func TestExecuteStdinErrorRetained(t *testing.T) {
+	exec := OSExecutor{}
+	cmd := helperCmd("cat-stdin")
+	cmd.Stdin = stdinErrorReader{}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	result, err := exec.Execute(context.Background(), cmd)
+	if err == nil {
+		t.Fatalf("expected ExecuteWait error for failed stdin, got nil (exit=%d)", result.ExitCode)
+	}
+	if err.Cause != ExecuteWait {
+		t.Fatalf("expected cause ExecuteWait, got %v", err.Cause)
+	}
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("expected io.ErrUnexpectedEOF in error chain, got %v", err)
+	}
+}
+
+// TestExecuteConcurrentWriteStreams verifies concurrent writes to stdout and stderr work correctly.
+func TestExecuteConcurrentWriteStreams(t *testing.T) {
+	exec := OSExecutor{}
+	cmd := helperCmd("write-both-streams")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	result, err := exec.Execute(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", result.ExitCode)
+	}
+
+	expectedLen := 8 * 1024 * 4
+	if stdout.Len() != expectedLen {
+		t.Fatalf("expected stdout length %d, got %d", expectedLen, stdout.Len())
+	}
+	if stderr.Len() != expectedLen {
+		t.Fatalf("expected stderr length %d, got %d", expectedLen, stderr.Len())
 	}
 }
