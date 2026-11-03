@@ -110,7 +110,7 @@ func sameWriter(a, b io.Writer) bool {
 	}
 	tA := reflect.TypeOf(a)
 	tB := reflect.TypeOf(b)
-	if tA != tB || !tA.Comparable() {
+	if tA != tB || !reflect.ValueOf(a).Comparable() {
 		return false
 	}
 	return a == b
