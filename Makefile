@@ -54,13 +54,14 @@ unit-go:
 
 # The Bats tests run in parallel, BATS_JOBS at once (GNU parallel; default: the number of processors), the slowest
 # files first (tools/unit-bats.sh). A file listed in BATS_SERIAL runs one after another with the other listed ones,
-# beside the parallel group: a file that does not bear running beside others. These four failed now and then with
-# every file in parallel (32 jobs, five runs) — tests of restarts, a node's heartbeat and a lead's start, bound to
-# timings that a loaded machine misses. BATS_JOBS=1, or no GNU parallel: every file one after another. BATS_FILES
-# narrows the run (e.g. while working).
+# beside the parallel group: a file that does not bear running beside others. These failed now and then with every
+# file in parallel, on a machine loaded by 32 jobs or by the agents' own work — tests of restarts, a node's heartbeat,
+# a lead's start and a review's course, bound to timings such a machine misses. BATS_JOBS=1, or no GNU parallel: every
+# file one after another. BATS_FILES narrows the run (e.g. while working).
 BATS_JOBS ?= $(shell nproc 2>/dev/null || echo 1)
 BATS_FILES ?= $(wildcard tests/unit/*.bats)
-BATS_SERIAL ?= tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/unit/restart.bats tests/unit/wake_cmd.bats
+BATS_SERIAL ?= tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/unit/restart.bats \
+	tests/unit/review_resilience.bats tests/unit/wake_cmd.bats
 
 unit-bats:
 	BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/unit-bats.sh
