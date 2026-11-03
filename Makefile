@@ -75,7 +75,7 @@ unit-bats:
 
 # Lane B: run active/done blackbox Bats cases against the real Go binary.
 unit-agent-bats:
-	@echo "unit-agent-bats: not yet implemented (R04 in progress)"
+	BATS_JOBS="$(BATS_JOBS)" BATS_SERIAL="$(BATS_SERIAL)" bash tools/unit-agent-bats.sh
 
 # Validate the Bats-to-Go test mapping ledger and hashes.
 check-agent-parity:
