@@ -49,6 +49,8 @@ func (s *streamErrorWriter) Write(p []byte) (int, error) {
 	n, err := s.w.Write(p)
 	if err != nil && s.err == nil {
 		s.err = err
+	} else if err == nil && n < len(p) && s.err == nil {
+		s.err = io.ErrShortWrite
 	}
 	return n, err
 }
@@ -63,7 +65,7 @@ type streamErrorReader struct {
 // Read reads from the underlying reader while recording any non-EOF error.
 func (s *streamErrorReader) Read(p []byte) (int, error) {
 	n, err := s.r.Read(p)
-	if err != nil && !errors.Is(err, io.EOF) {
+	if err != nil && err != io.EOF {
 		s.mu.Lock()
 		if s.err == nil {
 			s.err = err
