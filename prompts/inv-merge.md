@@ -59,7 +59,8 @@ and open (or update) a pull request on GitHub.
      - What was taken (with links to relevant commit SHAs).
      - What was dropped and why ("duplicate of X's ...", "superseded by Y's ...").
      - Any absent or failed results, documented factually.
-   - End the PR description with this attribution block exactly:
+   - End the PR description with this attribution block exactly (never attach `"Generated with Claude Code"` or
+     `"Co-Authored-By"` lines, and link mentioned repository files as `[path]({{REPO_URL}}/blob/{{BRANCH}}/path)`):
 
 {{ATTRIBUTION_BLOCK}}
 

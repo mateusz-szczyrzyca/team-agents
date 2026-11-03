@@ -6,6 +6,139 @@
 set -euo pipefail
 shopt -u patsub_replacement 2>/dev/null || :   # bash < 5.2 has no such option (nothing to disable)
 
+# agent_color name — consistent distinct hex color for an agent or investigator across all rounds
+agent_color() {
+  case $1 in
+    gemini-1|inv-gemini-argon)    printf '#2563eb' ;;
+    claude-haiku)                 printf '#d97706' ;;
+    codex-1)                      printf '#16a34a' ;;
+    claude-sonnet)                printf '#dc2626' ;;
+    openrouter-haiku|inv-opus)    printf '#9333ea' ;;
+    openrouter-minimax|inv-astra) printf '#0891b2' ;;
+    openrouter-qwen38-flash)      printf '#db2777' ;;
+    openrouter-qwen)              printf '#4f46e5' ;;
+    openrouter-deepseek)          printf '#0d9488' ;;
+    openrouter-deepseek41|inv-kimi) printf '#ea580c' ;;
+    openrouter-luna)              printf '#65a30d' ;;
+    deepinfra-qwen)               printf '#7c3aed' ;;
+    deepinfra-glm)                printf '#ca8a04' ;;
+    deepinfra-gemma)              printf '#0284c7' ;;
+    deepinfra-nemotron)           printf '#be123c' ;;
+    deepinfra-gptoss)             printf '#15803d' ;;
+    *)
+      local palette=('#2563eb' '#d97706' '#16a34a' '#dc2626' '#9333ea' '#0891b2' '#db2777' '#4f46e5' '#0d9488' '#ea580c' '#65a30d' '#7c3aed')
+      local h
+      h=$(printf '%s' "$1" | cksum | awk '{print $1}')
+      printf '%s' "${palette[h % ${#palette[@]}]}" ;;
+  esac
+}
+
+# agent_color_name name — bold colored MathJax span for GitHub attributions and review bylines
+agent_color_name() {
+  printf '$\\color{%s}{\\textbf{%s}}$' "$(agent_color "$1")" "$1"
+}
+
+# gh_format_markdown mode repo_url ref byline — formats outgoing GitHub markdown on stdin (strips Claude Code
+# attribution, links repository paths to their GitHub file contents, and in review mode places Recommendation at the
+# top with bold green/red verdict icons and ensures the top/bottom review bylines).
+gh_format_markdown() {
+  local input
+  input=$(cat)
+  python3 -c '
+import re, sys
+
+mode, repo_url, ref, byline, text = sys.argv[1], sys.argv[2].rstrip("/"), sys.argv[3] or "main", sys.argv[4], sys.argv[5]
+
+DIRS = r"(?:agent|agentbus|bin|config|docs|examples|live|prompts|systemd|tests|tools|\.agents|\.github)"
+TOP_FILES = r"(?:Makefile|README\.md|install\.sh)"
+PATH_PAT = rf"(?:{DIRS}/[A-Za-z0-9_./-]+|{TOP_FILES})"
+LINK_RE = re.compile(rf"(?<!\[)`({PATH_PAT})`|(?<![\[`/A-Za-z0-9_.-])({PATH_PAT})(?![`/A-Za-z0-9_-])")
+
+def link_line(line):
+    if not repo_url:
+        return line
+    def repl(m):
+        token = m.group(1) or m.group(2)
+        raw = token.rstrip(".,;:)")
+        trail = token[len(raw):]
+        return f"[`{raw}`]({repo_url}/blob/{ref}/{raw}){trail}"
+    parts = re.split(r"(\[[^\]]*\]\([^)]*\)|https?://\S+)", line)
+    for idx in range(0, len(parts), 2):
+        parts[idx] = LINK_RE.sub(repl, parts[idx])
+    return "".join(parts)
+
+lines = text.splitlines()
+out_lines = []
+fence = False
+for line in lines:
+    if re.match(r"^\s*```", line):
+        fence = not fence
+        out_lines.append(line)
+        continue
+    if not fence:
+        if re.match(r"^\s*(?:🤖\s*)?Generated with \[?Claude Code\]?", line, re.I):
+            continue
+        if re.match(r"^\s*Co-Authored-By:\s*Claude\b", line, re.I):
+            continue
+        line = link_line(line)
+    out_lines.append(line)
+
+while out_lines and out_lines[-1].strip() == "":
+    out_lines.pop()
+
+body = "\n".join(out_lines)
+
+if mode == "review":
+    if byline:
+        s = body.lstrip("\n")
+        first = s.split("\n", 1)[0] if s else ""
+        if "Review by the team-agents investigator" not in first:
+            body = byline + "\n\n" + body
+        elif "\\color" in byline and first.startswith("Review by the team-agents investigator "):
+            rest = s.split("\n", 1)[1] if "\n" in s else ""
+            body = byline + ("\n" + rest if rest else "")
+        if "\\color" in byline:
+            body = re.sub(
+                r"— Review by the team-agents investigator [^\n]+$",
+                lambda _: "— " + byline,
+                body,
+            )
+
+    def format_verdict(sec):
+        sec = re.sub(
+            r"(?:✅\s*)?(?:\*\*)?[Rr]eady to merge\.?(?:\*\*)?",
+            lambda _: r"✅ $\color{green}{\textbf{Ready to merge}}$",
+            sec,
+        )
+        sec = re.sub(
+            r"(?:🔧\s*)?(?:\*\*)?[Nn]eeds (?:changes|fixes)\.?(?:\*\*)?",
+            lambda _: r"🔧 $\color{red}{\textbf{Needs changes}}$",
+            sec,
+        )
+        return sec
+
+    rec_match = re.search(
+        r"(?ms)^(#{2,3}\s+Recommendation\s*\n.*?)(?=^#{2,3}\s+|\n— Review by the team-agents investigator |\Z)",
+        body,
+    )
+    if rec_match:
+        rec_block = format_verdict(rec_match.group(1).strip())
+        before = body[:rec_match.start()]
+        after = body[rec_match.end():]
+        if re.search(r"(?m)^#{2,3}\s+", before):
+            body_wo_rec = (before.rstrip() + "\n\n" + after.lstrip()).strip()
+            top_m = re.match(r"^(Review by the team-agents investigator [^\n]+\n+)", body_wo_rec)
+            if top_m:
+                body = top_m.group(1) + rec_block + "\n\n" + body_wo_rec[top_m.end():].lstrip()
+            else:
+                body = rec_block + "\n\n" + body_wo_rec
+        else:
+            body = before + rec_block + "\n\n" + after.lstrip()
+
+sys.stdout.write(body)
+' "$1" "$2" "$3" "$4" "$input"
+}
+
 # agent as gh — the agents' gh: the runner puts a link named gh to this script first on their CLI's PATH. Text on GitHub reaches them only from the trusted
 # accounts (AGENT_GITHUB_TRUSTED_RESOLVED, set by the runner). Comments and reviews by anyone else — and the trusted
 # accounts' own that begin with "ignore this mate" (a way to check this on GitHub's real data) — are left out and
@@ -82,15 +215,16 @@ if [[ ${1:-} == api ]]; then
     esac
   done
   # an investigator's review says who wrote it at its very top too (AGENT_REVIEW_BYLINE, set for an investigation)
-  if [[ -n ${AGENT_REVIEW_BYLINE:-} && $path =~ /pulls/[0-9]+/reviews$ ]]; then
+  if [[ $path =~ /pulls/[0-9]+/reviews$ ]]; then
     for i in "${!args[@]}"; do
       [[ ${args[i]} == --input && -f ${args[i+1]:-} ]] || continue
-      first=$(jq -r '(.body // "") | ltrimstr("\n") | split("\n")[0]' "${args[i+1]}")
-      [[ $first != *"Review by the team-agents investigator"* ]] || continue
-      if jq --arg l "$AGENT_REVIEW_BYLINE" '.body = ($l + "\n\n" + (.body // ""))' "${args[i+1]}" > "${args[i+1]}.byline"; then
-        args[i+1]="${args[i+1]}.byline"
-      else
-        gh_log review_byline_failed "the byline could not be put at the top of the review" "file=${args[i+1]}"
+      if [[ -n ${AGENT_REVIEW_BYLINE:-} || -n ${AGENT_GH_REPO_URL:-} ]]; then
+        rbody=$(jq -r '.body // ""' "${args[i+1]}" | gh_format_markdown review "${AGENT_GH_REPO_URL:-}" "${AGENT_GH_REF:-main}" "${AGENT_REVIEW_BYLINE:-}")
+        if jq --arg b "$rbody" '.body = $b' "${args[i+1]}" > "${args[i+1]}.byline"; then
+          args[i+1]="${args[i+1]}.byline"
+        else
+          gh_log review_byline_failed "the byline could not be put at the top of the review" "file=${args[i+1]}"
+        fi
       fi
     done
   fi
@@ -193,6 +327,31 @@ if [[ ${1:-} == pr || ${1:-} == issue ]] && [[ ${2:-} == view || ${2:-} == diff 
     exit 0
   fi
   exec "$real" "$kind" view "${pos[@]}" "${rest[@]}"
+fi
+
+if [[ ${1:-} == pr || ${1:-} == issue ]] && [[ ${2:-} == create || ${2:-} == edit || ${2:-} == comment ]]; then
+  out_args=()
+  while (($#)); do
+    case $1 in
+      -b|--body)
+        out_args+=("$1" "$(printf '%s' "${2:-}" | gh_format_markdown pr "${AGENT_GH_REPO_URL:-}" "${AGENT_GH_REF:-main}" "")")
+        shift 2 ;;
+      --body=*)
+        out_args+=("--body=$(printf '%s' "${1#--body=}" | gh_format_markdown pr "${AGENT_GH_REPO_URL:-}" "${AGENT_GH_REF:-main}" "")")
+        shift ;;
+      -F|--body-file)
+        if [[ -f ${2:-} ]]; then
+          gh_format_markdown pr "${AGENT_GH_REPO_URL:-}" "${AGENT_GH_REF:-main}" "" < "$2" > "$2.fmt"
+          out_args+=("$1" "$2.fmt")
+        else
+          out_args+=("$1" "${2:-}")
+        fi
+        shift 2 ;;
+      *)
+        out_args+=("$1"); shift ;;
+    esac
+  done
+  exec "$real" "${out_args[@]}"
 fi
 
 exec "$real" "$@"
@@ -1070,9 +1229,15 @@ skip_note() { # id — the skipped tests of the task's repository, appended to e
   sed -E 's/^([^:]+:[0-9]+):[[:space:]]*(.*)$/- `\1`: \2/' <<< "$list"
 }
 
-agent_desc() { # agent → "`name` (type, model `model`)" for attributions
-  local model=${AGENT_MODEL[$1]:-}
-  printf '`%s` (%s%s)' "$1" "${AGENT_TYPE[$1]:-?}" "${model:+, model \`$model\`}"
+agent_desc() { # agent → colored bold name (or `name` when unmodeled) + "(type, model `model`)" for attributions
+  local type=${AGENT_TYPE[$1]:-${INVESTIGATORS_TYPE[$1]:-}}
+  local model=${AGENT_MODEL[$1]:-${INVESTIGATORS_MODEL[$1]:-}}
+  if [[ -z $type && $1 == "${AGENT:-}" ]]; then type=${TYPE:-}; model=${model:-${MODEL:-}}; fi
+  if [[ -n $model ]]; then
+    printf '%s (%s, model `%s`)' "$(agent_color_name "$1")" "${type:-?}" "$model"
+  else
+    printf '`%s` (%s)' "$1" "${type:-?}"
+  fi
 }
 
 attribution_block() { # indent — the lines that end the description of a PR: the agent, or the team, its coordinator and its members
@@ -1244,19 +1409,23 @@ agents_gh_env() {
   [[ -n $real ]] || return 1
   mkdir -p "$dir" && ln -sfn "$SELF" "$dir/gh" || return 1   # agent run as gh is the filter (agent_gh)
   export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE=""
+  export AGENT_GH_REPO_URL AGENT_GH_REF=${BRANCH:-${BASE:-main}}
+  AGENT_GH_REPO_URL=$(github_repo_url "${REPO_ROOT:-.}")
   if [[ $(task_field "${RUNNER_ID:-}" KIND 2>/dev/null) == investigation ]]; then   # its reviews say who wrote them, first
-    AGENT_REVIEW_BYLINE=$(review_byline "$RUNNER_ID")
+    AGENT_REVIEW_BYLINE=$(review_byline "$RUNNER_ID" color)
   fi
   AGENT_GITHUB_TRUSTED_RESOLVED=$(github_trusted "${REPO_ROOT:-.}")
   [[ :$PATH: == *":$dir:"* ]] || export PATH="$dir:$PATH"
 }
 
-# review_byline task — who wrote an investigator's review: its first line on GitHub (put there by the agents' gh), and
+# review_byline task [color] — who wrote an investigator's review: its first line on GitHub (put there by the agents' gh), and
 # its last (the review prompt's signature)
 review_byline() {
-  local model
+  local model name
   model=$(task_field "$1" MODEL)
-  printf 'Review by the team-agents investigator `%s` (%s%s), request #%s.' "$(task_field "$1" AGENT)" "$(task_field "$1" TYPE)" \
+  name=$(task_field "$1" AGENT)
+  if [[ -n ${2:-} ]]; then name=$(agent_color_name "$name"); else name="\`$name\`"; fi
+  printf 'Review by the team-agents investigator %s (%s%s), request #%s.' "$name" "$(task_field "$1" TYPE)" \
     "${model:+, model $model}" "$(task_field "$1" INV_ID)"
 }
 
@@ -1288,10 +1457,11 @@ trusted_prs() {
 }
 
 pr_format_issues() { # body [repo-url] — what a PR description writes against the GitHub conventions, one item per
-  # line: a commit or a PR in code format without a link (GitHub links neither inside backticks), a code block that
-  # does not name its language, RED or GREEN as plain words. Nothing inside code blocks is checked.
+  # line: a commit, PR or repository path in code format without a link, a code block that does not name its language,
+  # RED or GREEN as plain words, or a Claude Code attribution clause. Nothing inside code blocks is checked.
   local body=$1 url=${2:-https://github.com/<owner>/<repo>} line fence=0 lang rest m
   local re_sha='(^|[^[])`([0-9a-f]{7,40})`(.*)$' re_pr='(^|[^[])`#([0-9]+)`(.*)$' re_tdd='(^|[^a-zA-Z{])(\*\*)?(RED|GREEN)(\*\*)?:'
+  local re_file='(^|[^[])`((agent|agentbus|bin|config|docs|examples|live|prompts|systemd|tests|tools)/[A-Za-z0-9_./-]+)`(.*)$'
   while IFS= read -r line; do
     if [[ $line =~ ^[[:space:]]*\`\`\`(.*)$ ]]; then
       if ((fence)); then fence=0; continue; fi
@@ -1312,8 +1482,16 @@ pr_format_issues() { # body [repo-url] — what a PR description writes against 
       m=${BASH_REMATCH[2]}; rest=${BASH_REMATCH[3]}
       printf 'PR `#%s` without a link: write [#%s](%s/pull/%s)\n' "$m" "$m" "$url" "$m"
     done
+    rest=$line
+    while [[ $rest =~ $re_file ]]; do
+      m=${BASH_REMATCH[2]}; rest=${BASH_REMATCH[4]}
+      printf 'file `%s` without a link: write [`%s`](%s/blob/<branch>/%s)\n' "$m" "$m" "$url" "$m"
+    done
     if [[ $line =~ $re_tdd && $line != *'\color'* ]]; then
       printf '%s as a plain word: write $\\color{red}{\\textbf{RED}}$ and $\\color{green}{\\textbf{GREEN}}$ (bold, in colour)\n' "${BASH_REMATCH[3]}"
+    fi
+    if [[ $line == *"Generated with"* && $line == *"Claude Code"* ]]; then
+      printf 'Claude Code attribution clause: remove "Generated with Claude Code"\n'
     fi
   done <<< "$body"
 }
@@ -2672,7 +2850,7 @@ build_prompt() { # id mode qfile next_round
     [GITHUB_TRUSTED]="$(github_trusted "$REPO_ROOT")"
     [HARDWARE_FILE]="$ENV_NOTES_FILE" [PEERS]="$(peers_list)" [LANGUAGE]="$AGENT_LANGUAGE"
     [REPO_LANGUAGE]="$REPO_LANGUAGE" [COMMIT_TRAILERS]="$(commit_trailers "$id")"
-    [GIT_NAME]="${GIT_NAME_FORMAT//%a/$AGENT}" [ATTRIBUTION]="\`$AGENT\` ($TYPE${MODEL:+, model $MODEL})"
+    [GIT_NAME]="${GIT_NAME_FORMAT//%a/$AGENT}" [ATTRIBUTION]="$( [[ -n ${MODEL:-} ]] && agent_color_name "$AGENT" || printf '`%s`' "$AGENT" ) ($TYPE${MODEL:+, model $MODEL})"
     [PRIVILEGES]="$(privileges_text)" [AGENTS_MD]="$(agents_md_text)"
     [QUESTIONS_FILE]=$qfile [ROUND]=$next_round [CONSULT_MIN]=$AGENT_CONSULT_MIN
     [ROUND_LIMIT_TEXT]="$(round_limit_text "$REPO_NAME")" [ROUND_SOFT]="$(round_soft "$REPO_NAME")"
@@ -3009,6 +3187,7 @@ is_independent_investigation() {
 run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   local id=$1 mode=$2 n=$3 pf=$4 dir=$5
   local args=(-p --output-format stream-json --verbose --dangerously-skip-permissions
+              --settings '{"attribution":{"commit":"","pr":""},"includeCoAuthoredBy":false}'
               --mcp-config "$dir/mcp.json" --max-turns "$CLAUDE_MAX_TURNS")
   if is_independent_investigation "$id"; then
     echo '{"mcpServers":{}}' > "$dir/mcp.json"

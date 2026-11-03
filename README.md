@@ -319,8 +319,8 @@ logged too); and a GraphQL query for comments or reviews is refused. This keeps 
 reaching an agent; it does not hold back an agent that bypasses `gh` with its token, so limit who may comment
 (the repository's interaction limits) and what the agents' token may do (a fine-grained token for this repository).
 
-**The review rotation.** With `AGENT_REVIEW_DRAW=rotate` the two reviewers rotate through every investigator: a
-new pair is never one of the last two pairs — a PR's re-review after a fix pass included —, and among the free
+**The review rotation.** By default (`AGENT_REVIEW_DRAW=rotate`) the two reviewers rotate through every investigator: a
+new pair is never one of the last two pairs — nor the PR's own previous review pair on a re-review after a fix pass —, and among the free
 investigators it prefers those outside the last pair, then the pair that reviewed least recently (or never), then
 the investigators that reviewed least recently. With four investigators A, B, C and D: A+B, C+D, A+C, B+D, A+D, B+C.
 The history is `~/agents/reviews/history` (one pair a line, oldest first, the last 100), shared by every repository
@@ -636,7 +636,7 @@ Then:
 | `AGENT_LONG_RUN_STEPS` | a team member's run of more tool calls is asked, in every answer of its bus server, to end; it is woken again at once, in a fresh session; `0` never (120) |
 | `AGENT_LONG_RUN_HARD` | a team member's run of this many tool calls is ended by the runner — asked to end at `AGENT_LONG_RUN_STEPS`, an agent may go on —; it sleeps and is woken at once in a fresh session; `0` never (200) |
 | `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |
-| `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `random` — two different investigators drawn among the free ones; a PR's re-review after a fix pass keeps its pair —, `list` — the first two free ones of the list —, or `rotate` — every investigator in turn (see "The review rotation" under [Teams](#teams)) (random) |
+| `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `rotate` — every investigator in turn, never repeating the PR's previous pair on a second review (see "The review rotation" under [Teams](#teams)) — or `list` — the first two free ones of the list (rotate) |
 | `AGENT_REVIEW_ROTATE_WAIT_MIN` | `rotate`: how long a review pair waits for a busy investigator when only it makes a pair not among the last two, before a free pair is repeated (20 minutes) |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) — the team reports of the protocol (`.agents/reports/`) are never counted, whatever it says |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
@@ -1341,7 +1341,7 @@ make integration   # real agent CLIs and accounts (costs usage)
 ```
 
 - **Go rewrite parity tracking and ledger validation.**
-  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 490 Bats unit test cases (361 black-box, 129 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
+  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 499 Bats unit test cases (363 black-box, 136 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
   tools/check-agent-test-map.sh              # validates tests/agent-go-map.tsv and prints summary counts
   tools/check-agent-test-map.sh --quiet      # (-q) suppresses summary output, exits 0 on success or 1 on error

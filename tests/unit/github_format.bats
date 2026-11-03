@@ -104,7 +104,8 @@ CONF
   export AGENT_GITHUB_TRUSTED_RESOLVED="mateusz-szczyrzyca ms-ai-agents"
   export AGENT_GH_REPO_URL="https://github.com/o/r"
   export AGENT_GH_REF="main"
-  export AGENT_REVIEW_BYLINE="Review by the team-agents investigator $(agent_color_name inv-astra) (codex, model gpt-6-astra), request #66."
+  AGENT_REVIEW_BYLINE="Review by the team-agents investigator $(agent_color_name inv-astra) (codex, model gpt-6-astra), request #66."
+  export AGENT_REVIEW_BYLINE
 
   jq -n --arg b $'### Summary\nGood change in `agent/errors.go`.\n\n### What I verified\nRan `make gate`.\n\n### Recommendation\n**Ready to merge**\n\n— Review by the team-agents investigator `inv-astra` (codex, model gpt-6-astra), request #66.' \
     '{commit_id:"x", event:"COMMENT", body:$b, comments:[]}' > "$BATS_TEST_TMPDIR/r1.json"

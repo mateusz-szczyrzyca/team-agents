@@ -56,12 +56,18 @@ The task the team worked on is below. Check the PR's compliance with the reposit
    - **A re-review** (the request says "re-review after fix pass N"): first check each critical and major
      finding of the previous review — fixed, convincingly disputed on the PR, or still open; then the rest of
      the change only for new problems. Say per previous finding what you found.
-   - `body` — summary: overall assessment; problems grouped by severity (**critical / major / minor**); what you
-     verified and how; recommendation: **"ready to merge"** or **"needs changes"** (with a list of what to fix).
+   - `body` — begins with the byline (`Review by the team-agents investigator {{ATTRIBUTION}}, request #{{INV_ID}}.`),
+     followed **immediately at the top** by `### Recommendation` (never at the bottom):
+     - when ready to merge: `✅ $\color{green}{\textbf{Ready to merge}}$`
+     - when changes are needed: `🔧 $\color{red}{\textbf{Needs changes}}$` (with a concise list of what to fix)
+     Then `### Summary` (overall assessment), `### Problems by severity` (**critical / major / minor**), and
+     `### What I verified` (and how). Link every mentioned repository file or directory to its contents on GitHub
+     (`[path]({{REPO_URL}}/blob/{{BASE}}/path)`).
    - `comments` — remarks attached to specific lines, ONLY on lines changed in the diff (side `RIGHT`, the line
      number in the new version of the file). General remarks go into `body`.
    - The `body` begins with this line, so that readers see at once who reviewed, and ends with it again:
-     `Review by the team-agents investigator {{ATTRIBUTION}}, request #{{INV_ID}}.` (at the end after `— `)
+     `Review by the team-agents investigator {{ATTRIBUTION}}, request #{{INV_ID}}.` (at the end after `— `). Do not
+     attach `"Generated with Claude Code"` or `"Co-Authored-By"` lines.
 5. Publish: `gh api repos/{owner}/{repo}/pulls/{{PR_NUMBER}}/reviews --method POST --input review.json`
    (gh fills in `{owner}/{repo}` itself). If GitHub rejects a line comment (e.g. error 422 — a line outside
    the diff), move it into `body` and publish again. Note the review URL (`html_url` in the response).
