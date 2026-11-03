@@ -38,7 +38,7 @@ type OSExecutor struct{}
 // streamErrorWriter tracks errors occurring during writes to an underlying io.Writer.
 type streamErrorWriter struct {
 	w   io.Writer  // underlying writer destination
-	mu  sync.Mutex // guards access to err and writes
+	mu  *sync.Mutex // guards access to err and writes (may be shared across trackers)
 	err error      // first write error encountered
 }
 
@@ -144,23 +144,37 @@ func (OSExecutor) Execute(ctx context.Context, cmd Command) (CommandResult, *Exe
 
 	var stdoutTracker *streamErrorWriter
 	var stderrTracker *streamErrorWriter
+	var sharedWriteMu *sync.Mutex // shared mutex for concurrent stream access
 	if cmd.Stdout != nil && sameWriter(cmd.Stdout, cmd.Stderr) {
 		if _, ok := cmd.Stdout.(*os.File); ok {
 			c.Stdout = cmd.Stdout
 			c.Stderr = cmd.Stderr
 		} else {
-			tracker := &streamErrorWriter{w: cmd.Stdout}
+			mu := &sync.Mutex{}
+			tracker := &streamErrorWriter{w: cmd.Stdout, mu: mu}
 			stdoutTracker = tracker
 			stderrTracker = tracker
 			c.Stdout = tracker
 			c.Stderr = tracker
 		}
 	} else {
+		// When both stdout and stderr need tracking, use a shared write mutex
+		// to serialize writes even if sameWriter cannot detect they're the same.
+		if cmd.Stdout != nil && cmd.Stderr != nil {
+			if _, okOut := cmd.Stdout.(*os.File); !okOut {
+				if _, okErr := cmd.Stderr.(*os.File); !okErr {
+					sharedWriteMu = &sync.Mutex{}
+				}
+			}
+		}
 		if cmd.Stdout != nil {
 			if _, ok := cmd.Stdout.(*os.File); ok {
 				c.Stdout = cmd.Stdout
 			} else {
-				stdoutTracker = &streamErrorWriter{w: cmd.Stdout}
+				if sharedWriteMu == nil {
+					sharedWriteMu = &sync.Mutex{}
+				}
+				stdoutTracker = &streamErrorWriter{w: cmd.Stdout, mu: sharedWriteMu}
 				c.Stdout = stdoutTracker
 			}
 		}
@@ -168,7 +182,10 @@ func (OSExecutor) Execute(ctx context.Context, cmd Command) (CommandResult, *Exe
 			if _, ok := cmd.Stderr.(*os.File); ok {
 				c.Stderr = cmd.Stderr
 			} else {
-				stderrTracker = &streamErrorWriter{w: cmd.Stderr}
+				if sharedWriteMu == nil {
+					sharedWriteMu = &sync.Mutex{}
+				}
+				stderrTracker = &streamErrorWriter{w: cmd.Stderr, mu: sharedWriteMu}
 				c.Stderr = stderrTracker
 			}
 		}
