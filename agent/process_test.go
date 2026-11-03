@@ -567,3 +567,70 @@ func TestFromProcessConversion(t *testing.T) {
 		t.Fatal("nil ProcessError should convert to nil OpError")
 	}
 }
+
+// joinedEOFReader returns some data, then returns errors.Join(io.EOF, io.ErrUnexpectedEOF).
+type joinedEOFReader struct {
+	data []byte // byte data to return on the first read
+	read bool   // whether the data has already been read
+}
+
+func (r *joinedEOFReader) Read(p []byte) (int, error) {
+	if r.read {
+		return 0, errors.Join(io.EOF, io.ErrUnexpectedEOF)
+	}
+	r.read = true
+	n := copy(p, r.data)
+	return n, nil
+}
+
+// shortWriter returns fewer bytes written than requested without returning an error.
+type shortWriter struct{}
+
+func (shortWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	return len(p) - 1, nil
+}
+
+// TestExecuteStdinJoinedEOFReaderFailure verifies that a stdin reader returning a joined
+// EOF and unexpected EOF error returns ExecuteWait with the unexpected EOF error, even
+// when the child process exits with a non-zero exit code.
+func TestExecuteStdinJoinedEOFReaderFailure(t *testing.T) {
+	exec := OSExecutor{}
+
+	cmd := helperCmd("consume-stdin-exit")
+	cmd.Stdin = &joinedEOFReader{data: []byte("some input data")}
+
+	res, err := exec.Execute(context.Background(), cmd)
+	if err == nil {
+		t.Fatalf("expected error on joined EOF reader, got nil: res=%+v", res)
+	}
+	if err.Cause != ExecuteWait {
+		t.Fatalf("expected cause ExecuteWait, got %v", err.Cause)
+	}
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("expected underlying io.ErrUnexpectedEOF, got %v", err)
+	}
+}
+
+// TestExecuteStderrShortWriteFailure verifies that a stderr writer returning a short write
+// (len(p)-1, nil) returns ExecuteWait with io.ErrShortWrite, even when the child exits
+// with a non-zero exit code.
+func TestExecuteStderrShortWriteFailure(t *testing.T) {
+	exec := OSExecutor{}
+
+	cmd := helperCmd("write-stderr-exit", "diagnostic output")
+	cmd.Stderr = shortWriter{}
+
+	res, err := exec.Execute(context.Background(), cmd)
+	if err == nil {
+		t.Fatalf("expected error on short write writer, got nil: res=%+v", res)
+	}
+	if err.Cause != ExecuteWait {
+		t.Fatalf("expected cause ExecuteWait, got %v", err.Cause)
+	}
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("expected underlying io.ErrShortWrite, got %v", err)
+	}
+}
