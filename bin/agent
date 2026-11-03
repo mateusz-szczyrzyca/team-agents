@@ -371,7 +371,9 @@ AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no 
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
-AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free)
+AGENT_REVIEW_DRAW="${AGENT_REVIEW_DRAW:-random}"               # a review pair: random among the free investigators | list (the first two free) | rotate (every investigator in turn)
+AGENT_REVIEW_ROTATE_WAIT_MIN="${AGENT_REVIEW_ROTATE_WAIT_MIN:-20}" # rotate: how long a pair waits for a busy investigator rather than repeat one of the last two pairs
+REVIEW_HISTORY_MAX=100   # how many review pairs $AGENTS_HOME/reviews/history keeps (the rotation reads its last ones)
 AGENT_PROMPT_CHECKPOINTS="${AGENT_PROMPT_CHECKPOINTS:-2}"       # a prompt's newest checkpoints (the rest: their file); 0 all
 AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}"
 AGENT_FRESH_SESSION_RATIO="${AGENT_FRESH_SESSION_RATIO:-2}"     # …and past this many times the task's own session starts (0: no such check) # a run that read more a step is followed by a fresh session (0: never)
@@ -1985,6 +1987,73 @@ free_investigator_list() { # every free investigator (not working, not waiting f
   done < <(investigator_names)
 }
 
+# review_history_add a b — appends a pair that started its reviews to the review history ($AGENTS_HOME/reviews/history:
+# one pair a line, "a b" in name order, oldest first, the last REVIEW_HISTORY_MAX kept), in every AGENT_REVIEW_DRAW
+# mode, so that a switch to rotate starts from the real history; called under the dispatch lock (one writer). A
+# failure to write it is logged: the reviews have started, and the next pair is then only less well rotated.
+review_history_add() {
+  local f="$AGENTS_HOME/reviews/history"
+  mkdir -p "$AGENTS_HOME/reviews"
+  if ! { { [[ ! -f $f ]] || tail -n $((REVIEW_HISTORY_MAX - 1)) "$f"; } && review_pair_key "$1" "$2"; } > "$f.tmp.$$" \
+    || ! mv "$f.tmp.$$" "$f"; then
+    log_warn review_history_failed "pair=$1,$2"
+    rm -f "$f.tmp.$$"
+  fi
+}
+
+# review_pair_key a b — a pair as the history writes it: its two names in name order, "a b"
+review_pair_key() { if [[ $1 < $2 ]]; then printf '%s %s\n' "$1" "$2"; else printf '%s %s\n' "$2" "$1"; fi; }
+
+# review_pair_pick strict|any name... — the rotation's best pair of those investigators (given in list order), from
+# the review history: strict = never one of the last two pairs; then the fewest members of the last pair, the pair
+# used least recently (or never), its members' reviews least recent, the list's order. Prints "a b" in list order;
+# 1 = no such pair.
+review_pair_pick() {
+  local mode=$1 hist=() n i j k a b key last="" prev="" ov pl ma mb score best="" pick=""
+  shift
+  [[ ! -f $AGENTS_HOME/reviews/history ]] || mapfile -t hist < "$AGENTS_HOME/reviews/history"
+  n=${#hist[@]}
+  ((n < 1)) || last=${hist[n - 1]}
+  ((n < 2)) || prev=${hist[n - 2]}
+  for ((i = 1; i <= $#; i++)); do
+    for ((j = i + 1; j <= $#; j++)); do
+      a=${!i} b=${!j}
+      key=$(review_pair_key "$a" "$b")
+      [[ $mode != strict || ($key != "$last" && $key != "$prev") ]] || continue
+      ov=0
+      [[ " $last " != *" $a "* ]] || ov=$((ov + 1))
+      [[ " $last " != *" $b "* ]] || ov=$((ov + 1))
+      pl=0 ma=0 mb=0   # the newest line (1-based) with the pair, with each member; 0 = never
+      for ((k = 0; k < n; k++)); do
+        [[ ${hist[k]} != "$key" ]] || pl=$((k + 1))
+        [[ " ${hist[k]} " != *" $a "* ]] || ma=$((k + 1))
+        [[ " ${hist[k]} " != *" $b "* ]] || mb=$((k + 1))
+      done
+      score=$(printf '%d%05d%05d' "$ov" "$pl" $((ma + mb)))   # same width: compared as strings, the lowest wins
+      if [[ -z $best || $score < $best ]]; then best=$score; pick="$a $b"; fi
+    done
+  done
+  [[ -n $pick ]] || return 1
+  printf '%s\n' "$pick"
+}
+
+# review_pair_rotate coordinator-task free-investigator... — AGENT_REVIEW_DRAW=rotate: the next pair among the free
+# investigators, never one of the last two pairs; when only a busy investigator makes such a pair, it waits
+# (1) AGENT_REVIEW_ROTATE_WAIT_MIN from the pair's request, then takes the best free pair; with no such pair at all
+# (two investigators) the best free pair at once
+review_pair_rotate() {
+  local id=$1 all=() since
+  shift
+  review_pair_pick strict "$@" && return 0
+  mapfile -t all < <(investigator_names)
+  if review_pair_pick strict "${all[@]}" > /dev/null; then
+    since=$(task_field "$id" REVIEW_PAIR_SINCE)
+    (($(date +%s) - ${since:-0} >= AGENT_REVIEW_ROTATE_WAIT_MIN * 60)) || return 1
+  fi
+  log_warn review_pair_repeated "task=$id" "free=$*"
+  review_pair_pick any "$@"
+}
+
 start_review_pairs() { # under the dispatch lock: a pending --autopilot review pair starts once two investigators are free
   local m
   for m in "$TASKS"/*/meta.env; do
@@ -2001,15 +2070,22 @@ start_review_pairs() { # under the dispatch lock: a pending --autopilot review p
 }
 
 start_review_pair() { # coordinator task — both reviews of its PR at once, on two different free investigators drawn at
-  # random (the previous pair of this PR when free: each re-checks its own findings); 1 = not two free ones yet
+  # random (the previous pair of this PR when free: each re-checks its own findings) or, AGENT_REVIEW_DRAW=rotate, the
+  # rotation's next pair (review_pair_rotate); 1 = not two free ones yet, or the rotation waits for a busy one
   local id=$1 free=() dir a="" b="" pa="" pb="" f slot name inv j q num url
   mapfile -t free < <(free_investigator_list)
   ((${#free[@]} >= 2)) || return 1
   num=$(task_field "$id" PR_NUMBER); url=$(task_field "$id" PR_URL)
+  if [[ $AGENT_REVIEW_DRAW == rotate ]]; then   # both chosen: nothing is kept nor drawn below, only put in list order
+    f=$(review_pair_rotate "$id" "${free[@]}") || return 1
+    read -r a b <<< "$f"
+  fi
   dir="$AGENTS_HOME/reviews/$(task_field "$id" REPO_NAME)-$num"
   mkdir -p "$dir"
-  [[ ! -f $dir/A.agent ]] || pa=$(<"$dir/A.agent")
-  [[ ! -f $dir/B.agent ]] || pb=$(<"$dir/B.agent")
+  if [[ $AGENT_REVIEW_DRAW != rotate ]]; then
+    [[ ! -f $dir/A.agent ]] || pa=$(<"$dir/A.agent")
+    [[ ! -f $dir/B.agent ]] || pb=$(<"$dir/B.agent")
+  fi
   for f in "${free[@]}"; do [[ $f != "$pa" ]] || a=$f; [[ $f != "$pb" ]] || b=$f; done
   local pool=()   # the others are drawn at random among the free ones: two different investigators
   for f in "${free[@]}"; do [[ $f == "$a" || $f == "$b" ]] || pool+=("$f"); done
@@ -2034,6 +2110,7 @@ start_review_pair() { # coordinator task — both reviews of its PR at once, on 
     start_review_slot "$id" "$dir" "$slot" "$name" || return 1
   done
   rm -f "$dir/decided"   # a new pair decides anew
+  review_history_add "$a" "$b"
   meta_set "$id" REVIEW_PAIR_PENDING ""
   meta_set "$id" REVIEW_SLOT_PENDING ""
   meta_set "$id" REVIEW_PAIR "$dir"
@@ -2042,16 +2119,25 @@ start_review_pair() { # coordinator task — both reviews of its PR at once, on 
 }
 
 # start_review_slot coordinator-task pair-dir slot investigator [fresh] — one review of the pair (A or B) on that
-# investigator; a re-review after a fix pass gets its slot's previous review, unless fresh (a review done again)
+# investigator; a re-review after a fix pass gets its slot's previous review (its own, or — rotated — another
+# investigator's), unless fresh (a review done again)
 start_review_slot() {
-  local id=$1 dir=$2 slot=$3 name=$4 fresh=${5:-} num url q inv j
+  local id=$1 dir=$2 slot=$3 name=$4 fresh=${5:-} num url q inv j by=""
   num=$(task_field "$id" PR_NUMBER); url=$(task_field "$id" PR_URL)
     q="Recenzja PR #$num ($url) — one of two independent reviews: do not read other reviews or review comments on this PR before your own is published."
     if [[ -z $fresh && -s $dir/$slot.md && -n $(task_field "$id" FIX_PASS) && $(task_field "$id" FIX_PASS) != 0 ]]; then
-      q+=" Re-review after fix pass $(task_field "$id" FIX_PASS): first check whether the findings of your previous review below are fixed (or disputed convincingly on the PR), then the rest of the change only for new problems.
+      [[ ! -f $dir/$slot.agent ]] || by=$(<"$dir/$slot.agent")   # who wrote it: the slot's investigator until now
+      if [[ -z $by || $by == "$name" ]]; then
+        q+=" Re-review after fix pass $(task_field "$id" FIX_PASS): first check whether the findings of your previous review below are fixed (or disputed convincingly on the PR), then the rest of the change only for new problems.
 
 Your previous review:
 $(head -c 6000 "$dir/$slot.md")"
+      else
+        q+=" Re-review after fix pass $(task_field "$id" FIX_PASS): first check whether the findings of the previous review below, by $by, are fixed (or disputed convincingly on the PR), then the rest of the change only for new problems.
+
+The previous review, by $by:
+$(head -c 6000 "$dir/$slot.md")"
+      fi
     fi
     inv=$(bus inv-add --dir "$BUS_DIR" --queue-max "$INVESTIGATION_QUEUE_MAX" --inv-slots "$INV_SLOTS" --kind review \
             --from-agent "$(task_field "$id" AGENT)" --from-task "$id" --repo "$(task_field "$id" REPO_NAME)" \
@@ -6105,7 +6191,19 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
   supervise_member_jobs
   supervise_teams
   supervise_review_waits
-  if ((phase1_pending)); then dispatch; fi
+  if ((phase1_pending)) || review_rotation_waits; then dispatch; fi
+}
+
+# review_rotation_waits — 0 when AGENT_REVIEW_DRAW=rotate and a review pair waits: the timer's dispatch starts it once
+# its busy investigator is free or AGENT_REVIEW_ROTATE_WAIT_MIN has passed, with no run ending to dispatch it
+review_rotation_waits() {
+  [[ $AGENT_REVIEW_DRAW == rotate ]] || return 1
+  local m
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    if grep -qx 'REVIEW_PAIR_PENDING=1' "$m"; then return 0; fi
+  done
+  return 1
 }
 
 supervise_member_jobs() { # the lead: a remote member's job whose team is closed or unknown to the bus is cancelled
