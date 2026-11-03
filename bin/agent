@@ -1057,7 +1057,9 @@ pr_skipped_section() { # id → the "## Skipped tests" section of the descriptio
 }
 
 skip_note() { # id — the skipped tests of the task's repository, appended to every run's prompt (nothing if none)
-  [[ $(task_field "$1" KIND) != investigation ]] || return 0
+  local kind
+  kind=$(task_field "$1" KIND)
+  [[ $kind != investigation && $kind != helper ]] || return 0
   local wt list
   wt=$(task_field "$1" WORKTREE)
   [[ -d $wt ]] || return 0
@@ -2616,13 +2618,17 @@ commit_trailers() {
 # agents_md_text — what the prompt says about the repository instructions (AGENTS.md) in this run's worktree
 agents_md_text() {
   if [[ -f $WORKTREE/AGENTS.md ]]; then
-    cat <<'TXT'
-**Repository instructions.** Before you start, read `AGENTS.md` in the repository root and every `AGENTS.md`
+    local note="record what you learned in the repository notebook (\`notebook_append\`)."
+    if is_independent_investigation "${ID:-}"; then
+      note="record what you learned in your findings report."
+    fi
+    cat <<TXT
+**Repository instructions.** Before you start, read \`AGENTS.md\` in the repository root and every \`AGENTS.md\`
 in the directories you work in (the nearest one applies to its directory). They describe the repository, its
 conventions and how to build, lint and test it; they are binding. Where they conflict with these instructions,
-these instructions decide how you communicate with the human and the other agents, and `AGENTS.md` decides how
-the code is written and checked; if unsure, ask. Do not change any `AGENTS.md` (or `CLAUDE.md`, `GEMINI.md`)
-unless the task explicitly asks for it — record what you learned in the repository notebook (`notebook_append`).
+these instructions decide how you communicate with the human and the other agents, and \`AGENTS.md\` decides how
+the code is written and checked; if unsure, ask. Do not change any \`AGENTS.md\` (or \`CLAUDE.md\`, \`GEMINI.md\`)
+unless the task explicitly asks for it — $note
 TXT
   else
     cat <<'TXT'
@@ -2676,7 +2682,7 @@ build_prompt() { # id mode qfile next_round
     [PR_URL]=${PR_URL:-} [PR_NUMBER]=${PR_NUMBER:-}
     [RESUMED_FROM]=${RESUMED_FROM:-} [HANG_MIN]=$AGENT_HANG_MIN
   )
-  if [[ $mode != fresh ]] && is_independent_investigation "$id"; then
+  if is_independent_investigation "$id"; then
     case ${INVESTIGATION_PHASE:-1} in
       2)
         R[INVESTIGATION_BASE_SHA]=${INVESTIGATION_BASE_SHA:-}
@@ -2688,7 +2694,17 @@ build_prompt() { # id mode qfile next_round
     esac
     printf '\n# TOPIC\n\n'
     cat "$TASKS/$id/task.md"
-    if [[ $mode == resume && -n ${ANSWERS_PENDING:-} ]]; then
+    if [[ $mode == fresh ]]; then
+      printf '\n\n'
+      R[FRESH_WHY]=$FRESH_WHY
+      R[LAST_REPORT]="(none)"
+      [[ -s $TASKS/$id/final.md ]] && R[LAST_REPORT]=$(cat "$TASKS/$id/final.md")
+      local fork
+      fork=$(git -C "$WORKTREE" merge-base HEAD "${BASE:-main}" 10>&- 2>/dev/null) || fork=HEAD
+      R[CHANGED_FILES]=$(git -C "$WORKTREE" diff --stat "$fork" 10>&- 2>/dev/null | tail -n 40)
+      render "$PROMPTS/fresh-session.md"
+    fi
+    if [[ ($mode == resume || $mode == fresh) && -n ${ANSWERS_PENDING:-} ]]; then
       R[ANSWERED_ROUND]=$ANSWERS_PENDING
       R[ANSWERED_FILE]="$TASKS/$id/questions-$ANSWERS_PENDING.md"
       printf '\n\n'
@@ -2696,9 +2712,9 @@ build_prompt() { # id mode qfile next_round
       printf '\n---\n\n'
       expand_answers "$TASKS/$id/questions-$ANSWERS_PENDING.md"
     fi
-    if [[ $mode == resume && -s $TASKS/$id/note-$RUN.md ]]; then
+    if [[ ($mode == resume || $mode == fresh) && -s $TASKS/$id/note-${RUN:-0}.md ]]; then
       printf '\n---\n\n## Additional note from the human\n\n'
-      cat "$TASKS/$id/note-$RUN.md"
+      cat "$TASKS/$id/note-${RUN:-0}.md"
     fi
     return
   fi
@@ -4258,11 +4274,13 @@ start_investigation() { # request-json (status "starting") investigator-name
     maybe_resume_worker "$from_task"
     return 1
   fi
-  local kind pr_url pr_num
+  local kind pr_url pr_num question
   kind=$(jq -r '.kind // empty' <<< "$j"); pr_url=$(jq -r '.pr_url // empty' <<< "$j"); pr_num=$(jq -r '.pr_number // empty' <<< "$j")
+  question=$(jq -r '.question // empty' <<< "$j")
   if [[ $kind == review ]]; then
     {
       printf '## Review PR #%s\n\n%s\n\n' "$pr_num" "$pr_url"
+      [[ -z $question ]] || printf '%s\n\n' "$question"
       printf '## The task the team worked on\n\n'
       if [[ -f $TASKS/$from_task/task.md ]]; then cat "$TASKS/$from_task/task.md"; else echo "—"; fi
     } > "$dir/task.md"
@@ -4410,7 +4428,7 @@ start_helper() { # request-json worker
   fi
   {
     printf '## Request H%s from %s\n\n%s\n\n' "$hid" "$from" "$(jq -r .request <<< "$j")"
-    printf '## Kontekst\n\n%s\n' "$(jq -r '.context // "—"' <<< "$j")"
+    printf '## Context\n\n%s\n' "$(jq -r '.context // "—"' <<< "$j")"
   } > "$dir/task.md"
   : > "$dir/meta.env"
   local sid=""

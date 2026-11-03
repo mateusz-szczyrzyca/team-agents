@@ -1073,13 +1073,17 @@ func (s *Server) handle(line []byte) {
 		if pv == "" {
 			pv = defaultProto
 		}
+		inst := "Agent communication bus on this host. You are " + s.me +
+			". At start call list_agents and read_messages; reserve shared resources before use and release them right after."
+		if s.role != RoleInvestigator {
+			inst += " A hard problem can be handed to an investigator: request_investigation."
+		}
+		inst += " Persistent repository knowledge: notebook_read."
 		s.reply(req.ID, map[string]any{
 			"protocolVersion": pv,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]any{"name": "agentbus", "version": version},
-			"instructions": "Agent communication bus on this host. You are " + s.me +
-				". At start call list_agents and read_messages; reserve shared resources before use and release them right after." +
-				" A hard problem can be handed to an investigator: request_investigation. Persistent repository knowledge: notebook_read.",
+			"instructions":    inst,
 		})
 	case "ping":
 		s.reply(req.ID, map[string]any{})

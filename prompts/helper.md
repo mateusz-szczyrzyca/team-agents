@@ -25,7 +25,9 @@ End every commit message with exactly these trailers, after a blank line:
 2. Be economical: use the simplest tools (`ls`, `find`, `grep`, `rg`, `wc`, `head`, `jq`); do not read whole
    large files when a fragment is enough.
 3. Do not change anything in the requester's worktree. Do not commit or push unless the request says so.
-4. Do not use shared resources (devices, test hosts) unless the request says so — then `reserve`/`release`.
+4. Do not use shared resources (devices, test hosts) unless the request says so — then `reserve`/`release`. Do not
+   call `request_investigation` unless the request explicitly asks for it; on longer multi-step work, record progress
+   with `checkpoint`.
 5. Your result must be **precise and verifiable**: numbers, paths, literal excerpts, the commands used.
    Do not guess. If something cannot be established, say so.
 
