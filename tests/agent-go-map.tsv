@@ -535,3 +535,4 @@ tests/unit/github_recommendation.bats	ready to merge in green, bold, with ✅; a
 tests/unit/github_recommendation.bats	incomplete: red with 🧩	source	R12	-	planned
 tests/unit/github_recommendation.bats	a recommendation already in colour goes out as it is	source	R12	-	planned
 tests/unit/github_recommendation.bats	a PR comment is not a review: its words stay	source	R12	-	planned
+tests/unit/agents_gh_race.bats	runs setting up the agents' gh at once all succeed, and the link is the script	source	R12	-	planned
