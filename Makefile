@@ -2,7 +2,7 @@
 #   make tools   installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
 #   make lint    every static check; fails when a linter is missing (run make tools)
 #   make test    unit tests: Go (agentbus, agentlive) and bats (the agent script)
-.PHONY: gate test unit-go unit-bats lint lint-go lint-shell lint-docs tools integration build generate check-generated
+.PHONY: gate test unit-go unit-bats harness lint lint-go lint-shell lint-docs tools integration build generate check-generated
 
 # Go modules of this repository (each has its own go.mod).
 GO_MODULES := agent agentbus live tools/doccheck tools/errgen
@@ -22,6 +22,7 @@ SHELL_SCRIPTS += tests/unit/remote_control_notifications.bats
 SHELL_SCRIPTS += tests/unit/lint_shell_memory.bats tests/unit/remote_control_review.bats \
 	tests/unit/handover_failed.bats tests/unit/prompt_file.bats
 SHELL_SCRIPTS += tests/unit/review_byline.bats tests/unit/tokens.bats
+SHELL_SCRIPTS += tests/unit/review_pair_rotate.bats tests/unit/autopilot_review_cap.bats
 SHELL_SCRIPTS += tests/unit/investigation_team_cli.bats tests/unit/investigation_team_validation.bats \
 	tests/unit/investigation_team_isolation.bats tests/unit/investigation_team_opencode_schema.bats
 SHELL_SCRIPTS += tests/unit/investigation_team_runtime.bats tests/unit/investigation_team_supervision.bats \
@@ -43,15 +44,19 @@ SHELL_SCRIPTS += tests/unit/investigation_single_pipeline.bats tests/unit/invest
 SHELL_SCRIPTS += tests/unit/investigation_resume_independence.bats
 SHELL_SCRIPTS += tests/unit/investigation_independent_labels.bats
 SHELL_SCRIPTS += tests/unit/investigation_completed_legacy.bats
+SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 
-test: unit-go unit-bats
+test: unit-go unit-bats harness
 
 unit-go:
 	cd agent && go vet ./... && go test ./...
 	cd agentbus && go vet ./... && go test ./...
 	cd live && go vet ./... && go test ./...
+
+harness:
+	bats tests/harness/*.bats
 
 # The Bats tests run in parallel, BATS_JOBS at once (GNU parallel; default: the number of processors), the slowest
 # files first (tools/unit-bats.sh). A file listed in BATS_SERIAL runs one after another with the other listed ones,
@@ -62,7 +67,7 @@ unit-go:
 BATS_JOBS ?= $(shell nproc 2>/dev/null || echo 1)
 BATS_FILES ?= $(wildcard tests/unit/*.bats)
 BATS_SERIAL ?= tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/unit/restart.bats \
-	tests/unit/review_resilience.bats tests/unit/wake_cmd.bats
+	tests/unit/review_resilience.bats tests/unit/wake_cmd.bats tests/unit/autopilot_review_cap.bats
 
 unit-bats:
 	BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/unit-bats.sh
@@ -79,7 +84,7 @@ lint: check-generated lint-shell lint-go lint-docs
 
 lint-shell:
 	@command -v shellcheck >/dev/null || { echo "shellcheck is missing: run make tools"; exit 1; }
-	bash -n bin/agent install.sh tools/install-linters.sh tests/integration/run.sh
+	bash -n bin/agent install.sh tools/install-linters.sh tools/check-agent-test-map.sh tests/integration/run.sh
 	@# Release sourced ASTs between files so small hosts retain full lint coverage.
 	@lint_result=0; for script in $(SHELL_SCRIPTS); do \
 		shellcheck -S warning "$$script" || lint_result=1; \

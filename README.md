@@ -319,11 +319,23 @@ logged too); and a GraphQL query for comments or reviews is refused. This keeps 
 reaching an agent; it does not hold back an agent that bypasses `gh` with its token, so limit who may comment
 (the repository's interaction limits) and what the agents' token may do (a fine-grained token for this repository).
 
+**The review rotation.** With `AGENT_REVIEW_DRAW=rotate` the two reviewers rotate through every investigator: a
+new pair is never one of the last two pairs — a PR's re-review after a fix pass included —, and among the free
+investigators it prefers those outside the last pair, then the pair that reviewed least recently (or never), then
+the investigators that reviewed least recently. With four investigators A, B, C and D: A+B, C+D, A+C, B+D, A+D, B+C.
+The history is `~/agents/reviews/history` (one pair a line, oldest first, the last 100), shared by every repository
+and written in every mode. When only a busy investigator makes such a pair, the pair waits for it
+`AGENT_REVIEW_ROTATE_WAIT_MIN` (20) minutes, then takes the best free pair (logged as `review_pair_repeated`); with
+two investigators their pair reviews every time. A re-review by another investigator than the slot's last one gets
+that review, "by" its author, to check its findings first.
+
 **The fix loop.** When the review finds critical or major problems, the team is woken with them: the review is
 added to its task ("Fix pass 1 of 2"), it fixes them (or disputes one on the PR) and finishes again — and the PR
 is reviewed again, a re-review that first checks the previous findings. After `VERIFY_MAX_FIX_PASSES` (2) fix
 passes with critical or major problems still found, the team is not woken again: the human is mentioned on the
-PR (`AGENT_HUMAN_GITHUB`, default the GitHub owner of the repository) and notified. The review gives, for each
+PR (`AGENT_HUMAN_GITHUB`, default the GitHub owner of the repository) and notified. A round is so reviewed three
+times at most before you decide (work → review → fix → review → fix → review), with `--verify` and `--autopilot`
+alike (a review done again for want of a verdict does not count); your resume of the round starts the count anew. The review gives, for each
 problem, the simplest fix that resolves it.
 
 ### When a member drops out
@@ -624,7 +636,8 @@ Then:
 | `AGENT_LONG_RUN_STEPS` | a team member's run of more tool calls is asked, in every answer of its bus server, to end; it is woken again at once, in a fresh session; `0` never (120) |
 | `AGENT_LONG_RUN_HARD` | a team member's run of this many tool calls is ended by the runner — asked to end at `AGENT_LONG_RUN_STEPS`, an agent may go on —; it sleeps and is woken at once in a fresh session; `0` never (200) |
 | `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |
-| `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `random` — two different investigators drawn among the free ones — or `list` — the first two free ones of the list (random) |
+| `AGENT_REVIEW_DRAW` | `--autopilot`'s review pair: `random` — two different investigators drawn among the free ones; a PR's re-review after a fix pass keeps its pair —, `list` — the first two free ones of the list —, or `rotate` — every investigator in turn (see "The review rotation" under [Teams](#teams)) (random) |
+| `AGENT_REVIEW_ROTATE_WAIT_MIN` | `rotate`: how long a review pair waits for a busy investigator when only it makes a pair not among the last two, before a free pair is repeated (20 minutes) |
 | `ROUND_MAX_LINES`, `ROUND_SOFT_LINES`, `ROUND_EXCLUDE`, `ROUND_BOUNCES`, `ROUND_MAX_LINES_REPO` | the round limit: hard and soft, files not counted, how often a round goes back to be split, per-repository limits (0 = none) — see [Rounds](#rounds) — the team reports of the protocol (`.agents/reports/`) are never counted, whatever it says |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS`, `AGENT_WEB_DEVICES`, `AGENT_WEB_URL` | the web interface: its loopback address, the Tailscale logins and the tagged devices (names or `tag:…`) let in through `tailscale serve`, the URL used in notification links (see [Web interface](#web-interface)) |
 | `QUESTIONS_EDITOR`, `VSCODE_SERVER_DIRS` | open new questions files in the connected VS Code window (`vscode`, default) or not (`off`); where VS Code servers live |
@@ -1321,10 +1334,19 @@ for human contributors): architecture, conventions, checks, and what must never 
 ```bash
 make tools         # installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
 make lint          # shellcheck, gofmt, golangci-lint, staticcheck, doccheck, generated-code check
-make test          # Go unit tests (agentbus, agentlive) + bats tests of the agent script
+make test          # Go unit tests (agentbus, agentlive), bats suite, and test-map harness
+make harness       # test harness suite (tests/harness/*.bats: test map and gate checks)
 make integration   # real agent CLIs and accounts (costs usage)
 ```
 
+- **Go rewrite parity tracking and ledger validation.**
+  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 480 Bats unit test cases (359 black-box, 121 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
+  ```bash
+  tools/check-agent-test-map.sh              # validates tests/agent-go-map.tsv and prints summary counts
+  tools/check-agent-test-map.sh --quiet      # (-q) suppresses summary output, exits 0 on success or 1 on error
+  make harness                              # runs the test harness suite (tests/harness/*.bats)
+  ```
+  The validator enforces 1:1 coverage against `tests/unit/*.bats`, valid round assignments (`R01`–`R56`), and lifecycle statuses (`planned`, `active`, `done`). The harness checks repository validation after activating and completing a row in temporary ledger copies. In Round R01, all cases remain `planned` and no Go behavioral parity is claimed yet.
 - **Bats in parallel.** With GNU `parallel` installed (`apt install parallel`; once,
   `mkdir -p ~/.parallel && touch ~/.parallel/will-cite`) the Bats tests run `BATS_JOBS` at once (default: the
   number of processors); a file listed in `BATS_SERIAL` in the `Makefile` runs one after another with the other
