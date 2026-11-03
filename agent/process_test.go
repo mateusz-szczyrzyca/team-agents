@@ -593,6 +593,13 @@ func (shortWriter) Write(p []byte) (int, error) {
 	return len(p) - 1, nil
 }
 
+// overCountWriter returns more bytes written than requested without returning an error.
+type overCountWriter struct{}
+
+func (overCountWriter) Write(p []byte) (int, error) {
+	return len(p) + 1, nil
+}
+
 // TestExecuteStdinJoinedEOFReaderFailure verifies that a stdin reader returning a joined
 // EOF and unexpected EOF error returns ExecuteWait with the unexpected EOF error, even
 // when the child process exits with a non-zero exit code.
@@ -626,6 +633,27 @@ func TestExecuteStderrShortWriteFailure(t *testing.T) {
 	res, err := exec.Execute(context.Background(), cmd)
 	if err == nil {
 		t.Fatalf("expected error on short write writer, got nil: res=%+v", res)
+	}
+	if err.Cause != ExecuteWait {
+		t.Fatalf("expected cause ExecuteWait, got %v", err.Cause)
+	}
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("expected underlying io.ErrShortWrite, got %v", err)
+	}
+}
+
+// TestExecuteStderrOverCountWriteFailure verifies that a stderr writer returning an over-count
+// write (len(p)+1, nil) returns ExecuteWait with io.ErrShortWrite, even when the child exits
+// with a non-zero exit code.
+func TestExecuteStderrOverCountWriteFailure(t *testing.T) {
+	exec := OSExecutor{}
+
+	cmd := helperCmd("write-stderr-exit", "diagnostic output")
+	cmd.Stderr = overCountWriter{}
+
+	res, err := exec.Execute(context.Background(), cmd)
+	if err == nil {
+		t.Fatalf("expected error on over-count writer, got nil: res=%+v", res)
 	}
 	if err.Cause != ExecuteWait {
 		t.Fatalf("expected cause ExecuteWait, got %v", err.Cause)
