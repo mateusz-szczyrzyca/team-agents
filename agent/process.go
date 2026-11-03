@@ -37,9 +37,9 @@ type OSExecutor struct{}
 
 // streamErrorWriter tracks errors occurring during writes to an underlying io.Writer.
 type streamErrorWriter struct {
-	w   io.Writer  // underlying writer destination
+	w   io.Writer   // underlying writer destination
 	mu  *sync.Mutex // guards access to err and writes (may be shared across trackers)
-	err error      // first write error encountered
+	err error       // first write error encountered
 }
 
 // Write writes to the underlying writer while recording any error.
