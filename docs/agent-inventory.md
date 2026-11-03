@@ -256,6 +256,7 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **questions-$round.md** / **questions.md** — questions submitted to human for round `$round`.
 - **fix-pass.n** — fix-pass number (numeric index for retry cycle). Written at `bin/agent:1746` during `review_fix_pass`, read at `bin/agent:1758` in `do_fix_pass` to retrieve the retry count.
 - **fix-pass.md** — fix-pass review findings and instructions for follow-up run. Written at `bin/agent:1747` alongside fix-pass.n.
+- **note-$RUN.md** — resume notes passed to the agent CLI for run $RUN. Written at `bin/agent:5824` by runner to save member notes; read at `bin/agent:2615` and `bin/agent:2768` during prompt construction to include prior run notes in resume/fresh sessions.
 - **history.md** — accumulated history of round progress, questions, and decisions.
 - **postmerge.log** / **precheck.log** — gate check and test logs during verification.
 - **phase1.json** — manifest of accepted cohort member tasks in independent investigation.
@@ -291,7 +292,7 @@ Inter-agent messages posted via `agentbus` with typed kinds:
 
 ### 3. Structured Log Records (`logs/agent.jsonl` & `runner.log`)
 JSON objects emitted via `log_event()` with schema `{ts, level, component: "agent", event, pid, subcommand, task, ...}`.
-There are **245 distinct structured log events** in `bin/agent`: 198 direct event names emitted via `log_info`, `log_warn`, and `log_error`, plus 47 additional events emitted exclusively through `try` and `jq_soft` helper wrappers (which log warnings via `log_warn` upon command failure or JSON parse error).
+There are **246 distinct structured log events** in `bin/agent`: 199 direct event names emitted via `log_info`, `log_warn`, and `log_error` (including `review_followup_failed` at line 4494), plus 47 additional events emitted exclusively through `try` and `jq_soft` helper wrappers (which log warnings via `log_warn` upon command failure or JSON parse error).
 
 **Direct Log Events (198 names):**
 `agents_gh_missing`, `agents_md_missing`, `answers_incomplete`, `answers_resume_failed`, `answers_saved`, `answers_sent`,
