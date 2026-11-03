@@ -64,7 +64,7 @@ Internal entry points and callbacks dispatched by `main()`:
 
 ## Function Families
 
-All 318 bash functions declared in `bin/agent` grouped by operational domain with source line anchors and planned round ownership:
+All 319 unique bash functions declared in `bin/agent` (320 total declarations including 1 duplicate `check`) grouped by operational domain with source line anchors and planned round ownership:
 
 - **GitHub CLI Filter (`agent as gh`) [R10, R11, R12]:** `agent_gh` (16), `gh_log` (25), `gh_report` (44), `gh_filter` (57), `gh_show` (69), `count_of` (1182), `findings_count` (1191), `agents_gh_env` (1236), `review_byline` (1252), `github_trusted` (1261), `trusted_prs` (1272), `pr_format_issues` (1286), `merge_blockers` (1317), `github_repo_url` (1159), `github_owner` (1176).
 - **Structured Logging, Side Effects & Error Handling [R08]:** `log_event` (221), `log_info` (251), `log_warn` (252), `log_error` (253), `try` (258), `jq_soft` (272), `die` (284), `act` (2795), `last_event` (2802), `render_log` (5898).
