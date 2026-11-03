@@ -591,13 +591,14 @@ func TestExecuteStdinErrorRetained(t *testing.T) {
 	}
 }
 
-// TestExecuteConcurrentWriteStreams verifies concurrent writes to stdout and stderr work correctly.
-func TestExecuteConcurrentWriteStreams(t *testing.T) {
+// TestExecuteSharedStdoutStderrRaceRegression verifies concurrent writes to stdout and stderr
+// work correctly under -race when shared to the same buffer.
+func TestExecuteSharedStdoutStderrRaceRegression(t *testing.T) {
 	exec := OSExecutor{}
 	cmd := helperCmd("write-both-streams")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	var shared bytes.Buffer
+	cmd.Stdout = &shared
+	cmd.Stderr = &shared
 
 	result, err := exec.Execute(context.Background(), cmd)
 	if err != nil {
@@ -607,11 +608,9 @@ func TestExecuteConcurrentWriteStreams(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d", result.ExitCode)
 	}
 
-	expectedLen := 8 * 1024 * 4
-	if stdout.Len() != expectedLen {
-		t.Fatalf("expected stdout length %d, got %d", expectedLen, stdout.Len())
-	}
-	if stderr.Len() != expectedLen {
-		t.Fatalf("expected stderr length %d, got %d", expectedLen, stderr.Len())
+	// Expect 4 iterations * (8KB stdout + 8KB stderr) = 64KB total
+	expectedLen := 4 * (8*1024 + 8*1024)
+	if shared.Len() != expectedLen {
+		t.Fatalf("expected shared buffer length %d, got %d", expectedLen, shared.Len())
 	}
 }
