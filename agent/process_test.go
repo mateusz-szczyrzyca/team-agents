@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -75,12 +74,14 @@ func TestHelperProcess(_ *testing.T) {
 	case "write-stderr":
 		fmt.Fprint(os.Stderr, args[1])
 		os.Exit(0)
+	case "write-stderr-exit":
+		fmt.Fprint(os.Stderr, args[1])
+		os.Exit(1)
 	case "large-output":
-		signal.Ignore(syscall.SIGPIPE)
 		chunk := strings.Repeat("A", 64*1024)
 		for i := 0; i < 16; i++ { // 1 MB total
 			if _, err := os.Stdout.WriteString(chunk); err != nil {
-				break
+				os.Exit(1)
 			}
 		}
 		os.Exit(0)
@@ -431,6 +432,33 @@ func TestExecuteWriterFailure(t *testing.T) {
 	}
 	if !errors.Is(err, ErrProcess) {
 		t.Fatalf("expected ErrProcess, got %v", err)
+	}
+	if !errors.Is(err, writerErr) {
+		t.Fatalf("expected underlying writer error, got %v", err)
+	}
+}
+
+// TestExecuteStderrWriterFailure tests that a failing stderr writer returns ExecuteWait
+// even when the child exits unsuccessfully.
+func TestExecuteStderrWriterFailure(t *testing.T) {
+	exec := OSExecutor{}
+
+	writerErr := errors.New("broken stderr pipe")
+	cmd := helperCmd("write-stderr-exit", "diagnostic output")
+	cmd.Stderr = failWriter{err: writerErr}
+
+	res, err := exec.Execute(context.Background(), cmd)
+	if err == nil {
+		t.Fatalf("expected error on failing stderr writer, got nil: res=%+v", res)
+	}
+	if err.Cause != ExecuteWait {
+		t.Fatalf("expected cause ExecuteWait, got %v", err.Cause)
+	}
+	if !errors.Is(err, ErrProcess) {
+		t.Fatalf("expected ErrProcess, got %v", err)
+	}
+	if !errors.Is(err, writerErr) {
+		t.Fatalf("expected underlying writer error, got %v", err)
 	}
 }
 
