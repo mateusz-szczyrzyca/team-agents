@@ -1364,11 +1364,9 @@ make harness       # test harness suite (tests/harness/*.bats: test map and gate
 make integration   # real agent CLIs and accounts (costs usage)
 ```
 
-- **Go candidate boundaries (R03).** The Go application (`agent/`) owns injected executor,
-  clock and concurrency-safe random boundaries; unconfigured execution is denied.
-  Subprocess execution covers argv, environment, working directory, stream error retention
-  (prioritized over exit codes as `ExecuteWait`), cancellation, and shared stream serialization.
-  Watchdog pipelines and descendant supervision belong to later rounds.
+- **Go candidate boundaries (R03).** The Go application (`agent/`) owns injected executor, clock and
+  random boundaries; unconfigured execution is denied. Subprocess execution covers argv, env, dir,
+  stream error retention (`ExecuteWait`), cancellation, and serialized shared output streams.
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 520 Bats unit test cases (361 black-box, 159 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
