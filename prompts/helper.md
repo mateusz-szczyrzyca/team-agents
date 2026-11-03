@@ -28,6 +28,8 @@ End every commit message with exactly these trailers, after a blank line:
 4. Do not use shared resources (devices, test hosts) unless the request says so — then `reserve`/`release`.
 5. Your result must be **precise and verifiable**: numbers, paths, literal excerpts, the commands used.
    Do not guess. If something cannot be established, say so.
+6. Your bus tools include `request_investigation` and `checkpoint`: a request needs neither. If it cannot be done
+   without an investigator, finish with `UNCLEAR: <what is missing>` — the requester decides.
 
 ## Questions
 

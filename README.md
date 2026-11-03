@@ -242,7 +242,12 @@ See the [investigation-team design](docs/investigation-teams.md) for details, in
 With `--verify` the coordinator's DONE is checked first (PR exists and is not a draft, everything is pushed,
 members' branches are merged); if something is missing the coordinator is sent back once with the list. Then an
 investigator reviews the PR and publishes a GitHub review (as a comment — GitHub does not let an author approve
-their own PR), and you get a notification with the recommendation.
+their own PR), and you get a notification with the recommendation. The review begins with it, right after the
+byline: `## Recommendation` with ✅ **Ready to merge** in green, or 🔧 **Needs changes** (🧩 when incomplete) in red
+and the list of what to fix — the icons of the notifications. The reviewer gets its request as it was made (one of
+two independent reviews; a re-review after a fix pass, with the previous review) and the rules for writing on
+GitHub, as every run that writes there does (an independent investigator's too): commits, PRs **and files** are
+links — a file to its blob at a pushed commit, `…/blob/<SHA>/path#L42`.
 
 **Before the review.** The round goes to review only when its head passes two checks, run in their own unit once
 the team's members have settled: a change of code adds tests (new test cases; a round with documentation only is
@@ -396,7 +401,8 @@ PR each:
   rounds and asks you to approve the plan. After each round `main` stays green: unfinished work is dead code or a
   stub. No test is written ahead of its round: a skipped test is an exception with a reason outside the code
   (a missing tool or device), listed in the PR description's `## Skipped tests` section (`docs/tdd.md`). Every
-  run's prompt lists the repository's skipped tests, so they get filled.
+  run's prompt lists the repository's skipped tests, so they get filled — except an investigator's and a helper's,
+  which do exactly what they were asked.
 - A round ends with `STATUS: ROUND_DONE N/M`. If its change is over the limit, or it adds a skipped test the
   PR does not list under `## Skipped tests`, it goes back to the agent to be split (at most `ROUND_BOUNCES` times, default 2; then it closes with a
   warning in the notification).
@@ -723,7 +729,9 @@ whatever credentials the agents find. To keep all of it off your account, create
 You review and merge as yourself. (The investigator's reviews come from the same account that opened the PR, so
 they stay comments — GitHub does not let an account approve its own PR.)
 
-Every commit message also ends with trailers, and pull requests and reviews end with a signature line:
+Claude Code runs with its own attribution off (`--settings`: no `Co-Authored-By: Claude`, no "Generated with Claude
+Code"), and the agents' `gh` leaves such a line out of what it publishes: a commit ends with the trailers below,
+a PR with the attribution block. Every commit message also ends with trailers, and pull requests and reviews end with a signature line:
 
 ```
 Fix debounce of the button on GPIO 15

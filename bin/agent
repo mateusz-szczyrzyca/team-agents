@@ -99,13 +99,28 @@ gh_colour_names() {
   printf '%s' "${out%$'\n'}"
 }
 
-# colour_json_body file — a copy of that JSON request file (file.names) with its body's names coloured
-# (gh_colour_names); prints the file to send: the copy, or the file itself when nothing changed or it is no JSON
+# gh_publish_text text — the text as the agents publish it on GitHub: without Claude Code's own "Generated with
+# Claude Code" line (and the blank line after it) — the attribution is the script's —, the names coloured
+# (gh_colour_names)
+gh_publish_text() {
+  local line out="" drop=0
+  local re='^[[:space:]]*(🤖[[:space:]]*)?Generated with \[?Claude Code\]?(\([^)]*\))?[[:space:]]*$'
+  while IFS= read -r line; do
+    if [[ $line =~ $re ]]; then drop=1; continue; fi
+    if ((drop)) && [[ -z ${line//[[:space:]]/} ]]; then drop=0; continue; fi
+    drop=0
+    out+=$line$'\n'
+  done <<< "$1"
+  gh_colour_names "${out%$'\n'}"
+}
+
+# colour_json_body file — a copy of that JSON request file (file.names) with its body as published
+# (gh_publish_text); prints the file to send: the copy, or the file itself when nothing changed or it is no JSON
 colour_json_body() {
   local body new
   if ! body=$(jq -er '(.body // empty) + "."' "$1" 2>/dev/null); then printf '%s' "$1"; return 0; fi   # no body
   body=${body%.}
-  new=$(gh_colour_names "$body"; printf .); new=${new%.}
+  new=$(gh_publish_text "$body"; printf .); new=${new%.}
   if [[ $new != "$body" ]] && jq --arg b "$new" '.body = $b' "$1" > "$1.names"; then printf '%s' "$1.names"; return 0; fi
   printf '%s' "$1"
 }
@@ -200,18 +215,18 @@ if [[ ${1:-} == pr || ${1:-} == issue ]] && [[ ${2:-} == list ]]; then   # the l
   exit 0
 fi
 
-if [[ ${1:-} == pr || ${1:-} == issue ]] && [[ ${2:-} == create || ${2:-} == edit || ${2:-} == comment ]] \
-   && [[ -n ${AGENT_GITHUB_NAME_COLORS:-} ]]; then   # a text the agents publish: the names coloured (gh_colour_names)
+if [[ ${1:-} == pr || ${1:-} == issue ]] && [[ ${2:-} == create || ${2:-} == edit || ${2:-} == comment ]]; then
+  # a text the agents publish: as gh_publish_text makes it
   args=("$@") tmp=""
   for i in "${!args[@]}"; do
     case ${args[i]} in
-      --body|-b) args[i+1]=$(gh_colour_names "${args[i+1]:-}") ;;
-      --body=*) args[i]="--body=$(gh_colour_names "${args[i]#--body=}")" ;;
+      --body|-b) args[i+1]=$(gh_publish_text "${args[i+1]:-}") ;;
+      --body=*) args[i]="--body=$(gh_publish_text "${args[i]#--body=}")" ;;
       --body-file|-F)
         [[ -z $tmp ]] || continue
         tmp=$(mktemp) || { gh_log github_names_failed "the names could not be coloured: no temporary file"; break; }
         if [[ ${args[i+1]:-} == - ]]; then text=$(cat && printf .); else text=$(cat -- "${args[i+1]:-}" && printf .); fi
-        if [[ $text != *. ]] || ! gh_colour_names "${text%.}" > "$tmp"; then   # unreadable: gh says so itself
+        if [[ $text != *. ]] || ! gh_publish_text "${text%.}" > "$tmp"; then   # unreadable: gh says so itself
           rm -f "$tmp"; tmp=""; continue
         fi
         args[i+1]=$tmp ;;
@@ -1133,8 +1148,9 @@ pr_skipped_section() { # id → the "## Skipped tests" section of the descriptio
   awk '/^#+[[:space:]]*Skipped tests/ { on = 1; next } on && /^#+[[:space:]]/ { on = 0 } on { print }' <<< "$body"
 }
 
-skip_note() { # id — the skipped tests of the task's repository, appended to every run's prompt (nothing if none)
-  [[ $(task_field "$1" KIND) != investigation ]] || return 0
+skip_note() { # id — the skipped tests of the task's repository, appended to every run's prompt (nothing if none; not
+  # for investigators and helpers)
+  case $(task_field "$1" KIND) in investigation|helper) return 0 ;; esac   # a helper does exactly what was asked
   local wt list
   wt=$(task_field "$1" WORKTREE)
   [[ -d $wt ]] || return 0
@@ -2750,7 +2766,8 @@ in the directories you work in (the nearest one applies to its directory). They 
 conventions and how to build, lint and test it; they are binding. Where they conflict with these instructions,
 these instructions decide how you communicate with the human and the other agents, and `AGENTS.md` decides how
 the code is written and checked; if unsure, ask. Do not change any `AGENTS.md` (or `CLAUDE.md`, `GEMINI.md`)
-unless the task explicitly asks for it — record what you learned in the repository notebook (`notebook_append`).
+unless the task explicitly asks for it — record what you learned in the repository notebook (`notebook_append`;
+without the agentbus tools: in your report).
 TXT
   else
     cat <<'TXT'
@@ -2805,29 +2822,36 @@ build_prompt() { # id mode qfile next_round
     [RESUMED_FROM]=${RESUMED_FROM:-} [HANG_MIN]=$AGENT_HANG_MIN
   )
   if [[ $mode != fresh ]] && is_independent_investigation "$id"; then
-    case ${INVESTIGATION_PHASE:-1} in
-      2)
-        R[INVESTIGATION_BASE_SHA]=${INVESTIGATION_BASE_SHA:-}
-        R[INVESTIGATION_TARGET_BRANCH]=${INVESTIGATION_TARGET_BRANCH:-main}
-        R[INVESTIGATION_PHASE1_MANIFEST]=${INVESTIGATION_PHASE1_MANIFEST:-}
-        render "$PROMPTS/inv-merge.md" ;;
-      3|5) render "$PROMPTS/review.md" ;;
-      *) render "$PROMPTS/inv-work.md" ;;
-    esac
-    printf '\n# TOPIC\n\n'
-    cat "$TASKS/$id/task.md"
-    if [[ $mode == resume && -n ${ANSWERS_PENDING:-} ]]; then
+    if [[ $mode == new ]]; then   # a later run's session has this already: it gets only what is new
+      case ${INVESTIGATION_PHASE:-1} in
+        2)
+          R[INVESTIGATION_BASE_SHA]=${INVESTIGATION_BASE_SHA:-}
+          R[INVESTIGATION_TARGET_BRANCH]=${INVESTIGATION_TARGET_BRANCH:-main}
+          R[INVESTIGATION_PHASE1_MANIFEST]=${INVESTIGATION_PHASE1_MANIFEST:-}
+          render "$PROMPTS/inv-merge.md" ;;
+        3|5) render "$PROMPTS/review.md" ;;
+        *) render "$PROMPTS/inv-work.md" ;;
+      esac
+      render "$PROMPTS/writing.md"
+      printf '\n# TOPIC\n\n'
+      cat "$TASKS/$id/task.md"
+      return
+    fi
+    local said=0
+    if [[ -n ${ANSWERS_PENDING:-} ]]; then
       R[ANSWERED_ROUND]=$ANSWERS_PENDING
       R[ANSWERED_FILE]="$TASKS/$id/questions-$ANSWERS_PENDING.md"
-      printf '\n\n'
       render "$PROMPTS/inv-resume.md"
       printf '\n---\n\n'
       expand_answers "$TASKS/$id/questions-$ANSWERS_PENDING.md"
+      said=1
     fi
-    if [[ $mode == resume && -s $TASKS/$id/note-$RUN.md ]]; then
+    if [[ -s $TASKS/$id/note-$RUN.md ]]; then
       printf '\n---\n\n## Additional note from the human\n\n'
       cat "$TASKS/$id/note-$RUN.md"
+      said=1
     fi
+    ((said)) || printf 'Continue task %s following the rules from the first message of this session.\n' "$id"
     return
   fi
   if [[ $mode == fresh ]]; then   # a fresh session: the new run's prompt, the handoff, then why it was woken
@@ -2851,6 +2875,7 @@ build_prompt() { # id mode qfile next_round
   if [[ $mode == new ]]; then
     if [[ ${KIND:-worker} == investigation && ${REVIEW:-} == 1 ]]; then
       render "$PROMPTS/review.md"
+      render "$PROMPTS/writing.md"
       printf '\n# PR REVIEW REQUEST #%s\n\n' "$PR_NUMBER"
     elif [[ ${KIND:-worker} == investigation ]]; then
       render "$PROMPTS/investigator.md"
@@ -3121,6 +3146,9 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
     jq -n --arg cmd "$AGENTBUS_BIN" --argjson args "$(bus_args_json "$id")" \
       '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$dir/mcp.json"
   fi
+  # Claude Code's own attribution off: the commit trailers and the PR's attribution are the script's
+  echo '{"includeCoAuthoredBy": false, "attribution": {"commit": "", "pr": ""}}' > "$dir/claude-settings.json"
+  args+=(--settings "$dir/claude-settings.json")
   if [[ -n ${MODEL:-} ]]; then args+=(--model "$MODEL"); fi
   if [[ $mode == new ]]; then args+=(--session-id "$SESSION_ID"); else args+=(--resume "$SESSION_ID"); fi
   local extra=(); read -ra extra <<< "${EXTRA_ARGS:-}"
@@ -4366,8 +4394,23 @@ dispatch() { # starts queued requests on free investigators
   )
 }
 
-# investigation_task_text job-json from-task from-agent — the task.md of an investigation or a review (not yet)
-investigation_task_text() { :; }
+# investigation_task_text job-json from-task from-agent — the task.md of an investigation or a review: a review gets
+# its PR, its request when it says more than "Review PR #N (url)" (one of two independent reviews, a re-review after
+# a fix pass with the previous review) and the team's task; an investigation its question and context
+investigation_task_text() {
+  local j=$1 from_task=$2 from_agent=$3 pr_url pr_num q
+  if [[ $(jq -r '.kind // empty' <<< "$j") == review ]]; then
+    pr_url=$(jq -r '.pr_url // empty' <<< "$j"); pr_num=$(jq -r '.pr_number // empty' <<< "$j")
+    q=$(jq -r '.question // empty' <<< "$j")
+    printf '## Review PR #%s\n\n%s\n\n' "$pr_num" "$pr_url"
+    if [[ -n $q && $q != "Review PR #$pr_num ($pr_url)" ]]; then printf '## The request\n\n%s\n\n' "$q"; fi
+    printf '## The task the team worked on\n\n'
+    if [[ -f $TASKS/$from_task/task.md ]]; then cat "$TASKS/$from_task/task.md"; else echo "—"; fi
+    return 0
+  fi
+  printf '## Question from %s\n\n%s\n\n' "$from_agent" "$(jq -r .question <<< "$j")"
+  printf '## Context from the agent\n\n%s\n' "$(jq -r '.context // "—"' <<< "$j")"
+}
 
 start_investigation() { # request-json (status "starting") investigator-name
   local j=$1 iname=$2 inv_id from_task from_agent
@@ -4391,18 +4434,7 @@ start_investigation() { # request-json (status "starting") investigator-name
   fi
   local kind pr_url pr_num
   kind=$(jq -r '.kind // empty' <<< "$j"); pr_url=$(jq -r '.pr_url // empty' <<< "$j"); pr_num=$(jq -r '.pr_number // empty' <<< "$j")
-  if [[ $kind == review ]]; then
-    {
-      printf '## Review PR #%s\n\n%s\n\n' "$pr_num" "$pr_url"
-      printf '## The task the team worked on\n\n'
-      if [[ -f $TASKS/$from_task/task.md ]]; then cat "$TASKS/$from_task/task.md"; else echo "—"; fi
-    } > "$dir/task.md"
-  else
-    {
-      printf '## Question from %s\n\n%s\n\n' "$from_agent" "$(jq -r .question <<< "$j")"
-      printf '## Context from the agent\n\n%s\n' "$(jq -r '.context // "—"' <<< "$j")"
-    } > "$dir/task.md"
-  fi
+  investigation_task_text "$j" "$from_task" "$from_agent" > "$dir/task.md"
   : > "$dir/meta.env"
   local sid=""
   [[ ${INVESTIGATORS_TYPE[$iname]} == claude ]] && sid=$(cat /proc/sys/kernel/random/uuid)
