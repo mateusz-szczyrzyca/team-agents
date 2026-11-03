@@ -111,9 +111,11 @@ stage_repository() {
   done
 }
 
-# escape_regex str — escapes regular expression metacharacters for Bats --filter
+# escape_regex str — escapes all extended-regex metacharacters for Bats --filter exact anchored matching
 escape_regex() {
-  printf '%s\n' "$1" | sed -e 's/[][()+*^$?.\]/\\&/g'
+  printf '%s\n' "$1" | sed -e 's/\\/\\\\/g' -e 's/|/\\|/g' -e 's/{/\\{/g' -e 's/}/\\}/g' \
+    -e 's/(/\\(/g' -e 's/)/\\)/g' -e 's/+/\\+/g' -e 's/*/\\*/g' -e 's/\^/\\^/g' \
+    -e 's/\$/\\$/g' -e 's/?/\\?/g' -e 's/\./\\./g' -e 's/\[/\\[/g' -e 's/\]/\\]/g'
 }
 
 # compute_map_hash — calculates sha256 of the map file

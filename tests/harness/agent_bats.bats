@@ -340,7 +340,7 @@ EOF
   [[ "$output" =~ "executed count" ]]
 }
 
-@test "agent-bats exact filter rejects regex alternation in test names" {
+@test "agent-bats exact filter handles regex metacharacters in test names" {
   local mock_repo="$BATS_TEST_TMPDIR/mock_repo_regex_filter"
   mkdir -p "$mock_repo/tests/unit" "$mock_repo/build" "$mock_repo/tools"
   cp "$TOOL" "$mock_repo/tools/"
@@ -368,5 +368,5 @@ EOF
 
   run "$mock_repo/tools/agent-bats.sh" --repo-root "$mock_repo"
   [ "$status" -ne 0 ]
-  [[ "$output" =~ "executed count" ]]
+  [[ "$output" =~ "foo|bar" ]]
 }
