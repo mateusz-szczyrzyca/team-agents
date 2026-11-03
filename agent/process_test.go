@@ -432,6 +432,32 @@ func TestExecuteWriterFailure(t *testing.T) {
 	}
 }
 
+// sliceWriter implements io.Writer directly on a non-comparable slice type.
+type sliceWriter []string
+
+func (s sliceWriter) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+// TestExecuteNonComparableWriter tests that non-comparable io.Writer implementations
+// (such as slice types) do not cause a runtime panic during equality checks.
+func TestExecuteNonComparableWriter(t *testing.T) {
+	exec := OSExecutor{}
+
+	sw := sliceWriter{"seed"}
+	cmd := helperCmd("echo-args", "noncomparable", "output")
+	cmd.Stdout = sw
+	cmd.Stderr = sw
+
+	res, err := exec.Execute(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", res.ExitCode)
+	}
+}
+
 // TestExecuteSharedStdoutStderr tests that using the same writer for stdout and stderr
 // works safely without race or corruption.
 func TestExecuteSharedStdoutStderr(t *testing.T) {
