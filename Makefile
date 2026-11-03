@@ -1,7 +1,7 @@
 # Developer tasks. Before every commit: `make lint test` (see AGENTS.md).
 #   make tools   installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
 #   make lint    every static check; fails when a linter is missing (run make tools)
-#   make test    unit tests: Go (agentbus, agentlive) and bats (the agent script)
+#   make test    unit tests: Go (agent, agentbus, agentlive) and bats (the agent script)
 .PHONY: gate test unit-go unit-bats harness lint lint-go lint-shell lint-docs tools integration build generate check-generated build-agent
 
 # Go modules of this repository (each has its own go.mod).
@@ -113,17 +113,15 @@ build: build-agent
 	cd agentbus && go build -o ../build/agentbus .
 	cd live && go build -o ../build/agentlive .
 
-# Regenerates agentbus/errors_gen.go from agentbus/errors.json.
+# Regenerates errors_gen.go from errors.json for agentbus and agent modules.
 generate:
 	cd agentbus && go generate ./...
-	@if [ -f agent/errors.json ]; then (cd agent && go generate ./...); fi
+	cd agent && go generate ./...
 
 # Fails when errors_gen.go is out of date with errors.json.
 check-generated:
 	mkdir -p build
 	cd tools/errgen && go run . -spec ../../agentbus/errors.json -out ../../build/errors_gen.go
 	cmp -s build/errors_gen.go agentbus/errors_gen.go || { echo "agentbus/errors_gen.go is out of date: run make generate"; exit 1; }
-	@if [ -f agent/errors.json ] && [ -f agent/errors_gen.go ]; then \
-		(cd tools/errgen && go run . -spec ../../agent/errors.json -out ../../build/agent_errors_gen.go) && \
-		cmp -s build/agent_errors_gen.go agent/errors_gen.go || { echo "agent/errors_gen.go is out of date: run make generate"; exit 1; }; \
-	fi
+	cd tools/errgen && go run . -spec ../../agent/errors.json -out ../../build/agent_errors_gen.go
+	cmp -s build/agent_errors_gen.go agent/errors_gen.go || { echo "agent/errors_gen.go is out of date: run make generate"; exit 1; }
