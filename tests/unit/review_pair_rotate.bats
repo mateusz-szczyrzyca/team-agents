@@ -14,15 +14,14 @@ pair_of() {
   printf 'ID=%s\nREPO_NAME=repo\nPR_NUMBER=%s\nPR_URL=https://github.com/o/r/pull/%s\nREVIEW_PAIR_SINCE=%s\n' \
     "$id" "$1" "$1" "${SINCE:-$(date +%s)}" > "$AGENTS_HOME/tasks/$id/meta.env"
   ( source "$REPO_ROOT/bin/agent"
-    AGENT_REVIEW_DRAW=rotate
     # shellcheck disable=SC2086  # FREE and ALL are lists of names
     free_investigator_list() { printf '%s\n' ${FREE:-inv-a inv-b inv-c inv-d}; }
-    # shellcheck disable=SC2086
+    # shellcheck disable=SC2086  # ALL and FREE are lists of names
     investigator_names() { printf '%s\n' ${ALL:-${FREE:-inv-a inv-b inv-c inv-d}}; }
     start_review_slot() { echo "$4" > "$2/$3.agent"; echo 1 > "$2/$3.inv"; }
     act() { :; }
     auto_stage() { :; }
-    start_review_pair "$id" > /dev/null || exit 1
+    AGENT_REVIEW_DRAW=rotate start_review_pair "$id" > /dev/null || exit 1
     d=$AGENTS_HOME/reviews/repo-$1
     echo "$(cat "$d/A.agent") $(cat "$d/B.agent")" )
 }
@@ -95,7 +94,7 @@ pair_of() {
 @test "rotate: the supervise timer dispatches a waiting review pair, which no run's end may do" {
   mkdir -p "$AGENTS_HOME/tasks/T1"
   printf 'ID=T1\nSTATUS=done\nREVIEW_PAIR_PENDING=1\nREVIEW_PAIR_SINCE=%s\n' "$(date +%s)" > "$AGENTS_HOME/tasks/T1/meta.env"
-  out=$( source "$REPO_ROOT/bin/agent"; dispatch() { echo dispatched; }; AGENT_REVIEW_DRAW=rotate; cmd__supervise )
+  out=$( source "$REPO_ROOT/bin/agent"; dispatch() { echo dispatched; }; AGENT_REVIEW_DRAW=rotate cmd__supervise )
   [[ $out == *dispatched* ]]
   out=$( source "$REPO_ROOT/bin/agent"; dispatch() { echo dispatched; }; cmd__supervise )
   [[ $out != *dispatched* ]]   # random and list: as before, a run's end dispatches

@@ -22,6 +22,7 @@ SHELL_SCRIPTS += tests/unit/remote_control_notifications.bats
 SHELL_SCRIPTS += tests/unit/lint_shell_memory.bats tests/unit/remote_control_review.bats \
 	tests/unit/handover_failed.bats tests/unit/prompt_file.bats
 SHELL_SCRIPTS += tests/unit/review_byline.bats tests/unit/tokens.bats
+SHELL_SCRIPTS += tests/unit/review_pair_rotate.bats tests/unit/autopilot_review_cap.bats
 SHELL_SCRIPTS += tests/unit/investigation_team_cli.bats tests/unit/investigation_team_validation.bats \
 	tests/unit/investigation_team_isolation.bats tests/unit/investigation_team_opencode_schema.bats
 SHELL_SCRIPTS += tests/unit/investigation_team_runtime.bats tests/unit/investigation_team_supervision.bats \
@@ -61,7 +62,7 @@ unit-go:
 BATS_JOBS ?= $(shell nproc 2>/dev/null || echo 1)
 BATS_FILES ?= $(wildcard tests/unit/*.bats)
 BATS_SERIAL ?= tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/unit/restart.bats \
-	tests/unit/review_resilience.bats tests/unit/wake_cmd.bats
+	tests/unit/review_resilience.bats tests/unit/wake_cmd.bats tests/unit/autopilot_review_cap.bats
 
 unit-bats:
 	BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/unit-bats.sh
