@@ -139,10 +139,20 @@ func opErr[C opCause](c C, format string, args ...any) *OpError[C] {
 }
 
 // fromStorage converts a storage failure into the operation's storage cause (nil stays nil).
-func fromStorage[C opCause](_ C, _ *StorageError) *OpError[C] { return nil }
+func fromStorage[C opCause](c C, err *StorageError) *OpError[C] {
+	if err == nil {
+		return nil
+	}
+	return &OpError[C]{Cause: c, Message: err.Message, Err: errors.Join(c.info().class.Sentinel(), err)}
+}
 
 // fromValue converts an invalid value into the operation's cause for it (nil stays nil).
-func fromValue[C opCause](_ C, _ *ValueError) *OpError[C] { return nil }
+func fromValue[C opCause](c C, err *ValueError) *OpError[C] {
+	if err == nil {
+		return nil
+	}
+	return &OpError[C]{Cause: c, Message: err.Message, Err: errors.Join(c.info().class.Sentinel(), err)}
+}
 
 // ---------------------------------------------------------------- low-level errors
 
@@ -173,7 +183,9 @@ func (e *StorageError) asError() error {
 }
 
 // storageErr builds a StorageError around an underlying error.
-func storageErr(_ error, _ string, _ ...any) *StorageError { return nil }
+func storageErr(err error, format string, args ...any) *StorageError {
+	return &StorageError{Message: fmt.Sprintf(format, args...) + ": " + err.Error(), Err: errors.Join(ErrStorage, err)}
+}
 
 // ValueError: a value (an enum, a timestamp, a flag) is not valid.
 type ValueError struct {
@@ -202,10 +214,14 @@ func (e *ValueError) asError() error {
 }
 
 // valueErr builds a ValueError.
-func valueErr(_ string, _ ...any) *ValueError { return nil }
+func valueErr(format string, args ...any) *ValueError {
+	return &ValueError{Message: fmt.Sprintf(format, args...), Err: ErrInvalidArgument}
+}
 
 // valueWrap builds a ValueError around an underlying error.
-func valueWrap(_ error, _ string, _ ...any) *ValueError { return nil }
+func valueWrap(err error, format string, args ...any) *ValueError {
+	return &ValueError{Message: fmt.Sprintf(format, args...) + ": " + err.Error(), Err: errors.Join(ErrInvalidArgument, err)}
+}
 
 // ProcessError: a helper process could not be started or exited with an error.
 type ProcessError struct {
@@ -227,4 +243,10 @@ func (e *ProcessError) Class() ErrorClass { return ClassProcess }
 func (e *ProcessError) CauseName() string { return ClassProcess.String() }
 
 // processErr builds a ProcessError around an underlying error (nil when there is none).
-func processErr(_ string, _ error, _ string, _ ...any) *ProcessError { return nil }
+func processErr(program string, err error, format string, args ...any) *ProcessError {
+	msg := fmt.Sprintf(format, args...)
+	if err == nil {
+		return &ProcessError{Program: program, Message: msg, Err: ErrProcess}
+	}
+	return &ProcessError{Program: program, Message: msg + ": " + err.Error(), Err: errors.Join(ErrProcess, err)}
+}

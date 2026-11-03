@@ -57,7 +57,10 @@ agent say <agent|all|team:ID> "text"     message agents through the bus
 `
 
 // printUsage writes the CLI usage instructions to the given writer.
-func printUsage(w io.Writer) error {
+func printUsage(w io.Writer) *StorageError {
 	_, err := fmt.Fprint(w, usageText)
-	return err
+	if err != nil {
+		return storageErr(err, "cannot write usage to stdout")
+	}
+	return nil
 }
