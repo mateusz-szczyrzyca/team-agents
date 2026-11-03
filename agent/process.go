@@ -37,20 +37,27 @@ type OSExecutor struct{}
 
 // streamErrorWriter tracks errors occurring during writes to an underlying io.Writer.
 type streamErrorWriter struct {
-	w   io.Writer   // underlying writer destination
-	mu  *sync.Mutex // guards access to err and writes (may be shared across trackers)
-	err error       // first write error encountered
+	w       io.Writer   // underlying writer destination
+	writeMu *sync.Mutex // serializes concurrent writes across output streams
+	errMu   sync.Mutex  // guards access to err
+	err     error       // first write error encountered
 }
 
 // Write writes to the underlying writer while recording any error.
 func (s *streamErrorWriter) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.writeMu.Lock()
 	n, err := s.w.Write(p)
-	if err != nil && s.err == nil {
-		s.err = err
-	} else if err == nil && n != len(p) && s.err == nil {
-		s.err = io.ErrShortWrite
+	s.writeMu.Unlock()
+	if err != nil || n != len(p) {
+		s.errMu.Lock()
+		if s.err == nil {
+			if err != nil {
+				s.err = err
+			} else {
+				s.err = io.ErrShortWrite
+			}
+		}
+		s.errMu.Unlock()
 	}
 	return n, err
 }
@@ -86,18 +93,18 @@ func collectStreamError(program string, stdin *streamErrorReader, stdout, stderr
 		stdin.mu.Unlock()
 	}
 	if stdout != nil {
-		stdout.mu.Lock()
+		stdout.errMu.Lock()
 		if stdout.err != nil {
 			errs = append(errs, stdout.err)
 		}
-		stdout.mu.Unlock()
+		stdout.errMu.Unlock()
 	}
 	if stderr != nil && stderr != stdout {
-		stderr.mu.Lock()
+		stderr.errMu.Lock()
 		if stderr.err != nil {
 			errs = append(errs, stderr.err)
 		}
-		stderr.mu.Unlock()
+		stderr.errMu.Unlock()
 	}
 	if len(errs) == 0 {
 		return nil
@@ -142,53 +149,25 @@ func (OSExecutor) Execute(ctx context.Context, cmd Command) (CommandResult, *Exe
 		}
 	}
 
+	var writeMu sync.Mutex
 	var stdoutTracker *streamErrorWriter
 	var stderrTracker *streamErrorWriter
-	var sharedWriteMu *sync.Mutex // shared mutex for concurrent stream access
+	wrapOutput := func(w io.Writer) (*streamErrorWriter, io.Writer) {
+		if w == nil {
+			return nil, nil
+		}
+		if _, ok := w.(*os.File); ok {
+			return nil, w
+		}
+		tracker := &streamErrorWriter{w: w, writeMu: &writeMu}
+		return tracker, tracker
+	}
 	if cmd.Stdout != nil && sameWriter(cmd.Stdout, cmd.Stderr) {
-		if _, ok := cmd.Stdout.(*os.File); ok {
-			c.Stdout = cmd.Stdout
-			c.Stderr = cmd.Stderr
-		} else {
-			mu := &sync.Mutex{}
-			tracker := &streamErrorWriter{w: cmd.Stdout, mu: mu}
-			stdoutTracker = tracker
-			stderrTracker = tracker
-			c.Stdout = tracker
-			c.Stderr = tracker
-		}
+		stdoutTracker, c.Stdout = wrapOutput(cmd.Stdout)
+		stderrTracker, c.Stderr = stdoutTracker, c.Stdout
 	} else {
-		// When both stdout and stderr need tracking, use a shared write mutex
-		// to serialize writes even if sameWriter cannot detect they're the same.
-		if cmd.Stdout != nil && cmd.Stderr != nil {
-			if _, okOut := cmd.Stdout.(*os.File); !okOut {
-				if _, okErr := cmd.Stderr.(*os.File); !okErr {
-					sharedWriteMu = &sync.Mutex{}
-				}
-			}
-		}
-		if cmd.Stdout != nil {
-			if _, ok := cmd.Stdout.(*os.File); ok {
-				c.Stdout = cmd.Stdout
-			} else {
-				if sharedWriteMu == nil {
-					sharedWriteMu = &sync.Mutex{}
-				}
-				stdoutTracker = &streamErrorWriter{w: cmd.Stdout, mu: sharedWriteMu}
-				c.Stdout = stdoutTracker
-			}
-		}
-		if cmd.Stderr != nil {
-			if _, ok := cmd.Stderr.(*os.File); ok {
-				c.Stderr = cmd.Stderr
-			} else {
-				if sharedWriteMu == nil {
-					sharedWriteMu = &sync.Mutex{}
-				}
-				stderrTracker = &streamErrorWriter{w: cmd.Stderr, mu: sharedWriteMu}
-				c.Stderr = stderrTracker
-			}
-		}
+		stdoutTracker, c.Stdout = wrapOutput(cmd.Stdout)
+		stderrTracker, c.Stderr = wrapOutput(cmd.Stderr)
 	}
 
 	if err := c.Start(); err != nil {

@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # A pair that has reviewed a PR never reviews it again while another pair can: in every AGENT_REVIEW_DRAW mode. With
 # four investigators A, B, C and D the reviews go A+B, then C+D, then mixed pairs (A+C, B+D, …). When only the PR's
-# previous pair is free, the review waits for another investigator (AGENT_REVIEW_ROTATE_WAIT_MIN) before it repeats.
+# previous pair is free, the review waits for another investigator: with three or more investigators for as long as
+# it takes (the PR's pair never repeats), else AGENT_REVIEW_ROTATE_WAIT_MIN before it repeats one of the last two pairs.
 
 load helpers
 
@@ -61,12 +62,13 @@ shares_one() {
   done
 }
 
-@test "default draw: only the PR's previous pair free — it waits AGENT_REVIEW_ROTATE_WAIT_MIN, then repeats it" {
+@test "default draw: only the PR's previous pair free — it waits, and does not repeat it after AGENT_REVIEW_ROTATE_WAIT_MIN" {
   [ "$(FREE="inv-a inv-b" ALL="inv-a inv-b inv-c inv-d" review_pass 31)" = "inv-a inv-b" ]
   FREE="inv-a inv-b" ALL="inv-a inv-b inv-c inv-d" run review_pass 31
   [ "$status" -ne 0 ]
   [ "$(wc -l < "$AGENTS_HOME/reviews/history")" -eq 1 ]
-  [ "$(SINCE=$(($(date +%s) - 1300)) FREE="inv-a inv-b" ALL="inv-a inv-b inv-c inv-d" review_pass 31)" = "inv-a inv-b" ]
+  SINCE=$(($(date +%s) - 1300)) FREE="inv-a inv-b" ALL="inv-a inv-b inv-c inv-d" run review_pass 31
+  [ "$status" -ne 0 ]
 }
 
 @test "default draw: one investigator of the previous pair busy — a new pair with the free ones, at once" {
@@ -107,4 +109,62 @@ shares_one() {
   echo needs-fixes > "$AGENTS_HOME/reviews/repo-81/A.verdict"
   out=$( source "$REPO_ROOT/bin/agent"; dispatch() { echo dispatched; }; cmd__supervise )
   [[ $out == *dispatched* ]]
+}
+
+# no_repeat_logged — 0 when no review_pair_repeated record was logged
+no_repeat_logged() {
+  [ ! -f "$AGENTS_HOME/logs/agent.jsonl" ] || ! grep -q '"event":"review_pair_repeated"' "$AGENTS_HOME/logs/agent.jsonl"
+}
+
+@test "four investigators, only the PR's previous pair free: a day later it still does not review the PR again" {
+  local s
+  for s in 1 2 3; do
+    rm -rf "$AGENTS_HOME/reviews" "$AGENTS_HOME/logs"
+    [ "$(FREE="inv-a inv-b" ALL="inv-a inv-b inv-c inv-d" review_pass "9$s" "$s")" = "inv-a inv-b" ]
+    SINCE=$(($(date +%s) - 86400)) FREE="inv-a inv-b" ALL="inv-a inv-b inv-c inv-d" run review_pass "9$s" "$s"
+    [ "$status" -ne 0 ]
+    [ "$(wc -l < "$AGENTS_HOME/reviews/history")" -eq 1 ]
+    run no_repeat_logged
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "three investigators: the PR's previous pair waits; once the third is free a partly new pair takes it at once" {
+  local old=$(($(date +%s) - 86400)) second
+  [ "$(FREE="inv-a inv-b" ALL="inv-a inv-b inv-c" review_pass 101)" = "inv-a inv-b" ]
+  SINCE=$old FREE="inv-a inv-b" ALL="inv-a inv-b inv-c" run review_pass 101
+  [ "$status" -ne 0 ]
+  second=$(SINCE=$old FREE="inv-a inv-b inv-c" ALL="inv-a inv-b inv-c" review_pass 101)
+  [ "$second" != "inv-a inv-b" ]
+  [[ " $second " == *" inv-c "* ]]
+}
+
+@test "rotate and list: only the PR's previous pair free, after AGENT_REVIEW_ROTATE_WAIT_MIN — no review" {
+  local draw
+  for draw in rotate list; do
+    rm -rf "$AGENTS_HOME/reviews"
+    export AGENT_REVIEW_DRAW=$draw
+    [ "$(FREE="inv-a inv-b" ALL="inv-a inv-b inv-c inv-d" review_pass "11$draw")" = "inv-a inv-b" ]
+    SINCE=$(($(date +%s) - 86400)) FREE="inv-a inv-b" ALL="inv-a inv-b inv-c inv-d" run review_pass "11$draw"
+    [ "$status" -ne 0 ]
+  done
+}
+
+@test "after AGENT_REVIEW_ROTATE_WAIT_MIN a pending pass whose PR's pair is all that is free stays pending for the timer" {
+  mkdir -p "$AGENTS_HOME/tasks/T1" "$AGENTS_HOME/reviews/repo-121"
+  printf 'ID=T1\nSTATUS=done\nREPO_NAME=repo\nPR_NUMBER=121\nREVIEW_PAIR_PENDING=1\nREVIEW_PAIR_SINCE=%s\n' \
+    "$(($(date +%s) - 86400))" > "$AGENTS_HOME/tasks/T1/meta.env"
+  echo inv-a > "$AGENTS_HOME/reviews/repo-121/A.agent"; echo inv-b > "$AGENTS_HOME/reviews/repo-121/B.agent"
+  echo needs-fixes > "$AGENTS_HOME/reviews/repo-121/A.verdict"
+  out=$( source "$REPO_ROOT/bin/agent"
+    free_investigator_list() { printf '%s\n' inv-a inv-b; }
+    investigator_names() { printf '%s\n' inv-a inv-b inv-c inv-d; }
+    start_review_slot() { echo "$4" >> "$AGENTS_HOME/started"; echo "$4" > "$2/$3.agent"; echo 1 > "$2/$3.inv"; }
+    act() { :; }
+    auto_stage() { :; }
+    start_review_pairs
+    if review_rotation_waits; then echo waits; fi )
+  [ ! -f "$AGENTS_HOME/started" ]
+  [[ $out == *waits* ]]
+  grep -qx 'REVIEW_PAIR_PENDING=1' "$AGENTS_HOME/tasks/T1/meta.env"
 }
