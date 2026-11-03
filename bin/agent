@@ -2011,7 +2011,7 @@ review_pair_key() { if [[ $1 < $2 ]]; then printf '%s %s\n' "$1" "$2"; else prin
 # used least recently (or never), its members' reviews least recent, the list's order. Prints "a b" in list order;
 # 1 = no such pair.
 review_pair_pick() {
-  local mode=$1 hist=() n i j k a b key last="" prev="" ov pl ma mb score best="" pick=""
+  local mode=$1 hist=() n i j k a b key last="" prev="" pr_last=${REVIEW_PR_LAST:-} ov pl ma mb score best="" pick=""
   shift
   [[ ! -f $AGENTS_HOME/reviews/history ]] || mapfile -t hist < "$AGENTS_HOME/reviews/history"
   n=${#hist[@]}
@@ -2021,10 +2021,15 @@ review_pair_pick() {
     for ((j = i + 1; j <= $#; j++)); do
       a=${!i} b=${!j}
       key=$(review_pair_key "$a" "$b")
-      [[ $mode != strict || ($key != "$last" && $key != "$prev") ]] || continue
+      [[ $mode != strict || ($key != "$last" && $key != "$prev" && $key != "$pr_last") ]] || continue
       ov=0
-      [[ " $last " != *" $a "* ]] || ov=$((ov + 1))
-      [[ " $last " != *" $b "* ]] || ov=$((ov + 1))
+      if [[ -n $pr_last ]]; then
+        [[ " $pr_last " != *" $a "* ]] || ov=$((ov + 1))
+        [[ " $pr_last " != *" $b "* ]] || ov=$((ov + 1))
+      else
+        [[ " $last " != *" $a "* ]] || ov=$((ov + 1))
+        [[ " $last " != *" $b "* ]] || ov=$((ov + 1))
+      fi
       pl=0 ma=0 mb=0   # the newest line (1-based) with the pair, with each member; 0 = never
       for ((k = 0; k < n; k++)); do
         [[ ${hist[k]} != "$key" ]] || pl=$((k + 1))
@@ -2078,13 +2083,16 @@ start_review_pair() { # coordinator task — both reviews of its PR at once, on 
   mapfile -t free < <(free_investigator_list)
   ((${#free[@]} >= 2)) || return 1
   num=$(task_field "$id" PR_NUMBER); url=$(task_field "$id" PR_URL)
-  if [[ $AGENT_REVIEW_DRAW == rotate ]]; then   # both chosen: nothing is kept nor drawn below, only put in list order
-    f=$(review_pair_rotate "$id" "${free[@]}") || return 1
-    read -r a b <<< "$f"
-  fi
   dir="$AGENTS_HOME/reviews/$(task_field "$id" REPO_NAME)-$num"
   mkdir -p "$dir"
-  if [[ $AGENT_REVIEW_DRAW != rotate ]]; then
+  local pr_last=""
+  if [[ -f $dir/A.agent && -f $dir/B.agent ]]; then
+    pr_last=$(review_pair_key "$(<"$dir/A.agent")" "$(<"$dir/B.agent")")
+  fi
+  if [[ $AGENT_REVIEW_DRAW != list && -z ${AGENT_REVIEW_SEED:-} ]]; then   # both chosen: nothing is kept nor drawn below, only put in list order
+    f=$(REVIEW_PR_LAST=$pr_last review_pair_rotate "$id" "${free[@]}") || return 1
+    read -r a b <<< "$f"
+  else
     [[ ! -f $dir/A.agent ]] || pa=$(<"$dir/A.agent")
     [[ ! -f $dir/B.agent ]] || pb=$(<"$dir/B.agent")
   fi
