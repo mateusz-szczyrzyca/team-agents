@@ -156,7 +156,10 @@ func fromValue[C opCause](c C, err *ValueError) *OpError[C] {
 
 // fromProcess converts a process failure into the operation's cause for it (nil stays nil).
 func fromProcess[C opCause](c C, err *ProcessError) *OpError[C] {
-	return nil
+	if err == nil {
+		return nil
+	}
+	return &OpError[C]{Cause: c, Message: err.Message, Err: errors.Join(c.info().class.Sentinel(), err)}
 }
 
 // ---------------------------------------------------------------- low-level errors
