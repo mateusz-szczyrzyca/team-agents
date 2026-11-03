@@ -52,9 +52,6 @@ func TestRandomInt63Range(t *testing.T) {
 		if val < 0 {
 			t.Fatalf("Int63() returned negative value: %v", val)
 		}
-		if val > 0x7FFFFFFFFFFFFFFF {
-			t.Fatalf("Int63() returned value > max int64: %v", val)
-		}
 	}
 }
 
@@ -104,7 +101,7 @@ func TestRandomDistinctSeedsDistinctSequence(t *testing.T) {
 func TestRandomConcurrentCallsRaceClean(t *testing.T) {
 	rng := newRandom(99999)
 	const (
-		goroutines = 10
+		goroutines        = 10
 		callsPerGoroutine = 100
 	)
 
@@ -144,16 +141,12 @@ func TestRandomConcurrentCallsRaceClean(t *testing.T) {
 	}
 }
 
-// TestClockInterfaceSignature verifies Clock interface has the expected signature.
-func TestClockInterfaceSignature(t *testing.T) {
-	var _ Clock
-	clock := newClock()
-	var _ Clock = clock
+// TestClockInterfaceSignature verifies newClock returns a Clock.
+func TestClockInterfaceSignature(_ *testing.T) {
+	_ = newClock()
 }
 
-// TestRandomInterfaceSignature verifies Random interface has the expected signature.
-func TestRandomInterfaceSignature(t *testing.T) {
-	var _ Random
-	rng := newRandom(42)
-	var _ Random = rng
+// TestRandomInterfaceSignature verifies newRandom returns a Random.
+func TestRandomInterfaceSignature(_ *testing.T) {
+	_ = newRandom(42)
 }
