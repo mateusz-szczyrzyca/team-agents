@@ -227,7 +227,7 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **reviews/<repo>-<PR-number>/pair.lock** — lock serializing verdict recording and completion decision for a review pair.
 - **reviews/<repo>-<PR-number>/A.verdict**, **B.verdict** — recorded verdicts for review slots A and B.
 - **reviews/<repo>-<PR-number>/A.md**, **B.md** — review commentary and findings.
-- **reviews/<repo>-<PR-number>/A.inv**, **B.inv** — investigator request/assignment IDs for review slots A and B. Written at `bin/agent:2062` during `start_review_slot`, read at `bin/agent:1905-1906` to determine slot assignment in `retry_review_slot`, displayed at `bin/agent:2041` in board messages.
+- **reviews/<repo>-<PR-number>/A.inv**, **B.inv** — investigator request/assignment IDs for review slots A and B. Written at `bin/agent:2062` during `start_review_slot`, read at `bin/agent:1905–1906` in `review_pair_done` to match a completed review task back to its slot, displayed at `bin/agent:2041` in board stage messages, and read at `bin/agent:1564` in `reviews_waiting_summary`.
 - **reviews/<repo>-<PR-number>/decided** — marker indicating one reviewer completed the pair decision.
 - **reviews/<repo>-<PR-number>/A.agent**, **B.agent** — assigned investigator names for slots A and B.
 - **reviews/<repo>-<PR-number>/A.retried**, **B.retried** — slot retry tracking markers.
@@ -255,17 +255,17 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **prompt-$n.md** — fully rendered prompt provided to the CLI for run `$n`.
 - **mcp.json** / **opencode-config.json** — provider-specific MCP configuration files in task directory (Claude Code, OpenCode). Note: Gemini/Antigravity uses `.agents/mcp_config.json` created in the working tree (`$WORKTREE/.agents/mcp_config.json`).
 - **questions-$round.md** / **questions.md** — questions submitted to human for round `$round`.
-- **fix-pass.n** — stores the number of critical/major findings from a review. Written at `bin/agent:1744–1746` by `review_fix_pass` with the findings count; read at `bin/agent:1758` by `do_fix_pass`. The separate `FIX_PASS` metadata field (`meta.env`) tracks the actual retry index.
+- **fix-pass.n** — stores the count of critical and major findings to address in the fix pass. Written at `bin/agent:1744–1746` in `review_fix_pass`; read at `bin/agent:1758` in `cmd__fixpass` and passed to `do_fix_pass` (the retry iteration index is the separate `FIX_PASS` metadata field read at `bin/agent:1765`).
 - **fix-pass.md** — fix-pass review findings and instructions for follow-up run. Written at `bin/agent:1747` alongside fix-pass.n.
-- **note-$RUN.md** — resume notes passed to the agent CLI for run $RUN. Written at `bin/agent:5824` by runner to save member notes; read at `bin/agent:2615` and `bin/agent:2768` during prompt construction to include prior run notes in resume/fresh sessions.
+- **note-$RUN.md** — resume notes passed to the agent CLI for run $RUN. Written at `bin/agent:5824` by `cmd_resume` when additional notes are supplied upon resuming a waiting task; read at `bin/agent:2615` and `bin/agent:2768` during prompt construction to include prior run notes in resume/fresh sessions.
 - **history.md** — accumulated history of round progress, questions, and decisions.
 - **postmerge.log** / **precheck.log** — gate check and test logs during verification.
 - **phase1.json** — manifest of accepted cohort member tasks in independent investigation.
 - **resume.json** — manifest of resumed investigation review tasks.
 - **resume-request.md** — advisory resume request instructions.
-- **sync_manifest.json** — node-side sync manifest containing metadata, per-file entries with sha and cut fields, and completion status for remote node task synchronization. Written and queried at `bin/agent:7879–7881` for structure inspection, and at `bin/agent:7594–7600` during sync cycles. Log cursors are stored separately in `bus/sync_log_cursors.json`. Read by `node_sync_terminal_unchanged` at `bin/agent:7513` to check completion status.
-- **acked** — empty marker file indicating task has been acknowledged by human. Written by `cmd_ack` callbacks at `bin/agent:8005` and `bin/agent:8012`; removed by `cmd__runner` at `bin/agent:4534` when the next run starts, not during finalization.
-- **long-run** — stores the observed step count at the soft threshold to signal a long-running task approaching limits. Written normally by `normalizer.countStep` in `agentbus/normalize.go:62–71` when the soft step limit (configured at `bin/agent:4537–4542`) is reached; also written with a hard-cut fallback at `bin/agent:4601` in `cmd__runner`. Consumed by `long_run_end` callback at `bin/agent:6433–6435`; cleared at `bin/agent:4534` at startup.
+- **sync_manifest.json** — node-side task sync snapshot with schema `{metadata, files, complete}` where `files` maps filenames to `{sha, cut}`. Written at `bin/agent:7879–7882` in `node_sync_task`; read at `bin/agent:7516` in `node_sync_terminal_unchanged` to verify complete terminal snapshots without reading task artifacts (separate from log cursors stored in `bus/sync_log_cursors.json` at lines 7530, 7883).
+- **acked** — empty marker file indicating a finished/terminal task has been acknowledged by human. Written at `bin/agent:8005` and `bin/agent:8012` by `cmd_ack`; removed at `bin/agent:4534` by `cmd__runner` when the next run starts.
+- **long-run** — stores observed step count when reaching threshold to signal wrap-up or trigger fresh session. Written at `agentbus/normalize.go:62–71` by normalizer `countStep` upon reaching the soft step threshold `$AGENT_LONG_RUN_STEPS`, and at `bin/agent:4601` by `cmd__runner` as a hard-cut fallback when `$AGENT_LONG_RUN_HARD` steps are reached; consumed and removed at `bin/agent:6433–6435` by `long_run_end` to schedule a fresh-session wake-up; also cleared at `bin/agent:4534` on runner startup.
 - **answers.lock** — exclusive lock serializing question saving, editing, and answers watch.
 - **wake.lock** — exclusive lock serializing scheduled task wake-ups.
 - **stop-requested** / **node-stop-requested** — lifecycle stop marker files.
