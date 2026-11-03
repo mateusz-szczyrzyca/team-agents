@@ -164,9 +164,13 @@ if [[ $LANE == "candidate" ]]; then
       mkdir -p "$(dirname "$EVIDENCE_FILE")"
       map_hash=$(compute_map_hash)
       tests_hash=$(compute_tests_hash)
-      cat > "$EVIDENCE_FILE" <<EOF
-{"lane":"$LANE","map_file":"$MAP_FILE","map_sha256":"$map_hash","tests_sha256":"$tests_hash","candidate_bin":"$CANDIDATE_BIN","selected_count":0,"executed_count":0,"failures":0,"skips":0}
-EOF
+      jq -n \
+        --arg lane "$LANE" \
+        --arg map_file "$MAP_FILE" \
+        --arg map_sha256 "$map_hash" \
+        --arg tests_sha256 "$tests_hash" \
+        --arg candidate_bin "$CANDIDATE_BIN" \
+        '{lane: $lane, map_file: $map_file, map_sha256: $map_sha256, tests_sha256: $tests_sha256, candidate_bin: $candidate_bin, selected_count: 0, executed_count: 0, failures: 0, skips: 0}' > "$EVIDENCE_FILE"
     fi
     exit 0
   fi
@@ -238,21 +242,35 @@ EOF
   done
 
   # Verify executed count vs selected count and gather outcomes
+  report_files=()
+  mapfile -t report_files < <(compgen -G "$REPORTS_DIR/*/report.xml" || true)
+  if ((${#report_files[@]} == 0)); then
+    echo "agent-bats: no JUnit XML reports generated in $REPORTS_DIR" >&2
+    exit 1
+  fi
   counts=$(awk '
     /<testcase / { t++ }
     /<failure /  { f++ }
     /<skipped/   { s++ }
     END { printf "%d %d %d\n", t+0, f+0, s+0 }
-  ' "$REPORTS_DIR"/*/report.xml 2>/dev/null || echo "0 0 0")
+  ' "${report_files[@]}")
   read -r executed_count failures_count skips_count <<< "$counts"
 
   if [[ -n $EVIDENCE_FILE ]]; then
     mkdir -p "$(dirname "$EVIDENCE_FILE")"
     map_hash=$(compute_map_hash)
     tests_hash=$(compute_tests_hash)
-    cat > "$EVIDENCE_FILE" <<EOF
-{"lane":"$LANE","map_file":"$MAP_FILE","map_sha256":"$map_hash","tests_sha256":"$tests_hash","candidate_bin":"$CANDIDATE_BIN","selected_count":$total_selected,"executed_count":$executed_count,"failures":$failures_count,"skips":$skips_count}
-EOF
+    jq -n \
+      --arg lane "$LANE" \
+      --arg map_file "$MAP_FILE" \
+      --arg map_sha256 "$map_hash" \
+      --arg tests_sha256 "$tests_hash" \
+      --arg candidate_bin "$CANDIDATE_BIN" \
+      --argjson selected_count "$total_selected" \
+      --argjson executed_count "$executed_count" \
+      --argjson failures "$failures_count" \
+      --argjson skips "$skips_count" \
+      '{lane: $lane, map_file: $map_file, map_sha256: $map_sha256, tests_sha256: $tests_sha256, candidate_bin: $candidate_bin, selected_count: $selected_count, executed_count: $executed_count, failures: $failures, skips: $skips}' > "$EVIDENCE_FILE"
   fi
 
   if (( executed_count != total_selected )); then
@@ -303,9 +321,14 @@ else
     mkdir -p "$(dirname "$EVIDENCE_FILE")"
     map_hash=$(compute_map_hash)
     tests_hash=$(compute_tests_hash)
-    cat > "$EVIDENCE_FILE" <<EOF
-{"lane":"$LANE","map_file":"$MAP_FILE","map_sha256":"$map_hash","tests_sha256":"$tests_hash","candidate_bin":"","selected_count":0,"executed_count":0,"failures":$oracle_rc,"skips":0}
-EOF
+    jq -n \
+      --arg lane "$LANE" \
+      --arg map_file "$MAP_FILE" \
+      --arg map_sha256 "$map_hash" \
+      --arg tests_sha256 "$tests_hash" \
+      --arg candidate_bin "" \
+      --argjson failures "$oracle_rc" \
+      '{lane: $lane, map_file: $map_file, map_sha256: $map_sha256, tests_sha256: $tests_sha256, candidate_bin: $candidate_bin, selected_count: 0, executed_count: 0, failures: $failures, skips: 0}' > "$EVIDENCE_FILE"
   fi
 
   exit "$oracle_rc"
