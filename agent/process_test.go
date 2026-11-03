@@ -71,6 +71,16 @@ func TestHelperProcess(_ *testing.T) {
 			os.Exit(1)
 		}
 		os.Exit(42)
+	case "write-distinct-streams":
+		for i := 0; i < 32; i++ {
+			if _, err := io.WriteString(os.Stdout, strings.Repeat("O", 4096)); err != nil {
+				os.Exit(1)
+			}
+			if _, err := io.WriteString(os.Stderr, strings.Repeat("E", 4096)); err != nil {
+				os.Exit(1)
+			}
+		}
+		os.Exit(0)
 	case "write-stderr":
 		fmt.Fprint(os.Stderr, args[1])
 		os.Exit(0)
