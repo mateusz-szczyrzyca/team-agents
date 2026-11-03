@@ -536,3 +536,11 @@ tests/unit/github_recommendation.bats	incomplete: red with 🧩	source	R12	-	pla
 tests/unit/github_recommendation.bats	a recommendation already in colour goes out as it is	source	R12	-	planned
 tests/unit/github_recommendation.bats	a PR comment is not a review: its words stay	source	R12	-	planned
 tests/unit/agents_gh_race.bats	runs setting up the agents' gh at once all succeed, and the link is the script	source	R12	-	planned
+tests/unit/serena.bats	Serena off by default: no serena server for any CLI	source	R12	-	planned
+tests/unit/serena.bats	claude: a serena server on the run's worktree, context claude-code, next to agentbus	source	R12	-	planned
+tests/unit/serena.bats	claude: an independent investigator gets serena, still without agentbus	source	R12	-	planned
+tests/unit/serena.bats	codex: serena with context codex and a startup time for its language servers	source	R12	-	planned
+tests/unit/serena.bats	gemini (Antigravity): serena in the workspace's MCP file, context antigravity	source	R12	-	planned
+tests/unit/serena.bats	opencode: serena as a local server, context ide, on	source	R12	-	planned
+tests/unit/serena.bats	Serena's project folder in a worktree is never committed: .serena/ is excluded	source	R12	-	planned
+tests/unit/serena.bats	the prompt tells the agent to navigate with Serena only when it is on	source	R12	-	planned
