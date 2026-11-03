@@ -244,7 +244,7 @@ members' branches are merged); if something is missing the coordinator is sent b
 investigator reviews the PR and publishes a GitHub review (as a comment — GitHub does not let an author approve
 their own PR), and you get a notification with the recommendation. The review begins with it, right after the
 byline: `## Recommendation` with ✅ **Ready to merge** in green, or 🔧 **Needs changes** (🧩 when incomplete) in red
-and the list of what to fix — the icons of the notifications. The reviewer gets its request as it was made (one of
+and the list of what to fix — the icons of the notifications. The agents' `gh` makes sure of the colours: in a review it publishes, the words of the recommendation's line (a line that begins "Recommendation", or the first line under that heading — "ready to merge", "needs changes", "needs fixes", in any case) become the bold, coloured ones with their icon, unless the line is in colour already. The reviewer gets its request as it was made (one of
 two independent reviews; a re-review after a fix pass, with the previous review) and the rules for writing on
 GitHub, as every run that writes there does (an independent investigator's too): commits, PRs **and files** are
 links — a file to its blob at a pushed commit, `…/blob/<SHA>/path#L42`.

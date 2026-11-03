@@ -99,6 +99,59 @@ gh_colour_names() {
   printf '%s' "${out%$'\n'}"
 }
 
+# gh_colour_recommendation text — an investigator's review as published: on its recommendation's line (a line that
+# begins "Recommendation", or the first line below a "Recommendation" heading) the verdict's words ("Ready to merge",
+# "Needs changes", "needs fixes"; any case, bold or not) bold, ✅ green or 🔧 red (🧩 red when the line says
+# incomplete): the notifications' icons. A recommendation in colour already, and every other line, stay as they are.
+gh_colour_recommendation() {
+  local line out="" state=0 low w i best=-1 word="" pre post bold icon colour
+  local head='^[[:space:]]*(#{1,6}[[:space:]]*)?[*_]{0,2}[Rr]ecommendation([^[:alpha:]]|$)'
+  while IFS= read -r line; do
+    if ((state == 0)) && [[ $line =~ $head ]]; then state=1; fi
+    if ((state == 1)) && [[ -n ${line//[[:space:]]/} ]]; then
+      low=${line,,} best=-1
+      for w in "ready to merge" "needs changes" "needs fixes"; do
+        i=${low%%"$w"*}
+        if [[ $i != "$low" ]] && ((best < 0 || ${#i} < best)); then best=${#i} word=$w; fi
+      done
+      if [[ $line == *'\color{'* ]]; then
+        state=2
+      elif ((best >= 0)); then
+        pre=${line:0:best} post=${line:best+${#word}} bold=""
+        if [[ $pre == *'**' || $pre == *'__' ]]; then bold=${pre: -2}; pre=${pre%??}; fi
+        pre=${pre%"${pre##*[![:space:]]}"}
+        pre=${pre%✅}; pre=${pre%🔧}; pre=${pre%🧩}
+        pre=${pre%"${pre##*[![:space:]]}"}
+        [[ -z $bold ]] || post=${post/"$bold"/}
+        if [[ $word == "ready to merge" ]]; then
+          icon="✅" colour='$\color{green}{\textbf{Ready to merge}}$'
+        else
+          icon="🔧" colour='$\color{red}{\textbf{Needs changes}}$'
+          [[ $low != *incomplete* ]] || icon="🧩"
+        fi
+        line="${pre:+$pre }$icon $colour$post"
+        state=2
+      elif [[ ! $line =~ $head ]]; then
+        state=2   # the heading's first line names no verdict: nothing to colour
+      fi
+    fi
+    out+=$line$'\n'
+  done <<< "$1"
+  printf '%s' "${out%$'\n'}"
+}
+
+# colour_json_recommendation file — a copy of that JSON review request (file.rec) with its body's recommendation in
+# colour (gh_colour_recommendation); prints the file to send: the copy, or the file itself when nothing changed or it
+# is no JSON
+colour_json_recommendation() {
+  local body new
+  if ! body=$(jq -er '(.body // empty) + "."' "$1" 2>/dev/null); then printf '%s' "$1"; return 0; fi   # no body
+  body=${body%.}
+  new=$(gh_colour_recommendation "$body"; printf .); new=${new%.}
+  if [[ $new != "$body" ]] && jq --arg b "$new" '.body = $b' "$1" > "$1.rec"; then printf '%s' "$1.rec"; return 0; fi
+  printf '%s' "$1"
+}
+
 # gh_publish_text text — the text as the agents publish it on GitHub: without Claude Code's own "Generated with
 # Claude Code" line (and the blank line after it) — the attribution is the script's —, the names coloured
 # (gh_colour_names)
@@ -152,6 +205,12 @@ if [[ ${1:-} == api ]]; then
       else
         gh_log review_byline_failed "the byline could not be put at the top of the review" "file=${args[i+1]}"
       fi
+    done
+  fi
+  if [[ $path =~ /pulls/[0-9]+/reviews$ ]]; then   # a review's recommendation in colour, whatever words it is in
+    for i in "${!args[@]}"; do
+      [[ ${args[i]} == --input && -f ${args[i+1]:-} ]] || continue
+      args[i+1]=$(colour_json_recommendation "${args[i+1]}")
     done
   fi
   if [[ $path =~ /(pulls|issues)(/[0-9]+)?(/reviews|/comments)?$ ]]; then   # a description, comment or review
