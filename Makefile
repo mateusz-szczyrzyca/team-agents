@@ -46,7 +46,7 @@ SHELL_SCRIPTS += tests/unit/investigation_resume_independence.bats
 SHELL_SCRIPTS += tests/unit/investigation_independent_labels.bats
 SHELL_SCRIPTS += tests/unit/investigation_completed_legacy.bats
 SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats \
-	tools/agent-bats.sh tests/harness/agent_bats.bats \
+	tools/agent-bats.sh tests/harness/agent_bats.bats tests/harness/agent_bats_runner.bats \
 	tools/check-agent-parity.sh tests/harness/check_agent_parity.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
