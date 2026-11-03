@@ -227,6 +227,7 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **reviews/<repo>-<PR-number>/pair.lock** — lock serializing verdict recording and completion decision for a review pair.
 - **reviews/<repo>-<PR-number>/A.verdict**, **B.verdict** — recorded verdicts for review slots A and B.
 - **reviews/<repo>-<PR-number>/A.md**, **B.md** — review commentary and findings.
+- **reviews/<repo>-<PR-number>/A.inv**, **B.inv** — investigator request/assignment IDs for review slots A and B.
 - **reviews/<repo>-<PR-number>/decided** — marker indicating one reviewer completed the pair decision.
 - **reviews/<repo>-<PR-number>/A.agent**, **B.agent** — assigned investigator names for slots A and B.
 - **reviews/<repo>-<PR-number>/A.retried**, **B.retried** — slot retry tracking markers.
@@ -253,12 +254,16 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - **prompt-$n.md** — fully rendered prompt provided to the CLI for run `$n`.
 - **mcp.json** / **opencode-config.json** — provider-specific MCP configuration files in task directory (Claude Code, OpenCode). Note: Gemini/Antigravity uses `.agents/mcp_config.json` created in the working tree (`$WORKTREE/.agents/mcp_config.json`).
 - **questions-$round.md** / **questions.md** — questions submitted to human for round `$round`.
+- **fix-pass.n** — fix-pass number (numeric index for retry cycle).
 - **fix-pass.md** — fix-pass review findings and instructions for follow-up run.
 - **history.md** — accumulated history of round progress, questions, and decisions.
 - **postmerge.log** / **precheck.log** — gate check and test logs during verification.
 - **phase1.json** — manifest of accepted cohort member tasks in independent investigation.
 - **resume.json** — manifest of resumed investigation review tasks.
 - **resume-request.md** — advisory resume request instructions.
+- **sync_manifest.json** — node-side sync state including completion status and log cursors.
+- **acked** — marker file indicating task has been acknowledged (seen by human).
+- **long-run** — stores soft step limit for long-running tasks to trigger wrap-up reminder.
 - **answers.lock** — exclusive lock serializing question saving, editing, and answers watch.
 - **wake.lock** — exclusive lock serializing scheduled task wake-ups.
 - **stop-requested** / **node-stop-requested** — lifecycle stop marker files.
@@ -313,7 +318,7 @@ There are **245 distinct structured log events** in `bin/agent`: 198 direct even
 `remote_questions_cleanup_failed`, `remote_questions_expired`, `remote_questions_lock_failed`, `remote_questions_retry_failed`, `remote_questions_start_failed`, `restart_limit`,
 `resume_abandoned`, `resume_failed`, `resume_postponed`, `resume_stash_retry`, `resume_wip_commit_failed`, `resume_worktree_remove_failed`,
 `resumed`, `resumed_after_pause`, `review_findings`, `review_fix_pass`, `review_fix_resume_failed`, `review_fixes_exhausted`,
-`review_pair_add_failed`, `review_pair_done`, `review_pair_lock_failed`, `review_pair_stale`, `review_pair_start_failed`, `review_pair_waiting`,
+`review_followup_failed`, `review_pair_add_failed`, `review_pair_done`, `review_pair_lock_failed`, `review_pair_stale`, `review_pair_start_failed`, `review_pair_waiting`,
 `review_precheck_failed`, `review_precheck_resume_failed`, `review_retry_failed`, `review_without_verdict`, `round_bounced`, `round_closed_with_problems`,
 `round_pr_superseded`, `round_size_failed`, `run_abandoned`, `run_finished`, `run_interrupted`, `run_interrupted_by_restart`,
 `run_started`, `run_stopped`, `runner_died`, `runner_start_failed`, `runner_starting`, `session_id_missing`,
