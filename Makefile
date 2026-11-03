@@ -2,7 +2,7 @@
 #   make tools   installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
 #   make lint    every static check; fails when a linter is missing (run make tools)
 #   make test    unit tests: Go (agent, agentbus, agentlive) and bats (the agent script)
-.PHONY: gate test unit-go unit-bats unit-agent-bats check-agent-parity harness lint lint-go lint-shell lint-docs tools integration build generate check-generated build-agent
+.PHONY: gate test unit-go unit-bats harness lint lint-go lint-shell lint-docs tools integration build generate check-generated build-agent unit-agent-bats check-agent-parity
 
 # Go modules of this repository (each has its own go.mod).
 GO_MODULES := agentbus live agent tools/doccheck tools/errgen
@@ -45,7 +45,9 @@ SHELL_SCRIPTS += tests/unit/investigation_single_pipeline.bats tests/unit/invest
 SHELL_SCRIPTS += tests/unit/investigation_resume_independence.bats
 SHELL_SCRIPTS += tests/unit/investigation_independent_labels.bats
 SHELL_SCRIPTS += tests/unit/investigation_completed_legacy.bats
-SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats
+SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats \
+	tools/agent-bats.sh tests/harness/agent_bats.bats \
+	tools/check-agent-parity.sh tests/harness/check_agent_parity.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 
@@ -73,14 +75,6 @@ BATS_SERIAL ?= tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/
 unit-bats:
 	BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/unit-bats.sh
 
-# Lane B: run active/done blackbox Bats cases against the real Go binary.
-unit-agent-bats:
-	BATS_JOBS="$(BATS_JOBS)" BATS_SERIAL="$(BATS_SERIAL)" bash tools/unit-agent-bats.sh
-
-# Validate the Bats-to-Go test mapping ledger and hashes.
-check-agent-parity:
-	bash tools/check-agent-test-map.sh
-
 tools:
 	tools/install-linters.sh
 
@@ -93,7 +87,7 @@ lint: check-generated lint-shell lint-go lint-docs
 
 lint-shell:
 	@command -v shellcheck >/dev/null || { echo "shellcheck is missing: run make tools"; exit 1; }
-	bash -n bin/agent install.sh tools/install-linters.sh tools/check-agent-test-map.sh tests/integration/run.sh
+	bash -n bin/agent install.sh tools/install-linters.sh tools/check-agent-test-map.sh tools/agent-bats.sh tools/check-agent-parity.sh tests/integration/run.sh
 	@# Release sourced ASTs between files so small hosts retain full lint coverage.
 	@lint_result=0; for script in $(SHELL_SCRIPTS); do \
 		shellcheck -S warning "$$script" || lint_result=1; \
@@ -117,6 +111,14 @@ integration:
 
 build-agent:
 	cd agent && go build -o ../build/agent-go .
+
+# Lane B: active/done rows of the Bats test suite against the real Go executable.
+unit-agent-bats: build-agent
+	tools/agent-bats.sh
+
+# Verifies parity ledger, classifications, mapping, and hashes.
+check-agent-parity:
+	tools/check-agent-parity.sh
 
 build: build-agent
 	cd agentbus && go build -o ../build/agentbus .

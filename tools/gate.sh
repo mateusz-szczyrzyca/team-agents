@@ -14,6 +14,9 @@ ROOT=${GATE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}   # the repository (tests: 
 LOGS=${GATE_LOG_DIR:-$ROOT/build/gate}                 # where the full logs go
 MAX_LINES=${GATE_MAX_LINES:-25}                        # at most this many lines of a failed step are shown
 STEPS=(check-generated lint-shell lint-go lint-docs unit-go unit-bats harness)
+if grep -q '^[[:space:]]*unit-agent-bats:' "$ROOT/Makefile" 2>/dev/null || grep -q '^\.PHONY:.*unit-agent-bats' "$ROOT/Makefile" 2>/dev/null; then
+  STEPS+=(unit-agent-bats)
+fi
 if (($# > 0)); then STEPS=("$@"); fi
 
 # excerpt step log — the lines of a failed step's log that tell what failed, by the tool behind the step
@@ -23,7 +26,7 @@ excerpt() {
       awk '/^--- FAIL|^panic:|^FAIL|^[^ \t].*\.go:[0-9]+:[0-9]+: / { print; inblk = ($0 ~ /^--- FAIL/); next }
            /^(=== |--- PASS|--- SKIP|ok )/ { inblk = 0; next }
            inblk { print }' "$2" ;;
-    unit-bats | harness) # every failed test: its line and the first lines of its diagnosis
+    unit-bats | harness | unit-agent-bats) # every failed test: its line and the first lines of its diagnosis
       awk '/^not ok / { print; n = 4; next } n > 0 && /^#/ { print; n--; next } { n = 0 }' "$2" ;;
     lint-go | lint-docs) # findings ("file:line:col: message") and the summary, without the code snippets
       { grep -E '^[^[:space:]].*:[0-9]+(:[0-9]+)?: |^[0-9]+ issues?|undocumented declarations' "$2" || (($? == 1)); } ;;
