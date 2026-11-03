@@ -31,3 +31,35 @@ func (c CommandCause) info() causeInfo { return commandCauses[c] }
 
 // String returns the cause name.
 func (c CommandCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- execute
+
+// ExecuteCause is a reason why subprocess execution failed.
+type ExecuteCause int
+
+const (
+	ExecuteInvalidCommand ExecuteCause = iota // the command specification is invalid [InvalidArgument]
+	ExecuteDenied                             // command execution is denied by policy [Permission]
+	ExecuteStart                              // the subprocess could not be started [Process]
+	ExecuteWait                               // the subprocess could not be waited for [Process]
+)
+
+// ExecuteError is the error of subprocess execution.
+type ExecuteError = OpError[ExecuteCause]
+
+// executeCauses describes the ExecuteCause values (same order as the constants).
+var executeCauses = [...]causeInfo{
+	{"InvalidCommand", ClassInvalidArgument},
+	{"Denied", ClassPermission},
+	{"Start", ClassProcess},
+	{"Wait", ClassProcess},
+}
+
+// op implements opCause.
+func (ExecuteCause) op() string { return "execute" }
+
+// info implements opCause.
+func (c ExecuteCause) info() causeInfo { return executeCauses[c] }
+
+// String returns the cause name.
+func (c ExecuteCause) String() string { return c.info().name }
