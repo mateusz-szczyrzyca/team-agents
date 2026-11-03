@@ -2124,7 +2124,7 @@ start_review_pair() { # coordinator task — both reviews of its PR at once, on 
 start_review_slot() {
   local id=$1 dir=$2 slot=$3 name=$4 fresh=${5:-} num url q inv j by=""
   num=$(task_field "$id" PR_NUMBER); url=$(task_field "$id" PR_URL)
-    q="Recenzja PR #$num ($url) — one of two independent reviews: do not read other reviews or review comments on this PR before your own is published."
+    q="Review PR #$num ($url) — one of two independent reviews: do not read other reviews or review comments on this PR before your own is published."
     if [[ -z $fresh && -s $dir/$slot.md && -n $(task_field "$id" FIX_PASS) && $(task_field "$id" FIX_PASS) != 0 ]]; then
       [[ ! -f $dir/$slot.agent ]] || by=$(<"$dir/$slot.agent")   # who wrote it: the slot's investigator until now
       if [[ -z $by || $by == "$name" ]]; then
@@ -2172,7 +2172,7 @@ request_review() { # coordinator task id — --verify: queue a PR review by an i
     return 0
   fi
   local pass question
-  pass=$(task_field "$id" FIX_PASS); question="Recenzja PR #$num ($url)"
+  pass=$(task_field "$id" FIX_PASS); question="Review PR #$num ($url)"
   if ((${pass:-0} > 0)); then
     question+=" — re-review after fix pass $pass: first check whether the critical and major findings of the previous review are fixed (or disputed convincingly on the PR), then the rest of the change only for new problems"
   fi
@@ -4262,7 +4262,7 @@ start_investigation() { # request-json (status "starting") investigator-name
   kind=$(jq -r '.kind // empty' <<< "$j"); pr_url=$(jq -r '.pr_url // empty' <<< "$j"); pr_num=$(jq -r '.pr_number // empty' <<< "$j")
   if [[ $kind == review ]]; then
     {
-      printf '## Recenzja PR #%s\n\n%s\n\n' "$pr_num" "$pr_url"
+      printf '## Review PR #%s\n\n%s\n\n' "$pr_num" "$pr_url"
       printf '## The task the team worked on\n\n'
       if [[ -f $TASKS/$from_task/task.md ]]; then cat "$TASKS/$from_task/task.md"; else echo "—"; fi
     } > "$dir/task.md"

@@ -21,7 +21,7 @@ End every commit message with exactly these trailers, after a blank line:
 
 ## Rules
 
-1. Do **exactly** what was asked — nothing more. No refactoring, nothing "while I'm at it".
+1. Do **exactly** what was asked, but make tests first — nothing more. No refactoring, nothing "while I'm at it".
 2. Be economical: use the simplest tools (`ls`, `find`, `grep`, `rg`, `wc`, `head`, `jq`); do not read whole
    large files when a fragment is enough.
 3. Do not change anything in the requester's worktree. Do not commit or push unless the request says so.

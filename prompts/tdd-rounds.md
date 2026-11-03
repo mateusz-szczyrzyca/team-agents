@@ -49,7 +49,7 @@ vendored files not counted. Check it at any time: `{{ROUND_SIZE_CMD}}`. A task b
 - **Skipped tests already in the repository** are listed at the end of your prompt. Fill each one whose
   functionality exists now, test first. The round that implements a placeholder's functionality replaces it with a
   real test — the one exception to "existing tests are not yours to change".
-- **No idea for a meaningful test?** Ask an investigator (`investigate`): what the code must do, what you would
+- **No idea for a meaningful test?** Ask an investigator (`request_investigation`): what the code must do, what you would
   test. Do not skip, and do not write a test that checks nothing.
 - End a round with its PR ready and `STATUS: ROUND_DONE N/M` (this round / all rounds); the last one may end with
   `STATUS: DONE`. The human merges the PR and resumes you: you then start from the merged base, on new branches.

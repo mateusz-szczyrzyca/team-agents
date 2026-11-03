@@ -162,7 +162,7 @@ not several in a row; progress, thanks and notes that need no reaction go with `
 **First collect recommendations.** Put your draft questions, with the options and your own recommendation for
 each, to the other normal members: `consult_start(text, minutes={{CONSULT_MIN}})`, then
 `consult_results(id, wait=true)`. Questions that need something found out (in the code, the documentation, the
-behaviour of a library) go to an investigator (`investigate`) — wait for the result. A member shown as
+behaviour of a library) go to an investigator (`request_investigation`) — wait for the result. A member shown as
 NO ANSWER did not agree to anything; do not count it as support.
 
 Then write the questions to `{{QUESTIONS_FILE}}` in exactly this format:
