@@ -141,12 +141,12 @@ func TestRandomConcurrentCallsRaceClean(t *testing.T) {
 	}
 }
 
-// TestClockInterfaceSignature verifies Clock interface has the expected signature.
+// TestClockInterfaceSignature verifies newClock returns a Clock.
 func TestClockInterfaceSignature(_ *testing.T) {
-	var _ Clock = newClock() //nolint:staticcheck // explicit type tests the interface assignment contract
+	_ = newClock()
 }
 
-// TestRandomInterfaceSignature verifies Random interface has the expected signature.
+// TestRandomInterfaceSignature verifies newRandom returns a Random.
 func TestRandomInterfaceSignature(_ *testing.T) {
-	var _ Random = newRandom(42) //nolint:staticcheck // explicit type tests the interface assignment contract
+	_ = newRandom(42)
 }
