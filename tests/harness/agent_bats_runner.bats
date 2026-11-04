@@ -266,3 +266,26 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"TMPDIR cannot be inside repository root"* ]]
 }
+
+@test "agent-bats rejects nonexistent external TMPDIR with appropriate error, not in-repo error" {
+  local mock_repo="$BATS_TEST_TMPDIR/mock_repo_external_tmpdir"
+  local nonexistent_tmpdir="/tmp/opencode/nonexistent-tmpdir-$$"
+  mkdir -p "$mock_repo/tests/unit" "$mock_repo/build" "$mock_repo/tools"
+  cp "$TOOL" "$mock_repo/tools/"
+  cp "$REPO_ROOT/tools/unit-bats.sh" "$mock_repo/tools/"
+
+  cat > "$mock_repo/build/agent-go" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$mock_repo/build/agent-go"
+
+  # This TMPDIR does not exist and is external to the repo.
+  # The error should be about TMPDIR not existing, not "inside repository root".
+  run env TMPDIR="$nonexistent_tmpdir" "$mock_repo/tools/agent-bats.sh" --repo-root "$mock_repo"
+  [ "$status" -ne 0 ]
+  # Should NOT report as in-repository (which was the bug)
+  [[ "$output" != *"TMPDIR cannot be inside repository root"* ]]
+  # Should report TMPDIR error clearly
+  [[ "$output" == *"TMPDIR"* ]]
+}
