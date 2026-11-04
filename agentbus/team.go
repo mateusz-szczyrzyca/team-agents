@@ -777,7 +777,7 @@ func cmdTeamGet(args []string) {
 	exitOn(transact(b, CmdTeamGetStorage, func(st *State) *CmdTeamGetError {
 		t := st.Teams[*team]
 		if t == nil {
-			return opErr(CmdTeamGetNoSuchTeam, "no team %s", *team)
+			return opErr(CmdTeamGetNoSuchTeam, "no team %s (pass --team <id>; inside an agent run, use the MCP tool team_status instead of the agentbus CLI)", *team)
 		}
 		return fromStorage(CmdTeamGetStorage, printJSON(t))
 	}).asError())

@@ -234,6 +234,18 @@ tests/unit/limits.bats	a 429 the CLI retried long before the run ended does not 
 tests/unit/lint_shell_memory.bats	lint-shell bounds each process and checks every file before reporting failure	blackbox	R55	-	planned
 tests/unit/long_run_cut.bats	the watchdog ends a run at its step limit and says so	source	R20	-	planned
 tests/unit/long_run_cut.bats	a run under its step limit is not ended	source	R20	-	planned
+tests/unit/member_in_team.bats	Claude Code gets the agentbus tools up front: its tool search is off, unless CLAUDE_TOOL_SEARCH says otherwise	source	R12	-	planned
+tests/unit/member_in_team.bats	a team member's gh pr merge, ready and close are refused, logged, and never reach gh	blackbox	R11	-	planned
+tests/unit/member_in_team.bats	the agents' gh asks the bus who coordinates when a PR command runs, not when the run started	blackbox	R11	-	planned
+tests/unit/member_in_team.bats	a team task's gh knows its team and agent; a solo task's and an investigator's do not	source	R23	-	planned
+tests/unit/member_in_team.bats	a round resumed tells a member to push its own branch: its coordinator merges it into the round's PR	blackbox	R31	-	planned
+tests/unit/member_in_team.bats	a round continued again has one heading and one PR note, the newest; what its reviews sent back stays	blackbox	R31	-	planned
+tests/unit/member_in_team.bats	a round whose PR is merged continues as its follow-up, and the next round is not started early	blackbox	R31	-	planned
+tests/unit/member_in_team.bats	a team member's gh pr reopen and edit are refused, logged, and never reach gh	blackbox	R11	-	planned
+tests/unit/member_in_team.bats	a non-coordinator member's STATUS: ROUND_DONE does not override the coordinator's WORK_ROUND	blackbox	R33	-	planned
+tests/unit/member_in_team.bats	a same-round resume prefers the coordinator's WORK_ROUND over a member's stale later round	blackbox	R56	-	planned
+tests/unit/member_in_team.bats	agent archive packs and removes each team member's own checkpoint	blackbox	R56	-	planned
+tests/unit/member_in_team.bats	a team member cannot create, merge, close or edit a PR through gh api	blackbox	R56	-	planned
 tests/unit/member_out.bats	an unknown STATUS goes back to the agent once, with the statuses it may use	blackbox	R29	-	planned
 tests/unit/member_out.bats	a second unknown STATUS fails the run	blackbox	R29	-	planned
 tests/unit/member_out.bats	a failed member's items go back with its progress notes, and the team is told where its work is	blackbox	R29	-	planned

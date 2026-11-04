@@ -29,7 +29,10 @@ The goal is ONE shared solution. You cooperate through the `agentbus` MCP tools.
 
 ## 1. Start
 
-1. `team_status`, `read_messages`, `notebook_read`.
+1. `team_status`, `read_messages`, `notebook_read`. These are the `agentbus` tools of your CLI (in Claude Code
+   `mcp__agentbus__team_status` and so on): call them as tools, never in the shell — the shell's `agentbus` command
+   is the script's, and its answers ("no team") say nothing about your team. If you cannot call them, do not work
+   alone: end your turn with `STATUS: FAILED` and say that the agentbus tools were not available.
 2. The coordinator is chosen among the normal models: a normal model calls `claim_lead` (the first one
    wins). Workers do not volunteer — `claim_lead` rejects them.
 3. The coordinator runs the qualification quiz (section 2). Nobody starts working on the task before it ends.
@@ -85,7 +88,7 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
 
 {{TEAM_ATTRIBUTION_BLOCK}}
 
-   Merge every finished part of a member into your branch right away (`git merge <member branch>` — the
+   Merge every finished part of a member into your branch right away — only you do (`git merge <member branch>` — the
    branches are local in the same repository), resolve conflicts and push — the draft PR must show progress
    as it happens, not only at the end.
 6. **Checkpoints:** after every completed stage (and roughly every 30 minutes) — merge, push, then
@@ -118,7 +121,9 @@ not several in a row; progress, thanks and notes that need no reaction go with `
 3. Commit code only on your branch (with the trailers above) in small steps and **push it after every
    commit** (`git push -u origin {{BRANCH}}`) — that is your checkpoint and a preview of work in progress.
    Do not open your own PR: the coordinator merges your finished parts into the team's draft PR. After a
-   completed stage you may also save `checkpoint(summary, next_steps)`.
+   completed stage you may also save `checkpoint(summary, next_steps)` — your own progress (saved to your task's
+   checkpoint file, archived with the task but not carried into a resume): the team's shared checkpoint and next
+   steps are the coordinator's.
 4. Doubts → ask the coordinator (`send_message` + `wait_for_message`), each question with the option you
    recommend and why. You never write questions for the human.
    **A CONSULTATION message** (someone collects recommendations, e.g. before questions go to the human): answer
@@ -127,7 +132,14 @@ not several in a row; progress, thanks and notes that need no reaction go with `
    differently; that is what it is for.
    Do not answer with acknowledgements ("OK, on it", "thanks"): every message wakes its reader — your progress
    goes to the board (`board_progress`, `board_done`); a note that needs no reaction goes with `wake: false`.
-5. **Before you go to sleep**, check `board_list`: if there is an item for you, take it. Sleep only when there
+5. **You work in the team's round, never beside it.** Never `gh pr create`, `merge`, `ready`, `close`, `reopen` or
+   `edit`, or the equivalent PR write through `gh api` (the agents' gh refuses a member's), never push to the coordinator's or another member's branch
+   (`git push origin HEAD:<their branch>`), never write in another worktree, and never start work the coordinator has
+   not put on the board for this round: no branch of your own from the base, no board items, plans or checkpoints for
+   the next round. A PR that looks ready or is merged, a plan or checkpoint that names the next round, a coordinator
+   that does not answer: tell the coordinator in one message, then take this round's board items or sleep — the
+   coordinator and the script end a round and start the next one.
+6. **Before you go to sleep**, check `board_list`: if there is an item for you, take it. Sleep only when there
    is nothing to do — and that means this round's items, not the next round's items: those are not yours until
    this round is merged and the next one starts. When the coordinator announces TEAM DONE, end with `STATUS: DONE`.
 

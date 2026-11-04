@@ -2,7 +2,7 @@
 #   make tools   installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
 #   make lint    every static check; fails when a linter is missing (run make tools)
 #   make test    unit tests: Go (agent, agentbus, agentlive) and bats (the agent script)
-.PHONY: gate test unit-go unit-bats harness lint lint-go lint-shell lint-docs tools integration build generate check-generated build-agent
+.PHONY: gate test unit-go unit-bats harness lint lint-go lint-shell lint-docs tools integration build generate check-generated build-agent unit-agent-bats check-agent-parity
 
 # Go modules of this repository (each has its own go.mod).
 GO_MODULES := agentbus live agent tools/doccheck tools/errgen
@@ -18,7 +18,7 @@ SHELL_SCRIPTS += tests/unit/review_pair_models.bats tests/unit/github_attributio
 SHELL_SCRIPTS += tests/unit/remote_answer_round.bats tests/unit/remote_questions_atomic.bats \
 	tests/unit/remote_questions_preparation_retry.bats
 SHELL_SCRIPTS += tests/unit/handover_failed.bats tests/unit/prompt_file.bats tests/unit/review_byline.bats tests/unit/tokens.bats \
-	tests/unit/context_hygiene.bats tests/unit/fresh_session.bats tests/unit/review_pair_random.bats tests/unit/resume_members.bats tests/unit/prompt_checkpoints.bats tests/unit/long_run_cut.bats tests/unit/round_only.bats tests/unit/fresh_relative.bats tests/unit/coordination.bats tests/unit/resume_stash.bats tests/unit/one_pr_per_round.bats tests/unit/investigation_mcp_off.bats tests/unit/round_discipline.bats tests/unit/member_pr.bats
+	tests/unit/context_hygiene.bats tests/unit/fresh_session.bats tests/unit/review_pair_random.bats tests/unit/resume_members.bats tests/unit/prompt_checkpoints.bats tests/unit/long_run_cut.bats tests/unit/round_only.bats tests/unit/fresh_relative.bats tests/unit/coordination.bats tests/unit/resume_stash.bats tests/unit/one_pr_per_round.bats tests/unit/investigation_mcp_off.bats tests/unit/round_discipline.bats tests/unit/member_pr.bats tests/unit/member_in_team.bats
 SHELL_SCRIPTS += tests/unit/remote_control_notifications.bats
 SHELL_SCRIPTS += tests/unit/lint_shell_memory.bats tests/unit/remote_control_review.bats \
 	tests/unit/handover_failed.bats tests/unit/prompt_file.bats
@@ -45,8 +45,9 @@ SHELL_SCRIPTS += tests/unit/investigation_single_pipeline.bats tests/unit/invest
 SHELL_SCRIPTS += tests/unit/investigation_resume_independence.bats
 SHELL_SCRIPTS += tests/unit/investigation_independent_labels.bats
 SHELL_SCRIPTS += tests/unit/investigation_completed_legacy.bats
-SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats
-SHELL_SCRIPTS += tests/unit/dashboard_lifecycle.bats tests/unit/dashboard_prompt_modes.bats
+SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats \
+	tools/agent-bats.sh tests/harness/agent_bats.bats tests/harness/agent_bats_runner.bats \
+	tools/check-agent-parity.sh tests/harness/check_agent_parity.bats tests/harness/agent_parity_gate.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 
@@ -72,7 +73,7 @@ BATS_SERIAL ?= tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/
 	tests/unit/review_resilience.bats tests/unit/wake_cmd.bats tests/unit/autopilot_review_cap.bats
 
 unit-bats:
-	BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/unit-bats.sh
+	BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/agent-bats.sh --lane oracle
 
 tools:
 	tools/install-linters.sh
@@ -86,7 +87,7 @@ lint: check-generated lint-shell lint-go lint-docs
 
 lint-shell:
 	@command -v shellcheck >/dev/null || { echo "shellcheck is missing: run make tools"; exit 1; }
-	bash -n bin/agent install.sh tools/install-linters.sh tools/check-agent-test-map.sh tests/integration/run.sh
+	bash -n bin/agent install.sh tools/install-linters.sh tools/check-agent-test-map.sh tools/agent-bats.sh tools/check-agent-parity.sh tests/integration/run.sh
 	@# Release sourced ASTs between files so small hosts retain full lint coverage.
 	@lint_result=0; for script in $(SHELL_SCRIPTS); do \
 		shellcheck -S warning "$$script" || lint_result=1; \
@@ -110,6 +111,15 @@ integration:
 
 build-agent:
 	cd agent && go build -o ../build/agent-go .
+
+# Lane B: active/done rows of the Bats test suite against the real Go executable.
+unit-agent-bats: build-agent
+	tools/agent-bats.sh
+	tools/check-agent-parity.sh --evidence build/agent-bats-evidence.json
+
+# Verifies parity ledger, classifications, mapping, and hashes.
+check-agent-parity:
+	tools/check-agent-parity.sh
 
 build: build-agent
 	cd agentbus && go build -o ../build/agentbus .

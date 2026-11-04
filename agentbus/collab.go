@@ -729,8 +729,8 @@ func collabToolDefs(inTeam bool, tier Tier) []map[string]any {
 		)
 	}
 	defs = append(defs, tool("checkpoint", "Save a work checkpoint: what is done (commits, findings, decisions) and what comes next. "+
-		"Do it after each completed stage and about every 30 min of work — after an interruption the team resumes from the last checkpoint instead of from scratch. "+
-		"Commit and push your branch before the checkpoint.",
+		"Do it after each completed stage and about every 30 min of work — after an interruption the team resumes from the coordinator's last checkpoint instead of from scratch. "+
+		"A non-coordinator member's own task record is archived with its task and is not carried into a resume. Commit and push your branch before the checkpoint.",
 		obj(map[string]any{"summary": str("State: what is done, where (commits/files), key findings and decisions"),
 			"next_steps": str("What next, in which order, by whom")}, "summary")))
 	if tier != TierWorker {
@@ -885,9 +885,10 @@ func cmdBoardReleaseAgent(args []string) {
 
 // ---------------------------------------------------------------- checkpoints
 
-// checkpointKey returns the checkpoint file key: "team-<id>" in a team, else "task-<id>".
-func (s *Server) checkpointKey() string {
-	if s.team != "" {
+// checkpointKey returns the shared "team-<id>" key for a team's coordinator (or before one is chosen), and the
+// member's own "task-<id>" key otherwise. Every team run has a task ID, so no agent-name fallback is needed.
+func (s *Server) checkpointKey(t *Team) string {
+	if s.team != "" && (t == nil || t.Lead == "" || t.Lead == s.me) {
 		return "team-" + s.team
 	}
 	return "task-" + s.info.Task
@@ -922,17 +923,26 @@ func (s *Server) checkpoint(summary, next string) (string, *CheckpointError) {
 	if summary == "" {
 		return "", opErr(CheckpointMissingSummary, "%s", missing("summary"))
 	}
+	var memberOnly bool
 	err := transact(s.bus, CheckpointStorage, func(st *State) *CheckpointError {
 		s.touch(st)
-		entry := renderCheckpoint(Now(), s.me, s.info.Branch, summary, strings.TrimSpace(next), s.myTeam(st))
-		if serr := appendFile(s.bus.checkpointPath(s.checkpointKey()), entry); serr != nil {
+		t := s.myTeam(st)
+		memberOnly = t != nil && t.Lead != "" && t.Lead != s.me
+		entry := renderCheckpoint(Now(), s.me, s.info.Branch, summary, strings.TrimSpace(next), t)
+		if serr := appendFile(s.bus.checkpointPath(s.checkpointKey(t)), entry); serr != nil {
 			return fromStorage(CheckpointStorage, serr)
+		}
+		if memberOnly {
+			return nil
 		}
 		_, serr := s.bus.post(st, s.me, "all", EventCheckpoint{Summary: summary})
 		return fromStorage(CheckpointStorage, serr)
 	})
 	if err != nil {
 		return "", err
+	}
+	if memberOnly {
+		return "Checkpoint saved to your own task record (task-<id>.md): agent archive packs it with your task, and it is not carried into a resume. Only the coordinator updates the team checkpoint; record your board item progress with board_progress. Make sure your commits are pushed (git push).", nil
 	}
 	return "Checkpoint saved. Make sure your commits are pushed (git push) — resuming starts from the pushed branches.", nil
 }
