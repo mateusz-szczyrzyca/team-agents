@@ -465,6 +465,7 @@ tests/unit/skips.bats	skip detection counts skip statements of each kind of test
 tests/unit/team_close.bats	agent team <id> --close closes a team whose members sleep	blackbox	R29	-	planned
 tests/unit/team_close.bats	closing a team ends its remote member's job; a failure to end it is logged with its reason	blackbox	R29	-	planned
 tests/unit/team_close.bats	an open team with no local member left is reported to the human, once, with how to resume or close it	blackbox	R29	-	planned
+tests/unit/team_close.bats	stopping a team stops its members and prevents automatic resume	blackbox	R29	-	planned
 tests/unit/tokens.bats	agent tokens sums what a team's runs used: per task, with its helpers and investigations, and in all	blackbox	R53	-	planned
 tests/unit/tokens.bats	agent tokens shows a task whose runs reported no usage, instead of leaving it out	blackbox	R53	-	planned
 tests/unit/tokens.bats	agent tokens --runs <task>: per run, its steps (tool calls) and tokens	blackbox	R53	-	planned

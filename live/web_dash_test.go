@@ -107,3 +107,17 @@ func TestDashboardShowsAtMost20LatestEntriesAndFullDashboardViewShowsAll(t *test
 		mustContain(t, "/dashboard/full", full, ">agent-"+strconv.Itoa(i)+"<")
 	}
 }
+
+func TestTeamsViewHasStopThisTeamOption(t *testing.T) {
+	home := fixture(t)
+	_, ts := testServer(t, home)
+	_, teamsBody := get(t, ts, "/teams")
+	mustContain(t, "/teams", teamsBody, "Stop this team", `/team/20261020-120000-team/stop`)
+	_, teamBody := get(t, ts, "/team/20261020-120000-team")
+	mustContain(t, "/team/20261020-120000-team", teamBody, "Stop this team", `/team/20261020-120000-team/stop`)
+
+	code, body := post(t, ts, "/team/20261020-120000-team/stop", nil)
+	if code != 200 || !strings.Contains(body, "team 20261020-120000-team --close") {
+		t.Fatalf("POST /team/20261020-120000-team/stop: code=%d body=%q", code, body)
+	}
+}
