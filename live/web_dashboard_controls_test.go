@@ -60,6 +60,27 @@ func TestDashboardStopMemberPersistsIntent(t *testing.T) {
 	}
 }
 
+// Rule: team stop is an authenticated POST and validates the team before invoking the script.
+func TestDashboardStopTeamAction(t *testing.T) {
+	home := fixture(t)
+	var calls []string
+	stubAgent(t, func(args ...string) (string, *OpError[AgentCallCause]) {
+		calls = append(calls, strings.Join(args, " "))
+		return "stopped", nil
+	})
+	_, ts := testServer(t, home)
+	_, body := get(t, ts, "/teams")
+	mustContain(t, "teams", body, `hx-post="/team/TT-team/stop"`, "Stop this team", "hx-confirm=")
+	code, _ := post(t, ts, "/team/TT-team/stop", url.Values{})
+	if code != http.StatusOK || len(calls) != 1 || calls[0] != "team TT-team --stop" {
+		t.Fatalf("team stop = %d %v", code, calls)
+	}
+	code, _ = post(t, ts, "/team/missing/stop", url.Values{})
+	if code != http.StatusNotFound || len(calls) != 1 {
+		t.Fatalf("missing team = %d %v", code, calls)
+	}
+}
+
 // Rule: persisted task stop wins over an obsolete bus state in both team displays.
 func TestDashboardTeamDisplaysStoppedMember(t *testing.T) {
 	home := fixture(t)

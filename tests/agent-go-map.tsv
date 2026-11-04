@@ -465,6 +465,7 @@ tests/unit/skips.bats	skip detection counts skip statements of each kind of test
 tests/unit/team_close.bats	agent team <id> --close closes a team whose members sleep	blackbox	R29	-	planned
 tests/unit/team_close.bats	closing a team ends its remote member's job; a failure to end it is logged with its reason	blackbox	R29	-	planned
 tests/unit/team_close.bats	an open team with no local member left is reported to the human, once, with how to resume or close it	blackbox	R29	-	planned
+tests/unit/team_close.bats	stopping a team stops its members and prevents automatic resume	blackbox	R29	-	planned
 tests/unit/tokens.bats	agent tokens sums what a team's runs used: per task, with its helpers and investigations, and in all	blackbox	R53	-	planned
 tests/unit/tokens.bats	agent tokens shows a task whose runs reported no usage, instead of leaving it out	blackbox	R53	-	planned
 tests/unit/tokens.bats	agent tokens --runs <task>: per run, its steps (tool calls) and tokens	blackbox	R53	-	planned
@@ -554,4 +555,6 @@ tests/unit/serena.bats	gemini (Antigravity): serena in the workspace's MCP file,
 tests/unit/serena.bats	opencode: serena as a local server, context ide, on	source	R12	-	planned
 tests/unit/serena.bats	Serena's project folder in a worktree is never committed: .serena/ is excluded	source	R12	-	planned
 tests/unit/serena.bats	the prompt tells the agent to navigate with Serena only when it is on	source	R12	-	planned
+tests/unit/dashboard_lifecycle.bats	dashboard team stop persists every member and prevents wake	source	R35	-	planned
+tests/unit/dashboard_lifecycle.bats	dashboard stopped automation cannot launch a fix pass or review	source	R35	-	planned
 tests/unit/dashboard_lifecycle.bats	dashboard stopped runner exits without restarting team automation	source	R35	-	planned

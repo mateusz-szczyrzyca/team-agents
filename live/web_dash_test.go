@@ -107,3 +107,25 @@ func TestDashboardShowsAtMost20LatestEntriesAndFullDashboardViewShowsAll(t *test
 		mustContain(t, "/dashboard/full", full, ">agent-"+strconv.Itoa(i)+"<")
 	}
 }
+
+func TestTeamsViewHasStopThisTeamOption(t *testing.T) {
+	home := fixture(t)
+	var called []string
+	stubAgent(t, func(args ...string) (string, *OpError[AgentCallCause]) {
+		called = args
+		return "Stopped team TT-team. Automatic resumption is disabled.", nil
+	})
+	_, ts := testServer(t, home)
+	_, teamsBody := get(t, ts, "/teams")
+	mustContain(t, "/teams", teamsBody, "Stop this team", `/team/TT-team/stop`)
+	_, teamBody := get(t, ts, "/team/TT-team")
+	mustContain(t, "/team/TT-team", teamBody, "Stop this team", `/team/TT-team/stop`)
+
+	code, body := post(t, ts, "/team/TT-team/stop", nil)
+	if code != 200 || !strings.Contains(body, "Stopped team TT-team.") {
+		t.Fatalf("POST /team/TT-team/stop: code=%d body=%q", code, body)
+	}
+	if strings.Join(called, " ") != "team TT-team --stop" {
+		t.Fatalf("callAgent args = %v, want [team TT-team --stop]", called)
+	}
+}
