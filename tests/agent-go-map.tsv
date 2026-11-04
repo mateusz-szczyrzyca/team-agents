@@ -238,6 +238,9 @@ tests/unit/member_out.bats	a failed member's items go back with its progress not
 tests/unit/member_out.bats	a long pause gives the member's items back; a short one keeps them	blackbox	R29	-	planned
 tests/unit/member_out.bats	a short pause (a rate limit) keeps the member's items	blackbox	R29	-	planned
 tests/unit/member_out.bats	agent _supervise finds a task whose runner died and ends it	blackbox	R29	-	planned
+tests/unit/member_pr.bats	a team member's gh pr create is refused, names its coordinator, is logged, and never reaches gh	blackbox	R11	-	planned
+tests/unit/member_pr.bats	anyone else's gh pr create goes to gh as before	blackbox	R11	-	planned
+tests/unit/member_pr.bats	gh_coordinator: a team member's coordinator; nobody for the coordinator, a solo task or an investigator	source	R23	-	planned
 tests/unit/meta.bats	concurrent meta_set calls of different keys all survive, and none fails	source	R07	-	planned
 tests/unit/network.bats	a network failure pauses the task for AGENT_NETWORK_PAUSE_MIN; its timer resumes it	blackbox	R25	-	planned
 tests/unit/network.bats	a network failing again and again fails the task after AGENT_NETWORK_MAX_PAUSES, with the reason	blackbox	R25	-	planned
