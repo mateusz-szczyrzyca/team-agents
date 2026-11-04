@@ -94,3 +94,26 @@ teardown() {
   [ "$status" -ne 0 ]
   [[ $output == *"not a loopback address"* ]]
 }
+
+@test "dashboard shows only 20 latest entries by default and Full dashboard view shows all" {
+  local i ts
+  for i in $(seq 1 25); do
+    ts=$(printf '20261104-1200%02d-entry-%02d' "$i" "$i")
+    mkdir -p "$AGENTS_HOME/tasks/$ts"
+    printf 'ID=%s\nAGENT=entry-%02d\nTYPE=claude\nSTATUS=stopped\nRUN=1\nFINISHED=2026-11-04T12:00:%02dZ\n' \
+      "$ts" "$i" "$i" > "$AGENTS_HOME/tasks/$ts/meta.env"
+  done
+  start_web
+  dash=$(curl -fsS "$WEB/")
+  echo "$dash" | grep -q 'href="/dashboard/full"'
+  echo "$dash" | grep -q 'Full dashboard view'
+  echo "$dash" | grep -q '>entry-25<'
+  echo "$dash" | grep -q '>entry-06<'
+  run grep -q '>entry-05<' <<< "$dash"
+  [ "$status" -ne 0 ]
+
+  full=$(curl -fsS "$WEB/dashboard/full")
+  echo "$full" | grep -q '>entry-25<'
+  echo "$full" | grep -q '>entry-01<'
+}
+

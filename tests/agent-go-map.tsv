@@ -483,6 +483,7 @@ tests/unit/web.bats	answering in the browser resumes the task; ok accepts the re
 tests/unit/web.bats	the web interface refuses proxied requests without an identity and changes from elsewhere	blackbox	R53	-	planned
 tests/unit/web.bats	tagged devices are let in by name through tailscale serve; other devices are told what to add	blackbox	R53	-	planned
 tests/unit/web.bats	agent web refuses to listen on a non-loopback address	blackbox	R53	-	planned
+tests/unit/web.bats	dashboard shows only 20 latest entries by default and Full dashboard view shows all	blackbox	R53	-	planned
 tests/unit/web_jobs.bats	agent web passes the configured node heartbeat timeout	blackbox	R53	-	planned
 tests/unit/autopilot_review_cap.bats	--autopilot: after three pairs of reviews with findings the autopilot stops and waits for the human	blackbox	R34	-	planned
 tests/unit/review_pair_rotate.bats	rotate: A,B then C,D; every new pair differs from the last two; four investigators make all six pairs	source	R33	-	planned
