@@ -74,12 +74,8 @@ rely on that.
   other agents' worktrees.
 - Commit to `{{BRANCH}}`, with the trailers above.
 - **Draft PR from the start:** after the first meaningful commit push your branch
-  (`git push -u origin {{BRANCH}}`) and update the existing subject PR. Only if none exists, open a draft:
-  `gh pr create --draft --base {{BASE}} --head {{BRANCH}}`
-  (title and description: the task and your plan) — unless a PR about the subject is already opened (state `Draft` or
-  `Open`). **Never open a new PR if you are not the coordinator or if a PR about the subject is already opened (state
-  `Draft` or `Open`). Always continue in the mentioned PR, never create a new PR.** End the description with these
-  lines, as they are:
+  (`git push -u origin {{BRANCH}}`) and open a draft: `gh pr create --draft --base {{BASE}} --head {{BRANCH}}`
+  (title and description: the task and your plan). End the description with these lines, as they are:
 
 {{ATTRIBUTION_BLOCK}}
 

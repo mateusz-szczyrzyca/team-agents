@@ -47,8 +47,6 @@ another agent, `wait_for_message` lets you wait for it (max 600 s).
 Commit experiments only to your branch `{{BRANCH}}` (with the trailers above, and
 `Investigation: #{{INV_ID}}` in the message). The agent sees the branch locally. Do not push, do not open
 PRs, do not write into the agent's worktree or the main repository directory.
-Never open a new PR if you are not the coordinator or if a PR about the subject is already opened (state `Draft` or `Open`);
-always continue in the mentioned PR, never create a new PR.
 
 ## Questions for the human
 

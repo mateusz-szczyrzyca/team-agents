@@ -234,6 +234,17 @@ case "${1:-} ${2:-}" in
     ;;
 esac
 
+# a task that owns an open PR opens no second one (AGENT_GH_OWN_PR: its PR, set by the runner)
+if [[ ${1:-} == pr && ${2:-} == create && -n ${AGENT_GH_OWN_PR:-} ]]; then
+  own_state=$("$AGENT_REAL_GH" pr view "$AGENT_GH_OWN_PR" --json state 2> /dev/null | jq -r '.state // empty' 2> /dev/null) \
+    || own_state=""   # unknown: let gh decide
+  if [[ $own_state == OPEN ]]; then
+    gh_log github_second_pr_refused "a second PR of a task whose PR is open is refused" "pr=$AGENT_GH_OWN_PR"
+    echo "agent-gh: this task's PR is #$AGENT_GH_OWN_PR and still open — push to its branch and keep its description up to date; open no other PR." >&2
+    exit 1
+  fi
+fi
+
 if [[ ${1:-} == api ]]; then
   shift
   args=() jqexpr="" path="" api_method="" api_fields=0
@@ -587,7 +598,8 @@ INVESTIGATION_QUEUE_MAX="${INVESTIGATION_QUEUE_MAX:-3}"
 # An empty seed draws from OS entropy; a decimal seed reproduces the phase choices.
 AGENT_INVESTIGATION_SEED="${AGENT_INVESTIGATION_SEED:-}"
 AGENT_HANG_MIN="${AGENT_HANG_MIN:-30}"          # watchdog: this many minutes without any activity = hang
-AGENT_HANG_STRIKES="${AGENT_HANG_STRIKES:-3}"    # this many consecutive hangs without progress = agent is hung
+AGENT_HANG_STRIKES="${AGENT_HANG_STRIKES:-3}"
+AGENT_INVESTIGATION_EXCLUSIVE="${AGENT_INVESTIGATION_EXCLUSIVE:-no}"   # yes: an --investigation holds back normal teams' resumption    # this many consecutive hangs without progress = agent is hung
 # Wake-loop guard: a team member that keeps being woken without doing anything is paused (see wake_loop_check).
 AGENT_IDLE_RUN_SEC="${AGENT_IDLE_RUN_SEC:-120}"           # a run shorter than this, without a commit or a bus message, is idle
 AGENT_WAKE_LOOP_MAX="${AGENT_WAKE_LOOP_MAX:-4}"           # this many idle runs in a row pause the member
@@ -1583,13 +1595,14 @@ agents_gh_env() {
     fi
   fi
   AGENT_GH_COORDINATOR=$(gh_coordinator "${RUNNER_ID:-}")   # a team member's: its PR commands are refused
+  AGENT_GH_OWN_PR=$(gh_own_pr "${RUNNER_ID:-}")              # a task's own PR: no second one while it is open
   AGENT_GH_TEAM="" AGENT_GH_SELF="" AGENT_GH_BUS_DIR=$BUS_DIR   # a team task's: whom the bus names coordinator, at the call
   if [[ -n ${RUNNER_ID:-} && $(task_field "$RUNNER_ID" KIND) != investigation* ]]; then
     AGENT_GH_TEAM=$(task_field "$RUNNER_ID" TEAM)
     [[ -z $AGENT_GH_TEAM ]] || AGENT_GH_SELF=$(task_field "$RUNNER_ID" AGENT)
   fi
   export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE="" AGENT_GITHUB_COLORS AGENT_GH_COORDINATOR \
-    AGENT_GH_TEAM AGENT_GH_SELF AGENT_GH_BUS_DIR AGENTBUS_BIN
+    AGENT_GH_TEAM AGENT_GH_SELF AGENT_GH_BUS_DIR AGENTBUS_BIN AGENT_GH_OWN_PR
   local names=()
   mapfile -t names < <(run_github_names)
   github_colour_register "${names[@]}"
@@ -1751,6 +1764,7 @@ blocking_investigation() {
 # the reason on stderr, while blocking_investigation finds one.
 normal_resume_allowed() {
   local id=$1 inv
+  [[ $AGENT_INVESTIGATION_EXCLUSIVE == yes ]] || return 0   # only when investigations are to hold their project
   inv=$(blocking_investigation "$id") || return 0
   log_info resume_blocked_investigation "task=$id" "investigation=$inv"
   printf 'agent: normal team resumption is blocked by independent investigation %s (--investigation) in this project; finish or stop it first.\n' "$inv" >&2
@@ -1760,7 +1774,7 @@ normal_resume_allowed() {
 # automation_allowed task — 0 unless the human stopped the task (agent stop, agent team --stop: every member and its
 # delegated descendants carry the mark): then its automatic follow-up (wake, review, precheck, fix pass, merge) is
 # dropped. An --investigation's priority is not checked here — a team already at work keeps its checks and reviews:
-# resume_run refuses to resume a normal team and cmd__wake defers a wake (normal_resume_allowed)
+# resume_run refuses to resume a normal team (normal_resume_allowed: with AGENT_INVESTIGATION_EXCLUSIVE=yes only)
 automation_allowed() {
   local id=$1
   [[ -n $id && -f $TASKS/$id/meta.env ]] || return 1
@@ -1772,7 +1786,6 @@ automation_allowed() {
 human_resume_allowed() {
   automation_allowed "$1" \
     || die "task $1 was stopped by the human — it is not resumed; start it again with: agent run --resume <team|task>"
-  normal_resume_allowed "$1"
 }
 
 start_task_unit() { # task subcommand — runs `agent <subcommand> <task>` in its own unit (it may take minutes)
@@ -2855,11 +2868,6 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
     exit 0
   fi
   automation_allowed "$id" || return 0
-  if ! normal_resume_allowed "$id"; then   # an --investigation goes first: supervise_deferred_wakes wakes it after
-    meta_set "$id" WAKE_DEFERRED 1
-    log_info wake_deferred_investigation "task=$id" "agent=$AGENT" "team=${TEAM:-}"
-    exit 0
-  fi
   [[ -z ${WAKE_DEFERRED:-} ]] || meta_set "$id" WAKE_DEFERRED ""
   if [[ ${KIND:-} == remote-member ]]; then   # the member works on its node: the lead asks the node to wake it
     try remote_wake_failed bus lead-member --dir "$BUS_DIR" --wake --member "$AGENT" >/dev/null
@@ -3197,9 +3205,51 @@ serena_note() {
   render "$PROMPTS/serena.md"
 }
 
+# pr_ownership_note — the prompt's rule on PRs by the run's role, naming the PR the script knows: a task that owns its
+# PR (a solo task, an investigation's merger) keeps every commit in it, or opens one; a team's round has one PR, its
+# coordinator's. Nothing for a run that opens no PR (a reviewer, a helper, an investigator)
+pr_ownership_note() {
+  local num=${PR_NUMBER:-} lead
+  [[ -n $num || -z ${PR_URL:-} ]] || num=${PR_URL##*/}
+  if [[ -n ${TEAM:-} ]]; then
+    printf "\n**Pull requests.** A team's round has one PR, opened by its coordinator: a member opens none — it pushes its branch and tells the coordinator, which merges its work into the round's PR."
+    lead=$(team_pr_task "$TEAM")
+    if [[ -n $lead ]]; then num=$(task_field "$lead" PR_NUMBER); num=${num:-$(task_field "$lead" ROUND_PR)}; fi
+    [[ -z $num ]] || printf " This round's PR is #%s: every commit of this round goes there; open no other." "$num"
+    printf '\n'
+    return 0
+  fi
+  case ${KIND:-worker} in
+    worker) ;;
+    investigation) [[ ${INVESTIGATION_PHASE:-} == 2 ]] || return 0 ;;   # an investigation's merger opens its PR
+    *) return 0 ;;
+  esac
+  if [[ -n $num ]]; then
+    printf "\n**Pull requests.** This task's PR is #%s%s: every commit of this task goes to its branch, and its description is the one you keep up to date. Open no other PR — a second one is refused.\n" \
+      "$num" "${BRANCH:+ (branch $BRANCH)}"
+  else
+    printf "\n**Pull requests.** This task opens one PR, from its branch, as its steps say, and keeps every commit there. Open no other — a second one is refused.\n"
+  fi
+}
+
+# gh_own_pr task — the PR a task owns (a solo task, an investigation's merger), for the agents' gh to refuse it a
+# second one while that PR is open; empty for anyone else
+gh_own_pr() {
+  local id=$1 num
+  [[ -n $id && -f $TASKS/$id/meta.env && -z $(task_field "$id" TEAM) ]] || return 0
+  case $(task_field "$id" KIND) in
+    worker|'') ;;
+    investigation) [[ $(task_field "$id" INVESTIGATION_PHASE) == 2 ]] || return 0 ;;
+    *) return 0 ;;
+  esac
+  num=$(task_field "$id" PR_NUMBER)
+  [[ -n $num ]] || num=$(task_field "$id" PR_URL | sed -n 's|.*/pull/\([0-9]*\).*|\1|p')
+  [[ -z $num ]] || echo "$num"
+}
+
 # continuation_rules — repeat role-independent rules even when a session resumes after a watchdog hang.
 continuation_rules() {
-  render "$PROMPTS/pr-ownership.md"
+  pr_ownership_note
   serena_note
   printf '\n'
 }

@@ -51,10 +51,7 @@ and open (or update) a pull request on GitHub.
 4. **Pull Request lifecycle (PR then precheck):**
    - Only the human may merge or close the PR. Do NOT merge or close it, enable auto-merge,
      or push to `{{INVESTIGATION_TARGET_BRANCH}}`; push only your assigned branch.
-   - Opening: Reuse the subject's existing Draft or Open PR. Only if none exists, open a pull request using `gh pr create --base {{INVESTIGATION_TARGET_BRANCH}} --head {{BRANCH}}`,
-     unless a PR about the subject is already opened (state `Draft` or `Open`).
-     Never open a new PR if you are not the coordinator or if a PR about the subject is already opened (state `Draft` or `Open`);
-     always continue in the mentioned PR, never create a new PR.
+   - Opening: Open a pull request using `gh pr create --base {{INVESTIGATION_TARGET_BRANCH}} --head {{BRANCH}}`.
    - Bounce on failed prechecks: If your task is resumed with `# Checks to fix` appended to `task.md`,
      address the precheck issues, push fixes, and update the existing PR description or title with
      `gh pr edit` (do NOT open a duplicate PR).

@@ -1108,20 +1108,23 @@ the team is already finished or stopped, where `kick` also marks the member `sto
 persisted `stopped` status over an older bus member state. Members that had already finished keep their result: a
 `done`, `failed`, `excluded` or `hung` member is not rewritten to `stopped`. `agent answer` and `agent resume` refuse a
 stopped task and say so.
-New structured script events: `team_stopped`, `automation_stopped`, `resume_blocked_investigation`,
-`wake_deferred_investigation`, `wake_replayed`.
+New structured script events: `team_stopped`, `automation_stopped`, `resume_blocked_investigation`.
 
-**Investigation priority.** A nonterminal top-level `--investigation` in a project blocks resuming its normal
-teams: `agent run --resume <team>` (also the fix pass and the next `--autopilot` round, which go through it and tell
-you that the team could not be resumed), and `agent answer` / `agent resume` of a member waiting for answers. The refusal
-names the independent investigation; finish or stop it, then resume the normal team. A message wake of a sleeping member
-(and the end of its pause) waits instead: the task gets `WAKE_DEFERRED=1`, and `agent _supervise` (every 3 minutes)
-wakes it once no investigation blocks it — the bus wakes a member once per message, so a dropped wake would leave its
-team waiting. The checks, reviews and bounces of a team that is already at work go on. Checks use `REPO_ROOT` and
-`REPO_NAME`; other projects, ordinary investigations requested through `request_investigation` and a finished cohort
-whose handoff still shows `waiting` do not block. This does not stop already-running normal teams or block new
-normal-team creation. No persisted format changes or migrations are needed: missing old metadata and stop markers keep
-their previous meaning.
+**Investigation priority.** By default an `--investigation` holds back nothing: normal teams in its project are
+resumed, woken and answered as usual. With `AGENT_INVESTIGATION_EXCLUSIVE=yes`, a nonterminal top-level
+`--investigation` in a project blocks resuming its normal teams: `agent run --resume <team>` (also the fix pass and the
+next `--autopilot` round, which go through it and tell you that the team could not be resumed). The refusal names the
+independent investigation; finish or stop it, then resume the normal team. A team already at work is never held back:
+its members' wakes and answers, its checks, reviews and bounces go on. Checks use `REPO_ROOT` and `REPO_NAME`; other
+projects, ordinary investigations requested through `request_investigation` and a finished cohort whose handoff still
+shows `waiting` do not block. No persisted format changes or migrations are needed: missing old metadata and stop
+markers keep their previous meaning.
+
+**Pull requests in the prompts.** The rule on PRs goes where a PR is opened or kept only, and names the PR the script
+knows: a task that owns its PR (a solo task, an investigation's merger) is told its PR and branch, or to open one; a
+team is told that its round has one PR, its coordinator's (and which, once known). Reviewers, helpers and
+investigators get no such rule. The agents' `gh` refuses a second `gh pr create` to a task whose PR is open
+(`github_second_pr_refused`).
 
 **Closing a team.** `agent team <id> --close` closes a team whatever its members do: the local ones still at
 work or sleeping are stopped, the remote ones' jobs end and their grants are revoked. A team whose coordinator failed stays
