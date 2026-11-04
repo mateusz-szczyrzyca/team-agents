@@ -1,5 +1,5 @@
 {{define "content"}}{{with .Data}}
-<div class="dash" hx-ext="sse" sse-connect="/events/dashboard">
+<div class="dash" hx-ext="sse" sse-connect="/events/dashboard{{if .Full}}/full{{end}}">
   <p class="dash-head" sse-swap="head">{{template "dash-head" .}}</p>
   <div sse-swap="table">{{template "dash-table" .}}</div>
   <div class="panels">

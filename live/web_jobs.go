@@ -176,9 +176,8 @@ func gitHubBranchURL(repoURL, branch string) string {
 	return u.String()
 }
 
-// remoteRows are the dashboard rows of the lead's remote jobs: active jobs and jobs finished in the
-// last 24 hours, newest first, linked to their page. Nil when this installation is not a lead.
-func remoteRows(busDir string) []taskRow {
+// remoteDashboardRows retains terminal jobs of any age for the full dashboard.
+func remoteDashboardRows(busDir string, full bool) []taskRow {
 	snap, err := readWebJobs(busDir)
 	if err != nil || snap == nil {
 		return nil // no lead here, or no readable registry: the dashboard shows the local tasks only
@@ -205,6 +204,9 @@ func remoteRows(busDir string) []taskRow {
 			Link:        "/jobs/" + url.PathEscape(j.Request.ID),
 			Running:     false,
 		}
+		if len(j.History) > 0 {
+			r.CreatedAt = j.History[0].At
+		}
 		if j.State != "done" && j.State != "failed" && j.State != "stopped" {
 			if n := len(a.Lines); n > 0 {
 				r.Last = a.Lines[n-1]
@@ -214,11 +216,13 @@ func remoteRows(busDir string) []taskRow {
 			active = append(active, r)
 		} else {
 			fin := jobFinishedAt(j)
-			if fin.IsZero() || now.Sub(fin) >= dashRecent {
+			if !full && (fin.IsZero() || now.Sub(fin) >= dashRecent) {
 				continue
 			}
 			r.FinishedAt = fin
-			r.Since = human(now.Sub(fin)) + " ago"
+			if !fin.IsZero() {
+				r.Since = human(now.Sub(fin)) + " ago"
+			}
 			r.Last = j.Result
 			done = append(done, r)
 		}

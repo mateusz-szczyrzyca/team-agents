@@ -78,7 +78,8 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
    Before you report a member as silent or ask the human about its work: `git fetch`, `read_messages` and
    `team_status` — its commits or answers may already be there.
 4. You also do part of the work yourself (`level=normal`).
-5. **Draft PR from the start:** right after splitting the work push your branch and open a draft
+5. **Draft PR from the start:** right after splitting the work push your branch and update the existing subject PR.
+   Only if none exists, open a draft
    `gh pr create --draft --base {{BASE}} --head {{BRANCH}}` (description: the task, the split, the plan). End the
    description with these lines, as they are:
 

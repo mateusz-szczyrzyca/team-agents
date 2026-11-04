@@ -108,6 +108,7 @@ type taskRow struct {
 	Running     bool      // a run is going on (the dashboard offers to stop it)
 	Link        string    // where the name links: the task's page, or a remote job's page
 	FinishedAt  time.Time // when the task or remote job finished (zero for active)
+	CreatedAt   time.Time // task creation or first remote transition, used for compact selection
 }
 
 // makeRow builds a task's row exactly as the panel does (ui.go: row).
@@ -115,9 +116,8 @@ type taskRow struct {
 // acknowledged as soon as their result is delivered.
 const dashRecent = 24 * time.Hour
 
-// dashTasks are the dashboard's tasks: the active ones in the panel's order, then the finished ones — not yet
-// acknowledged, or finished within dashRecent.
-func dashTasks(snap *Snapshot) ([]*Task, []*Task) {
+// dashboardTasks includes acknowledged history when full is true.
+func dashboardTasks(snap *Snapshot, full bool) ([]*Task, []*Task) {
 	var active, done []*Task
 	proxies := localRemoteMemberProxies(snap)
 	for _, t := range snap.All {
@@ -130,7 +130,7 @@ func dashTasks(snap *Snapshot) ([]*Task, []*Task) {
 		switch {
 		case t.Active():
 			active = append(active, t)
-		case !t.Acked || time.Since(finishedAt(t)) < dashRecent:
+		case full || !t.Acked || time.Since(finishedAt(t)) < dashRecent:
 			done = append(done, t)
 		}
 	}
@@ -208,7 +208,7 @@ func boardOrder(id string) int {
 }
 
 func makeRow(snap *Snapshot, t *Task) taskRow {
-	r := taskRow{ID: t.ID, Name: t.Label(), Status: t.Status, Repo: t.Repo, Team: t.Team, TeamShort: strings.TrimSuffix(t.Team, "-team"), JobMarker: t.JobMarker(), FinishedAt: finishedAt(t)}
+	r := taskRow{ID: t.ID, Name: t.Label(), Status: t.Status, Repo: t.Repo, Team: t.Team, TeamShort: strings.TrimSuffix(t.Team, "-team"), JobMarker: t.JobMarker(), FinishedAt: finishedAt(t), CreatedAt: t.Created}
 	r.Link = "/task/" + t.ID
 	r.StatusLabel, _ = statusStyle(t.Status)
 	r.StatusClass = statusClass(t.Status)
@@ -259,6 +259,7 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 
 // dashData is the dashboard: the panel's header line, table and events, plus the reservations.
 type dashData struct {
+	Full    bool           // full history uses a separate page and event stream
 	Queue   string         // the investigation queue line
 	Waiting int            // tasks waiting for answers
 	Rows    []taskRow      // the visible tasks, in the panel's order
@@ -267,8 +268,13 @@ type dashData struct {
 
 // dashboard builds the dashboard's data.
 func (s *webServer) dashboard(snap *Snapshot) dashData {
-	d := dashData{Queue: snap.QueueLine(s.cfg.queueMax), Waiting: len(snap.Waiting()), Res: snap.Res}
-	active, done := dashTasks(snap)
+	return s.dashboardView(snap, false)
+}
+
+// dashboardView selects at most twenty newest tasks while retaining the familiar status grouping.
+func (s *webServer) dashboardView(snap *Snapshot, full bool) dashData {
+	d := dashData{Full: full, Queue: snap.QueueLine(s.cfg.queueMax), Waiting: len(snap.Waiting()), Res: snap.Res}
+	active, done := dashboardTasks(snap, full)
 
 	var localActiveRows, localDoneRows []taskRow
 	for _, t := range active {
@@ -278,7 +284,7 @@ func (s *webServer) dashboard(snap *Snapshot) dashData {
 		localDoneRows = append(localDoneRows, makeRow(snap, t))
 	}
 
-	remRows := remoteRows(s.cfg.busDir)
+	remRows := remoteDashboardRows(s.cfg.busDir, full)
 	var remoteActive, remoteDone []taskRow
 	for _, r := range remRows {
 		hasProxy := false
@@ -308,13 +314,41 @@ func (s *webServer) dashboard(snap *Snapshot) dashData {
 
 	d.Rows = append(remoteActive, localActiveRows...)
 	d.Rows = append(d.Rows, doneRows...)
+	if !full && len(d.Rows) > dashboardLimit {
+		newest := append([]taskRow(nil), d.Rows...)
+		sort.SliceStable(newest, func(i, j int) bool {
+			if !newest[i].CreatedAt.Equal(newest[j].CreatedAt) {
+				return newest[i].CreatedAt.After(newest[j].CreatedAt)
+			}
+			return newest[i].ID > newest[j].ID
+		})
+		selected := map[string]bool{}
+		for _, row := range newest[:dashboardLimit] {
+			selected[row.Link] = true
+		}
+		rows := make([]taskRow, 0, dashboardLimit)
+		for _, row := range d.Rows {
+			if selected[row.Link] {
+				rows = append(rows, row)
+			}
+		}
+		d.Rows = rows
+	}
 	return d
 }
+
+// dashboardLimit bounds the compact page and its live stream.
+const dashboardLimit = 20
 
 // viewDashboard (GET /) is the main page: the same data as `agent live`.
 func (s *webServer) viewDashboard(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
-	s.render(w, r, http.StatusOK, "dashboard", "Dashboard", snap, s.dashboard(snap))
+	full := r.URL.Path == "/dashboard/full"
+	title := "Dashboard"
+	if full {
+		title = "Full dashboard view"
+	}
+	s.render(w, r, http.StatusOK, "dashboard", title, snap, s.dashboardView(snap, full))
 }
 
 // eventRow is one event of the dashboard's event list (the panel's events pane).
@@ -345,7 +379,7 @@ func (s *webServer) streamDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		snap, evs := watcher.Poll()
 		snap = s.applyRemoteControls(snap)
-		d := s.dashboard(snap)
+		d := s.dashboardView(snap, r.URL.Path == "/events/dashboard/full")
 		if table := s.fragment("dash-table", d); table != lastTable {
 			if !sseSend(w, f, "table", table) {
 				return
@@ -927,7 +961,11 @@ func (s *webServer) viewTeams(w http.ResponseWriter, r *http.Request) {
 		row := teamRow{ID: id, Lead: t.Lead, Done: t.Done, Members: len(t.Members)}
 		states := map[string]int{}
 		for _, m := range t.Members {
-			states[m.State]++
+			state := m.State
+			if task := snap.All[m.Task]; task != nil && task.Status == "stopped" {
+				state = "stopped"
+			}
+			states[state]++
 		}
 		var parts []string
 		for st, n := range states {
@@ -1005,6 +1043,10 @@ func (s *webServer) viewTeam(w http.ResponseWriter, r *http.Request) {
 		if tk := snap.All[m.Task]; tk != nil {
 			row := makeRow(snap, tk)
 			mr.Row = &row
+			if tk.Status == "stopped" {
+				mr.State = "stopped"
+				mr.StateClass = statusClass(mr.State)
+			}
 			if repo == "" || mr.Lead {
 				repo = tk.Repo
 			}
@@ -1484,8 +1526,7 @@ func insideDir(dir, path string) bool {
 
 // ---------------------------------------------------------------- actions: stop a run, wake a team
 
-// postStop (POST /task/{id}/stop) cuts a running agent's run short: `agent kick <task> web` (a team member sleeps
-// and can be woken again; a solo task is stopped).
+// postStop persistently stops local team members; remote runs retain their run-scoped kick protocol.
 func (s *webServer) postStop(w http.ResponseWriter, r *http.Request) {
 	t := findTask(s.snapshot(), r.PathValue("id"))
 	if t == nil {
@@ -1496,13 +1537,34 @@ func (s *webServer) postStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot stop mirrored task "+t.ID+" from the lead", http.StatusForbidden)
 		return
 	}
-	out, cerr := callAgent(s.cfg.agentCmd, "kick", t.ID, "web")
+	args := []string{"kick", t.ID, "web"}
+	if t.Team != "" && t.Node == "" && t.Kind != "remote-member" {
+		args = []string{"stop", t.ID}
+	}
+	out, cerr := callAgent(s.cfg.agentCmd, args...)
 	if cerr != nil {
-		logWarn(LogWebActionFailed, "action", "kick", "task", t.ID, "cause", cerr.Cause.String(), "error", cerr.Message)
+		logWarn(LogWebActionFailed, "action", args[0], "task", t.ID, "cause", cerr.Cause.String(), "error", cerr.Message)
 		http.Error(w, "cannot stop "+t.ID+": "+cerr.Message, http.StatusConflict)
 		return
 	}
-	logInfo(LogWebAction, "action", "kick", "task", t.ID)
+	logInfo(LogWebAction, "action", args[0], "task", t.ID)
+	writeText(w, strings.TrimSpace(out))
+}
+
+// postTeamStop persists human cancellation through the CLI, which owns team lifecycle changes.
+func (s *webServer) postTeamStop(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.snapshot().Teams[id] == nil {
+		http.Error(w, "no such team", http.StatusNotFound)
+		return
+	}
+	out, cerr := callAgent(s.cfg.agentCmd, "team", id, "--stop")
+	if cerr != nil {
+		logWarn(LogWebActionFailed, "action", "stop-team", "team", id, "cause", cerr.Cause.String(), "error", cerr.Message)
+		http.Error(w, "cannot stop team: "+cerr.Message, http.StatusConflict)
+		return
+	}
+	logInfo(LogWebAction, "action", "stop-team", "team", id)
 	writeText(w, strings.TrimSpace(out))
 }
 
