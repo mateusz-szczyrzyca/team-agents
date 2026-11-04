@@ -69,6 +69,8 @@ tests/unit/fresh_relative.bats	a resumed run starts a fresh session only past tw
 tests/unit/fresh_session.bats	a run that read a large context a step is followed by a fresh session, not a resume	blackbox	R24	-	planned
 tests/unit/fresh_session.bats	a run with a small context a step is resumed as before	blackbox	R24	-	planned
 tests/unit/fresh_session.bats	a team member's long run ends it: its next run starts a fresh session, woken at once	source	R25	-	planned
+tests/unit/foreground_commands.bats	a Claude Code run has background tasks off and a Bash timeout of CLAUDE_BASH_TIMEOUT_MIN	blackbox	R17	-	planned
+tests/unit/foreground_commands.bats	every run's prompt says to run commands in the foreground, never ending a turn to wait for one	blackbox	R16	-	planned
 tests/unit/gate.bats	passing steps take one line each; the full output is in the log	blackbox	R32	-	planned
 tests/unit/gate.bats	a failing Go test shows its failure, not the hundreds of passing ones	blackbox	R32	-	planned
 tests/unit/gate.bats	a failing bats test shows its name and diagnosis, capped; the linter shows its findings without code	blackbox	R32	-	planned
@@ -256,6 +258,9 @@ tests/unit/member_pr.bats	a team member's gh pr create is refused, names its coo
 tests/unit/member_pr.bats	anyone else's gh pr create goes to gh as before	blackbox	R11	-	planned
 tests/unit/member_pr.bats	gh_coordinator: a team member's coordinator; nobody for the coordinator, a solo task or an investigator	source	R23	-	planned
 tests/unit/meta.bats	concurrent meta_set calls of different keys all survive, and none fails	source	R07	-	planned
+tests/unit/merged_elsewhere.bats	a team still at work on a round whose PR someone else merged is stopped; the human hears of the commits after it, once	blackbox	R34	-	planned
+tests/unit/merged_elsewhere.bats	a review of a PR someone else merged is stopped	blackbox	R34	-	planned
+tests/unit/merged_elsewhere.bats	the autopilot's own merge stops nothing	blackbox	R34	-	planned
 tests/unit/network.bats	a network failure pauses the task for AGENT_NETWORK_PAUSE_MIN; its timer resumes it	blackbox	R25	-	planned
 tests/unit/network.bats	a network failing again and again fails the task after AGENT_NETWORK_MAX_PAUSES, with the reason	blackbox	R25	-	planned
 tests/unit/network.bats	a reset or refused connection is a network pause too; an ordinary error is not	source	R25	-	planned
