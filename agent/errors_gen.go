@@ -32,6 +32,34 @@ func (c CommandCause) info() causeInfo { return commandCauses[c] }
 // String returns the cause name.
 func (c CommandCause) String() string { return c.info().name }
 
+// ---------------------------------------------------------------- load_config
+
+// LoadConfigCause is a reason why executable Bash configuration loading failed.
+type LoadConfigCause int
+
+const (
+	LoadConfigShell    LoadConfigCause = iota // the isolated Bash configuration evaluator failed [Process]
+	LoadConfigProtocol                        // the configuration snapshot is malformed [InvalidArgument]
+)
+
+// LoadConfigError is the error of executable Bash configuration loading.
+type LoadConfigError = OpError[LoadConfigCause]
+
+// loadConfigCauses describes the LoadConfigCause values (same order as the constants).
+var loadConfigCauses = [...]causeInfo{
+	{"Shell", ClassProcess},
+	{"Protocol", ClassInvalidArgument},
+}
+
+// op implements opCause.
+func (LoadConfigCause) op() string { return "load_config" }
+
+// info implements opCause.
+func (c LoadConfigCause) info() causeInfo { return loadConfigCauses[c] }
+
+// String returns the cause name.
+func (c LoadConfigCause) String() string { return c.info().name }
+
 // ---------------------------------------------------------------- execute
 
 // ExecuteCause is a reason why subprocess execution failed.
