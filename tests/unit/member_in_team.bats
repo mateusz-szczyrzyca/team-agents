@@ -199,3 +199,60 @@ round_pr() {
   [ "$(meta "$t" WORK_ROUND)" = 4 ]
   [ -z "$(meta "$m" WORK_ROUND)" ]
 }
+
+@test "a same-round resume prefers the coordinator's WORK_ROUND over a member's stale later round" {
+  scenario '{"lead": {"new": "team-lead-round:2/5"}, "member": {"new": "sleep:300"}}'
+  agent run --team lead,member "team task" > /dev/null
+  t=$(task_of lead); m=$(task_of member)
+  wait_status "$t" 'done'
+  agent stop --running > /dev/null
+  printf 'PR_NUMBER=7\nPR_URL=https://github.com/o/r/pull/7\n' >> "$AGENTS_HOME/tasks/$t/meta.env"
+  printf 'WORK_ROUND=3\nWORK_ROUNDS=5\n' >> "$AGENTS_HOME/tasks/$m/meta.env"
+  round_pr OPEN
+  agent run --resume "$(meta "$t" TEAM)" --same-round "fix the review" > /dev/null
+  f=$AGENTS_HOME/tasks/$(task_of lead)/task.md
+  grep -q '^## Round 2 of 5 continues' "$f"
+  run ! grep -q '^## Round 3 of 5 continues' "$f"
+  agent stop --running > /dev/null
+}
+
+@test "agent archive packs and removes each team member's own checkpoint" {
+  command -v 7z >/dev/null || skip "7z not installed"
+  t=$(round_team)
+  m=$(task_of member)
+  team=$(meta "$t" TEAM)
+  mkdir -p "$AGENTS_HOME/bus/checkpoints"
+  printf '\n## Checkpoint — member\n\nmember own record\n' > "$AGENTS_HOME/bus/checkpoints/task-$m.md"
+  agent archive "$team" > /dev/null
+  archive=$AGENTS_HOME/tasks-archived/$team.7z
+  [ -f "$archive" ]
+  run 7z x -so "$archive" "checkpoints/task-$m.md"
+  [ "$status" -eq 0 ]
+  [[ $output == *"member own record"* ]]
+  [ ! -e "$AGENTS_HOME/bus/checkpoints/task-$m.md" ]
+}
+
+@test "a team member cannot create, merge, close or edit a PR through gh api" {
+  setup_gh
+  commands=(
+    "api -X PUT repos/o/r/pulls/53/merge -f merge_method=squash"
+    "api repos/o/r/pulls/53 --method PATCH -f state=closed"
+    "api repos/o/r/pulls -X POST -f title=member"
+    "api repos/o/r/pulls -f title=member -f head=member -f base=main"
+    "api --method=PUT repos/o/r/pulls/53/merge"
+  )
+  for cmd in "${commands[@]}"; do
+    read -ra a <<< "$cmd"
+    : > "$STUB_HOME/gh.log"
+    AGENT_GH_COORDINATOR=gemini-1 run ! "$GH" "${a[@]}"
+    [[ $output == *"gemini-1"* ]]
+    run ! grep -q '^gh api ' "$STUB_HOME/gh.log"
+    grep '"event":"github_member_pr_refused"' "$log" | grep -q '"action":"api"'
+  done
+  AGENT_GH_COORDINATOR=gemini-1 run "$GH" api repos/o/r/pulls/53
+  [ "$status" -eq 0 ]
+  grep -q '^gh api repos/o/r/pulls/53$' "$STUB_HOME/gh.log"
+  AGENT_GH_COORDINATOR="" run "$GH" api -X PUT repos/o/r/pulls/53/merge -f merge_method=squash
+  [ "$status" -eq 0 ]
+  grep -q '^gh api -X PUT repos/o/r/pulls/53/merge' "$STUB_HOME/gh.log"
+}
