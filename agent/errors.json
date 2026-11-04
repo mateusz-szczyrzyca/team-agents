@@ -10,6 +10,16 @@
    ]
   },
   {
+   "type": "LoadConfig",
+   "op": "load_config",
+   "what": "executable Bash configuration loading",
+   "causes": [
+    {"name": "Shell", "class": "Process", "doc": "the isolated Bash configuration evaluator failed"},
+    {"name": "Protocol", "class": "InvalidArgument", "doc": "the configuration snapshot is malformed"}
+   ],
+   "noStorage": true
+  },
+  {
    "type": "Execute",
    "op": "execute",
    "what": "subprocess execution",
