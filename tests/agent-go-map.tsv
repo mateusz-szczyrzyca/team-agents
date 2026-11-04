@@ -558,3 +558,7 @@ tests/unit/serena.bats	the prompt tells the agent to navigate with Serena only w
 tests/unit/dashboard_lifecycle.bats	dashboard team stop persists every member and prevents wake	source	R35	-	planned
 tests/unit/dashboard_lifecycle.bats	dashboard stopped automation cannot launch a fix pass or review	source	R35	-	planned
 tests/unit/dashboard_lifecycle.bats	dashboard stopped runner exits without restarting team automation	source	R35	-	planned
+tests/unit/dashboard_lifecycle.bats	dashboard independent investigation blocks normal resume before mutation	source	R35	-	planned
+tests/unit/dashboard_lifecycle.bats	dashboard independent investigation blocks message wake	source	R35	-	planned
+tests/unit/dashboard_lifecycle.bats	dashboard ordinary investigations and other projects do not block resume	source	R35	-	planned
+tests/unit/investigation_team_admission.bats	resuming a normal team in the same project is refused while --investigation is in progress, but allowed for normal model investigations	blackbox	R37	-	planned

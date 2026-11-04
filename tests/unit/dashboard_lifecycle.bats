@@ -60,3 +60,42 @@ lifecycle_fixture() {
   [ "$(task_field A STATUS)" = stopped ]
   [ ! -e "$HOME/automation-ran" ]
 }
+
+@test "dashboard independent investigation blocks normal resume before mutation" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/agent"
+  lifecycle_fixture
+  mkdir -p "$TASKS/INV"
+  printf 'ID=INV\nKIND=investigation_team\nSTATUS=running\nREPO_ROOT=%s\n' "$HOME/repo" > "$TASKS/INV/meta.env"
+  run "$SELF" run --resume T-team --same-round "continue"
+  [ "$status" -ne 0 ]
+  [[ $output == *"independent investigation INV"* ]]
+  [ "$(task_field A STATUS)" = sleeping ]
+  [ "$(find "$TASKS" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 3 ]
+}
+
+@test "dashboard independent investigation blocks message wake" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/agent"
+  lifecycle_fixture
+  mkdir -p "$TASKS/INV"
+  printf 'ID=INV\nKIND=investigation_team\nSTATUS=waiting\nREPO_ROOT=%s\n' "$HOME/repo" > "$TASKS/INV/meta.env"
+  run "$SELF" _wake B
+  [ "$status" -eq 0 ]
+  [ "$(task_field B STATUS)" = sleeping ]
+  [ "$(task_field B RUN)" = 1 ]
+}
+
+@test "dashboard ordinary investigations and other projects do not block resume" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/agent"
+  lifecycle_fixture
+  mkdir -p "$TASKS/INV"
+  printf 'ID=INV\nKIND=investigation\nSTATUS=running\nREPO_ROOT=%s\n' "$HOME/repo" > "$TASKS/INV/meta.env"
+  run "$SELF" run --resume T-team --same-round "continue"
+  [[ $output == *'is still active'* ]]
+  meta_set INV KIND investigation_team
+  meta_set INV REPO_ROOT "$HOME/other-repo"
+  run "$SELF" run --resume T-team --same-round "continue"
+  [[ $output == *'is still active'* ]]
+}
