@@ -579,3 +579,11 @@ tests/unit/dashboard_prompt_modes.bats	dashboard resume does not advertise Seren
 tests/unit/member_pr.bats	every mode's prompt states the rule never to open a new PR when not coordinator or when a Draft or Open PR already exists	source	R23	-	planned
 tests/unit/serena.bats	config/agents.conf enables AGENT_SERENA=serena and worktrees inherit .serena/project.yml from REPO_ROOT	source	R12	-	planned
 tests/unit/serena.bats	every model CLI (claude, codex, gemini, opencode) receives the Serena prompt and invokes the serena MCP server when needed	source	R12	-	planned
+tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
+tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
+tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
+tests/unit/team_stop_followup.bats	a member waiting for answers is not resumed while --investigation is in progress in its project	source	R35	-	planned
+tests/unit/team_stop_followup.bats	a normal team's precheck still runs while --investigation is in progress in its project	source	R35	-	planned
+tests/unit/team_stop_followup.bats	a run that continues a team member (a bounce) is not refused while --investigation is in progress	source	R35	-	planned
+tests/unit/team_stop_followup.bats	a wake held back by --investigation is recorded and replayed once the investigation ends	source	R35	-	planned
+tests/unit/team_stop_followup.bats	a finished --investigation still marked waiting does not block a normal team	source	R35	-	planned
