@@ -168,13 +168,14 @@ const (
 	MemberHung     MemberState = "hung"     // marked hung by the watchdog (no longer resumed)
 	// MemberPaused: out of quota, or stopped by the wake-loop guard. Messages and board items do not wake it;
 	// the `agent` script resumes it with a timer at the time it announced to the team.
-	MemberPaused MemberState = "paused"
+	MemberPaused  MemberState = "paused"
+	MemberStopped MemberState = "stopped" // stopped on demand by the human (not sleeping)
 )
 
 // Valid reports whether s is one of the defined states.
 func (s MemberState) Valid() bool {
 	switch s {
-	case MemberActive, MemberSleeping, MemberWaking, MemberDone, MemberExcluded, MemberHung, MemberPaused:
+	case MemberActive, MemberSleeping, MemberWaking, MemberDone, MemberExcluded, MemberHung, MemberPaused, MemberStopped:
 		return true
 	}
 	return false

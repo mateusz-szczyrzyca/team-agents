@@ -359,7 +359,7 @@ func (a *leadAPI) memberJobsChanged(ids []string) {
 			if job.Branch != "" && m.Branch == "" {
 				m.Branch = job.Branch
 			}
-			if !isTerminalJob(job.State) || m.State == MemberDone {
+			if !isTerminalJob(job.State) || m.State == MemberDone || m.State == MemberStopped {
 				return nil
 			}
 			team, task, ended = *t, m.Task, true

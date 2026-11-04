@@ -927,7 +927,7 @@ func (s *webServer) viewTeams(w http.ResponseWriter, r *http.Request) {
 		row := teamRow{ID: id, Lead: t.Lead, Done: t.Done, Members: len(t.Members)}
 		states := map[string]int{}
 		for _, m := range t.Members {
-			states[m.State]++
+			states[effectiveMemberState(snap, m)]++
 		}
 		var parts []string
 		for st, n := range states {
@@ -987,6 +987,23 @@ type teamData struct {
 	Notes    notesView    // the notebook of its repository
 }
 
+// effectiveMemberState returns a member's state, treating a member whose task was stopped on demand as "stopped"
+// even if the bus state had not been updated from "sleeping" or "paused".
+func effectiveMemberState(snap *Snapshot, m *MemberInfo) string {
+	if m == nil {
+		return ""
+	}
+	if m.State == "stopped" {
+		return "stopped"
+	}
+	if m.Task != "" {
+		if tk := snap.All[m.Task]; tk != nil && tk.Status == "stopped" {
+			return "stopped"
+		}
+	}
+	return m.State
+}
+
 // viewTeam (GET /team/{id}) shows a team: members, board, consultations, quiz, messages, notebook.
 func (s *webServer) viewTeam(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
@@ -1001,7 +1018,8 @@ func (s *webServer) viewTeam(w http.ResponseWriter, r *http.Request) {
 	repo := ""
 	for name, m := range t.Members {
 		members[name] = true
-		mr := memberRow{Name: name, State: m.State, StateClass: statusClass(m.State), Tier: m.Tier, Task: m.Task, Lead: name == t.Lead}
+		mState := effectiveMemberState(snap, m)
+		mr := memberRow{Name: name, State: mState, StateClass: statusClass(mState), Tier: m.Tier, Task: m.Task, Lead: name == t.Lead}
 		if tk := snap.All[m.Task]; tk != nil {
 			row := makeRow(snap, tk)
 			mr.Row = &row
@@ -1484,8 +1502,7 @@ func insideDir(dir, path string) bool {
 
 // ---------------------------------------------------------------- actions: stop a run, wake a team
 
-// postStop (POST /task/{id}/stop) cuts a running agent's run short: `agent kick <task> web` (a team member sleeps
-// and can be woken again; a solo task is stopped).
+// postStop persistently stops local team members; remote runs retain their run-scoped kick protocol.
 func (s *webServer) postStop(w http.ResponseWriter, r *http.Request) {
 	t := findTask(s.snapshot(), r.PathValue("id"))
 	if t == nil {
@@ -1496,13 +1513,17 @@ func (s *webServer) postStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot stop mirrored task "+t.ID+" from the lead", http.StatusForbidden)
 		return
 	}
-	out, cerr := callAgent(s.cfg.agentCmd, "kick", t.ID, "web")
+	args := []string{"kick", t.ID, "web"}
+	if t.Team != "" && t.Node == "" && t.Kind != "remote-member" {
+		args = []string{"stop", t.ID}
+	}
+	out, cerr := callAgent(s.cfg.agentCmd, args...)
 	if cerr != nil {
-		logWarn(LogWebActionFailed, "action", "kick", "task", t.ID, "cause", cerr.Cause.String(), "error", cerr.Message)
+		logWarn(LogWebActionFailed, "action", args[0], "task", t.ID, "cause", cerr.Cause.String(), "error", cerr.Message)
 		http.Error(w, "cannot stop "+t.ID+": "+cerr.Message, http.StatusConflict)
 		return
 	}
-	logInfo(LogWebAction, "action", "kick", "task", t.ID)
+	logInfo(LogWebAction, "action", args[0], "task", t.ID)
 	writeText(w, strings.TrimSpace(out))
 }
 
