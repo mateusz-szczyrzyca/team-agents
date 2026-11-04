@@ -37,7 +37,9 @@ vendored files not counted. Check it at any time: `{{ROUND_SIZE_CMD}}`. A task b
   recommendation) before writing code. Keep the plan in your checkpoints, with the next round marked.
 - **Never start the next round's work early.** When this round's work is done, end the round: what you do beyond
   it is in no PR, checked and reviewed with nothing, and left behind when the next round starts from the merged base
-  on fresh branches.
+  on fresh branches. That holds when the task or the human's addition says to go on with the next rounds, and when
+  this round's PR is merged already: the next round is the one the script starts, on fresh branches, with its own
+  heading ("Round N of M"). A team member never starts a round.
 - After every round the base stays green: it builds, passes the linters and the tests. Unfinished functionality is
   dead code or a stub returning a typed "not implemented" error, reachable from nothing that works today.
 - **No placeholder tests.** A test is written in the round that implements its behaviour (RED, then GREEN) — never

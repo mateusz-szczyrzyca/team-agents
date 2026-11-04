@@ -183,14 +183,50 @@ gh_show() {
   if [[ -n $2 ]]; then jq -r "$2" <<< "$1"; else printf '%s\n' "$1"; fi
 }
 
-# a team member opens no PR: the round has one, its coordinator's, which takes the member's work in
-# (AGENT_GH_COORDINATOR: the coordinator of the member's team, set by the runner; empty for anyone else)
-if [[ ${1:-} == pr && ${2:-} == create && -n ${AGENT_GH_COORDINATOR:-} ]]; then
-  gh_log github_member_pr_refused "a team member's gh pr create is refused: its coordinator opens the round's PR" \
-    "coordinator=$AGENT_GH_COORDINATOR"
-  echo "agent-gh: a team member does not open a PR — the round has one, opened by its coordinator ($AGENT_GH_COORDINATOR). Push your branch and tell the coordinator what is on it (a board item or a message): it merges your work into the round's PR." >&2
-  exit 1
-fi
+# gh_team_lead — who coordinates the run's team (AGENT_GH_TEAM), asked of the bus now: a new team has nobody when its
+# first runs start, and a member can take over during a run. Prints the coordinator ("" = nobody yet); fails, logged,
+# when the bus does not answer
+gh_team_lead() {
+  local out errf rc=0
+  errf=$(mktemp) || return 1
+  out=$("${AGENTBUS_BIN:-$HOME/.local/bin/agentbus}" team-get --dir "${AGENT_GH_BUS_DIR:-${AGENTS_HOME:-$HOME/agents}/bus}" \
+          --team "$AGENT_GH_TEAM" 2> "$errf") || rc=$?
+  if ((rc != 0)); then
+    gh_log github_coordinator_unknown "the bus did not say who coordinates the team" "team=$AGENT_GH_TEAM" \
+      "exit_code=$rc" "stderr=$(head -c 500 "$errf")"
+    rm -f "$errf"
+    return 1
+  fi
+  rm -f "$errf"
+  jq -r '.lead // empty' <<< "$out"
+}
+
+# a team member opens, merges, marks ready and closes no PR: the round has one, its coordinator's, which takes the
+# member's work in, and the human (or --autopilot) merges it. The coordinator is the bus's answer when the run's
+# team is known (AGENT_GH_TEAM, AGENT_GH_SELF: set by the runner for a team's task), else AGENT_GH_COORDINATOR (the
+# coordinator when the run started; empty for anyone else)
+case "${1:-} ${2:-}" in
+  "pr create"|"pr merge"|"pr ready"|"pr close")
+    gh_lead=${AGENT_GH_COORDINATOR:-} gh_member=${AGENT_GH_COORDINATOR:+1}
+    if [[ -n ${AGENT_GH_TEAM:-} ]] && gh_now=$(gh_team_lead); then
+      gh_lead=$gh_now gh_member=1
+      [[ $gh_now != "${AGENT_GH_SELF:-}" ]] || gh_member=""
+    fi
+    if [[ -n $gh_member ]]; then
+      gh_log github_member_pr_refused "a team member's gh pr $2 is refused: its coordinator opens the round's PR" \
+        "action=$2" "coordinator=${gh_lead:-none}"
+      case $2 in create) gh_verb=open ;; ready) gh_verb="mark ready" ;; *) gh_verb=$2 ;; esac
+      if [[ -z $gh_lead ]]; then
+        echo "agent-gh: a team member does not $gh_verb a PR — the round has one, its coordinator's, and your team has no coordinator yet. Push your branch and tell the team what is on it (send_message to \"team\")." >&2
+      elif [[ $2 == create ]]; then
+        echo "agent-gh: a team member does not open a PR — the round has one, opened by its coordinator ($gh_lead). Push your branch and tell the coordinator what is on it (a board item or a message): it merges your work into the round's PR." >&2
+      else
+        echo "agent-gh: a team member does not $gh_verb a PR — the round's PR is its coordinator's ($gh_lead), and the human (or --autopilot) merges it. Push your branch and tell the coordinator what is on it (a board item or a message)." >&2
+      fi
+      exit 1
+    fi
+    ;;
+esac
 
 if [[ ${1:-} == api ]]; then
   shift
@@ -499,6 +535,10 @@ GIT_SIGNING_KEY="${GIT_SIGNING_KEY:-}"
 ENV_NOTES_FILE="${ENV_NOTES_FILE:-$AGENTS_HOME/hardware.md}"
 BRANCH_PREFIX="${BRANCH_PREFIX:-agents}"
 CLAUDE_MAX_TURNS="${CLAUDE_MAX_TURNS:-300}"
+# Claude Code's tool search (its ENABLE_TOOL_SEARCH): false = every tool, the agentbus tools included, is given to the
+# model up front. Deferred behind ToolSearch, they were loaded and then run in the shell by claude-haiku, which then
+# worked without its team. Another value is passed on (true, auto, auto:N); "default" leaves it to Claude Code
+CLAUDE_TOOL_SEARCH="${CLAUDE_TOOL_SEARCH:-false}"
 AGY_BIN="${AGY_BIN:-$HOME/.local/bin/agy}"
 OPENCODE_BIN="${OPENCODE_BIN:-$HOME/.opencode/bin/opencode}"
 OPENCODE_BASH_TIMEOUT_MS="${OPENCODE_BASH_TIMEOUT_MS:-600000}"
@@ -1505,8 +1545,14 @@ agents_gh_env() {
       return 1
     fi
   fi
-  AGENT_GH_COORDINATOR=$(gh_coordinator "${RUNNER_ID:-}")   # a team member's: its gh pr create is refused
-  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE="" AGENT_GITHUB_COLORS AGENT_GH_COORDINATOR
+  AGENT_GH_COORDINATOR=$(gh_coordinator "${RUNNER_ID:-}")   # a team member's: its PR commands are refused
+  AGENT_GH_TEAM="" AGENT_GH_SELF="" AGENT_GH_BUS_DIR=$BUS_DIR   # a team task's: whom the bus names coordinator, at the call
+  if [[ -n ${RUNNER_ID:-} && $(task_field "$RUNNER_ID" KIND) != investigation* ]]; then
+    AGENT_GH_TEAM=$(task_field "$RUNNER_ID" TEAM)
+    [[ -z $AGENT_GH_TEAM ]] || AGENT_GH_SELF=$(task_field "$RUNNER_ID" AGENT)
+  fi
+  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE="" AGENT_GITHUB_COLORS AGENT_GH_COORDINATOR \
+    AGENT_GH_TEAM AGENT_GH_SELF AGENT_GH_BUS_DIR AGENTBUS_BIN
   local names=()
   mapfile -t names < <(run_github_names)
   github_colour_register "${names[@]}"
@@ -1765,23 +1811,48 @@ round_open_prs() {
   done | sort -u
 }
 
-# round_pr_note task… — what a resumed round's text says of its PR, from the round's tasks: which it is (the PR_NUMBER of
-# the task that opened it, or the ROUND_PR carried), and where the round's commits go
-round_pr_note() {
-  local t p num="" branch=""
+# round_pr_of_tasks task… — the round's PR, from the round's tasks: "<number> <branch>" — the PR_NUMBER and branch of
+# the task that opened it, or the ROUND_PR carried (no branch); nothing for none
+round_pr_of_tasks() {
+  local t p
   for t in "$@"; do
     p=$(task_field "$t" PR_NUMBER)
-    if [[ -n $p ]]; then num=$p; branch=$(task_field "$t" BRANCH); break; fi
+    if [[ -n $p ]]; then printf '%s %s' "$p" "$(task_field "$t" BRANCH)"; return 0; fi
   done
-  if [[ -z $num ]]; then
-    for t in "$@"; do
-      p=$(task_field "$t" ROUND_PR)
-      if [[ -n $p ]]; then num=$p; break; fi
-    done
-  fi
+  for t in "$@"; do
+    p=$(task_field "$t" ROUND_PR)
+    if [[ -n $p ]]; then printf '%s' "$p"; return 0; fi
+  done
+}
+
+# round_pr_merged number task… — whether the round's PR of that number is merged, from the PRs of the round's branches
+# (a branch can have an earlier round's merged PR too); GitHub not answering counts as not merged (logged)
+round_pr_merged() {
+  local num=$1 t b out state; shift
+  for t in "$@"; do
+    b=$(task_field "$t" BRANCH)
+    [[ -n $b ]] || continue
+    out=$(try pr_lookup_failed trusted_prs "$(task_field "$t" REPO_ROOT)" "$b" all number,state) || continue
+    state=$(jq_soft pr_lookup_parse -r --argjson n "$num" '.[] | select(.number == $n) | .state' <<< "${out:-[]}")
+    [[ $state != MERGED ]] || return 0
+  done
+  return 1
+}
+
+# round_pr_note merged task… — what a resumed round's text says of its PR (round_pr_of_tasks), and where the round's
+# commits go: through its coordinator, who alone merges the members' branches; merged=1: the PR is merged already,
+# and its follow-up gets one new PR
+round_pr_note() {
+  local merged=$1 num branch; shift
+  read -r num branch <<< "$(round_pr_of_tasks "$@")"
   [[ -n $num ]] || return 0
-  printf "This round's PR is #%s%s. Every commit of this round goes there: a member — or a new coordinator — merges %s into its own branch and pushes it there (git push origin HEAD:%s). Never open another PR for this round: the checks send a round with two open PRs back.\n" \
-    "$num" "${branch:+ (branch $branch)}" "${branch:+origin/$branch}" "${branch:-<its branch>}"
+  if ((merged)); then
+    printf "This round's PR #%s%s is merged. Its follow-up goes in one new PR, opened by the coordinator from its branch; a member pushes its own branch and tells the coordinator what is on it (a board item or a message), and the coordinator merges it. A member never pushes to the coordinator's branch, and never opens, merges or closes a PR.\n" \
+      "$num" "${branch:+ (branch $branch)}"
+    return 0
+  fi
+  printf "This round's PR is #%s%s. Every commit of this round goes there, through the coordinator: a member pushes its own branch and tells the coordinator what is on it (a board item or a message); the coordinator merges the members' branches into its own and pushes it there (git push origin HEAD:%s) — a new coordinator first merges %s into its branch. A member never pushes to the coordinator's branch, and never opens, merges or closes a PR. Never open another PR for this round: the checks send a round with two open PRs back.\n" \
+    "$num" "${branch:+ (branch $branch)}" "${branch:-<its branch>}" "${branch:+origin/$branch}"
 }
 
 # round_pr_of_team team — the round's PR its coordinator had: its PR_NUMBER, or the ROUND_PR it carried; "" for none
@@ -3366,8 +3437,10 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
       '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$dir/mcp.json"
   fi
   mcp_add_serena "$dir/mcp.json" claude
-  # Claude Code's own attribution off: the commit trailers and the PR's attribution are the script's
-  echo '{"includeCoAuthoredBy": false, "attribution": {"commit": "", "pr": ""}}' > "$dir/claude-settings.json"
+  # Claude Code's own attribution off: the commit trailers and the PR's attribution are the script's; its tool
+  # search as CLAUDE_TOOL_SEARCH says (a setting's env wins over the human's own settings)
+  jq -n --arg ts "$CLAUDE_TOOL_SEARCH" '{includeCoAuthoredBy: false, attribution: {commit: "", pr: ""}}
+    + (if $ts == "default" then {} else {env: {ENABLE_TOOL_SEARCH: $ts}} end)' > "$dir/claude-settings.json"
   args+=(--settings "$dir/claude-settings.json")
   if [[ -n ${MODEL:-} ]]; then args+=(--model "$MODEL"); fi
   if [[ $mode == new ]]; then args+=(--session-id "$SESSION_ID"); else args+=(--resume "$SESSION_ID"); fi
@@ -5072,6 +5145,7 @@ cmd__runner() {
       opencode) run_opencode "$id" "${mode/#fresh/new}" "$nrun" "$pf" "$dir" ;;
       *)      echo "unknown agent type: $TYPE"; RC=2 ;;
     esac
+    AGENT_GH_COORDINATOR="" AGENT_GH_TEAM=""   # the member's PR commands only: this runner's own (e.g. a fallback review) go on
     log_info cli_finished "run=$nrun" "exit_code=$RC" "hung=$HUNG"
     if ((LONG_CUT)); then   # ended at its step limit: it sleeps, and is woken at once in a fresh session (long_run_end)
       RC=0
@@ -5771,15 +5845,23 @@ resume_run() {
 
   # rounds: after STATUS: ROUND_DONE the next round starts only once its PR is merged, on fresh branches from the
   # updated base; --same-round continues the same round on the same branches (e.g. for review fixes)
-  local rtask="" wr="" wrs="" fresh=0 round_title="" round_head=""
+  local rtask="" wr="" wrs="" fresh=0 round_title="" round_head="" round_merged=0
   for t in "${olds[@]}"; do
     if [[ -n $(task_field "$t" WORK_ROUND) ]]; then rtask=$t; fi
   done
   if [[ -n $rtask ]]; then
     wr=$(task_field "$rtask" WORK_ROUND); wrs=$(task_field "$rtask" WORK_ROUNDS)
     if ((same_round)); then
+      local rnum next=""
+      read -r rnum _ <<< "$(round_pr_of_tasks "${olds[@]}")"
+      ((wr >= wrs)) || next=" Round $((wr + 1)) has not started: do none of its work — it starts on fresh branches when the round is resumed after its merge."
       round_title="Round $wr of $wrs continues"
-      round_head="Round $wr of $wrs continues: its PR is not merged — keep working on the same branches (e.g. on the review findings), then end with STATUS: ROUND_DONE $wr/$wrs again."
+      if [[ -n $rnum ]] && round_pr_merged "$rnum" "${olds[@]}"; then   # merged: what comes now is its follow-up
+        round_merged=1
+        round_head="Round $wr of $wrs continues, and its PR #$rnum is merged: do only the follow-up the text below asks for, on the same branches, then end with STATUS: ROUND_DONE $wr/$wrs again.$next"
+      else
+        round_head="Round $wr of $wrs continues: its PR is not merged — keep working on the same branches (e.g. on the review findings), then end with STATUS: ROUND_DONE $wr/$wrs again.$next"
+      fi
     else
       ((wr < wrs)) || die "all $wrs rounds are done (round $wr/$wrs was the last) — start a new task for more work"
       local pr state="" url="" t2 b heads=() open=() st u
@@ -5837,7 +5919,7 @@ resume_run() {
   done
   RESUME_NEW_IDS+=("${remote_ids[@]}")
   local round_pr_text=""   # the same round: which is its PR, said to every member
-  ((fresh)) || round_pr_text=$(round_pr_note "${olds[@]}")
+  ((fresh)) || round_pr_text=$(round_pr_note "$round_merged" "${olds[@]}")
   for old in "${olds[@]}" "${joiners[@]}"; do
     local joiner=""
     if [[ $old == +* ]]; then joiner=${old#+}; old=$tpl; fi   # a new member: the coordinator's task is its template
@@ -5890,7 +5972,9 @@ resume_run() {
         echo "  WARNING $name: the uncommitted changes of $old could not be applied — they stay in the stash: git stash apply $carry"
       fi
     fi
-    { if ((fresh)); then round_text_strip < "$TASKS/$old/task.md"; else cat "$TASKS/$old/task.md"; fi
+    { if ((fresh)); then round_text_strip < "$TASKS/$old/task.md"
+      else round_text_restate "$([[ -n $round_head ]] && echo 1)" "$([[ -n $round_pr_text ]] && echo 1)" < "$TASKS/$old/task.md"
+      fi
       if [[ -n $round_head ]]; then   # this round's own heading: for this round only
         printf '\n\n%s\n## %s (resumed %s)\n\n%s\n%s\n' "$ROUND_ONLY_OPEN" "$round_title" "$(date '+%Y-%m-%d %H:%M')" \
           "$round_head" "$ROUND_ONLY_CLOSE"
@@ -6880,6 +6964,26 @@ ROUND_ONLY_CLOSE="<!-- /round only -->"
 # round_text_strip — a task's text (stdin) without what was for its round only
 round_text_strip() {
   awk -v op="$ROUND_ONLY_OPEN" -v cl="$ROUND_ONLY_CLOSE" '$0 == op {skip = 1; next} $0 == cl {skip = 0; next} !skip'
+}
+
+# round_text_restate heads notes — the task's text without the round-only blocks a resume of the same round writes
+# anew, as only the newest is true (a PR merged since, the round number moved on): its heading ("## Round …") when
+# heads=1, its PR note ("## The round's PR") when notes=1, each with the blank lines before it. What the checks and
+# the reviews sent back stays, as does everything outside the round-only marks
+round_text_restate() {
+  awk -v op="$ROUND_ONLY_OPEN" -v cl="$ROUND_ONLY_CLOSE" -v heads="${1:-0}" -v notes="${2:-0}" -v pr="## The round's PR" '
+    function flush() { while (blank > 0) { print ""; blank-- } }
+    !inb && $0 == "" { blank++; next }
+    !inb && $0 == op { inb = 1; pre = blank; blank = 0; buf = $0 ORS; head = ""; next }
+    inb && $0 == cl {
+      inb = 0; buf = buf $0 ORS
+      if ((heads == 1 && head ~ /^## Round [0-9]/) || (notes == 1 && head == pr)) next
+      while (pre > 0) { print ""; pre-- }
+      printf "%s", buf; next
+    }
+    inb { buf = buf $0 ORS; if (head == "" && $0 ~ /^## /) head = $0; next }
+    { flush(); print }
+    END { if (inb) printf "%s", buf; flush() }'
 }
 
 # checkpoints_latest key — the key's newest AGENT_PROMPT_CHECKPOINTS checkpoints (all: 0), and where the earlier ones are

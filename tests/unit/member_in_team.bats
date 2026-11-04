@@ -44,9 +44,9 @@ EOF
   mkdir -p "$AGENTS_HOME/tasks/S2"
   printf 'ID=S2\nKIND=worker\nAGENT=solo\nSESSION_ID=sid\nWORKTREE=%s\n' "$HOME/repo" > "$AGENTS_HOME/tasks/S2/meta.env"
   touch "$AGENTS_HOME/tasks/S2/prompt-1.md"
+  printf 'CLAUDE_BIN=%q\n' "$HOME/stub_cli.sh" >> "$AGENTS_HOME/agents.conf"
   ( if (($#)); then export CLAUDE_TOOL_SEARCH=$1; fi
     source "$REPO_ROOT/bin/agent"
-    CLAUDE_BIN=$HOME/stub_cli.sh CLI_SESSION=()
     watch_run() { wait "$1"; }
     meta_load S2
     run_claude S2 new 1 "$AGENTS_HOME/tasks/S2/prompt-1.md" "$AGENTS_HOME/tasks/S2" ) > /dev/null
@@ -122,7 +122,7 @@ round_pr() {
     printf 'ID=%s\nAGENT=%s\nKIND=%s\nREPO_ROOT=%s\n' "$id" "$agent" "$kind" "$HOME/repo" > "$AGENTS_HOME/tasks/$id/meta.env"
     [[ $team == - ]] || printf 'TEAM=%s\n' "$team" >> "$AGENTS_HOME/tasks/$id/meta.env"
   done
-  env_of() { (source "$REPO_ROOT/bin/agent"; RUNNER_ID=$1 REPO_ROOT=$HOME/repo; agents_gh_env > /dev/null
+  env_of() { (source "$REPO_ROOT/bin/agent"; RUNNER_ID=$1 REPO_ROOT=$HOME/repo agents_gh_env > /dev/null
               printf '%s/%s' "${AGENT_GH_TEAM:-}" "${AGENT_GH_SELF:-}"); }
   [ "$(env_of M1)" = T-team/member ]
   [ "$(env_of S1)" = / ]
