@@ -5705,6 +5705,32 @@ resume_history() { # task → the human's answers from this task and its predece
   done
 }
 
+# active_investigation_in_repo repo-root repo-name — prints the task ID of an active --investigation in that repository
+# (either its parent KIND=investigation_team or a child task with INVESTIGATION_TEAM set), or returns 1. Investigations
+# requested by normal models (KIND=investigation with empty INVESTIGATION_TEAM) are not included.
+active_investigation_in_repo() {
+  local root=$1 repo=$2 d id kind inv_team st d_root d_repo
+  for d in "$TASKS"/*/; do
+    d=${d%/}; id=${d##*/}
+    [[ -f $TASKS/$id/meta.env ]] || continue
+    kind=$(task_field "$id" KIND)
+    inv_team=$(task_field "$id" INVESTIGATION_TEAM)
+    [[ $kind == investigation_team || ( $kind == investigation && -n $inv_team ) ]] || continue
+    st=$(task_field "$id" STATUS)
+    case $st in
+      new|starting|running|waiting|investigating|sleeping|paused|interrupted) ;;
+      *) continue ;;
+    esac
+    d_root=$(task_field "$id" REPO_ROOT)
+    d_repo=$(task_field "$id" REPO_NAME)
+    if [[ ( -n $root && -n $d_root && $d_root == "$root" ) || ( -n $repo && $d_repo == "$repo" ) ]]; then
+      printf '%s\n' "${inv_team:-$id}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 resume_run() {
   local carry # ref verify same_round [addition...] — resumes an interrupted team or task from its last checkpoint
   local ref=$1 verify=$2 same_round=$3; shift 3
@@ -5743,6 +5769,10 @@ resume_run() {
 
   local olds=() t
   if [[ -n $old_team ]]; then
+    local inv_active
+    if inv_active=$(active_investigation_in_repo "$(task_field "$first" REPO_ROOT)" "$(task_field "$first" REPO_NAME)"); then
+      die "cannot resume team $old_team while --investigation ($inv_active) is in progress in this project"
+    fi
     local tj; tj=$(bus team-get --dir "$BUS_DIR" --team "$old_team") || die "team $old_team not found on the bus"
     while read -r t; do olds+=("$t"); done < <(jq -r '.members[] | select(.state != "excluded") | .task' <<< "$tj")
   else
