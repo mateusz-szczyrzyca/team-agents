@@ -1876,7 +1876,7 @@ team_wait_settled() { # task — waits until the local members of its team have 
 cmd__precheck() { # coordinator task — once its team's members have settled: the checks, then the review — or the
   # round goes back to the team
   local id=$1
-  [[ $(task_field "$id" TEAM_STOPPED) != 1 && $(task_field "$id" AUTOPILOT_OFF) != 1 ]] || return 0
+  [[ $(task_field "$id" TEAM_STOPPED) != 1 ]] || return 0
   if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
     [[ $(task_field "$id" STATUS) != stopped && ! -f $TASKS/$id/stop-requested ]] || return 0
     local check_passed=0
@@ -2028,10 +2028,10 @@ review_fix_pass() { # parent findings text — the fix pass runs in its own unit
 
 cmd__fixpass() { # coordinator task — the fix pass recorded by review_fix_pass, once the team's members have settled
   local id=$1
-  [[ $(task_field "$id" TEAM_STOPPED) != 1 && $(task_field "$id" AUTOPILOT_OFF) != 1 ]] || return 0
+  [[ $(task_field "$id" TEAM_STOPPED) != 1 ]] || return 0
   auto_stage "$id" "fix pass: the team goes on with the reviews' findings once its runs end"
   team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=fix-pass"
-  [[ $(task_field "$id" TEAM_STOPPED) != 1 && $(task_field "$id" AUTOPILOT_OFF) != 1 ]] || return 0
+  [[ $(task_field "$id" TEAM_STOPPED) != 1 ]] || return 0
   do_fix_pass "$id" "$(<"$TASKS/$id/fix-pass.n")" "$(<"$TASKS/$id/fix-pass.md")"
   [[ $(task_field "$id" AUTO_STAGE) != "fix pass:"* ]] || auto_stage "$id" ""   # the team has the work, unless the human has
 }
@@ -2039,7 +2039,7 @@ cmd__fixpass() { # coordinator task — the fix pass recorded by review_fix_pass
 do_fix_pass() { # parent findings text — the team goes on with the review(s) that found problems, VERIFY_MAX_FIX_PASSES
   # times at most; after that the human is mentioned on the PR and notified
   local parent=$1 n=$2 text=$3 pass ref repo root add out owner args=()
-  [[ $(task_field "$parent" TEAM_STOPPED) != 1 && $(task_field "$parent" AUTOPILOT_OFF) != 1 ]] || return 0
+  [[ $(task_field "$parent" TEAM_STOPPED) != 1 ]] || return 0
   pass=$(task_field "$parent" FIX_PASS); pass=${pass:-0}
   PR_NUMBER=$(task_field "$parent" PR_NUMBER); PR_URL=$(task_field "$parent" PR_URL)
   ref=$(task_field "$parent" TEAM); ref=${ref:-$parent}

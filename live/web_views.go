@@ -118,12 +118,6 @@ const dashRecent = 24 * time.Hour
 // dashShown is how many entries the default dashboard shows before the full dashboard view.
 const dashShown = 20
 
-// dashTasks are the dashboard's tasks: the active ones in the panel's order, then the finished ones — not yet
-// acknowledged, or finished within dashRecent.
-func dashTasks(snap *Snapshot) ([]*Task, []*Task) {
-	return dashTasksMode(snap, false)
-}
-
 // dashTasksMode returns the active and finished tasks for the dashboard; when full is true, all finished tasks are included.
 func dashTasksMode(snap *Snapshot, full bool) ([]*Task, []*Task) {
 	var active, done []*Task
