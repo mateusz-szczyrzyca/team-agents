@@ -3343,13 +3343,17 @@ serena_args() {
 }
 
 # worktree_exclude path — that path of the worktree never committed: a line in the repository's info/exclude (shared
-# by its worktrees), added once
+# by its worktrees), added once. For .serena/, also seeds .serena/project.yml from REPO_ROOT when present.
 worktree_exclude() {
   local excl
   excl="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude" || return 1
   mkdir -p "$(dirname "$excl")"
   if [[ ! -f $excl ]] || ! grep -qxF "$1" "$excl"; then
     echo "$1" >> "$excl"
+  fi
+  if [[ $1 == .serena/ && -n ${REPO_ROOT:-} && -f $REPO_ROOT/.serena/project.yml && ! -f $WORKTREE/.serena/project.yml ]]; then
+    mkdir -p "$WORKTREE/.serena"
+    cp "$REPO_ROOT/.serena/project.yml" "$WORKTREE/.serena/project.yml"
   fi
 }
 

@@ -143,6 +143,7 @@ a_task() {
 
 @test "every model CLI (claude, codex, gemini, opencode) receives the Serena prompt and invokes the serena MCP server when needed" {
   setup_runs
+  watch_run() { wait "$1"; }
   cat > "$HOME/serena_mcp.sh" << 'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$HOME/serena-invocations.log"
