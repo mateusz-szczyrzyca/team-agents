@@ -574,6 +574,7 @@ CLAUDE_MAX_TURNS="${CLAUDE_MAX_TURNS:-300}"
 # model up front. Deferred behind ToolSearch, they were loaded and then run in the shell by claude-haiku, which then
 # worked without its team. Another value is passed on (true, auto, auto:N); "default" leaves it to Claude Code
 CLAUDE_TOOL_SEARCH="${CLAUDE_TOOL_SEARCH:-false}"
+CLAUDE_BASH_TIMEOUT_MIN="${CLAUDE_BASH_TIMEOUT_MIN:-20}"   # Claude Code's Bash timeout: a gate runs in the foreground
 AGY_BIN="${AGY_BIN:-$HOME/.local/bin/agy}"
 OPENCODE_BIN="${OPENCODE_BIN:-$HOME/.opencode/bin/opencode}"
 OPENCODE_BASH_TIMEOUT_MS="${OPENCODE_BASH_TIMEOUT_MS:-600000}"
@@ -1810,7 +1811,9 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
   checked=$(task_field "$id" PRECHECK_HEAD)
   [[ -z $checked ]] || match=(--match-head-commit "$checked")
   automation_allowed "$id" || return 0
+  meta_set "$id" PR_MERGE_OWN 1   # this merge is the autopilot's own: supervise_merged_rounds leaves the round alone
   if ! out=$(cd "$root" && gh pr merge "$url" --merge "${match[@]}" 2>&1); then
+    meta_set "$id" PR_MERGE_OWN ""
     auto_stage "$id" "waits for you: merging PR #$num failed"
     notify "$id" failed "" "⛔ autopilot stopped: merging PR #$num failed — your decision is needed: ${out:0:300} $url"
     log_error autopilot_merge_failed "task=$id" "reason=${out:0:300}"
@@ -3597,9 +3600,13 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   fi
   mcp_add_serena "$dir/mcp.json" claude
   # Claude Code's own attribution off: the commit trailers and the PR's attribution are the script's; its tool
-  # search as CLAUDE_TOOL_SEARCH says (a setting's env wins over the human's own settings)
-  jq -n --arg ts "$CLAUDE_TOOL_SEARCH" '{includeCoAuthoredBy: false, attribution: {commit: "", pr: ""}}
-    + (if $ts == "default" then {} else {env: {ENABLE_TOOL_SEARCH: $ts}} end)' > "$dir/claude-settings.json"
+  # search as CLAUDE_TOOL_SEARCH says (a setting's env wins over the human's own settings). Its background tasks
+  # off: a headless run ends with its turn and kills what runs in the background; its Bash timeout long enough for
+  # a command to run in the foreground — the gate included
+  jq -n --arg ts "$CLAUDE_TOOL_SEARCH" --arg ms "$((CLAUDE_BASH_TIMEOUT_MIN * 60000))" \
+    '{includeCoAuthoredBy: false, attribution: {commit: "", pr: ""},
+      env: ({CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1", BASH_DEFAULT_TIMEOUT_MS: $ms, BASH_MAX_TIMEOUT_MS: $ms}
+        + (if $ts == "default" then {} else {ENABLE_TOOL_SEARCH: $ts} end))}' > "$dir/claude-settings.json"
   args+=(--settings "$dir/claude-settings.json")
   if [[ -n ${MODEL:-} ]]; then args+=(--model "$MODEL"); fi
   if [[ $mode == new ]]; then args+=(--session-id "$SESSION_ID"); else args+=(--resume "$SESSION_ID"); fi
@@ -6877,6 +6884,7 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
   done
   supervise_member_jobs
   supervise_teams
+  supervise_merged_rounds
   supervise_review_waits
   if ((phase1_pending)) || review_rotation_waits; then dispatch; fi
 }
@@ -6915,6 +6923,76 @@ supervise_member_jobs() { # the lead: a remote member's job whose team is closed
       || log_info member_grant_already_gone "member=$member"   # revoked when its team finished, or never granted
   done < <(jq -r '.Jobs[] | select((.Request.Team // "") != "" and (.State | IN("queued", "assigned", "running", "waiting")))
                   | [.Request.ID, .Request.Team, .Request.Member] | @tsv' "$BUS_DIR/jobs.json")
+}
+
+# team_pr_task team — the task of the team that holds its round's PR: the one that opened it (PR_NUMBER), else one
+# that carries it from the round before (ROUND_PR); the bus need not know the coordinator yet
+team_pr_task() {
+  local m first=""
+  for m in "$TASKS"/*/meta.env; do
+    grep -qx "TEAM=$1" "$m" 2> /dev/null || continue
+    if grep -q '^PR_NUMBER=.' "$m"; then basename "$(dirname "$m")"; return 0; fi
+    [[ -n $first ]] || ! grep -q '^ROUND_PR=.' "$m" || first=$(basename "$(dirname "$m")")
+  done
+  [[ -z $first ]] || echo "$first"
+}
+
+# pr_merged_info root number — "headRefOid headRefName baseRefName mergedAt" (tab-separated) of a merged PR: the commit
+# GitHub froze it at, its branch, its base, when; empty when it is not merged or cannot be read
+pr_merged_info() {
+  local out
+  out=$(cd "$1" && gh pr view "$2" --json state,headRefOid,headRefName,baseRefName,mergedAt 2> /dev/null) || return 0
+  jq -r 'select(.state == "MERGED") | [.headRefOid, .headRefName, .baseRefName, (.mergedAt // "")] | @tsv' <<< "$out" \
+    2> /dev/null || return 0
+}
+
+# supervise_merged_rounds — what still works on a round whose PR someone else merged (by hand, while its fix pass or
+# its reviews went on) is stopped: the round's open team, the reviews of the PR, the coordinator last. The human is
+# told once, with the commits pushed to the PR's branch after the merge (on no PR, not on its base). The autopilot's
+# own merge (PR_MERGE_OWN on the coordinator's task) is left alone.
+supervise_merged_rounds() {
+  local m id st team lead num key info oid head base at t n after mark root
+  local -A coord=() work=()
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    id=$(basename "$(dirname "$m")")
+    st=$(task_field "$id" STATUS)
+    case $st in running|starting|sleeping|waiting|paused|queued) ;; *) continue ;; esac
+    lead="" team=$(task_field "$id" TEAM)
+    if [[ $(task_field "$id" KIND) == investigation && $(task_field "$id" REVIEW) == 1 ]]; then
+      lead=$(task_field "$id" PARENT_TASK)                          # a review: its PR is its coordinator's
+    elif [[ -n $team ]] && ! grep -qx 'REMOTE_TEAM=1' "$m"; then
+      lead=$(team_pr_task "$team")                                  # a member: its team's round PR
+    fi
+    [[ -n $lead && -f $TASKS/$lead/meta.env ]] || continue
+    num=$(task_field "$lead" PR_NUMBER); num=${num:-$(task_field "$lead" ROUND_PR)}
+    [[ -n $num && $(task_field "$lead" PR_MERGE_OWN) != 1 ]] || continue
+    key="$(task_field "$lead" REPO_ROOT)|$num"
+    coord[$key]=$lead
+    [[ $id == "$lead" ]] || work[$key]+="$id "
+  done
+  for key in "${!coord[@]}"; do
+    root=${key%|*} num=${key##*|} lead=${coord[$key]}
+    info=$(pr_merged_info "$root" "$num")
+    [[ -n $info ]] || continue
+    IFS=$'\t' read -r oid head base at <<< "$info"
+    n=0
+    for t in ${work[$key]:-} "$lead"; do   # the coordinator last: stopping it closes its team
+      case $(task_field "$t" STATUS) in running|starting|sleeping|waiting|paused|queued) ;; *) continue ;; esac
+      if "$SELF" stop "$t" > /dev/null 2>&1; then n=$((n + 1)); else log_warn merged_round_stop_failed "task=$t" "pr=$num"; fi
+    done
+    mark="$BUS_DIR/merged-elsewhere/$(basename "$root")-$num"
+    [[ ! -e $mark ]] || continue   # reported already
+    mkdir -p "${mark%/*}" && : > "$mark" || log_warn merged_round_mark_failed "mark=$mark"
+    git -C "$root" fetch -q origin "$head" 10>&- || log_warn merged_round_fetch_failed "task=$lead" "branch=$head"
+    after=$(git -C "$root" log --format='%h %s' "$oid..origin/$head" 2> /dev/null | head -n 10)
+    log_warn round_pr_merged_elsewhere "task=$lead" "pr=$num" "merged_at=$at" "stopped=$n" \
+      "after=$(grep -c . <<< "$after" || true)"
+    auto_stage "$lead" "⏸ waits for you: PR #$num was merged while its round went on — stopped"
+    notify "$lead" stopped "" "⛔ PR #$num was merged (${at:-just now}) while its round went on: $n task(s) of it stopped. $(
+      if [[ -n $after ]]; then printf 'Commits pushed to %s after the merge — on no PR, not on %s:\n%s' "$head" "$base" "$after"
+      else printf 'Nothing was pushed to %s after the merge.' "$head"; fi)"
+  done
 }
 
 supervise_teams() { # an open team with no local member at work or asleep for AGENT_TEAM_ABANDON_MIN is reported to the
