@@ -302,6 +302,11 @@ merged already, the heading says so: what comes now is the round's follow-up, an
 with `--intent-to-add` — it is staged and stashed again). A team that cannot take its work back — a resume refused — waits for you the same way, with
 the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
+**A round's PR merged by someone else.** When a round's PR is merged by hand (or by anyone but the autopilot) while
+the round still works on it — a fix pass, a review —, `agent _supervise` stops what works on it (the team, the
+reviews of the PR) and tells you once, with the commits pushed to the PR's branch after the merge: those are on no
+PR and not on the base (log: `round_pr_merged_elsewhere`). The autopilot's own merge is left alone.
+
 **Notifications that are not delivered.** When the notification command fails — say, a variable it needs is not
 set for the process that sends it —, every page of the dashboard counts the failures of the last 24 hours, with the
 last one's time, process (`_merge`, `_fixpass`, …) and error (`$AGENTS_HOME/notify-failures.jsonl`); one process's
