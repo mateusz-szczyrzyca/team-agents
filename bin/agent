@@ -5178,8 +5178,6 @@ questions_from_final() { # last-message-text id round → questions file on stdo
 
 # ------------------------------------------------------------------ runner (background)
 
-# runner_exit rc — the EXIT trap of a runner that did not finish normally (killed, stopped or crashed).
-# Every step runs through try: one failing step must not prevent the others (status, queues, notification).
 # stopped_handover — a run the human stopped: nothing of its own follows (no notification, wake, review or fix pass),
 # but whoever waits for it is told, as after any other end of a run — the agent that requested the investigation or
 # delegated to the helper gets a failed result; a member's board items go back and its team hears it is out (not when
@@ -5201,6 +5199,8 @@ Answer: investigation $why"
   if ! is_independent_investigation "$RUNNER_ID"; then try dispatch_failed dispatch_helpers; fi
 }
 
+# runner_exit rc — the EXIT trap of a runner that did not finish normally (killed, stopped or crashed).
+# Every step runs through try: one failing step must not prevent the others (status, queues, notification).
 runner_exit() {
   local rc=$1
   # A persisted outcome can still have an interrupted local result delivery.
