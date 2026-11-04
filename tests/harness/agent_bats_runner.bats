@@ -262,3 +262,22 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"TMPDIR cannot be inside repository root"* ]]
 }
+
+@test "agent-bats fails cleanly when external TMPDIR cannot be resolved" {
+  local mock_repo="$BATS_TEST_TMPDIR/mock_repo_unresolvable_tmpdir"
+  mkdir -p "$mock_repo/tests/unit" "$mock_repo/build" "$mock_repo/tools"
+  cp "$TOOL" "$mock_repo/tools/"
+  cp "$REPO_ROOT/tools/unit-bats.sh" "$mock_repo/tools/"
+
+  cat > "$mock_repo/build/agent-go" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$mock_repo/build/agent-go"
+
+  local bad_tmpdir="$BATS_TEST_TMPDIR/nonexistent_external_tmpdir/subdir"
+  run bash -c "cd '$mock_repo' && env TMPDIR='$bad_tmpdir' '$mock_repo/tools/agent-bats.sh' --repo-root '$mock_repo'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to resolve TMPDIR"* ]]
+  [[ "$output" != *"TMPDIR cannot be inside repository root"* ]]
+}
