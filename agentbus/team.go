@@ -689,7 +689,7 @@ func cmdTeamSet(args []string) {
 	dir := fs.String("dir", defaultDir(), "state directory")
 	team := fs.String("team", "", "team ID")
 	agent := fs.String("agent", "", "member")
-	state := fs.String("state", "", "the member's new state (active | sleeping | done | excluded | hung)")
+	state := fs.String("state", "", "the member's new state (active | sleeping | done | stopped | excluded | hung)")
 	parseFlags(fs, args)
 	newState, verr := parseEnum[MemberState](*state, "member state")
 	exitOn(fromValue(CmdTeamSetInvalidState, verr).asError())

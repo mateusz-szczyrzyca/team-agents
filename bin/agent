@@ -1137,7 +1137,8 @@ finish_team() { # team reason — closes the team; sleeping members finish as do
       act "$t" info "■ $why"
     fi
     case $(task_field "$t" STATUS) in
-      done|failed|stopped) bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state done >/dev/null ;;
+      done|failed) bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state done >/dev/null ;;
+      stopped) bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state stopped >/dev/null ;;
       excluded) bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state excluded >/dev/null ;;
     esac
   done
@@ -2510,7 +2511,8 @@ team_after_run() { # id status final note — team logic after a member's run en
     paused) state=paused ;;
     excluded) state=excluded ;;
     hung) state=hung ;;
-    done|failed|stopped) state=done ;;
+    done|failed) state=done ;;
+    stopped) state=stopped ;;
     *) state=active ;;
   esac
   try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$AGENT" --state "$state" >/dev/null
@@ -2668,7 +2670,7 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
     start_runner "$id" resume || bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state sleeping >/dev/null
   else
     local state=active
-    case $STATUS in done|failed|stopped) state=done ;; sleeping) state=done ;; esac
+    case $STATUS in done|failed) state=done ;; stopped) state=stopped ;; sleeping) state=done ;; esac
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state "$state" >/dev/null
   fi
 }
@@ -6420,6 +6422,11 @@ stop_all() { # agent stop --running: stops everything that is active, whatever i
   for d in "${stopped[@]}"; do   # a runner may have overwritten the status while stopping
     id=${d%% *}
     meta_set "$id" STATUS stopped
+    local team
+    team=$(task_field "$id" TEAM)
+    if [[ -n $team ]]; then
+      try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$id" AGENT)" --state stopped >/dev/null
+    fi
     if [[ $(task_field "$id" KIND) == investigation_team ]]; then
       investigation_team_stop "$id"
     fi
@@ -6454,7 +6461,7 @@ cmd_stop() {
     investigation_team_stop "$id"
   fi
   if [[ -n $team ]]; then
-    try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state done >/dev/null
+    try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state stopped >/dev/null
     if [[ $agent == "$(team_lead "$team")" ]]; then
       finish_team "$team" "team stopped by the user"
     elif [[ $st == sleeping ]]; then
@@ -7050,7 +7057,7 @@ cmd_kick() { # <task> [from] [expected-run] — cuts only the intended run short
   # The captured unit is safe to stop, but a newer run owns its status and timestamps.
   [[ $(task_field "$id" RUN) == "$run" ]] || return 0
   meta_set "$id" KICKED "$(date -Is)" "$run"
-  if [[ -n $team ]]; then
+  if [[ -n $team && $(team_done_flag "$team") != true && $(task_field "$id" TEAM_STOPPED) != 1 ]]; then
     [[ $(task_field "$id" STATUS) == sleeping ]] || meta_set "$id" STATUS sleeping "$run"
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state sleeping >/dev/null
     lead=$(team_lead "$team")
@@ -7059,6 +7066,10 @@ cmd_kick() { # <task> [from] [expected-run] — cuts only the intended run short
     fi
   else
     [[ $(task_field "$id" STATUS) == stopped ]] || meta_set "$id" STATUS stopped "$run"
+    meta_set "$id" FINISHED "$(date -Is)" "$run"
+    if [[ -n $team ]]; then
+      try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state stopped >/dev/null
+    fi
   fi
   act "$id" info "■ stopped by the human${2:+ (from the $2 interface)}"
   log_info task_kicked "task=$id" "team=$team" "from=${2:-cli}"

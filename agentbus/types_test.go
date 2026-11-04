@@ -152,4 +152,3 @@ func TestMemberStoppedState(t *testing.T) {
 		t.Fatalf("member state: got %q, want stopped", m.State)
 	}
 }
-

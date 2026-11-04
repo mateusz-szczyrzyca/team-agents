@@ -68,13 +68,12 @@ func TestStoppedTeamMemberIsNotShownAsSleeping(t *testing.T) {
 	_, ts := testServer(t, home)
 	for _, path := range []string{"/teams", "/team/20261104-122828-team"} {
 		_, body := get(t, ts, path)
-		if strings.Contains(body, ">sleeping<") || strings.Contains(body, "claude-haiku: sleeping") {
+		if strings.Contains(body, ">sleeping<") || strings.Contains(body, "1 sleeping") {
 			t.Fatalf("%s showed stopped member claude-haiku as sleeping:\n%s", path, body)
 		}
 	}
 	_, teamBody := get(t, ts, "/team/20261104-122828-team")
 	mustContain(t, "/team/20261104-122828-team", teamBody, ">stopped<")
 	_, teamsBody := get(t, ts, "/teams")
-	mustContain(t, "/teams", teamsBody, "claude-haiku: stopped")
+	mustContain(t, "/teams", teamsBody, "1 done, 1 stopped")
 }
-

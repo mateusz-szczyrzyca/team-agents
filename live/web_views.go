@@ -927,7 +927,7 @@ func (s *webServer) viewTeams(w http.ResponseWriter, r *http.Request) {
 		row := teamRow{ID: id, Lead: t.Lead, Done: t.Done, Members: len(t.Members)}
 		states := map[string]int{}
 		for _, m := range t.Members {
-			states[m.State]++
+			states[effectiveMemberState(snap, m)]++
 		}
 		var parts []string
 		for st, n := range states {
@@ -987,6 +987,23 @@ type teamData struct {
 	Notes    notesView    // the notebook of its repository
 }
 
+// effectiveMemberState returns a member's state, treating a member whose task was stopped on demand as "stopped"
+// even if the bus state had not been updated from "sleeping".
+func effectiveMemberState(snap *Snapshot, m *MemberInfo) string {
+	if m == nil {
+		return ""
+	}
+	if m.State == "stopped" {
+		return "stopped"
+	}
+	if m.Task != "" {
+		if tk := snap.All[m.Task]; tk != nil && tk.Status == "stopped" {
+			return "stopped"
+		}
+	}
+	return m.State
+}
+
 // viewTeam (GET /team/{id}) shows a team: members, board, consultations, quiz, messages, notebook.
 func (s *webServer) viewTeam(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
@@ -1001,7 +1018,8 @@ func (s *webServer) viewTeam(w http.ResponseWriter, r *http.Request) {
 	repo := ""
 	for name, m := range t.Members {
 		members[name] = true
-		mr := memberRow{Name: name, State: m.State, StateClass: statusClass(m.State), Tier: m.Tier, Task: m.Task, Lead: name == t.Lead}
+		mState := effectiveMemberState(snap, m)
+		mr := memberRow{Name: name, State: mState, StateClass: statusClass(mState), Tier: m.Tier, Task: m.Task, Lead: name == t.Lead}
 		if tk := snap.All[m.Task]; tk != nil {
 			row := makeRow(snap, tk)
 			mr.Row = &row
