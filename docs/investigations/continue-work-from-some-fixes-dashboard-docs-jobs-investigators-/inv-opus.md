@@ -1,3 +1,203 @@
+# Fixing the review of PR #61 — `inv-opus` (task `20261104-221457-inv-opus`)
+
+Topic: continue the work of `some-fixes-dashboard-docs-jobs-investigators.md`; check the review comments of
+[#61](https://github.com/mateusz-szczyrzyca/team-agents/pull/61) and fix the issues.
+
+The review is [the one by `ms-ai-agents` on #61](https://github.com/mateusz-szczyrzyca/team-agents/pull/61#pullrequestreview-5774854213): `4` major and `5`
+minor findings, plus `7` line comments that repeat them. There are no comments or reviews by other accounts on #61.
+
+**All `9` findings are fixed** on branch `agents/inv-opus/20261104-221457`.
+
+## How the branch is built
+
+#61's head branch `agents/inv-opus/20261104-203141` belongs to another task, and this task may push only its own
+branch. So:
+- the branch is reset to #61's head [`6ac8698`](https://github.com/mateusz-szczyrzyca/team-agents/commit/6ac869862988c16e922e252a101259a18520e69e), so it
+  contains all of #61 (and #60) unchanged;
+- `main` is merged in, because #61 conflicted with it: [`3774353`](https://github.com/mateusz-szczyrzyca/team-agents/commit/377435356721c4e3326456de0ee0eebb8bb61c30);
+- the fixes are `3` commits on top.
+
+The branch **fast-forwards from #61's head**. A merger can push it to #61's branch, or the human can decide (see
+"For the merger and the human").
+
+**The conflict:** a single hunk in `cmd__merge`. `main` sets `PR_MERGE_OWN=1` before `gh pr merge`, and #61
+checks `automation_allowed` there. Both are kept, with the stop check first, so a stopped coordinator neither merges
+nor marks the merge as its own.
+
+## Commits
+
+- [`3774353`](https://github.com/mateusz-szczyrzyca/team-agents/commit/377435356721c4e3326456de0ee0eebb8bb61c30) — merge of `main` into #61's head
+- [`bb1f72c`](https://github.com/mateusz-szczyrzyca/team-agents/commit/bb1f72c67ac0f3096828fd319afe5a838200975b) — $\color{red}{\textbf{RED}}$:
+  - `18` bats tests in [`tests/unit/team_stop_review.bats`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/tests/unit/team_stop_review.bats): `12` fail, `6` are guards that pass
+  - `2` Go tests in [`live/web_team_stop_done_test.go`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/live/web_team_stop_done_test.go): `1` fails
+  - their rows in [`tests/agent-go-map.tsv`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/tests/agent-go-map.tsv)
+- [`265b651`](https://github.com/mateusz-szczyrzyca/team-agents/commit/265b651088c80a22d6b6912a673de4f768f67559) — $\color{green}{\textbf{GREEN}}$: the fixes, in:
+  - [`bin/agent`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/bin/agent)
+  - [`install.sh`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/install.sh)
+  - [`prompts/pr-ownership.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/prompts/pr-ownership.md) and [`prompts/inv-merge.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/prompts/inv-merge.md)
+  - the two team templates ([`teams.html`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/live/web/templates/teams.html), [`team.html`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/live/web/templates/team.html))
+- [`477fff7`](https://github.com/mateusz-szczyrzyca/team-agents/commit/477fff74303bd1412609430a72d7272350cc3bf6) — documentation: [`README.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/README.md),
+  [`docs/investigations/dashboard/merged.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/docs/investigations/dashboard/merged.md), the
+  `dashboardView` comments in [`live/web_views.go`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/live/web_views.go) (`Test-First: not possible`, docs only)
+
+## The findings and what was done
+
+### Major 1 — a single `agent stop` told nobody who waited for the task
+
+**Fixed.** The early return in `runner_exit` now calls `stopped_handover`
+([`bin/agent`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/bin/agent)). It does not run the stopped task's own follow-up: no notification, wake,
+review or fix pass. But it tells whoever waits for the task, as `main` did:
+- an agent-requested investigator → `inv_finish … failed`, which wakes the requester; for an `--autopilot` review, also `review_without_verdict`
+- a helper → `helper_finish … failed`
+- a team member → `member_out`: its claimed board items go back and the other members are told
+- then `dispatch` and `dispatch_helpers`
+
+The review's sketch differs from the fix in four ways:
+- **`inv_finish` gets `failed`, not `stopped`.** `stopped` is not an `InvestigationStatus`
+  (`agentbus/types.go`), so `agentbus inv-set` would have rejected it and the requester would still wait.
+- **No `member_out` when the team is closed** (`team_done_flag`). `agent stop <coordinator>` runs `finish_team`
+  first, and nobody is left to take the work over.
+- **No `member_out` for a remote team's member** (`REMOTE_TEAM=1`), as in `team_after_run`: the lead follows its state.
+- **No `member_out` for a member of a team stopped with `agent team <id> --stop`** (`TEAM_STOPPED=1`), as the review suggested.
+
+Tests:
+- `a member stopped by the human gives its board items back and its coordinator is told` (real bus: the board item is `todo` again, `member_out` reaches the coordinator)
+- `an investigator requested by an agent and stopped by the human delivers a failed result to its requester`
+- `a helper stopped by the human sends a failed result to the agent that delegated to it`
+- guards:
+  - `a member of a team the human stopped as a whole is not reported out and keeps its board items`
+  - `the members of a closed team are not told that its stopped coordinator is out`
+  - `an independent investigator stopped by the human delivers nothing to a requester`
+
+### Major 2 — a `hung` investigation member blocked normal teams for good
+
+**Fixed.** The new `investigation_over` treats `done|failed|stopped|excluded|hung` as finished, the same set
+`agent ack` and the node code use, plus #60's completed-handoff case. `blocking_investigation` also skips a member
+whose cohort (`INVESTIGATION_TEAM`) has ended, whatever the member's own status says. That was the review's
+"better still" option. It is read with `INVESTIGATION_TEAM=""`, because `task_field` falls back to the caller's
+environment.
+
+Tests:
+- `a hung or excluded member of a finished --investigation does not block a normal team`
+- `a hung member blocks nobody even while its --investigation's record is not finished`
+- `a member still marked running does not block a normal team once its --investigation was stopped`
+- guard: `a running member of an --investigation in progress still blocks a normal team`
+
+### Major 3 — `install.sh` overrode an explicit Serena opt-out
+
+**Fixed.**
+- The `sed -i` on an existing `agents.conf` is gone. An existing value, including `AGENT_SERENA=""`, is never changed.
+- A missing `AGENT_SERENA` line is added only when Serena is installed, and `install.sh` prints what it added.
+- A **fresh** `agents.conf` gets `AGENT_SERENA=""` when Serena is not installed, with a message. So the template
+  no longer names a missing command (the review's "separately" point).
+
+Tests (they run the real `install.sh` with stub `go` / `systemctl`):
+- `install.sh keeps an explicit empty AGENT_SERENA in an existing agents.conf, Serena installed`
+- `install.sh adds AGENT_SERENA to an existing agents.conf without it when Serena is installed, and says so`
+- `install.sh leaves Serena off in a fresh agents.conf when it is not installed, and says so`
+- guard: `install.sh enables Serena in a fresh agents.conf when it is installed`
+
+### Major 4 — the PR ownership rule had no way out for a coordinator whose subject PR is on another branch
+
+**Fixed in the prompts. I chose the review's option (b), not (a).** Option (a), a new stacked PR, is exactly what
+the human's item `8` forbids: "never create a new PR". Option (b) asks the human instead:
+- [`prompts/pr-ownership.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/prompts/pr-ownership.md): a non-coordinator reports to its
+  coordinator. A coordinator whose matching PR's head branch is not its own does not push to that branch and does
+  not open a PR. It pushes its own branch, asks in its questions file (naming the PR and its branch), and ends with
+  `STATUS: QUESTIONS`.
+- [`prompts/inv-merge.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/477fff74303bd1412609430a72d7272350cc3bf6/prompts/inv-merge.md): the same for the Phase 2 merger. It first merges
+  that PR's head into `{{BRANCH}}`, so either answer can be carried out at once. The prompt also explains why it
+  cannot continue the PR itself: it pushes only `{{BRANCH}}`, and the precheck looks for the PR of `{{BRANCH}}`.
+
+Test: `the PR ownership rules tell a coordinator what to do when the subject's PR is on a branch it may not push`
+(solo and merger prompts).
+
+**This topic is itself such a case.** The Phase 2 merger of this investigation will find #61 open on a branch that
+is not its own. Under the new rule, it asks the human.
+
+### Minor findings
+
+1. **A fresh session got the rules twice — fixed.** `build_prompt … fresh` sets `local RULES_RENDERED=1` before
+   its nested `resume` part, which then skips `continuation_rules`. Test: `a fresh session's prompt has the PR
+   ownership rules and the Serena part once`.
+2. **`agent answer` refused too early — fixed.** The stop check is split out of `human_resume_allowed` into
+   `human_stop_respected`; `cmd_answer` uses only that.
+   - The resume is still refused by `agent resume`.
+   - It is also refused by the answers path unit (`cmd__answers_saved` → `cmd_resume`), which notifies the human
+     to save again later.
+
+   Tests:
+   - `answers to a waiting member can be written while --investigation is in progress; the resume is refused`
+   - guard: `a stopped task's answers are still refused before the editor opens`
+3. **The stop button showed on finished teams — fixed.** `/teams`: `stopped`, or the button only when the team
+   is not `Done`. `/team/<id>`: `{{if not (or .Stopped .T.Done)}}`.
+
+   Tests:
+   - `TestFinishedTeamOffersNoStop`
+   - guard: `TestStoppedFinishedTeamSaysStopped`
+4. **The docs described the 20-entry cut wrongly — fixed.** The README, the dashboard report and the
+   `dashboardView` comments now say: the first `20` entries in display order. That is remote jobs at work, then
+   local tasks at work, then finished ones, the most recently finished first. Creation time does not choose them.
+5. **Autopilot stayed off after a resume — documented.** The README's "Stopping a team" now says that a resumed
+   cohort inherits `AUTOPILOT_OFF=1`. Use `--autopilot` or `agent autopilot <team> on`. The behaviour is not
+   changed: a stop that keeps autopilot off is what item `2` asks for.
+
+## Checks
+
+`make gate` on [`477fff7`](https://github.com/mateusz-szczyrzyca/team-agents/commit/477fff74303bd1412609430a72d7272350cc3bf6), with this run's `AGENT_*` and `AGENTBUS_BIN` variables removed from
+the environment (see below):
+- all `8` steps passed
+- `0` lint findings
+- `570/570` + `42/42` unit bats tests
+- `57/57` harness tests
+- Go tests ok
+
+Other checks:
+- The RED commit fails only on its new tests: lint `0` issues, the test map valid.
+- Size against `main`: `2,622` lines (`+2,493` / `−129`) in `44` files, #60 and #61 included. This task's
+  part is `515` lines (`+484` / `−31`) in `12` files.
+- Existing tests: `git diff --numstat origin/main...HEAD` over `*_test.go` and `tests/**` shows `0` deleted lines.
+
+## Problem found: the bats suite picks up the running installation's `AGENTBUS_BIN`
+
+With this run's environment, the existing test `stopping a team keeps its finished members done, with their
+finishing time` (`tests/unit/team_stop_followup.bats`) fails. It fails the same way on #61's head `6ac8698`.
+
+**The cause:** `AGENTBUS_BIN`, set by the running installation, is inherited by the tests that source
+`bin/agent`. They then call the **installed** (older) `agentbus` instead of the one the suite builds. The bus
+directory is still the test's temporary one, so the real bus is not touched. Unset, the test passes.
+
+#61's merger hit the same thing and worked around it the same way. Suggestion (not done, rule 1 forbids changing
+`tests/unit/helpers.bash`): have `setup()` unset `AGENTBUS_BIN`, or have `make gate` clear it.
+
+## Compatibility
+
+- **No persisted format changes.**
+- **One new log event:** `member_out_failed`, for a failed `member_out` during a hand-over. The other events it uses
+  already existed: `investigation_finish_failed`, `helper_finish_failed`, `review_followup_failed`, `dispatch_failed`.
+- **`install.sh` no longer changes an existing `AGENT_SERENA`.** It only adds a missing line, and says so. It
+  never rewrites an existing value.
+- **The `agent answer` exit status during an `--investigation` changes.** Before, it refused before the editor
+  opened. Now it opens the editor, and the following resume is refused with the same message.
+
+## Lint suppressions
+
+None. The gosec finding G304 in the new Go test is avoided by reading through `os.DirFS`.
+
+## For the merger and the human
+
+- **The branch fast-forwards from #61's head.** It contains #60, #61, `main` and these fixes.
+- **Two ways to land it:**
+  - push it to #61's branch `agents/inv-opus/20261104-203141`; that is the human's or #61's owner's call;
+  - or answer the merger's question under the new rule (major 4).
+- **Not done:** `AGENTBUS_BIN` leaking into the bats suite (above). It needs a change to the test helpers or the
+  Makefile, and the human's approval.
+- **A suggestion for AGENTS.md:** say that the gate must run without the runner's `AGENT*` variables.
+
+---
+
+# Earlier report (task `20261104-200148-inv-opus`), kept unchanged
+
 # Continuing PR #60 — `inv-opus` (task `20261104-200148-inv-opus`)
 
 Topic: continue the work of `some-fixes-dashboard-docs-jobs-investigators.md` (8 items) in
