@@ -124,3 +124,80 @@ a_task() {
   grep -q 'MCP server `serena`' "$AGENTS_HOME/tasks/$t/prompt-1.md"
   [ "$(grep -c '{{' "$AGENTS_HOME/tasks/$t/prompt-1.md")" -eq 0 ]
 }
+
+@test "config/agents.conf enables AGENT_SERENA=serena and worktrees inherit .serena/project.yml from REPO_ROOT" {
+  grep -qx 'AGENT_SERENA="serena"' "$REPO_ROOT/config/agents.conf"
+  setup_runs
+  export AGENT_SERENA=serena
+  mkdir -p "$HOME/repo/.serena"
+  printf 'project_name: "repo"\nlanguage_servers:\n- go\n- bash\n' > "$HOME/repo/.serena/project.yml"
+  git -C "$HOME/repo" worktree add -q -b wt-branch "$HOME/wt" main
+  a_task T-wt claude
+  meta_set T-wt WORKTREE "$HOME/wt"
+  meta_load T-wt
+  run_claude T-wt new 1 "$AGENTS_HOME/tasks/T-wt/prompt-1.md" "$AGENTS_HOME/tasks/T-wt"
+  [ -f "$HOME/wt/.serena/project.yml" ]
+  grep -qx -- '- go' "$HOME/wt/.serena/project.yml"
+  grep -qx -- '- bash' "$HOME/wt/.serena/project.yml"
+}
+
+@test "every model CLI (claude, codex, gemini, opencode) receives the Serena prompt and invokes the serena MCP server when needed" {
+  setup_runs
+  cat > "$HOME/serena_mcp.sh" << 'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$HOME/serena-invocations.log"
+EOF
+  chmod +x "$HOME/serena_mcp.sh"
+  export AGENT_SERENA="$HOME/serena_mcp.sh"
+
+  cat > "$HOME/stub_cli.sh" << 'EOF'
+#!/usr/bin/env bash
+if [[ -n ${OPENCODE_CONFIG_CONTENT:-} ]]; then
+  mapfile -t cmd < <(jq -r '.mcp.serena.command[]' <<< "$OPENCODE_CONFIG_CONTENT")
+  "${cmd[@]}" <<< '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"serena_repl"}}'
+  printf '{"type":"step_finish","part":{"reason":"stop","tokens":{"input":10,"output":5}}}\n'
+  printf '{"type":"text","part":{"text":"STATUS: DONE"}}\n'
+  exit 0
+fi
+for ((i=1; i<=$#; i++)); do
+  arg="${!i}"
+  if [[ $arg == --mcp-config ]]; then
+    j=$((i+1)); cfg="${!j}"
+    cmd=$(jq -r '.mcpServers.serena.command' "$cfg")
+    mapfile -t sargs < <(jq -r '.mcpServers.serena.args[]' "$cfg")
+    "$cmd" "${sargs[@]}" <<< '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"serena_repl"}}'
+  elif [[ $arg == mcp_servers.serena.args=* ]]; then
+    raw="${arg#mcp_servers.serena.args=}"
+    mapfile -t sargs < <(jq -r '.[]' <<< "$raw")
+    "$AGENT_SERENA" "${sargs[@]}" <<< '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"serena_repl"}}'
+  fi
+done
+if [[ -f "$PWD/.agents/mcp_config.json" ]] && grep -q -- '--print-timeout' <<< "$*"; then
+  cmd=$(jq -r '.mcpServers.serena.command' "$PWD/.agents/mcp_config.json")
+  mapfile -t sargs < <(jq -r '.mcpServers.serena.args[]' "$PWD/.agents/mcp_config.json")
+  "$cmd" "${sargs[@]}" <<< '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"serena_repl"}}'
+  printf '{"event":"result","result":{"status":"SUCCESS","response":"STATUS: DONE","conversation_id":"cid-1"}}\n'
+  exit 0
+fi
+printf '{"type":"thread.started","thread_id":"tid-1"}\n'
+printf '{"type":"result","is_error":false,"result":"STATUS: DONE"}\n'
+EOF
+  chmod +x "$HOME/stub_cli.sh"
+
+  for cli in claude codex gemini opencode; do
+    a_task "T-$cli" "$cli"
+    meta_set "T-$cli" AGENT "solo"
+    meta_load "T-$cli"
+    printf 'Task for %s\n' "$cli" > "$AGENTS_HOME/tasks/T-$cli/task.md"
+    build_prompt "T-$cli" new "$AGENTS_HOME/tasks/T-$cli/questions-1.md" 1 > "$AGENTS_HOME/tasks/T-$cli/prompt-1.md"
+    grep -q 'initial_instructions' "$AGENTS_HOME/tasks/T-$cli/prompt-1.md"
+    grep -q 'serena_repl' "$AGENTS_HOME/tasks/T-$cli/prompt-1.md"
+    "run_$cli" "T-$cli" new 1 "$AGENTS_HOME/tasks/T-$cli/prompt-1.md" "$AGENTS_HOME/tasks/T-$cli"
+  done
+
+  grep -qxF "start-mcp-server --context claude-code --project $HOME/repo --open-web-dashboard false" "$HOME/serena-invocations.log"
+  grep -qxF "start-mcp-server --context codex --project $HOME/repo --open-web-dashboard false" "$HOME/serena-invocations.log"
+  grep -qxF "start-mcp-server --context antigravity --project $HOME/repo --open-web-dashboard false" "$HOME/serena-invocations.log"
+  grep -qxF "start-mcp-server --context ide --project $HOME/repo --open-web-dashboard false" "$HOME/serena-invocations.log"
+}
+
