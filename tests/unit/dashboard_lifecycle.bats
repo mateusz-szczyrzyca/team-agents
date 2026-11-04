@@ -62,6 +62,7 @@ lifecycle_fixture() {
 }
 
 @test "dashboard independent investigation blocks normal resume before mutation" {
+  export AGENT_INVESTIGATION_EXCLUSIVE=yes   # an --investigation holds its project only when it is to
   # shellcheck source=/dev/null
   source "$REPO_ROOT/bin/agent"
   lifecycle_fixture
@@ -74,7 +75,7 @@ lifecycle_fixture() {
   [ "$(find "$TASKS" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 3 ]
 }
 
-@test "dashboard independent investigation blocks message wake" {
+@test "dashboard independent investigation does not hold back a message wake" {
   # shellcheck source=/dev/null
   source "$REPO_ROOT/bin/agent"
   lifecycle_fixture
@@ -82,8 +83,8 @@ lifecycle_fixture() {
   printf 'ID=INV\nKIND=investigation_team\nSTATUS=waiting\nREPO_ROOT=%s\n' "$HOME/repo" > "$TASKS/INV/meta.env"
   run "$SELF" _wake B
   [ "$status" -eq 0 ]
-  [ "$(task_field B STATUS)" = sleeping ]
-  [ "$(task_field B RUN)" = 1 ]
+  [ -z "$(task_field B WAKE_DEFERRED)" ]
+  [ "$(task_field B RUN)" = 2 ]
 }
 
 @test "dashboard ordinary investigations and other projects do not block resume" {

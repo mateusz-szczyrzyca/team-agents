@@ -18,7 +18,7 @@ SHELL_SCRIPTS += tests/unit/review_pair_models.bats tests/unit/github_attributio
 SHELL_SCRIPTS += tests/unit/remote_answer_round.bats tests/unit/remote_questions_atomic.bats \
 	tests/unit/remote_questions_preparation_retry.bats
 SHELL_SCRIPTS += tests/unit/handover_failed.bats tests/unit/prompt_file.bats tests/unit/review_byline.bats tests/unit/tokens.bats \
-	tests/unit/context_hygiene.bats tests/unit/fresh_session.bats tests/unit/review_pair_random.bats tests/unit/resume_members.bats tests/unit/prompt_checkpoints.bats tests/unit/long_run_cut.bats tests/unit/round_only.bats tests/unit/fresh_relative.bats tests/unit/coordination.bats tests/unit/resume_stash.bats tests/unit/one_pr_per_round.bats tests/unit/investigation_mcp_off.bats tests/unit/round_discipline.bats tests/unit/member_pr.bats tests/unit/merged_elsewhere.bats tests/unit/foreground_commands.bats tests/unit/member_in_team.bats
+	tests/unit/context_hygiene.bats tests/unit/fresh_session.bats tests/unit/review_pair_random.bats tests/unit/resume_members.bats tests/unit/prompt_checkpoints.bats tests/unit/long_run_cut.bats tests/unit/round_only.bats tests/unit/fresh_relative.bats tests/unit/coordination.bats tests/unit/resume_stash.bats tests/unit/one_pr_per_round.bats tests/unit/investigation_mcp_off.bats tests/unit/round_discipline.bats tests/unit/member_pr.bats tests/unit/merged_elsewhere.bats tests/unit/foreground_commands.bats tests/unit/pr_ownership.bats tests/unit/member_in_team.bats
 SHELL_SCRIPTS += tests/unit/remote_control_notifications.bats
 SHELL_SCRIPTS += tests/unit/lint_shell_memory.bats tests/unit/remote_control_review.bats \
 	tests/unit/handover_failed.bats tests/unit/prompt_file.bats

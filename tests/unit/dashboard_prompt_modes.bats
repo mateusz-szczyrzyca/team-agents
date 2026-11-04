@@ -32,8 +32,10 @@ prompt_fixture() {
     for mode in new resume fresh; do
       FRESH_WHY='context limit'
       out=$(build_prompt P "$mode" "$TASKS/P/questions-1.md" 1)
-      [[ $out == *'Only the coordinator may open a PR.'* ]]
-      [[ $out == *'Draft or Open'* ]]
+      case $role in   # the PR rule only where a PR is opened or kept: its owner, a team
+        solo|team|merger) [[ $out == *'**Pull requests.**'* ]] ;;
+        *) [[ $out != *'**Pull requests.**'* ]] ;;
+      esac
       [[ $out == *'MCP server `serena`'* ]]
       [[ $out != *'{{'* ]]
     done
@@ -47,5 +49,5 @@ prompt_fixture() {
   export AGENT_SERENA=''
   out=$(build_prompt P resume "$TASKS/P/questions-1.md" 1)
   [[ $out != *'MCP server `serena`'* ]]
-  [[ $out == *'Only the coordinator may open a PR.'* ]]
+  [[ $out == *'**Pull requests.**'* ]]
 }

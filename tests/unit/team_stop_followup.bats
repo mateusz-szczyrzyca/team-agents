@@ -63,16 +63,15 @@ recording_self() {
   [ "$(task_field B RUN)" = 1 ]
 }
 
-@test "a member waiting for answers is not resumed while --investigation is in progress in its project" {
+@test "a member waiting for answers is resumed though --investigation is in progress in its project" {
   # shellcheck source=/dev/null
   source "$REPO_ROOT/bin/agent"
   followup_fixture
   meta_set B STATUS waiting
   active_investigation running
   run "$SELF" resume B
-  [ "$status" -ne 0 ]
-  [[ $output == *"--investigation"* ]]
-  [ "$(task_field B RUN)" = 1 ]
+  [[ $output != *"--investigation"* ]]
+  [ -z "$(grep '"event":"resume_blocked_investigation"' "$AGENTS_HOME/logs/agent.jsonl" 2> /dev/null)" ]
 }
 
 @test "a normal team's precheck still runs while --investigation is in progress in its project" {
@@ -97,23 +96,11 @@ recording_self() {
   [ "$(task_field A RUN)" = 2 ]
 }
 
-@test "a wake held back by --investigation is recorded and replayed once the investigation ends" {
+@test "a wake is not held back while --investigation is in progress in its project" {
   # shellcheck source=/dev/null
   source "$REPO_ROOT/bin/agent"
   followup_fixture
   active_investigation waiting
-  run "$SELF" _wake B
-  [ "$status" -eq 0 ]
-  [ "$(task_field B STATUS)" = sleeping ]
-  [ "$(task_field B WAKE_DEFERRED)" = 1 ]
-  local real=$SELF
-  SELF=$(recording_self)
-  supervise_deferred_wakes
-  [ ! -e "$HOME/replayed" ]
-  meta_set INV STATUS "done"
-  supervise_deferred_wakes
-  grep -qx '_wake B' "$HOME/replayed"
-  SELF=$real
   run "$SELF" _wake B
   [ "$status" -eq 0 ]
   [ -z "$(task_field B WAKE_DEFERRED)" ]

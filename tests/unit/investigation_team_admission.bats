@@ -237,6 +237,7 @@ FLOCK
 }
 
 @test "resuming a normal team in the same project is refused while --investigation is in progress, but allowed for normal model investigations" {
+  export AGENT_INVESTIGATION_EXCLUSIVE=yes   # an --investigation holds its project only when it is to
   scenario '{"lead": {"new": "done", "resume": "done"}, "member": {"new": "done", "resume": "done"}}'
   agent run --team lead,member "initial team task"
   l=$(task_of lead); m=$(task_of member)
