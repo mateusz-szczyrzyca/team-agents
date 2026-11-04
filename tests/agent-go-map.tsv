@@ -562,3 +562,8 @@ tests/unit/dashboard_lifecycle.bats	dashboard independent investigation blocks n
 tests/unit/dashboard_lifecycle.bats	dashboard independent investigation blocks message wake	source	R35	-	planned
 tests/unit/dashboard_lifecycle.bats	dashboard ordinary investigations and other projects do not block resume	source	R35	-	planned
 tests/unit/investigation_team_admission.bats	resuming a normal team in the same project is refused while --investigation is in progress, but allowed for normal model investigations	blackbox	R37	-	planned
+tests/unit/dashboard_prompt_modes.bats	dashboard PR ownership and Serena guidance reach every role and continuation	source	R35	-	planned
+tests/unit/dashboard_prompt_modes.bats	dashboard resume does not advertise Serena when disabled	source	R35	-	planned
+tests/unit/member_pr.bats	every mode's prompt states the rule never to open a new PR when not coordinator or when a Draft or Open PR already exists	source	R23	-	planned
+tests/unit/serena.bats	config/agents.conf enables AGENT_SERENA=serena and worktrees inherit .serena/project.yml from REPO_ROOT	source	R12	-	planned
+tests/unit/serena.bats	every model CLI (claude, codex, gemini, opencode) receives the Serena prompt and invokes the serena MCP server when needed	source	R12	-	planned
