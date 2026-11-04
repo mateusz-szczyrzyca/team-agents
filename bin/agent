@@ -213,6 +213,38 @@ gh_member() {
   [[ -n $member ]]
 }
 
+# gh_task_pr — this run's task's PR while it is open, "<number> <branch> <url>" as GitHub says: the task's PR_NUMBER,
+# else the ROUND_PR it carries, read from its meta file (AGENT_GH_TASK_META) at the call — the runner records them during
+# the run. Fails when the task has none, when it is merged or closed, and when its state cannot be read (logged: then
+# gh decides, as without a PR)
+gh_task_pr() {
+  local num out errf rc=0
+  [[ -n ${AGENT_GH_TASK_META:-} && -f $AGENT_GH_TASK_META ]] || return 1
+  # shellcheck source=/dev/null
+  num=$(unset PR_NUMBER ROUND_PR; source "$AGENT_GH_TASK_META"; printf '%s' "${PR_NUMBER:-${ROUND_PR:-}}")
+  [[ $num =~ ^[0-9]+$ ]] || return 1
+  errf=$(mktemp) || return 1
+  out=$("$real" pr view "$num" --json number,state,headRefName,url 2> "$errf") || rc=$?
+  if ((rc != 0)) || ! jq -e 'type == "object" and has("state")' <<< "$out" > /dev/null 2>> "$errf"; then
+    gh_log github_task_pr_unknown "the state of the task's PR could not be read: its gh pr create goes on to gh" \
+      "pr=$num" "exit_code=$rc" "stderr=$(head -c 500 "$errf")"
+    rm -f "$errf"
+    return 1
+  fi
+  rm -f "$errf"
+  jq -er 'select(.state == "OPEN") | "\(.number) \(.headRefName // "-") \(.url // "")"' <<< "$out"
+}
+
+# gh_refuse_task_pr action pr — refuses a second PR of a task whose PR is open (gh_task_pr's line), naming it; logged
+gh_refuse_task_pr() {
+  local num branch url
+  read -r num branch url <<< "$2"
+  [[ $branch != - ]] || branch=""
+  gh_log github_task_pr_refused "a new PR of a task whose PR is open is refused" "action=$1" "pr=$num" "branch=$branch"
+  echo "agent-gh: this task's PR #$num${branch:+ (branch $branch)} is open${url:+ ($url)} — do not open another one. Continue it: push your commits to its branch and update its description (gh pr edit $num)." >&2
+  exit 1
+}
+
 # a team member opens, merges, marks ready, closes, reopens and edits no PR: the round has one, its coordinator's, which
 # takes the member's work in, and the human (or --autopilot) merges it. AGENT_GH_COORDINATOR is the fallback for a solo
 # task (empty) and for a team whose bus cannot answer.
@@ -233,6 +265,8 @@ case "${1:-} ${2:-}" in
     fi
     ;;
 esac
+# a task has one PR: while it is open, a second one is refused, naming it
+if [[ "${1:-} ${2:-}" == "pr create" ]] && gh_open=$(gh_task_pr); then gh_refuse_task_pr create "$gh_open"; fi
 
 if [[ ${1:-} == api ]]; then
   shift
@@ -273,6 +307,9 @@ if [[ ${1:-} == api ]]; then
       "action=api" "coordinator=${gh_lead:-none}"
     echo "agent-gh: a team member does not create or change a PR through gh api — the round's PR is its coordinator's (${gh_lead:-none}), and the human (or --autopilot) merges it. Push your branch and tell the coordinator what is on it (a board item or a message)." >&2
     exit 1
+  fi
+  if ((api_mutation)) && [[ $api_path =~ (^|/)pulls$ ]] && gh_open=$(gh_task_pr); then   # a PR created through the API
+    gh_refuse_task_pr api "$gh_open"
   fi
   # an investigator's review says who wrote it at its very top too (AGENT_REVIEW_BYLINE, set for an investigation)
   if [[ -n ${AGENT_REVIEW_BYLINE:-} && $path =~ /pulls/[0-9]+/reviews$ ]]; then
@@ -1094,10 +1131,34 @@ open_in_editor() {
 # ------------------------------------------------------------------ prompts
 
 render() { # template file → stdout, with {{KEY}} placeholders substituted from R
-  local t; t=$(<"$1")
-  local k
+  fill "$(<"$1")"
+}
+
+# fill text — the text with its {{KEY}} placeholders substituted from R, and a newline
+fill() {
+  local t=$1 k
   for k in "${!R[@]}"; do t=${t//"{{$k}}"/${R[$k]}}; done
   printf '%s\n' "$t"
+}
+
+# render_parts file tag… — the template's parts for these tags, rendered (fill): a part starts at a line
+# "<!-- part: tag… -->" and is kept when each of its tags is given; trailing blank lines are dropped
+render_parts() {
+  local f=$1 line keep=0 t out="" tags=()
+  shift
+  local -A want=()
+  for t in "$@"; do want[$t]=1; done
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ $line =~ ^'<!-- part: '(.*)' -->'$ ]]; then
+      read -r -a tags <<< "${BASH_REMATCH[1]}"
+      keep=1
+      for t in "${tags[@]}"; do [[ -n ${want[$t]:-} ]] || keep=0; done
+      continue
+    fi
+    if ((keep)); then out+=$line$'\n'; fi
+  done < "$f"
+  while [[ $out == *$'\n' ]]; do out=${out%$'\n'}; done
+  fill "$out"
 }
 
 team_members_list() {
@@ -1583,13 +1644,15 @@ agents_gh_env() {
     fi
   fi
   AGENT_GH_COORDINATOR=$(gh_coordinator "${RUNNER_ID:-}")   # a team member's: its PR commands are refused
+  AGENT_GH_TASK_META=""   # the task's meta file: a second PR is refused while its PR is open (gh_task_pr)
+  [[ -z ${RUNNER_ID:-} ]] || AGENT_GH_TASK_META=$(meta_file "$RUNNER_ID")
   AGENT_GH_TEAM="" AGENT_GH_SELF="" AGENT_GH_BUS_DIR=$BUS_DIR   # a team task's: whom the bus names coordinator, at the call
   if [[ -n ${RUNNER_ID:-} && $(task_field "$RUNNER_ID" KIND) != investigation* ]]; then
     AGENT_GH_TEAM=$(task_field "$RUNNER_ID" TEAM)
     [[ -z $AGENT_GH_TEAM ]] || AGENT_GH_SELF=$(task_field "$RUNNER_ID" AGENT)
   fi
   export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE="" AGENT_GITHUB_COLORS AGENT_GH_COORDINATOR \
-    AGENT_GH_TEAM AGENT_GH_SELF AGENT_GH_BUS_DIR AGENTBUS_BIN
+    AGENT_GH_TEAM AGENT_GH_SELF AGENT_GH_BUS_DIR AGENTBUS_BIN AGENT_GH_TASK_META
   local names=()
   mapfile -t names < <(run_github_names)
   github_colour_register "${names[@]}"
@@ -3213,9 +3276,50 @@ serena_note() {
   render "$PROMPTS/serena.md"
 }
 
-# continuation_rules — repeat role-independent rules even when a session resumes after a watchdog hang.
+# task_pr id — this task's PR as "<number> [<branch>]": its own (PR_NUMBER, on its branch), else the round's it carries
+# (ROUND_PR, on the branch of the worker task of this repository that opened it — not a review of it —, while that
+# task is not archived); nothing when the script knows none
+task_pr() {
+  local id=$1 num repo m
+  num=$(task_field "$id" PR_NUMBER)
+  if [[ -n $num ]]; then printf '%s %s' "$num" "$(task_field "$id" BRANCH)"; return 0; fi
+  num=$(task_field "$id" ROUND_PR)
+  [[ -n $num ]] || return 0
+  repo=$(task_field "$id" REPO_NAME)
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] && grep -qxF "PR_NUMBER=$num" "$m" && grep -qxF "REPO_NAME=$repo" "$m" && grep -qx 'KIND=worker' "$m" \
+      || continue
+    printf '%s %s' "$num" "$(task_field "$(basename "$(dirname "$m")")" BRANCH)"
+    return 0
+  done
+  printf '%s' "$num"
+}
+
+# pr_rule_set id — R[TASK_PR] and R[TASK_PR_NUMBER] for the PR rule (prompts/pr-ownership.md): this task's PR
+# (task_pr), "#61 (branch `b`)"; R[PR_STATE]: known or none, the fragment's tag
+pr_rule_set() {
+  local num branch
+  read -r num branch <<< "$(task_pr "$1")"
+  R[TASK_PR_NUMBER]=$num R[TASK_PR]="#$num${branch:+ (branch \`$branch\`)}" R[PR_STATE]=known
+  [[ -n $num ]] || R[TASK_PR]="" R[PR_STATE]=none
+}
+
+# pr_rule_role — the PR rule's part for a solo or team task in a resumed session: coordinator for a solo task and for
+# the team's coordinator; member for a member, and while the team has no coordinator yet (a member opens no PR)
+pr_rule_role() {
+  local lead
+  [[ -n ${TEAM:-} ]] || { echo coordinator; return 0; }
+  lead=$(team_lead "$TEAM") || lead=""   # team_json logs why the bus did not answer
+  if [[ -n $lead && $lead == "${AGENT:-}" ]]; then echo coordinator; else echo member; fi
+}
+
+# continuation_rules id [mode] — the rules a resumed session's prompt repeats: the PR rule of a solo or team task's
+# role (not for helpers or investigators; a new prompt has it in protocol.md or team.md), and Serena
 continuation_rules() {
-  render "$PROMPTS/pr-ownership.md"
+  if [[ ${2:-resume} != new && ${KIND:-worker} == worker ]]; then
+    pr_rule_set "$1"
+    render_parts "$PROMPTS/pr-ownership.md" heading "$(pr_rule_role)" "${R[PR_STATE]}"
+  fi
   serena_note
   printf '\n'
 }
@@ -3247,7 +3351,7 @@ build_prompt() { # id mode qfile next_round
     [RESUMED_FROM]=${RESUMED_FROM:-} [HANG_MIN]=$AGENT_HANG_MIN
   )
   # a fresh prompt is the new run's prompt and then a resume's: the rules come with the first part only
-  if [[ $mode != fresh && -z ${RULES_RENDERED:-} ]]; then continuation_rules; fi
+  if [[ $mode != fresh && -z ${RULES_RENDERED:-} ]]; then continuation_rules "$id" "$mode"; fi
   if [[ $mode != fresh ]] && is_independent_investigation "$id"; then
     if [[ $mode == new ]]; then   # a later run's session has this already: it gets only what is new
       case ${INVESTIGATION_PHASE:-1} in
@@ -3312,11 +3416,16 @@ build_prompt() { # id mode qfile next_round
       render "$PROMPTS/helper.md"
       printf '\n# REQUEST H%s\n\n' "${R[HELPER_ID]}"
     elif [[ -n ${TEAM:-} ]]; then
+      pr_rule_set "$id"
+      R[PR_RULE_COORDINATOR]=$(render_parts "$PROMPTS/pr-ownership.md" coordinator "${R[PR_STATE]}")
+      R[PR_RULE_MEMBER]=$(render_parts "$PROMPTS/pr-ownership.md" member "${R[PR_STATE]}")
       render "$PROMPTS/team.md"
       render "$PROMPTS/tdd-rounds.md"
       render "$PROMPTS/writing.md"
       printf '\n# TEAM TASK\n\n'
     else
+      pr_rule_set "$id"
+      R[PR_RULE]=$(render_parts "$PROMPTS/pr-ownership.md" heading coordinator "${R[PR_STATE]}")
       render "$PROMPTS/protocol.md"
       render "$PROMPTS/tdd-rounds.md"
       render "$PROMPTS/writing.md"
@@ -5385,7 +5494,7 @@ cmd__runner() {
     pf="$dir/prompt-$nrun.md"
     R[HANG_MIN]=$AGENT_HANG_MIN
     automation_allowed "$id" || return 1
-    { continuation_rules; render "$PROMPTS/hang-resume.md"; } > "$pf"
+    { continuation_rules "$id"; render "$PROMPTS/hang-resume.md"; } > "$pf"
     act "$id" info "↻ resumed after a hang ($hangs/$AGENT_HANG_STRIKES)"
   done
   printf '%s\n' "$FINAL" > "$dir/final.md"

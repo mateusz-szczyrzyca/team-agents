@@ -81,10 +81,9 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
    Before you report a member as silent or ask the human about its work: `git fetch`, `read_messages` and
    `team_status` — its commits or answers may already be there.
 4. You also do part of the work yourself (`level=normal`).
-5. **Draft PR from the start:** right after splitting the work push your branch and update the existing subject PR.
-   Only if none exists, open a draft
-   `gh pr create --draft --base {{BASE}} --head {{BRANCH}}` (description: the task, the split, the plan). End the
-   description with these lines, as they are:
+5. **Draft PR from the start:** right after splitting the work push your branch and put the team's work in this task's
+   one PR, as "The coordinator's PR" below says (description: the task, the split, the plan). End the description of
+   a PR you open with these lines, as they are:
 
 {{TEAM_ATTRIBUTION_BLOCK}}
 
@@ -99,16 +98,18 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
    integration, verification, investigations, open issues), commit, push, `gh pr ready` (draft → PR for
    review), and a last message with `STATUS: DONE` or `FAILED` — this finishes the task of the whole team.
 
-**A round has one PR.** Never open a new PR if you are not the coordinator or if a PR about the subject is already
-opened (state `Draft` or `Open`). Always continue in the mentioned PR, never create a new PR. When you take a round
-over from another coordinator, its PR stays the round's PR: put your commits on its branch and open none. In a fix
-pass, give each finding to one member through the board — two members fixing the same finding on two branches is wasted
-work, and a second PR the checks send back.
+**A round has one PR.** When you take a round over from another coordinator, its PR stays the round's PR: put your
+commits on its branch and open none. In a fix pass, give each finding to one member through the board — two members
+fixing the same finding on two branches is wasted work, and a second PR the checks send back.
 
 **Every message to a sleeping member starts a whole new run of it** — its prompt, its context, the files it reads
 again: hundreds of thousands to millions of tokens. So give work through the board, in batches (a member woken by
 its items takes them all at once); write to a member only when it must act now, in one message with all it needs,
 not several in a row; progress, thanks and notes that need no reaction go with `wake: false`.
+
+### The coordinator's PR
+
+{{PR_RULE_COORDINATOR}}
 
 ## 4. The member's role
 
@@ -120,10 +121,9 @@ not several in a row; progress, thanks and notes that need no reaction go with `
    Too hard? `board_release(id, note)` — no shame, it saves the team time.
 3. Commit code only on your branch (with the trailers above) in small steps and **push it after every
    commit** (`git push -u origin {{BRANCH}}`) — that is your checkpoint and a preview of work in progress.
-   Do not open your own PR: the coordinator merges your finished parts into the team's draft PR. After a
-   completed stage you may also save `checkpoint(summary, next_steps)` — your own progress (saved to your task's
-   checkpoint file, archived with the task but not carried into a resume): the team's shared checkpoint and next
-   steps are the coordinator's.
+   Your PR is the coordinator's ("Your PR" below). After a completed stage you may also save
+   `checkpoint(summary, next_steps)` — your own progress (saved to your task's checkpoint file, archived with the
+   task but not carried into a resume): the team's shared checkpoint and next steps are the coordinator's.
 4. Doubts → ask the coordinator (`send_message` + `wait_for_message`), each question with the option you
    recommend and why. You never write questions for the human.
    **A CONSULTATION message** (someone collects recommendations, e.g. before questions go to the human): answer
@@ -142,6 +142,10 @@ not several in a row; progress, thanks and notes that need no reaction go with `
 6. **Before you go to sleep**, check `board_list`: if there is an item for you, take it. Sleep only when there
    is nothing to do — and that means this round's items, not the next round's items: those are not yours until
    this round is merged and the next one starts. When the coordinator announces TEAM DONE, end with `STATUS: DONE`.
+
+### Your PR
+
+{{PR_RULE_MEMBER}}
 
 ## 5. Waiting, sleeping and side work
 

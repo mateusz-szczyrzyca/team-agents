@@ -336,6 +336,11 @@ merge it; the member is told to push its branch and tell the coordinator, which 
 coordinates is asked of the bus when the command runs — a new team has no coordinator yet when its first runs
 start (then a member's PR commands are refused too), and a member can take over during a run (logged as
 `github_coordinator_unknown` when the bus does not answer; then the coordinator at the run's start counts).
+**A task has one PR:** while the task's PR is open — its `PR_NUMBER` in `meta.env`, else the `ROUND_PR` a resumed
+round carries, read when the command runs, its state asked of GitHub — anyone's `gh pr create` in that task, and a PR
+creation through `gh api`, is refused and names that PR (`github_task_pr_refused`, with the `action`, `pr` and
+`branch`). A merged or closed PR does not stop the next one. When GitHub does not say the PR's state, the command goes
+on to `gh` (`github_task_pr_unknown`).
 
 **A PR's next review is another pair's.** In every `AGENT_REVIEW_DRAW` mode, the pair that reviewed a PR does not
 review it again while another pair can — its re-review after a fix pass goes to other investigators, who get the
@@ -1260,15 +1265,22 @@ whose team is closed or unknown.
 
 ## Pull request ownership
 
-Every role and continuation receives the same PR ownership rule: only the coordinator may create a PR
-(the solo owner for solo work; the designated merger for independent investigations). Before creating one,
-check the mentioned PR and the repository's Draft or Open PRs for the same subject, including other branches.
-Continue an existing matching PR through its coordinator; never create a replacement. Helpers, members,
-investigators and reviewers deliver commits/findings without opening their own PR. Failed lookups or unclear
-ownership are blockers to report. A coordinator whose matching PR is on another task's branch neither pushes to that
-branch nor opens a PR: it pushes its own branch, asks you in its questions file which PR to continue, and ends with
-`STATUS: QUESTIONS` (the investigation merger first merges that PR's head into its branch). This is a prompt rule,
-not a GitHub permission restriction.
+The PR rule is one fragment, [`prompts/pr-ownership.md`](prompts/pr-ownership.md). The script renders it into three
+places only: a solo task's prompt (`protocol.md`), the coordinator's role and the member's role of a team's prompt
+(`team.md`), and the resumed sessions of these tasks. Helpers, investigators, reviews and the investigation prompts do
+not get it; they open no PR anyway (an investigation's merger has its own PR steps in `inv-merge.md`).
+
+- **This task's PR, when the script knows it:** the task's `PR_NUMBER`, else the `ROUND_PR` a resumed round carries
+  (with the branch of the task that opened it, while that task is not archived). The prompt says
+  "This task's PR is #N (branch X)": continue it, never open another.
+- **Otherwise** the coordinator is told to look for the subject's PR first (its branch's, the one the task mentions,
+  the Draft or Open PRs on other branches), and only when there is none to open one draft PR. A coordinator whose
+  matching PR is on another task's branch neither pushes to that branch nor opens a PR: it pushes its own branch,
+  asks you in its questions file which PR to continue, and ends with `STATUS: QUESTIONS`.
+- **A member** opens none: it pushes its own branch and tells the coordinator, which merges it into the team's PR.
+
+The agents' `gh` backs the rule: a team member's PR commands are refused, and so is a second PR of a task whose PR is
+open (see "What the agents read on GitHub" under "Teams").
 
 ## Serena
 
