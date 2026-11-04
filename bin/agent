@@ -183,6 +183,15 @@ gh_show() {
   if [[ -n $2 ]]; then jq -r "$2" <<< "$1"; else printf '%s\n' "$1"; fi
 }
 
+# a team member opens no PR: the round has one, its coordinator's, which takes the member's work in
+# (AGENT_GH_COORDINATOR: the coordinator of the member's team, set by the runner; empty for anyone else)
+if [[ ${1:-} == pr && ${2:-} == create && -n ${AGENT_GH_COORDINATOR:-} ]]; then
+  gh_log github_member_pr_refused "a team member's gh pr create is refused: its coordinator opens the round's PR" \
+    "coordinator=$AGENT_GH_COORDINATOR"
+  echo "agent-gh: a team member does not open a PR — the round has one, opened by its coordinator ($AGENT_GH_COORDINATOR). Push your branch and tell the coordinator what is on it (a board item or a message): it merges your work into the round's PR." >&2
+  exit 1
+fi
+
 if [[ ${1:-} == api ]]; then
   shift
   args=() jqexpr="" path=""
@@ -1470,6 +1479,17 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
   printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
 }
 
+# gh_coordinator task — the coordinator of the task's team when the task is one of its members and not the
+# coordinator itself (the agents' gh refuses such a task's gh pr create); empty for anyone else: a coordinator, a
+# solo task, an investigator, or a team whose coordinator the bus does not say
+gh_coordinator() {
+  local id=$1 team lead
+  team=$(task_field "$id" TEAM 2> /dev/null)
+  [[ -n $team && $(task_field "$id" KIND 2> /dev/null) != investigation* ]] || return 0
+  lead=$(team_lead "$team" 2> /dev/null) || return 0
+  [[ -z $lead || $lead == "$(task_field "$id" AGENT)" ]] || echo "$lead"
+}
+
 # agents_gh_env — the agents' CLI gets this script as its gh (a link named gh, first on its PATH: agent_gh): text on GitHub reaches it only from
 # the trusted accounts. AGENT_REAL_GH is the real gh; without gh there is nothing to put in front of
 agents_gh_env() {
@@ -1485,7 +1505,8 @@ agents_gh_env() {
       return 1
     fi
   fi
-  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE="" AGENT_GITHUB_COLORS
+  AGENT_GH_COORDINATOR=$(gh_coordinator "${RUNNER_ID:-}")   # a team member's: its gh pr create is refused
+  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE="" AGENT_GITHUB_COLORS AGENT_GH_COORDINATOR
   local names=()
   mapfile -t names < <(run_github_names)
   github_colour_register "${names[@]}"
