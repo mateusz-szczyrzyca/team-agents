@@ -372,20 +372,23 @@ The reviewer's read-only rule is only a prompt rule: it runs the same CLI with t
 
 ## 7. Summary matrix
 
-✔ = included, — = not included.
+✔ = included, — = not included. (Updated for current `main` / `bin/agent:2948-3195`.)
 
 | Source | Solo normal | Solo worker | Team normal | Team worker | Local helper | Remote helper | Investigator (request) | Reviewer (`--verify`/`--autopilot`) | `--inv` ph. 1 | ph. 2 | ph. 3 / 5 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `protocol.md` | ✔ | ✔ (`:105-106`) | — | — | — | ✔ | — | — | — | — | — |
+| `protocol.md` | ✔ | ✔ (`:88-106`) | — | — | — | ✔ | — | — | — | — | — |
 | `team.md` | — | — | ✔ | ✔ (worker lines) | — | — | — | — | — | — | — |
-| `tdd-rounds.md`, `writing.md` | ✔ | ✔ | ✔ | ✔ | — | ✔ | — | — | — | — | — |
+| `tdd-rounds.md` | ✔ | ✔ | ✔ | ✔ | — | ✔ | — | — | — | — | — |
+| `writing.md` | ✔ | ✔ | ✔ | ✔ | — | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| `serena.md` (`AGENT_SERENA` set) | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | `helper.md` | — | — | — | — | ✔ | — | — | — | — | — | — |
 | `investigator.md` | — | — | — | — | — | — | ✔ | — | — | — | — |
 | `review.md` | — | — | — | — | — | — | — | ✔ | — | — | ✔ |
 | `inv-work.md` / `inv-merge.md` | — | — | — | — | — | — | — | — | ✔ / — | — / ✔ | — |
 | `clarification.md` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | — | — | — |
 | `ask-solo.md` / `ask-team.md` | solo | solo | team | team | — | solo | solo | solo | — | — | — |
-| `skip_note` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | — | — | — | — | — |
+| `skip_note` | ✔ | ✔ | ✔ | ✔ | — | ✔ | — | — | — | — | — |
+| `fresh-session.md` (`mode=fresh`) | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | `autopilot-questions.md` (follow-up) | — | — | `--autopilot` | `--autopilot` | — | — | — | — | — | — | — |
 | `inv-resume.md` (follow-up) | — | — | — | — | — | — | — | — | ✔ | ✔ | ✔ |
 | agentbus | + `delegate` | no `delegate` | team tools + `delegate` | team tools, `easy` only, no `delegate`/`claim_lead` | no `delegate` | no `delegate` | investigator role | investigator role | none | none | none |
@@ -394,45 +397,33 @@ The reviewer's read-only rule is only a prompt rule: it runs the same CLI with t
 
 ---
 
-## 8. Inconsistencies found (none fixed here; the topic asks for a report)
+## 8. Inconsistencies found (verified against current `main`)
 
-1. **The reviewer never sees its review request.**
-   - The request is built at `start_review_slot` (`bin/agent:2127-2144`): "one of two independent reviews: do not
-     read other reviews …", "Re-review after fix pass N …" and the previous review. `request_review`
-     (`bin/agent:2175-2178`) builds "re-review after fix pass N".
-   - `start_investigation` writes the reviewer's `task.md` from only the PR number, the URL and the team's task
-     (`bin/agent:4263-4268`). It uses `.question` only for ordinary investigations (`:4271`).
-   - So a reviewer never learns that it must be independent, or that this is a re-review, while `review.md:56-58`
-     relies on "the request says 're-review after fix pass N'". inv-astra confirmed this with an isolated probe of
-     the unchanged `start_investigation`.
-2. **`CLAUDE.md` is stale** (§3.3). The human has to decide, because `AGENTS.md` forbids agents to edit it: copy the
-   file again, or make it the symlink the README recommends.
-3. **Prompts name a tool that does not exist:** `investigate` (`team.md:165`, `tdd-rounds.md:52`). agentbus has only
-   `request_investigation` *(opus)*.
-4. **Helpers are told to fill skipped tests.** `skip_note` says "Fill every one … test first" and is added to helper
-   prompts (`bin/agent:1060`, `2764`, `2860`). That contradicts `helper.md:24`, "Do exactly what was asked"
-   *(opus)*.
-5. **The agentbus `instructions` string offers `request_investigation` to investigators**
-   (`agentbus/main.go:1080-1082`), but they do not have it (§6).
-6. **`protocol.md:110` tells every solo model "You are a cheaper everyday model"**, normal models included
-   *(opus)*.
-7. **`helper.md` does not mention two tools helpers have:** `request_investigation` and `checkpoint` *(opus)*.
-8. **The independent phases get text that assumes a team and a bus.**
-   - In phase 3/5, `review.md:3-4` speaks of "a team of agents" and `review.md:54-55` of "a `--verify` fix pass"
-     *(opus)*.
-   - `review.md:28-29` requires `reserve`/`release` with no bus *(astra)*.
-   - `{{AGENTS_MD}}` suggests `notebook_append` in all phases (`bin/agent:2620-2625`) *(astra)*.
-   - The task text and `inv-work.md`/`inv-merge.md` override these where they say so. `review.md` has no
-     independent variant.
-9. **`inv-resume.md:8-10` cites "CLARIFICATION RULES point 6"**, but the independent phases never get
-   `clarification.md`. Their templates have their own question rules *(astra)*.
-10. **Local and remote delegation give different rules** (§4.5). A remote helper gets `protocol.md`, which allows a
-    PR and pushing and says to ask the human, not the requester *(astra)*.
-11. **Polish text in prompts:** "Recenzja PR" (`bin/agent:2127`, `2175`, `4265`). `AGENTS.md` requires English
-    prompts *(opus)*.
-12. **An independent phase in a fresh session gets its prompt twice.** `fresh` calls `build_prompt new` and
-    `build_prompt resume`, and both take the early return at `bin/agent:2679`. Even a plain `resume` repeats the
-    base prompt.
+1. **The reviewer never sees its review request — FIXED (`9575b28`).**
+   - `start_review_slot` (`bin/agent:2456-2472`) and `request_review` (`bin/agent:2491-2494`) build the review question, and `start_investigation` (`bin/agent:4658-4661`) now writes `$q` (`jq -r '.question'`) into the reviewer's `task.md`.
+2. **`CLAUDE.md` is stale — FIXED (`49f88fa`).**
+   - `CLAUDE.md` is now a symlink to `AGENTS.md`.
+3. **Prompts name a tool that does not exist (`investigate`) — FIXED (`9575b28`).**
+   - `prompts/team.md:166` and `prompts/tdd-rounds.md:52` now use `request_investigation`.
+4. **Helpers are told to fill skipped tests — FIXED (`9575b28`).**
+   - `bin/agent:3075-3081` (`helper)`) no longer appends `skip_note` to local helper prompts (`bin/agent:1232` also skips `KIND == helper`).
+5. **The agentbus `instructions` string offers investigations/reservations/notebook to roles that lack some of those tools — STILL RELEVANT (`agentbus/main.go:1080-1082`).**
+   - `agentbus/main.go:1080-1082` sends the base prefix (`"agentbus coordinates agents on this host (messages, resource reservations, investigations, notebook)..."`) to investigators too, even though `request_investigation` is gated out for `s.role == RoleInvestigator` at `agentbus/collab.go:697-735`.
+6. **`protocol.md` tells every solo model "You are a cheaper everyday model" — FIXED (`9575b28`).**
+   - `prompts/protocol.md:88-106` now sets `You are: {{TIER}}. Configured workers: {{WORKERS}}.` and separates `If you are a normal model:` from `If you are a worker:`.
+7. **`helper.md` does not mention two tools helpers have (`request_investigation` and `checkpoint`) — FIXED (`9575b28`).**
+   - `prompts/helper.md:31-32` now explicitly states: `6. Your bus tools include request_investigation and checkpoint: a request needs neither. If it cannot be done without an investigator, finish with UNCLEAR: <what is missing> — the requester decides.`
+8. **The independent phases get text that assumes a team and a bus — PARTIALLY RELEVANT.**
+   - **Still relevant in `prompts/review.md` when used for `--investigation` Phase 3/5 (`bin/agent:3011`):** `prompts/review.md:3-4` still says `"prepared by an agent or a team of agents"`, `prompts/review.md:28-29` still says `"You talk to other agents only through the agentbus MCP tools ... Before using a shared resource — reserve ... and release"`, and `prompts/review.md:55-56` still speaks of `"a fix pass"`, even though `--investigation` Phase 3/5 runs with `is_independent_investigation` (no `agentbus` MCP server).
+   - **Fixed in `{{AGENTS_MD}}` (`bin/agent:2960-2965`):** Now adds `(notebook_append; without the agentbus tools: in your report)`.
+9. **`inv-resume.md` cites "CLARIFICATION RULES point 6" — FIXED (`9575b28`).**
+   - `prompts/inv-resume.md:8-10` now explains short answers (`"1. a, 2. b"`, `"ok"`) directly without referencing `CLARIFICATION RULES point 6`.
+10. **Local and remote delegation give different rules — STILL RELEVANT (`bin/agent:7702-7727`, `3089-3099`).**
+    - A remote helper job launched by `node_launch_job` (`bin/agent:7702-7727`) runs with `KIND=worker` (`REMOTE_JOB=1`), so `build_prompt` (`bin/agent:3089-3099`) renders `protocol.md`, `tdd-rounds.md`, `writing.md`, `clarification.md`, and `ask-solo.md` instead of `helper.md`.
+11. **Polish text in prompts ("Recenzja PR") — FIXED (`9575b28`).**
+    - `bin/agent:2456`, `2491`, and `4660` now use English (`"Review of PR #..."` / `"Review PR #..."`).
+12. **An independent phase in a fresh session gets its prompt twice — FIXED (`9575b28`).**
+    - `bin/agent:3003` now checks `if [[ $mode != fresh ]] && is_independent_investigation "$id"; then`, `bin/agent:3020-3035` sends only delta content on `resume`, and `bin/agent:3037-3056` renders `build_prompt "$id" new` once followed by `fresh-session.md` on `fresh`.
 
 A test of the prompt contents for each role and phase would catch items 1, 3, 5, 8 and 9. It would check that no
 prompt mentions a tool the role lacks and that the generated task context is delivered *(astra)*.
