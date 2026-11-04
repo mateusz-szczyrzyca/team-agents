@@ -244,6 +244,7 @@ tests/unit/member_out.bats	agent _supervise finds a task whose runner died and e
 tests/unit/member_pr.bats	a team member's gh pr create is refused, names its coordinator, is logged, and never reaches gh	blackbox	R11	-	planned
 tests/unit/member_pr.bats	anyone else's gh pr create goes to gh as before	blackbox	R11	-	planned
 tests/unit/member_pr.bats	gh_coordinator: a team member's coordinator; nobody for the coordinator, a solo task or an investigator	source	R23	-	planned
+tests/unit/member_pr.bats	every mode's prompt states the rule never to open a new PR when not coordinator or when a Draft or Open PR already exists	source	R12	-	planned
 tests/unit/meta.bats	concurrent meta_set calls of different keys all survive, and none fails	source	R07	-	planned
 tests/unit/network.bats	a network failure pauses the task for AGENT_NETWORK_PAUSE_MIN; its timer resumes it	blackbox	R25	-	planned
 tests/unit/network.bats	a network failing again and again fails the task after AGENT_NETWORK_MAX_PAUSES, with the reason	blackbox	R25	-	planned
