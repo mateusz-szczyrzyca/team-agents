@@ -96,6 +96,15 @@ if [[ $LANE == "candidate" && ! -f $CANDIDATE_BIN ]]; then
   exit 1
 fi
 
+if [[ -n ${TMPDIR:-} ]]; then
+  real_tmp=$(cd "$TMPDIR" 2>/dev/null && pwd -P || pwd)
+  real_repo=$(cd "$REPO_ROOT" 2>/dev/null && pwd -P || pwd)
+  if [[ "$real_tmp" == "$real_repo" || "$real_tmp" == "$real_repo"/* ]]; then
+    echo "agent-bats: TMPDIR cannot be inside repository root: $TMPDIR" >&2
+    exit 1
+  fi
+fi
+
 # stage_repository dest_dir — copies necessary repository files into an isolated staged root
 stage_repository() {
   local dest=$1
@@ -105,7 +114,7 @@ stage_repository() {
     local base
     base=$(basename "$item")
     case "$base" in
-      build|.git|.agents|.gemini|*.tmp)
+      build|.git|.agents|.gemini|*.tmp|staged-*|agent-bats-*)
         continue
         ;;
       *)
