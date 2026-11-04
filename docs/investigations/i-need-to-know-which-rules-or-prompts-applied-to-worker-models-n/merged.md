@@ -418,7 +418,7 @@ absent. The [new regression suite][prompttests] exercises `8` role categories ×
 ## 8. Inconsistencies found — current dispositions
 
 The original `12` findings are historical. `11` were already resolved at the dashboard investigation's base (`9575b28` / `49f88fa`);
-item `10` remains partly relevant (and item `11` has one remaining non-review Polish heading noted below). The shared PR rule below additionally addresses item `10`'s PR-creation permission.
+item `10` remains partly relevant; item `11`'s last Polish heading is fixed by the follow-up noted below. The shared PR rule below additionally addresses item `10`'s PR-creation permission.
 
 | Original item | Current status | Evidence and remaining scope |
 |---|---|---|
@@ -432,7 +432,7 @@ item `10` remains partly relevant (and item `11` has one remaining non-review Po
 | `8`: independent review assumes bus/team | Resolved (`9575b28`) | [Review prompt][review] describes a team **or by an investigation** (`:4`); reservations apply only with `reserve`/`release` (`without the agentbus tools, do not use them`, `:30`). `agents_md_text` supplies a report fallback (`without the agentbus tools: in your report`). [Renderer][script]. |
 | `9`: invalid clarification reference | Resolved (`9575b28`) | [Independent resume][invresume] explains short answers directly and refers to the question format in the first message rather than a missing numbered rule. |
 | `10`: remote/local helper protocol differs | Partly remains | [Remote dispatch][remotehelper] creates a worker-selector job; node task creation (`node_launch_job`) and `build_prompt` still route it with `KIND=worker` (`REMOTE_JOB=1`) to [solo protocol][protocol], not [helper protocol][helper]. Commit/push scope and asking the human versus the requester still differ. The new [shared rule][ownership] forbids PR creation by remote helpers. No remote-role migration is included here. |
-| `11`: Polish review labels (`"Recenzja PR"`) | Resolved for review labels (`9575b28`) | Review requests (`start_review_slot`, `request_review`, `start_investigation`) now use English. A separate residual remains: `start_helper` still emits `## Kontekst` when formatting a helper task with context. [Source][script]. |
+| `11`: Polish review labels (`"Recenzja PR"`) | Resolved | Review requests (`start_review_slot`, `request_review`, `start_investigation`) use English (`9575b28`); the last residual, `start_helper`'s `## Kontekst` heading of a helper task's context, is `## Context` since the follow-up by `inv-opus` (task `20261104-200148-inv-opus`, test `a helper's task text is in English: the requester's context goes under Context`). [Source][script]. |
 | `12`: repeated independent base prompt | Resolved (`9575b28`) | Independent `resume` emits answers/notes or a short continuation; `fresh` adds the base once followed by `fresh-session.md`. Repeated short shared rules (`continuation_rules`) are intentional. [Source][script]. |
 
 Neither protected repository instruction file was changed. This audit updates the requested matrix and issue list rather than silently

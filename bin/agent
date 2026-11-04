@@ -5042,7 +5042,7 @@ start_helper() { # request-json worker
   fi
   {
     printf '## Request H%s from %s\n\n%s\n\n' "$hid" "$from" "$(jq -r .request <<< "$j")"
-    printf '## Kontekst\n\n%s\n' "$(jq -r '.context // "—"' <<< "$j")"
+    printf '## Context\n\n%s\n' "$(jq -r '.context // "—"' <<< "$j")"
   } > "$dir/task.md"
   : > "$dir/meta.env"
   local sid=""
