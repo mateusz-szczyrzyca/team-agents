@@ -1099,15 +1099,23 @@ jobs respect these markers; a check already running may finish cleanup, but cann
 a new cohort with `agent run --resume <team> --same-round` remains possible; old task stop markers are retained.
 The dashboard's local member stop button uses `agent stop`, while `agent kick` remains a temporary interruption (except when
 the team is already finished or stopped, where `kick` also marks the member `stopped`). Team displays prefer a task's
-persisted `stopped` status over an older bus member state.
-New structured script events: `team_stopped`, `automation_stopped`, `resume_blocked_investigation`.
+persisted `stopped` status over an older bus member state. Members that had already finished keep their result: a
+`done`, `failed`, `excluded` or `hung` member is not rewritten to `stopped`. `agent answer` and `agent resume` refuse a
+stopped task and say so.
+New structured script events: `team_stopped`, `automation_stopped`, `resume_blocked_investigation`,
+`wake_deferred_investigation`, `wake_replayed`.
 
 **Investigation priority.** A nonterminal top-level `--investigation` in a project blocks resuming its normal
-teams, including message wakes, answer-driven resumes and automatic follow-up work. The refusal names the
-independent investigation. Finish or stop it, then explicitly resume the normal team. Checks use `REPO_ROOT` and `REPO_NAME`;
-other projects and ordinary investigations requested through `request_investigation` do not block resumption.
-This does not stop already-running normal teams or block new normal-team creation. No persisted format changes
-or migrations are needed: missing old metadata and stop markers keep their previous meaning.
+teams: `agent run --resume <team>` (also the fix pass and the next `--autopilot` round, which go through it and tell
+you that the team could not be resumed), and `agent answer` / `agent resume` of a member waiting for answers. The refusal
+names the independent investigation; finish or stop it, then resume the normal team. A message wake of a sleeping member
+(and the end of its pause) waits instead: the task gets `WAKE_DEFERRED=1`, and `agent _supervise` (every 3 minutes)
+wakes it once no investigation blocks it — the bus wakes a member once per message, so a dropped wake would leave its
+team waiting. The checks, reviews and bounces of a team that is already at work go on. Checks use `REPO_ROOT` and
+`REPO_NAME`; other projects, ordinary investigations requested through `request_investigation` and a finished cohort
+whose handoff still shows `waiting` do not block. This does not stop already-running normal teams or block new
+normal-team creation. No persisted format changes or migrations are needed: missing old metadata and stop markers keep
+their previous meaning.
 
 **Closing a team.** `agent team <id> --close` closes a team whatever its members do: the local ones still at
 work or sleeping are stopped, the remote ones' jobs end and their grants are revoked. A team whose coordinator failed stays

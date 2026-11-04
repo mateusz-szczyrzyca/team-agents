@@ -51,54 +51,77 @@
   - Checks whether the target task belongs to a normal team (`TEAM` non-empty, `INVESTIGATION_TEAM` empty, `KIND` in `worker|remote-member|""`).
   - Scans `$TASKS/*/meta.env` for any non-terminal (`STATUS` not `done|failed|stopped`) top-level `--investigation` coordinator (`KIND=investigation_team`) or phase child (`INVESTIGATION_TEAM` non-empty) in the same repository (matching `REPO_ROOT` when present on both, or `REPO_NAME`).
   - Ordinary investigations requested by normal models (`KIND=investigation` with empty `INVESTIGATION_TEAM`) and investigations in other repositories do not block resumption.
-  - Enforced in `resume_run` (before mutating team/task state), `start_runner` (`mode != new`), and `automation_allowed` (blocking background wakes, prechecks, fix passes, and merges while `--investigation` runs).
+  - Enforced in `resume_run` (before mutating team/task state; the fix pass and the next `--autopilot` round go through it and report the refusal), in `agent answer` / `agent resume` (`human_resume_allowed`), and in `cmd__wake`, which defers the wake (`WAKE_DEFERRED=1`) for `supervise_deferred_wakes` to replay once the investigation ends.
+  - Follow-up by `inv-opus` (`20261104-200148-inv-opus`): the first version also checked it in `start_runner` (`mode != new`) and `automation_allowed`. That dropped the precheck, reviews and review results of a normal team already at work (with status `0`, nothing recorded), refused its bounces and pause resumes (left stuck), and lost every held-back wake (the bus wakes a member once per message). A finished cohort still marked `waiting` (`investigation_completed_wait`) no longer blocks.
 - **Tests:**
   - `dashboard independent investigation blocks normal resume before mutation`, `dashboard independent investigation blocks message wake`, `dashboard ordinary investigations and other projects do not block resume` (`tests/unit/dashboard_lifecycle.bats`, from `inv-astra`)
   - `resuming a normal team in the same project is refused while --investigation is in progress, but allowed for normal model investigations` (`tests/unit/investigation_team_admission.bats`, from `inv-gemini-argon`)
+  - `tests/unit/team_stop_followup.bats` (`8` tests, from `inv-opus`): deferred and replayed wakes, precheck and bounces of a team at work, answers refused, a finished cohort still marked `waiting`, finished members kept by `agent team <id> --stop`.
 
 ---
 
 ## 4. Background jobs report: inventory, where defined, what they do, and periods
 
-Even when no agent CLI (`claude`, `codex`, `agy`/`gemini`, `opencode`) is actively running, the installation runs **4 standing `systemd --user` services/timers** installed by `install.sh` and **11 transient `systemd-run --user` background unit types** (plus **3 in-process background loops/goroutines**) spawned dynamically by `bin/agent`, `agentbus`, and `agentlive`.
+Re-verified against the code by `inv-opus` (task `20261104-200148-inv-opus`): the first version of this section named
+units and subcommands that do not exist (`_unpause`, `_investigation-controller`, `_remote_member_done`,
+`agent-invteam-*`, `agent-rmember-*`, `agent-rquestion-*`, a consultation timer). Every row below names a `systemd-run`
+call, a `spawnDetached` call or a unit file that is in the code.
 
-### 4.1 Standing `systemd --user` units (defined in `install.sh`)
+When no agent CLI runs, work still happens through **4 standing `systemd --user` units** (2 of them only on a lead or
+a node), **8 kinds of transient `systemd-run` units** started by `bin/agent`, **4 kinds of detached `agent` processes**
+started by `agentbus`, and the polling loops inside those processes.
 
-| # | Unit | Type | Defined In | Period / Trigger | What It Does |
+### 4.1 Standing `systemd --user` units (written by `install.sh`)
+
+| # | Unit | Runs | Period / trigger | What it does |
+|---|---|---|---|---|
+| `1` | `agent-supervise.timer` → `agent-supervise.service` | `agent _supervise` (`cmd__supervise`) | `OnBootSec=3min`, `OnUnitActiveSec=3min` | cleans answer watches nobody waits for (`supervise_answer_watches`); retries remote question files (`supervise_remote_questions`); replays wakes an `--investigation` held back (`supervise_deferred_wakes`); a `running`/`starting` task without an active unit is failed after `AGENT_SUPERVISE_GRACE_SEC` (`120` s) or, after a reboot, resumed (`restart_interrupted`); on a lead cancels remote member jobs whose team ended (`supervise_member_jobs`); reports an open team with no local member alive for `AGENT_TEAM_ABANDON_MIN` (`60` min) once (`supervise_teams`); reports review pairs waiting longer than `AGENT_REVIEW_WAIT_MIN` (`30` min) (`supervise_review_waits`); runs `dispatch` while an `--investigation` cohort is pending or a review rotation waits — that is what advances the `--investigation` phases between runs |
+| `2` | `agentweb.service` | `agent web` (`live/web*.go`) | always on | the web interface; its live views re-read the files every `1` s; its buttons call `agent stop`, `agent kick`, `agent team <id> --stop`, `agent run --resume`, `agent resume` |
+| `3` | `agentlead.service` (only with `LEAD_LISTEN`) | `agent lead` → `agentbus lead` | always on; a `30` s ticker | the multi-host bus API; every `30` s puts remote members whose node stays away longer than the grace out of their teams (`checkAbsentMembers`) |
+| `4` | `agentnode.service` (only with `LEAD_URL`) | `agent node` | a loop every `NODE_POLL_SEC` (`5` s) | heartbeats to the lead; starts, wakes, kicks and cancels the jobs the lead assigns; pushes logs and artifacts |
+
+### 4.2 Transient `systemd-run --user` units (all in `bin/agent`)
+
+| # | Unit name | Runs | Started by | When | What it does |
 |---|---|---|---|---|---|
-| `1` | `agent-supervise.timer` + `agent-supervise.service` | Timer + oneshot (`agent _supervise`) | `install.sh:164-184`, `bin/agent` (`cmd__supervise`) | Every `3min` (`OnBootSec=3min`, `OnUnitActiveSec=3min`) | Reaps dead runners (`120s` grace), restarts machine-interrupted runs (`RUN_BOOT` mismatch), cleans stale question watches, retries undelivered remote questions, cancels orphaned remote jobs (`supervise_lead_jobs`), warns on abandoned open teams (`AGENT_TEAM_ABANDON_MIN=60m`) and delayed review pairs (`AGENT_REVIEW_WAIT_MIN=30m`), advances independent `--investigation` state machines (`supervise_investigation_teams`), and dispatches queued investigations and review pairs (`dispatch`). |
-| `2` | `agentweb.service` | Long-running daemon (`agent web`) | `install.sh:186-197`, `bin/agent` (`cmd_web`), `live/web.go` | Continuous (`Restart=on-failure`, `RestartSec=2s`); SSE poll `1s`; agent cache `30s`; Tailscale whois cache `1m` (`10s` on error) | Serves the web UI (`127.0.0.1:7777`), streams live SSE updates (`/events/dashboard`, `/events/dashboard/full`, `/events/task/{id}`, `/events/bus`), and executes web actions (`kick`, `stop`, `team --stop`, `run --resume`). |
-| `3` | `agentlead.service` | Long-running daemon (`agent lead`, when `LEAD_LISTEN` set) | `install.sh:206-225`, `bin/agent` (`cmd_lead`), `agentbus/lead_http.go` | Continuous (`Restart=on-failure`, `RestartSec=2s`); node heartbeat TTL `NODE_TTL_SEC=90s`; member-grace sweep `max(grace/4, 10s)` (`AGENT_RESTART_GRACE_MIN=10m`) | Serves the multi-host HTTP bus API (`agentbus lead`) and marks remote members on stale worker nodes as `absent` after the grace window, returning their board items. |
-| `4` | `agentnode.service` | Long-running daemon (`agent node`, when `LEAD_URL` set) | `install.sh:235-254`, `bin/agent` (`cmd_node`) | Continuous (`Restart=on-failure`, `RestartSec=5s`); poll `NODE_POLL_SEC=5s` (or doorbell wake up to `max(NODE_POLL_SEC, 25s)`); auth probe `NODE_AUTH_POLL_SEC=300s`; log push `NODE_LOG_PUSH_SEC=10s` | Sends node heartbeats and capabilities to the lead, launches/cancels assigned remote member and helper tasks, relays remote questions/answers, and pushes logs and artifacts. |
+| `5` | `agent-<task>-r<run>` | `agent _runner <task> <mode>` | `start_runner` | every run: a new task, a resume, a wake, an answer, a bounce (questions, status, round, `--verify`) | the agent CLI's run with its watchdog, then what its `STATUS:` line asks for (`team_after_run`, reviews, `dispatch`) |
+| `6` | `agent-<task>-precheck-<epoch>` | `agent _precheck <task>` | `start_precheck` | a `--verify`/`--autopilot` round ends | waits for the team to settle (`team_wait_settled`, `5` s polls, `10` min at most), checks tests-first and the PR, runs the gate in a temporary worktree (`AGENT_REVIEW_GATE_MIN`, `30` min), then requests the review |
+| `7` | `agent-<parent>-precheck-<n>` | `agent _precheck <parent>` | `investigation_pipeline_tick` | an `--investigation`'s merger has published its Phase 2 result | the same checks for the merged result before its review pair |
+| `8` | `agent-<task>-fixpass-<epoch>` | `agent _fixpass <task>` | `review_fix_pass` → `start_task_unit` | a review found critical/major problems | waits for the team to settle, then resumes it with the findings (`agent run --resume … --same-round`), `VERIFY_MAX_FIX_PASSES` times at most |
+| `9` | `agent-<task>-merge-<epoch>` | `agent _merge <task>` | `review_pair_done` → `start_task_unit` | `--autopilot`: both reviews say ready to merge | merges the PR, runs the gate on the merged base, starts the next round (`agent run --resume <team> --autopilot`) |
+| `10` | `agent-<task>-wake-<epoch>` (timer, `--on-active`) | `agent _wake <task>` | `schedule_wake` from `pause_task` and `long_run_end` | a pause ends (provider limit or quota, network, the wake-loop guard), or `5` s after a long run ended on request | resumes the paused task, or starts the member's next run in a fresh session |
+| `11` | `agent-<task>-answers-<round>` (path unit, `PathModified=`) | `agent _answers_saved <task> <round>` | `watch_answers` | the questions file of a waiting task is saved | resumes the task once every question is answered |
+| `12` | `agent-remote-questions-<task>@<node>` | `agent _remote_questions_ready <task>@<node>` | `cmd__remote_questions` (the lead) | a node's question file arrived | opens it for the human and notifies |
 
-### 4.2 Transient `systemd-run --user` units (defined in `bin/agent` and `agentbus`)
+`agent authenticated` also uses `systemd-run` (`agent-auth-*`, `_authcheck`) but waits for it in the foreground (`--wait`):
+it is not a background job.
 
-| # | Unit Pattern | Entrypoint | Defined In | Trigger / Period | What It Does |
-|---|---|---|---|---|---|
-| `5` | `agent-<task>-r<run>.service` | `agent _runner <task> <mode>` | `bin/agent` (`start_runner`, `cmd__runner`) | Per task start, resume, wake, or bounce | Prepares MCP config (`agentbus`, optional `serena`), builds prompt, launches the model CLI with `watch_run`, handles hang auto-resumes, records final status, and triggers post-run hooks (`team_after_run`, `review_followup`, `dispatch`, `dispatch_helpers`). |
-| `6` | `agent-<task>-precheck-<epoch>.service` | `agent _precheck <task>` | `bin/agent` (`start_precheck`, `cmd__precheck`, `review_precheck`) | Triggered when a `--verify` / `--autopilot` round finishes (`STATUS: DONE` or `ROUND_DONE`) or Phase 2 merge finishes; polls gate progress every `AGENT_STAGE_POLL_SEC=2s` (`team_wait_settled` polls `5s` up to `120`× = `10m`) | Waits for team members to settle, verifies test-first diff (`round_test_changes`), single open PR (`round_open_prs`), PR formatting (`pr_format_issues`), and runs `make gate` in an isolated detached worktree (timeout `AGENT_REVIEW_GATE_MIN=30m`). |
-| `7` | `agent-<task>-fixpass-<epoch>.service` | `agent _fixpass <task>` | `bin/agent` (`review_fix_pass`, `cmd__fixpass`, `do_fix_pass`) | Triggered when a `--verify` or `--autopilot` review returns `needs-fixes` or `incomplete` (`team_wait_settled` polls `5s` up to `10m`) | Waits for team members to settle, then resumes the team (`--same-round`) with the review findings (up to `VERIFY_MAX_FIX_PASSES=2`, or `3` pairs in `--autopilot`). |
-| `8` | `agent-<task>-merge-<epoch>.service` | `agent _merge <task>` | `bin/agent` (`review_pair_done`, `cmd__merge`) | Triggered in `--autopilot` when both reviews in a pair return `ready-to-merge` (`team_wait_settled` polls `5s` up to `10m`) | Checks `merge_blockers`, readies draft PR, merges PR (`--match-head-commit`), runs `gate_at` on merged base branch, and if `WORK_ROUND < WORK_ROUNDS`, starts round `N+1` via `agent run --resume <team> --autopilot`. |
-| `9` | `agent-wake-<task>-<ns>.service` | `agent _wake <task>` | `agentbus/team.go` (`wakeMember`), `bin/agent` (`cmd__wake`) | On-demand when a bus message with `wake=true` or board assignment targets a `sleeping` team member | Acquires `wake.lock`, checks whether the member is still `sleeping` and its agent is free; if free, starts a resume runner, or sets `WAKE_PENDING=1`. |
-| `10` | `agent-consult-<team>-<epoch>.timer` + `.service` | `agent _wake <lead-task>` | `bin/agent` (`start_consult_timer`, `stop_consult_timer`) | One-shot timer after `AGENT_CONSULT_MIN=5m` (`--on-active`) when a team coordinator enters `STATUS: CONSULTING` | Wakes the sleeping coordinator if not all members have posted their `consultation_reply` within the deadline. |
-| `11` | `agent-<task>-pause-<run>.timer` + `.service` | `agent _unpause <task> <run>` | `bin/agent` (`pause_task`, `cmd__unpause`) | One-shot timer (`--on-active=<secs>s`): network `15m`, rate-limit `5m`, overloaded `10m`, repeated empty wakes `30m`, or provider quota reset timestamp | Releases a paused task and resumes its run (or marks a sleeping team member ready for wakes). |
-| `12` | `agent-<task>-answers-<round>.path` + `.service` | `agent _answers_saved <task> <round>` | `bin/agent` (`watch_answers`, `cmd__answers_saved`) | `systemd` `PathChanged=` watch on `questions-<round>.md` while `STATUS=waiting` | Validates human answers when `**ANSWERED**` is saved in `questions-<round>.md` and automatically runs `agent resume <task>`. |
-| `13` | `agent-invteam-<id>-<epoch>.service` | `agent _investigation-controller --task <id>` | `bin/agent` (`start_investigation_controller`, `cmd__investigation_controller`) | Detached controller unit for `--investigation` | Drives the 6-phase independent investigation pipeline (`Phase 1` cohort → `Phase 2` merge → precheck → `Phase 3` review pair → optional `Phase 4` fix → precheck → `Phase 5` re-review → `Phase 6` handoff). |
-| `14` | `agent-rmember-<task>-<epoch>.service` | `agent _remote_member_done <task> <state>` | `bin/agent` (`cmd_lead`, `cmd__remote_member_done`) | Spawned by `cmd_lead` when `agentbus lead` emits `MEMBER_JOB\t<task>\t<state>` on stdout | Handles terminal transitions of remote team members on the lead (re-queuing unfinished board items on failure/stop and waking the coordinator if all members finished). |
-| `15` | `agent-rquestion-<job>-<round>-<epoch>.service` | `agent _remote_question <job> <round>` | `bin/agent` (`cmd_lead`, `cmd__remote_question`) | Spawned by `cmd_lead` when `agentbus lead` emits `QUESTION\t<job>\t<round>` on stdout | Materializes a worker node's question file on the lead, opens it in VS Code, starts a `PathChanged` watch, and sends a push notification. |
+### 4.3 Detached `agent` processes started by `agentbus` (`spawnDetached`, `setsid -f`, no unit)
 
-### 4.3 In-process background loops inside running commands
+| # | Runs | Where | When |
+|---|---|---|---|
+| `13` | `agent _wake <task>` | `agentbus/team.go` (`spawnWake`) | a message or new board work for a sleeping team member |
+| `14` | `agent _remote_member <task> <status> <branch> <note>` | `agentbus/remote_member.go` | on the lead: a remote member's job reports its end |
+| `15` | `agent _dispatch-helpers` | `agentbus/collab.go` (`agentCmdFn`) | a normal model queues a worker request (`delegate`) |
+| `16` | `agent _remote_questions <task>@<node>` | `agentbus/lead_command.go` (`--questions-cmd`) | on the lead: a node sends a question file; it starts unit `12` |
 
-- **`watch_run` (`bin/agent`):** Polls every `10s` inside each `agent _runner` while the model CLI runs; enforces `AGENT_HANG_MIN` (`20m` inactivity kill), `AGENT_WARN_MIN` (`30m` runtime notification), and `AGENT_LONG_RUN_SOFT` / `AGENT_LONG_RUN_HARD` (`120` / `160` steps).
-- **`gate` progress poller (`bin/agent`, `review_precheck`):** Polls `precheck.log` every `AGENT_STAGE_POLL_SEC=2s` while `make gate` runs in `agent _precheck`, updating `AUTO_STAGE` for the dashboard.
-- **`agent live` TUI ticker (`live/main.go`):** Refreshes the terminal UI every `2s` and emits periodic waiting/stopped reminders every `--remind` minutes (`30m` default).
+### 4.4 Loops inside these processes
 
-### 4.4 Why activity happens when no agent CLI is running
+- `watch_run` (in every `_runner`): every `AGENT_HANG_POLL` (`15` s) — the hang watchdog (`AGENT_HANG_MIN`, `30` min
+  without activity), long-run warnings and limits.
+- `review_precheck` (in `_precheck`): the gate's progress written for the dashboard every `AGENT_STAGE_POLL_SEC` (`2` s).
+- `team_wait_settled` (in `_precheck`, `_fixpass`, `_merge`): `5` s polls, `120` times at most.
+- `agent live`: a `1` s ticker; `agent web`: `1` s file polls per open live view.
 
-1. **Between rounds or before reviews (`_precheck`, `_merge`):** After all team members finish (`STATUS=done`/`sleeping`), `agent _precheck` or `agent _merge` waits for members to settle (`team_wait_settled`) and runs `make gate` in a temporary detached worktree for several minutes with zero model CLIs active.
-2. **Between review completion and fix pass (`_fixpass`):** After reviewer tasks finish, `agent _fixpass` waits for any late member runs to settle before invoking `agent run --resume` for the next fix pass.
-3. **Every 3 minutes (`agent-supervise.timer`):** `agent _supervise` runs even when the system is idle, reaping dead units, checking abandoned teams/review waits, advancing `--investigation` phases, and dispatching queued work.
-4. **Pause/consultation timers and file watches:** `agent-<task>-pause-<run>.timer`, `agent-consult-<team>.timer`, and `agent-<task>-answers-<round>.path` fire asynchronously on schedule or file save and launch new runners.
+### 4.5 Why something happens while no agent runs
+
+1. Every `3` minutes `agent _supervise` runs (row `1`): it ends dead runs, reports, and dispatches queued
+   investigations, review pairs and the next `--investigation` phase.
+2. After a round ends, `_precheck` runs the gate for minutes (rows `6`, `7`); after the reviews, `_fixpass` or `_merge`
+   (rows `8`, `9`) wait for the team to settle and then resume it or merge.
+3. Timers and watches fire on their own: a pause's end (row `10`), a saved answers file (row `11`).
+4. `agentbus` starts `agent` processes when a message arrives for a sleeping member or a worker request is queued
+   (rows `13`–`16`).
 
 ---
 

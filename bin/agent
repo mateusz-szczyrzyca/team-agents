@@ -1713,15 +1713,16 @@ task_stop_requested() {
   return 1
 }
 
-# normal_resume_allowed id — top-level investigations reserve their project against normal team resumption.
-# Ordinary agent-requested investigations and unrelated repositories never acquire this priority.
-normal_resume_allowed() {
+# blocking_investigation id — prints the independent investigation (--investigation) in progress in that normal team
+# task's project; 1 when there is none. Ordinary agent-requested investigations, unrelated repositories and a finished
+# cohort whose handoff still shows as waiting (investigation_completed_wait) never block.
+blocking_investigation() {
   local id=$1 root repo m inv inv_root inv_repo
-  [[ -n $(task_field "$id" TEAM) && -z $(task_field "$id" INVESTIGATION_TEAM) ]] || return 0
-  case $(task_field "$id" KIND) in worker|remote-member|"") ;; *) return 0 ;; esac
+  [[ -n $(task_field "$id" TEAM) && -z $(task_field "$id" INVESTIGATION_TEAM) ]] || return 1
+  case $(task_field "$id" KIND) in worker|remote-member|"") ;; *) return 1 ;; esac
   root=$(task_field "$id" REPO_ROOT)
   repo=$(task_field "$id" REPO_NAME)
-  [[ -n $root || -n $repo ]] || return 0
+  [[ -n $root || -n $repo ]] || return 1
   for m in "$TASKS"/*/meta.env; do
     [[ -f $m ]] || continue
     inv=${m%/meta.env}; inv=${inv##*/}
@@ -1738,21 +1739,39 @@ normal_resume_allowed() {
       continue
     fi
     case $(task_field "$inv" STATUS) in done|failed|stopped) continue ;; esac
-    log_info resume_blocked_investigation "task=$id" "investigation=$inv"
-    printf 'agent: normal team resumption is blocked by independent investigation %s (--investigation) in this project; finish or stop it first.\n' "$inv" >&2
-    return 1
+    if [[ $(task_field "$inv" KIND) == investigation_team ]] && investigation_completed_wait "$inv"; then continue; fi
+    printf '%s\n' "$inv"
+    return 0
   done
-  return 0
+  return 1
 }
 
-# automation_allowed task — 0 when automatic follow-up (wake, review, precheck, fix pass, merge) may run for this task
+# normal_resume_allowed id — top-level investigations reserve their project against normal team resumption: 1, with
+# the reason on stderr, while blocking_investigation finds one.
+normal_resume_allowed() {
+  local id=$1 inv
+  inv=$(blocking_investigation "$id") || return 0
+  log_info resume_blocked_investigation "task=$id" "investigation=$inv"
+  printf 'agent: normal team resumption is blocked by independent investigation %s (--investigation) in this project; finish or stop it first.\n' "$inv" >&2
+  return 1
+}
+
+# automation_allowed task — 0 unless the human stopped the task (agent stop, agent team --stop: every member and its
+# delegated descendants carry the mark): then its automatic follow-up (wake, review, precheck, fix pass, merge) is
+# dropped. An --investigation's priority is not checked here — a team already at work keeps its checks and reviews:
+# resume_run refuses to resume a normal team and cmd__wake defers a wake (normal_resume_allowed)
 automation_allowed() {
-  local id=$1 team
+  local id=$1
   [[ -n $id && -f $TASKS/$id/meta.env ]] || return 1
-  if task_stop_requested "$id" || [[ $(task_field "$id" STATUS) == stopped ]]; then return 1; fi
-  team=$(task_field "$id" TEAM)
-  if [[ -n $team ]] && team_is_stopped "$team"; then return 1; fi
-  normal_resume_allowed "$id"
+  ! task_stop_requested "$id" && [[ $(task_field "$id" STATUS) != stopped ]]
+}
+
+# human_resume_allowed id — agent answer / agent resume: refused, with the reason, for a task the human stopped, and
+# while an --investigation is in progress in its project
+human_resume_allowed() {
+  automation_allowed "$1" \
+    || die "task $1 was stopped by the human — it is not resumed; start it again with: agent run --resume <team|task>"
+  normal_resume_allowed "$1"
 }
 
 start_task_unit() { # task subcommand — runs `agent <subcommand> <task>` in its own unit (it may take minutes)
@@ -2833,6 +2852,12 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
     exit 0
   fi
   automation_allowed "$id" || return 0
+  if ! normal_resume_allowed "$id"; then   # an --investigation goes first: supervise_deferred_wakes wakes it after
+    meta_set "$id" WAKE_DEFERRED 1
+    log_info wake_deferred_investigation "task=$id" "agent=$AGENT" "team=${TEAM:-}"
+    exit 0
+  fi
+  [[ -z ${WAKE_DEFERRED:-} ]] || meta_set "$id" WAKE_DEFERRED ""
   if [[ ${KIND:-} == remote-member ]]; then   # the member works on its node: the lead asks the node to wake it
     try remote_wake_failed bus lead-member --dir "$BUS_DIR" --wake --member "$AGENT" >/dev/null
     exit 0
@@ -5634,7 +5659,6 @@ start_runner() { # id mode
     meta_set "$id" FINISHED "$(date -Is)"
     return 0   # cancellation is a completed no-op, not a launch failure for admission to overwrite
   fi
-  if [[ $mode != new ]]; then normal_resume_allowed "$id" || return 1; fi
   run=$(( $(task_field "$id" RUN) + 1 ))
   meta_set "$id" RUN "$run"
   meta_set "$id" STATUS starting
@@ -6491,7 +6515,7 @@ cmd_answer() {
     return
   fi
   meta_load "$id"
-  automation_allowed "$id" || return 1
+  human_resume_allowed "$id" || return 1
   [[ $STATUS == waiting ]] || die "task $id has status '$STATUS' — it is not waiting for answers"
   local q="$TASKS/$id/questions-$ROUND.md"
   "${EDITOR:-nano}" "$q"
@@ -6543,7 +6567,7 @@ cmd_resume() {
   local id; id=$(resolve_id "${1:?usage: agent resume <id> [additional note]}")
   shift
   meta_load "$id"
-  automation_allowed "$id" || return 1
+  human_resume_allowed "$id" || return 1
   [[ $STATUS == waiting ]] || die "task $id has status '$STATUS' (resume only works for 'waiting')"
   local q="$TASKS/$id/questions-$ROUND.md"
   validate_answers "$q" || die "not all questions are answered — complete: $q"
@@ -6796,11 +6820,28 @@ member_out() { # id reason — a team member is out of the team's work: its boar
   log_warn member_out "task=$id" "team=$team" "released=$released" "reason=${why:0:200}"
 }
 
+# supervise_deferred_wakes — a wake that an --investigation held back (WAKE_DEFERRED, cmd__wake) runs again once no
+# investigation blocks its task any more: the bus wakes a sleeping member once per message, so a wake dropped here
+# would leave its team waiting. A task the human stopped since loses its deferred wake
+supervise_deferred_wakes() {
+  local m id
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    id=${m%/meta.env}; id=${id##*/}
+    [[ $(task_field "$id" WAKE_DEFERRED) == 1 ]] || continue
+    if ! automation_allowed "$id"; then meta_set "$id" WAKE_DEFERRED ""; continue; fi
+    if blocking_investigation "$id" >/dev/null; then continue; fi   # still in progress: the next tick looks again
+    log_info wake_replayed "task=$id"
+    try wake_replay_failed "$SELF" _wake "$id"
+  done
+}
+
 cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running or starting, but no unit is active —
   # unless their machine restarted under the run (restart_interrupted)
   local d id st run rb kind phase1_pending=0
   supervise_answer_watches   # watches of answers nobody waits for any more
   supervise_remote_questions
+  supervise_deferred_wakes
   for d in "$TASKS"/*/; do
     [[ -f $d/meta.env ]] || continue
     id=${d%/}; id=${id##*/}
@@ -9000,10 +9041,11 @@ cmd_team() { # [id [--close|--stop]] [--all]
 }
 
 # team_stop team — persist stop intent for the whole team before any runner can react to another's exit.
-# Include delegated descendants so a completed review cannot launch another round after this command.
+# Include delegated descendants so a completed review cannot launch another round after this command. Only the tasks
+# not finished before the stop become stopped: a done, failed, excluded or hung one keeps its result and time.
 team_stop() {
   local team=$1 t m parent changed=1
-  local -A owned=()
+  local -A owned=() was=()
   bus team-get --dir "$BUS_DIR" --team "$team" >/dev/null || die "no team $team on the bus (agent team)"
   for t in $(team_tasks "$team"); do owned[$t]=1; done
   while ((changed)); do
@@ -9017,6 +9059,7 @@ team_stop() {
     done
   done
   for t in "${!owned[@]}"; do
+    was[$t]=$(task_field "$t" STATUS)
     touch "$TASKS/$t/stop-requested"
     meta_set "$t" TEAM_STOPPED 1
     meta_set "$t" AUTOPILOT_OFF 1
@@ -9026,6 +9069,7 @@ team_stop() {
   done
   finish_team "$team" "stopped by the human (agent team $team --stop)"
   for t in "${!owned[@]}"; do
+    case ${was[$t]} in done|failed|stopped|excluded|hung) continue ;; esac   # finish_team keeps these too
     if [[ $(task_field "$t" KIND) == remote-member ]]; then
       meta_set "$t" STATUS stopped
       meta_set "$t" FINISHED "$(date -Is)"
