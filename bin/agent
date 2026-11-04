@@ -1632,6 +1632,38 @@ task_stop_requested() {
   return 1
 }
 
+# normal_resume_allowed id — top-level investigations reserve their project against normal team resumption.
+# Ordinary agent-requested investigations and unrelated repositories never acquire this priority.
+normal_resume_allowed() {
+  local id=$1 root repo m inv inv_root inv_repo
+  [[ -n $(task_field "$id" TEAM) && -z $(task_field "$id" INVESTIGATION_TEAM) ]] || return 0
+  case $(task_field "$id" KIND) in worker|remote-member|"") ;; *) return 0 ;; esac
+  root=$(task_field "$id" REPO_ROOT)
+  repo=$(task_field "$id" REPO_NAME)
+  [[ -n $root || -n $repo ]] || return 0
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    inv=${m%/meta.env}; inv=${inv##*/}
+    if [[ $(task_field "$inv" KIND) != investigation_team && -z $(task_field "$inv" INVESTIGATION_TEAM) ]]; then
+      continue
+    fi
+    inv_root=$(task_field "$inv" REPO_ROOT)
+    inv_repo=$(task_field "$inv" REPO_NAME)
+    if [[ -n $root && -n $inv_root ]]; then
+      [[ $inv_root == "$root" ]] || continue
+    elif [[ -n $repo && -n $inv_repo ]]; then
+      [[ $inv_repo == "$repo" ]] || continue
+    else
+      continue
+    fi
+    case $(task_field "$inv" STATUS) in done|failed|stopped) continue ;; esac
+    log_info resume_blocked_investigation "task=$id" "investigation=$inv"
+    printf 'agent: normal team resumption is blocked by independent investigation %s (--investigation) in this project; finish or stop it first.\n' "$inv" >&2
+    return 1
+  done
+  return 0
+}
+
 # automation_allowed task — 0 when automatic follow-up (wake, review, precheck, fix pass, merge) may run for this task
 automation_allowed() {
   local id=$1 team
@@ -1639,7 +1671,7 @@ automation_allowed() {
   if task_stop_requested "$id" || [[ $(task_field "$id" STATUS) == stopped ]]; then return 1; fi
   team=$(task_field "$id" TEAM)
   if [[ -n $team ]] && team_is_stopped "$team"; then return 1; fi
-  return 0
+  normal_resume_allowed "$id"
 }
 
 start_task_unit() { # task subcommand — runs `agent <subcommand> <task>` in its own unit (it may take minutes)
@@ -5480,6 +5512,7 @@ start_runner() { # id mode
     meta_set "$id" FINISHED "$(date -Is)"
     return 0   # cancellation is a completed no-op, not a launch failure for admission to overwrite
   fi
+  if [[ $mode != new ]]; then normal_resume_allowed "$id" || return 1; fi
   run=$(( $(task_field "$id" RUN) + 1 ))
   meta_set "$id" RUN "$run"
   meta_set "$id" STATUS starting
@@ -5806,6 +5839,7 @@ resume_run() {
     if [[ $(task_field "$d" TEAM) == *"$ref"* || $d == *"$ref"* ]]; then first=$d; old_team=$(task_field "$d" TEAM); fi
   done
   [[ -n $first ]] || die "no team or task matches: $ref"
+  if ! normal_resume_allowed "$first"; then unlock_task_ids; return 1; fi
 
   local olds=() t
   if [[ -n $old_team ]]; then
