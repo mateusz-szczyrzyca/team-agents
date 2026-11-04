@@ -56,3 +56,37 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
   [ "$(grep -c "agent team T2 --close" "$HOME/notifications.log")" -eq 1 ]
   [[ $(agentbus team-get --dir "$AGENTS_HOME/bus" --team T2 | jq -r .done) == false ]]   # reported, not closed
 }
+
+@test "stopping a team stops its members and prevents automatic resume" {
+  scenario '{"lead": {"new": "team-lead-wait-read", "resume": "done"}, "member": {"new": "team-sleep-read", "resume": "done"}}'
+  agent run --team lead,member --autopilot --rounds 2 "task"
+  t=$(task_of lead); m=$(task_of member)
+  team=$(meta "$t" TEAM)
+  wait_status "$t" sleeping
+  wait_status "$m" sleeping
+
+  run agent team "$team" --stop
+  [ "$status" -eq 0 ]
+  [ "$(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r .done)" = true ]
+  [ "$(meta "$t" STATUS)" = stopped ]
+  [ "$(meta "$m" STATUS)" = stopped ]
+  [ "$(meta "$t" TEAM_STOPPED)" = 1 ]
+  [ "$(meta "$t" AUTOPILOT_OFF)" = 1 ]
+  [ "$(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.members.lead.state')" = stopped ]
+  [ "$(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.members.member.state')" = stopped ]
+
+  before_count=$(find "$AGENTS_HOME/tasks" -mindepth 1 -maxdepth 1 -type d | wc -l)
+  run agent _wake "$t"
+  [ "$status" -eq 0 ]
+  [ "$(meta "$t" RUN)" = 1 ]
+  [ "$(meta "$t" STATUS)" = stopped ]
+
+  run agent _precheck "$t"
+  [ "$status" -eq 0 ]
+  run agent _fixpass "$t" "fix review issue"
+  [ "$status" -eq 0 ]
+  run agent _merge "$t"
+  [ "$status" -eq 0 ]
+  after_count=$(find "$AGENTS_HOME/tasks" -mindepth 1 -maxdepth 1 -type d | wc -l)
+  [ "$before_count" -eq "$after_count" ]
+}

@@ -662,7 +662,7 @@ Then:
 | `AGENT_REVIEW_GATE`, `AGENT_REVIEW_GATE_MIN`, `AGENT_PRECHECK_MAX` | before a `--verify`/`--autopilot` review, the command a round's head must pass (`auto`: `make gate` where the repository has it; `off`: none), its time limit in minutes (30), and how many times a round goes back for its gate or its missing tests before you decide (2) |
 | `AGENT_STAGE_POLL_SEC` | how often the gate's progress before a review is written to the coordinator's task, for the dashboard (2 seconds) |
 | `AGENT_PROMPT_ARG_MAX` | a longer prompt (bytes) reaches the agent's CLI through `.agent-prompt.md` in its working directory, kept out of git, which the CLI is asked to read: Linux takes at most 128 KiB per command-line argument, and a task's text grows with every resume (100000) |
-| `AGENT_SERENA` | the command of [Serena](https://github.com/oraios/serena) (e.g. `serena`, on `RUN_PATH`, or a full path): every run gets a `serena` MCP server for finding code — see [Serena](#serena); empty = not used (empty) |
+| `AGENT_SERENA` | the command of [Serena](https://github.com/oraios/serena) (e.g. `serena`, on `RUN_PATH`, or a full path): every run gets a `serena` MCP server for finding code — see [Serena](#serena); empty = not used (`serena` in `config/agents.conf`) |
 | `AGENT_PROMPT_CHECKPOINTS` | a prompt carries the team's (or task's) newest checkpoints only, and says in which file the earlier ones are; `0` all (2) |
 | `AGENT_FRESH_SESSION_TOKENS` | a run that read more context a step (its input divided by its tool calls, as `agent tokens --runs` shows) is not resumed: the next run starts a fresh session — the full prompt, the last report, the files changed, the team's checkpoint, then why it was woken; `0` never (80000) |
 | `AGENT_FRESH_SESSION_RATIO` | …and only when that run read more than this many times the median of the task's own session starts (its new and fresh runs) — a fresh session reads much from its start, and a fixed threshold alone sent nearly every run to a new one; `0` no such check (2) |
@@ -803,6 +803,7 @@ agent live [--feed] [--remind MIN] [--light]  live panel (or an event stream)
 agent say <agent|all|team:ID> "text"          message agents through the bus
 agent inv [N|--all] | helpers [--all]         investigation queue / worker requests
 agent team [id|--all] | notes [repo]          teams / repository notebooks
+agent team <id> --stop                        stop the whole team and disable automatic resumption
 agent transcript <id|team> [--raw]            chronological log: bus messages + activity of every agent
 agent stop <id> | --running                   stop one task / EVERYTHING that is active
 agent ack <id|all> | clean <id>               acknowledge finished tasks / remove a worktree
@@ -846,10 +847,11 @@ The menu on the left slides out on demand (`☰` or `m`). Every view can be maxi
 
 | View | What it shows |
 |---|---|
-| Dashboard | active tasks, then finished ones newest first (also acknowledged ones and investigations from the last 24 h; their time as \"… ago\") live, events as they happen, reserved resources; investigations as "investigator #N (agent)" (the investigators of an `--investigation` team by their names); `done` in blue; a ■ button on a running task cuts its run short (`agent kick`: a team member only sleeps and its team can wake it, a solo task is stopped); a sleeping member of an open team shows what it waits for (`⏳ waits for: B36 gemini-2@rpi5-x: native gate (its latest progress)`, items nobody has taken yet); `stopped` in orange, failures in red |
+| Dashboard | the latest 20 eligible task/job entries by creation time, grouped with active tasks first; live activity, events and reservations; acknowledged terminal tasks remain eligible for 24 h. Local team members' ■ buttons persistently stop them; remote controls retain their existing kick semantics. Stopped tasks are orange, failures red. |
+| Full dashboard view | `/dashboard/full`: a separate page in the menu showing every task/job entry, including older acknowledged history, with its own live stream; the same status grouping and controls. Synthetic investigation parents and duplicate local/remote proxies stay hidden. |
 | Agents | the configured agents and investigators — working ones first, then by their last activity (shown) — tier, CLI, model, provider, what each is doing now, pauses (until when, why) |
 | Task | header (status, time, branch, team) and sections: live activity, the prompt of every run, question rounds, investigations, final message, error logs, the repository notebook, `meta.env` |
-| Teams / Team | the newest 20 teams (and "all"); a team: members and their states, the board (newest first, `for`, results), consultations, the quiz, the team's messages, the notebook; a finished team can be woken from its last task — this round or the next, with a prompt |
+| Teams / Team | the newest 20 teams (and "all"); a team: members and their states, the board (newest first, `for`, results), consultations, the quiz, the team's messages, the notebook; **Stop this team** (`POST /team/{id}/stop`) persistently stops its members and delegated tasks and disables automatic resumption; a finished team can be explicitly woken from its last task — this round or the next, with a prompt (refused while an `--investigation` is in progress in the same repository) |
 | Bus | all bus messages, newest first and live, coloured by direction (`a → b` and `b → a` differ), filtered by team, agent, kind or text |
 | Questions | everything waiting for your answers, and the answer form |
 | Investigations | investigations and PR reviews with the investigator and its model, their results and records |
@@ -1095,8 +1097,34 @@ out of its team like a failed member: its board items go back to the board, the 
 comes back the lead takes it back: within the grace it is told its items are still its own; after being put
 out it rejoins as an available member, told which of its items went to whom. Either way it is woken.
 
+**Stopping a team.** On `/teams` and `/team/<id>`, **Stop this team** runs `agent team <id> --stop` after confirmation.
+It records `stop-requested` and `TEAM_STOPPED=1` for every member and local delegated descendant before closing the bus team,
+stops local runs, cancels remote member jobs and disables autopilot (`AUTOPILOT_OFF=1`). Sleeping members become `stopped`
+on both their task and bus member state. Message wakes, interrupted-run cleanup and delayed precheck/fix-pass/review/merge
+jobs respect these markers; a check already running may finish cleanup, but cannot launch the next phase. Explicitly starting
+a new cohort with `agent run --resume <team> --same-round` remains possible; old task stop markers are retained.
+The dashboard's local member stop button uses `agent stop`, while `agent kick` remains a temporary interruption (except when
+the team is already finished or stopped, where `kick` also marks the member `stopped`). Team displays prefer a task's
+persisted `stopped` status over an older bus member state. Members that had already finished keep their result: a
+`done`, `failed`, `excluded` or `hung` member is not rewritten to `stopped`. `agent answer` and `agent resume` refuse a
+stopped task and say so.
+New structured script events: `team_stopped`, `automation_stopped`, `resume_blocked_investigation`,
+`wake_deferred_investigation`, `wake_replayed`.
+
+**Investigation priority.** A nonterminal top-level `--investigation` in a project blocks resuming its normal
+teams: `agent run --resume <team>` (also the fix pass and the next `--autopilot` round, which go through it and tell
+you that the team could not be resumed), and `agent answer` / `agent resume` of a member waiting for answers. The refusal
+names the independent investigation; finish or stop it, then resume the normal team. A message wake of a sleeping member
+(and the end of its pause) waits instead: the task gets `WAKE_DEFERRED=1`, and `agent _supervise` (every 3 minutes)
+wakes it once no investigation blocks it — the bus wakes a member once per message, so a dropped wake would leave its
+team waiting. The checks, reviews and bounces of a team that is already at work go on. Checks use `REPO_ROOT` and
+`REPO_NAME`; other projects, ordinary investigations requested through `request_investigation` and a finished cohort
+whose handoff still shows `waiting` do not block. This does not stop already-running normal teams or block new
+normal-team creation. No persisted format changes or migrations are needed: missing old metadata and stop markers keep
+their previous meaning.
+
 **Closing a team.** `agent team <id> --close` closes a team whatever its members do: the local ones still at
-work are stopped, the remote ones' jobs end and their grants are revoked. A team whose coordinator failed stays
+work or sleeping are stopped, the remote ones' jobs end and their grants are revoked. A team whose coordinator failed stays
 open for a resume; when no local member of an open team has been at work or asleep for `AGENT_TEAM_ABANDON_MIN`
 (60) minutes — its remote member may still sleep on its node, holding its agent — `agent _supervise` sends you
 one notification with the commands to resume or close it. On the lead it also cancels any remote member's job
@@ -1220,6 +1248,15 @@ whose team is closed or unknown.
   are listed in [the human checklist](docs/multi-instance.md#manual-checklist-human-real-tailnet). Record real
   deployment results separately; these checks are not run by `make gate`.
 
+## Pull request ownership
+
+Every role and continuation receives the same PR ownership rule: only the coordinator may create a PR
+(the solo owner for solo work; the designated merger for independent investigations). Before creating one,
+check the mentioned PR and the repository's Draft or Open PRs for the same subject, including other branches.
+Continue an existing matching PR through its coordinator; never create a replacement. Helpers, members,
+investigators and reviewers deliver commits/findings without opening their own PR. Failed lookups or unclear
+ownership are blockers to report. This is a prompt rule, not a GitHub permission restriction.
+
 ## Serena
 
 [Serena](https://github.com/oraios/serena) finds code through language servers: a file's symbols, a symbol's
@@ -1230,11 +1267,14 @@ investigator too — gets an MCP server `serena` next to `agentbus`, started as
 Serena's for the CLI: `claude-code` (claude), `codex` (codex, with a 120 s start-up time for the language servers),
 `antigravity` (gemini) and `ide` (opencode). The project is the run's own worktree, not a checkout Serena knows from
 elsewhere, so the agent sees its own branch. The prompt gets a short part that says to use it first and to fall back
-to the shell when it fails. Everything else comes from Serena's own configuration (`~/.serena/serena_config.yml`:
+to the shell when it fails. This guidance is included in new, resumed and fresh sessions whenever
+`AGENT_SERENA` is set; an installed executable alone does not enable it. Configure its absolute path if it is
+not on the service's `RUN_PATH`. Configuration/prompt tests verify availability and instructions, not an LLM's actual tool selection. Everything else comes from Serena's own configuration (`~/.serena/serena_config.yml`:
 its tools interface, dashboard, language servers).
 
 - Serena keeps a project folder `.serena/` in each worktree (its cache and memories). It is excluded from git in the
-  repository's `.git/info/exclude`, so no agent commits it.
+  repository's `.git/info/exclude`, so no agent commits it. When the main repository checkout has `.serena/project.yml`,
+  it is seeded into each new worktree so the configured language servers are available immediately.
 - Serena adds every worktree it opens to the `projects:` list of its global configuration. Remove old ones with
   `serena project remove <path>`; nothing in team-agents reads that list.
 - A worktree is indexed when Serena first needs it (the index of your own checkout is not reused); a run's first

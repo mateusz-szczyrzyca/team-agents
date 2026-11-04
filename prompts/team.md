@@ -81,7 +81,8 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
    Before you report a member as silent or ask the human about its work: `git fetch`, `read_messages` and
    `team_status` — its commits or answers may already be there.
 4. You also do part of the work yourself (`level=normal`).
-5. **Draft PR from the start:** right after splitting the work push your branch and open a draft
+5. **Draft PR from the start:** right after splitting the work push your branch and update the existing subject PR.
+   Only if none exists, open a draft
    `gh pr create --draft --base {{BASE}} --head {{BRANCH}}` (description: the task, the split, the plan). End the
    description with these lines, as they are:
 
@@ -98,9 +99,11 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
    integration, verification, investigations, open issues), commit, push, `gh pr ready` (draft → PR for
    review), and a last message with `STATUS: DONE` or `FAILED` — this finishes the task of the whole team.
 
-**A round has one PR.** When you take a round over from another coordinator, its PR stays the round's PR: put your
-commits on its branch and open none. In a fix pass, give each finding to one member through the board — two members
-fixing the same finding on two branches is wasted work, and a second PR the checks send back.
+**A round has one PR.** Never open a new PR if you are not the coordinator or if a PR about the subject is already
+opened (state `Draft` or `Open`). Always continue in the mentioned PR, never create a new PR. When you take a round
+over from another coordinator, its PR stays the round's PR: put your commits on its branch and open none. In a fix
+pass, give each finding to one member through the board — two members fixing the same finding on two branches is wasted
+work, and a second PR the checks send back.
 
 **Every message to a sleeping member starts a whole new run of it** — its prompt, its context, the files it reads
 again: hundreds of thousands to millions of tokens. So give work through the board, in batches (a member woken by

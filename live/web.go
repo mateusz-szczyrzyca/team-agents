@@ -255,6 +255,7 @@ func newWebServer(cfg webConfig) (*webServer, *OpError[StartCause]) {
 		}
 		s.pages[name] = t
 	}
+	s.pages["dashboard_full"] = s.pages["dashboard"]
 	return s, nil
 }
 
@@ -267,6 +268,7 @@ func (s *webServer) handler() http.Handler {
 	}))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeText(w, "ok") })
 	mux.HandleFunc("GET /{$}", s.viewDashboard)
+	mux.HandleFunc("GET /dashboard/full", s.viewDashboardFull)
 	mux.HandleFunc("GET /agents", s.viewAgents)
 	mux.HandleFunc("GET /agents/{id}", s.viewAgent)
 	mux.HandleFunc("GET /jobs", s.viewJobs)
@@ -284,8 +286,10 @@ func (s *webServer) handler() http.Handler {
 	mux.HandleFunc("GET /investigation/{id}", s.viewInvestigation)
 	mux.HandleFunc("GET /logs", s.viewLogs)
 	mux.HandleFunc("POST /task/{id}/stop", s.postStop)
+	mux.HandleFunc("POST /team/{id}/stop", s.postTeamStop)
 	mux.HandleFunc("POST /team/{id}/resume", s.postResume)
 	mux.HandleFunc("GET /events/dashboard", s.streamDashboard)
+	mux.HandleFunc("GET /events/dashboard/full", s.streamDashboard)
 	mux.HandleFunc("GET /events/task/{id}", s.streamTask)
 	mux.HandleFunc("GET /events/bus", s.streamBus)
 	return s.guard(mux)

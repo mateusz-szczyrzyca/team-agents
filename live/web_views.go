@@ -115,9 +115,11 @@ type taskRow struct {
 // acknowledged as soon as their result is delivered.
 const dashRecent = 24 * time.Hour
 
-// dashTasks are the dashboard's tasks: the active ones in the panel's order, then the finished ones — not yet
-// acknowledged, or finished within dashRecent.
-func dashTasks(snap *Snapshot) ([]*Task, []*Task) {
+// dashShown is how many entries the default dashboard shows before the full dashboard view.
+const dashShown = 20
+
+// dashboardTasks returns the active and finished tasks for the dashboard; when full is true, acknowledged history is included.
+func dashboardTasks(snap *Snapshot, full bool) ([]*Task, []*Task) {
 	var active, done []*Task
 	proxies := localRemoteMemberProxies(snap)
 	for _, t := range snap.All {
@@ -130,7 +132,7 @@ func dashTasks(snap *Snapshot) ([]*Task, []*Task) {
 		switch {
 		case t.Active():
 			active = append(active, t)
-		case !t.Acked || time.Since(finishedAt(t)) < dashRecent:
+		case full || !t.Acked || time.Since(finishedAt(t)) < dashRecent:
 			done = append(done, t)
 		}
 	}
@@ -259,16 +261,24 @@ func makeRow(snap *Snapshot, t *Task) taskRow {
 
 // dashData is the dashboard: the panel's header line, table and events, plus the reservations.
 type dashData struct {
+	Full    bool           // full history uses a separate page and event stream
 	Queue   string         // the investigation queue line
 	Waiting int            // tasks waiting for answers
 	Rows    []taskRow      // the visible tasks, in the panel's order
+	Total   int            // total tasks before truncation
+	Cut     bool           // true when Rows was truncated to dashShown
 	Res     []*Reservation // reserved resources
 }
 
-// dashboard builds the dashboard's data.
+// dashboard builds the default dashboard's data (capped at dashShown latest entries).
 func (s *webServer) dashboard(snap *Snapshot) dashData {
-	d := dashData{Queue: snap.QueueLine(s.cfg.queueMax), Waiting: len(snap.Waiting()), Res: snap.Res}
-	active, done := dashTasks(snap)
+	return s.dashboardView(snap, false)
+}
+
+// dashboardView builds the dashboard's data; when full is false, at most dashShown entries are returned.
+func (s *webServer) dashboardView(snap *Snapshot, full bool) dashData {
+	d := dashData{Full: full, Queue: snap.QueueLine(s.cfg.queueMax), Waiting: len(snap.Waiting()), Res: snap.Res}
+	active, done := dashboardTasks(snap, full)
 
 	var localActiveRows, localDoneRows []taskRow
 	for _, t := range active {
@@ -278,7 +288,7 @@ func (s *webServer) dashboard(snap *Snapshot) dashData {
 		localDoneRows = append(localDoneRows, makeRow(snap, t))
 	}
 
-	remRows := remoteRows(s.cfg.busDir)
+	remRows := remoteDashboardRows(s.cfg.busDir, full)
 	var remoteActive, remoteDone []taskRow
 	for _, r := range remRows {
 		hasProxy := false
@@ -308,13 +318,24 @@ func (s *webServer) dashboard(snap *Snapshot) dashData {
 
 	d.Rows = append(remoteActive, localActiveRows...)
 	d.Rows = append(d.Rows, doneRows...)
+	d.Total = len(d.Rows)
+	if !full && len(d.Rows) > dashShown {
+		d.Rows = d.Rows[:dashShown]
+		d.Cut = true
+	}
 	return d
 }
 
-// viewDashboard (GET /) is the main page: the same data as `agent live`.
+// viewDashboard (GET /) is the main page: the 20 latest entries, with the same data as `agent live`.
 func (s *webServer) viewDashboard(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	s.render(w, r, http.StatusOK, "dashboard", "Dashboard", snap, s.dashboard(snap))
+}
+
+// viewDashboardFull (GET /dashboard/full) is the separate page with the full task list.
+func (s *webServer) viewDashboardFull(w http.ResponseWriter, r *http.Request) {
+	snap := s.snapshot()
+	s.render(w, r, http.StatusOK, "dashboard_full", "Full dashboard view", snap, s.dashboardView(snap, true))
 }
 
 // eventRow is one event of the dashboard's event list (the panel's events pane).
@@ -325,7 +346,7 @@ type eventRow struct {
 	Class string // CSS class
 }
 
-// streamDashboard (GET /events/dashboard) sends the table when it changes, the header line and new events.
+// streamDashboard (GET /events/dashboard and /events/dashboard/full) sends the table when it changes, the header line and new events.
 func (s *webServer) streamDashboard(w http.ResponseWriter, r *http.Request) {
 	f, ok := sseStream(w)
 	if !ok {
@@ -336,6 +357,7 @@ func (s *webServer) streamDashboard(w http.ResponseWriter, r *http.Request) {
 	watcher.Poll() // the baseline: events are what happens from now on
 	tk := time.NewTicker(s.cfg.poll)
 	defer tk.Stop()
+	full := r.URL.Path == "/events/dashboard/full" || r.URL.Query().Get("all") == "1"
 	var lastTable, lastRes string
 	for {
 		select {
@@ -345,7 +367,7 @@ func (s *webServer) streamDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		snap, evs := watcher.Poll()
 		snap = s.applyRemoteControls(snap)
-		d := s.dashboard(snap)
+		d := s.dashboardView(snap, full)
 		if table := s.fragment("dash-table", d); table != lastTable {
 			if !sseSend(w, f, "table", table) {
 				return
@@ -914,9 +936,25 @@ func notebook(busDir, repo string) notesView {
 type teamRow struct {
 	ID, Lead, States string // team ID, coordinator, member states ("2 active, 1 sleeping")
 	Done             bool   // finished
+	Stopped          bool   // stopped by demand (TEAM_STOPPED=1)
 	Members          int    // number of members
 	Todo, Claimed    int    // board items to do / in progress
 	DoneItems        int    // board items done
+}
+
+// isTeamStopped reports whether any member task of the team was marked TEAM_STOPPED=1.
+func isTeamStopped(snap *Snapshot, t *TeamInfo) bool {
+	if t == nil {
+		return false
+	}
+	for _, m := range t.Members {
+		if tk := snap.All[m.Task]; tk != nil && tk.Dir != "" {
+			if readMeta(filepath.Join(tk.Dir, "meta.env"))["TEAM_STOPPED"] == "1" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // viewTeams (GET /teams) lists the teams, unfinished first.
@@ -924,10 +962,10 @@ func (s *webServer) viewTeams(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	var rows []teamRow
 	for id, t := range snap.Teams {
-		row := teamRow{ID: id, Lead: t.Lead, Done: t.Done, Members: len(t.Members)}
+		row := teamRow{ID: id, Lead: t.Lead, Done: t.Done, Stopped: isTeamStopped(snap, t), Members: len(t.Members)}
 		states := map[string]int{}
 		for _, m := range t.Members {
-			states[m.State]++
+			states[effectiveMemberState(snap, m)]++
 		}
 		var parts []string
 		for st, n := range states {
@@ -980,11 +1018,29 @@ type consultRow struct {
 type teamData struct {
 	ID       string       // team ID
 	T        *TeamInfo    // the team
+	Stopped  bool         // stopped by demand (TEAM_STOPPED=1)
 	Members  []memberRow  // its members
 	Board    []*BoardItem // its board, by number
 	Consults []consultRow // its consultations, newest first
 	Msgs     []msgRow     // its messages (the latest)
 	Notes    notesView    // the notebook of its repository
+}
+
+// effectiveMemberState returns a member's state, treating a member whose task was stopped on demand as "stopped"
+// even if the bus state had not been updated from "sleeping" or "paused".
+func effectiveMemberState(snap *Snapshot, m *MemberInfo) string {
+	if m == nil {
+		return ""
+	}
+	if m.State == "stopped" {
+		return "stopped"
+	}
+	if m.Task != "" {
+		if tk := snap.All[m.Task]; tk != nil && tk.Status == "stopped" {
+			return "stopped"
+		}
+	}
+	return m.State
 }
 
 // viewTeam (GET /team/{id}) shows a team: members, board, consultations, quiz, messages, notebook.
@@ -996,12 +1052,13 @@ func (s *webServer) viewTeam(w http.ResponseWriter, r *http.Request) {
 		viewError(s, w, r, webErr(ViewNotFound, nil, "no team %q", id))
 		return
 	}
-	d := teamData{ID: id, T: t}
+	d := teamData{ID: id, T: t, Stopped: isTeamStopped(snap, t)}
 	members := map[string]bool{}
 	repo := ""
 	for name, m := range t.Members {
 		members[name] = true
-		mr := memberRow{Name: name, State: m.State, StateClass: statusClass(m.State), Tier: m.Tier, Task: m.Task, Lead: name == t.Lead}
+		mState := effectiveMemberState(snap, m)
+		mr := memberRow{Name: name, State: mState, StateClass: statusClass(mState), Tier: m.Tier, Task: m.Task, Lead: name == t.Lead}
 		if tk := snap.All[m.Task]; tk != nil {
 			row := makeRow(snap, tk)
 			mr.Row = &row
@@ -1484,8 +1541,7 @@ func insideDir(dir, path string) bool {
 
 // ---------------------------------------------------------------- actions: stop a run, wake a team
 
-// postStop (POST /task/{id}/stop) cuts a running agent's run short: `agent kick <task> web` (a team member sleeps
-// and can be woken again; a solo task is stopped).
+// postStop persistently stops local team members; remote runs retain their run-scoped kick protocol.
 func (s *webServer) postStop(w http.ResponseWriter, r *http.Request) {
 	t := findTask(s.snapshot(), r.PathValue("id"))
 	if t == nil {
@@ -1496,13 +1552,34 @@ func (s *webServer) postStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot stop mirrored task "+t.ID+" from the lead", http.StatusForbidden)
 		return
 	}
-	out, cerr := callAgent(s.cfg.agentCmd, "kick", t.ID, "web")
+	args := []string{"kick", t.ID, "web"}
+	if t.Team != "" && t.Node == "" && t.Kind != "remote-member" {
+		args = []string{"stop", t.ID}
+	}
+	out, cerr := callAgent(s.cfg.agentCmd, args...)
 	if cerr != nil {
-		logWarn(LogWebActionFailed, "action", "kick", "task", t.ID, "cause", cerr.Cause.String(), "error", cerr.Message)
+		logWarn(LogWebActionFailed, "action", args[0], "task", t.ID, "cause", cerr.Cause.String(), "error", cerr.Message)
 		http.Error(w, "cannot stop "+t.ID+": "+cerr.Message, http.StatusConflict)
 		return
 	}
-	logInfo(LogWebAction, "action", "kick", "task", t.ID)
+	logInfo(LogWebAction, "action", args[0], "task", t.ID)
+	writeText(w, strings.TrimSpace(out))
+}
+
+// postTeamStop persists human cancellation through the CLI, which owns team lifecycle changes.
+func (s *webServer) postTeamStop(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.snapshot().Teams[id] == nil {
+		http.Error(w, "no such team", http.StatusNotFound)
+		return
+	}
+	out, cerr := callAgent(s.cfg.agentCmd, "team", id, "--stop")
+	if cerr != nil {
+		logWarn(LogWebActionFailed, "action", "stop-team", "team", id, "cause", cerr.Cause.String(), "error", cerr.Message)
+		http.Error(w, "cannot stop team: "+cerr.Message, http.StatusConflict)
+		return
+	}
+	logInfo(LogWebAction, "action", "stop-team", "team", id)
 	writeText(w, strings.TrimSpace(out))
 }
 

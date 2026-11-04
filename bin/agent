@@ -1213,7 +1213,8 @@ finish_team() { # team reason — closes the team; sleeping members finish as do
       act "$t" info "■ $why"
     fi
     case $(task_field "$t" STATUS) in
-      done|failed|stopped) bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state done >/dev/null ;;
+      done|failed) bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state done >/dev/null ;;
+      stopped) bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state stopped >/dev/null ;;
       excluded) bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state excluded >/dev/null ;;
     esac
   done
@@ -1698,7 +1699,84 @@ gate_at() { # repo rev log — runs the repository's gate at a revision in a tem
   return "$rc"
 }
 
+# task_stop_requested id — explicit stop intent also covers work delegated by a stopped ancestor.
+# A visited set makes malformed legacy parent cycles safe to read.
+task_stop_requested() {
+  local id=$1
+  local -A visited=()
+  while [[ -n $id && -f $TASKS/$id/meta.env && -z ${visited[$id]:-} ]]; do
+    if [[ -f $TASKS/$id/stop-requested || $(task_field "$id" TEAM_STOPPED) == 1 ]]; then
+      return 0
+    fi
+    visited[$id]=1
+    id=$(task_field "$id" PARENT_TASK)
+  done
+  return 1
+}
+
+# blocking_investigation id — prints the independent investigation (--investigation) in progress in that normal team
+# task's project; 1 when there is none. Ordinary agent-requested investigations, unrelated repositories and a finished
+# cohort whose handoff still shows as waiting (investigation_completed_wait) never block.
+blocking_investigation() {
+  local id=$1 root repo m inv inv_root inv_repo
+  [[ -n $(task_field "$id" TEAM) && -z $(task_field "$id" INVESTIGATION_TEAM) ]] || return 1
+  case $(task_field "$id" KIND) in worker|remote-member|"") ;; *) return 1 ;; esac
+  root=$(task_field "$id" REPO_ROOT)
+  repo=$(task_field "$id" REPO_NAME)
+  [[ -n $root || -n $repo ]] || return 1
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    inv=${m%/meta.env}; inv=${inv##*/}
+    if [[ $(task_field "$inv" KIND) != investigation_team && -z $(task_field "$inv" INVESTIGATION_TEAM) ]]; then
+      continue
+    fi
+    inv_root=$(task_field "$inv" REPO_ROOT)
+    inv_repo=$(task_field "$inv" REPO_NAME)
+    if [[ -n $root && -n $inv_root ]]; then
+      [[ $inv_root == "$root" ]] || continue
+    elif [[ -n $repo && -n $inv_repo ]]; then
+      [[ $inv_repo == "$repo" ]] || continue
+    else
+      continue
+    fi
+    case $(task_field "$inv" STATUS) in done|failed|stopped) continue ;; esac
+    if [[ $(task_field "$inv" KIND) == investigation_team ]] && investigation_completed_wait "$inv"; then continue; fi
+    printf '%s\n' "$inv"
+    return 0
+  done
+  return 1
+}
+
+# normal_resume_allowed id — top-level investigations reserve their project against normal team resumption: 1, with
+# the reason on stderr, while blocking_investigation finds one.
+normal_resume_allowed() {
+  local id=$1 inv
+  inv=$(blocking_investigation "$id") || return 0
+  log_info resume_blocked_investigation "task=$id" "investigation=$inv"
+  printf 'agent: normal team resumption is blocked by independent investigation %s (--investigation) in this project; finish or stop it first.\n' "$inv" >&2
+  return 1
+}
+
+# automation_allowed task — 0 unless the human stopped the task (agent stop, agent team --stop: every member and its
+# delegated descendants carry the mark): then its automatic follow-up (wake, review, precheck, fix pass, merge) is
+# dropped. An --investigation's priority is not checked here — a team already at work keeps its checks and reviews:
+# resume_run refuses to resume a normal team and cmd__wake defers a wake (normal_resume_allowed)
+automation_allowed() {
+  local id=$1
+  [[ -n $id && -f $TASKS/$id/meta.env ]] || return 1
+  ! task_stop_requested "$id" && [[ $(task_field "$id" STATUS) != stopped ]]
+}
+
+# human_resume_allowed id — agent answer / agent resume: refused, with the reason, for a task the human stopped, and
+# while an --investigation is in progress in its project
+human_resume_allowed() {
+  automation_allowed "$1" \
+    || die "task $1 was stopped by the human — it is not resumed; start it again with: agent run --resume <team|task>"
+  normal_resume_allowed "$1"
+}
+
 start_task_unit() { # task subcommand — runs `agent <subcommand> <task>` in its own unit (it may take minutes)
+  automation_allowed "$1" || return 0
   systemd-run --user --quiet --collect --unit="agent-$1-${2#_}-$(date +%s)" \
     --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
     "$SELF" "$2" "$1" 3>&- 7>&- 8>&- 9>&- 10>&-
@@ -1707,6 +1785,7 @@ start_task_unit() { # task subcommand — runs `agent <subcommand> <task>` in it
 cmd__merge() { # coordinator task — --autopilot after two ready-to-merge reviews: the merge (unless something needs the
   # human), the gate on the merged base, then the next round of the plan
   local id=$1 root branch base head mb url num why out wr wrs ref
+  automation_allowed "$id" || return 0
   root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH); base=$(task_field "$id" BASE); base=${base:-main}
   url=$(task_field "$id" PR_URL); num=$(task_field "$id" PR_NUMBER)
   if [[ $(task_field "$id" AUTOPILOT_OFF) == 1 ]]; then
@@ -1731,6 +1810,7 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
   local match=() checked   # only the commit the checks and the reviews had: anything pushed since stops the merge
   checked=$(task_field "$id" PRECHECK_HEAD)
   [[ -z $checked ]] || match=(--match-head-commit "$checked")
+  automation_allowed "$id" || return 0
   meta_set "$id" PR_MERGE_OWN 1   # this merge is the autopilot's own: supervise_merged_rounds leaves the round alone
   if ! out=$(cd "$root" && gh pr merge "$url" --merge "${match[@]}" 2>&1); then
     meta_set "$id" PR_MERGE_OWN ""
@@ -1758,6 +1838,7 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
   auto_stage "$id" "PR #$num merged — round $((wr + 1))/$wrs starts"
   notify "$id" merged "" "merged PR #$num — both reviews: ready to merge; round $((wr + 1))/$wrs starts"
   team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=next-round"   # a busy team cannot be resumed
+  automation_allowed "$id" || return 0
   ref=$(task_field "$id" TEAM); ref=${ref:-$id}
   if ! out=$(cd "$root" && "$SELF" run --resume "$ref" --autopilot \
        "Round $((wr + 1)) of $wrs: the PR of round $wr (#$num) is merged — go on with the next round of the plan." </dev/null 2>&1); then
@@ -1952,6 +2033,7 @@ pair_stage() {
 start_precheck() { # coordinator task — the checks before its review run in their own unit: the gate may take minutes,
   # and the team's members must settle before the round can go back to them
   local id=$1
+  automation_allowed "$id" || return 0
   if systemd-run --user --quiet --collect --unit="agent-$id-precheck-$(date +%s)" \
        --setenv=AGENTS_HOME="$AGENTS_HOME" --setenv=PATH="$RUN_PATH" --setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
        "$SELF" _precheck "$id" 3>&- 7>&- 8>&- 9>&- 10>&-; then
@@ -1983,6 +2065,7 @@ team_wait_settled() { # task — waits until the local members of its team have 
 cmd__precheck() { # coordinator task — once its team's members have settled: the checks, then the review — or the
   # round goes back to the team
   local id=$1
+  automation_allowed "$id" || return 0
   if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
     [[ $(task_field "$id" STATUS) != stopped && ! -f $TASKS/$id/stop-requested ]] || return 0
     local check_passed=0
@@ -1994,6 +2077,7 @@ cmd__precheck() { # coordinator task — once its team's members have settled: t
     return
   fi
   team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=precheck"
+  automation_allowed "$id" || return 0
   if review_precheck "$id"; then
     request_review "$id"
     dispatch   # the review queued here starts on a free investigator now, not at some later run's end
@@ -2003,6 +2087,7 @@ cmd__precheck() { # coordinator task — once its team's members have settled: t
 review_precheck() { # coordinator task id — before a review: the round's head adds tests for a change of code and passes
   # the gate; else the team goes on with the reason (AGENT_PRECHECK_MAX times), then the human decides. 0 = review it
   local id=$1 root branch base head mb tc gate wt rc why="" pass ref repo args=() out
+  automation_allowed "$id" || return 1
   root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH); base=$(task_field "$id" BASE)
   git -C "$root" fetch -q origin 10>&- || log_warn precheck_fetch_failed "task=$id"   # then the local refs are checked
   head=$(git -C "$root" rev-parse -q --verify "origin/$branch^{commit}" 10>&-) \
@@ -2069,6 +2154,7 @@ $issues"
 $(tail -n 40 "$TASKS/$id/precheck.log")
 \`\`\`"
   fi
+  automation_allowed "$id" || return 1
   [[ -n $why ]] || return 0
   if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
     meta_set "$id" INVESTIGATION_PRECHECK_REASON "$why"
@@ -2103,6 +2189,7 @@ review_followup() { # investigator-task-id final — after a --verify review: cr
   local id=$1 text=$2 parent n pass ref repo root add out owner args=()
   parent=$(task_field "$id" PARENT_TASK)
   [[ -n $parent ]] || return 0
+  automation_allowed "$parent" || return 0
   # the counts are in the final message ("Problems: …") and in the result file; the larger is the one that counts
   local n2=0
   n=$(findings_count "$text")
@@ -2124,6 +2211,7 @@ review_followup() { # investigator-task-id final — after a --verify review: cr
 
 review_fix_pass() { # parent findings text — the fix pass runs in its own unit, once the team's members have settled (a
   # member woken by the team's last messages may still run when the reviews end, and a busy team cannot be resumed)
+  automation_allowed "$1" || return 0
   printf '%s' "$2" > "$TASKS/$1/fix-pass.n"
   printf '%s' "$3" > "$TASKS/$1/fix-pass.md"
   if start_task_unit "$1" _fixpass; then return 0; fi
@@ -2134,8 +2222,10 @@ review_fix_pass() { # parent findings text — the fix pass runs in its own unit
 
 cmd__fixpass() { # coordinator task — the fix pass recorded by review_fix_pass, once the team's members have settled
   local id=$1
+  automation_allowed "$id" || return 0
   auto_stage "$id" "fix pass: the team goes on with the reviews' findings once its runs end"
   team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=fix-pass"
+  automation_allowed "$id" || return 0
   do_fix_pass "$id" "$(<"$TASKS/$id/fix-pass.n")" "$(<"$TASKS/$id/fix-pass.md")"
   [[ $(task_field "$id" AUTO_STAGE) != "fix pass:"* ]] || auto_stage "$id" ""   # the team has the work, unless the human has
 }
@@ -2143,6 +2233,7 @@ cmd__fixpass() { # coordinator task — the fix pass recorded by review_fix_pass
 do_fix_pass() { # parent findings text — the team goes on with the review(s) that found problems, VERIFY_MAX_FIX_PASSES
   # times at most; after that the human is mentioned on the PR and notified
   local parent=$1 n=$2 text=$3 pass ref repo root add out owner args=()
+  automation_allowed "$parent" || return 0
   pass=$(task_field "$parent" FIX_PASS); pass=${pass:-0}
   PR_NUMBER=$(task_field "$parent" PR_NUMBER); PR_URL=$(task_field "$parent" PR_URL)
   ref=$(task_field "$parent" TEAM); ref=${ref:-$parent}
@@ -2265,6 +2356,7 @@ review_without_verdict() {
 # none free it waits (REVIEW_SLOT_PENDING, started by a later dispatch)
 retry_review_slot() {
   local parent=$1 dir=$2 slot=$3 name
+  automation_allowed "$parent" || return 0
   name=$(free_investigator_list | { grep -vxF -e "$(cat "$dir/A.agent" 2>/dev/null)" -e "$(cat "$dir/B.agent" 2>/dev/null)" || (($? == 1)); } | head -n 1)
   if [[ -z $name ]]; then
     meta_set "$parent" REVIEW_SLOT_PENDING "$slot"
@@ -2282,6 +2374,7 @@ review_pair_done() { # review-task parent pair-dir verdict text — one review o
   # both have: both ready-to-merge = the PR is ready; a review without a verdict = the human decides; else the team
   # goes on with the review(s) that found problems
   local id=$1 parent=$2 dir=$3 verdict=$4 text=$5 slot other va vb combined="" s n=0
+  automation_allowed "$parent" || return 0
   local myinv; myinv=$(task_field "$id" INV_ID)
   if [[ $(cat "$dir/A.inv" 2>/dev/null) == "$myinv" ]]; then slot=A
   elif [[ $(cat "$dir/B.inv" 2>/dev/null) == "$myinv" ]]; then slot=B
@@ -2504,6 +2597,7 @@ start_review_pair() { # coordinator task — both reviews of its PR at once, on 
   # random, the first free ones of the list, or AGENT_REVIEW_DRAW=rotate the rotation's next). A pass whose pair never
   # ended its reviews keeps it, when free (random, list). 1 = not two free ones yet, or the pair waits for a busy one
   local id=$1 free=() dir a="" b="" pa="" pb="" avoid="" f slot name j num
+  if ! automation_allowed "$id"; then meta_set "$id" REVIEW_PAIR_PENDING ""; return 0; fi
   mapfile -t free < <(free_investigator_list)
   ((${#free[@]} >= 2)) || return 1
   num=$(task_field "$id" PR_NUMBER)
@@ -2577,6 +2671,7 @@ $(head -c 6000 "$dir/$slot.md")"
 
 request_review() { # coordinator task id — --verify: queue a PR review by an investigator
   local id=$1 root branch pr url num inv
+  automation_allowed "$id" || return 0
   root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH)
   pr=$(try pr_lookup_failed trusted_prs "$root" "$branch" all number,url)
   url=$(jq_soft pr_lookup_parse -r '.[0].url // empty' <<< "${pr:-[]}")
@@ -2611,6 +2706,11 @@ request_review() { # coordinator task id — --verify: queue a PR review by an i
 
 team_after_run() { # id status final note — team logic after a member's run ends
   local id=$1 status=$2 final=$3 note=$4
+  if task_stop_requested "$id"; then
+    meta_set "$id" STATUS stopped
+    [[ -z ${TEAM:-} ]] || try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state stopped >/dev/null
+    return 0
+  fi
   [[ $(task_field "$id" REMOTE_TEAM) != 1 ]] || return 0   # its team lives on the lead, which follows its state
   local team=$TEAM lead state
   lead=$(team_lead "$team")
@@ -2619,7 +2719,8 @@ team_after_run() { # id status final note — team logic after a member's run en
     paused) state=paused ;;
     excluded) state=excluded ;;
     hung) state=hung ;;
-    done|failed|stopped) state=done ;;
+    done|failed) state=done ;;
+    stopped) state=stopped ;;
     *) state=active ;;
   esac
   try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$AGENT" --state "$state" >/dev/null
@@ -2747,6 +2848,19 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
   exec 8>"$TASKS/$id/wake.lock"
   flock -w 30 8 || exit 0
   meta_load "$id"
+  if task_stop_requested "$id"; then
+    [[ $STATUS == stopped ]] || meta_set "$id" STATUS stopped
+    [[ -z ${TEAM:-} ]] || try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state stopped >/dev/null
+    log_info automation_stopped "task=$id" "reason=human stop"
+    exit 0
+  fi
+  automation_allowed "$id" || return 0
+  if ! normal_resume_allowed "$id"; then   # an --investigation goes first: supervise_deferred_wakes wakes it after
+    meta_set "$id" WAKE_DEFERRED 1
+    log_info wake_deferred_investigation "task=$id" "agent=$AGENT" "team=${TEAM:-}"
+    exit 0
+  fi
+  [[ -z ${WAKE_DEFERRED:-} ]] || meta_set "$id" WAKE_DEFERRED ""
   if [[ ${KIND:-} == remote-member ]]; then   # the member works on its node: the lead asks the node to wake it
     try remote_wake_failed bus lead-member --dir "$BUS_DIR" --wake --member "$AGENT" >/dev/null
     exit 0
@@ -2777,7 +2891,7 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
     start_runner "$id" resume || bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state sleeping >/dev/null
   else
     local state=active
-    case $STATUS in done|failed|stopped) state=done ;; sleeping) state=done ;; esac
+    case $STATUS in done|failed) state=done ;; stopped) state=stopped ;; sleeping) state=done ;; esac
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state "$state" >/dev/null
   fi
 }
@@ -3083,6 +3197,13 @@ serena_note() {
   render "$PROMPTS/serena.md"
 }
 
+# continuation_rules — repeat role-independent rules even when a session resumes after a watchdog hang.
+continuation_rules() {
+  render "$PROMPTS/pr-ownership.md"
+  serena_note
+  printf '\n'
+}
+
 build_prompt() { # id mode qfile next_round
   local id=$1 mode=$2 qfile=$3 next_round=$4
   declare -gA R=(
@@ -3109,6 +3230,7 @@ build_prompt() { # id mode qfile next_round
     [PR_URL]=${PR_URL:-} [PR_NUMBER]=${PR_NUMBER:-}
     [RESUMED_FROM]=${RESUMED_FROM:-} [HANG_MIN]=$AGENT_HANG_MIN
   )
+  if [[ $mode != fresh ]]; then continuation_rules; fi
   if [[ $mode != fresh ]] && is_independent_investigation "$id"; then
     if [[ $mode == new ]]; then   # a later run's session has this already: it gets only what is new
       case ${INVESTIGATION_PHASE:-1} in
@@ -3121,7 +3243,6 @@ build_prompt() { # id mode qfile next_round
         *) render "$PROMPTS/inv-work.md" ;;
       esac
       render "$PROMPTS/writing.md"
-      serena_note
       printf '\n# TOPIC\n\n'
       cat "$TASKS/$id/task.md"
       return
@@ -3165,13 +3286,13 @@ build_prompt() { # id mode qfile next_round
     if [[ ${KIND:-worker} == investigation && ${REVIEW:-} == 1 ]]; then
       render "$PROMPTS/review.md"
       render "$PROMPTS/writing.md"
-      printf '\n# PR REVIEW REQUEST #%s\n\n' "$PR_NUMBER"
+      printf '\n# PR REVIEW REQUEST #%s\n\n' "${R[PR_NUMBER]}"
     elif [[ ${KIND:-worker} == investigation ]]; then
       render "$PROMPTS/investigator.md"
-      printf '\n# INVESTIGATION REQUEST #%s\n\n' "$INV_ID"
+      printf '\n# INVESTIGATION REQUEST #%s\n\n' "${R[INV_ID]}"
     elif [[ ${KIND:-worker} == helper ]]; then
       render "$PROMPTS/helper.md"
-      printf '\n# REQUEST H%s\n\n' "$HELPER_ID"
+      printf '\n# REQUEST H%s\n\n' "${R[HELPER_ID]}"
     elif [[ -n ${TEAM:-} ]]; then
       render "$PROMPTS/team.md"
       render "$PROMPTS/tdd-rounds.md"
@@ -3203,7 +3324,6 @@ build_prompt() { # id mode qfile next_round
     elif [[ ${KIND:-worker} != helper && -f $PROMPTS/ask-solo.md ]]; then
       render "$PROMPTS/ask-solo.md"
     fi
-    serena_note
     skip_note "$id"
     return
   fi
@@ -3440,13 +3560,17 @@ serena_args() {
 }
 
 # worktree_exclude path — that path of the worktree never committed: a line in the repository's info/exclude (shared
-# by its worktrees), added once
+# by its worktrees), added once. For .serena/, also seeds .serena/project.yml from REPO_ROOT when present.
 worktree_exclude() {
   local excl
   excl="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude" || return 1
   mkdir -p "$(dirname "$excl")"
   if [[ ! -f $excl ]] || ! grep -qxF "$1" "$excl"; then
     echo "$1" >> "$excl"
+  fi
+  if [[ $1 == .serena/ && -n ${REPO_ROOT:-} && -f $REPO_ROOT/.serena/project.yml && ! -f $WORKTREE/.serena/project.yml ]]; then
+    mkdir -p "$WORKTREE/.serena"
+    cp "$REPO_ROOT/.serena/project.yml" "$WORKTREE/.serena/project.yml"
   fi
 }
 
@@ -4759,6 +4883,10 @@ investigation_task_text() {
 start_investigation() { # request-json (status "starting") investigator-name
   local j=$1 iname=$2 inv_id from_task from_agent
   inv_id=$(jq -r .id <<< "$j"); from_task=$(jq -r .from_task <<< "$j"); from_agent=$(jq -r .from_agent <<< "$j")
+  if task_stop_requested "$from_task"; then
+    bus inv-set --dir "$BUS_DIR" --id "$inv_id" --status failed --summary "requesting task stopped by the human"
+    return 0
+  fi
   log_info investigation_starting "investigation=$inv_id" "investigator=$iname" "requester=$from_agent" "requesting_task=$from_task"
   local p_root p_repo p_branch p_wt
   p_root=$(task_field "$from_task" REPO_ROOT); p_repo=$(task_field "$from_task" REPO_NAME)
@@ -4898,6 +5026,10 @@ dispatch_helpers() { # assigns queued requests to free workers
 start_helper() { # request-json worker
   local j=$1 w=$2 hid from from_task
   hid=$(jq -r .id <<< "$j"); from=$(jq -r .from <<< "$j"); from_task=$(jq -r .from_task <<< "$j")
+  if task_stop_requested "$from_task"; then
+    bus helper-set --dir "$BUS_DIR" --id "$hid" --status failed --summary "requesting task stopped by the human"
+    return 0
+  fi
   log_info helper_starting "request=H$hid" "worker=$w" "requester=$from" "requesting_task=$from_task"
   local p_root p_repo p_branch p_wt
   p_root=$(task_field "$from_task" REPO_ROOT); p_repo=$(task_field "$from_task" REPO_NAME)
@@ -4917,7 +5049,7 @@ start_helper() { # request-json worker
   fi
   {
     printf '## Request H%s from %s\n\n%s\n\n' "$hid" "$from" "$(jq -r .request <<< "$j")"
-    printf '## Kontekst\n\n%s\n' "$(jq -r '.context // "—"' <<< "$j")"
+    printf '## Context\n\n%s\n' "$(jq -r '.context // "—"' <<< "$j")"
   } > "$dir/task.md"
   : > "$dir/meta.env"
   local sid=""
@@ -5075,8 +5207,14 @@ runner_exit() {
     try dispatch_failed dispatch_helpers
     return
   fi
+  if task_stop_requested "$RUNNER_ID"; then
+    try meta_write_failed meta_set "$RUNNER_ID" STATUS stopped
+    try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
+    try activity_write_failed act "$RUNNER_ID" info "■ stopped by the human"
+    log_info run_stopped "reason=human stop"
+    return
+  fi
   local why="runner interrupted (exit code $rc) — see: agent log $RUNNER_ID"
-  [[ -f $TASKS/$RUNNER_ID/stop-requested ]] && why="stopped by the user"
   log_warn run_interrupted "exit_code=$rc" "reason=$why"
   try meta_write_failed meta_set "$RUNNER_ID" STATUS failed
   try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
@@ -5135,7 +5273,7 @@ cmd__runner() {
   export AGENT_RUN_LONG_AT
   trap 'runner_exit $?' EXIT
   trap 'exit 143' TERM INT HUP
-  rm -f "$dir/stop-requested"
+  if task_stop_requested "$id"; then return 0; fi
   # the boot ID before the run shows as running: a later boot ID means its machine restarted under this run, and a run
   # seen as running without one would be taken for a dead runner after a restart at its very start
   meta_set "$id" RUN_BOOT "$(boot_id)"
@@ -5206,7 +5344,8 @@ cmd__runner() {
     attempt=$((attempt + 1)); nrun="$n.h$attempt"; mode=resume
     pf="$dir/prompt-$nrun.md"
     R[HANG_MIN]=$AGENT_HANG_MIN
-    render "$PROMPTS/hang-resume.md" > "$pf"
+    automation_allowed "$id" || return 1
+    { continuation_rules; render "$PROMPTS/hang-resume.md"; } > "$pf"
     act "$id" info "↻ resumed after a hang ($hangs/$AGENT_HANG_STRIKES)"
   done
   printf '%s\n' "$FINAL" > "$dir/final.md"
@@ -5521,6 +5660,12 @@ Answer: the investigator hung ($AGENT_HANG_STRIKES times without progress) — n
 
 start_runner() { # id mode
   local id=$1 mode=$2 run
+  if task_stop_requested "$id"; then
+    log_info automation_stopped "task=$id" "reason=human stop"
+    meta_set "$id" STATUS stopped
+    meta_set "$id" FINISHED "$(date -Is)"
+    return 0   # cancellation is a completed no-op, not a launch failure for admission to overwrite
+  fi
   run=$(( $(task_field "$id" RUN) + 1 ))
   meta_set "$id" RUN "$run"
   meta_set "$id" STATUS starting
@@ -5847,6 +5992,7 @@ resume_run() {
     if [[ $(task_field "$d" TEAM) == *"$ref"* || $d == *"$ref"* ]]; then first=$d; old_team=$(task_field "$d" TEAM); fi
   done
   [[ -n $first ]] || die "no team or task matches: $ref"
+  if ! normal_resume_allowed "$first"; then unlock_task_ids; return 1; fi
 
   local olds=() t
   if [[ -n $old_team ]]; then
@@ -6376,6 +6522,7 @@ cmd_answer() {
     return
   fi
   meta_load "$id"
+  human_resume_allowed "$id" || return 1
   [[ $STATUS == waiting ]] || die "task $id has status '$STATUS' — it is not waiting for answers"
   local q="$TASKS/$id/questions-$ROUND.md"
   "${EDITOR:-nano}" "$q"
@@ -6427,6 +6574,7 @@ cmd_resume() {
   local id; id=$(resolve_id "${1:?usage: agent resume <id> [additional note]}")
   shift
   meta_load "$id"
+  human_resume_allowed "$id" || return 1
   [[ $STATUS == waiting ]] || die "task $id has status '$STATUS' (resume only works for 'waiting')"
   local q="$TASKS/$id/questions-$ROUND.md"
   validate_answers "$q" || die "not all questions are answered — complete: $q"
@@ -6552,6 +6700,11 @@ stop_all() { # agent stop --running: stops everything that is active, whatever i
   for d in "${stopped[@]}"; do   # a runner may have overwritten the status while stopping
     id=${d%% *}
     meta_set "$id" STATUS stopped
+    local team
+    team=$(task_field "$id" TEAM)
+    if [[ -n $team ]]; then
+      try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$id" AGENT)" --state stopped >/dev/null
+    fi
     if [[ $(task_field "$id" KIND) == investigation_team ]]; then
       investigation_team_stop "$id"
     fi
@@ -6586,7 +6739,7 @@ cmd_stop() {
     investigation_team_stop "$id"
   fi
   if [[ -n $team ]]; then
-    try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state done >/dev/null
+    try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state stopped >/dev/null
     if [[ $agent == "$(team_lead "$team")" ]]; then
       finish_team "$team" "team stopped by the user"
     elif [[ $st == sleeping ]]; then
@@ -6674,11 +6827,28 @@ member_out() { # id reason — a team member is out of the team's work: its boar
   log_warn member_out "task=$id" "team=$team" "released=$released" "reason=${why:0:200}"
 }
 
+# supervise_deferred_wakes — a wake that an --investigation held back (WAKE_DEFERRED, cmd__wake) runs again once no
+# investigation blocks its task any more: the bus wakes a sleeping member once per message, so a wake dropped here
+# would leave its team waiting. A task the human stopped since loses its deferred wake
+supervise_deferred_wakes() {
+  local m id
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    id=${m%/meta.env}; id=${id##*/}
+    [[ $(task_field "$id" WAKE_DEFERRED) == 1 ]] || continue
+    if ! automation_allowed "$id"; then meta_set "$id" WAKE_DEFERRED ""; continue; fi
+    if blocking_investigation "$id" >/dev/null; then continue; fi   # still in progress: the next tick looks again
+    log_info wake_replayed "task=$id"
+    try wake_replay_failed "$SELF" _wake "$id"
+  done
+}
+
 cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running or starting, but no unit is active —
   # unless their machine restarted under the run (restart_interrupted)
   local d id st run rb kind phase1_pending=0
   supervise_answer_watches   # watches of answers nobody waits for any more
   supervise_remote_questions
+  supervise_deferred_wakes
   for d in "$TASKS"/*/; do
     [[ -f $d/meta.env ]] || continue
     id=${d%/}; id=${id##*/}
@@ -7273,7 +7443,7 @@ cmd_kick() { # <task> [from] [expected-run] — cuts only the intended run short
   # The captured unit is safe to stop, but a newer run owns its status and timestamps.
   [[ $(task_field "$id" RUN) == "$run" ]] || return 0
   meta_set "$id" KICKED "$(date -Is)" "$run"
-  if [[ -n $team ]]; then
+  if [[ -n $team && $(team_done_flag "$team") != true && ! -f $TASKS/$id/stop-requested && $(task_field "$id" TEAM_STOPPED) != 1 ]]; then
     [[ $(task_field "$id" STATUS) == sleeping ]] || meta_set "$id" STATUS sleeping "$run"
     try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state sleeping >/dev/null
     lead=$(team_lead "$team")
@@ -7282,6 +7452,10 @@ cmd_kick() { # <task> [from] [expected-run] — cuts only the intended run short
     fi
   else
     [[ $(task_field "$id" STATUS) == stopped ]] || meta_set "$id" STATUS stopped "$run"
+    meta_set "$id" FINISHED "$(date -Is)" "$run"
+    if [[ -n $team ]]; then
+      try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$agent" --state stopped >/dev/null
+    fi
   fi
   act "$id" info "■ stopped by the human${2:+ (from the $2 interface)}"
   log_info task_kicked "task=$id" "team=$team" "from=${2:-cli}"
@@ -8927,7 +9101,11 @@ auth_providers() { # one quick request per provider (agent authenticated --provi
   rm -rf "$tmp"
 }
 
-cmd_team() { # [id [--close]] [--all]
+cmd_team() { # [id [--close|--stop]] [--all]
+  if [[ -n ${1:-} && $1 != --all && ${2:-} == --stop ]]; then
+    team_stop "$1"
+    return
+  fi
   if [[ -n ${1:-} && $1 != --all && ${2:-} == --close ]]; then
     team_close "$1"
     return
@@ -8938,6 +9116,48 @@ cmd_team() { # [id [--close]] [--all]
   else
     bus team-list --dir "$BUS_DIR" "$@"
   fi
+}
+
+# team_stop team — persist stop intent for the whole team before any runner can react to another's exit.
+# Include delegated descendants so a completed review cannot launch another round after this command. Only the tasks
+# not finished before the stop become stopped: a done, failed, excluded or hung one keeps its result and time.
+team_stop() {
+  local team=$1 t m parent changed=1
+  local -A owned=() was=()
+  bus team-get --dir "$BUS_DIR" --team "$team" >/dev/null || die "no team $team on the bus (agent team)"
+  for t in $(team_tasks "$team"); do owned[$t]=1; done
+  while ((changed)); do
+    changed=0
+    for m in "$TASKS"/*/meta.env; do
+      [[ -f $m ]] || continue
+      t=${m%/meta.env}; t=${t##*/}
+      [[ -z ${owned[$t]:-} ]] || continue
+      parent=$(task_field "$t" PARENT_TASK)
+      if [[ -n $parent && -n ${owned[$parent]:-} ]]; then owned[$t]=1; changed=1; fi
+    done
+  done
+  for t in "${!owned[@]}"; do
+    was[$t]=$(task_field "$t" STATUS)
+    touch "$TASKS/$t/stop-requested"
+    meta_set "$t" TEAM_STOPPED 1
+    meta_set "$t" AUTOPILOT_OFF 1
+    meta_set "$t" REVIEW_PAIR_PENDING ""
+    meta_set "$t" REVIEW_SLOT_PENDING ""
+    meta_set "$t" AUTO_STAGE ""
+  done
+  finish_team "$team" "stopped by the human (agent team $team --stop)"
+  for t in "${!owned[@]}"; do
+    case ${was[$t]} in done|failed|stopped|excluded|hung) continue ;; esac   # finish_team keeps these too
+    if [[ $(task_field "$t" KIND) == remote-member ]]; then
+      meta_set "$t" STATUS stopped
+      meta_set "$t" FINISHED "$(date -Is)"
+      try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state stopped >/dev/null
+    else
+      cmd_stop "$t" >/dev/null
+    fi
+  done
+  log_info team_stopped "team=$team"
+  echo "Stopped team $team. Automatic resumption is disabled."
 }
 
 team_close() { # team — closes a team whatever its members do: local ones still at work or waiting are stopped,
@@ -9232,6 +9452,7 @@ agent autopilot <team> [on|off]            a team's --autopilot: shown, or switc
 agent run --resume <team|task> ["addition"]  resume from the last checkpoint (same branches)
 agent team [id | --all]                   teams and their members
 agent team <id> --close                                close a team: stop its local members, end its remote ones' jobs
+agent team <id> --stop                    stop the whole team; disable automatic resumption
 agent helpers [--all]                     worker requests made by normal models
 agent transcript <id|team> [--raw]        full chronological log of a task/team (bus + activity)
 agent archive <id|team> | --finished      pack a finished task (with its resume chain) into tasks-archived/*.7z

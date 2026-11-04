@@ -47,3 +47,13 @@ setup_gh() {
   [ -z "$(out S1)" ]
   [ -z "$(out I1)" ]
 }
+
+@test "every mode's prompt states the rule never to open a new PR when not coordinator or when a Draft or Open PR already exists" {
+  local f
+  for f in protocol.md team.md helper.md investigator.md inv-work.md inv-merge.md review.md; do
+    grep -qi 'never open a new PR' "$REPO_ROOT/prompts/$f"
+    grep -q 'Draft' "$REPO_ROOT/prompts/$f"
+    grep -q 'Open' "$REPO_ROOT/prompts/$f"
+    grep -qi 'continue in the mentioned PR' "$REPO_ROOT/prompts/$f"
+  done
+}
