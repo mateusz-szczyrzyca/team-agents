@@ -111,6 +111,7 @@ tests/unit/investigation_team_admission.bats	a genuinely running investigator ke
 tests/unit/investigation_team_admission.bats	the manifest is written before the parent takes its investigator lease	blackbox	R36	-	planned
 tests/unit/investigation_team_admission.bats	a leased parent without manifest keeps the lease while its tagged child is still running	blackbox	R37	-	planned
 tests/unit/investigation_team_admission.bats	stop --running waits for admission before releasing investigation capacity	source	R36	-	planned
+tests/unit/investigation_team_admission.bats	resuming a normal team in the same project is refused while --investigation is in progress, but allowed for normal model investigations	blackbox	R36	-	planned
 tests/unit/investigation_team_advisory_resume.bats	open investigation PR resumes all original investigators including merger as advisory reviewers	blackbox	R40	-	planned
 tests/unit/investigation_team_advisory_resume.bats	merged investigation PR resume is refused with reason before creating tasks	blackbox	R40	-	planned
 tests/unit/investigation_team_advisory_resume.bats	closed investigation PR resume is refused with reason before creating tasks	blackbox	R40	-	planned

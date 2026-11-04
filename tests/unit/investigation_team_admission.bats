@@ -235,3 +235,30 @@ FLOCK
   [ "$second_active" -eq 3 ]
   [ "$available" = "$(printf 'inv\ninv2')" ]
 }
+
+@test "resuming a normal team in the same project is refused while --investigation is in progress, but allowed for normal model investigations" {
+  scenario '{"lead": {"new": "done", "resume": "done"}, "member": {"new": "done", "resume": "done"}}'
+  agent run --team lead,member "initial team task"
+  l=$(task_of lead); m=$(task_of member)
+  wait_status "$l" done
+  wait_status "$m" done
+  team=$(field "$l" TEAM)
+  agentbus team-done --dir "$AGENTS_HOME/bus" --team "$team"
+
+  # 1. With --investigation in progress in the same repository, resuming the normal team is refused.
+  mkdir -p "$AGENTS_HOME/tasks/20261104-160000-investigation-team"
+  printf 'ID=20261104-160000-investigation-team\nKIND=investigation_team\nSTATUS=running\nREPO_NAME=repo\nREPO_ROOT=%s/repo\n' "$HOME" \
+    > "$AGENTS_HOME/tasks/20261104-160000-investigation-team/meta.env"
+  run agent run --resume "$team" --same-round "continue work"
+  [ "$status" -ne 0 ]
+  [[ $output == *"--investigation"* ]]
+
+  # 2. Once --investigation is done and only a normal model's requested investigation is running, resuming succeeds.
+  meta_put 20261104-160000-investigation-team STATUS done
+  mkdir -p "$AGENTS_HOME/tasks/20261104-160100-inv"
+  printf 'ID=20261104-160100-inv\nKIND=investigation\nINVESTIGATION_TEAM=\nSTATUS=running\nREPO_NAME=repo\nREPO_ROOT=%s/repo\n' "$HOME" \
+    > "$AGENTS_HOME/tasks/20261104-160100-inv/meta.env"
+  run agent run --resume "$team" --same-round "continue work"
+  [ "$status" -eq 0 ]
+}
+
