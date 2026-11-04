@@ -97,8 +97,14 @@ if [[ $LANE == "candidate" && ! -f $CANDIDATE_BIN ]]; then
 fi
 
 if [[ -n ${TMPDIR:-} ]]; then
-  real_tmp=$(cd "$TMPDIR" 2>/dev/null && pwd -P || pwd)
-  real_repo=$(cd "$REPO_ROOT" 2>/dev/null && pwd -P || pwd)
+  if ! real_tmp=$(cd "$TMPDIR" && pwd -P); then
+    echo "agent-bats: TMPDIR does not exist or is not accessible: $TMPDIR" >&2
+    exit 1
+  fi
+  if ! real_repo=$(cd "$REPO_ROOT" && pwd -P); then
+    echo "agent-bats: REPO_ROOT does not exist or is not accessible: $REPO_ROOT" >&2
+    exit 1
+  fi
   if [[ "$real_tmp" == "$real_repo" || "$real_tmp" == "$real_repo"/* ]]; then
     echo "agent-bats: TMPDIR cannot be inside repository root: $TMPDIR" >&2
     exit 1
