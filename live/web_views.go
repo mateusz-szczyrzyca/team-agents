@@ -942,9 +942,25 @@ func notebook(busDir, repo string) notesView {
 type teamRow struct {
 	ID, Lead, States string // team ID, coordinator, member states ("2 active, 1 sleeping")
 	Done             bool   // finished
+	Stopped          bool   // stopped by demand (TEAM_STOPPED=1)
 	Members          int    // number of members
 	Todo, Claimed    int    // board items to do / in progress
 	DoneItems        int    // board items done
+}
+
+// isTeamStopped reports whether any member task of the team was marked TEAM_STOPPED=1.
+func isTeamStopped(snap *Snapshot, t *TeamInfo) bool {
+	if t == nil {
+		return false
+	}
+	for _, m := range t.Members {
+		if tk := snap.All[m.Task]; tk != nil && tk.Dir != "" {
+			if readMeta(filepath.Join(tk.Dir, "meta.env"))["TEAM_STOPPED"] == "1" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // viewTeams (GET /teams) lists the teams, unfinished first.
@@ -952,7 +968,7 @@ func (s *webServer) viewTeams(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	var rows []teamRow
 	for id, t := range snap.Teams {
-		row := teamRow{ID: id, Lead: t.Lead, Done: t.Done, Members: len(t.Members)}
+		row := teamRow{ID: id, Lead: t.Lead, Done: t.Done, Stopped: isTeamStopped(snap, t), Members: len(t.Members)}
 		states := map[string]int{}
 		for _, m := range t.Members {
 			states[effectiveMemberState(snap, m)]++
@@ -1008,6 +1024,7 @@ type consultRow struct {
 type teamData struct {
 	ID       string       // team ID
 	T        *TeamInfo    // the team
+	Stopped  bool         // stopped by demand (TEAM_STOPPED=1)
 	Members  []memberRow  // its members
 	Board    []*BoardItem // its board, by number
 	Consults []consultRow // its consultations, newest first
@@ -1041,7 +1058,7 @@ func (s *webServer) viewTeam(w http.ResponseWriter, r *http.Request) {
 		viewError(s, w, r, webErr(ViewNotFound, nil, "no team %q", id))
 		return
 	}
-	d := teamData{ID: id, T: t}
+	d := teamData{ID: id, T: t, Stopped: isTeamStopped(snap, t)}
 	members := map[string]bool{}
 	repo := ""
 	for name, m := range t.Members {
@@ -1549,6 +1566,24 @@ func (s *webServer) postStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logInfo(LogWebAction, "action", "kick", "task", t.ID)
+	writeText(w, strings.TrimSpace(out))
+}
+
+// postTeamStop (POST /team/{id}/stop) stops a team and disables automatic resume: `agent team <id> --close`.
+func (s *webServer) postTeamStop(w http.ResponseWriter, r *http.Request) {
+	snap := s.snapshot()
+	id := r.PathValue("id")
+	if snap.Teams[id] == nil {
+		http.Error(w, "no such team", http.StatusNotFound)
+		return
+	}
+	out, cerr := callAgent(s.cfg.agentCmd, "team", id, "--close")
+	if cerr != nil {
+		logWarn(LogWebActionFailed, "action", "team-stop", "team", id, "cause", cerr.Cause.String(), "error", cerr.Message)
+		http.Error(w, "cannot stop team "+id+": "+cerr.Message, http.StatusConflict)
+		return
+	}
+	logInfo(LogWebAction, "action", "team-stop", "team", id)
 	writeText(w, strings.TrimSpace(out))
 }
 

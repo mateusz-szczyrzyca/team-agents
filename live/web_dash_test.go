@@ -110,14 +110,22 @@ func TestDashboardShowsAtMost20LatestEntriesAndFullDashboardViewShowsAll(t *test
 
 func TestTeamsViewHasStopThisTeamOption(t *testing.T) {
 	home := fixture(t)
+	var called []string
+	stubAgent(t, func(args ...string) (string, *OpError[AgentCallCause]) {
+		called = args
+		return "Closed team TT-team.", nil
+	})
 	_, ts := testServer(t, home)
 	_, teamsBody := get(t, ts, "/teams")
-	mustContain(t, "/teams", teamsBody, "Stop this team", `/team/20261020-120000-team/stop`)
-	_, teamBody := get(t, ts, "/team/20261020-120000-team")
-	mustContain(t, "/team/20261020-120000-team", teamBody, "Stop this team", `/team/20261020-120000-team/stop`)
+	mustContain(t, "/teams", teamsBody, "Stop this team", `/team/TT-team/stop`)
+	_, teamBody := get(t, ts, "/team/TT-team")
+	mustContain(t, "/team/TT-team", teamBody, "Stop this team", `/team/TT-team/stop`)
 
-	code, body := post(t, ts, "/team/20261020-120000-team/stop", nil)
-	if code != 200 || !strings.Contains(body, "team 20261020-120000-team --close") {
-		t.Fatalf("POST /team/20261020-120000-team/stop: code=%d body=%q", code, body)
+	code, body := post(t, ts, "/team/TT-team/stop", nil)
+	if code != 200 || !strings.Contains(body, "Closed team TT-team.") {
+		t.Fatalf("POST /team/TT-team/stop: code=%d body=%q", code, body)
+	}
+	if strings.Join(called, " ") != "team TT-team --close" {
+		t.Fatalf("callAgent args = %v, want [team TT-team --close]", called)
 	}
 }

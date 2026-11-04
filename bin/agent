@@ -1628,6 +1628,7 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
   local id=$1 root branch base head mb url num why out wr wrs ref
   root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH); base=$(task_field "$id" BASE); base=${base:-main}
   url=$(task_field "$id" PR_URL); num=$(task_field "$id" PR_NUMBER)
+  [[ $(task_field "$id" TEAM_STOPPED) != 1 ]] || return 0
   if [[ $(task_field "$id" AUTOPILOT_OFF) == 1 ]]; then
     auto_stage "$id" "waits for you: the autopilot is off — merge the PR yourself"
     notify "$id" approved "" "both reviews: ready to merge — the autopilot is off: merge PR #$num yourself: $url"
@@ -1875,6 +1876,7 @@ team_wait_settled() { # task — waits until the local members of its team have 
 cmd__precheck() { # coordinator task — once its team's members have settled: the checks, then the review — or the
   # round goes back to the team
   local id=$1
+  [[ $(task_field "$id" TEAM_STOPPED) != 1 && $(task_field "$id" AUTOPILOT_OFF) != 1 ]] || return 0
   if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
     [[ $(task_field "$id" STATUS) != stopped && ! -f $TASKS/$id/stop-requested ]] || return 0
     local check_passed=0
@@ -2026,8 +2028,10 @@ review_fix_pass() { # parent findings text — the fix pass runs in its own unit
 
 cmd__fixpass() { # coordinator task — the fix pass recorded by review_fix_pass, once the team's members have settled
   local id=$1
+  [[ $(task_field "$id" TEAM_STOPPED) != 1 && $(task_field "$id" AUTOPILOT_OFF) != 1 ]] || return 0
   auto_stage "$id" "fix pass: the team goes on with the reviews' findings once its runs end"
   team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=fix-pass"
+  [[ $(task_field "$id" TEAM_STOPPED) != 1 && $(task_field "$id" AUTOPILOT_OFF) != 1 ]] || return 0
   do_fix_pass "$id" "$(<"$TASKS/$id/fix-pass.n")" "$(<"$TASKS/$id/fix-pass.md")"
   [[ $(task_field "$id" AUTO_STAGE) != "fix pass:"* ]] || auto_stage "$id" ""   # the team has the work, unless the human has
 }
@@ -2035,6 +2039,7 @@ cmd__fixpass() { # coordinator task — the fix pass recorded by review_fix_pass
 do_fix_pass() { # parent findings text — the team goes on with the review(s) that found problems, VERIFY_MAX_FIX_PASSES
   # times at most; after that the human is mentioned on the PR and notified
   local parent=$1 n=$2 text=$3 pass ref repo root add out owner args=()
+  [[ $(task_field "$parent" TEAM_STOPPED) != 1 && $(task_field "$parent" AUTOPILOT_OFF) != 1 ]] || return 0
   pass=$(task_field "$parent" FIX_PASS); pass=${pass:-0}
   PR_NUMBER=$(task_field "$parent" PR_NUMBER); PR_URL=$(task_field "$parent" PR_URL)
   ref=$(task_field "$parent" TEAM); ref=${ref:-$parent}
@@ -2640,6 +2645,11 @@ cmd__wake() { # id — a sleeping team member received a message, or the timer o
   exec 8>"$TASKS/$id/wake.lock"
   flock -w 30 8 || exit 0
   meta_load "$id"
+  if [[ ${TEAM_STOPPED:-} == 1 ]]; then
+    [[ $STATUS == stopped ]] || meta_set "$id" STATUS stopped
+    [[ -z ${TEAM:-} ]] || try team_state_failed bus team-set --dir "$BUS_DIR" --team "$TEAM" --agent "$AGENT" --state stopped >/dev/null
+    exit 0
+  fi
   if [[ ${KIND:-} == remote-member ]]; then   # the member works on its node: the lead asks the node to wake it
     try remote_wake_failed bus lead-member --dir "$BUS_DIR" --wake --member "$AGENT" >/dev/null
     exit 0
@@ -8715,8 +8725,8 @@ auth_providers() { # one quick request per provider (agent authenticated --provi
   rm -rf "$tmp"
 }
 
-cmd_team() { # [id [--close]] [--all]
-  if [[ -n ${1:-} && $1 != --all && ${2:-} == --close ]]; then
+cmd_team() { # [id [--close|--stop]] [--all]
+  if [[ -n ${1:-} && $1 != --all && ( ${2:-} == --close || ${2:-} == --stop ) ]]; then
     team_close "$1"
     return
   fi
@@ -8728,15 +8738,25 @@ cmd_team() { # [id [--close]] [--all]
   fi
 }
 
-team_close() { # team — closes a team whatever its members do: local ones still at work or waiting are stopped,
-  # then finish_team (sleeping ones done, its remote members' jobs ended, their grants revoked)
+team_close() { # team — closes a team whatever its members do: local ones still at work, waiting or sleeping are stopped,
+  # automatic resume (autopilot/verify/wake) is disabled, then finish_team ends remote members' jobs and revokes grants
   local team=$1 t
   bus team-get --dir "$BUS_DIR" --team "$team" >/dev/null || die "no team $team on the bus (agent team)"
   for t in $(team_tasks "$team"); do
+    meta_set "$t" TEAM_STOPPED 1
+    meta_set "$t" AUTOPILOT_OFF 1
+    meta_set "$t" VERIFY 0
+    meta_set "$t" REVIEW_PAIR_PENDING ""
+    meta_set "$t" REVIEW_SLOT_PENDING ""
+    meta_set "$t" AUTO_STAGE ""
     [[ $(task_field "$t" KIND) != remote-member ]] || continue
     case $(task_field "$t" STATUS) in
       new|starting|running|waiting|investigating|paused|interrupted)
         "$SELF" stop "$t" >/dev/null || log_warn team_close_stop_failed "task=$t" "team=$team" ;;
+      sleeping)
+        meta_set "$t" STATUS stopped
+        meta_set "$t" FINISHED "$(date -Is)"
+        try team_state_failed bus team-set --dir "$BUS_DIR" --team "$team" --agent "$(task_field "$t" AGENT)" --state stopped >/dev/null ;;
     esac
   done
   finish_team "$team" "closed by the human (agent team $team --close)"
