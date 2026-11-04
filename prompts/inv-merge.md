@@ -55,6 +55,10 @@ and open (or update) a pull request on GitHub.
      unless a PR about the subject is already opened (state `Draft` or `Open`).
      Never open a new PR if you are not the coordinator or if a PR about the subject is already opened (state `Draft` or `Open`);
      always continue in the mentioned PR, never create a new PR.
+   - If the subject's Draft or Open PR is the PR on another branch (its head branch is not `{{BRANCH}}`), you cannot
+     continue it (you push only `{{BRANCH}}`, and the checks after you look for the PR of `{{BRANCH}}`). Merge that PR's
+     head into `{{BRANCH}}`, push it, do NOT open a PR, write a question to `{{QUESTIONS_FILE}}` naming that PR and its
+     head branch, and end with `STATUS: QUESTIONS` (see "Completion").
    - Bounce on failed prechecks: If your task is resumed with `# Checks to fix` appended to `task.md`,
      address the precheck issues, push fixes, and update the existing PR description or title with
      `gh pr edit` (do NOT open a duplicate PR).

@@ -1714,11 +1714,19 @@ task_stop_requested() {
   return 1
 }
 
+# investigation_over task — 0 when that --investigation parent or member has ended: a terminal status (the set agent ack
+# and the node code use: a hung or excluded member never runs again by itself), or a parent whose completed handoff
+# still shows as waiting (investigation_completed_wait)
+investigation_over() {
+  case $(task_field "$1" STATUS) in done|failed|stopped|excluded|hung) return 0 ;; esac
+  [[ $(KIND="" task_field "$1" KIND) == investigation_team ]] && investigation_completed_wait "$1"
+}
+
 # blocking_investigation id — prints the independent investigation (--investigation) in progress in that normal team
-# task's project; 1 when there is none. Ordinary agent-requested investigations, unrelated repositories and a finished
-# cohort whose handoff still shows as waiting (investigation_completed_wait) never block.
+# task's project; 1 when there is none. Ordinary agent-requested investigations, unrelated repositories, an ended
+# parent or member (investigation_over) and a member whose cohort has ended (its own status may lag) never block.
 blocking_investigation() {
-  local id=$1 root repo m inv inv_root inv_repo
+  local id=$1 root repo m inv inv_root inv_repo cohort
   [[ -n $(task_field "$id" TEAM) && -z $(task_field "$id" INVESTIGATION_TEAM) ]] || return 1
   case $(task_field "$id" KIND) in worker|remote-member|"") ;; *) return 1 ;; esac
   root=$(task_field "$id" REPO_ROOT)
@@ -1739,8 +1747,11 @@ blocking_investigation() {
     else
       continue
     fi
-    case $(task_field "$inv" STATUS) in done|failed|stopped) continue ;; esac
-    if [[ $(task_field "$inv" KIND) == investigation_team ]] && investigation_completed_wait "$inv"; then continue; fi
+    if investigation_over "$inv"; then continue; fi
+    if [[ $(task_field "$inv" KIND) != investigation_team ]]; then   # a member: its cohort's end ends it too
+      cohort=$(INVESTIGATION_TEAM="" task_field "$inv" INVESTIGATION_TEAM)
+      if [[ -n $cohort && -f $TASKS/$cohort/meta.env ]] && investigation_over "$cohort"; then continue; fi
+    fi
     printf '%s\n' "$inv"
     return 0
   done
@@ -1767,11 +1778,16 @@ automation_allowed() {
   ! task_stop_requested "$id" && [[ $(task_field "$id" STATUS) != stopped ]]
 }
 
-# human_resume_allowed id — agent answer / agent resume: refused, with the reason, for a task the human stopped, and
-# while an --investigation is in progress in its project
-human_resume_allowed() {
+# human_stop_respected id — agent answer / agent resume: refused, with the reason, for a task the human stopped
+human_stop_respected() {
   automation_allowed "$1" \
     || die "task $1 was stopped by the human — it is not resumed; start it again with: agent run --resume <team|task>"
+}
+
+# human_resume_allowed id — agent resume: refused, with the reason, for a task the human stopped, and while an
+# --investigation is in progress in its project. agent answer checks only the stop: writing the answers resumes nothing
+human_resume_allowed() {
+  human_stop_respected "$1"
   normal_resume_allowed "$1"
 }
 
@@ -3230,7 +3246,8 @@ build_prompt() { # id mode qfile next_round
     [PR_URL]=${PR_URL:-} [PR_NUMBER]=${PR_NUMBER:-}
     [RESUMED_FROM]=${RESUMED_FROM:-} [HANG_MIN]=$AGENT_HANG_MIN
   )
-  if [[ $mode != fresh ]]; then continuation_rules; fi
+  # a fresh prompt is the new run's prompt and then a resume's: the rules come with the first part only
+  if [[ $mode != fresh && -z ${RULES_RENDERED:-} ]]; then continuation_rules; fi
   if [[ $mode != fresh ]] && is_independent_investigation "$id"; then
     if [[ $mode == new ]]; then   # a later run's session has this already: it gets only what is new
       case ${INVESTIGATION_PHASE:-1} in
@@ -3279,6 +3296,7 @@ build_prompt() { # id mode qfile next_round
       try checkpoint_read_failed checkpoints_latest "team-$TEAM"
     fi
     printf '\n\n---\n\n'
+    local RULES_RENDERED=1   # seen by the nested call only (dynamic scope)
     build_prompt "$id" resume "$qfile" "$next_round"
     return
   fi
@@ -5162,6 +5180,27 @@ questions_from_final() { # last-message-text id round → questions file on stdo
 
 # runner_exit rc — the EXIT trap of a runner that did not finish normally (killed, stopped or crashed).
 # Every step runs through try: one failing step must not prevent the others (status, queues, notification).
+# stopped_handover — a run the human stopped: nothing of its own follows (no notification, wake, review or fix pass),
+# but whoever waits for it is told, as after any other end of a run — the agent that requested the investigation or
+# delegated to the helper gets a failed result; a member's board items go back and its team hears it is out (not when
+# its whole team was stopped or closed: nobody is left to take them over). maybe_resume_worker and start_runner leave a
+# requester that was stopped itself alone.
+stopped_handover() {
+  local why="stopped by the human"
+  if [[ ${KIND:-worker} == investigation ]] && ! is_independent_investigation "$RUNNER_ID"; then
+    try investigation_finish_failed inv_finish "$RUNNER_ID" failed "STATUS: FAILED
+Answer: investigation $why"
+    if [[ ${REVIEW:-} == 1 ]]; then try review_followup_failed review_without_verdict "$RUNNER_ID" "$why"; fi
+  elif [[ ${KIND:-worker} == helper ]]; then
+    try helper_finish_failed helper_finish "$RUNNER_ID" failed "$why"
+  elif [[ -n ${TEAM:-} && $(task_field "$RUNNER_ID" TEAM_STOPPED) != 1 && $(task_field "$RUNNER_ID" REMOTE_TEAM) != 1 \
+          && $(team_done_flag "$TEAM") != true ]]; then
+    try member_out_failed member_out "$RUNNER_ID" "$why"
+  fi
+  try dispatch_failed dispatch
+  if ! is_independent_investigation "$RUNNER_ID"; then try dispatch_failed dispatch_helpers; fi
+}
+
 runner_exit() {
   local rc=$1
   # A persisted outcome can still have an interrupted local result delivery.
@@ -5212,6 +5251,7 @@ runner_exit() {
     try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
     try activity_write_failed act "$RUNNER_ID" info "■ stopped by the human"
     log_info run_stopped "reason=human stop"
+    stopped_handover
     return
   fi
   local why="runner interrupted (exit code $rc) — see: agent log $RUNNER_ID"
@@ -6522,7 +6562,7 @@ cmd_answer() {
     return
   fi
   meta_load "$id"
-  human_resume_allowed "$id" || return 1
+  human_stop_respected "$id"
   [[ $STATUS == waiting ]] || die "task $id has status '$STATUS' — it is not waiting for answers"
   local q="$TASKS/$id/questions-$ROUND.md"
   "${EDITOR:-nano}" "$q"

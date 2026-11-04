@@ -6,7 +6,7 @@
   <td>{{.Lead}}</td>
   <td>{{.Members}} <span class="dim">({{.States}})</span></td>
   <td class="hide-narrow">{{.Todo}} to do · {{.Claimed}} in progress · {{.DoneItems}} done</td>
-  <td>{{if not .Stopped}}<button type="button" class="btn stop-team" hx-post="/team/{{.ID}}/stop" hx-confirm="Stop this team and disable automatic resumption?" hx-swap="outerHTML">Stop this team</button>{{else}}<span class="dim">stopped</span>{{end}}</td>
+  <td>{{if .Stopped}}<span class="dim">stopped</span>{{else if not .Done}}<button type="button" class="btn stop-team" hx-post="/team/{{.ID}}/stop" hx-confirm="Stop this team and disable automatic resumption?" hx-swap="outerHTML">Stop this team</button>{{end}}</td>
 </tr>{{else}}<tr><td colspan="5" class="dim">(no teams)</td></tr>{{end}}</tbody>
 </table></div>
 {{if .Cut}}<p><a class="btn" href="/teams?all=1">Show all {{.Total}} teams</a></p>{{end}}

@@ -9,7 +9,11 @@ Before creating any PR, check the PR mentioned in the task and search the reposi
 same subject, including Draft or Open PRs on other branches. Follow the repository's trusted-author rules.
 If a matching PR exists, always continue that PR: use its existing head branch through the coordinator,
 push the changes there and update its description. Never open a replacement or duplicate PR, and never close
-an existing PR merely to replace it. If branch ownership prevents updating it, report to the coordinator.
+an existing PR merely to replace it. If you are not the coordinator, report it to your coordinator.
+If you are the coordinator and the matching PR's head branch is not yours (it belongs to another task), do not
+push to that branch and do not open a PR: push your own branch, write a question to your questions file naming
+that PR and its head branch (options: the human continues that PR with your branch's commits, or allows one new
+PR that names the PR it replaces), and end with `STATUS: QUESTIONS`.
 If the lookup fails or ownership is unclear, report the blocker rather than creating a PR blindly.
 Only when no matching Draft or Open PR exists may the coordinator create one. A later round may create a new
 PR after the preceding round's PR is merged or closed, provided no matching open PR already exists.

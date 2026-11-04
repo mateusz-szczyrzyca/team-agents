@@ -3,7 +3,7 @@
 # the prompts and the configuration templates.
 # Run it from the project directory as the user the agents will run as:  ./install.sh
 # Re-running it updates the binaries, the script and the prompts; it never overwrites
-# agents.conf, hardware.md or secrets.env.
+# agents.conf, hardware.md or secrets.env (to agents.conf it only adds a missing AGENT_SERENA line when Serena is installed).
 set -euo pipefail
 
 SRC=$(cd "$(dirname "$0")" && pwd)
@@ -143,16 +143,24 @@ for f in "$SRC"/prompts/*.md; do
   install -m 644 "$SRC/prompts/$f" "$AH/prompts/$f"
 done
 
+# serena_found — Serena is installed: in ~/.local/bin (where its installer puts it) or on PATH
+serena_found() {
+  [[ -x $HOME/.local/bin/serena ]] || command -v serena >/dev/null
+}
+
 echo "» configuration"
 if [[ ! -f $AH/agents.conf ]]; then
   install -m 644 "$SRC/config/agents.conf" "$AH/agents.conf"
+  if ! serena_found; then   # the template enables it: a fresh configuration does not name a missing command
+    sed -i 's/^AGENT_SERENA="serena"$/AGENT_SERENA=""/' "$AH/agents.conf"
+    echo "  Serena is not installed: AGENT_SERENA=\"\" in agents.conf (set it to \"serena\" once it is — see README \"Serena\")"
+  fi
 elif ! cmp -s "$SRC/config/agents.conf" "$AH/agents.conf"; then
-  if [[ -x $HOME/.local/bin/serena ]] || command -v serena >/dev/null 2>&1; then
-    if grep -qx 'AGENT_SERENA=""' "$AH/agents.conf"; then
-      sed -i 's/^AGENT_SERENA=""$/AGENT_SERENA="serena"/' "$AH/agents.conf"
-    elif ! grep -q '^AGENT_SERENA=' "$AH/agents.conf"; then
-      printf '\nAGENT_SERENA="serena"\n' >> "$AH/agents.conf"
-    fi
+  # an existing configuration is the human's: only a missing AGENT_SERENA line is added, an explicit value (also the
+  # opt-out "") is kept
+  if serena_found && ! grep -q '^AGENT_SERENA=' "$AH/agents.conf"; then
+    printf '\nAGENT_SERENA="serena"\n' >> "$AH/agents.conf"
+    echo "  Serena is installed: added AGENT_SERENA=\"serena\" to agents.conf (set it to \"\" to turn it off)"
   fi
   install -m 644 "$SRC/config/agents.conf" "$AH/agents.conf.new"
   echo "  agents.conf exists — the new template was saved as agents.conf.new (compare: diff -u $AH/agents.conf $AH/agents.conf.new)"
