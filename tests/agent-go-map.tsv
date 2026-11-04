@@ -239,6 +239,8 @@ tests/unit/member_in_team.bats	a team task's gh knows its team and agent; a solo
 tests/unit/member_in_team.bats	a round resumed tells a member to push its own branch: its coordinator merges it into the round's PR	blackbox	R31	-	planned
 tests/unit/member_in_team.bats	a round continued again has one heading and one PR note, the newest; what its reviews sent back stays	blackbox	R31	-	planned
 tests/unit/member_in_team.bats	a round whose PR is merged continues as its follow-up, and the next round is not started early	blackbox	R31	-	planned
+tests/unit/member_in_team.bats	a team member's gh pr reopen and edit are refused, logged, and never reach gh	blackbox	R11	-	planned
+tests/unit/member_in_team.bats	a non-coordinator member's STATUS: ROUND_DONE does not override the coordinator's WORK_ROUND	blackbox	R33	-	planned
 tests/unit/member_out.bats	an unknown STATUS goes back to the agent once, with the statuses it may use	blackbox	R29	-	planned
 tests/unit/member_out.bats	a second unknown STATUS fails the run	blackbox	R29	-	planned
 tests/unit/member_out.bats	a failed member's items go back with its progress notes, and the team is told where its work is	blackbox	R29	-	planned

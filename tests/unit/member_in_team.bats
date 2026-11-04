@@ -178,3 +178,24 @@ round_pr() {
   run ! grep -q "PR #7 is merged" "$f"
   agent stop --running > /dev/null
 }
+
+@test "a team member's gh pr reopen and edit are refused, logged, and never reach gh" {
+  setup_gh
+  for cmd in "reopen 53" "edit 53 --title new"; do
+    read -ra a <<< "$cmd"
+    AGENT_GH_COORDINATOR=gemini-1 run ! "$GH" pr "${a[@]}"
+    [[ $output == *"gemini-1"* ]]
+    run ! grep -q "pr ${a[0]}" "$STUB_HOME/gh.log"
+    grep '"event":"github_member_pr_refused"' "$log" | grep -q "\"action\":\"${a[0]}\""
+  done
+}
+
+@test "a non-coordinator member's STATUS: ROUND_DONE does not override the coordinator's WORK_ROUND" {
+  scenario '{"lead": {"new": "team-lead-round:4/7"}, "member": {"new": "round-done:5/7"}}'
+  agent run --team lead,member "task"
+  t=$(task_of lead); m=$(task_of member)
+  wait_status "$t" 'done'
+  wait_status "$m" 'done'
+  [ "$(meta "$t" WORK_ROUND)" = 4 ]
+  [ -z "$(meta "$m" WORK_ROUND)" ]
+}
