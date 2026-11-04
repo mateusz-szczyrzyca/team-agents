@@ -77,3 +77,33 @@ func TestStoppedTeamMemberIsNotShownAsSleeping(t *testing.T) {
 	_, teamsBody := get(t, ts, "/teams")
 	mustContain(t, "/teams", teamsBody, "1 done, 1 stopped")
 }
+
+func TestDashboardShowsAtMost20LatestEntriesAndFullDashboardViewShowsAll(t *testing.T) {
+	home := fixture(t)
+	now := time.Now()
+	for i := 1; i <= 25; i++ {
+		id := "20261104-1200" + strconv.Itoa(10+i) + "-task-" + strconv.Itoa(i)
+		agent := "agent-" + strconv.Itoa(i)
+		fin := now.Add(-time.Duration(i) * time.Minute).Format(time.RFC3339)
+		addTask(t, home, id, "AGENT="+agent+"\nSTATUS=stopped\nRUN=1\nFINISHED="+fin+"\n")
+	}
+	_, ts := testServer(t, home)
+	_, dash := get(t, ts, "/")
+	mustContain(t, "/", dash, "Full dashboard view", `/dashboard/full`)
+	// fixture(t) already has 4 tasks (3 active + 1 just finished), so 4 + 16 newest stopped = 20 rows on /.
+	// agent-1 .. agent-16 must be shown; agent-17 .. agent-25 must NOT be shown on /.
+	for i := 1; i <= 16; i++ {
+		mustContain(t, "/", dash, ">agent-"+strconv.Itoa(i)+"<")
+	}
+	for i := 17; i <= 25; i++ {
+		if strings.Contains(dash, ">agent-"+strconv.Itoa(i)+"<") {
+			t.Fatalf("/ showed >20 entries (found agent-%d on default dashboard)", i)
+		}
+	}
+
+	_, full := get(t, ts, "/dashboard/full")
+	mustContain(t, "/dashboard/full", full, "Full dashboard view")
+	for i := 1; i <= 25; i++ {
+		mustContain(t, "/dashboard/full", full, ">agent-"+strconv.Itoa(i)+"<")
+	}
+}

@@ -1,11 +1,52 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// Rule: the compact dashboard selects the newest twenty tasks; full view also includes acknowledged history.
+func TestDashboardCompactAndFullHistory(t *testing.T) {
+	home := t.TempDir()
+	for i := 0; i < 25; i++ {
+		id := fmt.Sprintf("D%02d", i)
+		created := time.Now().Add(time.Duration(i-25) * time.Hour).Format(time.RFC3339)
+		addTask(t, home, id, "AGENT="+id+"\nSTATUS=stopped\nCREATED="+created+"\nFINISHED="+created+"\n")
+	}
+	writeFile(t, filepath.Join(home, "tasks", "D00", "acked"), "")
+	_, ts := testServer(t, home)
+	_, body := get(t, ts, "/")
+	if n := strings.Count(body, `href="/task/D`); n != 20 {
+		t.Errorf("compact rows = %d, want 20", n)
+	}
+	if strings.Contains(body, `href="/task/D04"`) {
+		t.Error("compact view retained an older task")
+	}
+	mustContain(t, "/", body, "Full dashboard view", `href="/dashboard/full"`)
+	code, body := get(t, ts, "/dashboard/full")
+	if code != http.StatusOK {
+		t.Fatalf("full view status = %d", code)
+	}
+	if n := strings.Count(body, `href="/task/D`); n != 25 {
+		t.Errorf("full rows = %d, want 25", n)
+	}
+	mustContain(t, "full", body, `sse-connect="/events/dashboard/full"`)
+	for _, route := range []string{"/events/dashboard", "/events/dashboard/full"} {
+		table := readEvent(t, openStream(t, ts, route), "table")
+		want := 20
+		if strings.HasSuffix(route, "/full") {
+			want = 25
+		}
+		if n := strings.Count(table, `href="/task/D`); n != want {
+			t.Errorf("%s rows = %d, want %d", route, n, want)
+		}
+	}
+}
 
 // Rule: stopping a local team member uses persistent stop, not the resumable kick operation.
 func TestDashboardStopMemberPersistsIntent(t *testing.T) {
