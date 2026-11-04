@@ -2,7 +2,12 @@
 
 Combines both Phase 1 results, audited at base
 [`6cb487f`](https://github.com/mateusz-szczyrzyca/team-agents/tree/6cb487f0caf967b8085c326e6298a9306559741c).
-**Every line number refers to that commit.** The Phase 1 files [`inv-opus.md`](inv-opus.md) and
+**Historical line numbers outside §§7–8 refer to that commit.**
+
+**Audit update, 2026-11-04:** §§7–8 below describe the current source and dashboard changes. The other sections
+remain the original historical investigation; use the updated matrix and issue dispositions when they differ.
+
+The Phase 1 files [`inv-opus.md`](inv-opus.md) and
 [`inv-astra.md`](inv-astra.md) are kept unchanged. `inv-astra.md` has a GitHub permalink for most references.
 Tags such as *(opus)* and *(astra)* mark findings that only one investigator reported. Everything else was
 found by both. I re-checked every reference that came from only one investigator against the source before
@@ -370,72 +375,92 @@ The reviewer's read-only rule is only a prompt rule: it runs the same CLI with t
 
 ---
 
-## 7. Summary matrix
+## 7. Summary matrix — audited 2026-11-04
 
-✔ = included, — = not included.
+The matrix describes `build_prompt` for a **new** session; `fresh` includes that base once plus continuation
+context (`fresh-session.md`). Ordinary `resume` sends pending context rather than the base again. All continuations,
+including watchdog recovery (`hang-resume.md`), repeat the PR ownership rule (`pr-ownership.md`) and conditional
+Serena guidance (`serena.md`). Source: [the renderer and adapters][script].
+✔ = included; — = absent; conditional = requires `AGENT_SERENA` (`serena` in `config/agents.conf`). CLI/model choice does not select the base prompt.
 
-| Source | Solo normal | Solo worker | Team normal | Team worker | Local helper | Remote helper | Investigator (request) | Reviewer (`--verify`/`--autopilot`) | `--inv` ph. 1 | ph. 2 | ph. 3 / 5 |
+| Source | Solo normal | Solo worker | Team normal | Team worker | Local helper | Remote helper | Requested investigator | Reviewer | Independent ph. 1 | ph. 2 | ph. 3 / 5 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `protocol.md` | ✔ | ✔ (`:105-106`) | — | — | — | ✔ | — | — | — | — | — |
-| `team.md` | — | — | ✔ | ✔ (worker lines) | — | — | — | — | — | — | — |
-| `tdd-rounds.md`, `writing.md` | ✔ | ✔ | ✔ | ✔ | — | ✔ | — | — | — | — | — |
-| `helper.md` | — | — | — | — | ✔ | — | — | — | — | — | — |
-| `investigator.md` | — | — | — | — | — | — | ✔ | — | — | — | — |
-| `review.md` | — | — | — | — | — | — | — | ✔ | — | — | ✔ |
-| `inv-work.md` / `inv-merge.md` | — | — | — | — | — | — | — | — | ✔ / — | — / ✔ | — |
-| `clarification.md` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | — | — | — |
-| `ask-solo.md` / `ask-team.md` | solo | solo | team | team | — | solo | solo | solo | — | — | — |
-| `skip_note` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | — | — | — | — | — |
-| `autopilot-questions.md` (follow-up) | — | — | `--autopilot` | `--autopilot` | — | — | — | — | — | — | — |
-| `inv-resume.md` (follow-up) | — | — | — | — | — | — | — | — | ✔ | ✔ | ✔ |
-| agentbus | + `delegate` | no `delegate` | team tools + `delegate` | team tools, `easy` only, no `delegate`/`claim_lead` | no `delegate` | no `delegate` | investigator role | investigator role | none | none | none |
+| [Solo protocol (`protocol.md`)][protocol] | ✔ | ✔ (`:92-110`) | — | — | — | ✔ | — | — | — | — | — |
+| [Team protocol (`team.md`)][team] | — | — | ✔ | ✔ (worker lines) | — | — | — | — | — | — | — |
+| [TDD and rounds (`tdd-rounds.md`)][tdd] | ✔ | ✔ | ✔ | ✔ | — | ✔ | — | — | — | — | — |
+| [Writing (`writing.md`)][writing] | ✔ | ✔ | ✔ | ✔ | — | ✔ | — | ✔ | ✔ | ✔ | ✔ |
+| [Helper (`helper.md`)][helper] | — | — | — | — | ✔ | — | — | — | — | — | — |
+| [Requested investigator (`investigator.md`)][investigator] | — | — | — | — | — | — | ✔ | — | — | — | — |
+| [Reviewer (`review.md`)][review] | — | — | — | — | — | — | — | ✔ | — | — | ✔ |
+| [Independent work (`inv-work.md`)][invwork] / [merge (`inv-merge.md`)][invmerge] | — | — | — | — | — | — | — | — | ✔ / — | — / ✔ | — |
+| [Clarification (`clarification.md`)][clarification] | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | — | — | — |
+| [Solo questions (`ask-solo.md`)][asksolo] / [team questions (`ask-team.md`)][askteam] | solo | solo | team | team | — | solo | solo | solo | — | — | — |
+| `skip_note` | ✔ | ✔ | ✔ | ✔ | — | ✔ | — | — | — | — | — |
+| [PR ownership (`pr-ownership.md`)][ownership] | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| [Serena (`serena.md`)][serena] | conditional | conditional | conditional | conditional | conditional | conditional | conditional | conditional | conditional | conditional | conditional |
+| `fresh-session.md` (`mode=fresh`) | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| [Autopilot questions (`autopilot-questions.md`)][autoquestions] (follow-up) | — | — | `--autopilot` | `--autopilot` | — | — | — | — | — | — | — |
+| [Independent answers (`inv-resume.md`)][invresume] (follow-up) | — | — | — | — | — | — | — | — | ✔ | ✔ | ✔ |
+| agentbus | normal tools (+ `delegate`) | worker tools (no `delegate`) | normal + team (+ `delegate`) | worker + team (`easy` only, no `delegate`/`claim_lead`) | worker tools (no `delegate`) | worker tools (no `delegate`) | investigator role | investigator role | none | none | none |
 | `{{AGENTS_MD}}` → `AGENTS.md` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | CLI's own files (`CLAUDE.md`/`AGENTS.md`, §3.3) | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 
+CLI-owned instruction discovery remains client-specific; real clients were not launched for this audit.
+Worker tools omit `delegate`; workers cannot claim coordination or non-easy board work. Investigator tools omit
+`request_investigation` and `checkpoint`. Remote **team members** also have relay-specific tool restrictions;
+remote helpers in the matrix are separate delegated jobs. Initialization advertises only available tools:
+[tool selection and instructions][bus]. The repository's own TDD rules still apply even when its TDD prompt is
+absent. The [new regression suite][prompttests] exercises `8` role categories × `3` modes, plus Serena disabled;
+[existing adapter tests][serenatests] exercise all `4` CLIs. These tests do not run real models.
+
 ---
 
-## 8. Inconsistencies found (none fixed here; the topic asks for a report)
+## 8. Inconsistencies found — current dispositions
 
-1. **The reviewer never sees its review request.**
-   - The request is built at `start_review_slot` (`bin/agent:2127-2144`): "one of two independent reviews: do not
-     read other reviews …", "Re-review after fix pass N …" and the previous review. `request_review`
-     (`bin/agent:2175-2178`) builds "re-review after fix pass N".
-   - `start_investigation` writes the reviewer's `task.md` from only the PR number, the URL and the team's task
-     (`bin/agent:4263-4268`). It uses `.question` only for ordinary investigations (`:4271`).
-   - So a reviewer never learns that it must be independent, or that this is a re-review, while `review.md:56-58`
-     relies on "the request says 're-review after fix pass N'". inv-astra confirmed this with an isolated probe of
-     the unchanged `start_investigation`.
-2. **`CLAUDE.md` is stale** (§3.3). The human has to decide, because `AGENTS.md` forbids agents to edit it: copy the
-   file again, or make it the symlink the README recommends.
-3. **Prompts name a tool that does not exist:** `investigate` (`team.md:165`, `tdd-rounds.md:52`). agentbus has only
-   `request_investigation` *(opus)*.
-4. **Helpers are told to fill skipped tests.** `skip_note` says "Fill every one … test first" and is added to helper
-   prompts (`bin/agent:1060`, `2764`, `2860`). That contradicts `helper.md:24`, "Do exactly what was asked"
-   *(opus)*.
-5. **The agentbus `instructions` string offers `request_investigation` to investigators**
-   (`agentbus/main.go:1080-1082`), but they do not have it (§6).
-6. **`protocol.md:110` tells every solo model "You are a cheaper everyday model"**, normal models included
-   *(opus)*.
-7. **`helper.md` does not mention two tools helpers have:** `request_investigation` and `checkpoint` *(opus)*.
-8. **The independent phases get text that assumes a team and a bus.**
-   - In phase 3/5, `review.md:3-4` speaks of "a team of agents" and `review.md:54-55` of "a `--verify` fix pass"
-     *(opus)*.
-   - `review.md:28-29` requires `reserve`/`release` with no bus *(astra)*.
-   - `{{AGENTS_MD}}` suggests `notebook_append` in all phases (`bin/agent:2620-2625`) *(astra)*.
-   - The task text and `inv-work.md`/`inv-merge.md` override these where they say so. `review.md` has no
-     independent variant.
-9. **`inv-resume.md:8-10` cites "CLARIFICATION RULES point 6"**, but the independent phases never get
-   `clarification.md`. Their templates have their own question rules *(astra)*.
-10. **Local and remote delegation give different rules** (§4.5). A remote helper gets `protocol.md`, which allows a
-    PR and pushing and says to ask the human, not the requester *(astra)*.
-11. **Polish text in prompts:** "Recenzja PR" (`bin/agent:2127`, `2175`, `4265`). `AGENTS.md` requires English
-    prompts *(opus)*.
-12. **An independent phase in a fresh session gets its prompt twice.** `fresh` calls `build_prompt new` and
-    `build_prompt resume`, and both take the early return at `bin/agent:2679`. Even a plain `resume` repeats the
-    base prompt.
+The original `12` findings are historical. `11` were already resolved at the dashboard investigation's base (`9575b28` / `49f88fa`);
+item `10` remains partly relevant (and item `11` has one remaining non-review Polish heading noted below). The shared PR rule below additionally addresses item `10`'s PR-creation permission.
 
-A test of the prompt contents for each role and phase would catch items 1, 3, 5, 8 and 9. It would check that no
-prompt mentions a tool the role lacks and that the generated task context is delivered *(astra)*.
+| Original item | Current status | Evidence and remaining scope |
+|---|---|---|
+| `1`: reviewer loses its request | Resolved (`9575b28`) | `investigation_task_text` and `start_investigation` include `.question` for review requests, preserving independence and re-review context. [Source][script]. |
+| `2`: stale `CLAUDE.md` instructions | Resolved (`49f88fa`) | [`AGENTS.md`][agents] and [`CLAUDE.md`][claude] (a symlink to `AGENTS.md`) compare byte-for-byte equal. Neither was edited in this investigation. |
+| `3`: nonexistent `investigate` tool | Resolved (`9575b28`) | [Team][team] and [TDD][tdd] prompts name `request_investigation`. |
+| `4`: helper told to fill unrelated skipped tests | Resolved (`9575b28`) | `skip_note` excludes both `helper` and `investigation`. [Source][script]. |
+| `5`: unavailable tool in bus initialization | Resolved (`9575b28`) | `Server.instructions` (`agentbus/main.go:1068-1086`) derives advertised capabilities dynamically from `s.tools()`. [Source][bus]. |
+| `6`: every solo model called cheap | Resolved (`9575b28`) | [Solo protocol][protocol] sets `You are: {{TIER}}` and makes the cheaper-worker paragraph conditional on tier. |
+| `7`: helper omits available tools | Resolved (`9575b28`) | [Helper prompt][helper] explicitly covers `request_investigation` and `checkpoint`. |
+| `8`: independent review assumes bus/team | Resolved (`9575b28`) | [Review prompt][review] describes a team **or by an investigation** (`:4`); reservations apply only with `reserve`/`release` (`without the agentbus tools, do not use them`, `:30`). `agents_md_text` supplies a report fallback (`without the agentbus tools: in your report`). [Renderer][script]. |
+| `9`: invalid clarification reference | Resolved (`9575b28`) | [Independent resume][invresume] explains short answers directly and refers to the question format in the first message rather than a missing numbered rule. |
+| `10`: remote/local helper protocol differs | Partly remains | [Remote dispatch][remotehelper] creates a worker-selector job; node task creation (`node_launch_job`) and `build_prompt` still route it with `KIND=worker` (`REMOTE_JOB=1`) to [solo protocol][protocol], not [helper protocol][helper]. Commit/push scope and asking the human versus the requester still differ. The new [shared rule][ownership] forbids PR creation by remote helpers. No remote-role migration is included here. |
+| `11`: Polish review labels (`"Recenzja PR"`) | Resolved for review labels (`9575b28`) | Review requests (`start_review_slot`, `request_review`, `start_investigation`) now use English. A separate residual remains: `start_helper` still emits `## Kontekst` when formatting a helper task with context. [Source][script]. |
+| `12`: repeated independent base prompt | Resolved (`9575b28`) | Independent `resume` emits answers/notes or a short continuation; `fresh` adds the base once followed by `fresh-session.md`. Repeated short shared rules (`continuation_rules`) are intentional. [Source][script]. |
+
+Neither protected repository instruction file was changed. This audit updates the requested matrix and issue list rather than silently
+rewriting the historical narrative in §§1–6.
+
+[script]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/bin/agent
+[protocol]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/protocol.md
+[team]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/team.md
+[tdd]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/tdd-rounds.md
+[writing]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/writing.md
+[helper]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/helper.md
+[investigator]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/investigator.md
+[review]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/review.md
+[invwork]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/inv-work.md
+[invmerge]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/inv-merge.md
+[clarification]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/clarification.md
+[asksolo]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/ask-solo.md
+[askteam]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/ask-team.md
+[ownership]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/pr-ownership.md
+[serena]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/serena.md
+[autoquestions]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/autopilot-questions.md
+[invresume]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/prompts/inv-resume.md
+[bus]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/agentbus/main.go
+[prompttests]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/tests/unit/dashboard_prompt_modes.bats
+[serenatests]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/tests/unit/serena.bats
+[agents]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/AGENTS.md
+[claude]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/CLAUDE.md
+[remotehelper]: https://github.com/mateusz-szczyrzyca/team-agents/blob/53b0b5601cfd0090d52518fda4190322a5c79791/agentbus/helper_remote.go
 
 ## 9. How to find the exact rules of an actual run *(astra)*
 
