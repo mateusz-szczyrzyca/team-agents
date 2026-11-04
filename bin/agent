@@ -3063,6 +3063,13 @@ serena_note() {
   render "$PROMPTS/serena.md"
 }
 
+# continuation_rules — repeat role-independent rules even when a session resumes after a watchdog hang.
+continuation_rules() {
+  render "$PROMPTS/pr-ownership.md"
+  serena_note
+  printf '\n'
+}
+
 build_prompt() { # id mode qfile next_round
   local id=$1 mode=$2 qfile=$3 next_round=$4
   declare -gA R=(
@@ -3089,6 +3096,7 @@ build_prompt() { # id mode qfile next_round
     [PR_URL]=${PR_URL:-} [PR_NUMBER]=${PR_NUMBER:-}
     [RESUMED_FROM]=${RESUMED_FROM:-} [HANG_MIN]=$AGENT_HANG_MIN
   )
+  if [[ $mode != fresh ]]; then continuation_rules; fi
   if [[ $mode != fresh ]] && is_independent_investigation "$id"; then
     if [[ $mode == new ]]; then   # a later run's session has this already: it gets only what is new
       case ${INVESTIGATION_PHASE:-1} in
@@ -3101,7 +3109,6 @@ build_prompt() { # id mode qfile next_round
         *) render "$PROMPTS/inv-work.md" ;;
       esac
       render "$PROMPTS/writing.md"
-      serena_note
       printf '\n# TOPIC\n\n'
       cat "$TASKS/$id/task.md"
       return
@@ -3145,13 +3152,13 @@ build_prompt() { # id mode qfile next_round
     if [[ ${KIND:-worker} == investigation && ${REVIEW:-} == 1 ]]; then
       render "$PROMPTS/review.md"
       render "$PROMPTS/writing.md"
-      printf '\n# PR REVIEW REQUEST #%s\n\n' "$PR_NUMBER"
+      printf '\n# PR REVIEW REQUEST #%s\n\n' "${R[PR_NUMBER]}"
     elif [[ ${KIND:-worker} == investigation ]]; then
       render "$PROMPTS/investigator.md"
-      printf '\n# INVESTIGATION REQUEST #%s\n\n' "$INV_ID"
+      printf '\n# INVESTIGATION REQUEST #%s\n\n' "${R[INV_ID]}"
     elif [[ ${KIND:-worker} == helper ]]; then
       render "$PROMPTS/helper.md"
-      printf '\n# REQUEST H%s\n\n' "$HELPER_ID"
+      printf '\n# REQUEST H%s\n\n' "${R[HELPER_ID]}"
     elif [[ -n ${TEAM:-} ]]; then
       render "$PROMPTS/team.md"
       render "$PROMPTS/tdd-rounds.md"
@@ -3183,7 +3190,6 @@ build_prompt() { # id mode qfile next_round
     elif [[ ${KIND:-worker} != helper && -f $PROMPTS/ask-solo.md ]]; then
       render "$PROMPTS/ask-solo.md"
     fi
-    serena_note
     skip_note "$id"
     return
   fi
@@ -3420,13 +3426,17 @@ serena_args() {
 }
 
 # worktree_exclude path — that path of the worktree never committed: a line in the repository's info/exclude (shared
-# by its worktrees), added once
+# by its worktrees), added once. For .serena/, also seeds .serena/project.yml from REPO_ROOT when present.
 worktree_exclude() {
   local excl
   excl="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude" || return 1
   mkdir -p "$(dirname "$excl")"
   if [[ ! -f $excl ]] || ! grep -qxF "$1" "$excl"; then
     echo "$1" >> "$excl"
+  fi
+  if [[ $1 == .serena/ && -n ${REPO_ROOT:-} && -f $REPO_ROOT/.serena/project.yml && ! -f $WORKTREE/.serena/project.yml ]]; then
+    mkdir -p "$WORKTREE/.serena"
+    cp "$REPO_ROOT/.serena/project.yml" "$WORKTREE/.serena/project.yml"
   fi
 }
 
@@ -5194,7 +5204,7 @@ cmd__runner() {
     pf="$dir/prompt-$nrun.md"
     R[HANG_MIN]=$AGENT_HANG_MIN
     automation_allowed "$id" || return 1
-    render "$PROMPTS/hang-resume.md" > "$pf"
+    { continuation_rules; render "$PROMPTS/hang-resume.md"; } > "$pf"
     act "$id" info "↻ resumed after a hang ($hangs/$AGENT_HANG_STRIKES)"
   done
   printf '%s\n' "$FINAL" > "$dir/final.md"

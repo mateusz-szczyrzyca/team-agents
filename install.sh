@@ -147,6 +147,13 @@ echo "» configuration"
 if [[ ! -f $AH/agents.conf ]]; then
   install -m 644 "$SRC/config/agents.conf" "$AH/agents.conf"
 elif ! cmp -s "$SRC/config/agents.conf" "$AH/agents.conf"; then
+  if [[ -x $HOME/.local/bin/serena ]] || command -v serena >/dev/null 2>&1; then
+    if grep -qx 'AGENT_SERENA=""' "$AH/agents.conf"; then
+      sed -i 's/^AGENT_SERENA=""$/AGENT_SERENA="serena"/' "$AH/agents.conf"
+    elif ! grep -q '^AGENT_SERENA=' "$AH/agents.conf"; then
+      printf '\nAGENT_SERENA="serena"\n' >> "$AH/agents.conf"
+    fi
+  fi
   install -m 644 "$SRC/config/agents.conf" "$AH/agents.conf.new"
   echo "  agents.conf exists — the new template was saved as agents.conf.new (compare: diff -u $AH/agents.conf $AH/agents.conf.new)"
 fi
