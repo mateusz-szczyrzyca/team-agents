@@ -593,3 +593,21 @@ tests/unit/team_stop_followup.bats	a run that continues a team member (a bounce)
 tests/unit/team_stop_followup.bats	a wake held back by --investigation is recorded and replayed once the investigation ends	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a finished --investigation still marked waiting does not block a normal team	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a helper's task text is in English: the requester's context goes under Context	source	R35	-	planned
+tests/unit/team_stop_review.bats	a member stopped by the human gives its board items back and its coordinator is told	source	R35	-	planned
+tests/unit/team_stop_review.bats	a member of a team the human stopped as a whole is not reported out and keeps its board items	source	R35	-	planned
+tests/unit/team_stop_review.bats	the members of a closed team are not told that its stopped coordinator is out	source	R35	-	planned
+tests/unit/team_stop_review.bats	an investigator requested by an agent and stopped by the human delivers a failed result to its requester	source	R35	-	planned
+tests/unit/team_stop_review.bats	an independent investigator stopped by the human delivers nothing to a requester	source	R35	-	planned
+tests/unit/team_stop_review.bats	a helper stopped by the human sends a failed result to the agent that delegated to it	source	R35	-	planned
+tests/unit/team_stop_review.bats	a hung or excluded member of a finished --investigation does not block a normal team	source	R35	-	planned
+tests/unit/team_stop_review.bats	a hung member blocks nobody even while its --investigation's record is not finished	source	R35	-	planned
+tests/unit/team_stop_review.bats	a member still marked running does not block a normal team once its --investigation was stopped	source	R35	-	planned
+tests/unit/team_stop_review.bats	a running member of an --investigation in progress still blocks a normal team	source	R35	-	planned
+tests/unit/team_stop_review.bats	answers to a waiting member can be written while --investigation is in progress; the resume is refused	source	R35	-	planned
+tests/unit/team_stop_review.bats	a stopped task's answers are still refused before the editor opens	source	R35	-	planned
+tests/unit/team_stop_review.bats	a fresh session's prompt has the PR ownership rules and the Serena part once	source	R35	-	planned
+tests/unit/team_stop_review.bats	the PR ownership rules tell a coordinator what to do when the subject's PR is on a branch it may not push	source	R35	-	planned
+tests/unit/team_stop_review.bats	install.sh keeps an explicit empty AGENT_SERENA in an existing agents.conf, Serena installed	blackbox	R55	-	planned
+tests/unit/team_stop_review.bats	install.sh adds AGENT_SERENA to an existing agents.conf without it when Serena is installed, and says so	blackbox	R55	-	planned
+tests/unit/team_stop_review.bats	install.sh leaves Serena off in a fresh agents.conf when it is not installed, and says so	blackbox	R55	-	planned
+tests/unit/team_stop_review.bats	install.sh enables Serena in a fresh agents.conf when it is installed	blackbox	R55	-	planned
