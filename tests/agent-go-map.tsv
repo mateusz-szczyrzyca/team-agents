@@ -212,6 +212,8 @@ tests/unit/job_attribution_paths.bats	the node passes normalized origin attribut
 tests/unit/kick.bats	kicking a solo task stops its run and records it	blackbox	R25	-	planned
 tests/unit/kick.bats	kicking a team member ends its run without leaving the team: it sleeps or is woken again, the coordinator is told	blackbox	R25	-	planned
 tests/unit/kick.bats	kicking a task that does not run is refused	blackbox	R25	-	planned
+tests/unit/kick.bats	kicking a team member after its team is done marks it stopped, not sleeping	blackbox	R25	-	planned
+tests/unit/kick.bats	stopping a team member on demand marks its bus member state as stopped, not sleeping	blackbox	R25	-	planned
 tests/unit/lead.bats	agent lead needs LEAD_LISTEN and says how to set it	blackbox	R41	-	planned
 tests/unit/lead.bats	agent lead refuses a public listen address (agentbus lead decides)	blackbox	R41	-	planned
 tests/unit/lead.bats	agent lead serves its API on its address and on 127.0.0.1, and stops on SIGTERM	blackbox	R41	-	planned
@@ -551,3 +553,4 @@ tests/unit/serena.bats	gemini (Antigravity): serena in the workspace's MCP file,
 tests/unit/serena.bats	opencode: serena as a local server, context ide, on	source	R12	-	planned
 tests/unit/serena.bats	Serena's project folder in a worktree is never committed: .serena/ is excluded	source	R12	-	planned
 tests/unit/serena.bats	the prompt tells the agent to navigate with Serena only when it is on	source	R12	-	planned
+tests/unit/dashboard_lifecycle.bats	dashboard stopped runner exits without restarting team automation	source	R35	-	planned

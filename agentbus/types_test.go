@@ -138,3 +138,17 @@ func TestToolArgumentsAreValidatedAgainstTheSchema(t *testing.T) {
 
 // osWriteFile writes a test file with private permissions.
 func osWriteFile(path string, data []byte) error { return os.WriteFile(path, data, 0o600) }
+
+func TestMemberStoppedState(t *testing.T) {
+	v, verr := parseEnum[MemberState]("stopped", "member state")
+	if verr != nil || string(v) != "stopped" {
+		t.Fatalf("stopped must be a valid member state: got %q, %v", v, verr)
+	}
+	var m TeamMember
+	if err := json.Unmarshal([]byte(`{"role":"member","tier":"worker","type":"claude","model":"haiku","task":"t1","state":"stopped"}`), &m); err != nil {
+		t.Fatalf("unmarshal stopped member: %v", err)
+	}
+	if string(m.State) != "stopped" {
+		t.Fatalf("member state: got %q, want stopped", m.State)
+	}
+}
