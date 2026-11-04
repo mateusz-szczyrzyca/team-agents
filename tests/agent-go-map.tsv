@@ -551,3 +551,8 @@ tests/unit/serena.bats	gemini (Antigravity): serena in the workspace's MCP file,
 tests/unit/serena.bats	opencode: serena as a local server, context ide, on	source	R12	-	planned
 tests/unit/serena.bats	Serena's project folder in a worktree is never committed: .serena/ is excluded	source	R12	-	planned
 tests/unit/serena.bats	the prompt tells the agent to navigate with Serena only when it is on	source	R12	-	planned
+tests/unit/team_member_sync.bats	agent-gh refuses gh pr merge from any agent, logs github_pr_merge_refused, and allows AGENT_AUTOPILOT_MERGE=1	blackbox	R11	-	planned
+tests/unit/team_member_sync.bats	agent-gh resolves the coordinator dynamically during Run 1 and refuses member gh pr ready, close, reopen and edit	blackbox	R11	-	planned
+tests/unit/team_member_sync.bats	run_claude disables Claude Code ToolSearch in claude-settings.json so agentbus MCP tools load directly	blackbox	R23	-	planned
+tests/unit/team_member_sync.bats	round_pr_note instructs only the coordinator to merge member branches onto the round's PR branch	source	R33	-	planned
+tests/unit/team_member_sync.bats	a non-coordinator member's STATUS: ROUND_DONE does not override the coordinator's WORK_ROUND	blackbox	R33	-	planned
