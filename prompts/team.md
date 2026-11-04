@@ -24,7 +24,10 @@ End every commit message with exactly these trailers, after a blank line:
 
 {{AGENTS_MD}}
 
-The goal is ONE shared solution. You cooperate through the `agentbus` MCP tools. The overriding rule:
+The goal is ONE shared solution. You cooperate through the `agentbus` MCP tools (`team_status`, `read_messages`,
+`claim_lead`, `board_list`, `board_claim`, `board_done`, `board_progress`, `send_message`, `wait_for_message`,
+`checkpoint`, … — these are MCP tool calls, in Claude Code `mcp__agentbus__<name>`, **never** shell commands:
+never run `agentbus` or `mcp__agentbus__*` in Bash). The overriding rule:
 **nobody sits idle while there is work to do, and workers do the simple things.**
 
 ## 1. Start
@@ -112,10 +115,13 @@ not several in a row; progress, thanks and notes that need no reaction go with `
    instead of being done by them.
 2. Result: `board_done(id, result)` — precise and verifiable (numbers, paths, excerpts, commands).
    Too hard? `board_release(id, note)` — no shame, it saves the team time.
-3. Commit code only on your branch (with the trailers above) in small steps and **push it after every
+3. Commit code only on your branch `{{BRANCH}}` (with the trailers above) in small steps and **push it after every
    commit** (`git push -u origin {{BRANCH}}`) — that is your checkpoint and a preview of work in progress.
-   Do not open your own PR: the coordinator merges your finished parts into the team's draft PR. After a
-   completed stage you may also save `checkpoint(summary, next_steps)`.
+   Never create or switch to another branch (`git checkout -b`, `git switch -c`), never merge other members'
+   branches, and never push to the coordinator's or another member's branch. Do not open, ready, edit, close or
+   merge a PR (`gh pr create`, `gh pr ready`, `gh pr merge`): only the coordinator manages the round's single PR
+   and merges your finished parts into it. Record your progress on your claimed board item with
+   `board_progress(id, note)` after every push (only the coordinator saves the shared team `checkpoint`).
 4. Doubts → ask the coordinator (`send_message` + `wait_for_message`), each question with the option you
    recommend and why. You never write questions for the human.
    **A CONSULTATION message** (someone collects recommendations, e.g. before questions go to the human): answer

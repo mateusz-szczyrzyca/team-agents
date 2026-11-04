@@ -183,12 +183,36 @@ gh_show() {
   if [[ -n $2 ]]; then jq -r "$2" <<< "$1"; else printf '%s\n' "$1"; fi
 }
 
-# a team member opens no PR: the round has one, its coordinator's, which takes the member's work in
-# (AGENT_GH_COORDINATOR: the coordinator of the member's team, set by the runner; empty for anyone else)
-if [[ ${1:-} == pr && ${2:-} == create && -n ${AGENT_GH_COORDINATOR:-} ]]; then
+if [[ ${1:-} == pr && ${2:-} == merge && ${AGENT_AUTOPILOT_MERGE:-} != 1 ]]; then
+  gh_log github_pr_merge_refused "an agent's gh pr merge is refused: the human or --autopilot merges the PR after the reviews pass"
+  echo "agent-gh: agents do not merge pull requests — the human (or --autopilot after the reviews pass) merges the PR." >&2
+  exit 1
+fi
+
+# a team member opens no PR and does not ready, close, reopen or edit one: the round has one PR, its coordinator's
+# (AGENT_GH_COORDINATOR: set by the runner; when empty at run start in Run 1, AGENT_GH_TASK resolves the team's
+# current coordinator from the bus state)
+gh_coord=${AGENT_GH_COORDINATOR:-}
+if [[ -z $gh_coord && -n ${AGENT_GH_TASK:-} && -f ${AGENTS_HOME:-$HOME/agents}/tasks/$AGENT_GH_TASK/meta.env ]]; then
+  gh_meta=${AGENTS_HOME:-$HOME/agents}/tasks/$AGENT_GH_TASK/meta.env
+  gh_team=$(sed -n 's/^TEAM=//p' "$gh_meta")
+  gh_kind=$(sed -n 's/^KIND=//p' "$gh_meta")
+  gh_agent=$(sed -n 's/^AGENT=//p' "$gh_meta")
+  if [[ -n $gh_team && $gh_kind != investigation* && -f ${AGENTS_HOME:-$HOME/agents}/bus/state.json ]]; then
+    gh_lead=$(jq -r --arg t "$gh_team" '.teams[$t].lead // empty' "${AGENTS_HOME:-$HOME/agents}/bus/state.json" 2>/dev/null) || gh_lead=""
+    [[ -z $gh_lead || $gh_lead == "$gh_agent" ]] || gh_coord=$gh_lead
+  fi
+fi
+if [[ ${1:-} == pr && ${2:-} == create && -n $gh_coord ]]; then
   gh_log github_member_pr_refused "a team member's gh pr create is refused: its coordinator opens the round's PR" \
-    "coordinator=$AGENT_GH_COORDINATOR"
-  echo "agent-gh: a team member does not open a PR — the round has one, opened by its coordinator ($AGENT_GH_COORDINATOR). Push your branch and tell the coordinator what is on it (a board item or a message): it merges your work into the round's PR." >&2
+    "coordinator=$gh_coord"
+  echo "agent-gh: a team member does not open a PR — the round has one, opened by its coordinator ($gh_coord). Push your branch and tell the coordinator what is on it (a board item or a message): it merges your work into the round's PR." >&2
+  exit 1
+fi
+if [[ ${1:-} == pr && (${2:-} == ready || ${2:-} == close || ${2:-} == reopen || ${2:-} == edit) && -n $gh_coord && ${AGENT_AUTOPILOT_MERGE:-} != 1 ]]; then
+  gh_log github_member_pr_refused "a team member's gh pr $2 is refused: only its coordinator manages the round's PR" \
+    "coordinator=$gh_coord" "action=$2"
+  echo "agent-gh: a team member does not $2 a PR — only the team's coordinator ($gh_coord) manages the round's PR." >&2
   exit 1
 fi
 
@@ -1506,7 +1530,8 @@ agents_gh_env() {
     fi
   fi
   AGENT_GH_COORDINATOR=$(gh_coordinator "${RUNNER_ID:-}")   # a team member's: its gh pr create is refused
-  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE="" AGENT_GITHUB_COLORS AGENT_GH_COORDINATOR
+  AGENT_GH_TASK=${RUNNER_ID:-}
+  export AGENT_REAL_GH=$real AGENT_GITHUB_TRUSTED_RESOLVED AGENT_REVIEW_BYLINE="" AGENT_GITHUB_COLORS AGENT_GH_COORDINATOR AGENT_GH_TASK
   local names=()
   mapfile -t names < <(run_github_names)
   github_colour_register "${names[@]}"
@@ -1644,12 +1669,12 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
     return 0
   fi
   if [[ $(cd "$root" && gh pr view "$url" --json isDraft --jq .isDraft 2>/dev/null) == true ]]; then   # a draft is made ready first
-    (cd "$root" && try pr_ready_failed gh pr ready "$url" >/dev/null)
+    (cd "$root" && AGENT_AUTOPILOT_MERGE=1 try pr_ready_failed gh pr ready "$url" >/dev/null)
   fi
   local match=() checked   # only the commit the checks and the reviews had: anything pushed since stops the merge
   checked=$(task_field "$id" PRECHECK_HEAD)
   [[ -z $checked ]] || match=(--match-head-commit "$checked")
-  if ! out=$(cd "$root" && gh pr merge "$url" --merge "${match[@]}" 2>&1); then
+  if ! out=$(cd "$root" && AGENT_AUTOPILOT_MERGE=1 gh pr merge "$url" --merge "${match[@]}" 2>&1); then
     auto_stage "$id" "waits for you: merging PR #$num failed"
     notify "$id" failed "" "⛔ autopilot stopped: merging PR #$num failed — your decision is needed: ${out:0:300} $url"
     log_error autopilot_merge_failed "task=$id" "reason=${out:0:300}"
@@ -1780,8 +1805,8 @@ round_pr_note() {
     done
   fi
   [[ -n $num ]] || return 0
-  printf "This round's PR is #%s%s. Every commit of this round goes there: a member — or a new coordinator — merges %s into its own branch and pushes it there (git push origin HEAD:%s). Never open another PR for this round: the checks send a round with two open PRs back.\n" \
-    "$num" "${branch:+ (branch $branch)}" "${branch:+origin/$branch}" "${branch:-<its branch>}"
+  printf "This round's PR is #%s%s. Every commit of this round goes there: a member commits and pushes only to its own branch, and the coordinator merges the members' branches into %s and pushes it there (a new coordinator fetches %s and pushes to %s: git push origin HEAD:%s). Never open another PR for this round: the checks send a round with two open PRs back.\n" \
+    "$num" "${branch:+ (branch $branch)}" "${branch:-the PR branch}" "${branch:+origin/$branch}" "${branch:-the PR branch}" "${branch:-<its branch>}"
 }
 
 # round_pr_of_team team — the round's PR its coordinator had: its PR_NUMBER, or the ROUND_PR it carried; "" for none
@@ -3366,8 +3391,9 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
       '{mcpServers: {agentbus: {command: $cmd, args: $args}}}' > "$dir/mcp.json"
   fi
   mcp_add_serena "$dir/mcp.json" claude
-  # Claude Code's own attribution off: the commit trailers and the PR's attribution are the script's
-  echo '{"includeCoAuthoredBy": false, "attribution": {"commit": "", "pr": ""}}' > "$dir/claude-settings.json"
+  # Claude Code's own attribution off: the commit trailers and the PR's attribution are the script's;
+  # ENABLE_TOOL_SEARCH=false loads agentbus MCP tools directly on turn 1 instead of hiding them behind ToolSearch
+  echo '{"includeCoAuthoredBy": false, "attribution": {"commit": "", "pr": ""}, "env": {"ENABLE_TOOL_SEARCH": "false"}}' > "$dir/claude-settings.json"
   args+=(--settings "$dir/claude-settings.json")
   if [[ -n ${MODEL:-} ]]; then args+=(--model "$MODEL"); fi
   if [[ $mode == new ]]; then args+=(--session-id "$SESSION_ID"); else args+=(--resume "$SESSION_ID"); fi
@@ -3375,7 +3401,7 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   args+=("${extra[@]}")
   RC=0
   ( cd "$WORKTREE" || exit 1
-    "${CLI_SESSION[@]}" "$CLAUDE_BIN" "${args[@]}" "$(cli_prompt "$pf")" </dev/null 2>"$dir/err-$n.log" \
+    ENABLE_TOOL_SEARCH=false "${CLI_SESSION[@]}" "$CLAUDE_BIN" "${args[@]}" "$(cli_prompt "$pf")" </dev/null 2>"$dir/err-$n.log" \
       | tee "$dir/out-$n.jsonl" | "$AGENTBUS_BIN" normalize --type claude --full "$dir/activity-full.jsonl" >> "$dir/activity.jsonl"
     exit "${PIPESTATUS[0]}" ) &
   watch_run $! "$dir" "$n" || RC=$?
@@ -5253,13 +5279,16 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     fi
   elif [[ $fst == DONE || $fst == ROUND_DONE ]]; then
     status=done
-    if [[ $fst == ROUND_DONE ]]; then   # "STATUS: ROUND_DONE N/M": round N of M is finished
-      local rn
+    if [[ $fst == ROUND_DONE ]]; then   # "STATUS: ROUND_DONE N/M": round N of M is finished (in a team with a coordinator, only the coordinator's counts)
+      local rn rlead=""
+      [[ -z ${TEAM:-} ]] || rlead=$(team_lead "$TEAM")
       rn=$(sed 's/[*`]//g' <<< "$FINAL" | { grep -oE 'STATUS:[[:space:]]*ROUND_DONE[[:space:]]+[0-9]+/[0-9]+' || (($? == 1)); } \
              | head -1 | { grep -oE '[0-9]+/[0-9]+$' || (($? == 1)); })
       if [[ -n $rn ]] && ((${rn%/*} >= 1 && ${rn%/*} <= ${rn#*/})); then
-        meta_set "$id" WORK_ROUND "${rn%/*}"; meta_set "$id" WORK_ROUNDS "${rn#*/}"
-        note="round $rn"
+        if [[ -z $rlead || $AGENT == "$rlead" ]]; then
+          meta_set "$id" WORK_ROUND "${rn%/*}"; meta_set "$id" WORK_ROUNDS "${rn#*/}"
+          note="round $rn"
+        fi
       else
         status=failed; note="STATUS: ROUND_DONE needs the round as N/M (e.g. ROUND_DONE 2/5)"
       fi
@@ -5771,9 +5800,12 @@ resume_run() {
 
   # rounds: after STATUS: ROUND_DONE the next round starts only once its PR is merged, on fresh branches from the
   # updated base; --same-round continues the same round on the same branches (e.g. for review fixes)
-  local rtask="" wr="" wrs="" fresh=0 round_title="" round_head=""
+  local rtask="" wr="" wrs="" fresh=0 round_title="" round_head="" rlead=""
+  [[ -z ${tj:-} ]] || rlead=$(jq -r '.lead // empty' <<< "$tj")
   for t in "${olds[@]}"; do
-    if [[ -n $(task_field "$t" WORK_ROUND) ]]; then rtask=$t; fi
+    if [[ -n $(task_field "$t" WORK_ROUND) ]]; then
+      [[ -n $rtask && -n $rlead && $(task_field "$rtask" AGENT) == "$rlead" ]] || rtask=$t
+    fi
   done
   if [[ -n $rtask ]]; then
     wr=$(task_field "$rtask" WORK_ROUND); wrs=$(task_field "$rtask" WORK_ROUNDS)
