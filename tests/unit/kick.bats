@@ -45,3 +45,42 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
   [ "$status" -ne 0 ]
   [[ $output == *"not running"* ]]
 }
+
+@test "kicking a team member after its team is done marks it stopped, not sleeping" {
+  scenario '{"lead": {"new": "sleep:60"}, "member": {"new": "sleep:60"}}'
+  agent run --team lead,member "team task"
+  l=$(task_of lead)
+  m=$(task_of member)
+  wait_status "$l" running
+  wait_status "$m" running
+  team=$(meta "$m" TEAM)
+  agentbus team-done --dir "$AGENTS_HOME/bus" --team "$team"
+  [ "$(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.done')" = true ]
+
+  run agent kick "$m" web
+  [ "$status" -eq 0 ]
+  [ "$(meta "$m" STATUS)" = stopped ]
+  [ -n "$(meta "$m" FINISHED)" ]
+  [ "$(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.members.member.state')" = stopped ]
+}
+
+@test "stopping a team member on demand marks its bus member state as stopped, not sleeping" {
+  scenario '{"lead": {"new": "sleep:60"}, "member": {"new": "sleep:60"}}'
+  agent run --team lead,member "team task"
+  l=$(task_of lead)
+  m=$(task_of member)
+  wait_status "$l" running
+  wait_status "$m" running
+  team=$(meta "$m" TEAM)
+
+  run agent stop "$m"
+  [ "$status" -eq 0 ]
+  [ "$(meta "$m" STATUS)" = stopped ]
+  [ "$(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.members.member.state')" = stopped ]
+
+  run agent stop --running
+  [ "$status" -eq 0 ]
+  [ "$(meta "$l" STATUS)" = stopped ]
+  [ "$(agentbus team-get --dir "$AGENTS_HOME/bus" --team "$team" | jq -r '.members.lead.state')" = stopped ]
+}
+

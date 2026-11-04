@@ -48,3 +48,33 @@ func TestPairColoursOutrankTheListRule(t *testing.T) {
 
 // itoa writes a small number.
 func itoa(i int) string { return strconv.Itoa(i) }
+
+func TestStoppedTeamMemberIsNotShownAsSleeping(t *testing.T) {
+	home := fixture(t)
+	now := time.Now().Format(time.RFC3339)
+	addTask(t, home, "20261104-122828-gemini-1",
+		"AGENT=gemini-1\nTYPE=gemini\nMODEL=gemini-3.1-pro\nSTATUS=done\nRUN=1\n"+
+			"TEAM=20261104-122828-team\nTEAM_ROLE=coordinator\nCREATED="+now+"\nSTARTED="+now+"\nFINISHED="+now+"\n")
+	addTask(t, home, "20261104-122828-claude-haiku",
+		"AGENT=claude-haiku\nTYPE=claude\nMODEL=haiku\nSTATUS=stopped\nRUN=1\n"+
+			"TEAM=20261104-122828-team\nTEAM_ROLE=member\nCREATED="+now+"\nSTARTED="+now+"\nFINISHED="+now+"\n")
+	state := `{"teams":{"20261104-122828-team":{"id":"20261104-122828-team","created":"2026-11-04 12:28:28","done":true,` +
+		`"members":{` +
+		`"gemini-1":{"role":"coordinator","tier":"normal","type":"gemini","model":"gemini-3.1-pro","task":"20261104-122828-gemini-1","state":"done"},` +
+		`"claude-haiku":{"role":"member","tier":"worker","type":"claude","model":"haiku","task":"20261104-122828-claude-haiku","state":"sleeping"}` +
+		`},"board":[]}}}`
+	writeFile(t, filepath.Join(home, "bus", "state.json"), state)
+
+	_, ts := testServer(t, home)
+	for _, path := range []string{"/teams", "/team/20261104-122828-team"} {
+		_, body := get(t, ts, path)
+		if strings.Contains(body, ">sleeping<") || strings.Contains(body, "claude-haiku: sleeping") {
+			t.Fatalf("%s showed stopped member claude-haiku as sleeping:\n%s", path, body)
+		}
+	}
+	_, teamBody := get(t, ts, "/team/20261104-122828-team")
+	mustContain(t, "/team/20261104-122828-team", teamBody, ">stopped<")
+	_, teamsBody := get(t, ts, "/teams")
+	mustContain(t, "/teams", teamsBody, "claude-haiku: stopped")
+}
+
