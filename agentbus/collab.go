@@ -885,10 +885,17 @@ func cmdBoardReleaseAgent(args []string) {
 
 // ---------------------------------------------------------------- checkpoints
 
-// checkpointKey returns the checkpoint file key: "team-<id>" in a team, else "task-<id>".
-func (s *Server) checkpointKey() string {
+// checkpointKey returns the checkpoint file key: "team-<id>" in a team (for its coordinator, or before one is
+// chosen), else "task-<id>" (or "member-<team>-<agent>" when a non-coordinator member has no task ID).
+func (s *Server) checkpointKey(t *Team) string {
 	if s.team != "" {
-		return "team-" + s.team
+		if t == nil || t.Lead == "" || t.Lead == s.me {
+			return "team-" + s.team
+		}
+		if s.info.Task != "" {
+			return "task-" + s.info.Task
+		}
+		return "member-" + s.team + "-" + s.me
 	}
 	return "task-" + s.info.Task
 }
@@ -922,17 +929,26 @@ func (s *Server) checkpoint(summary, next string) (string, *CheckpointError) {
 	if summary == "" {
 		return "", opErr(CheckpointMissingSummary, "%s", missing("summary"))
 	}
+	var memberOnly bool
 	err := transact(s.bus, CheckpointStorage, func(st *State) *CheckpointError {
 		s.touch(st)
-		entry := renderCheckpoint(Now(), s.me, s.info.Branch, summary, strings.TrimSpace(next), s.myTeam(st))
-		if serr := appendFile(s.bus.checkpointPath(s.checkpointKey()), entry); serr != nil {
+		t := s.myTeam(st)
+		memberOnly = t != nil && t.Lead != "" && t.Lead != s.me
+		entry := renderCheckpoint(Now(), s.me, s.info.Branch, summary, strings.TrimSpace(next), t)
+		if serr := appendFile(s.bus.checkpointPath(s.checkpointKey(t)), entry); serr != nil {
 			return fromStorage(CheckpointStorage, serr)
+		}
+		if memberOnly {
+			return nil
 		}
 		_, serr := s.bus.post(st, s.me, "all", EventCheckpoint{Summary: summary})
 		return fromStorage(CheckpointStorage, serr)
 	})
 	if err != nil {
 		return "", err
+	}
+	if memberOnly {
+		return "Checkpoint saved for your task (only the coordinator updates the team checkpoint; record your board item progress with board_progress). Make sure your commits are pushed (git push).", nil
 	}
 	return "Checkpoint saved. Make sure your commits are pushed (git push) — resuming starts from the pushed branches.", nil
 }

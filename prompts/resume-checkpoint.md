@@ -8,6 +8,8 @@ task above contains an "Addition from the human" section). **Do not start from s
 - In a team: the coordinator stays the same (unless it hung), **there is no quiz** (everyone already passed it),
   and the board is preserved — items that were in progress are back in "todo".
 - First: read the checkpoints below, `git log`, `read_messages` (in a team also `team_status`, `board_list`).
-  Then continue from the "next steps" of the last checkpoint, taking the human's addition into account.
+  Then continue from the "next steps" of the last checkpoint — in a team, the coordinator's last checkpoint: a
+  member's records its own progress and never moves the team on (to the next round, say) — taking the human's
+  addition into account.
 - Questions the human already answered are below — do not ask them again. If the addition raises new
   ambiguities, ask according to the rules (in a team — through the coordinator).

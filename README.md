@@ -295,7 +295,10 @@ progress ("make gate — 2 of 6 steps passed"), the two reviews and their verdic
 "waits for you: …" where you decide. What a round's checks and reviews send back to its team (a fix pass, a bounce) is for that round only: the next
 round's task text leaves it out, and keeps your own additions. A round has one PR: the next round starts only when no PR of the round's branches is left open (merge or close it,
 or finish the round with `--same-round`); the checks send a round with more than one open PR back to its team; and a
-resumed round's text says which is its PR and that every commit of the round goes to its branch. A member's uncommitted work goes on into its resumed worktree (stashed; when git refuses it as it is — a file added
+resumed round's text says which is its PR and that every commit of the round goes to its branch, through the
+coordinator: a member pushes its own branch and the coordinator merges it. A round resumed with `--same-round` again
+keeps only its newest heading and PR note (what its checks and reviews sent back stays), and when the round's PR is
+merged already, the heading says so: what comes now is the round's follow-up, and the next round has not started. A member's uncommitted work goes on into its resumed worktree (stashed; when git refuses it as it is — a file added
 with `--intent-to-add` — it is staged and stashed again). A team that cannot take its work back — a resume refused — waits for you the same way, with
 the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
@@ -322,8 +325,12 @@ check it on GitHub's real data (`github_comment_marked_ignored`). A fork's PR, o
 not shown at all; `gh pr list` and `gh issue list` give only the trusted accounts' PRs and issues (each left out is
 logged too); and a GraphQL query for comments or reviews is refused. This keeps other people's text from
 reaching an agent; it does not hold back an agent that bypasses `gh` with its token, so limit who may comment
-(the repository's interaction limits) and what the agents' token may do (a fine-grained token for this repository). A team member's `gh pr create` is refused too (logged as `github_member_pr_refused`): a round has one PR, its
-coordinator's; the member is told to push its branch and tell the coordinator, which merges its work into that PR.
+(the repository's interaction limits) and what the agents' token may do (a fine-grained token for this repository). A team member's `gh pr create`, `gh pr merge`, `gh pr ready`, `gh pr close`, `gh pr reopen` and `gh pr edit` are refused too (logged as
+`github_member_pr_refused`, with the `action`): a round has one PR, its coordinator's, and you (or `--autopilot`)
+merge it; the member is told to push its branch and tell the coordinator, which merges its work into that PR. Who
+coordinates is asked of the bus when the command runs — a new team has no coordinator yet when its first runs
+start (then a member's PR commands are refused too), and a member can take over during a run (logged as
+`github_coordinator_unknown` when the bus does not answer; then the coordinator at the run's start counts).
 
 **A PR's next review is another pair's.** In every `AGENT_REVIEW_DRAW` mode, the pair that reviewed a PR does not
 review it again while another pair can — its re-review after a fix pass goes to other investigators, who get the
@@ -670,6 +677,7 @@ Then:
 | `NOTIFY_CMD`, `NOTIFY_DIR`, `NOTIFY_MAX_CHARS` | notifications (see below) |
 | `CLAUDE_BIN`, `CODEX_BIN`, `AGY_BIN`, `OPENCODE_BIN` | CLI paths |
 | `AUTH_MODEL_*` | cheap models used by `agent authenticated --providers` (the per-agent check uses each agent's model) |
+| `CLAUDE_TOOL_SEARCH` | Claude Code's tool search (its `ENABLE_TOOL_SEARCH`, set in each run's settings): `false` (default) gives the model every tool up front, the agentbus tools included — deferred behind tool search, they were loaded and then run in the shell by `claude-haiku`, which then worked without its team; `true`, `auto`, `auto:N` are passed on; `default` leaves it to Claude Code |
 | `BRANCH_PREFIX`, `CLAUDE_MAX_TURNS`, `AGY_PRINT_TIMEOUT`, `OPENCODE_BASH_TIMEOUT_MS` | misc |
 
 A paused task (a provider's limit, the network) resumes by itself at its pause's end; `agent wake <task>` resumes it
