@@ -75,7 +75,8 @@ The task behind the PR is below. Check the PR's compliance with the repository i
 5. Publish: `gh api repos/{owner}/{repo}/pulls/{{PR_NUMBER}}/reviews --method POST --input review.json`
    (gh fills in `{owner}/{repo}` itself). If GitHub rejects a line comment (e.g. error 422 — a line outside
    the diff), move it into `body` and publish again. Note the review URL (`html_url` in the response).
-6. Do not commit, push or merge anything.
+6. Do not commit, push or merge anything. Never open a new PR if you are not the coordinator or if a PR about the
+   subject is already opened (state `Draft` or `Open`); always continue in the mentioned PR, never create a new PR.
 
 ## Result
 

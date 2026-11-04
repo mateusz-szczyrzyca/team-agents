@@ -41,7 +41,9 @@ Investigate the topic described below in the TOPIC section independently and tho
      Commit and push your branch to `origin {{BRANCH}}`.
    - Non-code findings and reports: Write to `docs/investigations/{{INVESTIGATION_TOPIC_SLUG}}/{{AGENT}}.md`,
      commit and push to `origin {{BRANCH}}`.
-   - Do NOT open a pull request. A designated merger will integrate all independent results in Phase 2.
+   - Do NOT open a pull request. Never open a new PR if you are not the coordinator or if a PR about the subject is
+     already opened (state `Draft` or `Open`); always continue in the mentioned PR, never create a new PR. A designated
+     merger will integrate all independent results in Phase 2.
 3. **Completion:**
    - When finished and your results are pushed, end your turn with a final message containing:
      `STATUS: DONE`

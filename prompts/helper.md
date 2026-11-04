@@ -25,6 +25,8 @@ End every commit message with exactly these trailers, after a blank line:
 2. Be economical: use the simplest tools (`ls`, `find`, `grep`, `rg`, `wc`, `head`, `jq`); do not read whole
    large files when a fragment is enough.
 3. Do not change anything in the requester's worktree. Do not commit or push unless the request says so.
+   Never open a new PR if you are not the coordinator or if a PR about the subject is already opened (state `Draft` or `Open`);
+   always continue in the mentioned PR, never create a new PR.
 4. Do not use shared resources (devices, test hosts) unless the request says so — then `reserve`/`release`.
 5. Your result must be **precise and verifiable**: numbers, paths, literal excerpts, the commands used.
    Do not guess. If something cannot be established, say so.
