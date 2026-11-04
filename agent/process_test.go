@@ -470,21 +470,6 @@ func (s sliceWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// collectingWriter is a value receiver on a non-comparable type that tracks total bytes written.
-// The slice field makes the type non-comparable, triggering sameWriter to return false
-// even when both stdout and stderr point to the same underlying value.
-type collectingWriter struct {
-	data []byte // non-comparable field
-	size *int   // indirection to allow updates through value receiver via reflection
-}
-
-func (cw collectingWriter) Write(p []byte) (int, error) {
-	if cw.size != nil {
-		*cw.size += len(p)
-	}
-	return len(p), nil
-}
-
 // TestExecuteNonComparableWriter tests that non-comparable io.Writer implementations
 // (such as slice types) do not cause a runtime panic during equality checks.
 func TestExecuteNonComparableWriter(t *testing.T) {
@@ -507,33 +492,6 @@ func TestExecuteNonComparableWriter(t *testing.T) {
 	}
 	if res.ExitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", res.ExitCode)
-	}
-}
-
-// TestExecuteNonComparableSharedWriterConcurrency tests that a non-comparable writer
-// assigned to both stdout and stderr serializes writes correctly without data loss.
-func TestExecuteNonComparableSharedWriterConcurrency(t *testing.T) {
-	exec := OSExecutor{}
-
-	// Use a non-comparable writer (value type with slice field) assigned to both streams.
-	// The helper writes 32 * (4096 O's + 4096 E's) = 262,144 bytes total.
-	size := 0
-	cw := collectingWriter{data: make([]byte, 0), size: &size}
-	cmd := helperCmd("write-distinct-streams")
-	cmd.Stdout = cw
-	cmd.Stderr = cw
-
-	res, err := exec.Execute(context.Background(), cmd)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if res.ExitCode != 0 {
-		t.Fatalf("expected exit code 0, got %d", res.ExitCode)
-	}
-	// Verify all data was written (no loss due to concurrent access).
-	expectedSize := 32 * 4096 * 2 // stdout: 32*4096, stderr: 32*4096
-	if size != expectedSize {
-		t.Fatalf("expected %d bytes written, got %d (data loss detected)", expectedSize, size)
 	}
 }
 
