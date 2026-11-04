@@ -11,7 +11,7 @@
 <tbody>{{range .}}{{template "task-row" .}}{{else}}<tr><td colspan="5" class="dim">(no tasks)</td></tr>{{end}}</tbody>
 </table></div>{{end}}
 
-{{define "dash-table"}}{{template "task-table" .Rows}}{{end}}
+{{define "dash-table"}}{{template "task-table" .Rows}}{{if .Cut}}<p class="dim">Showing the {{len .Rows}} latest of {{.Total}} entries — <a href="/dashboard/full">Full dashboard view</a></p>{{end}}{{end}}
 
 {{define "dash-head"}}<span>{{.Queue}}</span>{{if .Waiting}} · <a href="/questions" class="st-waiting">waiting for you: {{.Waiting}}</a>{{end}}{{end}}
 

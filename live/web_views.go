@@ -115,9 +115,17 @@ type taskRow struct {
 // acknowledged as soon as their result is delivered.
 const dashRecent = 24 * time.Hour
 
+// dashShown is how many entries the default dashboard shows before the full dashboard view.
+const dashShown = 20
+
 // dashTasks are the dashboard's tasks: the active ones in the panel's order, then the finished ones — not yet
 // acknowledged, or finished within dashRecent.
 func dashTasks(snap *Snapshot) ([]*Task, []*Task) {
+	return dashTasksMode(snap, false)
+}
+
+// dashTasksMode returns the active and finished tasks for the dashboard; when full is true, all finished tasks are included.
+func dashTasksMode(snap *Snapshot, full bool) ([]*Task, []*Task) {
 	var active, done []*Task
 	proxies := localRemoteMemberProxies(snap)
 	for _, t := range snap.All {
@@ -130,7 +138,7 @@ func dashTasks(snap *Snapshot) ([]*Task, []*Task) {
 		switch {
 		case t.Active():
 			active = append(active, t)
-		case !t.Acked || time.Since(finishedAt(t)) < dashRecent:
+		case full || !t.Acked || time.Since(finishedAt(t)) < dashRecent:
 			done = append(done, t)
 		}
 	}
@@ -262,13 +270,21 @@ type dashData struct {
 	Queue   string         // the investigation queue line
 	Waiting int            // tasks waiting for answers
 	Rows    []taskRow      // the visible tasks, in the panel's order
+	Total   int            // total tasks before truncation
+	Cut     bool           // true when Rows was truncated to dashShown
+	Full    bool           // true on the full dashboard view (/dashboard/full)
 	Res     []*Reservation // reserved resources
 }
 
-// dashboard builds the dashboard's data.
+// dashboard builds the default dashboard's data (capped at dashShown latest entries).
 func (s *webServer) dashboard(snap *Snapshot) dashData {
-	d := dashData{Queue: snap.QueueLine(s.cfg.queueMax), Waiting: len(snap.Waiting()), Res: snap.Res}
-	active, done := dashTasks(snap)
+	return s.dashboardMode(snap, false)
+}
+
+// dashboardMode builds the dashboard's data; when full is false, at most dashShown entries are returned.
+func (s *webServer) dashboardMode(snap *Snapshot, full bool) dashData {
+	d := dashData{Queue: snap.QueueLine(s.cfg.queueMax), Waiting: len(snap.Waiting()), Full: full, Res: snap.Res}
+	active, done := dashTasksMode(snap, full)
 
 	var localActiveRows, localDoneRows []taskRow
 	for _, t := range active {
@@ -308,13 +324,24 @@ func (s *webServer) dashboard(snap *Snapshot) dashData {
 
 	d.Rows = append(remoteActive, localActiveRows...)
 	d.Rows = append(d.Rows, doneRows...)
+	d.Total = len(d.Rows)
+	if !full && len(d.Rows) > dashShown {
+		d.Rows = d.Rows[:dashShown]
+		d.Cut = true
+	}
 	return d
 }
 
-// viewDashboard (GET /) is the main page: the same data as `agent live`.
+// viewDashboard (GET /) is the main page: the 20 latest entries, with the same data as `agent live`.
 func (s *webServer) viewDashboard(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	s.render(w, r, http.StatusOK, "dashboard", "Dashboard", snap, s.dashboard(snap))
+}
+
+// viewDashboardFull (GET /dashboard/full) is the separate page with the full task list.
+func (s *webServer) viewDashboardFull(w http.ResponseWriter, r *http.Request) {
+	snap := s.snapshot()
+	s.render(w, r, http.StatusOK, "dashboard_full", "Full dashboard view", snap, s.dashboardMode(snap, true))
 }
 
 // eventRow is one event of the dashboard's event list (the panel's events pane).
@@ -336,6 +363,7 @@ func (s *webServer) streamDashboard(w http.ResponseWriter, r *http.Request) {
 	watcher.Poll() // the baseline: events are what happens from now on
 	tk := time.NewTicker(s.cfg.poll)
 	defer tk.Stop()
+	full := r.URL.Query().Get("all") == "1"
 	var lastTable, lastRes string
 	for {
 		select {
@@ -345,7 +373,7 @@ func (s *webServer) streamDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		snap, evs := watcher.Poll()
 		snap = s.applyRemoteControls(snap)
-		d := s.dashboard(snap)
+		d := s.dashboardMode(snap, full)
 		if table := s.fragment("dash-table", d); table != lastTable {
 			if !sseSend(w, f, "table", table) {
 				return

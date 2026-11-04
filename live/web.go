@@ -267,6 +267,7 @@ func (s *webServer) handler() http.Handler {
 	}))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeText(w, "ok") })
 	mux.HandleFunc("GET /{$}", s.viewDashboard)
+	mux.HandleFunc("GET /dashboard/full", s.viewDashboardFull)
 	mux.HandleFunc("GET /agents", s.viewAgents)
 	mux.HandleFunc("GET /agents/{id}", s.viewAgent)
 	mux.HandleFunc("GET /jobs", s.viewJobs)

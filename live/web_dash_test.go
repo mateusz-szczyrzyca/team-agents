@@ -90,12 +90,12 @@ func TestDashboardShowsAtMost20LatestEntriesAndFullDashboardViewShowsAll(t *test
 	_, ts := testServer(t, home)
 	_, dash := get(t, ts, "/")
 	mustContain(t, "/", dash, "Full dashboard view", `/dashboard/full`)
-	// fixture(t) already has 3 active tasks (solo, helper, wait1), so 3 active + 17 newest stopped = 20 rows on /.
-	// agent-1 .. agent-17 must be shown; agent-18 .. agent-25 must NOT be shown on /.
-	for i := 1; i <= 17; i++ {
+	// fixture(t) already has 4 tasks (3 active + 1 just finished), so 4 + 16 newest stopped = 20 rows on /.
+	// agent-1 .. agent-16 must be shown; agent-17 .. agent-25 must NOT be shown on /.
+	for i := 1; i <= 16; i++ {
 		mustContain(t, "/", dash, ">agent-"+strconv.Itoa(i)+"<")
 	}
-	for i := 18; i <= 25; i++ {
+	for i := 17; i <= 25; i++ {
 		if strings.Contains(dash, ">agent-"+strconv.Itoa(i)+"<") {
 			t.Fatalf("/ showed >20 entries (found agent-%d on default dashboard)", i)
 		}
