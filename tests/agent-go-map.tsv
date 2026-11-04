@@ -587,3 +587,4 @@ tests/unit/team_stop_followup.bats	a normal team's precheck still runs while --i
 tests/unit/team_stop_followup.bats	a run that continues a team member (a bounce) is not refused while --investigation is in progress	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a wake held back by --investigation is recorded and replayed once the investigation ends	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a finished --investigation still marked waiting does not block a normal team	source	R35	-	planned
+tests/unit/team_stop_followup.bats	a helper's task text is in English: the requester's context goes under Context	source	R35	-	planned

@@ -131,3 +131,16 @@ recording_self() {
   run normal_resume_allowed A
   [ "$status" -eq 0 ]
 }
+
+@test "a helper's task text is in English: the requester's context goes under Context" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/agent"
+  followup_fixture
+  meta_set A BRANCH main
+  bus() { return 0; }
+  start_runner() { return 0; }
+  start_helper '{"id":1,"from":"A","from_task":"A","request":"find the cache","context":"see cache.go"}' worker
+  local f=("$TASKS"/*-worker-h1/task.md)
+  grep -qx '## Context' "${f[0]}"
+  ! grep -q 'Kontekst' "${f[0]}"
+}
