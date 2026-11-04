@@ -20,6 +20,7 @@ setup() {
   cp "$BATS_TEST_DIRNAME/stubs/fake-claude" "$HOME/.local/bin/claude"
   cp "$REPO_ROOT"/prompts/*.md "$AGENTS_HOME/prompts/"
   export PATH="$BATS_TEST_DIRNAME/stubs:$HOME/.local/bin:$PATH"
+  unset AGENT_GITHUB_NAME_COLORS AGENT_GITHUB_COLORS
 
   cat > "$HOME/notify.sh" <<'NOTIFY'
 #!/usr/bin/env bash
