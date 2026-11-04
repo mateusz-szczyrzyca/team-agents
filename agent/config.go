@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 // Config holds all agent runtime configuration loaded from agents.conf and secrets.env.
 type Config struct {
@@ -253,4 +256,77 @@ func NewConfigError(cause ConfigErrorCause, format string, args ...interface{}) 
 		Cause:  cause,
 		Reason: fmt.Sprintf(format, args...),
 	}
+}
+
+// LoadConfigFromFile loads configuration from agents.conf file via Bash sourcing.
+func LoadConfigFromFile(filePath string) (*Config, error) {
+	c := NewConfig()
+
+	if _, err := os.Stat(filePath); err != nil {
+		return nil, fmt.Errorf("failed to load config from %s: %v", filePath, err)
+	}
+
+	// Stub: actual Bash sourcing will be implemented in config_shell.go
+	return c, nil
+}
+
+// LoadSecretsFromFile loads secrets from envfile.
+func LoadSecretsFromFile(filePath string) (map[string]string, error) {
+	env := make(map[string]string)
+
+	// Stub: file is optional, missing is not an error
+	// Actual implementation will be in envfile.go
+
+	return env, nil
+}
+
+// Validate checks that all required fields are set and internally consistent.
+func (c *Config) Validate() error {
+	if len(c.AgentType) == 0 {
+		return NewConfigError(ConfigMissingValue, "no agents configured")
+	}
+
+	// Validate agent types
+	for name, typeStr := range c.AgentType {
+		if _, err := ParseAgentType(typeStr); err != nil {
+			return fmt.Errorf("agent %q has invalid type %q: %v", name, typeStr, err)
+		}
+	}
+
+	// Validate investigator consistency
+	for name := range c.InvestigatorType {
+		if _, ok := c.InvestigatorModel[name]; !ok {
+			return fmt.Errorf("investigator %q has type but no model", name)
+		}
+	}
+	for name := range c.InvestigatorModel {
+		if _, ok := c.InvestigatorType[name]; !ok {
+			return fmt.Errorf("investigator %q has model but no type", name)
+		}
+	}
+
+	return nil
+}
+
+// ExportedEnvironment returns environment variables that should be set for agent runs.
+func (c *Config) ExportedEnvironment() map[string]string {
+	env := make(map[string]string)
+
+	if c.RunPath != "" {
+		env["RUN_PATH"] = c.RunPath
+	}
+	if c.BranchPrefix != "" {
+		env["BRANCH_PREFIX"] = c.BranchPrefix
+	}
+	if c.AgentLanguage != "" {
+		env["AGENT_LANGUAGE"] = c.AgentLanguage
+	}
+	if c.RepoLanguage != "" {
+		env["REPO_LANGUAGE"] = c.RepoLanguage
+	}
+	if c.GitSigningKey != "" {
+		env["GIT_SIGNING_KEY"] = c.GitSigningKey
+	}
+
+	return env
 }
