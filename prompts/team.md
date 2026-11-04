@@ -118,8 +118,8 @@ not several in a row; progress, thanks and notes that need no reaction go with `
 3. Commit code only on your branch (with the trailers above) in small steps and **push it after every
    commit** (`git push -u origin {{BRANCH}}`) — that is your checkpoint and a preview of work in progress.
    Do not open your own PR: the coordinator merges your finished parts into the team's draft PR. After a
-   completed stage you may also save `checkpoint(summary, next_steps)` — your own progress: the team's next steps
-   are the coordinator's.
+   completed stage you may also save `checkpoint(summary, next_steps)` — your own progress (saved to your task's
+   checkpoint file): the team's shared checkpoint and next steps are the coordinator's.
 4. Doubts → ask the coordinator (`send_message` + `wait_for_message`), each question with the option you
    recommend and why. You never write questions for the human.
    **A CONSULTATION message** (someone collects recommendations, e.g. before questions go to the human): answer
@@ -128,8 +128,8 @@ not several in a row; progress, thanks and notes that need no reaction go with `
    differently; that is what it is for.
    Do not answer with acknowledgements ("OK, on it", "thanks"): every message wakes its reader — your progress
    goes to the board (`board_progress`, `board_done`); a note that needs no reaction goes with `wake: false`.
-5. **You work in the team's round, never beside it.** Never `gh pr create`, `merge`, `ready` or `close` (the
-   agents' gh refuses a member's), never push to the coordinator's or another member's branch
+5. **You work in the team's round, never beside it.** Never `gh pr create`, `merge`, `ready`, `close`, `reopen` or
+   `edit` (the agents' gh refuses a member's), never push to the coordinator's or another member's branch
    (`git push origin HEAD:<their branch>`), never write in another worktree, and never start work the coordinator has
    not put on the board for this round: no branch of your own from the base, no board items, plans or checkpoints for
    the next round. A PR that looks ready or is merged, a plan or checkpoint that names the next round, a coordinator

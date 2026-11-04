@@ -201,12 +201,12 @@ gh_team_lead() {
   jq -r '.lead // empty' <<< "$out"
 }
 
-# a team member opens, merges, marks ready and closes no PR: the round has one, its coordinator's, which takes the
-# member's work in, and the human (or --autopilot) merges it. The coordinator is the bus's answer when the run's
-# team is known (AGENT_GH_TEAM, AGENT_GH_SELF: set by the runner for a team's task), else AGENT_GH_COORDINATOR (the
-# coordinator when the run started; empty for anyone else)
+# a team member opens, merges, marks ready, closes, reopens and edits no PR: the round has one, its coordinator's, which
+# takes the member's work in, and the human (or --autopilot) merges it. The coordinator is the bus's answer when the
+# run's team is known (AGENT_GH_TEAM, AGENT_GH_SELF: set by the runner for a team's task), else AGENT_GH_COORDINATOR
+# (the coordinator when the run started; empty for anyone else)
 case "${1:-} ${2:-}" in
-  "pr create"|"pr merge"|"pr ready"|"pr close")
+  "pr create"|"pr merge"|"pr ready"|"pr close"|"pr reopen"|"pr edit")
     gh_lead=${AGENT_GH_COORDINATOR:-} gh_member=${AGENT_GH_COORDINATOR:+1}
     if [[ -n ${AGENT_GH_TEAM:-} ]] && gh_now=$(gh_team_lead); then
       gh_lead=$gh_now gh_member=1
@@ -5327,13 +5327,16 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     fi
   elif [[ $fst == DONE || $fst == ROUND_DONE ]]; then
     status=done
-    if [[ $fst == ROUND_DONE ]]; then   # "STATUS: ROUND_DONE N/M": round N of M is finished
-      local rn
+    if [[ $fst == ROUND_DONE ]]; then   # "STATUS: ROUND_DONE N/M": round N of M is finished (in a team with a coordinator, only the coordinator's counts)
+      local rn rlead=""
+      [[ -z ${TEAM:-} ]] || rlead=$(team_lead "$TEAM")
       rn=$(sed 's/[*`]//g' <<< "$FINAL" | { grep -oE 'STATUS:[[:space:]]*ROUND_DONE[[:space:]]+[0-9]+/[0-9]+' || (($? == 1)); } \
              | head -1 | { grep -oE '[0-9]+/[0-9]+$' || (($? == 1)); })
       if [[ -n $rn ]] && ((${rn%/*} >= 1 && ${rn%/*} <= ${rn#*/})); then
-        meta_set "$id" WORK_ROUND "${rn%/*}"; meta_set "$id" WORK_ROUNDS "${rn#*/}"
-        note="round $rn"
+        if [[ -z $rlead || $AGENT == "$rlead" ]]; then
+          meta_set "$id" WORK_ROUND "${rn%/*}"; meta_set "$id" WORK_ROUNDS "${rn#*/}"
+          note="round $rn"
+        fi
       else
         status=failed; note="STATUS: ROUND_DONE needs the round as N/M (e.g. ROUND_DONE 2/5)"
       fi
@@ -5845,9 +5848,12 @@ resume_run() {
 
   # rounds: after STATUS: ROUND_DONE the next round starts only once its PR is merged, on fresh branches from the
   # updated base; --same-round continues the same round on the same branches (e.g. for review fixes)
-  local rtask="" wr="" wrs="" fresh=0 round_title="" round_head="" round_merged=0
+  local rtask="" wr="" wrs="" fresh=0 round_title="" round_head="" round_merged=0 rlead=""
+  [[ -z ${tj:-} ]] || rlead=$(jq -r '.lead // empty' <<< "$tj")
   for t in "${olds[@]}"; do
-    if [[ -n $(task_field "$t" WORK_ROUND) ]]; then rtask=$t; fi
+    if [[ -n $(task_field "$t" WORK_ROUND) ]]; then
+      [[ -n $rtask && -n $rlead && $(task_field "$rtask" AGENT) == "$rlead" ]] || rtask=$t
+    fi
   done
   if [[ -n $rtask ]]; then
     wr=$(task_field "$rtask" WORK_ROUND); wrs=$(task_field "$rtask" WORK_ROUNDS)

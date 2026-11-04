@@ -325,7 +325,7 @@ check it on GitHub's real data (`github_comment_marked_ignored`). A fork's PR, o
 not shown at all; `gh pr list` and `gh issue list` give only the trusted accounts' PRs and issues (each left out is
 logged too); and a GraphQL query for comments or reviews is refused. This keeps other people's text from
 reaching an agent; it does not hold back an agent that bypasses `gh` with its token, so limit who may comment
-(the repository's interaction limits) and what the agents' token may do (a fine-grained token for this repository). A team member's `gh pr create`, `gh pr merge`, `gh pr ready` and `gh pr close` are refused too (logged as
+(the repository's interaction limits) and what the agents' token may do (a fine-grained token for this repository). A team member's `gh pr create`, `gh pr merge`, `gh pr ready`, `gh pr close`, `gh pr reopen` and `gh pr edit` are refused too (logged as
 `github_member_pr_refused`, with the `action`): a round has one PR, its coordinator's, and you (or `--autopilot`)
 merge it; the member is told to push its branch and tell the coordinator, which merges its work into that PR. Who
 coordinates is asked of the bus when the command runs — a new team has no coordinator yet when its first runs
