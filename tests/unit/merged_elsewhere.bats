@@ -6,6 +6,7 @@
 # merge (PR_MERGE_OWN) is left alone.
 
 load helpers
+bats_require_minimum_version 1.5.0   # run ! (a command that must fail)
 
 meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
 set_meta() { (source "$REPO_ROOT/bin/agent"; meta_set "$1" "$2" "$3"); }
