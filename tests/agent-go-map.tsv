@@ -579,9 +579,8 @@ tests/unit/dashboard_lifecycle.bats	dashboard independent investigation blocks n
 tests/unit/dashboard_lifecycle.bats	dashboard independent investigation blocks message wake	source	R35	-	planned
 tests/unit/dashboard_lifecycle.bats	dashboard ordinary investigations and other projects do not block resume	source	R35	-	planned
 tests/unit/investigation_team_admission.bats	resuming a normal team in the same project is refused while --investigation is in progress, but allowed for normal model investigations	blackbox	R37	-	planned
-tests/unit/dashboard_prompt_modes.bats	dashboard PR ownership and Serena guidance reach every role and continuation	source	R35	-	planned
+tests/unit/dashboard_prompt_modes.bats	dashboard Serena guidance reaches every role and continuation	source	R35	-	planned
 tests/unit/dashboard_prompt_modes.bats	dashboard resume does not advertise Serena when disabled	source	R35	-	planned
-tests/unit/member_pr.bats	every mode's prompt states the rule never to open a new PR when not coordinator or when a Draft or Open PR already exists	source	R23	-	planned
 tests/unit/serena.bats	config/agents.conf enables AGENT_SERENA=serena and worktrees inherit .serena/project.yml from REPO_ROOT	source	R12	-	planned
 tests/unit/serena.bats	every model CLI (claude, codex, gemini, opencode) receives the Serena prompt and invokes the serena MCP server when needed	source	R12	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
@@ -611,3 +610,19 @@ tests/unit/team_stop_review.bats	install.sh keeps an explicit empty AGENT_SERENA
 tests/unit/team_stop_review.bats	install.sh adds AGENT_SERENA to an existing agents.conf without it when Serena is installed, and says so	blackbox	R55	-	planned
 tests/unit/team_stop_review.bats	install.sh leaves Serena off in a fresh agents.conf when it is not installed, and says so	blackbox	R55	-	planned
 tests/unit/team_stop_review.bats	install.sh enables Serena in a fresh agents.conf when it is installed	blackbox	R55	-	planned
+tests/unit/pr_rule.bats	a solo task's prompt has the PR rule once, with the coordinator's part, and tells it to open one draft PR	source	R35	-	planned
+tests/unit/pr_rule.bats	a solo task whose PR the script knows is told its number and branch and to continue it	source	R35	-	planned
+tests/unit/pr_rule.bats	a resumed round's task names the ROUND_PR it carries, with the branch of the task that opened it	source	R35	-	planned
+tests/unit/pr_rule.bats	a task's own PR_NUMBER comes before the ROUND_PR it carries	source	R35	-	planned
+tests/unit/pr_rule.bats	a team's prompt has the coordinator's part in the coordinator's role and the member's part in the member's role	source	R35	-	planned
+tests/unit/pr_rule.bats	a team member of a resumed round is told the round's PR in its role	source	R35	-	planned
+tests/unit/pr_rule.bats	helpers, requested investigators, reviews and independent investigations get no PR rule, in no mode	source	R35	-	planned
+tests/unit/pr_rule.bats	no prompt file repeats the PR rule: it is in the fragment only	source	R35	-	planned
+tests/unit/pr_rule.bats	a resumed session repeats the rule of its role: a solo task's and a coordinator's, or a member's	source	R35	-	planned
+tests/unit/pr_rule.bats	the runner gives the agents' gh its task's meta file, and nothing without a task	source	R35	-	planned
+tests/unit/pr_rule.bats	gh pr create of a task whose PR is open is refused, names that PR, is logged, and never reaches gh	blackbox	R11	-	planned
+tests/unit/pr_rule.bats	gh pr create of a task that carries its round's open PR (ROUND_PR) is refused, naming it	blackbox	R11	-	planned
+tests/unit/pr_rule.bats	a PR creation through gh api of a task whose PR is open is refused too	blackbox	R11	-	planned
+tests/unit/pr_rule.bats	a task whose PR is merged or closed may open a new one; so may a task without a PR	blackbox	R11	-	planned
+tests/unit/pr_rule.bats	when the task's PR cannot be read, gh pr create goes on to gh, and that is logged	blackbox	R11	-	planned
+tests/unit/pr_rule.bats	a team member's gh pr create is refused as a member's, before its task's PR is looked up	blackbox	R11	-	planned

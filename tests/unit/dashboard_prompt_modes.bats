@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Every role and continuation receives PR ownership and optional Serena guidance.
+# Every role and continuation receives the optional Serena guidance; the PR rule's roles are in pr_rule.bats.
 load helpers
 
 # prompt_fixture prepares a real prompt renderer without launching an agent.
@@ -10,7 +10,7 @@ prompt_fixture() {
   meta_load P
 }
 
-@test "dashboard PR ownership and Serena guidance reach every role and continuation" {
+@test "dashboard Serena guidance reaches every role and continuation" {
   # shellcheck source=/dev/null
   source "$REPO_ROOT/bin/agent"
   prompt_fixture
@@ -32,8 +32,6 @@ prompt_fixture() {
     for mode in new resume fresh; do
       FRESH_WHY='context limit'
       out=$(build_prompt P "$mode" "$TASKS/P/questions-1.md" 1)
-      [[ $out == *'Only the coordinator may open a PR.'* ]]
-      [[ $out == *'Draft or Open'* ]]
       [[ $out == *'MCP server `serena`'* ]]
       [[ $out != *'{{'* ]]
     done
