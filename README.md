@@ -847,7 +847,7 @@ The menu on the left slides out on demand (`☰` or `m`). Every view can be maxi
 
 | View | What it shows |
 |---|---|
-| Dashboard | the latest 20 eligible task/job entries by creation time, grouped with active tasks first; live activity, events and reservations; acknowledged terminal tasks remain eligible for 24 h. Local team members' ■ buttons persistently stop them; remote controls retain their existing kick semantics. Stopped tasks are orange, failures red. |
+| Dashboard | the first 20 eligible task/job entries in display order — remote jobs at work, local tasks at work, then finished ones, the most recently finished first; live activity, events and reservations; acknowledged terminal tasks remain eligible for 24 h. Local team members' ■ buttons persistently stop them; remote controls retain their existing kick semantics. Stopped tasks are orange, failures red. |
 | Full dashboard view | `/dashboard/full`: a separate page in the menu showing every task/job entry, including older acknowledged history, with its own live stream; the same status grouping and controls. Synthetic investigation parents and duplicate local/remote proxies stay hidden. |
 | Agents | the configured agents and investigators — working ones first, then by their last activity (shown) — tier, CLI, model, provider, what each is doing now, pauses (until when, why) |
 | Task | header (status, time, branch, team) and sections: live activity, the prompt of every run, question rounds, investigations, final message, error logs, the repository notebook, `meta.env` |
@@ -1102,24 +1102,34 @@ It records `stop-requested` and `TEAM_STOPPED=1` for every member and local dele
 stops local runs, cancels remote member jobs and disables autopilot (`AUTOPILOT_OFF=1`). Sleeping members become `stopped`
 on both their task and bus member state. Message wakes, interrupted-run cleanup and delayed precheck/fix-pass/review/merge
 jobs respect these markers; a check already running may finish cleanup, but cannot launch the next phase. Explicitly starting
-a new cohort with `agent run --resume <team> --same-round` remains possible; old task stop markers are retained.
+a new cohort with `agent run --resume <team> --same-round` remains possible; old task stop markers are retained. The new
+cohort inherits `AUTOPILOT_OFF=1`: its autopilot stays off unless the resume names `--autopilot` or you run
+`agent autopilot <team> on`.
 The dashboard's local member stop button uses `agent stop`, while `agent kick` remains a temporary interruption (except when
 the team is already finished or stopped, where `kick` also marks the member `stopped`). Team displays prefer a task's
 persisted `stopped` status over an older bus member state. Members that had already finished keep their result: a
 `done`, `failed`, `excluded` or `hung` member is not rewritten to `stopped`. `agent answer` and `agent resume` refuse a
 stopped task and say so.
+
+**Stopping one task.** `agent stop <id>` (and the dashboard's ■ for a local team member) ends nothing but that task's
+own follow-up — no notification, wake, review or fix pass. Whoever waits for it is still told, as after any other end
+of a run: the agent that requested an investigation, or delegated to a helper, gets a failed result ("stopped by the
+human"); a team member's claimed board items go back to the board and its team hears it is out (`member_out`). A member
+of a team that was stopped (`agent team <id> --stop`) or closed is not reported out.
 New structured script events: `team_stopped`, `automation_stopped`, `resume_blocked_investigation`,
 `wake_deferred_investigation`, `wake_replayed`.
 
 **Investigation priority.** A nonterminal top-level `--investigation` in a project blocks resuming its normal
 teams: `agent run --resume <team>` (also the fix pass and the next `--autopilot` round, which go through it and tell
-you that the team could not be resumed), and `agent answer` / `agent resume` of a member waiting for answers. The refusal
+you that the team could not be resumed), and `agent resume` of a member waiting for answers (also when its saved
+answers would resume it; `agent answer` still opens the editor, the resume after it is refused). The refusal
 names the independent investigation; finish or stop it, then resume the normal team. A message wake of a sleeping member
 (and the end of its pause) waits instead: the task gets `WAKE_DEFERRED=1`, and `agent _supervise` (every 3 minutes)
 wakes it once no investigation blocks it — the bus wakes a member once per message, so a dropped wake would leave its
 team waiting. The checks, reviews and bounces of a team that is already at work go on. Checks use `REPO_ROOT` and
-`REPO_NAME`; other projects, ordinary investigations requested through `request_investigation` and a finished cohort
-whose handoff still shows `waiting` do not block. This does not stop already-running normal teams or block new
+`REPO_NAME`; other projects, ordinary investigations requested through `request_investigation`, a finished cohort
+whose handoff still shows `waiting`, and an investigator that is `hung` or `excluded` or whose cohort has ended (`done`,
+`failed`, `stopped`, `hung`, `excluded`) do not block. This does not stop already-running normal teams or block new
 normal-team creation. No persisted format changes or migrations are needed: missing old metadata and stop markers keep
 their previous meaning.
 
@@ -1255,7 +1265,10 @@ Every role and continuation receives the same PR ownership rule: only the coordi
 check the mentioned PR and the repository's Draft or Open PRs for the same subject, including other branches.
 Continue an existing matching PR through its coordinator; never create a replacement. Helpers, members,
 investigators and reviewers deliver commits/findings without opening their own PR. Failed lookups or unclear
-ownership are blockers to report. This is a prompt rule, not a GitHub permission restriction.
+ownership are blockers to report. A coordinator whose matching PR is on another task's branch neither pushes to that
+branch nor opens a PR: it pushes its own branch, asks you in its questions file which PR to continue, and ends with
+`STATUS: QUESTIONS` (the investigation merger first merges that PR's head into its branch). This is a prompt rule,
+not a GitHub permission restriction.
 
 ## Serena
 
@@ -1268,7 +1281,9 @@ Serena's for the CLI: `claude-code` (claude), `codex` (codex, with a 120 s start
 `antigravity` (gemini) and `ide` (opencode). The project is the run's own worktree, not a checkout Serena knows from
 elsewhere, so the agent sees its own branch. The prompt gets a short part that says to use it first and to fall back
 to the shell when it fails. This guidance is included in new, resumed and fresh sessions whenever
-`AGENT_SERENA` is set; an installed executable alone does not enable it. Configure its absolute path if it is
+`AGENT_SERENA` is set; an installed executable alone does not enable it. `install.sh` writes `AGENT_SERENA="serena"`
+into a fresh `agents.conf` only when Serena is installed (else `""`), adds the line to an existing `agents.conf` that
+has none when Serena is installed, and says so; an existing value — the opt-out `""` too — is never changed. Configure its absolute path if it is
 not on the service's `RUN_PATH`. Configuration/prompt tests verify availability and instructions, not an LLM's actual tool selection. Everything else comes from Serena's own configuration (`~/.serena/serena_config.yml`:
 its tools interface, dashboard, language servers).
 

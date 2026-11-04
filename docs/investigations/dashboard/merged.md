@@ -13,7 +13,7 @@
 ### Integrated solution
 
 - **Compact default view (`GET /`):**
-  - `dashShown = 20` in `live/web_views.go` caps `GET /` to the `20` newest eligible entries (selected by creation timestamp `CreatedAt` across local tasks and recent remote lead jobs, then ordered with active tasks first and newest finished tasks second).
+  - `dashShown = 20` in `live/web_views.go` caps `GET /` to the first `20` eligible entries in display order (`dashboardView`): remote lead jobs at work, local tasks at work (by status priority, then ID), then finished local tasks and remote jobs, the most recently finished (`FinishedAt`) first. Creation time does not choose them.
   - When entries are truncated (`Cut: true`), `dash-table` in `live/web/templates/partials.html` renders a footer link to `/dashboard/full`.
 - **Full dashboard view (`GET /dashboard/full`):**
   - Added `"Full dashboard view"` to the left navigation menu in `live/web/templates/layout.html` (`<a href="/dashboard/full" data-views="dashboard_full">Full dashboard view</a>`).

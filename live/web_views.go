@@ -270,12 +270,13 @@ type dashData struct {
 	Res     []*Reservation // reserved resources
 }
 
-// dashboard builds the default dashboard's data (capped at dashShown latest entries).
+// dashboard builds the default dashboard's data (the first dashShown entries in display order).
 func (s *webServer) dashboard(snap *Snapshot) dashData {
 	return s.dashboardView(snap, false)
 }
 
-// dashboardView builds the dashboard's data; when full is false, at most dashShown entries are returned.
+// dashboardView builds the dashboard's data: remote jobs at work, local tasks at work, then finished tasks and jobs,
+// the most recently finished first; when full is false, only the first dashShown of them.
 func (s *webServer) dashboardView(snap *Snapshot, full bool) dashData {
 	d := dashData{Full: full, Queue: snap.QueueLine(s.cfg.queueMax), Waiting: len(snap.Waiting()), Res: snap.Res}
 	active, done := dashboardTasks(snap, full)
@@ -326,7 +327,7 @@ func (s *webServer) dashboardView(snap *Snapshot, full bool) dashData {
 	return d
 }
 
-// viewDashboard (GET /) is the main page: the 20 latest entries, with the same data as `agent live`.
+// viewDashboard (GET /) is the main page: the first 20 entries (dashboardView), with the same data as `agent live`.
 func (s *webServer) viewDashboard(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	s.render(w, r, http.StatusOK, "dashboard", "Dashboard", snap, s.dashboard(snap))
