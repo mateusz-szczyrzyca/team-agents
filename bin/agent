@@ -201,18 +201,24 @@ gh_team_lead() {
   jq -r '.lead // empty' <<< "$out"
 }
 
+# gh_member — whether this run is a non-coordinator team member; sets gh_lead to its coordinator for the refusal.
+# The bus is asked now: a new team has nobody when its first runs start, and a member can take over during a run.
+gh_member() {
+  local member=${AGENT_GH_COORDINATOR:+1} now
+  gh_lead=${AGENT_GH_COORDINATOR:-}
+  if [[ -n ${AGENT_GH_TEAM:-} ]] && now=$(gh_team_lead); then
+    gh_lead=$now member=1
+    [[ $now != "${AGENT_GH_SELF:-}" ]] || member=""
+  fi
+  [[ -n $member ]]
+}
+
 # a team member opens, merges, marks ready, closes, reopens and edits no PR: the round has one, its coordinator's, which
-# takes the member's work in, and the human (or --autopilot) merges it. The coordinator is the bus's answer when the
-# run's team is known (AGENT_GH_TEAM, AGENT_GH_SELF: set by the runner for a team's task), else AGENT_GH_COORDINATOR
-# (the coordinator when the run started; empty for anyone else)
+# takes the member's work in, and the human (or --autopilot) merges it. AGENT_GH_COORDINATOR is the fallback for a solo
+# task (empty) and for a team whose bus cannot answer.
 case "${1:-} ${2:-}" in
   "pr create"|"pr merge"|"pr ready"|"pr close"|"pr reopen"|"pr edit")
-    gh_lead=${AGENT_GH_COORDINATOR:-} gh_member=${AGENT_GH_COORDINATOR:+1}
-    if [[ -n ${AGENT_GH_TEAM:-} ]] && gh_now=$(gh_team_lead); then
-      gh_lead=$gh_now gh_member=1
-      [[ $gh_now != "${AGENT_GH_SELF:-}" ]] || gh_member=""
-    fi
-    if [[ -n $gh_member ]]; then
+    if gh_member; then
       gh_log github_member_pr_refused "a team member's gh pr $2 is refused: its coordinator opens the round's PR" \
         "action=$2" "coordinator=${gh_lead:-none}"
       case $2 in create) gh_verb=open ;; ready) gh_verb="mark ready" ;; *) gh_verb=$2 ;; esac
@@ -230,15 +236,44 @@ esac
 
 if [[ ${1:-} == api ]]; then
   shift
-  args=() jqexpr="" path=""
+  args=() jqexpr="" path="" api_method="" api_fields=0
   while (($#)); do
     case $1 in
       --jq|-q) jqexpr=${2:-}; shift 2 ;;
       --jq=*) jqexpr=${1#--jq=}; shift ;;
       -t|--template|--template=*) echo "agent-gh: --template is not available to the agents; use --jq" >&2; exit 2 ;;
+      -X|--method)
+        if (($# < 2)); then args+=("$1"); shift; continue; fi
+        api_method=$2; args+=("$1" "$2"); shift 2 ;;
+      --method=*|-X=*) api_method=${1#*=}; args+=("$1"); shift ;;
+      -X?*) api_method=${1#-X}; args+=("$1"); shift ;;
+      -f|--raw-field|-F|--field|--input)
+        if (($# < 2)); then args+=("$1"); shift; continue; fi
+        api_fields=1; args+=("$1" "$2"); shift 2 ;;
+      -f=*|--raw-field=*|-F=*|--field=*|--input=*|-f?*|-F?*) api_fields=1; args+=("$1"); shift ;;
+      -H|--header|--hostname|--cache|--preview)
+        if (($# < 2)); then args+=("$1"); shift; continue; fi
+        args+=("$1" "$2"); shift 2 ;;
       *) if [[ -z $path && $1 != -* ]]; then path=$1; fi; args+=("$1"); shift ;;
     esac
   done
+  # The REST API is another way to change a PR: apply the same member rule to explicit and field-implied writes.
+  api_path=${path%%[?#]*} api_mutation=0
+  if [[ $api_path =~ (^|/)pulls/[0-9]+/merge$ ]]; then
+    api_mutation=1
+  elif [[ $api_path =~ (^|/)pulls(/[0-9]+)?$ ]]; then
+    if [[ -n $api_method ]]; then
+      [[ ${api_method^^} == GET ]] || api_mutation=1
+    elif ((api_fields)); then
+      api_mutation=1
+    fi
+  fi
+  if ((api_mutation)) && gh_member; then
+    gh_log github_member_pr_refused "a team member's gh api PR mutation is refused: its coordinator owns the round's PR" \
+      "action=api" "coordinator=${gh_lead:-none}"
+    echo "agent-gh: a team member does not create or change a PR through gh api — the round's PR is its coordinator's (${gh_lead:-none}), and the human (or --autopilot) merges it. Push your branch and tell the coordinator what is on it (a board item or a message)." >&2
+    exit 1
+  fi
   # an investigator's review says who wrote it at its very top too (AGENT_REVIEW_BYLINE, set for an investigation)
   if [[ -n ${AGENT_REVIEW_BYLINE:-} && $path =~ /pulls/[0-9]+/reviews$ ]]; then
     for i in "${!args[@]}"; do
@@ -9004,6 +9039,10 @@ archive_one() { # start-task — packs the whole group into tasks-archived/<name
       [[ -f $BUS_DIR/checkpoints/$t-$k.md ]] && cp "$BUS_DIR/checkpoints/$t-$k.md" "$stage/checkpoints/"
     done
   done
+  # A team member's own record is keyed by its task ID, not by the team ID used for the shared checkpoint.
+  for t in "${ids[@]}"; do
+    [[ -f $BUS_DIR/checkpoints/task-$t.md ]] && cp "$BUS_DIR/checkpoints/task-$t.md" "$stage/checkpoints/"
+  done
   for t in "${ids[@]}"; do cp -a "$TASKS/$t" "$stage/tasks/"; done
 
   ( cd "$stage" && "$zip" a -t7z -mx=7 "$archive_file" . >/dev/null ) || { rm -rf "$stage"; die "packing failed"; }
@@ -9024,6 +9063,7 @@ archive_one() { # start-task — packs the whole group into tasks-archived/<name
   done
   for t in "${ids[@]}"; do rm -rf "${TASKS:?}/$t"; done
   for k in "${keys[@]}"; do rm -f "$BUS_DIR/checkpoints/team-$k.md" "$BUS_DIR/checkpoints/task-$k.md" "$TASKS/.team-$k.stuck"; done
+  for t in "${ids[@]}"; do rm -f "$BUS_DIR/checkpoints/task-$t.md"; done
   for t in "${ids[@]}"; do unset "IX_ST[$t]"; done
   log_info archived "archive=$archive_file" "tasks=${ids[*]}" "worktrees_removed=$n_wt"
   printf '%s  (%s, tasks: %d, worktrees removed: %d)\n' "$archive_file" "$(du -h "$archive_file" | cut -f1)" "${#ids[@]}" "$n_wt"

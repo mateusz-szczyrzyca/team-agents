@@ -325,8 +325,8 @@ check it on GitHub's real data (`github_comment_marked_ignored`). A fork's PR, o
 not shown at all; `gh pr list` and `gh issue list` give only the trusted accounts' PRs and issues (each left out is
 logged too); and a GraphQL query for comments or reviews is refused. This keeps other people's text from
 reaching an agent; it does not hold back an agent that bypasses `gh` with its token, so limit who may comment
-(the repository's interaction limits) and what the agents' token may do (a fine-grained token for this repository). A team member's `gh pr create`, `gh pr merge`, `gh pr ready`, `gh pr close`, `gh pr reopen` and `gh pr edit` are refused too (logged as
-`github_member_pr_refused`, with the `action`): a round has one PR, its coordinator's, and you (or `--autopilot`)
+(the repository's interaction limits) and what the agents' token may do (a fine-grained token for this repository). A team member's `gh pr create`, `gh pr merge`, `gh pr ready`, `gh pr close`, `gh pr reopen` and `gh pr edit` are refused too, as are the equivalent PR creations and mutations through `gh api` (logged as
+`github_member_pr_refused`, with the `action`, `api` for the latter): a round has one PR, its coordinator's, and you (or `--autopilot`)
 merge it; the member is told to push its branch and tell the coordinator, which merges its work into that PR. Who
 coordinates is asked of the bus when the command runs — a new team has no coordinator yet when its first runs
 start (then a member's PR commands are refused too), and a member can take over during a run (logged as
@@ -391,7 +391,8 @@ output (`git stash apply <sha>`).
 Agents commit and push in small steps and call `checkpoint(summary, next_steps)` after every stage. If you stop
 work — typically to extend the task — `agent run --resume <team|task> "addition"` starts the same agents on the
 same branches (and the same draft PR), with the checkpoints, the earlier answers and your addition in the
-prompt. A resumed team keeps its coordinator and board and skips the quiz.
+prompt. A resumed team keeps its coordinator and board and skips the quiz. A non-coordinator member's checkpoint
+is its own `task-<id>.md` record: it is not carried into a resume, and `agent archive` packs it with the task.
 
 Ordinary starts and `run --resume` reserve fresh timestamp-shaped task IDs and team IDs under the local
 `task-ids.lock`. If a timestamp is already occupied, allocation tries the next second. The whole team's task
@@ -1240,7 +1241,7 @@ its tools interface, dashboard, language servers).
 | `list_agents`, `send_message`, `read_messages`, `wait_for_message`, `set_status` | communication |
 | `reserve`, `release`, `list_reservations` | shared resources |
 | `notebook_read`, `notebook_append`, `notebook_write_section` | the repository notebook |
-| `checkpoint` | save a resumable work state |
+| `checkpoint` | save a resumable work state; a non-coordinator member saves its own archived task record, not carried into a resume |
 | `request_investigation`, `investigation_status`, `record_decision` | investigators (not for investigators themselves) |
 | `delegate`, `delegation_status` | worker requests (normal tier); optional `requires` routes to a capable node |
 | `team_status`, `claim_lead`, `handover_lead` | teams |
