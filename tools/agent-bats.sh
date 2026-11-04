@@ -98,11 +98,11 @@ fi
 
 if [[ -n ${TMPDIR:-} ]]; then
   if ! real_tmp=$(cd "$TMPDIR" && pwd -P); then
-    echo "agent-bats: TMPDIR does not exist or is not accessible: $TMPDIR" >&2
+    echo "agent-bats: failed to resolve TMPDIR: $TMPDIR" >&2
     exit 1
   fi
   if ! real_repo=$(cd "$REPO_ROOT" && pwd -P); then
-    echo "agent-bats: REPO_ROOT does not exist or is not accessible: $REPO_ROOT" >&2
+    echo "agent-bats: failed to resolve repository root: $REPO_ROOT" >&2
     exit 1
   fi
   if [[ "$real_tmp" == "$real_repo" || "$real_tmp" == "$real_repo"/* ]]; then
