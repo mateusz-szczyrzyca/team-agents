@@ -684,6 +684,7 @@ Then:
 | `CLAUDE_BIN`, `CODEX_BIN`, `AGY_BIN`, `OPENCODE_BIN` | CLI paths |
 | `AUTH_MODEL_*` | cheap models used by `agent authenticated --providers` (the per-agent check uses each agent's model) |
 | `CLAUDE_TOOL_SEARCH` | Claude Code's tool search (its `ENABLE_TOOL_SEARCH`, set in each run's settings): `false` (default) gives the model every tool up front, the agentbus tools included — deferred behind tool search, they were loaded and then run in the shell by `claude-haiku`, which then worked without its team; `true`, `auto`, `auto:N` are passed on; `default` leaves it to Claude Code |
+| `CLAUDE_BASH_TIMEOUT_MIN` | Claude Code's Bash timeout in minutes (20): commands run in the foreground, the gate included; its background tasks are off (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`), as a headless run ends with its turn |
 | `BRANCH_PREFIX`, `CLAUDE_MAX_TURNS`, `AGY_PRINT_TIMEOUT`, `OPENCODE_BASH_TIMEOUT_MS` | misc |
 
 A paused task (a provider's limit, the network) resumes by itself at its pause's end; `agent wake <task>` resumes it

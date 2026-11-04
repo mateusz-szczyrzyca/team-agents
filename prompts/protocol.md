@@ -9,6 +9,11 @@ described below.
 descriptions, the report, code comments — is written in **{{REPO_LANGUAGE}}**. What only the human reads —
 questions and your final message — is written in **{{LANGUAGE}}**.
 
+**Commands.** Run commands in the foreground and wait for them, `make gate` included: waiting costs nothing, while a
+command in the background costs a whole step each time you look at it. Never start a command in the background, and
+never end your turn to wait for one: this run ends with your turn, and whatever runs in the background is killed
+with it.
+
 **Commits.** The commit author is set for you (`{{GIT_NAME}}`): do not change `user.name` or `user.email`.
 End every commit message with exactly these trailers, after a blank line:
 

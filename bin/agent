@@ -574,6 +574,7 @@ CLAUDE_MAX_TURNS="${CLAUDE_MAX_TURNS:-300}"
 # model up front. Deferred behind ToolSearch, they were loaded and then run in the shell by claude-haiku, which then
 # worked without its team. Another value is passed on (true, auto, auto:N); "default" leaves it to Claude Code
 CLAUDE_TOOL_SEARCH="${CLAUDE_TOOL_SEARCH:-false}"
+CLAUDE_BASH_TIMEOUT_MIN="${CLAUDE_BASH_TIMEOUT_MIN:-20}"   # Claude Code's Bash timeout: a gate runs in the foreground
 AGY_BIN="${AGY_BIN:-$HOME/.local/bin/agy}"
 OPENCODE_BIN="${OPENCODE_BIN:-$HOME/.opencode/bin/opencode}"
 OPENCODE_BASH_TIMEOUT_MS="${OPENCODE_BASH_TIMEOUT_MS:-600000}"
@@ -3475,9 +3476,13 @@ run_claude() { # id mode n prompt_file dir ; sets RC, FINAL
   fi
   mcp_add_serena "$dir/mcp.json" claude
   # Claude Code's own attribution off: the commit trailers and the PR's attribution are the script's; its tool
-  # search as CLAUDE_TOOL_SEARCH says (a setting's env wins over the human's own settings)
-  jq -n --arg ts "$CLAUDE_TOOL_SEARCH" '{includeCoAuthoredBy: false, attribution: {commit: "", pr: ""}}
-    + (if $ts == "default" then {} else {env: {ENABLE_TOOL_SEARCH: $ts}} end)' > "$dir/claude-settings.json"
+  # search as CLAUDE_TOOL_SEARCH says (a setting's env wins over the human's own settings). Its background tasks
+  # off: a headless run ends with its turn and kills what runs in the background; its Bash timeout long enough for
+  # a command to run in the foreground — the gate included
+  jq -n --arg ts "$CLAUDE_TOOL_SEARCH" --arg ms "$((CLAUDE_BASH_TIMEOUT_MIN * 60000))" \
+    '{includeCoAuthoredBy: false, attribution: {commit: "", pr: ""},
+      env: ({CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1", BASH_DEFAULT_TIMEOUT_MS: $ms, BASH_MAX_TIMEOUT_MS: $ms}
+        + (if $ts == "default" then {} else {ENABLE_TOOL_SEARCH: $ts} end))}' > "$dir/claude-settings.json"
   args+=(--settings "$dir/claude-settings.json")
   if [[ -n ${MODEL:-} ]]; then args+=(--model "$MODEL"); fi
   if [[ $mode == new ]]; then args+=(--session-id "$SESSION_ID"); else args+=(--resume "$SESSION_ID"); fi
