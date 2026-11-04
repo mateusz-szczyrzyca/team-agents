@@ -1,3 +1,116 @@
+# One PR rule for the roles that open PRs — `inv-opus` (task `20261104-231852-inv-opus`)
+
+Topic: continue [#61](https://github.com/mateusz-szczyrzyca/team-agents/pull/61). The PR rule is one fragment,
+[`prompts/pr-ownership.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/c93b45ea805c2642d2d475fe239ede866d3e60cf/prompts/pr-ownership.md), rendered by the script into `protocol.md` (solo), the coordinator's role and the member's
+role only — not into `review.md` or the other prompts. It names this task's PR when the script knows it (`PR_NUMBER`,
+else `ROUND_PR`), otherwise it says to open one draft PR. The agents' `gh` refuses `gh pr create` while the task's PR is
+open, naming it. The test that grepped seven prompt files is replaced by tests of the rendered prompts and of the
+refusal. Tests first.
+
+**Done.** Branch `agents/inv-opus/20261104-231852`, which **fast-forwards from** [`fe1b10b`](https://github.com/mateusz-szczyrzyca/team-agents/commit/fe1b10b7fe1fd42890995a1d8e127460ac9453a8)
+(the head of round 2 of #61, still waiting to be pushed to #61's branch).
+
+## Commits
+
+- [`0a63890`](https://github.com/mateusz-szczyrzyca/team-agents/commit/0a6389030a4da6f74ff3066979ce15822b31205f) — $\color{red}{\textbf{RED}}$: `16` bats tests in [`tests/unit/pr_rule.bats`](https://github.com/mateusz-szczyrzyca/team-agents/blob/c93b45ea805c2642d2d475fe239ede866d3e60cf/tests/unit/pr_rule.bats)
+  (`14` fail, `2` are guards that pass); the grep test is removed (see "Changed tests")
+- [`c93b45e`](https://github.com/mateusz-szczyrzyca/team-agents/commit/c93b45ea805c2642d2d475fe239ede866d3e60cf) — $\color{green}{\textbf{GREEN}}$: [`bin/agent`](https://github.com/mateusz-szczyrzyca/team-agents/blob/c93b45ea805c2642d2d475fe239ede866d3e60cf/bin/agent), the prompts and [`README.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/c93b45ea805c2642d2d475fe239ede866d3e60cf/README.md)
+
+## What changed
+
+**The fragment** [`prompts/pr-ownership.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/c93b45ea805c2642d2d475fe239ede866d3e60cf/prompts/pr-ownership.md) is in parts, `<!-- part: tag… -->`; `render_parts` keeps a part when
+all its tags are given. Tags: `heading`, the role (`coordinator` or `member`) and the PR state (`known` or `none`).
+
+| Prompt | Part |
+|---|---|
+| solo task, new (`protocol.md`, `{{PR_RULE}}` after "Repository") | heading + coordinator |
+| team, new (`team.md`): end of "3. The coordinator's role" / end of "4. The member's role" | coordinator / member |
+| solo or team task, resumed session (`continuation_rules`, also after a hang) | heading + the task's role: coordinator for a solo task and the team's coordinator, member otherwise (also while the team has no coordinator) |
+| helper, requested investigator, review, independent investigation (phase 1, merger, review) | none |
+
+- **The PR the prompt names** (`task_pr`): the task's `PR_NUMBER` on its `BRANCH`; else its `ROUND_PR`, with the branch
+  of the worker task of the same repository whose `PR_NUMBER` it is (a review of that PR does not count), or the number
+  alone when that task is archived. Text: "**This task's PR is #58 (branch `agents/lead/1`).**", then continue it,
+  `gh pr edit 58`, never another PR.
+- **No PR known:** the coordinator looks for the subject's PR first (its branch's, the one the task mentions, Draft or
+  Open PRs on other branches). It keeps #61's way out for a PR on another task's branch (`STATUS: QUESTIONS`). Only when
+  there is none does it open **one draft PR** (`gh pr create --draft --base … --head …`). The member's part says the
+  coordinator opens it.
+- **The duplicates are gone:** the sentence "Never open a new PR if you are not the coordinator…" that #60 added to
+  seven prompt files. `helper.md`, `investigator.md`, `inv-work.md` and `review.md` are back to `main`'s text.
+  `inv-merge.md` keeps only the merger's own steps (reuse the subject's PR; the PR on another branch → `STATUS: QUESTIONS`).
+  In `team.md`, "A round has one PR" is back to `main`'s text, and the member's "Do not open your own PR" now points to the member's part.
+- **The refusal** (the agents' `gh`, [`bin/agent`](https://github.com/mateusz-szczyrzyca/team-agents/blob/c93b45ea805c2642d2d475fe239ede866d3e60cf/bin/agent) `gh_task_pr`, `gh_refuse_task_pr`):
+  - The runner exports `AGENT_GH_TASK_META`, the path of the task's `meta.env`.
+  - On `gh pr create` and on a PR creation through `gh api` (`POST …/pulls`), `gh` reads `PR_NUMBER`, else `ROUND_PR`,
+    when the command runs. It then asks GitHub (`gh pr view N --json number,state,headRefName,url`).
+  - `OPEN` (drafts included): refused, exit `1`, with "this task's PR #61 (branch X) is open (url) — … gh pr edit 61".
+    Logged as `github_task_pr_refused` (`action`, `pr`, `branch`).
+  - `MERGED` / `CLOSED`, or no PR known: the command goes on to `gh`, so the next round can open its PR.
+  - State not readable: goes on to `gh`, logged as `github_task_pr_unknown`.
+  - A team member's refusal comes first, as before.
+
+## Changed tests
+
+The human asked for this replacement. Both tests were added by #60/#61 and are not on `main`:
+- removed: `every mode's prompt states the rule never to open a new PR when not coordinator or when a Draft or Open PR
+  already exists` ([`tests/unit/member_pr.bats`](https://github.com/mateusz-szczyrzyca/team-agents/blob/c93b45ea805c2642d2d475fe239ede866d3e60cf/tests/unit/member_pr.bats)), the grep over seven prompt files;
+- narrowed and renamed: `dashboard PR ownership and Serena guidance reach every role and continuation` →
+  `dashboard Serena guidance reaches every role and continuation` ([`tests/unit/dashboard_prompt_modes.bats`](https://github.com/mateusz-szczyrzyca/team-agents/blob/c93b45ea805c2642d2d475fe239ede866d3e60cf/tests/unit/dashboard_prompt_modes.bats)). It
+  required the PR rule in every role, which the topic now forbids. Its Serena assertions for every role and mode stay;
+  the PR rule's roles are tested in [`tests/unit/pr_rule.bats`](https://github.com/mateusz-szczyrzyca/team-agents/blob/c93b45ea805c2642d2d475fe239ede866d3e60cf/tests/unit/pr_rule.bats).
+
+The other #61 tests of the rule pass unchanged:
+- `dashboard resume does not advertise Serena when disabled` — the fragment keeps the sentence "Only the coordinator
+  may open a PR.";
+- `a fresh session's prompt has the PR ownership rules and the Serena part once`;
+- `the PR ownership rules tell a coordinator what to do…` — `inv-merge.md` now says "its head branch is not yours".
+
+## Checks
+
+- `make gate` on [`c93b45e`](https://github.com/mateusz-szczyrzyca/team-agents/commit/c93b45ea805c2642d2d475fe239ede866d3e60cf), with the run's `AGENT_*` / `AGENTBUS_BIN` / `AGENTS_HOME` variables
+  removed: all `8` steps passed, `0` lint findings, `627/627` bats (`585` + `42`), `57/57` harness, Go tests ok.
+- The RED commit alone, in a temporary worktree: `14` of the `16` new tests fail, as its message shows.
+- No test on `main` was changed.
+
+## Size — a decision for the human
+
+`agent round-size`: **`3,227` lines** (`+3,094` / `−133`) in `40` files against `main`. That is over the hard limit of
+`3,000`. #61 alone (round 2, [`fe1b10b`](https://github.com/mateusz-szczyrzyca/team-agents/commit/fe1b10b7fe1fd42890995a1d8e127460ac9453a8)) was already at `2,822`.
+This round adds `567` lines (`+482` / `−85`) in `14` files, before this report. Any round 3 with tests passes the
+limit. Options:
+- a) merge #61 at [`fe1b10b`](https://github.com/mateusz-szczyrzyca/team-agents/commit/fe1b10b7fe1fd42890995a1d8e127460ac9453a8) first. This branch then goes
+  in one new PR: the rule allows it once the round's PR is merged. Its diff against `main` is this round only.
+  **Recommended:** both PRs stay within the limit;
+- b) fast-forward #61's branch to this branch and accept #61 over the limit.
+
+## Compatibility
+
+- New environment variable for the agents' `gh`: `AGENT_GH_TASK_META`. Without it (an older runner), `gh` behaves as
+  before.
+- New log events: `github_task_pr_refused`, `github_task_pr_unknown`.
+- No persisted format changes: `PR_NUMBER`, `ROUND_PR`, `BRANCH`, `KIND` and `REPO_NAME` are only read.
+- The prompts of helpers, investigators and reviews no longer have the PR rule (as on `main` before #60).
+
+## Lint suppressions
+
+One `# shellcheck source=/dev/null` above the `source` of the task's `meta.env` in `gh_task_pr`: the file is the
+task's, known only at run time. This is the same directive as at `task_field` and `meta_load`.
+
+## Not done
+
+- **The bats suite still inherits the run's `AGENT_*` variables** (`AGENTBUS_BIN`, `AGENT_GITHUB_NAME_COLORS`, …):
+  the gate passes only with them removed. This was already reported by both earlier rounds. The fix belongs in
+  [`tests/unit/helpers.bash`](https://github.com/mateusz-szczyrzyca/team-agents/blob/c93b45ea805c2642d2d475fe239ede866d3e60cf/tests/unit/helpers.bash) and needs the human's approval.
+- The no-PR text is used when `PR_NUMBER` is not recorded yet. A solo task records it only after its first run, for
+  `--verify`. So in its second run the prompt says "no PR of this task is known yet". The prompt tells the agent to
+  check its branch's PR first (`gh pr list --head <branch>`), and `gh` itself refuses a second PR for the same head
+  branch.
+
+---
+
+# Earlier report (task `20261104-221457-inv-opus`), kept unchanged
+
 # Fixing the review of PR #61 — `inv-opus` (task `20261104-221457-inv-opus`)
 
 Topic: continue the work of `some-fixes-dashboard-docs-jobs-investigators.md`; check the review comments of
