@@ -142,10 +142,13 @@ func (a *App) cmdAgents(out io.Writer, cfg *Config, root, busDir string) *Agents
 	if berr != nil {
 		return fromProcess(AgentsProcess, processErr(busBin, berr, "list investigations"))
 	}
-	// head -1 emits no line for empty output and adds a newline for unterminated output.
+	// head -1 preserves whether the first line was terminated in the bus output.
 	if summary != "" {
-		first, _, _ := strings.Cut(summary, "\n")
-		if _, err := fmt.Fprintln(out, first); err != nil {
+		first, _, terminated := strings.Cut(summary, "\n")
+		if terminated {
+			first += "\n"
+		}
+		if _, err := io.WriteString(out, first); err != nil {
 			return fromStorage(AgentsStorage, storageErr(err, "write investigation summary"))
 		}
 	}

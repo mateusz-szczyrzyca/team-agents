@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 // App owns the effect boundaries for one invocation of the Go candidate.
@@ -18,6 +19,7 @@ type App struct {
 	busDir    string    // agentbus state directory
 	busBin    string    // path override for agentbus binary
 	agentHome string    // agent home directory
+	config    *Config   // evaluated startup configuration; nil for explicitly constructed test apps
 }
 
 // tasksDirectory returns the configured tasks directory or resolves it from agent home.
@@ -33,6 +35,50 @@ func (a *App) tasksDirectory() string {
 		home = filepath.Join(os.Getenv("HOME"), "agents")
 	}
 	return filepath.Join(home, "tasks")
+}
+
+// loadStartupConfig prepares production paths and configuration before dispatch.
+func (a *App) loadStartupConfig(ctx context.Context, args []string) *LoadConfigError {
+	home := os.Getenv("HOME")
+	agentsHome := os.Getenv("AGENTS_HOME")
+	if agentsHome == "" {
+		agentsHome = filepath.Join(home, "agents")
+	}
+	self, selfErr := os.Executable()
+	if selfErr != nil {
+		return fromProcess(LoadConfigShell, processErr("startup", selfErr, "locate executable"))
+	}
+	hostname := os.Getenv("HOSTNAME")
+	if hostname == "" {
+		detected, hostErr := os.Hostname()
+		if hostErr != nil {
+			return fromProcess(LoadConfigShell, processErr("startup", hostErr, "read hostname"))
+		}
+		hostname = detected
+	}
+	cfg, err := a.loadConfig(ctx, ConfigRequest{
+		Args: args, File: filepath.Join(agentsHome, "agents.conf"),
+		Context: ConfigContext{Home: home, AgentsHome: agentsHome, Hostname: hostname, UID: strconv.Itoa(os.Getuid()), Self: self},
+	})
+	if err != nil {
+		return err
+	}
+	a.config = &cfg
+	a.agentHome = cfg.Scalars["AGENTS_HOME"]
+	a.tasksDir = cfg.Scalars["TASKS"]
+	a.busDir = cfg.Scalars["BUS_DIR"]
+	a.busBin = cfg.Scalars["AGENTBUS_BIN"]
+	return nil
+}
+
+// listingConfig uses production settings or oracle capacities for injected test apps.
+func (a *App) listingConfig() *Config {
+	if a.config != nil {
+		return a.config
+	}
+	return &Config{Scalars: map[string]string{
+		"AGENTBUS_BIN": a.busBinary(), "INVESTIGATION_QUEUE_MAX": "3", "INV_SLOTS": "1",
+	}}
 }
 
 // newApp fills omitted boundaries without granting command execution permission.

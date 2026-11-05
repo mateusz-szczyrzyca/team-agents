@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 )
 
 // dispatch routes a command to its handler, returning a typed CommandError on failure.
@@ -73,21 +71,13 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 
 // routeAgents delegates to cmdAgents.
 func (a *App) routeAgents(_ context.Context, stdout io.Writer) *CommandError {
-	tasksDir := a.tasksDir
-	if tasksDir == "" {
-		home := a.agentHome
-		if home == "" {
-			home = os.Getenv("HOME")
-		}
-		tasksDir = filepath.Join(home, "agents", "tasks")
-	}
+	tasksDir := a.tasksDirectory()
 	busDir := a.busDirectory()
-	cfg := &Config{
-		Scalars: map[string]string{
-			"AGENTBUS_BIN": a.busBinary(),
-		},
-	}
+	cfg := a.listingConfig()
 	if err := a.cmdAgents(stdout, cfg, tasksDir, busDir); err != nil {
+		if err.Cause == AgentsProcess {
+			return opErr(CommandProcess, "%s", err.Message)
+		}
 		return fromStorage(CommandStorage, storageErr(err.asError(), "agents"))
 	}
 	return nil
@@ -95,7 +85,7 @@ func (a *App) routeAgents(_ context.Context, stdout io.Writer) *CommandError {
 
 // routeAgentsJSON delegates to cmdAgentsJSON.
 func (a *App) routeAgentsJSON(_ context.Context, stdout io.Writer) *CommandError {
-	cfg := &Config{}
+	cfg := a.listingConfig()
 	if err := a.cmdAgentsJSON(stdout, cfg); err != nil {
 		return fromStorage(CommandStorage, storageErr(err.asError(), "agents json"))
 	}
