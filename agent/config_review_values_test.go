@@ -31,7 +31,8 @@ func TestConfigReviewValues(t *testing.T) {
 			if tc.key != "" {
 				probe = `[[ ${` + tc.name + `[` + tc.key + `]} == '` + tc.want + `' ]]`
 			}
-			oracle := `set -euo pipefail; shopt -u patsub_replacement; CONF=$1 HOME=$2 AGENTS_HOME=$3 HOSTNAME=$4 SELF=$5; TASKS=$AGENTS_HOME/tasks PROMPTS=$AGENTS_HOME/prompts BUS_DIR=$AGENTS_HOME/bus LOG_DIR=$AGENTS_HOME/logs; eval "$(sed -n '/source "\$CONF"/,/export XDG_RUNTIME_DIR/p' ../bin/agent)"; ` + probe
+			// Bash before 5.2 lacks this option; match the production startup guard.
+			oracle := `set -euo pipefail; shopt -u patsub_replacement 2>/dev/null || :; CONF=$1 HOME=$2 AGENTS_HOME=$3 HOSTNAME=$4 SELF=$5; TASKS=$AGENTS_HOME/tasks PROMPTS=$AGENTS_HOME/prompts BUS_DIR=$AGENTS_HOME/bus LOG_DIR=$AGENTS_HOME/logs; eval "$(sed -n '/source "\$CONF"/,/export XDG_RUNTIME_DIR/p' ../bin/agent)"; ` + probe
 			result, failure := app.execute(context.Background(), Command{Name: "bash", Args: []string{"-c", oracle, "oracle", file, ctx.Home, ctx.AgentsHome, ctx.Hostname, ctx.Self}, Env: []string{"PATH=/usr/bin:/bin"}})
 			if failure != nil || (result.ExitCode != 0) != tc.invalid {
 				t.Fatalf("direct Bash assertion: exit=%d error=%v", result.ExitCode, failure)
