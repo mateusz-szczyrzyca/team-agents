@@ -46,7 +46,8 @@ first_boot() {
   agent run solo "a task"
   t=$(task_of solo)
   wait_status "$t" running
-  echo "RESTARTS=2" >> "$AGENTS_HOME/tasks/$t/meta.env"
+  # The running runner replaces meta.env under this same lock.
+  ( flock -w 30 9 && echo "RESTARTS=2" >> "$AGENTS_HOME/tasks/$t/meta.env" ) 9> "$AGENTS_HOME/tasks/$t/meta.env.lock"
   restart "$t"
   AGENT_SUPERVISE_GRACE_SEC=0 AGENT_RESTART_MAX=2 agent _supervise
   [ "$(meta "$t" STATUS)" = failed ]
@@ -61,7 +62,10 @@ first_boot() {
   agent run solo "a task"
   t=$(task_of solo)
   wait_status "$t" running
-  printf 'TEAM=T\nMEMBER=solo@node2\nREMOTE_TEAM=1\nJOB_LEAD=http://127.0.0.1:9\n' >> "$AGENTS_HOME/tasks/$t/meta.env"
+  # The running runner replaces meta.env under this same lock.
+  ( flock -w 30 9 &&
+    printf 'TEAM=T\nMEMBER=solo@node2\nREMOTE_TEAM=1\nJOB_LEAD=http://127.0.0.1:9\n' >> "$AGENTS_HOME/tasks/$t/meta.env"
+  ) 9> "$AGENTS_HOME/tasks/$t/meta.env.lock"
   restart "$t"
   AGENT_SUPERVISE_GRACE_SEC=0 agent _supervise
   [ "$(meta "$t" STATUS)" = interrupted ]
