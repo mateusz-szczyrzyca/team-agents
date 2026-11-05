@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -466,5 +467,150 @@ func TestSeparateProcessMetaWrite(t *testing.T) {
 	// Verify original ID is preserved
 	if id, ok := m2.Lookup("ID"); !ok || id != "separate-process" {
 		t.Fatalf("ID lost: got %q,%v", id, ok)
+	}
+}
+
+// TestJobTransitionsNotCreatedWithoutJobID verifies job_transitions.jsonl is not created when JOB_ID is absent.
+func TestJobTransitionsNotCreatedWithoutJobID(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "no-job-id"
+	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=no-job-id\nSTATUS=init\n")
+
+	// Set STATUS without JOB_ID present
+	err := setTaskMeta(tasks, taskID, "STATUS", "running", "")
+	if err != nil {
+		t.Fatalf("setTaskMeta failed: %v", err)
+	}
+
+	// Verify job_transitions.jsonl was NOT created
+	jobTransFile := filepath.Join(tasks, taskID, "job_transitions.jsonl")
+	if _, failure := os.Stat(jobTransFile); failure == nil {
+		t.Fatal("job_transitions.jsonl should not be created without JOB_ID")
+	}
+}
+
+// TestJobTransitionsNotCreatedForNonStatusKeys verifies job_transitions.jsonl is not updated for non-STATUS keys.
+func TestJobTransitionsNotCreatedForNonStatusKeys(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "no-status-key"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=no-status-key\nJOB_ID=job-456\nNOTE=initial\n")
+
+	// Set non-STATUS key
+	err := setTaskMeta(tasks, taskID, "NOTE", "updated", "")
+	if err != nil {
+		t.Fatalf("setTaskMeta failed: %v", err)
+	}
+
+	// Verify job_transitions.jsonl was NOT created
+	jobTransFile := filepath.Join(taskDir, "job_transitions.jsonl")
+	if _, failure := os.Stat(jobTransFile); failure == nil {
+		t.Fatal("job_transitions.jsonl should not be created for non-STATUS keys")
+	}
+}
+
+// TestJobTransitionsMultipleRecords verifies multiple STATUS transitions append distinct records with RFC3339 timestamps.
+func TestJobTransitionsMultipleRecords(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "multi-trans"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=multi-trans\nJOB_ID=job-789\nSTATUS=init\n")
+
+	// Set STATUS multiple times
+	states := []string{"running", "paused", "completed"}
+	for _, state := range states {
+		err := setTaskMeta(tasks, taskID, "STATUS", state, "")
+		if err != nil {
+			t.Fatalf("setTaskMeta failed for state %s: %v", state, err)
+		}
+	}
+
+	// Verify job_transitions.jsonl has records
+	jobTransFile := filepath.Join(taskDir, "job_transitions.jsonl")
+	transitions, failure := os.ReadFile(jobTransFile)
+	if failure != nil {
+		t.Fatalf("job_transitions.jsonl not found: %v", failure)
+	}
+
+	// Count records (should be at least 3 for the states we set)
+	lines := strings.Split(strings.TrimSpace(string(transitions)), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 transition records, got %d", len(lines))
+	}
+
+	// Verify each line is valid JSON with state and timestamp fields
+	for i, line := range lines {
+		if line == "" {
+			continue
+		}
+		var record map[string]interface{}
+		if failure := json.Unmarshal([]byte(line), &record); failure != nil {
+			t.Fatalf("line %d not valid JSON: %v", i, failure)
+		}
+		if _, hasState := record["state"]; !hasState {
+			t.Fatalf("line %d missing 'state' field", i)
+		}
+		if _, hasAt := record["at"]; !hasAt {
+			t.Fatalf("line %d missing 'at' field (timestamp)", i)
+		}
+	}
+
+	// Verify all expected states appear in transitions
+	transContent := string(transitions)
+	for _, state := range states {
+		if !strings.Contains(transContent, fmt.Sprintf(`"state":"%s"`, state)) {
+			t.Fatalf("state %s not found in transitions", state)
+		}
+	}
+}
+
+// TestJobTransitionsPrelanchCancel verifies STATUS update with RUN=0 (prelaunch_cancel).
+func TestJobTransitionsPrelanchCancel(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "prelaunch-cancel"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=prelaunch-cancel\nJOB_ID=job-cancel\nRUN=0\nSTATUS=init\n")
+
+	// Set STATUS=stopped when RUN=0
+	err := setTaskMeta(tasks, taskID, "STATUS", "stopped", "")
+	if err != nil {
+		t.Fatalf("setTaskMeta failed for prelaunch cancel: %v", err)
+	}
+
+	// Verify STATUS was updated
+	data, failure := os.ReadFile(metaFile)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	m := parseMeta(data)
+	status, ok := m.Lookup("STATUS")
+	if !ok || status != "stopped" {
+		t.Fatalf("STATUS not updated: got %q,%v", status, ok)
+	}
+
+	// Verify job_transitions.jsonl has the stopped transition
+	jobTransFile := filepath.Join(taskDir, "job_transitions.jsonl")
+	transitions, failure := os.ReadFile(jobTransFile)
+	if failure != nil {
+		t.Fatalf("job_transitions.jsonl not found: %v", failure)
+	}
+	if !strings.Contains(string(transitions), "stopped") {
+		t.Fatalf("'stopped' state not in transitions: %s", string(transitions))
 	}
 }
