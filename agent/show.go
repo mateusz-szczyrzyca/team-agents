@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,107 +11,124 @@ import (
 )
 
 // cmdShow displays full details of a single task: metadata, task.md, questions, result, report.
-func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowError {
-	// Resolve the task ID (simple matching for now)
+func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowError {
 	tasksDir := app.tasksDir
 	if tasksDir == "" {
 		return opErr(ShowNotFound, "no task directory")
 	}
 
-	// Try exact match first
+	resolvedID, rerr := resolveTaskID(tasksDir, taskID)
+	if rerr != nil {
+		switch rerr.Cause {
+		case ResolveTaskNotFound:
+			return opErr(ShowNotFound, "no task matches: %s", taskID)
+		case ResolveTaskAmbiguous:
+			return opErr(ShowAmbiguous, "ambiguous task ID: %s", taskID)
+		default:
+			return fromStorage(ShowStorage, storageErr(rerr.Err, "%s", rerr.Message))
+		}
+	}
+	taskID = resolvedID
 	taskDir := filepath.Join(tasksDir, taskID)
-	if _, err := os.Stat(taskDir); os.IsNotExist(err) {
-		// Try partial match
-		entries, err := ioutil.ReadDir(tasksDir)
-		if err != nil {
-			return opErr(ShowNotFound, "cannot read tasks directory")
-		}
 
-		var matches []string
-		for _, entry := range entries {
-			if entry.IsDir() && strings.Contains(entry.Name(), taskID) {
-				matches = append(matches, entry.Name())
-			}
-		}
-
-		if len(matches) == 0 {
-			return opErr(ShowNotFound, "no task matches: "+taskID)
-		}
-		if len(matches) > 1 {
-			return opErr(ShowAmbiguous, "ambiguous task ID: "+taskID)
-		}
-		
-		taskDir = filepath.Join(tasksDir, matches[0])
-		taskID = matches[0]
+	meta, readErr := readTaskMeta(tasksDir, taskID)
+	if readErr != nil {
+		return opErr(ShowNotFound, "cannot read task metadata: %s", readErr.Error())
 	}
 
-	// Load metadata
-	meta := readMetaFile(filepath.Join(taskDir, "meta.env"))
-
 	// Print task header
-	fmt.Fprintf(out, "== %s\n", taskID)
+	if _, err := fmt.Fprintf(out, "== %s\n", taskID); err != nil {
+		return fromStorage(ShowStorage, storageErr(err, "write task header"))
+	}
 
 	// Print meta.env indented by 2 spaces
 	metaFile := filepath.Join(taskDir, "meta.env")
-	if content, err := ioutil.ReadFile(metaFile); err == nil {
+	if content, err := os.ReadFile(metaFile); err == nil { // #nosec G304 -- local task metadata path under tasks directory
 		for _, line := range strings.Split(string(content), "\n") {
 			if strings.TrimSpace(line) != "" {
-				fmt.Fprintf(out, "  %s\n", line)
+				if _, err := fmt.Fprintf(out, "  %s\n", line); err != nil {
+					return fromStorage(ShowStorage, storageErr(err, "write meta.env line"))
+				}
 			}
 		}
 	}
 
 	// Print task.md if it exists
 	taskmdFile := filepath.Join(taskDir, "task.md")
-	if content, err := ioutil.ReadFile(taskmdFile); err == nil {
-		fmt.Fprintf(out, "\n== task\n")
-		fmt.Fprint(out, string(content))
+	if content, err := os.ReadFile(taskmdFile); err == nil { // #nosec G304 -- local task description file under tasks directory
+		if _, err := fmt.Fprintf(out, "\n== task\n"); err != nil {
+			return fromStorage(ShowStorage, storageErr(err, "write task header"))
+		}
+		if _, err := fmt.Fprint(out, string(content)); err != nil {
+			return fromStorage(ShowStorage, storageErr(err, "write task content"))
+		}
 	}
 
 	// Print questions if ROUND > 0
-	round, _ := strconv.Atoi(meta["ROUND"])
+	roundStr, _ := meta.Lookup("ROUND")
+	round, _ := strconv.Atoi(roundStr)
 	if round > 0 {
 		questionsFile := filepath.Join(taskDir, fmt.Sprintf("questions-%d.md", round))
-		if content, err := ioutil.ReadFile(questionsFile); err == nil {
-			fmt.Fprintf(out, "\n== questions (round %d): %s\n", round, questionsFile)
-			fmt.Fprint(out, string(content))
+		if _, err := os.Stat(questionsFile); err == nil {
+			if _, err := fmt.Fprintf(out, "\n== questions (round %d): %s\n", round, questionsFile); err != nil {
+				return fromStorage(ShowStorage, storageErr(err, "write questions header"))
+			}
 		}
 	}
 
 	// Print investigations
-	if meta["KIND"] == "worker" {
+	kind, _ := meta.Lookup("KIND")
+	switch kind {
+	case "worker":
 		// Worker tasks can have investigations
-		// TODO: call bus inv-list
-		fmt.Fprintf(out, "\n== investigations\n")
-	} else if meta["KIND"] == "investigation" {
-		if team := meta["INVESTIGATION_TEAM"]; team != "" {
-			phase := meta["INVESTIGATION_PHASE"]
-			fmt.Fprintf(out, "\n== investigation team %s (phase %s)\n", team, phase)
-		} else {
-			invID := meta["INV_ID"]
-			fromAgent := meta["FROM_AGENT"]
-			parentTask := meta["PARENT_TASK"]
-			fmt.Fprintf(out, "\n== investigation #%s for %s (task %s)\n", invID, fromAgent, parentTask)
+		// In future rounds: call bus inv-list
+		if _, err := fmt.Fprintf(out, "\n== investigations\n"); err != nil {
+			return fromStorage(ShowStorage, storageErr(err, "write investigations header"))
 		}
-		
+	case "investigation":
+		team, _ := meta.Lookup("INVESTIGATION_TEAM")
+		if team != "" {
+			phase, _ := meta.Lookup("INVESTIGATION_PHASE")
+			if _, err := fmt.Fprintf(out, "\n== investigation team %s (phase %s)\n", team, phase); err != nil {
+				return fromStorage(ShowStorage, storageErr(err, "write investigation team header"))
+			}
+		} else {
+			invID, _ := meta.Lookup("INV_ID")
+			fromAgent, _ := meta.Lookup("FROM_AGENT")
+			parentTask, _ := meta.Lookup("PARENT_TASK")
+			if _, err := fmt.Fprintf(out, "\n== investigation #%s for %s (task %s)\n", invID, fromAgent, parentTask); err != nil {
+				return fromStorage(ShowStorage, storageErr(err, "write investigation header"))
+			}
+		}
+
 		// Show result.md if it exists
 		resultFile := filepath.Join(taskDir, "result.md")
-		if content, err := ioutil.ReadFile(resultFile); err == nil && len(content) > 0 {
-			fmt.Fprintf(out, "   result: %s\n", resultFile)
+		if content, err := os.ReadFile(resultFile); err == nil && len(content) > 0 { // #nosec G304 -- local investigation result path
+			if _, err := fmt.Fprintf(out, "   result: %s\n", resultFile); err != nil {
+				return fromStorage(ShowStorage, storageErr(err, "write result path"))
+			}
 		}
 	}
 
 	// Print final message from final.md
 	finalFile := filepath.Join(taskDir, "final.md")
-	if content, err := ioutil.ReadFile(finalFile); err == nil && len(content) > 0 {
-		fmt.Fprintf(out, "\n== the agent's last message\n")
-		fmt.Fprint(out, string(content))
+	if content, err := os.ReadFile(finalFile); err == nil && len(content) > 0 { // #nosec G304 -- local final message path
+		if _, err := fmt.Fprintf(out, "\n== the agent's last message\n"); err != nil {
+			return fromStorage(ShowStorage, storageErr(err, "write final message header"))
+		}
+		if _, err := fmt.Fprint(out, string(content)); err != nil {
+			return fromStorage(ShowStorage, storageErr(err, "write final message content"))
+		}
 	}
 
 	// Print report if it exists
-	reportFile := filepath.Join(app.workTree, ".agents", "reports", taskID+".md")
-	if _, err := os.Stat(reportFile); err == nil {
-		fmt.Fprintf(out, "\n== report: %s\n", reportFile)
+	if app.workTree != "" {
+		reportFile := filepath.Join(app.workTree, ".agents", "reports", taskID+".md")
+		if _, err := os.Stat(reportFile); err == nil {
+			if _, err := fmt.Fprintf(out, "\n== report: %s\n", reportFile); err != nil {
+				return fromStorage(ShowStorage, storageErr(err, "write report line"))
+			}
+		}
 	}
 
 	return nil

@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,12 +45,12 @@ func TestCmdShowMetaenv(t *testing.T) {
 
 	// Create task with metadata
 	taskDir := filepath.Join(tasksDir, "show-test")
-	if err := os.MkdirAll(taskDir, 0755); err != nil {
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	metaFile := filepath.Join(taskDir, "meta.env")
 	meta := "ID=show-test\nAGENT=test-agent\nSTATUS=done\nROUND=1\nRUN=1\n"
-	if err := ioutil.WriteFile(metaFile, []byte(meta), 0644); err != nil {
+	if err := os.WriteFile(metaFile, []byte(meta), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -84,15 +83,15 @@ func TestCmdShowTaskmd(t *testing.T) {
 
 	// Create task with task.md
 	taskDir := filepath.Join(tasksDir, "taskmd-test")
-	if err := os.MkdirAll(taskDir, 0755); err != nil {
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	meta := "ID=taskmd-test\nSTATUS=done\nROUND=1\nRUN=1\n"
-	if err := ioutil.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
 		t.Fatal(err)
 	}
 	task := "# Test Task\n\nThis is a test task description."
-	if err := ioutil.WriteFile(filepath.Join(taskDir, "task.md"), []byte(task), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte(task), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -125,15 +124,15 @@ func TestCmdShowQuestions(t *testing.T) {
 
 	// Create task with ROUND > 0 and questions file
 	taskDir := filepath.Join(tasksDir, "questions-test")
-	if err := os.MkdirAll(taskDir, 0755); err != nil {
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	meta := "ID=questions-test\nSTATUS=done\nROUND=2\nRUN=1\n"
-	if err := ioutil.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
 		t.Fatal(err)
 	}
 	questions := "# Questions for Round 2"
-	if err := ioutil.WriteFile(filepath.Join(taskDir, "questions-2.md"), []byte(questions), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(taskDir, "questions-2.md"), []byte(questions), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -163,15 +162,15 @@ func TestCmdShowFinalMessage(t *testing.T) {
 
 	// Create task with final.md
 	taskDir := filepath.Join(tasksDir, "final-test")
-	if err := os.MkdirAll(taskDir, 0755); err != nil {
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	meta := "ID=final-test\nSTATUS=done\nROUND=1\nRUN=1\n"
-	if err := ioutil.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
 		t.Fatal(err)
 	}
 	final := "Final message from the agent"
-	if err := ioutil.WriteFile(filepath.Join(taskDir, "final.md"), []byte(final), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(taskDir, "final.md"), []byte(final), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -206,21 +205,21 @@ func TestCmdShowReport(t *testing.T) {
 
 	// Create task
 	taskDir := filepath.Join(tasksDir, "report-test")
-	if err := os.MkdirAll(taskDir, 0755); err != nil {
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	meta := "ID=report-test\nSTATUS=done\nROUND=1\nRUN=1\n"
-	if err := ioutil.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create report file in .agents/reports/
 	reportDir := filepath.Join(workTree, ".agents", "reports")
-	if err := os.MkdirAll(reportDir, 0755); err != nil {
+	if err := os.MkdirAll(reportDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	report := "# Task Report\n\nCompleted successfully."
-	if err := ioutil.WriteFile(filepath.Join(reportDir, "report-test.md"), []byte(report), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(reportDir, "report-test.md"), []byte(report), 0600); err != nil {
 		t.Fatal(err)
 	}
 

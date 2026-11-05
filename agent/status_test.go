@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,12 +53,12 @@ func TestCmdStatusListing(t *testing.T) {
 
 	// Create test tasks with metadata
 	task1Dir := filepath.Join(tasksDir, "task1")
-	if err := os.MkdirAll(task1Dir, 0755); err != nil {
+	if err := os.MkdirAll(task1Dir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	metaFile := filepath.Join(task1Dir, "meta.env")
 	meta1 := "ID=task1\nAGENT=agent-1\nSTATUS=done\nROUND=1\nRUN=1\nREPO_NAME=test\n"
-	if err := ioutil.WriteFile(metaFile, []byte(meta1), 0644); err != nil {
+	if err := os.WriteFile(metaFile, []byte(meta1), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,11 +94,11 @@ func TestCmdStatusInvestigatorNaming(t *testing.T) {
 
 	// Create investigation task without INVESTIGATION_TEAM
 	invDir := filepath.Join(tasksDir, "inv-task")
-	if err := os.MkdirAll(invDir, 0755); err != nil {
+	if err := os.MkdirAll(invDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	meta := "ID=inv-task\nAGENT=inv-agent\nKIND=investigation\nINV_ID=123\nSTATUS=done\nROUND=1\nRUN=1\n"
-	if err := ioutil.WriteFile(filepath.Join(invDir, "meta.env"), []byte(meta), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(invDir, "meta.env"), []byte(meta), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -129,11 +128,11 @@ func TestCmdStatusMissingFields(t *testing.T) {
 
 	// Create task with missing fields
 	taskDir := filepath.Join(tasksDir, "partial-task")
-	if err := os.MkdirAll(taskDir, 0755); err != nil {
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	meta := "ID=partial-task\n" // only ID, all other fields missing
-	if err := ioutil.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
 		t.Fatal(err)
 	}
 

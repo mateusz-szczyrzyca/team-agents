@@ -4,18 +4,18 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
 
 // cmdStatus displays a table of all tasks with their status, agent, round, and run number.
-func cmdStatus(ctx context.Context, app *App, out io.Writer) *StatusError {
+func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 	// Print header
-	fmt.Fprintf(out, "%-30s %-12s %-13s %-6s %-5s %s\n",
-		"TASK", "AGENT", "STATUS", "ROUND", "RUN", "REPO")
+	if _, err := fmt.Fprintf(out, "%-30s %-12s %-13s %-6s %-5s %s\n",
+		"TASK", "AGENT", "STATUS", "ROUND", "RUN", "REPO"); err != nil {
+		return fromStorage(StatusStorage, storageErr(err, "write status header"))
+	}
 
 	// Read all tasks from tasksDir
 	tasksDir := app.tasksDir
@@ -23,9 +23,9 @@ func cmdStatus(ctx context.Context, app *App, out io.Writer) *StatusError {
 		return nil
 	}
 
-	entries, err := ioutil.ReadDir(tasksDir)
+	entries, err := os.ReadDir(tasksDir)
 	if err != nil && !os.IsNotExist(err) {
-		return opErr(StatusStorage, err.Error())
+		return fromStorage(StatusStorage, storageErr(err, "read tasks dir"))
 	}
 
 	var tasks []string
@@ -42,76 +42,47 @@ func cmdStatus(ctx context.Context, app *App, out io.Writer) *StatusError {
 
 	// Print each task
 	for _, taskID := range tasks {
-		meta := readMetaFile(filepath.Join(tasksDir, taskID, "meta.env"))
-		
-		agent := meta["AGENT"]
-		if agent == "" {
+		meta, readErr := readTaskMeta(tasksDir, taskID)
+		if readErr != nil {
+			continue
+		}
+
+		agent, ok := meta.Lookup("AGENT")
+		if !ok || agent == "" {
 			agent = "?"
 		}
 
 		// Special handling for investigation teams
-		if meta["KIND"] == "investigation" && meta["INVESTIGATION_TEAM"] == "" {
-			if invID := meta["INV_ID"]; invID != "" {
+		kind, _ := meta.Lookup("KIND")
+		team, _ := meta.Lookup("INVESTIGATION_TEAM")
+		if kind == "investigation" && team == "" {
+			if invID, ok := meta.Lookup("INV_ID"); ok && invID != "" {
 				agent = "inv#" + invID
 			}
 		}
 
-		status := meta["STATUS"]
-		if status == "" {
+		status, ok := meta.Lookup("STATUS")
+		if !ok || status == "" {
 			status = "?"
 		}
 
-		round := meta["ROUND"]
-		if round == "" {
+		round, ok := meta.Lookup("ROUND")
+		if !ok || round == "" {
 			round = "-"
 		}
 
-		run := meta["RUN"]
-		if run == "" {
+		run, ok := meta.Lookup("RUN")
+		if !ok || run == "" {
 			run = "-"
 		}
 
-		repo := meta["REPO_NAME"]
-		if repo == "" {
-			repo = ""
-		}
+		repo, _ := meta.Lookup("REPO_NAME")
 
-		fmt.Fprintf(out, "%-30s %-12s %-13s %-6s %-5s %s\n",
-			taskID, agent, status, round, run, repo)
+		if _, err := fmt.Fprintf(out, "%-30s %-12s %-13s %-6s %-5s %s\n",
+			taskID, agent, status, round, run, repo); err != nil {
+			return fromStorage(StatusStorage, storageErr(err, "write status row"))
+		}
 	}
 
 	return nil
-}
-
-// readMetaFile reads a Bash-quoted metadata file and returns the key-value pairs.
-func readMetaFile(path string) map[string]string {
-	meta := make(map[string]string)
-	content, err := ioutil.ReadFile(path)
-	if err != nil {
-		return meta
-	}
-
-	for _, line := range strings.Split(string(content), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			meta[parts[0]] = unquoteValue(parts[1])
-		}
-	}
-	return meta
-}
-
-// unquoteValue unquotes a Bash-quoted metadata value.
-func unquoteValue(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'' {
-		return s[1 : len(s)-1]
-	}
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		return strings.NewReplacer("\\\"", "\"", "\\\\", "\\").Replace(s[1 : len(s)-1])
-	}
-	return s
 }
