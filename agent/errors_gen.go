@@ -60,6 +60,38 @@ func (c ResolveTaskCause) info() causeInfo { return resolveTaskCauses[c] }
 // String returns the cause name.
 func (c ResolveTaskCause) String() string { return c.info().name }
 
+// ---------------------------------------------------------------- set_task_meta
+
+// SetTaskMetaCause is a reason why task metadata writing failed.
+type SetTaskMetaCause int
+
+const (
+	SetTaskMetaNotFound          SetTaskMetaCause = iota // the task directory or metadata file does not exist [NotFound]
+	SetTaskMetaInvalidAssignment                         // the metadata key or value is invalid [InvalidArgument]
+	SetTaskMetaLockTimeout                               // acquiring the task metadata lock timed out [Conflict]
+	SetTaskMetaStorage                                   // the shared state or a file could not be read or written [Storage]
+)
+
+// SetTaskMetaError is the error of task metadata writing.
+type SetTaskMetaError = OpError[SetTaskMetaCause]
+
+// setTaskMetaCauses describes the SetTaskMetaCause values (same order as the constants).
+var setTaskMetaCauses = [...]causeInfo{
+	{"NotFound", ClassNotFound},
+	{"InvalidAssignment", ClassInvalidArgument},
+	{"LockTimeout", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (SetTaskMetaCause) op() string { return "set_task_meta" }
+
+// info implements opCause.
+func (c SetTaskMetaCause) info() causeInfo { return setTaskMetaCauses[c] }
+
+// String returns the cause name.
+func (c SetTaskMetaCause) String() string { return c.info().name }
+
 // ---------------------------------------------------------------- command
 
 // CommandCause is a reason why local command dispatch failed.

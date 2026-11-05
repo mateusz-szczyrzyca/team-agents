@@ -2,12 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // TestMetaLiteralRecords covers legacy encodings and additive hand-written fixture forms.
@@ -179,5 +184,836 @@ func writeMetaFixture(t *testing.T, file, data string) {
 	t.Helper()
 	if failure := os.WriteFile(file, []byte(data), 0o600); failure != nil {
 		t.Fatal(failure)
+	}
+}
+
+// TestConcurrentSetTaskMeta verifies that concurrent setTaskMeta calls of different keys all survive.
+func TestConcurrentSetTaskMeta(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "concurrent-meta"
+	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	writeMetaFixture(t, metaFile, "STATUS=running\n")
+
+	// Spawn multiple concurrent writers
+	errChan := make(chan *SetTaskMetaError, 20)
+	for i := 1; i <= 20; i++ {
+		go func(index int) {
+			key := fmt.Sprintf("K%d", index)
+			value := fmt.Sprintf("v%d", index)
+			err := setTaskMeta(tasks, taskID, key, value, "")
+			errChan <- err
+		}(i)
+	}
+
+	// Collect all errors
+	var failCount int
+	for i := 0; i < 20; i++ {
+		err := <-errChan
+		if err != nil {
+			failCount++
+		}
+	}
+
+	if failCount > 0 {
+		t.Fatalf("concurrent operations failed: %d errors", failCount)
+	}
+
+	// Verify all keys were written
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	m := parseMeta(data)
+	for i := 1; i <= 20; i++ {
+		key := fmt.Sprintf("K%d", i)
+		value := fmt.Sprintf("v%d", i)
+		got, ok := m.Lookup(key)
+		if !ok || got != value {
+			t.Fatalf("key %s: got %q, want %q", key, got, value)
+		}
+	}
+
+	// Verify original STATUS is preserved
+	status, ok := m.Lookup("STATUS")
+	if !ok || status != "running" {
+		t.Fatalf("STATUS: got %q, want 'running'", status)
+	}
+}
+
+// TestSetTaskMetaWriteFailure verifies that setTaskMeta fails and keeps old metadata when writing fails.
+func TestSetTaskMetaWriteFailure(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "write-fault"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	original := "ID=write-fault\nSTATUS=original\n"
+	writeMetaFixture(t, metaFile, original)
+
+	// Inject write failure by replacing writeMetaTemp hook
+	var createdTemp string
+	oldWrite := writeMetaTemp
+	defer func() { writeMetaTemp = oldWrite }()
+	writeMetaTemp = func(f *os.File, _ []byte) (int, error) {
+		createdTemp = f.Name()
+		return 0, fmt.Errorf("injected write error")
+	}
+
+	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
+	if err == nil {
+		t.Fatal("expected write failure, got nil")
+	}
+	if err.Cause != SetTaskMetaStorage {
+		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
+	}
+
+	// Verify temp file was actually created and cleaned up
+	if createdTemp == "" {
+		t.Fatal("expected temp file to be created before write failure")
+	}
+	if _, statErr := os.Stat(createdTemp); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("temp file was not cleaned up after write failure: %v", statErr)
+	}
+
+	// Verify original metadata is preserved
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if string(data) != original {
+		t.Fatalf("metadata changed on write failure: got %q, want %q", string(data), original)
+	}
+}
+
+// TestSetTaskMetaReadFailure verifies that setTaskMeta fails and keeps old metadata when reading fails.
+func TestSetTaskMetaReadFailure(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "read-fault"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	original := "ID=read-fault\nSTATUS=original\n"
+	writeMetaFixture(t, metaFile, original)
+
+	// Pre-create lock file so lock acquisition succeeds
+	lockFile := filepath.Join(taskDir, "meta.env.lock")
+	if failure := os.WriteFile(lockFile, []byte(""), 0o600); failure != nil { // #nosec G304 -- test directory
+		t.Fatal(failure)
+	}
+
+	// Make meta.env unreadable to trigger read failure
+	if failure := os.Chmod(metaFile, 0o000); failure != nil { // #nosec G302 -- test file
+		t.Fatal(failure)
+	}
+	defer func() { // #nosec G302 -- test file
+		if err := os.Chmod(metaFile, 0o600); err != nil {
+			t.Errorf("failed to restore file permissions: %v", err)
+		}
+	}()
+
+	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
+	if err == nil {
+		t.Fatal("expected read failure, got nil")
+	}
+	if err.Cause != SetTaskMetaStorage {
+		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
+	}
+
+	// Restore permissions to verify original metadata is preserved
+	if failure := os.Chmod(metaFile, 0o600); failure != nil { // #nosec G302 -- test file
+		t.Fatalf("failed to restore for verification: %v", failure)
+	}
+
+	// Verify original metadata is preserved
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if string(data) != original {
+		t.Fatalf("metadata changed on read failure: got %q, want %q", string(data), original)
+	}
+}
+
+// TestSetTaskMetaStaleRunNoOp verifies that setting metadata with mismatched run is a successful no-op.
+func TestSetTaskMetaStaleRunNoOp(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "stale-run"
+	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	original := "ID=stale-run\nRUN=run123\nSTATUS=original\n"
+	writeMetaFixture(t, metaFile, original)
+
+	// Try to set metadata with a different run ID
+	err := setTaskMeta(tasks, taskID, "STATUS", "new", "run-different")
+	if err != nil {
+		t.Fatalf("stale run should return nil, got: %v", err)
+	}
+
+	// Verify metadata is unchanged (stale run is a no-op)
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if string(data) != original {
+		t.Fatalf("stale run was not a no-op: got %q, want %q", string(data), original)
+	}
+}
+
+// TestSetTaskMetaJobTransitions verifies that setting STATUS appends to job_transitions.jsonl.
+func TestSetTaskMetaJobTransitions(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "job-transitions"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	original := "ID=job-transitions\nJOB_ID=job-123\nSTATUS=original\n"
+	writeMetaFixture(t, metaFile, original)
+
+	// Set STATUS, which should create/append to job_transitions.jsonl
+	err := setTaskMeta(tasks, taskID, "STATUS", "running", "")
+	if err != nil {
+		t.Fatalf("setTaskMeta failed: %v", err)
+	}
+
+	// Verify metadata was updated
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	m := parseMeta(data)
+	status, ok := m.Lookup("STATUS")
+	if !ok || status != "running" {
+		t.Fatalf("STATUS not updated: got %q", status)
+	}
+
+	// Verify job_transitions.jsonl was created
+	jobTransFile := filepath.Join(taskDir, "job_transitions.jsonl")
+	transitions, failure := os.ReadFile(jobTransFile) // #nosec G304 -- path belongs to temporary test directory
+	if failure != nil {
+		t.Fatalf("job_transitions.jsonl not created: %v", failure)
+	}
+
+	// Verify it contains a valid JSON entry with "running" state
+	if !strings.Contains(string(transitions), "running") {
+		t.Fatalf("job_transitions.jsonl missing 'running' state: %s", string(transitions))
+	}
+}
+
+// extractBashMetaFuncs extracts meta_file, meta_set, task_field, and log_error from bin/agent source.
+func extractBashMetaFuncs(t *testing.T) string {
+	t.Helper()
+	source, failure := os.ReadFile("../bin/agent")
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	const (
+		metaFile = "meta_file() {"
+		metaSet  = "meta_set() {"
+		taskFld  = "task_field() {"
+		logErr   = "log_error() {"
+	)
+	var funcs strings.Builder
+	funcs.WriteString("# Extracted from bin/agent\n")
+	for _, fn := range []struct{ name, pattern string }{
+		{"meta_file", metaFile},
+		{"log_error", logErr},
+		{"meta_set", metaSet},
+		{"task_field", taskFld},
+	} {
+		start := strings.Index(string(source), fn.pattern)
+		if start < 0 {
+			t.Fatalf("function %s not found in bin/agent", fn.name)
+		}
+		end := strings.Index(string(source)[start:], "\n}")
+		if end < 0 {
+			t.Fatalf("end of function %s not found", fn.name)
+		}
+		funcs.WriteString(string(source)[start : start+end+2])
+		funcs.WriteString("\n")
+	}
+	return funcs.String()
+}
+
+// startMetaTestProcess starts a bounded child and always reaps it, including after assertion failures.
+func startMetaTestProcess(t *testing.T, cmd *exec.Cmd) <-chan struct{} {
+	t.Helper()
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := cmd.Wait(); err != nil {
+			t.Errorf("metadata child failed: %v\n%s", err, output.String())
+		}
+	}()
+	return done
+}
+
+// waitMetaTestMarker bounds readiness polling and reports unexpected filesystem failures.
+func waitMetaTestMarker(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("metadata child did not create readiness marker %s", path)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// assertMetaWriterBlocked proves an already-ready child cannot finish while the parent owns the lock.
+func assertMetaWriterBlocked(t *testing.T, donePath string) {
+	t.Helper()
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(donePath); err == nil {
+			t.Fatalf("metadata writer bypassed the parent's lock: %s", donePath)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// holdMetaTestLock keeps cleanup safe even when a blocked-writer assertion aborts the test.
+func holdMetaTestLock(t *testing.T, tasks, taskID string) func() {
+	t.Helper()
+	lock, failure := lockTaskMeta(tasks, taskID, 0)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			if err := finishTaskMeta(lock, nil); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	t.Cleanup(release)
+	return release
+}
+
+// TestMixedBashGoWriter checks Bash lock interoperability and reads each language's writes from the other.
+func TestMixedBashGoWriter(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "mixed-writer"
+	taskDir := filepath.Join(tasks, taskID)
+	if err := os.MkdirAll(taskDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeMetaFixture(t, filepath.Join(taskDir, "meta.env"), "ID=mixed-writer\nSTATUS=init\n")
+	release := holdMetaTestLock(t, tasks, taskID)
+	readyPath := filepath.Join(taskDir, "bash-ready")
+	donePath := filepath.Join(taskDir, "bash-done")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	bashFuncs := extractBashMetaFuncs(t)
+	cmd := exec.CommandContext(ctx, "bash", "--noprofile", "--norc", "-c", bashFuncs+`
+set -euo pipefail
+TASKS=$1
+printf ready > "$3"
+meta_set "$2" BASH_KEY bash_value
+printf done > "$4"
+`, "meta-test", tasks, taskID, readyPath, donePath) // #nosec G204 -- script contains only extracted repository functions and fixed test statements
+	cmd.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/bin:/bin", "LC_ALL=C"}
+	done := startMetaTestProcess(t, cmd)
+	defer func() { cancel(); <-done }()
+	waitMetaTestMarker(t, readyPath)
+	assertMetaWriterBlocked(t, donePath)
+	release()
+	<-done
+	m, failure := readTaskMeta(tasks, taskID)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if val, ok := m.Lookup("BASH_KEY"); !ok || val != "bash_value" {
+		t.Fatalf("Go read Bash key: %q,%v", val, ok)
+	}
+	if err := setTaskMeta(tasks, taskID, "GO_KEY", "go value 'with quotes'", ""); err != nil {
+		t.Fatal(err)
+	}
+	got := runMetaBash(t, "C", bashFuncs+`
+TASKS=$1
+task_field "$2" GO_KEY
+`, tasks, taskID)
+	if got != "go value 'with quotes'" {
+		t.Fatalf("Bash read Go key: %q", got)
+	}
+	m, failure = readTaskMeta(tasks, taskID)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	for key, want := range map[string]string{"ID": taskID, "BASH_KEY": "bash_value", "GO_KEY": "go value 'with quotes'"} {
+		if got, ok := m.Lookup(key); !ok || got != want {
+			t.Errorf("final %s = %q,%v; want %q,true", key, got, ok, want)
+		}
+	}
+}
+
+// TestSeparateProcessMetaWrite proves both child writers wait for the shared lock and preserve all keys.
+func TestSeparateProcessMetaWrite(t *testing.T) {
+	if childKey := os.Getenv("TEST_CHILD_PROCESS_KEY"); childKey != "" {
+		if err := os.WriteFile(os.Getenv("TEST_CHILD_READY_FILE"), []byte("ready"), 0o600); err != nil { // #nosec G703 -- marker path is supplied by this test parent inside its temporary task directory
+			t.Fatal(err)
+		}
+		if err := setTaskMeta(os.Getenv("TEST_TASKS_DIR"), os.Getenv("TEST_TASK_ID"), childKey,
+			os.Getenv("TEST_CHILD_PROCESS_VALUE"), ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(os.Getenv("TEST_CHILD_DONE_FILE"), []byte("done"), 0o600); err != nil { // #nosec G703 -- marker path is supplied by this test parent inside its temporary task directory
+			t.Fatal(err)
+		}
+		return
+	}
+	tasks := t.TempDir()
+	taskID := "separate-process"
+	taskDir := filepath.Join(tasks, taskID)
+	if err := os.MkdirAll(taskDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeMetaFixture(t, filepath.Join(taskDir, "meta.env"), "ID=separate-process\nSTATUS=init\n")
+	release := holdMetaTestLock(t, tasks, taskID)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var children []<-chan struct{}
+	defer func() {
+		cancel()
+		for _, done := range children {
+			<-done
+		}
+	}()
+	for i := 1; i <= 2; i++ {
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSeparateProcessMetaWrite$") // #nosec G204,G702 -- re-executes only the current test binary
+		cmd.Env = append(os.Environ(),
+			"TEST_TASKS_DIR="+tasks, "TEST_TASK_ID="+taskID,
+			fmt.Sprintf("TEST_CHILD_PROCESS_KEY=PROCESS%d", i),
+			fmt.Sprintf("TEST_CHILD_PROCESS_VALUE=value%d", i),
+			"TEST_CHILD_READY_FILE="+filepath.Join(taskDir, fmt.Sprintf("ready%d", i)),
+			"TEST_CHILD_DONE_FILE="+filepath.Join(taskDir, fmt.Sprintf("done%d", i)),
+		)
+		children = append(children, startMetaTestProcess(t, cmd))
+	}
+	for i := 1; i <= 2; i++ {
+		waitMetaTestMarker(t, filepath.Join(taskDir, fmt.Sprintf("ready%d", i)))
+	}
+	for i := 1; i <= 2; i++ {
+		assertMetaWriterBlocked(t, filepath.Join(taskDir, fmt.Sprintf("done%d", i)))
+	}
+	release()
+	for _, done := range children {
+		<-done
+	}
+	m, failure := readTaskMeta(tasks, taskID)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	for key, want := range map[string]string{"ID": taskID, "PROCESS1": "value1", "PROCESS2": "value2"} {
+		if got, ok := m.Lookup(key); !ok || got != want {
+			t.Errorf("final %s = %q,%v; want %q,true", key, got, ok, want)
+		}
+	}
+}
+
+// TestJobTransitionsNotCreatedWithoutJobID verifies job_transitions.jsonl is not created when JOB_ID is absent.
+func TestJobTransitionsNotCreatedWithoutJobID(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "no-job-id"
+	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=no-job-id\nSTATUS=init\n")
+
+	// Set STATUS without JOB_ID present
+	err := setTaskMeta(tasks, taskID, "STATUS", "running", "")
+	if err != nil {
+		t.Fatalf("setTaskMeta failed: %v", err)
+	}
+
+	// Verify job_transitions.jsonl was NOT created
+	jobTransFile := filepath.Join(tasks, taskID, "job_transitions.jsonl")
+	if _, failure := os.Stat(jobTransFile); failure == nil {
+		t.Fatal("job_transitions.jsonl should not be created without JOB_ID")
+	}
+}
+
+// TestJobTransitionsNotCreatedForNonStatusKeys verifies job_transitions.jsonl is not updated for non-STATUS keys.
+func TestJobTransitionsNotCreatedForNonStatusKeys(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "no-status-key"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=no-status-key\nJOB_ID=job-456\nNOTE=initial\n")
+
+	// Set non-STATUS key
+	err := setTaskMeta(tasks, taskID, "NOTE", "updated", "")
+	if err != nil {
+		t.Fatalf("setTaskMeta failed: %v", err)
+	}
+
+	// Verify job_transitions.jsonl was NOT created
+	jobTransFile := filepath.Join(taskDir, "job_transitions.jsonl")
+	if _, failure := os.Stat(jobTransFile); failure == nil {
+		t.Fatal("job_transitions.jsonl should not be created for non-STATUS keys")
+	}
+}
+
+// TestJobTransitionsMultipleRecords verifies multiple STATUS transitions append distinct records with RFC3339 timestamps.
+func TestJobTransitionsMultipleRecords(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "multi-trans"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=multi-trans\nJOB_ID=job-789\nSTATUS=init\n")
+
+	// Set STATUS multiple times
+	states := []string{"running", "paused", "completed"}
+	for _, state := range states {
+		err := setTaskMeta(tasks, taskID, "STATUS", state, "")
+		if err != nil {
+			t.Fatalf("setTaskMeta failed for state %s: %v", state, err)
+		}
+	}
+
+	// Verify job_transitions.jsonl has records
+	jobTransFile := filepath.Join(taskDir, "job_transitions.jsonl")
+	transitions, failure := os.ReadFile(jobTransFile) // #nosec G304 -- path belongs to temporary test directory
+	if failure != nil {
+		t.Fatalf("job_transitions.jsonl not found: %v", failure)
+	}
+
+	// Count records (should be at least 3 for the states we set)
+	lines := strings.Split(strings.TrimSpace(string(transitions)), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 transition records, got %d", len(lines))
+	}
+
+	// Verify each line is valid JSON with state and timestamp fields
+	for i, line := range lines {
+		if line == "" {
+			continue
+		}
+		var record map[string]interface{}
+		if failure := json.Unmarshal([]byte(line), &record); failure != nil {
+			t.Fatalf("line %d not valid JSON: %v", i, failure)
+		}
+		if _, hasState := record["state"]; !hasState {
+			t.Fatalf("line %d missing 'state' field", i)
+		}
+		if _, hasAt := record["at"]; !hasAt {
+			t.Fatalf("line %d missing 'at' field (timestamp)", i)
+		}
+	}
+
+	// Verify all expected states appear in transitions
+	transContent := string(transitions)
+	for _, state := range states {
+		if !strings.Contains(transContent, fmt.Sprintf(`"state":"%s"`, state)) {
+			t.Fatalf("state %s not found in transitions", state)
+		}
+	}
+}
+
+// TestJobTransitionsPrelanchCancel verifies STATUS update with RUN=0 (prelaunch_cancel).
+func TestJobTransitionsPrelanchCancel(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "prelaunch-cancel"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=prelaunch-cancel\nJOB_ID=job-cancel\nRUN=0\nSTATUS=init\n")
+
+	// Set STATUS=stopped when RUN=0
+	err := setTaskMeta(tasks, taskID, "STATUS", "stopped", "")
+	if err != nil {
+		t.Fatalf("setTaskMeta failed for prelaunch cancel: %v", err)
+	}
+
+	// Verify STATUS was updated
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	m := parseMeta(data)
+	status, ok := m.Lookup("STATUS")
+	if !ok || status != "stopped" {
+		t.Fatalf("STATUS not updated: got %q,%v", status, ok)
+	}
+
+	// Verify job_transitions.jsonl has the stopped transition
+	jobTransFile := filepath.Join(taskDir, "job_transitions.jsonl")
+	transitions, failure := os.ReadFile(jobTransFile) // #nosec G304 -- path belongs to temporary test directory
+	if failure != nil {
+		t.Fatalf("job_transitions.jsonl not found: %v", failure)
+	}
+	if !strings.Contains(string(transitions), "stopped") {
+		t.Fatalf("'stopped' state not in transitions: %s", string(transitions))
+	}
+}
+
+// TestConcurrentReadWriteMeta verifies concurrent reads never observe partial writes or corrupt lines.
+func TestConcurrentReadWriteMeta(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "concurrent-rw"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=concurrent-rw\nSTATUS=init\nCOUNT=0\n")
+
+	// Concurrent reader and writer goroutines using WaitGroup
+	var wg sync.WaitGroup
+	writerErrors := make(chan *SetTaskMetaError, 50) // 10 writers × 5 operations each
+	readerCount := 10
+	writerCount := 10
+
+	// Start readers
+	wg.Add(readerCount)
+	for i := 0; i < readerCount; i++ {
+		go func(readerID int) {
+			defer wg.Done()
+			for j := 0; j < 5; j++ {
+				m, err := readTaskMeta(tasks, taskID)
+				if err != nil {
+					// Read failure is acceptable during concurrent writes, but report it
+					t.Errorf("reader %d: read failed: %v", readerID, err)
+					return
+				}
+				// Verify no corrupted lines or missing complete records
+				for _, line := range m.Lines {
+					if line.Raw == "" && line.Kind != MetaBlank {
+						t.Errorf("reader %d: empty raw line with kind %v", readerID, line.Kind)
+					}
+				}
+				// Verify ID is readable
+				if idVal, ok := m.Lookup("ID"); !ok || idVal != "concurrent-rw" {
+					t.Errorf("reader %d: ID corrupted or missing", readerID)
+				}
+			}
+		}(i)
+	}
+
+	// Start writers
+	wg.Add(writerCount)
+	for i := 0; i < writerCount; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 5; j++ {
+				key := fmt.Sprintf("RW_%d_%d", id, j)
+				value := fmt.Sprintf("val_%d_%d", id, j)
+				err := setTaskMeta(tasks, taskID, key, value, "")
+				writerErrors <- err
+			}
+		}(i)
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+	close(writerErrors)
+
+	// Collect writer errors
+	var failCount int
+	for err := range writerErrors {
+		if err != nil {
+			failCount++
+		}
+	}
+
+	if failCount > 0 {
+		t.Fatalf("concurrent write operations failed: %d errors", failCount)
+	}
+
+	// Verify file is still readable and consistent
+	m, err := readTaskMeta(tasks, taskID)
+	if err != nil {
+		t.Fatalf("final read failed: %v", err)
+	}
+	if id, ok := m.Lookup("ID"); !ok || id != "concurrent-rw" {
+		t.Fatal("final read: ID corrupted or missing")
+	}
+}
+
+// TestSetTaskMetaValueEscaping verifies various special characters roundtrip correctly.
+func TestSetTaskMetaValueEscaping(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "escaping"
+	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=escaping\n")
+
+	testValues := []string{
+		"simple",
+		"with spaces",
+		"with\nnewline",
+		"with'single'quotes",
+		`with"double"quotes`,
+		"with$dollar",
+		"with`backtick`",
+		"with\\backslash",
+		"with#hash",
+		"tab\there",
+		"mixed\n'single'\"double\"$dollar\\back",
+		"unicode_é_ñ_ü",
+		"emoji_😀_🎉",
+		"\x01\x02\x03control",
+		"empty_value_next",
+		"",
+	}
+
+	// Write each value with setTaskMeta
+	for i, value := range testValues {
+		key := fmt.Sprintf("TEST_%d", i)
+		err := setTaskMeta(tasks, taskID, key, value, "")
+		if err != nil {
+			t.Fatalf("setTaskMeta failed for index %d (value %q): %v", i, value, err)
+		}
+	}
+
+	// Read back and verify each value matches exactly
+	m, err := readTaskMeta(tasks, taskID)
+	if err != nil {
+		t.Fatalf("readTaskMeta failed: %v", err)
+	}
+
+	for i, expectedValue := range testValues {
+		key := fmt.Sprintf("TEST_%d", i)
+		gotValue, ok := m.Lookup(key)
+		if !ok {
+			t.Fatalf("key %s not found in metadata", key)
+		}
+		if gotValue != expectedValue {
+			t.Fatalf("value mismatch for %s: got %q, want %q", key, gotValue, expectedValue)
+		}
+	}
+}
+
+// TestSetTaskMetaRenameFailure verifies setTaskMeta fails and cleans up temp file when rename fails.
+func TestSetTaskMetaRenameFailure(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "rename-fault"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	original := "ID=rename-fault\nSTATUS=original\n"
+	writeMetaFixture(t, metaFile, original)
+
+	// Inject rename failure by replacing renameMetaTemp hook
+	var createdTemp string
+	oldRename := renameMetaTemp
+	defer func() { renameMetaTemp = oldRename }()
+	renameMetaTemp = func(oldpath, _ string) error {
+		createdTemp = oldpath
+		if _, statErr := os.Stat(oldpath); statErr != nil { // #nosec G703 -- oldpath comes from internal os.CreateTemp
+			t.Errorf("temp file does not exist before rename: %v", statErr)
+		}
+		return fmt.Errorf("injected rename error")
+	}
+
+	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
+	if err == nil {
+		t.Fatal("expected rename failure, got nil")
+	}
+	if err.Cause != SetTaskMetaStorage {
+		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
+	}
+
+	// Verify temp file was actually created and then cleaned up
+	if createdTemp == "" {
+		t.Fatal("expected temp file to be created before rename failure")
+	}
+	if _, statErr := os.Stat(createdTemp); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("temp file was not cleaned up after rename failure: %v", statErr)
+	}
+
+	// Verify original metadata is preserved
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if string(data) != original {
+		t.Fatalf("metadata changed on rename failure: got %q, want %q", string(data), original)
+	}
+}
+
+// TestSetTaskMetaTempFileCleanup verifies temp files are removed on write/close/rename failures.
+func TestSetTaskMetaTempFileCleanup(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "cleanup-test"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=cleanup-test\n")
+
+	// Inject write failure to trigger cleanup path
+	var createdTemp string
+	oldWrite := writeMetaTemp
+	defer func() { writeMetaTemp = oldWrite }()
+	writeMetaTemp = func(f *os.File, _ []byte) (int, error) {
+		createdTemp = f.Name()
+		return 0, fmt.Errorf("injected write error for cleanup test")
+	}
+
+	// Attempt to write metadata, which will fail and should clean up temp file
+	err := setTaskMeta(tasks, taskID, "KEY", "value", "")
+	if err == nil {
+		t.Fatal("expected failure, got nil")
+	}
+	if err.Cause != SetTaskMetaStorage {
+		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
+	}
+
+	if createdTemp == "" {
+		t.Fatal("expected temp file to be created")
+	}
+	if _, statErr := os.Stat(createdTemp); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("temp file was not cleaned up: %v", statErr)
+	}
+
+	// Verify no temp files remain in task directory
+	entries, failure := os.ReadDir(taskDir)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), "meta.env.tmp") {
+			t.Fatalf("orphaned temp file found after write failure: %s", entry.Name())
+		}
 	}
 }

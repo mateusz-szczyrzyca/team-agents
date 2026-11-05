@@ -18,6 +18,16 @@
    ]
   },
   {
+   "type": "SetTaskMeta",
+   "op": "set_task_meta",
+   "what": "task metadata writing",
+   "causes": [
+    {"name": "NotFound", "class": "NotFound", "doc": "the task directory or metadata file does not exist"},
+    {"name": "InvalidAssignment", "class": "InvalidArgument", "doc": "the metadata key or value is invalid"},
+    {"name": "LockTimeout", "class": "Conflict", "doc": "acquiring the task metadata lock timed out"}
+   ]
+  },
+  {
    "type": "Command",
    "op": "command",
    "what": "local command dispatch",
