@@ -255,9 +255,11 @@ func TestSetTaskMetaWriteFailure(t *testing.T) {
 	writeMetaFixture(t, metaFile, original)
 
 	// Inject write failure by replacing writeMetaTemp hook
+	var createdTemp string
 	oldWrite := writeMetaTemp
 	defer func() { writeMetaTemp = oldWrite }()
-	writeMetaTemp = func(f *os.File, b []byte) (int, error) {
+	writeMetaTemp = func(f *os.File, _ []byte) (int, error) {
+		createdTemp = f.Name()
 		return 0, fmt.Errorf("injected write error")
 	}
 
@@ -269,17 +271,12 @@ func TestSetTaskMetaWriteFailure(t *testing.T) {
 		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
 	}
 
-	// Verify temp file was created and cleaned up
-	if _, err := os.Stat(filepath.Join(taskDir, "meta.env.tmp.+")); !errors.Is(err, os.ErrNotExist) {
-		// May have a different suffix, so check if any temp files exist
-		entries, dirErr := os.ReadDir(taskDir)
-		if dirErr == nil {
-			for _, entry := range entries {
-				if strings.Contains(entry.Name(), "meta.env.tmp") {
-				t.Fatalf("temp file not cleaned up: %s", entry.Name())
-			}
-		}
+	// Verify temp file was actually created and cleaned up
+	if createdTemp == "" {
+		t.Fatal("expected temp file to be created before write failure")
 	}
+	if _, statErr := os.Stat(createdTemp); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("temp file was not cleaned up after write failure: %v", statErr)
 	}
 
 	// Verify original metadata is preserved
@@ -899,16 +896,15 @@ func TestSetTaskMetaRenameFailure(t *testing.T) {
 	writeMetaFixture(t, metaFile, original)
 
 	// Inject rename failure by replacing renameMetaTemp hook
+	var createdTemp string
 	oldRename := renameMetaTemp
 	defer func() { renameMetaTemp = oldRename }()
-	renameCount := 0
-	renameMetaTemp = func(old, new string) error {
-		renameCount++
-		// First rename call is what we want to intercept
-		if renameCount == 1 {
-			return fmt.Errorf("injected rename error")
+	renameMetaTemp = func(oldpath, _ string) error {
+		createdTemp = oldpath
+		if _, statErr := os.Stat(oldpath); statErr != nil { // #nosec G703 -- oldpath comes from internal os.CreateTemp
+			t.Errorf("temp file does not exist before rename: %v", statErr)
 		}
-		return oldRename(old, new)
+		return fmt.Errorf("injected rename error")
 	}
 
 	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
@@ -919,15 +915,12 @@ func TestSetTaskMetaRenameFailure(t *testing.T) {
 		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
 	}
 
-	// Verify temp file was created and cleaned up
-	entries, failure := os.ReadDir(taskDir)
-	if failure != nil {
-		t.Fatal(failure)
+	// Verify temp file was actually created and then cleaned up
+	if createdTemp == "" {
+		t.Fatal("expected temp file to be created before rename failure")
 	}
-	for _, entry := range entries {
-		if strings.Contains(entry.Name(), "meta.env.tmp") {
-			t.Fatalf("temp file not cleaned up: %s", entry.Name())
-		}
+	if _, statErr := os.Stat(createdTemp); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("temp file was not cleaned up after rename failure: %v", statErr)
 	}
 
 	// Verify original metadata is preserved
@@ -952,9 +945,11 @@ func TestSetTaskMetaTempFileCleanup(t *testing.T) {
 	writeMetaFixture(t, metaFile, "ID=cleanup-test\n")
 
 	// Inject write failure to trigger cleanup path
+	var createdTemp string
 	oldWrite := writeMetaTemp
 	defer func() { writeMetaTemp = oldWrite }()
-	writeMetaTemp = func(f *os.File, b []byte) (int, error) {
+	writeMetaTemp = func(f *os.File, _ []byte) (int, error) {
+		createdTemp = f.Name()
 		return 0, fmt.Errorf("injected write error for cleanup test")
 	}
 
@@ -965,6 +960,13 @@ func TestSetTaskMetaTempFileCleanup(t *testing.T) {
 	}
 	if err.Cause != SetTaskMetaStorage {
 		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
+	}
+
+	if createdTemp == "" {
+		t.Fatal("expected temp file to be created")
+	}
+	if _, statErr := os.Stat(createdTemp); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("temp file was not cleaned up: %v", statErr)
 	}
 
 	// Verify no temp files remain in task directory
