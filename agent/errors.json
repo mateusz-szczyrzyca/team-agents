@@ -90,6 +90,15 @@
    "op": "act",
    "what": "activity log writing",
    "causes": []
+  },
+  {
+   "type": "Ack",
+   "op": "ack",
+   "what": "task completion acknowledgement",
+   "causes": [
+    {"name": "NotFound", "class": "NotFound", "doc": "the task directory does not exist"},
+    {"name": "StillRunning", "class": "Conflict", "doc": "the task is still running and cannot be acknowledged"}
+   ]
   }
  ]
 }

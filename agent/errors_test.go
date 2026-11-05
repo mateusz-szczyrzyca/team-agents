@@ -77,6 +77,36 @@ func TestCommandCauses(t *testing.T) {
 	}
 }
 
+// TestAckCauses checks the generated operation identity and exact causes for ack.
+func TestAckCauses(t *testing.T) {
+	cases := []struct {
+		cause AckCause
+		name  string
+		class ErrorClass
+	}{
+		{AckNotFound, "NotFound", ClassNotFound},
+		{AckStillRunning, "StillRunning", ClassConflict},
+		{AckStorage, "Storage", ClassStorage},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cause.op() != "ack" || tc.cause.String() != tc.name || tc.cause.info().class != tc.class {
+				t.Fatalf("wrong generated cause metadata: %+v", tc.cause.info())
+			}
+			failure := opErr(tc.cause, "ack error %s", tc.name)
+			if failure == nil {
+				t.Fatal("constructor returned nil")
+			}
+			if failure.Cause != tc.cause || failure.Class() != tc.class || failure.CauseName() != tc.name {
+				t.Fatalf("wrong error classification: %+v", failure)
+			}
+			if !errors.Is(failure.asError(), tc.class.Sentinel()) {
+				t.Fatal("constructor lost sentinel identity")
+			}
+		})
+	}
+}
+
 // TestOperationErrorConversion checks typed nil and non-nil conversions at interface boundaries.
 func TestOperationErrorConversion(t *testing.T) {
 	// absent represents a successful typed operation result.

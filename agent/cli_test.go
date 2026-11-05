@@ -57,6 +57,17 @@ func TestDispatchUnknownCommand(t *testing.T) {
 	}
 }
 
+func TestDispatchRecognizesR09Commands(t *testing.T) {
+	commands := []string{"status", "ls", "show", "agents", "_agents-json", "ack", "bus", "inv", "notes", "helpers"}
+	for _, cmd := range commands {
+		var stdout, stderr bytes.Buffer
+		err := dispatch(cmd, nil, &stdout, &stderr)
+		if err != nil && err.Cause == CommandUnknownCommand {
+			t.Fatalf("dispatch(%q) returned CommandUnknownCommand, want recognized command", cmd)
+		}
+	}
+}
+
 func TestDispatchHelp(t *testing.T) {
 	for _, cmd := range []string{"help", "-h", "--help"} {
 		var stdout, stderr bytes.Buffer
