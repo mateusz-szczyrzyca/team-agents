@@ -186,7 +186,7 @@ Execution round 6 delivered **R05B-DESIGN**, a documentation-only revision. It l
 Bash, the unwired R05A loader, tests, and parity-ledger state unchanged; it did not complete secrets
 parity or authorize affected candidate activation or cutover.
 
-The compatibility/architecture question presented these options (the selected disposition follows):
+The compatibility/architecture question presented these options (the interim disposition follows):
 
 - **a) Adopt the documented `NAME=value` secrets contract.** The template
   `config/secrets.env.example` and README troubleshooting describe assignment-based keys, without
@@ -202,13 +202,15 @@ The compatibility/architecture question presented these options (the selected di
   contract and revise the Go replacement/cutover scope explicitly. This avoids a new evaluator bridge
   but leaves the affected production paths in Bash and the full native replacement incomplete.
 
-**Selected disposition — option c.** The resumed `--autopilot` instruction selected the coordinator's
+**Interim disposition — option c, pending human confirmation before R22.** The resumed
+`--autopilot` instruction selected the coordinator's
 recommended option c from the decided question: retain secrets loading and its dependent continuation
 in the existing Bash command. This preserves existing executable scripts with the least new machinery
-and explicitly reduces the native replacement/cutover scope. Options a and b are not selected: no
+and provisionally retains the affected Bash paths without approving a final reduction of the native
+replacement/cutover scope. Options a and b are not selected: no
 script-contract narrowing, migration, new evaluator bridge, or decision-6 exception is authorized.
 
-R22 runner and R51 auth paths that depend on secrets/caller continuation remain Bash-owned. Their
+Until the human verdict, secrets-dependent runner/auth paths remain Bash-owned. Their
 native parity is incomplete; do not mark those ledger rows done or treat their Bash execution as Go
 candidate evidence. R54 completion and the full R55 installer replacement remain blocked by those
 retained paths. Independent native components may continue in development with their own additive
@@ -217,12 +219,17 @@ The R05B transport/state proposals below remain unscheduled alternatives, not pr
 an unused secrets evaluator under option c.
 
 When a fresh round 7 is launched after this round merges, resume original R06's independent native
-metadata readers/codec work within its existing cap and test-first requirements. The architecture
-question is settled by the autopilot selection; do not ask it again. This round implements no R06
-work and starts no later round.
+metadata readers/codec work within its existing cap and test-first requirements. Before R22 starts,
+the coordinator must obtain and record an explicit human verdict: confirm option c and its reduced
+native replacement scope, or choose option a or b with the corresponding compatibility/architecture
+requirements above. Autopilot selection alone does not supply that confirmation. R22, R51, R54 and
+R55 must wait for that verdict and a concrete revised plan for their affected scope and acceptance
+criteria. This round implements no R06 work and starts no later round.
 
-The following deferred alternatives may be scheduled only after a separate scope change authorizes
-them; option c does not schedule them. Each behavior round
+After the human verdict, the coordinator must update this plan with the selected scope and acceptance
+criteria before scheduling affected implementation. The following deferred alternatives may be
+scheduled only if that verdict authorizes them; interim option c does not schedule them. Each behavior
+round
 has its own 1,500-line cap, RED/GREEN tests for its implemented behavior, and no future placeholder or
 skipped test. Split again before RED if the estimate does not fit:
 
@@ -416,7 +423,7 @@ Rounds likely to need A/B splits include R20–R22, R30, R38, and R43–R49.
 | **R03** | Injected command executor, clock/random boundaries, isolated Go subprocess support. Test spaces/newlines in argv, env/cwd/stdin, stderr, exits, failed start, and cleanup. | Unexpected external execution fails closed. No real CLI, systemd, or network call. |
 | **R04** | Staged legacy and real-binary lanes plus parity checker. Test oracle source/extract behavior, candidate copy, `gh`, self callbacks, multi-home, exact filters, JUnit counts, and rejection of a bad candidate. | Full unchanged legacy suite; initially empty or skeleton-safe candidate selection. Test hashes identical; no bridge, fallback, helper edit, or stub edit. |
 | **R05A** | Merged configuration/defaults machinery; retain its internal, unwired status. | Existing configuration fixtures stay unchanged; no claim of complete script/output/context parity. |
-| **R05B-DESIGN** | Current documentation-only compatibility disposition and revised round plan; at most 500 changed lines including the report. Secrets implementation remains incomplete. | Full gate; no code/test/ledger activation changes. R05B-TRANSPORT/STATE remain unscheduled pending the compatibility reconciliation in section 4. |
+| **R05B-DESIGN** | Delivered documentation-only compatibility analysis and interim option c. Secrets implementation remained incomplete. | Full gate; no code/test/ledger activation changes. R05B-TRANSPORT/STATE remain unscheduled; the coordinator must obtain the human verdict described in section 4 before R22. |
 | **R06** | Native metadata readers/codec: old shell encodings, optional/unknown fields, task-ID resolution, ambiguous/missing IDs. | Synthetic legacy fixtures read by both Bash and Go; writes accepted by current live readers. No JSON migration. |
 | **R07** | Metadata updates, journals, and Linux locks: concurrent writers, stale-run fence, read/write/rename failures, lock timeout, descriptor inheritance. | `meta`, relevant `node_checkout`/`node_prelaunch_cancel`; race plus separate-process and mixed Bash/Go writer tests. |
 | **R08** | `bus.go`, `logging.go`: exact bus argv/status mapping, structured schema, typed notices, warning-only side effects, output-write failures. | `agent` log/notice and `resilience` cases; existing agentbus compatibility tests unchanged. |
@@ -475,7 +482,9 @@ safe because the installed production command stays Bash until R55.
 
 ## 8. R55 cutover details
 
-**Blocking prerequisite:** resolve the R05B full-script-context/no-bridge conflict and demonstrate the
+**Blocking prerequisite:** obtain the explicit human verdict required before R22 in section 4, revise
+the affected scope and acceptance criteria, resolve the R05B full-script-context/no-bridge conflict,
+and demonstrate the
 reconciled contract in runner/auth continuation tests before starting installer cutover. Green
 data-only evaluator tests or unchanged Bash tests do not satisfy this prerequisite.
 
@@ -520,7 +529,7 @@ The migration is complete only when every row is true:
 | Same behavioral coverage in Go | Every Bats case, including every source-coupled case and every branch/loop/failure injection, names passing Go test/subtest coverage in the ledger. |
 | Complete command coverage | Every public/hidden command, alias, nested callback, and `gh` basename path works without Bash orchestration or a not-implemented stub. |
 | Static and concurrency checks | `make gate` passes with zero findings and explicitly runs Lane B; `agent` is covered by vet/lint/doccheck/generation; `go test -race ./...` passes. |
-| Executable configuration/secrets | Exactly one configuration source per process; exact secrets timing, caller context, mutation/continuation behavior, output destinations and failure semantics under an explicitly reconciled contract; no silently dropped Bash internals or orchestration bridge. |
+| Executable configuration/secrets | Human verdict recorded before R22 and affected scope/acceptance criteria revised accordingly. Exactly one configuration source per process; exact secrets timing, caller context, mutation/continuation behavior, output destinations and failure semantics under an explicitly reconciled contract; no silently dropped Bash internals or orchestration bridge. |
 | Persistent compatibility | Old configuration, metadata, phase, node, review, log, and archive fixtures load; new writes remain readable after rollback; mixed writers and mixed lead/node versions interoperate. |
 | Failure and recovery semantics | Failed writes preserve prior state; stopped/stale runners cannot overwrite newer work; crash-window, signal, acknowledgement, and retry tests pass. |
 | Installation and rollback | Isolated clean-home and upgrade/reinstall tests install a real Go executable; compiler failure cannot install/fall back; stable paths support old persisted callbacks. No live service was touched. |
