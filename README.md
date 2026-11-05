@@ -1464,6 +1464,14 @@ make integration        # real agent CLIs and accounts (costs usage)
   - **Lane B (real Go candidate):** `make unit-agent-bats` (or `tools/agent-bats.sh --lane candidate`) stages the compiled candidate binary (`build/agent-go`) at `STAGED_ROOT/bin/agent` and executes only `active` or `done` rows classified as `blackbox` in `tests/agent-go-map.tsv`. For mixed files, exact regex filters are applied; `planned` cases are never activated. Real executable copies, multi-home setups, self-callbacks, and `gh` invocations execute without symlinks or bridges. Skipped or failed selected contracts fail the runner. Execution generates machine-readable evidence (`build/agent-bats-evidence.json`) with SHA-256 digests of the map file and `tests/unit` directory.
   - Candidate evidence belongs only to Lane B: oracle runs preserve it and reject `--evidence`. `make unit-agent-bats` requires parity validation after candidate execution, including in the ordinary gate.
   - **Parity checker:** `make check-agent-parity` (`tools/check-agent-parity.sh`) verifies the ledger via `tools/check-agent-test-map.sh`, validates execution counts and SHA-256 digests against candidate evidence, and enforces valid Go test mappings (`TestName[/subtest]`) for active/done rows.
+- **Configuration evaluation and parity (R05A).** The Go candidate can evaluate trusted `agents.conf`
+  files in non-interactive Bash, then apply the startup defaults in Go. A dedicated descriptor carries
+  a NUL-delimited snapshot, preserving scalars, indexed and associative arrays, sparse numeric keys,
+  unset versus empty values, and legacy investigator definitions. Configuration output is discarded;
+  evaluation failures return typed errors. The config remains executable shell code, with the caller's
+  permissions; this is not a sandbox. This internal API is not wired into production commands yet.
+  Under the `1,500`-line round cap, R05A covers configuration/defaults parity. R05B will add secrets
+  loading, `set -a` timing, empty key pruning, and exported environment after R05A is merged.
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 520 Bats unit test cases (361 black-box, 159 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
