@@ -180,3 +180,64 @@ func TestCmdNotes(t *testing.T) {
 		t.Fatalf("cmdNotes output unexpected: %q", got)
 	}
 }
+
+func TestCmdNotesGitRepoDetection(t *testing.T) {
+	exec := &readCmdsTestExecutor{
+		responses: map[string]string{
+			"show-toplevel":  "/home/dev/agents/worktrees/my-awesome-repo/task-456\n",
+			"git-common-dir": "/home/dev/agents/worktrees/my-awesome-repo/.git\n",
+			"notes":          "awesome notes\n",
+		},
+	}
+	app := newApp(exec, nil, nil)
+	app.busBin = "/bin/agentbus"
+	app.busDir = "/tmp/bus"
+	app.workTree = "/home/dev/agents/worktrees/my-awesome-repo/task-456"
+
+	var out bytes.Buffer
+	err := app.cmdNotes(context.Background(), []string{"--section", "S"}, &out)
+	if err != nil {
+		t.Fatalf("cmdNotes failed: %v", err)
+	}
+
+	var notesCmd *Command
+	for i := range exec.commands {
+		if strings.Contains(strings.Join(exec.commands[i].Args, " "), "notes") {
+			notesCmd = &exec.commands[i]
+		}
+	}
+	if notesCmd == nil {
+		t.Fatal("notes bus command was not executed")
+	}
+	hasRepo := false
+	for i, arg := range notesCmd.Args {
+		if arg == "--repo" && i+1 < len(notesCmd.Args) && notesCmd.Args[i+1] == "my-awesome-repo" {
+			hasRepo = true
+		}
+	}
+	if !hasRepo {
+		t.Fatalf("expected --repo my-awesome-repo in bus command args, got: %v", notesCmd.Args)
+	}
+}
+
+func TestCmdInvEmptyArgQueue(t *testing.T) {
+	exec := &readCmdsTestExecutor{
+		responses: map[string]string{
+			"inv-list": "queue content\n",
+		},
+	}
+	app := newApp(exec, nil, nil)
+	app.busBin = "/bin/agentbus"
+	app.busDir = "/tmp/bus"
+
+	var out bytes.Buffer
+	err := app.cmdInv(context.Background(), []string{""}, &out)
+	if err != nil {
+		t.Fatalf("cmdInv failed on empty string arg: %v", err)
+	}
+
+	if len(exec.commands) == 0 || exec.commands[0].Args[0] != "inv-list" {
+		t.Fatalf("expected inv-list for empty arg, got commands: %v", exec.commands)
+	}
+}
+
