@@ -84,6 +84,10 @@ tests/unit/github_trust.bats	the agents are told that text on GitHub by anyone b
 tests/unit/handover_failed.bats	remote_start_check: the lead's commit must be on origin for a new remote member	source	R30	-	planned
 tests/unit/handover_failed.bats	a remote member coming back on a resume does not need the lead's checkout pushed; a new one does	source	R30	-	planned
 tests/unit/handover_failed.bats	a team that cannot take its work back tells the human why: the stage, the PR, the notification	source	R30	-	planned
+tests/unit/handback_wait.bats	a hand-back refused while a member still runs waits; _supervise hands the work back once the run ends	blackbox	R34	-	planned
+tests/unit/handback_wait.bats	a run that goes on past AGENT_HANDBACK_WAIT_MIN is stopped — that one alone — and the work goes back to the team	blackbox	R34	-	planned
+tests/unit/handback_wait.bats	a hand-back refused for another reason reaches the human at once, with where its text is	blackbox	R34	-	planned
+tests/unit/handback_wait.bats	resuming a team with a task still running names that task to stop, not every task	blackbox	R34	-	planned
 tests/unit/identity.bats	an empty GIT_EMAIL is the agent's own .invalid address, never the human's e-mail from git config	blackbox	R23	-	planned
 tests/unit/identity.bats	%a in GIT_EMAIL is the agent's name	blackbox	R23	-	planned
 tests/unit/identity.bats	without GIT_SIGNING_KEY the agents do not sign, even when the human signs every commit	blackbox	R23	-	planned
