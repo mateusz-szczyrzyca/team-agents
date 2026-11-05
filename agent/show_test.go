@@ -352,3 +352,110 @@ func TestCmdShowReport(t *testing.T) {
 		t.Errorf("output missing report header: %s", output)
 	}
 }
+
+// TestCmdShowQuestionsHeaderWithoutFile verifies questions header prints when ROUND > 0 even if file does not exist.
+func TestCmdShowQuestionsHeaderWithoutFile(t *testing.T) {
+	tasksDir := t.TempDir()
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	taskDir := filepath.Join(tasksDir, "q-missing")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=q-missing\nROUND=2\nSTATUS=done\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := cmdShow(context.Background(), app, "q-missing", &out)
+	if err != nil {
+		t.Fatalf("cmdShow failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "== questions (round 2):") {
+		t.Errorf("output missing questions header: %s", output)
+	}
+}
+
+// TestCmdShowWorkerWithInvestigations verifies worker task prints investigations section when non-empty.
+func TestCmdShowWorkerWithInvestigations(t *testing.T) {
+	tasksDir := t.TempDir()
+	exec := &readCmdsTestExecutor{
+		responses: map[string]string{
+			"inv-list": "inv #1: active\n",
+		},
+	}
+	app := newApp(exec, nil, nil)
+	app.tasksDir = tasksDir
+	app.busBin = "/bin/agentbus"
+	app.busDir = "/tmp/bus"
+
+	taskDir := filepath.Join(tasksDir, "worker-inv")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=worker-inv\nKIND=worker\nSTATUS=done\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := cmdShow(context.Background(), app, "worker-inv", &out)
+	if err != nil {
+		t.Fatalf("cmdShow failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "== investigations") {
+		t.Fatalf("output missing investigations header: %s", output)
+	}
+	if !strings.Contains(output, "inv #1: active") {
+		t.Fatalf("output missing investigation details: %s", output)
+	}
+}
+
+// TestCmdShowFinalMessageTrailingNewlines verifies trailing newlines in final.md are normalized.
+func TestCmdShowFinalMessageTrailingNewlines(t *testing.T) {
+	tasksDir := t.TempDir()
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	taskDir := filepath.Join(tasksDir, "final-task")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=final-task\nSTATUS=done\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "final.md"), []byte("Done work.\n\n\n\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := cmdShow(context.Background(), app, "final-task", &out)
+	if err != nil {
+		t.Fatalf("cmdShow failed: %v", err)
+	}
+
+	output := out.String()
+	expected := "\n== the agent's last message\nDone work.\n"
+	if !strings.Contains(output, expected) {
+		t.Errorf("output does not contain cleanly normalized final message, got: %q", output)
+	}
+}

@@ -287,3 +287,75 @@ func (e *statusTestExecutor) Execute(_ context.Context, cmd Command) (CommandRes
 	}
 	return CommandResult{ExitCode: 0}, nil
 }
+
+// TestCmdStatusMetaID verifies first column uses ID from meta.env with fallback to taskID.
+func TestCmdStatusMetaID(t *testing.T) {
+	tasksDir := t.TempDir()
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	taskDir := filepath.Join(tasksDir, "dir-name")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=explicit-id\nSTATUS=done\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := cmdStatus(context.Background(), app, &out)
+	if err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "explicit-id") {
+		t.Errorf("output missing explicit ID from meta.env: %s", output)
+	}
+	if strings.Contains(output, "dir-name") {
+		t.Errorf("output should use explicit-id rather than dir-name: %s", output)
+	}
+}
+
+// TestCmdStatusMetaReadError verifies corrupted or unreadable meta.env fails with StatusStorage.
+func TestCmdStatusMetaReadError(t *testing.T) {
+	tasksDir := t.TempDir()
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	taskDir := filepath.Join(tasksDir, "broken-task")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	if err := os.WriteFile(metaFile, []byte("NOT_KEY_VALUE\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(metaFile, 0000); err != nil {
+		t.Skip("cannot set unreadable file permissions")
+	}
+	defer func() { _ = os.Chmod(metaFile, 0600) }()
+
+	var out bytes.Buffer
+	err := cmdStatus(context.Background(), app, &out)
+	if err == nil {
+		t.Fatal("expected status error for unreadable meta.env")
+	}
+	if err.Cause != StatusStorage {
+		t.Fatalf("expected StatusStorage, got %v", err.Cause)
+	}
+}
+
