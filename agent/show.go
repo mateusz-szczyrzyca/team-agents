@@ -69,9 +69,12 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 	round, _ := strconv.Atoi(roundStr)
 	if round > 0 {
 		questionsFile := filepath.Join(taskDir, fmt.Sprintf("questions-%d.md", round))
-		if _, err := os.Stat(questionsFile); err == nil { // #nosec G703 -- local questions file path under tasks directory
+		if content, err := os.ReadFile(questionsFile); err == nil { // #nosec G304,G703 -- local questions file path under tasks directory
 			if _, err := fmt.Fprintf(out, "\n== questions (round %d): %s\n", round, questionsFile); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write questions header"))
+			}
+			if _, err := fmt.Fprint(out, string(content)); err != nil {
+				return fromStorage(ShowStorage, storageErr(err, "write questions content"))
 			}
 		}
 	}
@@ -80,11 +83,9 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 	kind, _ := meta.Lookup("KIND")
 	switch kind {
 	case "worker":
-		// Worker tasks can have investigations
-		// In future rounds: call bus inv-list
-		if _, err := fmt.Fprintf(out, "\n== investigations\n"); err != nil {
-			return fromStorage(ShowStorage, storageErr(err, "write investigations header"))
-		}
+		// Worker tasks can have investigations (query via bus inv-list in future rounds)
+		// For now, only print header if there are investigations
+		// TODO: call bus inv-list --dir busDir --task taskID and only print header if non-empty
 	case "investigation":
 		team, _ := meta.Lookup("INVESTIGATION_TEAM")
 		if team != "" {
@@ -122,8 +123,12 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 	}
 
 	// Print report if it exists
-	if app.workTree != "" {
-		reportFile := filepath.Join(app.workTree, ".agents", "reports", taskID+".md")
+	workTree, _ := meta.Lookup("WORKTREE")
+	if workTree == "" {
+		workTree = app.workTree
+	}
+	if workTree != "" {
+		reportFile := filepath.Join(workTree, ".agents", "reports", taskID+".md")
 		if _, err := os.Stat(reportFile); err == nil { // #nosec G703 -- local report file path under workTree
 			if _, err := fmt.Fprintf(out, "\n== report: %s\n", reportFile); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write report line"))
