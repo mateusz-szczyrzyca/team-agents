@@ -159,20 +159,27 @@ func TestStatusCauses(t *testing.T) {
 
 // TestAgentsCauses checks the generated operation identity and exact causes for agents.
 func TestAgentsCauses(t *testing.T) {
-	tc := struct {
+	cases := []struct {
 		cause AgentsCause
 		name  string
 		class ErrorClass
-	}{AgentsStorage, "Storage", ClassStorage}
-	if tc.cause.op() != "agents" || tc.cause.String() != tc.name || tc.cause.info().class != tc.class {
-		t.Fatalf("wrong generated cause metadata: %+v", tc.cause.info())
+	}{
+		{AgentsProcess, "Process", ClassProcess},
+		{AgentsStorage, "Storage", ClassStorage},
 	}
-	failure := opErr(tc.cause, "agents error %s", tc.name)
-	if failure == nil || failure.Cause != tc.cause || failure.Class() != tc.class || failure.CauseName() != tc.name {
-		t.Fatalf("wrong error classification: %+v", failure)
-	}
-	if !errors.Is(failure.asError(), tc.class.Sentinel()) {
-		t.Fatal("constructor lost sentinel identity")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cause.op() != "agents" || tc.cause.String() != tc.name || tc.cause.info().class != tc.class {
+				t.Fatalf("wrong generated cause metadata: %+v", tc.cause.info())
+			}
+			failure := opErr(tc.cause, "agents error %s", tc.name)
+			if failure == nil || failure.Cause != tc.cause || failure.Class() != tc.class || failure.CauseName() != tc.name {
+				t.Fatalf("wrong error classification: %+v", failure)
+			}
+			if !errors.Is(failure.asError(), tc.class.Sentinel()) {
+				t.Fatal("constructor lost sentinel identity")
+			}
+		})
 	}
 }
 

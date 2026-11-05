@@ -396,7 +396,8 @@ func (c ShowCause) String() string { return c.info().name }
 type AgentsCause int
 
 const (
-	AgentsStorage AgentsCause = iota // the shared state or a file could not be read or written [Storage]
+	AgentsProcess AgentsCause = iota // agent inspection or bus process execution failed [Process]
+	AgentsStorage                    // the shared state or a file could not be read or written [Storage]
 )
 
 // AgentsError is the error of configured agent listing.
@@ -404,6 +405,7 @@ type AgentsError = OpError[AgentsCause]
 
 // agentsCauses describes the AgentsCause values (same order as the constants).
 var agentsCauses = [...]causeInfo{
+	{"Process", ClassProcess},
 	{"Storage", ClassStorage},
 }
 

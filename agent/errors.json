@@ -120,7 +120,9 @@
    "type": "Agents",
    "op": "agents",
    "what": "configured agent listing",
-   "causes": []
+   "causes": [
+    {"name": "Process", "class": "Process", "doc": "agent inspection or bus process execution failed"}
+   ]
   },
   {
    "type": "AgentsJSON",
