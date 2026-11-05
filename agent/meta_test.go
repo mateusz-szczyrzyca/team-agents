@@ -195,7 +195,7 @@ func TestConcurrentSetTaskMeta(t *testing.T) {
 	writeMetaFixture(t, metaFile, "STATUS=running\n")
 
 	// Spawn multiple concurrent writers
-	errChan := make(chan interface{}, 20)
+	errChan := make(chan *SetTaskMetaError, 20)
 	for i := 1; i <= 20; i++ {
 		go func(index int) {
 			key := fmt.Sprintf("K%d", index)
