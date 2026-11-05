@@ -12,6 +12,12 @@ type App struct {
 	busDir    string   // agentbus state directory
 	busBin    string   // path override for agentbus binary
 	agentHome string   // agent home directory
+	config    *Config  // evaluated startup configuration; nil for explicitly constructed test apps
+}
+
+// loadStartupConfig prepares production paths and configuration before dispatch.
+func (a *App) loadStartupConfig(_ context.Context, _ []string) *LoadConfigError {
+	return nil
 }
 
 // newApp fills omitted boundaries without granting command execution permission.
