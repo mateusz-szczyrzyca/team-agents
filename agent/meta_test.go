@@ -264,6 +264,9 @@ func TestSetTaskMetaWriteFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected write failure, got nil")
 	}
+	if err.Cause != SetTaskMetaStorage {
+		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
+	}
 
 	// Verify original metadata is preserved
 	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
@@ -297,6 +300,9 @@ func TestSetTaskMetaReadFailure(t *testing.T) {
 	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
 	if err == nil {
 		t.Fatal("expected read failure, got nil")
+	}
+	if err.Cause != SetTaskMetaStorage {
+		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
 	}
 
 	// Verify directory structure remains intact (can't verify exact metadata since it's a directory)
@@ -375,7 +381,42 @@ func TestSetTaskMetaJobTransitions(t *testing.T) {
 	}
 }
 
-// TestMixedBashGoWriter verifies that Bash meta_set and Go setTaskMeta can coexist in the same file.
+// extractBashMetaFuncs extracts meta_file, meta_set, task_field, and log_error from bin/agent source.
+func extractBashMetaFuncs(t *testing.T) string {
+	t.Helper()
+	source, failure := os.ReadFile("../bin/agent")
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	const (
+		metaFile = "meta_file() {"
+		metaSet  = "meta_set() {"
+		taskFld  = "task_field() {"
+		logErr   = "log_error() {"
+	)
+	var funcs strings.Builder
+	funcs.WriteString("# Extracted from bin/agent\n")
+	for _, fn := range []struct{ name, pattern string }{
+		{"meta_file", metaFile},
+		{"log_error", logErr},
+		{"meta_set", metaSet},
+		{"task_field", taskFld},
+	} {
+		start := strings.Index(string(source), fn.pattern)
+		if start < 0 {
+			t.Fatalf("function %s not found in bin/agent", fn.name)
+		}
+		end := strings.Index(string(source)[start:], "\n}")
+		if end < 0 {
+			t.Fatalf("end of function %s not found", fn.name)
+		}
+		funcs.WriteString(string(source)[start : start+end+2])
+		funcs.WriteString("\n")
+	}
+	return funcs.String()
+}
+
+// TestMixedBashGoWriter verifies that Bash meta_set and Go setTaskMeta preserve each other's writes.
 func TestMixedBashGoWriter(t *testing.T) {
 	tasks := t.TempDir()
 	taskID := "mixed-writer"
@@ -385,12 +426,17 @@ func TestMixedBashGoWriter(t *testing.T) {
 	metaFile := filepath.Join(tasks, taskID, "meta.env")
 	writeMetaFixture(t, metaFile, "ID=mixed-writer\nSTATUS=init\n")
 
-	// Simulate Bash meta_set writing a key (simplified - just append to file)
-	bashKey := "BASH_KEY"
-	bashValue := "bash_value"
-	bashLine := fmt.Sprintf("%s=%s\n", bashKey, bashValue)
-	if failure := os.WriteFile(metaFile, []byte("ID=mixed-writer\nSTATUS=init\n"+bashLine), 0o600); failure != nil {
-		t.Fatal(failure)
+	bashFuncs := extractBashMetaFuncs(t)
+	bashScript := bashFuncs + `
+TASKS=$1
+# Bash writes BASH_KEY
+meta_set "$2" BASH_KEY bash_value
+# Then read it back to verify
+task_field "$2" BASH_KEY
+`
+	bashResult := runMetaBash(t, "C", bashScript, tasks, taskID)
+	if strings.TrimSpace(bashResult) != "bash_value" {
+		t.Fatalf("Bash meta_set failed: got %q, want 'bash_value'", strings.TrimSpace(bashResult))
 	}
 
 	// Use Go setTaskMeta to write another key
@@ -406,12 +452,12 @@ func TestMixedBashGoWriter(t *testing.T) {
 	}
 	m := parseMeta(data)
 
-	// Check Bash key (written directly)
-	if bashVal, ok := m.Lookup(bashKey); !ok || bashVal != bashValue {
-		t.Fatalf("Bash key lost: got %q,%v want %q,true", bashVal, ok, bashValue)
+	// Check Bash key (written by Bash)
+	if bashVal, ok := m.Lookup("BASH_KEY"); !ok || bashVal != "bash_value" {
+		t.Fatalf("Bash key lost: got %q,%v want 'bash_value',true", bashVal, ok)
 	}
 
-	// Check Go key (written by setTaskMeta)
+	// Check Go key (written by Go)
 	if goVal, ok := m.Lookup("GO_KEY"); !ok || goVal != "go_value" {
 		t.Fatalf("Go key not written: got %q,%v", goVal, ok)
 	}
@@ -422,8 +468,21 @@ func TestMixedBashGoWriter(t *testing.T) {
 	}
 }
 
-// TestSeparateProcessMetaWrite verifies metadata can be updated correctly from separate processes.
+// TestSeparateProcessMetaWrite verifies metadata can be updated correctly from separate OS processes.
 func TestSeparateProcessMetaWrite(t *testing.T) {
+	// Check if we're a child process doing the write
+	if childKey := os.Getenv("TEST_CHILD_PROCESS_KEY"); childKey != "" {
+		childValue := os.Getenv("TEST_CHILD_PROCESS_VALUE")
+		tasks := os.Getenv("TEST_TASKS_DIR")
+		taskID := os.Getenv("TEST_TASK_ID")
+		err := setTaskMeta(tasks, taskID, childKey, childValue, "")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "child process setTaskMeta failed: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	tasks := t.TempDir()
 	taskID := "separate-process"
 	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
@@ -432,43 +491,37 @@ func TestSeparateProcessMetaWrite(t *testing.T) {
 	metaFile := filepath.Join(tasks, taskID, "meta.env")
 	writeMetaFixture(t, metaFile, "ID=separate-process\nSTATUS=init\n")
 
-	// First process: Go setTaskMeta writes a key
-	err := setTaskMeta(tasks, taskID, "PROCESS1", "value1", "")
-	if err != nil {
-		t.Fatalf("Process 1 setTaskMeta failed: %v", err)
+	// Spawn 2 separate processes to write different keys
+	for i := 1; i <= 2; i++ {
+		cmd := exec.Command(os.Args[0], "-test.run=TestSeparateProcessMetaWrite$") // #nosec G204,G702 -- os.Args[0] is the test binary itself
+		cmd.Env = append(os.Environ(),
+			"TEST_TASKS_DIR="+tasks,
+			"TEST_TASK_ID="+taskID,
+			fmt.Sprintf("TEST_CHILD_PROCESS_KEY=PROCESS%d", i),
+			fmt.Sprintf("TEST_CHILD_PROCESS_VALUE=value%d", i),
+		)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("child process %d failed: %v\n%s", i, err, string(output))
+		}
 	}
 
-	// Verify first write
+	// Verify both writes are present
 	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatal(failure)
 	}
-	m1 := parseMeta(data)
-	if val, ok := m1.Lookup("PROCESS1"); !ok || val != "value1" {
-		t.Fatalf("Process1 key not written: got %q,%v", val, ok)
-	}
+	m := parseMeta(data)
 
-	// Second process: Go setTaskMeta writes a different key
-	err = setTaskMeta(tasks, taskID, "PROCESS2", "value2", "")
-	if err != nil {
-		t.Fatalf("Process 2 setTaskMeta failed: %v", err)
-	}
-
-	// Verify both writes are present
-	data, failure = os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
-	if failure != nil {
-		t.Fatal(failure)
-	}
-	m2 := parseMeta(data)
-	if val, ok := m2.Lookup("PROCESS1"); !ok || val != "value1" {
-		t.Fatalf("Process1 key lost after Process2 write: got %q,%v", val, ok)
-	}
-	if val, ok := m2.Lookup("PROCESS2"); !ok || val != "value2" {
-		t.Fatalf("Process2 key not written: got %q,%v", val, ok)
+	for i := 1; i <= 2; i++ {
+		key := fmt.Sprintf("PROCESS%d", i)
+		value := fmt.Sprintf("value%d", i)
+		if val, ok := m.Lookup(key); !ok || val != value {
+			t.Fatalf("Process%d key not written: got %q,%v want %q,true", i, val, ok, value)
+		}
 	}
 
 	// Verify original ID is preserved
-	if id, ok := m2.Lookup("ID"); !ok || id != "separate-process" {
+	if id, ok := m.Lookup("ID"); !ok || id != "separate-process" {
 		t.Fatalf("ID lost: got %q,%v", id, ok)
 	}
 }
@@ -752,6 +805,94 @@ func TestSetTaskMetaValueEscaping(t *testing.T) {
 		}
 		if gotValue != expectedValue {
 			t.Fatalf("value mismatch for %s: got %q, want %q", key, gotValue, expectedValue)
+		}
+	}
+}
+
+// TestSetTaskMetaRenameFailure verifies setTaskMeta fails and cleans up temp file when rename fails.
+func TestSetTaskMetaRenameFailure(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "rename-fault"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	original := "ID=rename-fault\nSTATUS=original\n"
+	writeMetaFixture(t, metaFile, original)
+
+	// Make the task directory read-only to prevent rename
+	if failure := os.Chmod(taskDir, 0o500); failure != nil { // #nosec G302 -- temporary test directory
+		t.Fatal(failure)
+	}
+	defer func() { // #nosec G302 -- temporary test directory
+		_ = os.Chmod(taskDir, 0o700)
+	}()
+
+	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
+	if err == nil {
+		t.Fatal("expected rename failure, got nil")
+	}
+	if err.Cause != SetTaskMetaStorage {
+		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
+	}
+
+	// Verify original metadata is preserved
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if string(data) != original {
+		t.Fatalf("metadata changed on rename failure: got %q, want %q", string(data), original)
+	}
+
+	// Verify no orphaned temp files exist
+	entries, failure := os.ReadDir(taskDir)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), "meta.env.tmp") {
+			t.Fatalf("orphaned temp file found: %s", entry.Name())
+		}
+	}
+}
+
+// TestSetTaskMetaTempFileCleanup verifies temp files are removed on write/close/rename failures.
+func TestSetTaskMetaTempFileCleanup(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "cleanup-test"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=cleanup-test\n")
+
+	// Make the task directory read-only after fixture to trigger write/rename failure
+	if failure := os.Chmod(taskDir, 0o500); failure != nil { // #nosec G302 -- temporary test directory
+		t.Fatal(failure)
+	}
+	defer func() { // #nosec G302 -- temporary test directory
+		_ = os.Chmod(taskDir, 0o700)
+	}()
+
+	// Attempt to write metadata, which will fail
+	err := setTaskMeta(tasks, taskID, "KEY", "value", "")
+	if err == nil {
+		t.Fatal("expected failure, got nil")
+	}
+
+	// Verify no temp files remain in task directory (restored to 0o700 by defer)
+	os.Chmod(taskDir, 0o700) // #nosec G302 -- temporary test directory
+
+	entries, failure := os.ReadDir(taskDir)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), "meta.env.tmp") {
+			t.Fatalf("orphaned temp file found after write failure: %s", entry.Name())
 		}
 	}
 }
