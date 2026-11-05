@@ -613,6 +613,7 @@ AGENT_SUPERVISE_GRACE_SEC="${AGENT_SUPERVISE_GRACE_SEC:-120}" # agent _supervise
 AGENT_RESTART_MAX="${AGENT_RESTART_MAX:-2}"             # a task goes on after this many restarts of its machine; one more fails it
 AGENT_RESTART_GRACE_MIN="${AGENT_RESTART_GRACE_MIN:-10}" # lead: a remote member whose node is away longer is put out of its team
 AGENT_TEAM_ABANDON_MIN="${AGENT_TEAM_ABANDON_MIN:-60}"   # an open team with no local member at work or asleep this long is reported
+AGENT_REVIEW_OVERLOAD_WAIT_MIN="${AGENT_REVIEW_OVERLOAD_WAIT_MIN:-5}"   # a pair's review waits out a model's overload this long
 AGENT_RATE_LIMIT_PAUSE_MIN="${AGENT_RATE_LIMIT_PAUSE_MIN:-5}"   # a rate limit (HTTP 429) without a reset time
 AGENT_NETWORK_PAUSE_MIN="${AGENT_NETWORK_PAUSE_MIN:-15}"        # the network or the provider unreachable: wait, then go on
 AGENT_NETWORK_MAX_PAUSES="${AGENT_NETWORK_MAX_PAUSES:-12}"      # that many such pauses in a row fail the task
@@ -2363,6 +2364,17 @@ review_without_verdict() {
   pair=$(task_field "$parent" REVIEW_PAIR); [[ -n $pair ]] || return 0
   log_warn review_without_verdict "task=$parent" "review=$id" "reason=${why:0:200}"
   review_pair_done "$id" "$parent" "$pair" none ""
+}
+
+# review_hands_over reason seconds — whether a pair's review paused for this reason this long goes to another
+# investigator at once: on an exhausted quota always; on a model overloaded at the provider past
+# AGENT_REVIEW_OVERLOAD_WAIT_MIN; not on a rate limit (the account's, short) nor on a short overload
+review_hands_over() {
+  case $1 in
+    quota) return 0 ;;
+    overloaded) (($2 > AGENT_REVIEW_OVERLOAD_WAIT_MIN * 60)) ;;
+    *) return 1 ;;
+  esac
 }
 
 # retry_review_slot parent pair-dir slot — that review again, by a free investigator other than the pair's two; with
@@ -5499,12 +5511,18 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     else
       note="the provider's quota or usage limit is exhausted — resumes at $resume_at${why:+ — $why}"
     fi
-    # an --autopilot pair does not wait days for one review: out of quota, it ends without a verdict (the pair has it
-    # done again by another investigator), and its investigator is not chosen until the quota resets (QUOTA_UNTIL)
-    if [[ ${REVIEW:-} == 1 && $pause_reason == quota && -n $(task_field "$(task_field "$id" PARENT_TASK)" REVIEW_PAIR) ]]; then
+    # a pair does not wait days for one review: out of quota, or its model overloaded past
+    # AGENT_REVIEW_OVERLOAD_WAIT_MIN, it ends without a verdict (the pair has it done again by an investigator outside
+    # the pair), and its investigator is not chosen until then (QUOTA_UNTIL)
+    if [[ ${REVIEW:-} == 1 && -n $(task_field "$(task_field "$id" PARENT_TASK)" REVIEW_PAIR) ]] \
+        && review_hands_over "$pause_reason" "$pause_secs"; then
       status=failed
       meta_set "$id" QUOTA_UNTIL "$(( $(date +%s) + pause_secs ))"
-      note="the investigator's provider is out of quota until $resume_at — the review goes to another investigator${why:+ — $why}"
+      if [[ $pause_reason == quota ]]; then
+        note="the investigator's provider is out of quota until $resume_at — the review goes to another investigator${why:+ — $why}"
+      else
+        note="the model is overloaded at the provider until $resume_at — the review goes to another investigator, outside its pair${why:+ — $why}"
+      fi
     fi
   elif [[ -s $qfile ]]; then
     # every question the agent wrote must carry a recommendation; without one it gets the file back once

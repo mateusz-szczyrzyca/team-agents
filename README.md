@@ -463,6 +463,8 @@ A sleeping member costs nothing; every wake-up starts a run and costs tokens. So
 - Both are read only from the end of the run's errors (`AGENT_LIMIT_TAIL_LINES`, default 30 lines of stderr): a
   429 the CLI retried and got past does not pause a run that later ends without STATUS for another reason. The
   notification quotes the line that caused the pause.
+`AGENT_REVIEW_OVERLOAD_WAIT_MIN` (5): a pair's review whose model is overloaded at the provider waits it out this long
+at most; past it the review goes at once to an investigator outside the pair, as on an exhausted quota.
 
 A paused task (`⏸ paused` in `agent status`) does not run and is not woken by messages or the board; a systemd
 timer (`agent-<task>-wake-<time>.timer`) resumes it at the announced time, in the same session. Its claimed board
