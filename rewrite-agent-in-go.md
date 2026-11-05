@@ -27,15 +27,18 @@ Examined base: `940f6fdc067069f92a8023c84ed1b5eb011b95ae`.
 6. Do not use a production Bash launcher, an `agent _fn` bridge, exported shell mocks, or implicit Bash
    fallback. Those mechanisms would preserve shell global state, make test routing ambiguous, and would
    not deliver the requested Go executable. The final `bin/agent` is a generated, ignored Go executable,
-   not committed binary content and not a script.
+   not committed binary content and not a script. Under the selected R05B option c below, that full
+   native replacement remains incomplete: secrets loading and dependent runner/auth continuation stay
+   in the existing Bash command. No partial Go installer cutover or production wrapper is authorized.
 7. Port configuration and disk formats compatibly rather than redesigning them. A narrow Bash evaluator is
    allowed for the documented executable-Bash configuration contract; orchestration, metadata, and normal
    process execution move to Go.
    The selected R05B compatibility decision also preserves one configuration evaluation per process,
    secrets-script context, and ordinary stdout/stderr behavior. It does not authorize dropping access
    to internal Bash functions or caller locals. Investigation #163 establishes a conflict between that
-   full contract and decision 6 for a fixed data-only evaluator. Preserve production behavior and keep
-   candidate activation/cutover blocked; do not resolve the conflict by silently narrowing either rule.
+   full contract and decision 6 for a fixed data-only evaluator. The selected option c preserves those
+   Bash paths and explicitly reduces the native replacement scope; it does not relax the no-bridge
+   rule or permit affected candidate activation/cutover.
 8. Follow RED → GREEN → REFACTOR within every behavior round. Split an over-budget subsystem into A/B
    rounds before writing its tests; never defer tests, add placeholders, or add skips for later work.
 9. Use `golangci-lint` to asses if Go code is in good shape. Always use default formatter `gofmt` for
@@ -183,8 +186,7 @@ Execution round 6 delivered **R05B-DESIGN**, a documentation-only revision. It l
 Bash, the unwired R05A loader, tests, and parity-ledger state unchanged; it did not complete secrets
 parity or authorize affected candidate activation or cutover.
 
-The human owns the unresolved compatibility/architecture decision. The coordinator must present
-these options and record the human's choice before scheduling the affected implementation:
+The compatibility/architecture question presented these options (the selected disposition follows):
 
 - **a) Adopt the documented `NAME=value` secrets contract.** The template
   `config/secrets.env.example` and README troubleshooting describe assignment-based keys, without
@@ -200,13 +202,27 @@ these options and record the human's choice before scheduling the affected imple
   contract and revise the Go replacement/cutover scope explicitly. This avoids a new evaluator bridge
   but leaves the affected production paths in Bash and the full native replacement incomplete.
 
-Round 7 must first stop for this human decision; it is not automatically original R06 or permission
-to implement deferred R05B packages. The coordinator must obtain and record the verdict and revised
-scope before proposing its implementation round. This revision selects none of a/b/c and grants
-neither a bridge exception nor a restricted script contract. More implementation rounds alone cannot
-remove the contradiction; until resolved, affected activation and R55 cutover remain blocked.
+**Selected disposition — option c.** The resumed `--autopilot` instruction selected the coordinator's
+recommended option c from the decided question: retain secrets loading and its dependent continuation
+in the existing Bash command. This preserves existing executable scripts with the least new machinery
+and explicitly reduces the native replacement/cutover scope. Options a and b are not selected: no
+script-contract narrowing, migration, new evaluator bridge, or decision-6 exception is authorized.
 
-Only after that reconciliation is recorded may the following work be scheduled. Each behavior round
+R22 runner and R51 auth paths that depend on secrets/caller continuation remain Bash-owned. Their
+native parity is incomplete; do not mark those ledger rows done or treat their Bash execution as Go
+candidate evidence. R54 completion and the full R55 installer replacement remain blocked by those
+retained paths. Independent native components may continue in development with their own additive
+parity tests, but there is no partial production activation or installer cutover in this disposition.
+The R05B transport/state proposals below remain unscheduled alternatives, not prerequisites to build
+an unused secrets evaluator under option c.
+
+When a fresh round 7 is launched after this round merges, resume original R06's independent native
+metadata readers/codec work within its existing cap and test-first requirements. The architecture
+question is settled by the autopilot selection; do not ask it again. This round implements no R06
+work and starts no later round.
+
+The following deferred alternatives may be scheduled only after a separate scope change authorizes
+them; option c does not schedule them. Each behavior round
 has its own 1,500-line cap, RED/GREEN tests for its implemented behavior, and no future placeholder or
 skipped test. Split again before RED if the estimate does not fit:
 
