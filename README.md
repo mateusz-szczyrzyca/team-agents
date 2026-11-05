@@ -1485,11 +1485,17 @@ make integration        # real agent CLIs and accounts (costs usage)
   caller variables. Formatting uses the runner's C.UTF-8 quoting convention; Unicode printability
   follows Go's Unicode tables, which can differ from another host's libc for newly assigned characters.
   These encodings decode to the same bytes.
-  Shell-only metadata such as `WAKE_AT=$(...)` or `KEY=~/x` is retained as opaque text and never
-  executed by the native reader. Existing Bash commands keep their current sourcing behavior; no
+  Shell-only metadata such as `WAKE_AT=$(...)`, `KEY=$[1+1]` or `KEY=~/x` is retained as opaque text
+  and never executed by the native reader. ANSI-C Unicode escapes outside valid Unicode scalar
+  values also remain opaque, preserving their bytes. A later opaque record with a recognized
+  assignment key hides an earlier literal value; lookup reports that value as unavailable.
+  Existing Bash commands keep their current sourcing behavior; no
   caller switches to the native reader in this round. Task lookup preserves exact-directory precedence,
   unique literal fragments, directory symlinks and existing path-like references. Updates, locks and
   consumer-specific sourcing/raw-text quirks belong to later rounds.
+  The internal APIs currently report storage failures for uninspectable task entries (including
+  symlink loops) and non-regular `meta.env` paths; Bash may skip those entries or report no such task.
+  This deliberate diagnostic difference must be reconciled before migrating command consumers.
   The live panel now correctly reads Bash-written `\a`, `\b`, `\f` and `\v` escapes in metadata.
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 520 Bats unit test cases (361 black-box, 159 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:

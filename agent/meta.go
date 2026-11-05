@@ -23,7 +23,7 @@ func (k MetaLineKind) Valid() bool { return k <= MetaShell }
 type MetaLine struct {
 	Kind    MetaLineKind // classification; shell records never execute
 	Raw     string       // original bytes, including the terminating newline if present
-	Key     string       // assignment name, empty for non-assignments
+	Key     string       // recognized assignment prefix, including opaque values; empty otherwise
 	Value   string       // decoded literal value, including explicitly empty values
 	Encoded string       // original assignment word for consumers comparing encoded text
 }
@@ -47,12 +47,13 @@ func parseMeta(data []byte) MetaFile {
 	return file
 }
 
-// Lookup returns the last literal assignment; absence differs from an empty value.
+// Lookup returns the last literal assignment unless a later keyed shell record hides it.
+// A false result means absent or opaque; a literal empty value still returns true.
 func (m MetaFile) Lookup(key string) (string, bool) {
 	for i := len(m.Lines) - 1; i >= 0; i-- {
 		line := m.Lines[i]
-		if line.Kind == MetaAssignment && line.Key == key {
-			return line.Value, true
+		if line.Key == key {
+			return line.Value, line.Kind == MetaAssignment
 		}
 	}
 	return "", false
@@ -68,6 +69,7 @@ func (m MetaFile) Bytes() []byte {
 }
 
 // readTaskMeta reads an existing file without inheriting any caller variables.
+// Non-regular paths deliberately report Storage rather than Bash meta_load's NotFound.
 func readTaskMeta(tasksDir, id string) (MetaFile, *ReadTaskMetaError) {
 	path := tasksDir + "/" + id + "/meta.env"
 	data, err := os.ReadFile(path) // #nosec G304 -- local task paths deliberately preserve Bash path-like references; no network request supplies this path

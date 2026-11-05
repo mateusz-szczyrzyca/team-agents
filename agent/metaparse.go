@@ -17,7 +17,7 @@ func metaExpansion(s string) bool {
 	if len(s) < 2 {
 		return false
 	}
-	return isName(s[1]) || strings.ContainsRune("{(\"'@*#?$!-", rune(s[1]))
+	return isName(s[1]) || strings.ContainsRune("{([\"'@*#?$!-", rune(s[1]))
 }
 
 // recordEnd finds an unquoted newline, ignoring quotes inside shell comments.
@@ -53,7 +53,7 @@ func recordEnd(s string) int {
 			i++
 		case c == '"':
 			dq = true
-		case c == '#' && (i == 0 || strings.ContainsRune(" \t\n", rune(s[i-1]))):
+		case c == '#' && metaCommentStart(s, i):
 			if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
 				return i + j
 			}
@@ -63,6 +63,21 @@ func recordEnd(s string) int {
 		}
 	}
 	return len(s)
+}
+
+// metaCommentStart checks whether an unquoted hash follows an unescaped token boundary.
+func metaCommentStart(s string, i int) bool {
+	if i == 0 {
+		return true
+	}
+	if !strings.ContainsRune(" \t\n;&|()<>", rune(s[i-1])) {
+		return false
+	}
+	escaped := false
+	for j := i - 2; j >= 0 && s[j] == '\\'; j-- {
+		escaped = !escaped
+	}
+	return !escaped
 }
 
 // isNameStart accepts the portable ASCII scalar-name prefix.
@@ -94,11 +109,11 @@ func classifyMeta(raw string) MetaLine {
 	word := s[i+1:]
 	decoded := decodeWord(word)
 	if !decoded.literal {
-		return MetaLine{Kind: MetaShell, Raw: raw}
+		return MetaLine{Kind: MetaShell, Raw: raw, Key: key}
 	}
 	rest := strings.TrimLeft(word[decoded.end:], " \t")
 	if rest != "" && rest[0] != '#' {
-		return MetaLine{Kind: MetaShell, Raw: raw} // KEY=a b: an environment prefix for a command
+		return MetaLine{Kind: MetaShell, Raw: raw, Key: key} // KEY=a b: an environment prefix for a command
 	}
 	return MetaLine{Kind: MetaAssignment, Raw: raw, Key: key, Value: decoded.value, Encoded: word[:decoded.end]}
 }
@@ -248,6 +263,9 @@ func decodeMetaANSI(s string) metaWord {
 			if e == 'x' {
 				out = append(out, byte(v))
 			} else {
+				if !utf8.ValidRune(rune(v)) {
+					return metaWord{} // Bash emits non-UTF-8 bytes for these values; retain the raw record.
+				}
 				out = utf8.AppendRune(out, rune(v))
 			}
 			i = j - 1

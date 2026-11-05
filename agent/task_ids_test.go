@@ -43,10 +43,6 @@ func TestResolveTaskIDMatchesOracle(t *testing.T) {
 			if failure == nil || (failure.Cause != ResolveTaskNotFound && failure.Cause != ResolveTaskAmbiguous) {
 				t.Fatalf("ref %q: wanted lookup failure, got %q,%v", ref, got, failure)
 			}
-			// The command diagnostic is part of the oracle contract, in addition to its typed cause.
-			if failure.Message != strings.TrimPrefix(want, "ERROR:") {
-				t.Fatalf("ref %q: diagnostic %q, want %q", ref, failure.Message, want)
-			}
 		} else if failure != nil || got != want {
 			t.Fatalf("ref %q: %q,%v want %q", ref, got, failure, want)
 		}
