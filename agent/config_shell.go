@@ -13,67 +13,58 @@ import (
 const configShell = `exec 3>&1
 exec 1>&2
 set -euo pipefail
+shopt -u patsub_replacement
 HOME=$1 AGENTS_HOME=$2 HOSTNAME=$3 SELF=$4 CONF=$5
 TASKS=$AGENTS_HOME/tasks PROMPTS=$AGENTS_HOME/prompts BUS_DIR=$AGENTS_HOME/bus LOG_DIR=$AGENTS_HOME/logs
-shift 5
+readonly _agent_cfg_defaults=$6
+shift 6
+readonly -a _agent_cfg_names=("$@")
 source "$CONF"
-for _agent_cfg_name in "$@"; do
+builtin eval "$_agent_cfg_defaults"
+for _agent_cfg_name in "${_agent_cfg_names[@]}"; do
+    declare -n _agent_cfg_ref="$_agent_cfg_name"
+    _agent_cfg_flags=
     # An undeclared allowlisted name is an expected absence, not a source failure.
-    if _agent_cfg_decl=$(declare -p "$_agent_cfg_name" 2>/dev/null); then
+    if _agent_cfg_decl=$(declare -p "${!_agent_cfg_ref}" 2>/dev/null); then
         _agent_cfg_flags=${_agent_cfg_decl#declare -}
         _agent_cfg_flags=${_agent_cfg_flags%% *}
-        if [[ $_agent_cfg_flags == *A* || $_agent_cfg_flags == *a* ]]; then
-            _agent_cfg_tag=I
-            _agent_cfg_element=i
-            if [[ $_agent_cfg_flags == *A* ]]; then
-                _agent_cfg_tag=A
-                _agent_cfg_element=a
-            fi
-            printf '%s\0%s\0\0\0' "$_agent_cfg_tag" "$_agent_cfg_name" >&3
-            declare -n _agent_cfg_ref="$_agent_cfg_name"
-            for _agent_cfg_key in "${!_agent_cfg_ref[@]}"; do
-                printf '%s\0%s\0%s\0%s\0' "$_agent_cfg_element" "$_agent_cfg_name" "$_agent_cfg_key" "${_agent_cfg_ref[$_agent_cfg_key]}" >&3
-            done
-            unset -n _agent_cfg_ref
-        elif [[ -v $_agent_cfg_name ]]; then
-            printf 'S\0%s\0\0%s\0' "$_agent_cfg_name" "${!_agent_cfg_name}" >&3
-        fi
     fi
+    if [[ $_agent_cfg_flags == *A* || $_agent_cfg_flags == *a* ]]; then
+        _agent_cfg_tag=I
+        _agent_cfg_element=i
+        if [[ $_agent_cfg_flags == *A* ]]; then
+            _agent_cfg_tag=A
+            _agent_cfg_element=a
+        fi
+        printf '%s\0%s\0\0\0' "$_agent_cfg_tag" "$_agent_cfg_name" >&3
+        for _agent_cfg_key in "${!_agent_cfg_ref[@]}"; do
+            printf '%s\0%s\0%s\0%s\0' "$_agent_cfg_element" "$_agent_cfg_name" "$_agent_cfg_key" "${_agent_cfg_ref[$_agent_cfg_key]}" >&3
+        done
+    elif [[ -v $_agent_cfg_name ]]; then
+        printf 'S\0%s\0\0%s\0' "$_agent_cfg_name" "${!_agent_cfg_name}" >&3
+    fi
+    unset -n _agent_cfg_ref
 done
 printf 'Z\0\0\0\0' >&3
 `
 
-// loadConfig evaluates executable Bash settings before applying startup defaults.
+// loadConfig evaluates executable Bash settings and startup defaults in one shell.
 func (a *App) loadConfig(ctx context.Context, req ConfigRequest) (Config, *LoadConfigError) {
-	cfg, err := a.loadShellConfig(ctx, req)
-	if err != nil {
-		return Config{}, err
-	}
-	// Bash evaluates a fallback lazily: an unset context fails only when its default is used.
-	for name, settings := range map[string][]string{
-		"HOME":        {"CLAUDE_BIN", "CODEX_BIN", "AGENTBUS_BIN", "RUN_PATH", "VSCODE_SERVER_DIRS", "AGY_BIN", "OPENCODE_BIN", "AGENTLIVE_BIN"},
-		"AGENTS_HOME": {"NOTIFY_DIR", "ENV_NOTES_FILE"},
-		"HOSTNAME":    {"INSTANCE_NAME"},
-	} {
-		if _, present := configScalar(cfg, name); present {
-			continue
-		}
-		for _, setting := range settings {
-			if value, _ := configScalar(cfg, setting); value == "" {
-				return Config{}, opErr(LoadConfigShell, "configuration unset %s required by a default", name)
-			}
-		}
-	}
-	return applyConfigDefaults(cfg, req.Context), nil
+	return a.evaluateConfigShell(ctx, req, configDefaultShell(req.Context))
 }
 
 // loadShellConfig isolates configuration output from its typed NUL snapshot.
 func (a *App) loadShellConfig(ctx context.Context, req ConfigRequest) (Config, *LoadConfigError) {
+	return a.evaluateConfigShell(ctx, req, "")
+}
+
+// evaluateConfigShell retains Bash declarations through default assignments before snapshotting.
+func (a *App) evaluateConfigShell(ctx context.Context, req ConfigRequest, defaults string) (Config, *LoadConfigError) {
 	home := req.Context.AgentsHome
 	if home == "" {
 		home = req.Context.Home + "/agents"
 	}
-	args := []string{"--noprofile", "--norc", "-c", configShell, "agent-config", req.Context.Home, home, req.Context.Hostname, req.Context.Self, req.File}
+	args := []string{"--noprofile", "--norc", "-c", configShell, "agent-config", req.Context.Home, home, req.Context.Hostname, req.Context.Self, req.File, defaults}
 	args = append(args, configNames()...)
 	var output bytes.Buffer
 	result, err := a.execute(ctx, Command{Name: "bash", Args: args, Env: configEnvironment(req.Env), Stdout: &output, Stderr: io.Discard})
@@ -90,6 +81,49 @@ func (a *App) loadShellConfig(ctx context.Context, req ConfigRequest) (Config, *
 		return Config{}, opErr(LoadConfigProtocol, "configuration snapshot is incomplete")
 	}
 	return decodeConfigNUL(bytes.TrimSuffix(data, end))
+}
+
+// configDefaultShell emits only trusted assignments; Bash retains attributes and evaluates indices.
+func configDefaultShell(ctx ConfigContext) string {
+	script := `declare -p AGENT_EXTRA_ARGS &>/dev/null || declare -A AGENT_EXTRA_ARGS=()
+declare -p AGENT_MODEL &>/dev/null || declare -A AGENT_MODEL=()
+declare -p NORMAL_AGENTS &>/dev/null || NORMAL_AGENTS=()
+declare -p WORKER_AGENTS &>/dev/null || WORKER_AGENTS=()
+`
+	for _, setting := range configSettings(ConfigContext{Home: "@HOME@", AgentsHome: "@AGENTS_HOME@", UID: ctx.UID}) {
+		switch setting.name {
+		case "AGENTLIVE_BIN":
+			script += `declare -p INVESTIGATORS_TYPE &>/dev/null || declare -A INVESTIGATORS_TYPE=()
+declare -p INVESTIGATORS_MODEL &>/dev/null || declare -A INVESTIGATORS_MODEL=()
+declare -p INVESTIGATORS_EXTRA_ARGS &>/dev/null || declare -A INVESTIGATORS_EXTRA_ARGS=()
+if ((${#INVESTIGATORS_TYPE[@]} == 0)); then
+    INVESTIGATORS_TYPE[$INVESTIGATOR_NAME]=$INVESTIGATOR_TYPE
+    INVESTIGATORS_MODEL[$INVESTIGATOR_NAME]=$INVESTIGATOR_MODEL
+    INVESTIGATORS_EXTRA_ARGS[$INVESTIGATOR_NAME]=$INVESTIGATOR_EXTRA_ARGS
+fi
+INV_SLOTS=${#INVESTIGATORS_TYPE[@]}
+`
+		case "LEAD_URL":
+			script += "declare -p ROUND_MAX_LINES_REPO &>/dev/null || declare -A ROUND_MAX_LINES_REPO=()\ndeclare -p NODE_REPOS &>/dev/null || declare -A NODE_REPOS=()\n"
+		case "AUTH_MODEL_ANTHROPIC":
+			script += "declare -p INSTANCE_CAPABILITIES &>/dev/null || declare -a INSTANCE_CAPABILITIES=()\n"
+		}
+		value := "'" + strings.ReplaceAll(setting.value, "'", "'\\''") + "'"
+		value = strings.NewReplacer("@HOME@", "'\"${HOME}\"'", "@AGENTS_HOME@", "'\"${AGENTS_HOME}\"'").Replace(value)
+		if setting.name == "INSTANCE_NAME" {
+			value = "${HOSTNAME%%.*}"
+		}
+		op := ":-"
+		if setting.name == "AUTO_MERGE_HUMAN_PATHS" {
+			op = "-"
+		}
+		if setting.name == "REVIEW_HISTORY_MAX" || setting.name == "ROUND_ALWAYS_EXCLUDE" {
+			script += setting.name + "=" + value + "\n"
+		} else {
+			script += setting.name + "=${" + setting.name + op + value + "}\n"
+		}
+	}
+	return script
 }
 
 // configEnvironment prevents inherited startup hooks from executing before the fixed script.

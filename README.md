@@ -1465,7 +1465,7 @@ make integration        # real agent CLIs and accounts (costs usage)
   - Candidate evidence belongs only to Lane B: oracle runs preserve it and reject `--evidence`. `make unit-agent-bats` requires parity validation after candidate execution, including in the ordinary gate.
   - **Parity checker:** `make check-agent-parity` (`tools/check-agent-parity.sh`) verifies the ledger via `tools/check-agent-test-map.sh`, validates execution counts and SHA-256 digests against candidate evidence, and enforces valid Go test mappings (`TestName[/subtest]`) for active/done rows.
 - **Configuration evaluation and parity (R05A).** The Go candidate can evaluate trusted `agents.conf`
-  files in non-interactive Bash, then apply the startup defaults in Go. A dedicated descriptor carries
+  files and startup defaults in non-interactive Bash, retaining declaration attributes and name references. A dedicated descriptor carries
   a NUL-delimited snapshot, preserving scalars, indexed and associative arrays, sparse numeric keys,
   unset versus empty values, and legacy investigator definitions. Configuration output is discarded;
   evaluation failures return typed errors. The config remains executable shell code, with the caller's
