@@ -60,3 +60,21 @@ func decodeNULDelimited(r io.Reader) (map[string]string, error) {
 	_ = r
 	return make(map[string]string), nil
 }
+
+// loadConfig loads configuration from Bash transport, then applies defaults.
+// It calls loadShellConfig to source agents.conf through Bash, then applies
+// context-dependent defaults via applyConfigDefaults.
+func (a *App) loadConfig(ctx context.Context, req ConfigRequest) (Config, error) { //nolint:unused // RED stub; called in tests/wrapper during GREEN
+	cfg, err := a.loadShellConfig(ctx, req)
+	if err != nil {
+		return Config{}, err
+	}
+	return applyConfigDefaults(cfg, req.Context), nil
+}
+
+// configNames returns the complete set of allowed configuration setting names.
+// RED stub returns nil; GREEN implementation derives from configSettings defaults
+// plus context-required fields and agent type names.
+func configNames() []string { //nolint:unused // RED stub; called by parity tests in GREEN
+	return nil
+}
