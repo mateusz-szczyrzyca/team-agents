@@ -281,4 +281,3 @@ func TestCmdInvEmptyArgQueue(t *testing.T) {
 		t.Fatalf("expected inv-list for empty arg, got commands: %v", exec.commands)
 	}
 }
-

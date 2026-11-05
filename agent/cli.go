@@ -128,7 +128,9 @@ func (a *App) run(args []string, stdout, stderr io.Writer) int {
 
 	if err := a.dispatch(context.Background(), cmd, cmdArgs, stdout, stderr); err != nil {
 		if err.Cause != CommandUnknownCommand {
-			fmt.Fprintf(stderr, "agent: %s\n", err.Message)
+			if _, werr := fmt.Fprintf(stderr, "agent: %s\n", err.Message); werr != nil {
+				return 1
+			}
 		}
 		var berr *BusError
 		if errors.As(err, &berr) {

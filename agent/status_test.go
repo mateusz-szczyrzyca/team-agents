@@ -358,4 +358,3 @@ func TestCmdStatusMetaReadError(t *testing.T) {
 		t.Fatalf("expected StatusStorage, got %v", err.Cause)
 	}
 }
-

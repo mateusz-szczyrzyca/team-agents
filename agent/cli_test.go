@@ -122,7 +122,6 @@ func TestRunDiagnosticsOnStderr(t *testing.T) {
 	}
 }
 
-
 func TestDispatchAckMissingArg(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := dispatch("ack", nil, &stdout, &stderr)
