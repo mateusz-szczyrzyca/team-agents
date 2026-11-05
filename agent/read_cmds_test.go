@@ -120,6 +120,45 @@ func TestCmdInvGet(t *testing.T) {
 	}
 }
 
+func TestCmdInvListOracleDefaults(t *testing.T) {
+	exec := &readCmdsTestExecutor{
+		responses: map[string]string{
+			"inv-list": "investigation queue\n",
+		},
+	}
+	app := newApp(exec, nil, nil)
+	app.busBin = "/bin/agentbus"
+	app.busDir = "/tmp/bus"
+
+	var out bytes.Buffer
+	err := app.cmdInv(context.Background(), nil, &out)
+	if err != nil {
+		t.Fatalf("cmdInv failed: %v", err)
+	}
+
+	// Verify that oracle defaults are passed: queue-max=3, inv-slots=1
+	if len(exec.commands) == 0 {
+		t.Fatal("no commands executed")
+	}
+	cmd := exec.commands[0]
+	hasQueueMax3 := false
+	hasSlots1 := false
+	for i, arg := range cmd.Args {
+		if arg == "--queue-max" && i+1 < len(cmd.Args) && cmd.Args[i+1] == "3" {
+			hasQueueMax3 = true
+		}
+		if arg == "--inv-slots" && i+1 < len(cmd.Args) && cmd.Args[i+1] == "1" {
+			hasSlots1 = true
+		}
+	}
+	if !hasQueueMax3 {
+		t.Fatalf("--queue-max 3 not found in args: %v", cmd.Args)
+	}
+	if !hasSlots1 {
+		t.Fatalf("--inv-slots 1 not found in args: %v", cmd.Args)
+	}
+}
+
 func TestCmdNotes(t *testing.T) {
 	exec := &readCmdsTestExecutor{
 		responses: map[string]string{
