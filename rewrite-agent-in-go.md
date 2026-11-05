@@ -179,18 +179,32 @@ hours-long shell for scripts whose effects end at that boundary. It is a mechani
   changed function bodies, dynamic scope, or shell effects needed by later orchestration. Importing the
   Bash orchestration functions or exposing equivalent generic callbacks would be a forbidden bridge.
 
-The current round is **R05B-DESIGN**, documentation only: update this plan, the README status, and the
-round report. Change no implementation, configuration, installer, tests, or parity-ledger state. Keep
-`bin/agent` and production selection unchanged. Do not mark secrets parity complete, wire the R05A
-loader into a command, activate affected candidate rows, or schedule cutover on this evidence. Budget
-at most 250 added+deleted lines for plan/README edits and at most 250 for the round report; total at
-most 500, inside the unchanged 1,500-line cap. Run `make gate` before committing and record
-`Test-First: not possible — documentation-only compatibility and round-plan revision`.
+Execution round 6 delivered **R05B-DESIGN**, a documentation-only revision. It left production
+Bash, the unwired R05A loader, tests, and parity-ledger state unchanged; it did not complete secrets
+parity or authorize affected candidate activation or cutover.
 
-A future implementation plan must first reconcile the full context requirement with decision 6.
-This revision grants neither a bridge exception nor a restricted script contract. More implementation
-rounds alone cannot remove the contradiction. If both remain binding, keep the production Bash command
-and the Go candidate in development; the native replacement cannot claim completion.
+The human owns the unresolved compatibility/architecture decision. The coordinator must present
+these options and record the human's choice before scheduling the affected implementation:
+
+- **a) Adopt the documented `NAME=value` secrets contract.** The template
+  `config/secrets.env.example` and README troubleshooting describe assignment-based keys, without
+  spaces around `=`. Define that supported subset precisely instead of promising arbitrary caller
+  context. Under repository rule 9, explicitly reconcile existing executable scripts through a
+  compatibility or migration plan, tests for old and selected behavior, and a README update before
+  activation. Documentation alone does not migrate scripts that currently execute in the caller.
+- **b) Approve a narrow exception to decision 6.** Specify the retained Bash secrets/caller
+  continuation boundary and its lifetime, preserving source-once configuration, dynamic scope,
+  function replacement, output, and failure behavior. Revise the no-bridge/native completion claims
+  explicitly; a settings snapshot alone is insufficient.
+- **c) Keep secrets loading and its dependent continuation in Bash.** Preserve the current execution
+  contract and revise the Go replacement/cutover scope explicitly. This avoids a new evaluator bridge
+  but leaves the affected production paths in Bash and the full native replacement incomplete.
+
+Round 7 must first stop for this human decision; it is not automatically original R06 or permission
+to implement deferred R05B packages. The coordinator must obtain and record the verdict and revised
+scope before proposing its implementation round. This revision selects none of a/b/c and grants
+neither a bridge exception nor a restricted script contract. More implementation rounds alone cannot
+remove the contradiction; until resolved, affected activation and R55 cutover remain blocked.
 
 Only after that reconciliation is recorded may the following work be scheduled. Each behavior round
 has its own 1,500-line cap, RED/GREEN tests for its implemented behavior, and no future placeholder or
