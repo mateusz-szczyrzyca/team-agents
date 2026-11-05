@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // MetaLineKind distinguishes decoded data from records requiring shell evaluation.
@@ -82,8 +86,113 @@ func readTaskMeta(tasksDir, id string) (MetaFile, *ReadTaskMetaError) {
 	return parseMeta(data), nil
 }
 
+// jobTransition captures one status change record appended to job_transitions.jsonl.
+type jobTransition struct {
+	State string `json:"state"` // task state name
+	At    string `json:"at"`    // ISO-8601 UTC timestamp
+}
+
 // setTaskMeta writes a key=value pair to the task metadata file under lock.
 // If runID is provided and does not match the current RUN value, returns nil (stale-run fence).
-func setTaskMeta(tasksDir, taskID, key, value, runID string) *SetTaskMetaError {
+func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMetaError) {
+	f, lockErr := lockTaskMeta(tasksDir, taskID, 0)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer func() {
+		if unlockErr := unlockTaskMeta(f); unlockErr != nil && retErr == nil {
+			retErr = fromStorage(SetTaskMetaStorage, unlockErr)
+		}
+	}()
+
+	metaPath := filepath.Join(tasksDir, taskID, "meta.env")
+	data, readErr := os.ReadFile(metaPath) // #nosec G304 -- local task path under isolated tasks directory
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return fromStorage(SetTaskMetaStorage, storageErr(readErr, "read metadata %s", metaPath))
+	}
+
+	var m MetaFile
+	if readErr == nil {
+		m = parseMeta(data)
+	}
+
+	if runID != "" {
+		currentRun, _ := m.Lookup("RUN")
+		if currentRun != runID {
+			return nil
+		}
+	}
+
+	newLine, verr := formatMetaAssignment(key, value)
+	if verr != nil {
+		return fromStorage(SetTaskMetaStorage, storageErr(verr.asError(), "format metadata %s=%s", key, value))
+	}
+
+	var buf bytes.Buffer
+	for _, line := range m.Lines {
+		if line.Key == key {
+			continue
+		}
+		buf.WriteString(line.Raw)
+	}
+	if buf.Len() > 0 && !strings.HasSuffix(buf.String(), "\n") {
+		buf.WriteByte('\n')
+	}
+	buf.WriteString(newLine)
+
+	tmp, err := os.CreateTemp(filepath.Join(tasksDir, taskID), "meta.env.tmp.*")
+	if err != nil {
+		return fromStorage(SetTaskMetaStorage, storageErr(err, "create temp metadata in %s", filepath.Join(tasksDir, taskID)))
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		if closeErr := tmp.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		if removeErr := os.Remove(tmpName); removeErr != nil {
+			err = errors.Join(err, removeErr)
+		}
+		return fromStorage(SetTaskMetaStorage, storageErr(err, "write temp metadata %s", tmpName))
+	}
+	if err := tmp.Close(); err != nil {
+		if removeErr := os.Remove(tmpName); removeErr != nil {
+			err = errors.Join(err, removeErr)
+		}
+		return fromStorage(SetTaskMetaStorage, storageErr(err, "close temp metadata %s", tmpName))
+	}
+	if err := os.Rename(tmpName, metaPath); err != nil {
+		if removeErr := os.Remove(tmpName); removeErr != nil {
+			err = errors.Join(err, removeErr)
+		}
+		return fromStorage(SetTaskMetaStorage, storageErr(err, "rename %s to %s", tmpName, metaPath))
+	}
+
+	if key == "STATUS" {
+		if jid, ok := m.Lookup("JOB_ID"); ok && jid != "" {
+			now := time.Now().UTC().Format(time.RFC3339Nano)
+			recordBytes, err := json.Marshal(jobTransition{State: value, At: now})
+			if err != nil {
+				return fromStorage(SetTaskMetaStorage, storageErr(err, "marshal job transition"))
+			}
+			recordBytes = append(recordBytes, '\n')
+
+			journalPath := filepath.Join(tasksDir, taskID, "job_transitions.jsonl")
+			jf, err := os.OpenFile(journalPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) // #nosec G304 -- local task path under isolated tasks directory
+			if err != nil {
+				return fromStorage(SetTaskMetaStorage, storageErr(err, "open journal %s", journalPath))
+			}
+			if _, err := jf.Write(recordBytes); err != nil {
+				if closeErr := jf.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+				return fromStorage(SetTaskMetaStorage, storageErr(err, "append journal %s", journalPath))
+			}
+			if err := jf.Close(); err != nil {
+				return fromStorage(SetTaskMetaStorage, storageErr(err, "close journal %s", journalPath))
+			}
+		}
+	}
+
 	return nil
 }
