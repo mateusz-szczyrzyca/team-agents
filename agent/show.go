@@ -12,11 +12,11 @@ import (
 )
 
 // cmdShow displays full details of a single task: metadata, task.md, questions, result, report.
-func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ResolveTaskError {
+func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowError {
 	// Resolve the task ID (simple matching for now)
 	tasksDir := app.tasksDir
 	if tasksDir == "" {
-		return opErr(ResolveTaskNotFound, "no task directory")
+		return opErr(ShowNotFound, "no task directory")
 	}
 
 	// Try exact match first
@@ -25,21 +25,21 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *Resol
 		// Try partial match
 		entries, err := ioutil.ReadDir(tasksDir)
 		if err != nil {
-			return opErr(ResolveTaskNotFound, "cannot read tasks directory")
+			return opErr(ShowNotFound, "cannot read tasks directory")
 		}
-		
+
 		var matches []string
 		for _, entry := range entries {
 			if entry.IsDir() && strings.Contains(entry.Name(), taskID) {
 				matches = append(matches, entry.Name())
 			}
 		}
-		
+
 		if len(matches) == 0 {
-			return opErr(ResolveTaskNotFound, "no task matches: "+taskID)
+			return opErr(ShowNotFound, "no task matches: "+taskID)
 		}
 		if len(matches) > 1 {
-			return opErr(ResolveTaskNotFound, "ambiguous task ID: "+taskID)
+			return opErr(ShowAmbiguous, "ambiguous task ID: "+taskID)
 		}
 		
 		taskDir = filepath.Join(tasksDir, matches[0])

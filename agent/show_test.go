@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// TestCmdShowTaskNotFound verifies ResolveTaskNotFound error is returned.
+// TestCmdShowTaskNotFound verifies ShowNotFound error is returned.
 func TestCmdShowTaskNotFound(t *testing.T) {
 	app := &App{
 		Executor:  &appExecutor{},
@@ -26,9 +26,9 @@ func TestCmdShowTaskNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("cmdShow should return error for nonexistent task")
 	}
-	// Should be a ResolveTaskNotFound error
-	if err.Cause != ResolveTaskNotFound {
-		t.Errorf("got error %v, want ResolveTaskNotFound", err)
+	// Should be a ShowNotFound error
+	if err.Cause != ShowNotFound {
+		t.Errorf("got error %v, want ShowNotFound", err)
 	}
 }
 
