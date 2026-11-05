@@ -370,3 +370,101 @@ func TestSetTaskMetaJobTransitions(t *testing.T) {
 		t.Fatalf("job_transitions.jsonl missing 'running' state: %s", string(transitions))
 	}
 }
+
+// TestMixedBashGoWriter verifies that Bash meta_set and Go setTaskMeta can coexist in the same file.
+func TestMixedBashGoWriter(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "mixed-writer"
+	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=mixed-writer\nSTATUS=init\n")
+
+	// Simulate Bash meta_set writing a key (simplified - just append to file)
+	bashKey := "BASH_KEY"
+	bashValue := "bash_value"
+	bashLine := fmt.Sprintf("%s=%s\n", bashKey, bashValue)
+	if failure := os.WriteFile(metaFile, []byte("ID=mixed-writer\nSTATUS=init\n"+bashLine), 0o600); failure != nil {
+		t.Fatal(failure)
+	}
+
+	// Use Go setTaskMeta to write another key
+	err := setTaskMeta(tasks, taskID, "GO_KEY", "go_value", "")
+	if err != nil {
+		t.Fatalf("Go setTaskMeta failed: %v", err)
+	}
+
+	// Verify both Bash and Go keys exist
+	data, failure := os.ReadFile(metaFile)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	m := parseMeta(data)
+
+	// Check Bash key (written directly)
+	if bashVal, ok := m.Lookup(bashKey); !ok || bashVal != bashValue {
+		t.Fatalf("Bash key lost: got %q,%v want %q,true", bashVal, ok, bashValue)
+	}
+
+	// Check Go key (written by setTaskMeta)
+	if goVal, ok := m.Lookup("GO_KEY"); !ok || goVal != "go_value" {
+		t.Fatalf("Go key not written: got %q,%v", goVal, ok)
+	}
+
+	// Check original ID is preserved
+	if id, ok := m.Lookup("ID"); !ok || id != "mixed-writer" {
+		t.Fatalf("ID lost: got %q,%v", id, ok)
+	}
+}
+
+// TestSeparateProcessMetaWrite verifies metadata can be updated correctly from separate processes.
+func TestSeparateProcessMetaWrite(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "separate-process"
+	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=separate-process\nSTATUS=init\n")
+
+	// First process: Go setTaskMeta writes a key
+	err := setTaskMeta(tasks, taskID, "PROCESS1", "value1", "")
+	if err != nil {
+		t.Fatalf("Process 1 setTaskMeta failed: %v", err)
+	}
+
+	// Verify first write
+	data, failure := os.ReadFile(metaFile)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	m1 := parseMeta(data)
+	if val, ok := m1.Lookup("PROCESS1"); !ok || val != "value1" {
+		t.Fatalf("Process1 key not written: got %q,%v", val, ok)
+	}
+
+	// Second process: Go setTaskMeta writes a different key
+	err = setTaskMeta(tasks, taskID, "PROCESS2", "value2", "")
+	if err != nil {
+		t.Fatalf("Process 2 setTaskMeta failed: %v", err)
+	}
+
+	// Verify both writes are present
+	data, failure = os.ReadFile(metaFile)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	m2 := parseMeta(data)
+	if val, ok := m2.Lookup("PROCESS1"); !ok || val != "value1" {
+		t.Fatalf("Process1 key lost after Process2 write: got %q,%v", val, ok)
+	}
+	if val, ok := m2.Lookup("PROCESS2"); !ok || val != "value2" {
+		t.Fatalf("Process2 key not written: got %q,%v", val, ok)
+	}
+
+	// Verify original ID is preserved
+	if id, ok := m2.Lookup("ID"); !ok || id != "separate-process" {
+		t.Fatalf("ID lost: got %q,%v", id, ok)
+	}
+}
