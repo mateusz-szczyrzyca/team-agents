@@ -84,6 +84,10 @@ tests/unit/github_trust.bats	the agents are told that text on GitHub by anyone b
 tests/unit/handover_failed.bats	remote_start_check: the lead's commit must be on origin for a new remote member	source	R30	-	planned
 tests/unit/handover_failed.bats	a remote member coming back on a resume does not need the lead's checkout pushed; a new one does	source	R30	-	planned
 tests/unit/handover_failed.bats	a team that cannot take its work back tells the human why: the stage, the PR, the notification	source	R30	-	planned
+tests/unit/handback_wait.bats	a hand-back refused while a member still runs waits; _supervise hands the work back once the run ends	blackbox	R34	-	planned
+tests/unit/handback_wait.bats	a run that goes on past AGENT_HANDBACK_WAIT_MIN is stopped — that one alone — and the work goes back to the team	blackbox	R34	-	planned
+tests/unit/handback_wait.bats	a hand-back refused for another reason reaches the human at once, with where its text is	blackbox	R34	-	planned
+tests/unit/handback_wait.bats	resuming a team with a task still running names that task to stop, not every task	blackbox	R34	-	planned
 tests/unit/identity.bats	an empty GIT_EMAIL is the agent's own .invalid address, never the human's e-mail from git config	blackbox	R23	-	planned
 tests/unit/identity.bats	%a in GIT_EMAIL is the agent's name	blackbox	R23	-	planned
 tests/unit/identity.bats	without GIT_SIGNING_KEY the agents do not sign, even when the human signs every commit	blackbox	R23	-	planned
@@ -444,6 +448,8 @@ tests/unit/resume_stash.bats	a resume carries a member's changes on though one o
 tests/unit/review_byline.bats	an investigator's review gets its byline at the top; the one at the end stays; none is doubled	blackbox	R12	-	planned
 tests/unit/review_byline.bats	a review posted by anyone but an investigator is left as it is	blackbox	R12	-	planned
 tests/unit/review_byline.bats	review_byline: the investigator, its CLI and model, the request	source	R12	-	planned
+tests/unit/review_overload.bats	review_hands_over: an exhausted quota, and an overload past AGENT_REVIEW_OVERLOAD_WAIT_MIN, hand a review over; a short overload or a rate limit do not	source	R34	-	planned
+tests/unit/review_overload.bats	a review done again goes to an investigator outside its pair, though the pair's other one is free	source	R34	-	planned
 tests/unit/review_pair_random.bats	a review pair is drawn at random: over eight PRs each of four free investigators reviews, never twice in a pair	source	R33	-	planned
 tests/unit/review_pair_random.bats	with two free investigators the pair keeps the list's order: A the first, B the second	source	R33	-	planned
 tests/unit/review_pair_random.bats	a PR's next review pass keeps its pair	source	R33	-	planned

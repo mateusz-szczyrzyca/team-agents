@@ -302,6 +302,13 @@ merged already, the heading says so: what comes now is the round's follow-up, an
 with `--intent-to-add` — it is staged and stashed again). A team that cannot take its work back — a resume refused — waits for you the same way, with
 the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
+**A hand-back that waits for a run.** When `--autopilot` sends a round back to its team — after its checks, or
+for a fix pass — while a run of the team still goes on (a member still at work after its coordinator ended the
+round), the hand-back waits instead of calling you: `agent _supervise` hands the work back once the team's runs
+end, and stops a run that goes on past `AGENT_HANDBACK_WAIT_MIN` (default: `AGENT_HANG_MIN`, 30) — that one alone
+(log: `handback_waiting`, `handback_stopped_run`, `handback_done`). Any other refusal reaches you at once, with the
+hand-back's text kept in the task's `handback.md` to resume with.
+
 **A round's PR merged by someone else.** When a round's PR is merged by hand (or by anyone but the autopilot) while
 the round still works on it — a fix pass, a review —, `agent _supervise` stops what works on it (the team, the
 reviews of the PR) and tells you once, with the commits pushed to the PR's branch after the merge: those are on no
@@ -463,6 +470,8 @@ A sleeping member costs nothing; every wake-up starts a run and costs tokens. So
 - Both are read only from the end of the run's errors (`AGENT_LIMIT_TAIL_LINES`, default 30 lines of stderr): a
   429 the CLI retried and got past does not pause a run that later ends without STATUS for another reason. The
   notification quotes the line that caused the pause.
+`AGENT_REVIEW_OVERLOAD_WAIT_MIN` (5): a pair's review whose model is overloaded at the provider waits it out this long
+at most; past it the review goes at once to an investigator outside the pair, as on an exhausted quota.
 
 A paused task (`⏸ paused` in `agent status`) does not run and is not woken by messages or the board; a systemd
 timer (`agent-<task>-wake-<time>.timer`) resumes it at the announced time, in the same session. Its claimed board
