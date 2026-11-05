@@ -13,12 +13,14 @@ import (
 const configShell = `exec 3>&1
 exec 1>&2
 set -euo pipefail
-shopt -u patsub_replacement
+shopt -u patsub_replacement 2>/dev/null || : # Expected on Bash before 5.2, matching production.
 HOME=$1 AGENTS_HOME=$2 HOSTNAME=$3 SELF=$4 CONF=$5
 TASKS=$AGENTS_HOME/tasks PROMPTS=$AGENTS_HOME/prompts BUS_DIR=$AGENTS_HOME/bus LOG_DIR=$AGENTS_HOME/logs
 readonly _agent_cfg_defaults=$6
 shift 6
-readonly -a _agent_cfg_names=("$@")
+readonly -a _agent_cfg_names=("${@:2:$1}")
+shift "$(($1 + 1))"
+AGENT_SUBCOMMAND=${1:-} RUNNER_ID=""
 source "$CONF"
 builtin eval "$_agent_cfg_defaults"
 for _agent_cfg_name in "${_agent_cfg_names[@]}"; do
@@ -40,8 +42,8 @@ for _agent_cfg_name in "${_agent_cfg_names[@]}"; do
         for _agent_cfg_key in "${!_agent_cfg_ref[@]}"; do
             printf '%s\0%s\0%s\0%s\0' "$_agent_cfg_element" "$_agent_cfg_name" "$_agent_cfg_key" "${_agent_cfg_ref[$_agent_cfg_key]}" >&3
         done
-    elif [[ -v $_agent_cfg_name ]]; then
-        printf 'S\0%s\0\0%s\0' "$_agent_cfg_name" "${!_agent_cfg_name}" >&3
+    elif [[ ${_agent_cfg_ref+set} ]]; then
+        printf 'S\0%s\0\0%s\0' "$_agent_cfg_name" "${_agent_cfg_ref}" >&3
     fi
     unset -n _agent_cfg_ref
 done
@@ -59,15 +61,27 @@ func (a *App) loadShellConfig(ctx context.Context, req ConfigRequest) (Config, *
 }
 
 // evaluateConfigShell retains Bash declarations through default assignments before snapshotting.
-func (a *App) evaluateConfigShell(ctx context.Context, req ConfigRequest, defaults string) (Config, *LoadConfigError) {
+func (a *App) evaluateConfigShell(ctx context.Context, req ConfigRequest, defaults string) (cfg Config, failure *LoadConfigError) {
 	home := req.Context.AgentsHome
 	if home == "" {
 		home = req.Context.Home + "/agents"
 	}
 	args := []string{"--noprofile", "--norc", "-c", configShell, "agent-config", req.Context.Home, home, req.Context.Hostname, req.Context.Self, req.File, defaults}
-	args = append(args, configNames()...)
-	var output bytes.Buffer
-	result, err := a.execute(ctx, Command{Name: "bash", Args: args, Env: configEnvironment(req.Env), Stdout: &output, Stderr: io.Discard})
+	names := configNames()
+	args = append(args, strconv.Itoa(len(names)))
+	args = append(append(args, names...), req.Args...)
+	// Regular-file output and nil stderr avoid pipe-copy waits on background children.
+	output, fileErr := os.CreateTemp("", "agent-config-*.nul")
+	if fileErr != nil {
+		return Config{}, opErr(LoadConfigShell, "cannot create configuration snapshot: %v", fileErr)
+	}
+	defer func() {
+		closeErr, removeErr := output.Close(), os.Remove(output.Name())
+		if closeErr != nil || removeErr != nil {
+			cfg, failure = Config{}, opErr(LoadConfigShell, "cannot clean up configuration snapshot: close=%v remove=%v", closeErr, removeErr)
+		}
+	}()
+	result, err := a.execute(ctx, Command{Name: "bash", Args: args, Env: configEnvironment(req.Env), Stdout: output})
 	if err != nil {
 		// Executor diagnostics can contain caller-controlled values; retain cause, redact text.
 		return Config{}, &LoadConfigError{Cause: LoadConfigShell, Message: "cannot evaluate Bash configuration", Err: err}
@@ -75,7 +89,13 @@ func (a *App) evaluateConfigShell(ctx context.Context, req ConfigRequest, defaul
 	if result.ExitCode != 0 {
 		return Config{}, opErr(LoadConfigShell, "Bash configuration exited with status %d", result.ExitCode)
 	}
-	data := output.Bytes()
+	if _, seekErr := output.Seek(0, io.SeekStart); seekErr != nil {
+		return Config{}, opErr(LoadConfigShell, "cannot rewind configuration snapshot: %v", seekErr)
+	}
+	data, readErr := io.ReadAll(output)
+	if readErr != nil {
+		return Config{}, opErr(LoadConfigShell, "cannot read configuration snapshot: %v", readErr)
+	}
 	end := []byte("Z\x00\x00\x00\x00")
 	if !bytes.HasSuffix(data, end) {
 		return Config{}, opErr(LoadConfigProtocol, "configuration snapshot is incomplete")
