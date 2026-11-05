@@ -1,6 +1,23 @@
 {
  "operations": [
   {
+   "type": "ReadTaskMeta",
+   "op": "read_task_meta",
+   "what": "legacy task metadata reading",
+   "causes": [
+    {"name": "NotFound", "class": "NotFound", "doc": "the task metadata file does not exist"}
+   ]
+  },
+  {
+   "type": "ResolveTask",
+   "op": "resolve_task",
+   "what": "task identifier resolution",
+   "causes": [
+    {"name": "NotFound", "class": "NotFound", "doc": "no task directory matches the reference"},
+    {"name": "Ambiguous", "class": "Conflict", "doc": "more than one task directory matches the reference"}
+   ]
+  },
+  {
    "type": "Command",
    "op": "command",
    "what": "local command dispatch",

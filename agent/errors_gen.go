@@ -2,6 +2,64 @@
 
 package main
 
+// ---------------------------------------------------------------- read_task_meta
+
+// ReadTaskMetaCause is a reason why legacy task metadata reading failed.
+type ReadTaskMetaCause int
+
+const (
+	ReadTaskMetaNotFound ReadTaskMetaCause = iota // the task metadata file does not exist [NotFound]
+	ReadTaskMetaStorage                           // the shared state or a file could not be read or written [Storage]
+)
+
+// ReadTaskMetaError is the error of legacy task metadata reading.
+type ReadTaskMetaError = OpError[ReadTaskMetaCause]
+
+// readTaskMetaCauses describes the ReadTaskMetaCause values (same order as the constants).
+var readTaskMetaCauses = [...]causeInfo{
+	{"NotFound", ClassNotFound},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (ReadTaskMetaCause) op() string { return "read_task_meta" }
+
+// info implements opCause.
+func (c ReadTaskMetaCause) info() causeInfo { return readTaskMetaCauses[c] }
+
+// String returns the cause name.
+func (c ReadTaskMetaCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- resolve_task
+
+// ResolveTaskCause is a reason why task identifier resolution failed.
+type ResolveTaskCause int
+
+const (
+	ResolveTaskNotFound  ResolveTaskCause = iota // no task directory matches the reference [NotFound]
+	ResolveTaskAmbiguous                         // more than one task directory matches the reference [Conflict]
+	ResolveTaskStorage                           // the shared state or a file could not be read or written [Storage]
+)
+
+// ResolveTaskError is the error of task identifier resolution.
+type ResolveTaskError = OpError[ResolveTaskCause]
+
+// resolveTaskCauses describes the ResolveTaskCause values (same order as the constants).
+var resolveTaskCauses = [...]causeInfo{
+	{"NotFound", ClassNotFound},
+	{"Ambiguous", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (ResolveTaskCause) op() string { return "resolve_task" }
+
+// info implements opCause.
+func (c ResolveTaskCause) info() causeInfo { return resolveTaskCauses[c] }
+
+// String returns the cause name.
+func (c ResolveTaskCause) String() string { return c.info().name }
+
 // ---------------------------------------------------------------- command
 
 // CommandCause is a reason why local command dispatch failed.

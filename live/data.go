@@ -353,6 +353,14 @@ func ansiC(s string) string {
 		}
 		i++
 		switch s[i] {
+		case 'a':
+			out = append(out, '\a')
+		case 'b':
+			out = append(out, '\b')
+		case 'f':
+			out = append(out, '\f')
+		case 'v':
+			out = append(out, '\v')
 		case 'n':
 			out = append(out, '\n')
 		case 't':
