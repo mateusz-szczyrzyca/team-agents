@@ -198,10 +198,14 @@ func (e *busTestExecutor) Execute(ctx context.Context, cmd Command) (CommandResu
 	_ = ctx
 	e.cmd = cmd
 	if e.stdout != "" && cmd.Stdout != nil {
-		_, _ = cmd.Stdout.Write([]byte(e.stdout))
+		if _, err := cmd.Stdout.Write([]byte(e.stdout)); err != nil {
+			return CommandResult{}, fromProcess(ExecuteWait, processErr("busTestExecutor", err, "stdout write failed"))
+		}
 	}
 	if e.stderr != "" && cmd.Stderr != nil {
-		_, _ = cmd.Stderr.Write([]byte(e.stderr))
+		if _, err := cmd.Stderr.Write([]byte(e.stderr)); err != nil {
+			return CommandResult{}, fromProcess(ExecuteWait, processErr("busTestExecutor", err, "stderr write failed"))
+		}
 	}
 	return e.result, e.execErr
 }
@@ -438,4 +442,3 @@ func TestBusTestExecutorStreamErrors(t *testing.T) {
 		}
 	})
 }
-
