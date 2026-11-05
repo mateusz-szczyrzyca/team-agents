@@ -28,7 +28,7 @@ func resolveTaskID(tasksDir, ref string) (string, *ResolveTaskError) {
 		if strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		info, statErr := os.Stat(tasksDir + "/" + entry.Name())
+		info, statErr := os.Stat(tasksDir + "/" + entry.Name()) // #nosec G703 -- local directory entry inspection matches Bash task path resolution
 		if statErr != nil {
 			// A broken directory symlink is excluded by Bash's */ glob as well.
 			if errors.Is(statErr, os.ErrNotExist) {

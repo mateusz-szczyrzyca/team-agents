@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 )
 
 // dispatch routes a command to its handler, returning a typed CommandError on failure.
@@ -60,18 +62,56 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 	}
 }
 
-// routeAgents delegates to cmdAgents or returns nil until merged.
-func (a *App) routeAgents(_ context.Context, _ io.Writer) *CommandError {
+// routeAgents delegates to cmdAgents.
+func (a *App) routeAgents(_ context.Context, stdout io.Writer) *CommandError {
+	tasksDir := a.tasksDir
+	if tasksDir == "" {
+		home := a.agentHome
+		if home == "" {
+			home = os.Getenv("HOME")
+		}
+		tasksDir = filepath.Join(home, "agents", "tasks")
+	}
+	busDir := a.busDirectory()
+	cfg := &Config{
+		Scalars: map[string]string{
+			"AGENTBUS_BIN": a.busBinary(),
+		},
+	}
+	if err := a.cmdAgents(stdout, cfg, tasksDir, busDir); err != nil {
+		return fromStorage(CommandStorage, storageErr(err.asError(), "agents"))
+	}
 	return nil
 }
 
-// routeAgentsJSON delegates to cmdAgentsJSON or returns nil until merged.
-func (a *App) routeAgentsJSON(_ context.Context, _ io.Writer) *CommandError {
+// routeAgentsJSON delegates to cmdAgentsJSON.
+func (a *App) routeAgentsJSON(_ context.Context, stdout io.Writer) *CommandError {
+	cfg := &Config{}
+	if err := a.cmdAgentsJSON(stdout, cfg); err != nil {
+		return fromStorage(CommandStorage, storageErr(err.asError(), "agents json"))
+	}
 	return nil
 }
 
-// routeAck delegates to cmdAck or returns nil until merged.
-func (a *App) routeAck(_ context.Context, _ []string, _ io.Writer) *CommandError {
+// routeAck delegates to cmdAck.
+func (a *App) routeAck(_ context.Context, args []string, stdout io.Writer) *CommandError {
+	if len(args) == 0 {
+		return opErr(CommandInvalidArgument, "usage: agent ack <id|all>")
+	}
+	tasksDir := a.tasksDir
+	if tasksDir == "" {
+		home := a.agentHome
+		if home == "" {
+			home = os.Getenv("HOME")
+		}
+		tasksDir = filepath.Join(home, "agents", "tasks")
+	}
+	if err := a.cmdAck(args[0], stdout, tasksDir); err != nil {
+		if err.Cause == AckNotFound || err.Cause == AckAmbiguous || err.Cause == AckStillRunning {
+			return opErr(CommandInvalidArgument, "%s", err.Message)
+		}
+		return fromStorage(CommandStorage, storageErr(err.asError(), "ack"))
+	}
 	return nil
 }
 

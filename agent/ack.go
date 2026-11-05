@@ -42,7 +42,7 @@ func taskDirectories(root string) ([]string, *StorageError) {
 		if strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		info, statErr := os.Stat(root + "/" + entry.Name())
+		info, statErr := os.Stat(root + "/" + entry.Name()) // #nosec G703 -- local directory entry inspection matches Bash task path resolution
 		if errors.Is(statErr, os.ErrNotExist) {
 			continue
 		}
@@ -52,7 +52,7 @@ func taskDirectories(root string) ([]string, *StorageError) {
 		if !info.IsDir() {
 			continue
 		}
-		metaInfo, metaErr := os.Stat(root + "/" + entry.Name() + "/meta.env")
+		metaInfo, metaErr := os.Stat(root + "/" + entry.Name() + "/meta.env") // #nosec G703 -- internal task metadata file inspection matches Bash path resolution
 		if errors.Is(metaErr, os.ErrNotExist) {
 			continue
 		}

@@ -84,6 +84,22 @@ func TestDispatchWithArgs(t *testing.T) {
 	}
 }
 
+func TestDispatchAckMissingArg(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := dispatch("ack", nil, &stdout, &stderr)
+	if err == nil || err.Cause != CommandInvalidArgument {
+		t.Fatalf("dispatch(ack, nil) err = %v, want CommandInvalidArgument", err)
+	}
+}
+
+func TestDispatchAgentsJSON(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := dispatch("_agents-json", nil, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("dispatch(_agents-json, nil) err = %v, want nil", err)
+	}
+}
+
 func TestDispatchHelp(t *testing.T) {
 	for _, cmd := range []string{"help", "-h", "--help"} {
 		var stdout, stderr bytes.Buffer
