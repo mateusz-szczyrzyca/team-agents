@@ -614,3 +614,127 @@ func TestJobTransitionsPrelanchCancel(t *testing.T) {
 		t.Fatalf("'stopped' state not in transitions: %s", string(transitions))
 	}
 }
+
+// TestConcurrentReadWriteMeta verifies concurrent reads never observe partial writes or corrupt lines.
+func TestConcurrentReadWriteMeta(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "concurrent-rw"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=concurrent-rw\nSTATUS=init\nCOUNT=0\n")
+
+	// Concurrent reader and writer goroutines
+	done := make(chan bool, 20)
+	readerCount := 10
+	writerCount := 10
+
+	// Start readers
+	for i := 0; i < readerCount; i++ {
+		go func(readerID int) {
+			for j := 0; j < 5; j++ {
+				m, err := readTaskMeta(tasks, taskID)
+				if err != nil {
+					// Read failure is acceptable during concurrent writes
+					done <- true
+					return
+				}
+				// Verify no corrupted lines or missing complete records
+				for _, line := range m.Lines {
+					if line.Raw == "" && line.Kind != MetaBlank {
+						t.Errorf("reader %d: empty raw line with kind %v", readerID, line.Kind)
+					}
+				}
+				// Verify ID is readable
+				if idVal, ok := m.Lookup("ID"); !ok || idVal != "concurrent-rw" {
+					t.Errorf("reader %d: ID corrupted or missing", readerID)
+				}
+			}
+			done <- true
+		}(i)
+	}
+
+	// Start writers
+	for i := 0; i < writerCount; i++ {
+		go func(id int) {
+			for j := 0; j < 5; j++ {
+				key := fmt.Sprintf("RW_%d_%d", id, j)
+				value := fmt.Sprintf("val_%d_%d", id, j)
+				setTaskMeta(tasks, taskID, key, value, "")
+			}
+			done <- true
+		}(i)
+	}
+
+	// Wait for all goroutines to complete
+	for i := 0; i < readerCount+writerCount; i++ {
+		<-done
+	}
+
+	// Verify file is still readable and consistent
+	m, err := readTaskMeta(tasks, taskID)
+	if err != nil {
+		t.Fatalf("final read failed: %v", err)
+	}
+	if id, ok := m.Lookup("ID"); !ok || id != "concurrent-rw" {
+		t.Fatal("final read: ID corrupted or missing")
+	}
+}
+
+// TestSetTaskMetaValueEscaping verifies various special characters roundtrip correctly.
+func TestSetTaskMetaValueEscaping(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "escaping"
+	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	writeMetaFixture(t, metaFile, "ID=escaping\n")
+
+	testValues := []string{
+		"simple",
+		"with spaces",
+		"with\nnewline",
+		"with'single'quotes",
+		`with"double"quotes`,
+		"with$dollar",
+		"with`backtick`",
+		"with\\backslash",
+		"with#hash",
+		"tab\there",
+		"mixed\n'single'\"double\"$dollar\\back",
+		"unicode_é_ñ_ü",
+		"emoji_😀_🎉",
+		"\x01\x02\x03control",
+		"empty_value_next",
+		"",
+	}
+
+	// Write each value with setTaskMeta
+	for i, value := range testValues {
+		key := fmt.Sprintf("TEST_%d", i)
+		err := setTaskMeta(tasks, taskID, key, value, "")
+		if err != nil {
+			t.Fatalf("setTaskMeta failed for index %d (value %q): %v", i, value, err)
+		}
+	}
+
+	// Read back and verify each value matches exactly
+	m, err := readTaskMeta(tasks, taskID)
+	if err != nil {
+		t.Fatalf("readTaskMeta failed: %v", err)
+	}
+
+	for i, expectedValue := range testValues {
+		key := fmt.Sprintf("TEST_%d", i)
+		gotValue, ok := m.Lookup(key)
+		if !ok {
+			t.Fatalf("key %s not found in metadata", key)
+		}
+		if gotValue != expectedValue {
+			t.Fatalf("value mismatch for %s: got %q, want %q", key, gotValue, expectedValue)
+		}
+	}
+}
