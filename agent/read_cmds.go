@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -83,7 +84,7 @@ func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *Comm
 	busDir := a.busDirectory()
 	queueMax := "3"  // oracle default for INVESTIGATION_QUEUE_MAX
 	invSlots := "1"  // oracle default for INV_SLOTS
-	if len(args) == 0 {
+	if len(args) == 0 || args[0] == "" {
 		out, err := busCmd(ctx, a, busBin, "inv-list", "--dir", busDir, "--queue-max", queueMax, "--inv-slots", invSlots)
 		if err != nil {
 			return opErr(CommandStorage, "inv list: %s", err.Error())
@@ -118,14 +119,12 @@ func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *Comm
 	if jerr := json.Unmarshal([]byte(out), &res); jerr != nil {
 		return opErr(CommandStorage, "parse inv-get json: %s", jerr.Error())
 	}
-	if res.File != "" {
-		data, rerr := os.ReadFile(res.File) // #nosec G304 -- local investigation record path returned by agentbus inv-get
-		if rerr != nil {
-			return fromStorage(CommandStorage, storageErr(rerr, "read investigation file %s", res.File))
-		}
-		if _, werr := fmt.Fprint(stdout, string(data)); werr != nil {
-			return fromStorage(CommandStorage, storageErr(werr, "write investigation content"))
-		}
+	data, rerr := os.ReadFile(res.File) // #nosec G304 -- local investigation record path returned by agentbus inv-get
+	if rerr != nil {
+		return fromStorage(CommandStorage, storageErr(rerr, "read investigation file %s", res.File))
+	}
+	if _, werr := fmt.Fprint(stdout, string(data)); werr != nil {
+		return fromStorage(CommandStorage, storageErr(werr, "write investigation content"))
 	}
 	return nil
 }
@@ -142,8 +141,34 @@ func (a *App) cmdNotes(ctx context.Context, args []string, stdout io.Writer) *Co
 	} else {
 		rest = args
 	}
-	if repo == "" && a.workTree != "" {
-		repo = filepath.Base(a.workTree)
+	if repo == "" {
+		var rootBuf bytes.Buffer
+		cmd1 := Command{
+			Name:   "git",
+			Args:   []string{"rev-parse", "--show-toplevel"},
+			Dir:    a.workTree,
+			Stdout: &rootBuf,
+		}
+		if res, err := a.execute(ctx, cmd1); err == nil && res.ExitCode == 0 {
+			root := strings.TrimSpace(rootBuf.String())
+			if root != "" {
+				var commonBuf bytes.Buffer
+				cmd2 := Command{
+					Name:   "git",
+					Args:   []string{"-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"},
+					Stdout: &commonBuf,
+				}
+				if res2, err2 := a.execute(ctx, cmd2); err2 == nil && res2.ExitCode == 0 {
+					commonDir := strings.TrimSpace(commonBuf.String())
+					if commonDir != "" {
+						base := filepath.Base(filepath.Dir(commonDir))
+						if base != "." && base != "/" && base != "" {
+							repo = base
+						}
+					}
+				}
+			}
+		}
 	}
 	if repo == "" {
 		if _, werr := fmt.Fprintf(stdout, "Repository notebooks:\n"); werr != nil {
