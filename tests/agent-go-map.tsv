@@ -444,6 +444,8 @@ tests/unit/resume_stash.bats	a resume carries a member's changes on though one o
 tests/unit/review_byline.bats	an investigator's review gets its byline at the top; the one at the end stays; none is doubled	blackbox	R12	-	planned
 tests/unit/review_byline.bats	a review posted by anyone but an investigator is left as it is	blackbox	R12	-	planned
 tests/unit/review_byline.bats	review_byline: the investigator, its CLI and model, the request	source	R12	-	planned
+tests/unit/review_overload.bats	review_hands_over: an exhausted quota, and an overload past AGENT_REVIEW_OVERLOAD_WAIT_MIN, hand a review over; a short overload or a rate limit do not	source	R34	-	planned
+tests/unit/review_overload.bats	a review done again goes to an investigator outside its pair, though the pair's other one is free	source	R34	-	planned
 tests/unit/review_pair_random.bats	a review pair is drawn at random: over eight PRs each of four free investigators reviews, never twice in a pair	source	R33	-	planned
 tests/unit/review_pair_random.bats	with two free investigators the pair keeps the list's order: A the first, B the second	source	R33	-	planned
 tests/unit/review_pair_random.bats	a PR's next review pass keeps its pair	source	R33	-	planned
