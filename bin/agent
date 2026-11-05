@@ -597,7 +597,8 @@ INVESTIGATOR_EXTRA_ARGS="${INVESTIGATOR_EXTRA_ARGS:-}"
 INVESTIGATION_QUEUE_MAX="${INVESTIGATION_QUEUE_MAX:-3}"
 # An empty seed draws from OS entropy; a decimal seed reproduces the phase choices.
 AGENT_INVESTIGATION_SEED="${AGENT_INVESTIGATION_SEED:-}"
-AGENT_HANG_MIN="${AGENT_HANG_MIN:-30}"          # watchdog: this many minutes without any activity = hang
+AGENT_HANG_MIN="${AGENT_HANG_MIN:-30}"
+AGENT_HANDBACK_WAIT_MIN="${AGENT_HANDBACK_WAIT_MIN:-$AGENT_HANG_MIN}"   # a hand-back waits this long for a team's run          # watchdog: this many minutes without any activity = hang
 AGENT_HANG_STRIKES="${AGENT_HANG_STRIKES:-3}"
 AGENT_INVESTIGATION_EXCLUSIVE="${AGENT_INVESTIGATION_EXCLUSIVE:-no}"   # yes: an --investigation holds back normal teams' resumption    # this many consecutive hangs without progress = agent is hung
 # Wake-loop guard: a team member that keeps being woken without doing anything is paused (see wake_loop_check).
@@ -2181,15 +2182,17 @@ $(tail -n 40 "$TASKS/$id/precheck.log")
   if ((pass < AGENT_PRECHECK_MAX)); then
     args=(run --resume "$ref" --same-round)
     if [[ $(task_field "$id" AUTOPILOT) == 1 ]]; then args+=(--autopilot); else args+=(--verify); fi
-    if out=$(cd "$root" && AGENT_PRECHECK_PASS=$((pass + 1)) AGENT_FIX_PASS=$(task_field "$id" FIX_PASS) \
-         AGENT_FORMAT_BOUNCED=$format_bounce "$SELF" "${args[@]}" \
-         "Not reviewed yet ($((pass + 1)) of $AGENT_PRECHECK_MAX): $why
-Fix it on the same branches and finish as before; the round goes to review once its head passes." </dev/null 2>&1); then
-      act "$id" info "before the review: the team goes on ($((pass + 1)) of $AGENT_PRECHECK_MAX) — ${why:0:120}"
-      auto_stage "$id" ""   # the team has the work
+    if handback "$id" "the round" \
+         "AGENT_PRECHECK_PASS=$((pass + 1)) AGENT_FIX_PASS=$(task_field "$id" FIX_PASS) AGENT_FORMAT_BOUNCED=$format_bounce" \
+         "${args[@]}" "Not reviewed yet ($((pass + 1)) of $AGENT_PRECHECK_MAX): $why
+Fix it on the same branches and finish as before; the round goes to review once its head passes."; then
+      if [[ $(task_field "$id" HANDBACK_PENDING) != 1 ]]; then   # else it waits for the team's runs to end
+        act "$id" info "before the review: the team goes on ($((pass + 1)) of $AGENT_PRECHECK_MAX) — ${why:0:120}"
+        auto_stage "$id" ""   # the team has the work
+      fi
     else
-      log_error review_precheck_resume_failed "task=$id" "reason=${out:0:500}"
-      handover_failed "$id" "the round" "$out"
+      log_error review_precheck_resume_failed "task=$id" "reason=${HANDBACK_OUT:0:500}"
+      handover_failed "$id" "the round" "$HANDBACK_OUT"
     fi
     return 1
   fi
@@ -2262,13 +2265,14 @@ ${text:0:8000}"
     args=(run --resume "$ref")
     if [[ $(task_field "$parent" AUTOPILOT) == 1 ]]; then args+=(--autopilot); else args+=(--verify); fi
     if [[ -n $(task_field "$parent" WORK_ROUND) ]]; then args+=(--same-round); fi
-    if out=$(cd "$root" && AGENT_FIX_PASS=$((pass + 1)) "$SELF" "${args[@]}" "$add" </dev/null 2>&1); then
-      act "$id" info "--verify: $n critical/major finding(s) — the team resumed for fix pass $((pass + 1))"
+    if handback "$parent" "the fix pass" "AGENT_FIX_PASS=$((pass + 1))" "${args[@]}" "$add"; then
+      act "$id" info "--verify: $n critical/major finding(s) — fix pass $((pass + 1))$(
+        [[ $(task_field "$parent" HANDBACK_PENDING) != 1 ]] || printf ' waits for the team'"'"'s runs to end')"
       log_info review_fix_pass "task=$parent" "pass=$((pass + 1))" "findings=$n"
     else
-      log_error review_fix_resume_failed "task=$parent" "reason=${out:0:500}"
-      handover_failed "$parent" "the fix pass" "$out"
-      push_text "$repo" "--verify: the review of PR #$PR_NUMBER found $n critical or major finding(s), but the team could not be resumed:" "${out:0:500}"
+      log_error review_fix_resume_failed "task=$parent" "reason=${HANDBACK_OUT:0:500}"
+      handover_failed "$parent" "the fix pass" "$HANDBACK_OUT"
+      push_text "$repo" "--verify: the review of PR #$PR_NUMBER found $n critical or major finding(s), but the team could not be resumed:" "${HANDBACK_OUT:0:500}"
     fi
     return 0
   fi
@@ -2334,6 +2338,85 @@ remote_start_check() {
   git -C "$1" merge-base --is-ancestor "$sha" "origin/$2" 10>&-
 }
 
+# handback task what envspec arg… — the team takes its work back: agent run arg… (a --resume) with the environment
+# envspec ("NAME=value …"); the hand-back's text, its last argument, is kept in the task's handback.md. Refused because
+# a run of the team still goes on, it waits (HANDBACK_PENDING): supervise_handbacks tries it again once the team's
+# runs end, and stops a run that goes on past AGENT_HANDBACK_WAIT_MIN. 0: taken back, or waiting; 1: refused
+# otherwise — the refusal's output is in HANDBACK_OUT
+handback() {
+  local id=$1 what=$2 envspec=$3 out root envs=()
+  shift 3
+  root=$(task_field "$id" REPO_ROOT)
+  read -ra envs <<< "$envspec"
+  printf '%s\n' "${@: -1}" > "$TASKS/$id/handback.md" || log_warn handback_text_failed "task=$id"
+  HANDBACK_OUT=""
+  if out=$(cd "${root:-.}" && env "${envs[@]}" "$SELF" "$@" < /dev/null 2>&1); then
+    meta_set "$id" HANDBACK_PENDING ""
+    meta_set "$id" HANDBACK_SINCE ""
+    rm -f "$TASKS/$id/handback.args"
+    return 0
+  fi
+  if grep -q 'is still active (' <<< "$out"; then   # a run of the team still goes on: the hand-back waits for it
+    if printf '%s\0' "$what" "$envspec" "$@" > "$TASKS/$id/handback.args"; then
+      [[ -n $(task_field "$id" HANDBACK_SINCE) ]] || meta_set "$id" HANDBACK_SINCE "$(date +%s)"
+      meta_set "$id" HANDBACK_PENDING 1
+      act "$id" info "$what waits to go back to the team: $(grep -m1 -o 'task [^ ]* is still active ([a-z]*)' <<< "$out")"
+      auto_stage "$id" "$what goes back to the team once its runs end"
+      log_info handback_waiting "task=$id" "what=$what"
+      return 0
+    fi
+    log_warn handback_args_failed "task=$id"
+  fi
+  HANDBACK_OUT=$out
+  return 1
+}
+
+# supervise_handbacks — a hand-back waiting for the team's runs (HANDBACK_PENDING) is tried again once they end; a
+# run that goes on past AGENT_HANDBACK_WAIT_MIN is stopped first — that one alone. A hand-back the human stopped, or
+# that has nothing to hand back, waits no more
+supervise_handbacks() {
+  local m id f what envspec team since now t a=() running_tasks=()
+  now=$(date +%s)
+  for m in "$TASKS"/*/meta.env; do
+    grep -qx 'HANDBACK_PENDING=1' "$m" 2> /dev/null || continue
+    id=$(basename "$(dirname "$m")"); f=$TASKS/$id/handback.args
+    if [[ ! -s $f ]] || ! automation_allowed "$id"; then
+      meta_set "$id" HANDBACK_PENDING ""
+      continue
+    fi
+    mapfile -d '' -t a < "$f"
+    what=${a[0]} envspec=${a[1]}
+    team=$(task_field "$id" TEAM) running_tasks=()
+    if [[ -n $team ]]; then
+      for t in $(grep -lx "TEAM=$team" "$TASKS"/*/meta.env 2> /dev/null | xargs -r -n1 dirname | xargs -r -n1 basename); do
+        case $(task_field "$t" STATUS) in new|starting|running|waiting|investigating|sleeping|paused) running_tasks+=("$t") ;; esac
+      done
+    fi
+    since=$(task_field "$id" HANDBACK_SINCE); since=${since:-$now}
+    if ((${#running_tasks[@]})); then
+      ((now - since >= AGENT_HANDBACK_WAIT_MIN * 60)) || continue   # the team's runs still go on: it waits
+      for t in "${running_tasks[@]}"; do
+        if "$SELF" stop "$t" > /dev/null 2>&1; then
+          log_warn handback_stopped_run "task=$t" "for=$id" "waited_min=$(( (now - since) / 60 ))"
+        else
+          log_warn handback_stop_failed "task=$t" "for=$id"
+        fi
+      done
+    fi
+    if handback "$id" "$what" "$envspec" "${a[@]:2}"; then
+      if [[ $(task_field "$id" HANDBACK_PENDING) != 1 ]]; then
+        act "$id" info "$what went back to the team"
+        auto_stage "$id" ""
+        log_info handback_done "task=$id" "what=$what"
+      fi
+    else
+      log_error handback_failed "task=$id" "reason=${HANDBACK_OUT:0:300}"
+      meta_set "$id" HANDBACK_PENDING ""
+      handover_failed "$id" "$what" "$HANDBACK_OUT"
+    fi
+  done
+}
+
 # handover_failed task what output — the team could not take its work back (its resume was refused): the human
 # decides, and hears why — the stage "waits for you: …" (also said on the PR, by auto_stage), and the notification
 handover_failed() {
@@ -2341,7 +2424,9 @@ handover_failed() {
   why=$( { grep -m1 '^agent: ' <<< "$out" || (($? == 1)); } | sed 's/^agent: //' | cut -c1-200)   # the refusal's own words
   [[ -n $why ]] || why=$(tail -n 1 <<< "$out" | cut -c1-200)
   auto_stage "$id" "waits for you: $what could not go back to the team — $why"
-  notify "$id" failed "" "⛔ $what could not go back to the team: $why — once that is fixed: agent run --resume $(task_field "$id" TEAM) --same-round"
+  local text=$TASKS/$id/handback.md   # what the team was to do: to resume it with
+  notify "$id" failed "" "⛔ $what could not go back to the team: $why — once that is fixed: agent run --resume $(task_field "$id" TEAM) --same-round$(
+    [[ ! -s $text ]] || printf ' — what the team was to do: %s' "$text")"
 }
 
 # team_lead_task team agent — the team's task of that agent (its coordinator), the newest; "" when there is none
@@ -6097,7 +6182,7 @@ resume_run() {
   for t in "${olds[@]}"; do
     case $(task_field "$t" STATUS) in
       new|starting|running|waiting|investigating|sleeping|paused)
-        die "task $t is still active ($(task_field "$t" STATUS)) — first: agent stop --running" ;;
+        die "task $t is still active ($(task_field "$t" STATUS)) — wait for its run to end, or stop it: agent stop $t" ;;
     esac
     agent_running_task "$(task_field "$t" AGENT)" >/dev/null && die "agent $(task_field "$t" AGENT) is busy with another task"
   done
@@ -6953,6 +7038,7 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
   supervise_member_jobs
   supervise_teams
   supervise_merged_rounds
+  supervise_handbacks
   supervise_review_waits
   if ((phase1_pending)) || review_rotation_waits; then dispatch; fi
 }
