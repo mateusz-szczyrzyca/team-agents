@@ -219,7 +219,7 @@ func TestConcurrentSetTaskMeta(t *testing.T) {
 	}
 
 	// Verify all keys were written
-	data, failure := os.ReadFile(metaFile)
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatal(failure)
 	}
@@ -252,10 +252,12 @@ func TestSetTaskMetaWriteFailure(t *testing.T) {
 	writeMetaFixture(t, metaFile, original)
 
 	// Make the directory read-only to prevent writing
-	if failure := os.Chmod(filepath.Join(tasks, taskID), 0o500); failure != nil {
+	if failure := os.Chmod(filepath.Join(tasks, taskID), 0o500); failure != nil { // #nosec G302 -- temporary test directory permission change
 		t.Fatal(failure)
 	}
-	defer os.Chmod(filepath.Join(tasks, taskID), 0o700)
+	defer func() { // #nosec G302 -- temporary test directory permission change
+		_ = os.Chmod(filepath.Join(tasks, taskID), 0o700)
+	}()
 
 	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
 	if err == nil {
@@ -263,7 +265,7 @@ func TestSetTaskMetaWriteFailure(t *testing.T) {
 	}
 
 	// Verify original metadata is preserved
-	data, failure := os.ReadFile(metaFile)
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatal(failure)
 	}
@@ -321,7 +323,7 @@ func TestSetTaskMetaStaleRunNoOp(t *testing.T) {
 	}
 
 	// Verify metadata is unchanged (stale run is a no-op)
-	data, failure := os.ReadFile(metaFile)
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatal(failure)
 	}
@@ -349,7 +351,7 @@ func TestSetTaskMetaJobTransitions(t *testing.T) {
 	}
 
 	// Verify metadata was updated
-	data, failure := os.ReadFile(metaFile)
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatal(failure)
 	}
@@ -361,7 +363,7 @@ func TestSetTaskMetaJobTransitions(t *testing.T) {
 
 	// Verify job_transitions.jsonl was created
 	jobTransFile := filepath.Join(taskDir, "job_transitions.jsonl")
-	transitions, failure := os.ReadFile(jobTransFile)
+	transitions, failure := os.ReadFile(jobTransFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatalf("job_transitions.jsonl not created: %v", failure)
 	}
@@ -397,7 +399,7 @@ func TestMixedBashGoWriter(t *testing.T) {
 	}
 
 	// Verify both Bash and Go keys exist
-	data, failure := os.ReadFile(metaFile)
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatal(failure)
 	}
@@ -436,7 +438,7 @@ func TestSeparateProcessMetaWrite(t *testing.T) {
 	}
 
 	// Verify first write
-	data, failure := os.ReadFile(metaFile)
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatal(failure)
 	}
@@ -452,7 +454,7 @@ func TestSeparateProcessMetaWrite(t *testing.T) {
 	}
 
 	// Verify both writes are present
-	data, failure = os.ReadFile(metaFile)
+	data, failure = os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatal(failure)
 	}
@@ -539,7 +541,7 @@ func TestJobTransitionsMultipleRecords(t *testing.T) {
 
 	// Verify job_transitions.jsonl has records
 	jobTransFile := filepath.Join(taskDir, "job_transitions.jsonl")
-	transitions, failure := os.ReadFile(jobTransFile)
+	transitions, failure := os.ReadFile(jobTransFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatalf("job_transitions.jsonl not found: %v", failure)
 	}
@@ -594,7 +596,7 @@ func TestJobTransitionsPrelanchCancel(t *testing.T) {
 	}
 
 	// Verify STATUS was updated
-	data, failure := os.ReadFile(metaFile)
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatal(failure)
 	}
@@ -606,7 +608,7 @@ func TestJobTransitionsPrelanchCancel(t *testing.T) {
 
 	// Verify job_transitions.jsonl has the stopped transition
 	jobTransFile := filepath.Join(taskDir, "job_transitions.jsonl")
-	transitions, failure := os.ReadFile(jobTransFile)
+	transitions, failure := os.ReadFile(jobTransFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatalf("job_transitions.jsonl not found: %v", failure)
 	}
@@ -662,7 +664,7 @@ func TestConcurrentReadWriteMeta(t *testing.T) {
 			for j := 0; j < 5; j++ {
 				key := fmt.Sprintf("RW_%d_%d", id, j)
 				value := fmt.Sprintf("val_%d_%d", id, j)
-				setTaskMeta(tasks, taskID, key, value, "")
+				_ = setTaskMeta(tasks, taskID, key, value, "") // concurrent stress test ignores write failures
 			}
 			done <- true
 		}(i)
