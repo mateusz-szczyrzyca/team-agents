@@ -41,6 +41,20 @@ func (n ScriptNotice) Valid() bool {
 	return false
 }
 
+// UnmarshalJSON validates the notice during JSON decoding.
+func (n *ScriptNotice) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+	notice := ScriptNotice(str)
+	if !notice.Valid() {
+		return fmt.Errorf("invalid notice: %s", str)
+	}
+	*n = notice
+	return nil
+}
+
 // BusCause is an error cause for bus operations.
 type BusCause string
 
@@ -223,12 +237,8 @@ func busArgsJSON(params BusServeParams) []string {
 		if params.Role != "" {
 			args = append(args, "--role", params.Role)
 		}
-		if params.QueueMax > 0 {
-			args = append(args, "--queue-max", fmt.Sprintf("%d", params.QueueMax))
-		}
-		if params.InvSlots > 0 {
-			args = append(args, "--inv-slots", fmt.Sprintf("%d", params.InvSlots))
-		}
+		args = append(args, "--queue-max", fmt.Sprintf("%d", params.QueueMax))
+		args = append(args, "--inv-slots", fmt.Sprintf("%d", params.InvSlots))
 		if params.TasksDir != "" {
 			args = append(args, "--tasks-dir", params.TasksDir)
 		}
@@ -257,11 +267,13 @@ func busMessagesFrom(path, agent string) (int, error) {
 		if os.IsNotExist(err) {
 			return 0, nil // File doesn't exist yet, count is 0
 		}
-		return 0, err
+		return 0, storageErr(err, "open messages.jsonl")
 	}
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
+	const maxBufferSize = 1024 * 1024
+	scanner.Buffer(make([]byte, bufio.MaxScanTokenSize), maxBufferSize)
 	count := 0
 
 	for scanner.Scan() {
@@ -276,7 +288,7 @@ func busMessagesFrom(path, agent string) (int, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return 0, err
+		return 0, storageErr(err, "scan messages.jsonl")
 	}
 
 	return count, nil

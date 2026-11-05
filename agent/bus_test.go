@@ -283,4 +283,7 @@ func TestBusMessagesFromReturnsTypedError(t *testing.T) {
 	if count != 0 {
 		t.Errorf("expected count 0 on error, got %d", count)
 	}
+	if !errors.Is(err, ErrStorage) {
+		t.Errorf("expected error to be a storage error, got %T: %v", err, err)
+	}
 }
