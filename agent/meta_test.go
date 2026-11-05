@@ -884,7 +884,9 @@ func TestSetTaskMetaTempFileCleanup(t *testing.T) {
 	}
 
 	// Verify no temp files remain in task directory (restored to 0o700 by defer)
-	os.Chmod(taskDir, 0o700) // #nosec G302 -- temporary test directory
+	if chmodErr := os.Chmod(taskDir, 0o700); chmodErr != nil { // #nosec G302 -- temporary test directory
+		t.Fatal(chmodErr)
+	}
 
 	entries, failure := os.ReadDir(taskDir)
 	if failure != nil {
