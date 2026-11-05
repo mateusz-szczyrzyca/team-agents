@@ -325,7 +325,7 @@ func TestBusMultipleToolCalls(t *testing.T) {
 	if bus != nil {
 		defer bus.Close()
 		// Multiple Call invocations should be possible (even if they fail)
-		_ = bus.Call("board_list", nil)
-		_ = bus.Call("team_get", nil)
+		_, _ = bus.Call("board_list", nil)
+		_, _ = bus.Call("team_get", nil)
 	}
 }

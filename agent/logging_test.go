@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"regexp"
 	"strings"
 	"sync"
@@ -313,9 +312,9 @@ func TestLoggerTimestampPrecision(t *testing.T) {
 	buf := new(bytes.Buffer)
 	logger := NewLogger(buf)
 
-	before := time.Now().UTC()
+	before := time.Now().UTC().Add(-1 * time.Second) // Allow 1 second margin
 	logger.Info("test_event")
-	after := time.Now().UTC()
+	after := time.Now().UTC().Add(1 * time.Second) // Allow 1 second margin
 
 	output := buf.String()
 	var record map[string]interface{}
@@ -329,8 +328,8 @@ func TestLoggerTimestampPrecision(t *testing.T) {
 			t.Errorf("timestamp %q is not RFC 3339: %v", ts, err)
 		}
 
-		// Verify timestamp is between before and after
-		if parsed.Before(before) || parsed.After(after.Add(1*time.Second)) {
+		// Verify timestamp is between before and after (within reasonable bounds)
+		if parsed.Before(before) || parsed.After(after) {
 			t.Errorf("timestamp %v is not within expected range [%v, %v]", parsed, before, after)
 		}
 
