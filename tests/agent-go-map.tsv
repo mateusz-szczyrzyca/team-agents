@@ -257,7 +257,7 @@ tests/unit/member_out.bats	agent _supervise finds a task whose runner died and e
 tests/unit/member_pr.bats	a team member's gh pr create is refused, names its coordinator, is logged, and never reaches gh	blackbox	R11	-	planned
 tests/unit/member_pr.bats	anyone else's gh pr create goes to gh as before	blackbox	R11	-	planned
 tests/unit/member_pr.bats	gh_coordinator: a team member's coordinator; nobody for the coordinator, a solo task or an investigator	source	R23	-	planned
-tests/unit/meta.bats	concurrent meta_set calls of different keys all survive, and none fails	source	R07	-	planned
+tests/unit/meta.bats	concurrent meta_set calls of different keys all survive, and none fails	source	R07	TestConcurrentSetTaskMeta	done
 tests/unit/merged_elsewhere.bats	a team still at work on a round whose PR someone else merged is stopped; the human hears of the commits after it, once	blackbox	R34	-	planned
 tests/unit/merged_elsewhere.bats	a review of a PR someone else merged is stopped	blackbox	R34	-	planned
 tests/unit/merged_elsewhere.bats	the autopilot's own merge stops nothing	blackbox	R34	-	planned
@@ -284,8 +284,8 @@ tests/unit/node_checkout.bats	create_task fails and leaves no task when the work
 tests/unit/node_checkout.bats	create_task fails and leaves no task when git cannot add the worktree	source	R14	-	planned
 tests/unit/node_checkout.bats	a job whose task worktree cannot be created fails with node_checkout_failed and starts nothing	source	R43	-	planned
 tests/unit/node_checkout.bats	a job for an unknown agent is refused without an unbound-variable crash	source	R43	-	planned
-tests/unit/node_checkout.bats	meta_set fails and keeps the old metadata when writing the new line fails	source	R07	-	planned
-tests/unit/node_checkout.bats	meta_set fails and keeps the old metadata when reading the file fails	source	R07	-	planned
+tests/unit/node_checkout.bats	meta_set fails and keeps the old metadata when writing the new line fails	source	R07	TestSetTaskMetaWriteFailure	done
+tests/unit/node_checkout.bats	meta_set fails and keeps the old metadata when reading the file fails	source	R07	TestSetTaskMetaReadFailure	done
 tests/unit/node_checkout.bats	create_task fails and leaves no task when a metadata write fails	source	R14	-	planned
 tests/unit/node_checkout.bats	create_task fails and leaves no task when the task text cannot be written	source	R14	-	planned
 tests/unit/node_checkout.bats	create_task fails and leaves no task when meta.env cannot be created	source	R14	-	planned
