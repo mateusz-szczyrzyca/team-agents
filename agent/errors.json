@@ -22,7 +22,8 @@
    "op": "set_task_meta",
    "what": "task metadata writing",
    "causes": [
-    {"name": "NotFound", "class": "NotFound", "doc": "the task directory does not exist"}
+    {"name": "NotFound", "class": "NotFound", "doc": "the task directory does not exist"},
+    {"name": "LockTimeout", "class": "Conflict", "doc": "acquiring the task metadata lock timed out"}
    ]
   },
   {
