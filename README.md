@@ -1466,7 +1466,17 @@ make integration        # real agent CLIs and accounts (costs usage)
   - **Parity checker:** `make check-agent-parity` (`tools/check-agent-parity.sh`) verifies the ledger via `tools/check-agent-test-map.sh`, validates execution counts and SHA-256 digests against candidate evidence, and enforces valid Go test mappings (`TestName[/subtest]`) for active/done rows.
 - **Configuration evaluation and parity (R05A).** The Go candidate evaluates trusted `agents.conf` and ordered defaults in non-interactive Bash, retaining declaration attributes, name references, scalar/array shapes, sparse keys, unset/empty values and legacy investigators. Caller arguments, `AGENT_SUBCOMMAND` and initially empty `RUNNER_ID` match startup context.
   A dedicated descriptor writes a NUL snapshot to a private temporary file; inherited background-child descriptors do not delay loading. Ordinary output is discarded and failures return typed errors. Configuration executes with caller permissions; this internal API is not wired into production commands yet.
-  Under the `1,500`-line round cap, R05A covers configuration/defaults parity. R05B adds secrets loading, `set -a` timing, empty key pruning and exported environment after R05A merges and a new round launches.
+  R05A covers the tested configuration/defaults values, not complete executable-script parity. R05B is
+  a documentation-only design revision. Interim option c keeps secrets loading and its dependent
+  runner/auth continuation in the existing Bash command, preserving executable scripts, caller context,
+  and output behavior. It defers the final native replacement scope without adding a Bash orchestration
+  bridge. Native secrets parity remains incomplete; affected candidate activation and full production
+  cutover stay blocked. Before R22, the coordinator must obtain an explicit human verdict confirming
+  option c and reduced scope or selecting option a/b, then revise the affected plan and acceptance
+  criteria. R22, R51, R54 and R55 wait for that verdict. Independent Go components can continue in
+  development. See
+  [`rewrite-agent-in-go.md`](rewrite-agent-in-go.md#r05b-compatibility-disposition-investigation-163)
+  for the interim disposition, unchanged 1,500-line cap, and unscheduled alternatives.
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 520 Bats unit test cases (361 black-box, 159 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
