@@ -17,6 +17,13 @@ timings=${BATS_TIMINGS:-build/bats-timings.txt}
 read -ra files <<< "${BATS_FILES:-}"
 read -ra serial <<< "${BATS_SERIAL:-}"
 ((${#files[@]})) || { echo "unit-bats: no test files (BATS_FILES)" >&2; exit 2; }
+# room for the runs' temporary files first: without it GNU parallel fails at once and no test runs
+min_free=${BATS_MIN_FREE_MB:-2048}
+free=$(df -Pm "${TMPDIR:-/tmp}" 2> /dev/null | awk 'NR == 2 {print $4}')
+if [[ $free =~ ^[0-9]+$ ]] && ((free < min_free)); then
+  echo "unit-bats: only $free MB free in ${TMPDIR:-/tmp} (BATS_MIN_FREE_MB: $min_free) — no test is run; what fills it: du -sh ${TMPDIR:-/tmp}/* | sort -h | tail" >&2
+  exit 2
+fi
 reports=$(mktemp -d)
 runs=$(mktemp -d "${TMPDIR:-/tmp}/bats-XXXXXX")   # every run's temporary directory, under one
 trap 'stop_left "$runs"; rm -rf "$reports"' EXIT   # stopped or interrupted: what runs under $runs is stopped too

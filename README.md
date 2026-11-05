@@ -1482,6 +1482,11 @@ make integration        # real agent CLIs and accounts (costs usage)
   others'. The slowest files start first: each run records
   every file's time in `build/bats-timings.txt`. `make unit-bats BATS_JOBS=1` runs every file one after another;
   `BATS_FILES="tests/unit/x.bats …"` runs only those files.
+- **The runs' temporary files** go to `BATS_TMP` (default `~/.cache/team-agents/tmp`), on disk: on a tmpfs `/tmp`
+  what runs stopped hard left takes memory, and GNU `parallel` then fails ("Is the disk full?") though the file
+  system has room. Before each run `tools/tmp-sweep.sh` removes what earlier runs left there and in `/tmp`
+  (agent-bats.sh's staged copies and reports, the runs' directories: older than `TMP_SWEEP_MIN` minutes, 360, and
+  used by no process), and `tools/unit-bats.sh` refuses to start with less than `BATS_MIN_FREE_MB` (2048) free.
 - **Linters.** `tools/install-linters.sh` downloads pinned release binaries of `golangci-lint`, `staticcheck` and
   `shellcheck` from GitHub, verifies their SHA-256 checksums and installs them without sudo. `golangci-lint`
   runs the standard linters plus `errorlint`, `gosec`, `misspell`, `revive` and `unparam` (`.golangci.yml`);
