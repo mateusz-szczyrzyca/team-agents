@@ -13,7 +13,8 @@ Examined base: `940f6fdc067069f92a8023c84ed1b5eb011b95ae`.
    retain their interfaces.
 2. Keep the current Bash program as the immutable behavioral oracle throughout development. Build the
    candidate as `build/agent-go`; do not select it for production until feature parity is complete.
-3. Use **56 initial, dependency-ordered rounds**, R01–R56. Each round has a working cap of **1,500 added
+3. Use the original **56 dependency-ordered round IDs**, R01–R56, with explicit A/B splits below.
+   These IDs are not a promise of 56 execution rounds after splits. Each round has a working cap of **1,500 added
    plus deleted lines**, including implementation, tests, fixtures, documentation, and deletions. This is
    stricter than the repository's normal 3,000-line hard limit and honors the requested roughly 1,500-line
    review size. Generated and vendored files retain the repository's existing exclusions; handwritten code
@@ -30,6 +31,11 @@ Examined base: `940f6fdc067069f92a8023c84ed1b5eb011b95ae`.
 7. Port configuration and disk formats compatibly rather than redesigning them. A narrow Bash evaluator is
    allowed for the documented executable-Bash configuration contract; orchestration, metadata, and normal
    process execution move to Go.
+   The selected R05B compatibility decision also preserves one configuration evaluation per process,
+   secrets-script context, and ordinary stdout/stderr behavior. It does not authorize dropping access
+   to internal Bash functions or caller locals. Investigation #163 establishes a conflict between that
+   full contract and decision 6 for a fixed data-only evaluator. Preserve production behavior and keep
+   candidate activation/cutover blocked; do not resolve the conflict by silently narrowing either rule.
 8. Follow RED → GREEN → REFACTOR within every behavior round. Split an over-budget subsystem into A/B
    rounds before writing its tests; never defer tests, add placeholders, or add skips for later work.
 9. Use `golangci-lint` to asses if Go code is in good shape. Always use default formatter `gofmt` for
@@ -148,6 +154,58 @@ interpolation.
 Dispatch the trusted `gh` fast path using `filepath.Base(os.Args[0]) == "gh"` **before** ordinary
 configuration loading. Replace `readlink -f` self-path assumptions with `os.Executable` and
 `filepath.EvalSymlinks` as needed.
+
+### R05B compatibility disposition (investigation #163)
+
+R05A is merged internal configuration/defaults machinery, not complete executable-script parity. Its
+current evaluator discards ordinary output and has no `bin/agent` internal functions. It remains
+unwired. Investigation #162's repeated configuration source, omitted internal context, and discarded
+secrets output are rejected as implementation choices under the selected preserve-contract decision.
+
+A retained Bash evaluator can source configuration once, publish its configuration snapshot, wait for
+fixed typed runtime data, source secrets at the caller's boundary, publish the result, and exit. This
+preserves unexported configuration variables, arrays, and configuration-defined functions without an
+hours-long shell for scripts whose effects end at that boundary. It is a mechanism, not full parity:
+
+- Runner secrets can call `meta_set`, read and mutate `id`, `mode`, `dir`, `n`, and see `main`'s `cmd`.
+  They can replace `git_identity`; the original runner invokes that replacement after secrets return.
+- Auth secrets run with `p`, `model`, `tmp`, `rc`, caller arguments, and enclosing call frames. The
+  `--agent` command-substitution path has different errexit behavior from direct provider auth.
+- Configuration output precedes the runner redirection. Runner secrets stdout, stderr, and fd 3 go to
+  `runner.log`; auth stdout can become part of a command-substitution result. Preserve ordinary script
+  output at its existing sink. The prohibition on logging serialized secrets is not permission to
+  suppress that output or copy it into new diagnostics.
+- Input-only runtime variables and a returned environment cannot preserve arbitrary function calls,
+  changed function bodies, dynamic scope, or shell effects needed by later orchestration. Importing the
+  Bash orchestration functions or exposing equivalent generic callbacks would be a forbidden bridge.
+
+The current round is **R05B-DESIGN**, documentation only: update this plan, the README status, and the
+round report. Change no implementation, configuration, installer, tests, or parity-ledger state. Keep
+`bin/agent` and production selection unchanged. Do not mark secrets parity complete, wire the R05A
+loader into a command, activate affected candidate rows, or schedule cutover on this evidence. Budget
+at most 250 added+deleted lines for plan/README edits and at most 250 for the round report; total at
+most 500, inside the unchanged 1,500-line cap. Run `make gate` before committing and record
+`Test-First: not possible — documentation-only compatibility and round-plan revision`.
+
+A future implementation plan must first reconcile the full context requirement with decision 6.
+This revision grants neither a bridge exception nor a restricted script contract. More implementation
+rounds alone cannot remove the contradiction. If both remain binding, keep the production Bash command
+and the Go candidate in development; the native replacement cannot claim completion.
+
+Only after that reconciliation is recorded may the following work be scheduled. Each behavior round
+has its own 1,500-line cap, RED/GREEN tests for its implemented behavior, and no future placeholder or
+skipped test. Split again before RED if the estimate does not fit:
+
+| Deferred package | Concrete scope | Acceptance boundary |
+|---|---|---|
+| R05B-TRANSPORT | Injected evaluator session start/read/write/wait/cancel/reap, descriptor ownership, framed snapshots, typed failures. No generic command/eval channel, production integration, or borrowed orchestration functions. | Fake-session tests plus isolated Bash protocol/cancellation tests; no bypass of denied execution. Budget implementation 650, tests 650, docs/report 200 changed lines. |
+| R05B-STATE | Source-once config/defaults snapshot; ordered typed boundary data; delayed secrets, exports/pruning, post-secrets settings, and script-output sinks. Preserve startup input/arguments and distinguish unset from empty. | Additive source-count/timing/state/output/failure tests against the actual oracle contexts. Budget implementation 600, tests 700, docs/report 200 changed lines. Data-only fixtures do not establish full context parity. |
+| R22 / R51 integration | Runner/auth adapters at the exact existing boundaries, including caller context, mutation propagation, stream routing, and command-substitution semantics under the reconciled contract. | Tests exercise full relevant oracle call paths and their continuations, with fake providers; no real accounts. Unresolved internal functions, caller scope, or later shell effects block activation. Split each adapter into additional 1,500-line rounds if needed. |
+
+Do not renumber the original R06–R56 IDs or rewrite ledger ownership to hide unfinished work. The
+next execution-round count must reflect approved splits; this revision does not start a later round.
+Independent native work may proceed only within its own authorization and without activating a
+command that depends on unresolved configuration/secrets semantics.
 
 ### Metadata, locks, and persisted state
 
@@ -327,7 +385,8 @@ Rounds likely to need A/B splits include R20–R22, R30, R38, and R43–R49.
 | **R02** | Module, thin CLI/help skeleton, local typed error core, build/lint/generate/doccheck wiring. Tests for empty argv, help aliases, unknown-command exit, causes, and typed nil. | Go skeleton tests; production remains Bash. Add `agent` to Go build/test/lint/doc/generation coverage without claiming unfinished commands. |
 | **R03** | Injected command executor, clock/random boundaries, isolated Go subprocess support. Test spaces/newlines in argv, env/cwd/stdin, stderr, exits, failed start, and cleanup. | Unexpected external execution fails closed. No real CLI, systemd, or network call. |
 | **R04** | Staged legacy and real-binary lanes plus parity checker. Test oracle source/extract behavior, candidate copy, `gh`, self callbacks, multi-home, exact filters, JUnit counts, and rejection of a bad candidate. | Full unchanged legacy suite; initially empty or skeleton-safe candidate selection. Test hashes identical; no bridge, fallback, helper edit, or stub edit. |
-| **R05** | `config.go`, `config_shell.go`, secrets loader: all configuration families/defaults, scalar/list/map distinction, legacy investigators, exported environment, and secrets timing. | Golden Bash/Go fixtures; characterize extra args and `RUN_PATH`; no secret diagnostics. Split export handling if needed. |
+| **R05A** | Merged configuration/defaults machinery; retain its internal, unwired status. | Existing configuration fixtures stay unchanged; no claim of complete script/output/context parity. |
+| **R05B-DESIGN** | Current documentation-only compatibility disposition and revised round plan; at most 500 changed lines including the report. Secrets implementation remains incomplete. | Full gate; no code/test/ledger activation changes. R05B-TRANSPORT/STATE remain unscheduled pending the compatibility reconciliation in section 4. |
 | **R06** | Native metadata readers/codec: old shell encodings, optional/unknown fields, task-ID resolution, ambiguous/missing IDs. | Synthetic legacy fixtures read by both Bash and Go; writes accepted by current live readers. No JSON migration. |
 | **R07** | Metadata updates, journals, and Linux locks: concurrent writers, stale-run fence, read/write/rename failures, lock timeout, descriptor inheritance. | `meta`, relevant `node_checkout`/`node_prelaunch_cancel`; race plus separate-process and mixed Bash/Go writer tests. |
 | **R08** | `bus.go`, `logging.go`: exact bus argv/status mapping, structured schema, typed notices, warning-only side effects, output-write failures. | `agent` log/notice and `resilience` cases; existing agentbus compatibility tests unchanged. |
@@ -386,6 +445,10 @@ safe because the installed production command stays Bash until R55.
 
 ## 8. R55 cutover details
 
+**Blocking prerequisite:** resolve the R05B full-script-context/no-bridge conflict and demonstrate the
+reconciled contract in runner/auth continuation tests before starting installer cutover. Green
+data-only evaluator tests or unchanged Bash tests do not satisfy this prerequisite.
+
 1. **RED installer and gate tests.** Add new tests outside `tests/unit/`, plus mapped Go installer tests.
    Use a clean temporary home, stub systemd, and a test `go` wrapper that delegates only the `agent/`
    build to the real compiler while preserving no-op builds for other modules. Assert an executable Go
@@ -427,6 +490,7 @@ The migration is complete only when every row is true:
 | Same behavioral coverage in Go | Every Bats case, including every source-coupled case and every branch/loop/failure injection, names passing Go test/subtest coverage in the ledger. |
 | Complete command coverage | Every public/hidden command, alias, nested callback, and `gh` basename path works without Bash orchestration or a not-implemented stub. |
 | Static and concurrency checks | `make gate` passes with zero findings and explicitly runs Lane B; `agent` is covered by vet/lint/doccheck/generation; `go test -race ./...` passes. |
+| Executable configuration/secrets | Exactly one configuration source per process; exact secrets timing, caller context, mutation/continuation behavior, output destinations and failure semantics under an explicitly reconciled contract; no silently dropped Bash internals or orchestration bridge. |
 | Persistent compatibility | Old configuration, metadata, phase, node, review, log, and archive fixtures load; new writes remain readable after rollback; mixed writers and mixed lead/node versions interoperate. |
 | Failure and recovery semantics | Failed writes preserve prior state; stopped/stale runners cannot overwrite newer work; crash-window, signal, acknowledgement, and retry tests pass. |
 | Installation and rollback | Isolated clean-home and upgrade/reinstall tests install a real Go executable; compiler failure cannot install/fall back; stable paths support old persisted callbacks. No live service was touched. |
