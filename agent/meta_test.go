@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestMetaLiteralRecords covers legacy encodings and additive hand-written fixture forms.
@@ -416,113 +418,194 @@ func extractBashMetaFuncs(t *testing.T) string {
 	return funcs.String()
 }
 
-// TestMixedBashGoWriter verifies that Bash meta_set and Go setTaskMeta preserve each other's writes.
-func TestMixedBashGoWriter(t *testing.T) {
-	tasks := t.TempDir()
-	taskID := "mixed-writer"
-	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
-		t.Fatal(failure)
+// startMetaTestProcess starts a bounded child and always reaps it, including after assertion failures.
+func startMetaTestProcess(t *testing.T, cmd *exec.Cmd) <-chan struct{} {
+	t.Helper()
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
 	}
-	metaFile := filepath.Join(tasks, taskID, "meta.env")
-	writeMetaFixture(t, metaFile, "ID=mixed-writer\nSTATUS=init\n")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := cmd.Wait(); err != nil {
+			t.Errorf("metadata child failed: %v\n%s", err, output.String())
+		}
+	}()
+	return done
+}
 
-	bashFuncs := extractBashMetaFuncs(t)
-	bashScript := bashFuncs + `
-TASKS=$1
-# Bash writes BASH_KEY
-meta_set "$2" BASH_KEY bash_value
-# Then read it back to verify
-task_field "$2" BASH_KEY
-`
-	bashResult := runMetaBash(t, "C", bashScript, tasks, taskID)
-	if strings.TrimSpace(bashResult) != "bash_value" {
-		t.Fatalf("Bash meta_set failed: got %q, want 'bash_value'", strings.TrimSpace(bashResult))
-	}
-
-	// Use Go setTaskMeta to write another key
-	err := setTaskMeta(tasks, taskID, "GO_KEY", "go_value", "")
-	if err != nil {
-		t.Fatalf("Go setTaskMeta failed: %v", err)
-	}
-
-	// Verify both Bash and Go keys exist
-	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
-	if failure != nil {
-		t.Fatal(failure)
-	}
-	m := parseMeta(data)
-
-	// Check Bash key (written by Bash)
-	if bashVal, ok := m.Lookup("BASH_KEY"); !ok || bashVal != "bash_value" {
-		t.Fatalf("Bash key lost: got %q,%v want 'bash_value',true", bashVal, ok)
-	}
-
-	// Check Go key (written by Go)
-	if goVal, ok := m.Lookup("GO_KEY"); !ok || goVal != "go_value" {
-		t.Fatalf("Go key not written: got %q,%v", goVal, ok)
-	}
-
-	// Check original ID is preserved
-	if id, ok := m.Lookup("ID"); !ok || id != "mixed-writer" {
-		t.Fatalf("ID lost: got %q,%v", id, ok)
+// waitMetaTestMarker bounds readiness polling and reports unexpected filesystem failures.
+func waitMetaTestMarker(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("metadata child did not create readiness marker %s", path)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
-// TestSeparateProcessMetaWrite verifies metadata can be updated correctly from separate OS processes.
-func TestSeparateProcessMetaWrite(t *testing.T) {
-	// Check if we're a child process doing the write
-	if childKey := os.Getenv("TEST_CHILD_PROCESS_KEY"); childKey != "" {
-		childValue := os.Getenv("TEST_CHILD_PROCESS_VALUE")
-		tasks := os.Getenv("TEST_TASKS_DIR")
-		taskID := os.Getenv("TEST_TASK_ID")
-		err := setTaskMeta(tasks, taskID, childKey, childValue, "")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "child process setTaskMeta failed: %v\n", err)
-			os.Exit(1)
+// assertMetaWriterBlocked proves an already-ready child cannot finish while the parent owns the lock.
+func assertMetaWriterBlocked(t *testing.T, donePath string) {
+	t.Helper()
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(donePath); err == nil {
+			t.Fatalf("metadata writer bypassed the parent's lock: %s", donePath)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
 		}
-		os.Exit(0)
+		time.Sleep(5 * time.Millisecond)
 	}
+}
 
-	tasks := t.TempDir()
-	taskID := "separate-process"
-	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
-		t.Fatal(failure)
-	}
-	metaFile := filepath.Join(tasks, taskID, "meta.env")
-	writeMetaFixture(t, metaFile, "ID=separate-process\nSTATUS=init\n")
-
-	// Spawn 2 separate processes to write different keys
-	for i := 1; i <= 2; i++ {
-		cmd := exec.Command(os.Args[0], "-test.run=TestSeparateProcessMetaWrite$") // #nosec G204,G702 -- os.Args[0] is the test binary itself
-		cmd.Env = append(os.Environ(),
-			"TEST_TASKS_DIR="+tasks,
-			"TEST_TASK_ID="+taskID,
-			fmt.Sprintf("TEST_CHILD_PROCESS_KEY=PROCESS%d", i),
-			fmt.Sprintf("TEST_CHILD_PROCESS_VALUE=value%d", i),
-		)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("child process %d failed: %v\n%s", i, err, string(output))
-		}
-	}
-
-	// Verify both writes are present
-	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
+// holdMetaTestLock keeps cleanup safe even when a blocked-writer assertion aborts the test.
+func holdMetaTestLock(t *testing.T, tasks, taskID string) func() {
+	t.Helper()
+	lock, failure := lockTaskMeta(tasks, taskID, 0)
 	if failure != nil {
 		t.Fatal(failure)
 	}
-	m := parseMeta(data)
-
-	for i := 1; i <= 2; i++ {
-		key := fmt.Sprintf("PROCESS%d", i)
-		value := fmt.Sprintf("value%d", i)
-		if val, ok := m.Lookup(key); !ok || val != value {
-			t.Fatalf("Process%d key not written: got %q,%v want %q,true", i, val, ok, value)
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			if err := finishTaskMeta(lock, nil); err != nil {
+				t.Error(err)
+			}
 		}
 	}
+	t.Cleanup(release)
+	return release
+}
 
-	// Verify original ID is preserved
-	if id, ok := m.Lookup("ID"); !ok || id != "separate-process" {
-		t.Fatalf("ID lost: got %q,%v", id, ok)
+// TestMixedBashGoWriter checks Bash lock interoperability and reads each language's writes from the other.
+func TestMixedBashGoWriter(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "mixed-writer"
+	taskDir := filepath.Join(tasks, taskID)
+	if err := os.MkdirAll(taskDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeMetaFixture(t, filepath.Join(taskDir, "meta.env"), "ID=mixed-writer\nSTATUS=init\n")
+	release := holdMetaTestLock(t, tasks, taskID)
+	readyPath := filepath.Join(taskDir, "bash-ready")
+	donePath := filepath.Join(taskDir, "bash-done")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	bashFuncs := extractBashMetaFuncs(t)
+	cmd := exec.CommandContext(ctx, "bash", "--noprofile", "--norc", "-c", bashFuncs+`
+set -euo pipefail
+TASKS=$1
+printf ready > "$3"
+meta_set "$2" BASH_KEY bash_value
+printf done > "$4"
+`, "meta-test", tasks, taskID, readyPath, donePath) // #nosec G204 -- script contains only extracted repository functions and fixed test statements
+	cmd.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/bin:/bin", "LC_ALL=C"}
+	done := startMetaTestProcess(t, cmd)
+	defer func() { cancel(); <-done }()
+	waitMetaTestMarker(t, readyPath)
+	assertMetaWriterBlocked(t, donePath)
+	release()
+	<-done
+	m, failure := readTaskMeta(tasks, taskID)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if val, ok := m.Lookup("BASH_KEY"); !ok || val != "bash_value" {
+		t.Fatalf("Go read Bash key: %q,%v", val, ok)
+	}
+	if err := setTaskMeta(tasks, taskID, "GO_KEY", "go value 'with quotes'", ""); err != nil {
+		t.Fatal(err)
+	}
+	got := runMetaBash(t, "C", bashFuncs+`
+TASKS=$1
+task_field "$2" GO_KEY
+`, tasks, taskID)
+	if got != "go value 'with quotes'" {
+		t.Fatalf("Bash read Go key: %q", got)
+	}
+	m, failure = readTaskMeta(tasks, taskID)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	for key, want := range map[string]string{"ID": taskID, "BASH_KEY": "bash_value", "GO_KEY": "go value 'with quotes'"} {
+		if got, ok := m.Lookup(key); !ok || got != want {
+			t.Errorf("final %s = %q,%v; want %q,true", key, got, ok, want)
+		}
+	}
+}
+
+// TestSeparateProcessMetaWrite proves both child writers wait for the shared lock and preserve all keys.
+func TestSeparateProcessMetaWrite(t *testing.T) {
+	if childKey := os.Getenv("TEST_CHILD_PROCESS_KEY"); childKey != "" {
+		if err := os.WriteFile(os.Getenv("TEST_CHILD_READY_FILE"), []byte("ready"), 0o600); err != nil { // #nosec G703 -- marker path is supplied by this test parent inside its temporary task directory
+			t.Fatal(err)
+		}
+		if err := setTaskMeta(os.Getenv("TEST_TASKS_DIR"), os.Getenv("TEST_TASK_ID"), childKey,
+			os.Getenv("TEST_CHILD_PROCESS_VALUE"), ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(os.Getenv("TEST_CHILD_DONE_FILE"), []byte("done"), 0o600); err != nil { // #nosec G703 -- marker path is supplied by this test parent inside its temporary task directory
+			t.Fatal(err)
+		}
+		return
+	}
+	tasks := t.TempDir()
+	taskID := "separate-process"
+	taskDir := filepath.Join(tasks, taskID)
+	if err := os.MkdirAll(taskDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeMetaFixture(t, filepath.Join(taskDir, "meta.env"), "ID=separate-process\nSTATUS=init\n")
+	release := holdMetaTestLock(t, tasks, taskID)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var children []<-chan struct{}
+	defer func() {
+		cancel()
+		for _, done := range children {
+			<-done
+		}
+	}()
+	for i := 1; i <= 2; i++ {
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSeparateProcessMetaWrite$") // #nosec G204,G702 -- re-executes only the current test binary
+		cmd.Env = append(os.Environ(),
+			"TEST_TASKS_DIR="+tasks, "TEST_TASK_ID="+taskID,
+			fmt.Sprintf("TEST_CHILD_PROCESS_KEY=PROCESS%d", i),
+			fmt.Sprintf("TEST_CHILD_PROCESS_VALUE=value%d", i),
+			"TEST_CHILD_READY_FILE="+filepath.Join(taskDir, fmt.Sprintf("ready%d", i)),
+			"TEST_CHILD_DONE_FILE="+filepath.Join(taskDir, fmt.Sprintf("done%d", i)),
+		)
+		children = append(children, startMetaTestProcess(t, cmd))
+	}
+	for i := 1; i <= 2; i++ {
+		waitMetaTestMarker(t, filepath.Join(taskDir, fmt.Sprintf("ready%d", i)))
+	}
+	for i := 1; i <= 2; i++ {
+		assertMetaWriterBlocked(t, filepath.Join(taskDir, fmt.Sprintf("done%d", i)))
+	}
+	release()
+	for _, done := range children {
+		<-done
+	}
+	m, failure := readTaskMeta(tasks, taskID)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	for key, want := range map[string]string{"ID": taskID, "PROCESS1": "value1", "PROCESS2": "value2"} {
+		if got, ok := m.Lookup(key); !ok || got != want {
+			t.Errorf("final %s = %q,%v; want %q,true", key, got, ok, want)
+		}
 	}
 }
 
