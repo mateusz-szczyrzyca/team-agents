@@ -223,3 +223,81 @@ func (c BusCause) info() causeInfo { return busCauses[c] }
 
 // String returns the cause name.
 func (c BusCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- log_write
+
+// LogWriteCause is a reason why structured log writing failed.
+type LogWriteCause int
+
+const (
+	LogWriteStorage LogWriteCause = iota // the shared state or a file could not be read or written [Storage]
+)
+
+// LogWriteError is the error of structured log writing.
+type LogWriteError = OpError[LogWriteCause]
+
+// logWriteCauses describes the LogWriteCause values (same order as the constants).
+var logWriteCauses = [...]causeInfo{
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (LogWriteCause) op() string { return "log_write" }
+
+// info implements opCause.
+func (c LogWriteCause) info() causeInfo { return logWriteCauses[c] }
+
+// String returns the cause name.
+func (c LogWriteCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- render_log
+
+// RenderLogCause is a reason why readable log rendering failed.
+type RenderLogCause int
+
+const (
+	RenderLogStorage RenderLogCause = iota // the shared state or a file could not be read or written [Storage]
+)
+
+// RenderLogError is the error of readable log rendering.
+type RenderLogError = OpError[RenderLogCause]
+
+// renderLogCauses describes the RenderLogCause values (same order as the constants).
+var renderLogCauses = [...]causeInfo{
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (RenderLogCause) op() string { return "render_log" }
+
+// info implements opCause.
+func (c RenderLogCause) info() causeInfo { return renderLogCauses[c] }
+
+// String returns the cause name.
+func (c RenderLogCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- act
+
+// ActCause is a reason why activity log writing failed.
+type ActCause int
+
+const (
+	ActStorage ActCause = iota // the shared state or a file could not be read or written [Storage]
+)
+
+// ActError is the error of activity log writing.
+type ActError = OpError[ActCause]
+
+// actCauses describes the ActCause values (same order as the constants).
+var actCauses = [...]causeInfo{
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (ActCause) op() string { return "act" }
+
+// info implements opCause.
+func (c ActCause) info() causeInfo { return actCauses[c] }
+
+// String returns the cause name.
+func (c ActCause) String() string { return c.info().name }

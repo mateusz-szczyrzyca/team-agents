@@ -72,6 +72,24 @@
     {"name": "UnknownTool", "class": "UnknownTool", "doc": "tool is unknown to the bus"},
     {"name": "Process", "class": "Process", "doc": "bus process failed to execute"}
    ]
+  },
+  {
+   "type": "LogWrite",
+   "op": "log_write",
+   "what": "structured log writing",
+   "causes": []
+  },
+  {
+   "type": "RenderLog",
+   "op": "render_log",
+   "what": "readable log rendering",
+   "causes": []
+  },
+  {
+   "type": "Act",
+   "op": "act",
+   "what": "activity log writing",
+   "causes": []
   }
  ]
 }
