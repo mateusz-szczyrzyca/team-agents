@@ -181,3 +181,45 @@ func (c ExecuteCause) info() causeInfo { return executeCauses[c] }
 
 // String returns the cause name.
 func (c ExecuteCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- bus
+
+// BusCause is a reason why bus subcommand execution failed.
+type BusCause int
+
+const (
+	BusInvalidArgument BusCause = iota // invalid argument for bus command [InvalidArgument]
+	BusNotFound                        // entity not found on the bus [NotFound]
+	BusNotInTeam                       // agent is not in the specified team [NotInTeam]
+	BusPermission                      // operation not permitted on the bus [Permission]
+	BusConflict                        // bus state conflict or lock busy [Conflict]
+	BusInvalidState                    // bus state does not permit the transition [InvalidState]
+	BusUnknownTool                     // tool is unknown to the bus [UnknownTool]
+	BusProcess                         // bus process failed to execute [Process]
+	BusStorage                         // the shared state or a file could not be read or written [Storage]
+)
+
+// BusError is the error of bus subcommand execution.
+type BusError = OpError[BusCause]
+
+// busCauses describes the BusCause values (same order as the constants).
+var busCauses = [...]causeInfo{
+	{"InvalidArgument", ClassInvalidArgument},
+	{"NotFound", ClassNotFound},
+	{"NotInTeam", ClassNotInTeam},
+	{"Permission", ClassPermission},
+	{"Conflict", ClassConflict},
+	{"InvalidState", ClassInvalidState},
+	{"UnknownTool", ClassUnknownTool},
+	{"Process", ClassProcess},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (BusCause) op() string { return "bus" }
+
+// info implements opCause.
+func (c BusCause) info() causeInfo { return busCauses[c] }
+
+// String returns the cause name.
+func (c BusCause) String() string { return c.info().name }
