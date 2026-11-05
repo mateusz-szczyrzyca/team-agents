@@ -29,7 +29,15 @@ func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 	for _, taskID := range tasks {
 		meta, readErr := readTaskMeta(tasksDir, taskID)
 		if readErr != nil {
-			continue
+			if readErr.Cause == ReadTaskMetaNotFound {
+				continue
+			}
+			return fromStorage(StatusStorage, storageErr(readErr, "read task meta"))
+		}
+
+		id, ok := meta.Lookup("ID")
+		if !ok || id == "" {
+			id = taskID
 		}
 
 		agent, ok := meta.Lookup("AGENT")
@@ -55,10 +63,6 @@ func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 
 		// Check if unit is active for running/starting status
 		if (status == "running" || status == "starting") && kind != "remote-member" && kind != "investigation_team" {
-			id, _ := meta.Lookup("ID")
-			if id == "" {
-				id = taskID
-			}
 			runVal, _ := meta.Lookup("RUN")
 			if runVal == "" {
 				runVal = "0"
@@ -69,8 +73,11 @@ func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 				Args: []string{"--user", "is-active", "--quiet", unitName},
 			}
 			result, uerr := app.Executor.Execute(context.Background(), cmd)
-			// If unit check fails or unit is inactive, append "?" suffix
-			if uerr != nil || result.ExitCode != 0 {
+			if uerr != nil {
+				return opErr(StatusProcess, "check unit active %s: %s", id, uerr.Error())
+			}
+			// If unit is inactive, append "?" suffix
+			if result.ExitCode != 0 {
 				status = status + "?"
 			}
 		}
@@ -88,7 +95,7 @@ func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 		repo, _ := meta.Lookup("REPO_NAME")
 
 		if _, err := fmt.Fprintf(out, "%-30s %-12s %-13s %-6s %-5s %s\n",
-			taskID, agent, status, round, run, repo); err != nil {
+			id, agent, status, round, run, repo); err != nil {
 			return fromStorage(StatusStorage, storageErr(err, "write status row"))
 		}
 	}

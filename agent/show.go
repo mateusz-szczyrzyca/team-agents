@@ -11,7 +11,7 @@ import (
 )
 
 // cmdShow displays full details of a single task: metadata, task.md, questions, result, report.
-func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowError {
+func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowError {
 	tasksDir := app.tasksDir
 	if tasksDir == "" {
 		return opErr(ShowNotFound, "no task directory")
@@ -69,10 +69,10 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 	round, _ := strconv.Atoi(roundStr)
 	if round > 0 {
 		questionsFile := filepath.Join(taskDir, fmt.Sprintf("questions-%d.md", round))
+		if _, err := fmt.Fprintf(out, "\n== questions (round %d): %s\n", round, questionsFile); err != nil {
+			return fromStorage(ShowStorage, storageErr(err, "write questions header"))
+		}
 		if content, err := os.ReadFile(questionsFile); err == nil { // #nosec G304,G703 -- local questions file path under tasks directory
-			if _, err := fmt.Fprintf(out, "\n== questions (round %d): %s\n", round, questionsFile); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write questions header"))
-			}
 			if _, err := fmt.Fprint(out, string(content)); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write questions content"))
 			}
@@ -81,11 +81,20 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 
 	// Print investigations
 	kind, _ := meta.Lookup("KIND")
+	if kind == "" {
+		kind = "worker"
+	}
 	switch kind {
 	case "worker":
-		// Worker tasks can have investigations (query via bus inv-list in future rounds)
-		// For now, only print header if there are investigations
-		// TODO: call bus inv-list --dir busDir --task taskID and only print header if non-empty
+		invs, err := busCmd(ctx, app, app.busBinary(), "inv-list", "--dir", app.busDirectory(), "--task", taskID)
+		if err == nil {
+			invs = strings.TrimRight(invs, "\r\n")
+			if invs != "" {
+				if _, err := fmt.Fprintf(out, "\n== investigations\n%s\n", invs); err != nil {
+					return fromStorage(ShowStorage, storageErr(err, "write investigations"))
+				}
+			}
+		}
 	case "investigation":
 		team, _ := meta.Lookup("INVESTIGATION_TEAM")
 		if team != "" {
@@ -113,12 +122,12 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 
 	// Print final message from final.md
 	finalFile := filepath.Join(taskDir, "final.md")
-	if content, err := os.ReadFile(finalFile); err == nil && len(content) > 0 { // #nosec G304,G703 -- local final message path under tasks directory
-		if _, err := fmt.Fprintf(out, "\n== the agent's last message\n"); err != nil {
-			return fromStorage(ShowStorage, storageErr(err, "write final message header"))
-		}
-		if _, err := fmt.Fprint(out, string(content)); err != nil {
-			return fromStorage(ShowStorage, storageErr(err, "write final message content"))
+	if content, err := os.ReadFile(finalFile); err == nil { // #nosec G304,G703 -- local final message path under tasks directory
+		last := strings.TrimRight(string(content), "\r\n")
+		if last != "" {
+			if _, err := fmt.Fprintf(out, "\n== the agent's last message\n%s\n", last); err != nil {
+				return fromStorage(ShowStorage, storageErr(err, "write final message"))
+			}
 		}
 	}
 
