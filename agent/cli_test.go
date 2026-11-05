@@ -68,6 +68,22 @@ func TestDispatchRecognizesR09Commands(t *testing.T) {
 	}
 }
 
+func TestDispatchShowMissingArg(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := dispatch("show", nil, &stdout, &stderr)
+	if err == nil || err.Cause != CommandInvalidArgument {
+		t.Fatalf("dispatch(show, nil) err = %v, want CommandInvalidArgument", err)
+	}
+}
+
+func TestDispatchWithArgs(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := dispatch("show", []string{"nonexistent-task"}, &stdout, &stderr)
+	if err == nil || err.Cause != CommandInvalidArgument {
+		t.Fatalf("dispatch(show, [nonexistent-task]) err = %v, want CommandInvalidArgument", err)
+	}
+}
+
 func TestDispatchHelp(t *testing.T) {
 	for _, cmd := range []string{"help", "-h", "--help"} {
 		var stdout, stderr bytes.Buffer

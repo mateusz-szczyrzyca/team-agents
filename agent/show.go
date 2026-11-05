@@ -43,7 +43,7 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 
 	// Print meta.env indented by 2 spaces
 	metaFile := filepath.Join(taskDir, "meta.env")
-	if content, err := os.ReadFile(metaFile); err == nil { // #nosec G304 -- local task metadata path under tasks directory
+	if content, err := os.ReadFile(metaFile); err == nil { // #nosec G304,G703 -- local task metadata path under tasks directory
 		for _, line := range strings.Split(string(content), "\n") {
 			if strings.TrimSpace(line) != "" {
 				if _, err := fmt.Fprintf(out, "  %s\n", line); err != nil {
@@ -55,7 +55,7 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 
 	// Print task.md if it exists
 	taskmdFile := filepath.Join(taskDir, "task.md")
-	if content, err := os.ReadFile(taskmdFile); err == nil { // #nosec G304 -- local task description file under tasks directory
+	if content, err := os.ReadFile(taskmdFile); err == nil { // #nosec G304,G703 -- local task description file under tasks directory
 		if _, err := fmt.Fprintf(out, "\n== task\n"); err != nil {
 			return fromStorage(ShowStorage, storageErr(err, "write task header"))
 		}
@@ -69,7 +69,7 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 	round, _ := strconv.Atoi(roundStr)
 	if round > 0 {
 		questionsFile := filepath.Join(taskDir, fmt.Sprintf("questions-%d.md", round))
-		if _, err := os.Stat(questionsFile); err == nil {
+		if _, err := os.Stat(questionsFile); err == nil { // #nosec G703 -- local questions file path under tasks directory
 			if _, err := fmt.Fprintf(out, "\n== questions (round %d): %s\n", round, questionsFile); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write questions header"))
 			}
@@ -103,7 +103,7 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 
 		// Show result.md if it exists
 		resultFile := filepath.Join(taskDir, "result.md")
-		if content, err := os.ReadFile(resultFile); err == nil && len(content) > 0 { // #nosec G304 -- local investigation result path
+		if content, err := os.ReadFile(resultFile); err == nil && len(content) > 0 { // #nosec G304,G703 -- local investigation result path under tasks directory
 			if _, err := fmt.Fprintf(out, "   result: %s\n", resultFile); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write result path"))
 			}
@@ -112,7 +112,7 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 
 	// Print final message from final.md
 	finalFile := filepath.Join(taskDir, "final.md")
-	if content, err := os.ReadFile(finalFile); err == nil && len(content) > 0 { // #nosec G304 -- local final message path
+	if content, err := os.ReadFile(finalFile); err == nil && len(content) > 0 { // #nosec G304,G703 -- local final message path under tasks directory
 		if _, err := fmt.Fprintf(out, "\n== the agent's last message\n"); err != nil {
 			return fromStorage(ShowStorage, storageErr(err, "write final message header"))
 		}
@@ -124,7 +124,7 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 	// Print report if it exists
 	if app.workTree != "" {
 		reportFile := filepath.Join(app.workTree, ".agents", "reports", taskID+".md")
-		if _, err := os.Stat(reportFile); err == nil {
+		if _, err := os.Stat(reportFile); err == nil { // #nosec G703 -- local report file path under workTree
 			if _, err := fmt.Fprintf(out, "\n== report: %s\n", reportFile); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write report line"))
 			}
