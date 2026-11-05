@@ -150,3 +150,84 @@ func TestCmdStatusMissingFields(t *testing.T) {
 		t.Errorf("output missing '?' for missing fields: %s", output)
 	}
 }
+
+// TestCmdStatusSkipsHiddenDirectories verifies that directories starting with . are skipped.
+func TestCmdStatusSkipsHiddenDirectories(t *testing.T) {
+	tasksDir := t.TempDir()
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	// Create hidden task directory
+	hiddenDir := filepath.Join(tasksDir, ".hidden-task")
+	if err := os.MkdirAll(hiddenDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=.hidden-task\nSTATUS=done\n"
+	if err := os.WriteFile(filepath.Join(hiddenDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create normal task
+	normalDir := filepath.Join(tasksDir, "normal-task")
+	if err := os.MkdirAll(normalDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta = "ID=normal-task\nSTATUS=done\n"
+	if err := os.WriteFile(filepath.Join(normalDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := cmdStatus(context.Background(), app, &out)
+	if err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	if strings.Contains(output, ".hidden-task") {
+		t.Errorf("output should not include hidden task: %s", output)
+	}
+	if !strings.Contains(output, "normal-task") {
+		t.Errorf("output missing normal-task: %s", output)
+	}
+}
+
+// TestCmdStatusInvestigationEmptyINVID verifies investigation with empty INV_ID shows 'inv#?'.
+func TestCmdStatusInvestigationEmptyINVID(t *testing.T) {
+	tasksDir := t.TempDir()
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	// Create investigation task with empty INV_ID
+	invDir := filepath.Join(tasksDir, "inv-empty")
+	if err := os.MkdirAll(invDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=inv-empty\nKIND=investigation\nINV_ID=\nSTATUS=done\n"
+	if err := os.WriteFile(filepath.Join(invDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := cmdStatus(context.Background(), app, &out)
+	if err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "inv#?") {
+		t.Errorf("output missing 'inv#?' for investigation with empty INV_ID: %s", output)
+	}
+}
