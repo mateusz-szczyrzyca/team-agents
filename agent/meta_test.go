@@ -195,7 +195,7 @@ func TestConcurrentSetTaskMeta(t *testing.T) {
 	writeMetaFixture(t, metaFile, "STATUS=running\n")
 
 	// Spawn multiple concurrent writers
-	errChan := make(chan interface{}, 20)
+	errChan := make(chan *SetTaskMetaError, 20)
 	for i := 1; i <= 20; i++ {
 		go func(index int) {
 			key := fmt.Sprintf("K%d", index)
@@ -215,7 +215,7 @@ func TestConcurrentSetTaskMeta(t *testing.T) {
 	}
 
 	if failCount > 0 {
-		t.Fatalf("concurrent writes failed: %d errors", failCount)
+		t.Fatalf("concurrent operations failed: %d errors", failCount)
 	}
 
 	// Verify all keys were written
@@ -629,7 +629,7 @@ func TestConcurrentReadWriteMeta(t *testing.T) {
 	writeMetaFixture(t, metaFile, "ID=concurrent-rw\nSTATUS=init\nCOUNT=0\n")
 
 	// Concurrent reader and writer goroutines
-	done := make(chan bool, 20)
+	errChan := make(chan *SetTaskMetaError, 20)
 	readerCount := 10
 	writerCount := 10
 
@@ -640,7 +640,7 @@ func TestConcurrentReadWriteMeta(t *testing.T) {
 				m, err := readTaskMeta(tasks, taskID)
 				if err != nil {
 					// Read failure is acceptable during concurrent writes
-					done <- true
+					errChan <- nil
 					return
 				}
 				// Verify no corrupted lines or missing complete records
@@ -654,7 +654,7 @@ func TestConcurrentReadWriteMeta(t *testing.T) {
 					t.Errorf("reader %d: ID corrupted or missing", readerID)
 				}
 			}
-			done <- true
+			errChan <- nil
 		}(i)
 	}
 
@@ -664,15 +664,19 @@ func TestConcurrentReadWriteMeta(t *testing.T) {
 			for j := 0; j < 5; j++ {
 				key := fmt.Sprintf("RW_%d_%d", id, j)
 				value := fmt.Sprintf("val_%d_%d", id, j)
-				_ = setTaskMeta(tasks, taskID, key, value, "") // concurrent stress test ignores write failures
+				err := setTaskMeta(tasks, taskID, key, value, "")
+				errChan <- err
 			}
-			done <- true
 		}(i)
 	}
 
-	// Wait for all goroutines to complete
-	for i := 0; i < readerCount+writerCount; i++ {
-		<-done
+	// Wait for all goroutines to complete and collect errors
+	var failCount int
+	for i := 0; i < (readerCount*5)+(writerCount*5); i++ {
+		err := <-errChan
+		if err != nil {
+			failCount++
+		}
 	}
 
 	// Verify file is still readable and consistent
