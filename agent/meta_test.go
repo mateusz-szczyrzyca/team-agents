@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestMetaLiteralRecords covers legacy encodings and additive hand-written fixture forms.
@@ -245,19 +246,22 @@ func TestConcurrentSetTaskMeta(t *testing.T) {
 func TestSetTaskMetaWriteFailure(t *testing.T) {
 	tasks := t.TempDir()
 	taskID := "write-fault"
-	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
 		t.Fatal(failure)
 	}
-	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	metaFile := filepath.Join(taskDir, "meta.env")
 	original := "ID=write-fault\nSTATUS=original\n"
 	writeMetaFixture(t, metaFile, original)
 
-	// Make the directory read-only to prevent writing
-	if failure := os.Chmod(filepath.Join(tasks, taskID), 0o500); failure != nil { // #nosec G302 -- temporary test directory permission change
+	// Make the directory read-only to prevent creating temp file
+	if failure := os.Chmod(taskDir, 0o500); failure != nil { // #nosec G302 -- temporary test directory
 		t.Fatal(failure)
 	}
-	defer func() { // #nosec G302 -- temporary test directory permission change
-		_ = os.Chmod(filepath.Join(tasks, taskID), 0o700)
+	defer func() { // #nosec G302 -- temporary test directory
+		if err := os.Chmod(taskDir, 0o700); err != nil {
+			t.Errorf("failed to restore directory permissions: %v", err)
+		}
 	}()
 
 	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
@@ -266,6 +270,11 @@ func TestSetTaskMetaWriteFailure(t *testing.T) {
 	}
 	if err.Cause != SetTaskMetaStorage {
 		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
+	}
+
+	// Restore permissions to verify original metadata is preserved
+	if failure := os.Chmod(taskDir, 0o700); failure != nil { // #nosec G302 -- temporary test directory
+		t.Fatalf("failed to restore for verification: %v", failure)
 	}
 
 	// Verify original metadata is preserved
@@ -289,13 +298,15 @@ func TestSetTaskMetaReadFailure(t *testing.T) {
 	original := "ID=read-fault\nSTATUS=original\n"
 	writeMetaFixture(t, metaFile, original)
 
-	// Replace the file with a directory to cause read failure
-	if failure := os.Remove(metaFile); failure != nil {
+	// Remove read permission from the metadata file to cause read failure
+	if failure := os.Chmod(metaFile, 0o000); failure != nil { // #nosec G302 -- temporary test file
 		t.Fatal(failure)
 	}
-	if failure := os.Mkdir(metaFile, 0o700); failure != nil {
-		t.Fatal(failure)
-	}
+	defer func() { // #nosec G302 -- temporary test file
+		if err := os.Chmod(metaFile, 0o600); err != nil {
+			t.Errorf("failed to restore file permissions: %v", err)
+		}
+	}()
 
 	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
 	if err == nil {
@@ -305,10 +316,18 @@ func TestSetTaskMetaReadFailure(t *testing.T) {
 		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
 	}
 
-	// Verify directory structure remains intact (can't verify exact metadata since it's a directory)
-	info, failure := os.Stat(metaFile)
-	if failure != nil || !info.IsDir() {
-		t.Fatal("meta.env directory structure was corrupted")
+	// Restore permissions to verify original metadata is preserved
+	if failure := os.Chmod(metaFile, 0o600); failure != nil { // #nosec G302 -- temporary test file
+		t.Fatalf("failed to restore for verification: %v", failure)
+	}
+
+	// Verify original metadata is preserved
+	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if string(data) != original {
+		t.Fatalf("metadata changed on read failure: got %q, want %q", string(data), original)
 	}
 }
 
@@ -445,7 +464,18 @@ task_field "$2" BASH_KEY
 		t.Fatalf("Go setTaskMeta failed: %v", err)
 	}
 
-	// Verify both Bash and Go keys exist
+	// Now have Bash read the Go-written key to test interoperability
+	bashReadScript := bashFuncs + `
+TASKS=$1
+# Read the key that Go wrote
+task_field "$2" GO_KEY
+`
+	bashReadResult := runMetaBash(t, "C", bashReadScript, tasks, taskID)
+	if strings.TrimSpace(bashReadResult) != "go_value" {
+		t.Fatalf("Bash failed to read Go-written key: got %q, want 'go_value'", strings.TrimSpace(bashReadResult))
+	}
+
+	// Verify all keys exist in metadata
 	data, failure := os.ReadFile(metaFile) // #nosec G304 -- path belongs to temporary test directory
 	if failure != nil {
 		t.Fatal(failure)
@@ -475,6 +505,11 @@ func TestSeparateProcessMetaWrite(t *testing.T) {
 		childValue := os.Getenv("TEST_CHILD_PROCESS_VALUE")
 		tasks := os.Getenv("TEST_TASKS_DIR")
 		taskID := os.Getenv("TEST_TASK_ID")
+		// Signal ready to parent
+		readySig := os.Getenv("TEST_READY_SIGNAL_FILE")
+		if readySig != "" {
+			_ = os.WriteFile(readySig, []byte("ready"), 0o600) // #nosec G304 -- test file
+		}
 		err := setTaskMeta(tasks, taskID, childKey, childValue, "")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "child process setTaskMeta failed: %v\n", err)
@@ -491,18 +526,47 @@ func TestSeparateProcessMetaWrite(t *testing.T) {
 	metaFile := filepath.Join(tasks, taskID, "meta.env")
 	writeMetaFixture(t, metaFile, "ID=separate-process\nSTATUS=init\n")
 
-	// Spawn 2 separate processes to write different keys
-	for i := 1; i <= 2; i++ {
-		cmd := exec.Command(os.Args[0], "-test.run=TestSeparateProcessMetaWrite$") // #nosec G204,G702 -- os.Args[0] is the test binary itself
+	// Start 2 separate processes concurrently
+	var cmds []*exec.Cmd
+	readyFiles := make([]string, 2)
+	for i := 0; i < 2; i++ {
+		readyFile := filepath.Join(tasks, fmt.Sprintf("ready%d", i))
+		readyFiles[i] = readyFile
+		cmd := exec.Command(os.Args[0], "-test.run=TestSeparateProcessMetaWrite$") // #nosec G204,G702 -- test binary
 		cmd.Env = append(os.Environ(),
 			"TEST_TASKS_DIR="+tasks,
 			"TEST_TASK_ID="+taskID,
-			fmt.Sprintf("TEST_CHILD_PROCESS_KEY=PROCESS%d", i),
-			fmt.Sprintf("TEST_CHILD_PROCESS_VALUE=value%d", i),
+			fmt.Sprintf("TEST_CHILD_PROCESS_KEY=PROCESS%d", i+1),
+			fmt.Sprintf("TEST_CHILD_PROCESS_VALUE=value%d", i+1),
+			"TEST_READY_SIGNAL_FILE="+readyFile,
 		)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("child process %d failed: %v\n%s", i, err, string(output))
+		cmds = append(cmds, cmd)
+		// Start process (don't wait yet)
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("failed to start child %d: %v", i+1, err)
 		}
+	}
+
+	// Wait for both to signal ready, establishing overlap
+	for _, readyFile := range readyFiles {
+		for attempts := 0; attempts < 100; attempts++ {
+			if _, err := os.Stat(readyFile); err == nil {
+				break // Process is ready
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	// Wait for both processes to complete
+	for i, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("child process %d failed: %v", i+1, err)
+		}
+	}
+
+	// Cleanup ready files
+	for _, readyFile := range readyFiles {
+		_ = os.Remove(readyFile)
 	}
 
 	// Verify both writes are present
@@ -696,7 +760,8 @@ func TestConcurrentReadWriteMeta(t *testing.T) {
 			for j := 0; j < 5; j++ {
 				m, err := readTaskMeta(tasks, taskID)
 				if err != nil {
-					// Read failure is acceptable during concurrent writes
+					// Read failure is acceptable during concurrent writes, but report it
+					t.Errorf("reader %d: read failed: %v", readerID, err)
 					return
 				}
 				// Verify no corrupted lines or missing complete records
@@ -826,7 +891,9 @@ func TestSetTaskMetaRenameFailure(t *testing.T) {
 		t.Fatal(failure)
 	}
 	defer func() { // #nosec G302 -- temporary test directory
-		_ = os.Chmod(taskDir, 0o700)
+		if err := os.Chmod(taskDir, 0o700); err != nil {
+			t.Errorf("failed to restore directory permissions: %v", err)
+		}
 	}()
 
 	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
@@ -835,6 +902,11 @@ func TestSetTaskMetaRenameFailure(t *testing.T) {
 	}
 	if err.Cause != SetTaskMetaStorage {
 		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
+	}
+
+	// Restore permissions to verify original metadata is preserved
+	if failure := os.Chmod(taskDir, 0o700); failure != nil { // #nosec G302 -- temporary test directory
+		t.Fatalf("failed to restore for verification: %v", failure)
 	}
 
 	// Verify original metadata is preserved
@@ -874,7 +946,9 @@ func TestSetTaskMetaTempFileCleanup(t *testing.T) {
 		t.Fatal(failure)
 	}
 	defer func() { // #nosec G302 -- temporary test directory
-		_ = os.Chmod(taskDir, 0o700)
+		if err := os.Chmod(taskDir, 0o700); err != nil {
+			t.Errorf("failed to restore directory permissions: %v", err)
+		}
 	}()
 
 	// Attempt to write metadata, which will fail
@@ -883,9 +957,12 @@ func TestSetTaskMetaTempFileCleanup(t *testing.T) {
 		t.Fatal("expected failure, got nil")
 	}
 
-	// Verify no temp files remain in task directory (restored to 0o700 by defer)
-	os.Chmod(taskDir, 0o700) // #nosec G302 -- temporary test directory
+	// Restore permissions to verify cleanup
+	if failure := os.Chmod(taskDir, 0o700); failure != nil { // #nosec G302 -- temporary test directory
+		t.Fatalf("failed to restore for verification: %v", failure)
+	}
 
+	// Verify no temp files remain in task directory
 	entries, failure := os.ReadDir(taskDir)
 	if failure != nil {
 		t.Fatal(failure)
