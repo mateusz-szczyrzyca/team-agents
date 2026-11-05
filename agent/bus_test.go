@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -394,3 +395,47 @@ func TestSendNotice(t *testing.T) {
 		t.Fatalf("sendNotice should not return error on bus send failure (warning only): %v", err)
 	}
 }
+
+// busFailWriter is an io.Writer that always fails write operations.
+type busFailWriter struct{}
+
+// Write implements io.Writer by always returning io.ErrClosedPipe.
+func (busFailWriter) Write([]byte) (int, error) {
+	return 0, io.ErrClosedPipe
+}
+
+// TestBusTestExecutorStreamErrors verifies busTestExecutor returns ExecuteWait when stream writes fail.
+func TestBusTestExecutorStreamErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("stdout write error", func(t *testing.T) {
+		exec := &busTestExecutor{stdout: "hello"}
+		cmd := Command{Stdout: busFailWriter{}}
+		_, err := exec.Execute(context.Background(), cmd)
+		if err == nil {
+			t.Fatal("expected ExecuteError on stdout write failure, got nil")
+		}
+		if err.Cause != ExecuteWait {
+			t.Errorf("got cause %v, want ExecuteWait", err.Cause)
+		}
+		if !errors.Is(err, io.ErrClosedPipe) {
+			t.Errorf("expected wrapped io.ErrClosedPipe, got: %v", err)
+		}
+	})
+
+	t.Run("stderr write error", func(t *testing.T) {
+		exec := &busTestExecutor{stderr: "err message"}
+		cmd := Command{Stderr: busFailWriter{}}
+		_, err := exec.Execute(context.Background(), cmd)
+		if err == nil {
+			t.Fatal("expected ExecuteError on stderr write failure, got nil")
+		}
+		if err.Cause != ExecuteWait {
+			t.Errorf("got cause %v, want ExecuteWait", err.Cause)
+		}
+		if !errors.Is(err, io.ErrClosedPipe) {
+			t.Errorf("expected wrapped io.ErrClosedPipe, got: %v", err)
+		}
+	})
+}
+
