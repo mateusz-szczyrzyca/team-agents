@@ -65,7 +65,7 @@ func TestExtraArgsFixtureUnderProduction(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	cfg, _ := newApp(OSExecutor{}, nil, nil).loadShellConfig(context.Background(), ConfigRequest{
-		File: confFile,
+		File:    confFile,
 		Context: ConfigContext{Home: tempDir, AgentsHome: tempDir, Hostname: "test", Self: "self"},
 		Env:     []string{"HOME=" + tempDir},
 	})
