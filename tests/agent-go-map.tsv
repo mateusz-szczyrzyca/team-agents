@@ -594,3 +594,6 @@ tests/unit/team_stop_followup.bats	a run that continues a team member (a bounce)
 tests/unit/team_stop_followup.bats	a wake is not held back while --investigation is in progress in its project	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a finished --investigation still marked waiting does not block a normal team	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a helper's task text is in English: the requester's context goes under Context	source	R35	-	planned
+tests/unit/tmp_sweep.bats	tmp-sweep removes the old leftovers of test runs that no process uses; it keeps fresh ones, those in use, and anything else	blackbox	R03	-	planned
+tests/unit/tmp_sweep.bats	make unit-bats runs the tests with their temporary files in BATS_TMP, after sweeping it and /tmp	blackbox	R03	-	planned
+tests/unit/tmp_sweep.bats	unit-bats.sh refuses to start without room for its temporary files, and says so	blackbox	R03	-	planned
