@@ -4,9 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
-	"sort"
 )
 
 // cmdStatus displays a table of all tasks with their status, agent, round, and run number.
@@ -23,22 +20,10 @@ func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 		return nil
 	}
 
-	entries, err := os.ReadDir(tasksDir)
-	if err != nil && !os.IsNotExist(err) {
-		return fromStorage(StatusStorage, storageErr(err, "read tasks dir"))
+	tasks, terr := taskDirectories(tasksDir)
+	if terr != nil {
+		return fromStorage(StatusStorage, terr)
 	}
-
-	var tasks []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		metaFile := filepath.Join(tasksDir, entry.Name(), "meta.env")
-		if _, err := os.Stat(metaFile); err == nil {
-			tasks = append(tasks, entry.Name())
-		}
-	}
-	sort.Strings(tasks)
 
 	// Print each task
 	for _, taskID := range tasks {
@@ -56,9 +41,11 @@ func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 		kind, _ := meta.Lookup("KIND")
 		team, _ := meta.Lookup("INVESTIGATION_TEAM")
 		if kind == "investigation" && team == "" {
-			if invID, ok := meta.Lookup("INV_ID"); ok && invID != "" {
-				agent = "inv#" + invID
+			invID, _ := meta.Lookup("INV_ID")
+			if invID == "" {
+				invID = "?"
 			}
+			agent = "inv#" + invID
 		}
 
 		status, ok := meta.Lookup("STATUS")
