@@ -1,5 +1,11 @@
 package main
 
+import (
+	"errors"
+	"os"
+	"strings"
+)
+
 // MetaLineKind distinguishes decoded data from records requiring shell evaluation.
 type MetaLineKind uint8
 
@@ -28,13 +34,48 @@ type MetaFile struct {
 }
 
 // parseMeta classifies literal records without executing metadata as a program.
-func parseMeta(_ []byte) MetaFile { return MetaFile{} }
+func parseMeta(data []byte) MetaFile {
+	var file MetaFile
+	for remaining := string(data); remaining != ""; {
+		end := recordEnd(remaining)
+		if end < len(remaining) {
+			end++
+		}
+		file.Lines = append(file.Lines, classifyMeta(remaining[:end]))
+		remaining = remaining[end:]
+	}
+	return file
+}
 
 // Lookup returns the last literal assignment; absence differs from an empty value.
-func (m MetaFile) Lookup(_ string) (string, bool) { return "", false }
+func (m MetaFile) Lookup(key string) (string, bool) {
+	for i := len(m.Lines) - 1; i >= 0; i-- {
+		line := m.Lines[i]
+		if line.Kind == MetaAssignment && line.Key == key {
+			return line.Value, true
+		}
+	}
+	return "", false
+}
 
 // Bytes reproduces the original file, including unsupported records and final newline state.
-func (m MetaFile) Bytes() []byte { return nil }
+func (m MetaFile) Bytes() []byte {
+	var out strings.Builder
+	for _, line := range m.Lines {
+		out.WriteString(line.Raw)
+	}
+	return []byte(out.String())
+}
 
 // readTaskMeta reads an existing file without inheriting any caller variables.
-func readTaskMeta(_, _ string) (MetaFile, *ReadTaskMetaError) { return MetaFile{}, nil }
+func readTaskMeta(tasksDir, id string) (MetaFile, *ReadTaskMetaError) {
+	path := tasksDir + "/" + id + "/meta.env"
+	data, err := os.ReadFile(path) // #nosec G304 -- local task paths deliberately preserve Bash path-like references; no network request supplies this path
+	if errors.Is(err, os.ErrNotExist) {
+		return MetaFile{}, opErr(ReadTaskMetaNotFound, "no such task: %s", id)
+	}
+	if err != nil {
+		return MetaFile{}, fromStorage(ReadTaskMetaStorage, storageErr(err, "cannot read %s", path))
+	}
+	return parseMeta(data), nil
+}
