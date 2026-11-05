@@ -254,15 +254,12 @@ func TestSetTaskMetaWriteFailure(t *testing.T) {
 	original := "ID=write-fault\nSTATUS=original\n"
 	writeMetaFixture(t, metaFile, original)
 
-	// Make the directory read-only to prevent creating temp file
-	if failure := os.Chmod(taskDir, 0o500); failure != nil { // #nosec G302 -- temporary test directory
-		t.Fatal(failure)
+	// Inject write failure by replacing writeMetaTemp hook
+	oldWrite := writeMetaTemp
+	defer func() { writeMetaTemp = oldWrite }()
+	writeMetaTemp = func(f *os.File, b []byte) (int, error) {
+		return 0, fmt.Errorf("injected write error")
 	}
-	defer func() { // #nosec G302 -- temporary test directory
-		if err := os.Chmod(taskDir, 0o700); err != nil {
-			t.Errorf("failed to restore directory permissions: %v", err)
-		}
-	}()
 
 	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
 	if err == nil {
@@ -272,9 +269,17 @@ func TestSetTaskMetaWriteFailure(t *testing.T) {
 		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
 	}
 
-	// Restore permissions to verify original metadata is preserved
-	if failure := os.Chmod(taskDir, 0o700); failure != nil { // #nosec G302 -- temporary test directory
-		t.Fatalf("failed to restore for verification: %v", failure)
+	// Verify temp file was created and cleaned up
+	if _, err := os.Stat(filepath.Join(taskDir, "meta.env.tmp.+")); !errors.Is(err, os.ErrNotExist) {
+		// May have a different suffix, so check if any temp files exist
+		entries, dirErr := os.ReadDir(taskDir)
+		if dirErr == nil {
+			for _, entry := range entries {
+				if strings.Contains(entry.Name(), "meta.env.tmp") {
+				t.Fatalf("temp file not cleaned up: %s", entry.Name())
+			}
+		}
+	}
 	}
 
 	// Verify original metadata is preserved
@@ -291,18 +296,25 @@ func TestSetTaskMetaWriteFailure(t *testing.T) {
 func TestSetTaskMetaReadFailure(t *testing.T) {
 	tasks := t.TempDir()
 	taskID := "read-fault"
-	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
 		t.Fatal(failure)
 	}
-	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	metaFile := filepath.Join(taskDir, "meta.env")
 	original := "ID=read-fault\nSTATUS=original\n"
 	writeMetaFixture(t, metaFile, original)
 
-	// Remove read permission from the metadata file to cause read failure
-	if failure := os.Chmod(metaFile, 0o000); failure != nil { // #nosec G302 -- temporary test file
+	// Pre-create lock file so lock acquisition succeeds
+	lockFile := filepath.Join(taskDir, "meta.env.lock")
+	if failure := os.WriteFile(lockFile, []byte(""), 0o600); failure != nil { // #nosec G304 -- test directory
 		t.Fatal(failure)
 	}
-	defer func() { // #nosec G302 -- temporary test file
+
+	// Make meta.env unreadable to trigger read failure
+	if failure := os.Chmod(metaFile, 0o000); failure != nil { // #nosec G302 -- test file
+		t.Fatal(failure)
+	}
+	defer func() { // #nosec G302 -- test file
 		if err := os.Chmod(metaFile, 0o600); err != nil {
 			t.Errorf("failed to restore file permissions: %v", err)
 		}
@@ -317,7 +329,7 @@ func TestSetTaskMetaReadFailure(t *testing.T) {
 	}
 
 	// Restore permissions to verify original metadata is preserved
-	if failure := os.Chmod(metaFile, 0o600); failure != nil { // #nosec G302 -- temporary test file
+	if failure := os.Chmod(metaFile, 0o600); failure != nil { // #nosec G302 -- test file
 		t.Fatalf("failed to restore for verification: %v", failure)
 	}
 
@@ -886,15 +898,18 @@ func TestSetTaskMetaRenameFailure(t *testing.T) {
 	original := "ID=rename-fault\nSTATUS=original\n"
 	writeMetaFixture(t, metaFile, original)
 
-	// Make the task directory read-only to prevent rename
-	if failure := os.Chmod(taskDir, 0o500); failure != nil { // #nosec G302 -- temporary test directory
-		t.Fatal(failure)
-	}
-	defer func() { // #nosec G302 -- temporary test directory
-		if err := os.Chmod(taskDir, 0o700); err != nil {
-			t.Errorf("failed to restore directory permissions: %v", err)
+	// Inject rename failure by replacing renameMetaTemp hook
+	oldRename := renameMetaTemp
+	defer func() { renameMetaTemp = oldRename }()
+	renameCount := 0
+	renameMetaTemp = func(old, new string) error {
+		renameCount++
+		// First rename call is what we want to intercept
+		if renameCount == 1 {
+			return fmt.Errorf("injected rename error")
 		}
-	}()
+		return oldRename(old, new)
+	}
 
 	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
 	if err == nil {
@@ -904,9 +919,15 @@ func TestSetTaskMetaRenameFailure(t *testing.T) {
 		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
 	}
 
-	// Restore permissions to verify original metadata is preserved
-	if failure := os.Chmod(taskDir, 0o700); failure != nil { // #nosec G302 -- temporary test directory
-		t.Fatalf("failed to restore for verification: %v", failure)
+	// Verify temp file was created and cleaned up
+	entries, failure := os.ReadDir(taskDir)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), "meta.env.tmp") {
+			t.Fatalf("temp file not cleaned up: %s", entry.Name())
+		}
 	}
 
 	// Verify original metadata is preserved
@@ -916,17 +937,6 @@ func TestSetTaskMetaRenameFailure(t *testing.T) {
 	}
 	if string(data) != original {
 		t.Fatalf("metadata changed on rename failure: got %q, want %q", string(data), original)
-	}
-
-	// Verify no orphaned temp files exist
-	entries, failure := os.ReadDir(taskDir)
-	if failure != nil {
-		t.Fatal(failure)
-	}
-	for _, entry := range entries {
-		if strings.Contains(entry.Name(), "meta.env.tmp") {
-			t.Fatalf("orphaned temp file found: %s", entry.Name())
-		}
 	}
 }
 
@@ -941,25 +951,20 @@ func TestSetTaskMetaTempFileCleanup(t *testing.T) {
 	metaFile := filepath.Join(taskDir, "meta.env")
 	writeMetaFixture(t, metaFile, "ID=cleanup-test\n")
 
-	// Make the task directory read-only after fixture to trigger write/rename failure
-	if failure := os.Chmod(taskDir, 0o500); failure != nil { // #nosec G302 -- temporary test directory
-		t.Fatal(failure)
+	// Inject write failure to trigger cleanup path
+	oldWrite := writeMetaTemp
+	defer func() { writeMetaTemp = oldWrite }()
+	writeMetaTemp = func(f *os.File, b []byte) (int, error) {
+		return 0, fmt.Errorf("injected write error for cleanup test")
 	}
-	defer func() { // #nosec G302 -- temporary test directory
-		if err := os.Chmod(taskDir, 0o700); err != nil {
-			t.Errorf("failed to restore directory permissions: %v", err)
-		}
-	}()
 
-	// Attempt to write metadata, which will fail
+	// Attempt to write metadata, which will fail and should clean up temp file
 	err := setTaskMeta(tasks, taskID, "KEY", "value", "")
 	if err == nil {
 		t.Fatal("expected failure, got nil")
 	}
-
-	// Restore permissions to verify cleanup
-	if failure := os.Chmod(taskDir, 0o700); failure != nil { // #nosec G302 -- temporary test directory
-		t.Fatalf("failed to restore for verification: %v", failure)
+	if err.Cause != SetTaskMetaStorage {
+		t.Fatalf("expected SetTaskMetaStorage cause, got %v", err.Cause)
 	}
 
 	// Verify no temp files remain in task directory

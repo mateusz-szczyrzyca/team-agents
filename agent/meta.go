@@ -94,6 +94,12 @@ type jobTransition struct {
 
 // setTaskMeta writes a key=value pair to the task metadata file under lock.
 // If runID is provided and does not match the current RUN value, returns nil (stale-run fence).
+// writeMetaTemp is a test injection hook for Write failures on metadata temporary files.
+var writeMetaTemp = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
+
+// renameMetaTemp is a test injection hook for Rename failures when atomically replacing metadata.
+var renameMetaTemp = os.Rename
+
 func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMetaError) {
 	f, lockErr := lockTaskMeta(tasksDir, taskID, 0)
 	if lockErr != nil {
@@ -153,7 +159,7 @@ func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMet
 	}
 	tmpName := tmp.Name()
 
-	if _, err := tmp.Write(buf.Bytes()); err != nil {
+	if _, err := writeMetaTemp(tmp, buf.Bytes()); err != nil {
 		if closeErr := tmp.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
@@ -174,7 +180,7 @@ func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMet
 		}
 		return fromStorage(SetTaskMetaStorage, storageErr(err, "preserve metadata permissions %s", tmpName))
 	}
-	if err := os.Rename(tmpName, metaPath); err != nil { // #nosec G703 -- tmpName is from os.CreateTemp, metaPath is constructed from trusted task coordinates
+	if err := renameMetaTemp(tmpName, metaPath); err != nil { // #nosec G703 -- tmpName is from os.CreateTemp, metaPath is constructed from trusted task coordinates
 		if removeErr := os.Remove(tmpName); removeErr != nil { // #nosec G703 -- tmpName is from os.CreateTemp
 			err = errors.Join(err, removeErr)
 		}
