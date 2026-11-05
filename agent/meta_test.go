@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -628,19 +629,21 @@ func TestConcurrentReadWriteMeta(t *testing.T) {
 	metaFile := filepath.Join(taskDir, "meta.env")
 	writeMetaFixture(t, metaFile, "ID=concurrent-rw\nSTATUS=init\nCOUNT=0\n")
 
-	// Concurrent reader and writer goroutines
-	errChan := make(chan *SetTaskMetaError, 20)
+	// Concurrent reader and writer goroutines using WaitGroup
+	var wg sync.WaitGroup
+	writerErrors := make(chan *SetTaskMetaError, 50) // 10 writers × 5 operations each
 	readerCount := 10
 	writerCount := 10
 
 	// Start readers
+	wg.Add(readerCount)
 	for i := 0; i < readerCount; i++ {
 		go func(readerID int) {
+			defer wg.Done()
 			for j := 0; j < 5; j++ {
 				m, err := readTaskMeta(tasks, taskID)
 				if err != nil {
 					// Read failure is acceptable during concurrent writes
-					errChan <- nil
 					return
 				}
 				// Verify no corrupted lines or missing complete records
@@ -654,29 +657,37 @@ func TestConcurrentReadWriteMeta(t *testing.T) {
 					t.Errorf("reader %d: ID corrupted or missing", readerID)
 				}
 			}
-			errChan <- nil
 		}(i)
 	}
 
 	// Start writers
+	wg.Add(writerCount)
 	for i := 0; i < writerCount; i++ {
 		go func(id int) {
+			defer wg.Done()
 			for j := 0; j < 5; j++ {
 				key := fmt.Sprintf("RW_%d_%d", id, j)
 				value := fmt.Sprintf("val_%d_%d", id, j)
 				err := setTaskMeta(tasks, taskID, key, value, "")
-				errChan <- err
+				writerErrors <- err
 			}
 		}(i)
 	}
 
-	// Wait for all goroutines to complete and collect errors
+	// Wait for all goroutines to complete
+	wg.Wait()
+	close(writerErrors)
+
+	// Collect writer errors
 	var failCount int
-	for i := 0; i < (readerCount*5)+(writerCount*5); i++ {
-		err := <-errChan
+	for err := range writerErrors {
 		if err != nil {
 			failCount++
 		}
+	}
+
+	if failCount > 0 {
+		t.Fatalf("concurrent write operations failed: %d errors", failCount)
 	}
 
 	// Verify file is still readable and consistent
