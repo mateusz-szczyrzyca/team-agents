@@ -53,6 +53,28 @@ func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 			status = "?"
 		}
 
+		// Check if unit is active for running/starting status
+		if (status == "running" || status == "starting") && kind != "remote-member" && kind != "investigation_team" {
+			id, _ := meta.Lookup("ID")
+			if id == "" {
+				id = taskID
+			}
+			runVal, _ := meta.Lookup("RUN")
+			if runVal == "" {
+				runVal = "0"
+			}
+			unitName := "agent-" + id + "-r" + runVal + ".service"
+			cmd := Command{
+				Name: "systemctl",
+				Args: []string{"--user", "is-active", "--quiet", unitName},
+			}
+			result, uerr := app.Executor.Execute(context.Background(), cmd)
+			// If unit check fails or unit is inactive, append "?" suffix
+			if uerr != nil || result.ExitCode != 0 {
+				status = status + "?"
+			}
+		}
+
 		round, ok := meta.Lookup("ROUND")
 		if !ok || round == "" {
 			round = "-"

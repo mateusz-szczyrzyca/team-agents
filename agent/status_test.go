@@ -231,3 +231,59 @@ func TestCmdStatusInvestigationEmptyINVID(t *testing.T) {
 		t.Errorf("output missing 'inv#?' for investigation with empty INV_ID: %s", output)
 	}
 }
+
+// TestCmdStatusUnitActiveSuffix verifies running/starting status appends ? when unit is inactive.
+func TestCmdStatusUnitActiveSuffix(t *testing.T) {
+	tasksDir := t.TempDir()
+
+	// Create mock executor that reports unit as inactive (exit code 1)
+	exec := &statusTestExecutor{
+		unitActive: false, // systemctl is-active returns 1 (inactive)
+	}
+
+	app := &App{
+		Executor:  exec,
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	// Create running task
+	taskDir := filepath.Join(tasksDir, "running-task")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=running-task\nSTATUS=running\nRUN=1\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := cmdStatus(context.Background(), app, &out)
+	if err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	// Should show running? (with ?) when unit is inactive
+	if !strings.Contains(output, "running?") {
+		t.Errorf("output missing 'running?' suffix for inactive unit: %s", output)
+	}
+}
+
+type statusTestExecutor struct {
+	unitActive bool // false means unit is inactive (exit code 1)
+}
+
+func (e *statusTestExecutor) Execute(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
+	// Mock systemctl is-active check
+	if len(cmd.Args) >= 3 && cmd.Args[1] == "is-active" {
+		if e.unitActive {
+			return CommandResult{ExitCode: 0}, nil
+		}
+		return CommandResult{ExitCode: 1}, nil
+	}
+	return CommandResult{ExitCode: 0}, nil
+}
