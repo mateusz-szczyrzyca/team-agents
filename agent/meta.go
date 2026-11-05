@@ -100,9 +100,7 @@ func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMet
 		return lockErr
 	}
 	defer func() {
-		if unlockErr := unlockTaskMeta(f); unlockErr != nil && retErr == nil {
-			retErr = fromStorage(SetTaskMetaStorage, unlockErr)
-		}
+		retErr = finishTaskMeta(f, retErr)
 	}()
 
 	metaPath := filepath.Join(tasksDir, taskID, "meta.env")
@@ -122,10 +120,19 @@ func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMet
 			return nil
 		}
 	}
+	if errors.Is(readErr, os.ErrNotExist) {
+		return opErr(SetTaskMetaNotFound, "no such task metadata: %s", metaPath)
+	}
+
+	// Atomic replacement must retain permissions expected by metadata consumers.
+	info, statErr := os.Stat(metaPath)
+	if statErr != nil {
+		return fromStorage(SetTaskMetaStorage, storageErr(statErr, "stat metadata %s", metaPath))
+	}
 
 	newLine, verr := formatMetaAssignment(key, value)
 	if verr != nil {
-		return fromStorage(SetTaskMetaStorage, storageErr(verr.asError(), "format metadata %s=%s", key, value))
+		return fromValue(SetTaskMetaInvalidAssignment, verr)
 	}
 
 	var buf bytes.Buffer
@@ -161,6 +168,12 @@ func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMet
 		}
 		return fromStorage(SetTaskMetaStorage, storageErr(err, "close temp metadata %s", tmpName))
 	}
+	if err := os.Chmod(tmpName, info.Mode().Perm()); err != nil {
+		if removeErr := os.Remove(tmpName); removeErr != nil {
+			err = errors.Join(err, removeErr)
+		}
+		return fromStorage(SetTaskMetaStorage, storageErr(err, "preserve metadata permissions %s", tmpName))
+	}
 	if err := os.Rename(tmpName, metaPath); err != nil {
 		if removeErr := os.Remove(tmpName); removeErr != nil {
 			err = errors.Join(err, removeErr)
@@ -169,8 +182,16 @@ func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMet
 	}
 
 	if key == "STATUS" {
-		if jid, ok := m.Lookup("JOB_ID"); ok && jid != "" {
-			now := time.Now().UTC().Format(time.RFC3339Nano)
+		// Bash tests the encoded assignment, so JOB_ID='' still marks a job.
+		hasJobID := false
+		for _, line := range m.Lines {
+			if line.Key == "JOB_ID" && line.Encoded != "" {
+				hasJobID = true
+				break
+			}
+		}
+		if hasJobID {
+			now := formatJobTransitionTime(time.Now())
 			recordBytes, err := json.Marshal(jobTransition{State: value, At: now})
 			if err != nil {
 				return fromStorage(SetTaskMetaStorage, storageErr(err, "marshal job transition"))
@@ -195,4 +216,20 @@ func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMet
 	}
 
 	return nil
+}
+
+// finishTaskMeta releases the metadata lock without hiding an earlier operation failure.
+func finishTaskMeta(f *os.File, prior *SetTaskMetaError) *SetTaskMetaError {
+	if unlockErr := unlockTaskMeta(f); unlockErr != nil {
+		if prior == nil {
+			return fromStorage(SetTaskMetaStorage, unlockErr)
+		}
+		prior.Err = errors.Join(prior.Err, unlockErr)
+	}
+	return prior
+}
+
+// formatJobTransitionTime emits the fixed nanosecond UTC journal timestamp.
+func formatJobTransitionTime(at time.Time) string {
+	return at.UTC().Format("2006-01-02T15:04:05.000000000Z")
 }
