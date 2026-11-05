@@ -18,6 +18,14 @@
    ]
   },
   {
+   "type": "SetTaskMeta",
+   "op": "set_task_meta",
+   "what": "task metadata writing",
+   "causes": [
+    {"name": "NotFound", "class": "NotFound", "doc": "the task directory does not exist"}
+   ]
+  },
+  {
    "type": "Command",
    "op": "command",
    "what": "local command dispatch",

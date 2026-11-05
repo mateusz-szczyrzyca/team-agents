@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -179,5 +180,193 @@ func writeMetaFixture(t *testing.T, file, data string) {
 	t.Helper()
 	if failure := os.WriteFile(file, []byte(data), 0o600); failure != nil {
 		t.Fatal(failure)
+	}
+}
+
+// TestConcurrentSetTaskMeta verifies that concurrent setTaskMeta calls of different keys all survive.
+func TestConcurrentSetTaskMeta(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "concurrent-meta"
+	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	writeMetaFixture(t, metaFile, "STATUS=running\n")
+
+	// Spawn multiple concurrent writers
+	errChan := make(chan interface{}, 20)
+	for i := 1; i <= 20; i++ {
+		go func(index int) {
+			key := fmt.Sprintf("K%d", index)
+			value := fmt.Sprintf("v%d", index)
+			err := setTaskMeta(tasks, taskID, key, value, "")
+			errChan <- err
+		}(i)
+	}
+
+	// Collect all errors
+	var failCount int
+	for i := 0; i < 20; i++ {
+		err := <-errChan
+		if err != nil {
+			failCount++
+		}
+	}
+
+	if failCount > 0 {
+		t.Fatalf("concurrent writes failed: %d errors", failCount)
+	}
+
+	// Verify all keys were written
+	data, failure := os.ReadFile(metaFile)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	m := parseMeta(data)
+	for i := 1; i <= 20; i++ {
+		key := fmt.Sprintf("K%d", i)
+		value := fmt.Sprintf("v%d", i)
+		got, ok := m.Lookup(key)
+		if !ok || got != value {
+			t.Fatalf("key %s: got %q, want %q", key, got, value)
+		}
+	}
+
+	// Verify original STATUS is preserved
+	status, ok := m.Lookup("STATUS")
+	if !ok || status != "running" {
+		t.Fatalf("STATUS: got %q, want 'running'", status)
+	}
+}
+
+// TestSetTaskMetaWriteFailure verifies that setTaskMeta fails and keeps old metadata when writing fails.
+func TestSetTaskMetaWriteFailure(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "write-fault"
+	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	original := "ID=write-fault\nSTATUS=original\n"
+	writeMetaFixture(t, metaFile, original)
+
+	// Make the directory read-only to prevent writing
+	if failure := os.Chmod(filepath.Join(tasks, taskID), 0o500); failure != nil {
+		t.Fatal(failure)
+	}
+	defer os.Chmod(filepath.Join(tasks, taskID), 0o700)
+
+	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
+	if err == nil {
+		t.Fatal("expected write failure, got nil")
+	}
+
+	// Verify original metadata is preserved
+	data, failure := os.ReadFile(metaFile)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if string(data) != original {
+		t.Fatalf("metadata changed on write failure: got %q, want %q", string(data), original)
+	}
+}
+
+// TestSetTaskMetaReadFailure verifies that setTaskMeta fails and keeps old metadata when reading fails.
+func TestSetTaskMetaReadFailure(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "read-fault"
+	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	original := "ID=read-fault\nSTATUS=original\n"
+	writeMetaFixture(t, metaFile, original)
+
+	// Replace the file with a directory to cause read failure
+	if failure := os.Remove(metaFile); failure != nil {
+		t.Fatal(failure)
+	}
+	if failure := os.Mkdir(metaFile, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+
+	err := setTaskMeta(tasks, taskID, "STATUS", "new", "")
+	if err == nil {
+		t.Fatal("expected read failure, got nil")
+	}
+
+	// Verify directory structure remains intact (can't verify exact metadata since it's a directory)
+	info, failure := os.Stat(metaFile)
+	if failure != nil || !info.IsDir() {
+		t.Fatal("meta.env directory structure was corrupted")
+	}
+}
+
+// TestSetTaskMetaStaleRunNoOp verifies that setting metadata with mismatched run is a successful no-op.
+func TestSetTaskMetaStaleRunNoOp(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "stale-run"
+	if failure := os.MkdirAll(filepath.Join(tasks, taskID), 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(tasks, taskID, "meta.env")
+	original := "ID=stale-run\nRUN=run123\nSTATUS=original\n"
+	writeMetaFixture(t, metaFile, original)
+
+	// Try to set metadata with a different run ID
+	err := setTaskMeta(tasks, taskID, "STATUS", "new", "run-different")
+	if err != nil {
+		t.Fatalf("stale run should return nil, got: %v", err)
+	}
+
+	// Verify metadata is unchanged (stale run is a no-op)
+	data, failure := os.ReadFile(metaFile)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if string(data) != original {
+		t.Fatalf("stale run was not a no-op: got %q, want %q", string(data), original)
+	}
+}
+
+// TestSetTaskMetaJobTransitions verifies that setting STATUS appends to job_transitions.jsonl.
+func TestSetTaskMetaJobTransitions(t *testing.T) {
+	tasks := t.TempDir()
+	taskID := "job-transitions"
+	taskDir := filepath.Join(tasks, taskID)
+	if failure := os.MkdirAll(taskDir, 0o700); failure != nil {
+		t.Fatal(failure)
+	}
+	metaFile := filepath.Join(taskDir, "meta.env")
+	original := "ID=job-transitions\nJOB_ID=job-123\nSTATUS=original\n"
+	writeMetaFixture(t, metaFile, original)
+
+	// Set STATUS, which should create/append to job_transitions.jsonl
+	err := setTaskMeta(tasks, taskID, "STATUS", "running", "")
+	if err != nil {
+		t.Fatalf("setTaskMeta failed: %v", err)
+	}
+
+	// Verify metadata was updated
+	data, failure := os.ReadFile(metaFile)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	m := parseMeta(data)
+	status, ok := m.Lookup("STATUS")
+	if !ok || status != "running" {
+		t.Fatalf("STATUS not updated: got %q", status)
+	}
+
+	// Verify job_transitions.jsonl was created
+	jobTransFile := filepath.Join(taskDir, "job_transitions.jsonl")
+	transitions, failure := os.ReadFile(jobTransFile)
+	if failure != nil {
+		t.Fatalf("job_transitions.jsonl not created: %v", failure)
+	}
+
+	// Verify it contains a valid JSON entry with "running" state
+	if !strings.Contains(string(transitions), "running") {
+		t.Fatalf("job_transitions.jsonl missing 'running' state: %s", string(transitions))
 	}
 }

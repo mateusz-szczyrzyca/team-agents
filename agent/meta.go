@@ -81,3 +81,9 @@ func readTaskMeta(tasksDir, id string) (MetaFile, *ReadTaskMetaError) {
 	}
 	return parseMeta(data), nil
 }
+
+// setTaskMeta writes a key=value pair to the task metadata file under lock.
+// If runID is provided and does not match the current RUN value, returns nil (stale-run fence).
+func setTaskMeta(tasksDir, taskID, key, value, runID string) *SetTaskMetaError {
+	return nil
+}
