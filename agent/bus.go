@@ -1,5 +1,12 @@
 package main
 
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
 // ScriptNotice represents a typed bus notice.
 type ScriptNotice string
 
@@ -52,8 +59,9 @@ const (
 
 // BusError is an error from agentbus.
 type BusError struct {
-	Cause BusCause
-	Text  string
+	Cause BusCause // why the operation failed
+	Text  string   // what went wrong
+	Err   error    // the class sentinel for errors.Is
 }
 
 // Error implements the error interface.
@@ -61,10 +69,35 @@ func (e *BusError) Error() string {
 	return e.Text
 }
 
+// Unwrap exposes the class sentinel for errors.Is.
+func (e *BusError) Unwrap() error {
+	return e.Err
+}
+
 // Class returns the ErrorClass for this error.
 func (e *BusError) Class() ErrorClass {
-	// Stub - implementation required
-	return 0
+	switch e.Cause {
+	case BusInvalidArgument:
+		return ClassInvalidArgument
+	case BusNotFound:
+		return ClassNotFound
+	case BusNotInTeam:
+		return ClassNotInTeam
+	case BusPermission:
+		return ClassPermission
+	case BusConflict:
+		return ClassConflict
+	case BusInvalidState:
+		return ClassInvalidState
+	case BusStorage:
+		return ClassStorage
+	case BusUnknownTool:
+		return ClassUnknownTool
+	case BusProcess:
+		return ClassProcess
+	default:
+		return ClassStorage // Default to storage error
+	}
 }
 
 // Bus exit codes matching agentbus/errors.go.
@@ -83,8 +116,43 @@ const (
 
 // mapBusExitCode converts an agentbus exit code to a BusError.
 func mapBusExitCode(code int, text string) *BusError {
-	// Stub - implementation required
-	return nil
+	if code == BusExitSuccess {
+		return nil
+	}
+
+	cause := BusStorage // Default to storage error for unknown codes
+	switch code {
+	case BusExitInvalidArgument:
+		cause = BusInvalidArgument
+	case BusExitNotFound:
+		cause = BusNotFound
+	case BusExitNotInTeam:
+		cause = BusNotInTeam
+	case BusExitPermission:
+		cause = BusPermission
+	case BusExitConflict:
+		cause = BusConflict
+	case BusExitInvalidState:
+		cause = BusInvalidState
+	case BusExitStorage:
+		cause = BusStorage
+	case BusExitUnknownTool:
+		cause = BusUnknownTool
+	case BusExitProcess:
+		cause = BusProcess
+	}
+
+	// Create error with class sentinel
+	busErr := &BusError{
+		Cause: cause,
+		Text:  text,
+	}
+
+	// Create a temporary error to get the class and sentinel
+	class := busErr.Class()
+	busErr.Err = class.Sentinel()
+
+	return busErr
 }
 
 // BusServeParams contains parameters for agentbus serve.
@@ -115,12 +183,101 @@ type BusServeParams struct {
 
 // busArgsJSON builds argv for agentbus serve.
 func busArgsJSON(params BusServeParams) []string {
-	// Stub - implementation required
-	return nil
+	var args []string
+	args = append(args, "serve")
+
+	if params.RemoteTeam {
+		// Remote mode
+		if params.JobLead != "" {
+			args = append(args, "--relay", params.JobLead)
+		}
+		if params.Member != "" {
+			args = append(args, "--member", params.Member)
+		}
+	} else {
+		// Local mode
+		if params.BusDir != "" {
+			args = append(args, "--dir", params.BusDir)
+		}
+		if params.Agent != "" {
+			args = append(args, "--agent", params.Agent)
+		}
+		if params.TaskID != "" {
+			args = append(args, "--task", params.TaskID)
+		}
+		if params.TaskDir != "" {
+			args = append(args, "--task-dir", params.TaskDir)
+		}
+		if params.RepoName != "" {
+			args = append(args, "--repo", params.RepoName)
+		}
+		if params.Branch != "" {
+			args = append(args, "--branch", params.Branch)
+		}
+		if params.Worktree != "" {
+			args = append(args, "--worktree", params.Worktree)
+		}
+		if params.Peers != "" {
+			args = append(args, "--peers", params.Peers)
+		}
+		if params.Role != "" {
+			args = append(args, "--role", params.Role)
+		}
+		if params.QueueMax > 0 {
+			args = append(args, "--queue-max", fmt.Sprintf("%d", params.QueueMax))
+		}
+		if params.InvSlots > 0 {
+			args = append(args, "--inv-slots", fmt.Sprintf("%d", params.InvSlots))
+		}
+		if params.TasksDir != "" {
+			args = append(args, "--tasks-dir", params.TasksDir)
+		}
+		if params.Team != "" {
+			args = append(args, "--team", params.Team)
+		}
+		if params.Tier != "" {
+			args = append(args, "--tier", params.Tier)
+		}
+		if params.AgentCmd != "" {
+			args = append(args, "--agent-cmd", params.AgentCmd)
+		}
+	}
+
+	if params.AgentsHome != "" {
+		args = append(args, "--home", params.AgentsHome)
+	}
+
+	return args
 }
 
 // busMessagesFrom counts messages from a specific agent in messages.jsonl.
 func busMessagesFrom(path, agent string) (int, error) {
-	// Stub - implementation required
-	return 0, nil
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil // File doesn't exist yet, count is 0
+		}
+		return 0, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	count := 0
+
+	for scanner.Scan() {
+		var msg map[string]interface{}
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+			continue // Skip malformed lines
+		}
+
+		if from, ok := msg["from"].(string); ok && from == agent {
+			count++
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+
+	return count, nil
 }
