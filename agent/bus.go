@@ -123,6 +123,35 @@ func mapBusExitCode(code int, stderr string) *BusError {
 	return opErr(cause, "%s", stderr)
 }
 
+// busExitCode returns the process exit status of a delegated agentbus failure.
+func busExitCode(err *BusError) int {
+	if err == nil {
+		return 0
+	}
+	switch err.Cause {
+	case BusInvalidArgument:
+		return BusExitInvalidArgument
+	case BusNotFound:
+		return BusExitNotFound
+	case BusNotInTeam:
+		return BusExitNotInTeam
+	case BusPermission:
+		return BusExitPermission
+	case BusConflict:
+		return BusExitConflict
+	case BusInvalidState:
+		return BusExitInvalidState
+	case BusStorage:
+		return BusExitStorage
+	case BusUnknownTool:
+		return BusExitUnknownTool
+	case BusProcess:
+		return BusExitProcess
+	default:
+		return 1
+	}
+}
+
 // busArgsJSON constructs the argv list for agentbus serve matching bash bus_args_json.
 func busArgsJSON(params BusServeParams) []string {
 	args := []string{"serve"}
@@ -239,6 +268,9 @@ func busCmd(ctx context.Context, app *App, busBin string, args ...string) (strin
 	result, eerr := app.execute(ctx, cmd)
 	if eerr != nil {
 		return "", opErr(BusProcess, "execute %s: %s", busBin, eerr.Error())
+	}
+	if app != nil && app.Stderr != nil && stderr.Len() > 0 {
+		_, _ = app.Stderr.Write(stderr.Bytes())
 	}
 	if result.ExitCode != BusExitSuccess {
 		return "", mapBusExitCode(result.ExitCode, stderr.String())

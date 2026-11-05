@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -22,18 +24,25 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 		return nil
 	case "status", "ls":
 		if err := cmdStatus(ctx, a, stdout); err != nil {
+			if err.Cause == StatusProcess {
+				return opErr(CommandProcess, "%s", err.Message)
+			}
 			return fromStorage(CommandStorage, storageErr(err.asError(), "status"))
 		}
 		return nil
 	case "show":
-		if len(args) == 0 {
+		if len(args) == 0 || args[0] == "" {
 			return opErr(CommandInvalidArgument, "usage: agent show <id>")
 		}
 		if err := cmdShow(ctx, a, args[0], stdout); err != nil {
-			if err.Cause == ShowNotFound {
-				return opErr(CommandInvalidArgument, "task %s not found", args[0])
+			switch err.Cause {
+			case ShowNotFound:
+				return opErr(CommandNotFound, "task %s not found", args[0])
+			case ShowAmbiguous:
+				return opErr(CommandConflict, "%s", err.Message)
+			default:
+				return fromStorage(CommandStorage, storageErr(err.asError(), "show"))
 			}
-			return fromStorage(CommandStorage, storageErr(err.asError(), "show"))
 		}
 		return nil
 	case "bus":
@@ -95,22 +104,19 @@ func (a *App) routeAgentsJSON(_ context.Context, stdout io.Writer) *CommandError
 
 // routeAck delegates to cmdAck.
 func (a *App) routeAck(_ context.Context, args []string, stdout io.Writer) *CommandError {
-	if len(args) == 0 {
+	if len(args) == 0 || args[0] == "" {
 		return opErr(CommandInvalidArgument, "usage: agent ack <id|all>")
 	}
-	tasksDir := a.tasksDir
-	if tasksDir == "" {
-		home := a.agentHome
-		if home == "" {
-			home = os.Getenv("HOME")
-		}
-		tasksDir = filepath.Join(home, "agents", "tasks")
-	}
+	tasksDir := a.tasksDirectory()
 	if err := a.cmdAck(args[0], stdout, tasksDir); err != nil {
-		if err.Cause == AckNotFound || err.Cause == AckAmbiguous || err.Cause == AckStillRunning {
-			return opErr(CommandInvalidArgument, "%s", err.Message)
+		switch err.Cause {
+		case AckNotFound:
+			return opErr(CommandNotFound, "%s", err.Message)
+		case AckAmbiguous, AckStillRunning:
+			return opErr(CommandConflict, "%s", err.Message)
+		default:
+			return fromStorage(CommandStorage, storageErr(err.asError(), "ack"))
 		}
-		return fromStorage(CommandStorage, storageErr(err.asError(), "ack"))
 	}
 	return nil
 }
@@ -122,6 +128,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // run routes the CLI within an owned application and preserves numeric exit codes.
 func (a *App) run(args []string, stdout, stderr io.Writer) int {
+	a.Stderr = stderr
 	cmd := "help"
 	var cmdArgs []string
 	if len(args) > 0 {
@@ -130,6 +137,13 @@ func (a *App) run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if err := a.dispatch(context.Background(), cmd, cmdArgs, stdout, stderr); err != nil {
+		if err.Cause != CommandUnknownCommand {
+			fmt.Fprintf(stderr, "agent: %s\n", err.Message)
+		}
+		var berr *BusError
+		if errors.As(err, &berr) {
+			return busExitCode(berr)
+		}
 		return err.Class().ExitCode()
 	}
 	return 0

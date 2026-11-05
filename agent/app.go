@@ -1,17 +1,38 @@
 package main
 
-import "context"
+import (
+	"context"
+	"io"
+	"os"
+	"path/filepath"
+)
 
 // App owns the effect boundaries for one invocation of the Go candidate.
 type App struct {
-	Executor  Executor // command policy; nil is denied by execute
-	Clock     Clock    // time source for decisions and default random seeding
-	Random    Random   // owned non-cryptographic draws for selection decisions
-	tasksDir  string   // directory containing task metadata
-	workTree  string   // git worktree directory for reports and checkpoints
-	busDir    string   // agentbus state directory
-	busBin    string   // path override for agentbus binary
-	agentHome string   // agent home directory
+	Executor  Executor  // command policy; nil is denied by execute
+	Clock     Clock     // time source for decisions and default random seeding
+	Random    Random    // owned non-cryptographic draws for selection decisions
+	Stderr    io.Writer // standard error destination for diagnostics and subprocess output
+	tasksDir  string    // directory containing task metadata
+	workTree  string    // git worktree directory for reports and checkpoints
+	busDir    string    // agentbus state directory
+	busBin    string    // path override for agentbus binary
+	agentHome string    // agent home directory
+}
+
+// tasksDirectory returns the configured tasks directory or resolves it from agent home.
+func (a *App) tasksDirectory() string {
+	if a.tasksDir != "" {
+		return a.tasksDir
+	}
+	home := a.agentHome
+	if home == "" {
+		home = os.Getenv("AGENTS_HOME")
+	}
+	if home == "" {
+		home = filepath.Join(os.Getenv("HOME"), "agents")
+	}
+	return filepath.Join(home, "tasks")
 }
 
 // newApp fills omitted boundaries without granting command execution permission.
