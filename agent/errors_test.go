@@ -77,6 +77,124 @@ func TestCommandCauses(t *testing.T) {
 	}
 }
 
+// TestAckCauses checks the generated operation identity and exact causes for ack.
+func TestAckCauses(t *testing.T) {
+	cases := []struct {
+		cause AckCause
+		name  string
+		class ErrorClass
+	}{
+		{AckNotFound, "NotFound", ClassNotFound},
+		{AckAmbiguous, "Ambiguous", ClassConflict},
+		{AckStillRunning, "StillRunning", ClassConflict},
+		{AckStorage, "Storage", ClassStorage},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cause.op() != "ack" || tc.cause.String() != tc.name || tc.cause.info().class != tc.class {
+				t.Fatalf("wrong generated cause metadata: %+v", tc.cause.info())
+			}
+			failure := opErr(tc.cause, "ack error %s", tc.name)
+			if failure == nil {
+				t.Fatal("constructor returned nil")
+			}
+			if failure.Cause != tc.cause || failure.Class() != tc.class || failure.CauseName() != tc.name {
+				t.Fatalf("wrong error classification: %+v", failure)
+			}
+			if !errors.Is(failure.asError(), tc.class.Sentinel()) {
+				t.Fatal("constructor lost sentinel identity")
+			}
+		})
+	}
+}
+
+// TestShowCauses checks the generated operation identity and exact causes for show.
+func TestShowCauses(t *testing.T) {
+	cases := []struct {
+		cause ShowCause
+		name  string
+		class ErrorClass
+	}{
+		{ShowNotFound, "NotFound", ClassNotFound},
+		{ShowAmbiguous, "Ambiguous", ClassConflict},
+		{ShowStorage, "Storage", ClassStorage},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cause.op() != "show" || tc.cause.String() != tc.name || tc.cause.info().class != tc.class {
+				t.Fatalf("wrong generated cause metadata: %+v", tc.cause.info())
+			}
+			failure := opErr(tc.cause, "show error %s", tc.name)
+			if failure == nil {
+				t.Fatal("constructor returned nil")
+			}
+			if failure.Cause != tc.cause || failure.Class() != tc.class || failure.CauseName() != tc.name {
+				t.Fatalf("wrong error classification: %+v", failure)
+			}
+			if !errors.Is(failure.asError(), tc.class.Sentinel()) {
+				t.Fatal("constructor lost sentinel identity")
+			}
+		})
+	}
+}
+
+// TestStatusCauses checks the generated operation identity and exact causes for status.
+func TestStatusCauses(t *testing.T) {
+	tc := struct {
+		cause StatusCause
+		name  string
+		class ErrorClass
+	}{StatusStorage, "Storage", ClassStorage}
+	if tc.cause.op() != "status" || tc.cause.String() != tc.name || tc.cause.info().class != tc.class {
+		t.Fatalf("wrong generated cause metadata: %+v", tc.cause.info())
+	}
+	failure := opErr(tc.cause, "status error %s", tc.name)
+	if failure == nil || failure.Cause != tc.cause || failure.Class() != tc.class || failure.CauseName() != tc.name {
+		t.Fatalf("wrong error classification: %+v", failure)
+	}
+	if !errors.Is(failure.asError(), tc.class.Sentinel()) {
+		t.Fatal("constructor lost sentinel identity")
+	}
+}
+
+// TestAgentsCauses checks the generated operation identity and exact causes for agents.
+func TestAgentsCauses(t *testing.T) {
+	tc := struct {
+		cause AgentsCause
+		name  string
+		class ErrorClass
+	}{AgentsStorage, "Storage", ClassStorage}
+	if tc.cause.op() != "agents" || tc.cause.String() != tc.name || tc.cause.info().class != tc.class {
+		t.Fatalf("wrong generated cause metadata: %+v", tc.cause.info())
+	}
+	failure := opErr(tc.cause, "agents error %s", tc.name)
+	if failure == nil || failure.Cause != tc.cause || failure.Class() != tc.class || failure.CauseName() != tc.name {
+		t.Fatalf("wrong error classification: %+v", failure)
+	}
+	if !errors.Is(failure.asError(), tc.class.Sentinel()) {
+		t.Fatal("constructor lost sentinel identity")
+	}
+}
+
+// TestAgentsJSONCauses checks the generated operation identity and exact causes for agents_json.
+func TestAgentsJSONCauses(t *testing.T) {
+	tc := struct {
+		cause AgentsJSONCause
+		name  string
+		class ErrorClass
+	}{AgentsJSONStorage, "Storage", ClassStorage}
+	if tc.cause.op() != "agents_json" || tc.cause.String() != tc.name || tc.cause.info().class != tc.class {
+		t.Fatalf("wrong generated cause metadata: %+v", tc.cause.info())
+	}
+	failure := opErr(tc.cause, "agents_json error %s", tc.name)
+	if failure == nil || failure.Cause != tc.cause || failure.Class() != tc.class || failure.CauseName() != tc.name {
+		t.Fatalf("wrong error classification: %+v", failure)
+	}
+	if !errors.Is(failure.asError(), tc.class.Sentinel()) {
+		t.Fatal("constructor lost sentinel identity")
+	}
+}
+
 // TestOperationErrorConversion checks typed nil and non-nil conversions at interface boundaries.
 func TestOperationErrorConversion(t *testing.T) {
 	// absent represents a successful typed operation result.
