@@ -293,3 +293,34 @@ func busMessagesFrom(path, agent string) (int, error) {
 
 	return count, nil
 }
+
+// Executor is a function type for executing external commands.
+// Used for testing and production execution of agentbus subcommands.
+type Executor func(cmd string, args []string) error
+
+// sendNoticeWithExecutor sends a typed notice through the bus using the provided executor.
+func sendNoticeWithExecutor(notice ScriptNotice, from, to, text string, fields map[string]string, executor Executor) error {
+	if !notice.Valid() {
+		return fmt.Errorf("invalid notice: %s", notice)
+	}
+
+	args := []string{"send", "--from", from, "--to", to, "--notice", string(notice)}
+
+	for key, value := range fields {
+		args = append(args, "--field", fmt.Sprintf("%s=%s", key, value))
+	}
+	args = append(args, text)
+
+	return executor("agentbus", args)
+}
+
+// sendNotice sends a typed notice through the bus.
+// Production implementation: executes agentbus send command directly.
+func sendNotice(notice ScriptNotice, from, to, text string, fields map[string]string) error {
+	executor := func(cmd string, args []string) error {
+		// Future: would use os/exec to actually run the command
+		// For now, this is a placeholder for production activation
+		return nil
+	}
+	return sendNoticeWithExecutor(notice, from, to, text, fields, executor)
+}

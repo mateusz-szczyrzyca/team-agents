@@ -287,3 +287,58 @@ func TestBusMessagesFromReturnsTypedError(t *testing.T) {
 		t.Errorf("expected error to be a storage error, got %T: %v", err, err)
 	}
 }
+
+func TestSendNotice(t *testing.T) {
+	tests := []struct {
+		name       string
+		notice     ScriptNotice
+		from       string
+		to         string
+		text       string
+		fields     map[string]string
+		wantCalled bool
+	}{
+		{
+			"member_finished notice",
+			NoticeMemberFinished,
+			"claude-haiku",
+			"gemini-1",
+			"Round 8 complete",
+			map[string]string{"team": "team-123", "agent": "claude-haiku"},
+			true,
+		},
+		{
+			"member_failed notice",
+			NoticeMemberFailed,
+			"codex-1",
+			"all",
+			"Task failed",
+			map[string]string{},
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			mockExecutor := func(cmd string, args []string) error {
+				called = true
+				if cmd != "agentbus" {
+					t.Errorf("expected agentbus, got %s", cmd)
+				}
+				if len(args) < 1 || args[0] != "send" {
+					t.Errorf("expected 'send' subcommand, got %v", args)
+				}
+				return nil
+			}
+
+			err := sendNoticeWithExecutor(tt.notice, tt.from, tt.to, tt.text, tt.fields, mockExecutor)
+			if err != nil {
+				t.Errorf("sendNotice failed: %v", err)
+			}
+			if !called {
+				t.Errorf("executor was not called")
+			}
+		})
+	}
+}
