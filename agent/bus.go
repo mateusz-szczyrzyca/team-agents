@@ -173,18 +173,21 @@ func busArgsJSON(params BusServeParams) []string {
 }
 
 // busMessagesFrom counts messages matching from: agent in messages.jsonl.
-func busMessagesFrom(messagesPath string, agent string) (int, error) {
-	file, err := os.Open(messagesPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+func busMessagesFrom(messagesPath string, agent string) (count int, err error) {
+	file, openErr := os.Open(messagesPath) // #nosec G304 -- path to messages.jsonl is constructed by the agent runner
+	if openErr != nil {
+		if errors.Is(openErr, os.ErrNotExist) {
 			return 0, nil
 		}
-		return 0, err
+		return 0, openErr
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	scanner := bufio.NewScanner(file)
-	count := 0
 	for scanner.Scan() {
 		var msg struct {
 			From string `json:"from"`
@@ -196,8 +199,8 @@ func busMessagesFrom(messagesPath string, agent string) (int, error) {
 			count++
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return 0, err
+	if scanErr := scanner.Err(); scanErr != nil {
+		return 0, scanErr
 	}
 	return count, nil
 }
