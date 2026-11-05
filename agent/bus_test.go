@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,6 +33,34 @@ func TestScriptNoticeValid(t *testing.T) {
 	}
 	if ScriptNotice("unknown_notice").Valid() {
 		t.Errorf("expected unknown_notice to be invalid")
+	}
+}
+
+func TestScriptNoticeUnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantValid bool
+		wantErr   bool
+	}{
+		{"valid_member_finished", `"member_finished"`, true, false},
+		{"valid_member_failed", `"member_failed"`, true, false},
+		{"unknown_notice", `"unknown_notice"`, false, true},
+		{"non_string", `42`, false, true},
+		{"invalid_json", `invalid`, false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var n ScriptNotice
+			err := json.Unmarshal([]byte(tt.input), &n)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Unmarshal error = %v, want error %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && !n.Valid() {
+				t.Errorf("expected %q to be valid", n)
+			}
+		})
 	}
 }
 
@@ -121,6 +150,43 @@ func TestBusArgsJSONLocal(t *testing.T) {
 	}
 }
 
+func TestBusArgsJSONZeroLimits(t *testing.T) {
+	params := BusServeParams{
+		BusDir:     "/home/dev/agents/bus",
+		Agent:      "claude-haiku",
+		QueueMax:   0,
+		InvSlots:   0,
+		AgentsHome: "/home/dev/agents",
+	}
+
+	got := busArgsJSON(params)
+	wantFlags := map[string]bool{
+		"--queue-max": false,
+		"--inv-slots": false,
+	}
+
+	for i := 0; i < len(got); i++ {
+		switch got[i] {
+		case "--queue-max":
+			wantFlags["--queue-max"] = true
+			if i+1 < len(got) && got[i+1] != "0" {
+				t.Errorf("expected --queue-max 0, got --queue-max %s", got[i+1])
+			}
+		case "--inv-slots":
+			wantFlags["--inv-slots"] = true
+			if i+1 < len(got) && got[i+1] != "0" {
+				t.Errorf("expected --inv-slots 0, got --inv-slots %s", got[i+1])
+			}
+		}
+	}
+
+	for flag, found := range wantFlags {
+		if !found {
+			t.Errorf("expected %s flag to be present even with zero value", flag)
+		}
+	}
+}
+
 func TestBusArgsJSONRemote(t *testing.T) {
 	params := BusServeParams{
 		RemoteTeam: true,
@@ -177,5 +243,44 @@ func TestBusMessagesFrom(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("expected count 0 for agent-3, got %d", count)
+	}
+}
+
+func TestBusMessagesFromLargeMessage(t *testing.T) {
+	tmpDir := t.TempDir()
+	msgsFile := filepath.Join(tmpDir, "messages.jsonl")
+
+	largeBody := string(make([]byte, 70*1024)) + "x"
+	for i := range largeBody {
+		largeBody = string([]byte{byte(i % 256)}) + largeBody
+	}
+
+	content := `{"id":1,"from":"agent-1","to":"all","text":"hello"}
+{"id":2,"from":"agent-1","to":"all","body":"` + largeBody + `"}
+{"id":3,"from":"agent-1","to":"all","text":"world"}
+`
+	if err := os.WriteFile(msgsFile, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := busMessagesFrom(msgsFile, "agent-1")
+	if err != nil {
+		t.Fatalf("busMessagesFrom failed with large message: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("expected count 3 with large message, got %d", count)
+	}
+}
+
+func TestBusMessagesFromReturnsTypedError(t *testing.T) {
+	tmpDir := t.TempDir()
+	msgsFile := filepath.Join(tmpDir, "missing_dir", "messages.jsonl")
+
+	count, err := busMessagesFrom(msgsFile, "agent-1")
+	if err == nil {
+		t.Errorf("expected error for non-existent directory, got nil")
+	}
+	if count != 0 {
+		t.Errorf("expected count 0 on error, got %d", count)
 	}
 }
