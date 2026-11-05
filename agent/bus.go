@@ -10,22 +10,36 @@ import (
 // ScriptNotice represents a typed bus notice.
 type ScriptNotice string
 
-// ScriptNotice constants.
+// ScriptNotice constants for bus message types.
 const (
-	NoticeMemberFinished    ScriptNotice = "member_finished"
-	NoticeMemberFailed      ScriptNotice = "member_failed"
-	NoticeMemberStopped     ScriptNotice = "member_stopped"
-	NoticeMemberQuestions   ScriptNotice = "member_questions"
-	NoticeMemberNoStatus    ScriptNotice = "member_no_status"
-	NoticeTeamStuck         ScriptNotice = "team_stuck"
-	NoticeWorkerHung        ScriptNotice = "worker_hung"
-	NoticeAgentHung         ScriptNotice = "agent_hung"
-	NoticeCoordinatorHung   ScriptNotice = "coordinator_hung"
-	NoticeHelperResult      ScriptNotice = "helper_result"
+	// NoticeMemberFinished is sent when a team member completes its work.
+	NoticeMemberFinished ScriptNotice = "member_finished"
+	// NoticeMemberFailed is sent when a team member fails its work.
+	NoticeMemberFailed ScriptNotice = "member_failed"
+	// NoticeMemberStopped is sent when a team member is stopped or terminated.
+	NoticeMemberStopped ScriptNotice = "member_stopped"
+	// NoticeMemberQuestions is sent when a team member has questions for the human.
+	NoticeMemberQuestions ScriptNotice = "member_questions"
+	// NoticeMemberNoStatus is sent when a team member ends without status.
+	NoticeMemberNoStatus ScriptNotice = "member_no_status"
+	// NoticeTeamStuck is sent when a team becomes stuck or unresponsive.
+	NoticeTeamStuck ScriptNotice = "team_stuck"
+	// NoticeWorkerHung is sent when a worker agent hangs or stops responding.
+	NoticeWorkerHung ScriptNotice = "worker_hung"
+	// NoticeAgentHung is sent when an agent hangs or stops responding.
+	NoticeAgentHung ScriptNotice = "agent_hung"
+	// NoticeCoordinatorHung is sent when a coordinator hangs or stops responding.
+	NoticeCoordinatorHung ScriptNotice = "coordinator_hung"
+	// NoticeHelperResult is sent when a helper provides results.
+	NoticeHelperResult ScriptNotice = "helper_result"
+	// NoticeHelperStartFailure is sent when a helper fails to start.
 	NoticeHelperStartFailure ScriptNotice = "helper_start_failed"
-	NoticeMemberPaused      ScriptNotice = "member_paused"
-	NoticeMemberBack        ScriptNotice = "member_back"
-	NoticeMemberOut         ScriptNotice = "member_out"
+	// NoticeMemberPaused is sent when a member is paused.
+	NoticeMemberPaused ScriptNotice = "member_paused"
+	// NoticeMemberBack is sent when a paused member returns.
+	NoticeMemberBack ScriptNotice = "member_back"
+	// NoticeMemberOut is sent when a member is excluded from the team.
+	NoticeMemberOut ScriptNotice = "member_out"
 )
 
 // Valid reports whether n is a valid ScriptNotice.
@@ -58,17 +72,26 @@ func (n *ScriptNotice) UnmarshalJSON(data []byte) error {
 // BusCause is an error cause for bus operations.
 type BusCause string
 
-// BusCause constants.
+// BusCause constants represent error causes from bus operations.
 const (
+	// BusInvalidArgument indicates an invalid argument was provided to agentbus.
 	BusInvalidArgument BusCause = "InvalidArgument"
-	BusNotFound        BusCause = "NotFound"
-	BusNotInTeam       BusCause = "NotInTeam"
-	BusPermission      BusCause = "Permission"
-	BusConflict        BusCause = "Conflict"
-	BusInvalidState    BusCause = "InvalidState"
-	BusStorage         BusCause = "Storage"
-	BusUnknownTool     BusCause = "UnknownTool"
-	BusProcess         BusCause = "Process"
+	// BusNotFound indicates a requested resource was not found.
+	BusNotFound BusCause = "NotFound"
+	// BusNotInTeam indicates an agent is not in a team.
+	BusNotInTeam BusCause = "NotInTeam"
+	// BusPermission indicates insufficient permissions for the operation.
+	BusPermission BusCause = "Permission"
+	// BusConflict indicates a state conflict preventing the operation.
+	BusConflict BusCause = "Conflict"
+	// BusInvalidState indicates an invalid state for the operation.
+	BusInvalidState BusCause = "InvalidState"
+	// BusStorage indicates a storage or I/O error.
+	BusStorage BusCause = "Storage"
+	// BusUnknownTool indicates an unknown agentbus tool was called.
+	BusUnknownTool BusCause = "UnknownTool"
+	// BusProcess indicates a subprocess or process error.
+	BusProcess BusCause = "Process"
 )
 
 // BusError is an error from agentbus.
@@ -114,18 +137,28 @@ func (e *BusError) Class() ErrorClass {
 	}
 }
 
-// Bus exit codes matching agentbus/errors.go.
+// Bus exit code constants match agentbus/errors.go exit status codes.
 const (
-	BusExitSuccess          = 0
-	BusExitInvalidArgument  = 2
-	BusExitNotFound         = 3
-	BusExitNotInTeam        = 4
-	BusExitPermission       = 5
-	BusExitConflict         = 6
-	BusExitInvalidState     = 7
-	BusExitStorage          = 8
-	BusExitUnknownTool      = 9
-	BusExitProcess          = 10
+	// BusExitSuccess is the exit code for successful agentbus operations.
+	BusExitSuccess = 0
+	// BusExitInvalidArgument is the exit code for invalid arguments.
+	BusExitInvalidArgument = 2
+	// BusExitNotFound is the exit code when a resource is not found.
+	BusExitNotFound = 3
+	// BusExitNotInTeam is the exit code when an agent is not in a team.
+	BusExitNotInTeam = 4
+	// BusExitPermission is the exit code for permission errors.
+	BusExitPermission = 5
+	// BusExitConflict is the exit code for state conflicts.
+	BusExitConflict = 6
+	// BusExitInvalidState is the exit code for invalid state errors.
+	BusExitInvalidState = 7
+	// BusExitStorage is the exit code for storage or I/O errors.
+	BusExitStorage = 8
+	// BusExitUnknownTool is the exit code for unknown tools.
+	BusExitUnknownTool = 9
+	// BusExitProcess is the exit code for process errors.
+	BusExitProcess = 10
 )
 
 // mapBusExitCode converts an agentbus exit code to a BusError.
@@ -172,27 +205,46 @@ func mapBusExitCode(code int, text string) *BusError {
 // BusServeParams contains parameters for agentbus serve.
 type BusServeParams struct {
 	// Local mode
-	BusDir     string
-	Agent      string
-	TaskID     string
-	TaskDir    string
-	RepoName   string
-	Branch     string
-	Worktree   string
-	Peers      string
-	Role       string
-	QueueMax   int
-	InvSlots   int
-	TasksDir   string
-	Team       string
-	Tier       string
-	AgentCmd   string
+	// BusDir is the path to the agentbus state directory.
+	BusDir string
+	// Agent is the name of the agent.
+	Agent string
+	// TaskID is the task identifier.
+	TaskID string
+	// TaskDir is the directory for the task.
+	TaskDir string
+	// RepoName is the repository name.
+	RepoName string
+	// Branch is the git branch name.
+	Branch string
+	// Worktree is the path to the git worktree.
+	Worktree string
+	// Peers is a comma-separated list of peer agent names.
+	Peers string
+	// Role is the agent role (worker, normal, or coordinator).
+	Role string
+	// QueueMax is the maximum size of the investigation queue.
+	QueueMax int
+	// InvSlots is the number of investigation slots available.
+	InvSlots int
+	// TasksDir is the directory containing tasks.
+	TasksDir string
+	// Team is the team identifier.
+	Team string
+	// Tier is the agent tier (worker or normal).
+	Tier string
+	// AgentCmd is the path to the agent command.
+	AgentCmd string
+	// AgentsHome is the agents home directory.
 	AgentsHome string
 
 	// Remote mode
+	// RemoteTeam indicates whether this is a remote team.
 	RemoteTeam bool
-	JobLead    string
-	Member     string
+	// JobLead is the job lead relay URL for remote mode.
+	JobLead string
+	// Member is the member identifier for remote mode.
+	Member string
 }
 
 // busArgsJSON builds argv for agentbus serve.
@@ -261,24 +313,28 @@ func busArgsJSON(params BusServeParams) []string {
 }
 
 // busMessagesFrom counts messages from a specific agent in messages.jsonl.
-func busMessagesFrom(path, agent string) (int, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
+func busMessagesFrom(path, agent string) (count int, err error) {
+	file, openErr := os.Open(path) // #nosec G304 -- path is constructed by the agent runner
+	if openErr != nil {
+		if os.IsNotExist(openErr) {
 			return 0, nil // File doesn't exist yet, count is 0
 		}
-		return 0, storageErr(err, "open messages.jsonl")
+		return 0, storageErr(openErr, "open messages.jsonl")
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	scanner := bufio.NewScanner(file)
 	const maxBufferSize = 1024 * 1024
 	scanner.Buffer(make([]byte, bufio.MaxScanTokenSize), maxBufferSize)
-	count := 0
+	count = 0
 
 	for scanner.Scan() {
 		var msg map[string]interface{}
-		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+		if scanErr := json.Unmarshal(scanner.Bytes(), &msg); scanErr != nil {
 			continue // Skip malformed lines
 		}
 
@@ -287,19 +343,19 @@ func busMessagesFrom(path, agent string) (int, error) {
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return 0, storageErr(err, "scan messages.jsonl")
+	if scanErr := scanner.Err(); scanErr != nil {
+		return 0, storageErr(scanErr, "scan messages.jsonl")
 	}
 
 	return count, nil
 }
 
-// Executor is a function type for executing external commands.
+// BusExecutor is a function type for executing agentbus commands.
 // Used for testing and production execution of agentbus subcommands.
-type Executor func(cmd string, args []string) error
+type BusExecutor func(cmd string, args []string) error
 
 // sendNoticeWithExecutor sends a typed notice through the bus using the provided executor.
-func sendNoticeWithExecutor(notice ScriptNotice, from, to, text string, fields map[string]string, executor Executor) error {
+func sendNoticeWithExecutor(notice ScriptNotice, from, to, text string, fields map[string]string, executor BusExecutor) error {
 	if !notice.Valid() {
 		return fmt.Errorf("invalid notice: %s", notice)
 	}
@@ -312,15 +368,4 @@ func sendNoticeWithExecutor(notice ScriptNotice, from, to, text string, fields m
 	args = append(args, text)
 
 	return executor("agentbus", args)
-}
-
-// sendNotice sends a typed notice through the bus.
-// Production implementation: executes agentbus send command directly.
-func sendNotice(notice ScriptNotice, from, to, text string, fields map[string]string) error {
-	executor := func(cmd string, args []string) error {
-		// Future: would use os/exec to actually run the command
-		// For now, this is a placeholder for production activation
-		return nil
-	}
-	return sendNoticeWithExecutor(notice, from, to, text, fields, executor)
 }

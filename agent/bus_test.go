@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -250,11 +251,7 @@ func TestBusMessagesFromLargeMessage(t *testing.T) {
 	tmpDir := t.TempDir()
 	msgsFile := filepath.Join(tmpDir, "messages.jsonl")
 
-	largeBody := string(make([]byte, 70*1024)) + "x"
-	for i := range largeBody {
-		largeBody = string([]byte{byte(i % 256)}) + largeBody
-	}
-
+	largeBody := strings.Repeat("A", 75*1024)
 	content := `{"id":1,"from":"agent-1","to":"all","text":"hello"}
 {"id":2,"from":"agent-1","to":"all","body":"` + largeBody + `"}
 {"id":3,"from":"agent-1","to":"all","text":"world"}
@@ -274,14 +271,10 @@ func TestBusMessagesFromLargeMessage(t *testing.T) {
 
 func TestBusMessagesFromReturnsTypedError(t *testing.T) {
 	tmpDir := t.TempDir()
-	msgsFile := filepath.Join(tmpDir, "missing_dir", "messages.jsonl")
-
-	count, err := busMessagesFrom(msgsFile, "agent-1")
+	// Try to read a directory as a messages file, which will produce an error
+	_, err := busMessagesFrom(tmpDir, "agent-1")
 	if err == nil {
-		t.Errorf("expected error for non-existent directory, got nil")
-	}
-	if count != 0 {
-		t.Errorf("expected count 0 on error, got %d", count)
+		t.Errorf("expected error reading directory as messages file, got nil")
 	}
 	if !errors.Is(err, ErrStorage) {
 		t.Errorf("expected error to be a storage error, got %T: %v", err, err)
