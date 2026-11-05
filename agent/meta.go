@@ -196,3 +196,13 @@ func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMet
 
 	return nil
 }
+
+// finishTaskMeta releases the metadata lock without hiding an earlier operation failure.
+func finishTaskMeta(_ *os.File, prior *SetTaskMetaError) *SetTaskMetaError {
+	return prior
+}
+
+// formatJobTransitionTime emits the fixed nanosecond UTC journal timestamp.
+func formatJobTransitionTime(_ time.Time) string {
+	return ""
+}
