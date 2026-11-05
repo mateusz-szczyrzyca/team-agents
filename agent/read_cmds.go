@@ -82,8 +82,15 @@ func (a *App) cmdHelpers(ctx context.Context, args []string, stdout io.Writer) *
 func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *CommandError {
 	busBin := a.busBinary()
 	busDir := a.busDirectory()
+	cfg := a.listingConfig()
 	queueMax := "3" // oracle default for INVESTIGATION_QUEUE_MAX
+	if cfg != nil && cfg.Scalars != nil && cfg.Scalars["INVESTIGATION_QUEUE_MAX"] != "" {
+		queueMax = cfg.Scalars["INVESTIGATION_QUEUE_MAX"]
+	}
 	invSlots := "1" // oracle default for INV_SLOTS
+	if cfg != nil && cfg.Scalars != nil && cfg.Scalars["INV_SLOTS"] != "" {
+		invSlots = cfg.Scalars["INV_SLOTS"]
+	}
 	if len(args) == 0 || args[0] == "" {
 		out, err := busCmd(ctx, a, busBin, "inv-list", "--dir", busDir, "--queue-max", queueMax, "--inv-slots", invSlots)
 		if err != nil {
