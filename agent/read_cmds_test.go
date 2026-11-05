@@ -159,6 +159,47 @@ func TestCmdInvListOracleDefaults(t *testing.T) {
 	}
 }
 
+func TestCmdInvConfiguredCapacities(t *testing.T) {
+	exec := &readCmdsTestExecutor{
+		responses: map[string]string{
+			"inv-list": "investigation queue\n",
+		},
+	}
+	app := newApp(exec, nil, nil)
+	app.busBin = "/bin/agentbus"
+	app.busDir = "/tmp/bus"
+	app.config = &Config{
+		Scalars: map[string]string{
+			"INVESTIGATION_QUEUE_MAX": "7",
+			"INV_SLOTS":               "2",
+		},
+	}
+
+	var out bytes.Buffer
+	err := app.cmdInv(context.Background(), nil, &out)
+	if err != nil {
+		t.Fatalf("cmdInv failed: %v", err)
+	}
+
+	if len(exec.commands) == 0 {
+		t.Fatal("no commands executed")
+	}
+	cmd := exec.commands[0]
+	hasQueueMax7 := false
+	hasSlots2 := false
+	for i, arg := range cmd.Args {
+		if arg == "--queue-max" && i+1 < len(cmd.Args) && cmd.Args[i+1] == "7" {
+			hasQueueMax7 = true
+		}
+		if arg == "--inv-slots" && i+1 < len(cmd.Args) && cmd.Args[i+1] == "2" {
+			hasSlots2 = true
+		}
+	}
+	if !hasQueueMax7 || !hasSlots2 {
+		t.Fatalf("expected --queue-max 7 --inv-slots 2, got: %v", cmd.Args)
+	}
+}
+
 func TestCmdNotes(t *testing.T) {
 	exec := &readCmdsTestExecutor{
 		responses: map[string]string{
