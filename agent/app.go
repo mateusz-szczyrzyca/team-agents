@@ -4,9 +4,13 @@ import "context"
 
 // App owns the effect boundaries for one invocation of the Go candidate.
 type App struct {
-	Executor Executor // command policy; nil is denied by execute
-	Clock    Clock    // time source for decisions and default random seeding
-	Random   Random   // owned non-cryptographic draws for selection decisions
+	Executor  Executor // command policy; nil is denied by execute
+	Clock     Clock    // time source for decisions and default random seeding
+	Random    Random   // owned non-cryptographic draws for selection decisions
+	tasksDir  string   // directory containing task metadata
+	workTree  string   // git worktree directory for reports and checkpoints
+	busDir    string   // agentbus state directory
+	agentHome string   // agent home directory
 }
 
 // newApp fills omitted boundaries without granting command execution permission.
