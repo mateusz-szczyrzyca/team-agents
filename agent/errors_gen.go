@@ -100,6 +100,9 @@ type CommandCause int
 const (
 	CommandUnknownCommand  CommandCause = iota // the requested command is not implemented [InvalidArgument]
 	CommandInvalidArgument                     // a command argument is missing or invalid [InvalidArgument]
+	CommandNotFound                            // a requested command target was not found [NotFound]
+	CommandConflict                            // the requested command encountered a conflicting state [Conflict]
+	CommandProcess                             // a helper command or process execution failed [Process]
 	CommandStorage                             // the shared state or a file could not be read or written [Storage]
 )
 
@@ -110,6 +113,9 @@ type CommandError = OpError[CommandCause]
 var commandCauses = [...]causeInfo{
 	{"UnknownCommand", ClassInvalidArgument},
 	{"InvalidArgument", ClassInvalidArgument},
+	{"NotFound", ClassNotFound},
+	{"Conflict", ClassConflict},
+	{"Process", ClassProcess},
 	{"Storage", ClassStorage},
 }
 
@@ -340,7 +346,8 @@ func (c AckCause) String() string { return c.info().name }
 type StatusCause int
 
 const (
-	StatusStorage StatusCause = iota // the shared state or a file could not be read or written [Storage]
+	StatusProcess StatusCause = iota // unit status inspection failed [Process]
+	StatusStorage                    // the shared state or a file could not be read or written [Storage]
 )
 
 // StatusError is the error of task status table display.
@@ -348,6 +355,7 @@ type StatusError = OpError[StatusCause]
 
 // statusCauses describes the StatusCause values (same order as the constants).
 var statusCauses = [...]causeInfo{
+	{"Process", ClassProcess},
 	{"Storage", ClassStorage},
 }
 
