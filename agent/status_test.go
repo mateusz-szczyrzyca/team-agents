@@ -345,7 +345,7 @@ func TestCmdStatusMetaReadError(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(metaFile, 0000); err != nil {
-		t.Skip("cannot set unreadable file permissions")
+		t.Fatal(err)
 	}
 	defer func() { _ = os.Chmod(metaFile, 0600) }()
 
