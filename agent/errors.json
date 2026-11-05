@@ -97,8 +97,36 @@
    "what": "task completion acknowledgement",
    "causes": [
     {"name": "NotFound", "class": "NotFound", "doc": "the task directory does not exist"},
+    {"name": "Ambiguous", "class": "Conflict", "doc": "more than one task directory matches the reference"},
     {"name": "StillRunning", "class": "Conflict", "doc": "the task is still running and cannot be acknowledged"}
    ]
+  },
+  {
+   "type": "Status",
+   "op": "status",
+   "what": "task status table display",
+   "causes": []
+  },
+  {
+   "type": "Show",
+   "op": "show",
+   "what": "task inspection display",
+   "causes": [
+    {"name": "NotFound", "class": "NotFound", "doc": "the task directory or metadata file does not exist"},
+    {"name": "Ambiguous", "class": "Conflict", "doc": "more than one task directory matches the reference"}
+   ]
+  },
+  {
+   "type": "Agents",
+   "op": "agents",
+   "what": "configured agent listing",
+   "causes": []
+  },
+  {
+   "type": "AgentsJSON",
+   "op": "agents_json",
+   "what": "agent JSON listing",
+   "causes": []
   }
  ]
 }
