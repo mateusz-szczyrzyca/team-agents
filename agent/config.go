@@ -24,6 +24,7 @@ type ConfigContext struct {
 
 // ConfigRequest describes an isolated configuration evaluation, never a secrets load.
 type ConfigRequest struct {
+	Args    []string      // caller arguments visible while sourcing configuration
 	File    string        // executable Bash configuration file
 	Env     []string      // complete subprocess environment; nil inherits the executor's environment
 	Context ConfigContext // explicit startup values overriding the environment

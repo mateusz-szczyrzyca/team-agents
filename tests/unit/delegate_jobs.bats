@@ -228,12 +228,15 @@ complete_job() {
   request_step round8-delegate:hw:rp2350
   # Preserve the real captured identity while replacing only the bounded task text.
   python3 - "$AGENTS_HOME/bus/state.json" <<'MAKE'
-import json, pathlib, sys
+import fcntl, json, pathlib, sys
 p = pathlib.Path(sys.argv[1])
-s = json.loads(p.read_text())
-s["helpers"]["1"]["request"] = '"' * 65536
-s["helpers"]["1"]["context"] = ""
-p.write_text(json.dumps(s))
+# Match the bus transaction lock so detached dispatch cannot overwrite this edit.
+with p.with_name("bus.lock").open("a+") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    s = json.loads(p.read_text())
+    s["helpers"]["1"]["request"] = '"' * 65536
+    s["helpers"]["1"]["context"] = ""
+    p.write_text(json.dumps(s))
 MAKE
   run source_cycle
   [ "$status" -eq 0 ]
