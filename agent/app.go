@@ -10,6 +10,7 @@ type App struct {
 	tasksDir  string   // directory containing task metadata
 	workTree  string   // git worktree directory for reports and checkpoints
 	busDir    string   // agentbus state directory
+	busBin    string   // path override for agentbus binary
 	agentHome string   // agent home directory
 }
 
