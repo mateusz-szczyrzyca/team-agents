@@ -66,9 +66,10 @@ func (c ResolveTaskCause) String() string { return c.info().name }
 type SetTaskMetaCause int
 
 const (
-	SetTaskMetaNotFound    SetTaskMetaCause = iota // the task directory does not exist [NotFound]
-	SetTaskMetaLockTimeout                         // acquiring the task metadata lock timed out [Conflict]
-	SetTaskMetaStorage                             // the shared state or a file could not be read or written [Storage]
+	SetTaskMetaNotFound        SetTaskMetaCause = iota // the task metadata file does not exist [NotFound]
+	SetTaskMetaInvalidArgument                         // the key or value is not valid metadata [InvalidArgument]
+	SetTaskMetaLockTimeout                             // acquiring the task metadata lock timed out [Conflict]
+	SetTaskMetaStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
 // SetTaskMetaError is the error of task metadata writing.
@@ -77,6 +78,7 @@ type SetTaskMetaError = OpError[SetTaskMetaCause]
 // setTaskMetaCauses describes the SetTaskMetaCause values (same order as the constants).
 var setTaskMetaCauses = [...]causeInfo{
 	{"NotFound", ClassNotFound},
+	{"InvalidArgument", ClassInvalidArgument},
 	{"LockTimeout", ClassConflict},
 	{"Storage", ClassStorage},
 }

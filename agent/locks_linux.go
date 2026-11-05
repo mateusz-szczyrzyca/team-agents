@@ -21,7 +21,7 @@ func lockTaskMeta(tasksDir, id string, timeout time.Duration) (*os.File, *SetTas
 		timeout = metaLockTimeout
 	}
 	path := filepath.Join(tasksDir, id, "meta.env.lock")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_CLOEXEC, 0600) // #nosec G304 -- tasksDir and id are trusted internal task coordinates.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_CLOEXEC, 0600) // #nosec G304,G703 -- tasksDir and id are trusted internal task coordinates
 	if err != nil {
 		return nil, fromStorage(SetTaskMetaStorage, storageErr(err, "open metadata lock %s", path))
 	}

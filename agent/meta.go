@@ -106,15 +106,15 @@ func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMet
 	}()
 
 	metaPath := filepath.Join(tasksDir, taskID, "meta.env")
-	data, readErr := os.ReadFile(metaPath) // #nosec G304 -- local task path under isolated tasks directory
-	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+	data, readErr := os.ReadFile(metaPath) // #nosec G304,G703 -- local task path under isolated tasks directory
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
+			return opErr(SetTaskMetaNotFound, "no such task: %s", taskID)
+		}
 		return fromStorage(SetTaskMetaStorage, storageErr(readErr, "read metadata %s", metaPath))
 	}
 
-	var m MetaFile
-	if readErr == nil {
-		m = parseMeta(data)
-	}
+	m := parseMeta(data)
 
 	if runID != "" {
 		currentRun, _ := m.Lookup("RUN")
@@ -125,7 +125,7 @@ func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMet
 
 	newLine, verr := formatMetaAssignment(key, value)
 	if verr != nil {
-		return fromStorage(SetTaskMetaStorage, storageErr(verr.asError(), "format metadata %s=%s", key, value))
+		return fromValue(SetTaskMetaInvalidArgument, verr)
 	}
 
 	var buf bytes.Buffer
@@ -150,19 +150,19 @@ func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMet
 		if closeErr := tmp.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
-		if removeErr := os.Remove(tmpName); removeErr != nil {
+		if removeErr := os.Remove(tmpName); removeErr != nil { // #nosec G703 -- tmpName is from os.CreateTemp
 			err = errors.Join(err, removeErr)
 		}
 		return fromStorage(SetTaskMetaStorage, storageErr(err, "write temp metadata %s", tmpName))
 	}
 	if err := tmp.Close(); err != nil {
-		if removeErr := os.Remove(tmpName); removeErr != nil {
+		if removeErr := os.Remove(tmpName); removeErr != nil { // #nosec G703 -- tmpName is from os.CreateTemp
 			err = errors.Join(err, removeErr)
 		}
 		return fromStorage(SetTaskMetaStorage, storageErr(err, "close temp metadata %s", tmpName))
 	}
-	if err := os.Rename(tmpName, metaPath); err != nil {
-		if removeErr := os.Remove(tmpName); removeErr != nil {
+	if err := os.Rename(tmpName, metaPath); err != nil { // #nosec G703 -- tmpName is from os.CreateTemp, metaPath is constructed from trusted task coordinates
+		if removeErr := os.Remove(tmpName); removeErr != nil { // #nosec G703 -- tmpName is from os.CreateTemp
 			err = errors.Join(err, removeErr)
 		}
 		return fromStorage(SetTaskMetaStorage, storageErr(err, "rename %s to %s", tmpName, metaPath))
@@ -178,7 +178,7 @@ func setTaskMeta(tasksDir, taskID, key, value, runID string) (retErr *SetTaskMet
 			recordBytes = append(recordBytes, '\n')
 
 			journalPath := filepath.Join(tasksDir, taskID, "job_transitions.jsonl")
-			jf, err := os.OpenFile(journalPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) // #nosec G304 -- local task path under isolated tasks directory
+			jf, err := os.OpenFile(journalPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) // #nosec G304,G703 -- local task path under isolated tasks directory
 			if err != nil {
 				return fromStorage(SetTaskMetaStorage, storageErr(err, "open journal %s", journalPath))
 			}
