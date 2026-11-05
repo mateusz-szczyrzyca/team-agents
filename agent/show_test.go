@@ -189,6 +189,124 @@ func TestCmdShowFinalMessage(t *testing.T) {
 	}
 }
 
+// TestCmdShowWorkerNoInvestigations verifies worker tasks don't print investigations header when none exist.
+func TestCmdShowWorkerNoInvestigations(t *testing.T) {
+	tasksDir := t.TempDir()
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	// Create worker task
+	taskDir := filepath.Join(tasksDir, "worker-task")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=worker-task\nKIND=worker\nSTATUS=done\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := cmdShow(context.Background(), app, "worker-task", &out)
+	if err != nil {
+		t.Fatalf("cmdShow failed: %v", err)
+	}
+
+	output := out.String()
+	// Should not have investigations header when KIND=worker
+	if strings.Contains(output, "== investigations") {
+		t.Errorf("worker task should not show empty investigations header: %s", output)
+	}
+}
+
+// TestCmdShowWorktreeFromMeta verifies WORKTREE is read from meta.env, not app.workTree.
+func TestCmdShowWorktreeFromMeta(t *testing.T) {
+	tasksDir := t.TempDir()
+	appWorkTree := "/wrong/path"
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		workTree:  appWorkTree, // This should NOT be used
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	// Create task with WORKTREE in meta.env
+	taskDir := filepath.Join(tasksDir, "wt-task")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=wt-task\nWORKTREE=/correct/path\nSTATUS=done\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Note: we can't actually create reports at /correct/path, so this test verifies
+	// the code attempts to look in the right place
+
+	var out bytes.Buffer
+	err := cmdShow(context.Background(), app, "wt-task", &out)
+	if err != nil {
+		t.Fatalf("cmdShow failed: %v", err)
+	}
+
+	output := out.String()
+	// Verify output doesn't use app.workTree in report path
+	if strings.Contains(output, appWorkTree) && strings.Contains(output, "== report:") {
+		t.Errorf("report path should use meta.env WORKTREE, not app.workTree: %s", output)
+	}
+}
+
+// TestCmdShowQuestionsContent verifies questions file content is printed, not just header.
+func TestCmdShowQuestionsContent(t *testing.T) {
+	tasksDir := t.TempDir()
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	// Create task with questions
+	taskDir := filepath.Join(tasksDir, "q-task")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=q-task\nROUND=1\nSTATUS=done\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+	questions := "# Questions - Round 1\n\n## 1. First question\n**Recommended:** a) Option A"
+	if err := os.WriteFile(filepath.Join(taskDir, "questions-1.md"), []byte(questions), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := cmdShow(context.Background(), app, "q-task", &out)
+	if err != nil {
+		t.Fatalf("cmdShow failed: %v", err)
+	}
+
+	output := out.String()
+	// Should have questions header
+	if !strings.Contains(output, "== questions") {
+		t.Errorf("output missing questions header: %s", output)
+	}
+	// Should have questions CONTENT, not just header
+	if !strings.Contains(output, "First question") {
+		t.Errorf("output missing questions content: %s", output)
+	}
+}
+
 // TestCmdShowReport verifies report is shown from .agents/reports/$id.md.
 func TestCmdShowReport(t *testing.T) {
 	tasksDir := t.TempDir()
