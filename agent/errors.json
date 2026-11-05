@@ -57,6 +57,39 @@
     {"name": "Wait", "class": "Process", "doc": "the subprocess could not be waited for"}
    ],
    "noStorage": true
+  },
+  {
+   "type": "Bus",
+   "op": "bus",
+   "what": "bus subcommand execution",
+   "causes": [
+    {"name": "InvalidArgument", "class": "InvalidArgument", "doc": "invalid argument for bus command"},
+    {"name": "NotFound", "class": "NotFound", "doc": "entity not found on the bus"},
+    {"name": "NotInTeam", "class": "NotInTeam", "doc": "agent is not in the specified team"},
+    {"name": "Permission", "class": "Permission", "doc": "operation not permitted on the bus"},
+    {"name": "Conflict", "class": "Conflict", "doc": "bus state conflict or lock busy"},
+    {"name": "InvalidState", "class": "InvalidState", "doc": "bus state does not permit the transition"},
+    {"name": "UnknownTool", "class": "UnknownTool", "doc": "tool is unknown to the bus"},
+    {"name": "Process", "class": "Process", "doc": "bus process failed to execute"}
+   ]
+  },
+  {
+   "type": "LogWrite",
+   "op": "log_write",
+   "what": "structured log writing",
+   "causes": []
+  },
+  {
+   "type": "RenderLog",
+   "op": "render_log",
+   "what": "readable log rendering",
+   "causes": []
+  },
+  {
+   "type": "Act",
+   "op": "act",
+   "what": "activity log writing",
+   "causes": []
   }
  ]
 }
