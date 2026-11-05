@@ -34,6 +34,8 @@ type LogEvent string
 const (
 	// LogNoticeFailed reports a failed best-effort bus notice.
 	LogNoticeFailed LogEvent = "notice_failed"
+	// LogNoticeSent reports successful delivery of a bus notice.
+	LogNoticeSent LogEvent = "notice_sent"
 	// LogEventScanFailed reports failed activity filtering.
 	LogEventScanFailed LogEvent = "event_scan_failed"
 	// LogCommandFailed reports failure of a command.
@@ -397,7 +399,7 @@ func (level *LogLevel) UnmarshalJSON(data []byte) error {
 
 // Valid reports whether this event is defined by this candidate's logging module.
 func (event LogEvent) Valid() bool {
-	return event == LogNoticeFailed || event == LogEventScanFailed || event == LogCommandFailed
+	return event == LogNoticeFailed || event == LogNoticeSent || event == LogEventScanFailed || event == LogCommandFailed
 }
 
 // UnmarshalJSON validates the event; errors contain *ValueError.

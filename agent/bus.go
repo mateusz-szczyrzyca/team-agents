@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"strconv"
 )
@@ -43,7 +45,15 @@ func (n ScriptNotice) Valid() bool {
 
 // UnmarshalJSON validates the notice; errors contain *ValueError.
 func (n *ScriptNotice) UnmarshalJSON(data []byte) error {
-	_ = data
+	var text string
+	if err := json.Unmarshal(data, &text); err != nil {
+		return valueWrap(err, "invalid script notice").asError()
+	}
+	candidate := ScriptNotice(text)
+	if !candidate.Valid() {
+		return valueErr("unknown script notice %q", text).asError()
+	}
+	*n = candidate
 	return nil
 }
 
@@ -152,12 +162,8 @@ func busArgsJSON(params BusServeParams) []string {
 		if params.Role != "" {
 			args = append(args, "--role", params.Role)
 		}
-		if params.QueueMax > 0 {
-			args = append(args, "--queue-max", strconv.Itoa(params.QueueMax))
-		}
-		if params.InvSlots > 0 {
-			args = append(args, "--inv-slots", strconv.Itoa(params.InvSlots))
-		}
+		args = append(args, "--queue-max", strconv.Itoa(params.QueueMax))
+		args = append(args, "--inv-slots", strconv.Itoa(params.InvSlots))
 		if params.TasksDir != "" {
 			args = append(args, "--tasks-dir", params.TasksDir)
 		}
@@ -180,58 +186,78 @@ func busArgsJSON(params BusServeParams) []string {
 }
 
 // busMessagesFrom counts messages matching from: agent in messages.jsonl.
-func busMessagesFrom(messagesPath string, agent string) (count int, err error) {
+func busMessagesFrom(messagesPath string, agent string) (count int, err *StorageError) {
 	file, openErr := os.Open(messagesPath) // #nosec G304 -- path to messages.jsonl is constructed by the agent runner
 	if openErr != nil {
 		if errors.Is(openErr, os.ErrNotExist) {
 			return 0, nil
 		}
-		return 0, openErr
+		return 0, storageErr(openErr, "open messages file %s", messagesPath)
 	}
 	defer func() {
-		if closeErr := file.Close(); closeErr != nil && err == nil {
-			err = closeErr
+		if closeErr := file.Close(); closeErr != nil {
+			cerr := storageErr(closeErr, "close messages file %s", messagesPath)
+			if err == nil {
+				err = cerr
+			} else {
+				err.Err = errors.Join(err.Err, closeErr)
+			}
 		}
 	}()
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		var msg struct {
-			From string `json:"from"`
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			var msg struct {
+				From string `json:"from"`
+			}
+			if json.Unmarshal(line, &msg) == nil && msg.From == agent {
+				count++
+			}
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
-			continue
-		}
-		if msg.From == agent {
-			count++
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			err = storageErr(readErr, "read messages file %s", messagesPath)
+			break
 		}
 	}
-	if scanErr := scanner.Err(); scanErr != nil {
-		return 0, scanErr
-	}
-	return count, nil
+	return count, err
 }
 
 // busCmd executes an agentbus subcommand via the app executor and maps its status code.
 func busCmd(ctx context.Context, app *App, busBin string, args ...string) (string, *BusError) {
-	_ = ctx
-	_ = app
-	_ = busBin
-	_ = args
-	return "", nil
+	var stdout, stderr bytes.Buffer
+	cmd := Command{
+		Name:   busBin,
+		Args:   args,
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+	result, eerr := app.execute(ctx, cmd)
+	if eerr != nil {
+		return "", opErr(BusProcess, "execute %s: %s", busBin, eerr.Error())
+	}
+	if result.ExitCode != BusExitSuccess {
+		return "", mapBusExitCode(result.ExitCode, stderr.String())
+	}
+	return stdout.String(), nil
 }
 
 // sendNotice constructs and delivers a typed script notice on the bus, logging delivery and warning on failure.
 func sendNotice(ctx context.Context, app *App, logger *Logger, busBin, busDir string, kind ScriptNotice, from, to, text string, fields ...string) *LogWriteError {
-	_ = ctx
-	_ = app
-	_ = logger
-	_ = busBin
-	_ = busDir
-	_ = kind
-	_ = from
-	_ = to
-	_ = text
-	_ = fields
+	args := []string{"send", "--dir", busDir, "--from", from, "--to", to, "--notice", string(kind)}
+	for _, field := range fields {
+		args = append(args, "--field", field)
+	}
+	args = append(args, text)
+	if err := Try(ctx, app, logger, LogNoticeFailed, Command{Name: busBin, Args: args}); err != nil {
+		return err
+	}
+	if logger != nil {
+		return logger.Log(ctx, LevelInfo, LogNoticeSent, "notice="+string(kind), "to="+to)
+	}
 	return nil
 }
