@@ -68,16 +68,15 @@ func (a *App) routeAgents(_ context.Context, stdout io.Writer) *CommandError {
 	if tasksDir == "" {
 		home := a.agentHome
 		if home == "" {
-			home = os.Getenv("HOME")
+			home = os.Getenv("AGENTS_HOME")
 		}
-		tasksDir = filepath.Join(home, "agents", "tasks")
+		if home == "" {
+			home = filepath.Join(os.Getenv("HOME"), "agents")
+		}
+		tasksDir = filepath.Join(home, "tasks")
 	}
 	busDir := a.busDirectory()
-	cfg := &Config{
-		Scalars: map[string]string{
-			"AGENTBUS_BIN": a.busBinary(),
-		},
-	}
+	cfg := a.listingConfig()
 	if err := a.cmdAgents(stdout, cfg, tasksDir, busDir); err != nil {
 		return fromStorage(CommandStorage, storageErr(err.asError(), "agents"))
 	}
@@ -86,7 +85,7 @@ func (a *App) routeAgents(_ context.Context, stdout io.Writer) *CommandError {
 
 // routeAgentsJSON delegates to cmdAgentsJSON.
 func (a *App) routeAgentsJSON(_ context.Context, stdout io.Writer) *CommandError {
-	cfg := &Config{}
+	cfg := a.listingConfig()
 	if err := a.cmdAgentsJSON(stdout, cfg); err != nil {
 		return fromStorage(CommandStorage, storageErr(err.asError(), "agents json"))
 	}
