@@ -1,7 +1,11 @@
 package main
 
 import (
-	"context"
+	"bufio"
+	"encoding/json"
+	"errors"
+	"os"
+	"strconv"
 )
 
 // ScriptNotice is the typed kind of an event published by the agent script on the bus.
@@ -75,20 +79,125 @@ type BusServeParams struct {
 
 // mapBusExitCode converts an agentbus process exit code and stderr to a typed BusError.
 func mapBusExitCode(code int, stderr string) *BusError {
-	return nil
+	if code == BusExitSuccess {
+		return nil
+	}
+	cause := BusStorage
+	switch code {
+	case BusExitInvalidArgument:
+		cause = BusInvalidArgument
+	case BusExitNotFound:
+		cause = BusNotFound
+	case BusExitNotInTeam:
+		cause = BusNotInTeam
+	case BusExitPermission:
+		cause = BusPermission
+	case BusExitConflict:
+		cause = BusConflict
+	case BusExitInvalidState:
+		cause = BusInvalidState
+	case BusExitStorage:
+		cause = BusStorage
+	case BusExitUnknownTool:
+		cause = BusUnknownTool
+	case BusExitProcess:
+		cause = BusProcess
+	}
+	return opErr(cause, "%s", stderr)
 }
 
 // busArgsJSON constructs the argv list for agentbus serve matching bash bus_args_json.
 func busArgsJSON(params BusServeParams) []string {
-	return nil
+	args := []string{"serve"}
+
+	if params.RemoteTeam {
+		if params.JobLead != "" {
+			args = append(args, "--relay", params.JobLead)
+		}
+		if params.Member != "" {
+			args = append(args, "--member", params.Member)
+		}
+	} else {
+		if params.BusDir != "" {
+			args = append(args, "--dir", params.BusDir)
+		}
+		if params.Agent != "" {
+			args = append(args, "--agent", params.Agent)
+		}
+		if params.TaskID != "" {
+			args = append(args, "--task", params.TaskID)
+		}
+		if params.TaskDir != "" {
+			args = append(args, "--task-dir", params.TaskDir)
+		}
+		if params.RepoName != "" {
+			args = append(args, "--repo", params.RepoName)
+		}
+		if params.Branch != "" {
+			args = append(args, "--branch", params.Branch)
+		}
+		if params.Worktree != "" {
+			args = append(args, "--worktree", params.Worktree)
+		}
+		if params.Peers != "" {
+			args = append(args, "--peers", params.Peers)
+		}
+		if params.Role != "" {
+			args = append(args, "--role", params.Role)
+		}
+		if params.QueueMax > 0 {
+			args = append(args, "--queue-max", strconv.Itoa(params.QueueMax))
+		}
+		if params.InvSlots > 0 {
+			args = append(args, "--inv-slots", strconv.Itoa(params.InvSlots))
+		}
+		if params.TasksDir != "" {
+			args = append(args, "--tasks-dir", params.TasksDir)
+		}
+		if params.Team != "" {
+			args = append(args, "--team", params.Team)
+		}
+		if params.Tier != "" {
+			args = append(args, "--tier", params.Tier)
+		}
+		if params.AgentCmd != "" {
+			args = append(args, "--agent-cmd", params.AgentCmd)
+		}
+	}
+
+	if params.AgentsHome != "" {
+		args = append(args, "--home", params.AgentsHome)
+	}
+
+	return args
 }
 
 // busMessagesFrom counts messages matching from: agent in messages.jsonl.
 func busMessagesFrom(messagesPath string, agent string) (int, error) {
-	return 0, nil
-}
+	file, err := os.Open(messagesPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer file.Close()
 
-// busCmd executes an agentbus subcommand via the app executor and maps its status code.
-func busCmd(ctx context.Context, app *App, busBin string, args ...string) (string, *BusError) {
-	return "", nil
+	scanner := bufio.NewScanner(file)
+	count := 0
+	for scanner.Scan() {
+		var msg struct {
+			From string `json:"from"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+			continue
+		}
+		if msg.From == agent {
+			count++
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
