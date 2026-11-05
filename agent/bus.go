@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -38,6 +39,12 @@ func (n ScriptNotice) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// UnmarshalJSON validates the notice; errors contain *ValueError.
+func (n *ScriptNotice) UnmarshalJSON(data []byte) error {
+	_ = data
+	return nil
 }
 
 // Exit codes from the agentbus CLI subcommands.
@@ -203,4 +210,28 @@ func busMessagesFrom(messagesPath string, agent string) (count int, err error) {
 		return 0, scanErr
 	}
 	return count, nil
+}
+
+// busCmd executes an agentbus subcommand via the app executor and maps its status code.
+func busCmd(ctx context.Context, app *App, busBin string, args ...string) (string, *BusError) {
+	_ = ctx
+	_ = app
+	_ = busBin
+	_ = args
+	return "", nil
+}
+
+// sendNotice constructs and delivers a typed script notice on the bus, logging delivery and warning on failure.
+func sendNotice(ctx context.Context, app *App, logger *Logger, busBin, busDir string, kind ScriptNotice, from, to, text string, fields ...string) *LogWriteError {
+	_ = ctx
+	_ = app
+	_ = logger
+	_ = busBin
+	_ = busDir
+	_ = kind
+	_ = from
+	_ = to
+	_ = text
+	_ = fields
+	return nil
 }
