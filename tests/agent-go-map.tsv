@@ -619,6 +619,12 @@ tests/unit/serena.bats	every model CLI (claude, codex, gemini, opencode) receive
 tests/unit/spend.bats	agent spend: a paid model's spending, a subscription's equivalent, by model	blackbox	R11	-	planned
 tests/unit/spend.bats	agent spend: a subscription's model in MODEL_PRICES is priced at its API rates, cached input at its own	blackbox	R11	-	planned
 tests/unit/spend.bats	agent spend --days: older runs are left out; --daily shows a line a day and model	blackbox	R11	-	planned
+tests/unit/script_split.bats	fix_items: the items a review lists under Recommendation, each once; [minor] ones easy, the others normal	source	R22	-	planned
+tests/unit/script_split.bats	a fix pass puts its items on the new team's board for the members in turn, not the coordinator; a minor one also goes to a worker	blackbox	R22	-	planned
+tests/unit/script_split.bats	the review prompt asks for each item to fix with its severity; the fix pass tells the coordinator the items are on the board	blackbox	R22	-	planned
+tests/unit/coordinator_alone.bats	coordinator_alone: the coordinator, its members not at work, nothing open on the board for anyone else	source	R22	-	planned
+tests/unit/coordinator_alone.bats	a coordinator working alone past AGENT_SOLO_COORD_STEPS is ended; its next run starts with the work to split	blackbox	R22	-	planned
+tests/unit/coordinator_alone.bats	AGENT_COORDINATOR_PREFER names who coordinates a new team	blackbox	R22	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned

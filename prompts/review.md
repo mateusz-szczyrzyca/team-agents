@@ -60,7 +60,8 @@ The task behind the PR is below. Check the PR's compliance with the repository i
    - `body` — in this order:
      1. the byline (below);
      2. `## Recommendation` — **right after the byline, before anything else** — with exactly one of these lines, as your
-        `VERDICT` is, then for changes the list of what to fix, one item a line:
+        `VERDICT` is, then for changes the list of what to fix, one item a line, each starting with its severity: `[critical]`, `[major]` or `[minor]`
+        (each item becomes a task of its own for the team; a minor one goes to a cheaper worker):
         - `ready-to-merge`: `✅ $\color{green}{\textbf{Ready to merge}}$`
         - `needs-fixes`: `🔧 $\color{red}{\textbf{Needs changes}}$`
         - `incomplete`: `🧩 $\color{red}{\textbf{Needs changes}}$ — incomplete`
