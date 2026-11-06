@@ -3434,6 +3434,10 @@ pr_ownership_note() {
     lead=$(team_pr_task "$TEAM")
     if [[ -n $lead ]]; then num=$(task_field "$lead" PR_NUMBER); num=${num:-$(task_field "$lead" ROUND_PR)}; fi
     [[ -z $num ]] || printf " This round's PR is #%s: every commit of this round goes there; open no other." "$num"
+    if [[ -n $num && -n $lead && -n $(task_field "$lead" ROUND_PR_BRANCH) ]]; then   # a team started on that PR (--pr)
+      printf " Its branch is %s: the coordinator pushes the round's work there (git push origin HEAD:%s)." \
+        "$(task_field "$lead" ROUND_PR_BRANCH)" "$(task_field "$lead" ROUND_PR_BRANCH)"
+    fi
     printf '\n'
     return 0
   fi
@@ -6691,7 +6695,7 @@ validate_investigation_topic() {
 cmd_run() {
   local members=() verify=0 autopilot=0 same_round=0 team_list="" resume_ref="" need_caps=() target_node=""
   local investigation=0 team_requested=0 last_team_requested=0 resolve_last_team=0
-  while [[ ${1:-} == --need || ${1:-} == --on || ${1:-} == --team || ${1:-} == --verify || ${1:-} == --autopilot || ${1:-} == --resume || ${1:-} == --same-round || ${1:-} == --last-team || ${1:-} == --investigation ]]; do
+  while [[ ${1:-} == --need || ${1:-} == --pr || ${1:-} == --on || ${1:-} == --team || ${1:-} == --verify || ${1:-} == --autopilot || ${1:-} == --resume || ${1:-} == --same-round || ${1:-} == --last-team || ${1:-} == --investigation ]]; do
     case $1 in
       --investigation) investigation=1; shift ;;
       --need)
@@ -6706,6 +6710,7 @@ cmd_run() {
       --verify) verify=1; shift ;;
       --autopilot) verify=1; autopilot=1; shift ;;   # --verify, then the merge and the next round by themselves
       --same-round) same_round=1; shift ;;
+      --pr) pin_pr=${2:-}; [[ $pin_pr =~ ^[0-9]+$ ]] || die "--pr takes the number of an open PR"; shift 2 ;;   # a team on that PR
       --resume)
         [[ -n ${2:-} ]] || die "usage: agent run --resume <team|task> [\"addition\" | -f file.md]"
         resume_ref=$2; resolve_last_team=0; shift 2 ;;
@@ -6832,16 +6837,41 @@ cmd_run() {
   local ts base team="" ids=() roots=() repos=() with_team=0
   for m in "${members[@]}"; do roots+=("$root"); repos+=("$(basename "$main_root")"); done
   ((${#members[@]} + ${#remotes[@]} > 1)) && with_team=1
+  local pin_start=HEAD pin_branch="" pin_url="" pin_base="" pin_json named owner_team
+  if [[ -n ${pin_pr:-} ]]; then   # a team on an open PR: from its head, on its base, the PR its round's
+    pin_json=$(trusted_prs "$main_root" "" open number,url,headRefName,headRefOid,baseRefName \
+      | jq -c --argjson n "$pin_pr" '[.[] | select(.number == $n)][0] // empty') || die "could not look up PR #$pin_pr"
+    [[ -n $pin_json ]] || die "PR #$pin_pr is not an open PR of this repository from a trusted account"
+    pin_branch=$(jq -r .headRefName <<< "$pin_json"); pin_url=$(jq -r .url <<< "$pin_json")
+    pin_start=$(jq -r .headRefOid <<< "$pin_json"); pin_base=$(jq -r '.baseRefName // "main"' <<< "$pin_json")
+    git -C "$root" fetch -q origin "$pin_branch" || die "could not fetch PR #$pin_pr's branch $pin_branch"
+    git -C "$root" cat-file -e "$pin_start^{commit}" || die "PR #$pin_pr's head $pin_start is not here after a fetch"
+  elif [[ $task =~ PR[[:space:]]*\#([0-9]+) ]]; then   # it names a PR: if that one is open here, say how to continue it
+    named=${BASH_REMATCH[1]}
+    if trusted_prs "$main_root" "" open number 2> /dev/null | jq -e --argjson n "$named" 'any(.[]; .number == $n)' > /dev/null; then
+      owner_team=$(grep -lx "PR_NUMBER=$named" "$TASKS"/*/meta.env 2> /dev/null | head -n 1 | xargs -r sed -n 's/^TEAM=//p') \
+        || owner_team=""   # no task yet, or none of that PR
+      echo "WARNING: the task names PR #$named, an open PR of this repository — this run starts on its own branches." >&2
+      echo "  To continue that PR: agent run --pr $named …${owner_team:+, or resume its team: agent run --resume $owner_team --same-round …}" >&2
+      log_warn task_names_open_pr "pr=$named" "team=${owner_team:-}"
+    fi
+  fi
   ts=$(allocate_run_ids "$with_team" members roots repos)
   base=$(git -C "$root" symbolic-ref --quiet --short HEAD || git -C "$root" rev-parse --short HEAD)
+  [[ -z $pin_base ]] || base=$pin_base   # a team on a PR (--pr): the PR's base
   ((${#members[@]} + ${#remotes[@]} > 1)) && team="$ts-team"
   for m in "${members[@]}"; do
-    if ! create_task "$m" "$task" "$root" "$main_root" "$base" "$ts" "$team"; then
+    if ! create_task "$m" "$task" "$root" "$main_root" "$base" "$ts" "$team" "$pin_start"; then
       abandon_run "could not create task for $m: ${CREATE_TASK_ERROR:-worktree creation failed}" "${ids[@]}"
     fi
     ids+=("$NEW_ID")
   done
 
+  if [[ -n ${pin_pr:-} ]]; then   # the round's PR from the first run, and its branch, in every task
+    local pt
+    for pt in "${ids[@]}"; do meta_set "$pt" ROUND_PR "$pin_pr"; meta_set "$pt" ROUND_PR_BRANCH "$pin_branch"; done
+    [[ -n $team ]] || { meta_set "${ids[0]}" PR_NUMBER "$pin_pr"; meta_set "${ids[0]}" PR_URL "$pin_url"; }
+  fi
   if [[ -n $team ]]; then
     local json='{}' i
     for i in "${ids[@]}"; do

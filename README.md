@@ -304,6 +304,11 @@ merged already, the heading says so: what comes now is the round's follow-up, an
 with `--intent-to-add` — it is staged and stashed again). A team that cannot take its work back — a resume refused — waits for you the same way, with
 the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
+**A team on an open PR.** `agent run --pr N …` starts a team (or a solo task) on PR #N of the repository, open and
+from a trusted account: its tasks start at the PR's head, their base is the PR's base, and the round's PR is #N from
+the first run — the agents are told its branch, where the round's work goes, and the checks and reviews find it. A
+task that names an open PR without `--pr` is told how to continue it (`--pr`, or resuming the team that owns it).
+
 **The round's PR.** `--verify` and the closing of a team find the round's PR by the coordinator's branch; else by the
 round's PR the team was given; else by an open PR of the repository, from a trusted account, whose head is the
 coordinator's commit — a team that pushed its work to another team's PR. With none, the round is not reviewed and you
