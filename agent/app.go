@@ -109,7 +109,7 @@ func (a *App) newLogger(subcommand string) *Logger {
 		}
 		clock = a.Clock
 	}
-	return &Logger{LogDir: logDir, Subcommand: subcommand, Stderr: stderr, Clock: clock, Journal: true, App: a}
+	return &Logger{LogDir: logDir, Subcommand: subcommand, Stderr: stderr, Clock: clock, Journal: true, App: a, Interactive: writerIsTerminal(stderr)}
 }
 
 // listingConfig uses production settings or oracle capacities for injected test apps.

@@ -12,6 +12,16 @@ import (
 	"strings"
 )
 
+// showInvList preserves Bash's best-effort lookup and warning delivery without aborting show.
+func showInvList(ctx context.Context, app *App, taskID string, out io.Writer) {
+	if logErr := Try(ctx, app, app.newLogger("show"), LogInvListFailed, Command{
+		Name: app.busBinary(), Args: []string{"inv-list", "--dir", app.busDirectory(), "--task", taskID}, Stdout: out,
+	}); logErr != nil {
+		// Logger already attempted every destination and reported write failures; show must continue.
+		return
+	}
+}
+
 // cmdShow displays full details of a single task: metadata, task.md, questions, result, report.
 func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowError {
 	tasksDir := app.tasksDir
@@ -96,13 +106,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	switch kind {
 	case kindWorker:
 		var invs bytes.Buffer
-		logger := app.newLogger("show")
-		// In bin/agent:460, inv-list is best effort; failure to write warning log is a nonfatal side effect.
-		_ = Try(ctx, app, logger, LogInvListFailed, Command{
-			Name:   app.busBinary(),
-			Args:   []string{"inv-list", "--dir", app.busDirectory(), "--task", taskID},
-			Stdout: &invs,
-		})
+		showInvList(ctx, app, taskID, &invs)
 		if s := strings.TrimRight(invs.String(), "\r\n"); s != "" {
 			if _, err := fmt.Fprintf(out, "\n== investigations\n%s\n", s); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write investigations"))
