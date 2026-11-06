@@ -126,6 +126,29 @@ func (a *App) run(args []string, stdout, stderr io.Writer) int {
 	a.Stdout = stdout
 	a.Stderr = stderr
 
+	// Load configuration and extract exported environment variables
+	home := os.Getenv("HOME")
+	agentsHome := os.Getenv("AGENTS_HOME")
+	if agentsHome == "" && home != "" {
+		agentsHome = filepath.Join(home, "agents")
+	}
+	confFile := filepath.Join(agentsHome, "agents.conf")
+	if home != "" && agentsHome != "" {
+		// Attempt to load configuration; treat failure as advisory (missing config is not fatal)
+		if cfg, cfgErr := a.loadConfig(context.Background(), ConfigRequest{File: confFile, Context: ConfigContext{Home: home, AgentsHome: agentsHome}}); cfgErr == nil {
+			// Extract exported environment variables from configuration
+			a.configEnv = make(map[string]string)
+			for _, e := range cfg.Env {
+				// Parse "KEY=value" format
+				if idx := strings.IndexByte(e, '='); idx > 0 {
+					key := e[:idx]
+					value := e[idx+1:]
+					a.configEnv[key] = value
+				}
+			}
+		}
+	}
+
 	cmd := "help"
 	var cmdArgs []string
 	if len(args) > 0 {
