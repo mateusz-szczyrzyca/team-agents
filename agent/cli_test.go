@@ -105,83 +105,41 @@ func TestDispatchWithArgs(t *testing.T) {
 
 // TestDelegatedBusExitCodesAndStderr verifies that delegated agentbus exit codes and stderr are preserved without duplication.
 func TestDelegatedBusExitCodesAndStderr(t *testing.T) {
-	t.Run("inv 99 exits BusExitNotFound and preserves stderr without duplication", func(t *testing.T) {
-		exec := &busTestExecutor{
-			result: CommandResult{ExitCode: BusExitNotFound},
-			stderr: "agentbus: inv-get: no investigation #99\n",
-		}
-		app := newApp(exec, nil, nil)
-		var stdout, stderr bytes.Buffer
-		code := app.run([]string{"inv", "99"}, &stdout, &stderr)
-		if code != BusExitNotFound {
-			t.Fatalf("run(inv 99) exit code = %d, want %d", code, BusExitNotFound)
-		}
-		wantStderr := "agentbus: inv-get: no investigation #99\n"
-		if stderr.String() != wantStderr {
-			t.Fatalf("run(inv 99) stderr = %q, want %q", stderr.String(), wantStderr)
-		}
-	})
-
-	t.Run("helpers exits BusExitPermission and preserves stderr", func(t *testing.T) {
-		exec := &busTestExecutor{
-			result: CommandResult{ExitCode: BusExitPermission},
-			stderr: "agentbus: permission denied\n",
-		}
-		app := newApp(exec, nil, nil)
-		var stdout, stderr bytes.Buffer
-		code := app.run([]string{"helpers"}, &stdout, &stderr)
-		if code != BusExitPermission {
-			t.Fatalf("run(helpers) exit code = %d, want %d", code, BusExitPermission)
-		}
-		wantStderr := "agentbus: permission denied\n"
-		if stderr.String() != wantStderr {
-			t.Fatalf("run(helpers) stderr = %q, want %q", stderr.String(), wantStderr)
-		}
-	})
-
-	t.Run("bus exits BusExitNotFound", func(t *testing.T) {
-		exec := &busTestExecutor{
-			result: CommandResult{ExitCode: BusExitNotFound},
-			stderr: "agentbus: bus state not found\n",
-		}
-		app := newApp(exec, nil, nil)
-		var stdout, stderr bytes.Buffer
-		code := app.run([]string{"bus", "5"}, &stdout, &stderr)
-		if code != BusExitNotFound {
-			t.Fatalf("run(bus 5) exit code = %d, want %d", code, BusExitNotFound)
-		}
-	})
-
-	t.Run("notes exits BusExitNotInTeam", func(t *testing.T) {
-		exec := &busTestExecutor{
-			result: CommandResult{ExitCode: BusExitNotInTeam},
-			stderr: "agentbus: not in team\n",
-		}
-		app := newApp(exec, nil, nil)
-		var stdout, stderr bytes.Buffer
-		code := app.run([]string{"notes", "myrepo"}, &stdout, &stderr)
-		if code != BusExitNotInTeam {
-			t.Fatalf("run(notes myrepo) exit code = %d, want %d", code, BusExitNotInTeam)
-		}
-	})
+	cases := []struct {
+		cmd    []string
+		code   int
+		stderr string
+	}{
+		{[]string{"inv", "99"}, BusExitNotFound, "agentbus: inv-get: no investigation #99\n"},
+		{[]string{"helpers"}, BusExitPermission, "agentbus: permission denied\n"},
+		{[]string{"bus", "5"}, BusExitNotFound, "agentbus: bus state not found\n"},
+		{[]string{"notes", "myrepo"}, BusExitNotInTeam, "agentbus: not in team\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd[0], func(t *testing.T) {
+			exec := &busTestExecutor{result: CommandResult{ExitCode: tc.code}, stderr: tc.stderr}
+			app := newApp(exec, nil, nil)
+			var stdout, stderr bytes.Buffer
+			if code := app.run(tc.cmd, &stdout, &stderr); code != tc.code {
+				t.Fatalf("run(%v) exit code = %d, want %d", tc.cmd, code, tc.code)
+			}
+			if tc.stderr != "" && stderr.String() != tc.stderr {
+				t.Fatalf("run(%v) stderr = %q, want %q", tc.cmd, stderr.String(), tc.stderr)
+			}
+		})
+	}
 
 	t.Run("agents exits BusExitPermission on bus failure", func(t *testing.T) {
 		exec := &busTestExecutor{
 			result: CommandResult{ExitCode: BusExitPermission},
 			stderr: "agentbus: permission denied\n",
 		}
-		cfg := &Config{
-			Scalars: map[string]string{
-				"INVESTIGATION_QUEUE_MAX": "3",
-				"INV_SLOTS":               "1",
-			},
-		}
+		cfg := &Config{Scalars: map[string]string{"INVESTIGATION_QUEUE_MAX": "3", "INV_SLOTS": "1"}}
 		app := newApp(exec, nil, nil)
 		app.config = cfg
 		app.tasksDir = t.TempDir()
 		var stdout, stderr bytes.Buffer
-		code := app.run([]string{"agents"}, &stdout, &stderr)
-		if code != BusExitPermission {
+		if code := app.run([]string{"agents"}, &stdout, &stderr); code != BusExitPermission {
 			t.Fatalf("run(agents) exit code = %d, want %d", code, BusExitPermission)
 		}
 	})

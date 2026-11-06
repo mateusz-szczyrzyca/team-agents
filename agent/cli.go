@@ -36,7 +36,7 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 		if err := cmdShow(ctx, a, args[0], stdout); err != nil {
 			switch err.Cause {
 			case ShowNotFound:
-				return opErr(CommandNotFound, "task %s not found", args[0])
+				return opErr(CommandNotFound, "%s", err.Message)
 			case ShowAmbiguous:
 				return opErr(CommandConflict, "%s", err.Message)
 			default:

@@ -828,14 +828,11 @@ team ID (`<timestamp>-team`) or any member's task ID.
 
 ### Reading and displaying tasks and agents
 
-- `agent status` or `agent ls`: list tasks in the tasks directory (`TASK`, `AGENT`, `STATUS`, `ROUND`, `RUN`, `REPO`)
-- `agent show <id>`: display task metadata, task description, questions header (if round > 0), investigations (for workers), agent's last message, and report
+- `agent status` / `agent ls`: list tasks in tasks directory (`TASK`, `AGENT`, `STATUS`, `ROUND`, `RUN`, `REPO`)
+- `agent show <id>`: display task metadata, description, questions header, investigations, final message, report
 - `agent agents`: list configured agents and investigators with CLI type, model, and allocation status
-- `agent bus [N]`: show recent bus messages (default: 30)
-- `agent inv [N|--all]`: show investigation queue or details of investigation N
-- `agent notes [repo]`: show repository notebook (default: current repository)
-- `agent helpers [--all]`: list helper agents and active investigations
-- `agent ack <id|all>`: mark task(s) as acknowledged
+- `agent bus [N]`: show recent bus messages; `agent ack <id|all>`: mark task(s) as acknowledged
+- `agent inv [N|--all]`: show investigation queue/details; `agent helpers [--all]`: list helpers; `agent notes [repo]`: notebooks
 
 ## The live panel
 

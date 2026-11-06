@@ -23,9 +23,9 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	if rerr != nil {
 		switch rerr.Cause {
 		case ResolveTaskNotFound:
-			return opErr(ShowNotFound, "no task matches: %s", taskID)
+			return opErr(ShowNotFound, "%s", rerr.Message)
 		case ResolveTaskAmbiguous:
-			return opErr(ShowAmbiguous, "ambiguous task ID: %s", taskID)
+			return opErr(ShowAmbiguous, "%s", rerr.Message)
 		default:
 			return fromStorage(ShowStorage, storageErr(rerr.Err, "%s", rerr.Message))
 		}
@@ -53,39 +53,38 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 		return fromStorage(ShowStorage, storageErr(err, "read %s", metaFile))
 	}
 	if err == nil {
-		lines := strings.Split(string(content), "\n")
-		if len(lines) > 0 && lines[len(lines)-1] == "" {
-			lines = lines[:len(lines)-1]
-		}
-		for _, line := range lines {
+		for _, line := range strings.Split(strings.TrimSuffix(string(content), "\n"), "\n") {
 			if _, err := fmt.Fprintf(out, "  %s\n", line); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write meta.env line"))
 			}
 		}
 	}
 
-	// Print task.md if it exists
+	// Print task.md
+	if _, err := fmt.Fprintf(out, "\n== task\n"); err != nil {
+		return fromStorage(ShowStorage, storageErr(err, "write task header"))
+	}
 	taskmdFile := filepath.Join(taskDir, "task.md")
 	content, err = os.ReadFile(taskmdFile) // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err != nil {
 		return fromStorage(ShowStorage, storageErr(err, "read %s", taskmdFile))
 	}
-	if err == nil {
-		if _, err := fmt.Fprintf(out, "\n== task\n"); err != nil {
-			return fromStorage(ShowStorage, storageErr(err, "write task header"))
-		}
-		if _, err := fmt.Fprint(out, string(content)); err != nil {
-			return fromStorage(ShowStorage, storageErr(err, "write task content"))
-		}
+	if _, err := fmt.Fprint(out, string(content)); err != nil {
+		return fromStorage(ShowStorage, storageErr(err, "write task content"))
 	}
 
 	// Print questions header if ROUND > 0
-	roundStr, _ := meta.Lookup("ROUND")
-	round, _ := strconv.Atoi(roundStr)
-	if round > 0 {
-		questionsFile := filepath.Join(taskDir, fmt.Sprintf("questions-%d.md", round))
-		if _, err := fmt.Fprintf(out, "\n== questions (round %d): %s\n", round, questionsFile); err != nil {
-			return fromStorage(ShowStorage, storageErr(err, "write questions header"))
+	roundStr, ok := meta.Lookup("ROUND")
+	if ok && roundStr != "" {
+		round, err := strconv.Atoi(roundStr)
+		if err != nil {
+			return fromStorage(ShowStorage, storageErr(err, "invalid ROUND %q", roundStr))
+		}
+		if round > 0 {
+			questionsFile := filepath.Join(taskDir, fmt.Sprintf("questions-%d.md", round))
+			if _, err := fmt.Fprintf(out, "\n== questions (round %d): %s\n", round, questionsFile); err != nil {
+				return fromStorage(ShowStorage, storageErr(err, "write questions header"))
+			}
 		}
 	}
 
@@ -97,14 +96,13 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	switch kind {
 	case kindWorker:
 		var invs bytes.Buffer
-		logger := &Logger{LogDir: filepath.Join(app.agentHome, "logs"), Subcommand: "show", Stderr: app.Stderr, Clock: app.Clock}
-		if lerr := Try(ctx, app, logger, LogInvListFailed, Command{
+		logger := app.newLogger("show")
+		// In bin/agent:460, inv-list is best effort; failure to write warning log is a nonfatal side effect.
+		_ = Try(ctx, app, logger, LogInvListFailed, Command{
 			Name:   app.busBinary(),
 			Args:   []string{"inv-list", "--dir", app.busDirectory(), "--task", taskID},
 			Stdout: &invs,
-		}); lerr != nil {
-			return fromStorage(ShowStorage, storageErr(lerr.asError(), "log inv-list failure"))
-		}
+		})
 		if s := strings.TrimRight(invs.String(), "\r\n"); s != "" {
 			if _, err := fmt.Fprintf(out, "\n== investigations\n%s\n", s); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write investigations"))
@@ -161,9 +159,11 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	}
 	if workTree != "" {
 		reportFile := filepath.Join(workTree, ".agents", "reports", taskID+".md")
-		if _, err := os.Stat(reportFile); err == nil { // #nosec G703 -- report file path under task worktree
-			if _, err := fmt.Fprintf(out, "\n== report: %s\n", reportFile); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write report line"))
+		if info, err := os.Stat(reportFile); err == nil { // #nosec G703 -- report file path under task worktree
+			if info.Mode().IsRegular() {
+				if _, err := fmt.Fprintf(out, "\n== report: %s\n", reportFile); err != nil {
+					return fromStorage(ShowStorage, storageErr(err, "write report line"))
+				}
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fromStorage(ShowStorage, storageErr(err, "stat %s", reportFile))

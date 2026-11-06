@@ -37,7 +37,7 @@ func createShowTaskDir(t *testing.T, tasksDir, id, meta string) string {
 			t.Fatal(err)
 		}
 	}
-	if id != "bad-task" && !strings.Contains(id, "no-taskmd") {
+	if id != "bad-task" && !strings.Contains(id, "no-taskmd") && !strings.Contains(id, "unreadable") {
 		if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte("# Task\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -66,7 +66,7 @@ func TestCmdShowMetaBlankLines(t *testing.T) {
 	if err := cmdShow(context.Background(), app, "show-test", &out); err != nil {
 		t.Fatal(err)
 	}
-	if want := "== show-test\n  ID=show-test\n  \n  KIND=remote-member\n  \n"; out.String() != want {
+	if want := "== show-test\n  ID=show-test\n  \n  KIND=remote-member\n  \n\n== task\n# Task\n"; out.String() != want {
 		t.Fatalf("metadata output = %q, want %q", out.String(), want)
 	}
 }
@@ -80,11 +80,8 @@ func TestCmdShowMetaenv(t *testing.T) {
 		t.Fatalf("cmdShow failed: %v", err)
 	}
 	output := out.String()
-	if !strings.Contains(output, "== show-test") {
-		t.Errorf("output missing task header: %s", output)
-	}
-	if !strings.Contains(output, "  ID=show-test") {
-		t.Errorf("output missing indented meta.env: %s", output)
+	if !strings.Contains(output, "== show-test") || !strings.Contains(output, "  ID=show-test") {
+		t.Fatalf("output missing meta.env: %s", output)
 	}
 }
 
@@ -101,11 +98,8 @@ func TestCmdShowTaskmd(t *testing.T) {
 		t.Fatalf("cmdShow failed: %v", err)
 	}
 	output := out.String()
-	if !strings.Contains(output, "== task") {
-		t.Errorf("output missing task.md header: %s", output)
-	}
-	if !strings.Contains(output, "# Test Task") {
-		t.Errorf("output missing task.md content: %s", output)
+	if !strings.Contains(output, "== task") || !strings.Contains(output, "# Test Task") {
+		t.Fatalf("output missing task: %s", output)
 	}
 }
 
@@ -113,17 +107,15 @@ func TestCmdShowTaskmd(t *testing.T) {
 func TestCmdShowQuestions(t *testing.T) {
 	app, tasksDir := newShowTestApp(t)
 	taskDir := createShowTaskDir(t, tasksDir, "questions-test", "ID=questions-test\nSTATUS=done\nROUND=2\nRUN=1\n")
-	questions := "# Questions for Round 2"
-	if err := os.WriteFile(filepath.Join(taskDir, "questions-2.md"), []byte(questions), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(taskDir, "questions-2.md"), []byte("# Questions for Round 2"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
 	if err := cmdShow(context.Background(), app, "questions-test", &out); err != nil {
 		t.Fatalf("cmdShow failed: %v", err)
 	}
-	output := out.String()
-	if !strings.Contains(output, "questions (round 2)") {
-		t.Errorf("output missing questions header: %s", output)
+	if !strings.Contains(out.String(), "questions (round 2)") {
+		t.Fatalf("output missing questions header: %s", out.String())
 	}
 }
 
@@ -140,11 +132,8 @@ func TestCmdShowFinalMessage(t *testing.T) {
 		t.Fatalf("cmdShow failed: %v", err)
 	}
 	output := out.String()
-	if !strings.Contains(output, "== the agent's last message") {
-		t.Errorf("output missing final message header: %s", output)
-	}
-	if !strings.Contains(output, final) {
-		t.Errorf("output missing final message content: %s", output)
+	if !strings.Contains(output, "== the agent's last message") || !strings.Contains(output, final) {
+		t.Fatalf("output missing final message: %s", output)
 	}
 }
 
@@ -277,11 +266,8 @@ func TestCmdShowWorkerWithInvestigations(t *testing.T) {
 		t.Fatalf("cmdShow failed: %v", err)
 	}
 	output := out.String()
-	if !strings.Contains(output, "== investigations") {
-		t.Fatalf("output missing investigations header: %s", output)
-	}
-	if !strings.Contains(output, "inv #1: active") {
-		t.Fatalf("output missing investigation details: %s", output)
+	if !strings.Contains(output, "== investigations") || !strings.Contains(output, "inv #1: active") {
+		t.Fatalf("output missing investigations: %s", output)
 	}
 }
 
@@ -304,6 +290,14 @@ func TestCmdShowFinalMessageTrailingNewlines(t *testing.T) {
 
 // TestCmdShowStorageFailures verifies that I/O failures for required and optional task files return ShowStorage.
 func TestCmdShowStorageFailures(t *testing.T) {
+	assertStorage := func(t *testing.T, app *App, id string) {
+		t.Helper()
+		var out bytes.Buffer
+		err := cmdShow(context.Background(), app, id, &out)
+		if err == nil || err.Cause != ShowStorage || !errors.Is(err, ErrStorage) {
+			t.Fatalf("expected ShowStorage/ErrStorage for %s, got %v", id, err)
+		}
+	}
 	t.Run("unreadable meta.env returns ShowStorage", func(t *testing.T) {
 		app, tasksDir := newShowTestApp(t)
 		taskDir := filepath.Join(tasksDir, "unreadable-meta")
@@ -313,14 +307,7 @@ func TestCmdShowStorageFailures(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte("ID=unreadable-meta\n"), 0000); err != nil {
 			t.Fatal(err)
 		}
-		var out bytes.Buffer
-		err := cmdShow(context.Background(), app, "unreadable-meta", &out)
-		if err == nil {
-			t.Fatal("expected ShowStorage error, got nil")
-		}
-		if err.Cause != ShowStorage || !errors.Is(err, ErrStorage) {
-			t.Fatalf("expected ShowStorage / ErrStorage, got %v", err)
-		}
+		assertStorage(t, app, "unreadable-meta")
 	})
 
 	t.Run("unreadable task.md returns ShowStorage", func(t *testing.T) {
@@ -329,41 +316,29 @@ func TestCmdShowStorageFailures(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte("task description\n"), 0000); err != nil {
 			t.Fatal(err)
 		}
-		var out bytes.Buffer
-		err := cmdShow(context.Background(), app, "unreadable-taskmd", &out)
-		if err == nil {
-			t.Fatal("expected ShowStorage error, got nil")
-		}
-		if err.Cause != ShowStorage || !errors.Is(err, ErrStorage) {
-			t.Fatalf("expected ShowStorage / ErrStorage, got %v", err)
-		}
+		assertStorage(t, app, "unreadable-taskmd")
 	})
 }
 
 // TestCmdShowWorktreeReportRegression verifies that the report line uses WORKTREE from meta.env when a real report exists.
 func TestCmdShowWorktreeReportRegression(t *testing.T) {
 	app, tasksDir := newShowTestApp(t)
-	appWorkTree := t.TempDir()
 	metaWorkTree := t.TempDir()
-	app.workTree = appWorkTree
-
-	reportDir := filepath.Join(metaWorkTree, ".agents", "reports")
-	if err := os.MkdirAll(reportDir, 0750); err != nil {
+	app.workTree = t.TempDir()
+	reportFile := filepath.Join(metaWorkTree, ".agents", "reports", "wt-task.md")
+	if err := os.MkdirAll(filepath.Dir(reportFile), 0750); err != nil {
 		t.Fatal(err)
 	}
-	reportFile := filepath.Join(reportDir, "wt-task.md")
 	if err := os.WriteFile(reportFile, []byte("# Report"), 0600); err != nil {
 		t.Fatal(err)
 	}
-
 	createShowTaskDir(t, tasksDir, "wt-task", fmt.Sprintf("ID=wt-task\nWORKTREE=%s\nSTATUS=done\n", metaWorkTree))
 	var out bytes.Buffer
 	if err := cmdShow(context.Background(), app, "wt-task", &out); err != nil {
 		t.Fatalf("cmdShow failed: %v", err)
 	}
-	wantLine := fmt.Sprintf("\n== report: %s\n", reportFile)
-	if !strings.Contains(out.String(), wantLine) {
-		t.Fatalf("output does not contain expected report line %q: %s", wantLine, out.String())
+	if wantLine := fmt.Sprintf("\n== report: %s\n", reportFile); !strings.Contains(out.String(), wantLine) {
+		t.Fatalf("output missing report line %q: %s", wantLine, out.String())
 	}
 }
 
@@ -374,17 +349,13 @@ func TestCmdShowFinalMessageTrailingNewlinesExact(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(taskDir, "final.md"), []byte("Message content\n\n\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-
 	var out bytes.Buffer
 	if err := cmdShow(context.Background(), app, "trailing-task", &out); err != nil {
 		t.Fatalf("cmdShow failed: %v", err)
 	}
-	if strings.HasSuffix(out.String(), "\n\n") {
-		t.Fatalf("output has trailing empty lines: %q", out.String())
-	}
 	want := "\n== the agent's last message\nMessage content\n"
-	if !strings.HasSuffix(out.String(), want) {
-		t.Fatalf("output does not end with exactly %q: %q", want, out.String())
+	if !strings.HasSuffix(out.String(), want) || strings.HasSuffix(out.String(), "\n\n") {
+		t.Fatalf("output does not end with %q: %q", want, out.String())
 	}
 }
 
@@ -443,13 +414,15 @@ func TestCmdShowRegressions(t *testing.T) {
 	if err := cmdShow(context.Background(), app, "rep-dir-task", &out); err != nil || strings.Contains(out.String(), "== report:") {
 		t.Fatalf("rep-dir err=%v out=%s", err, out.String())
 	}
-	var stdout, stderr bytes.Buffer
-	if code := app.run([]string{"show", "absent"}, &stdout, &stderr); code != 3 || stderr.String() != "agent: no unique task matches 'absent' (0 matches)\n" {
-		t.Fatalf("absent code=%d err=%q", code, stderr.String())
-	}
-	stdout.Reset()
-	stderr.Reset()
-	if code := app.run([]string{"show", "dup"}, &stdout, &stderr); code != 6 || stderr.String() != "agent: no unique task matches 'dup' (2 matches)\n" {
-		t.Fatalf("dup code=%d err=%q", code, stderr.String())
+	for _, tc := range []struct {
+		arg, msg string
+	}{
+		{"absent", "agent: no unique task matches 'absent' (0 matches)\n"},
+		{"dup", "agent: no unique task matches 'dup' (2 matches)\n"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := app.run([]string{"show", tc.arg}, &stdout, &stderr); code != 1 || stderr.String() != tc.msg {
+			t.Fatalf("%s code=%d err=%q", tc.arg, code, stderr.String())
+		}
 	}
 }

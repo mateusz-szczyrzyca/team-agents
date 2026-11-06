@@ -8,7 +8,9 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
+	"strings"
 )
 
 // ScriptNotice is the typed kind of an event published by the agent script on the bus.
@@ -123,10 +125,32 @@ func mapBusExitCode(code int, stderr string) *BusError {
 	return opErr(cause, "%s", stderr)
 }
 
+// isLaunchError reports whether the error represents a subprocess launch failure.
+func isLaunchError(err error) bool {
+	var execErr *ExecuteError
+	if errors.As(err, &execErr) && execErr.Cause == ExecuteStart {
+		return true
+	}
+	var procErr *ProcessError
+	if errors.As(err, &procErr) {
+		if errors.Is(procErr.Err, os.ErrNotExist) || errors.Is(procErr.Err, exec.ErrNotFound) {
+			return true
+		}
+	}
+	var busErr *BusError
+	if errors.As(err, &busErr) && strings.HasPrefix(busErr.Message, "execute ") {
+		return true
+	}
+	return false
+}
+
 // busExitCode returns the process exit status of a delegated agentbus failure.
 func busExitCode(err *BusError) int {
 	if err == nil {
 		return 0
+	}
+	if isLaunchError(err) {
+		return 127
 	}
 	switch err.Cause {
 	case BusInvalidArgument:
@@ -267,7 +291,7 @@ func busCmd(ctx context.Context, app *App, busBin string, args ...string) (strin
 	}
 	result, eerr := app.execute(ctx, cmd)
 	if eerr != nil {
-		return "", opErr(BusProcess, "execute %s: %s", busBin, eerr.Error())
+		return "", fromProcess(BusProcess, processErr(busBin, eerr, "execute %s: %s", busBin, eerr.Error()))
 	}
 	if app != nil && app.Stderr != nil && stderr.Len() > 0 {
 		n, werr := app.Stderr.Write(stderr.Bytes())

@@ -51,20 +51,20 @@ func taskDirectories(root string) ([]string, *StorageError) {
 			continue
 		}
 		info, statErr := os.Stat(root + "/" + entry.Name()) // #nosec G703 -- local directory entry inspection matches Bash task path resolution
-		if errors.Is(statErr, os.ErrNotExist) {
-			continue
-		}
 		if statErr != nil {
+			if errors.Is(statErr, os.ErrNotExist) {
+				continue
+			}
 			return nil, storageErr(statErr, "cannot inspect task %s", entry.Name())
 		}
 		if !info.IsDir() {
 			continue
 		}
 		metaInfo, metaErr := os.Stat(root + "/" + entry.Name() + "/meta.env") // #nosec G703 -- internal task metadata file inspection matches Bash path resolution
-		if errors.Is(metaErr, os.ErrNotExist) {
-			continue
-		}
 		if metaErr != nil {
+			if errors.Is(metaErr, os.ErrNotExist) {
+				continue
+			}
 			return nil, storageErr(metaErr, "cannot inspect task metadata %s", entry.Name())
 		}
 		if metaInfo.Mode().IsRegular() {

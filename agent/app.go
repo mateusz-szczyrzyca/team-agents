@@ -49,13 +49,11 @@ func (a *App) loadStartupConfig(ctx context.Context, args []string) *LoadConfigE
 	if selfErr != nil {
 		return fromProcess(LoadConfigShell, processErr("startup", selfErr, "locate executable"))
 	}
-	hostname := os.Getenv("HOSTNAME")
-	if hostname == "" {
-		detected, hostErr := os.Hostname()
-		if hostErr != nil {
+	hostname, hostErr := os.Hostname()
+	if hostErr != nil {
+		if hostname = os.Getenv("HOSTNAME"); hostname == "" {
 			return fromProcess(LoadConfigShell, processErr("startup", hostErr, "read hostname"))
 		}
-		hostname = detected
 	}
 	cfg, err := a.loadConfig(ctx, ConfigRequest{
 		Args: args, File: filepath.Join(agentsHome, "agents.conf"),
@@ -69,7 +67,47 @@ func (a *App) loadStartupConfig(ctx context.Context, args []string) *LoadConfigE
 	a.tasksDir = cfg.Scalars["TASKS"]
 	a.busDir = cfg.Scalars["BUS_DIR"]
 	a.busBin = cfg.Scalars["AGENTBUS_BIN"]
+	if err := os.Setenv("XDG_RUNTIME_DIR", a.xdgRuntimeDir()); err != nil {
+		return fromProcess(LoadConfigShell, processErr("startup", err, "set XDG_RUNTIME_DIR"))
+	}
 	return nil
+}
+
+// xdgRuntimeDir returns the configured XDG_RUNTIME_DIR, environment override, or default /run/user/<uid>.
+func (a *App) xdgRuntimeDir() string {
+	if a != nil && a.config != nil {
+		if v, ok := a.config.Scalars["XDG_RUNTIME_DIR"]; ok && v != "" {
+			return v
+		}
+	}
+	if v := os.Getenv("XDG_RUNTIME_DIR"); v != "" {
+		return v
+	}
+	return "/run/user/" + strconv.Itoa(os.Getuid())
+}
+
+// newLogger returns a Logger configured with the application's resolved log directory and settings.
+func (a *App) newLogger(subcommand string) *Logger {
+	logDir := ""
+	if a != nil && a.config != nil {
+		logDir = a.config.Scalars["LOG_DIR"]
+	}
+	if logDir == "" {
+		if a != nil && a.agentHome != "" {
+			logDir = filepath.Join(a.agentHome, "logs")
+		} else {
+			logDir = filepath.Join(os.Getenv("HOME"), "agents", "logs")
+		}
+	}
+	stderr := io.Writer(os.Stderr)
+	var clock Clock
+	if a != nil {
+		if a.Stderr != nil {
+			stderr = a.Stderr
+		}
+		clock = a.Clock
+	}
+	return &Logger{LogDir: logDir, Subcommand: subcommand, Stderr: stderr, Clock: clock, Journal: true, App: a}
 }
 
 // listingConfig uses production settings or oracle capacities for injected test apps.
@@ -98,6 +136,11 @@ func newApp(executor Executor, clock Clock, random Random) *App {
 
 // execute runs through the owned boundary, denying unconfigured execution.
 func (a *App) execute(ctx context.Context, cmd Command) (CommandResult, *ExecuteError) {
+	if a != nil && cmd.Env == nil {
+		if xdg := a.xdgRuntimeDir(); xdg != "" {
+			cmd.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+xdg)
+		}
+	}
 	if a.Executor == nil {
 		return newDeniedExecutor().Execute(ctx, cmd)
 	}
