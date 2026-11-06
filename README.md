@@ -302,6 +302,14 @@ merged already, the heading says so: what comes now is the round's follow-up, an
 with `--intent-to-add` — it is staged and stashed again). A team that cannot take its work back — a resume refused — waits for you the same way, with
 the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
+**A member whose model is out of service.** In an `--autopilot` team, a member whose model is overloaded at the
+provider past `AGENT_FAILOVER_MIN` (15) minutes, or for the `AGENT_FAILOVER_OVERLOADS`-th (3) time within an hour, or
+out of quota, is replaced by `agent _supervise`: its work in progress is committed and pushed on its branch, its board
+items go back to the board, its task is stopped, and the round goes back to the team with a free agent of
+`NORMAL_AGENTS` in its place — of another CLI when one is free, never one replaced elsewhere while its pause lasts.
+A coordinator replaced, the team gets a new one. Without a free agent the member waits its pause out, and you hear
+of it (log: `failover_done`, `failover_no_agent`).
+
 **A hand-back that waits for a run.** When `--autopilot` sends a round back to its team — after its checks, or
 for a fix pass — while a run of the team still goes on (a member still at work after its coordinator ended the
 round), the hand-back waits instead of calling you: `agent _supervise` hands the work back once the team's runs
