@@ -1539,6 +1539,10 @@ func main() {
 		cmdHelperList(os.Args[2:])
 	case "board-dump":
 		cmdBoardDump(os.Args[2:])
+	case "board-add":
+		cmdBoardAdd(os.Args[2:])
+	case "delegate":
+		cmdDelegate(os.Args[2:])
 	default:
 		exitOn(opErr(CliUnknownSubcommand, "unknown subcommand %q — inside an agent run, team_status, read_messages, claim_lead, board_list, send_message, etc. are MCP tools (mcp__agentbus__<name>), not shell commands; for CLI subcommands run agentbus without arguments", os.Args[1]).asError())
 	}

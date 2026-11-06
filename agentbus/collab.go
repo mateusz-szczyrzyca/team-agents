@@ -965,3 +965,46 @@ func cmdCheckpointGet(args []string) {
 	out.printf("%s", data)
 	exitOn(fromStorage(CmdCheckpointGetStorage, out.err).asError())
 }
+
+// cmdBoardAdd (board-add) adds an item to a team's board as one of its members (--as), the way that member's board_add
+// would: for a member (--for), whom it wakes, at a level (easy or normal). It prints the item's ID. The script splits a
+// fix pass's work with it.
+func cmdBoardAdd(args []string) {
+	fs := newFlagSet("board-add")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	team := fs.String("team", "", "team")
+	as := fs.String("as", "", "the member the item is added as")
+	title := fs.String("title", "", "the item's title")
+	details := fs.String("details", "", "the item's details")
+	level := fs.String("level", "normal", "easy or normal")
+	forMember := fs.String("for", "", "the member the item is for")
+	parseFlags(fs, args)
+	s := &Server{bus: &Bus{dir: *dir}, me: *as, team: *team}
+	id, err := s.boardAddFor(*title, *details, *level, *forMember)
+	exitOn(err.asError())
+	fmt.Println(id)
+}
+
+// cmdDelegate (delegate) hands a request to a worker as an agent (--as) of a team, the way that agent's delegate would:
+// the worker gets that agent's task, branch and worktree, and its result comes to that agent as a message. It prints
+// what delegate answers. The script gives a fix pass's minor items to workers with it.
+func cmdDelegate(args []string) {
+	fs := newFlagSet("delegate")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	team := fs.String("team", "", "team")
+	as := fs.String("as", "", "the agent the request is made as")
+	task := fs.String("task", "", "that agent's task")
+	repo := fs.String("repo", "", "its repository")
+	branch := fs.String("branch", "", "its branch")
+	worktree := fs.String("worktree", "", "its worktree")
+	agentCmd := fs.String("agent-cmd", "agent", "the agent command that dispatches the request to a worker")
+	home := fs.String("home", "", "AGENTS_HOME of that agent command")
+	request := fs.String("request", "", "what the worker is to do")
+	context := fs.String("context", "", "what the worker needs to know")
+	parseFlags(fs, args)
+	s := &Server{bus: &Bus{dir: *dir}, me: *as, team: *team, agentCmd: *agentCmd, home: *home,
+		info: Presence{Task: *task, Repo: *repo, Branch: *branch, Worktree: *worktree}}
+	out, err := s.delegate(*request, *context)
+	exitOn(err.asError())
+	fmt.Println(out)
+}

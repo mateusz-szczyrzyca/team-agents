@@ -304,6 +304,12 @@ merged already, the heading says so: what comes now is the round's follow-up, an
 with `--intent-to-add` — it is staged and stashed again). A team that cannot take its work back — a resume refused — waits for you the same way, with
 the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
+**The script splits a fix pass.** A model left to split a team's work may not: a coordinator worked alone through a
+fix pass while its members slept. When a review sends a round back, each item the reviews list under
+`## Recommendation` (one a line, tagged `[critical]`, `[major]` or `[minor]`) is on the new team's board before any of
+its runs starts, for a member in turn — never the coordinator, who integrates, unless it is alone; a `[minor]` one is
+an easy item that also goes to a worker at once, as its member's request (`agentbus board-add`, `agentbus delegate`).
+
 **The board is the round's plan.** What the checks and the reviews send back to a team (a fix pass, a bounce)
 reaches its coordinator alone; a member is told to take only the board items assigned to it, and so is it under the
 human's addition, which still reaches everyone. The coordinator puts the work on the board first — items that do not

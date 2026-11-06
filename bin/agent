@@ -2264,7 +2264,7 @@ do_fix_pass() { # parent findings text — the team goes on with the review(s) t
   repo=$(task_field "$parent" REPO_NAME); root=$(task_field "$parent" REPO_ROOT)
   if ((pass < VERIFY_MAX_FIX_PASSES)); then
     add="Fix pass $((pass + 1)) of $VERIFY_MAX_FIX_PASSES after the --verify review of PR #$PR_NUMBER ($PR_URL): $n critical or major finding(s).
-Fix every critical and major finding — or dispute one, with a justification, as a reply on the PR; fix minor ones only if trivial. Then finish as before (the PR ready; STATUS: DONE or STATUS: ROUND_DONE N/M): the PR is reviewed again.
+Fix every critical and major finding — or dispute one, with a justification, as a reply on the PR; fix minor ones only if trivial. Each item the reviews list is already on the board, for one member each — a minor one also with a worker, whose result goes to that member: integrate the items as they are done, and redo none. Then finish as before (the PR ready; STATUS: DONE or STATUS: ROUND_DONE N/M): the PR is reviewed again.
 
 The review:
 
@@ -6255,6 +6255,55 @@ resume_history() { # task → the human's answers from this task and its predece
   done
 }
 
+# fix_items text — the items to fix the reviews in the text list under their Recommendation, one a line, each once:
+# "<level>\t<item>" — easy for one tagged [minor], normal for any other
+fix_items() {
+  awk '
+    /^##[[:space:]]+Recommendation/ {inrec = 1; next}
+    /^##[[:space:]]/ {inrec = 0}
+    inrec && /^[[:space:]]*([-*]|[0-9]+[.)])[[:space:]]+/ {
+      line = $0; sub(/^[[:space:]]*([-*]|[0-9]+[.)])[[:space:]]+/, "", line)
+      key = tolower(line); gsub(/[^a-z0-9]/, "", key)
+      if (key == "" || key in seen) next
+      seen[key] = 1
+      print (tolower(line) ~ /^\[minor\]/ ? "easy" : "normal") "\t" line
+    }' <<< "$1"
+}
+
+# split_fix_items team text task… — a fix pass's work on its new team's board before any of its runs starts, so that
+# no member waits for its coordinator to split it: each item the reviews list (fix_items) for a member in turn — never
+# the coordinator, who integrates, unless it is alone; an easy one also goes to a worker at once, as its member's
+# request: the worker's result comes to that member as a message. A failure is logged and leaves the item to the team.
+split_fix_items() {
+  local team=$1 text=$2 t lead=${split_lead:-} members=() tasks=() i=0 lvl item who wid bid out
+  shift 2
+  for t in "$@"; do
+    [[ $(task_field "$t" AGENT) != "$lead" ]] || continue
+    members+=("$(task_field "$t" AGENT)"); tasks+=("$t")
+  done
+  if ((${#members[@]} == 0)); then members=("$(task_field "$1" AGENT)"); tasks=("$1"); fi
+  while IFS=$'\t' read -r lvl item; do
+    [[ -n $item ]] || continue
+    who=${members[i % ${#members[@]}]}; wid=${tasks[i % ${#tasks[@]}]}; i=$((i + 1))
+    if ! bid=$(bus board-add --dir "$BUS_DIR" --team "$team" --as "${lead:-$who}" --title "${item:0:160}" --details "$item" \
+        --level "$lvl" --for "$who" 2>&1); then
+      log_warn fix_item_failed "team=$team" "item=${item:0:80}" "reason=${bid:0:300}"
+      continue
+    fi
+    bid=$(grep -oE '\bB[0-9]+\b' <<< "$bid" | head -n 1)   # board-add says "Added B3 (easy). …"
+    log_info fix_item "team=$team" "item=$bid" "for=$who" "level=$lvl"
+    [[ $lvl == easy && ${#WORKER_AGENTS[@]} -gt 0 ]] || continue
+    if out=$(bus delegate --dir "$BUS_DIR" --team "$team" --as "$who" --task "$wid" --repo "$(task_field "$wid" REPO_NAME)" \
+        --branch "$(task_field "$wid" BRANCH)" --worktree "$(task_field "$wid" WORKTREE)" --agent-cmd "$SELF" --home "$AGENTS_HOME" \
+        --request "$item — board item $bid of team $team, a fix after a review of the round's PR" \
+        --context "$who owns the item and checks your result before pushing it." 2>&1); then
+      log_info fix_item_to_worker "team=$team" "item=$bid" "for=$who"
+    else
+      log_warn fix_item_to_worker_failed "team=$team" "item=$bid" "reason=${out:0:300}"
+    fi
+  done < <(fix_items "$text")
+}
+
 resume_run() {
   local carry # ref verify same_round [addition...] — resumes an interrupted team or task from its last checkpoint
   local ref=$1 verify=$2 same_round=$3; shift 3
@@ -6548,6 +6597,9 @@ resume_run() {
 
   trap - EXIT; RESUME_NEW_IDS=()   # made: from here on the tasks run (a runner that fails to start is its own failure)
   unlock_task_ids
+  if [[ -n $new_team ]] && ((${AGENT_FIX_PASS:-0} > 0)); then   # the work split before anyone runs
+    split_fix_items "$new_team" "$add" "${ids[@]}"
+  fi
   for id in "${ids[@]}"; do start_runner "$id" new || exit 1; done
   log_info resumed "from=${old_team:-$first}" "new_team=$new_team" "tasks=${ids[*]}"
   echo "Resumed ${old_team:-$first} from the last checkpoint:"
