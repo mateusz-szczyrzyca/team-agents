@@ -235,6 +235,7 @@ func busCmd(ctx context.Context, app *App, busBin string, args ...string) (strin
 		Args:   args,
 		Stdout: &stdout,
 		Stderr: &stderr,
+		Env:    app.mergeConfigEnv(nil),
 	}
 	result, eerr := app.execute(ctx, cmd)
 	if eerr != nil {
@@ -257,7 +258,7 @@ func sendNotice(ctx context.Context, app *App, logger *Logger, busBin, busDir st
 		args = append(args, "--field", field)
 	}
 	args = append(args, text)
-	if err := Try(ctx, app, logger, LogNoticeFailed, Command{Name: busBin, Args: args}); err != nil {
+	if err := Try(ctx, app, logger, LogNoticeFailed, Command{Name: busBin, Args: args, Env: app.mergeConfigEnv(nil)}); err != nil {
 		return err
 	}
 	if logger != nil {

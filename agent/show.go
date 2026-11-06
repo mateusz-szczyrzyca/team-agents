@@ -99,6 +99,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer, stderr
 			Name:   app.busBinary(),
 			Args:   []string{"inv-list", "--dir", app.busDirectory(), "--task", taskID},
 			Stdout: &invOut,
+			Env:    app.mergeConfigEnv(nil),
 		})
 		// Try returns nil on success, *LogWriteError on logging failure; inv-list failure is non-fatal (best-effort) so continue on error
 		_ = tryErr // nolint:errcheck -- inv-list logging failure is best-effort and non-fatal; continue showing task
