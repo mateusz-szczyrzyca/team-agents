@@ -11,6 +11,7 @@ type Config struct {
 	Scalars     map[string]string            // scalar settings, including explicitly empty strings
 	Indexed     map[string]map[string]string // indexed arrays, keyed by decimal Bash index
 	Associative map[string]map[string]string // associative arrays, including declared empty maps
+	Env         []string                     // exported environment variables from Bash configuration evaluation
 }
 
 // ConfigContext supplies startup paths and host values without reading the installation.
