@@ -508,6 +508,9 @@ tests/unit/wake_cmd.bats	agent wake: a paused task resumes now, not at its pause
 tests/unit/wake_cmd.bats	agent wake refuses a task that is not paused	blackbox	R25	-	planned
 tests/unit/wake_cmd.bats	agent wake on a remote member's proxy task asks its node to resume it	blackbox	R46	-	planned
 tests/unit/wake_cmd.bats	a node resumes its paused member at once when the lead asks (WakesNow)	source	R46	-	planned
+tests/unit/worker_draw.bats	after a worker of one provider, a worker of another is drawn — at random among them	source	R21	-	planned
+tests/unit/worker_draw.bats	with only workers of the last provider free, one of them is drawn	source	R21	-	planned
+tests/unit/worker_draw.bats	drawn and recorded one after another, every worker gets work — openrouter-deepseek41 too	source	R21	-	planned
 tests/unit/web.bats	agent _agents-json lists every configured agent and investigator	blackbox	R09	-	planned
 tests/unit/web.bats	the web interface shows the tasks, the agents and a task's activity	blackbox	R53	-	planned
 tests/unit/web.bats	answering in the browser resumes the task; ok accepts the recommendation	blackbox	R53	-	planned
