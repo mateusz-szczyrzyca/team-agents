@@ -580,6 +580,16 @@ Put the token into `secrets.env` as `GH_TOKEN` (gh uses it instead of a stored l
 - Notification hooks (`NOTIFY_CMD`) get their tokens from `secrets.env` too: use a token that can only send
   notifications.
 
+Besides a run's own notification: a new task or team (`agent run`), and each next round `--autopilot` starts, is
+announced with 🚀 — once for a team; a PR the autopilot merges with 🟣 "PR merged", naming who gave it "ready to merge"
+(the two reviewers, their CLI and model). Each of these is a file of its own (`<task>-r<run>-merged-summary.md`,
+`-started-`, `-round-start-`), beside the run's own notification, which it does not overwrite.
+
+Every notification's title — its first line, the repository's name — starts with its icon, so that a device shows
+the kind first: the status's icon, and the note's when it starts with another one (`🟣 team-agents`,
+`❌⛔ team-agents`); the lead's notifications of jobs, the icon of the job's state (`⏹ team-agents`). The body is as
+before.
+
 ### Security testing
 
 Be careful with tasks such as "find vulnerabilities", "test the security of X" or penetration tests. An agent

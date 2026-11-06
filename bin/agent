@@ -1198,7 +1198,9 @@ push_text() { # repo line... — a notification outside the normal task cycle
   mkdir -p "$NOTIFY_DIR"
   local f
   f="$NOTIFY_DIR/$(date +%Y%m%d-%H%M%S)-$RANDOM-summary.md"
-  { printf '%s\n' "$repo"; printf '%s\n' "$@"; } > "$f"
+  local icon
+  icon=$(leading_icon "${1:-}")   # the icon its text starts with comes first in the title, seen at once
+  { printf '%s\n' "${icon:+$icon }$repo"; printf '%s\n' "$@"; } > "$f"
   notify_send "$f"
 }
 
@@ -1849,11 +1851,11 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
   wr=$(task_field "$id" WORK_ROUND); wrs=$(task_field "$id" WORK_ROUNDS)
   if [[ -z $wr || -z $wrs ]] || ((wr >= wrs)); then
     auto_stage "$id" ""   # the task is done
-    notify "$id" merged "" "merged PR #$num — both reviews: ready to merge; ${wr:+round $wr/$wrs was the last: }the task is done"
+    notify "$id" merged "" "PR #$num merged by --autopilot — ready to merge: $(pair_reviewers "$(task_field "$id" REVIEW_PAIR)"); ${wr:+round $wr/$wrs was the last: }the task is done — $url"
     return 0
   fi
   auto_stage "$id" "PR #$num merged — round $((wr + 1))/$wrs starts"
-  notify "$id" merged "" "merged PR #$num — both reviews: ready to merge; round $((wr + 1))/$wrs starts"
+  notify "$id" merged "" "PR #$num merged by --autopilot — ready to merge: $(pair_reviewers "$(task_field "$id" REVIEW_PAIR)"); round $wr/$wrs is done — $url"
   team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=next-round"   # a busy team cannot be resumed
   automation_allowed "$id" || return 0
   ref=$(task_field "$id" TEAM); ref=${ref:-$id}
@@ -1865,6 +1867,7 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
     return 0
   fi
   log_info autopilot_next_round "task=$id" "round=$((wr + 1))/$wrs" "output=${out:0:300}"
+  notify "$id" round-start "" "round $((wr + 1))/$wrs starts on fresh branches from the merged $base — team ${ref}"
   auto_stage "$id" ""   # the next round's team has the work
 }
 
@@ -2274,14 +2277,14 @@ ${text:0:8000}"
     else
       log_error review_fix_resume_failed "task=$parent" "reason=${HANDBACK_OUT:0:500}"
       handover_failed "$parent" "the fix pass" "$HANDBACK_OUT"
-      push_text "$repo" "--verify: the review of PR #$PR_NUMBER found $n critical or major finding(s), but the team could not be resumed:" "${HANDBACK_OUT:0:500}"
+      push_text "$repo" "⛔ --verify: the review of PR #$PR_NUMBER found $n critical or major finding(s), but the team could not be resumed:" "${HANDBACK_OUT:0:500}"
     fi
     return 0
   fi
   owner=${AGENT_HUMAN_GITHUB:-$(github_owner "$root")}
   auto_stage "$parent" "waits for you: the reviews still find problems after $pass fix passes" no-comment   # the mention below says it
   (cd "$root" && try review_mention_failed gh pr comment "$PR_URL" --body "${owner:+@$owner }The fixes are still not done: after $pass fix passes the review still finds $n critical or major problem(s) (see the review above). The team has stopped; your decision is needed.")
-  push_text "$repo" "--verify: PR #$PR_NUMBER still has $n critical or major problem(s) after $pass fix passes — your decision is needed: $PR_URL"
+  push_text "$repo" "⛔ --verify: PR #$PR_NUMBER still has $n critical or major problem(s) after $pass fix passes — your decision is needed: $PR_URL"
   log_warn review_fixes_exhausted "task=$parent" "passes=$pass" "findings=$n"
 }
 
@@ -2876,7 +2879,7 @@ request_review() { # coordinator task id — --verify: queue a PR review by an i
   num=$(jq_soft pr_lookup_parse -r '.[0].number // empty' <<< "${pr:-[]}")
   if [[ -z $url ]]; then
     act "$id" err "--verify: no PR found for branch $branch — review skipped"
-    push_text "$(task_field "$id" REPO_NAME)" "Team $(task_field "$id" TEAM): --verify — no PR found for branch $branch, investigator review skipped."
+    push_text "$(task_field "$id" REPO_NAME)" "⚠ Team $(task_field "$id" TEAM): --verify — no PR found for branch $branch, investigator review skipped."
     return 0
   fi
   meta_set "$id" PR_NUMBER "$num"; meta_set "$id" PR_URL "$url"
@@ -3020,7 +3023,7 @@ $(team_summary "$team")" ;;
       start_precheck "$ltask"
       act "$ltask" info "all members finished — the round goes to review once its head passes the checks"
     fi
-    push_text "$REPO_NAME" "Team $team finished without being closed by its coordinator:" "$(team_summary "$team")"
+    push_text "$REPO_NAME" "⚠ Team $team finished without being closed by its coordinator:" "$(team_summary "$team")"
   elif team_all sleep && ! team_waits_on_others "$team" && { sleep 3   # a pending wake-up gets a moment; re-check
          [[ $(team_done_flag "$team") != true ]] && team_all sleep && ! team_all done; }; then
     local n=1
@@ -3031,7 +3034,7 @@ $(team_summary "$team")" ;;
         "TEAM STUCK: all members are asleep. As the coordinator, check the state (team_status, read_messages) and either assign work or finish the team task (STATUS: DONE). Waiting for the human to merge a PR? Then end the round instead of sleeping: STATUS: ROUND_DONE N/M." \
         "team=$team"
     elif ((n == 2)); then
-      push_text "$REPO_NAME" "Team $team is stuck: all members are asleep and waking the coordinator did not help." \
+      push_text "$REPO_NAME" "⛔ Team $team is stuck: all members are asleep and waking the coordinator did not help." \
         "See: agent live. Nudge them with a message (m / agent say) or stop: agent stop <coordinator task id>. If the coordinator waits for you to merge a PR: merge it, then tell it so (agent say)." \
         "$(team_summary "$team")"
     fi
@@ -4010,6 +4013,27 @@ run_opencode() { # id mode n prompt_file dir ; sets RC, FINAL  (OpenRouter, Deep
   fi
 }
 
+# pair_reviewers pair-dir — a review pair's two reviewers, with their CLI and model: "inv-a (codex · gpt-6), inv-b (…)"
+# leading_icon text — the icon a text starts with: its first word, when that has no letter, digit or ASCII punctuation
+# and is no dash or dot ("⛔", "✅✅", "🟣"); nothing else
+leading_icon() {
+  local LC_ALL=C w=${1%% *}   # ASCII classes only: in a UTF-8 locale an emoji is [[:punct:]]
+  [[ -n $w && $w != *[[:alnum:]]* && $w != *[[:punct:]]* ]] || return 0
+  case $w in "—"|"–"|"·"|"…") return 0 ;; esac   # a dash or a dot, not an icon
+  printf '%s' "$w"
+}
+
+pair_reviewers() {
+  local s a out=()
+  for s in A B; do
+    a=$(cat "$1/$s.agent" 2> /dev/null) || continue
+    [[ -n $a ]] || continue
+    out+=("$a (${INVESTIGATORS_TYPE[$a]:-?}${INVESTIGATORS_MODEL[$a]:+ · ${INVESTIGATORS_MODEL[$a]}})")
+  done
+  local IFS=,
+  printf '%s' "${out[*]}" | sed 's/,/, /g'
+}
+
 notify() { # id status final note
   local id=$1 status=$2 final=$3 note=${4:-}
   stopping && return 0
@@ -4040,7 +4064,9 @@ notify() { # id status final note
     paused)  label="⏸ paused" ;;
     abandoned) label="⚠ team left without members" ;;
     approved) label="✅✅ both reviews: ready to merge" ;;
-    merged) label="🔀 merged" ;;
+    merged) label="🟣 PR merged" ;;
+    started) label="🚀 started" ;;
+    round-start) label="🚀 a new round starts" ;;
     review-wait) label="⏳ reviews waiting" ;;
     *)       label=$status ;;
   esac
@@ -4054,9 +4080,14 @@ notify() { # id status final note
   fi
   [[ -n $final ]] || final="(no final message from the agent — see: agent log $id)"
   mkdir -p "$NOTIFY_DIR"
-  local f="$NOTIFY_DIR/${id}-r${RUN}-summary.md"
+  local icons note_icon   # the status's icon, and the note's when it is another: first in the title
+  icons=$(leading_icon "$label"); note_icon=$(leading_icon "$note")
+  [[ -z $note_icon || $note_icon == "$icons" ]] || icons+=$note_icon
+  local kind=""   # a merge or a start: a file of its own, beside the run's own notification
+  case $status in merged|started|round-start) kind="-$status" ;; esac
+  local f="$NOTIFY_DIR/${id}-r${RUN}${kind}-summary.md"
   {
-    printf '%s\n' "$REPO_NAME"                      # first line = title/thread
+    printf '%s\n' "${icons:+$icons }$REPO_NAME"    # first line = title/thread: the icons first, seen at once
     printf 'Repo: %s\n' "$REPO_NAME"
     if [[ ${KIND:-worker} == investigation ]] && ! is_independent_investigation "$id"; then
       printf 'Agent: %s (%s%s) — investigation #%s for %s\n' "${AGENT:-?}" "${TYPE:-?}" "${MODEL:+, $MODEL}" "$INV_ID" "$FROM_AGENT"
@@ -6729,6 +6760,7 @@ cmd_run() {
   for i in "${ids[@]}"; do
     start_runner "$i" new || exit 1
   done
+  notify "${ids[0]}" started "" "work starts: ${team:+team $team, }${members[*]} — from $base"   # once for a team
   if [[ -n $team ]]; then
     echo "Started team $team: ${members[*]} (from $base)"
     for i in "${ids[@]}"; do echo "  $i  →  $(task_field "$i" BRANCH)"; done
