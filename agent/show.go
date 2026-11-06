@@ -95,15 +95,12 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer, stderr
 		logDir := filepath.Join(app.agentHome, "logs")
 		logger := &Logger{LogDir: logDir, Subcommand: "show", Stderr: stderrWriter}
 		var invOut bytes.Buffer
-		lerr := Try(ctx, app, logger, LogInvListFailed, Command{
+		_ = Try(ctx, app, logger, LogInvListFailed, Command{
 			Name:   app.busBinary(),
 			Args:   []string{"inv-list", "--dir", app.busDirectory(), "--task", taskID},
 			Stdout: &invOut,
 		})
-		// Try returns nil on success, *LogWriteError on logging failure
-		if lerr != nil {
-			// Log write error is non-fatal, continue
-		}
+		// Try returns nil on success, *LogWriteError on logging failure; errors are non-fatal
 		if invOut.Len() > 0 && strings.TrimSpace(invOut.String()) != "" {
 			if _, err := fmt.Fprintf(out, "\n== investigations\n%s\n", invOut.String()); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write investigations"))

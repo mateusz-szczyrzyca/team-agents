@@ -389,7 +389,7 @@ func TestCmdShowInvListFailed(t *testing.T) {
 
 	// Check that log file was created with inv_list_failed event
 	logFile := filepath.Join(logDir, "agent.jsonl")
-	if content, err := os.ReadFile(logFile); err == nil {
+	if content, err := os.ReadFile(logFile); err == nil { // #nosec G304 -- test file path under temp directory
 		if !strings.Contains(string(content), "inv_list_failed") {
 			t.Errorf("log file missing inv_list_failed event: %s", string(content))
 		}
