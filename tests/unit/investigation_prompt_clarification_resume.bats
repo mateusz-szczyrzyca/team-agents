@@ -42,11 +42,15 @@ load helpers
   [ -s "$qfile" ]
   sed -i 's/^\*\*Verdict:\*\*$/\*\*Verdict:\*\* a)/' "$qfile"
 
-  # Set ANSWERS_PENDING to simulate pending answers
-  sed -i 's/^ANSWERS_PENDING=.*/ANSWERS_PENDING=1/' "$AGENTS_HOME/tasks/$child/meta.env"
-  if ! grep -q '^ANSWERS_PENDING=' "$AGENTS_HOME/tasks/$child/meta.env"; then
-    echo "ANSWERS_PENDING=1" >> "$AGENTS_HOME/tasks/$child/meta.env"
-  fi
+  # Set ANSWERS_PENDING to simulate pending answers — once the child's runner is done with its metadata, and under the
+  # script's lock: a write of the runner's own replaced the file and lost an unlocked edit, under load
+  local pid
+  for _ in $(seq 1 150); do   # its runner removes runner.pid when its run ends
+    pid=$(cat "$AGENTS_HOME/tasks/$child/runner.pid" 2> /dev/null) || break
+    kill -0 "$pid" 2> /dev/null || break
+    sleep 0.2
+  done
+  (source "$REPO_ROOT/bin/agent"; meta_set "$child" ANSWERS_PENDING 1)
 
   run bash -c "
     export AGENTS_HOME='$AGENTS_HOME'
