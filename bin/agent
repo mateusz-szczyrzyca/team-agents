@@ -672,7 +672,7 @@ ROUND_SOFT_LINES="${ROUND_SOFT_LINES:-2000}"
 ROUND_ALWAYS_EXCLUDE=".agents/reports/"
 # --verify: a review with critical or major findings wakes the team with them, at most VERIFY_MAX_FIX_PASSES
 # times; then the human (AGENT_HUMAN_GITHUB, default: the owner of the GitHub repository) is mentioned on the PR.
-VERIFY_MAX_FIX_PASSES="${VERIFY_MAX_FIX_PASSES:-2}"
+VERIFY_MAX_FIX_PASSES="${VERIFY_MAX_FIX_PASSES:-5}"
 # Before a review (--verify, --autopilot): a round's head must pass the repository's gate and add tests for a change
 # of code; else the team goes on with the reason, at most AGENT_PRECHECK_MAX times, then the human decides.
 AGENT_REVIEW_GATE="${AGENT_REVIEW_GATE:-auto}"        # the gate's command: auto = `make gate` where the repository has it; off = none

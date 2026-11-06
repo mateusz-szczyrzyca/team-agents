@@ -378,7 +378,7 @@ and written in every mode. It waits for a busy investigator as above.
 
 **The fix loop.** When the review finds critical or major problems, the team is woken with them: the review is
 added to its task ("Fix pass 1 of 2"), it fixes them (or disputes one on the PR) and finishes again — and the PR
-is reviewed again, a re-review that first checks the previous findings. After `VERIFY_MAX_FIX_PASSES` (2) fix
+is reviewed again, a re-review that first checks the previous findings. After `VERIFY_MAX_FIX_PASSES` (5) fix
 passes with critical or major problems still found, the team is not woken again: the human is mentioned on the
 PR (`AGENT_HUMAN_GITHUB`, default the GitHub owner of the repository) and notified. A round is so reviewed three
 times at most before you decide (work → review → fix → review → fix → review), with `--verify` and `--autopilot`
@@ -677,7 +677,7 @@ Then:
 | `AGENT_NETWORK_PAUSE_MIN`, `AGENT_NETWORK_MAX_PAUSES` | a run that ends because the network or the provider's host is unreachable (DNS, a refused or reset connection, a timeout) pauses the task this many minutes, then goes on (15); this many such pauses in consecutive runs fail it, with the reason (12) |
 | `AGENT_GITHUB_TRUSTED` | the GitHub accounts whose PRs are a round's and whose texts the agents take for more than data, space-separated; by default the repository's owner and the account `gh` is logged in as. A fork's PR with a round's branch name, or one opened by another account, is ignored (logged as `pr_untrusted_ignored`) |
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
-| `VERIFY_MAX_FIX_PASSES`, `AGENT_HUMAN_GITHUB` | how many times a `--verify` review wakes the team to fix critical or major problems (default 2); who is then mentioned on the PR (default: the repository's GitHub owner) |
+| `VERIFY_MAX_FIX_PASSES`, `AGENT_HUMAN_GITHUB` | how many times a `--verify` review wakes the team to fix critical or major problems (default 5: five reviews with fixes, the sixth failed one calls you); who is then mentioned on the PR (default: the repository's GitHub owner) |
 | `AGENT_REVIEW_GATE`, `AGENT_REVIEW_GATE_MIN`, `AGENT_PRECHECK_MAX` | before a `--verify`/`--autopilot` review, the command a round's head must pass (`auto`: `make gate` where the repository has it; `off`: none), its time limit in minutes (30), and how many times a round goes back for its gate or its missing tests before you decide (2) |
 | `AGENT_STAGE_POLL_SEC` | how often the gate's progress before a review is written to the coordinator's task, for the dashboard (2 seconds) |
 | `AGENT_PROMPT_ARG_MAX` | a longer prompt (bytes) reaches the agent's CLI through `.agent-prompt.md` in its working directory, kept out of git, which the CLI is asked to read: Linux takes at most 128 KiB per command-line argument, and a task's text grows with every resume (100000) |
