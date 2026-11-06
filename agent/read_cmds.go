@@ -30,7 +30,7 @@ func commandFromBus(prefix string, err *BusError) *CommandError {
 // runBusDisplay writes non-empty text to out and returns cmdErr (or write failure).
 func runBusDisplay(out io.Writer, cmdErr *CommandError, text, op string) *CommandError {
 	if text != "" {
-		if _, err := io.WriteString(out, text); err != nil && cmdErr == nil {
+		if _, err := io.WriteString(out, text); err != nil {
 			return fromStorage(CommandStorage, storageErr(err, "write %s", op))
 		}
 	}
@@ -69,7 +69,7 @@ func (a *App) busDirectory() string {
 func (a *App) cmdBus(ctx context.Context, n string, stdout io.Writer) *CommandError {
 	busBin, busDir := a.busBinary(), a.busDirectory()
 	statusOut, err := busCmd(ctx, a, busBin, "status", "--dir", busDir)
-	if statusOut != "" {
+	if err == nil {
 		statusOut += "\n"
 	}
 	if werr := runBusDisplay(stdout, commandFromBus("bus status", err), statusOut, "bus status"); werr != nil {

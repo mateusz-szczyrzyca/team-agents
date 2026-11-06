@@ -81,9 +81,10 @@ func TestRunBusDisplayWriteErrorWithCmdError(t *testing.T) {
 // TestBusCmdStderrShortWrite tests that busCmd detects when stderr write is truncated.
 func TestBusCmdStderrShortWrite(t *testing.T) {
 	// Create a test executor that returns stderr
+	// Don't include "status" in responses; only in stderrs to ensure stderr path is taken
 	exec := &readCmdsTestExecutor{
-		responses: map[string]string{"status": "ok"},
-		stderrs:   map[string]string{"status": "diagnostic output"}, // stderr to be written
+		responses: map[string]string{"log": "ok"},
+		stderrs:   map[string]string{"status": "diagnostic output"}, // stderr to be written for status command
 	}
 
 	app := newReadCmdsTestApp(exec)

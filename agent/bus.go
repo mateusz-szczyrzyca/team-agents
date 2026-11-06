@@ -288,7 +288,11 @@ func busCmd(ctx context.Context, app *App, busBin string, args ...string) (strin
 		return "", fromProcess(BusProcess, processErr(busBin, eerr, "%s", eerr.Message))
 	}
 	if app != nil && app.Stderr != nil && stderr.Len() > 0 {
-		if _, werr := app.Stderr.Write(stderr.Bytes()); werr != nil {
+		data := stderr.Bytes()
+		if n, werr := app.Stderr.Write(data); werr != nil || n < len(data) {
+			if werr == nil {
+				werr = io.ErrShortWrite
+			}
 			return stdout.String(), fromStorage(BusStorage, storageErr(werr, "write subprocess stderr"))
 		}
 	}
