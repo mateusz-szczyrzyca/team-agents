@@ -396,6 +396,8 @@ tests/unit/notify_icon_first.bats	a finished task's notification starts with its
 tests/unit/notify_icon_first.bats	the status's icon and the note's, when another, come first; a merge's is its own	source	R14	-	planned
 tests/unit/notify_icon_first.bats	with no icon in the status nor the note the title is as before	source	R14	-	planned
 tests/unit/notify_icon_first.bats	a notification outside a task's cycle starts with the icon its text starts with	source	R14	-	planned
+tests/unit/push_text_icons.bats	every notification outside a task's cycle starts with an icon	source	R14	-	planned
+tests/unit/push_text_icons.bats	the end of the fix passes stops the work: its notification's title starts with ⛔	source	R14	-	planned
 tests/unit/one_pr_per_round.bats	the next round does not start while another PR of the round is open, though one of its PRs is merged	blackbox	R34	-	planned
 tests/unit/one_pr_per_round.bats	round_open_prs lists the open PRs of the team's branches, and only those	source	R31	-	planned
 tests/unit/one_pr_per_round.bats	a round resumed says which is its PR, and that every commit of the round goes there	blackbox	R31	-	planned
