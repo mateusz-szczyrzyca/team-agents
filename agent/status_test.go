@@ -220,7 +220,11 @@ func TestCmdStatusMetaReadError(t *testing.T) {
 	if err := os.Chmod(metaFile, 0000); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chmod(metaFile, 0600) }()
+	defer func() {
+		if err := os.Chmod(metaFile, 0600); err != nil {
+			t.Errorf("restore permissions: %v", err)
+		}
+	}()
 
 	var out bytes.Buffer
 	err := cmdStatus(context.Background(), app, &out)
@@ -230,4 +234,30 @@ func TestCmdStatusMetaReadError(t *testing.T) {
 	if err.Cause != StatusStorage {
 		t.Fatalf("expected StatusStorage, got %v", err.Cause)
 	}
+}
+
+type statusEnvExecutor struct{ capturedEnv []string }
+
+func (e *statusEnvExecutor) Execute(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
+	e.capturedEnv = cmd.Env
+	return CommandResult{ExitCode: 0}, nil
+}
+
+// TestStatusXDGRuntimeDirPropagated verifies XDG_RUNTIME_DIR is passed to systemctl when unset in parent environment.
+func TestStatusXDGRuntimeDirPropagated(t *testing.T) {
+	tempTasks := t.TempDir()
+	createStatusTaskDir(t, tempTasks, "active-task", "ID=active-task\nSTATUS=running\nRUN=1\n")
+	exec := &statusEnvExecutor{}
+	app := newApp(exec, nil, nil)
+	app.tasksDir = tempTasks
+	var out bytes.Buffer
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
+		t.Fatalf("cmdStatus err = %v", err)
+	}
+	for _, e := range exec.capturedEnv {
+		if strings.HasPrefix(e, "XDG_RUNTIME_DIR=") {
+			return
+		}
+	}
+	t.Fatalf("cmd.Env does not contain XDG_RUNTIME_DIR: %v", exec.capturedEnv)
 }

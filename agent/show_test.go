@@ -37,6 +37,11 @@ func createShowTaskDir(t *testing.T, tasksDir, id, meta string) string {
 			t.Fatal(err)
 		}
 	}
+	if id != "bad-task" && !strings.Contains(id, "no-taskmd") {
+		if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte("# Task\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return dir
 }
 
@@ -410,5 +415,41 @@ func TestCmdShowWorkerInvListFailure(t *testing.T) {
 	logBytes, err := os.ReadFile(filepath.Join(agentHome, "logs", "agent.jsonl")) // #nosec G304 -- path belongs to temporary test directory
 	if err != nil || !strings.Contains(string(logBytes), `"event":"inv_list_failed"`) {
 		t.Fatalf("expected inv_list_failed log record, err=%v content=%s", err, string(logBytes))
+	}
+}
+
+// TestCmdShowRegressions verifies missing task.md, invalid ROUND, dir report and resolver diagnostics.
+func TestCmdShowRegressions(t *testing.T) {
+	app, tasksDir := newShowTestApp(t)
+	createShowTaskDir(t, tasksDir, "no-taskmd-test", "ID=no-taskmd-test\nSTATUS=done\n")
+	createShowTaskDir(t, tasksDir, "bad-round-task", "ID=bad-round-task\nROUND=abc\n")
+	taskDir := createShowTaskDir(t, tasksDir, "rep-dir-task", "ID=rep-dir-task\n")
+	if err := os.MkdirAll(filepath.Join(taskDir, ".agents", "reports", "rep-dir-task.md"), 0750); err != nil {
+		t.Fatal(err)
+	}
+	createShowTaskDir(t, tasksDir, "dup-1", "ID=dup-1\n")
+	createShowTaskDir(t, tasksDir, "dup-2", "ID=dup-2\n")
+
+	var out bytes.Buffer
+	if err := cmdShow(context.Background(), app, "no-taskmd-test", &out); err == nil || err.Cause != ShowStorage || !strings.Contains(out.String(), "== task") {
+		t.Fatalf("no-taskmd err=%v out=%s", err, out.String())
+	}
+	out.Reset()
+	if err := cmdShow(context.Background(), app, "bad-round-task", &out); err == nil || err.Cause != ShowStorage {
+		t.Fatalf("bad-round err=%v", err)
+	}
+	out.Reset()
+	app.workTree = taskDir
+	if err := cmdShow(context.Background(), app, "rep-dir-task", &out); err != nil || strings.Contains(out.String(), "== report:") {
+		t.Fatalf("rep-dir err=%v out=%s", err, out.String())
+	}
+	var stdout, stderr bytes.Buffer
+	if code := app.run([]string{"show", "absent"}, &stdout, &stderr); code != 3 || stderr.String() != "agent: no unique task matches 'absent' (0 matches)\n" {
+		t.Fatalf("absent code=%d err=%q", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.run([]string{"show", "dup"}, &stdout, &stderr); code != 6 || stderr.String() != "agent: no unique task matches 'dup' (2 matches)\n" {
+		t.Fatalf("dup code=%d err=%q", code, stderr.String())
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -458,5 +459,17 @@ func TestBusCmdStderrReplayFailure(t *testing.T) {
 	}
 	if err.Cause != BusStorage || !errors.Is(err, ErrStorage) {
 		t.Fatalf("expected cause BusStorage/ErrStorage, got %v", err)
+	}
+}
+
+// TestDelegatedBusLaunchFailureExitCode verifies launch failures exit 127 for bus commands.
+func TestDelegatedBusLaunchFailureExitCode(t *testing.T) {
+	for _, cmd := range [][]string{{"bus", "5"}, {"helpers"}, {"inv", "99"}, {"notes", "testrepo"}} {
+		var stdout, stderr bytes.Buffer
+		app := newApp(OSExecutor{}, nil, nil)
+		app.busBin = "/nonexistent/path/to/agentbus"
+		if code := app.run(cmd, &stdout, &stderr); code != 127 {
+			t.Fatalf("run(%v) code = %d, want 127", cmd, code)
+		}
 	}
 }
