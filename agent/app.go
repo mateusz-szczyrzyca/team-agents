@@ -14,6 +14,7 @@ type App struct {
 	Clock     Clock     // time source for decisions and default random seeding
 	Random    Random    // owned non-cryptographic draws for selection decisions
 	Stderr    io.Writer // standard error destination for diagnostics and subprocess output
+	Stdout    io.Writer // ordinary configuration output destination; nil discards
 	tasksDir  string    // directory containing task metadata
 	workTree  string    // git worktree directory for reports and checkpoints
 	busDir    string    // agentbus state directory
