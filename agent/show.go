@@ -62,6 +62,9 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 		if _, err := fmt.Fprint(out, string(content)); err != nil {
 			return fromStorage(ShowStorage, storageErr(err, "write task content"))
 		}
+	} else if !os.IsNotExist(err) {
+		// Non-ENOENT errors (e.g., is a directory) are storage failures
+		return fromStorage(ShowStorage, storageErr(err, "read task.md"))
 	}
 
 	// Print questions header if ROUND > 0
@@ -117,6 +120,9 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 		if _, err := fmt.Fprint(out, string(content)); err != nil {
 			return fromStorage(ShowStorage, storageErr(err, "write final message content"))
 		}
+	} else if err != nil && !os.IsNotExist(err) {
+		// Non-ENOENT errors (e.g., is a directory) are storage failures
+		return fromStorage(ShowStorage, storageErr(err, "read final.md"))
 	}
 
 	// Print report if it exists
