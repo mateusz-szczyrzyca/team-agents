@@ -1172,6 +1172,7 @@ notify_send() { # file — delivers a notification file (first line = title/thre
 # notify_failure_keep command error — the failure, with this process's subcommand, kept a day in notify-failures.jsonl
 # (older ones are left out on the way): a notification delivered by another process does not hide it
 notify_failure_keep() {
+  [[ $AGENT_SUBCOMMAND == _* ]] || return 0
   local f="$AGENTS_HOME/notify-failures.jsonl" now
   now=$(date +%s)
   (
@@ -1851,11 +1852,11 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
   wr=$(task_field "$id" WORK_ROUND); wrs=$(task_field "$id" WORK_ROUNDS)
   if [[ -z $wr || -z $wrs ]] || ((wr >= wrs)); then
     auto_stage "$id" ""   # the task is done
-    notify "$id" merged "" "PR #$num merged by --autopilot — ready to merge: $(pair_reviewers "$(task_field "$id" REVIEW_PAIR)"); ${wr:+round $wr/$wrs was the last: }the task is done — $url"
+    notify "$id" merged "" "PR #$num merged by --autopilot — both reviews: ready to merge: $(pair_reviewers "$(task_field "$id" REVIEW_PAIR)"); ${wr:+round $wr/$wrs was the last: }the task is done — $url"
     return 0
   fi
   auto_stage "$id" "PR #$num merged — round $((wr + 1))/$wrs starts"
-  notify "$id" merged "" "PR #$num merged by --autopilot — ready to merge: $(pair_reviewers "$(task_field "$id" REVIEW_PAIR)"); round $wr/$wrs is done — $url"
+  notify "$id" merged "" "PR #$num merged by --autopilot — both reviews: ready to merge: $(pair_reviewers "$(task_field "$id" REVIEW_PAIR)"); round $wr/$wrs is done — $url"
   team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=next-round"   # a busy team cannot be resumed
   automation_allowed "$id" || return 0
   ref=$(task_field "$id" TEAM); ref=${ref:-$id}
