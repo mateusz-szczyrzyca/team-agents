@@ -406,6 +406,9 @@ tests/unit/pr_ownership.bats	the agents' gh refuses a second PR to a task whose 
 tests/unit/pr_by_commit.bats	round_pr_for: the PR on the branch, else the round's PR it was given, else an open PR at the branch's commit	source	R25	-	planned
 tests/unit/pr_by_commit.bats	a review whose round has no PR anywhere tells the human ⛔: no review, and what to do	source	R25	-	planned
 tests/unit/pr_by_commit.bats	closing a team finds the round's PR at its commit: no gap 'no PR from your branch'	source	R25	-	planned
+tests/unit/pr_pin.bats	agent run --pr: the team starts at the PR's head, on the PR's base, with the PR as its round's PR	blackbox	R25	-	planned
+tests/unit/pr_pin.bats	agent run --pr refuses a PR that is not open here, and starts nothing	blackbox	R25	-	planned
+tests/unit/pr_pin.bats	a task that names an open PR, without --pr, is told how to continue that PR	blackbox	R25	-	planned
 tests/unit/pause_notify.bats	a remote member's pause reaches its team: the coordinator hears why and until when; back at work it is active again	blackbox	R46	-	planned
 tests/unit/pause_notify.bats	notifications that cannot be delivered are kept for a day, with the process that sent them, whatever is delivered since	blackbox	R23	-	planned
 tests/unit/pause_notify.bats	the supervisor stops an answers watch whose task no longer waits for answers, and keeps a waiting task's	blackbox	R26	-	planned
