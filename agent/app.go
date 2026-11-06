@@ -49,11 +49,13 @@ func (a *App) loadStartupConfig(ctx context.Context, args []string) *LoadConfigE
 	if selfErr != nil {
 		return fromProcess(LoadConfigShell, processErr("startup", selfErr, "locate executable"))
 	}
-	hostname, hostErr := os.Hostname()
-	if hostErr != nil {
-		if hostname = os.Getenv("HOSTNAME"); hostname == "" {
+	hostname := os.Getenv("HOSTNAME")
+	if hostname == "" {
+		resolvedHostname, hostErr := os.Hostname()
+		if hostErr != nil {
 			return fromProcess(LoadConfigShell, processErr("startup", hostErr, "read hostname"))
 		}
+		hostname = resolvedHostname
 	}
 	cfg, err := a.loadConfig(ctx, ConfigRequest{
 		Args: args, File: filepath.Join(agentsHome, "agents.conf"),
