@@ -24,7 +24,7 @@ func TestLeadNotificationTitleStartsWithItsStateIcon(t *testing.T) {
 	if _, err := a.cancel(true, job.Request.ID); err != nil {
 		t.Fatal(err)
 	}
-	data, rerr := os.ReadFile(filepath.Join(notifyDir, "job-icon-summary.md")) //nolint:gosec // G304: notifyDir is inside t.TempDir()
+	data, rerr := os.ReadFile(filepath.Join(notifyDir, "job-icon-summary.md")) //nolint:gosec // G304: file path inside t.TempDir()
 	if rerr != nil {
 		t.Fatal(rerr)
 	}

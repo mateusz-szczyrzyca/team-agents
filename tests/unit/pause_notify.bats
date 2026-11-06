@@ -43,6 +43,13 @@ NTFY
   agent run solo "a task"
   wait_status "$(task_of solo)" 'done'
   for _ in $(seq 1 50); do [ -s "$f" ] && break; sleep 0.1; done
+  local t1 pid
+  t1=$(task_of solo)
+  for _ in $(seq 1 150); do   # its runner sends its last notification after the status: count once the runner is gone
+    pid=$(cat "$AGENTS_HOME/tasks/$t1/runner.pid" 2> /dev/null) || break
+    kill -0 "$pid" 2> /dev/null || break
+    sleep 0.2
+  done
   jq -se 'length >= 1 and all(.[]; (.error | test("NTFY_URL")) and .from == "_runner" and (.command | test("ntfy.sh")))' "$f"
   n=$(wc -l < "$f")
   sed -i 's|^NOTIFY_CMD=.*|NOTIFY_CMD=true|' "$AGENTS_HOME/agents.conf"   # delivered from now on, by this process

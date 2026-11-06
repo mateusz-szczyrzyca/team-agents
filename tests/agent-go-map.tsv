@@ -530,6 +530,9 @@ tests/unit/web.bats	tagged devices are let in by name through tailscale serve; o
 tests/unit/web.bats	agent web refuses to listen on a non-loopback address	blackbox	R53	-	planned
 tests/unit/web.bats	dashboard shows only 20 latest entries by default and Full dashboard view shows all	blackbox	R53	-	planned
 tests/unit/web_jobs.bats	agent web passes the configured node heartbeat timeout	blackbox	R53	-	planned
+tests/unit/work_split.bats	what the checks and reviews send back reaches the coordinator alone; a member takes only its board items	blackbox	R22	-	planned
+tests/unit/work_split.bats	the human's addition reaches every member, a member with the same line	blackbox	R22	-	planned
+tests/unit/work_split.bats	the team prompt makes the board the round's plan, and a member take only its items	blackbox	R22	-	planned
 tests/unit/autopilot_review_cap.bats	--autopilot: after three pairs of reviews with findings the autopilot stops and waits for the human	blackbox	R34	-	planned
 tests/unit/review_pair_rotate.bats	rotate: A,B then C,D; every new pair differs from the last two; four investigators make all six pairs	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: a PR's re-review after a fix pass is done by another pair, not the one before	source	R33	-	planned
@@ -540,6 +543,9 @@ tests/unit/review_pair_rotate.bats	rotate: three investigators — the third pai
 tests/unit/review_pair_rotate.bats	rotate: a re-review by another investigator gets the slot's previous review as someone else's	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: the supervise timer dispatches a waiting review pair, which no run's end may do	source	R33	-	planned
 tests/unit/round_discipline.bats	the prompts say never to start the next round's work; a member out of items sleeps instead	blackbox	R31	-	planned
+tests/unit/round_check.bats	agent round-check shows a member's work not in the round's PR, the files two branches changed, the workers	blackbox	R23	-	planned
+tests/unit/round_check.bats	round_check_line sums the card up in one line	source	R23	-	planned
+tests/unit/round_check.bats	the coordinator's notification of a round carries the round's card in one line	source	R23	-	planned
 tests/unit/review_pair_repeat.bats	default draw: a PR's second review is done by the other two investigators, its third by a mixed pair	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	default draw: across PRs A+B is followed by C+D, then by a mixed pair	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	default draw: only the PR's previous pair free — it waits, and does not repeat it after AGENT_REVIEW_ROTATE_WAIT_MIN	source	R33	-	planned

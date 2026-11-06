@@ -278,6 +278,7 @@ func (s *webServer) handler() http.Handler {
 	mux.HandleFunc("GET /task/{id}", s.viewTask)
 	mux.HandleFunc("GET /teams", s.viewTeams)
 	mux.HandleFunc("GET /team/{id}", s.viewTeam)
+	mux.HandleFunc("GET /team/{id}/round-check", s.viewRoundCheck)
 	mux.HandleFunc("GET /bus", s.viewBus)
 	mux.HandleFunc("GET /questions", s.viewQuestions)
 	mux.HandleFunc("GET /questions/{id}", s.viewAnswer)
