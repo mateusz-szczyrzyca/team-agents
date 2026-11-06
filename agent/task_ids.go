@@ -28,7 +28,7 @@ func resolveTaskID(tasksDir, ref string) (string, *ResolveTaskError) {
 		if strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		info, statErr := os.Stat(tasksDir + "/" + entry.Name()) // #nosec G703 -- local directory entry inspection matches Bash task path resolution
+		info, statErr := os.Stat(tasksDir + "/" + entry.Name())
 		if statErr != nil {
 			// A broken directory symlink is excluded by Bash's */ glob as well.
 			if errors.Is(statErr, os.ErrNotExist) {
@@ -53,8 +53,9 @@ func resolveTaskID(tasksDir, ref string) (string, *ResolveTaskError) {
 	if len(matches) == 1 {
 		return matches[0], nil
 	}
+	cause := ResolveTaskNotFound
 	if len(matches) > 1 {
-		return "", opErr(ResolveTaskAmbiguous, "no unique task matches '%s' (%d matches)", ref, len(matches))
+		cause = ResolveTaskAmbiguous
 	}
-	return "", opErr(ResolveTaskNotFound, "no unique task matches '%s' (0 matches)", ref)
+	return "", opErr(cause, "no unique task matches '%s' (%d matches)", ref, len(matches))
 }

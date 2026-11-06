@@ -12,17 +12,14 @@ import (
 
 // App owns the effect boundaries for one invocation of the Go candidate.
 type App struct {
-	Executor  Executor  // command policy; nil is denied by execute
-	Clock     Clock     // time source for decisions and default random seeding
-	Random    Random    // owned non-cryptographic draws for selection decisions
-	Stderr    io.Writer // standard error destination for diagnostics and subprocess output
-	Stdout    io.Writer // ordinary configuration output destination; nil discards
-	tasksDir  string    // directory containing task metadata
-	workTree  string    // git worktree directory for reports and checkpoints
-	busDir    string    // agentbus state directory
-	busBin    string    // path override for agentbus binary
-	agentHome string    // agent home directory
-	config    *Config   // evaluated startup configuration; nil for explicitly constructed test apps
+	Executor Executor // command policy; nil is denied by execute
+	Clock    Clock    // time source for decisions and default random seeding
+	Random   Random   // owned non-cryptographic draws for selection decisions
+
+	Stderr                                        io.Writer // standard error destination for diagnostics and subprocess output
+	Stdout                                        io.Writer // ordinary configuration output destination; nil discards
+	tasksDir, workTree, busDir, busBin, agentHome string    // path overrides for tasks, worktrees, bus state, binary, and home
+	config                                        *Config   // evaluated startup configuration; nil for explicitly constructed test apps
 }
 
 // tasksDirectory returns the configured tasks directory or resolves it from agent home.
@@ -30,13 +27,7 @@ func (a *App) tasksDirectory() string {
 	if a.tasksDir != "" {
 		return a.tasksDir
 	}
-	home := a.agentHome
-	if home == "" {
-		if home = os.Getenv("AGENTS_HOME"); home == "" {
-			home = filepath.Join(os.Getenv("HOME"), "agents")
-		}
-	}
-	return filepath.Join(home, "tasks")
+	return filepath.Join(firstNonEmpty(a.agentHome, os.Getenv("AGENTS_HOME"), filepath.Join(os.Getenv("HOME"), "agents")), "tasks")
 }
 
 // loadStartupConfig prepares production paths and configuration before dispatch.
@@ -49,11 +40,10 @@ func (a *App) loadStartupConfig(ctx context.Context, args []string) *LoadConfigE
 	}
 	hostname := os.Getenv("HOSTNAME")
 	if hostname == "" {
-		detected, hostErr := os.Hostname()
-		if hostErr != nil {
+		var hostErr error
+		if hostname, hostErr = os.Hostname(); hostErr != nil {
 			return fromProcess(LoadConfigShell, processErr("startup", hostErr, "read hostname"))
 		}
-		hostname = detected
 	}
 	cfg, err := a.loadConfig(ctx, ConfigRequest{
 		Args: args, File: filepath.Join(agentsHome, "agents.conf"),
@@ -63,10 +53,7 @@ func (a *App) loadStartupConfig(ctx context.Context, args []string) *LoadConfigE
 		return err
 	}
 	a.config = &cfg
-	a.agentHome = cfg.Scalars["AGENTS_HOME"]
-	a.tasksDir = cfg.Scalars["TASKS"]
-	a.busDir = cfg.Scalars["BUS_DIR"]
-	a.busBin = cfg.Scalars["AGENTBUS_BIN"]
+	a.agentHome, a.tasksDir, a.busDir, a.busBin = cfg.Scalars["AGENTS_HOME"], cfg.Scalars["TASKS"], cfg.Scalars["BUS_DIR"], cfg.Scalars["AGENTBUS_BIN"]
 	if err := os.Setenv("XDG_RUNTIME_DIR", a.xdgRuntimeDir()); err != nil {
 		return fromProcess(LoadConfigShell, processErr("startup", err, "set XDG_RUNTIME_DIR"))
 	}
@@ -75,10 +62,8 @@ func (a *App) loadStartupConfig(ctx context.Context, args []string) *LoadConfigE
 
 // xdgRuntimeDir returns the configured XDG_RUNTIME_DIR, environment override, or default /run/user/<uid>.
 func (a *App) xdgRuntimeDir() string {
-	if a != nil && a.config != nil {
-		if v, ok := a.config.Scalars["XDG_RUNTIME_DIR"]; ok && v != "" {
-			return v
-		}
+	if a != nil && a.config != nil && a.config.Scalars["XDG_RUNTIME_DIR"] != "" {
+		return a.config.Scalars["XDG_RUNTIME_DIR"]
 	}
 	return firstNonEmpty(os.Getenv("XDG_RUNTIME_DIR"), "/run/user/"+strconv.Itoa(os.Getuid()))
 }
@@ -90,11 +75,9 @@ func (a *App) newLogger(subcommand string) *Logger {
 		logDir = a.config.Scalars["LOG_DIR"]
 	}
 	if logDir == "" {
-		base := firstNonEmpty(a.agentHome, filepath.Join(os.Getenv("HOME"), "agents"))
-		logDir = filepath.Join(base, "logs")
+		logDir = filepath.Join(firstNonEmpty(a.agentHome, filepath.Join(os.Getenv("HOME"), "agents")), "logs")
 	}
-	stderr := io.Writer(os.Stderr)
-	var clock Clock
+	stderr, clock := io.Writer(os.Stderr), Clock(nil)
 	if a != nil {
 		if a.Stderr != nil {
 			stderr = a.Stderr
@@ -146,10 +129,7 @@ func (a *App) execute(ctx context.Context, cmd Command) (CommandResult, *Execute
 		if a.config != nil && len(a.config.Env) > 0 {
 			baseEnv = a.config.Env
 		}
-		cmd.Env = append([]string(nil), baseEnv...)
-		if xdg := a.xdgRuntimeDir(); xdg != "" {
-			cmd.Env = append(cmd.Env, "XDG_RUNTIME_DIR="+xdg)
-		}
+		cmd.Env = append(append([]string(nil), baseEnv...), "XDG_RUNTIME_DIR="+a.xdgRuntimeDir())
 	}
 	if a.Executor == nil {
 		return newDeniedExecutor().Execute(ctx, cmd)

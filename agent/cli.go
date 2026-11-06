@@ -29,24 +29,23 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 		}
 		return nil
 	case "show":
-		if len(args) == 0 || args[0] == "" {
+		target := firstArg(args)
+		if target == "" {
 			return opErr(CommandInvalidArgument, "usage: agent show <id>")
 		}
-		if err := cmdShow(ctx, a, args[0], stdout); err != nil {
-			if err.Cause == ShowNotFound {
+		if err := cmdShow(ctx, a, target, stdout); err != nil {
+			switch err.Cause {
+			case ShowNotFound:
 				return opErr(CommandNotFound, "%s", err.Message)
-			} else if err.Cause == ShowAmbiguous {
+			case ShowAmbiguous:
 				return opErr(CommandConflict, "%s", err.Message)
+			default:
+				return &CommandError{Cause: CommandStorage, Message: err.Message, Err: errors.Join(CommandStorage.info().class.Sentinel(), err)}
 			}
-			return &CommandError{Cause: CommandStorage, Message: err.Message, Err: errors.Join(CommandStorage.info().class.Sentinel(), err)}
 		}
 		return nil
 	case "bus":
-		var count string
-		if len(args) > 0 {
-			count = args[0]
-		}
-		return a.cmdBus(ctx, count, stdout)
+		return a.cmdBus(ctx, firstArg(args), stdout)
 	case "inv":
 		return a.cmdInv(ctx, args, stdout)
 	case "notes":
@@ -61,16 +60,19 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 		}
 		return nil
 	case "ack":
-		if len(args) == 0 || args[0] == "" {
+		target := firstArg(args)
+		if target == "" {
 			return opErr(CommandInvalidArgument, "usage: agent ack <id|all>")
 		}
-		if err := a.cmdAck(args[0], stdout, a.tasksDirectory()); err != nil {
-			if err.Cause == AckNotFound {
+		if err := a.cmdAck(target, stdout, a.tasksDirectory()); err != nil {
+			switch err.Cause {
+			case AckNotFound:
 				return opErr(CommandNotFound, "%s", err.Message)
-			} else if err.Cause == AckAmbiguous || err.Cause == AckStillRunning {
+			case AckAmbiguous, AckStillRunning:
 				return opErr(CommandConflict, "%s", err.Message)
+			default:
+				return fromStorage(CommandStorage, storageErr(err.asError(), "ack"))
 			}
-			return fromStorage(CommandStorage, storageErr(err.asError(), "ack"))
 		}
 		return nil
 	default:
@@ -90,6 +92,14 @@ func (a *App) routeAgents(_ context.Context, stdout io.Writer) *CommandError {
 		return fromStorage(CommandStorage, storageErr(err.asError(), "agents"))
 	}
 	return nil
+}
+
+// firstArg returns the first element of args or empty string.
+func firstArg(args []string) string {
+	if len(args) > 0 {
+		return args[0]
+	}
+	return ""
 }
 
 // run provides the CLI test entry point with external execution denied by default.

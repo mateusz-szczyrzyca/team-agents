@@ -12,6 +12,14 @@ import (
 	"strings"
 )
 
+// showPrint formats and writes output, mapping failures to ShowStorage.
+func showPrint(out io.Writer, op, format string, args ...any) *ShowError {
+	if _, err := fmt.Fprintf(out, format, args...); err != nil {
+		return fromStorage(ShowStorage, storageErr(err, op))
+	}
+	return nil
+}
+
 // cmdShow displays full details of a single task: metadata, task.md, questions, result, report.
 func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowError {
 	if app.tasksDir == "" {
@@ -19,12 +27,14 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	}
 	resolvedID, rerr := resolveTaskID(app.tasksDir, taskID)
 	if rerr != nil {
-		if rerr.Cause == ResolveTaskNotFound {
+		switch rerr.Cause {
+		case ResolveTaskNotFound:
 			return opErr(ShowNotFound, "%s", rerr.Message)
-		} else if rerr.Cause == ResolveTaskAmbiguous {
+		case ResolveTaskAmbiguous:
 			return opErr(ShowAmbiguous, "%s", rerr.Message)
+		default:
+			return fromStorage(ShowStorage, storageErr(rerr.Err, "%s", rerr.Message))
 		}
-		return fromStorage(ShowStorage, storageErr(rerr.Err, "%s", rerr.Message))
 	}
 	taskID = resolvedID
 	taskDir := filepath.Join(app.tasksDir, taskID)
@@ -37,35 +47,31 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 		return fromStorage(ShowStorage, storageErr(readErr, "read metadata for %s", taskID))
 	}
 
-	if _, err := fmt.Fprintf(out, "== %s\n", taskID); err != nil {
-		return fromStorage(ShowStorage, storageErr(err, "write task header"))
+	if err := showPrint(out, "write task header", "== %s\n", taskID); err != nil {
+		return err
 	}
 
-	if content, err := os.ReadFile(filepath.Join(taskDir, "meta.env")); err == nil && len(content) > 0 { // #nosec G304
-		hasNL := strings.HasSuffix(string(content), "\n")
-		for _, line := range strings.Split(strings.TrimSuffix(string(content), "\n"), "\n") {
-			if _, err := fmt.Fprintf(out, "  %s\n", line); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write meta.env line"))
-			}
+	if content, err := os.ReadFile(filepath.Join(taskDir, "meta.env")); err == nil && len(content) > 0 { // #nosec G304,G703
+		s := "  " + strings.ReplaceAll(strings.TrimSuffix(string(content), "\n"), "\n", "\n  ") + "\n"
+		if strings.HasSuffix(string(content), "\n") {
+			s += "\n"
 		}
-		if hasNL {
-			if _, err := fmt.Fprintln(out); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write newline"))
-			}
+		if err := showPrint(out, "write meta.env", "%s", s); err != nil {
+			return err
 		}
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fromStorage(ShowStorage, storageErr(err, "read meta.env"))
 	}
 
-	if _, err := fmt.Fprintf(out, "== task\n"); err != nil {
-		return fromStorage(ShowStorage, storageErr(err, "write task header"))
+	if err := showPrint(out, "write task header", "== task\n"); err != nil {
+		return err
 	}
 	taskContent, err := os.ReadFile(filepath.Join(taskDir, "task.md")) // #nosec G304,G703
 	if err != nil {
 		return fromStorage(ShowStorage, storageErr(err, "read task.md"))
 	}
-	if _, err := fmt.Fprint(out, string(taskContent)); err != nil {
-		return fromStorage(ShowStorage, storageErr(err, "write task content"))
+	if err := showPrint(out, "write task content", "%s", string(taskContent)); err != nil {
+		return err
 	}
 
 	if roundStr := metaLookup(meta, "ROUND", ""); roundStr != "" {
@@ -74,8 +80,8 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 			return fromStorage(ShowStorage, storageErr(err, "invalid ROUND %q", roundStr))
 		}
 		if round > 0 {
-			if _, err := fmt.Fprintf(out, "\n== questions (round %d): %s\n", round, filepath.Join(taskDir, fmt.Sprintf("questions-%d.md", round))); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write questions header"))
+			if err := showPrint(out, "write questions header", "\n== questions (round %d): %s/questions-%d.md\n", round, taskDir, round); err != nil {
+				return err
 			}
 		}
 	}
@@ -83,8 +89,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	switch metaLookup(meta, "KIND", kindWorker) {
 	case kindWorker:
 		var invs bytes.Buffer
-		logger := app.newLogger("show")
-		if lerr := Try(ctx, app, logger, LogInvListFailed, Command{
+		if lerr := Try(ctx, app, app.newLogger("show"), LogInvListFailed, Command{
 			Name:   app.busBinary(),
 			Args:   []string{"inv-list", "--dir", app.busDirectory(), "--task", taskID},
 			Stdout: &invs,
@@ -92,47 +97,45 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 			return fromStorage(ShowStorage, storageErr(lerr, "inv-list warning"))
 		}
 		if s := strings.TrimRight(invs.String(), "\n"); s != "" {
-			if _, err := fmt.Fprintf(out, "\n== investigations\n%s\n", s); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write investigations"))
+			if err := showPrint(out, "write investigations", "\n== investigations\n%s\n", s); err != nil {
+				return err
 			}
 		}
 	case kindInvestigation:
+		header := fmt.Sprintf("\n== investigation #%s for %s (task %s)\n", metaLookup(meta, "INV_ID", ""), metaLookup(meta, "FROM_AGENT", ""), metaLookup(meta, "PARENT_TASK", ""))
 		if team := metaLookup(meta, "INVESTIGATION_TEAM", ""); team != "" {
-			if _, err := fmt.Fprintf(out, "\n== investigation team %s (phase %s)\n", team, metaLookup(meta, "INVESTIGATION_PHASE", "")); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write investigation team header"))
-			}
-		} else {
-			if _, err := fmt.Fprintf(out, "\n== investigation #%s for %s (task %s)\n", metaLookup(meta, "INV_ID", ""), metaLookup(meta, "FROM_AGENT", ""), metaLookup(meta, "PARENT_TASK", "")); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write investigation header"))
-			}
+			header = fmt.Sprintf("\n== investigation team %s (phase %s)\n", team, metaLookup(meta, "INVESTIGATION_PHASE", ""))
+		}
+		if err := showPrint(out, "write investigation header", "%s", header); err != nil {
+			return err
 		}
 		resultPath := filepath.Join(taskDir, "result.md")
-		if fi, err := os.Stat(resultPath); err == nil && fi.Mode().IsRegular() && fi.Size() > 0 {
-			if _, err := fmt.Fprintf(out, "   result: %s\n", resultPath); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write result path"))
+		if fi, err := os.Stat(resultPath); err == nil && fi.Mode().IsRegular() && fi.Size() > 0 { // #nosec G703
+			if err := showPrint(out, "write result path", "   result: %s\n", resultPath); err != nil {
+				return err
 			}
 		}
 	}
 
 	finalPath := filepath.Join(taskDir, "final.md")
-	if fi, err := os.Stat(finalPath); err == nil && fi.Mode().IsRegular() {
-		if content, err := os.ReadFile(finalPath); err != nil { // #nosec G304
+	if fi, err := os.Stat(finalPath); err == nil && fi.Mode().IsRegular() { // #nosec G703
+		if content, err := os.ReadFile(finalPath); err != nil { // #nosec G304,G703 -- path constructed from validated task directory
 			return fromStorage(ShowStorage, storageErr(err, "read final.md"))
 		} else if last := strings.TrimRight(string(content), "\n"); last != "" {
-			if _, err := fmt.Fprintf(out, "\n== the agent's last message\n%s\n", last); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write final message"))
+			if err := showPrint(out, "write final message", "\n== the agent's last message\n%s\n", last); err != nil {
+				return err
 			}
 		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fromStorage(ShowStorage, storageErr(err, "stat final.md"))
 	}
 
-	if workTree := metaLookup(meta, "WORKTREE", app.workTree); workTree != "" {
-		reportFile := filepath.Join(workTree, ".agents", "reports", taskID+".md")
-		if info, err := os.Stat(reportFile); err == nil && info.Mode().IsRegular() { // #nosec G703
-			if _, err := fmt.Fprintf(out, "\n== report: %s\n", reportFile); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write report line"))
-			}
+	if wt := metaLookup(meta, "WORKTREE", app.workTree); wt != "" {
+		p := filepath.Join(wt, ".agents", "reports", taskID+".md")
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() { // #nosec G703
+			return showPrint(out, "write report line", "\n== report: %s\n", p)
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fromStorage(ShowStorage, storageErr(err, "stat %s", reportFile))
+			return fromStorage(ShowStorage, storageErr(err, "stat %s", p))
 		}
 	}
 	return nil

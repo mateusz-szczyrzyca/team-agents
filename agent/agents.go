@@ -9,14 +9,10 @@ import (
 	"strings"
 )
 
+// CLI provider and listing tier constants classify agents across web and CLI displays.
 const (
-	listingNormal       string = "normal"       // listingNormal identifies a full-capability team agent.
-	listingWorker       string = "worker"       // listingWorker identifies an inexpensive helper.
-	listingInvestigator string = "investigator" // listingInvestigator identifies a reviewer.
-	cliClaude           string = "claude"       // cliClaude selects the Anthropic CLI provider.
-	cliCodex            string = "codex"        // cliCodex selects the OpenAI CLI provider.
-	cliGemini           string = "gemini"       // cliGemini selects the Google CLI provider.
-	cliOpenCode         string = "opencode"     // cliOpenCode derives its provider from the model prefix.
+	listingNormal, listingWorker, listingInvestigator string = "normal", "worker", "investigator"      // agent listing tiers
+	cliClaude, cliCodex, cliGemini, cliOpenCode       string = "claude", "codex", "gemini", "opencode" // supported agent CLI types
 )
 
 // agentListing is one line of the web panel's existing JSON interface.
@@ -35,7 +31,7 @@ var agentProviders = map[string]string{cliClaude: "anthropic", cliCodex: "openai
 func configuredListings(cfg *Config) []agentListing {
 	var records []agentListing // records puts sorted investigators after the configured agents.
 	for _, group := range []string{"AGENT_TYPE", "INVESTIGATORS_TYPE"} {
-		var names []string // names removes Go's map iteration randomness.
+		var names []string
 		for name := range cfg.Associative[group] {
 			names = append(names, name)
 		}
@@ -43,8 +39,7 @@ func configuredListings(cfg *Config) []agentListing {
 		for _, name := range names {
 			record := agentListing{Name: name, Type: cfg.Associative[group][name], Model: cfg.Associative["AGENT_MODEL"][name], Tier: listingNormal} // record starts as a normal agent.
 			if group == "INVESTIGATORS_TYPE" {
-				record.Model = cfg.Associative["INVESTIGATORS_MODEL"][name]
-				record.Tier = listingInvestigator
+				record.Model, record.Tier = cfg.Associative["INVESTIGATORS_MODEL"][name], listingInvestigator
 			} else {
 				for _, worker := range cfg.Indexed["WORKER_AGENTS"] {
 					if worker == name {
@@ -52,12 +47,11 @@ func configuredListings(cfg *Config) []agentListing {
 						break
 					}
 				}
+				record.Provider = "other"
 				if p, ok := agentProviders[record.Type]; ok {
 					record.Provider = p
 				} else if record.Type == cliOpenCode {
 					record.Provider, _, _ = strings.Cut(record.Model, "/")
-				} else {
-					record.Provider = "other"
 				}
 			}
 			records = append(records, record)
@@ -83,16 +77,12 @@ func (a *App) runningTask(name, root string) (string, *AgentsError) {
 		if agent, _ := meta.Lookup("AGENT"); agent != name {
 			continue
 		}
-		status, _ := meta.Lookup("STATUS")
-		run, _ := meta.Lookup("RUN")
+		status, run, job := metaLookup(meta, "STATUS", ""), metaLookup(meta, "RUN", ""), metaLookup(meta, "JOB_ID", "")
 		if status == taskRunning || status == taskStarting {
-			result, eerr := a.execute(context.Background(), Command{Name: "systemctl", Args: []string{"--user", "is-active", "--quiet", "agent-" + id + "-r" + run + ".service"}})
-			if eerr == nil && result.ExitCode == 0 {
+			if res, err := a.execute(context.Background(), Command{Name: "systemctl", Args: []string{"--user", "is-active", "--quiet", "agent-" + id + "-r" + run + ".service"}}); err == nil && res.ExitCode == 0 {
 				return id, nil
 			}
-			// systemctl uses nonzero exit codes or launch failures for inactive units.
 		}
-		job, _ := meta.Lookup("JOB_ID")
 		if status == taskSleeping || (job != "" && (run == "0" || run == "") && (status == taskNew || status == taskStarting || status == taskRunning)) {
 			return id, nil
 		}
@@ -109,22 +99,16 @@ func (a *App) cmdAgents(out io.Writer, cfg *Config, root, busDir string) *Agents
 			if aerr != nil {
 				return aerr
 			}
-			if allocation = "free"; id != "" {
+			allocation = "free"
+			if id != "" {
 				allocation = "busy: " + id
 			}
 		}
-		model := record.Model // model uses a text-only default, unlike the JSON representation.
-		if model == "" {
-			model = "default"
-		}
-		if _, err := fmt.Fprintf(out, "%-12s %-7s model=%-24s %s\n", record.Name, record.Type, model, allocation); err != nil {
+		if _, err := fmt.Fprintf(out, "%-12s %-7s model=%-24s %s\n", record.Name, record.Type, firstNonEmpty(record.Model, "default"), allocation); err != nil {
 			return fromStorage(AgentsStorage, storageErr(err, "write agent row"))
 		}
 	}
-	busBin := cfg.Scalars["AGENTBUS_BIN"] // busBin comes from the already resolved configuration.
-	if busBin == "" {
-		busBin = "agentbus"
-	}
+	busBin := firstNonEmpty(cfg.Scalars["AGENTBUS_BIN"], "agentbus") // busBin comes from the already resolved configuration.
 	summary, berr := busCmd(context.Background(), a, busBin, "inv-list", "--dir", busDir, "--queue-max", cfg.Scalars["INVESTIGATION_QUEUE_MAX"], "--inv-slots", cfg.Scalars["INV_SLOTS"])
 	if berr != nil {
 		return fromProcess(AgentsProcess, processErr(busBin, berr, "list investigations"))

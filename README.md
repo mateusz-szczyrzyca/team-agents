@@ -1537,10 +1537,13 @@ make integration        # real agent CLIs and accounts (costs usage)
   and never executed by the native reader. ANSI-C Unicode escapes outside valid Unicode scalar
   values also remain opaque, preserving their bytes. A later opaque record with a recognized
   assignment key hides an earlier literal value; lookup reports that value as unavailable.
-  Task lookup preserves exact-directory precedence, unique literal fragments, directory symlinks and
-  existing path-like references.
+  Existing Bash commands keep their current sourcing behavior; no
+  caller switches to the native reader in this round. Task lookup preserves exact-directory precedence,
+  unique literal fragments, directory symlinks and existing path-like references. Updates, locks and
+  consumer-specific sourcing/raw-text quirks belong to later rounds.
   The internal APIs currently report storage failures for uninspectable task entries (including
   symlink loops) and non-regular `meta.env` paths; Bash may skip those entries or report no such task.
+  This deliberate diagnostic difference must be reconciled before migrating command consumers.
   The live panel now correctly reads Bash-written `\a`, `\b`, `\f` and `\v` escapes in metadata.
 - **Read and display CLI commands (R09, execution round 10).** The Go candidate binary implements
   read-only inspection and acknowledgment commands (`status`, `ls`, `show`, `agents`, `_agents-json`, `ack`,

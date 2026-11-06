@@ -8,35 +8,18 @@ import (
 	"strings"
 )
 
-// Metadata status values remain strings so unknown legacy states stay readable.
+// Task status and kind constants classify tasks across runner listings and displays.
 const (
-	taskNew      string = "new"      // taskNew has not started a run.
-	taskStarting string = "starting" // taskStarting is preparing a run.
-	taskRunning  string = "running"  // taskRunning has an executing run.
-	taskSleeping string = "sleeping" // taskSleeping reserves its agent between turns.
-	taskDone     string = "done"     // taskDone completed successfully.
-	taskFailed   string = "failed"   // taskFailed completed unsuccessfully.
-	taskStopped  string = "stopped"  // taskStopped was stopped explicitly.
-	taskExcluded string = "excluded" // taskExcluded was removed from a team.
-	taskHung     string = "hung"     // taskHung lost its executing unit.
-)
-
-// Task kind values classify tasks across runner listings and detail displays.
-const (
-	kindWorker            string = "worker"             // kindWorker is an autonomous worker task.
-	kindInvestigation     string = "investigation"      // kindInvestigation is an investigation task.
-	kindRemoteMember      string = "remote-member"      // kindRemoteMember is a remote team member task.
-	kindInvestigationTeam string = "investigation_team" // kindInvestigationTeam is an investigation team task.
+	taskNew, taskStarting, taskRunning      string = "new", "starting", "running"          // taskNew, taskStarting, taskRunning identify active states.
+	taskSleeping, taskDone, taskFailed      string = "sleeping", "done", "failed"          // taskSleeping, taskDone, taskFailed identify resting or finished states.
+	taskStopped, taskExcluded, taskHung     string = "stopped", "excluded", "hung"         // taskStopped, taskExcluded, taskHung identify abnormal states.
+	kindWorker, kindInvestigation           string = "worker", "investigation"             // kindWorker, kindInvestigation identify standard tasks.
+	kindRemoteMember, kindInvestigationTeam string = "remote-member", "investigation_team" // kindRemoteMember, kindInvestigationTeam identify team tasks.
 )
 
 // ackableStatus preserves the Bash terminal-state allowlist, including unknown-state rejection.
 func ackableStatus(status string) bool {
-	switch status {
-	case taskDone, taskFailed, taskStopped, taskExcluded, taskHung:
-		return true
-	default:
-		return false
-	}
+	return status == taskDone || status == taskFailed || status == taskStopped || status == taskExcluded || status == taskHung
 }
 
 // taskDirectories follows Bash's non-hidden */ glob, including directory symlinks.
@@ -47,20 +30,21 @@ func taskDirectories(root string) ([]string, *StorageError) {
 	}
 	var ids []string // ids retains lexical order for the first busy-task match.
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") {
 			continue
 		}
-		info, statErr := os.Stat(root + "/" + entry.Name()) // #nosec G703 -- local directory entry inspection matches Bash task path resolution
-		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-			return nil, storageErr(statErr, "cannot inspect task %s", entry.Name())
-		} else if statErr != nil || !info.IsDir() {
+		path := root + "/" + name
+		if info, err := os.Stat(path); err != nil || !info.IsDir() { // #nosec G703
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return nil, storageErr(err, "cannot inspect task %s", name)
+			}
 			continue
 		}
-		metaInfo, metaErr := os.Stat(root + "/" + entry.Name() + "/meta.env") // #nosec G703 -- internal task metadata file inspection matches Bash path resolution
-		if metaErr != nil && !errors.Is(metaErr, os.ErrNotExist) {
-			return nil, storageErr(metaErr, "cannot inspect task metadata %s", entry.Name())
-		} else if metaErr == nil && metaInfo.Mode().IsRegular() {
-			ids = append(ids, entry.Name())
+		if mi, err := os.Stat(path + "/meta.env"); err != nil && !errors.Is(err, os.ErrNotExist) { // #nosec G703
+			return nil, storageErr(err, "cannot inspect task metadata %s", name)
+		} else if err == nil && mi.Mode().IsRegular() {
+			ids = append(ids, name)
 		}
 	}
 	return ids, nil
@@ -70,6 +54,14 @@ func taskDirectories(root string) ([]string, *StorageError) {
 func acknowledgeTask(root, id string) *StorageError {
 	if err := os.WriteFile(root+"/"+id+"/acked", nil, 0o666); err != nil { // #nosec G306,G703 -- local task reference and marker mode preserve Bash redirection, filtered by the process umask
 		return storageErr(err, "cannot acknowledge task %s", id)
+	}
+	return nil
+}
+
+// ackPrint writes formatted output or returns AckStorage error.
+func ackPrint(out io.Writer, format string, args ...any) *AckError {
+	if _, err := fmt.Fprintf(out, format, args...); err != nil {
+		return fromStorage(AckStorage, storageErr(err, "write acknowledgement"))
 	}
 	return nil
 }
@@ -87,27 +79,25 @@ func (a *App) cmdAck(target string, out io.Writer, root string) *AckError {
 			if merr != nil && merr.Cause != ReadTaskMetaNotFound {
 				return fromStorage(AckStorage, storageErr(merr, "cannot read task %s", id))
 			}
-			if !ackableStatus(metaLookup(meta, "STATUS", "")) {
-				continue
+			if ackableStatus(metaLookup(meta, "STATUS", "")) {
+				if serr := acknowledgeTask(root, id); serr != nil {
+					return fromStorage(AckStorage, serr)
+				}
+				n++
 			}
-			if serr := acknowledgeTask(root, id); serr != nil {
-				return fromStorage(AckStorage, serr)
-			}
-			n++
 		}
-		if _, err := fmt.Fprintf(out, "Acknowledged: %d\n", n); err != nil {
-			return fromStorage(AckStorage, storageErr(err, "write acknowledgement count"))
-		}
-		return nil
+		return ackPrint(out, "Acknowledged: %d\n", n)
 	}
 	id, rerr := resolveTaskID(root, target)
 	if rerr != nil {
-		if rerr.Cause == ResolveTaskNotFound {
+		switch rerr.Cause {
+		case ResolveTaskNotFound:
 			return opErr(AckNotFound, "%s", rerr.Message)
-		} else if rerr.Cause == ResolveTaskAmbiguous {
+		case ResolveTaskAmbiguous:
 			return opErr(AckAmbiguous, "%s", rerr.Message)
+		default:
+			return fromStorage(AckStorage, storageErr(rerr, "resolve task %s", target))
 		}
-		return fromStorage(AckStorage, storageErr(rerr, "resolve task %s", target))
 	}
 	meta, merr := readTaskMeta(root, id)
 	if merr != nil && merr.Cause != ReadTaskMetaNotFound {
@@ -119,8 +109,5 @@ func (a *App) cmdAck(target string, out io.Writer, root string) *AckError {
 	if serr := acknowledgeTask(root, id); serr != nil {
 		return fromStorage(AckStorage, serr)
 	}
-	if _, err := fmt.Fprintf(out, "Acknowledged %s.\n", id); err != nil {
-		return fromStorage(AckStorage, storageErr(err, "write acknowledgement"))
-	}
-	return nil
+	return ackPrint(out, "Acknowledged %s.\n", id)
 }

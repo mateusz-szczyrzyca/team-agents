@@ -3,15 +3,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
 // writeTestScript creates a file or script in a test directory.
 func writeTestScript(t *testing.T, path, content string, mode os.FileMode) {
-	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(content), mode); err != nil {
 		t.Fatal(err)
 	}
@@ -24,25 +28,21 @@ func TestEffectiveChildPathResolution(t *testing.T) {
 	writeTestScript(t, filepath.Join(dirB, "samplecmd"), "#!/bin/sh\necho child\n", 0o755)
 	var out bytes.Buffer
 	res, err := OSExecutor{}.Execute(context.Background(), Command{Name: "samplecmd", Env: []string{"PATH=" + dirB}, Stdout: &out})
-	if err != nil {
-		t.Fatalf("unexpected execute error: %v", err)
-	}
-	if res.ExitCode != 0 || strings.TrimSpace(out.String()) != "child" {
-		t.Fatalf("got exit=%d out=%q, want exit=0 out=child", res.ExitCode, out.String())
+	if err != nil || res.ExitCode != 0 || strings.TrimSpace(out.String()) != "child" {
+		t.Fatalf("err=%v exit=%d out=%q", err, res.ExitCode, out.String())
 	}
 }
 
 // TestDelegatedBusPartialStdoutAndRawExit verifies partial stdout retention and raw exit preservation.
 func TestDelegatedBusPartialStdoutAndRawExit(t *testing.T) {
-	app := newApp(nil, nil, nil)
-	app.Executor = executorFunc(func(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
+	app := &App{Executor: executorFunc(func(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
 		if cmd.Stdout != nil {
 			_, _ = cmd.Stdout.Write([]byte("partial-text\n"))
 		}
 		return CommandResult{ExitCode: 42}, nil
-	})
-	var out, errBuf bytes.Buffer
-	if code := app.run([]string{"helpers"}, &out, &errBuf); code != 42 || out.String() != "partial-text\n" {
+	})}
+	var out bytes.Buffer
+	if code := app.run([]string{"helpers"}, &out, io.Discard); code != 42 || out.String() != "partial-text\n" {
 		t.Fatalf("got exit=%d out=%q, want exit=42 out=partial-text\\n", code, out.String())
 	}
 }
@@ -52,14 +52,13 @@ func TestCmdShowOptionalFilesDirectoriesAndCRLF(t *testing.T) {
 	tasksDir := t.TempDir()
 	taskDir := filepath.Join(tasksDir, "task-opt")
 	for _, sub := range []string{"final.md", "result.md"} {
-		if err := os.MkdirAll(filepath.Join(taskDir, sub), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(taskDir, sub), 0o750); err != nil {
 			t.Fatal(err)
 		}
 	}
 	writeTestScript(t, filepath.Join(taskDir, "meta.env"), "ID=task-opt\nKIND=investigation\n", 0o644)
 	writeTestScript(t, filepath.Join(taskDir, "task.md"), "Task text\n", 0o644)
-	app := newApp(nil, nil, nil)
-	app.tasksDir = tasksDir
+	app := &App{tasksDir: tasksDir}
 	var out bytes.Buffer
 	if err := cmdShow(context.Background(), app, "task-opt", &out); err != nil {
 		t.Fatalf("cmdShow failed on directory optional files: %v", err)
@@ -70,15 +69,10 @@ func TestCmdShowOptionalFilesDirectoriesAndCRLF(t *testing.T) {
 func TestStatusAndAgentsSystemctlFailure(t *testing.T) {
 	tasksDir := t.TempDir()
 	taskDir := filepath.Join(tasksDir, "task-sys")
-	if err := os.MkdirAll(taskDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	writeTestScript(t, filepath.Join(taskDir, "meta.env"), "ID=task-sys\nSTATUS=running\nAGENT=solo\n", 0o644)
-	app := newApp(nil, nil, nil)
-	app.tasksDir = tasksDir
-	app.Executor = executorFunc(func(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
+	app := &App{tasksDir: tasksDir, Executor: executorFunc(func(_ context.Context, _ Command) (CommandResult, *ExecuteError) {
 		return CommandResult{}, opErr(ExecuteStart, "systemctl missing")
-	})
+	})}
 	var out bytes.Buffer
 	if err := cmdStatus(context.Background(), app, &out); err != nil || !strings.Contains(out.String(), "running?") {
 		t.Fatalf("cmdStatus failed or missing running?: err=%v out=%s", err, out.String())
@@ -88,33 +82,22 @@ func TestStatusAndAgentsSystemctlFailure(t *testing.T) {
 // TestCmdNotesExplicitEmptyArg verifies that an explicit empty argument is not consumed as repo.
 func TestCmdNotesExplicitEmptyArg(t *testing.T) {
 	var notesArgs []string
-	app := newApp(nil, nil, nil)
-	app.Executor = executorFunc(func(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
-		if strings.Contains(strings.Join(cmd.Args, " "), "show-toplevel") {
-			if cmd.Stdout != nil {
-				_, _ = cmd.Stdout.Write([]byte("/home/dev/agents/worktrees/my-awesome-repo/task-456\n"))
-			}
-		} else if strings.Contains(strings.Join(cmd.Args, " "), "git-common-dir") {
-			if cmd.Stdout != nil {
-				_, _ = cmd.Stdout.Write([]byte("/home/dev/agents/worktrees/my-awesome-repo/.git\n"))
-			}
-		} else if strings.Contains(strings.Join(cmd.Args, " "), "notes") {
+	app := &App{Executor: executorFunc(func(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
+		argStr := strings.Join(cmd.Args, " ")
+		if strings.Contains(argStr, "show-toplevel") && cmd.Stdout != nil {
+			_, _ = io.WriteString(cmd.Stdout, "/home/dev/agents/worktrees/my-awesome-repo/task-456\n")
+		} else if strings.Contains(argStr, "git-common-dir") && cmd.Stdout != nil {
+			_, _ = io.WriteString(cmd.Stdout, "/home/dev/agents/worktrees/my-awesome-repo/.git\n")
+		} else if strings.Contains(argStr, "notes") {
 			notesArgs = cmd.Args
 		}
 		return CommandResult{ExitCode: 0}, nil
-	})
+	})}
 	var out bytes.Buffer
 	if err := app.cmdNotes(context.Background(), []string{""}, &out); err != nil {
 		t.Fatalf("cmdNotes failed: %v", err)
 	}
-	hasEmpty := false
-	for _, a := range notesArgs {
-		if a == "" {
-			hasEmpty = true
-			break
-		}
-	}
-	if !hasEmpty {
+	if !slices.Contains(notesArgs, "") {
 		t.Fatalf("expected empty string argument to be passed to bus notes, got: %v", notesArgs)
 	}
 }

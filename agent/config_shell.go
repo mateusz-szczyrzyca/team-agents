@@ -127,11 +127,9 @@ func (a *App) evaluateConfigShell(ctx context.Context, req ConfigRequest, defaul
 	if rErr != nil && !os.IsNotExist(rErr) {
 		return Config{}, fromStorage(LoadConfigShell, storageErr(rErr, "read configuration environment"))
 	}
-	if len(envData) > 0 {
-		for _, e := range bytes.Split(bytes.TrimSuffix(envData, []byte{0}), []byte{0}) {
-			if len(e) > 0 {
-				cfg.Env = append(cfg.Env, string(e))
-			}
+	for _, e := range bytes.Split(bytes.TrimSuffix(envData, []byte{0}), []byte{0}) {
+		if len(e) > 0 {
+			cfg.Env = append(cfg.Env, string(e))
 		}
 	}
 	return cfg, nil
@@ -143,13 +141,13 @@ func replayConfigOutput(path string, out io.Writer) *LoadConfigError {
 		return nil
 	}
 	data, err := os.ReadFile(path) // #nosec G304 -- path is a fixed filename in the evaluator's private temporary directory.
-	if os.IsNotExist(err) {
-		return nil
-	}
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return fromStorage(LoadConfigShell, storageErr(err, "read configuration output"))
 	}
-	if _, err := io.Copy(out, bytes.NewReader(data)); err != nil {
+	if _, err := out.Write(data); err != nil {
 		return fromStorage(LoadConfigShell, storageErr(err, "write configuration output"))
 	}
 	return nil

@@ -138,6 +138,11 @@ func mapBusExitCode(code int, stderr string) *BusError {
 	return err
 }
 
+// isPermissionError reports whether err indicates a permission denial during launch.
+func isPermissionError(err error) bool {
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
+}
+
 // isLaunchError reports whether the error represents a subprocess launch failure.
 func isLaunchError(err error) bool {
 	var execErr *ExecuteError
@@ -145,18 +150,7 @@ func isLaunchError(err error) bool {
 		return true
 	}
 	var procErr *ProcessError
-	if errors.As(err, &procErr) {
-		if errors.Is(procErr.Err, os.ErrNotExist) || errors.Is(procErr.Err, exec.ErrNotFound) ||
-			isPermissionError(procErr.Err) {
-			return true
-		}
-	}
-	return false
-}
-
-// isPermissionError reports whether err indicates a permission denial during launch.
-func isPermissionError(err error) bool {
-	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
+	return errors.As(err, &procErr) && (errors.Is(procErr.Err, os.ErrNotExist) || errors.Is(procErr.Err, exec.ErrNotFound) || isPermissionError(procErr.Err))
 }
 
 // busExitCode returns the process exit status of a delegated agentbus failure.
@@ -174,28 +168,7 @@ func busExitCode(err *BusError) int {
 		}
 		return 127
 	}
-	switch err.Cause {
-	case BusInvalidArgument:
-		return BusExitInvalidArgument
-	case BusNotFound:
-		return BusExitNotFound
-	case BusNotInTeam:
-		return BusExitNotInTeam
-	case BusPermission:
-		return BusExitPermission
-	case BusConflict:
-		return BusExitConflict
-	case BusInvalidState:
-		return BusExitInvalidState
-	case BusStorage:
-		return BusExitStorage
-	case BusUnknownTool:
-		return BusExitUnknownTool
-	case BusProcess:
-		return BusExitProcess
-	default:
-		return 1
-	}
+	return err.Class().ExitCode()
 }
 
 // busArgsJSON constructs the argv list for agentbus serve matching bash bus_args_json.
@@ -315,12 +288,8 @@ func busCmd(ctx context.Context, app *App, busBin string, args ...string) (strin
 		return "", fromProcess(BusProcess, processErr(busBin, eerr, "%s", eerr.Message))
 	}
 	if app != nil && app.Stderr != nil && stderr.Len() > 0 {
-		n, werr := app.Stderr.Write(stderr.Bytes())
-		if werr != nil {
+		if _, werr := app.Stderr.Write(stderr.Bytes()); werr != nil {
 			return stdout.String(), fromStorage(BusStorage, storageErr(werr, "write subprocess stderr"))
-		}
-		if n < stderr.Len() {
-			return stdout.String(), fromStorage(BusStorage, storageErr(io.ErrShortWrite, "write subprocess stderr"))
 		}
 	}
 	if result.ExitCode != BusExitSuccess {
