@@ -264,7 +264,7 @@ func TestCmdShowWorktreeFromMeta(t *testing.T) {
 	}
 }
 
-// TestCmdShowQuestionsContent verifies questions file content is printed, not just header.
+// TestCmdShowQuestionsContent verifies questions header is printed without content.
 func TestCmdShowQuestionsContent(t *testing.T) {
 	tasksDir := t.TempDir()
 	app := &App{
@@ -301,9 +301,9 @@ func TestCmdShowQuestionsContent(t *testing.T) {
 	if !strings.Contains(output, "== questions") {
 		t.Errorf("output missing questions header: %s", output)
 	}
-	// Should have questions CONTENT, not just header
-	if !strings.Contains(output, "First question") {
-		t.Errorf("output missing questions content: %s", output)
+	// Should NOT have questions content, only header (parity with Bash oracle)
+	if strings.Contains(output, "First question") {
+		t.Errorf("output should not include questions content: %s", output)
 	}
 }
 
