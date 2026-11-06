@@ -75,6 +75,24 @@ func TestCmdBus(t *testing.T) {
 	}
 }
 
+// TestCmdBusStatusPreservedOnLogFailure verifies status output is preserved even when bus log fails.
+func TestCmdBusStatusPreservedOnLogFailure(t *testing.T) {
+	exec := &readCmdsTestExecutor{
+		responses: map[string]string{"status": "bus status ok\n"},
+		exitCodes: map[string]int{"log": 2},
+		stderrs:   map[string]string{"log": "invalid argument\n"},
+	}
+	app := newReadCmdsTestApp(exec)
+	var out bytes.Buffer
+	if err := app.cmdBus(context.Background(), "invalid", &out); err == nil {
+		t.Fatal("expected error from cmdBus on log failure")
+	}
+	if got := out.String(); got != "bus status ok\n\n" {
+		t.Fatalf("cmdBus output = %q, want %q", got, "bus status ok\n\n")
+	}
+}
+
+
 func TestCmdHelpers(t *testing.T) {
 	exec := &readCmdsTestExecutor{responses: map[string]string{"helper-list": "helper-1 ready\n"}}
 	app := newReadCmdsTestApp(exec)
