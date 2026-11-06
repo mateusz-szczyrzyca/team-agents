@@ -86,9 +86,14 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 	kind, _ := meta.Lookup("KIND")
 	switch kind {
 	case "worker":
-		// Worker tasks can have investigations (query via bus inv-list in future rounds)
-		// For now, only print header if there are investigations
-		// TODO: call bus inv-list --dir busDir --task taskID and only print header if non-empty
+		// Worker tasks can have investigations
+		invOut, invErr := busCmd(context.Background(), app, app.busBinary(), "inv-list", "--dir", app.busDirectory(), "--task", taskID)
+		if invErr == nil && strings.TrimSpace(invOut) != "" {
+			if _, err := fmt.Fprintf(out, "\n== investigations\n%s\n", invOut); err != nil {
+				return fromStorage(ShowStorage, storageErr(err, "write investigations"))
+			}
+		}
+		// If inv-list fails, skip silently (non-fatal)
 	case "investigation":
 		team, _ := meta.Lookup("INVESTIGATION_TEAM")
 		if team != "" {
