@@ -134,7 +134,7 @@ func configSettings(ctx ConfigContext) []configSetting {
 		{"AGENT_WEB_LISTEN", "127.0.0.1:8787"}, {"AGENT_WEB_USERS", ""}, {"AGENT_WEB_DEVICES", ""}, {"AGENT_WEB_URL", ""},
 		{"LEAD_LISTEN", ""}, {"LEAD_NODES", ""}, {"INSTANCE_NAME", strings.SplitN(ctx.Hostname, ".", 2)[0]},
 		{"NODE_TTL_SEC", "90"}, {"ROUND_SOFT_LINES", "2000"}, {"ROUND_ALWAYS_EXCLUDE", ".agents/reports/"},
-		{"VERIFY_MAX_FIX_PASSES", "2"}, {"AGENT_REVIEW_GATE", "auto"}, {"AGENT_REVIEW_GATE_MIN", "30"},
+		{"VERIFY_MAX_FIX_PASSES", "5"}, {"AGENT_REVIEW_GATE", "auto"}, {"AGENT_REVIEW_GATE_MIN", "30"},
 		{"AGENT_STAGE_POLL_SEC", "2"}, {"AGENT_PRECHECK_MAX", "2"},
 		{"AUTO_MERGE_HUMAN_PATHS", "install.sh .github/ systemd/ AGENTS.md"}, {"AUTO_MERGE_HOLD_TEST_CHANGES", "yes"},
 		{"AGENT_REVIEW_WAIT_MIN", "30"}, {"AGENT_HUMAN_GITHUB", ""},
