@@ -70,12 +70,9 @@ func (a *App) xdgRuntimeDir() string {
 
 // newLogger returns a Logger configured with the application's resolved log directory and settings.
 func (a *App) newLogger(subcommand string) *Logger {
-	logDir := ""
-	if a != nil && a.config != nil {
+	logDir := filepath.Join(firstNonEmpty(a.agentHome, filepath.Join(os.Getenv("HOME"), "agents")), "logs")
+	if a != nil && a.config != nil && a.config.Scalars["LOG_DIR"] != "" {
 		logDir = a.config.Scalars["LOG_DIR"]
-	}
-	if logDir == "" {
-		logDir = filepath.Join(firstNonEmpty(a.agentHome, filepath.Join(os.Getenv("HOME"), "agents")), "logs")
 	}
 	stderr, clock := io.Writer(os.Stderr), Clock(nil)
 	if a != nil {
@@ -103,9 +100,7 @@ func (a *App) listingConfig() *Config {
 	if a.config != nil {
 		return a.config
 	}
-	return &Config{Scalars: map[string]string{
-		"AGENTBUS_BIN": a.busBinary(), "INVESTIGATION_QUEUE_MAX": "3", "INV_SLOTS": "1",
-	}}
+	return &Config{Scalars: map[string]string{"AGENTBUS_BIN": a.busBinary(), "INVESTIGATION_QUEUE_MAX": "3", "INV_SLOTS": "1"}}
 }
 
 // newApp fills omitted boundaries without granting command execution permission.
