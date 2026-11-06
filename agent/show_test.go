@@ -352,3 +352,39 @@ func TestCmdShowReport(t *testing.T) {
 		t.Errorf("output missing report header: %s", output)
 	}
 }
+
+// TestCmdShowTaskmdDirectory verifies ShowStorage error when task.md is a directory.
+func TestCmdShowTaskmdDirectory(t *testing.T) {
+	tasksDir := t.TempDir()
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	// Create task where task.md is a directory instead of file
+	taskDir := filepath.Join(tasksDir, "bad-task")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=bad-task\nSTATUS=done\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Create task.md as a directory instead of a file
+	if err := os.Mkdir(filepath.Join(taskDir, "task.md"), 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := cmdShow(context.Background(), app, "bad-task", &out)
+	if err == nil {
+		t.Fatalf("cmdShow should return error when task.md is a directory, got nil")
+	}
+	if err.Cause != ShowStorage {
+		t.Fatalf("cmdShow returned %v, want ShowStorage", err.Cause)
+	}
+}
