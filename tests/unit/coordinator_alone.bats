@@ -49,7 +49,7 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
     _ "$AGENTS_HOME/bus/state.json" "$team"
   for i in 1 2 3 4; do jq -nc --arg i "$i" '{ts: "2026-11-06 10:00:00", k: "cmd", t: ("ls " + $i)}' >> "$AGENTS_HOME/tasks/$t/activity.jsonl"; done
   wait_grep "worked alone" "$AGENTS_HOME/tasks/$t/activity.jsonl"
-  grep -q '"event":"solo_coordinator_cut"' "$AGENTS_HOME/logs/agent.jsonl"
+  wait_grep '"event":"solo_coordinator_cut"' "$AGENTS_HOME/logs/agent.jsonl"   # logged just after the activity line
   wait_grep "put the work on the board" "$AGENTS_HOME/tasks/$t/prompt-2.md"   # the next run's prompt, once written
   agent stop --running > /dev/null
 }
