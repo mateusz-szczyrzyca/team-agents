@@ -84,10 +84,7 @@ func (a *App) cmdAck(target string, out io.Writer, root string) *AckError {
 		n := 0 // n includes existing acknowledgement markers, matching repeated Bash calls.
 		for _, id := range ids {
 			meta, merr := readTaskMeta(root, id)
-			if merr != nil {
-				if merr.Cause == ReadTaskMetaNotFound {
-					continue
-				}
+			if merr != nil && merr.Cause != ReadTaskMetaNotFound {
 				return fromStorage(AckStorage, storageErr(merr, "cannot read task %s", id))
 			}
 			if !ackableStatus(metaLookup(meta, "STATUS", "")) {
