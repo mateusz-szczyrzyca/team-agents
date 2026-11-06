@@ -123,7 +123,7 @@ func (a *App) evaluateConfigShell(ctx context.Context, req ConfigRequest, defaul
 	if failure != nil {
 		return Config{}, failure
 	}
-	if envData, rErr := os.ReadFile(envPath); rErr == nil && len(envData) > 0 {
+	if envData, rErr := os.ReadFile(envPath); rErr == nil && len(envData) > 0 { // #nosec G304 -- fixed filename in private temporary directory
 		for _, e := range bytes.Split(bytes.TrimSuffix(envData, []byte{0}), []byte{0}) {
 			if len(e) > 0 {
 				cfg.Env = append(cfg.Env, string(e))

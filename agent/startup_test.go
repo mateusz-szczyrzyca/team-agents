@@ -170,14 +170,14 @@ func TestStartupConfigExportedEnvPropagated(t *testing.T) {
 	}
 	home := t.TempDir()
 	binDir, confDir, taskDir := filepath.Join(home, "bin"), filepath.Join(home, "agents"), filepath.Join(home, "agents", "tasks", "t1")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+	if err := os.MkdirAll(taskDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	stub := "#!/bin/sh\n[ \"$DBUS_SESSION_BUS_ADDRESS\" = \"unix:path=/tmp/test-bus\" ] && exit 0\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(binDir, "systemctl"), []byte(stub), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(binDir, "systemctl"), []byte(stub), 0o700); err != nil { // #nosec G306 -- test executable stub
 		t.Fatal(err)
 	}
 	writeConfigFixture(t, filepath.Join(confDir, "agents.conf"), "export DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/test-bus\n")

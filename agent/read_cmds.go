@@ -128,7 +128,9 @@ func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *Comm
 	if err != nil {
 		return commandFromBus("inv get", err)
 	}
-	var res struct{ File string `json:"file"` }
+	var res struct {
+		File string `json:"file"`
+	}
 	if jerr := json.Unmarshal([]byte(out), &res); jerr != nil {
 		return opErr(CommandStorage, "parse inv-get json: %s", jerr.Error())
 	}
