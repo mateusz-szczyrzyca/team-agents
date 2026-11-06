@@ -308,38 +308,6 @@ func (c ActCause) info() causeInfo { return actCauses[c] }
 // String returns the cause name.
 func (c ActCause) String() string { return c.info().name }
 
-// ---------------------------------------------------------------- ack
-
-// AckCause is a reason why task completion acknowledgement failed.
-type AckCause int
-
-const (
-	AckNotFound     AckCause = iota // the task directory does not exist [NotFound]
-	AckAmbiguous                    // more than one task directory matches the reference [Conflict]
-	AckStillRunning                 // the task is still running and cannot be acknowledged [Conflict]
-	AckStorage                      // the shared state or a file could not be read or written [Storage]
-)
-
-// AckError is the error of task completion acknowledgement.
-type AckError = OpError[AckCause]
-
-// ackCauses describes the AckCause values (same order as the constants).
-var ackCauses = [...]causeInfo{
-	{"NotFound", ClassNotFound},
-	{"Ambiguous", ClassConflict},
-	{"StillRunning", ClassConflict},
-	{"Storage", ClassStorage},
-}
-
-// op implements opCause.
-func (AckCause) op() string { return "ack" }
-
-// info implements opCause.
-func (c AckCause) info() causeInfo { return ackCauses[c] }
-
-// String returns the cause name.
-func (c AckCause) String() string { return c.info().name }
-
 // ---------------------------------------------------------------- status
 
 // StatusCause is a reason why task status table display failed.

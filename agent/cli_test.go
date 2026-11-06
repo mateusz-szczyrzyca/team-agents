@@ -59,7 +59,7 @@ func TestDispatchUnknownCommand(t *testing.T) {
 }
 
 func TestDispatchRecognizesR09Commands(t *testing.T) {
-	commands := []string{"status", "ls", "show", "agents", "_agents-json", "ack", "bus", "inv", "notes", "helpers"}
+	commands := []string{"status", "ls", "show", "agents", "_agents-json", "bus", "inv", "notes", "helpers"}
 	for _, cmd := range commands {
 		var stdout, stderr bytes.Buffer
 		err := dispatch(cmd, nil, &stdout, &stderr)
@@ -145,14 +145,6 @@ func TestDelegatedBusExitCodesAndStderr(t *testing.T) {
 	})
 }
 
-func TestDispatchAckEmptyArg(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	err := dispatch("ack", []string{""}, &stdout, &stderr)
-	if err == nil || err.Cause != CommandInvalidArgument {
-		t.Fatalf("dispatch(ack, ['']) err = %v, want CommandInvalidArgument", err)
-	}
-}
-
 func TestRunDiagnosticsOnStderr(t *testing.T) {
 	app := newApp(nil, nil, nil)
 	var stdout, stderr bytes.Buffer
@@ -176,14 +168,6 @@ func TestRunDiagnosticsOnStderr(t *testing.T) {
 	}
 }
 
-func TestDispatchAckMissingArg(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	err := dispatch("ack", nil, &stdout, &stderr)
-	if err == nil || err.Cause != CommandInvalidArgument {
-		t.Fatalf("dispatch(ack, nil) err = %v, want CommandInvalidArgument", err)
-	}
-}
-
 func TestDispatchAgentsJSON(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := dispatch("_agents-json", nil, &stdout, &stderr)
@@ -202,5 +186,12 @@ func TestDispatchHelp(t *testing.T) {
 		if !strings.Contains(stdout.String(), "agent run <agent> \"task\"") {
 			t.Fatalf("dispatch(%q) stdout does not contain usage", cmd)
 		}
+	}
+}
+
+func TestDispatchShowEmptyArg(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if err := dispatch("show", []string{""}, &stdout, &stderr); err == nil || err.Cause != CommandInvalidArgument {
+		t.Fatalf("dispatch(show, empty argument) = %v, want CommandInvalidArgument", err)
 	}
 }
