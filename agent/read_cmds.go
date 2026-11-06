@@ -152,8 +152,7 @@ func (a *App) cmdNotes(ctx context.Context, args []string, stdout io.Writer) *Co
 	if repo == "" {
 		var rootBuf, commonBuf bytes.Buffer
 		if res, err := a.execute(ctx, Command{Name: "git", Args: []string{"rev-parse", "--show-toplevel"}, Dir: a.workTree, Stdout: &rootBuf}); err == nil && res.ExitCode == 0 {
-			root := strings.TrimSpace(rootBuf.String())
-			if res2, err2 := a.execute(ctx, Command{Name: "git", Args: []string{"-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"}, Stdout: &commonBuf}); err2 == nil && res2.ExitCode == 0 {
+			if res2, err2 := a.execute(ctx, Command{Name: "git", Args: []string{"-C", strings.TrimSpace(rootBuf.String()), "rev-parse", "--path-format=absolute", "--git-common-dir"}, Stdout: &commonBuf}); err2 == nil && res2.ExitCode == 0 {
 				if base := filepath.Base(filepath.Dir(strings.TrimSpace(commonBuf.String()))); base != "." && base != "/" && base != "" {
 					repo = base
 				}

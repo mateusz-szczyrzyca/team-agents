@@ -139,8 +139,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	}
 
 	// Print report if it exists
-	workTree := metaLookup(meta, "WORKTREE", app.workTree)
-	if workTree != "" {
+	if workTree := metaLookup(meta, "WORKTREE", app.workTree); workTree != "" {
 		reportFile := filepath.Join(workTree, ".agents", "reports", taskID+".md")
 		if info, err := os.Stat(reportFile); err == nil && info.Mode().IsRegular() { // #nosec G703 -- report file path under task worktree
 			if _, err := fmt.Fprintf(out, "\n== report: %s\n", reportFile); err != nil {

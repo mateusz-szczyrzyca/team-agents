@@ -58,9 +58,25 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 	case "agents":
 		return a.routeAgents(ctx, stdout)
 	case "_agents-json":
-		return a.routeAgentsJSON(ctx, stdout)
+		if err := a.cmdAgentsJSON(stdout, a.listingConfig()); err != nil {
+			return fromStorage(CommandStorage, storageErr(err.asError(), "agents json"))
+		}
+		return nil
 	case "ack":
-		return a.routeAck(ctx, args, stdout)
+		if len(args) == 0 || args[0] == "" {
+			return opErr(CommandInvalidArgument, "usage: agent ack <id|all>")
+		}
+		if err := a.cmdAck(args[0], stdout, a.tasksDirectory()); err != nil {
+			switch err.Cause {
+			case AckNotFound:
+				return opErr(CommandNotFound, "%s", err.Message)
+			case AckAmbiguous, AckStillRunning:
+				return opErr(CommandConflict, "%s", err.Message)
+			default:
+				return fromStorage(CommandStorage, storageErr(err.asError(), "ack"))
+			}
+		}
+		return nil
 	default:
 		if err := printUsage(stdout); err != nil {
 			return fromStorage(CommandStorage, storageErr(err, "print usage"))
@@ -76,32 +92,6 @@ func (a *App) routeAgents(_ context.Context, stdout io.Writer) *CommandError {
 			return &CommandError{Cause: CommandProcess, Message: err.Message, Err: errors.Join(CommandProcess.info().class.Sentinel(), err)}
 		}
 		return fromStorage(CommandStorage, storageErr(err.asError(), "agents"))
-	}
-	return nil
-}
-
-// routeAgentsJSON delegates to cmdAgentsJSON.
-func (a *App) routeAgentsJSON(_ context.Context, stdout io.Writer) *CommandError {
-	if err := a.cmdAgentsJSON(stdout, a.listingConfig()); err != nil {
-		return fromStorage(CommandStorage, storageErr(err.asError(), "agents json"))
-	}
-	return nil
-}
-
-// routeAck delegates to cmdAck.
-func (a *App) routeAck(_ context.Context, args []string, stdout io.Writer) *CommandError {
-	if len(args) == 0 || args[0] == "" {
-		return opErr(CommandInvalidArgument, "usage: agent ack <id|all>")
-	}
-	if err := a.cmdAck(args[0], stdout, a.tasksDirectory()); err != nil {
-		switch err.Cause {
-		case AckNotFound:
-			return opErr(CommandNotFound, "%s", err.Message)
-		case AckAmbiguous, AckStillRunning:
-			return opErr(CommandConflict, "%s", err.Message)
-		default:
-			return fromStorage(CommandStorage, storageErr(err.asError(), "ack"))
-		}
 	}
 	return nil
 }
