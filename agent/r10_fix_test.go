@@ -37,7 +37,9 @@ func TestEffectiveChildPathResolution(t *testing.T) {
 func TestDelegatedBusPartialStdoutAndRawExit(t *testing.T) {
 	app := &App{Executor: executorFunc(func(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
 		if cmd.Stdout != nil {
-			_, _ = cmd.Stdout.Write([]byte("partial-text\n"))
+			if _, err := cmd.Stdout.Write([]byte("partial-text\n")); err != nil {
+				t.Fatalf("write stdout: %v", err)
+			}
 		}
 		return CommandResult{ExitCode: 42}, nil
 	})}
@@ -85,9 +87,13 @@ func TestCmdNotesExplicitEmptyArg(t *testing.T) {
 	app := &App{Executor: executorFunc(func(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
 		argStr := strings.Join(cmd.Args, " ")
 		if strings.Contains(argStr, "show-toplevel") && cmd.Stdout != nil {
-			_, _ = io.WriteString(cmd.Stdout, "/home/dev/agents/worktrees/my-awesome-repo/task-456\n")
+			if _, err := io.WriteString(cmd.Stdout, "/home/dev/agents/worktrees/my-awesome-repo/task-456\n"); err != nil {
+				t.Fatalf("write show-toplevel: %v", err)
+			}
 		} else if strings.Contains(argStr, "git-common-dir") && cmd.Stdout != nil {
-			_, _ = io.WriteString(cmd.Stdout, "/home/dev/agents/worktrees/my-awesome-repo/.git\n")
+			if _, err := io.WriteString(cmd.Stdout, "/home/dev/agents/worktrees/my-awesome-repo/.git\n"); err != nil {
+				t.Fatalf("write git-common-dir: %v", err)
+			}
 		} else if strings.Contains(argStr, "notes") {
 			notesArgs = cmd.Args
 		}

@@ -51,7 +51,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 		return err
 	}
 
-	if content, err := os.ReadFile(filepath.Join(taskDir, "meta.env")); err == nil && len(content) > 0 { // #nosec G304,G703
+	if content, err := os.ReadFile(filepath.Join(taskDir, "meta.env")); err == nil && len(content) > 0 { // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
 		s := "  " + strings.ReplaceAll(strings.TrimSuffix(string(content), "\n"), "\n", "\n  ") + "\n"
 		if strings.HasSuffix(string(content), "\n") {
 			s += "\n"
@@ -66,7 +66,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	if err := showPrint(out, "write task header", "== task\n"); err != nil {
 		return err
 	}
-	taskContent, err := os.ReadFile(filepath.Join(taskDir, "task.md")) // #nosec G304,G703
+	taskContent, err := os.ReadFile(filepath.Join(taskDir, "task.md")) // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
 	if err != nil {
 		return fromStorage(ShowStorage, storageErr(err, "read task.md"))
 	}
@@ -110,7 +110,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 			return err
 		}
 		resultPath := filepath.Join(taskDir, "result.md")
-		if fi, err := os.Stat(resultPath); err == nil && fi.Mode().IsRegular() && fi.Size() > 0 { // #nosec G703
+		if fi, err := os.Stat(resultPath); err == nil && fi.Mode().IsRegular() && fi.Size() > 0 { // #nosec G703 -- local task directory inspection matches Bash path resolution
 			if err := showPrint(out, "write result path", "   result: %s\n", resultPath); err != nil {
 				return err
 			}
@@ -118,7 +118,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	}
 
 	finalPath := filepath.Join(taskDir, "final.md")
-	if fi, err := os.Stat(finalPath); err == nil && fi.Mode().IsRegular() { // #nosec G703
+	if fi, err := os.Stat(finalPath); err == nil && fi.Mode().IsRegular() { // #nosec G703 -- local task directory inspection matches Bash path resolution
 		if content, err := os.ReadFile(finalPath); err != nil { // #nosec G304,G703 -- path constructed from validated task directory
 			return fromStorage(ShowStorage, storageErr(err, "read final.md"))
 		} else if last := strings.TrimRight(string(content), "\n"); last != "" {
@@ -132,7 +132,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 
 	if wt := metaLookup(meta, "WORKTREE", app.workTree); wt != "" {
 		p := filepath.Join(wt, ".agents", "reports", taskID+".md")
-		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() { // #nosec G703
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() { // #nosec G703 -- report file path under task worktree
 			return showPrint(out, "write report line", "\n== report: %s\n", p)
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fromStorage(ShowStorage, storageErr(err, "stat %s", p))
