@@ -2277,14 +2277,14 @@ ${text:0:8000}"
     else
       log_error review_fix_resume_failed "task=$parent" "reason=${HANDBACK_OUT:0:500}"
       handover_failed "$parent" "the fix pass" "$HANDBACK_OUT"
-      push_text "$repo" "--verify: the review of PR #$PR_NUMBER found $n critical or major finding(s), but the team could not be resumed:" "${HANDBACK_OUT:0:500}"
+      push_text "$repo" "⛔ --verify: the review of PR #$PR_NUMBER found $n critical or major finding(s), but the team could not be resumed:" "${HANDBACK_OUT:0:500}"
     fi
     return 0
   fi
   owner=${AGENT_HUMAN_GITHUB:-$(github_owner "$root")}
   auto_stage "$parent" "waits for you: the reviews still find problems after $pass fix passes" no-comment   # the mention below says it
   (cd "$root" && try review_mention_failed gh pr comment "$PR_URL" --body "${owner:+@$owner }The fixes are still not done: after $pass fix passes the review still finds $n critical or major problem(s) (see the review above). The team has stopped; your decision is needed.")
-  push_text "$repo" "--verify: PR #$PR_NUMBER still has $n critical or major problem(s) after $pass fix passes — your decision is needed: $PR_URL"
+  push_text "$repo" "⛔ --verify: PR #$PR_NUMBER still has $n critical or major problem(s) after $pass fix passes — your decision is needed: $PR_URL"
   log_warn review_fixes_exhausted "task=$parent" "passes=$pass" "findings=$n"
 }
 
@@ -2879,7 +2879,7 @@ request_review() { # coordinator task id — --verify: queue a PR review by an i
   num=$(jq_soft pr_lookup_parse -r '.[0].number // empty' <<< "${pr:-[]}")
   if [[ -z $url ]]; then
     act "$id" err "--verify: no PR found for branch $branch — review skipped"
-    push_text "$(task_field "$id" REPO_NAME)" "Team $(task_field "$id" TEAM): --verify — no PR found for branch $branch, investigator review skipped."
+    push_text "$(task_field "$id" REPO_NAME)" "⚠ Team $(task_field "$id" TEAM): --verify — no PR found for branch $branch, investigator review skipped."
     return 0
   fi
   meta_set "$id" PR_NUMBER "$num"; meta_set "$id" PR_URL "$url"
@@ -3023,7 +3023,7 @@ $(team_summary "$team")" ;;
       start_precheck "$ltask"
       act "$ltask" info "all members finished — the round goes to review once its head passes the checks"
     fi
-    push_text "$REPO_NAME" "Team $team finished without being closed by its coordinator:" "$(team_summary "$team")"
+    push_text "$REPO_NAME" "⚠ Team $team finished without being closed by its coordinator:" "$(team_summary "$team")"
   elif team_all sleep && ! team_waits_on_others "$team" && { sleep 3   # a pending wake-up gets a moment; re-check
          [[ $(team_done_flag "$team") != true ]] && team_all sleep && ! team_all done; }; then
     local n=1
@@ -3034,7 +3034,7 @@ $(team_summary "$team")" ;;
         "TEAM STUCK: all members are asleep. As the coordinator, check the state (team_status, read_messages) and either assign work or finish the team task (STATUS: DONE). Waiting for the human to merge a PR? Then end the round instead of sleeping: STATUS: ROUND_DONE N/M." \
         "team=$team"
     elif ((n == 2)); then
-      push_text "$REPO_NAME" "Team $team is stuck: all members are asleep and waking the coordinator did not help." \
+      push_text "$REPO_NAME" "⛔ Team $team is stuck: all members are asleep and waking the coordinator did not help." \
         "See: agent live. Nudge them with a message (m / agent say) or stop: agent stop <coordinator task id>. If the coordinator waits for you to merge a PR: merge it, then tell it so (agent say)." \
         "$(team_summary "$team")"
     fi
