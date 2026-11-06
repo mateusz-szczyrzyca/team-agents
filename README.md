@@ -151,6 +151,8 @@ The path unit (`agent-<task>-answers-<round>.path`) does not survive a reboot of
   request in progress per investigator plus `INVESTIGATION_QUEUE_MAX` waiting ones. Requests rotate across
   the investigators: each goes to the next free one after the last one, preferring another provider than the
   last one's — no provider gets every investigation and review.
+A worker is drawn at random among the free ones of another provider than the last one that got work (the
+provider of an opencode model is its prefix, `deepinfra/…`, `openrouter/…`), so that every worker of the list gets work.
 
 **Why mix tiers and providers.** Every subscription has usage limits (per few hours and per week) and every API
 key has a budget. Splitting the agents into CLI types and tiers spreads the load and the token usage across

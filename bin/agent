@@ -5202,24 +5202,25 @@ maybe_resume_worker() { # resumes the requesting agent if the investigation was 
 
 # ------------------------------------------------------------------ worker requests (delegate)
 
-free_worker() { # a free worker; balances providers: picks the provider with the fewest working workers
-  local w d p best="" bestp=""
-  declare -A busy=()
-  for d in "$TASKS"/*/; do
-    [[ -f $d/meta.env ]] || continue
-    d=${d%/}; d=${d##*/}
-    case $(task_field "$d" STATUS) in running|starting) ;; *) continue ;; esac
-    [[ $(task_field "$d" TIER) == worker ]] || continue
-    p=$(agent_provider "$(task_field "$d" AGENT)"); busy[$p]=$(( ${busy[$p]:-0} + 1 ))
-  done
-  for w in "${WORKER_AGENTS[@]}"; do   # within a provider the list order decides
+free_worker() { # a free worker, drawn at random among the free ones of another provider than the last one drawn
+  # (worker-last, written by worker_drawn) — among all the free ones when none of another provider is free
+  local w last others=() all=()
+  last=$(cat "$AGENTS_HOME/worker-last" 2> /dev/null)   # none yet: any provider
+  for w in "${WORKER_AGENTS[@]}"; do
     [[ -n ${AGENT_TYPE[$w]:-} ]] || continue
-    agent_running_task "$w" >/dev/null && continue
-    p=$(agent_provider "$w")
-    if [[ -z $best ]] || (( ${busy[$p]:-0} < ${busy[$bestp]:-0} )); then best=$w; bestp=$p; fi
+    agent_running_task "$w" > /dev/null && continue
+    all+=("$w")
+    [[ $(agent_provider "$w") == "$last" ]] || others+=("$w")
   done
-  [[ -n $best ]] && { printf '%s' "$best"; return 0; }
+  if ((${#others[@]})); then printf '%s' "${others[RANDOM % ${#others[@]}]}"; return 0; fi
+  if ((${#all[@]})); then printf '%s' "${all[RANDOM % ${#all[@]}]}"; return 0; fi
   return 1
+}
+
+# worker_drawn worker — the worker got work: its provider is the last one drawn, which the next draw avoids
+worker_drawn() {
+  agent_provider "$1" > "$AGENTS_HOME/worker-last.tmp" && mv "$AGENTS_HOME/worker-last.tmp" "$AGENTS_HOME/worker-last" \
+    || log_warn worker_last_failed "worker=$1"
 }
 
 dispatch_helpers() { # assigns queued requests to free workers
@@ -5253,6 +5254,7 @@ dispatch_helpers() { # assigns queued requests to free workers
     while w=$(free_worker); do
       j=$(bus helper-next --dir "$BUS_DIR" --worker "$w" --capabilities "$caps") || break
       [[ -n $j ]] || break
+      worker_drawn "$w"   # it gets work: the next draw takes another provider
       start_helper "$j" "$w" || log_error helper_start_failed "request=$(jq -r .id <<< "$j")" "worker=$w"
     done
   )
