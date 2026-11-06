@@ -273,6 +273,56 @@ func TestCmdStatusUnitActiveSuffix(t *testing.T) {
 	}
 }
 
+// TestCmdStatusConfigEnvExports verifies configuration environment exports reach systemctl.
+func TestCmdStatusConfigEnvExports(t *testing.T) {
+	tasksDir := t.TempDir()
+	taskID := "test-task-1"
+	taskDir := filepath.Join(tasksDir, taskID)
+	if err := os.MkdirAll(taskDir, 0700); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	metaPath := filepath.Join(taskDir, "meta.env")
+	metaContent := "ID=test-id-1\nAGENT=agent-1\nSTATUS=running\nRUN=1\nKIND=worker\nREPO_NAME=repo\n"
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0600); err != nil {
+		t.Fatalf("write meta.env failed: %v", err)
+	}
+
+	executor := &configExportStatusTestExecutor{
+		expectedDBusAddr: "unix:path=/tmp/bus",
+		unitActive:       true,
+		receivedEnv:      make(map[string]string),
+	}
+
+	app := &App{
+		Executor:  executor,
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		busBin:    "agentbus",
+		agentHome: t.TempDir(),
+	}
+
+	// Add config-exported env vars to app (simulate loaded configuration)
+	app.configEnv = map[string]string{
+		"DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/bus",
+	}
+
+	var out bytes.Buffer
+	err := cmdStatus(context.Background(), app, &out)
+	if err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	// Verify that DBUS_SESSION_BUS_ADDRESS was passed to systemctl
+	if executor.receivedEnv["DBUS_SESSION_BUS_ADDRESS"] != "unix:path=/tmp/bus" {
+		t.Errorf("DBUS_SESSION_BUS_ADDRESS not passed to systemctl: got %q, want %q",
+			executor.receivedEnv["DBUS_SESSION_BUS_ADDRESS"],
+			"unix:path=/tmp/bus")
+	}
+}
+
 type statusTestExecutor struct {
 	unitActive bool // false means unit is inactive (exit code 1)
 }
@@ -280,6 +330,34 @@ type statusTestExecutor struct {
 func (e *statusTestExecutor) Execute(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
 	// Mock systemctl is-active check
 	if len(cmd.Args) >= 3 && cmd.Args[1] == "is-active" {
+		if e.unitActive {
+			return CommandResult{ExitCode: 0}, nil
+		}
+		return CommandResult{ExitCode: 1}, nil
+	}
+	return CommandResult{ExitCode: 0}, nil
+}
+
+// configExportStatusTestExecutor verifies configuration exports are passed to subprocess.
+type configExportStatusTestExecutor struct {
+	expectedDBusAddr string
+	unitActive       bool
+	receivedEnv      map[string]string
+}
+
+func (e *configExportStatusTestExecutor) Execute(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
+	if len(cmd.Args) >= 3 && cmd.Args[1] == "is-active" {
+		// Capture the environment passed to the command
+		if cmd.Env != nil {
+			for _, envVar := range cmd.Env {
+				if strings.HasPrefix(envVar, "DBUS_SESSION_BUS_ADDRESS=") {
+					parts := strings.SplitN(envVar, "=", 2)
+					if len(parts) == 2 {
+						e.receivedEnv[parts[0]] = parts[1]
+					}
+				}
+			}
+		}
 		if e.unitActive {
 			return CommandResult{ExitCode: 0}, nil
 		}
