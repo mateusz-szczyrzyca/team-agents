@@ -158,3 +158,36 @@ func (*startupSummaryExecutor) Execute(_ context.Context, command Command) (Comm
 	}
 	return CommandResult{}, nil
 }
+
+// TestStartupConfigExportedEnvPropagated ensures exports in configuration reach subprocesses.
+func TestStartupConfigExportedEnvPropagated(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "agent-go")
+	var buildOut bytes.Buffer
+	res, berr := (OSExecutor{}).Execute(context.Background(), Command{Name: "go", Args: []string{"build", "-o", binary, "."}, Stdout: &buildOut, Stderr: &buildOut})
+	if berr != nil || res.ExitCode != 0 {
+		t.Fatalf("build: %v: %s", berr, buildOut.String())
+	}
+	home := t.TempDir()
+	binDir, confDir, taskDir := filepath.Join(home, "bin"), filepath.Join(home, "agents"), filepath.Join(home, "agents", "tasks", "t1")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stub := "#!/bin/sh\n[ \"$DBUS_SESSION_BUS_ADDRESS\" = \"unix:path=/tmp/test-bus\" ] && exit 0\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(binDir, "systemctl"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeConfigFixture(t, filepath.Join(confDir, "agents.conf"), "export DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/test-bus\n")
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte("ID=t1\nSTATUS=running\nRUN=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	cmd := Command{Name: binary, Args: []string{"status"}, Env: []string{"HOME=" + home, "AGENTS_HOME=" + confDir, "PATH=" + binDir + ":" + os.Getenv("PATH")}, Stdout: &output, Stderr: &output}
+	res, err := (OSExecutor{}).Execute(context.Background(), cmd)
+	if err != nil || res.ExitCode != 0 || strings.Contains(output.String(), "running?") || !strings.Contains(output.String(), "running") {
+		t.Fatalf("config exports not propagated: %v (exit %d): %s", err, res.ExitCode, output.String())
+	}
+}
