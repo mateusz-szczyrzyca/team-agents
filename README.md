@@ -862,6 +862,7 @@ agent log <id> [--raw]                        follow the runner log (structured 
 agent answer <id>                             answer the questions in $EDITOR and resume
 agent resume <id> ["note"]                    resume after editing the answers yourself
 agent live [--feed] [--remind MIN] [--light]  live panel (or an event stream)
+agent bus [N]                                 agentbus status and recent log entries
 agent say <agent|all|team:ID> "text"          message agents through the bus
 agent inv [N|--all] | helpers [--all]         investigation queue / worker requests
 agent team [id|--all] | notes [repo]          teams / repository notebooks
@@ -877,6 +878,11 @@ agent authenticated --providers               one quick request per provider acc
 
 `<id>` can be any unambiguous fragment of a task ID. `agent run --resume` and `agent transcript` also accept a
 team ID (`<timestamp>-team`) or any member's task ID.
+
+### Reading and displaying tasks and agents
+
+- `agent status` / `agent ls`: list tasks; `agent show <id>`: details; `agent ack <id|all>`: acknowledge
+- `agent agents`: configured agents/investigators; `agent bus [N]`: status/log; `inv`, `helpers`, `notes`
 
 ## The live panel
 
@@ -1526,8 +1532,8 @@ make integration        # real agent CLIs and accounts (costs usage)
   - **Lane B (real Go candidate):** `make unit-agent-bats` (or `tools/agent-bats.sh --lane candidate`) stages the compiled candidate binary (`build/agent-go`) at `STAGED_ROOT/bin/agent` and executes only `active` or `done` rows classified as `blackbox` in `tests/agent-go-map.tsv`. For mixed files, exact regex filters are applied; `planned` cases are never activated. Real executable copies, multi-home setups, self-callbacks, and `gh` invocations execute without symlinks or bridges. Skipped or failed selected contracts fail the runner. Execution generates machine-readable evidence (`build/agent-bats-evidence.json`) with SHA-256 digests of the map file and `tests/unit` directory.
   - Candidate evidence belongs only to Lane B: oracle runs preserve it and reject `--evidence`. `make unit-agent-bats` requires parity validation after candidate execution, including in the ordinary gate.
   - **Parity checker:** `make check-agent-parity` (`tools/check-agent-parity.sh`) verifies the ledger via `tools/check-agent-test-map.sh`, validates execution counts and SHA-256 digests against candidate evidence, and enforces valid Go test mappings (`TestName[/subtest]`) for active/done rows.
-- **Configuration evaluation and parity (R05A).** The Go candidate evaluates trusted `agents.conf` and ordered defaults in non-interactive Bash, retaining declaration attributes, name references, scalar/array shapes, sparse keys, unset/empty values and legacy investigators. Caller arguments, `AGENT_SUBCOMMAND` and initially empty `RUNNER_ID` match startup context.
-  A dedicated descriptor writes a NUL snapshot to a private temporary file; inherited background-child descriptors do not delay loading. Ordinary output is discarded and failures return typed errors. Configuration executes with caller permissions; this internal API is not wired into production commands yet.
+- **Configuration evaluation and parity (R05A, wired in R09).** The Go candidate evaluates trusted `agents.conf` and ordered defaults in non-interactive Bash, retaining declaration attributes, name references, scalar/array shapes, sparse keys, unset/empty values and legacy investigators. Caller arguments, `AGENT_SUBCOMMAND` and initially empty `RUNNER_ID` match startup context.
+  A dedicated descriptor writes a NUL snapshot to a private temporary file; inherited background-child descriptors do not delay loading. Ordinary stdout and stderr output are preserved separately from the snapshot, and startup configuration failures print safe typed diagnostics to stderr before exit. Startup configuration loading is now wired into the candidate binary entry point for read and listing commands.
   R05A covers the tested configuration/defaults values, not complete executable-script parity. R05B is
   a documentation-only design revision. Interim option c keeps secrets loading and its dependent
   runner/auth continuation in the existing Bash command, preserving executable scripts, caller context,
@@ -1559,6 +1565,11 @@ make integration        # real agent CLIs and accounts (costs usage)
   symlink loops) and non-regular `meta.env` paths; Bash may skip those entries or report no such task.
   This deliberate diagnostic difference must be reconciled before migrating command consumers.
   The live panel now correctly reads Bash-written `\a`, `\b`, `\f` and `\v` escapes in metadata.
+- **Read and display CLI commands (R09, execution round 10).** The Go candidate binary implements
+  read-only inspection and acknowledgment commands (`status`, `ls`, `show`, `agents`, `_agents-json`, `ack`,
+  `bus`, `inv`, `notes`, `helpers`), matching `bin/agent` output contracts, active unit checks, non-hidden
+  directory symlinks, field fallbacks, and delegated exit statuses. Default capacities match oracle defaults
+  (`INVESTIGATION_QUEUE_MAX=3`, `INV_SLOTS=1`).
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 520 Bats unit test cases (361 black-box, 159 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash

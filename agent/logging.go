@@ -40,6 +40,8 @@ const (
 	LogEventScanFailed LogEvent = "event_scan_failed"
 	// LogCommandFailed reports failure of a command.
 	LogCommandFailed LogEvent = "command_failed"
+	// LogInvListFailed reports a failed best-effort investigation list query.
+	LogInvListFailed LogEvent = "inv_list_failed"
 )
 
 // Logger owns destinations and immutable invocation metadata; Log serializes writes.

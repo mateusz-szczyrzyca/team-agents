@@ -100,6 +100,9 @@ type CommandCause int
 const (
 	CommandUnknownCommand  CommandCause = iota // the requested command is not implemented [InvalidArgument]
 	CommandInvalidArgument                     // a command argument is missing or invalid [InvalidArgument]
+	CommandNotFound                            // a requested command target was not found [NotFound]
+	CommandConflict                            // the requested command encountered a conflicting state [Conflict]
+	CommandProcess                             // a helper command or process execution failed [Process]
 	CommandStorage                             // the shared state or a file could not be read or written [Storage]
 )
 
@@ -110,6 +113,9 @@ type CommandError = OpError[CommandCause]
 var commandCauses = [...]causeInfo{
 	{"UnknownCommand", ClassInvalidArgument},
 	{"InvalidArgument", ClassInvalidArgument},
+	{"NotFound", ClassNotFound},
+	{"Conflict", ClassConflict},
+	{"Process", ClassProcess},
 	{"Storage", ClassStorage},
 }
 
@@ -301,3 +307,147 @@ func (c ActCause) info() causeInfo { return actCauses[c] }
 
 // String returns the cause name.
 func (c ActCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- ack
+
+// AckCause is a reason why task completion acknowledgement failed.
+type AckCause int
+
+const (
+	AckNotFound     AckCause = iota // the task directory does not exist [NotFound]
+	AckAmbiguous                    // more than one task directory matches the reference [Conflict]
+	AckStillRunning                 // the task is still running and cannot be acknowledged [Conflict]
+	AckStorage                      // the shared state or a file could not be read or written [Storage]
+)
+
+// AckError is the error of task completion acknowledgement.
+type AckError = OpError[AckCause]
+
+// ackCauses describes the AckCause values (same order as the constants).
+var ackCauses = [...]causeInfo{
+	{"NotFound", ClassNotFound},
+	{"Ambiguous", ClassConflict},
+	{"StillRunning", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (AckCause) op() string { return "ack" }
+
+// info implements opCause.
+func (c AckCause) info() causeInfo { return ackCauses[c] }
+
+// String returns the cause name.
+func (c AckCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- status
+
+// StatusCause is a reason why task status table display failed.
+type StatusCause int
+
+const (
+	StatusProcess StatusCause = iota // unit status inspection failed [Process]
+	StatusStorage                    // the shared state or a file could not be read or written [Storage]
+)
+
+// StatusError is the error of task status table display.
+type StatusError = OpError[StatusCause]
+
+// statusCauses describes the StatusCause values (same order as the constants).
+var statusCauses = [...]causeInfo{
+	{"Process", ClassProcess},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (StatusCause) op() string { return "status" }
+
+// info implements opCause.
+func (c StatusCause) info() causeInfo { return statusCauses[c] }
+
+// String returns the cause name.
+func (c StatusCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- show
+
+// ShowCause is a reason why task inspection display failed.
+type ShowCause int
+
+const (
+	ShowNotFound  ShowCause = iota // the task directory or metadata file does not exist [NotFound]
+	ShowAmbiguous                  // more than one task directory matches the reference [Conflict]
+	ShowStorage                    // the shared state or a file could not be read or written [Storage]
+)
+
+// ShowError is the error of task inspection display.
+type ShowError = OpError[ShowCause]
+
+// showCauses describes the ShowCause values (same order as the constants).
+var showCauses = [...]causeInfo{
+	{"NotFound", ClassNotFound},
+	{"Ambiguous", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (ShowCause) op() string { return "show" }
+
+// info implements opCause.
+func (c ShowCause) info() causeInfo { return showCauses[c] }
+
+// String returns the cause name.
+func (c ShowCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- agents
+
+// AgentsCause is a reason why configured agent listing failed.
+type AgentsCause int
+
+const (
+	AgentsProcess AgentsCause = iota // agent inspection or bus process execution failed [Process]
+	AgentsStorage                    // the shared state or a file could not be read or written [Storage]
+)
+
+// AgentsError is the error of configured agent listing.
+type AgentsError = OpError[AgentsCause]
+
+// agentsCauses describes the AgentsCause values (same order as the constants).
+var agentsCauses = [...]causeInfo{
+	{"Process", ClassProcess},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (AgentsCause) op() string { return "agents" }
+
+// info implements opCause.
+func (c AgentsCause) info() causeInfo { return agentsCauses[c] }
+
+// String returns the cause name.
+func (c AgentsCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- agents_json
+
+// AgentsJSONCause is a reason why agent JSON listing failed.
+type AgentsJSONCause int
+
+const (
+	AgentsJSONStorage AgentsJSONCause = iota // the shared state or a file could not be read or written [Storage]
+)
+
+// AgentsJSONError is the error of agent JSON listing.
+type AgentsJSONError = OpError[AgentsJSONCause]
+
+// agentsJSONCauses describes the AgentsJSONCause values (same order as the constants).
+var agentsJSONCauses = [...]causeInfo{
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (AgentsJSONCause) op() string { return "agents_json" }
+
+// info implements opCause.
+func (c AgentsJSONCause) info() causeInfo { return agentsJSONCauses[c] }
+
+// String returns the cause name.
+func (c AgentsJSONCause) String() string { return c.info().name }

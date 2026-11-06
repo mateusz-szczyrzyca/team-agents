@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -125,13 +127,51 @@ func sameWriter(a, b io.Writer) bool {
 	return a == b
 }
 
+// lookPathEnv resolves a bare executable name in pathVal, returning the path or an error.
+func lookPathEnv(file, pathVal string) (string, error) {
+	var permErr error
+	for _, dir := range filepath.SplitList(pathVal) {
+		if dir == "" {
+			dir = "."
+		}
+		target := filepath.Join(dir, file)
+		if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
+			if fi.Mode()&0111 != 0 {
+				return target, nil
+			}
+			if permErr == nil {
+				permErr = &os.PathError{Op: "stat", Path: target, Err: os.ErrPermission}
+			}
+		}
+	}
+	if permErr != nil {
+		return "", permErr
+	}
+	return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
+}
+
 // Execute executes the command synchronously using os/exec.
 func (OSExecutor) Execute(ctx context.Context, cmd Command) (CommandResult, *ExecuteError) {
 	if cmd.Name == "" {
 		return CommandResult{}, opErr(ExecuteInvalidCommand, "command name cannot be empty")
 	}
 
-	c := exec.CommandContext(ctx, cmd.Name, cmd.Args...) // #nosec G204 -- synchronous execution of caller-provided command and argv without shell interpolation
+	target := cmd.Name
+	if !strings.Contains(cmd.Name, "/") && cmd.Env != nil {
+		for i := len(cmd.Env) - 1; i >= 0; i-- {
+			if strings.HasPrefix(cmd.Env[i], "PATH=") {
+				resolved, err := lookPathEnv(cmd.Name, cmd.Env[i][5:])
+				if err != nil {
+					return CommandResult{}, fromProcess(ExecuteStart, processErr(cmd.Name, err, "failed to start %s", cmd.Name))
+				}
+				target = resolved
+				break
+			}
+		}
+	}
+
+	c := exec.CommandContext(ctx, target, cmd.Args...) // #nosec G204 -- synchronous execution of caller-provided command and argv without shell interpolation
+	c.Args[0] = cmd.Name
 	if cmd.Env != nil {
 		c.Env = cmd.Env
 	}
