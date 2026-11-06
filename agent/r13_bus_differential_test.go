@@ -95,7 +95,7 @@ func TestM2StderrShortWriteDetection(t *testing.T) {
 // Fixed: always reports write error when io.WriteString fails.
 type closedPipeWriter struct{}
 
-func (cpw closedPipeWriter) Write(p []byte) (int, error) {
+func (cpw closedPipeWriter) Write(_ []byte) (int, error) {
 	return 0, io.ErrClosedPipe
 }
 
