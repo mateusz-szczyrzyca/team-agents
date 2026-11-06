@@ -91,6 +91,103 @@ func TestDispatchShowNotFound(t *testing.T) {
 	}
 }
 
+// TestDispatchWithArgs verifies that dispatching a command with arguments resolves and validates targets.
+func TestDispatchWithArgs(t *testing.T) {
+	tempTasks := t.TempDir()
+	app := newApp(nil, nil, nil)
+	app.tasksDir = tempTasks
+	var stdout, stderr bytes.Buffer
+	err := app.dispatch(context.Background(), "show", []string{"nonexistent-task"}, &stdout, &stderr)
+	if err == nil || err.Cause != CommandNotFound {
+		t.Fatalf("dispatch(show, [nonexistent-task]) err = %v, want CommandNotFound", err)
+	}
+}
+
+// TestDelegatedBusExitCodesAndStderr verifies that delegated agentbus exit codes and stderr are preserved without duplication.
+func TestDelegatedBusExitCodesAndStderr(t *testing.T) {
+	t.Run("inv 99 exits BusExitNotFound and preserves stderr without duplication", func(t *testing.T) {
+		exec := &busTestExecutor{
+			result: CommandResult{ExitCode: BusExitNotFound},
+			stderr: "agentbus: inv-get: no investigation #99\n",
+		}
+		app := newApp(exec, nil, nil)
+		var stdout, stderr bytes.Buffer
+		code := app.run([]string{"inv", "99"}, &stdout, &stderr)
+		if code != BusExitNotFound {
+			t.Fatalf("run(inv 99) exit code = %d, want %d", code, BusExitNotFound)
+		}
+		wantStderr := "agentbus: inv-get: no investigation #99\n"
+		if stderr.String() != wantStderr {
+			t.Fatalf("run(inv 99) stderr = %q, want %q", stderr.String(), wantStderr)
+		}
+	})
+
+	t.Run("helpers exits BusExitPermission and preserves stderr", func(t *testing.T) {
+		exec := &busTestExecutor{
+			result: CommandResult{ExitCode: BusExitPermission},
+			stderr: "agentbus: permission denied\n",
+		}
+		app := newApp(exec, nil, nil)
+		var stdout, stderr bytes.Buffer
+		code := app.run([]string{"helpers"}, &stdout, &stderr)
+		if code != BusExitPermission {
+			t.Fatalf("run(helpers) exit code = %d, want %d", code, BusExitPermission)
+		}
+		wantStderr := "agentbus: permission denied\n"
+		if stderr.String() != wantStderr {
+			t.Fatalf("run(helpers) stderr = %q, want %q", stderr.String(), wantStderr)
+		}
+	})
+
+	t.Run("bus exits BusExitNotFound", func(t *testing.T) {
+		exec := &busTestExecutor{
+			result: CommandResult{ExitCode: BusExitNotFound},
+			stderr: "agentbus: bus state not found\n",
+		}
+		app := newApp(exec, nil, nil)
+		var stdout, stderr bytes.Buffer
+		code := app.run([]string{"bus", "5"}, &stdout, &stderr)
+		if code != BusExitNotFound {
+			t.Fatalf("run(bus 5) exit code = %d, want %d", code, BusExitNotFound)
+		}
+	})
+
+	t.Run("notes exits BusExitNotInTeam", func(t *testing.T) {
+		exec := &busTestExecutor{
+			result: CommandResult{ExitCode: BusExitNotInTeam},
+			stderr: "agentbus: not in team\n",
+		}
+		app := newApp(exec, nil, nil)
+		var stdout, stderr bytes.Buffer
+		code := app.run([]string{"notes", "myrepo"}, &stdout, &stderr)
+		if code != BusExitNotInTeam {
+			t.Fatalf("run(notes myrepo) exit code = %d, want %d", code, BusExitNotInTeam)
+		}
+	})
+
+	t.Run("agents exits BusExitPermission on bus failure", func(t *testing.T) {
+		exec := &busTestExecutor{
+			result: CommandResult{ExitCode: BusExitPermission},
+			stderr: "agentbus: permission denied\n",
+		}
+		cfg := &Config{
+			Scalars: map[string]string{
+				"INVESTIGATION_QUEUE_MAX": "3",
+				"INV_SLOTS":               "1",
+			},
+		}
+		app := newApp(exec, nil, nil)
+		app.config = cfg
+		app.tasksDir = t.TempDir()
+		var stdout, stderr bytes.Buffer
+		code := app.run([]string{"agents"}, &stdout, &stderr)
+		if code != BusExitPermission {
+			t.Fatalf("run(agents) exit code = %d, want %d", code, BusExitPermission)
+		}
+	})
+}
+
+
 func TestDispatchAckEmptyArg(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := dispatch("ack", []string{""}, &stdout, &stderr)

@@ -442,3 +442,22 @@ func TestBusTestExecutorStreamErrors(t *testing.T) {
 		}
 	})
 }
+
+// TestBusCmdStderrReplayFailure verifies that busCmd returns BusStorage when writing stderr to app.Stderr fails.
+func TestBusCmdStderrReplayFailure(t *testing.T) {
+	ctx := context.Background()
+	exec := &busTestExecutor{
+		result: CommandResult{ExitCode: 0},
+		stderr: "warning: low disk space\n",
+	}
+	app := newApp(exec, nil, nil)
+	app.Stderr = busFailWriter{}
+	_, err := busCmd(ctx, app, "/bin/agentbus", "status")
+	if err == nil {
+		t.Fatal("expected BusStorage error on stderr write failure, got nil")
+	}
+	if err.Cause != BusStorage || !errors.Is(err, ErrStorage) {
+		t.Fatalf("expected cause BusStorage/ErrStorage, got %v", err)
+	}
+}
+
