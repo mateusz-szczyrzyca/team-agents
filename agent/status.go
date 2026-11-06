@@ -42,7 +42,7 @@ func cmdStatus(ctx context.Context, app *App, out io.Writer) *StatusError {
 		status := metaLookup(meta, "STATUS", "?")
 		if (status == taskRunning || status == taskStarting) && kind != kindRemoteMember && kind != kindInvestigationTeam {
 			res, uerr := app.execute(ctx, Command{Name: "systemctl", Args: []string{"--user", "is-active", "--quiet", "agent-" + id + "-r" + metaLookup(meta, "RUN", "0") + ".service"}})
-			if uerr != nil || res.ExitCode != 0 {
+			if uerr != nil || res.ExitCode != 0 { // a failed launch is the oracle's "not active" answer (unit_active: 2>/dev/null).
 				status += "?"
 			}
 		}

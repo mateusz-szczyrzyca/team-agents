@@ -79,7 +79,7 @@ func (a *App) runningTask(name, root string) (string, *AgentsError) {
 		}
 		status, run, job := metaLookup(meta, "STATUS", ""), metaLookup(meta, "RUN", ""), metaLookup(meta, "JOB_ID", "")
 		if status == taskRunning || status == taskStarting {
-			if res, err := a.execute(context.Background(), Command{Name: "systemctl", Args: []string{"--user", "is-active", "--quiet", "agent-" + id + "-r" + run + ".service"}}); err == nil && res.ExitCode == 0 {
+			if res, err := a.execute(context.Background(), Command{Name: "systemctl", Args: []string{"--user", "is-active", "--quiet", "agent-" + id + "-r" + run + ".service"}}); err == nil && res.ExitCode == 0 { // a failed launch is the oracle's "not active" answer (unit_active: 2>/dev/null).
 				return id, nil
 			}
 		}
