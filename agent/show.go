@@ -96,8 +96,8 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer, stderr
 		logger := &Logger{LogDir: logDir, Subcommand: "show", Stderr: stderrWriter}
 		var invOut bytes.Buffer
 		lerr := Try(ctx, app, logger, LogInvListFailed, Command{
-			Name: app.busBinary(),
-			Args: []string{"inv-list", "--dir", app.busDirectory(), "--task", taskID},
+			Name:   app.busBinary(),
+			Args:   []string{"inv-list", "--dir", app.busDirectory(), "--task", taskID},
 			Stdout: &invOut,
 		})
 		// Try returns nil on success, *LogWriteError on logging failure
