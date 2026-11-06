@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 )
 
 // dispatch routes a command to its handler, returning a typed CommandError on failure.
@@ -40,7 +39,7 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 			case ShowAmbiguous:
 				return opErr(CommandConflict, "%s", err.Message)
 			default:
-				return fromStorage(CommandStorage, storageErr(err.asError(), "show"))
+				return &CommandError{Cause: CommandStorage, Message: err.Message, Err: errors.Join(CommandStorage.info().class.Sentinel(), err)}
 			}
 		}
 		return nil
@@ -134,7 +133,7 @@ func (a *App) run(args []string, stdout, stderr io.Writer) int {
 	if err := a.dispatch(context.Background(), cmd, cmdArgs, stdout, stderr); err != nil {
 		var berr *BusError
 		if errors.As(err, &berr) {
-			if berr.Cause == BusProcess && strings.HasPrefix(berr.Message, "execute ") {
+			if isLaunchError(berr) {
 				if _, werr := fmt.Fprintf(stderr, "agent: %s\n", err.Message); werr != nil {
 					return 1
 				}

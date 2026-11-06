@@ -115,6 +115,23 @@ func TestCmdInvGet(t *testing.T) {
 	}
 }
 
+// assertCapacities asserts exact --queue-max and --inv-slots flag values.
+func assertCapacities(t *testing.T, args []string, queueMax, invSlots string) {
+	t.Helper()
+	hasQueue, hasSlots := false, false
+	for i, arg := range args {
+		if arg == "--queue-max" && i+1 < len(args) && args[i+1] == queueMax {
+			hasQueue = true
+		}
+		if arg == "--inv-slots" && i+1 < len(args) && args[i+1] == invSlots {
+			hasSlots = true
+		}
+	}
+	if !hasQueue || !hasSlots {
+		t.Fatalf("expected --queue-max %s --inv-slots %s, got: %v", queueMax, invSlots, args)
+	}
+}
+
 func TestCmdInvListOracleDefaults(t *testing.T) {
 	exec := &readCmdsTestExecutor{responses: map[string]string{"inv-list": "investigation queue\n"}}
 	app := newReadCmdsTestApp(exec)
@@ -125,10 +142,7 @@ func TestCmdInvListOracleDefaults(t *testing.T) {
 	if len(exec.commands) == 0 {
 		t.Fatal("no commands executed")
 	}
-	argsStr := strings.Join(exec.commands[0].Args, " ")
-	if !strings.Contains(argsStr, "--queue-max 3") || !strings.Contains(argsStr, "--inv-slots 1") {
-		t.Fatalf("defaults missing in args: %v", exec.commands[0].Args)
-	}
+	assertCapacities(t, exec.commands[0].Args, "3", "1")
 }
 
 func TestCmdInvConfiguredCapacities(t *testing.T) {
@@ -142,10 +156,7 @@ func TestCmdInvConfiguredCapacities(t *testing.T) {
 	if len(exec.commands) == 0 {
 		t.Fatal("no commands executed")
 	}
-	argsStr := strings.Join(exec.commands[0].Args, " ")
-	if !strings.Contains(argsStr, "--queue-max 7") || !strings.Contains(argsStr, "--inv-slots 2") {
-		t.Fatalf("expected --queue-max 7 --inv-slots 2, got: %v", exec.commands[0].Args)
-	}
+	assertCapacities(t, exec.commands[0].Args, "7", "2")
 }
 
 func TestCmdNotes(t *testing.T) {

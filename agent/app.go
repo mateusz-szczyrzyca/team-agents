@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
+	"unsafe"
 )
 
 // App owns the effect boundaries for one invocation of the Go candidate.
@@ -49,11 +51,13 @@ func (a *App) loadStartupConfig(ctx context.Context, args []string) *LoadConfigE
 	if selfErr != nil {
 		return fromProcess(LoadConfigShell, processErr("startup", selfErr, "locate executable"))
 	}
-	hostname, hostErr := os.Hostname()
-	if hostErr != nil {
-		if hostname = os.Getenv("HOSTNAME"); hostname == "" {
+	hostname := os.Getenv("HOSTNAME")
+	if hostname == "" {
+		detected, hostErr := os.Hostname()
+		if hostErr != nil {
 			return fromProcess(LoadConfigShell, processErr("startup", hostErr, "read hostname"))
 		}
+		hostname = detected
 	}
 	cfg, err := a.loadConfig(ctx, ConfigRequest{
 		Args: args, File: filepath.Join(agentsHome, "agents.conf"),
@@ -93,11 +97,11 @@ func (a *App) newLogger(subcommand string) *Logger {
 		logDir = a.config.Scalars["LOG_DIR"]
 	}
 	if logDir == "" {
+		base := filepath.Join(os.Getenv("HOME"), "agents")
 		if a != nil && a.agentHome != "" {
-			logDir = filepath.Join(a.agentHome, "logs")
-		} else {
-			logDir = filepath.Join(os.Getenv("HOME"), "agents", "logs")
+			base = a.agentHome
 		}
+		logDir = filepath.Join(base, "logs")
 	}
 	stderr := io.Writer(os.Stderr)
 	var clock Clock
@@ -107,7 +111,18 @@ func (a *App) newLogger(subcommand string) *Logger {
 		}
 		clock = a.Clock
 	}
-	return &Logger{LogDir: logDir, Subcommand: subcommand, Stderr: stderr, Clock: clock, Journal: true, App: a}
+	return &Logger{LogDir: logDir, Subcommand: subcommand, Stderr: stderr, Clock: clock, Journal: true, App: a, Interactive: isTerminal(stderr)}
+}
+
+// isTerminal reports whether w is connected to an interactive terminal descriptor.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	var termios syscall.Termios
+	_, _, err := syscall.Syscall6(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TCGETS), uintptr(unsafe.Pointer(&termios)), 0, 0, 0) // #nosec G103 -- TCGETS ioctl determines terminal state
+	return err == 0
 }
 
 // listingConfig uses production settings or oracle capacities for injected test apps.

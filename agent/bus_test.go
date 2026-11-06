@@ -462,31 +462,26 @@ func TestBusCmdStderrReplayFailure(t *testing.T) {
 	}
 }
 
-// TestDelegatedBusLaunchFailureExitCode verifies launch failures exit 127 for bus commands.
-func TestDelegatedBusLaunchFailureExitCode(t *testing.T) {
-	for _, cmd := range [][]string{{"bus", "5"}, {"helpers"}, {"inv", "99"}, {"notes", "testrepo"}} {
-		var stdout, stderr bytes.Buffer
-		app := newApp(OSExecutor{}, nil, nil)
-		app.busBin = "/nonexistent/path/to/agentbus"
-		if code := app.run(cmd, &stdout, &stderr); code != 127 {
-			t.Fatalf("run(%v) code = %d, want 127", cmd, code)
-		}
-	}
-}
-
-// TestDelegatedBusPermissionFailureExitCode verifies launch permission failures exit 126 for bus commands.
-func TestDelegatedBusPermissionFailureExitCode(t *testing.T) {
-	tmpDir := t.TempDir()
-	nonExecBus := filepath.Join(tmpDir, "agentbus")
+// TestDelegatedBusLaunchFailureExitCodes verifies launch failure exit codes (127 for not found, 126 for permission denied).
+func TestDelegatedBusLaunchFailureExitCodes(t *testing.T) {
+	nonExecBus := filepath.Join(t.TempDir(), "agentbus")
 	if err := os.WriteFile(nonExecBus, []byte("#!/bin/sh\nexit 0\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, cmd := range [][]string{{"bus", "5"}, {"helpers"}, {"inv", "99"}, {"notes", "testrepo"}} {
-		var stdout, stderr bytes.Buffer
-		app := newApp(OSExecutor{}, nil, nil)
-		app.busBin = nonExecBus
-		if code := app.run(cmd, &stdout, &stderr); code != 126 {
-			t.Fatalf("run(%v) code = %d, want 126", cmd, code)
+	for _, tc := range []struct {
+		bin  string
+		want int
+	}{
+		{"/nonexistent/path/to/agentbus", 127},
+		{nonExecBus, 126},
+	} {
+		for _, cmd := range [][]string{{"bus", "5"}, {"helpers"}, {"inv", "99"}, {"notes", "testrepo"}} {
+			var stdout, stderr bytes.Buffer
+			app := newApp(OSExecutor{}, nil, nil)
+			app.busBin = tc.bin
+			if code := app.run(cmd, &stdout, &stderr); code != tc.want {
+				t.Fatalf("bin=%s run(%v) code = %d, want %d", tc.bin, cmd, code, tc.want)
+			}
 		}
 	}
 }

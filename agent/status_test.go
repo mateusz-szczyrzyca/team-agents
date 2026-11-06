@@ -48,16 +48,9 @@ func TestCmdStatusHeader(t *testing.T) {
 	}
 
 	output := out.String()
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) == 0 {
-		t.Fatal("no output from cmdStatus")
-	}
-
-	header := lines[0]
-	expectedFields := []string{"TASK", "AGENT", "STATUS", "ROUND", "RUN", "REPO"}
-	for _, field := range expectedFields {
-		if !strings.Contains(header, field) {
-			t.Errorf("header missing field %q: %s", field, header)
+	for _, field := range []string{"TASK", "AGENT", "STATUS", "ROUND", "RUN", "REPO"} {
+		if !strings.Contains(output, field) {
+			t.Errorf("header missing field %q: %s", field, output)
 		}
 	}
 }

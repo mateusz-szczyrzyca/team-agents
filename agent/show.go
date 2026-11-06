@@ -97,12 +97,18 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	case kindWorker:
 		var invs bytes.Buffer
 		logger := app.newLogger("show")
-		// In bin/agent:460, inv-list is best effort; failure to write warning log is a nonfatal side effect.
-		_ = Try(ctx, app, logger, LogInvListFailed, Command{
+		if lerr := Try(ctx, app, logger, LogInvListFailed, Command{
 			Name:   app.busBinary(),
 			Args:   []string{"inv-list", "--dir", app.busDirectory(), "--task", taskID},
 			Stdout: &invs,
-		})
+		}); lerr != nil {
+			if lerr.Cause == LogWriteStorage {
+				// Best-effort warning log failure is nonfatal per bin/agent:460; diagnostic was written to stderr by logger.
+				lerr = nil
+			} else {
+				return fromStorage(ShowStorage, storageErr(lerr, "inv-list warning"))
+			}
+		}
 		if s := strings.TrimRight(invs.String(), "\r\n"); s != "" {
 			if _, err := fmt.Fprintf(out, "\n== investigations\n%s\n", s); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write investigations"))

@@ -10,7 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
+	"syscall"
 )
 
 // ScriptNotice is the typed kind of an event published by the agent script on the bus.
@@ -133,15 +133,17 @@ func isLaunchError(err error) bool {
 	}
 	var procErr *ProcessError
 	if errors.As(err, &procErr) {
-		if errors.Is(procErr.Err, os.ErrNotExist) || errors.Is(procErr.Err, exec.ErrNotFound) {
+		if errors.Is(procErr.Err, os.ErrNotExist) || errors.Is(procErr.Err, exec.ErrNotFound) ||
+			isPermissionError(procErr.Err) {
 			return true
 		}
 	}
-	var busErr *BusError
-	if errors.As(err, &busErr) && strings.HasPrefix(busErr.Message, "execute ") {
-		return true
-	}
 	return false
+}
+
+// isPermissionError reports whether err indicates a permission denial during launch.
+func isPermissionError(err error) bool {
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
 }
 
 // busExitCode returns the process exit status of a delegated agentbus failure.
@@ -150,6 +152,9 @@ func busExitCode(err *BusError) int {
 		return 0
 	}
 	if isLaunchError(err) {
+		if isPermissionError(err) {
+			return 126
+		}
 		return 127
 	}
 	switch err.Cause {
@@ -291,7 +296,7 @@ func busCmd(ctx context.Context, app *App, busBin string, args ...string) (strin
 	}
 	result, eerr := app.execute(ctx, cmd)
 	if eerr != nil {
-		return "", fromProcess(BusProcess, processErr(busBin, eerr, "execute %s: %s", busBin, eerr.Error()))
+		return "", fromProcess(BusProcess, processErr(busBin, eerr, "%s", eerr.Message))
 	}
 	if app != nil && app.Stderr != nil && stderr.Len() > 0 {
 		n, werr := app.Stderr.Write(stderr.Bytes())

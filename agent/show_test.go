@@ -254,8 +254,6 @@ func TestCmdShowWorkerWithInvestigations(t *testing.T) {
 	app := &App{
 		Executor:  exec,
 		tasksDir:  tasksDir,
-		Clock:     appClock{},
-		Random:    appRandom{},
 		busBin:    "/bin/agentbus",
 		busDir:    "/tmp/bus",
 		agentHome: t.TempDir(),
@@ -367,14 +365,7 @@ func TestCmdShowWorkerInvListFailure(t *testing.T) {
 	}
 	tasksDir, agentHome := t.TempDir(), t.TempDir()
 	var stderr bytes.Buffer
-	app := &App{
-		Executor:  exec,
-		tasksDir:  tasksDir,
-		busBin:    "/bin/agentbus",
-		busDir:    "/tmp/bus",
-		agentHome: agentHome,
-		Stderr:    &stderr,
-	}
+	app := &App{Executor: exec, tasksDir: tasksDir, busBin: "/bin/agentbus", busDir: "/tmp/bus", agentHome: agentHome, Stderr: &stderr}
 	createShowTaskDir(t, tasksDir, "worker-fail", "ID=worker-fail\nKIND=worker\nSTATUS=done\n")
 	var out bytes.Buffer
 	if err := cmdShow(context.Background(), app, "worker-fail", &out); err != nil {
@@ -391,18 +382,6 @@ func TestCmdShowWorkerInvListFailure(t *testing.T) {
 
 // TestCmdShowInteractiveWarningOnInvListFailure verifies failing inv-list writes interactive warning when stderr is a terminal.
 func TestCmdShowInteractiveWarningOnInvListFailure(t *testing.T) {
-	exec := &readCmdsTestExecutor{
-		exitCodes: map[string]int{"inv-list": 1},
-		stderrs:   map[string]string{"inv-list": "simulated agentbus failure\n"},
-	}
-	tasksDir, agentHome := t.TempDir(), t.TempDir()
-	app := &App{
-		Executor:  exec,
-		tasksDir:  tasksDir,
-		busBin:    "/bin/agentbus",
-		busDir:    "/tmp/bus",
-		agentHome: agentHome,
-	}
 	pty, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
 	if err != nil {
 		t.Skip("pty not available")
@@ -412,9 +391,8 @@ func TestCmdShowInteractiveWarningOnInvListFailure(t *testing.T) {
 			t.Errorf("close pty: %v", err)
 		}
 	}()
-	app.Stderr = pty
-	logger := app.newLogger("show")
-	if !logger.Interactive {
+	app := &App{Stderr: pty}
+	if logger := app.newLogger("show"); !logger.Interactive {
 		t.Fatalf("newLogger.Interactive = false for terminal stderr, want true")
 	}
 }
