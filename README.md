@@ -1569,7 +1569,9 @@ make integration        # real agent CLIs and accounts (costs usage)
   read-only inspection and acknowledgment commands (`status`, `ls`, `show`, `agents`, `_agents-json`, `ack`,
   `bus`, `inv`, `notes`, `helpers`), matching `bin/agent` output contracts, active unit checks, non-hidden
   directory symlinks, field fallbacks, and delegated exit statuses. Default capacities match oracle defaults
-  (`INVESTIGATION_QUEUE_MAX=3`, `INV_SLOTS=1`).
+  (`INVESTIGATION_QUEUE_MAX=3`, `INV_SLOTS=1`). The bus display inserts its separator only after a
+  successful status query, including an empty result; failures preserve partial output and exit status.
+  Output replay failures, including short diagnostic writes, are reported as storage errors.
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 520 Bats unit test cases (361 black-box, 159 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
