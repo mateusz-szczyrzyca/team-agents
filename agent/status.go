@@ -67,6 +67,7 @@ func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 			cmd := Command{
 				Name: "systemctl",
 				Args: []string{"--user", "is-active", "--quiet", unitName},
+				Env:  app.mergeConfigEnv(nil),
 			}
 			result, uerr := app.execute(context.Background(), cmd)
 			// If unit check fails or unit is inactive, append "?" suffix
