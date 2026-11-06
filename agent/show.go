@@ -71,8 +71,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	}
 
 	// Print questions header if ROUND > 0
-	roundStr, ok := meta.Lookup("ROUND")
-	if ok && roundStr != "" {
+	if roundStr, ok := meta.Lookup("ROUND"); ok && roundStr != "" {
 		round, err := strconv.Atoi(roundStr)
 		if err != nil {
 			return fromStorage(ShowStorage, storageErr(err, "invalid ROUND %q", roundStr))
@@ -86,11 +85,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	}
 
 	// Print investigations
-	kind, _ := meta.Lookup("KIND")
-	if kind == "" {
-		kind = kindWorker
-	}
-	switch kind {
+	switch metaLookup(meta, "KIND", kindWorker) {
 	case kindWorker:
 		var invs bytes.Buffer
 		logger := app.newLogger("show")
@@ -112,9 +107,8 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 			}
 		}
 	case kindInvestigation:
-		team, _ := meta.Lookup("INVESTIGATION_TEAM")
-		if team != "" {
-			phase, _ := meta.Lookup("INVESTIGATION_PHASE")
+		if team := metaLookup(meta, "INVESTIGATION_TEAM", ""); team != "" {
+			phase := metaLookup(meta, "INVESTIGATION_PHASE", "")
 			if _, err := fmt.Fprintf(out, "\n== investigation team %s (phase %s)\n", team, phase); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write investigation team header"))
 			}
