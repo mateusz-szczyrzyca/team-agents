@@ -92,7 +92,6 @@ func TestCmdBusStatusPreservedOnLogFailure(t *testing.T) {
 	}
 }
 
-
 func TestCmdHelpers(t *testing.T) {
 	exec := &readCmdsTestExecutor{responses: map[string]string{"helper-list": "helper-1 ready\n"}}
 	app := newReadCmdsTestApp(exec)
