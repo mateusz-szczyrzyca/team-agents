@@ -151,8 +151,13 @@ func newApp(executor Executor, clock Clock, random Random) *App {
 // execute runs through the owned boundary, denying unconfigured execution.
 func (a *App) execute(ctx context.Context, cmd Command) (CommandResult, *ExecuteError) {
 	if a != nil && cmd.Env == nil {
+		baseEnv := os.Environ()
+		if a.config != nil && len(a.config.Env) > 0 {
+			baseEnv = a.config.Env
+		}
+		cmd.Env = append([]string(nil), baseEnv...)
 		if xdg := a.xdgRuntimeDir(); xdg != "" {
-			cmd.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+xdg)
+			cmd.Env = append(cmd.Env, "XDG_RUNTIME_DIR="+xdg)
 		}
 	}
 	if a.Executor == nil {

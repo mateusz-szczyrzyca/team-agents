@@ -17,7 +17,8 @@ shopt -u patsub_replacement 2>/dev/null || : # Expected on Bash before 5.2, matc
 HOME=$1 AGENTS_HOME=$2 HOSTNAME=$3 SELF=$4 CONF=$5
 TASKS=$AGENTS_HOME/tasks PROMPTS=$AGENTS_HOME/prompts BUS_DIR=$AGENTS_HOME/bus LOG_DIR=$AGENTS_HOME/logs
 readonly _agent_cfg_defaults=$6
-shift 8
+readonly _agent_cfg_env=$9
+shift 9
 readonly -a _agent_cfg_names=("${@:2:$1}")
 shift "$(($1 + 1))"
 AGENT_SUBCOMMAND=${1:-} RUNNER_ID=""
@@ -48,6 +49,7 @@ for _agent_cfg_name in "${_agent_cfg_names[@]}"; do
     unset -n _agent_cfg_ref
 done
 printf 'Z\0\0\0\0' >&3
+env -0 >"$_agent_cfg_env"
 `
 
 // loadConfig evaluates executable Bash settings and startup defaults in one shell.
@@ -72,12 +74,12 @@ func (a *App) evaluateConfigShell(ctx context.Context, req ConfigRequest, defaul
 			cfg, failure = Config{}, fromStorage(LoadConfigShell, storageErr(removeErr, "remove configuration output directory"))
 		}
 	}()
-	stdoutPath, stderrPath := streams+"/stdout", streams+"/stderr"
+	stdoutPath, stderrPath, envPath := streams+"/stdout", streams+"/stderr", streams+"/env"
 	home := req.Context.AgentsHome
 	if home == "" {
 		home = req.Context.Home + "/agents"
 	}
-	args := []string{"--noprofile", "--norc", "-c", configShell, "agent-config", req.Context.Home, home, req.Context.Hostname, req.Context.Self, req.File, defaults, stdoutPath, stderrPath}
+	args := []string{"--noprofile", "--norc", "-c", configShell, "agent-config", req.Context.Home, home, req.Context.Hostname, req.Context.Self, req.File, defaults, stdoutPath, stderrPath, envPath}
 	names := configNames()
 	args = append(args, strconv.Itoa(len(names)))
 	args = append(append(args, names...), req.Args...)
@@ -117,7 +119,18 @@ func (a *App) evaluateConfigShell(ctx context.Context, req ConfigRequest, defaul
 	if !bytes.HasSuffix(data, end) {
 		return Config{}, opErr(LoadConfigProtocol, "configuration snapshot is incomplete")
 	}
-	return decodeConfigNUL(bytes.TrimSuffix(data, end))
+	cfg, failure = decodeConfigNUL(bytes.TrimSuffix(data, end))
+	if failure != nil {
+		return Config{}, failure
+	}
+	if envData, rErr := os.ReadFile(envPath); rErr == nil && len(envData) > 0 {
+		for _, e := range bytes.Split(bytes.TrimSuffix(envData, []byte{0}), []byte{0}) {
+			if len(e) > 0 {
+				cfg.Env = append(cfg.Env, string(e))
+			}
+		}
+	}
+	return cfg, nil
 }
 
 // replayConfigOutput forwards a completed shell stream; absence means the shell never started.
