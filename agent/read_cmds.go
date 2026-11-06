@@ -67,12 +67,15 @@ func (a *App) cmdBus(ctx context.Context, n string, stdout io.Writer) *CommandEr
 	if err != nil {
 		return commandFromBus("bus status", err)
 	}
+	if _, werr := fmt.Fprintf(stdout, "%s\n", statusOut); werr != nil {
+		return fromStorage(CommandStorage, storageErr(werr, "write bus status"))
+	}
 	logOut, err := busCmd(ctx, a, busBin, "log", "--dir", busDir, "-n", n)
 	if err != nil {
 		return commandFromBus("bus log", err)
 	}
-	if _, werr := fmt.Fprintf(stdout, "%s\n%s", statusOut, logOut); werr != nil {
-		return fromStorage(CommandStorage, storageErr(werr, "write bus status"))
+	if _, werr := fmt.Fprint(stdout, logOut); werr != nil {
+		return fromStorage(CommandStorage, storageErr(werr, "write bus log"))
 	}
 	return nil
 }
@@ -153,36 +156,24 @@ func (a *App) cmdNotes(ctx context.Context, args []string, stdout io.Writer) *Co
 		rest = args
 	}
 	if repo == "" {
-		var rootBuf bytes.Buffer
-		cmd1 := Command{Name: "git", Args: []string{"rev-parse", "--show-toplevel"}, Dir: a.workTree, Stdout: &rootBuf}
-		if res, err := a.execute(ctx, cmd1); err == nil && res.ExitCode == 0 {
-			if root := strings.TrimSpace(rootBuf.String()); root != "" {
-				var commonBuf bytes.Buffer
-				cmd2 := Command{Name: "git", Args: []string{"-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"}, Stdout: &commonBuf}
-				if res2, err2 := a.execute(ctx, cmd2); err2 == nil && res2.ExitCode == 0 {
-					if commonDir := strings.TrimSpace(commonBuf.String()); commonDir != "" {
-						if base := filepath.Base(filepath.Dir(commonDir)); base != "." && base != "/" && base != "" {
-							repo = base
-						}
-					}
+		var rootBuf, commonBuf bytes.Buffer
+		if res, err := a.execute(ctx, Command{Name: "git", Args: []string{"rev-parse", "--show-toplevel"}, Dir: a.workTree, Stdout: &rootBuf}); err == nil && res.ExitCode == 0 {
+			root := strings.TrimSpace(rootBuf.String())
+			if res2, err2 := a.execute(ctx, Command{Name: "git", Args: []string{"-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"}, Stdout: &commonBuf}); err2 == nil && res2.ExitCode == 0 {
+				if base := filepath.Base(filepath.Dir(strings.TrimSpace(commonBuf.String()))); base != "." && base != "/" && base != "" {
+					repo = base
 				}
 			}
 		}
 	}
+	notesArgs := append([]string{"notes", "--dir", busDir, "--repo", repo}, rest...)
 	if repo == "" {
 		if _, werr := fmt.Fprintf(stdout, "Repository notebooks:\n"); werr != nil {
 			return fromStorage(CommandStorage, storageErr(werr, "write notes header"))
 		}
-		out, err := busCmd(ctx, a, busBin, "notes", "--dir", busDir, "--list")
-		if err != nil {
-			return commandFromBus("bus notes --list", err)
-		}
-		if _, werr := fmt.Fprint(stdout, out); werr != nil {
-			return fromStorage(CommandStorage, storageErr(werr, "write notes list"))
-		}
-		return nil
+		notesArgs = []string{"notes", "--dir", busDir, "--list"}
 	}
-	out, err := busCmd(ctx, a, busBin, append([]string{"notes", "--dir", busDir, "--repo", repo}, rest...)...)
+	out, err := busCmd(ctx, a, busBin, notesArgs...)
 	if err != nil {
 		return commandFromBus("bus notes", err)
 	}

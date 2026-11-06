@@ -838,11 +838,9 @@ team ID (`<timestamp>-team`) or any member's task ID.
 
 ### Reading and displaying tasks and agents
 
-- `agent status` / `agent ls`: list tasks in tasks directory (`TASK`, `AGENT`, `STATUS`, `ROUND`, `RUN`, `REPO`)
-- `agent show <id>`: display task metadata, description, questions header, investigations, final message, report
-- `agent agents`: list configured agents and investigators with CLI type, model, and allocation status
-- `agent bus [N]`: show recent bus messages; `agent ack <id|all>`: mark task(s) as acknowledged
-- `agent inv [N|--all]`: show investigation queue/details; `agent helpers [--all]`: list helpers; `agent notes [repo]`: notebooks
+- `agent status` / `agent ls`: list tasks (`TASK`, `AGENT`, `STATUS`, `ROUND`, `RUN`, `REPO`); `agent show <id>`: details
+- `agent agents`: configured agents/investigators (`_agents-json` exports JSON); `agent ack <id|all>`: acknowledge tasks
+- `agent bus [N]`: bus status/log; `agent inv [N|--all]` / `helpers` / `notes`: investigations, helpers, notebooks
 
 ## The live panel
 
@@ -1522,14 +1520,13 @@ make integration        # real agent CLIs and accounts (costs usage)
   The internal APIs currently report storage failures for uninspectable task entries (including
   symlink loops) and non-regular `meta.env` paths; Bash may skip those entries or report no such task.
   The live panel now correctly reads Bash-written `\a`, `\b`, `\f` and `\v` escapes in metadata.
-- **Read and display CLI commands (R09, execution round 10).** The Go candidate binary implements the
+- **Read and display CLI commands (R09, execution round 10).** The Go candidate binary implements
   read-only inspection and acknowledgment commands (`status`, `ls`, `show`, `agents`, `_agents-json`, `ack`,
   `bus`, `inv`, `notes`, `helpers`), matching `bin/agent` output contracts, active unit checks, non-hidden
-  directory symlink handling, and field fallbacks. Subprocess delegation to `agentbus` preserves exact exit
-  statuses (e.g. `BusExitNotFound` for missing investigations, `BusExitPermission`) and replays subprocess
-  stderr without duplicated error banners. Default capacity limits match oracle defaults
-  (`INVESTIGATION_QUEUE_MAX=3`, `INV_SLOTS=1`), and missing task targets return typed not-found errors
-  while metadata and file storage failures are preserved.
+  directory symlinks, and field fallbacks. Subprocess delegation to `agentbus` preserves exact exit statuses
+  (e.g. `BusExitNotFound`, `BusExitPermission`) and replays stderr without duplicated banners. Default capacities
+  match oracle defaults (`INVESTIGATION_QUEUE_MAX=3`, `INV_SLOTS=1`), and missing task targets return typed
+  not-found errors while metadata and file storage failures are preserved.
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 520 Bats unit test cases (361 black-box, 159 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash

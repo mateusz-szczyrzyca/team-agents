@@ -102,11 +102,8 @@ func (a *App) runningTask(name, root string) (string, *AgentsError) {
 			return id, nil
 		}
 		job, _ := meta.Lookup("JOB_ID")
-		if job != "" && (run == "0" || run == "") {
-			switch status {
-			case taskNew, taskStarting, taskRunning:
-				return id, nil
-			}
+		if job != "" && (run == "0" || run == "") && (status == taskNew || status == taskStarting || status == taskRunning) {
+			return id, nil
 		}
 	}
 	return "", nil

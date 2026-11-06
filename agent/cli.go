@@ -71,16 +71,9 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 
 // routeAgents delegates to cmdAgents.
 func (a *App) routeAgents(_ context.Context, stdout io.Writer) *CommandError {
-	tasksDir := a.tasksDirectory()
-	busDir := a.busDirectory()
-	cfg := a.listingConfig()
-	if err := a.cmdAgents(stdout, cfg, tasksDir, busDir); err != nil {
+	if err := a.cmdAgents(stdout, a.listingConfig(), a.tasksDirectory(), a.busDirectory()); err != nil {
 		if err.Cause == AgentsProcess {
-			return &CommandError{
-				Cause:   CommandProcess,
-				Message: err.Message,
-				Err:     errors.Join(CommandProcess.info().class.Sentinel(), err),
-			}
+			return &CommandError{Cause: CommandProcess, Message: err.Message, Err: errors.Join(CommandProcess.info().class.Sentinel(), err)}
 		}
 		return fromStorage(CommandStorage, storageErr(err.asError(), "agents"))
 	}
@@ -89,8 +82,7 @@ func (a *App) routeAgents(_ context.Context, stdout io.Writer) *CommandError {
 
 // routeAgentsJSON delegates to cmdAgentsJSON.
 func (a *App) routeAgentsJSON(_ context.Context, stdout io.Writer) *CommandError {
-	cfg := a.listingConfig()
-	if err := a.cmdAgentsJSON(stdout, cfg); err != nil {
+	if err := a.cmdAgentsJSON(stdout, a.listingConfig()); err != nil {
 		return fromStorage(CommandStorage, storageErr(err.asError(), "agents json"))
 	}
 	return nil
@@ -101,8 +93,7 @@ func (a *App) routeAck(_ context.Context, args []string, stdout io.Writer) *Comm
 	if len(args) == 0 || args[0] == "" {
 		return opErr(CommandInvalidArgument, "usage: agent ack <id|all>")
 	}
-	tasksDir := a.tasksDirectory()
-	if err := a.cmdAck(args[0], stdout, tasksDir); err != nil {
+	if err := a.cmdAck(args[0], stdout, a.tasksDirectory()); err != nil {
 		switch err.Cause {
 		case AckNotFound:
 			return opErr(CommandNotFound, "%s", err.Message)

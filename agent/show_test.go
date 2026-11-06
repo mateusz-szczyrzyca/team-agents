@@ -365,7 +365,14 @@ func TestCmdShowWorkerInvListFailure(t *testing.T) {
 	}
 	tasksDir, agentHome := t.TempDir(), t.TempDir()
 	var stderr bytes.Buffer
-	app := &App{Executor: exec, tasksDir: tasksDir, busBin: "/bin/agentbus", busDir: "/tmp/bus", agentHome: agentHome, Stderr: &stderr}
+	app := &App{
+		Executor:  exec,
+		tasksDir:  tasksDir,
+		busBin:    "/bin/agentbus",
+		busDir:    "/tmp/bus",
+		agentHome: agentHome,
+		Stderr:    &stderr,
+	}
 	createShowTaskDir(t, tasksDir, "worker-fail", "ID=worker-fail\nKIND=worker\nSTATUS=done\n")
 	var out bytes.Buffer
 	if err := cmdShow(context.Background(), app, "worker-fail", &out); err != nil {

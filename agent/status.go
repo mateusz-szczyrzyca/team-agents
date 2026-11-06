@@ -63,8 +63,7 @@ func cmdStatus(ctx context.Context, app *App, out io.Writer) *StatusError {
 			if runVal == "" {
 				runVal = "0"
 			}
-			cmd := Command{Name: "systemctl", Args: []string{"--user", "is-active", "--quiet", "agent-" + id + "-r" + runVal + ".service"}}
-			result, uerr := app.execute(ctx, cmd)
+			result, uerr := app.execute(ctx, Command{Name: "systemctl", Args: []string{"--user", "is-active", "--quiet", "agent-" + id + "-r" + runVal + ".service"}})
 			if uerr != nil {
 				return opErr(StatusProcess, "check unit active %s: %s", id, uerr.Error())
 			}

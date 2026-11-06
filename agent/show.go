@@ -165,13 +165,11 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	}
 	if workTree != "" {
 		reportFile := filepath.Join(workTree, ".agents", "reports", taskID+".md")
-		if info, err := os.Stat(reportFile); err == nil { // #nosec G703 -- report file path under task worktree
-			if info.Mode().IsRegular() {
-				if _, err := fmt.Fprintf(out, "\n== report: %s\n", reportFile); err != nil {
-					return fromStorage(ShowStorage, storageErr(err, "write report line"))
-				}
+		if info, err := os.Stat(reportFile); err == nil && info.Mode().IsRegular() { // #nosec G703 -- report file path under task worktree
+			if _, err := fmt.Fprintf(out, "\n== report: %s\n", reportFile); err != nil {
+				return fromStorage(ShowStorage, storageErr(err, "write report line"))
 			}
-		} else if !errors.Is(err, os.ErrNotExist) {
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fromStorage(ShowStorage, storageErr(err, "stat %s", reportFile))
 		}
 	}

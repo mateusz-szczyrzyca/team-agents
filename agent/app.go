@@ -32,10 +32,9 @@ func (a *App) tasksDirectory() string {
 	}
 	home := a.agentHome
 	if home == "" {
-		home = os.Getenv("AGENTS_HOME")
-	}
-	if home == "" {
-		home = filepath.Join(os.Getenv("HOME"), "agents")
+		if home = os.Getenv("AGENTS_HOME"); home == "" {
+			home = filepath.Join(os.Getenv("HOME"), "agents")
+		}
 	}
 	return filepath.Join(home, "tasks")
 }
