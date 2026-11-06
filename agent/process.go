@@ -137,7 +137,7 @@ func lookPathEnv(file, pathVal string) (string, error) {
 		target := filepath.Join(dir, file)
 		if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
 			if fi.Mode()&0111 != 0 {
-				return target, nil
+				return filepath.Abs(target)
 			}
 			if permErr == nil {
 				permErr = &os.PathError{Op: "stat", Path: target, Err: os.ErrPermission}
