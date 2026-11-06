@@ -128,9 +128,7 @@ func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *Comm
 	if err != nil {
 		return commandFromBus("inv get", err)
 	}
-	var res struct {
-		File string `json:"file"`
-	}
+	var res struct{ File string `json:"file"` }
 	if jerr := json.Unmarshal([]byte(out), &res); jerr != nil {
 		return opErr(CommandStorage, "parse inv-get json: %s", jerr.Error())
 	}
@@ -145,11 +143,9 @@ func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *Comm
 func (a *App) cmdNotes(ctx context.Context, args []string, stdout io.Writer) *CommandError {
 	busBin, busDir := a.busBinary(), a.busDirectory()
 	var repo string
-	var rest []string
+	rest := args
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		repo, rest = args[0], args[1:]
-	} else {
-		rest = args
 	}
 	if repo == "" {
 		var rootBuf, commonBuf bytes.Buffer
@@ -162,12 +158,11 @@ func (a *App) cmdNotes(ctx context.Context, args []string, stdout io.Writer) *Co
 			}
 		}
 	}
-	notesArgs := append([]string{"notes", "--dir", busDir, "--repo", repo}, rest...)
-	if repo == "" {
-		if err := writeOutput(stdout, "Repository notebooks:\n", "notes header"); err != nil {
-			return err
-		}
-		notesArgs = []string{"notes", "--dir", busDir, "--list"}
+	notesArgs := []string{"notes", "--dir", busDir, "--list"}
+	if repo != "" {
+		notesArgs = append([]string{"notes", "--dir", busDir, "--repo", repo}, rest...)
+	} else if err := writeOutput(stdout, "Repository notebooks:\n", "notes header"); err != nil {
+		return err
 	}
 	out, err := busCmd(ctx, a, busBin, notesArgs...)
 	if err != nil {
