@@ -20,6 +20,7 @@ setup() {
   cp "$BATS_TEST_DIRNAME/stubs/fake-claude" "$HOME/.local/bin/claude"
   cp "$REPO_ROOT"/prompts/*.md "$AGENTS_HOME/prompts/"
   export PATH="$BATS_TEST_DIRNAME/stubs:$HOME/.local/bin:$PATH"
+  unset AGENT_GH_SELF AGENT_GH_COORDINATOR AGENT_GH_TEAM AGENT_GH_BUS_DIR
 
   cat > "$HOME/notify.sh" <<'NOTIFY'
 #!/usr/bin/env bash
