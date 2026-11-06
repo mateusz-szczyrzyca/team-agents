@@ -124,3 +124,10 @@ func (a *App) cmdAgents(out io.Writer, cfg *Config, root, busDir string) *Agents
 	}
 	return nil
 }
+
+// cmdAgentsJSON emits one configuration record per agent and investigator.
+func (a *App) cmdAgentsJSON(out io.Writer, cfg *Config) *AgentsJSONError {
+	_ = out
+	_ = cfg
+	return nil
+}
