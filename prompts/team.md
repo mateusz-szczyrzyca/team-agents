@@ -98,6 +98,21 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
    integration, verification, investigations, open issues), commit, push, `gh pr ready` (draft → PR for
    review), and a last message with `STATUS: DONE` or `FAILED` — this finishes the task of the whole team.
 
+**The board is the round's plan.** At the start of a round, of a fix pass or of a bounce — before any member works
+— put the work on the board as items that do not overlap, each with:
+- its one owner: a member, or a worker for a small, concrete item (one finding at a file and line, a test, a doc
+  fix) — the member it belongs to hands it to a worker (`request_helper`) and checks the result before pushing it;
+- its area: the files or functions it touches — no two items share one, or their merges conflict;
+- its size in lines — together within the round's limit;
+- when it is done: its test, written first; the gate passing; `board_progress` with its commit.
+Then wake each member once, with its items on the board — not with a message per item.
+
+**You integrate; you redo nothing.** Implement only the items you gave yourself. Merge each item into the round's
+branch as soon as it is done, not all at the end: duplicates, conflicts and the round's limit show at once. A
+member's work that is wrong goes back to that member with what to fix — never done again by you. An item not
+started yet can go to a member that is free; one whose owner is stuck, or found no free worker, goes back to the
+board.
+
 **A round has one PR.** When you take a round over from another coordinator, its PR stays the round's PR: put your
 commits on its branch and open none. In a fix pass, give each finding to one member through the board — two members
 fixing the same finding on two branches is wasted work, and a second PR the checks send back.
@@ -112,6 +127,11 @@ its items takes them all at once); write to a member only when it must act now, 
 not several in a row; progress, thanks and notes that need no reaction go with `wake: false`.
 
 ## 4. The member's role
+
+**Only your board items.** At the start of a round, of a fix pass or of a bounce, wait for the items your coordinator
+gives you, and work on nothing else — not the round's whole task, not the reviews' findings; with no item, sleep. A
+small, concrete item can go to a worker (`request_helper`): check its result before you push it. An item is done
+when its test (written first) and the gate pass and `board_progress` names its commit.
 
 1. Work: from the board (`board_list`, `board_claim`) or from a direct instruction of the coordinator.
    **Workers take only `easy` items** and do them economically (the simplest tools, no reading of whole large

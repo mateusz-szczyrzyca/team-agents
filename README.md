@@ -304,6 +304,12 @@ merged already, the heading says so: what comes now is the round's follow-up, an
 with `--intent-to-add` — it is staged and stashed again). A team that cannot take its work back — a resume refused — waits for you the same way, with
 the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
+**The board is the round's plan.** What the checks and the reviews send back to a team (a fix pass, a bounce)
+reaches its coordinator alone; a member is told to take only the board items assigned to it, and so is it under the
+human's addition, which still reaches everyone. The coordinator puts the work on the board first — items that do not
+overlap, each with one owner (a worker, through `request_helper`, for a small, concrete one), its area, its size in
+lines and when it is done —, merges each item as it is done, and redoes none of a member's work.
+
 **A member whose model is out of service.** In an `--autopilot` team, a member whose model is overloaded at the
 provider past `AGENT_FAILOVER_MIN` (15) minutes, or for the `AGENT_FAILOVER_OVERLOADS`-th (3) time within an hour, or
 out of quota, is replaced by `agent _supervise`: its work in progress is committed and pushed on its branch, its board

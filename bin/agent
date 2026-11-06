@@ -2353,6 +2353,7 @@ handback() {
   shift 3
   root=$(task_field "$id" REPO_ROOT)
   read -ra envs <<< "$envspec"
+  envs+=("AGENT_HANDBACK_LEAD=$(task_field "$id" AGENT)")   # who coordinates: its text is for it alone
   printf '%s\n' "${@: -1}" > "$TASKS/$id/handback.md" || log_warn handback_text_failed "task=$id"
   HANDBACK_OUT=""
   if out=$(cd "${root:-.}" && env "${envs[@]}" "$SELF" "$@" < /dev/null 2>&1); then
@@ -6398,6 +6399,10 @@ resume_run() {
       "$(task_field "$r" REPO_ROOT)" "$ts" resume)")
   done
   RESUME_NEW_IDS+=("${remote_ids[@]}")
+  local split_lead=""   # the coordinator: what the checks and reviews send back is its alone (the bus, else handback)
+  split_lead=$(jq -r '.lead // empty' <<< "${tj:-}" 2> /dev/null) || split_lead=""
+  split_lead=${split_lead:-${AGENT_HANDBACK_LEAD:-}}
+  local split_line="Your coordinator splits this work on the board: take only the board items assigned to you — with none, sleep."
   local round_pr_text=""   # the same round: which is its PR, said to every member
   ((fresh)) || round_pr_text=$(round_pr_note "$round_merged" "${olds[@]}")
   for old in "${olds[@]}" "${joiners[@]}"; do
@@ -6463,11 +6468,17 @@ resume_run() {
         printf '\n\n%s\n## The round'"'"'s PR\n\n%s\n%s\n' "$ROUND_ONLY_OPEN" "$round_pr_text" "$ROUND_ONLY_CLOSE"
       fi
       if [[ -n ${add//[[:space:]]/} ]] && ((${AGENT_FIX_PASS:-0} > 0 || ${AGENT_PRECHECK_PASS:-0} > 0)); then
-        # what the checks and the reviews send back (a fix pass, a bounce): for this round only
-        printf '\n\n%s\n## For this round only: from its checks and reviews (resumed %s)\n\n%s\n%s\n' "$ROUND_ONLY_OPEN" \
-          "$(date '+%Y-%m-%d %H:%M')" "$add" "$ROUND_ONLY_CLOSE"
+        # what the checks and the reviews send back (a fix pass, a bounce): for this round only, the coordinator's
+        if [[ -n $split_lead && $(task_field "$old" AGENT 2> /dev/null) != "$split_lead" ]]; then
+          printf '\n\n%s\n## For this round only: your work (resumed %s)\n\n%s\n%s\n' "$ROUND_ONLY_OPEN" \
+            "$(date '+%Y-%m-%d %H:%M')" "$split_line" "$ROUND_ONLY_CLOSE"
+        else
+          printf '\n\n%s\n## For this round only: from its checks and reviews (resumed %s)\n\n%s\n%s\n' "$ROUND_ONLY_OPEN" \
+            "$(date '+%Y-%m-%d %H:%M')" "$add" "$ROUND_ONLY_CLOSE"
+        fi
       elif [[ -n ${add//[[:space:]]/} ]]; then
         printf '\n\n## Addition from the human (resumed %s)\n\n%s\n' "$(date '+%Y-%m-%d %H:%M')" "$add"
+        if [[ $(task_field "$old" AGENT 2> /dev/null) != "${split_lead:-}" ]]; then printf '\n%s\n' "$split_line"; fi
       fi; } > "$TASKS/$id/task.md"
     for t in "${olds[@]}"; do resume_history "$t"; done > "$TASKS/$id/history.md"   # every member sees all answers
     : > "$TASKS/$id/meta.env"
