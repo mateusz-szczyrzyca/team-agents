@@ -16,6 +16,26 @@ var execNotifyCmd = func(cmdPath, filePath string) error {
 }
 
 // notifyLead delivers a terminal job notification to the human requester.
+// jobStateIcon is the icon, with its space, that a lead's notification puts before its title, so that a device shows
+// the job's state at once; none for a state without one
+func jobStateIcon(s JobState) string {
+	switch s {
+	case JobDone:
+		return "✅ "
+	case JobFailed:
+		return "❌ "
+	case JobStopped:
+		return "⏹ "
+	case JobWaiting:
+		return "❓ "
+	case JobRunning:
+		return "🚀 "
+	case JobQueued, JobAssigned:
+		return "⏳ "
+	}
+	return ""
+}
+
 func (a *leadAPI) notifyLead(job Job) {
 	if job.Request.Requester != "human" {
 		return
@@ -36,7 +56,7 @@ func (a *leadAPI) notifyLead(job Job) {
 	if repoName == "" {
 		repoName = "team-agents"
 	}
-	sb.WriteString(repoName + "\n")
+	sb.WriteString(jobStateIcon(job.State) + repoName + "\n") // the state's icon first: a device shows the title first
 	sb.WriteString("Repo: " + repoName + "\n")
 	sb.WriteString("Job: " + job.Request.ID + "\n")
 	sb.WriteString("Status: " + statusStr + "\n")

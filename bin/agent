@@ -1198,7 +1198,9 @@ push_text() { # repo line... — a notification outside the normal task cycle
   mkdir -p "$NOTIFY_DIR"
   local f
   f="$NOTIFY_DIR/$(date +%Y%m%d-%H%M%S)-$RANDOM-summary.md"
-  { printf '%s\n' "$repo"; printf '%s\n' "$@"; } > "$f"
+  local icon
+  icon=$(leading_icon "${1:-}")   # the icon its text starts with comes first in the title, seen at once
+  { printf '%s\n' "${icon:+$icon }$repo"; printf '%s\n' "$@"; } > "$f"
   notify_send "$f"
 }
 
@@ -4012,6 +4014,15 @@ run_opencode() { # id mode n prompt_file dir ; sets RC, FINAL  (OpenRouter, Deep
 }
 
 # pair_reviewers pair-dir — a review pair's two reviewers, with their CLI and model: "inv-a (codex · gpt-6), inv-b (…)"
+# leading_icon text — the icon a text starts with: its first word, when that has no letter, digit or ASCII punctuation
+# and is no dash or dot ("⛔", "✅✅", "🟣"); nothing else
+leading_icon() {
+  local LC_ALL=C w=${1%% *}   # ASCII classes only: in a UTF-8 locale an emoji is [[:punct:]]
+  [[ -n $w && $w != *[[:alnum:]]* && $w != *[[:punct:]]* ]] || return 0
+  case $w in "—"|"–"|"·"|"…") return 0 ;; esac   # a dash or a dot, not an icon
+  printf '%s' "$w"
+}
+
 pair_reviewers() {
   local s a out=()
   for s in A B; do
@@ -4069,11 +4080,14 @@ notify() { # id status final note
   fi
   [[ -n $final ]] || final="(no final message from the agent — see: agent log $id)"
   mkdir -p "$NOTIFY_DIR"
+  local icons note_icon   # the status's icon, and the note's when it is another: first in the title
+  icons=$(leading_icon "$label"); note_icon=$(leading_icon "$note")
+  [[ -z $note_icon || $note_icon == "$icons" ]] || icons+=$note_icon
   local kind=""   # a merge or a start: a file of its own, beside the run's own notification
   case $status in merged|started|round-start) kind="-$status" ;; esac
   local f="$NOTIFY_DIR/${id}-r${RUN}${kind}-summary.md"
   {
-    printf '%s\n' "$REPO_NAME"                      # first line = title/thread
+    printf '%s\n' "${icons:+$icons }$REPO_NAME"    # first line = title/thread: the icons first, seen at once
     printf 'Repo: %s\n' "$REPO_NAME"
     if [[ ${KIND:-worker} == investigation ]] && ! is_independent_investigation "$id"; then
       printf 'Agent: %s (%s%s) — investigation #%s for %s\n' "${AGENT:-?}" "${TYPE:-?}" "${MODEL:+, $MODEL}" "$INV_ID" "$FROM_AGENT"
