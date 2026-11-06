@@ -1,6 +1,16 @@
 {
  "operations": [
   {
+   "type": "Ack",
+   "op": "ack",
+   "what": "terminal task acknowledgement",
+   "causes": [
+    {"name": "NotFound", "class": "NotFound", "doc": "no task directory matches the reference"},
+    {"name": "Ambiguous", "class": "Conflict", "doc": "more than one task directory matches the reference"},
+    {"name": "StillRunning", "class": "Conflict", "doc": "the task has not reached an acknowledgeable terminal state"}
+   ]
+  },
+  {
    "type": "ReadTaskMeta",
    "op": "read_task_meta",
    "what": "legacy task metadata reading",
