@@ -151,6 +151,8 @@ The path unit (`agent-<task>-answers-<round>.path`) does not survive a reboot of
   request in progress per investigator plus `INVESTIGATION_QUEUE_MAX` waiting ones. Requests rotate across
   the investigators: each goes to the next free one after the last one, preferring another provider than the
   last one's — no provider gets every investigation and review.
+A worker is drawn at random among the free ones of another provider than the last one that got work (the
+provider of an opencode model is its prefix, `deepinfra/…`, `openrouter/…`), so that every worker of the list gets work.
 
 **Why mix tiers and providers.** Every subscription has usage limits (per few hours and per week) and every API
 key has a budget. Splitting the agents into CLI types and tiers spreads the load and the token usage across
@@ -302,6 +304,14 @@ merged already, the heading says so: what comes now is the round's follow-up, an
 with `--intent-to-add` — it is staged and stashed again). A team that cannot take its work back — a resume refused — waits for you the same way, with
 the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
+**A member whose model is out of service.** In an `--autopilot` team, a member whose model is overloaded at the
+provider past `AGENT_FAILOVER_MIN` (15) minutes, or for the `AGENT_FAILOVER_OVERLOADS`-th (3) time within an hour, or
+out of quota, is replaced by `agent _supervise`: its work in progress is committed and pushed on its branch, its board
+items go back to the board, its task is stopped, and the round goes back to the team with a free agent of
+`NORMAL_AGENTS` in its place — of another CLI when one is free, never one replaced elsewhere while its pause lasts.
+A coordinator replaced, the team gets a new one. Without a free agent the member waits its pause out, and you hear
+of it (log: `failover_done`, `failover_no_agent`).
+
 **A hand-back that waits for a run.** When `--autopilot` sends a round back to its team — after its checks, or
 for a fix pass — while a run of the team still goes on (a member still at work after its coordinator ended the
 round), the hand-back waits instead of calling you: `agent _supervise` hands the work back once the team's runs
@@ -368,7 +378,7 @@ and written in every mode. It waits for a busy investigator as above.
 
 **The fix loop.** When the review finds critical or major problems, the team is woken with them: the review is
 added to its task ("Fix pass 1 of 2"), it fixes them (or disputes one on the PR) and finishes again — and the PR
-is reviewed again, a re-review that first checks the previous findings. After `VERIFY_MAX_FIX_PASSES` (2) fix
+is reviewed again, a re-review that first checks the previous findings. After `VERIFY_MAX_FIX_PASSES` (5) fix
 passes with critical or major problems still found, the team is not woken again: the human is mentioned on the
 PR (`AGENT_HUMAN_GITHUB`, default the GitHub owner of the repository) and notified. A round is so reviewed three
 times at most before you decide (work → review → fix → review → fix → review), with `--verify` and `--autopilot`
@@ -667,7 +677,7 @@ Then:
 | `AGENT_NETWORK_PAUSE_MIN`, `AGENT_NETWORK_MAX_PAUSES` | a run that ends because the network or the provider's host is unreachable (DNS, a refused or reset connection, a timeout) pauses the task this many minutes, then goes on (15); this many such pauses in consecutive runs fail it, with the reason (12) |
 | `AGENT_GITHUB_TRUSTED` | the GitHub accounts whose PRs are a round's and whose texts the agents take for more than data, space-separated; by default the repository's owner and the account `gh` is logged in as. A fork's PR with a round's branch name, or one opened by another account, is ignored (logged as `pr_untrusted_ignored`) |
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
-| `VERIFY_MAX_FIX_PASSES`, `AGENT_HUMAN_GITHUB` | how many times a `--verify` review wakes the team to fix critical or major problems (default 2); who is then mentioned on the PR (default: the repository's GitHub owner) |
+| `VERIFY_MAX_FIX_PASSES`, `AGENT_HUMAN_GITHUB` | how many times a `--verify` review wakes the team to fix critical or major problems (default 5: five reviews with fixes, the sixth failed one calls you); who is then mentioned on the PR (default: the repository's GitHub owner) |
 | `AGENT_REVIEW_GATE`, `AGENT_REVIEW_GATE_MIN`, `AGENT_PRECHECK_MAX` | before a `--verify`/`--autopilot` review, the command a round's head must pass (`auto`: `make gate` where the repository has it; `off`: none), its time limit in minutes (30), and how many times a round goes back for its gate or its missing tests before you decide (2) |
 | `AGENT_STAGE_POLL_SEC` | how often the gate's progress before a review is written to the coordinator's task, for the dashboard (2 seconds) |
 | `AGENT_PROMPT_ARG_MAX` | a longer prompt (bytes) reaches the agent's CLI through `.agent-prompt.md` in its working directory, kept out of git, which the CLI is asked to read: Linux takes at most 128 KiB per command-line argument, and a task's text grows with every resume (100000) |

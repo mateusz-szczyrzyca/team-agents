@@ -49,6 +49,7 @@ teams_of() { grep -h '^TEAM=' "$AGENTS_HOME"/tasks/*-"$1"/meta.env 2> /dev/null 
 }
 
 @test "a review with major findings wakes the team with them, twice at most; then the human is called on the PR" {
+  export VERIFY_MAX_FIX_PASSES=2   # two fix passes: the mechanism, whatever the default
   printf 'AGENT_HUMAN_GITHUB=boss\n' >> "$AGENTS_HOME/agents.conf"
   echo '[{"number": 7, "url": "https://github.com/o/r/pull/7", "state": "OPEN"}]' > "$HOME/gh-prs.json"
   # the coordinator claims its role (as in agent.bats) — without a coordinator no review is requested

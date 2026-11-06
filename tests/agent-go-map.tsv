@@ -65,6 +65,12 @@ tests/unit/delegate_jobs.bats	failed destination checkout returns a failed helpe
 tests/unit/delegate_jobs.bats	requester commits after delegation cannot change the submitted base	blackbox	R50	-	planned
 tests/unit/delegate_jobs.bats	maximum-size escaped helper task is accepted by the real lead and tracked after POST	blackbox	R50	-	planned
 tests/unit/findings.bats	the critical and major findings of a review are counted in every usual form	source	R21	-	planned
+tests/unit/failover.bats	failover_due: an exhausted quota, an overload past AGENT_FAILOVER_MIN or the third in an hour; not a short one, nor a rate limit	source	R29	-	planned
+tests/unit/failover.bats	a member whose model is out of service is replaced by a free normal agent; its work in progress is pushed on its branch	blackbox	R29	-	planned
+tests/unit/failover.bats	a coordinator whose model is out of service is replaced: the new team has a new coordinator	blackbox	R29	-	planned
+tests/unit/failover.bats	without a free normal agent the member waits its pause out, and the human hears of it	blackbox	R29	-	planned
+tests/unit/failover.bats	a coordinator's prompt says never to wait in a loop for its members	blackbox	R29	-	planned
+tests/unit/fix_passes_default.bats	by default --autopilot has five fix passes: the sixth failed review calls the human	source	R34	-	planned
 tests/unit/fresh_relative.bats	a resumed run starts a fresh session only past twice the task's session starts; --runs shows each run's mode	source	R17	-	planned
 tests/unit/fresh_session.bats	a run that read a large context a step is followed by a fresh session, not a resume	blackbox	R24	-	planned
 tests/unit/fresh_session.bats	a run with a small context a step is resumed as before	blackbox	R24	-	planned
@@ -503,7 +509,10 @@ tests/unit/wake_cmd.bats	agent wake: a paused task resumes now, not at its pause
 tests/unit/wake_cmd.bats	agent wake refuses a task that is not paused	blackbox	R25	-	planned
 tests/unit/wake_cmd.bats	agent wake on a remote member's proxy task asks its node to resume it	blackbox	R46	-	planned
 tests/unit/wake_cmd.bats	a node resumes its paused member at once when the lead asks (WakesNow)	source	R46	-	planned
-tests/unit/web.bats	agent _agents-json lists every configured agent and investigator	blackbox	R09	TestProductionListings	done
+tests/unit/worker_draw.bats	after a worker of one provider, a worker of another is drawn — at random among them	source	R21	-	planned
+tests/unit/worker_draw.bats	with only workers of the last provider free, one of them is drawn	source	R21	-	planned
+tests/unit/worker_draw.bats	drawn and recorded one after another, every worker gets work — openrouter-deepseek41 too	source	R21	-	planned
+tests/unit/web.bats	agent _agents-json lists every configured agent and investigator	blackbox	R09	-	planned
 tests/unit/web.bats	the web interface shows the tasks, the agents and a task's activity	blackbox	R53	-	planned
 tests/unit/web.bats	answering in the browser resumes the task; ok accepts the recommendation	blackbox	R53	-	planned
 tests/unit/web.bats	the web interface refuses proxied requests without an identity and changes from elsewhere	blackbox	R53	-	planned

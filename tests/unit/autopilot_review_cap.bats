@@ -12,6 +12,7 @@ leads() { local d; for d in "$AGENTS_HOME"/tasks/*-lead/; do d=${d%/}; echo "${d
 reviews() { grep -l '^REVIEW=1$' "$AGENTS_HOME"/tasks/*/meta.env 2> /dev/null || (($? == 1)); }   # none yet is an answer
 
 @test "--autopilot: after three pairs of reviews with findings the autopilot stops and waits for the human" {
+  export VERIFY_MAX_FIX_PASSES=2   # two fix passes: the mechanism, whatever the default
   printf 'AGENT_HUMAN_GITHUB=boss\nINVESTIGATORS_TYPE[inv2]=claude\nAGENT_REVIEW_GATE=true\n' >> "$AGENTS_HOME/agents.conf"
   echo '[{"number": 7, "url": "https://github.com/o/r/pull/7", "state": "OPEN"}]' > "$HOME/gh-prs.json"
   scenario '{"lead": {"new": "team-lead-done", "resume": "team-lead-done"}, "member": {"new": "team-sleep", "resume": "done"}, "inv": {"new": "review-fixes"}, "inv2": {"new": "review-fixes"}}'

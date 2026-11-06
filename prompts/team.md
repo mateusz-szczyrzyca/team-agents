@@ -102,6 +102,10 @@ receive an EXCLUDED message — do nothing more and end your turn with `STATUS: 
 commits on its branch and open none. In a fix pass, give each finding to one member through the board — two members
 fixing the same finding on two branches is wasted work, and a second PR the checks send back.
 
+**Never wait in a loop for a member.** Do not sleep, poll, or start a background wait for a member's work or its
+gate: each wait is a whole step, with your whole context. End your run instead: the member's message wakes you when
+its work is done.
+
 **Every message to a sleeping member starts a whole new run of it** — its prompt, its context, the files it reads
 again: hundreds of thousands to millions of tokens. So give work through the board, in batches (a member woken by
 its items takes them all at once); write to a member only when it must act now, in one message with all it needs,

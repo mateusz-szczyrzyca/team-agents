@@ -598,7 +598,9 @@ INVESTIGATION_QUEUE_MAX="${INVESTIGATION_QUEUE_MAX:-3}"
 # An empty seed draws from OS entropy; a decimal seed reproduces the phase choices.
 AGENT_INVESTIGATION_SEED="${AGENT_INVESTIGATION_SEED:-}"
 AGENT_HANG_MIN="${AGENT_HANG_MIN:-30}"
-AGENT_HANDBACK_WAIT_MIN="${AGENT_HANDBACK_WAIT_MIN:-$AGENT_HANG_MIN}"   # a hand-back waits this long for a team's run          # watchdog: this many minutes without any activity = hang
+AGENT_HANDBACK_WAIT_MIN="${AGENT_HANDBACK_WAIT_MIN:-$AGENT_HANG_MIN}"
+AGENT_FAILOVER_MIN="${AGENT_FAILOVER_MIN:-15}"             # a member overloaded longer is replaced (an --autopilot team)
+AGENT_FAILOVER_OVERLOADS="${AGENT_FAILOVER_OVERLOADS:-3}"  # … or overloaded this many times within an hour   # a hand-back waits this long for a team's run          # watchdog: this many minutes without any activity = hang
 AGENT_HANG_STRIKES="${AGENT_HANG_STRIKES:-3}"
 AGENT_INVESTIGATION_EXCLUSIVE="${AGENT_INVESTIGATION_EXCLUSIVE:-no}"   # yes: an --investigation holds back normal teams' resumption    # this many consecutive hangs without progress = agent is hung
 # Wake-loop guard: a team member that keeps being woken without doing anything is paused (see wake_loop_check).
@@ -670,7 +672,7 @@ ROUND_SOFT_LINES="${ROUND_SOFT_LINES:-2000}"
 ROUND_ALWAYS_EXCLUDE=".agents/reports/"
 # --verify: a review with critical or major findings wakes the team with them, at most VERIFY_MAX_FIX_PASSES
 # times; then the human (AGENT_HUMAN_GITHUB, default: the owner of the GitHub repository) is mentioned on the PR.
-VERIFY_MAX_FIX_PASSES="${VERIFY_MAX_FIX_PASSES:-2}"
+VERIFY_MAX_FIX_PASSES="${VERIFY_MAX_FIX_PASSES:-5}"
 # Before a review (--verify, --autopilot): a round's head must pass the repository's gate and add tests for a change
 # of code; else the team goes on with the reason, at most AGENT_PRECHECK_MAX times, then the human decides.
 AGENT_REVIEW_GATE="${AGENT_REVIEW_GATE:-auto}"        # the gate's command: auto = `make gate` where the repository has it; off = none
@@ -2369,6 +2371,92 @@ handback() {
   fi
   HANDBACK_OUT=$out
   return 1
+}
+
+# failover_due task reason seconds — whether a paused member of an --autopilot team is to be replaced: out of quota
+# always; its model overloaded at the provider past AGENT_FAILOVER_MIN, or for the AGENT_FAILOVER_OVERLOADS-th time
+# within an hour (its overloads kept in OVERLOAD_TIMES); never for a rate limit, the account's and short
+failover_due() {
+  local id=$1 reason=$2 secs=$3 now t times=() kept=()
+  case $reason in
+    quota) return 0 ;;
+    overloaded) ;;
+    *) return 1 ;;
+  esac
+  now=$(date +%s)
+  read -ra times <<< "$(task_field "$id" OVERLOAD_TIMES)"
+  for t in "${times[@]}" "$now"; do
+    [[ $t =~ ^[0-9]+$ ]] && ((now - t < 3600)) && kept+=("$t")
+  done
+  meta_set "$id" OVERLOAD_TIMES "${kept[*]}"
+  ((secs > AGENT_FAILOVER_MIN * 60 || ${#kept[@]} >= AGENT_FAILOVER_OVERLOADS))
+}
+
+# failover_agent agent member… — a free normal agent to take the agent's place: none of the team's members, not busy,
+# not out of service itself (a task of it with FAILOVER_UNTIL to come); one of another CLI than the agent's if free
+failover_agent() {
+  local agent=$1 a m u other="" same="" now
+  shift
+  now=$(date +%s)
+  for a in "${NORMAL_AGENTS[@]}"; do
+    [[ $a != "$agent" ]] && ! is_one_of "$a" "$@" || continue
+    [[ -z $(agent_running_task "$a") ]] || continue
+    for m in $(grep -lx "AGENT=$a" "$TASKS"/*/meta.env 2> /dev/null); do
+      u=$(sed -n 's/^FAILOVER_UNTIL=//p' "$m")
+      [[ $u =~ ^[0-9]+$ ]] && ((u > now)) && continue 2
+    done
+    if [[ ${AGENT_TYPE[$a]:-} != "${AGENT_TYPE[$agent]:-}" ]]; then other=${other:-$a}; else same=${same:-$a}; fi
+  done
+  echo "${other:-$same}"
+}
+
+# supervise_failovers — a member of an --autopilot team marked FAILOVER_PENDING is replaced: its work in progress
+# committed and pushed on its branch, its board items given back (member_out), its task stopped, and the round handed
+# back to its team (handback, which waits for runs still going on) with a free normal agent in its place; a
+# coordinator replaced, the team gets a new one. Without a free agent the member waits its pause out, and the human
+# hears of it
+supervise_failovers() {
+  local m id team agent wt branch keeper new t text until team_agents=() args=()
+  for m in "$TASKS"/*/meta.env; do
+    grep -qx 'FAILOVER_PENDING=1' "$m" 2> /dev/null || continue
+    id=$(basename "$(dirname "$m")")
+    meta_set "$id" FAILOVER_PENDING ""
+    [[ $(task_field "$id" STATUS) == paused ]] || continue   # it went on meanwhile
+    team=$(task_field "$id" TEAM); agent=$(task_field "$id" AGENT)
+    team_agents=() keeper=""
+    for t in $(grep -lx "TEAM=$team" "$TASKS"/*/meta.env 2> /dev/null | xargs -r -n1 dirname | xargs -r -n1 basename); do
+      [[ $t != "$id" ]] || continue
+      team_agents+=("$(task_field "$t" AGENT)")
+      [[ -n $keeper || $(task_field "$t" STATUS) == stopped ]] || keeper=$t
+    done
+    new=$(failover_agent "$agent" "${team_agents[@]}")
+    if [[ -z $new || -z $keeper ]]; then
+      log_warn failover_no_agent "task=$id" "agent=$agent" "team=$team"
+      notify "$id" paused "" "⏸ $agent is out of service in team $team, and no free normal agent can take its place: it waits its pause out"
+      continue
+    fi
+    until=$(task_field "$id" FAILOVER_UNTIL)
+    wt=$(task_field "$id" WORKTREE); branch=$(task_field "$id" BRANCH)
+    if [[ -n $(git -C "$wt" status --porcelain 2> /dev/null) ]]; then   # its work in progress, for the team
+      { git -C "$wt" add -A && git -C "$wt" -c user.name="$agent (team-agents)" -c user.email="$agent@team-agents.invalid" \
+          commit -q --no-verify -m "wip: $agent hands its work over (its model is out of service)"; } 10>&- \
+        || log_warn failover_wip_failed "task=$id"
+    fi
+    git -C "$wt" push -q origin "HEAD:$branch" 10>&- 2> /dev/null || log_warn failover_push_failed "task=$id" "branch=$branch"
+    member_out "$id" "replaced by $new: its model is out of service"
+    "$SELF" stop "$id" > /dev/null 2>&1 || log_warn failover_stop_failed "task=$id"
+    team_agents+=("$new")
+    args=(run --resume "$team" --same-round --autopilot --team "$(IFS=,; echo "${team_agents[*]}")")
+    text="$agent is out of this round: its model is out of service (overloaded at the provider, or out of quota)$(
+      [[ ! $until =~ ^[0-9]+$ ]] || date -d "@$until" '+ until %H:%M')). $new takes its place. $agent's work is on its branch $branch, its board items are back on the board: go on with the round's work."
+    if handback "$keeper" "the round" "" "${args[@]}" "$text"; then
+      log_info failover_done "task=$id" "agent=$agent" "by=$new" "team=$team"
+      notify "$id" stopped "" "🔁 $agent is replaced by $new in team $team: its model is out of service"
+    else
+      log_error failover_failed "task=$id" "reason=${HANDBACK_OUT:0:300}"
+      handover_failed "$keeper" "the round" "$HANDBACK_OUT"
+    fi
+  done
 }
 
 # supervise_handbacks — a hand-back waiting for the team's runs (HANDBACK_PENDING) is tried again once they end; a
@@ -5114,24 +5202,25 @@ maybe_resume_worker() { # resumes the requesting agent if the investigation was 
 
 # ------------------------------------------------------------------ worker requests (delegate)
 
-free_worker() { # a free worker; balances providers: picks the provider with the fewest working workers
-  local w d p best="" bestp=""
-  declare -A busy=()
-  for d in "$TASKS"/*/; do
-    [[ -f $d/meta.env ]] || continue
-    d=${d%/}; d=${d##*/}
-    case $(task_field "$d" STATUS) in running|starting) ;; *) continue ;; esac
-    [[ $(task_field "$d" TIER) == worker ]] || continue
-    p=$(agent_provider "$(task_field "$d" AGENT)"); busy[$p]=$(( ${busy[$p]:-0} + 1 ))
-  done
-  for w in "${WORKER_AGENTS[@]}"; do   # within a provider the list order decides
+free_worker() { # a free worker, drawn at random among the free ones of another provider than the last one drawn
+  # (worker-last, written by worker_drawn) — among all the free ones when none of another provider is free
+  local w last others=() all=()
+  last=$(cat "$AGENTS_HOME/worker-last" 2> /dev/null)   # none yet: any provider
+  for w in "${WORKER_AGENTS[@]}"; do
     [[ -n ${AGENT_TYPE[$w]:-} ]] || continue
-    agent_running_task "$w" >/dev/null && continue
-    p=$(agent_provider "$w")
-    if [[ -z $best ]] || (( ${busy[$p]:-0} < ${busy[$bestp]:-0} )); then best=$w; bestp=$p; fi
+    agent_running_task "$w" > /dev/null && continue
+    all+=("$w")
+    [[ $(agent_provider "$w") == "$last" ]] || others+=("$w")
   done
-  [[ -n $best ]] && { printf '%s' "$best"; return 0; }
+  if ((${#others[@]})); then printf '%s' "${others[RANDOM % ${#others[@]}]}"; return 0; fi
+  if ((${#all[@]})); then printf '%s' "${all[RANDOM % ${#all[@]}]}"; return 0; fi
   return 1
+}
+
+# worker_drawn worker — the worker got work: its provider is the last one drawn, which the next draw avoids
+worker_drawn() {
+  agent_provider "$1" > "$AGENTS_HOME/worker-last.tmp" && mv "$AGENTS_HOME/worker-last.tmp" "$AGENTS_HOME/worker-last" \
+    || log_warn worker_last_failed "worker=$1"
 }
 
 dispatch_helpers() { # assigns queued requests to free workers
@@ -5165,6 +5254,7 @@ dispatch_helpers() { # assigns queued requests to free workers
     while w=$(free_worker); do
       j=$(bus helper-next --dir "$BUS_DIR" --worker "$w" --capabilities "$caps") || break
       [[ -n $j ]] || break
+      worker_drawn "$w"   # it gets work: the next draw takes another provider
       start_helper "$j" "$w" || log_error helper_start_failed "request=$(jq -r .id <<< "$j")" "worker=$w"
     done
   )
@@ -5608,6 +5698,12 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
       else
         note="the model is overloaded at the provider until $resume_at — the review goes to another investigator, outside its pair${why:+ — $why}"
       fi
+    fi
+    # an --autopilot team does not wait out a member's model out of service: _supervise replaces it (supervise_failovers)
+    if [[ $status == paused && -n ${TEAM:-} && ${REVIEW:-} != 1 && $(task_field "$id" AUTOPILOT) == 1 ]] \
+        && failover_due "$id" "$pause_reason" "$pause_secs"; then
+      meta_set "$id" FAILOVER_UNTIL "$(( $(date +%s) + pause_secs ))"
+      meta_set "$id" FAILOVER_PENDING 1
     fi
   elif [[ -s $qfile ]]; then
     # every question the agent wrote must carry a recommendation; without one it gets the file back once
@@ -7038,6 +7134,7 @@ cmd__supervise() { # (a systemd timer) ends the tasks whose runner died: running
   supervise_member_jobs
   supervise_teams
   supervise_merged_rounds
+  supervise_failovers
   supervise_handbacks
   supervise_review_waits
   if ((phase1_pending)) || review_rotation_waits; then dispatch; fi
