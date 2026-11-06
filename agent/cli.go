@@ -123,6 +123,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // run routes the CLI within an owned application and preserves numeric exit codes.
 func (a *App) run(args []string, stdout, stderr io.Writer) int {
+	a.Stdout = stdout
+	a.Stderr = stderr
+
 	cmd := "help"
 	var cmdArgs []string
 	if len(args) > 0 {

@@ -1,6 +1,9 @@
 package main
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 // App owns the effect boundaries for one invocation of the Go candidate.
 type App struct {
@@ -13,6 +16,8 @@ type App struct {
 	busBin    string            // path override for agentbus binary
 	agentHome string            // agent home directory
 	configEnv map[string]string // configuration-exported environment variables to propagate
+	Stdout    io.Writer         // standard output destination for configuration replay
+	Stderr    io.Writer         // standard error destination for configuration replay
 }
 
 // newApp fills omitted boundaries without granting command execution permission.
