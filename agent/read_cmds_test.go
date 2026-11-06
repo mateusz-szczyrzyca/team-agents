@@ -11,13 +11,25 @@ import (
 )
 
 type readCmdsTestExecutor struct {
-	commands  []Command
-	responses map[string]string
+	commands   []Command
+	responses  map[string]string
+	exitCodes  map[string]int // maps command patterns to exit codes
 }
 
 func (m *readCmdsTestExecutor) Execute(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
 	m.commands = append(m.commands, cmd)
 	key := strings.Join(append([]string{cmd.Name}, cmd.Args...), " ")
+
+	// Check for explicit exit code mapping
+	exitCode := 0
+	for pattern, code := range m.exitCodes {
+		if strings.Contains(key, pattern) {
+			exitCode = code
+			break
+		}
+	}
+
+	// Check for response output
 	for k, out := range m.responses {
 		if strings.Contains(key, k) {
 			if cmd.Stdout != nil {
@@ -25,10 +37,14 @@ func (m *readCmdsTestExecutor) Execute(_ context.Context, cmd Command) (CommandR
 					return CommandResult{}, opErr(ExecuteWait, "write stdout: %s", err.Error())
 				}
 			}
+			if exitCode != 0 {
+				// Return non-zero exit code even though output was written
+				return CommandResult{ExitCode: exitCode}, nil
+			}
 			return CommandResult{ExitCode: 0}, nil
 		}
 	}
-	return CommandResult{ExitCode: 0}, nil
+	return CommandResult{ExitCode: exitCode}, nil
 }
 
 func TestCmdBus(t *testing.T) {
@@ -50,6 +66,33 @@ func TestCmdBus(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "bus status ok\n\nevent1\nevent2\n") {
 		t.Fatalf("cmdBus output unexpected: %q", got)
+	}
+}
+
+// TestCmdBusStatusPreservedOnLogFailure verifies that successful status output is preserved even when log retrieval fails.
+func TestCmdBusStatusPreservedOnLogFailure(t *testing.T) {
+	exec := &readCmdsTestExecutor{
+		responses: map[string]string{
+			"status": "bus status ok\n",
+			"log":    "event1\nevent2\n",
+		},
+		exitCodes: map[string]int{
+			"log": 5, // Make log command fail with exit code 5
+		},
+	}
+	app := newApp(exec, nil, nil)
+	app.busBin = "/bin/agentbus"
+	app.busDir = "/tmp/bus"
+
+	var out bytes.Buffer
+	err := app.cmdBus(context.Background(), "20", &out)
+	if err == nil {
+		t.Fatal("cmdBus should fail when log command fails")
+	}
+	got := out.String()
+	// The status output and separator should be preserved in the output even though log failed
+	if !strings.Contains(got, "bus status ok\n\n") {
+		t.Fatalf("status output not preserved on log failure: %q", got)
 	}
 }
 
