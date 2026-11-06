@@ -353,6 +353,47 @@ func TestCmdShowReport(t *testing.T) {
 	}
 }
 
+// TestCmdShowInvListFailed verifies that a failing inv-list is logged nonfatally.
+func TestCmdShowInvListFailed(t *testing.T) {
+	t.Skip("Placeholder: inv-list error handling with Try helper - RED")
+}
+
+// TestCmdShowBlankMetaLines verifies that blank lines in meta.env are preserved in output.
+func TestCmdShowBlankMetaLines(t *testing.T) {
+	tasksDir := t.TempDir()
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	// Create task with blank lines in meta.env
+	taskDir := filepath.Join(tasksDir, "blank-meta")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=blank-meta\n\nSTATUS=done\n\nRUN=1\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := cmdShow(context.Background(), app, "blank-meta", &out)
+	if err != nil {
+		t.Fatalf("cmdShow failed: %v", err)
+	}
+
+	output := out.String()
+	// The output should contain blank lines as "  \n" (two spaces for blank line indentation)
+	// We expect at least one blank line from the meta content
+	if !strings.Contains(output, "  \n") {
+		t.Errorf("output missing blank lines from meta.env: %s", output)
+	}
+}
+
 // TestCmdShowTaskmdDirectory verifies ShowStorage error when task.md is a directory.
 func TestCmdShowTaskmdDirectory(t *testing.T) {
 	tasksDir := t.TempDir()
