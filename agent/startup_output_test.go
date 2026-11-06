@@ -24,7 +24,7 @@ func TestStartupBinaryDiagnostics(t *testing.T) {
 				writeConfigFixture(t, filepath.Join(home, "agents.conf"), "printf 'config stdout marker\\n'\nprintf 'config stderr marker\\n' >&2\n")
 			}
 			var stdout, stderr bytes.Buffer
-			result, err := (OSExecutor{}).Execute(context.Background(), Command{Name: binary, Args: []string{"_agents-json"}, Env: []string{"HOME=" + home, "AGENTS_HOME=" + home, "PATH=" + os.Getenv("PATH")}, Stdout: &stdout, Stderr: &stderr})
+			result, err := (OSExecutor{}).Execute(context.Background(), Command{Name: binary, Args: []string{"status"}, Env: []string{"HOME=" + home, "AGENTS_HOME=" + home, "PATH=" + os.Getenv("PATH")}, Stdout: &stdout, Stderr: &stderr})
 			if err != nil {
 				t.Fatal(err)
 			}

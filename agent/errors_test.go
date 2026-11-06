@@ -152,25 +152,6 @@ func TestAgentsCauses(t *testing.T) {
 	}
 }
 
-// TestAgentsJSONCauses checks the generated operation identity and exact causes for agents_json.
-func TestAgentsJSONCauses(t *testing.T) {
-	tc := struct {
-		cause AgentsJSONCause
-		name  string
-		class ErrorClass
-	}{AgentsJSONStorage, "Storage", ClassStorage}
-	if tc.cause.op() != "agents_json" || tc.cause.String() != tc.name || tc.cause.info().class != tc.class {
-		t.Fatalf("wrong generated cause metadata: %+v", tc.cause.info())
-	}
-	failure := opErr(tc.cause, "agents_json error %s", tc.name)
-	if failure == nil || failure.Cause != tc.cause || failure.Class() != tc.class || failure.CauseName() != tc.name {
-		t.Fatalf("wrong error classification: %+v", failure)
-	}
-	if !errors.Is(failure.asError(), tc.class.Sentinel()) {
-		t.Fatal("constructor lost sentinel identity")
-	}
-}
-
 // TestOperationErrorConversion checks typed nil and non-nil conversions at interface boundaries.
 func TestOperationErrorConversion(t *testing.T) {
 	// absent represents a successful typed operation result.

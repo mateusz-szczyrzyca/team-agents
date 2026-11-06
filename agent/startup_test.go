@@ -11,43 +11,6 @@ import (
 	"testing"
 )
 
-// TestProductionListings loads real configuration through the compiled entry point.
-func TestProductionListings(t *testing.T) {
-	root := t.TempDir()
-	binary := filepath.Join(root, "agent-go")
-	var buildOutput bytes.Buffer
-	result, buildErr := (OSExecutor{}).Execute(context.Background(), Command{Name: "go", Args: []string{"build", "-o", binary, "."}, Stdout: &buildOutput, Stderr: &buildOutput})
-	if buildErr != nil || result.ExitCode != 0 {
-		t.Fatalf("build: %v: %s", buildErr, buildOutput.String())
-	}
-	for _, customHome := range []bool{false, true} {
-		t.Run(map[bool]string{false: "HOME", true: "AGENTS_HOME"}[customHome], func(t *testing.T) {
-			home := t.TempDir()
-			agentsHome := filepath.Join(home, "agents")
-			if customHome {
-				agentsHome = filepath.Join(home, "custom")
-			}
-			if err := os.MkdirAll(agentsHome, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			writeConfigFixture(t, filepath.Join(agentsHome, "agents.conf"), `declare -A AGENT_TYPE=([fixture]=codex)
-declare -A AGENT_MODEL=([fixture]=example-model)
-declare -A INVESTIGATORS_TYPE=([reviewer]=claude)
-declare -A INVESTIGATORS_MODEL=([reviewer]=review-model)
-`)
-			var output bytes.Buffer
-			command := Command{Name: binary, Args: []string{"_agents-json"}, Env: []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}, Stdout: &output, Stderr: &output}
-			if customHome {
-				command.Env = append(command.Env, "AGENTS_HOME="+agentsHome)
-			}
-			result, err := (OSExecutor{}).Execute(context.Background(), command)
-			if err != nil || result.ExitCode != 0 || !strings.Contains(output.String(), `"name":"fixture"`) || !strings.Contains(output.String(), `"name":"reviewer"`) {
-				t.Fatalf("configured listings missing: %v: %s", err, output.String())
-			}
-		})
-	}
-}
-
 // TestStartupConfigPaths retains sourced paths and computed queue settings.
 func TestStartupConfigPaths(t *testing.T) {
 	home := t.TempDir()

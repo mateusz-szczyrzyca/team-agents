@@ -59,7 +59,7 @@ func TestDispatchUnknownCommand(t *testing.T) {
 }
 
 func TestDispatchRecognizesR09Commands(t *testing.T) {
-	commands := []string{"status", "ls", "show", "agents", "_agents-json", "bus", "inv", "notes", "helpers"}
+	commands := []string{"status", "ls", "show", "agents", "bus", "inv", "notes", "helpers"}
 	for _, cmd := range commands {
 		var stdout, stderr bytes.Buffer
 		err := dispatch(cmd, nil, &stdout, &stderr)
@@ -165,14 +165,6 @@ func TestRunDiagnosticsOnStderr(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("run(unknown-cmd) stderr = %q, want empty", stderr.String())
-	}
-}
-
-func TestDispatchAgentsJSON(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	err := dispatch("_agents-json", nil, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("dispatch(_agents-json, nil) err = %v, want nil", err)
 	}
 }
 

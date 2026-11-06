@@ -17,8 +17,7 @@ func (fw *failingWriter) Write(p []byte) (int, error) {
 	fw.callCount++
 	if fw.callCount == 1 && len(p) > 0 {
 		// Simulate truncation: write all but last byte, return success
-		n, _ := fw.buf.Write(p[:len(p)-1])
-		return n, nil
+		return fw.buf.Write(p[:len(p)-1])
 	}
 	return fw.buf.Write(p)
 }
