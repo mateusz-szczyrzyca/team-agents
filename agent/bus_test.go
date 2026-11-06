@@ -460,4 +460,3 @@ func TestBusCmdStderrReplayFailure(t *testing.T) {
 		t.Fatalf("expected cause BusStorage/ErrStorage, got %v", err)
 	}
 }
-

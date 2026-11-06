@@ -9,18 +9,40 @@ import (
 	"testing"
 )
 
+// newStatusTestApp returns an App instance configured with a temporary tasks directory.
+func newStatusTestApp(t *testing.T) (*App, string) {
+	t.Helper()
+	tasksDir := t.TempDir()
+	return &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}, tasksDir
+}
+
+// createStatusTaskDir creates a task directory under tasksDir with optional meta.env content.
+func createStatusTaskDir(t *testing.T, tasksDir, id, meta string) string {
+	t.Helper()
+	dir := filepath.Join(tasksDir, id)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if meta != "" {
+		if err := os.WriteFile(filepath.Join(dir, "meta.env"), []byte(meta), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
 // TestCmdStatusHeader verifies the output format header is correct.
 func TestCmdStatusHeader(t *testing.T) {
-	app := &App{
-		Executor: &appExecutor{},
-		tasksDir: t.TempDir(),
-		Clock:    appClock{},
-		Random:   appRandom{},
-	}
-
+	app, _ := newStatusTestApp(t)
 	var out bytes.Buffer
-	err := cmdStatus(context.Background(), app, &out)
-	if err != nil {
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
 		t.Fatalf("cmdStatus failed: %v", err)
 	}
 
@@ -41,30 +63,11 @@ func TestCmdStatusHeader(t *testing.T) {
 
 // TestCmdStatusListing verifies tasks are listed from $TASKS/*/meta.env.
 func TestCmdStatusListing(t *testing.T) {
-	tasksDir := t.TempDir()
-	app := &App{
-		Executor:  &appExecutor{},
-		tasksDir:  tasksDir,
-		Clock:     appClock{},
-		Random:    appRandom{},
-		busDir:    t.TempDir(),
-		agentHome: t.TempDir(),
-	}
-
-	// Create test tasks with metadata
-	task1Dir := filepath.Join(tasksDir, "task1")
-	if err := os.MkdirAll(task1Dir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	metaFile := filepath.Join(task1Dir, "meta.env")
-	meta1 := "ID=task1\nAGENT=agent-1\nSTATUS=done\nROUND=1\nRUN=1\nREPO_NAME=test\n"
-	if err := os.WriteFile(metaFile, []byte(meta1), 0600); err != nil {
-		t.Fatal(err)
-	}
+	app, tasksDir := newStatusTestApp(t)
+	createStatusTaskDir(t, tasksDir, "task1", "ID=task1\nAGENT=agent-1\nSTATUS=done\nROUND=1\nRUN=1\nREPO_NAME=test\n")
 
 	var out bytes.Buffer
-	err := cmdStatus(context.Background(), app, &out)
-	if err != nil {
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
 		t.Fatalf("cmdStatus failed: %v", err)
 	}
 
@@ -82,29 +85,11 @@ func TestCmdStatusListing(t *testing.T) {
 
 // TestCmdStatusInvestigatorNaming verifies special naming for investigations.
 func TestCmdStatusInvestigatorNaming(t *testing.T) {
-	tasksDir := t.TempDir()
-	app := &App{
-		Executor:  &appExecutor{},
-		tasksDir:  tasksDir,
-		Clock:     appClock{},
-		Random:    appRandom{},
-		busDir:    t.TempDir(),
-		agentHome: t.TempDir(),
-	}
-
-	// Create investigation task without INVESTIGATION_TEAM
-	invDir := filepath.Join(tasksDir, "inv-task")
-	if err := os.MkdirAll(invDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=inv-task\nAGENT=inv-agent\nKIND=investigation\nINV_ID=123\nSTATUS=done\nROUND=1\nRUN=1\n"
-	if err := os.WriteFile(filepath.Join(invDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	app, tasksDir := newStatusTestApp(t)
+	createStatusTaskDir(t, tasksDir, "inv-task", "ID=inv-task\nAGENT=inv-agent\nKIND=investigation\nINV_ID=123\nSTATUS=done\nROUND=1\nRUN=1\n")
 
 	var out bytes.Buffer
-	err := cmdStatus(context.Background(), app, &out)
-	if err != nil {
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
 		t.Fatalf("cmdStatus failed: %v", err)
 	}
 
@@ -116,29 +101,11 @@ func TestCmdStatusInvestigatorNaming(t *testing.T) {
 
 // TestCmdStatusMissingFields verifies missing fields are shown as '?'.
 func TestCmdStatusMissingFields(t *testing.T) {
-	tasksDir := t.TempDir()
-	app := &App{
-		Executor:  &appExecutor{},
-		tasksDir:  tasksDir,
-		Clock:     appClock{},
-		Random:    appRandom{},
-		busDir:    t.TempDir(),
-		agentHome: t.TempDir(),
-	}
-
-	// Create task with missing fields
-	taskDir := filepath.Join(tasksDir, "partial-task")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=partial-task\n" // only ID, all other fields missing
-	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	app, tasksDir := newStatusTestApp(t)
+	createStatusTaskDir(t, tasksDir, "partial-task", "ID=partial-task\n")
 
 	var out bytes.Buffer
-	err := cmdStatus(context.Background(), app, &out)
-	if err != nil {
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
 		t.Fatalf("cmdStatus failed: %v", err)
 	}
 
@@ -153,39 +120,12 @@ func TestCmdStatusMissingFields(t *testing.T) {
 
 // TestCmdStatusSkipsHiddenDirectories verifies that directories starting with . are skipped.
 func TestCmdStatusSkipsHiddenDirectories(t *testing.T) {
-	tasksDir := t.TempDir()
-	app := &App{
-		Executor:  &appExecutor{},
-		tasksDir:  tasksDir,
-		Clock:     appClock{},
-		Random:    appRandom{},
-		busDir:    t.TempDir(),
-		agentHome: t.TempDir(),
-	}
-
-	// Create hidden task directory
-	hiddenDir := filepath.Join(tasksDir, ".hidden-task")
-	if err := os.MkdirAll(hiddenDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=.hidden-task\nSTATUS=done\n"
-	if err := os.WriteFile(filepath.Join(hiddenDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create normal task
-	normalDir := filepath.Join(tasksDir, "normal-task")
-	if err := os.MkdirAll(normalDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta = "ID=normal-task\nSTATUS=done\n"
-	if err := os.WriteFile(filepath.Join(normalDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	app, tasksDir := newStatusTestApp(t)
+	createStatusTaskDir(t, tasksDir, ".hidden-task", "ID=.hidden-task\nSTATUS=done\n")
+	createStatusTaskDir(t, tasksDir, "normal-task", "ID=normal-task\nSTATUS=done\n")
 
 	var out bytes.Buffer
-	err := cmdStatus(context.Background(), app, &out)
-	if err != nil {
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
 		t.Fatalf("cmdStatus failed: %v", err)
 	}
 
@@ -200,29 +140,11 @@ func TestCmdStatusSkipsHiddenDirectories(t *testing.T) {
 
 // TestCmdStatusInvestigationEmptyINVID verifies investigation with empty INV_ID shows 'inv#?'.
 func TestCmdStatusInvestigationEmptyINVID(t *testing.T) {
-	tasksDir := t.TempDir()
-	app := &App{
-		Executor:  &appExecutor{},
-		tasksDir:  tasksDir,
-		Clock:     appClock{},
-		Random:    appRandom{},
-		busDir:    t.TempDir(),
-		agentHome: t.TempDir(),
-	}
-
-	// Create investigation task with empty INV_ID
-	invDir := filepath.Join(tasksDir, "inv-empty")
-	if err := os.MkdirAll(invDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=inv-empty\nKIND=investigation\nINV_ID=\nSTATUS=done\n"
-	if err := os.WriteFile(filepath.Join(invDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	app, tasksDir := newStatusTestApp(t)
+	createStatusTaskDir(t, tasksDir, "inv-empty", "ID=inv-empty\nKIND=investigation\nINV_ID=\nSTATUS=done\n")
 
 	var out bytes.Buffer
-	err := cmdStatus(context.Background(), app, &out)
-	if err != nil {
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
 		t.Fatalf("cmdStatus failed: %v", err)
 	}
 
@@ -232,53 +154,11 @@ func TestCmdStatusInvestigationEmptyINVID(t *testing.T) {
 	}
 }
 
-// TestCmdStatusUnitActiveSuffix verifies running/starting status appends ? when unit is inactive.
-func TestCmdStatusUnitActiveSuffix(t *testing.T) {
-	tasksDir := t.TempDir()
-
-	// Create mock executor that reports unit as inactive (exit code 1)
-	exec := &statusTestExecutor{
-		unitActive: false, // systemctl is-active returns 1 (inactive)
-	}
-
-	app := &App{
-		Executor:  exec,
-		tasksDir:  tasksDir,
-		Clock:     appClock{},
-		Random:    appRandom{},
-		busDir:    t.TempDir(),
-		agentHome: t.TempDir(),
-	}
-
-	// Create running task
-	taskDir := filepath.Join(tasksDir, "running-task")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=running-task\nSTATUS=running\nRUN=1\n"
-	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	var out bytes.Buffer
-	err := cmdStatus(context.Background(), app, &out)
-	if err != nil {
-		t.Fatalf("cmdStatus failed: %v", err)
-	}
-
-	output := out.String()
-	// Should show running? (with ?) when unit is inactive
-	if !strings.Contains(output, "running?") {
-		t.Errorf("output missing 'running?' suffix for inactive unit: %s", output)
-	}
-}
-
 type statusTestExecutor struct {
 	unitActive bool // false means unit is inactive (exit code 1)
 }
 
 func (e *statusTestExecutor) Execute(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
-	// Mock systemctl is-active check
 	if len(cmd.Args) >= 3 && cmd.Args[1] == "is-active" {
 		if e.unitActive {
 			return CommandResult{ExitCode: 0}, nil
@@ -288,30 +168,38 @@ func (e *statusTestExecutor) Execute(_ context.Context, cmd Command) (CommandRes
 	return CommandResult{ExitCode: 0}, nil
 }
 
-// TestCmdStatusMetaID verifies first column uses ID from meta.env with fallback to taskID.
-func TestCmdStatusMetaID(t *testing.T) {
+// TestCmdStatusUnitActiveSuffix verifies running/starting status appends ? when unit is inactive.
+func TestCmdStatusUnitActiveSuffix(t *testing.T) {
 	tasksDir := t.TempDir()
+	exec := &statusTestExecutor{unitActive: false}
 	app := &App{
-		Executor:  &appExecutor{},
+		Executor:  exec,
 		tasksDir:  tasksDir,
 		Clock:     appClock{},
 		Random:    appRandom{},
 		busDir:    t.TempDir(),
 		agentHome: t.TempDir(),
 	}
-
-	taskDir := filepath.Join(tasksDir, "dir-name")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=explicit-id\nSTATUS=done\n"
-	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	createStatusTaskDir(t, tasksDir, "running-task", "ID=running-task\nSTATUS=running\nRUN=1\n")
 
 	var out bytes.Buffer
-	err := cmdStatus(context.Background(), app, &out)
-	if err != nil {
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "running?") {
+		t.Errorf("output missing 'running?' suffix for inactive unit: %s", output)
+	}
+}
+
+// TestCmdStatusMetaID verifies first column uses ID from meta.env with fallback to taskID.
+func TestCmdStatusMetaID(t *testing.T) {
+	app, tasksDir := newStatusTestApp(t)
+	createStatusTaskDir(t, tasksDir, "dir-name", "ID=explicit-id\nSTATUS=done\n")
+
+	var out bytes.Buffer
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
 		t.Fatalf("cmdStatus failed: %v", err)
 	}
 
@@ -326,24 +214,9 @@ func TestCmdStatusMetaID(t *testing.T) {
 
 // TestCmdStatusMetaReadError verifies corrupted or unreadable meta.env fails with StatusStorage.
 func TestCmdStatusMetaReadError(t *testing.T) {
-	tasksDir := t.TempDir()
-	app := &App{
-		Executor:  &appExecutor{},
-		tasksDir:  tasksDir,
-		Clock:     appClock{},
-		Random:    appRandom{},
-		busDir:    t.TempDir(),
-		agentHome: t.TempDir(),
-	}
-
-	taskDir := filepath.Join(tasksDir, "broken-task")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
+	app, tasksDir := newStatusTestApp(t)
+	taskDir := createStatusTaskDir(t, tasksDir, "broken-task", "NOT_KEY_VALUE\n")
 	metaFile := filepath.Join(taskDir, "meta.env")
-	if err := os.WriteFile(metaFile, []byte("NOT_KEY_VALUE\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.Chmod(metaFile, 0000); err != nil {
 		t.Fatal(err)
 	}

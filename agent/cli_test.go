@@ -187,7 +187,6 @@ func TestDelegatedBusExitCodesAndStderr(t *testing.T) {
 	})
 }
 
-
 func TestDispatchAckEmptyArg(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := dispatch("ack", []string{""}, &stdout, &stderr)

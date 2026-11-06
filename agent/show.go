@@ -47,7 +47,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 
 	// Print meta.env indented by 2 spaces
 	metaFile := filepath.Join(taskDir, "meta.env")
-	content, err := os.ReadFile(metaFile)
+	content, err := os.ReadFile(metaFile) // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fromStorage(ShowStorage, storageErr(err, "read %s", metaFile))
 	}
@@ -65,7 +65,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 
 	// Print task.md if it exists
 	taskmdFile := filepath.Join(taskDir, "task.md")
-	content, err = os.ReadFile(taskmdFile)
+	content, err = os.ReadFile(taskmdFile) // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fromStorage(ShowStorage, storageErr(err, "read %s", taskmdFile))
 	}
@@ -129,7 +129,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 
 		// Show result.md if it exists
 		resultFile := filepath.Join(taskDir, "result.md")
-		content, err = os.ReadFile(resultFile)
+		content, err = os.ReadFile(resultFile) // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fromStorage(ShowStorage, storageErr(err, "read %s", resultFile))
 		}
@@ -142,7 +142,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 
 	// Print final message from final.md
 	finalFile := filepath.Join(taskDir, "final.md")
-	content, err = os.ReadFile(finalFile)
+	content, err = os.ReadFile(finalFile) // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fromStorage(ShowStorage, storageErr(err, "read %s", finalFile))
 	}
@@ -165,7 +165,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	}
 	if workTree != "" {
 		reportFile := filepath.Join(workTree, ".agents", "reports", taskID+".md")
-		if _, err := os.Stat(reportFile); err == nil {
+		if _, err := os.Stat(reportFile); err == nil { // #nosec G703 -- report file path under task worktree
 			if _, err := fmt.Fprintf(out, "\n== report: %s\n", reportFile); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write report line"))
 			}
