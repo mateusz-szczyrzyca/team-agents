@@ -53,10 +53,7 @@ func cmdStatus(ctx context.Context, app *App, out io.Writer) *StatusError {
 		if (status == taskRunning || status == taskStarting) && kind != kindRemoteMember && kind != kindInvestigationTeam {
 			runVal := metaLookup(meta, "RUN", "0")
 			result, uerr := app.execute(ctx, Command{Name: "systemctl", Args: []string{"--user", "is-active", "--quiet", "agent-" + id + "-r" + runVal + ".service"}})
-			if uerr != nil {
-				return opErr(StatusProcess, "check unit active %s: %s", id, uerr.Error())
-			}
-			if result.ExitCode != 0 {
+			if uerr != nil || result.ExitCode != 0 {
 				status += "?"
 			}
 		}

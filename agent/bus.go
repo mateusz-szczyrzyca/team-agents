@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -96,6 +97,16 @@ type BusServeParams struct {
 	Member     string // member name for remote team relay
 }
 
+// exitStatusError preserves the raw process exit code of a delegated subcommand.
+type exitStatusError struct {
+	code int // process exit code
+}
+
+// Error formats the exit status.
+func (e exitStatusError) Error() string {
+	return fmt.Sprintf("exit status %d", e.code)
+}
+
 // mapBusExitCode converts an agentbus process exit code and stderr to a typed BusError.
 func mapBusExitCode(code int, stderr string) *BusError {
 	if code == BusExitSuccess {
@@ -122,7 +133,9 @@ func mapBusExitCode(code int, stderr string) *BusError {
 	case BusExitProcess:
 		cause = BusProcess
 	}
-	return opErr(cause, "%s", stderr)
+	err := opErr(cause, "%s", stderr)
+	err.Err = errors.Join(err.Err, exitStatusError{code: code})
+	return err
 }
 
 // isLaunchError reports whether the error represents a subprocess launch failure.
@@ -150,6 +163,10 @@ func isPermissionError(err error) bool {
 func busExitCode(err *BusError) int {
 	if err == nil {
 		return 0
+	}
+	var raw exitStatusError
+	if errors.As(err, &raw) {
+		return raw.code
 	}
 	if isLaunchError(err) {
 		if isPermissionError(err) {
@@ -288,27 +305,26 @@ func busMessagesFrom(messagesPath string, agent string) (count int, err *Storage
 // busCmd executes an agentbus subcommand via the app executor and maps its status code.
 func busCmd(ctx context.Context, app *App, busBin string, args ...string) (string, *BusError) {
 	var stdout, stderr bytes.Buffer
-	cmd := Command{
+	result, eerr := app.execute(ctx, Command{
 		Name:   busBin,
 		Args:   args,
 		Stdout: &stdout,
 		Stderr: &stderr,
-	}
-	result, eerr := app.execute(ctx, cmd)
+	})
 	if eerr != nil {
 		return "", fromProcess(BusProcess, processErr(busBin, eerr, "%s", eerr.Message))
 	}
 	if app != nil && app.Stderr != nil && stderr.Len() > 0 {
 		n, werr := app.Stderr.Write(stderr.Bytes())
 		if werr != nil {
-			return "", fromStorage(BusStorage, storageErr(werr, "write subprocess stderr"))
+			return stdout.String(), fromStorage(BusStorage, storageErr(werr, "write subprocess stderr"))
 		}
 		if n < stderr.Len() {
-			return "", fromStorage(BusStorage, storageErr(io.ErrShortWrite, "write subprocess stderr"))
+			return stdout.String(), fromStorage(BusStorage, storageErr(io.ErrShortWrite, "write subprocess stderr"))
 		}
 	}
 	if result.ExitCode != BusExitSuccess {
-		return "", mapBusExitCode(result.ExitCode, stderr.String())
+		return stdout.String(), mapBusExitCode(result.ExitCode, stderr.String())
 	}
 	return stdout.String(), nil
 }

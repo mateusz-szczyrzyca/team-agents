@@ -67,26 +67,38 @@ func (a *App) cmdBus(ctx context.Context, n string, stdout io.Writer) *CommandEr
 	busBin, busDir := a.busBinary(), a.busDirectory()
 	n = firstNonEmpty(n, "30")
 	statusOut, err := busCmd(ctx, a, busBin, "status", "--dir", busDir)
+	if statusOut != "" {
+		if werr := writeOutput(stdout, statusOut+"\n", "bus status"); werr != nil && err == nil {
+			return werr
+		}
+	}
 	if err != nil {
 		return commandFromBus("bus status", err)
 	}
-	if err := writeOutput(stdout, statusOut+"\n", "bus status"); err != nil {
-		return err
-	}
 	logOut, err := busCmd(ctx, a, busBin, "log", "--dir", busDir, "-n", n)
+	if logOut != "" {
+		if werr := writeOutput(stdout, logOut, "bus log"); werr != nil && err == nil {
+			return werr
+		}
+	}
 	if err != nil {
 		return commandFromBus("bus log", err)
 	}
-	return writeOutput(stdout, logOut, "bus log")
+	return nil
 }
 
 // cmdHelpers lists active helper agents.
 func (a *App) cmdHelpers(ctx context.Context, args []string, stdout io.Writer) *CommandError {
 	out, err := busCmd(ctx, a, a.busBinary(), append([]string{"helper-list", "--dir", a.busDirectory()}, args...)...)
+	if out != "" {
+		if werr := writeOutput(stdout, out, "helpers"); werr != nil && err == nil {
+			return werr
+		}
+	}
 	if err != nil {
 		return commandFromBus("helpers", err)
 	}
-	return writeOutput(stdout, out, "helpers")
+	return nil
 }
 
 // cmdInv displays the investigation queue or details of an investigation.
@@ -103,11 +115,13 @@ func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *Comm
 			invArgs = append(invArgs, "--all")
 		}
 		out, err := busCmd(ctx, a, busBin, invArgs...)
+		if out != "" {
+			if werr := writeOutput(stdout, out, "inv-list"); werr != nil && err == nil {
+				return werr
+			}
+		}
 		if err != nil {
 			return commandFromBus("inv list", err)
-		}
-		if err := writeOutput(stdout, out, "inv-list"); err != nil {
-			return err
 		}
 		if len(args) == 0 || args[0] == "" {
 			return writeOutput(stdout, "\nAll: agent inv --all   |   details: agent inv <number>\n", "inv footer")
@@ -138,7 +152,7 @@ func (a *App) cmdNotes(ctx context.Context, args []string, stdout io.Writer) *Co
 	busBin, busDir := a.busBinary(), a.busDirectory()
 	var repo string
 	rest := args
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+	if len(args) > 0 && args[0] != "" && !strings.HasPrefix(args[0], "-") {
 		repo, rest = args[0], args[1:]
 	}
 	if repo == "" {
@@ -158,8 +172,13 @@ func (a *App) cmdNotes(ctx context.Context, args []string, stdout io.Writer) *Co
 		return err
 	}
 	out, err := busCmd(ctx, a, busBin, notesArgs...)
+	if out != "" {
+		if werr := writeOutput(stdout, out, "notes"); werr != nil && err == nil {
+			return werr
+		}
+	}
 	if err != nil {
 		return commandFromBus("bus notes", err)
 	}
-	return writeOutput(stdout, out, "notes")
+	return nil
 }

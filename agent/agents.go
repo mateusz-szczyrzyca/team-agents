@@ -87,13 +87,10 @@ func (a *App) runningTask(name, root string) (string, *AgentsError) {
 		run, _ := meta.Lookup("RUN")
 		if status == taskRunning || status == taskStarting {
 			result, eerr := a.execute(context.Background(), Command{Name: "systemctl", Args: []string{"--user", "is-active", "--quiet", "agent-" + id + "-r" + run + ".service"}})
-			if eerr != nil {
-				return "", fromProcess(AgentsProcess, processErr("systemctl", eerr, "inspect task %s", id))
-			}
-			if result.ExitCode == 0 {
+			if eerr == nil && result.ExitCode == 0 {
 				return id, nil
 			}
-			// systemctl uses nonzero exit codes for inactive or unknown units, both expected answers here.
+			// systemctl uses nonzero exit codes or launch failures for inactive units.
 		}
 		job, _ := meta.Lookup("JOB_ID")
 		if status == taskSleeping || (job != "" && (run == "0" || run == "") && (status == taskNew || status == taskStarting || status == taskRunning)) {
