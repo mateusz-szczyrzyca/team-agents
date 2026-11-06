@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -264,7 +265,7 @@ func TestCmdShowWorktreeFromMeta(t *testing.T) {
 	}
 }
 
-// TestCmdShowQuestionsContent verifies questions file content is printed, not just header.
+// TestCmdShowQuestionsContent verifies questions header is printed without content.
 func TestCmdShowQuestionsContent(t *testing.T) {
 	tasksDir := t.TempDir()
 	app := &App{
@@ -301,9 +302,9 @@ func TestCmdShowQuestionsContent(t *testing.T) {
 	if !strings.Contains(output, "== questions") {
 		t.Errorf("output missing questions header: %s", output)
 	}
-	// Should have questions CONTENT, not just header
-	if !strings.Contains(output, "First question") {
-		t.Errorf("output missing questions content: %s", output)
+	// Should NOT have questions content, only header (parity with Bash oracle)
+	if strings.Contains(output, "First question") {
+		t.Errorf("output should not include questions content: %s", output)
 	}
 }
 
@@ -459,3 +460,51 @@ func TestCmdShowFinalMessageTrailingNewlines(t *testing.T) {
 		t.Errorf("output does not contain cleanly normalized final message, got: %q", output)
 	}
 }
+
+// TestCmdShowStorageFailures verifies that I/O failures for required and optional task files return ShowStorage.
+func TestCmdShowStorageFailures(t *testing.T) {
+	t.Run("unreadable meta.env returns ShowStorage", func(t *testing.T) {
+		tasksDir := t.TempDir()
+		app := &App{tasksDir: tasksDir}
+		taskDir := filepath.Join(tasksDir, "unreadable-meta")
+		if err := os.Mkdir(taskDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		metaFile := filepath.Join(taskDir, "meta.env")
+		if err := os.WriteFile(metaFile, []byte("ID=unreadable-meta\n"), 0000); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		err := cmdShow(context.Background(), app, "unreadable-meta", &out)
+		if err == nil {
+			t.Fatal("expected ShowStorage error, got nil")
+		}
+		if err.Cause != ShowStorage || !errors.Is(err, ErrStorage) {
+			t.Fatalf("expected ShowStorage / ErrStorage, got %v", err)
+		}
+	})
+
+	t.Run("unreadable task.md returns ShowStorage", func(t *testing.T) {
+		tasksDir := t.TempDir()
+		app := &App{tasksDir: tasksDir}
+		taskDir := filepath.Join(tasksDir, "unreadable-taskmd")
+		if err := os.Mkdir(taskDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte("ID=unreadable-taskmd\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte("task description\n"), 0000); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		err := cmdShow(context.Background(), app, "unreadable-taskmd", &out)
+		if err == nil {
+			t.Fatal("expected ShowStorage error, got nil")
+		}
+		if err.Cause != ShowStorage || !errors.Is(err, ErrStorage) {
+			t.Fatalf("expected ShowStorage / ErrStorage, got %v", err)
+		}
+	})
+}
+
