@@ -64,17 +64,14 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 		}
 	}
 
-	// Print questions if ROUND > 0
+	// Print questions header if ROUND > 0
 	roundStr, _ := meta.Lookup("ROUND")
 	round, _ := strconv.Atoi(roundStr)
 	if round > 0 {
 		questionsFile := filepath.Join(taskDir, fmt.Sprintf("questions-%d.md", round))
-		if content, err := os.ReadFile(questionsFile); err == nil { // #nosec G304,G703 -- local questions file path under tasks directory
+		if _, err := os.Stat(questionsFile); err == nil {
 			if _, err := fmt.Fprintf(out, "\n== questions (round %d): %s\n", round, questionsFile); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write questions header"))
-			}
-			if _, err := fmt.Fprint(out, string(content)); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write questions content"))
 			}
 		}
 	}
