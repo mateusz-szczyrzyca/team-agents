@@ -310,6 +310,12 @@ human's addition, which still reaches everyone. The coordinator puts the work on
 overlap, each with one owner (a worker, through `request_helper`, for a small, concrete one), its area, its size in
 lines and when it is done —, merges each item as it is done, and redoes none of a member's work.
 
+**The round's card.** `agent round-check <team|task>` shows whether a round's work was split as planned, done
+once and merged: its board (items, done, without an owner), each member's work that is not in the round's PR
+(commits, lines, tokens), the files more than one branch changed, the items workers did. It reads the tasks and
+branches the round left, so finished rounds can be checked too. The coordinator's notification of a round's end
+carries the card in one line (📋 round-check).
+
 **A member whose model is out of service.** In an `--autopilot` team, a member whose model is overloaded at the
 provider past `AGENT_FAILOVER_MIN` (15) minutes, or for the `AGENT_FAILOVER_OVERLOADS`-th (3) time within an hour, or
 out of quota, is replaced by `agent _supervise`: its work in progress is committed and pushed on its branch, its board

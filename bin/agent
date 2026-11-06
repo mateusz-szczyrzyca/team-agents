@@ -4084,6 +4084,9 @@ notify() { # id status final note
   local icons note_icon   # the status's icon, and the note's when it is another: first in the title
   icons=$(leading_icon "$label"); note_icon=$(leading_icon "$note")
   [[ -z $note_icon || $note_icon == "$icons" ]] || icons+=$note_icon
+  if [[ $status == done && -n ${TEAM:-} && -n ${WORK_ROUND:-} ]]; then   # a round's end: its card, in one line
+    note="${note:+$note · }$(round_check_line "$TEAM")"
+  fi
   local kind=""   # a merge or a start: a file of its own, beside the run's own notification
   case $status in merged|started|round-start) kind="-$status" ;; esac
   local f="$NOTIFY_DIR/${id}-r${RUN}${kind}-summary.md"
@@ -7627,6 +7630,76 @@ long_run_end() {
   schedule_wake "$id" 5 || log_warn long_run_wake_failed "task=$id"
 }
 
+# round_card team — the round's card, one fact a line, tab-separated: "pr <number> <branch>"; "board <items> <done>
+# <without an owner>"; "member <agent> <commits not in the PR> <their lines> <tokens in>" for every branch but the
+# PR's; "shared <file> <agents>" for a file more than one branch changed; "workers <helpers' items>". From the tasks and
+# branches the round left: a finished round too
+round_card() {
+  local team=$1 t f b agent pr_task root base pr_branch num items n lines tokens w=()
+  local -a tasks=()
+  local -A seen=()
+  mapfile -t tasks < <(grep -lx "TEAM=$team" "$TASKS"/*/meta.env 2> /dev/null | xargs -r -n1 dirname | xargs -r -n1 basename)
+  ((${#tasks[@]})) || return 1
+  pr_task=$(team_pr_task "$team"); pr_task=${pr_task:-${tasks[0]}}
+  root=$(task_field "$pr_task" REPO_ROOT); base=$(task_field "$pr_task" BASE); pr_branch=$(task_field "$pr_task" BRANCH)
+  num=$(task_field "$pr_task" PR_NUMBER); num=${num:-$(task_field "$pr_task" ROUND_PR)}
+  printf 'pr\t%s\t%s\n' "${num:--}" "$pr_branch"
+  items=$(bus board-dump --dir "$BUS_DIR" --team "$team" 2> /dev/null | jq -r '(.board // []) | (if type == "object" then [.[]] else . end)
+    | "\(length)\t\([.[] | select(.status == "done")] | length)\t\([.[] | select((.for // "") == "" and (.assignee // "") == "")] | length)"' \
+    2> /dev/null) || items=""
+  printf 'board\t%s\n' "${items:-?	?	?}"   # the bus may no longer know a finished team
+  for t in "${tasks[@]}"; do
+    case $(task_field "$t" KIND) in worker|'') ;; *) continue ;; esac
+    b=$(task_field "$t" BRANCH); agent=$(task_field "$t" AGENT)
+    [[ -n $b && -n $root ]] || continue
+    while IFS= read -r f; do [[ -z $f ]] || seen[$f]+="$agent "; done < <(git -C "$root" diff --name-only "$base...$b" 2> /dev/null)
+    [[ $b != "$pr_branch" ]] || continue
+    n=$(git -C "$root" rev-list --count "$pr_branch..$b" 2> /dev/null) || n=0
+    lines=$(git -C "$root" diff --shortstat "$pr_branch...$b" 2> /dev/null | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+')
+    tokens=$(runs_usage "$t" 2> /dev/null | awk -F'\t' '{s += $3} END {print s + 0}')
+    printf 'member\t%s\t%s\t%s\t%s\n' "$agent" "$n" "${lines:-0}" "$tokens"
+  done
+  for f in "${!seen[@]}"; do
+    read -ra w <<< "${seen[$f]}"
+    ((${#w[@]} < 2)) || printf 'shared\t%s\t%s\n' "$f" "${w[*]}"
+  done
+  n=0
+  for t in "${tasks[@]}"; do
+    n=$((n + $(grep -lx "PARENT_TASK=$t" "$TASKS"/*/meta.env 2> /dev/null | xargs -r grep -lx 'KIND=helper' | wc -l)))
+  done
+  printf 'workers\t%s\n' "$n"
+}
+
+# round_check_line team — the round's card in one line, for the coordinator's notification of the round
+round_check_line() {
+  local card lost shared workers board
+  card=$(round_card "$1") || return 0
+  lost=$(awk -F'\t' '$1 == "member" && $3 > 0 {printf "%s%s %s commits", (n++ ? ", " : ""), $2, $3}' <<< "$card")
+  shared=$(grep -c '^shared' <<< "$card") || shared=0
+  workers=$(awk -F'\t' '$1 == "workers" {print $2}' <<< "$card")
+  board=$(awk -F'\t' '$1 == "board" {print $2 " items, " $3 " done, " $4 " without an owner"}' <<< "$card")
+  printf '📋 round-check: board %s · not in the PR: %s · files changed by more than one branch: %s · workers'"'"' items: %s — agent round-check %s' \
+    "$board" "${lost:-none}" "$shared" "$workers" "$1"
+}
+
+# cmd_round_check <team|task> — the round's card: was its work split as planned, done once, merged
+cmd_round_check() {
+  local ref=${1:?usage: agent round-check <team|task>} team card line
+  team=$ref
+  [[ ! -f $TASKS/$ref/meta.env ]] || team=$(task_field "$ref" TEAM)
+  card=$(round_card "$team") || die "no task of team $team"
+  echo "Round card — team $team"
+  awk -F'\t' '$1 == "pr" {print "PR: " ($2 == "-" ? "none yet" : "#" $2) " (branch " $3 ")"}
+    $1 == "board" {print "board: " $2 " items, " $3 " done, " $4 " without an owner"}' <<< "$card"
+  echo "members' work not in the round's PR:"
+  line=$(awk -F'\t' '$1 == "member" && $3 > 0 {print "  " $2 ": " $3 " commits, " $4 " lines, " $5 " tokens in"}' <<< "$card")
+  echo "${line:-  none}"
+  echo "files changed by more than one branch:"
+  line=$(awk -F'\t' '$1 == "shared" {print "  " $2 " (" $3 ")"}' <<< "$card" | sort)
+  echo "${line:-  none}"
+  awk -F'\t' '$1 == "workers" {print "workers: " $2}' <<< "$card"
+}
+
 cmd_tokens() { # <team|task> — the tokens the runs used, from their activity's usage lines (and opencode's step lines):
   # per task — a team's members, and the helpers and investigations they asked for — and in all
   local q=${1:?usage: agent tokens <team|task>} ids=() m d id team_ids=" " per
@@ -9736,6 +9809,7 @@ agent jobs [<id>]                         remote jobs on the lead (or this node'
 agent jobs --cancel <id>                  cancel a remote job on the lead
 agent nodes                               registered nodes on the lead
 agent kick <task>                         cut a run short: a team member sleeps (the team can wake it), solo: stopped
+agent round-check <team|task>             a round's card: its board, members' work not in its PR, files two branches changed, workers' items
 agent tokens <team|task>                  the tokens its runs used: per task (a team's helpers and investigations too), in all
 agent tokens --runs <task>                a task's tokens per run, its steps (tool calls) and input per step: the costly runs
 agent wake <task>                         resume a paused task now, not at its pause's end (a remote member's: on its node)
@@ -9789,6 +9863,7 @@ main() {
     kick)    cmd_kick "$@" ;;
     wake)    cmd_wake "$@" ;;
     tokens)  cmd_tokens "$@" ;;
+    round-check) cmd_round_check "$@" ;;
     round-size) cmd_round_size "$@" ;;
     _agents-json) cmd__agents_json ;;
     ack)     cmd_ack "$@" ;;
