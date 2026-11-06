@@ -39,37 +39,33 @@ func writeOutput(out io.Writer, s, op string) *CommandError {
 	return nil
 }
 
+// firstNonEmpty returns the first non-empty string among the provided values.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // busBinary returns the configured agentbus path or a default resolution.
 func (a *App) busBinary() string {
-	if a.busBin != "" {
-		return a.busBin
-	}
-	if env := os.Getenv("AGENTBUS_BIN"); env != "" {
-		return env
-	}
-	return "agentbus"
+	return firstNonEmpty(a.busBin, os.Getenv("AGENTBUS_BIN"), "agentbus")
 }
 
 // busDirectory returns the bus state directory.
 func (a *App) busDirectory() string {
-	if a.busDir != "" {
-		return a.busDir
-	}
-	if env := os.Getenv("BUS_DIR"); env != "" {
-		return env
-	}
 	if home := os.Getenv("HOME"); home != "" {
-		return filepath.Join(home, "agents", "bus")
+		return firstNonEmpty(a.busDir, os.Getenv("BUS_DIR"), filepath.Join(home, "agents", "bus"))
 	}
-	return "bus"
+	return firstNonEmpty(a.busDir, os.Getenv("BUS_DIR"), "bus")
 }
 
 // cmdBus displays agentbus status and the latest log entries.
 func (a *App) cmdBus(ctx context.Context, n string, stdout io.Writer) *CommandError {
 	busBin, busDir := a.busBinary(), a.busDirectory()
-	if n == "" {
-		n = "30"
-	}
+	n = firstNonEmpty(n, "30")
 	statusOut, err := busCmd(ctx, a, busBin, "status", "--dir", busDir)
 	if err != nil {
 		return commandFromBus("bus status", err)
@@ -98,12 +94,8 @@ func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *Comm
 	busBin, busDir := a.busBinary(), a.busDirectory()
 	queueMax, invSlots := "3", "1"
 	if cfg := a.listingConfig(); cfg != nil && cfg.Scalars != nil {
-		if q := cfg.Scalars["INVESTIGATION_QUEUE_MAX"]; q != "" {
-			queueMax = q
-		}
-		if s := cfg.Scalars["INV_SLOTS"]; s != "" {
-			invSlots = s
-		}
+		queueMax = firstNonEmpty(cfg.Scalars["INVESTIGATION_QUEUE_MAX"], "3")
+		invSlots = firstNonEmpty(cfg.Scalars["INV_SLOTS"], "1")
 	}
 	if len(args) == 0 || args[0] == "" || args[0] == "--all" {
 		invArgs := []string{"inv-list", "--dir", busDir, "--queue-max", queueMax, "--inv-slots", invSlots}

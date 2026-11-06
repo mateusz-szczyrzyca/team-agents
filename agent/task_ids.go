@@ -53,9 +53,8 @@ func resolveTaskID(tasksDir, ref string) (string, *ResolveTaskError) {
 	if len(matches) == 1 {
 		return matches[0], nil
 	}
-	cause := ResolveTaskNotFound
 	if len(matches) > 1 {
-		cause = ResolveTaskAmbiguous
+		return "", opErr(ResolveTaskAmbiguous, "no unique task matches '%s' (%d matches)", ref, len(matches))
 	}
-	return "", opErr(cause, "no unique task matches '%s' (%d matches)", ref, len(matches))
+	return "", opErr(ResolveTaskNotFound, "no unique task matches '%s' (0 matches)", ref)
 }
