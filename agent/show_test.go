@@ -9,6 +9,28 @@ import (
 	"testing"
 )
 
+// createTestTask creates a minimal valid task with required metadata and task.md files.
+func createTestTask(t *testing.T, tasksDir, taskID, metaContent, taskContent string) string {
+	taskDir := filepath.Join(tasksDir, taskID)
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	// Ensure ID is set in metadata
+	if !strings.Contains(metaContent, "ID=") {
+		metaContent = "ID=" + taskID + "\n" + metaContent
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(metaContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if taskContent == "" {
+		taskContent = "Test task"
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte(taskContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return taskDir
+}
+
 // TestCmdShowTaskNotFound verifies ShowNotFound error is returned.
 func TestCmdShowTaskNotFound(t *testing.T) {
 	app := &App{
@@ -43,16 +65,8 @@ func TestCmdShowMetaenv(t *testing.T) {
 		agentHome: t.TempDir(),
 	}
 
-	// Create task with metadata
-	taskDir := filepath.Join(tasksDir, "show-test")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	metaFile := filepath.Join(taskDir, "meta.env")
-	meta := "ID=show-test\nAGENT=test-agent\nSTATUS=done\nROUND=1\nRUN=1\n"
-	if err := os.WriteFile(metaFile, []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	meta := "AGENT=test-agent\nSTATUS=done\nROUND=1\nRUN=1\n"
+	createTestTask(t, tasksDir, "show-test", meta, "Test task")
 
 	var out bytes.Buffer
 	err := cmdShow(context.Background(), app, "show-test", &out)
@@ -122,17 +136,10 @@ func TestCmdShowQuestions(t *testing.T) {
 		agentHome: t.TempDir(),
 	}
 
-	// Create task with ROUND > 0 and questions file
-	taskDir := filepath.Join(tasksDir, "questions-test")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=questions-test\nSTATUS=done\nROUND=2\nRUN=1\n"
-	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	meta := "STATUS=done\nROUND=2\nRUN=1\n"
+	createTestTask(t, tasksDir, "questions-test", meta, "Test task")
 	questions := "# Questions for Round 2"
-	if err := os.WriteFile(filepath.Join(taskDir, "questions-2.md"), []byte(questions), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tasksDir, "questions-test", "questions-2.md"), []byte(questions), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -160,17 +167,10 @@ func TestCmdShowFinalMessage(t *testing.T) {
 		agentHome: t.TempDir(),
 	}
 
-	// Create task with final.md
-	taskDir := filepath.Join(tasksDir, "final-test")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=final-test\nSTATUS=done\nROUND=1\nRUN=1\n"
-	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	meta := "STATUS=done\nROUND=1\nRUN=1\n"
+	createTestTask(t, tasksDir, "final-test", meta, "Test task")
 	final := "Final message from the agent"
-	if err := os.WriteFile(filepath.Join(taskDir, "final.md"), []byte(final), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tasksDir, "final-test", "final.md"), []byte(final), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -201,15 +201,8 @@ func TestCmdShowWorkerNoInvestigations(t *testing.T) {
 		agentHome: t.TempDir(),
 	}
 
-	// Create worker task
-	taskDir := filepath.Join(tasksDir, "worker-task")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=worker-task\nKIND=worker\nSTATUS=done\n"
-	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	meta := "KIND=worker\nSTATUS=done\n"
+	createTestTask(t, tasksDir, "worker-task", meta, "Test worker task")
 
 	var out bytes.Buffer
 	err := cmdShow(context.Background(), app, "worker-task", &out)
@@ -238,15 +231,8 @@ func TestCmdShowWorktreeFromMeta(t *testing.T) {
 		agentHome: t.TempDir(),
 	}
 
-	// Create task with WORKTREE in meta.env
-	taskDir := filepath.Join(tasksDir, "wt-task")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=wt-task\nWORKTREE=/correct/path\nSTATUS=done\n"
-	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	meta := "WORKTREE=/correct/path\nSTATUS=done\n"
+	createTestTask(t, tasksDir, "wt-task", meta, "Test task")
 
 	// Note: we can't actually create reports at /correct/path, so this test verifies
 	// the code attempts to look in the right place
@@ -276,17 +262,10 @@ func TestCmdShowQuestionsContent(t *testing.T) {
 		agentHome: t.TempDir(),
 	}
 
-	// Create task with questions
-	taskDir := filepath.Join(tasksDir, "q-task")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=q-task\nROUND=1\nSTATUS=done\n"
-	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	meta := "ROUND=1\nSTATUS=done\n"
+	createTestTask(t, tasksDir, "q-task", meta, "Test task")
 	questions := "# Questions - Round 1\n\n## 1. First question\n**Recommended:** a) Option A"
-	if err := os.WriteFile(filepath.Join(taskDir, "questions-1.md"), []byte(questions), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tasksDir, "q-task", "questions-1.md"), []byte(questions), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -321,15 +300,8 @@ func TestCmdShowReport(t *testing.T) {
 		agentHome: t.TempDir(),
 	}
 
-	// Create task
-	taskDir := filepath.Join(tasksDir, "report-test")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=report-test\nSTATUS=done\nROUND=1\nRUN=1\n"
-	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	meta := "STATUS=done\nROUND=1\nRUN=1\n"
+	createTestTask(t, tasksDir, "report-test", meta, "Test task")
 
 	// Create report file in .agents/reports/
 	reportDir := filepath.Join(workTree, ".agents", "reports")
@@ -369,15 +341,8 @@ func TestCmdShowInvListFailed(t *testing.T) {
 		busBin:    "false", // Use 'false' command which exits with 1
 	}
 
-	// Create worker task
-	taskDir := filepath.Join(tasksDir, "worker-task")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	meta := "ID=worker-task\nKIND=worker\nSTATUS=done\nRUN=1\n"
-	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	meta := "KIND=worker\nSTATUS=done\nRUN=1\n"
+	createTestTask(t, tasksDir, "worker-task", meta, "Test worker task")
 
 	var out bytes.Buffer
 	var stderr bytes.Buffer
@@ -415,16 +380,9 @@ func TestCmdShowBlankMetaLines(t *testing.T) {
 		agentHome: t.TempDir(),
 	}
 
-	// Create task with blank lines in meta.env
-	taskDir := filepath.Join(tasksDir, "blank-meta")
-	if err := os.MkdirAll(taskDir, 0750); err != nil {
-		t.Fatal(err)
-	}
-	// Create meta.env with a blank line in the middle (blank line between ID and STATUS)
+	// Create task with blank lines in meta.env - blank line between ID and STATUS
 	meta := "ID=blank-meta\n\nSTATUS=done\nRUN=1\n"
-	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
-		t.Fatal(err)
-	}
+	createTestTask(t, tasksDir, "blank-meta", meta, "Test task")
 
 	var out bytes.Buffer
 	err := cmdShow(context.Background(), app, "blank-meta", &out)
@@ -477,6 +435,39 @@ func TestCmdShowTaskmdDirectory(t *testing.T) {
 	err := cmdShow(context.Background(), app, "bad-task", &out)
 	if err == nil {
 		t.Fatalf("cmdShow should return error when task.md is a directory, got nil")
+	}
+	if err.Cause != ShowStorage {
+		t.Fatalf("cmdShow returned %v, want ShowStorage", err.Cause)
+	}
+}
+
+// TestCmdShowTaskmdMissing verifies ShowStorage error when task.md is missing.
+func TestCmdShowTaskmdMissing(t *testing.T) {
+	tasksDir := t.TempDir()
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+
+	// Create task without task.md file
+	taskDir := filepath.Join(tasksDir, "no-task-md")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=no-task-md\nSTATUS=done\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately do NOT create task.md file
+
+	var out bytes.Buffer
+	err := cmdShow(context.Background(), app, "no-task-md", &out)
+	if err == nil {
+		t.Fatalf("cmdShow should return error when task.md is missing, got nil. Output was: %s", out.String())
 	}
 	if err.Cause != ShowStorage {
 		t.Fatalf("cmdShow returned %v, want ShowStorage", err.Cause)
