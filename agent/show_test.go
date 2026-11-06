@@ -473,3 +473,51 @@ func TestCmdShowTaskmdMissing(t *testing.T) {
 		t.Fatalf("cmdShow returned %v, want ShowStorage", err.Cause)
 	}
 }
+
+// TestCmdShowWorkerInvListFailureHandled verifies Try error is explicitly handled (not discarded) when inv-list fails.
+func TestCmdShowWorkerInvListFailureHandled(t *testing.T) {
+	tasksDir := t.TempDir()
+	busDir := t.TempDir()
+	logDir := t.TempDir()
+
+	app := &App{
+		Executor: &busTestExecutor{
+			result: CommandResult{ExitCode: BusExitNotFound}, // inv-list returns not found (2)
+			stderr: "no investigations for task",
+		},
+		tasksDir:  tasksDir,
+		busDir:    busDir,
+		agentHome: logDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+	}
+
+	// Create a worker task
+	taskDir := filepath.Join(tasksDir, "worker-task")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=worker-task\nKIND=worker\nSTATUS=running\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte("Task for testing"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Even with inv-list failing, show should succeed (best-effort, non-fatal)
+	var out bytes.Buffer
+	err := cmdShow(context.Background(), app, "worker-task", &out)
+	if err != nil {
+		t.Fatalf("cmdShow should succeed even when inv-list fails: %v", err)
+	}
+
+	// Output should still contain task header and content
+	outStr := out.String()
+	if !strings.Contains(outStr, "== worker-task") {
+		t.Fatalf("output missing task header: %s", outStr)
+	}
+	if !strings.Contains(outStr, "== task") {
+		t.Fatalf("output missing task section: %s", outStr)
+	}
+}
