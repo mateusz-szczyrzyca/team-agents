@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -76,9 +77,6 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 		if _, err := fmt.Fprint(out, string(content)); err != nil {
 			return fromStorage(ShowStorage, storageErr(err, "write task content"))
 		}
-	} else if !os.IsNotExist(err) {
-		// Non-ENOENT errors (e.g., is a directory) are storage failures
-		return fromStorage(ShowStorage, storageErr(err, "read task.md"))
 	}
 
 	// Print questions header if ROUND > 0
@@ -98,17 +96,18 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	}
 	switch kind {
 	case kindWorker:
-		invs, err := busCmd(ctx, app, app.busBinary(), "inv-list", "--dir", app.busDirectory(), "--task", taskID)
-		if err != nil {
-			if app != nil && app.Stderr != nil {
-				_, _ = fmt.Fprintf(app.Stderr, "agent: warning: inv-list failed: %s\n", err.Error())
-			}
-		} else {
-			invs = strings.TrimRight(invs, "\r\n")
-			if invs != "" {
-				if _, err := fmt.Fprintf(out, "\n== investigations\n%s\n", invs); err != nil {
-					return fromStorage(ShowStorage, storageErr(err, "write investigations"))
-				}
+		var invs bytes.Buffer
+		logger := &Logger{LogDir: filepath.Join(app.agentHome, "logs"), Subcommand: "show", Stderr: app.Stderr, Clock: app.Clock}
+		if lerr := Try(ctx, app, logger, LogInvListFailed, Command{
+			Name:   app.busBinary(),
+			Args:   []string{"inv-list", "--dir", app.busDirectory(), "--task", taskID},
+			Stdout: &invs,
+		}); lerr != nil {
+			return fromStorage(ShowStorage, storageErr(lerr.asError(), "log inv-list failure"))
+		}
+		if s := strings.TrimRight(invs.String(), "\r\n"); s != "" {
+			if _, err := fmt.Fprintf(out, "\n== investigations\n%s\n", s); err != nil {
+				return fromStorage(ShowStorage, storageErr(err, "write investigations"))
 			}
 		}
 	case kindInvestigation:
@@ -153,9 +152,6 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 				return fromStorage(ShowStorage, storageErr(err, "write final message"))
 			}
 		}
-	} else if err != nil && !os.IsNotExist(err) {
-		// Non-ENOENT errors (e.g., is a directory) are storage failures
-		return fromStorage(ShowStorage, storageErr(err, "read final.md"))
 	}
 
 	// Print report if it exists
