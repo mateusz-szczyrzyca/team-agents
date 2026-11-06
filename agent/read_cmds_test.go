@@ -13,6 +13,8 @@ import (
 type readCmdsTestExecutor struct {
 	commands  []Command
 	responses map[string]string
+	stderrs   map[string]string
+	exitCodes map[string]int
 }
 
 func (m *readCmdsTestExecutor) Execute(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
@@ -26,6 +28,22 @@ func (m *readCmdsTestExecutor) Execute(_ context.Context, cmd Command) (CommandR
 				}
 			}
 			return CommandResult{ExitCode: 0}, nil
+		}
+	}
+	for k, errText := range m.stderrs {
+		if strings.Contains(key, k) {
+			if cmd.Stderr != nil {
+				if _, err := io.WriteString(cmd.Stderr, errText); err != nil {
+					return CommandResult{}, opErr(ExecuteWait, "write stderr: %s", err.Error())
+				}
+			}
+			exitCode := 1
+			if m.exitCodes != nil {
+				if code, ok := m.exitCodes[k]; ok {
+					exitCode = code
+				}
+			}
+			return CommandResult{ExitCode: exitCode}, nil
 		}
 	}
 	return CommandResult{ExitCode: 0}, nil

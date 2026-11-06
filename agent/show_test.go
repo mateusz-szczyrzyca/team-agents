@@ -369,3 +369,33 @@ func TestCmdShowFinalMessageTrailingNewlinesExact(t *testing.T) {
 		t.Fatalf("output does not end with exactly %q: %q", want, out.String())
 	}
 }
+
+// TestCmdShowWorkerInvListFailure verifies failing inv-list exits 0, writes no stderr, and logs inv_list_failed.
+func TestCmdShowWorkerInvListFailure(t *testing.T) {
+	exec := &readCmdsTestExecutor{
+		exitCodes: map[string]int{"inv-list": 1},
+		stderrs:   map[string]string{"inv-list": "simulated agentbus failure\n"},
+	}
+	tasksDir, agentHome := t.TempDir(), t.TempDir()
+	var stderr bytes.Buffer
+	app := &App{
+		Executor:  exec,
+		tasksDir:  tasksDir,
+		busBin:    "/bin/agentbus",
+		busDir:    "/tmp/bus",
+		agentHome: agentHome,
+		Stderr:    &stderr,
+	}
+	createShowTaskDir(t, tasksDir, "worker-fail", "ID=worker-fail\nKIND=worker\nSTATUS=done\n")
+	var out bytes.Buffer
+	if err := cmdShow(context.Background(), app, "worker-fail", &out); err != nil {
+		t.Fatalf("cmdShow failed on inv-list failure: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got: %q", stderr.String())
+	}
+	logBytes, err := os.ReadFile(filepath.Join(agentHome, "logs", "agent.jsonl"))
+	if err != nil || !strings.Contains(string(logBytes), `"event":"inv_list_failed"`) {
+		t.Fatalf("expected inv_list_failed log record, err=%v content=%s", err, string(logBytes))
+	}
+}
