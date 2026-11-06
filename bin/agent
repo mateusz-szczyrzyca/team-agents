@@ -1849,11 +1849,11 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
   wr=$(task_field "$id" WORK_ROUND); wrs=$(task_field "$id" WORK_ROUNDS)
   if [[ -z $wr || -z $wrs ]] || ((wr >= wrs)); then
     auto_stage "$id" ""   # the task is done
-    notify "$id" merged "" "merged PR #$num — both reviews: ready to merge; ${wr:+round $wr/$wrs was the last: }the task is done"
+    notify "$id" merged "" "PR #$num merged by --autopilot — ready to merge: $(pair_reviewers "$(task_field "$id" REVIEW_PAIR)"); ${wr:+round $wr/$wrs was the last: }the task is done — $url"
     return 0
   fi
   auto_stage "$id" "PR #$num merged — round $((wr + 1))/$wrs starts"
-  notify "$id" merged "" "merged PR #$num — both reviews: ready to merge; round $((wr + 1))/$wrs starts"
+  notify "$id" merged "" "PR #$num merged by --autopilot — ready to merge: $(pair_reviewers "$(task_field "$id" REVIEW_PAIR)"); round $wr/$wrs is done — $url"
   team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=next-round"   # a busy team cannot be resumed
   automation_allowed "$id" || return 0
   ref=$(task_field "$id" TEAM); ref=${ref:-$id}
@@ -1865,6 +1865,7 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
     return 0
   fi
   log_info autopilot_next_round "task=$id" "round=$((wr + 1))/$wrs" "output=${out:0:300}"
+  notify "$id" round-start "" "round $((wr + 1))/$wrs starts on fresh branches from the merged $base — team ${ref}"
   auto_stage "$id" ""   # the next round's team has the work
 }
 
@@ -4010,6 +4011,18 @@ run_opencode() { # id mode n prompt_file dir ; sets RC, FINAL  (OpenRouter, Deep
   fi
 }
 
+# pair_reviewers pair-dir — a review pair's two reviewers, with their CLI and model: "inv-a (codex · gpt-6), inv-b (…)"
+pair_reviewers() {
+  local s a out=()
+  for s in A B; do
+    a=$(cat "$1/$s.agent" 2> /dev/null) || continue
+    [[ -n $a ]] || continue
+    out+=("$a (${INVESTIGATORS_TYPE[$a]:-?}${INVESTIGATORS_MODEL[$a]:+ · ${INVESTIGATORS_MODEL[$a]}})")
+  done
+  local IFS=,
+  printf '%s' "${out[*]}" | sed 's/,/, /g'
+}
+
 notify() { # id status final note
   local id=$1 status=$2 final=$3 note=${4:-}
   stopping && return 0
@@ -4040,7 +4053,9 @@ notify() { # id status final note
     paused)  label="⏸ paused" ;;
     abandoned) label="⚠ team left without members" ;;
     approved) label="✅✅ both reviews: ready to merge" ;;
-    merged) label="🔀 merged" ;;
+    merged) label="🟣 PR merged" ;;
+    started) label="🚀 started" ;;
+    round-start) label="🚀 a new round starts" ;;
     review-wait) label="⏳ reviews waiting" ;;
     *)       label=$status ;;
   esac
@@ -4054,7 +4069,9 @@ notify() { # id status final note
   fi
   [[ -n $final ]] || final="(no final message from the agent — see: agent log $id)"
   mkdir -p "$NOTIFY_DIR"
-  local f="$NOTIFY_DIR/${id}-r${RUN}-summary.md"
+  local kind=""   # a merge or a start: a file of its own, beside the run's own notification
+  case $status in merged|started|round-start) kind="-$status" ;; esac
+  local f="$NOTIFY_DIR/${id}-r${RUN}${kind}-summary.md"
   {
     printf '%s\n' "$REPO_NAME"                      # first line = title/thread
     printf 'Repo: %s\n' "$REPO_NAME"
@@ -6729,6 +6746,7 @@ cmd_run() {
   for i in "${ids[@]}"; do
     start_runner "$i" new || exit 1
   done
+  notify "${ids[0]}" started "" "work starts: ${team:+team $team, }${members[*]} — from $base"   # once for a team
   if [[ -n $team ]]; then
     echo "Started team $team: ${members[*]} (from $base)"
     for i in "${ids[@]}"; do echo "  $i  →  $(task_field "$i" BRANCH)"; done
