@@ -825,6 +825,17 @@ agent authenticated --providers               one quick request per provider acc
 `<id>` can be any unambiguous fragment of a task ID. `agent run --resume` and `agent transcript` also accept a
 team ID (`<timestamp>-team`) or any member's task ID.
 
+### Reading and displaying tasks and agents
+
+- `agent status` or `agent ls`: list all tasks in the tasks directory with status, duration, repository, round and run
+- `agent show <id>`: show full details of a task: metadata, task description, questions (if any), investigation summary, agent's final message, and report
+- `agent agents`: list all agents currently running, their worktrees, branches, and status
+- `agent bus [N]`: show N most recent bus messages (default: 10); for direct bus access, use `agentbus serve`
+- `agent inv [N|--all]`: show investigation queue or details of investigation N; queue size and slot configuration are from the oracle defaults
+- `agent notes [repo]`: show repository notebook (all repositories if no repo given); persists findings, conventions, and tool behavior for future rounds
+- `agent helpers [--all]`: list active helper agents and their status
+- `agent ack <id|all>`: mark task(s) as acknowledged (removes from active display); use after reviewing results
+
 ## The live panel
 
 `agent live` shows all active and unacknowledged tasks (status, duration, repository, stage, last activity), a
