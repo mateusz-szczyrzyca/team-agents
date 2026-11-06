@@ -31,7 +31,7 @@ open_pr() {
   [ "$(meta "$t" ROUND_PR)" = 67 ]
   p=$AGENTS_HOME/tasks/$t/prompt-1.md
   wait_grep "This round's PR is #67" "$p"
-  grep -q "agents/gemini-1/old" "$p"
+  wait_grep "Its branch is agents/gemini-1/old" "$p"   # written just after: the prompt is written as it is built
   agent stop --running > /dev/null
 }
 
