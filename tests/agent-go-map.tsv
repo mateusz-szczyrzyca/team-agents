@@ -543,6 +543,9 @@ tests/unit/review_pair_rotate.bats	rotate: three investigators — the third pai
 tests/unit/review_pair_rotate.bats	rotate: a re-review by another investigator gets the slot's previous review as someone else's	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: the supervise timer dispatches a waiting review pair, which no run's end may do	source	R33	-	planned
 tests/unit/round_discipline.bats	the prompts say never to start the next round's work; a member out of items sleeps instead	blackbox	R31	-	planned
+tests/unit/round_check.bats	agent round-check shows a member's work not in the round's PR, the files two branches changed, the workers	blackbox	R23	-	planned
+tests/unit/round_check.bats	round_check_line sums the card up in one line	source	R23	-	planned
+tests/unit/round_check.bats	the coordinator's notification of a round carries the round's card in one line	source	R23	-	planned
 tests/unit/review_pair_repeat.bats	default draw: a PR's second review is done by the other two investigators, its third by a mixed pair	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	default draw: across PRs A+B is followed by C+D, then by a mixed pair	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	default draw: only the PR's previous pair free — it waits, and does not repeat it after AGENT_REVIEW_ROTATE_WAIT_MIN	source	R33	-	planned
