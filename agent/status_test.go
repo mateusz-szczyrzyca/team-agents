@@ -1,0 +1,266 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// newStatusTestApp returns an App instance configured with a temporary tasks directory.
+func newStatusTestApp(t *testing.T) (*App, string) {
+	t.Helper()
+	tasksDir := t.TempDir()
+	return &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}, tasksDir
+}
+
+// createStatusTaskDir creates a task directory under tasksDir with optional meta.env content.
+func createStatusTaskDir(t *testing.T, tasksDir, id, meta string) string {
+	t.Helper()
+	dir := filepath.Join(tasksDir, id)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if meta != "" {
+		if err := os.WriteFile(filepath.Join(dir, "meta.env"), []byte(meta), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// TestCmdStatusHeader verifies the output format header is correct.
+func TestCmdStatusHeader(t *testing.T) {
+	app, _ := newStatusTestApp(t)
+	var out bytes.Buffer
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) == 0 {
+		t.Fatal("no output from cmdStatus")
+	}
+
+	header := lines[0]
+	expectedFields := []string{"TASK", "AGENT", "STATUS", "ROUND", "RUN", "REPO"}
+	for _, field := range expectedFields {
+		if !strings.Contains(header, field) {
+			t.Errorf("header missing field %q: %s", field, header)
+		}
+	}
+}
+
+// TestCmdStatusListing verifies tasks are listed from $TASKS/*/meta.env.
+func TestCmdStatusListing(t *testing.T) {
+	app, tasksDir := newStatusTestApp(t)
+	createStatusTaskDir(t, tasksDir, "task1", "ID=task1\nAGENT=agent-1\nSTATUS=done\nROUND=1\nRUN=1\nREPO_NAME=test\n")
+
+	var out bytes.Buffer
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "task1") {
+		t.Errorf("output missing task1: %s", output)
+	}
+	if !strings.Contains(output, "agent-1") {
+		t.Errorf("output missing agent-1: %s", output)
+	}
+	if !strings.Contains(output, "done") {
+		t.Errorf("output missing done status: %s", output)
+	}
+}
+
+// TestCmdStatusInvestigatorNaming verifies special naming for investigations.
+func TestCmdStatusInvestigatorNaming(t *testing.T) {
+	app, tasksDir := newStatusTestApp(t)
+	createStatusTaskDir(t, tasksDir, "inv-task", "ID=inv-task\nAGENT=inv-agent\nKIND=investigation\nINV_ID=123\nSTATUS=done\nROUND=1\nRUN=1\n")
+
+	var out bytes.Buffer
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "inv#123") {
+		t.Errorf("output missing 'inv#123' for investigation: %s", output)
+	}
+}
+
+// TestCmdStatusMissingFields verifies missing fields are shown as '?'.
+func TestCmdStatusMissingFields(t *testing.T) {
+	app, tasksDir := newStatusTestApp(t)
+	createStatusTaskDir(t, tasksDir, "partial-task", "ID=partial-task\n")
+
+	var out bytes.Buffer
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "partial-task") {
+		t.Errorf("output missing task ID: %s", output)
+	}
+	if !strings.Contains(output, "?") {
+		t.Errorf("output missing '?' for missing fields: %s", output)
+	}
+}
+
+// TestCmdStatusSkipsHiddenDirectories verifies that directories starting with . are skipped.
+func TestCmdStatusSkipsHiddenDirectories(t *testing.T) {
+	app, tasksDir := newStatusTestApp(t)
+	createStatusTaskDir(t, tasksDir, ".hidden-task", "ID=.hidden-task\nSTATUS=done\n")
+	createStatusTaskDir(t, tasksDir, "normal-task", "ID=normal-task\nSTATUS=done\n")
+
+	var out bytes.Buffer
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	if strings.Contains(output, ".hidden-task") {
+		t.Errorf("output should not include hidden task: %s", output)
+	}
+	if !strings.Contains(output, "normal-task") {
+		t.Errorf("output missing normal-task: %s", output)
+	}
+}
+
+// TestCmdStatusInvestigationEmptyINVID verifies investigation with empty INV_ID shows 'inv#?'.
+func TestCmdStatusInvestigationEmptyINVID(t *testing.T) {
+	app, tasksDir := newStatusTestApp(t)
+	createStatusTaskDir(t, tasksDir, "inv-empty", "ID=inv-empty\nKIND=investigation\nINV_ID=\nSTATUS=done\n")
+
+	var out bytes.Buffer
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "inv#?") {
+		t.Errorf("output missing 'inv#?' for investigation with empty INV_ID: %s", output)
+	}
+}
+
+type statusTestExecutor struct {
+	unitActive bool // false means unit is inactive (exit code 1)
+}
+
+func (e *statusTestExecutor) Execute(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
+	if len(cmd.Args) >= 3 && cmd.Args[1] == "is-active" {
+		if e.unitActive {
+			return CommandResult{ExitCode: 0}, nil
+		}
+		return CommandResult{ExitCode: 1}, nil
+	}
+	return CommandResult{ExitCode: 0}, nil
+}
+
+// TestCmdStatusUnitActiveSuffix verifies running/starting status appends ? when unit is inactive.
+func TestCmdStatusUnitActiveSuffix(t *testing.T) {
+	tasksDir := t.TempDir()
+	exec := &statusTestExecutor{unitActive: false}
+	app := &App{
+		Executor:  exec,
+		tasksDir:  tasksDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busDir:    t.TempDir(),
+		agentHome: t.TempDir(),
+	}
+	createStatusTaskDir(t, tasksDir, "running-task", "ID=running-task\nSTATUS=running\nRUN=1\n")
+
+	var out bytes.Buffer
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "running?") {
+		t.Errorf("output missing 'running?' suffix for inactive unit: %s", output)
+	}
+}
+
+// TestCmdStatusMetaID verifies first column uses ID from meta.env with fallback to taskID.
+func TestCmdStatusMetaID(t *testing.T) {
+	app, tasksDir := newStatusTestApp(t)
+	createStatusTaskDir(t, tasksDir, "dir-name", "ID=explicit-id\nSTATUS=done\n")
+
+	var out bytes.Buffer
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
+		t.Fatalf("cmdStatus failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "explicit-id") {
+		t.Errorf("output missing explicit ID from meta.env: %s", output)
+	}
+	if strings.Contains(output, "dir-name") {
+		t.Errorf("output should use explicit-id rather than dir-name: %s", output)
+	}
+}
+
+// TestCmdStatusMetaReadError verifies corrupted or unreadable meta.env fails with StatusStorage.
+func TestCmdStatusMetaReadError(t *testing.T) {
+	app, tasksDir := newStatusTestApp(t)
+	taskDir := createStatusTaskDir(t, tasksDir, "broken-task", "NOT_KEY_VALUE\n")
+	metaFile := filepath.Join(taskDir, "meta.env")
+	if err := os.Chmod(metaFile, 0000); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chmod(metaFile, 0600); err != nil {
+			t.Errorf("restore permissions: %v", err)
+		}
+	}()
+
+	var out bytes.Buffer
+	err := cmdStatus(context.Background(), app, &out)
+	if err == nil {
+		t.Fatal("expected status error for unreadable meta.env")
+	}
+	if err.Cause != StatusStorage {
+		t.Fatalf("expected StatusStorage, got %v", err.Cause)
+	}
+}
+
+type statusEnvExecutor struct{ capturedEnv []string }
+
+func (e *statusEnvExecutor) Execute(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
+	e.capturedEnv = cmd.Env
+	return CommandResult{ExitCode: 0}, nil
+}
+
+// TestStatusXDGRuntimeDirPropagated verifies XDG_RUNTIME_DIR is passed to systemctl when unset in parent environment.
+func TestStatusXDGRuntimeDirPropagated(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	tempTasks := t.TempDir()
+	createStatusTaskDir(t, tempTasks, "active-task", "ID=active-task\nSTATUS=running\nRUN=1\n")
+	exec := &statusEnvExecutor{}
+	app := newApp(exec, nil, nil)
+	app.tasksDir = tempTasks
+	var out bytes.Buffer
+	if err := cmdStatus(context.Background(), app, &out); err != nil {
+		t.Fatalf("cmdStatus err = %v", err)
+	}
+	want := "XDG_RUNTIME_DIR=/run/user/" + strconv.Itoa(os.Getuid())
+	for _, e := range exec.capturedEnv {
+		if e == want {
+			return
+		}
+	}
+	t.Fatalf("cmd.Env does not contain %s: %v", want, exec.capturedEnv)
+}

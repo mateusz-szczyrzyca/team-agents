@@ -10,7 +10,7 @@ import (
 // resolveTaskID preserves exact-directory precedence and literal fragment matching.
 func resolveTaskID(tasksDir, ref string) (string, *ResolveTaskError) {
 	// Concatenation preserves the Bash path and returns the original reference verbatim.
-	info, exactErr := os.Stat(tasksDir + "/" + ref)
+	info, exactErr := os.Stat(tasksDir + "/" + ref) // #nosec G703 -- local task directory inspection matches Bash path resolution
 	if exactErr == nil && info.IsDir() {
 		return ref, nil
 	}

@@ -186,3 +186,12 @@ func (e configOutputExecutor) Execute(_ context.Context, cmd Command) (CommandRe
 	}
 	return CommandResult{}, nil
 }
+
+// TestConfigEnvReadFailure ensures non-ENOENT environment read errors fail configuration load.
+func TestConfigEnvReadFailure(t *testing.T) {
+	conf := filepath.Join(t.TempDir(), "agents.conf")
+	writeConfigFixture(t, conf, "trap 'chmod 000 \"$_agent_cfg_env\"' EXIT\n")
+	if _, err := newApp(OSExecutor{}, nil, nil).loadConfig(context.Background(), ConfigRequest{File: conf}); err == nil || err.Cause != LoadConfigShell {
+		t.Fatalf("loadConfig = %v, want LoadConfigShell", err)
+	}
+}
