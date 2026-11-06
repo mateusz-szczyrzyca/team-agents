@@ -407,7 +407,7 @@ func TestCmdShowWorkerInvListFailure(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("expected empty stderr, got: %q", stderr.String())
 	}
-	logBytes, err := os.ReadFile(filepath.Join(agentHome, "logs", "agent.jsonl"))
+	logBytes, err := os.ReadFile(filepath.Join(agentHome, "logs", "agent.jsonl")) // #nosec G304 -- path belongs to temporary test directory
 	if err != nil || !strings.Contains(string(logBytes), `"event":"inv_list_failed"`) {
 		t.Fatalf("expected inv_list_failed log record, err=%v content=%s", err, string(logBytes))
 	}
