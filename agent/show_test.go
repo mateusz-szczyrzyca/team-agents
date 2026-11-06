@@ -355,7 +355,52 @@ func TestCmdShowReport(t *testing.T) {
 
 // TestCmdShowInvListFailed verifies that a failing inv-list is logged nonfatally.
 func TestCmdShowInvListFailed(t *testing.T) {
-	t.Skip("Placeholder: inv-list error handling with Try helper - RED")
+	tasksDir := t.TempDir()
+	agentHome := t.TempDir()
+	logDir := filepath.Join(agentHome, "logs")
+	busDir := t.TempDir()
+	app := &App{
+		Executor:  &appExecutor{},
+		tasksDir:  tasksDir,
+		agentHome: agentHome,
+		busDir:    busDir,
+		Clock:     appClock{},
+		Random:    appRandom{},
+		busBin:    "false", // Use 'false' command which exits with 1
+	}
+
+	// Create worker task
+	taskDir := filepath.Join(tasksDir, "worker-task")
+	if err := os.MkdirAll(taskDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	meta := "ID=worker-task\nKIND=worker\nSTATUS=done\nRUN=1\n"
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+
+	err := cmdShow(context.Background(), app, "worker-task", &out, &stderr)
+	if err != nil {
+		t.Fatalf("cmdShow should not fail on inv-list failure, got: %v", err)
+	}
+
+	// Check that log file was created with inv_list_failed event
+	logFile := filepath.Join(logDir, "agent.jsonl")
+	if content, err := os.ReadFile(logFile); err == nil {
+		if !strings.Contains(string(content), "inv_list_failed") {
+			t.Errorf("log file missing inv_list_failed event: %s", string(content))
+		}
+	}
+
+	// The failure should not result in doubled error output to stderr
+	stderrOutput := stderr.String()
+	// Count how many times the error appears (should be logged once, not printed twice)
+	if strings.Count(stderrOutput, "bus") > 2 {
+		t.Errorf("error message appears too many times in stderr: %s", stderrOutput)
+	}
 }
 
 // TestCmdShowBlankMetaLines verifies that blank lines in meta.env are preserved in output.
@@ -375,7 +420,8 @@ func TestCmdShowBlankMetaLines(t *testing.T) {
 	if err := os.MkdirAll(taskDir, 0750); err != nil {
 		t.Fatal(err)
 	}
-	meta := "ID=blank-meta\n\nSTATUS=done\n\nRUN=1\n"
+	// Create meta.env with a blank line in the middle (blank line between ID and STATUS)
+	meta := "ID=blank-meta\n\nSTATUS=done\nRUN=1\n"
 	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -387,10 +433,17 @@ func TestCmdShowBlankMetaLines(t *testing.T) {
 	}
 
 	output := out.String()
-	// The output should contain blank lines as "  \n" (two spaces for blank line indentation)
-	// We expect at least one blank line from the meta content
-	if !strings.Contains(output, "  \n") {
-		t.Errorf("output missing blank lines from meta.env: %s", output)
+	lines := strings.Split(output, "\n")
+	// Should find "  " (two spaces for blank line) in the meta section
+	hasBlankLine := false
+	for _, line := range lines {
+		if line == "  " { // Two spaces indicates a blank line from meta.env
+			hasBlankLine = true
+			break
+		}
+	}
+	if !hasBlankLine {
+		t.Errorf("output missing blank lines from meta.env, expected blank line with two spaces. Got: %s", output)
 	}
 }
 

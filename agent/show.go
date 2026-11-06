@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,7 +12,11 @@ import (
 )
 
 // cmdShow displays full details of a single task: metadata, task.md, questions, result, report.
-func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowError {
+func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer, stderr ...io.Writer) *ShowError {
+	stderrWriter := io.Writer(os.Stderr)
+	if len(stderr) > 0 && stderr[0] != nil {
+		stderrWriter = stderr[0]
+	}
 	tasksDir := app.tasksDir
 	if tasksDir == "" {
 		return opErr(ShowNotFound, "no task directory")
@@ -87,13 +92,23 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 	switch kind {
 	case "worker":
 		// Worker tasks can have investigations
-		invOut, invErr := busCmd(context.Background(), app, app.busBinary(), "inv-list", "--dir", app.busDirectory(), "--task", taskID)
-		if invErr == nil && strings.TrimSpace(invOut) != "" {
-			if _, err := fmt.Fprintf(out, "\n== investigations\n%s\n", invOut); err != nil {
+		logDir := filepath.Join(app.agentHome, "logs")
+		logger := &Logger{LogDir: logDir, Subcommand: "show", Stderr: stderrWriter}
+		var invOut bytes.Buffer
+		lerr := Try(ctx, app, logger, LogInvListFailed, Command{
+			Name: app.busBinary(),
+			Args: []string{"inv-list", "--dir", app.busDirectory(), "--task", taskID},
+			Stdout: &invOut,
+		})
+		// Try returns nil on success, *LogWriteError on logging failure
+		if lerr != nil {
+			// Log write error is non-fatal, continue
+		}
+		if invOut.Len() > 0 && strings.TrimSpace(invOut.String()) != "" {
+			if _, err := fmt.Fprintf(out, "\n== investigations\n%s\n", invOut.String()); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write investigations"))
 			}
 		}
-		// If inv-list fails, skip silently (non-fatal)
 	case "investigation":
 		team, _ := meta.Lookup("INVESTIGATION_TEAM")
 		if team != "" {

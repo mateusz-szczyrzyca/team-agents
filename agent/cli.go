@@ -13,7 +13,7 @@ func dispatch(cmd string, args []string, stdout, stderr io.Writer) *CommandError
 }
 
 // dispatch routes a command within an App instance.
-func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _ io.Writer) *CommandError {
+func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, stderr io.Writer) *CommandError {
 	switch cmd {
 	case "help", "-h", "--help":
 		if err := printUsage(stdout); err != nil {
@@ -29,7 +29,7 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 		if len(args) == 0 {
 			return opErr(CommandInvalidArgument, "usage: agent show <id>")
 		}
-		if err := cmdShow(ctx, a, args[0], stdout); err != nil {
+		if err := cmdShow(ctx, a, args[0], stdout, stderr); err != nil {
 			if err.Cause == ShowNotFound {
 				return opErr(CommandInvalidArgument, "task %s not found", args[0])
 			}
