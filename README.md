@@ -304,6 +304,13 @@ merged already, the heading says so: what comes now is the round's follow-up, an
 with `--intent-to-add` — it is staged and stashed again). A team that cannot take its work back — a resume refused — waits for you the same way, with
 the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
+**A coordinator working alone is stopped.** Where the script does not know the work to split (a new round), the
+runner watches the coordinator: once its run has worked `AGENT_SOLO_COORD_STEPS` (30) steps alone — its other members
+not at work, its board with nothing open for anyone else —, the run is ended, and the next one, a fresh session,
+starts with the work to put on the board (0: never). `AGENT_COORDINATOR_PREFER` names who coordinates a new team —
+the first of these agents in it, and on a resume whose coordinator is left out —; empty, the first to claim the role
+coordinates, as before.
+
 **The script splits a fix pass.** A model left to split a team's work may not: a coordinator worked alone through a
 fix pass while its members slept. When a review sends a round back, each item the reviews list under
 `## Recommendation` (one a line, tagged `[critical]`, `[major]` or `[minor]`) is on the new team's board before any of

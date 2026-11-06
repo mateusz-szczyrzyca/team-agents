@@ -634,6 +634,8 @@ AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}"
 AGENT_FRESH_SESSION_RATIO="${AGENT_FRESH_SESSION_RATIO:-2}"     # …and past this many times the task's own session starts (0: no such check) # a run that read more a step is followed by a fresh session (0: never)
 AGENT_LONG_RUN_STEPS="${AGENT_LONG_RUN_STEPS:-120}"
 AGENT_LONG_RUN_HARD="${AGENT_LONG_RUN_HARD:-200}"           # a team member's run of this many steps is ended by the runner (0: never)           # a team member's run of more tool calls is asked to end (0: never)
+AGENT_SOLO_COORD_STEPS="${AGENT_SOLO_COORD_STEPS:-30}"   # a coordinator working alone this many steps — its members not at work, its board with nothing for them — is ended, and starts again with the work to split (0: never)
+AGENT_COORDINATOR_PREFER="${AGENT_COORDINATOR_PREFER:-}"   # who coordinates a new team: the first of these in it (empty: whoever claims the role)
 AGENT_PROMPT_ARG_MAX="${AGENT_PROMPT_ARG_MAX:-100000}"           # a longer prompt (bytes) reaches the CLI through a file: Linux takes 128 KiB per argument
 AGENT_LIMIT_TAIL_LINES="${AGENT_LIMIT_TAIL_LINES:-30}"           # how much of the end of stderr shows a provider limit
 # Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
@@ -3705,8 +3707,9 @@ watch_run() { # pid dir n — waits for a CLI run; kills it after AGENT_HANG_MIN
   local pid=$1 dir=$2 n=$3 last now f m
   local limit=${AGENT_HANG_SECS:-$((AGENT_HANG_MIN * 60))} poll=${AGENT_HANG_POLL:-15}
   local hard=${AGENT_RUN_HARD_AT:-0} from=0 steps   # a team member's step limit (0: none)
-  HUNG=0 LONG_CUT=0
-  if ((hard > 0)) && [[ -f $dir/activity.jsonl ]]; then from=$(wc -l < "$dir/activity.jsonl"); fi
+  local solo=${AGENT_RUN_SOLO_AT:-0} solo_checked=0   # a coordinator alone is ended at this step (0: never)
+  HUNG=0 LONG_CUT=0 SOLO_CUT=0
+  if ((hard > 0 || solo > 0)) && [[ -f $dir/activity.jsonl ]]; then from=$(wc -l < "$dir/activity.jsonl"); fi
   while kill -0 "$pid" 2>/dev/null; do   # kill -0 only asks whether the process still exists
     sleep "$poll"
     last=$(date +%s)
@@ -3724,10 +3727,22 @@ watch_run() { # pid dir n — waits for a CLI run; kills it after AGENT_HANG_MIN
       killtree "$pid"
       break
     fi
-    if ((hard > 0)) && [[ -f $dir/activity.jsonl ]]; then   # this run's steps: the activity since it started
+    if ((hard > 0 || solo > 0)) && [[ -f $dir/activity.jsonl ]]; then   # this run's steps: the activity since it started
       steps=$(tail -n +"$((from + 1))" "$dir/activity.jsonl" \
         | jq_soft activity_parse -c 'select(.k != "info" and .k != "text" and .k != "err")' | awk 'NF {n++} END {print n + 0}')
-      if ((steps >= hard)) && kill -0 "$pid" 2>/dev/null; then
+      if ((solo > 0 && !solo_checked && steps >= solo)) && kill -0 "$pid" 2>/dev/null; then
+        solo_checked=1   # asked once a run
+        if coordinator_alone "$RUNNER_ID"; then
+          LONG_CUT=1 SOLO_CUT=1
+          act "$RUNNER_ID" info "■ the coordinator worked alone $steps steps — its members not at work, its board with nothing for them: the runner ends the run, and the next starts with the work to split"
+          log_info solo_coordinator_cut "task=$RUNNER_ID" "steps=$steps"
+          killtree "$pid"
+          sleep 2
+          killtree "$pid"
+          break
+        fi
+      fi
+      if ((hard > 0 && steps >= hard)) && kill -0 "$pid" 2>/dev/null; then
         LONG_CUT=1
         act "$RUNNER_ID" info "■ the run reached its limit of $hard steps: the runner ends it, and the next starts a fresh session"
         killtree "$pid"
@@ -5553,8 +5568,9 @@ cmd__runner() {
   [[ $mode != fresh ]] || act "$id" info "■ fresh session: $FRESH_WHY"
   AGENT_RUN_LONG_AT=0   # the steps after which a team member's run is long (the normalizer marks it)
   AGENT_RUN_HARD_AT=0   # the steps at which the watchdog ends a team member's run
+  AGENT_RUN_SOLO_AT=0   # the steps at which the watchdog asks whether a coordinator works alone (coordinator_alone)
   if [[ -n ${TEAM:-} && ${KIND:-worker} == worker ]]; then
-    AGENT_RUN_LONG_AT=$AGENT_LONG_RUN_STEPS AGENT_RUN_HARD_AT=$AGENT_LONG_RUN_HARD
+    AGENT_RUN_LONG_AT=$AGENT_LONG_RUN_STEPS AGENT_RUN_HARD_AT=$AGENT_LONG_RUN_HARD AGENT_RUN_SOLO_AT=$AGENT_SOLO_COORD_STEPS
   fi
   export AGENT_RUN_LONG_AT
   trap 'runner_exit $?' EXIT
@@ -5617,6 +5633,7 @@ cmd__runner() {
       RC=0
       FINAL=$(printf 'STATUS: SLEEPING\nRole: member\nDone:\n- The run reached its limit of %s steps and was ended by the runner.\nNot done: what the checkpoint and the board say.\nUnclear: None.\n' "$AGENT_LONG_RUN_HARD")
       [[ -f $dir/long-run ]] || echo "$AGENT_LONG_RUN_HARD" > "$dir/long-run"
+      ((SOLO_CUT == 0)) || : > "$dir/solo-cut"   # its next run starts with the work to split (fresh_session_due)
       log_info long_run_cut "task=$id" "steps=$AGENT_LONG_RUN_HARD"
     fi
     if ((HUNG == 0)); then
@@ -6577,7 +6594,8 @@ resume_run() {
                '.[$a] = {agent:$a, task:$t, branch:"", worktree:$w, state:"active", tier:$tier, provider:"remote"}' <<< "$json")
     done
     jq -n --arg id "$new_team" --arg repo "$(task_field "${ids[0]}" REPO_NAME)" --arg wake "$SELF" --arg home "$AGENTS_HOME" \
-      --argjson members "$json" --arg lead "$lead" --arg from "$old_team" --argjson old "$tj" '
+      --argjson members "$json" --arg from "$old_team" \
+      --arg lead "${lead:-$(jq -r 'keys[]' <<< "$json" | { mapfile -t a; preferred_coordinator "${a[@]}"; })}" --argjson old "$tj" '
       {id:$id, repo:$repo, wake_cmd:$wake, home:$home, members:$members, lead:$lead, resumed_from:$from,
        next_board_id: ($old.next_board_id // 0),
        board: (($old.board // {}) | map_values(if .status == "claimed" then .status = "todo" | .assignee = "" else . end))}' \
@@ -6815,7 +6833,8 @@ cmd_run() {
                '.[$a] = {agent:$a, task:$t, branch:"", worktree:$w, state:"active", tier:$tier, provider:"remote"}' <<< "$json")
     done
     jq -n --arg id "$team" --arg repo "$(basename "$main_root")" --arg wake "$SELF" --arg home "$AGENTS_HOME" \
-      --argjson members "$json" '{id:$id, repo:$repo, wake_cmd:$wake, home:$home, members:$members}' \
+      --arg lead "$(preferred_coordinator "${members[@]}")" \
+      --argjson members "$json" '{id:$id, repo:$repo, wake_cmd:$wake, home:$home, members:$members, lead:$lead}' \
       | bus team-create --dir "$BUS_DIR" ||
       abandon_run "could not create the team on the bus (see ~/agents/logs/agentbus.jsonl)" "${ids[@]}"
     for rid in "${remote_ids[@]}"; do
@@ -7658,6 +7677,11 @@ checkpoints_latest() {
 fresh_session_due() {
   local id=$1 rows last lrun steps in median
   FRESH_WHY=""
+  if [[ $(task_field "$id" SOLO_CUT) == 1 ]]; then   # ended for working alone: the work to split comes first
+    meta_set "$id" SOLO_CUT ""
+    FRESH_WHY="you worked alone while your members slept and your board had nothing for them, and the runner ended your run. Before anything else now, put the work on the board — items that do not overlap, each for one member (a worker for a small one), with its area, its size and when it is done — and wake each member once; implement only the items you give yourself"
+    return 0
+  fi
   if [[ $(task_field "$id" LONG_RUN) == 1 ]]; then
     FRESH_WHY="your last run was long, and you were asked to end it"
     return 0
@@ -7678,12 +7702,42 @@ fresh_session_due() {
   FRESH_WHY="your last run read some $((in / steps)) tokens of context a step${median:+ — over $AGENT_FRESH_SESSION_RATIO times the $median of a fresh session}"
 }
 
+# coordinator_alone task — whether a team's coordinator works alone: the task coordinates its team, which has other
+# members, none of them at work (running), and its board has nothing open for anyone but the coordinator
+coordinator_alone() {
+  local id=$1 team agent t n_others=0 open
+  team=$(task_field "$id" TEAM); agent=$(task_field "$id" AGENT)
+  [[ -n $team && $(team_lead "$team") == "$agent" ]] || return 1
+  for t in $(grep -lx "TEAM=$team" "$TASKS"/*/meta.env 2> /dev/null | xargs -r -n1 dirname | xargs -r -n1 basename); do
+    [[ $t != "$id" ]] || continue
+    n_others=$((n_others + 1))
+    [[ $(task_field "$t" STATUS) != running ]] || return 1
+  done
+  ((n_others > 0)) || return 1
+  open=$(bus board-dump --dir "$BUS_DIR" --team "$team" 2> /dev/null | jq --arg me "$agent" \
+    '[.board // {} | (if type == "object" then .[] else .[] end) | select(.status != "done" and (.for // "") != $me)] | length' 2> /dev/null) \
+    || return 1   # the board unknown: not taken as empty
+  [[ $open == 0 ]]
+}
+
+# preferred_coordinator agent… — of the agents, the first AGENT_COORDINATOR_PREFER names; nothing for none (the team
+# elects its coordinator as before)
+preferred_coordinator() {
+  local p a
+  for p in $AGENT_COORDINATOR_PREFER; do
+    for a in "$@"; do
+      [[ $a != "$p" ]] || { printf '%s' "$p"; return 0; }
+    done
+  done
+}
+
 # long_run_end task status — a run marked long (its long-run file) has ended: a team member gone to sleep is woken at
 # once, and its next run starts a fresh session
 long_run_end() {
   local id=$1 status=$2 f="$TASKS/$1/long-run"
   [[ -f $f ]] || return 0
   rm -f "$f"
+  if [[ -f $TASKS/$id/solo-cut ]]; then rm -f "$TASKS/$id/solo-cut"; meta_set "$id" SOLO_CUT 1; fi
   [[ $status == sleeping ]] || return 0
   meta_set "$id" LONG_RUN 1
   log_info long_run_ended "task=$id"
