@@ -11,7 +11,7 @@ import (
 
 // TestCmdShowCRLFExactOutput verifies that CRLF endings in task files are formatted properly and verified with exact assertions.
 func TestCmdShowCRLFExactOutput(t *testing.T) {
-	tasksDir := t.TempDir()
+	app, tasksDir := newShowTestApp(t)
 	taskDir := filepath.Join(tasksDir, "task-crlf")
 	if err := os.MkdirAll(taskDir, 0o750); err != nil {
 		t.Fatal(err)
@@ -20,7 +20,6 @@ func TestCmdShowCRLFExactOutput(t *testing.T) {
 	writeTestScript(t, filepath.Join(taskDir, "task.md"), "Task instruction line 1\r\nTask instruction line 2\r\n", 0o644)
 	writeTestScript(t, filepath.Join(taskDir, "final.md"), "Agent final message\r\n", 0o644)
 
-	app := &App{tasksDir: tasksDir}
 	var out bytes.Buffer
 	if err := cmdShow(context.Background(), app, "task-crlf", &out); err != nil {
 		t.Fatalf("cmdShow failed: %v", err)
