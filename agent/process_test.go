@@ -170,19 +170,16 @@ func TestExecuteInvalidCommand(t *testing.T) {
 	}
 }
 
-// TestExecuteFailedStart tests that a nonexistent binary produces ExecuteStart.
+// TestExecuteFailedStart tests that a nonexistent binary returns exit code 127.
 func TestExecuteFailedStart(t *testing.T) {
 	exec := OSExecutor{}
 	cmd := Command{Name: "/nonexistent/binary/path/which/does/not/exist"}
-	_, err := exec.Execute(context.Background(), cmd)
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	result, err := exec.Execute(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
-	if err.Cause != ExecuteStart {
-		t.Fatalf("expected cause ExecuteStart, got %v", err.Cause)
-	}
-	if !errors.Is(err, ErrProcess) {
-		t.Fatalf("expected ErrProcess, got %v", err)
+	if result.ExitCode != 127 {
+		t.Fatalf("expected exit code 127 for nonexistent binary, got %d", result.ExitCode)
 	}
 }
 
