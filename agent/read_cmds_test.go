@@ -11,9 +11,9 @@ import (
 )
 
 type readCmdsTestExecutor struct {
-	commands   []Command
-	responses  map[string]string
-	exitCodes  map[string]int // maps command patterns to exit codes
+	commands  []Command
+	responses map[string]string
+	exitCodes map[string]int // maps command patterns to exit codes
 }
 
 func (m *readCmdsTestExecutor) Execute(_ context.Context, cmd Command) (CommandResult, *ExecuteError) {
