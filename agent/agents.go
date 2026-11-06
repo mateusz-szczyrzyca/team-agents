@@ -89,7 +89,7 @@ func (a *App) runningTask(name, root string) (string, *AgentsError) {
 		status, _ := meta.Lookup("STATUS")
 		run, _ := meta.Lookup("RUN")
 		if status == taskRunning || status == taskStarting {
-			result, eerr := a.execute(context.Background(), Command{Name: "systemctl", Args: []string{"--user", "is-active", "--quiet", "agent-" + id + "-r" + run + ".service"}, Env: a.mergeConfigEnv(nil)})
+			result, eerr := a.execute(context.Background(), Command{Name: "systemctl", Args: []string{"--user", "is-active", "--quiet", "agent-" + id + "-r" + run + ".service"}, Env: a.mergeConfigEnv()})
 			if eerr != nil {
 				return "", fromProcess(AgentsProcess, processErr("systemctl", eerr, "inspect task %s", id))
 			}
