@@ -69,7 +69,7 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 	round, _ := strconv.Atoi(roundStr)
 	if round > 0 {
 		questionsFile := filepath.Join(taskDir, fmt.Sprintf("questions-%d.md", round))
-		if _, err := os.Stat(questionsFile); err == nil {
+		if _, err := os.Stat(questionsFile); err == nil { // #nosec G703 -- constructed from validated taskDir
 			if _, err := fmt.Fprintf(out, "\n== questions (round %d): %s\n", round, questionsFile); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write questions header"))
 			}
