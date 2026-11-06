@@ -616,6 +616,9 @@ tests/unit/dashboard_prompt_modes.bats	dashboard PR ownership and Serena guidanc
 tests/unit/dashboard_prompt_modes.bats	dashboard resume does not advertise Serena when disabled	source	R35	-	planned
 tests/unit/serena.bats	config/agents.conf enables AGENT_SERENA=serena and worktrees inherit .serena/project.yml from REPO_ROOT	source	R12	-	planned
 tests/unit/serena.bats	every model CLI (claude, codex, gemini, opencode) receives the Serena prompt and invokes the serena MCP server when needed	source	R12	-	planned
+tests/unit/spend.bats	agent spend: a paid model's spending, a subscription's equivalent, by model	blackbox	R11	-	planned
+tests/unit/spend.bats	agent spend: a subscription's model in MODEL_PRICES is priced at its API rates, cached input at its own	blackbox	R11	-	planned
+tests/unit/spend.bats	agent spend --days: older runs are left out; --daily shows a line a day and model	blackbox	R11	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
