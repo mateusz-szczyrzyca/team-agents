@@ -1851,11 +1851,11 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
   wr=$(task_field "$id" WORK_ROUND); wrs=$(task_field "$id" WORK_ROUNDS)
   if [[ -z $wr || -z $wrs ]] || ((wr >= wrs)); then
     auto_stage "$id" ""   # the task is done
-    notify "$id" merged "" "PR #$num merged by --autopilot — ready to merge: $(pair_reviewers "$(task_field "$id" REVIEW_PAIR)"); ${wr:+round $wr/$wrs was the last: }the task is done — $url"
+    notify "$id" merged "" "PR #$num merged by --autopilot — both reviews: ready to merge ($(pair_reviewers "$(task_field "$id" REVIEW_PAIR)")); ${wr:+round $wr/$wrs was the last: }the task is done — $url"
     return 0
   fi
   auto_stage "$id" "PR #$num merged — round $((wr + 1))/$wrs starts"
-  notify "$id" merged "" "PR #$num merged by --autopilot — ready to merge: $(pair_reviewers "$(task_field "$id" REVIEW_PAIR)"); round $wr/$wrs is done — $url"
+  notify "$id" merged "" "PR #$num merged by --autopilot — both reviews: ready to merge ($(pair_reviewers "$(task_field "$id" REVIEW_PAIR)")); round $wr/$wrs is done — $url"
   team_wait_settled "$id" || log_warn team_not_settled "task=$id" "before=next-round"   # a busy team cannot be resumed
   automation_allowed "$id" || return 0
   ref=$(task_field "$id" TEAM); ref=${ref:-$id}
@@ -5527,6 +5527,12 @@ cmd__runner() {
     log_info fresh_session "task=$id" "reason=$FRESH_WHY" "${fresh_sid[@]}"
   fi
   log_info run_started "run=$n" "mode=$mode" "agent=$AGENT" "cli=$TYPE" "kind=${KIND:-worker}" "model=${MODEL:-}"
+  local start_note
+  start_note=$(task_field "$id" START_NOTIFY)
+  if [[ -n $start_note ]]; then   # a new task or team: its first run says it starts — once for a team (agent run)
+    meta_set "$id" START_NOTIFY ""
+    notify "$id" started "" "$start_note"
+  fi
 
   if [[ -f $AGENTS_HOME/secrets.env ]]; then
     set -a; source "$AGENTS_HOME/secrets.env"; set +a
@@ -6774,7 +6780,7 @@ cmd_run() {
   for i in "${ids[@]}"; do
     start_runner "$i" new || exit 1
   done
-  notify "${ids[0]}" started "" "work starts: ${team:+team $team, }${members[*]} — from $base"   # once for a team
+  meta_set "${ids[0]}" START_NOTIFY "work starts: ${team:+team $team, }${members[*]} — from $base"   # its runner says it, once for a team
   if [[ -n $team ]]; then
     echo "Started team $team: ${members[*]} (from $base)"
     for i in "${ids[@]}"; do echo "  $i  →  $(task_field "$i" BRANCH)"; done
