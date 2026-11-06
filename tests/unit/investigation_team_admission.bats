@@ -16,9 +16,8 @@ configure_investigators() {
 field() { bash -c 'source "$1"; printf "%s" "${!2:-}"' _ "$AGENTS_HOME/tasks/$1/meta.env" "$2"; }
 
 # meta_put sets KEY=value in a task's meta.env, replacing the line when the key already exists.
-meta_put() {
-  local file="$AGENTS_HOME/tasks/$1/meta.env"
-  if grep -q "^$2=" "$file"; then sed -i "s|^$2=.*|$2=$3|" "$file"; else printf '%s=%s\n' "$2" "$3" >> "$file"; fi
+meta_put() {   # through the script's meta_set, under its lock: a runner's write must not undo the test's edit
+  (source "$REPO_ROOT/bin/agent"; meta_set "$1" "$2" "$3")
 }
 
 # install_mv_probe puts a pass-through mv in this test home that records a parent whose lease is published
@@ -155,19 +154,35 @@ recorded_status() {
   scenario '{"inv":{"new":"publish"},"inv2":{"new":"hold"}}'
   launch_phase_one
   wait_status "$(task_of inv)" 'done'
-  local live_child
+  local live_child pid
   live_child=$(task_of inv2)
-  # Crash window without a manifest: the still-running tagged child must keep the lease, not be ignored.
+  for _ in $(seq 1 150); do   # the finished child's runner ends, and with it the dispatch its end starts
+    pid=$(cat "$AGENTS_HOME/tasks/$(task_of inv)/runner.pid" 2> /dev/null) || break
+    kill -0 "$pid" 2> /dev/null || break
+    sleep 0.2
+  done
+  # Crash window without a manifest: the still-running tagged child must keep the lease, not be ignored. The window is
+  # made under dispatch.lock, which a dispatch holds for its whole tick: none may see it half made.
+  exec {dl}> "$AGENTS_HOME/dispatch.lock"
+  flock "$dl"
   rm -f "$AGENTS_HOME/tasks/$PHASE_ONE/phase1.json"
   meta_put "$PHASE_ONE" INVESTIGATION_PHASE1_TASKS ""
   meta_put "$PHASE_ONE" INVESTIGATION_LEASE 1
   meta_put "$PHASE_ONE" STATUS running
+  exec {dl}>&-
   run agent _supervise
   local supervise_status=$status lease_now child_now snapshot_now=no
   lease_now=$(field "$PHASE_ONE" INVESTIGATION_LEASE)
   child_now=$(field "$live_child" STATUS)
   # Recovery rebuilds the snapshot from the tagged children before it decides anything.
   [ -f "$AGENTS_HOME/tasks/$PHASE_ONE/phase1.json" ] && snapshot_now=yes
+  if [[ $lease_now != 1 || $child_now != running ]]; then   # what the human's run needs to find why, shown on failure
+    echo "--- _supervise ($supervise_status): $output"
+    echo "--- parent $PHASE_ONE"; grep -E '^(STATUS|INVESTIGATION_[A-Z_]*)=' "$AGENTS_HOME/tasks/$PHASE_ONE/meta.env"
+    echo "--- child $live_child"; grep -E '^(STATUS|RUN|INVESTIGATION_[A-Z_]*)=' "$AGENTS_HOME/tasks/$live_child/meta.env"
+    echo "--- the log's lease, dispatch and recovery records"
+    grep -hE 'lease|dispatch|recover|phase1|admission' "$AGENTS_HOME/logs/agent.jsonl" | jq -c '{ts, event, task, reason}' | tail -25
+  fi
   # Release the live child before any assertion can fail, so the fixture finishes cleanly.
   touch "$HOME/release"
   wait_status "$live_child" 'done'
