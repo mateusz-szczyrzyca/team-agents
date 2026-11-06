@@ -68,7 +68,7 @@ func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 				Name: "systemctl",
 				Args: []string{"--user", "is-active", "--quiet", unitName},
 			}
-			result, uerr := app.Executor.Execute(context.Background(), cmd)
+			result, uerr := app.execute(context.Background(), cmd)
 			// If unit check fails or unit is inactive, append "?" suffix
 			if uerr != nil || result.ExitCode != 0 {
 				status = status + "?"

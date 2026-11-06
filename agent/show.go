@@ -44,11 +44,14 @@ func cmdShow(_ context.Context, app *App, taskID string, out io.Writer) *ShowErr
 	// Print meta.env indented by 2 spaces
 	metaFile := filepath.Join(taskDir, "meta.env")
 	if content, err := os.ReadFile(metaFile); err == nil { // #nosec G304,G703 -- local task metadata path under tasks directory
-		for _, line := range strings.Split(string(content), "\n") {
-			if strings.TrimSpace(line) != "" {
-				if _, err := fmt.Fprintf(out, "  %s\n", line); err != nil {
-					return fromStorage(ShowStorage, storageErr(err, "write meta.env line"))
-				}
+		lines := strings.Split(string(content), "\n")
+		// Skip only the final empty element from the trailing newline
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+		for _, line := range lines {
+			if _, err := fmt.Fprintf(out, "  %s\n", line); err != nil {
+				return fromStorage(ShowStorage, storageErr(err, "write meta.env line"))
 			}
 		}
 	}
