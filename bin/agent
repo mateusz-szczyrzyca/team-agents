@@ -6466,6 +6466,20 @@ resume_run() {
           [[ $st != OPEN ]] || open+=("$u")
         done < <(jq -r '.[] | [(.state // ""), (.url // "")] | @tsv' <<< "$pr")
       done
+      if [[ -z $url ]]; then   # none from its branches: the PR the round was reviewed on (another team's branch, --pr)
+        local rn rj
+        read -r rn _ <<< "$(round_pr_of_tasks "${olds[@]}")"
+        if [[ -n $rn ]]; then
+          rj=$(trusted_prs "$(task_field "${olds[0]}" REPO_ROOT)" "" all number,url,state \
+            | jq -r --argjson n "$rn" '.[] | select(.number == $n) | [(.state // ""), (.url // "")] | @tsv') \
+            || die "cannot check PR #$rn of round $wr/$wrs (gh pr list failed) — retry, or continue the round: agent run --resume $ref --same-round"
+          if [[ -n $rj ]]; then
+            IFS=$'\t' read -r state url <<< "$rj"
+            [[ $state != OPEN ]] || open+=("$url")
+            log_info round_pr_found "task=${olds[0]}" "pr=$rn" "by=round_pr" "state=$state"
+          fi
+        fi
+      fi
       [[ -n $url ]] || die "round $wr/$wrs has no PR (branches ${heads[*]}) — open and merge it, or continue the round: agent run --resume $ref --same-round"
       [[ $state == MERGED ]] || die "the PR of round $wr/$wrs ($url) is not merged yet ($state). Merge it and run this again — or keep working on round $wr (e.g. review fixes): agent run --resume $ref --same-round"
       ((${#open[@]} == 0)) || die "round $wr/$wrs still has an open PR (${open[*]}) — a round has one PR: merge or close it first; or finish the round: agent run --resume $ref --same-round"
