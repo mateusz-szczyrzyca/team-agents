@@ -39,7 +39,7 @@ func TestM1FailedStatusNoDifferentialSeparator(t *testing.T) {
 func TestM1EmptySuccessfulStatusSeparator(t *testing.T) {
 	exec := &readCmdsTestExecutor{
 		responses: map[string]string{
-			"status": "",          // empty successful status
+			"status": "", // empty successful status
 			"log":    "output\n",
 		},
 	}
