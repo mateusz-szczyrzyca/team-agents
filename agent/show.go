@@ -47,12 +47,9 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	}
 
 	// Print meta.env indented by 2 spaces
-	metaFile := filepath.Join(taskDir, "meta.env")
-	content, err := os.ReadFile(metaFile) // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fromStorage(ShowStorage, storageErr(err, "read %s", metaFile))
-	}
-	if err == nil {
+	if content, err := readOptionalTaskFile(taskDir, "meta.env"); err != nil {
+		return err
+	} else if len(content) > 0 {
 		for _, line := range strings.Split(strings.TrimSuffix(string(content), "\n"), "\n") {
 			if _, err := fmt.Fprintf(out, "  %s\n", line); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write meta.env line"))
@@ -65,11 +62,11 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 		return fromStorage(ShowStorage, storageErr(err, "write task header"))
 	}
 	taskmdFile := filepath.Join(taskDir, "task.md")
-	content, err = os.ReadFile(taskmdFile) // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
+	taskContent, err := os.ReadFile(taskmdFile) // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
 	if err != nil {
 		return fromStorage(ShowStorage, storageErr(err, "read %s", taskmdFile))
 	}
-	if _, err := fmt.Fprint(out, string(content)); err != nil {
+	if _, err := fmt.Fprint(out, string(taskContent)); err != nil {
 		return fromStorage(ShowStorage, storageErr(err, "write task content"))
 	}
 
@@ -131,30 +128,21 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 		}
 
 		// Show result.md if it exists
-		resultFile := filepath.Join(taskDir, "result.md")
-		content, err = os.ReadFile(resultFile) // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fromStorage(ShowStorage, storageErr(err, "read %s", resultFile))
-		}
-		if err == nil && len(content) > 0 {
-			if _, err := fmt.Fprintf(out, "   result: %s\n", resultFile); err != nil {
+		if content, err := readOptionalTaskFile(taskDir, "result.md"); err != nil {
+			return err
+		} else if len(content) > 0 {
+			if _, err := fmt.Fprintf(out, "   result: %s\n", filepath.Join(taskDir, "result.md")); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write result path"))
 			}
 		}
 	}
 
 	// Print final message from final.md
-	finalFile := filepath.Join(taskDir, "final.md")
-	content, err = os.ReadFile(finalFile) // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fromStorage(ShowStorage, storageErr(err, "read %s", finalFile))
-	}
-	if err == nil {
-		last := strings.TrimRight(string(content), "\r\n")
-		if last != "" {
-			if _, err := fmt.Fprintf(out, "\n== the agent's last message\n%s\n", last); err != nil {
-				return fromStorage(ShowStorage, storageErr(err, "write final message"))
-			}
+	if content, err := readOptionalTaskFile(taskDir, "final.md"); err != nil {
+		return err
+	} else if last := strings.TrimRight(string(content), "\r\n"); last != "" {
+		if _, err := fmt.Fprintf(out, "\n== the agent's last message\n%s\n", last); err != nil {
+			return fromStorage(ShowStorage, storageErr(err, "write final message"))
 		}
 	}
 
@@ -175,4 +163,13 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	}
 
 	return nil
+}
+
+// readOptionalTaskFile reads a named file in taskDir, returning nil if it does not exist.
+func readOptionalTaskFile(taskDir, name string) ([]byte, *ShowError) {
+	data, err := os.ReadFile(filepath.Join(taskDir, name)) // #nosec G304,G703 -- local task directory inspection matches Bash path resolution
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fromStorage(ShowStorage, storageErr(err, "read %s", filepath.Join(taskDir, name)))
+	}
+	return data, nil
 }

@@ -98,8 +98,7 @@ func (a *App) cmdAck(target string, out io.Writer, root string) *AckError {
 				}
 				return fromStorage(AckStorage, storageErr(merr, "cannot read task %s", id))
 			}
-			status, _ := meta.Lookup("STATUS")
-			if !ackableStatus(status) {
+			if !ackableStatus(metaLookup(meta, "STATUS", "")) {
 				continue
 			}
 			if serr := acknowledgeTask(root, id); serr != nil {
@@ -127,8 +126,7 @@ func (a *App) cmdAck(target string, out io.Writer, root string) *AckError {
 	if merr != nil && merr.Cause != ReadTaskMetaNotFound {
 		return fromStorage(AckStorage, storageErr(merr, "read task %s", id))
 	}
-	status, _ := meta.Lookup("STATUS")
-	if !ackableStatus(status) {
+	if !ackableStatus(metaLookup(meta, "STATUS", "")) {
 		return opErr(AckStillRunning, "task %s is still running", id)
 	}
 	if serr := acknowledgeTask(root, id); serr != nil {

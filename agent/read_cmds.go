@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -30,6 +29,14 @@ func commandFromBus(prefix string, err *BusError) *CommandError {
 		Message: msg,
 		Err:     errors.Join(cause.info().class.Sentinel(), err),
 	}
+}
+
+// writeOutput writes s to out, returning CommandStorage error on failure.
+func writeOutput(out io.Writer, s, op string) *CommandError {
+	if _, err := io.WriteString(out, s); err != nil {
+		return fromStorage(CommandStorage, storageErr(err, "write %s", op))
+	}
+	return nil
 }
 
 // busBinary returns the configured agentbus path or a default resolution.
@@ -67,17 +74,14 @@ func (a *App) cmdBus(ctx context.Context, n string, stdout io.Writer) *CommandEr
 	if err != nil {
 		return commandFromBus("bus status", err)
 	}
-	if _, werr := fmt.Fprintf(stdout, "%s\n", statusOut); werr != nil {
-		return fromStorage(CommandStorage, storageErr(werr, "write bus status"))
+	if err := writeOutput(stdout, statusOut+"\n", "bus status"); err != nil {
+		return err
 	}
 	logOut, err := busCmd(ctx, a, busBin, "log", "--dir", busDir, "-n", n)
 	if err != nil {
 		return commandFromBus("bus log", err)
 	}
-	if _, werr := fmt.Fprint(stdout, logOut); werr != nil {
-		return fromStorage(CommandStorage, storageErr(werr, "write bus log"))
-	}
-	return nil
+	return writeOutput(stdout, logOut, "bus log")
 }
 
 // cmdHelpers lists active helper agents.
@@ -86,10 +90,7 @@ func (a *App) cmdHelpers(ctx context.Context, args []string, stdout io.Writer) *
 	if err != nil {
 		return commandFromBus("helpers", err)
 	}
-	if _, werr := fmt.Fprint(stdout, out); werr != nil {
-		return fromStorage(CommandStorage, storageErr(werr, "write helpers"))
-	}
-	return nil
+	return writeOutput(stdout, out, "helpers")
 }
 
 // cmdInv displays the investigation queue or details of an investigation.
@@ -113,13 +114,11 @@ func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *Comm
 		if err != nil {
 			return commandFromBus("inv list", err)
 		}
-		if _, werr := fmt.Fprint(stdout, out); werr != nil {
-			return fromStorage(CommandStorage, storageErr(werr, "write inv-list"))
+		if err := writeOutput(stdout, out, "inv-list"); err != nil {
+			return err
 		}
 		if len(args) == 0 || args[0] == "" {
-			if _, werr := fmt.Fprintf(stdout, "\nAll: agent inv --all   |   details: agent inv <number>\n"); werr != nil {
-				return fromStorage(CommandStorage, storageErr(werr, "write inv footer"))
-			}
+			return writeOutput(stdout, "\nAll: agent inv --all   |   details: agent inv <number>\n", "inv footer")
 		}
 		return nil
 	}
@@ -139,10 +138,7 @@ func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *Comm
 	if rerr != nil {
 		return fromStorage(CommandStorage, storageErr(rerr, "read investigation file %s", res.File))
 	}
-	if _, werr := fmt.Fprint(stdout, string(data)); werr != nil {
-		return fromStorage(CommandStorage, storageErr(werr, "write investigation content"))
-	}
-	return nil
+	return writeOutput(stdout, string(data), "investigation content")
 }
 
 // cmdNotes displays or searches notebook entries.
@@ -168,8 +164,8 @@ func (a *App) cmdNotes(ctx context.Context, args []string, stdout io.Writer) *Co
 	}
 	notesArgs := append([]string{"notes", "--dir", busDir, "--repo", repo}, rest...)
 	if repo == "" {
-		if _, werr := fmt.Fprintf(stdout, "Repository notebooks:\n"); werr != nil {
-			return fromStorage(CommandStorage, storageErr(werr, "write notes header"))
+		if err := writeOutput(stdout, "Repository notebooks:\n", "notes header"); err != nil {
+			return err
 		}
 		notesArgs = []string{"notes", "--dir", busDir, "--list"}
 	}
@@ -177,8 +173,5 @@ func (a *App) cmdNotes(ctx context.Context, args []string, stdout io.Writer) *Co
 	if err != nil {
 		return commandFromBus("bus notes", err)
 	}
-	if _, werr := fmt.Fprint(stdout, out); werr != nil {
-		return fromStorage(CommandStorage, storageErr(werr, "write notes"))
-	}
-	return nil
+	return writeOutput(stdout, out, "notes")
 }

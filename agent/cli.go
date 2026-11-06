@@ -33,14 +33,12 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 			return opErr(CommandInvalidArgument, "usage: agent show <id>")
 		}
 		if err := cmdShow(ctx, a, args[0], stdout); err != nil {
-			switch err.Cause {
-			case ShowNotFound:
+			if err.Cause == ShowNotFound {
 				return opErr(CommandNotFound, "%s", err.Message)
-			case ShowAmbiguous:
+			} else if err.Cause == ShowAmbiguous {
 				return opErr(CommandConflict, "%s", err.Message)
-			default:
-				return &CommandError{Cause: CommandStorage, Message: err.Message, Err: errors.Join(CommandStorage.info().class.Sentinel(), err)}
 			}
+			return &CommandError{Cause: CommandStorage, Message: err.Message, Err: errors.Join(CommandStorage.info().class.Sentinel(), err)}
 		}
 		return nil
 	case "bus":
@@ -94,14 +92,12 @@ func (a *App) routeAck(_ context.Context, args []string, stdout io.Writer) *Comm
 		return opErr(CommandInvalidArgument, "usage: agent ack <id|all>")
 	}
 	if err := a.cmdAck(args[0], stdout, a.tasksDirectory()); err != nil {
-		switch err.Cause {
-		case AckNotFound:
+		if err.Cause == AckNotFound {
 			return opErr(CommandNotFound, "%s", err.Message)
-		case AckAmbiguous, AckStillRunning:
+		} else if err.Cause == AckAmbiguous || err.Cause == AckStillRunning {
 			return opErr(CommandConflict, "%s", err.Message)
-		default:
-			return fromStorage(CommandStorage, storageErr(err.asError(), "ack"))
 		}
+		return fromStorage(CommandStorage, storageErr(err.asError(), "ack"))
 	}
 	return nil
 }

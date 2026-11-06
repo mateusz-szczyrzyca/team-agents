@@ -6,6 +6,14 @@ import (
 	"io"
 )
 
+// metaLookup returns key from m or fallback when absent or empty.
+func metaLookup(m MetaFile, key, fallback string) string {
+	if v, _ := m.Lookup(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 // cmdStatus displays a table of all tasks with their status, agent, round, and run number.
 func cmdStatus(ctx context.Context, app *App, out io.Writer) *StatusError {
 	// Print header
@@ -35,34 +43,17 @@ func cmdStatus(ctx context.Context, app *App, out io.Writer) *StatusError {
 			return fromStorage(StatusStorage, storageErr(readErr, "read task meta"))
 		}
 
-		id, _ := meta.Lookup("ID")
-		if id == "" {
-			id = taskID
-		}
-		agent, _ := meta.Lookup("AGENT")
-		if agent == "" {
-			agent = "?"
-		}
-		kind, _ := meta.Lookup("KIND")
-		team, _ := meta.Lookup("INVESTIGATION_TEAM")
+		id := metaLookup(meta, "ID", taskID)
+		agent := metaLookup(meta, "AGENT", "?")
+		kind, team := metaLookup(meta, "KIND", ""), metaLookup(meta, "INVESTIGATION_TEAM", "")
 		if kind == kindInvestigation && team == "" {
-			invID, _ := meta.Lookup("INV_ID")
-			if invID == "" {
-				invID = "?"
-			}
-			agent = "inv#" + invID
+			agent = "inv#" + metaLookup(meta, "INV_ID", "?")
 		}
-		status, _ := meta.Lookup("STATUS")
-		if status == "" {
-			status = "?"
-		}
+		status := metaLookup(meta, "STATUS", "?")
 
 		// Check if unit is active for running/starting status
 		if (status == taskRunning || status == taskStarting) && kind != kindRemoteMember && kind != kindInvestigationTeam {
-			runVal, _ := meta.Lookup("RUN")
-			if runVal == "" {
-				runVal = "0"
-			}
+			runVal := metaLookup(meta, "RUN", "0")
 			result, uerr := app.execute(ctx, Command{Name: "systemctl", Args: []string{"--user", "is-active", "--quiet", "agent-" + id + "-r" + runVal + ".service"}})
 			if uerr != nil {
 				return opErr(StatusProcess, "check unit active %s: %s", id, uerr.Error())
@@ -72,14 +63,8 @@ func cmdStatus(ctx context.Context, app *App, out io.Writer) *StatusError {
 			}
 		}
 
-		round, _ := meta.Lookup("ROUND")
-		if round == "" {
-			round = "-"
-		}
-		run, _ := meta.Lookup("RUN")
-		if run == "" {
-			run = "-"
-		}
+		round := metaLookup(meta, "ROUND", "-")
+		run := metaLookup(meta, "RUN", "-")
 		repo, _ := meta.Lookup("REPO_NAME")
 
 		if _, err := fmt.Fprintf(out, "%-30s %-12s %-13s %-6s %-5s %s\n",

@@ -82,8 +82,7 @@ func (a *App) runningTask(name, root string) (string, *AgentsError) {
 			}
 			return "", fromStorage(AgentsStorage, storageErr(merr, "read task %s", id))
 		}
-		agent, _ := meta.Lookup("AGENT")
-		if agent != name {
+		if agent, _ := meta.Lookup("AGENT"); agent != name {
 			continue
 		}
 		status, _ := meta.Lookup("STATUS")
