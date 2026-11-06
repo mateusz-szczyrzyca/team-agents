@@ -22,20 +22,18 @@ func cmdStatus(ctx context.Context, app *App, out io.Writer) *StatusError {
 		return fromStorage(StatusStorage, storageErr(err, "write status header"))
 	}
 
-	// Read all tasks from tasksDir
-	tasksDir := app.tasksDir
-	if tasksDir == "" {
+	if app.tasksDir == "" {
 		return nil
 	}
 
-	tasks, terr := taskDirectories(tasksDir)
+	tasks, terr := taskDirectories(app.tasksDir)
 	if terr != nil {
 		return fromStorage(StatusStorage, terr)
 	}
 
 	// Print each task
 	for _, taskID := range tasks {
-		meta, readErr := readTaskMeta(tasksDir, taskID)
+		meta, readErr := readTaskMeta(app.tasksDir, taskID)
 		if readErr != nil {
 			if readErr.Cause == ReadTaskMetaNotFound {
 				continue
@@ -63,12 +61,8 @@ func cmdStatus(ctx context.Context, app *App, out io.Writer) *StatusError {
 			}
 		}
 
-		round := metaLookup(meta, "ROUND", "-")
-		run := metaLookup(meta, "RUN", "-")
-		repo, _ := meta.Lookup("REPO_NAME")
-
 		if _, err := fmt.Fprintf(out, "%-30s %-12s %-13s %-6s %-5s %s\n",
-			id, agent, status, round, run, repo); err != nil {
+			id, agent, status, metaLookup(meta, "ROUND", "-"), metaLookup(meta, "RUN", "-"), metaLookup(meta, "REPO_NAME", "")); err != nil {
 			return fromStorage(StatusStorage, storageErr(err, "write status row"))
 		}
 	}

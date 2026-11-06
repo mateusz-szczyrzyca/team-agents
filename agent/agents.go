@@ -28,6 +28,9 @@ type agentListing struct {
 	Provider string `json:"provider"` // Provider is empty for investigators, as in Bash.
 }
 
+// agentProviders maps known CLI names to their provider labels.
+var agentProviders = map[string]string{cliClaude: "anthropic", cliCodex: "openai", cliGemini: "google"}
+
 // configuredListings makes output deterministic while preserving the Bash field values.
 func configuredListings(cfg *Config) []agentListing {
 	var records []agentListing // records puts sorted investigators after the configured agents.
@@ -49,16 +52,11 @@ func configuredListings(cfg *Config) []agentListing {
 						break
 					}
 				}
-				switch record.Type {
-				case cliClaude:
-					record.Provider = "anthropic"
-				case cliCodex:
-					record.Provider = "openai"
-				case cliGemini:
-					record.Provider = "google"
-				case cliOpenCode:
+				if p, ok := agentProviders[record.Type]; ok {
+					record.Provider = p
+				} else if record.Type == cliOpenCode {
 					record.Provider, _, _ = strings.Cut(record.Model, "/")
-				default:
+				} else {
 					record.Provider = "other"
 				}
 			}
@@ -97,11 +95,8 @@ func (a *App) runningTask(name, root string) (string, *AgentsError) {
 			}
 			// systemctl uses nonzero exit codes for inactive or unknown units, both expected answers here.
 		}
-		if status == taskSleeping {
-			return id, nil
-		}
 		job, _ := meta.Lookup("JOB_ID")
-		if job != "" && (run == "0" || run == "") && (status == taskNew || status == taskStarting || status == taskRunning) {
+		if status == taskSleeping || (job != "" && (run == "0" || run == "") && (status == taskNew || status == taskStarting || status == taskRunning)) {
 			return id, nil
 		}
 	}
@@ -117,8 +112,7 @@ func (a *App) cmdAgents(out io.Writer, cfg *Config, root, busDir string) *Agents
 			if aerr != nil {
 				return aerr
 			}
-			allocation = "free"
-			if id != "" {
+			if allocation = "free"; id != "" {
 				allocation = "busy: " + id
 			}
 		}

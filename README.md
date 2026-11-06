@@ -838,9 +838,8 @@ team ID (`<timestamp>-team`) or any member's task ID.
 
 ### Reading and displaying tasks and agents
 
-- `agent status` / `agent ls`: list tasks (`TASK`, `AGENT`, `STATUS`, `ROUND`, `RUN`, `REPO`); `agent show <id>`: details
-- `agent agents`: configured agents/investigators (`_agents-json` exports JSON); `agent ack <id|all>`: acknowledge tasks
-- `agent bus [N]`: bus status/log; `agent inv [N|--all]` / `helpers` / `notes`: investigations, helpers, notebooks
+- `agent status` / `agent ls`: list tasks; `agent show <id>`: details; `agent ack <id|all>`: acknowledge
+- `agent agents`: configured agents/investigators; `agent bus [N]`: status/log; `inv`, `helpers`, `notes`
 
 ## The live panel
 
@@ -1523,10 +1522,8 @@ make integration        # real agent CLIs and accounts (costs usage)
 - **Read and display CLI commands (R09, execution round 10).** The Go candidate binary implements
   read-only inspection and acknowledgment commands (`status`, `ls`, `show`, `agents`, `_agents-json`, `ack`,
   `bus`, `inv`, `notes`, `helpers`), matching `bin/agent` output contracts, active unit checks, non-hidden
-  directory symlinks, and field fallbacks. Subprocess delegation to `agentbus` preserves exact exit statuses
-  (e.g. `BusExitNotFound`, `BusExitPermission`) and replays stderr without duplicated banners. Default capacities
-  match oracle defaults (`INVESTIGATION_QUEUE_MAX=3`, `INV_SLOTS=1`), and missing task targets return typed
-  not-found errors while metadata and file storage failures are preserved.
+  directory symlinks, field fallbacks, and delegated exit statuses. Default capacities match oracle defaults
+  (`INVESTIGATION_QUEUE_MAX=3`, `INV_SLOTS=1`).
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 520 Bats unit test cases (361 black-box, 159 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash

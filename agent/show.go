@@ -119,9 +119,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 				return fromStorage(ShowStorage, storageErr(err, "write investigation team header"))
 			}
 		} else {
-			invID, _ := meta.Lookup("INV_ID")
-			fromAgent, _ := meta.Lookup("FROM_AGENT")
-			parentTask, _ := meta.Lookup("PARENT_TASK")
+			invID, fromAgent, parentTask := metaLookup(meta, "INV_ID", ""), metaLookup(meta, "FROM_AGENT", ""), metaLookup(meta, "PARENT_TASK", "")
 			if _, err := fmt.Fprintf(out, "\n== investigation #%s for %s (task %s)\n", invID, fromAgent, parentTask); err != nil {
 				return fromStorage(ShowStorage, storageErr(err, "write investigation header"))
 			}
@@ -147,10 +145,7 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer) *ShowE
 	}
 
 	// Print report if it exists
-	workTree, _ := meta.Lookup("WORKTREE")
-	if workTree == "" {
-		workTree = app.workTree
-	}
+	workTree := metaLookup(meta, "WORKTREE", app.workTree)
 	if workTree != "" {
 		reportFile := filepath.Join(workTree, ".agents", "reports", taskID+".md")
 		if info, err := os.Stat(reportFile); err == nil && info.Mode().IsRegular() { // #nosec G703 -- report file path under task worktree
