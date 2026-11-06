@@ -59,22 +59,6 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 			return fromStorage(CommandStorage, storageErr(err.asError(), "agents json"))
 		}
 		return nil
-	case "ack":
-		target := firstArg(args)
-		if target == "" {
-			return opErr(CommandInvalidArgument, "usage: agent ack <id|all>")
-		}
-		if err := a.cmdAck(target, stdout, a.tasksDirectory()); err != nil {
-			switch err.Cause {
-			case AckNotFound:
-				return opErr(CommandNotFound, "%s", err.Message)
-			case AckAmbiguous, AckStillRunning:
-				return opErr(CommandConflict, "%s", err.Message)
-			default:
-				return fromStorage(CommandStorage, storageErr(err.asError(), "ack"))
-			}
-		}
-		return nil
 	default:
 		if err := printUsage(stdout); err != nil {
 			return fromStorage(CommandStorage, storageErr(err, "print usage"))

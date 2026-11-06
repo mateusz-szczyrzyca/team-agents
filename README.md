@@ -1566,12 +1566,14 @@ make integration        # real agent CLIs and accounts (costs usage)
   This deliberate diagnostic difference must be reconciled before migrating command consumers.
   The live panel now correctly reads Bash-written `\a`, `\b`, `\f` and `\v` escapes in metadata.
 - **Read and display CLI commands (R09, execution round 10).** The Go candidate binary implements
-  read-only inspection and acknowledgment commands (`status`, `ls`, `show`, `agents`, `_agents-json`, `ack`,
+  read-only inspection commands (`status`, `ls`, `show`, `agents`, `_agents-json`,
   `bus`, `inv`, `notes`, `helpers`), matching `bin/agent` output contracts, active unit checks, non-hidden
   directory symlinks, field fallbacks, and delegated exit statuses. Default capacities match oracle defaults
   (`INVESTIGATION_QUEUE_MAX=3`, `INV_SLOTS=1`). The bus display inserts its separator only after a
   successful status query, including an empty result; failures preserve partial output and exit status.
   Output replay failures, including short diagnostic writes, are reported as storage errors.
+  Native Go `ack` and its tests move together to the next execution subround; the installed Bash command
+  remains available. The candidate currently reports `ack` as an unknown command.
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 520 Bats unit test cases (361 black-box, 159 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
