@@ -7,7 +7,7 @@ import (
 )
 
 // cmdStatus displays a table of all tasks with their status, agent, round, and run number.
-func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
+func cmdStatus(ctx context.Context, app *App, out io.Writer) *StatusError {
 	// Print header
 	if _, err := fmt.Fprintf(out, "%-30s %-12s %-13s %-6s %-5s %s\n",
 		"TASK", "AGENT", "STATUS", "ROUND", "RUN", "REPO"); err != nil {
@@ -48,7 +48,7 @@ func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 		// Special handling for investigation teams
 		kind, _ := meta.Lookup("KIND")
 		team, _ := meta.Lookup("INVESTIGATION_TEAM")
-		if kind == "investigation" && team == "" {
+		if kind == kindInvestigation && team == "" {
 			invID, _ := meta.Lookup("INV_ID")
 			if invID == "" {
 				invID = "?"
@@ -62,7 +62,7 @@ func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 		}
 
 		// Check if unit is active for running/starting status
-		if (status == "running" || status == "starting") && kind != "remote-member" && kind != "investigation_team" {
+		if (status == taskRunning || status == taskStarting) && kind != kindRemoteMember && kind != kindInvestigationTeam {
 			runVal, _ := meta.Lookup("RUN")
 			if runVal == "" {
 				runVal = "0"
@@ -72,7 +72,7 @@ func cmdStatus(_ context.Context, app *App, out io.Writer) *StatusError {
 				Name: "systemctl",
 				Args: []string{"--user", "is-active", "--quiet", unitName},
 			}
-			result, uerr := app.Executor.Execute(context.Background(), cmd)
+			result, uerr := app.execute(ctx, cmd)
 			if uerr != nil {
 				return opErr(StatusProcess, "check unit active %s: %s", id, uerr.Error())
 			}

@@ -4,12 +4,33 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// commandFromBus wraps an agentbus execution error into a CommandError while preserving the typed BusError.
+func commandFromBus(prefix string, err *BusError) *CommandError {
+	if err == nil {
+		return nil
+	}
+	cause := CommandProcess
+	if err.Cause == BusNotFound {
+		cause = CommandNotFound
+	}
+	msg := err.Message
+	if prefix != "" {
+		msg = prefix + ": " + err.Message
+	}
+	return &CommandError{
+		Cause:   cause,
+		Message: msg,
+		Err:     errors.Join(cause.info().class.Sentinel(), err),
+	}
+}
 
 // busBinary returns the configured agentbus path or a default resolution.
 func (a *App) busBinary() string {
@@ -45,7 +66,7 @@ func (a *App) cmdBus(ctx context.Context, n string, stdout io.Writer) *CommandEr
 	}
 	statusOut, err := busCmd(ctx, a, busBin, "status", "--dir", busDir)
 	if err != nil {
-		return opErr(CommandStorage, "bus status: %s", err.Error())
+		return commandFromBus("bus status", err)
 	}
 	if _, werr := fmt.Fprint(stdout, statusOut); werr != nil {
 		return fromStorage(CommandStorage, storageErr(werr, "write bus status"))
@@ -55,7 +76,7 @@ func (a *App) cmdBus(ctx context.Context, n string, stdout io.Writer) *CommandEr
 	}
 	logOut, err := busCmd(ctx, a, busBin, "log", "--dir", busDir, "-n", n)
 	if err != nil {
-		return opErr(CommandStorage, "bus log: %s", err.Error())
+		return commandFromBus("bus log", err)
 	}
 	if _, werr := fmt.Fprint(stdout, logOut); werr != nil {
 		return fromStorage(CommandStorage, storageErr(werr, "write bus log"))
@@ -70,7 +91,7 @@ func (a *App) cmdHelpers(ctx context.Context, args []string, stdout io.Writer) *
 	cmdArgs := append([]string{"helper-list", "--dir", busDir}, args...)
 	out, err := busCmd(ctx, a, busBin, cmdArgs...)
 	if err != nil {
-		return opErr(CommandStorage, "helpers: %s", err.Error())
+		return commandFromBus("helpers", err)
 	}
 	if _, werr := fmt.Fprint(stdout, out); werr != nil {
 		return fromStorage(CommandStorage, storageErr(werr, "write helpers"))
@@ -94,7 +115,7 @@ func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *Comm
 	if len(args) == 0 || args[0] == "" {
 		out, err := busCmd(ctx, a, busBin, "inv-list", "--dir", busDir, "--queue-max", queueMax, "--inv-slots", invSlots)
 		if err != nil {
-			return opErr(CommandStorage, "inv list: %s", err.Error())
+			return commandFromBus("inv list", err)
 		}
 		if _, werr := fmt.Fprint(stdout, out); werr != nil {
 			return fromStorage(CommandStorage, storageErr(werr, "write inv-list"))
@@ -107,7 +128,7 @@ func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *Comm
 	if args[0] == "--all" {
 		out, err := busCmd(ctx, a, busBin, "inv-list", "--dir", busDir, "--queue-max", queueMax, "--inv-slots", invSlots, "--all")
 		if err != nil {
-			return opErr(CommandStorage, "inv list --all: %s", err.Error())
+			return commandFromBus("inv list --all", err)
 		}
 		if _, werr := fmt.Fprint(stdout, out); werr != nil {
 			return fromStorage(CommandStorage, storageErr(werr, "write inv-list --all"))
@@ -118,7 +139,7 @@ func (a *App) cmdInv(ctx context.Context, args []string, stdout io.Writer) *Comm
 	id := strings.TrimPrefix(args[0], "#")
 	out, err := busCmd(ctx, a, busBin, "inv-get", "--dir", busDir, "--id", id)
 	if err != nil {
-		return opErr(CommandStorage, "inv get: %s", err.Error())
+		return commandFromBus("inv get", err)
 	}
 	var res struct {
 		File string `json:"file"`
@@ -183,7 +204,7 @@ func (a *App) cmdNotes(ctx context.Context, args []string, stdout io.Writer) *Co
 		}
 		out, err := busCmd(ctx, a, busBin, "notes", "--dir", busDir, "--list")
 		if err != nil {
-			return opErr(CommandStorage, "bus notes --list: %s", err.Error())
+			return commandFromBus("bus notes --list", err)
 		}
 		if _, werr := fmt.Fprint(stdout, out); werr != nil {
 			return fromStorage(CommandStorage, storageErr(werr, "write notes list"))
@@ -193,7 +214,7 @@ func (a *App) cmdNotes(ctx context.Context, args []string, stdout io.Writer) *Co
 	cmdArgs := append([]string{"notes", "--dir", busDir, "--repo", repo}, rest...)
 	out, err := busCmd(ctx, a, busBin, cmdArgs...)
 	if err != nil {
-		return opErr(CommandStorage, "bus notes: %s", err.Error())
+		return commandFromBus("bus notes", err)
 	}
 	if _, werr := fmt.Fprint(stdout, out); werr != nil {
 		return fromStorage(CommandStorage, storageErr(werr, "write notes"))

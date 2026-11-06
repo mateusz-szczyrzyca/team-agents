@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // dispatch routes a command to its handler, returning a typed CommandError on failure.
@@ -76,7 +77,11 @@ func (a *App) routeAgents(_ context.Context, stdout io.Writer) *CommandError {
 	cfg := a.listingConfig()
 	if err := a.cmdAgents(stdout, cfg, tasksDir, busDir); err != nil {
 		if err.Cause == AgentsProcess {
-			return opErr(CommandProcess, "%s", err.Message)
+			return &CommandError{
+				Cause:   CommandProcess,
+				Message: err.Message,
+				Err:     errors.Join(CommandProcess.info().class.Sentinel(), err),
+			}
 		}
 		return fromStorage(CommandStorage, storageErr(err.asError(), "agents"))
 	}
@@ -127,14 +132,19 @@ func (a *App) run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if err := a.dispatch(context.Background(), cmd, cmdArgs, stdout, stderr); err != nil {
+		var berr *BusError
+		if errors.As(err, &berr) {
+			if berr.Cause == BusProcess && strings.HasPrefix(berr.Message, "execute ") {
+				if _, werr := fmt.Fprintf(stderr, "agent: %s\n", err.Message); werr != nil {
+					return 1
+				}
+			}
+			return busExitCode(berr)
+		}
 		if err.Cause != CommandUnknownCommand {
 			if _, werr := fmt.Fprintf(stderr, "agent: %s\n", err.Message); werr != nil {
 				return 1
 			}
-		}
-		var berr *BusError
-		if errors.As(err, &berr) {
-			return busExitCode(berr)
 		}
 		return err.Class().ExitCode()
 	}

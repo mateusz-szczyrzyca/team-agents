@@ -270,7 +270,13 @@ func busCmd(ctx context.Context, app *App, busBin string, args ...string) (strin
 		return "", opErr(BusProcess, "execute %s: %s", busBin, eerr.Error())
 	}
 	if app != nil && app.Stderr != nil && stderr.Len() > 0 {
-		_, _ = app.Stderr.Write(stderr.Bytes())
+		n, werr := app.Stderr.Write(stderr.Bytes())
+		if werr != nil {
+			return "", fromStorage(BusStorage, storageErr(werr, "write subprocess stderr"))
+		}
+		if n < stderr.Len() {
+			return "", fromStorage(BusStorage, storageErr(io.ErrShortWrite, "write subprocess stderr"))
+		}
 	}
 	if result.ExitCode != BusExitSuccess {
 		return "", mapBusExitCode(result.ExitCode, stderr.String())

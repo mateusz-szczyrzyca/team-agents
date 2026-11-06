@@ -21,6 +21,14 @@ const (
 	taskHung     string = "hung"     // taskHung lost its executing unit.
 )
 
+// Task kind values classify tasks across runner listings and detail displays.
+const (
+	kindWorker            string = "worker"             // kindWorker is an autonomous worker task.
+	kindInvestigation     string = "investigation"      // kindInvestigation is an investigation task.
+	kindRemoteMember      string = "remote-member"      // kindRemoteMember is a remote team member task.
+	kindInvestigationTeam string = "investigation_team" // kindInvestigationTeam is an investigation team task.
+)
+
 // ackableStatus preserves the Bash terminal-state allowlist, including unknown-state rejection.
 func ackableStatus(status string) bool {
 	switch status {
