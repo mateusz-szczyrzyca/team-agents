@@ -1647,10 +1647,11 @@ github_trusted() {
 # trusted_prs root branch state fields — the round's PRs of that branch, newest first, as a JSON array: from this
 # repository (a fork's PR with the same branch name is not — the agents' branch names are public) and opened by a
 # trusted account (github_trusted); the others are logged (pr_untrusted_ignored) and left out
-trusted_prs() {
-  local root=$1 branch=$2 state=$3 fields out trusted ignored
+trusted_prs() {   # (an empty branch: every branch's PRs)
+  local root=$1 branch=$2 state=$3 fields out trusted ignored head_opt=()
+  [[ -z $branch ]] || head_opt=(--head "$branch")
   fields=$(printf '%s,number,isCrossRepository,headRepositoryOwner,author' "$4" | tr ',' '\n' | awk 'NF && !seen[$0]++' | paste -sd, -)
-  out=$(cd "$root" && gh pr list --head "$branch" --state "$state" --json "$fields" --limit 20) || return 1
+  out=$(cd "$root" && gh pr list "${head_opt[@]}" --state "$state" --json "$fields" --limit "$( [[ -n $branch ]] && echo 20 || echo 100)") || return 1
   trusted=$(github_trusted "$root" | jq -R 'split(" ") | map(select(. != ""))')
   local owner; owner=$(github_owner "$root")   # its head in this repository: not a fork's, whatever GitHub's flag says
   ignored=$(jq -r --argjson t "$trusted" --arg o "$owner" '[.[] | select((.isCrossRepository // false) or ($o != "" and (.headRepositoryOwner.login // $o) != $o)
@@ -1659,6 +1660,28 @@ trusted_prs() {
   [[ -z $ignored ]] || log_warn pr_untrusted_ignored "branch=$branch" "prs=$ignored" "trusted=$(jq -r 'join(" ")' <<< "$trusted")"
   jq -c --argjson t "$trusted" --arg o "$owner" '[.[] | select((.isCrossRepository // false) == false and ($o == "" or (.headRepositoryOwner.login // $o) == $o)
             and ((.author.login // "") as $a | ($t | index($a)) != null))]' <<< "$out"
+}
+
+# round_pr_for task fields — the round's PR of a coordinator's task, as trusted_prs gives it (a JSON array, [] for
+# none): the PR of its branch; else the round's PR it was given (ROUND_PR), open; else an open PR whose head is its
+# branch's commit — a team that pushed its work to another team's PR. How it was found is logged.
+round_pr_for() {
+  local id=$1 fields=$2 root branch pr num sha
+  root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH)
+  pr=$(trusted_prs "$root" "$branch" all "$fields") || return 1
+  [[ $(jq 'length' <<< "$pr") == 0 ]] || { printf '%s' "$pr"; return 0; }
+  num=$(task_field "$id" ROUND_PR)
+  if [[ -n $num ]]; then
+    pr=$(trusted_prs "$root" "" open "$fields,number" | jq -c --argjson n "$num" '[.[] | select(.number == $n)]') || return 1
+    if [[ $(jq 'length' <<< "$pr") != 0 ]]; then
+      log_info round_pr_found "task=$id" "pr=$num" "by=round_pr"
+      printf '%s' "$pr"; return 0
+    fi
+  fi
+  sha=$(git -C "$root" rev-parse --verify --quiet "refs/heads/$branch^{commit}") || { echo '[]'; return 0; }
+  pr=$(trusted_prs "$root" "" open "$fields,headRefOid" | jq -c --arg s "$sha" '[.[] | select(.headRefOid == $s)]') || return 1
+  [[ $(jq 'length' <<< "$pr") == 0 ]] || log_info round_pr_found "task=$id" "pr=$(jq -r '.[0].number' <<< "$pr")" "by=commit" "sha=$sha"
+  printf '%s' "$pr"
 }
 
 pr_format_issues() { # body [repo-url] — what a PR description writes against the GitHub conventions, one item per
@@ -2879,12 +2902,14 @@ request_review() { # coordinator task id — --verify: queue a PR review by an i
   local id=$1 root branch pr url num inv
   automation_allowed "$id" || return 0
   root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH)
-  pr=$(try pr_lookup_failed trusted_prs "$root" "$branch" all number,url)
+  pr=$(try pr_lookup_failed round_pr_for "$id" number,url)
   url=$(jq_soft pr_lookup_parse -r '.[0].url // empty' <<< "${pr:-[]}")
   num=$(jq_soft pr_lookup_parse -r '.[0].number // empty' <<< "${pr:-[]}")
   if [[ -z $url ]]; then
-    act "$id" err "--verify: no PR found for branch $branch — review skipped"
-    push_text "$(task_field "$id" REPO_NAME)" "⚠ Team $(task_field "$id" TEAM): --verify — no PR found for branch $branch, investigator review skipped."
+    act "$id" err "--verify: the round has no PR — none on branch $branch, none given, none at its commit: no review"
+    log_warn review_no_pr "task=$id" "branch=$branch"
+    push_text "$(task_field "$id" REPO_NAME)" "⛔ Team $(task_field "$id" TEAM): --verify — the round ended with no PR, so it is not reviewed: none on its branch $branch, no round's PR given, no open PR at its commit." \
+      "Open its PR (gh pr create --base $(task_field "$id" BASE) --head $branch), or resume the team that owns the round's PR with --same-round, or start a team on that PR with --pr <number>."
     return 0
   fi
   meta_set "$id" PR_NUMBER "$num"; meta_set "$id" PR_URL "$url"
@@ -5377,7 +5402,7 @@ pl_commits() { # number → "1 commit" / "N commits"
 verify_gaps() { # coordinator-id — gaps before closing a --verify team (empty = all good)
   local br=$BRANCH wt=$WORKTREE pr cnt m mb
   local errf; errf=$(mktemp)
-  if pr=$(trusted_prs "$wt" "$br" all number,isDraft,state 2>"$errf"); then
+  if pr=$(round_pr_for "$1" number,isDraft,state 2>"$errf"); then   # its branch's, the given one, or the one at its commit
     if [[ $(jq_soft pr_lookup_parse 'length' <<< "$pr") == 0 ]]; then
       echo "- no PR from your branch $br — open it (gh pr create --base $BASE --head $br)"
     elif [[ $(jq -r '.[0].isDraft' <<< "$pr") == true ]]; then

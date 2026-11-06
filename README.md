@@ -304,6 +304,11 @@ merged already, the heading says so: what comes now is the round's follow-up, an
 with `--intent-to-add` — it is staged and stashed again). A team that cannot take its work back — a resume refused — waits for you the same way, with
 the refusal's reason; a resume never depends on whether your own checkout of the lead is pushed.
 
+**The round's PR.** `--verify` and the closing of a team find the round's PR by the coordinator's branch; else by the
+round's PR the team was given; else by an open PR of the repository, from a trusted account, whose head is the
+coordinator's commit — a team that pushed its work to another team's PR. With none, the round is not reviewed and you
+hear ⛔, with what to do.
+
 **A coordinator working alone is stopped.** Where the script does not know the work to split (a new round), the
 runner watches the coordinator: once its run has worked `AGENT_SOLO_COORD_STEPS` (30) steps alone — its other members
 not at work, its board with nothing open for anyone else —, the run is ended, and the next one, a fresh session,
