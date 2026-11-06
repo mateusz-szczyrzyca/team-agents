@@ -43,8 +43,10 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
   wait_status "$m" 'done'
   wait_status "$t" running
   team=$(meta "$t" TEAM)
-  f=$(grep -l '"teams"' "$AGENTS_HOME"/bus/*.json | head -n 1)
-  jq --arg t "$team" '.teams[$t].lead = "lead"' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  # the coordinator, set as the bus sets its state: under its lock (bus.lock), through a temporary file of its own —
+  # the bus's own is state.json.tmp, and a run's write of it raced this one
+  flock "$AGENTS_HOME/bus/bus.lock" bash -c 'tmp=$(mktemp "$1.XXXXXX") && jq --arg t "$2" ".teams[\$t].lead = \"lead\"" "$1" > "$tmp" && mv "$tmp" "$1"' \
+    _ "$AGENTS_HOME/bus/state.json" "$team"
   for i in 1 2 3 4; do jq -nc --arg i "$i" '{ts: "2026-11-06 10:00:00", k: "cmd", t: ("ls " + $i)}' >> "$AGENTS_HOME/tasks/$t/activity.jsonl"; done
   wait_grep "worked alone" "$AGENTS_HOME/tasks/$t/activity.jsonl"
   grep -q '"event":"solo_coordinator_cut"' "$AGENTS_HOME/logs/agent.jsonl"
