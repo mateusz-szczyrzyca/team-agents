@@ -53,6 +53,19 @@ func TestCmdShowTaskNotFound(t *testing.T) {
 	}
 }
 
+// TestCmdShowMetaBlankLines preserves interior and final blank metadata lines.
+func TestCmdShowMetaBlankLines(t *testing.T) {
+	app, tasksDir := newShowTestApp(t)
+	createShowTaskDir(t, tasksDir, "show-test", "ID=show-test\n\nKIND=remote-member\n\n")
+	var out bytes.Buffer
+	if err := cmdShow(context.Background(), app, "show-test", &out); err != nil {
+		t.Fatal(err)
+	}
+	if want := "== show-test\n  ID=show-test\n  \n  KIND=remote-member\n  \n"; out.String() != want {
+		t.Fatalf("metadata output = %q, want %q", out.String(), want)
+	}
+}
+
 // TestCmdShowMetaenv verifies meta.env is printed indented by 2 spaces.
 func TestCmdShowMetaenv(t *testing.T) {
 	app, tasksDir := newShowTestApp(t)
