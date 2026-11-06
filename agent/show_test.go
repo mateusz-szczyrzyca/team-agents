@@ -384,7 +384,7 @@ func TestCmdShowWorkerInvListFailure(t *testing.T) {
 func TestCmdShowInteractiveWarningOnInvListFailure(t *testing.T) {
 	pty, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
 	if err != nil {
-		t.Skip("pty not available")
+		t.Fatal(err)
 	}
 	defer func() {
 		if err := pty.Close(); err != nil {
