@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // dispatch routes a command to its handler, returning a typed CommandError on failure.
@@ -130,6 +131,12 @@ func (a *App) run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if err := a.dispatch(context.Background(), cmd, cmdArgs, stdout, stderr); err != nil {
+		// Check for OS exit codes 126 (permission denied) and 127 (not found) in process errors.
+		if strings.Contains(err.Message, "exit code 126") {
+			return 126
+		} else if strings.Contains(err.Message, "exit code 127") {
+			return 127
+		}
 		return err.Class().ExitCode()
 	}
 	return 0

@@ -125,6 +125,11 @@ func sameWriter(a, b io.Writer) bool {
 	return a == b
 }
 
+// isPermissionError checks if an error is due to permission denied (e.g., file not executable).
+func isPermissionError(err error) bool {
+	return errors.Is(err, os.ErrPermission)
+}
+
 // Execute executes the command synchronously using os/exec.
 func (OSExecutor) Execute(ctx context.Context, cmd Command) (CommandResult, *ExecuteError) {
 	if cmd.Name == "" {
@@ -171,6 +176,20 @@ func (OSExecutor) Execute(ctx context.Context, cmd Command) (CommandResult, *Exe
 	}
 
 	if err := c.Start(); err != nil {
+		// Distinguish "not found" (127) from "permission denied" (126) to match shell behavior.
+		exitCode := 1
+		if isPermissionError(err) {
+			exitCode = 126
+		} else {
+			var execErr *exec.Error
+			if errors.As(err, &execErr) || errors.Is(err, os.ErrNotExist) {
+				exitCode = 127
+			}
+		}
+		// When the executable cannot be started, return the exit code instead of an error so callers can check it.
+		if exitCode == 127 || exitCode == 126 {
+			return CommandResult{ExitCode: exitCode}, nil
+		}
 		return CommandResult{}, fromProcess(ExecuteStart, processErr(cmd.Name, err, "failed to start %s", cmd.Name))
 	}
 

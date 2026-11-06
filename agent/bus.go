@@ -241,6 +241,10 @@ func busCmd(ctx context.Context, app *App, busBin string, args ...string) (strin
 		return "", opErr(BusProcess, "execute %s: %s", busBin, eerr.Error())
 	}
 	if result.ExitCode != BusExitSuccess {
+		// Preserve OS exit codes 126 (permission denied) and 127 (not found) as process errors.
+		if result.ExitCode == 126 || result.ExitCode == 127 {
+			return "", opErr(BusProcess, "execute %s: exit code %d", busBin, result.ExitCode)
+		}
 		return "", mapBusExitCode(result.ExitCode, stderr.String())
 	}
 	return stdout.String(), nil

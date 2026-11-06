@@ -10,7 +10,7 @@ import (
 )
 
 // createTestTask creates a minimal valid task with required metadata and task.md files.
-func createTestTask(t *testing.T, tasksDir, taskID, metaContent, taskContent string) string {
+func createTestTask(t *testing.T, tasksDir, taskID, metaContent, taskContent string) {
 	taskDir := filepath.Join(tasksDir, taskID)
 	if err := os.MkdirAll(taskDir, 0750); err != nil {
 		t.Fatal(err)
@@ -28,7 +28,6 @@ func createTestTask(t *testing.T, tasksDir, taskID, metaContent, taskContent str
 	if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte(taskContent), 0600); err != nil {
 		t.Fatal(err)
 	}
-	return taskDir
 }
 
 // TestCmdShowTaskNotFound verifies ShowNotFound error is returned.
