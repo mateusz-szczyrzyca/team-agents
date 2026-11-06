@@ -33,7 +33,10 @@
    "what": "local command dispatch",
    "causes": [
     {"name": "UnknownCommand", "class": "InvalidArgument", "doc": "the requested command is not implemented"},
-    {"name": "InvalidArgument", "class": "InvalidArgument", "doc": "a command argument is missing or invalid"}
+    {"name": "InvalidArgument", "class": "InvalidArgument", "doc": "a command argument is missing or invalid"},
+    {"name": "NotFound", "class": "NotFound", "doc": "a requested command target was not found"},
+    {"name": "Conflict", "class": "Conflict", "doc": "the requested command encountered a conflicting state"},
+    {"name": "Process", "class": "Process", "doc": "a helper command or process execution failed"}
    ]
   },
   {
@@ -90,6 +93,31 @@
    "op": "act",
    "what": "activity log writing",
    "causes": []
+  },
+  {
+   "type": "Status",
+   "op": "status",
+   "what": "task status table display",
+   "causes": [
+    {"name": "Process", "class": "Process", "doc": "unit status inspection failed"}
+   ]
+  },
+  {
+   "type": "Show",
+   "op": "show",
+   "what": "task inspection display",
+   "causes": [
+    {"name": "NotFound", "class": "NotFound", "doc": "the task directory or metadata file does not exist"},
+    {"name": "Ambiguous", "class": "Conflict", "doc": "more than one task directory matches the reference"}
+   ]
+  },
+  {
+   "type": "Agents",
+   "op": "agents",
+   "what": "configured agent listing",
+   "causes": [
+    {"name": "Process", "class": "Process", "doc": "agent inspection or bus process execution failed"}
+   ]
   }
  ]
 }

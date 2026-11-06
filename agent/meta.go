@@ -76,7 +76,7 @@ func (m MetaFile) Bytes() []byte {
 // Non-regular paths deliberately report Storage rather than Bash meta_load's NotFound.
 func readTaskMeta(tasksDir, id string) (MetaFile, *ReadTaskMetaError) {
 	path := tasksDir + "/" + id + "/meta.env"
-	data, err := os.ReadFile(path) // #nosec G304 -- local task paths deliberately preserve Bash path-like references; no network request supplies this path
+	data, err := os.ReadFile(path) // #nosec G304,G703 -- local task paths deliberately preserve Bash path-like references; no network request supplies this path
 	if errors.Is(err, os.ErrNotExist) {
 		return MetaFile{}, opErr(ReadTaskMetaNotFound, "no such task: %s", id)
 	}

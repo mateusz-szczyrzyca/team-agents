@@ -6,9 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
+	"syscall"
 )
 
 // ScriptNotice is the typed kind of an event published by the agent script on the bus.
@@ -94,6 +97,16 @@ type BusServeParams struct {
 	Member     string // member name for remote team relay
 }
 
+// exitStatusError preserves the raw process exit code of a delegated subcommand.
+type exitStatusError struct {
+	code int // process exit code
+}
+
+// Error formats the exit status.
+func (e exitStatusError) Error() string {
+	return fmt.Sprintf("exit status %d", e.code)
+}
+
 // mapBusExitCode converts an agentbus process exit code and stderr to a typed BusError.
 func mapBusExitCode(code int, stderr string) *BusError {
 	if code == BusExitSuccess {
@@ -120,7 +133,42 @@ func mapBusExitCode(code int, stderr string) *BusError {
 	case BusExitProcess:
 		cause = BusProcess
 	}
-	return opErr(cause, "%s", stderr)
+	err := opErr(cause, "%s", stderr)
+	err.Err = errors.Join(err.Err, exitStatusError{code: code})
+	return err
+}
+
+// isPermissionError reports whether err indicates a permission denial during launch.
+func isPermissionError(err error) bool {
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
+}
+
+// isLaunchError reports whether the error represents a subprocess launch failure.
+func isLaunchError(err error) bool {
+	var execErr *ExecuteError
+	if errors.As(err, &execErr) && execErr.Cause == ExecuteStart {
+		return true
+	}
+	var procErr *ProcessError
+	return errors.As(err, &procErr) && (errors.Is(procErr.Err, os.ErrNotExist) || errors.Is(procErr.Err, exec.ErrNotFound) || isPermissionError(procErr.Err))
+}
+
+// busExitCode returns the process exit status of a delegated agentbus failure.
+func busExitCode(err *BusError) int {
+	if err == nil {
+		return 0
+	}
+	var raw exitStatusError
+	if errors.As(err, &raw) {
+		return raw.code
+	}
+	if isLaunchError(err) {
+		if isPermissionError(err) {
+			return 126
+		}
+		return 127
+	}
+	return err.Class().ExitCode()
 }
 
 // busArgsJSON constructs the argv list for agentbus serve matching bash bus_args_json.
@@ -230,18 +278,26 @@ func busMessagesFrom(messagesPath string, agent string) (count int, err *Storage
 // busCmd executes an agentbus subcommand via the app executor and maps its status code.
 func busCmd(ctx context.Context, app *App, busBin string, args ...string) (string, *BusError) {
 	var stdout, stderr bytes.Buffer
-	cmd := Command{
+	result, eerr := app.execute(ctx, Command{
 		Name:   busBin,
 		Args:   args,
 		Stdout: &stdout,
 		Stderr: &stderr,
-	}
-	result, eerr := app.execute(ctx, cmd)
+	})
 	if eerr != nil {
-		return "", opErr(BusProcess, "execute %s: %s", busBin, eerr.Error())
+		return "", fromProcess(BusProcess, processErr(busBin, eerr, "%s", eerr.Message))
+	}
+	if app != nil && app.Stderr != nil && stderr.Len() > 0 {
+		data := stderr.Bytes()
+		if n, werr := app.Stderr.Write(data); werr != nil || n < len(data) {
+			if werr == nil {
+				werr = io.ErrShortWrite
+			}
+			return stdout.String(), fromStorage(BusStorage, storageErr(werr, "write subprocess stderr"))
+		}
 	}
 	if result.ExitCode != BusExitSuccess {
-		return "", mapBusExitCode(result.ExitCode, stderr.String())
+		return stdout.String(), mapBusExitCode(result.ExitCode, stderr.String())
 	}
 	return stdout.String(), nil
 }

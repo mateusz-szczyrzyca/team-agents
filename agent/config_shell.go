@@ -9,15 +9,16 @@ import (
 	"strings"
 )
 
-// configShell sources trusted Bash once; FD3 carries data while ordinary output is discarded.
+// configShell sources trusted Bash once; FD3 carries data independently of ordinary output.
 const configShell = `exec 3>&1
-exec 1>&2
+exec 1>"$7" 2>"$8"
 set -euo pipefail
 shopt -u patsub_replacement 2>/dev/null || : # Expected on Bash before 5.2, matching production.
 HOME=$1 AGENTS_HOME=$2 HOSTNAME=$3 SELF=$4 CONF=$5
 TASKS=$AGENTS_HOME/tasks PROMPTS=$AGENTS_HOME/prompts BUS_DIR=$AGENTS_HOME/bus LOG_DIR=$AGENTS_HOME/logs
 readonly _agent_cfg_defaults=$6
-shift 6
+readonly _agent_cfg_env=$9
+shift 9
 readonly -a _agent_cfg_names=("${@:2:$1}")
 shift "$(($1 + 1))"
 AGENT_SUBCOMMAND=${1:-} RUNNER_ID=""
@@ -48,6 +49,7 @@ for _agent_cfg_name in "${_agent_cfg_names[@]}"; do
     unset -n _agent_cfg_ref
 done
 printf 'Z\0\0\0\0' >&3
+env -0 >"$_agent_cfg_env"
 `
 
 // loadConfig evaluates executable Bash settings and startup defaults in one shell.
@@ -62,15 +64,26 @@ func (a *App) loadShellConfig(ctx context.Context, req ConfigRequest) (Config, *
 
 // evaluateConfigShell retains Bash declarations through default assignments before snapshotting.
 func (a *App) evaluateConfigShell(ctx context.Context, req ConfigRequest, defaults string) (cfg Config, failure *LoadConfigError) {
+	// Regular files keep background configuration children from holding copy pipes open.
+	streams, streamsErr := os.MkdirTemp("", "agent-config-streams-*")
+	if streamsErr != nil {
+		return Config{}, fromStorage(LoadConfigShell, storageErr(streamsErr, "create configuration output directory"))
+	}
+	defer func() {
+		if removeErr := os.RemoveAll(streams); removeErr != nil {
+			cfg, failure = Config{}, fromStorage(LoadConfigShell, storageErr(removeErr, "remove configuration output directory"))
+		}
+	}()
+	stdoutPath, stderrPath, envPath := streams+"/stdout", streams+"/stderr", streams+"/env"
 	home := req.Context.AgentsHome
 	if home == "" {
 		home = req.Context.Home + "/agents"
 	}
-	args := []string{"--noprofile", "--norc", "-c", configShell, "agent-config", req.Context.Home, home, req.Context.Hostname, req.Context.Self, req.File, defaults}
+	args := []string{"--noprofile", "--norc", "-c", configShell, "agent-config", req.Context.Home, home, req.Context.Hostname, req.Context.Self, req.File, defaults, stdoutPath, stderrPath, envPath}
 	names := configNames()
 	args = append(args, strconv.Itoa(len(names)))
 	args = append(append(args, names...), req.Args...)
-	// Regular-file output and nil stderr avoid pipe-copy waits on background children.
+	// The snapshot has its own channel, separate from ordinary configuration output.
 	output, fileErr := os.CreateTemp("", "agent-config-*.nul")
 	if fileErr != nil {
 		return Config{}, opErr(LoadConfigShell, "cannot create configuration snapshot: %v", fileErr)
@@ -82,6 +95,12 @@ func (a *App) evaluateConfigShell(ctx context.Context, req ConfigRequest, defaul
 		}
 	}()
 	result, err := a.execute(ctx, Command{Name: "bash", Args: args, Env: configEnvironment(req.Env), Stdout: output})
+	if streamErr := replayConfigOutput(stdoutPath, a.Stdout); streamErr != nil {
+		return Config{}, streamErr
+	}
+	if streamErr := replayConfigOutput(stderrPath, a.Stderr); streamErr != nil {
+		return Config{}, streamErr
+	}
 	if err != nil {
 		// Executor diagnostics can contain caller-controlled values; retain cause, redact text.
 		return Config{}, &LoadConfigError{Cause: LoadConfigShell, Message: "cannot evaluate Bash configuration", Err: err}
@@ -100,7 +119,38 @@ func (a *App) evaluateConfigShell(ctx context.Context, req ConfigRequest, defaul
 	if !bytes.HasSuffix(data, end) {
 		return Config{}, opErr(LoadConfigProtocol, "configuration snapshot is incomplete")
 	}
-	return decodeConfigNUL(bytes.TrimSuffix(data, end))
+	cfg, failure = decodeConfigNUL(bytes.TrimSuffix(data, end))
+	if failure != nil {
+		return Config{}, failure
+	}
+	envData, rErr := os.ReadFile(envPath) // #nosec G304 -- fixed filename in private temporary directory
+	if rErr != nil && !os.IsNotExist(rErr) {
+		return Config{}, fromStorage(LoadConfigShell, storageErr(rErr, "read configuration environment"))
+	}
+	for _, e := range bytes.Split(bytes.TrimSuffix(envData, []byte{0}), []byte{0}) {
+		if len(e) > 0 {
+			cfg.Env = append(cfg.Env, string(e))
+		}
+	}
+	return cfg, nil
+}
+
+// replayConfigOutput forwards a completed shell stream; absence means the shell never started.
+func replayConfigOutput(path string, out io.Writer) *LoadConfigError {
+	if out == nil {
+		return nil
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- path is a fixed filename in the evaluator's private temporary directory.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fromStorage(LoadConfigShell, storageErr(err, "read configuration output"))
+	}
+	if _, err := out.Write(data); err != nil {
+		return fromStorage(LoadConfigShell, storageErr(err, "write configuration output"))
+	}
+	return nil
 }
 
 // configDefaultShell emits only trusted assignments; Bash retains attributes and evaluates indices.
