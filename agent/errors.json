@@ -118,12 +118,6 @@
    "causes": [
     {"name": "Process", "class": "Process", "doc": "agent inspection or bus process execution failed"}
    ]
-  },
-  {
-   "type": "AgentsJSON",
-   "op": "agents_json",
-   "what": "agent JSON listing",
-   "causes": []
   }
  ]
 }

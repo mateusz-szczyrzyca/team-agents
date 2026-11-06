@@ -54,11 +54,6 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 		return a.cmdHelpers(ctx, args, stdout)
 	case "agents":
 		return a.routeAgents(ctx, stdout)
-	case "_agents-json":
-		if err := a.cmdAgentsJSON(stdout, a.listingConfig()); err != nil {
-			return fromStorage(CommandStorage, storageErr(err.asError(), "agents json"))
-		}
-		return nil
 	default:
 		if err := printUsage(stdout); err != nil {
 			return fromStorage(CommandStorage, storageErr(err, "print usage"))

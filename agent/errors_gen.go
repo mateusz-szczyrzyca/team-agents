@@ -393,29 +393,3 @@ func (c AgentsCause) info() causeInfo { return agentsCauses[c] }
 
 // String returns the cause name.
 func (c AgentsCause) String() string { return c.info().name }
-
-// ---------------------------------------------------------------- agents_json
-
-// AgentsJSONCause is a reason why agent JSON listing failed.
-type AgentsJSONCause int
-
-const (
-	AgentsJSONStorage AgentsJSONCause = iota // the shared state or a file could not be read or written [Storage]
-)
-
-// AgentsJSONError is the error of agent JSON listing.
-type AgentsJSONError = OpError[AgentsJSONCause]
-
-// agentsJSONCauses describes the AgentsJSONCause values (same order as the constants).
-var agentsJSONCauses = [...]causeInfo{
-	{"Storage", ClassStorage},
-}
-
-// op implements opCause.
-func (AgentsJSONCause) op() string { return "agents_json" }
-
-// info implements opCause.
-func (c AgentsJSONCause) info() causeInfo { return agentsJSONCauses[c] }
-
-// String returns the cause name.
-func (c AgentsJSONCause) String() string { return c.info().name }
