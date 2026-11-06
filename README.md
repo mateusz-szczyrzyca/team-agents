@@ -310,6 +310,13 @@ human's addition, which still reaches everyone. The coordinator puts the work on
 overlap, each with one owner (a worker, through `request_helper`, for a small, concrete one), its area, its size in
 lines and when it is done —, merges each item as it is done, and redoes none of a member's work.
 
+**Where the money goes.** `agent spend [--days N] [--daily]` counts every task's runs of the last N days (7) by
+model — a line a day and model with `--daily`. A model paid by the token (its CLI in `AGENT_PAID_CLIS`, `opencode` by
+default) shows what it spent: its provider's cost, else `MODEL_PRICES`'. A subscription's model (Claude Code, Codex)
+shows what it would have cost at its API rates as an equivalent — not money spent, but what eats its limit:
+`MODEL_PRICES[<model>]="<input> <cached input> <output>"` in `agents.conf`, USD a million tokens, else its CLI's own
+cost. Prices change: note in `agents.conf` when they were checked.
+
 **The round's card.** `agent round-check <team|task>` shows whether a round's work was split as planned, done
 once and merged: its board (items, done, without an owner), each member's work that is not in the round's PR
 (commits, lines, tokens), the files more than one branch changed, the items workers did. It reads the tasks and

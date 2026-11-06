@@ -523,6 +523,7 @@ jq_soft() {
 die() { LOG_QUIET=1 log_error command_failed "message=$*"; echo "agent: $*" >&2; exit 1; }
 
 [[ -f $CONF ]] || die "missing configuration: $CONF"
+declare -A MODEL_PRICES=()   # a model's API prices, USD a million tokens: "<input> <cached input> <output>" (agents.conf)
 # shellcheck source=/dev/null
 source "$CONF"
 declare -p AGENT_EXTRA_ARGS &>/dev/null || declare -A AGENT_EXTRA_ARGS=()
@@ -638,6 +639,7 @@ AGENT_LIMIT_TAIL_LINES="${AGENT_LIMIT_TAIL_LINES:-30}"           # how much of t
 # Investigators: list format (INVESTIGATORS_*) or the legacy single investigator (INVESTIGATOR_*)
 declare -p INVESTIGATORS_TYPE &>/dev/null || declare -A INVESTIGATORS_TYPE=()
 declare -p INVESTIGATORS_MODEL &>/dev/null || declare -A INVESTIGATORS_MODEL=()
+AGENT_PAID_CLIS="${AGENT_PAID_CLIS:-opencode}"   # the CLIs whose models are paid by the token; the others are a subscription
 declare -p INVESTIGATORS_EXTRA_ARGS &>/dev/null || declare -A INVESTIGATORS_EXTRA_ARGS=()
 if ((${#INVESTIGATORS_TYPE[@]} == 0)); then
   INVESTIGATORS_TYPE[$INVESTIGATOR_NAME]=$INVESTIGATOR_TYPE
@@ -7707,6 +7709,62 @@ cmd_round_check() {
   awk -F'\t' '$1 == "workers" {print "workers: " $2}' <<< "$card"
 }
 
+# run_days task — per run of the task, the day it started: "<run>\t<YYYY-MM-DD>", from its activity
+run_days() {
+  [[ -f $TASKS/$1/activity.jsonl ]] || return 0
+  jq -r 'select(.k == "info" and ((.t // "") | test("^▶ run [0-9]+"))) | [(.t | capture("^▶ run (?<n>[0-9]+)").n), .ts[0:10]] | @tsv' \
+    "$TASKS/$1/activity.jsonl" 2> /dev/null || log_warn run_days_failed "task=$1"
+}
+
+# task_model task — the model a task's runs used: its MODEL, else its agent's configured model, else its CLI
+task_model() {
+  local m agent
+  m=$(task_field "$1" MODEL); agent=$(task_field "$1" AGENT)
+  printf '%s' "${m:-${AGENT_MODEL[$agent]:-${INVESTIGATORS_MODEL[$agent]:-$(task_field "$1" TYPE)}}}"
+}
+
+# cmd_spend [--days N] [--daily] — where the money goes: every task's runs of the last N days (7), by model — a line a
+# day and model with --daily. A model paid by the token (its CLI in AGENT_PAID_CLIS) shows what it spent: its
+# provider's cost, else MODEL_PRICES'. A subscription's model shows what it would have cost at its API rates
+# (MODEL_PRICES, else its CLI's own cost) as an equivalent — not money spent, but what eats its limit.
+cmd_spend() {
+  local days=7 daily=0 since m id type billing prices="" k usage="usage: agent spend [--days N] [--daily]"
+  while (($#)); do
+    case $1 in
+      --days) days=${2:?$usage}; shift 2 ;;
+      --daily) daily=1; shift ;;
+      *) die "$usage" ;;
+    esac
+  done
+  [[ $days =~ ^[0-9]+$ ]] || die "--days takes a number of days: $usage"
+  since=$(date -d "-$days days" +%F)
+  for k in "${!MODEL_PRICES[@]}"; do prices+="$k=${MODEL_PRICES[$k]};"; done
+  printf '%s%-36s %-9s %-12s %5s %12s %12s %10s %10s %10s\n' "$( ((daily)) && printf '%-11s' DAY)" \
+    MODEL CLI BILLING RUNS IN CACHED OUT 'SPENT$' 'EQUIV$'
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    id=$(basename "$(dirname "$m")")
+    type=$(task_field "$id" TYPE)
+    billing=subscription
+    [[ " $AGENT_PAID_CLIS " != *" $type "* ]] || billing=paid
+    join -t$'\t' <(run_days "$id" | sort -t$'\t' -k1,1) <(runs_usage "$id" | sort -t$'\t' -k1,1) \
+      | awk -F'\t' -v s="$since" -v m="$(task_model "$id")" -v c="$type" -v b="$billing" \
+          '$2 >= s {print $2 "\t" m "\t" c "\t" b "\t" $4 "\t" $5 "\t" $6 "\t" $7}'
+  done | awk -F'\t' -v D="$daily" -v P="$prices" '
+    BEGIN {n = split(P, a, ";"); for (i = 1; i <= n; i++) if (index(a[i], "=")) price[substr(a[i], 1, index(a[i], "=") - 1)] = substr(a[i], index(a[i], "=") + 1)}
+    {k = (D ? $1 : "") "\t" $2; cli[k] = $3; bill[k] = $4; runs[k]++; tin[k] += $5; ca[k] += $6; out[k] += $7; cost[k] += $8}
+    END {
+      for (k in runs) {
+        split(k, kd, "\t"); m = kd[2]; priced = -1
+        if (m in price) {split(price[m], p, " "); priced = ((tin[k] - ca[k]) * p[1] + ca[k] * p[2] + out[k] * p[3]) / 1e6}
+        if (bill[k] == "paid") {v = (cost[k] > 0 ? cost[k] : (priced >= 0 ? priced : 0)); sp = sprintf("%.4f", v); eq = "-"; ts += v}
+        else {sp = "-"; if (priced >= 0) v = priced; else v = cost[k]; eq = (priced >= 0 || cost[k] > 0 ? sprintf("%.4f", v) : "?"); te += v}
+        printf "1\t%s\t%s%-36s %-9s %-12s %5d %12d %12d %10d %10s %10s\n", k, (D ? sprintf("%-11s", kd[1]) : ""), m, cli[k], bill[k], runs[k], tin[k], ca[k], out[k], sp, eq
+      }
+      printf "2\t\t\t%s%-36s %-9s %-12s %5s %12s %12s %10s %10.4f %10.4f\n", (D ? sprintf("%-11s", "") : ""), "total", "", "", "", "", "", "", ts, te
+    }' | sort -t$'\t' -k1,1 -k2,2 -k3,3 | cut -f4-
+}
+
 cmd_tokens() { # <team|task> — the tokens the runs used, from their activity's usage lines (and opencode's step lines):
   # per task — a team's members, and the helpers and investigations they asked for — and in all
   local q=${1:?usage: agent tokens <team|task>} ids=() m d id team_ids=" " per
@@ -9817,6 +9875,7 @@ agent jobs --cancel <id>                  cancel a remote job on the lead
 agent nodes                               registered nodes on the lead
 agent kick <task>                         cut a run short: a team member sleeps (the team can wake it), solo: stopped
 agent round-check <team|task>             a round's card: its board, members' work not in its PR, files two branches changed, workers' items
+agent spend [--days N] [--daily]          where the money goes, by model: a paid model's spending, a subscription's equivalent
 agent tokens <team|task>                  the tokens its runs used: per task (a team's helpers and investigations too), in all
 agent tokens --runs <task>                a task's tokens per run, its steps (tool calls) and input per step: the costly runs
 agent wake <task>                         resume a paused task now, not at its pause's end (a remote member's: on its node)
@@ -9870,6 +9929,7 @@ main() {
     kick)    cmd_kick "$@" ;;
     wake)    cmd_wake "$@" ;;
     tokens)  cmd_tokens "$@" ;;
+    spend)   cmd_spend "$@" ;;
     round-check) cmd_round_check "$@" ;;
     round-size) cmd_round_size "$@" ;;
     _agents-json) cmd__agents_json ;;
