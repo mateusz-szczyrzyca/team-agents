@@ -1,0 +1,6 @@
+{{define "tools"}}{{with .Data}}<a class="btn" href="/team/{{.ID}}">Team</a>{{end}}{{end}}
+{{define "content"}}{{with .Data}}
+<p class="dim">Was the round's work split as planned, done once, merged? — <code>agent round-check {{.ID}}</code></p>
+{{if .Error}}<p class="notice failed">{{.Error}}</p>{{end}}
+<pre class="doc">{{.Card}}</pre>
+{{end}}{{end}}

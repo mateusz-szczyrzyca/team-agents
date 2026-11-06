@@ -1,4 +1,4 @@
-{{define "tools"}}{{with .Data}}{{if not .Stopped}}<button type="button" class="btn stop-team" hx-post="/team/{{.ID}}/stop" hx-confirm="Stop this team and disable automatic resumption?" hx-swap="outerHTML">Stop this team</button> {{end}}<a class="btn" href="/bus?team={{.ID}}">Messages</a>{{end}}{{end}}
+{{define "tools"}}{{with .Data}}{{if not .Stopped}}<button type="button" class="btn stop-team" hx-post="/team/{{.ID}}/stop" hx-confirm="Stop this team and disable automatic resumption?" hx-swap="outerHTML">Stop this team</button> {{end}}<a class="btn" href="/bus?team={{.ID}}">Messages</a> <a class="btn" href="/team/{{.ID}}/round-check">Round card</a>{{end}}{{end}}
 {{define "content"}}{{with .Data}}
 <p class="dim">{{.ID}}{{if .T.Done}} · <span class="tag">finished</span>{{end}} · coordinator: {{if .T.Lead}}{{.T.Lead}}{{else}}not chosen yet{{end}}</p>
 {{if .T.Done}}<form method="post" action="/team/{{.ID}}/resume" class="wake">

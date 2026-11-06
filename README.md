@@ -314,7 +314,8 @@ lines and when it is done —, merges each item as it is done, and redoes none o
 once and merged: its board (items, done, without an owner), each member's work that is not in the round's PR
 (commits, lines, tokens), the files more than one branch changed, the items workers did. It reads the tasks and
 branches the round left, so finished rounds can be checked too. The coordinator's notification of a round's end
-carries the card in one line (📋 round-check).
+carries the card in one line (📋 round-check). The dashboard shows it too: a team's page links its **Round card**
+(`/team/<team>/round-check`).
 
 **A member whose model is out of service.** In an `--autopilot` team, a member whose model is overloaded at the
 provider past `AGENT_FAILOVER_MIN` (15) minutes, or for the `AGENT_FAILOVER_OVERLOADS`-th (3) time within an hour, or

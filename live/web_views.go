@@ -1044,6 +1044,24 @@ func effectiveMemberState(snap *Snapshot, m *MemberInfo) string {
 }
 
 // viewTeam (GET /team/{id}) shows a team: members, board, consultations, quiz, messages, notebook.
+// viewRoundCheck shows a team's round card: what `agent round-check <team>` prints — its board, its members' work not
+// in the round's PR, the files two branches changed, the workers' items. A team the dashboard does not know has none.
+func (s *webServer) viewRoundCheck(w http.ResponseWriter, r *http.Request) {
+	snap := s.snapshot()
+	id := r.PathValue("id")
+	if snap.Teams[id] == nil {
+		viewError(s, w, r, webErr(ViewNotFound, nil, "no team %q", id))
+		return
+	}
+	d := map[string]any{"ID": id}
+	out, cerr := callAgent(s.cfg.agentCmd, "round-check", id)
+	d["Card"] = out
+	if cerr != nil {
+		d["Error"] = cerr.Error()
+	}
+	s.render(w, r, http.StatusOK, "round_check", "Round card · "+id, snap, d)
+}
+
 func (s *webServer) viewTeam(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	id := r.PathValue("id")
