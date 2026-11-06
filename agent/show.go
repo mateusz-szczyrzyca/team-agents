@@ -61,18 +61,18 @@ func cmdShow(ctx context.Context, app *App, taskID string, out io.Writer, stderr
 		}
 	}
 
-	// Print task.md if it exists
+	// Print task.md (required, oracle unconditionally reads it)
+	if _, err := fmt.Fprintf(out, "\n== task\n"); err != nil {
+		return fromStorage(ShowStorage, storageErr(err, "write task header"))
+	}
 	taskmdFile := filepath.Join(taskDir, "task.md")
-	if content, err := os.ReadFile(taskmdFile); err == nil { // #nosec G304,G703 -- local task description file under tasks directory
-		if _, err := fmt.Fprintf(out, "\n== task\n"); err != nil {
-			return fromStorage(ShowStorage, storageErr(err, "write task header"))
-		}
-		if _, err := fmt.Fprint(out, string(content)); err != nil {
-			return fromStorage(ShowStorage, storageErr(err, "write task content"))
-		}
-	} else if !os.IsNotExist(err) {
-		// Non-ENOENT errors (e.g., is a directory) are storage failures
+	content, err := os.ReadFile(taskmdFile) // #nosec G304,G703 -- local task description file under tasks directory
+	if err != nil {
+		// Missing or unreadable task.md is a storage failure, matching oracle behavior
 		return fromStorage(ShowStorage, storageErr(err, "read task.md"))
+	}
+	if _, err := fmt.Fprint(out, string(content)); err != nil {
+		return fromStorage(ShowStorage, storageErr(err, "write task content"))
 	}
 
 	// Print questions header if ROUND > 0
