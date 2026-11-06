@@ -6777,10 +6777,11 @@ cmd_run() {
     if ((autopilot)); then for i in "${ids[@]}"; do meta_set "$i" AUTOPILOT 1; done; fi
   fi
   unlock_task_ids
+  # its runner says it, once for a team — marked before any runner starts, or a quick one would miss the mark
+  meta_set "${ids[0]}" START_NOTIFY "work starts: ${team:+team $team, }${members[*]} — from $base"
   for i in "${ids[@]}"; do
     start_runner "$i" new || exit 1
   done
-  meta_set "${ids[0]}" START_NOTIFY "work starts: ${team:+team $team, }${members[*]} — from $base"   # its runner says it, once for a team
   if [[ -n $team ]]; then
     echo "Started team $team: ${members[*]} (from $base)"
     for i in "${ids[@]}"; do echo "  $i  →  $(task_field "$i" BRANCH)"; done
