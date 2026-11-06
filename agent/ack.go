@@ -105,14 +105,12 @@ func (a *App) cmdAck(target string, out io.Writer, root string) *AckError {
 	}
 	id, rerr := resolveTaskID(root, target)
 	if rerr != nil {
-		switch rerr.Cause {
-		case ResolveTaskNotFound:
+		if rerr.Cause == ResolveTaskNotFound {
 			return opErr(AckNotFound, "%s", rerr.Message)
-		case ResolveTaskAmbiguous:
+		} else if rerr.Cause == ResolveTaskAmbiguous {
 			return opErr(AckAmbiguous, "%s", rerr.Message)
-		default:
-			return fromStorage(AckStorage, storageErr(rerr, "resolve task %s", target))
 		}
+		return fromStorage(AckStorage, storageErr(rerr, "resolve task %s", target))
 	}
 	meta, merr := readTaskMeta(root, id)
 	if merr != nil && merr.Cause != ReadTaskMetaNotFound {

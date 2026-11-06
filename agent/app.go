@@ -42,10 +42,7 @@ func (a *App) tasksDirectory() string {
 // loadStartupConfig prepares production paths and configuration before dispatch.
 func (a *App) loadStartupConfig(ctx context.Context, args []string) *LoadConfigError {
 	home := os.Getenv("HOME")
-	agentsHome := os.Getenv("AGENTS_HOME")
-	if agentsHome == "" {
-		agentsHome = filepath.Join(home, "agents")
-	}
+	agentsHome := firstNonEmpty(os.Getenv("AGENTS_HOME"), filepath.Join(home, "agents"))
 	self, selfErr := os.Executable()
 	if selfErr != nil {
 		return fromProcess(LoadConfigShell, processErr("startup", selfErr, "locate executable"))
@@ -83,10 +80,7 @@ func (a *App) xdgRuntimeDir() string {
 			return v
 		}
 	}
-	if v := os.Getenv("XDG_RUNTIME_DIR"); v != "" {
-		return v
-	}
-	return "/run/user/" + strconv.Itoa(os.Getuid())
+	return firstNonEmpty(os.Getenv("XDG_RUNTIME_DIR"), "/run/user/"+strconv.Itoa(os.Getuid()))
 }
 
 // newLogger returns a Logger configured with the application's resolved log directory and settings.
@@ -96,10 +90,7 @@ func (a *App) newLogger(subcommand string) *Logger {
 		logDir = a.config.Scalars["LOG_DIR"]
 	}
 	if logDir == "" {
-		base := filepath.Join(os.Getenv("HOME"), "agents")
-		if a != nil && a.agentHome != "" {
-			base = a.agentHome
-		}
+		base := firstNonEmpty(a.agentHome, filepath.Join(os.Getenv("HOME"), "agents"))
 		logDir = filepath.Join(base, "logs")
 	}
 	stderr := io.Writer(os.Stderr)
