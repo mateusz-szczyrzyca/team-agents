@@ -93,15 +93,15 @@ func TestM2StderrShortWriteDetection(t *testing.T) {
 // the write error must be reported, not hidden.
 // Buggy: only reports write error if cmdErr == nil.
 // Fixed: always reports write error when io.WriteString fails.
-type closedPipeWriter struct{}
+type failedWriter struct{}
 
-func (cpw closedPipeWriter) Write(_ []byte) (int, error) {
+func (fw failedWriter) Write(_ []byte) (int, error) {
 	return 0, io.ErrClosedPipe
 }
 
 func TestM2WriteErrorReportedWithCmdError(t *testing.T) {
 	cmdErr := &CommandError{Cause: CommandProcess, Message: "cmd failed"}
-	fw := closedPipeWriter{}
+	fw := failedWriter{}
 
 	result := runBusDisplay(fw, cmdErr, "output", "op")
 	if result == nil {

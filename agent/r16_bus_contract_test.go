@@ -14,11 +14,13 @@ import (
 // Fixed Go: proper error handling without extra separator on failure.
 func TestM1FailedStatusExactDifferential(t *testing.T) {
 	// Simulate: status command fails with partial stdout and stderr
-	// Executor produces these exact Bash outputs
-	type statusFailExecutor struct {
-		cmd Command
+	exec := &readCmdsTestExecutor{
+		stderrs: map[string]string{"status": "status-error"},
+		responses: map[string]string{
+			"log": "event\n",
+		},
+		exitCodes: map[string]int{"status": 42},
 	}
-	exec := &statusFailExecutor{}
 
 	app := newReadCmdsTestApp(exec)
 	var out bytes.Buffer
@@ -34,21 +36,28 @@ func TestM1FailedStatusExactDifferential(t *testing.T) {
 	}
 }
 
+// truncatingStdErr writes n-1 bytes to simulate truncation.
+type truncatingStdErr struct {
+	count int
+}
+
+func (ts *truncatingStdErr) Write(p []byte) (int, error) {
+	ts.count++
+	if ts.count == 1 && len(p) > 0 {
+		return len(p) - 1, nil // truncate: write n-1, no error
+	}
+	return len(p), nil
+}
+
 // TestM2StderrShortWriteContractError verifies M2 fix: short writes are detected via io.ErrShortWrite.
 // When app.Stderr.Write returns (n, nil) where n < len(data), must synthesize io.ErrShortWrite.
 func TestM2StderrShortWriteContractError(t *testing.T) {
-	// Writer that truncates: write n-1 bytes, return nil (no explicit error)
-	type shortWriter struct {
-		count int
-	}
-	sw := &shortWriter{}
-
 	exec := &readCmdsTestExecutor{
 		stderrs:   map[string]string{"status": "diagnostic"},
 		responses: map[string]string{"log": "ok"},
 	}
 	app := newReadCmdsTestApp(exec)
-	app.Stderr = &shortWriter{}
+	app.Stderr = &truncatingStdErr{}
 
 	_, err := busCmd(context.Background(), app, "/bin/agentbus", "status", "--dir", "/tmp/bus")
 
@@ -70,7 +79,7 @@ func TestM2StderrShortWriteContractError(t *testing.T) {
 // When runBusDisplay has both cmdErr and write failure, write error must be reported.
 func TestM2WriteErrorWithCmdErrorContract(t *testing.T) {
 	cmdErr := &CommandError{Cause: CommandProcess, Message: "cmd failed"}
-	closedWriter := closedPipeWriter{}
+	closedWriter := &closedPipeWriter{}
 
 	result := runBusDisplay(closedWriter, cmdErr, "text", "op")
 
