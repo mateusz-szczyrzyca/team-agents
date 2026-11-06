@@ -389,6 +389,9 @@ tests/unit/node_two_homes.bats	a remote member that fails is out of its team on 
 tests/unit/node_two_homes.bats	resuming a team with a remote member brings the member back on its node	blackbox	R50	-	planned
 tests/unit/node_two_homes.bats	a job whose task is paused on its node can be stopped (no unit runs it)	blackbox	R50	-	planned
 tests/unit/node_two_homes.bats	a remote member's job whose team the lead's bus does not know is cancelled by agent _supervise on the lead	blackbox	R50	-	planned
+tests/unit/notify_merged_start.bats	a new solo task is announced as started	blackbox	R14	-	planned
+tests/unit/notify_merged_start.bats	a new team is announced as started once, not once a member	blackbox	R14	-	planned
+tests/unit/notify_merged_start.bats	a merge is '🟣 PR merged', with its two reviewers and their models, in a file of its own	source	R14	-	planned
 tests/unit/one_pr_per_round.bats	the next round does not start while another PR of the round is open, though one of its PRs is merged	blackbox	R34	-	planned
 tests/unit/one_pr_per_round.bats	round_open_prs lists the open PRs of the team's branches, and only those	source	R31	-	planned
 tests/unit/one_pr_per_round.bats	a round resumed says which is its PR, and that every commit of the round goes there	blackbox	R31	-	planned
