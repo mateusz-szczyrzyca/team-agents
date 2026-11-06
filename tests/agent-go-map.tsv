@@ -75,6 +75,7 @@ tests/unit/fresh_relative.bats	a resumed run starts a fresh session only past tw
 tests/unit/fresh_session.bats	a run that read a large context a step is followed by a fresh session, not a resume	blackbox	R24	-	planned
 tests/unit/fresh_session.bats	a run with a small context a step is resumed as before	blackbox	R24	-	planned
 tests/unit/fresh_session.bats	a team member's long run ends it: its next run starts a fresh session, woken at once	source	R25	-	planned
+tests/unit/fresh_session_id.bats	a Claude Code task's fresh session gets a new session ID, not its old session's	blackbox	R18	-	planned
 tests/unit/foreground_commands.bats	a Claude Code run has background tasks off and a Bash timeout of CLAUDE_BASH_TIMEOUT_MIN	blackbox	R17	-	planned
 tests/unit/foreground_commands.bats	every run's prompt says to run commands in the foreground, never ending a turn to wait for one	blackbox	R16	-	planned
 tests/unit/gate.bats	passing steps take one line each; the full output is in the log	blackbox	R32	-	planned

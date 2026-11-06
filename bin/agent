@@ -5483,7 +5483,13 @@ cmd__runner() {
   if [[ $mode == resume ]] && fresh_session_due "$id"; then   # not the old session: a fresh one with the handoff
     mode=fresh
     meta_set "$id" LONG_RUN ""
-    log_info fresh_session "task=$id" "reason=$FRESH_WHY"
+    local fresh_sid=()
+    if [[ $TYPE == claude ]]; then   # a fresh session is a new one: Claude Code refuses the old one's ID ("already in use")
+      SESSION_ID=$(cat /proc/sys/kernel/random/uuid)
+      meta_set "$id" SESSION_ID "$SESSION_ID"
+      fresh_sid=("session=$SESSION_ID")
+    fi
+    log_info fresh_session "task=$id" "reason=$FRESH_WHY" "${fresh_sid[@]}"
   fi
   log_info run_started "run=$n" "mode=$mode" "agent=$AGENT" "cli=$TYPE" "kind=${KIND:-worker}" "model=${MODEL:-}"
 
