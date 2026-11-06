@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -507,4 +508,74 @@ func TestCmdShowStorageFailures(t *testing.T) {
 		}
 	})
 }
+
+// TestCmdShowWorktreeReportRegression verifies that the report line uses WORKTREE from meta.env when a real report exists.
+func TestCmdShowWorktreeReportRegression(t *testing.T) {
+	tasksDir := t.TempDir()
+	appWorkTree := t.TempDir()
+	metaWorkTree := t.TempDir()
+	app := &App{
+		Executor: &appExecutor{},
+		tasksDir: tasksDir,
+		workTree: appWorkTree,
+	}
+
+	// Create real report only in metaWorkTree
+	reportDir := filepath.Join(metaWorkTree, ".agents", "reports")
+	if err := os.MkdirAll(reportDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	reportFile := filepath.Join(reportDir, "wt-task.md")
+	if err := os.WriteFile(reportFile, []byte("# Report"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	taskDir := filepath.Join(tasksDir, "wt-task")
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	meta := fmt.Sprintf("ID=wt-task\nWORKTREE=%s\nSTATUS=done\n", metaWorkTree)
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte(meta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := cmdShow(context.Background(), app, "wt-task", &out); err != nil {
+		t.Fatalf("cmdShow failed: %v", err)
+	}
+	wantLine := fmt.Sprintf("\n== report: %s\n", reportFile)
+	if !strings.Contains(out.String(), wantLine) {
+		t.Fatalf("output does not contain expected report line %q: %s", wantLine, out.String())
+	}
+}
+
+// TestCmdShowFinalMessageTrailingNewlinesExact verifies that final.md trailing newlines are stripped exactly.
+func TestCmdShowFinalMessageTrailingNewlinesExact(t *testing.T) {
+	tasksDir := t.TempDir()
+	app := &App{tasksDir: tasksDir}
+	taskDir := filepath.Join(tasksDir, "trailing-task")
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "meta.env"), []byte("ID=trailing-task\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "final.md"), []byte("Message content\n\n\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := cmdShow(context.Background(), app, "trailing-task", &out); err != nil {
+		t.Fatalf("cmdShow failed: %v", err)
+	}
+	// Verify that the output ends with exactly one newline after the message
+	if strings.HasSuffix(out.String(), "\n\n") {
+		t.Fatalf("output has trailing empty lines: %q", out.String())
+	}
+	want := "\n== the agent's last message\nMessage content\n"
+	if !strings.HasSuffix(out.String(), want) {
+		t.Fatalf("output does not end with exactly %q: %q", want, out.String())
+	}
+}
+
 
