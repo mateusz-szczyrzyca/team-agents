@@ -827,12 +827,12 @@ team ID (`<timestamp>-team`) or any member's task ID.
 
 ### Reading and displaying tasks and agents
 
-- `agent status` or `agent ls`: list all tasks in the tasks directory with status, duration, repository, round and run
+- `agent status` or `agent ls`: list all tasks in the tasks directory with task ID, agent name, status (with `?` for hung units), round, run, and repository
 - `agent show <id>`: show full details of a task: metadata, task description, questions (if any), investigation summary, agent's final message, and report
-- `agent agents`: list all agents currently running, their worktrees, branches, and status
-- `agent bus [N]`: show N most recent bus messages (default: 10); for direct bus access, use `agentbus serve`
-- `agent inv [N|--all]`: show investigation queue or details of investigation N; queue size and slot configuration are from the oracle defaults
-- `agent notes [repo]`: show repository notebook (all repositories if no repo given); persists findings, conventions, and tool behavior for future rounds
+- `agent agents`: list all configured agents and investigators with live task allocation status and investigation slot summary
+- `agent bus [N]`: show N most recent bus messages (default: 30); for direct bus access, use `agentbus serve`
+- `agent inv [N|--all]`: show investigation queue or details of investigation N; queue size and slot configuration are from `INVESTIGATION_QUEUE_MAX` and `INV_SLOTS` in `agents.conf`
+- `agent notes [repo]`: show repository notebook; without a repository argument, uses the current git repository; lists all notebooks only outside a repository
 - `agent helpers [--all]`: list active helper agents and their status
 - `agent ack <id|all>`: mark task(s) as acknowledged (removes from active display); use after reviewing results
 
