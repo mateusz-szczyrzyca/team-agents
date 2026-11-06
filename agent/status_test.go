@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -245,6 +246,7 @@ func (e *statusEnvExecutor) Execute(_ context.Context, cmd Command) (CommandResu
 
 // TestStatusXDGRuntimeDirPropagated verifies XDG_RUNTIME_DIR is passed to systemctl when unset in parent environment.
 func TestStatusXDGRuntimeDirPropagated(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "")
 	tempTasks := t.TempDir()
 	createStatusTaskDir(t, tempTasks, "active-task", "ID=active-task\nSTATUS=running\nRUN=1\n")
 	exec := &statusEnvExecutor{}
@@ -254,10 +256,11 @@ func TestStatusXDGRuntimeDirPropagated(t *testing.T) {
 	if err := cmdStatus(context.Background(), app, &out); err != nil {
 		t.Fatalf("cmdStatus err = %v", err)
 	}
+	want := "XDG_RUNTIME_DIR=/run/user/" + strconv.Itoa(os.Getuid())
 	for _, e := range exec.capturedEnv {
-		if strings.HasPrefix(e, "XDG_RUNTIME_DIR=") {
+		if e == want {
 			return
 		}
 	}
-	t.Fatalf("cmd.Env does not contain XDG_RUNTIME_DIR: %v", exec.capturedEnv)
+	t.Fatalf("cmd.Env does not contain %s: %v", want, exec.capturedEnv)
 }

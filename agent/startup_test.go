@@ -132,6 +132,27 @@ func TestAgentsRouteLoadedConfig(t *testing.T) {
 	}
 }
 
+// TestStartupHostnamePrecedence verifies inherited HOSTNAME takes precedence over os.Hostname.
+func TestStartupHostnamePrecedence(t *testing.T) {
+	t.Setenv("HOSTNAME", "custom-inherited-hostname.example")
+	home := t.TempDir()
+	confPath := filepath.Join(home, "agents", "agents.conf")
+	if err := os.MkdirAll(filepath.Dir(confPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(confPath, []byte("INSTANCE_NAME=\"${HOSTNAME:-fallback}\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	app := newApp(OSExecutor{}, nil, nil)
+	t.Setenv("HOME", home)
+	if err := app.loadStartupConfig(context.Background(), nil); err != nil {
+		t.Fatalf("loadStartupConfig failed: %v", err)
+	}
+	if got := app.config.Scalars["INSTANCE_NAME"]; got != "custom-inherited-hostname.example" {
+		t.Fatalf("INSTANCE_NAME = %q, want custom-inherited-hostname.example", got)
+	}
+}
+
 // Execute provides bus output while preserving any destination failure.
 func (*startupSummaryExecutor) Execute(_ context.Context, command Command) (CommandResult, *ExecuteError) {
 	if _, err := io.Copy(command.Stdout, strings.NewReader("summary")); err != nil {

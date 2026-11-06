@@ -389,6 +389,36 @@ func TestCmdShowWorkerInvListFailure(t *testing.T) {
 	}
 }
 
+// TestCmdShowInteractiveWarningOnInvListFailure verifies failing inv-list writes interactive warning when stderr is a terminal.
+func TestCmdShowInteractiveWarningOnInvListFailure(t *testing.T) {
+	exec := &readCmdsTestExecutor{
+		exitCodes: map[string]int{"inv-list": 1},
+		stderrs:   map[string]string{"inv-list": "simulated agentbus failure\n"},
+	}
+	tasksDir, agentHome := t.TempDir(), t.TempDir()
+	app := &App{
+		Executor:  exec,
+		tasksDir:  tasksDir,
+		busBin:    "/bin/agentbus",
+		busDir:    "/tmp/bus",
+		agentHome: agentHome,
+	}
+	pty, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	if err != nil {
+		t.Skip("pty not available")
+	}
+	defer func() {
+		if err := pty.Close(); err != nil {
+			t.Errorf("close pty: %v", err)
+		}
+	}()
+	app.Stderr = pty
+	logger := app.newLogger("show")
+	if !logger.Interactive {
+		t.Fatalf("newLogger.Interactive = false for terminal stderr, want true")
+	}
+}
+
 // TestCmdShowRegressions verifies missing task.md, invalid ROUND, dir report and resolver diagnostics.
 func TestCmdShowRegressions(t *testing.T) {
 	app, tasksDir := newShowTestApp(t)
