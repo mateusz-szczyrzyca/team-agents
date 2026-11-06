@@ -70,6 +70,7 @@ tests/unit/failover.bats	a member whose model is out of service is replaced by a
 tests/unit/failover.bats	a coordinator whose model is out of service is replaced: the new team has a new coordinator	blackbox	R29	-	planned
 tests/unit/failover.bats	without a free normal agent the member waits its pause out, and the human hears of it	blackbox	R29	-	planned
 tests/unit/failover.bats	a coordinator's prompt says never to wait in a loop for its members	blackbox	R29	-	planned
+tests/unit/fix_passes_default.bats	by default --autopilot has five fix passes: the sixth failed review calls the human	source	R34	-	planned
 tests/unit/fresh_relative.bats	a resumed run starts a fresh session only past twice the task's session starts; --runs shows each run's mode	source	R17	-	planned
 tests/unit/fresh_session.bats	a run that read a large context a step is followed by a fresh session, not a resume	blackbox	R24	-	planned
 tests/unit/fresh_session.bats	a run with a small context a step is resumed as before	blackbox	R24	-	planned
