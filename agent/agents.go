@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -127,7 +128,12 @@ func (a *App) cmdAgents(out io.Writer, cfg *Config, root, busDir string) *Agents
 
 // cmdAgentsJSON emits one configuration record per agent and investigator.
 func (a *App) cmdAgentsJSON(out io.Writer, cfg *Config) *AgentsJSONError {
-	_ = out
-	_ = cfg
+	enc := json.NewEncoder(out) // enc emits one independently parseable object per line.
+	enc.SetEscapeHTML(false)
+	for _, record := range configuredListings(cfg) {
+		if err := enc.Encode(record); err != nil {
+			return fromStorage(AgentsJSONStorage, storageErr(err, "write agent JSON"))
+		}
+	}
 	return nil
 }
