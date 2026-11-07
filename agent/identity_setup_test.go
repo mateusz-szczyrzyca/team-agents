@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -217,7 +218,8 @@ func TestSetupLogsIdentityDespiteRunnerFailure(t *testing.T) {
 		t.Fatalf("Setup error: %v", setupErr)
 	}
 	// Both warning and git_identity should be logged to agent.jsonl despite runner failure
-	data, readErr := os.ReadFile(filepath.Join(logDir, "agent.jsonl")) //nolint:gosec // Test temp directory path is under caller control.
+	jsonlPath := filepath.Clean(filepath.Join(logDir, "agent.jsonl"))
+	data, readErr := os.ReadFile(jsonlPath)
 	if readErr != nil {
 		t.Fatalf("agent.jsonl: %v", readErr)
 	}
@@ -227,6 +229,45 @@ func TestSetupLogsIdentityDespiteRunnerFailure(t *testing.T) {
 	}
 	if !strings.Contains(content, `"event":"git_identity"`) {
 		t.Error("git_identity not logged to agent.jsonl despite runner failure")
+	}
+}
+
+// TestSetupLogsIdentityWithFailingAggregateFile tests M1 exact scenario: failing file sink with healthy runner.
+// Both warning and git_identity must appear in runner buffer when agent.jsonl is blocked.
+func TestSetupLogsIdentityWithFailingAggregateFile(t *testing.T) {
+	tmpdir := t.TempDir()
+	// Block the agent.jsonl directory to cause file sink failures
+	logDir := filepath.Join(tmpdir, "logs")
+	if err := os.Mkdir(logDir, 0700); err != nil {
+		t.Fatalf("Failed to create log dir: %v", err)
+	}
+	// Create a regular file where agent.jsonl should be written, blocking it
+	jsonlPath := filepath.Join(logDir, "agent.jsonl")
+	if err := os.WriteFile(jsonlPath, []byte("blocked"), 0600); err != nil {
+		t.Fatalf("Failed to create blocking file: %v", err)
+	}
+
+	var runnerBuffer bytes.Buffer
+	logger := &Logger{LogDir: logDir, Runner: &runnerBuffer, Task: "test"}
+	id := &Identity{Agent: "test", SigningKey: "/nonexistent/key"}
+	env, setupErr := id.Setup(context.Background(), "", logger)
+
+	// Logger failure should be nonfatal
+	if setupErr != nil {
+		t.Fatalf("Setup returned error: %v", setupErr)
+	}
+	// Environment should be populated despite file sink failure
+	if env == nil || env["GIT_AUTHOR_NAME"] == "" {
+		t.Error("Environment not populated despite file sink failure")
+	}
+
+	// Both records should appear in runner buffer despite file sink failure
+	runnerContent := runnerBuffer.String()
+	if !strings.Contains(runnerContent, `"event":"signing_key_unreadable"`) {
+		t.Error("warning not logged to runner buffer despite file sink failure")
+	}
+	if !strings.Contains(runnerContent, `"event":"git_identity"`) {
+		t.Error("git_identity not logged to runner buffer despite file sink failure")
 	}
 }
 

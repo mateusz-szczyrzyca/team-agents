@@ -160,16 +160,22 @@ func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logg
 	}
 
 	if logger != nil {
+		var warnErr, identErr *LogWriteError
 		if id.SigningKey != "" && !signingEnabled {
-			// Log warning to all sinks. Individual sink failures are logged to stderr by Logger and do not block operation.
-			_ = logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key="+id.SigningKey, "effect=commits of this run are not signed") //nolint:errcheck // Sink failures are nonfatal; already logged to stderr by Logger.
+			// Log warning to all sinks. Continue to identity even if a sink fails.
+			warnErr = logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key="+id.SigningKey, "effect=commits of this run are not signed")
 		}
 		sigStr := "no"
 		if signingEnabled {
 			sigStr = "yes"
 		}
-		// Log identity info. Preserve record in healthy sinks even if one sink fails.
-		_ = logger.Log(ctx, LevelInfo, LogGitIdentity, "name="+author, "email="+email, "signing="+sigStr) //nolint:errcheck // Sink failures are nonfatal; already logged to stderr by Logger.
+		// Log identity info. Preserve record in healthy sinks even if warning sink failed.
+		identErr = logger.Log(ctx, LevelInfo, LogGitIdentity, "name="+author, "email="+email, "signing="+sigStr)
+		// Individual sink failures are logged to stderr by Logger and are nonfatal.
+		if warnErr != nil || identErr != nil {
+			// Logger failures do not block operation; prepared identity is valid.
+			return env, nil
+		}
 	}
 
 	return env, nil
