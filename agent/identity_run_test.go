@@ -252,3 +252,36 @@ func TestIdentityFromRunAuthorFormatExpansion(t *testing.T) {
 		t.Errorf("FormatAuthor should expand %%a to agent name, got %q", author)
 	}
 }
+
+func TestIdentityFromRunArrayFormIdentityConfig(t *testing.T) {
+	// RED: Array-form identity config (GIT_NAME_FORMAT/EMAIL/SIGNING_KEY) should be read correctly
+	meta := MetaFile{
+		Lines: []MetaLine{
+			{Kind: MetaAssignment, Key: "AGENT", Value: "claude-haiku"},
+			{Kind: MetaAssignment, Key: "TYPE", Value: "claude"},
+		},
+	}
+	cfg := Config{
+		Indexed: map[string]map[string]string{
+			"GIT_NAME_FORMAT": {"0": "%a (custom)"},
+			"GIT_EMAIL":       {"0": "%a@example.com"},
+			"GIT_SIGNING_KEY": {"0": "/path/to/key"},
+		},
+	}
+
+	id := IdentityFromRun(meta, cfg, "run-123")
+
+	if id == nil {
+		t.Fatal("IdentityFromRun returned nil")
+	}
+	// Verify array-form config is extracted and usable
+	if id.NameFormat != "%a (custom)" {
+		t.Errorf("NameFormat: got %q, want %q", id.NameFormat, "%a (custom)")
+	}
+	if id.EmailConfig != "%a@example.com" {
+		t.Errorf("EmailConfig: got %q, want %q", id.EmailConfig, "%a@example.com")
+	}
+	if id.SigningKey != "/path/to/key" {
+		t.Errorf("SigningKey: got %q, want %q", id.SigningKey, "/path/to/key")
+	}
+}

@@ -20,11 +20,6 @@ setup() {
   cp "$BATS_TEST_DIRNAME/stubs/fake-claude" "$HOME/.local/bin/claude"
   cp "$REPO_ROOT"/prompts/*.md "$AGENTS_HOME/prompts/"
   export PATH="$BATS_TEST_DIRNAME/stubs:$HOME/.local/bin:$PATH"
-  # Fixture isolation: clear inherited environment variables that would cause
-  # test infrastructure failures in ordinary (non-sanitized) environments
-  export AGENTBUS_BIN="$HOME/.local/bin/agentbus"
-  export AGENT_GH_BUS_DIR="$AGENTS_HOME/bus"
-  unset AGENT_GITHUB_NAME_COLORS OPENCODE_CONFIG_CONTENT
 
   cat > "$HOME/notify.sh" <<'NOTIFY'
 #!/usr/bin/env bash

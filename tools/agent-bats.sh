@@ -132,6 +132,13 @@ stage_repository() {
   done
 }
 
+# scrub_inherited_env — removes hostile inherited environment variables from ordinary runs
+# Clears: AGENTBUS_BIN, AGENT_GH_BUS_DIR, AGENT_GH_COORDINATOR, AGENT_GH_OWN_PR, AGENT_GH_SELF,
+# AGENT_GH_TEAM, AGENT_GITHUB_NAME_COLORS, OPENCODE_CONFIG_CONTENT
+scrub_inherited_env() {
+  unset AGENTBUS_BIN AGENT_GH_BUS_DIR AGENT_GH_COORDINATOR AGENT_GH_OWN_PR AGENT_GH_SELF AGENT_GH_TEAM AGENT_GITHUB_NAME_COLORS OPENCODE_CONFIG_CONTENT
+}
+
 # escape_regex str — escapes regular expression metacharacters for Bats --filter
 escape_regex() {
   printf '%s\n' "$1" | sed -e 's/[][(){}|+*^$?.\]/\\&/g'
@@ -210,6 +217,10 @@ if [[ $LANE == "candidate" ]]; then
   trap cleanup_candidate_root EXIT
 
   stage_repository "$STAGED_ROOT"
+
+  # Scrub inherited environment variables that would cause test infrastructure failures
+  # when running in ordinary (non-sanitized) environments
+  scrub_inherited_env
 
   # Place Go candidate binary at bin/agent (actual executable copy, not symlink)
   mkdir -p "$STAGED_ROOT/bin"
@@ -330,6 +341,11 @@ else
   trap cleanup_oracle_root EXIT
 
   stage_repository "$STAGED_ROOT"
+
+  # Scrub inherited environment variables that would cause test infrastructure failures
+  # when running in ordinary (non-sanitized) environments
+  scrub_inherited_env
+
   mkdir -p "$STAGED_ROOT/bin"
 
   # Place oracle at bin/agent (tracked bin/agent or tests/oracle/agent)

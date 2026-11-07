@@ -662,8 +662,3 @@ tests/unit/team_stop_followup.bats	a helper's task text is in English: the reque
 tests/unit/tmp_sweep.bats	tmp-sweep removes the old leftovers of test runs that no process uses; it keeps fresh ones, those in use, and anything else	blackbox	R55	-	planned
 tests/unit/tmp_sweep.bats	make unit-bats runs the tests with their temporary files in BATS_TMP, after sweeping it and /tmp	blackbox	R55	-	planned
 tests/unit/tmp_sweep.bats	unit-bats.sh refuses to start without room for its temporary files, and says so	blackbox	R55	-	planned
-tests/unit/fixture_isolation_test.bats	fixture isolation: AGENTBUS_BIN is bound to fixture, not inherited	source	R10B	-	planned
-tests/unit/fixture_isolation_test.bats	fixture isolation: AGENT_GH_BUS_DIR is bound to fixture, not inherited	source	R10B	-	planned
-tests/unit/fixture_isolation_test.bats	fixture isolation: AGENT_GITHUB_NAME_COLORS is cleared in fixture	source	R10B	-	planned
-tests/unit/fixture_isolation_test.bats	fixture isolation: OPENCODE_CONFIG_CONTENT is cleared in fixture	source	R10B	-	planned
-tests/unit/fixture_isolation_test.bats	fixture isolation: setup overrides hostile inherited environment variables	source	R10B	-	planned
