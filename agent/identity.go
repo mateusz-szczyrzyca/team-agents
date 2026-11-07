@@ -28,6 +28,8 @@ type Identity struct {
 	SigningKey string
 	// NameFormat is the configured author name format string (%a = agent name).
 	NameFormat string
+	// ConfigIndexed preserves array-form git config (GIT_CONFIG_*) from the loaded config.
+	ConfigIndexed map[string]map[string]string
 	// Task is the task ID this run belongs to.
 	Task string
 	// Team is the team ID, if this is a team run.
@@ -125,6 +127,13 @@ func (id *Identity) Environment() map[string]string {
 	// Merge signing configuration
 	for k, v := range id.SigningEnv() {
 		env[k] = v
+	}
+
+	// Preserve array-form config from loaded configuration
+	for varName, indices := range id.ConfigIndexed {
+		if val, ok := indices["0"]; ok {
+			env[varName] = val
+		}
 	}
 
 	return env

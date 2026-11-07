@@ -17,14 +17,15 @@ func IdentityFromRun(meta MetaFile, cfg Config, runnerID string) *Identity {
 	signingKey := cfg.Scalars["GIT_SIGNING_KEY"]
 
 	return &Identity{
-		Agent:       agent,
-		Provider:    provider,
-		Model:       model,
-		NameFormat:  nameFormat,
-		EmailConfig: emailConfig,
-		SigningKey:  signingKey,
-		Task:        runnerID,
-		Team:        team,
-		InvID:       invID,
+		Agent:         agent,
+		Provider:      provider,
+		Model:         model,
+		NameFormat:    nameFormat,
+		EmailConfig:   emailConfig,
+		SigningKey:    signingKey,
+		ConfigIndexed: cfg.Indexed,
+		Task:          runnerID,
+		Team:          team,
+		InvID:         invID,
 	}
 }

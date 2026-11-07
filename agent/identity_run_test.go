@@ -252,3 +252,34 @@ func TestIdentityFromRunAuthorFormatExpansion(t *testing.T) {
 		t.Errorf("FormatAuthor should expand %%a to agent name, got %q", author)
 	}
 }
+
+func TestIdentityFromRunPreservesArrayFormConfig(t *testing.T) {
+	// RED: Array-form git config should be preserved through IdentityFromRun
+	meta := MetaFile{
+		Lines: []MetaLine{
+			{Kind: MetaAssignment, Key: "AGENT", Value: "claude-haiku"},
+			{Kind: MetaAssignment, Key: "TYPE", Value: "claude"},
+		},
+	}
+	cfg := Config{
+		Indexed: map[string]map[string]string{
+			"GIT_CONFIG_COUNT": {"0": "1"},
+			"GIT_CONFIG_KEY_0": {"0": "user.name"},
+			"GIT_CONFIG_VALUE_0": {"0": "ArrayFormAgent"},
+		},
+	}
+
+	id := IdentityFromRun(meta, cfg, "run-123")
+
+	if id == nil {
+		t.Fatal("IdentityFromRun returned nil")
+	}
+	// Verify array config was preserved (Environment should include it)
+	env := id.Environment()
+	if env["GIT_CONFIG_COUNT"] == "" {
+		t.Error("GIT_CONFIG_COUNT not preserved from array-form config")
+	}
+	if env["GIT_CONFIG_VALUE_0"] != "ArrayFormAgent" {
+		t.Errorf("Array-form config value not preserved, got %q", env["GIT_CONFIG_VALUE_0"])
+	}
+}
