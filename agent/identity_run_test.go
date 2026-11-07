@@ -263,8 +263,8 @@ func TestIdentityFromRunPreservesArrayFormConfig(t *testing.T) {
 	}
 	cfg := Config{
 		Indexed: map[string]map[string]string{
-			"GIT_CONFIG_COUNT": {"0": "1"},
-			"GIT_CONFIG_KEY_0": {"0": "user.name"},
+			"GIT_CONFIG_COUNT":   {"0": "1"},
+			"GIT_CONFIG_KEY_0":   {"0": "user.name"},
 			"GIT_CONFIG_VALUE_0": {"0": "ArrayFormAgent"},
 		},
 	}
