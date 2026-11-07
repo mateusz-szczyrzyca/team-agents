@@ -646,6 +646,7 @@ tests/unit/debug_cmd.bats	agent debug <team> writes one file with the team on th
 tests/unit/debug_cmd.bats	agent debug redacts tokens and the values of secrets.env	blackbox	R53B	-	planned
 tests/unit/debug_cmd.bats	agent debug of a task: the last activity by default, all of it with --full, in the file --out names	blackbox	R53B	-	planned
 tests/unit/debug_cmd.bats	agent debug refuses an ID that is no team and no task	blackbox	R53B	-	planned
+tests/unit/resume_large_board.bats	a team whose board is larger than one argument can hold is resumed, its board carried	blackbox	R30	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
