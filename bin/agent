@@ -2497,11 +2497,12 @@ supervise_failovers() {
 # coordinator's request, whose result the coordinator gets. A team whose members all sleep while items wait
 # AGENT_BOARD_STALL_MIN tells the human ⛔ — once for the same items (stall-<team> under the bus directory).
 supervise_board() {
-  local m team lead lt tj board now id upd title details age stale mark
+  local m team lead lt tj board now id upd title details age stale mark repo
   local -A teams_seen=()
   now=$(date +%s)
   for m in "$TASKS"/*/meta.env; do
-    team=$(sed -n 's/^TEAM=//p' "$m" 2> /dev/null)
+    [[ -f $m ]] || continue   # no task at all: the pattern is left as it is
+    team=$(sed -n 's/^TEAM=//p' "$m" 2> /dev/null) || continue
     [[ -n $team && -z ${teams_seen[$team]:-} ]] || continue
     teams_seen[$team]=1
     tj=$(team_json "$team" 2> /dev/null) || continue
@@ -2537,7 +2538,8 @@ supervise_board() {
     [[ -n $stale && $(cat "$mark" 2> /dev/null) != "$stale" ]] || continue
     echo "$stale" > "$mark"
     log_warn board_stall "team=$team" "items=$stale"
-    push_text "$(task_field "$lt" REPO_NAME)" "⛔ Team $team is at a standstill: its members all sleep, and board items wait that nobody takes: $stale" \
+    repo=$(task_field "$lt" REPO_NAME)
+    push_text "$repo" "⛔ Team $team is at a standstill: its members all sleep, and board items wait that nobody takes: $stale" \
       "Wake its coordinator with what to do: agent run --resume $team --same-round \"…\""
   done
 }
@@ -7506,12 +7508,12 @@ supervise_merged_rounds() {
 supervise_teams() { # an open team with no local member at work or asleep for AGENT_TEAM_ABANDON_MIN is reported to the
   # human, once: it waits for a resume (a coordinator's failure keeps a team open) or to be closed — never by itself
   local m team t alive last tm mark first
-  local -A teams_seen=()
+  local -A seen=()
   for m in "$TASKS"/*/meta.env; do
     [[ -f $m ]] || continue
     team=$(sed -n 's/^TEAM=//p' "$m")
-    [[ -n $team && -z ${teams_seen[$team]:-} ]] || continue
-    teams_seen[$team]=1
+    [[ -n $team && -z ${seen[$team]:-} ]] || continue
+    seen[$team]=1
     grep -qx 'REMOTE_TEAM=1' "$m" && continue                 # a remote member's task: its team lives on the lead
     [[ $(team_done_flag "$team") == false ]] || continue        # closed, or unknown to the bus
     mark="$BUS_DIR/abandoned-teams/$team"
@@ -7877,7 +7879,7 @@ long_run_end() {
 round_card() {
   local team=$1 t f b agent pr_task root base pr_branch num items n lines tokens w=()
   local -a tasks=()
-  local -A teams_seen=()
+  local -A seen=()
   mapfile -t tasks < <(grep -lx "TEAM=$team" "$TASKS"/*/meta.env 2> /dev/null | xargs -r -n1 dirname | xargs -r -n1 basename)
   ((${#tasks[@]})) || return 1
   pr_task=$(team_pr_task "$team"); pr_task=${pr_task:-${tasks[0]}}
