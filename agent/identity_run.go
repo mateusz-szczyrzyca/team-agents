@@ -6,6 +6,23 @@ package main
 // runnerID is the task ID of the current run.
 // No validation rejects legacy values; all fields are preserved as-is.
 func IdentityFromRun(meta MetaFile, cfg Config, runnerID string) *Identity {
-	// Implementation stub — will be replaced by GREEN phase
-	return nil
+	agent, _ := meta.Lookup("AGENT")
+	provider, _ := meta.Lookup("TYPE")
+	model, _ := meta.Lookup("MODEL")
+	team, _ := meta.Lookup("TEAM")
+	invID, _ := meta.Lookup("INV_ID")
+
+	emailConfig := cfg.Scalars["GIT_EMAIL"]
+	signingKey := cfg.Scalars["GIT_SIGNING_KEY"]
+
+	return &Identity{
+		Agent:       agent,
+		Provider:    provider,
+		Model:       model,
+		EmailConfig: emailConfig,
+		SigningKey:  signingKey,
+		Task:        runnerID,
+		Team:        team,
+		InvID:       invID,
+	}
 }

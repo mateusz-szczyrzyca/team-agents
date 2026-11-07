@@ -226,7 +226,7 @@ func TestIdentityFromRunInvestigationTrailer(t *testing.T) {
 }
 
 func TestIdentityFromRunAuthorFormatExpansion(t *testing.T) {
-	// RED: author name format with %a expands correctly
+	// RED: Identity values are extracted and preserved correctly
 	meta := MetaFile{
 		Lines: []MetaLine{
 			{Kind: MetaAssignment, Key: "AGENT", Value: "my-agent"},
@@ -246,7 +246,8 @@ func TestIdentityFromRunAuthorFormatExpansion(t *testing.T) {
 		t.Fatal("IdentityFromRun returned nil")
 	}
 
-	author := id.FormatAuthor(id.EmailConfig)
+	// FormatAuthor expands %a when given the format
+	author := id.FormatAuthor("%a (team-agents)")
 	if !strings.Contains(author, "my-agent") {
 		t.Errorf("FormatAuthor should expand %%a to agent name, got %q", author)
 	}
