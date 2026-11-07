@@ -39,22 +39,28 @@ func TestIdentityUnreadableKeyEnv(t *testing.T) {
 	}
 }
 
-// TestIdentityNoGlobalMutation ensures Environment doesn't mutate process state.
+// TestIdentityNoGlobalMutation verifies returned environment is independent of process state.
 func TestIdentityNoGlobalMutation(t *testing.T) {
 	id := &Identity{Agent: "a1", Provider: "p1", Model: "m1", Task: "t1"}
 
-	// Call Environment multiple times
-	e1 := id.Environment()
-	e2 := id.Environment()
-
-	// Should get equivalent (not identical) maps
-	if e1["GIT_AUTHOR_NAME"] != e2["GIT_AUTHOR_NAME"] {
-		t.Error("Environment() should be deterministic")
+	// Get environment
+	env1 := id.Environment()
+	original := make(map[string]string)
+	for k, v := range env1 {
+		original[k] = v
 	}
 
-	// Verify no exported environment variables
-	if _, ok := e1["GIT_AUTHOR_NAME"]; ok && e1["GIT_AUTHOR_NAME"] != "" {
-		// This is correct - methods return values, not set env
-		// The test just verifies the returned values are safe
+	// Mutate returned map
+	env1["GIT_AUTHOR_NAME"] = "MODIFIED"
+	env1["GIT_AUTHOR_EMAIL"] = "modified@test"
+
+	// Get environment again - should not be affected by mutation
+	env2 := id.Environment()
+	if env2["GIT_AUTHOR_NAME"] == "MODIFIED" {
+		t.Error("Environment() returned map should not be affected by external mutation")
+	}
+	if env2["GIT_AUTHOR_NAME"] != original["GIT_AUTHOR_NAME"] {
+		t.Errorf("Environment() not deterministic after mutation: %q != %q",
+			env2["GIT_AUTHOR_NAME"], original["GIT_AUTHOR_NAME"])
 	}
 }

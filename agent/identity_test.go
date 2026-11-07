@@ -137,9 +137,13 @@ func TestIdentitySigningConfig(t *testing.T) {
 			t.Fatalf("Failed to create temp key file: %v", err)
 		}
 		defer func() {
-			_ = os.Remove(tmpfile.Name())
+			if err := os.Remove(tmpfile.Name()); err != nil {
+				t.Logf("cleanup: could not remove temp file: %v", err)
+			}
 		}()
-		_ = tmpfile.Close()
+		if err := tmpfile.Close(); err != nil {
+			t.Logf("cleanup: could not close temp file: %v", err)
+		}
 
 		id := &Identity{Agent: "test", SigningKey: tmpfile.Name()}
 		env := id.SigningEnv()
