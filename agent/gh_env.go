@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	execpkg "os/exec"
@@ -16,14 +17,17 @@ import (
 // LogAgentsGHMissing is emitted when the host environment has no gh binary available.
 const LogAgentsGHMissing LogEvent = "agents_gh_missing"
 
-// githubOwnerPattern extracts the owner from common GitHub remote URL formats.
-var githubOwnerPattern = regexp.MustCompile(`^(?:https://|git@|ssh://git@)github\.com[:/]([^/]+)/.*`)
+var (
+	// githubOwnerPattern extracts the owner from common GitHub remote URL formats.
+	githubOwnerPattern = regexp.MustCompile(`^(?:https://|git@|ssh://git@)github\.com[:/]([^/]+)/.*`)
+	// ghLoginMu synchronizes access to the default in-process GitHub login cache.
+	ghLoginMu sync.Mutex
+	// ghLoginCache holds the default cached authenticated GitHub user login.
+	ghLoginCache string
+)
 
-// ghLoginMu synchronizes access to the in-process GitHub login cache.
-var ghLoginMu sync.Mutex
-
-// ghLoginCache holds the cached authenticated GitHub user login for the process lifetime.
-var ghLoginCache string
+// ghLoginCacheKey is the context key for an isolated GitHub login cache.
+type ghLoginCacheKey struct{}
 
 // GitHubSetupParams carries the per-run inputs needed to configure the trusted gh wrapper environment.
 type GitHubSetupParams struct {
@@ -59,8 +63,7 @@ type GitHubRunEnv struct {
 
 // ExtractGitHubOwner parses a git remote origin URL and extracts the repository owner.
 func ExtractGitHubOwner(remoteURL string) string {
-	trimmed := strings.TrimSpace(remoteURL)
-	matches := githubOwnerPattern.FindStringSubmatch(trimmed)
+	matches := githubOwnerPattern.FindStringSubmatch(strings.TrimSpace(remoteURL))
 	if len(matches) < 2 {
 		return ""
 	}
@@ -72,21 +75,17 @@ func ResolveRealGH(lookPath func(string) (string, error), agentsHome string, cur
 	if lookPath == nil {
 		lookPath = execpkg.LookPath
 	}
-	dir := filepath.Join(agentsHome, "run", "gh-trusted")
-	wrapperPath := filepath.Join(dir, "gh")
-
+	wrapperPath := filepath.Join(agentsHome, "run", "gh-trusted", "gh")
 	realPath, err := lookPath("gh")
 	if err != nil {
 		return "", false, nil
 	}
-
 	if realPath == wrapperPath {
 		realPath = currentRealGH
 	}
 	if realPath == "" {
 		return "", false, opErr(GitHubSetupMissingRealGH, "gh points to wrapper %s but AGENT_REAL_GH is not set", wrapperPath)
 	}
-
 	return realPath, true, nil
 }
 
@@ -96,69 +95,59 @@ func EnsureGHWrapper(agentsHome string, selfExecutable string) (string, *GitHubS
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fromStorage(GitHubSetupStorage, storageErr(err, "create gh wrapper directory %s", dir))
 	}
-
 	wrapperPath := filepath.Join(dir, "gh")
-	target, err := os.Readlink(wrapperPath)
-	if err == nil && target == selfExecutable {
+	if target, err := os.Readlink(wrapperPath); err == nil && target == selfExecutable {
 		return wrapperPath, nil
 	}
-
 	tempPath := fmt.Sprintf("%s.%d.%d", wrapperPath, os.Getpid(), time.Now().UnixNano())
-	if symErr := os.Symlink(selfExecutable, tempPath); symErr != nil {
-		return "", fromStorage(GitHubSetupStorage, storageErr(symErr, "create temporary gh wrapper symlink %s", tempPath))
+	if err := os.Symlink(selfExecutable, tempPath); err != nil {
+		return "", fromStorage(GitHubSetupStorage, storageErr(err, "create temporary gh wrapper symlink %s", tempPath))
 	}
-
-	if renameErr := os.Rename(tempPath, wrapperPath); renameErr != nil {
-		_ = os.Remove(tempPath)
-		return "", fromStorage(GitHubSetupStorage, storageErr(renameErr, "rename gh wrapper symlink %s", wrapperPath))
+	if err := os.Rename(tempPath, wrapperPath); err != nil {
+		if rerr := os.Remove(tempPath); rerr != nil { // #nosec G703 -- cleanup temp symlink
+			err = errors.Join(err, rerr)
+		}
+		return "", fromStorage(GitHubSetupStorage, storageErr(err, "rename gh wrapper symlink %s", wrapperPath))
 	}
-
 	return wrapperPath, nil
 }
 
 // ResolveGitHubTrustedRaw resolves trusted accounts returning the exact oracle format with separator.
 func ResolveGitHubTrustedRaw(ctx context.Context, exec Executor, repoRoot string, trustedOverride string) string {
-	if trimmed := strings.TrimSpace(trustedOverride); trimmed != "" {
+	if trustedOverride != "" {
 		return trustedOverride
 	}
 	if exec == nil {
 		exec = OSExecutor{}
 	}
-
 	var owner string
 	var gitOut bytes.Buffer
-	gitCmd := Command{
-		Name:   "git",
-		Args:   []string{"-C", repoRoot, "remote", "get-url", "origin"},
-		Stdout: &gitOut,
-	}
-	if res, err := exec.Execute(ctx, gitCmd); err == nil && res.ExitCode == 0 {
+	if res, err := exec.Execute(ctx, Command{Name: "git", Args: []string{"-C", repoRoot, "remote", "get-url", "origin"}, Stdout: &gitOut}); err == nil && res.ExitCode == 0 {
 		owner = ExtractGitHubOwner(gitOut.String())
 	}
-
-	ghLoginMu.Lock()
-	cached := ghLoginCache
-	ghLoginMu.Unlock()
-
-	login := cached
+	var login string
+	var cachePtr *string
+	if ptr, ok := ctx.Value(ghLoginCacheKey{}).(*string); ok && ptr != nil {
+		cachePtr, login = ptr, *ptr
+	} else {
+		ghLoginMu.Lock()
+		login = ghLoginCache
+		ghLoginMu.Unlock()
+	}
 	if login == "" {
 		var ghOut bytes.Buffer
-		ghCmd := Command{
-			Name:   "gh",
-			Args:   []string{"api", "user", "--jq", ".login"},
-			Dir:    repoRoot,
-			Stdout: &ghOut,
-		}
-		if res, err := exec.Execute(ctx, ghCmd); err == nil && res.ExitCode == 0 {
-			login = strings.TrimSpace(ghOut.String())
-			if login != "" {
-				ghLoginMu.Lock()
-				ghLoginCache = login
-				ghLoginMu.Unlock()
+		if res, err := exec.Execute(ctx, Command{Name: "gh", Args: []string{"api", "user", "--jq", ".login"}, Dir: repoRoot, Stdout: &ghOut}); err == nil && res.ExitCode == 0 {
+			if login = strings.TrimSpace(ghOut.String()); login != "" {
+				if cachePtr != nil {
+					*cachePtr = login
+				} else {
+					ghLoginMu.Lock()
+					ghLoginCache = login
+					ghLoginMu.Unlock()
+				}
 			}
 		}
 	}
-
 	return fmt.Sprintf("%s %s", owner, login)
 }
 
@@ -171,7 +160,8 @@ func ResetGHLoginCacheForTest() {
 
 // WithGHLoginCache returns a context that carries an in-process GitHub login cache.
 func WithGHLoginCache(ctx context.Context) context.Context {
-	return ctx
+	var s string
+	return context.WithValue(ctx, ghLoginCacheKey{}, &s)
 }
 
 // ResolveGitHubTrusted resolves the trusted accounts (override, or repository owner + authenticated user).
@@ -179,9 +169,7 @@ func ResolveGitHubTrusted(ctx context.Context, exec Executor, repoRoot string, t
 	if err := ctx.Err(); err != nil {
 		return "", fromStorage(GitHubSetupStorage, storageErr(err, "resolve trusted github accounts in %s", repoRoot))
 	}
-	if _, isOS := exec.(OSExecutor); exec != nil && !isOS {
-		ResetGHLoginCacheForTest()
-	}
+	ctx = WithGHLoginCache(ctx)
 	raw := ResolveGitHubTrustedRaw(ctx, exec, repoRoot, trustedOverride)
 	return strings.TrimSpace(raw), nil
 }
@@ -194,58 +182,37 @@ func SetupGitHubRun(ctx context.Context, exec Executor, params GitHubSetupParams
 	}
 	if !found {
 		if params.Logger != nil {
-			_ = params.Logger.Log(ctx, LevelWarn, LogAgentsGHMissing, "task="+params.RunnerID, "detail=task="+params.RunnerID)
+			if lerr := params.Logger.Log(ctx, LevelWarn, LogAgentsGHMissing, "task="+params.RunnerID, "detail=task="+params.RunnerID); lerr != nil {
+				return nil, fromStorage(GitHubSetupStorage, storageErr(lerr, "log agents_gh_missing warning"))
+			}
 		}
-		return &GitHubRunEnv{
-			Env:           make(map[string]string),
-			EffectivePath: params.CurrentPath,
-		}, nil
+		return &GitHubRunEnv{Env: make(map[string]string), EffectivePath: params.CurrentPath}, nil
 	}
-
 	wrapperPath, wrapErr := EnsureGHWrapper(params.AgentsHome, params.SelfExecutable)
 	if wrapErr != nil {
 		return nil, wrapErr
 	}
-
-	if _, isOS := exec.(OSExecutor); exec != nil && !isOS {
-		ResetGHLoginCacheForTest()
+	if ctx.Value(ghLoginCacheKey{}) == nil {
+		ctx = WithGHLoginCache(ctx)
 	}
 	rawTrusted := ResolveGitHubTrustedRaw(ctx, exec, params.RepoRoot, params.GitHubTrusted)
-
 	wrapperDir := filepath.Dir(wrapperPath)
-	effectivePath := params.CurrentPath
-	prependPath := wrapperDir
+	effectivePath, prependPath := params.CurrentPath, wrapperDir
 	if strings.Contains(":"+params.CurrentPath+":", ":"+wrapperDir+":") {
 		prependPath = ""
+	} else if effectivePath == "" {
+		effectivePath = wrapperDir
 	} else {
-		if effectivePath == "" {
-			effectivePath = wrapperDir
-		} else {
-			effectivePath = wrapperDir + ":" + effectivePath
-		}
+		effectivePath = wrapperDir + ":" + effectivePath
 	}
-
-	env := map[string]string{
-		"AGENT_REAL_GH":                 realPath,
-		"AGENT_GITHUB_TRUSTED_RESOLVED": rawTrusted,
-		"AGENT_REVIEW_BYLINE":           params.ReviewByline,
-		"AGENT_GITHUB_COLORS":           params.GitHubColors,
-		"AGENT_GH_COORDINATOR":          params.Coordinator,
-		"AGENT_GH_TEAM":                 params.Team,
-		"AGENT_GH_SELF":                 params.Agent,
-		"AGENT_GH_BUS_DIR":              params.BusDir,
-		"AGENTBUS_BIN":                  params.AgentbusBin,
-		"AGENT_GH_OWN_PR":               params.OwnPR,
-		"AGENT_GITHUB_NAME_COLORS":      params.GitHubNameColors,
-	}
-
 	return &GitHubRunEnv{
-		RealGH:          realPath,
-		WrapperPath:     wrapperPath,
-		TrustedAccounts: strings.TrimSpace(rawTrusted),
-		RawTrusted:      rawTrusted,
-		Env:             env,
-		PrependPath:     prependPath,
-		EffectivePath:   effectivePath,
+		RealGH: realPath, WrapperPath: wrapperPath, TrustedAccounts: strings.TrimSpace(rawTrusted), RawTrusted: rawTrusted,
+		Env: map[string]string{
+			"AGENT_REAL_GH": realPath, "AGENT_GITHUB_TRUSTED_RESOLVED": rawTrusted, "AGENT_REVIEW_BYLINE": params.ReviewByline,
+			"AGENT_GITHUB_COLORS": params.GitHubColors, "AGENT_GH_COORDINATOR": params.Coordinator, "AGENT_GH_TEAM": params.Team,
+			"AGENT_GH_SELF": params.Agent, "AGENT_GH_BUS_DIR": params.BusDir, "AGENTBUS_BIN": params.AgentbusBin,
+			"AGENT_GH_OWN_PR": params.OwnPR, "AGENT_GITHUB_NAME_COLORS": params.GitHubNameColors,
+		},
+		PrependPath: prependPath, EffectivePath: effectivePath,
 	}, nil
 }

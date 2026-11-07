@@ -148,17 +148,10 @@ func TestSetupGitHubRun_ExactEnvAndGlobalUnchanged(t *testing.T) {
 	}
 
 	expectedKeys := []string{
-		"AGENT_REAL_GH",
-		"AGENT_GITHUB_TRUSTED_RESOLVED",
-		"AGENT_REVIEW_BYLINE",
-		"AGENT_GITHUB_COLORS",
-		"AGENT_GH_COORDINATOR",
-		"AGENT_GH_TEAM",
-		"AGENT_GH_SELF",
-		"AGENT_GH_BUS_DIR",
-		"AGENTBUS_BIN",
-		"AGENT_GH_OWN_PR",
-		"AGENT_GITHUB_NAME_COLORS",
+		"AGENT_REAL_GH", "AGENT_GITHUB_TRUSTED_RESOLVED", "AGENT_REVIEW_BYLINE",
+		"AGENT_GITHUB_COLORS", "AGENT_GH_COORDINATOR", "AGENT_GH_TEAM",
+		"AGENT_GH_SELF", "AGENT_GH_BUS_DIR", "AGENTBUS_BIN",
+		"AGENT_GH_OWN_PR", "AGENT_GITHUB_NAME_COLORS",
 	}
 
 	for _, key := range expectedKeys {
@@ -234,12 +227,7 @@ func TestEnsureGHWrapper_StorageFailure(t *testing.T) {
 
 // TestExtractGitHubOwner_InvalidOrNonGitHub verifies non-matching URLs return empty string.
 func TestExtractGitHubOwner_InvalidOrNonGitHub(t *testing.T) {
-	cases := []string{
-		"",
-		"https://gitlab.com/owner/repo.git",
-		"invalid-url",
-		"ssh://git@bitbucket.org/team/repo.git",
-	}
+	cases := []string{"", "https://gitlab.com/owner/repo.git", "invalid-url", "ssh://git@bitbucket.org/team/repo.git"}
 	for _, c := range cases {
 		if got := ExtractGitHubOwner(c); got != "" {
 			t.Errorf("ExtractGitHubOwner(%q) = %q; want empty string", c, got)
@@ -288,15 +276,9 @@ func TestSetupGitHubRun_LoggerFailurePropagated(t *testing.T) {
 	logger := &Logger{LogDir: unwriteableLogDir, Subcommand: "runner"}
 
 	params := GitHubSetupParams{
-		AgentsHome:     tmpDir,
-		SelfExecutable: "/bin/agent",
-		RepoRoot:       tmpDir,
-		RunnerID:       "task-log-fail",
-		CurrentPath:    "/usr/bin:/bin",
-		LookPath: func(string) (string, error) {
-			return "", execpkg.ErrNotFound
-		},
-		Logger: logger,
+		AgentsHome: tmpDir, SelfExecutable: "/bin/agent", RepoRoot: tmpDir, RunnerID: "task-log-fail", CurrentPath: "/usr/bin:/bin",
+		LookPath: func(string) (string, error) { return "", execpkg.ErrNotFound },
+		Logger:   logger,
 	}
 
 	exec := &fakeGHExecutor{}
