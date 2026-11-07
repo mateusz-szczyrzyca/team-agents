@@ -212,11 +212,14 @@ func TestSetupLogsIdentityDespiteRunnerFailure(t *testing.T) {
 	failRunner := &failAfterCount{limit: 0} // Fail all writes
 	logger := &Logger{LogDir: logDir, Runner: failRunner, Task: "test"}
 	id := &Identity{Agent: "test", SigningKey: "/nonexistent/key"}
-	id.Setup(context.Background(), "", logger)
+	_, setupErr := id.Setup(context.Background(), "", logger)
+	if setupErr != nil {
+		t.Fatalf("Setup error: %v", setupErr)
+	}
 	// Both warning and git_identity should be logged to agent.jsonl despite runner failure
-	data, err := os.ReadFile(filepath.Join(logDir, "agent.jsonl"))
-	if err != nil {
-		t.Fatalf("agent.jsonl: %v", err)
+	data, readErr := os.ReadFile(filepath.Join(logDir, "agent.jsonl")) //nolint:gosec // Test temp directory path is under caller control.
+	if readErr != nil {
+		t.Fatalf("agent.jsonl: %v", readErr)
 	}
 	content := string(data)
 	if !strings.Contains(content, `"event":"signing_key_unreadable"`) {
@@ -229,10 +232,11 @@ func TestSetupLogsIdentityDespiteRunnerFailure(t *testing.T) {
 
 // failAfterCount fails after a limit of successful writes.
 type failAfterCount struct {
-	limit int
-	count int
+	limit int // number of successful writes before failures begin
+	count int // current count of successful writes
 }
 
+// Write implements io.Writer, returning success until limit is reached.
 func (f *failAfterCount) Write(p []byte) (int, error) {
 	if f.count < f.limit {
 		f.count++

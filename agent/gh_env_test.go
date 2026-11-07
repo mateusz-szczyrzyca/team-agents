@@ -229,7 +229,7 @@ func TestSetupGitHubRun(t *testing.T) {
 		GitHubColors:     "auto",
 		GitHubNameColors: "gemini-1:cyan",
 		CurrentPath:      "/usr/bin:/bin",
-		LookPath:         func(name string) (string, error) { return "/usr/bin/gh", nil }, // Fake successful lookup
+		LookPath:         func(_ string) (string, error) { return "/usr/bin/gh", nil }, // Fake successful lookup
 	}
 
 	runEnv, err := SetupGitHubRun(context.Background(), exec, params)
