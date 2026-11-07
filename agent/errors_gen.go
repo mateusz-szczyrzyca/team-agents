@@ -485,7 +485,6 @@ type GitHubSetupCause int
 
 const (
 	GitHubSetupMissingRealGH GitHubSetupCause = iota // real gh binary was not found or is recursive [NotFound]
-	GitHubSetupProcess                               // inspecting repository origin or gh user failed [Process]
 	GitHubSetupStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
@@ -495,7 +494,6 @@ type GitHubSetupError = OpError[GitHubSetupCause]
 // gitHubSetupCauses describes the GitHubSetupCause values (same order as the constants).
 var gitHubSetupCauses = [...]causeInfo{
 	{"MissingRealGH", ClassNotFound},
-	{"Process", ClassProcess},
 	{"Storage", ClassStorage},
 }
 

@@ -58,6 +58,9 @@ type GitHubRunEnv struct {
 	Env                         map[string]string // exported environment variables
 }
 
+// runCmd executes an external helper command for github setup. Command failures or non-zero exits
+// return an empty string per the Bash oracle (bin/agent github_owner and github_trusted), where
+// missing origin URL yields no owner and unauthenticated gh API yields no trusted user login.
 func runCmd(ctx context.Context, exec Executor, dir, name string, args ...string) string {
 	if exec == nil {
 		exec = OSExecutor{}
@@ -153,8 +156,10 @@ func SetupGitHubRun(ctx context.Context, exec Executor, params GitHubSetupParams
 	}
 	if !found {
 		if params.Logger != nil {
-			if err := params.Logger.Log(ctx, LevelWarn, LogAgentsGHMissing, "task="+params.RunnerID, "detail=task="+params.RunnerID); err != nil {
-				return nil, fromStorage(GitHubSetupStorage, storageErr(err, "log agents_gh_missing warning"))
+			if logErr := params.Logger.Log(ctx, LevelWarn, LogAgentsGHMissing, "task="+params.RunnerID); logErr != nil {
+				// Side effect: log write failure is nonfatal per the Bash oracle (which emits a diagnostic
+				// to stderr via Logger.Log); do not abort setup and proceed without wrapper.
+				return &GitHubRunEnv{Env: map[string]string{}, EffectivePath: params.CurrentPath}, nil
 			}
 		}
 		return &GitHubRunEnv{Env: map[string]string{}, EffectivePath: params.CurrentPath}, nil
