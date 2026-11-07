@@ -234,3 +234,41 @@ func TestAgentSoftPartialOutput(t *testing.T) {
 		t.Fatalf("last valid=%q %v", out, err)
 	}
 }
+
+// TestLogEventValidRoundTrip checks validity and JSON unmarshaling for all defined log events.
+func TestLogEventValidRoundTrip(t *testing.T) {
+	events := []LogEvent{
+		LogNoticeFailed,
+		LogNoticeSent,
+		LogEventScanFailed,
+		LogCommandFailed,
+		LogGitIdentity,
+		LogSigningKeyUnreadable,
+		LogAgentsGHMissing,
+	}
+	for _, ev := range events {
+		t.Run(string(ev), func(t *testing.T) {
+			if !ev.Valid() {
+				t.Fatalf("expected event %q to be valid", ev)
+			}
+			data, err := json.Marshal(ev)
+			if err != nil {
+				t.Fatalf("json.Marshal(%q) failed: %v", ev, err)
+			}
+			var decoded LogEvent
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatalf("json.Unmarshal(%s) failed: %v", data, err)
+			}
+			if decoded != ev {
+				t.Fatalf("round trip mismatch: got %q, want %q", decoded, ev)
+			}
+		})
+	}
+
+	for _, invalid := range []string{`""`, `"unknown_event"`, `"bad"`} {
+		var decoded LogEvent
+		if err := json.Unmarshal([]byte(invalid), &decoded); !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("expected ErrInvalidArgument for %s", invalid)
+		}
+	}
+}

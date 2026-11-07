@@ -1,0 +1,283 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestSetupFormat tests Setup() with custom and default author formats.
+func TestSetupFormat(t *testing.T) {
+	id := &Identity{Agent: "bot"}
+
+	// Empty format uses default
+	env, err := id.Setup(context.Background(), "", nil)
+	if err != nil {
+		t.Fatalf("Setup with empty format failed: %v", err)
+	}
+	if env["GIT_AUTHOR_NAME"] != "bot (team-agents)" {
+		t.Errorf("Empty format should use default, got %q", env["GIT_AUTHOR_NAME"])
+	}
+
+	// Custom format
+	env, err = id.Setup(context.Background(), "%a [custom]", nil)
+	if err != nil {
+		t.Fatalf("Setup with custom format failed: %v", err)
+	}
+	if env["GIT_AUTHOR_NAME"] != "bot [custom]" {
+		t.Errorf("Custom format failed, got %q", env["GIT_AUTHOR_NAME"])
+	}
+}
+
+// TestSetupReadableKeyLogging tests logging with readable key.
+func TestSetupReadableKeyLogging(t *testing.T) {
+	tmpdir := t.TempDir()
+	keyFile := filepath.Join(tmpdir, "key")
+	if err := os.WriteFile(keyFile, []byte("fake"), 0600); err != nil {
+		t.Fatalf("Failed to create key: %v", err)
+	}
+
+	logger := &Logger{LogDir: tmpdir}
+	id := &Identity{Agent: "test", SigningKey: keyFile}
+	env, err := id.Setup(context.Background(), "%a", logger)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Verify signing enabled
+	if env["GIT_CONFIG_COUNT"] != "4" {
+		t.Errorf("Readable key: GIT_CONFIG_COUNT=%q, want 4", env["GIT_CONFIG_COUNT"])
+	}
+
+	// Verify git_identity logged with signing=yes
+	entries := readLogLines(t, filepath.Join(tmpdir, "agent.jsonl"))
+	found := false
+	for _, e := range entries {
+		if e["event"] == "git_identity" && e["signing"] == "yes" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("Expected git_identity with signing=yes in logs")
+	}
+}
+
+// TestSetupUnreadableKeyLogging tests logging with unreadable key.
+func TestSetupUnreadableKeyLogging(t *testing.T) {
+	tmpdir := t.TempDir()
+	logger := &Logger{LogDir: tmpdir}
+	id := &Identity{Agent: "test", SigningKey: "/nonexistent/key"}
+	env, err := id.Setup(context.Background(), "%a", logger)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Verify signing disabled
+	if env["GIT_CONFIG_COUNT"] != "2" {
+		t.Errorf("Unreadable key: GIT_CONFIG_COUNT=%q, want 2", env["GIT_CONFIG_COUNT"])
+	}
+
+	// Verify signing_key_unreadable warning logged
+	entries := readLogLines(t, filepath.Join(tmpdir, "agent.jsonl"))
+	found := false
+	for _, e := range entries {
+		if e["event"] == "signing_key_unreadable" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("Expected signing_key_unreadable warning in logs")
+	}
+}
+
+// TestSetupEnvironmentIndependence tests environment independence from mutations.
+func TestSetupEnvironmentIndependence(t *testing.T) {
+	id := &Identity{Agent: "test"}
+	env1, err := id.Setup(context.Background(), "%a", nil)
+	if err != nil {
+		t.Fatalf("First Setup failed: %v", err)
+	}
+
+	// Record original
+	orig := env1["GIT_AUTHOR_NAME"]
+
+	// Mutate returned map
+	env1["GIT_AUTHOR_NAME"] = "MUTATED"
+
+	// Get new environment
+	env2, err := id.Setup(context.Background(), "%a", nil)
+	if err != nil {
+		t.Fatalf("Second Setup failed: %v", err)
+	}
+
+	if env2["GIT_AUTHOR_NAME"] != orig {
+		t.Error("Setup() returned maps not independent")
+	}
+}
+
+// TestSetupProcessEnvIndependence tests environment doesn't leak os.Environ.
+func TestSetupProcessEnvIndependence(t *testing.T) {
+	// Set a unique process environment variable
+	if err := os.Setenv("__CLAUDE_TEST_UNIQUE_VAR__", "should_not_appear"); err != nil {
+		t.Fatalf("Failed to set env: %v", err)
+	}
+
+	id := &Identity{Agent: "test"}
+	env, err := id.Setup(context.Background(), "%a", nil)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Verify environment doesn't contain process env vars
+	if _, found := env["__CLAUDE_TEST_UNIQUE_VAR__"]; found {
+		t.Error("Setup() leaked process environment variable")
+	}
+}
+
+// readLogLines reads JSON log lines from a file and returns them as maps.
+func readLogLines(t *testing.T, logfile string) []map[string]interface{} {
+	data, err := os.ReadFile(logfile) // #nosec G304 - test-controlled path in temp directory
+	if err != nil {
+		return []map[string]interface{}{}
+	}
+
+	var entries []map[string]interface{}
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		var e map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Logf("Failed to parse log line: %v", err)
+			continue
+		}
+		entries = append(entries, e)
+	}
+	return entries
+}
+
+// TestSetupExistsButUnreadableKey tests SigningEnv readability handling.
+// Regression: SigningEnv uses os.Stat (exists), Setup uses keyReadable (readable).
+// File exists but unreadable should result in no signing config.
+func TestSetupExistsButUnreadableKey(t *testing.T) {
+	tmpdir := t.TempDir()
+	keyFile := filepath.Join(tmpdir, "unreadable")
+	if err := os.WriteFile(keyFile, []byte("key"), 0000); err != nil {
+		t.Fatalf("Failed to create unreadable key: %v", err)
+	}
+
+	id := &Identity{Agent: "test", SigningKey: keyFile}
+	env, err := id.Setup(context.Background(), "%a", nil)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+	if env["GIT_CONFIG_COUNT"] != "2" {
+		t.Errorf("Unreadable key should disable signing, got GIT_CONFIG_COUNT=%q, want 2", env["GIT_CONFIG_COUNT"])
+	}
+}
+
+// TestSetupLoggerFailureNonfatal tests logger errors don't block Setup.
+// Regression: Setup returns logger errors immediately (fatal).
+// Logger errors should be logged as warnings but not block operation.
+func TestSetupLoggerFailureNonfatal(t *testing.T) {
+	tmpdir := t.TempDir()
+	// Use read-only directory to force logger.Log to fail
+	baddir := filepath.Join(tmpdir, "baddir")
+	if err := os.Mkdir(baddir, 0000); err != nil {
+		t.Fatalf("Failed to create read-only dir: %v", err)
+	}
+	failLogger := &Logger{LogDir: baddir}
+	id := &Identity{Agent: "test", EmailConfig: "%a@example.com"}
+	env, err := id.Setup(context.Background(), "%a", failLogger)
+
+	// Logger failure should NOT be returned as Setup error (nonfatal)
+	if err != nil {
+		t.Errorf("Logger failure should be nonfatal, but Setup returned error: %v", err)
+	}
+	// Environment should still be populated
+	if env["GIT_AUTHOR_EMAIL"] != "test@example.com" {
+		t.Errorf("Environment should be populated despite logger failure")
+	}
+}
+
+// TestSetupLogsIdentityDespiteRunnerFailure tests that git_identity is logged to healthy sinks (agent.jsonl)
+// when the runner sink (fd 3) fails. The warning and identity records must both be present in healthy sinks.
+func TestSetupLogsIdentityDespiteRunnerFailure(t *testing.T) {
+	tmpdir := t.TempDir()
+	logDir := filepath.Join(tmpdir, "logs")
+	failRunner := &failAfterCount{limit: 0} // Fail all writes
+	logger := &Logger{LogDir: logDir, Runner: failRunner, Task: "test"}
+	id := &Identity{Agent: "test", SigningKey: "/nonexistent/key"}
+	_, setupErr := id.Setup(context.Background(), "", logger)
+	if setupErr != nil {
+		t.Fatalf("Setup error: %v", setupErr)
+	}
+	// Both warning and git_identity should be logged to agent.jsonl despite runner failure
+	jsonlPath := filepath.Clean(filepath.Join(logDir, "agent.jsonl"))
+	data, readErr := os.ReadFile(jsonlPath)
+	if readErr != nil {
+		t.Fatalf("agent.jsonl: %v", readErr)
+	}
+	content := string(data)
+	if !strings.Contains(content, `"event":"signing_key_unreadable"`) {
+		t.Error("warning not logged to agent.jsonl")
+	}
+	if !strings.Contains(content, `"event":"git_identity"`) {
+		t.Error("git_identity not logged to agent.jsonl despite runner failure")
+	}
+}
+
+// TestSetupLogsIdentityWithFailingAggregateFile tests M1 exact scenario: failing file sink with healthy runner.
+// Both warning and git_identity must appear in runner buffer when agent.jsonl is blocked.
+func TestSetupLogsIdentityWithFailingAggregateFile(t *testing.T) {
+	tmpdir := t.TempDir()
+	// Block LogDir itself by making it a regular file, not a directory.
+	// This causes the logger to fail when trying to open agent.jsonl for writing.
+	logDir := filepath.Join(tmpdir, "logs")
+	if err := os.WriteFile(logDir, []byte("blocked"), 0600); err != nil {
+		t.Fatalf("Failed to create blocking file: %v", err)
+	}
+
+	var runnerBuffer bytes.Buffer
+	logger := &Logger{LogDir: logDir, Runner: &runnerBuffer, Task: "test"}
+	id := &Identity{Agent: "test", SigningKey: "/nonexistent/key"}
+	env, setupErr := id.Setup(context.Background(), "", logger)
+
+	// Logger failure should be nonfatal
+	if setupErr != nil {
+		t.Fatalf("Setup returned error: %v", setupErr)
+	}
+	// Environment should be populated despite file sink failure
+	if env == nil || env["GIT_AUTHOR_NAME"] == "" {
+		t.Error("Environment not populated despite file sink failure")
+	}
+
+	// Both records should appear in runner buffer despite file sink failure
+	runnerContent := runnerBuffer.String()
+	if !strings.Contains(runnerContent, `"event":"signing_key_unreadable"`) {
+		t.Error("warning not logged to runner buffer despite file sink failure")
+	}
+	if !strings.Contains(runnerContent, `"event":"git_identity"`) {
+		t.Error("git_identity not logged to runner buffer despite file sink failure")
+	}
+}
+
+// failAfterCount fails after a limit of successful writes.
+type failAfterCount struct {
+	limit int // number of successful writes before failures begin
+	count int // current count of successful writes
+}
+
+// Write implements io.Writer, returning success until limit is reached.
+func (f *failAfterCount) Write(p []byte) (int, error) {
+	if f.count < f.limit {
+		f.count++
+		return len(p), nil
+	}
+	return 0, io.EOF
+}
