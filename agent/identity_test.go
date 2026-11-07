@@ -93,26 +93,44 @@ func TestIdentityEmail(t *testing.T) {
 }
 
 // TestIdentitySigningConfig tests signing environment variables based on key availability.
+// Oracle pattern: GIT_CONFIG_COUNT with indexed GIT_CONFIG_KEY_*/GIT_CONFIG_VALUE_*.
 func TestIdentitySigningConfig(t *testing.T) {
-	// Test case 1: No signing key provided
+	// Test case 1: No signing key provided - signing disabled
 	t.Run("no signing key", func(t *testing.T) {
 		id := &Identity{Agent: "test", SigningKey: ""}
 		env := id.SigningEnv()
-		if env == nil || env["GIT_COMMIT_GPGSIGN"] != "false" {
-			t.Error("Expected signing disabled when no key provided")
+		if env == nil {
+			t.Fatal("Expected non-nil env")
+		}
+		if env["GIT_CONFIG_COUNT"] != "2" {
+			t.Errorf("Expected GIT_CONFIG_COUNT=2, got %q", env["GIT_CONFIG_COUNT"])
+		}
+		if env["GIT_CONFIG_KEY_0"] != "commit.gpgsign" || env["GIT_CONFIG_VALUE_0"] != "false" {
+			t.Errorf("Expected commit.gpgsign=false, got KEY_0=%q VALUE_0=%q",
+				env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"])
+		}
+		if env["GIT_CONFIG_KEY_1"] != "tag.gpgsign" || env["GIT_CONFIG_VALUE_1"] != "false" {
+			t.Errorf("Expected tag.gpgsign=false, got KEY_1=%q VALUE_1=%q",
+				env["GIT_CONFIG_KEY_1"], env["GIT_CONFIG_VALUE_1"])
 		}
 	})
 
-	// Test case 2: Signing key file missing (should disable signing)
+	// Test case 2: Signing key file missing - signing disabled with warning
 	t.Run("missing signing key file", func(t *testing.T) {
 		id := &Identity{Agent: "test", SigningKey: "/nonexistent/key.pub"}
 		env := id.SigningEnv()
-		if env == nil || env["GIT_COMMIT_GPGSIGN"] != "false" {
-			t.Error("Expected signing disabled when key file doesn't exist")
+		if env == nil {
+			t.Fatal("Expected non-nil env")
+		}
+		if env["GIT_CONFIG_COUNT"] != "2" {
+			t.Errorf("Expected GIT_CONFIG_COUNT=2, got %q", env["GIT_CONFIG_COUNT"])
+		}
+		if env["GIT_CONFIG_VALUE_0"] != "false" {
+			t.Errorf("Expected signing disabled when key doesn't exist, got %q", env["GIT_CONFIG_VALUE_0"])
 		}
 	})
 
-	// Test case 3: Signing key exists
+	// Test case 3: Signing key exists - signing enabled with full config
 	t.Run("signing key exists", func(t *testing.T) {
 		tmpfile, err := os.CreateTemp("", "test-key-*")
 		if err != nil {
@@ -126,13 +144,23 @@ func TestIdentitySigningConfig(t *testing.T) {
 		id := &Identity{Agent: "test", SigningKey: tmpfile.Name()}
 		env := id.SigningEnv()
 		if env == nil {
-			t.Error("Expected non-nil env when signing key exists")
+			t.Fatal("Expected non-nil env")
 		}
-		if env["GIT_COMMIT_GPGSIGN"] != "true" {
-			t.Error("Expected signing enabled when key exists")
+		if env["GIT_CONFIG_COUNT"] != "4" {
+			t.Errorf("Expected GIT_CONFIG_COUNT=4 when signing, got %q", env["GIT_CONFIG_COUNT"])
 		}
-		if env["GIT_GPG_FORMAT"] != "ssh" {
-			t.Error("Expected GPG format to be ssh")
+		if env["GIT_CONFIG_KEY_0"] != "gpg.format" || env["GIT_CONFIG_VALUE_0"] != "ssh" {
+			t.Errorf("Expected gpg.format=ssh, got KEY_0=%q VALUE_0=%q",
+				env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"])
+		}
+		if env["GIT_CONFIG_KEY_1"] != "user.signingkey" || env["GIT_CONFIG_VALUE_1"] != tmpfile.Name() {
+			t.Errorf("Expected user.signingkey=%q, got VALUE_1=%q", tmpfile.Name(), env["GIT_CONFIG_VALUE_1"])
+		}
+		if env["GIT_CONFIG_KEY_2"] != "commit.gpgsign" || env["GIT_CONFIG_VALUE_2"] != "true" {
+			t.Errorf("Expected commit.gpgsign=true")
+		}
+		if env["GIT_CONFIG_KEY_3"] != "tag.gpgsign" || env["GIT_CONFIG_VALUE_3"] != "true" {
+			t.Errorf("Expected tag.gpgsign=true")
 		}
 	})
 }
@@ -230,9 +258,12 @@ func TestIdentityEnvironment(t *testing.T) {
 		t.Errorf("GIT_COMMITTER_EMAIL = %q, want %q", env["GIT_COMMITTER_EMAIL"], "test-agent@team-agents.invalid")
 	}
 
-	// Check signing is disabled by default (no key)
-	if env["GIT_COMMIT_GPGSIGN"] != "false" {
-		t.Errorf("GIT_COMMIT_GPGSIGN = %q, want %q (signing disabled)", env["GIT_COMMIT_GPGSIGN"], "false")
+	// Check signing is disabled by default (no key) - oracle uses GIT_CONFIG_COUNT pattern
+	if env["GIT_CONFIG_COUNT"] != "2" {
+		t.Errorf("GIT_CONFIG_COUNT = %q, want %q (signing disabled)", env["GIT_CONFIG_COUNT"], "2")
+	}
+	if env["GIT_CONFIG_KEY_0"] != "commit.gpgsign" || env["GIT_CONFIG_VALUE_0"] != "false" {
+		t.Errorf("Expected commit.gpgsign=false in config")
 	}
 }
 
