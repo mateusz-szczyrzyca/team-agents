@@ -253,8 +253,8 @@ func TestIdentityFromRunAuthorFormatExpansion(t *testing.T) {
 	}
 }
 
-func TestIdentityFromRunPreservesArrayFormConfig(t *testing.T) {
-	// RED: Array-form git config should be preserved through IdentityFromRun
+func TestIdentityFromRunArrayFormIdentityConfig(t *testing.T) {
+	// RED: Array-form identity config (GIT_NAME_FORMAT/EMAIL/SIGNING_KEY) should be read correctly
 	meta := MetaFile{
 		Lines: []MetaLine{
 			{Kind: MetaAssignment, Key: "AGENT", Value: "claude-haiku"},
@@ -263,9 +263,9 @@ func TestIdentityFromRunPreservesArrayFormConfig(t *testing.T) {
 	}
 	cfg := Config{
 		Indexed: map[string]map[string]string{
-			"GIT_CONFIG_COUNT":   {"0": "1"},
-			"GIT_CONFIG_KEY_0":   {"0": "user.name"},
-			"GIT_CONFIG_VALUE_0": {"0": "ArrayFormAgent"},
+			"GIT_NAME_FORMAT": {"0": "%a (custom)"},
+			"GIT_EMAIL":       {"0": "%a@example.com"},
+			"GIT_SIGNING_KEY": {"0": "/path/to/key"},
 		},
 	}
 
@@ -274,12 +274,14 @@ func TestIdentityFromRunPreservesArrayFormConfig(t *testing.T) {
 	if id == nil {
 		t.Fatal("IdentityFromRun returned nil")
 	}
-	// Verify array config was preserved (Environment should include it)
-	env := id.Environment()
-	if env["GIT_CONFIG_COUNT"] == "" {
-		t.Error("GIT_CONFIG_COUNT not preserved from array-form config")
+	// Verify array-form config is extracted and usable
+	if id.NameFormat != "%a (custom)" {
+		t.Errorf("NameFormat: got %q, want %q", id.NameFormat, "%a (custom)")
 	}
-	if env["GIT_CONFIG_VALUE_0"] != "ArrayFormAgent" {
-		t.Errorf("Array-form config value not preserved, got %q", env["GIT_CONFIG_VALUE_0"])
+	if id.EmailConfig != "%a@example.com" {
+		t.Errorf("EmailConfig: got %q, want %q", id.EmailConfig, "%a@example.com")
+	}
+	if id.SigningKey != "/path/to/key" {
+		t.Errorf("SigningKey: got %q, want %q", id.SigningKey, "/path/to/key")
 	}
 }

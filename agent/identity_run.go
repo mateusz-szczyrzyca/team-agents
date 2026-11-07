@@ -12,20 +12,19 @@ func IdentityFromRun(meta MetaFile, cfg Config, runnerID string) *Identity {
 	team, _ := meta.Lookup("TEAM")
 	invID, _ := meta.Lookup("INV_ID")
 
-	nameFormat := cfg.Scalars["GIT_NAME_FORMAT"]
-	emailConfig := cfg.Scalars["GIT_EMAIL"]
-	signingKey := cfg.Scalars["GIT_SIGNING_KEY"]
+	nameFormat, _ := configScalar(cfg, "GIT_NAME_FORMAT")
+	emailConfig, _ := configScalar(cfg, "GIT_EMAIL")
+	signingKey, _ := configScalar(cfg, "GIT_SIGNING_KEY")
 
 	return &Identity{
-		Agent:         agent,
-		Provider:      provider,
-		Model:         model,
-		NameFormat:    nameFormat,
-		EmailConfig:   emailConfig,
-		SigningKey:    signingKey,
-		ConfigIndexed: cfg.Indexed,
-		Task:          runnerID,
-		Team:          team,
-		InvID:         invID,
+		Agent:       agent,
+		Provider:    provider,
+		Model:       model,
+		NameFormat:  nameFormat,
+		EmailConfig: emailConfig,
+		SigningKey:  signingKey,
+		Task:        runnerID,
+		Team:        team,
+		InvID:       invID,
 	}
 }
