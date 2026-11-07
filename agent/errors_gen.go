@@ -2,6 +2,38 @@
 
 package main
 
+// ---------------------------------------------------------------- ack
+
+// AckCause is a reason why terminal task acknowledgement failed.
+type AckCause int
+
+const (
+	AckNotFound     AckCause = iota // no task directory matches the reference [NotFound]
+	AckAmbiguous                    // more than one task directory matches the reference [Conflict]
+	AckStillRunning                 // the task has not reached an acknowledgeable terminal state [Conflict]
+	AckStorage                      // the shared state or a file could not be read or written [Storage]
+)
+
+// AckError is the error of terminal task acknowledgement.
+type AckError = OpError[AckCause]
+
+// ackCauses describes the AckCause values (same order as the constants).
+var ackCauses = [...]causeInfo{
+	{"NotFound", ClassNotFound},
+	{"Ambiguous", ClassConflict},
+	{"StillRunning", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (AckCause) op() string { return "ack" }
+
+// info implements opCause.
+func (c AckCause) info() causeInfo { return ackCauses[c] }
+
+// String returns the cause name.
+func (c AckCause) String() string { return c.info().name }
+
 // ---------------------------------------------------------------- read_task_meta
 
 // ReadTaskMetaCause is a reason why legacy task metadata reading failed.
@@ -393,3 +425,29 @@ func (c AgentsCause) info() causeInfo { return agentsCauses[c] }
 
 // String returns the cause name.
 func (c AgentsCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- agents_json
+
+// AgentsJSONCause is a reason why agent JSON listing failed.
+type AgentsJSONCause int
+
+const (
+	AgentsJSONStorage AgentsJSONCause = iota // the shared state or a file could not be read or written [Storage]
+)
+
+// AgentsJSONError is the error of agent JSON listing.
+type AgentsJSONError = OpError[AgentsJSONCause]
+
+// agentsJSONCauses describes the AgentsJSONCause values (same order as the constants).
+var agentsJSONCauses = [...]causeInfo{
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (AgentsJSONCause) op() string { return "agents_json" }
+
+// info implements opCause.
+func (c AgentsJSONCause) info() causeInfo { return agentsJSONCauses[c] }
+
+// String returns the cause name.
+func (c AgentsJSONCause) String() string { return c.info().name }

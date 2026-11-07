@@ -54,6 +54,27 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string, stdout, _
 		return a.cmdHelpers(ctx, args, stdout)
 	case "agents":
 		return a.routeAgents(ctx, stdout)
+	case "ack":
+		target := firstArg(args)
+		if target == "" {
+			return opErr(CommandInvalidArgument, "usage: agent ack <id|all>")
+		}
+		if err := a.cmdAck(target, stdout, a.tasksDirectory()); err != nil {
+			cause := CommandStorage // cause maps the acknowledgement failure to its CLI category.
+			switch err.Cause {
+			case AckNotFound:
+				cause = CommandNotFound
+			case AckAmbiguous, AckStillRunning:
+				cause = CommandConflict
+			}
+			return &CommandError{Cause: cause, Message: err.Message, Err: errors.Join(cause.info().class.Sentinel(), err)}
+		}
+		return nil
+	case "_agents-json":
+		if err := a.cmdAgentsJSON(stdout, a.listingConfig()); err != nil {
+			return fromStorage(CommandStorage, storageErr(err, "list agents as JSON"))
+		}
+		return nil
 	default:
 		if err := printUsage(stdout); err != nil {
 			return fromStorage(CommandStorage, storageErr(err, "print usage"))
