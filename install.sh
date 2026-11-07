@@ -218,7 +218,8 @@ fi
 
 # The lead's job listener (agentlead.service: agent lead) is installed only when this instance is a lead: LEAD_LISTEN
 # is set in agents.conf (README "Several instances"). Without it no lead unit is written.
-lead_listen=$(bash -c 'source "$1"; printf %s "${LEAD_LISTEN:-}"' _ "$AH/agents.conf")
+# MODEL_PRICES declared first: an agents.conf from before the template declared it prices models into it all the same
+lead_listen=$(bash -c 'declare -A MODEL_PRICES=(); source "$1"; printf %s "${LEAD_LISTEN:-}"' _ "$AH/agents.conf")
 if [[ -n $lead_listen ]]; then
   echo "» lead (agentlead.service: agent lead, listening on $lead_listen)"
   cat > "$UNIT_DIR/agentlead.service" <<UNIT
@@ -250,7 +251,7 @@ fi
 
 # The node daemon (agentnode.service: agent node) is installed only when this instance is a node: LEAD_URL is set in
 # agents.conf (README "Several instances"). Without it no node unit is written.
-lead_url=$(bash -c 'source "$1"; printf %s "${LEAD_URL:-}"' _ "$AH/agents.conf")
+lead_url=$(bash -c 'declare -A MODEL_PRICES=(); source "$1"; printf %s "${LEAD_URL:-}"' _ "$AH/agents.conf")
 if [[ -n $lead_url ]]; then
   echo "» node daemon (agentnode.service: agent node, lead $lead_url)"
   cat > "$UNIT_DIR/agentnode.service" <<UNIT
