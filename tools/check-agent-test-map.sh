@@ -87,13 +87,13 @@ validate_map() {
         ;;
     esac
 
-    if [[ ! $round =~ ^R([0-9]{2})$ ]]; then
-      err "line $line_no: invalid round format '$round' (expected R01-R56)"
+    if [[ ! $round =~ ^R([0-9]{2})[A-Z]?$ ]]; then   # a split round has a letter after its number: R29B
+      err "line $line_no: invalid round format '$round' (expected R01-R56, a split one as R29B)"
       errors=$((errors + 1))
     else
       local r_num=$((10#${BASH_REMATCH[1]}))
       if (( r_num < 1 || r_num > 56 )); then
-        err "line $line_no: invalid round format '$round' (expected R01-R56)"
+        err "line $line_no: invalid round format '$round' (expected R01-R56, a split one as R29B)"
         errors=$((errors + 1))
       fi
     fi
