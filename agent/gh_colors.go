@@ -12,6 +12,9 @@ import (
 	"time"
 )
 
+// LogGitHubColorsFailed is emitted when registering GitHub name colors fails.
+const LogGitHubColorsFailed LogEvent = "github_colors_failed"
+
 // isValidColor checks if c matches the oracle pattern ^#[0-9A-Fa-f]{6}$.
 func isValidColor(c string) bool {
 	return len(c) == 7 && c[0] == '#' && strings.IndexFunc(c[1:], func(r rune) bool {

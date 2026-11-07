@@ -245,6 +245,7 @@ func TestLogEventValidRoundTrip(t *testing.T) {
 		LogGitIdentity,
 		LogSigningKeyUnreadable,
 		LogAgentsGHMissing,
+		LogGitHubColorsFailed,
 	}
 	for _, ev := range events {
 		t.Run(string(ev), func(t *testing.T) {
