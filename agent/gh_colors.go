@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // isValidColor checks if c matches the oracle pattern ^#[0-9A-Fa-f]{6}$.
@@ -25,15 +26,57 @@ func isValidName(n string) bool {
 	}) == -1
 }
 
+// isPaletteDisabled returns true if palette is empty or explicitly configured as "none".
+func isPaletteDisabled(palette []string) bool {
+	return len(palette) == 0 || (len(palette) == 1 && palette[0] == "none")
+}
+
+// lockColorsFile attempts to lock the file respecting context cancellation and timeout.
+// It retries flock with nonblocking flag, polling at short intervals.
+func lockColorsFile(ctx context.Context, f *os.File, timeout time.Duration) *StorageError {
+	if err := ctx.Err(); err != nil {
+		return storageErr(err, "lock %s canceled", f.Name())
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EINTR) {
+			return storageErr(err, "flock %s", f.Name())
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return storageErr(ctxErr, "lock %s canceled", f.Name())
+		}
+		if !time.Now().Before(deadline) {
+			return storageErr(syscall.ETIMEDOUT, "lock %s timed out after %s", f.Name(), timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return storageErr(ctx.Err(), "lock %s canceled", f.Name())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 // readColorLines parses remembered color assignments from path.
-func readColorLines(path string) (pairs [][2]string) {
-	data, _ := os.ReadFile(filepath.Clean(path)) //nolint:gosec // caller supplies local color assignment path
+// Missing file (ENOENT) returns nil pairs and nil error (clean first-run state).
+func readColorLines(path string) ([][2]string, *StorageError) {
+	data, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // caller supplies local color assignment path
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, storageErr(err, "read color file %s", path)
+	}
+	var pairs [][2]string
 	for _, line := range strings.Split(string(data), "\n") {
 		if f := strings.Fields(line); len(f) == 2 && isValidName(f[0]) && isValidColor(f[1]) {
 			pairs = append(pairs, [2]string{f[0], f[1]})
 		}
 	}
-	return pairs
+	return pairs, nil
 }
 
 // sortedMapKeys returns the sorted keys of an associative configuration map.
@@ -49,9 +92,8 @@ func sortedMapKeys(m map[string]string) (keys []string) {
 // Assignments are stored in colorsPath ("<name> <#RRGGBB>\n").
 // Concurrency is handled via flock on colorsPath + ".lock".
 func RegisterGitHubColors(ctx context.Context, colorsPath string, palette []string, names []string, logger *Logger) (retErr *StorageError) {
-	_ = ctx
 	_ = logger
-	if len(palette) == 0 || len(names) == 0 {
+	if isPaletteDisabled(palette) || len(names) == 0 {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(colorsPath), 0o750); err != nil {
@@ -63,16 +105,22 @@ func RegisterGitHubColors(ctx context.Context, colorsPath string, palette []stri
 		return storageErr(err, "open lock %s", lockPath)
 	}
 	defer func() {
-		if joinErr := errors.Join(syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN), lockFile.Close()); joinErr != nil && retErr == nil {
+		unlockErr := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		closeErr := lockFile.Close()
+		if joinErr := errors.Join(unlockErr, closeErr); joinErr != nil && retErr == nil {
 			retErr = storageErr(joinErr, "release lock %s", lockPath)
 		}
 	}()
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
-		return storageErr(err, "flock %s", lockPath)
+	if lockErr := lockColorsFile(ctx, lockFile, 10*time.Second); lockErr != nil {
+		return lockErr
 	}
 
+	lines, readErr := readColorLines(colorsPath)
+	if readErr != nil {
+		return readErr
+	}
 	have, uses := make(map[string]string), make(map[string]int)
-	for _, p := range readColorLines(colorsPath) {
+	for _, p := range lines {
 		have[p[0]], uses[p[1]] = p[1], uses[p[1]]+1
 	}
 	var toAppend []byte
@@ -95,15 +143,29 @@ func RegisterGitHubColors(ctx context.Context, colorsPath string, palette []stri
 	return nil
 }
 
-// FormatGitHubNameColors formats the AGENT_GITHUB_NAME_COLORS string ("name=#RRGGBB ...").
+// FormatGitHubNameColors formats the AGENT_GITHUB_NAME_COLORS environment variable string.
 // It first takes remembered colors in colorsPath, then for any configured agents not in have,
 // assigns their color from the configuration's order (NORMAL_AGENTS, WORKER_AGENTS, sorted AGENT_TYPE, sorted INVESTIGATORS_TYPE).
 func FormatGitHubNameColors(colorsPath string, palette []string, config Config) string {
-	if len(palette) == 0 {
-		return ""
+	res, err := formatGitHubNameColorsWithLogger(colorsPath, palette, config, nil)
+	if err != nil {
+		return res
 	}
+	return res
+}
+
+// formatGitHubNameColorsWithLogger formats name colors and logs any read error if logger is non-nil.
+func formatGitHubNameColorsWithLogger(colorsPath string, palette []string, config Config, logger *Logger) (string, *LogWriteError) {
+	if isPaletteDisabled(palette) {
+		return "", nil
+	}
+	var logErr *LogWriteError
 	have, entries := make(map[string]bool), []string(nil)
-	for _, p := range readColorLines(colorsPath) {
+	lines, readErr := readColorLines(colorsPath)
+	if readErr != nil && logger != nil {
+		logErr = logger.logFailure(readErr, "read github colors")
+	}
+	for _, p := range lines {
 		if !have[p[0]] {
 			have[p[0]], entries = true, append(entries, p[0]+"="+p[1])
 		}
@@ -131,12 +193,14 @@ func FormatGitHubNameColors(colorsPath string, palette []string, config Config) 
 	for _, a := range sortedMapKeys(config.Associative["AGENT_TYPE"]) {
 		appendName(a)
 	}
-	for _, group := range [][]string{names, sortedMapKeys(config.Associative["INVESTIGATORS_TYPE"])} {
-		for i, n := range group {
-			if !have[n] {
-				have[n], entries = true, append(entries, n+"="+palette[i%len(palette)])
-			}
+	for _, a := range sortedMapKeys(config.Associative["INVESTIGATORS_TYPE"]) {
+		appendName(a)
+	}
+	for i, a := range names {
+		if !have[a] {
+			have[a] = true
+			entries = append(entries, a+"="+palette[i%len(palette)])
 		}
 	}
-	return strings.Join(entries, " ")
+	return strings.Join(entries, " "), logErr
 }
