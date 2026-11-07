@@ -646,6 +646,9 @@ tests/unit/debug_cmd.bats	agent debug <team> writes one file with the team on th
 tests/unit/debug_cmd.bats	agent debug redacts tokens and the values of secrets.env	blackbox	R53B	-	planned
 tests/unit/debug_cmd.bats	agent debug of a task: the last activity by default, all of it with --full, in the file --out names	blackbox	R53B	-	planned
 tests/unit/debug_cmd.bats	agent debug refuses an ID that is no team and no task	blackbox	R53B	-	planned
+tests/unit/resume_large_board.bats	a team whose board is larger than one argument can hold is resumed, its board carried	blackbox	R30	-	planned
+tests/unit/install_model_prices.bats	install.sh reads an agents.conf whose models are priced in MODEL_PRICES, with no declaration of it	blackbox	R55	-	planned
+tests/unit/install_model_prices.bats	the configuration template declares MODEL_PRICES: prices added to it load in a plain bash	blackbox	R55	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
@@ -658,3 +661,7 @@ tests/unit/team_stop_followup.bats	a helper's task text is in English: the reque
 tests/unit/tmp_sweep.bats	tmp-sweep removes the old leftovers of test runs that no process uses; it keeps fresh ones, those in use, and anything else	blackbox	R55	-	planned
 tests/unit/tmp_sweep.bats	make unit-bats runs the tests with their temporary files in BATS_TMP, after sweeping it and /tmp	blackbox	R55	-	planned
 tests/unit/tmp_sweep.bats	unit-bats.sh refuses to start without room for its temporary files, and says so	blackbox	R55	-	planned
+tests/unit/fixture_isolation_test.bats	fixture isolation: AGENTBUS_BIN is bound to fixture, not inherited	source	R10B	-	planned
+tests/unit/fixture_isolation_test.bats	fixture isolation: AGENT_GH_BUS_DIR is bound to fixture, not inherited	source	R10B	-	planned
+tests/unit/fixture_isolation_test.bats	fixture isolation: AGENT_GITHUB_NAME_COLORS is cleared in fixture	source	R10B	-	planned
+tests/unit/fixture_isolation_test.bats	fixture isolation: OPENCODE_CONFIG_CONTENT is cleared in fixture	source	R10B	-	planned
