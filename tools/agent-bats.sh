@@ -133,9 +133,9 @@ stage_repository() {
 }
 
 # scrub_inherited_env — removes hostile inherited environment variables from ordinary runs
-# Clears: AGENTBUS_BIN, AGENT_GH_BUS_DIR, AGENT_GITHUB_NAME_COLORS, OPENCODE_CONFIG_CONTENT
+# Clears: AGENTBUS_BIN, AGENT_GH_BUS_DIR, AGENT_GITHUB_NAME_COLORS, OPENCODE_CONFIG_CONTENT, AGENT_GH_* team/coordinator vars
 scrub_inherited_env() {
-  unset AGENTBUS_BIN AGENT_GH_BUS_DIR AGENT_GITHUB_NAME_COLORS OPENCODE_CONFIG_CONTENT
+  unset AGENTBUS_BIN AGENT_GH_BUS_DIR AGENT_GITHUB_NAME_COLORS OPENCODE_CONFIG_CONTENT AGENT_GH_TEAM AGENT_GH_SELF AGENT_GH_COORDINATOR AGENT_GH_OWN_PR
 }
 
 # escape_regex str — escapes regular expression metacharacters for Bats --filter

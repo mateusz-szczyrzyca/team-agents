@@ -367,6 +367,10 @@ EOF
   [[ -z ${AGENT_GH_BUS_DIR+x} ]] || exit 1
   [[ -z ${AGENT_GITHUB_NAME_COLORS+x} ]] || exit 1
   [[ -z ${OPENCODE_CONFIG_CONTENT+x} ]] || exit 1
+  [[ -z ${AGENT_GH_TEAM+x} ]] || exit 2
+  [[ -z ${AGENT_GH_SELF+x} ]] || exit 3
+  [[ -z ${AGENT_GH_COORDINATOR+x} ]] || exit 4
+  [[ -z ${AGENT_GH_OWN_PR+x} ]] || exit 5
 }
 EOF
 
@@ -376,11 +380,15 @@ exit 0
 EOF
   chmod +x "$mock_repo/build/agent-go"
 
-  # Run with hostile inherited variables set
+  # Run with hostile inherited variables set (all four original plus four AGENT_GH_* vars)
   export AGENTBUS_BIN="/hostile/agentbus"
   export AGENT_GH_BUS_DIR="/hostile/bus"
   export AGENT_GITHUB_NAME_COLORS="hostile=red"
   export OPENCODE_CONFIG_CONTENT="hostile-config"
+  export AGENT_GH_TEAM="fake-team"
+  export AGENT_GH_SELF="fake-self"
+  export AGENT_GH_COORDINATOR="fake-coordinator"
+  export AGENT_GH_OWN_PR="fake-pr"
 
   run "$mock_repo/tools/agent-bats.sh" --repo-root "$mock_repo"
   [ "$status" -eq 0 ]
