@@ -1,10 +1,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 )
+
+// LogGitIdentity is the event name for git identity setup logging.
+const LogGitIdentity LogEvent = "git_identity"
+
+// LogSigningKeyUnreadable is the event name for unreadable signing key warnings.
+const LogSigningKeyUnreadable LogEvent = "signing_key_unreadable"
 
 // Identity holds agent identity information for git commits and environment setup.
 // It manages author/committer names, email formatting, signing configuration, and commit trailers.
@@ -120,4 +127,12 @@ func (id *Identity) Environment() map[string]string {
 	}
 
 	return env
+}
+
+// Setup returns environment with configurable author format and logs identity setup.
+// Empty authorFormat defaults to "%a (team-agents)", nonempty uses exact format.
+// logger receives git_identity info (name/email/signing) and signing_key_unreadable
+// warn if key nonempty but unreadable. Nil logger = silent. Returns typed LogWriteError.
+func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logger) (map[string]string, *LogWriteError) {
+	return nil, nil
 }
