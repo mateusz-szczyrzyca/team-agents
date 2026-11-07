@@ -293,7 +293,8 @@ func TestSetupGitHubRun_LoggerFailureNonfatal(t *testing.T) {
 	if err := os.WriteFile(unwriteableLogDir, []byte("blocker"), 0o400); err != nil {
 		t.Fatal(err)
 	}
-	logger := &Logger{LogDir: unwriteableLogDir, Subcommand: "runner"}
+	var stderrBuf strings.Builder
+	logger := &Logger{LogDir: unwriteableLogDir, Subcommand: "runner", Stderr: &stderrBuf}
 
 	params := GitHubSetupParams{
 		AgentsHome:     tmpDir,
@@ -317,6 +318,9 @@ func TestSetupGitHubRun_LoggerFailureNonfatal(t *testing.T) {
 	}
 	if runEnv.EffectivePath != params.CurrentPath {
 		t.Errorf("EffectivePath = %q; want %q", runEnv.EffectivePath, params.CurrentPath)
+	}
+	if !strings.Contains(stderrBuf.String(), "agent: cannot write") {
+		t.Errorf("expected stderr warning, got: %q", stderrBuf.String())
 	}
 }
 
