@@ -68,3 +68,22 @@ open_team() {
   [ "$(board "$team" B2 | jq -r .status)" = todo ]
   ! grep -q '"event":"board_stall"' "$AGENTS_HOME/logs/agent.jsonl" || false
 }
+
+@test "a team none of whose members was at work in AGENT_BOARD_RECENT_H is left alone: an old one, never closed" {
+  export AGENT_BOARD_STALL_MIN=0 AGENT_EASY_TO_WORKER_MIN=0 AGENT_BOARD_RECENT_H=6
+  open_team
+  "$BUILD_DIR/agentbus" board-add --dir "$AGENTS_HOME/bus" --team "$team" --as lead --title "an old one" --details "d" --level easy > /dev/null
+  local t pid
+  for t in $(grep -lx "TEAM=$team" "$AGENTS_HOME"/tasks/*/meta.env | xargs -n1 dirname); do
+    for _ in $(seq 1 150); do   # its runner done writing — a last line would make the activity new again
+      pid=$(cat "$t/runner.pid" 2> /dev/null) || break
+      kill -0 "$pid" 2> /dev/null || break
+      sleep 0.2
+    done
+    touch -d '-7 hours' "$t/activity.jsonl"
+  done
+  agent _supervise
+  ! grep -l "standstill" "$AGENTS_HOME"/notifications/*.md 2> /dev/null || false
+  [ "$(board "$team" B1 | jq -r .status)" = todo ]
+  agent stop --running > /dev/null
+}

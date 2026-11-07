@@ -545,6 +545,7 @@ tests/unit/board_unstick.bats	an easy item nobody owns goes to a worker as the c
 tests/unit/board_unstick.bats	a member that finishes gives back the items designated for it	blackbox	R22	-	planned
 tests/unit/board_unstick.bats	a team whose members all sleep while items wait past AGENT_BOARD_STALL_MIN tells the human ⛔, once	blackbox	R22	-	planned
 tests/unit/board_unstick.bats	a stopped team is neither reported at a standstill nor has its easy items given to workers	blackbox	R22	-	planned
+tests/unit/board_unstick.bats	a team none of whose members was at work in AGENT_BOARD_RECENT_H is left alone: an old one, never closed	blackbox	R22	-	planned
 tests/unit/helper_failover.bats	a worker request whose model is out of service goes to another worker; the requester hears no failure	blackbox	R21	-	planned
 tests/unit/helper_failover.bats	free_worker passes over a worker whose model is out of service while its pause lasts	source	R21	-	planned
 tests/unit/review_pair_rotate.bats	rotate: A,B then C,D; every new pair differs from the last two; four investigators make all six pairs	source	R33	-	planned
