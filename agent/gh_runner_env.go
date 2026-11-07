@@ -132,29 +132,55 @@ func DeriveGitHubParams(ctx context.Context, params GitHubRunDerivationParams) (
 	team, self := ResolveTeamAndSelf(params.RunnerID, meta)
 	rawColors, _ := configScalar(params.Config, "AGENT_GITHUB_COLORS")
 	palette := strings.Fields(rawColors)
+	if rawColors == "none" || isPaletteDisabled(palette) {
+		palette = nil
+	}
 	colorsPath := filepath.Join(params.AgentsHome, "github-colors")
 
+	matches, globErr := filepath.Glob(filepath.Join(params.TasksDir, "*", "meta.env"))
+	if globErr != nil {
+		return GitHubSetupParams{}, storageErr(globErr, "glob task directories in %s", params.TasksDir)
+	}
+	var logFailures *LogWriteError
 	var taskMetas []MetaFile
-	matches, _ := filepath.Glob(filepath.Join(params.TasksDir, "*", "meta.env"))
 	for _, p := range matches {
-		if m, rerr := os.ReadFile(filepath.Clean(p)); rerr == nil { //nolint:gosec // task metadata paths
-			taskMetas = append(taskMetas, parseMeta(m))
+		m, rerr := os.ReadFile(filepath.Clean(p)) //nolint:gosec // task metadata paths
+		if rerr != nil {
+			if params.Logger != nil {
+				logFailures = joinLogFailures(logFailures, params.Logger.logFailure(storageErr(rerr, "read task meta %s", p), "task metadata read"))
+			}
+			continue
 		}
+		taskMetas = append(taskMetas, parseMeta(m))
 	}
 	names := CollectGitHubNames(metaValue(meta, "AGENT"), team, taskMetas, params.Config)
+
+	// Step 1: Register colors under lock first.
+	if len(palette) > 0 {
+		if colorErr := RegisterGitHubColors(ctx, colorsPath, palette, names, params.Logger); colorErr != nil && params.Logger != nil {
+			logFailures = joinLogFailures(logFailures, params.Logger.logFailure(colorErr, "register github colors"))
+		}
+	}
+
+	// Step 2: Format name colors AFTER registration so newly remembered colors are included.
+	formattedNameColors := ""
+	if len(palette) > 0 {
+		var nameLogErr *LogWriteError
+		formattedNameColors, nameLogErr = formatGitHubNameColorsWithLogger(colorsPath, palette, params.Config, params.Logger)
+		logFailures = joinLogFailures(logFailures, nameLogErr)
+	}
+
 	trusted, _ := configScalar(params.Config, "AGENT_GITHUB_TRUSTED")
 	out := GitHubSetupParams{
 		AgentsHome: params.AgentsHome, SelfExecutable: params.SelfExecutable, RepoRoot: params.RepoRoot, RunnerID: params.RunnerID,
 		Team: team, Agent: self, Coordinator: ResolveCoordinator(ctx, meta, params.TeamLeadLookup), OwnPR: ResolveOwnPR(meta),
 		BusDir: params.BusDir, AgentbusBin: params.AgentbusBin, ReviewByline: ResolveReviewByline(meta),
-		GitHubTrusted: trusted, GitHubColors: rawColors, GitHubNameColors: FormatGitHubNameColors(colorsPath, palette, params.Config),
+		GitHubTrusted: trusted, GitHubColors: rawColors, GitHubNameColors: formattedNameColors,
 		CurrentPath: params.CurrentPath, LookPath: params.LookPath, Logger: params.Logger,
 	}
-	if colorErr := RegisterGitHubColors(ctx, colorsPath, palette, names, params.Logger); colorErr != nil && params.Logger != nil {
-		if logErr := params.Logger.logFailure(colorErr, "register github colors"); logErr != nil {
-			// Nonfatal logging: sink failures are logged to stderr; parameters remain valid.
-			return out, nil
-		}
+	if logFailures != nil {
+		// Nonfatal: logger sink failures are logged to stderr; parameters remain valid.
+		return out, nil
 	}
 	return out, nil
 }

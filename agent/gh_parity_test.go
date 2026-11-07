@@ -94,7 +94,7 @@ func TestReadColorLines_UnreadableError(t *testing.T) {
 		t.Skip("environment allows reading 0000 files (running as root)")
 	}
 
-	_, storageErr := readColorLinesChecked(colorsPath)
+	_, storageErr := readColorLines(colorsPath)
 	if storageErr == nil {
 		t.Fatal("expected StorageError for unreadable colors file, got nil")
 	}
