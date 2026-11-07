@@ -402,7 +402,7 @@ func (level *LogLevel) UnmarshalJSON(data []byte) error {
 // Valid reports whether this event is defined by this candidate's logging module.
 func (event LogEvent) Valid() bool {
 	return event == LogNoticeFailed || event == LogNoticeSent || event == LogEventScanFailed || event == LogCommandFailed ||
-		event == LogGitIdentity || event == LogSigningKeyUnreadable || event == LogAgentsGHMissing
+		event == LogGitIdentity || event == LogSigningKeyUnreadable || event == LogAgentsGHMissing || event == LogGitHubColorsFailed
 }
 
 // UnmarshalJSON validates the event; errors contain *ValueError.
