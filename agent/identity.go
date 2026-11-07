@@ -75,11 +75,19 @@ func (id *Identity) SigningEnv() map[string]string {
 // Trailers returns the commit trailers as a list of lines.
 // Required trailers: Agent, Agent-Model, Task.
 // Optional trailers: Team, Investigation (if set).
+// Agent-Model format: provider/model (or just provider if model is empty).
 func (id *Identity) Trailers() []string {
 	var trailers []string
 
 	trailers = append(trailers, fmt.Sprintf("Agent: %s", id.Agent))
-	trailers = append(trailers, fmt.Sprintf("Agent-Model: %s/%s", id.Provider, id.Model))
+
+	// Agent-Model: only add slash and model if model is not empty (oracle pattern)
+	if id.Model != "" {
+		trailers = append(trailers, fmt.Sprintf("Agent-Model: %s/%s", id.Provider, id.Model))
+	} else {
+		trailers = append(trailers, fmt.Sprintf("Agent-Model: %s", id.Provider))
+	}
+
 	trailers = append(trailers, fmt.Sprintf("Task: %s", id.Task))
 
 	if id.Team != "" {
