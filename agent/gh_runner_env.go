@@ -73,7 +73,9 @@ func ResolveOwnPR(meta MetaFile) string {
 	if num := metaValue(meta, "PR_NUMBER"); num != "" {
 		return num
 	}
-	if _, rest, ok := strings.Cut(metaValue(meta, "PR_URL"), "/pull/"); ok {
+	prURL := metaValue(meta, "PR_URL")
+	if start := strings.LastIndex(prURL, "/pull/"); start != -1 {
+		rest := prURL[start+len("/pull/"):]
 		if end := strings.IndexFunc(rest, func(r rune) bool { return r < '0' || r > '9' }); end != -1 {
 			return rest[:end]
 		}
