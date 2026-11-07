@@ -24,6 +24,7 @@ failed_coordinator() {
   for _ in $(seq 1 100); do [ "$(lead_of "$team")" = solo ] && break; sleep 0.2; done
   [ "$(lead_of "$team")" = solo ]
   wait_grep '"event":"coordinator_takeover"' "$AGENTS_HOME/logs/agent.jsonl"
+  wait_grep 'solo coordinates the team now' "$AGENTS_HOME/bus/messages.jsonl"   # the members hear who coordinates
   s=$(task_of solo)
   for _ in $(seq 1 150); do [ "$(meta "$s" RUN)" -ge 2 ] && break; sleep 0.2; done
   [ "$(meta "$s" RUN)" -ge 2 ]   # woken to coordinate
