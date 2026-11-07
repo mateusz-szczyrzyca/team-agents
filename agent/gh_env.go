@@ -156,8 +156,11 @@ func SetupGitHubRun(ctx context.Context, exec Executor, params GitHubSetupParams
 	}
 	if !found {
 		if params.Logger != nil {
-			// Side effect: log write failure is nonfatal per Bash oracle log_event (which warns to stderr); do not abort run.
-			_ = params.Logger.Log(ctx, LevelWarn, LogAgentsGHMissing, "task="+params.RunnerID)
+			if logErr := params.Logger.Log(ctx, LevelWarn, LogAgentsGHMissing, "task="+params.RunnerID); logErr != nil {
+				// Side effect: log write failure is nonfatal per the Bash oracle (which emits a diagnostic
+				// to stderr via Logger.Log); do not abort setup and proceed without wrapper.
+				return &GitHubRunEnv{Env: map[string]string{}, EffectivePath: params.CurrentPath}, nil
+			}
 		}
 		return &GitHubRunEnv{Env: map[string]string{}, EffectivePath: params.CurrentPath}, nil
 	}
