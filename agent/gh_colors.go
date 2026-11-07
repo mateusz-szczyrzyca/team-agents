@@ -193,13 +193,11 @@ func formatGitHubNameColorsWithLogger(colorsPath string, palette []string, confi
 	for _, a := range sortedMapKeys(config.Associative["AGENT_TYPE"]) {
 		appendName(a)
 	}
-	for _, a := range sortedMapKeys(config.Associative["INVESTIGATORS_TYPE"]) {
-		appendName(a)
-	}
-	for i, a := range names {
-		if !have[a] {
-			have[a] = true
-			entries = append(entries, a+"="+palette[i%len(palette)])
+	for _, group := range [][]string{names, sortedMapKeys(config.Associative["INVESTIGATORS_TYPE"])} {
+		for i, n := range group {
+			if !have[n] {
+				have[n], entries = true, append(entries, n+"="+palette[i%len(palette)])
+			}
 		}
 	}
 	return strings.Join(entries, " "), logErr
