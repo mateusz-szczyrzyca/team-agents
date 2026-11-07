@@ -161,15 +161,19 @@ func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logg
 
 	if logger != nil {
 		if id.SigningKey != "" && !signingEnabled {
-			// Logger.Log logs its own failures to stderr; signing key warning is diagnostic, nonfatal
-			_ = logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key="+id.SigningKey, "effect=commits of this run are not signed")
+			// Logger already warned to stderr; prepared identity is valid; skip remaining diagnostic on failing logger
+			if logErr := logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key="+id.SigningKey, "effect=commits of this run are not signed"); logErr != nil {
+				return env, nil
+			}
 		}
 		sigStr := "no"
 		if signingEnabled {
 			sigStr = "yes"
 		}
-		// Logger.Log logs its own failures to stderr; identity logging is diagnostic, nonfatal
-		_ = logger.Log(ctx, LevelInfo, LogGitIdentity, "name="+author, "email="+email, "signing="+sigStr)
+		// Logger already warned to stderr; prepared identity is valid; skip remaining diagnostic on failing logger
+		if logErr := logger.Log(ctx, LevelInfo, LogGitIdentity, "name="+author, "email="+email, "signing="+sigStr); logErr != nil {
+			return env, nil
+		}
 	}
 
 	return env, nil
