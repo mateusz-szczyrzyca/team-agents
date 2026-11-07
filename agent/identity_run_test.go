@@ -18,9 +18,9 @@ func TestIdentityFromRunBasicMapping(t *testing.T) {
 	}
 	cfg := Config{
 		Scalars: map[string]string{
-			"GIT_NAME_FORMAT":  "%a (team-agents)",
-			"GIT_EMAIL":        "%a@team-agents.invalid",
-			"GIT_SIGNING_KEY":  "",
+			"GIT_NAME_FORMAT": "%a (team-agents)",
+			"GIT_EMAIL":       "%a@team-agents.invalid",
+			"GIT_SIGNING_KEY": "",
 		},
 	}
 	runnerID := "20261107-test-run"
