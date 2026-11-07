@@ -146,11 +146,12 @@ func TestCommitTrailers(t *testing.T) {
 	}{
 		{
 			id: &Identity{
-				Agent: "claude-haiku",
-				Model: "haiku",
-				Task:  "task-123",
-				Team:  "",
-				InvID: "",
+				Agent:    "claude-haiku",
+				Provider: "claude",
+				Model:    "haiku",
+				Task:     "task-123",
+				Team:     "",
+				InvID:    "",
 			},
 			want: []string{
 				"Agent: claude-haiku",
@@ -161,11 +162,12 @@ func TestCommitTrailers(t *testing.T) {
 		},
 		{
 			id: &Identity{
-				Agent: "codex-1",
-				Model: "gpt-6.1-sol",
-				Task:  "task-456",
-				Team:  "team-001",
-				InvID: "123",
+				Agent:    "codex-1",
+				Provider: "codex",
+				Model:    "gpt-6.1-sol",
+				Task:     "task-456",
+				Team:     "team-001",
+				InvID:    "123",
 			},
 			want: []string{
 				"Agent: codex-1",
