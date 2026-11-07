@@ -136,6 +136,15 @@
    "causes": []
   },
   {
+   "type": "GHFastPath",
+   "op": "gh_fast_path",
+   "what": "early GitHub executable dispatch",
+   "causes": [
+    {"name": "Unavailable", "class": "InvalidState", "doc": "native GitHub policies are not implemented yet"}
+   ],
+   "noStorage": true
+  },
+  {
    "type": "GitHubSetup",
    "op": "github_setup",
    "what": "per-run GitHub wrapper and environment setup",
