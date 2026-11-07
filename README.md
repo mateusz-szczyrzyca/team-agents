@@ -1609,8 +1609,9 @@ make integration        # real agent CLIs and accounts (costs usage)
   ordered trailers, trusted accounts and wrapper environment without process-wide identity or Git changes.
   Candidate `gh` dispatch precedes configuration and returns typed unavailable until R11/R12 implement policy.
   Runner activation remains in its planned round; the installed Bash CLI retains its existing behavior.
-  R10B completes configurable identity setup, readable-key checks, identity diagnostics and derived runner
-  metadata. These lower layers have no production callers; R10A does not claim complete R10 parity.
+  Configurable identity setup checks key readability and reports identity/signing diagnostics. GitHub setup
+  warns and continues if its warning log cannot be written. R10B completes derived runner metadata.
+  These lower layers have no production callers; R10A does not claim complete R10 parity.
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). The current ledger tracks 659 Bats unit test cases, with 4 rows done and 655 planned, in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). R10 adds lower-layer Go coverage without activating runner or GitHub-policy rows. The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"syscall"
 )
@@ -52,23 +51,22 @@ func (id *Identity) Email() string {
 
 // SigningEnv returns environment variables for git signing configuration.
 // Uses oracle GIT_CONFIG_COUNT pattern with indexed KEY/VALUE pairs.
+// Checks readability via keyReadable helper to match Setup contract.
 func (id *Identity) SigningEnv() map[string]string {
 	env := make(map[string]string)
 
-	if id.SigningKey != "" {
-		if _, err := os.Stat(id.SigningKey); err == nil {
-			// Key exists: enable signing with full config
-			env["GIT_CONFIG_COUNT"] = "4"
-			env["GIT_CONFIG_KEY_0"] = "gpg.format"
-			env["GIT_CONFIG_VALUE_0"] = "ssh"
-			env["GIT_CONFIG_KEY_1"] = "user.signingkey"
-			env["GIT_CONFIG_VALUE_1"] = id.SigningKey
-			env["GIT_CONFIG_KEY_2"] = "commit.gpgsign"
-			env["GIT_CONFIG_VALUE_2"] = "true"
-			env["GIT_CONFIG_KEY_3"] = "tag.gpgsign"
-			env["GIT_CONFIG_VALUE_3"] = "true"
-			return env
-		}
+	if id.keyReadable() {
+		// Key exists and is readable: enable signing with full config
+		env["GIT_CONFIG_COUNT"] = "4"
+		env["GIT_CONFIG_KEY_0"] = "gpg.format"
+		env["GIT_CONFIG_VALUE_0"] = "ssh"
+		env["GIT_CONFIG_KEY_1"] = "user.signingkey"
+		env["GIT_CONFIG_VALUE_1"] = id.SigningKey
+		env["GIT_CONFIG_KEY_2"] = "commit.gpgsign"
+		env["GIT_CONFIG_VALUE_2"] = "true"
+		env["GIT_CONFIG_KEY_3"] = "tag.gpgsign"
+		env["GIT_CONFIG_VALUE_3"] = "true"
+		return env
 	}
 
 	// Key missing or unreadable: disable signing (GIT_CONFIG_COUNT=2 for gpgsign false)
@@ -141,8 +139,8 @@ func (id *Identity) keyReadable() bool {
 // Setup returns environment with configurable author format and logs identity setup.
 // Empty authorFormat defaults to "%a (team-agents)", nonempty uses exact format.
 // logger receives git_identity info (name/email/signing) and signing_key_unreadable
-// warn if key nonempty but unreadable. Nil logger = silent. Returns typed LogWriteError.
-func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logger) (map[string]string, *LogWriteError) {
+// warn if key nonempty but unreadable. Nil logger = silent. Logger errors are nonfatal.
+func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logger) (map[string]string, *LogWriteError) { //nolint:unparam // Retain typed-error signature for caller compatibility; diagnostic failures are nonfatal.
 	env := make(map[string]string)
 	format := authorFormat
 	if format == "" {
@@ -161,19 +159,20 @@ func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logg
 		env[k] = v
 	}
 
-	if id.SigningKey != "" && !signingEnabled && logger != nil {
-		if err := logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key="+id.SigningKey, "effect=commits of this run are not signed"); err != nil {
-			return env, err
-		}
-	}
-
 	if logger != nil {
+		if id.SigningKey != "" && !signingEnabled {
+			// Logger already warned to stderr; prepared identity is valid; skip remaining diagnostic on failing logger
+			if logErr := logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key="+id.SigningKey, "effect=commits of this run are not signed"); logErr != nil {
+				return env, nil
+			}
+		}
 		sigStr := "no"
 		if signingEnabled {
 			sigStr = "yes"
 		}
-		if err := logger.Log(ctx, LevelInfo, LogGitIdentity, "name="+author, "email="+email, "signing="+sigStr); err != nil {
-			return env, err
+		// Logger already warned to stderr; prepared identity is valid; skip remaining diagnostic on failing logger
+		if logErr := logger.Log(ctx, LevelInfo, LogGitIdentity, "name="+author, "email="+email, "signing="+sigStr); logErr != nil {
+			return env, nil
 		}
 	}
 
