@@ -347,6 +347,13 @@ human's addition, which still reaches everyone. The coordinator puts the work on
 overlap, each with one owner (a worker, through `request_helper`, for a small, concrete one), its area, its size in
 lines and when it is done —, merges each item as it is done, and redoes none of a member's work.
 
+**Diagnosing a team.** `agent debug <team|task> [--full] [--out file]` writes one file with everything a diagnosis
+needs — the team on the bus, its board, its worker requests, every task's metadata, activity, errors, final report,
+checks and runner log, the script's log, the bus messages, the branches (a merge in progress too), the round's PR,
+its card and tokens — and prints where it is (`~/agents/debug/` by default). It changes nothing. The last lines of
+each source by default, all of them with `--full`. Tokens and the values of `secrets.env` are redacted, so the file
+can be shared.
+
 **Where the money goes.** `agent spend [--days N] [--daily]` counts every task's runs of the last N days (7) by
 model — a line a day and model with `--daily`. A model paid by the token (its CLI in `AGENT_PAID_CLIS`, `opencode` by
 default) shows what it spent: its provider's cost, else `MODEL_PRICES`'. A subscription's model (Claude Code, Codex)
@@ -1560,17 +1567,12 @@ make integration        # real agent CLIs and accounts (costs usage)
   - **Parity checker:** `make check-agent-parity` (`tools/check-agent-parity.sh`) verifies the ledger via `tools/check-agent-test-map.sh`, validates execution counts and SHA-256 digests against candidate evidence, and enforces valid Go test mappings (`TestName[/subtest]`) for active/done rows.
 - **Configuration evaluation and parity (R05A, wired in R09).** The Go candidate evaluates trusted `agents.conf` and ordered defaults in non-interactive Bash, retaining declaration attributes, name references, scalar/array shapes, sparse keys, unset/empty values and legacy investigators. Caller arguments, `AGENT_SUBCOMMAND` and initially empty `RUNNER_ID` match startup context.
   A dedicated descriptor writes a NUL snapshot to a private temporary file; inherited background-child descriptors do not delay loading. Ordinary stdout and stderr output are preserved separately from the snapshot, and startup configuration failures print safe typed diagnostics to stderr before exit. Startup configuration loading is now wired into the candidate binary entry point for read and listing commands.
-  R05A covers the tested configuration/defaults values, not complete executable-script parity. R05B is
-  a documentation-only design revision. Interim option c keeps secrets loading and its dependent
-  runner/auth continuation in the existing Bash command, preserving executable scripts, caller context,
-  and output behavior. It defers the final native replacement scope without adding a Bash orchestration
-  bridge. Native secrets parity remains incomplete; affected candidate activation and full production
-  cutover stay blocked. Before R22, the coordinator must obtain an explicit human verdict confirming
-  option c and reduced scope or selecting option a/b, then revise the affected plan and acceptance
-  criteria. R22, R51, R54 and R55 wait for that verdict. Independent Go components can continue in
-  development. See
+  R05A covers the tested configuration/defaults values, not complete executable-script parity.
+  R05B revision 2 selects option a: secrets become assignment-only data, parsed natively in R22/R51.
+  Executable shell syntax in secrets receives an explicit diagnostic; trusted `agents.conf` remains
+  executable Bash. Production cutover waits for the native secrets and runner paths. See
   [`rewrite-agent-in-go.md`](rewrite-agent-in-go.md#r05b-compatibility-disposition-investigation-163)
-  for the interim disposition, unchanged 1,500-line cap, and unscheduled alternatives.
+  for the decision and the 1,500-line round cap.
 - **Native metadata primitives (R06, execution round 7).** The Go candidate has internal, read-only
   metadata and task-ID APIs; production commands still use the existing Bash paths. The codec reads
   Bash `%q` values from C and UTF-8 locales, including empty values, control bytes and literal quoted
@@ -1603,8 +1605,14 @@ make integration        # real agent CLIs and accounts (costs usage)
   `done`, `failed`, `stopped`, `excluded` and `hung` tasks on every call. JSON listings emit one record per
   configured agent or investigator, with `name`, `type`, `model`, `tier` and `provider` fields; investigators
   have an empty provider. The installed Bash commands retain their existing behavior.
+- **Git and GitHub run primitives (R10A).** Native lower layers return per-run identity, signing overrides,
+  ordered trailers, trusted accounts and wrapper environment without process-wide identity or Git changes.
+  Candidate `gh` dispatch precedes configuration and returns typed unavailable until R11/R12 implement policy.
+  Runner activation remains in its planned round; the installed Bash CLI retains its existing behavior.
+  R10B completes configurable identity setup, readable-key checks, identity diagnostics and derived runner
+  metadata. These lower layers have no production callers; R10A does not claim complete R10 parity.
 - **Go rewrite parity tracking and ledger validation.**
-  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). Parity mapping for all 520 Bats unit test cases (361 black-box, 159 source-coupled) across the 56 implementation rounds is tracked in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
+  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). The current ledger tracks 659 Bats unit test cases, with 4 rows done and 655 planned, in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). R10 adds lower-layer Go coverage without activating runner or GitHub-policy rows. The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
   tools/check-agent-test-map.sh              # validates tests/agent-go-map.tsv and prints summary counts
   tools/check-agent-test-map.sh --quiet      # (-q) suppresses summary output, exits 0 on success or 1 on error
