@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -123,12 +124,17 @@ func CollectGitHubNames(agent, team string, taskMetas []MetaFile, config Config)
 
 // DeriveGitHubParams derives the GitHubSetupParams from task metadata and configuration.
 func DeriveGitHubParams(ctx context.Context, params GitHubRunDerivationParams) (GitHubSetupParams, *StorageError) {
-	metaPath := filepath.Join(params.TasksDir, params.RunnerID, "meta.env")
-	data, err := os.ReadFile(filepath.Clean(metaPath)) //nolint:gosec // task metadata path within TASKS
-	if err != nil {
-		return GitHubSetupParams{}, storageErr(err, "read task metadata %s", metaPath)
+	var meta MetaFile
+	if params.RunnerID != "" {
+		metaPath := filepath.Join(params.TasksDir, params.RunnerID, "meta.env")
+		data, err := os.ReadFile(filepath.Clean(metaPath)) //nolint:gosec // task metadata path within TASKS
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return GitHubSetupParams{}, storageErr(err, "read task metadata %s", metaPath)
+		}
+		if err == nil {
+			meta = parseMeta(data)
+		}
 	}
-	meta := parseMeta(data)
 	team, self := ResolveTeamAndSelf(params.RunnerID, meta)
 	rawColors, _ := configScalar(params.Config, "AGENT_GITHUB_COLORS")
 	palette := strings.Fields(rawColors)
@@ -158,7 +164,7 @@ func DeriveGitHubParams(ctx context.Context, params GitHubRunDerivationParams) (
 	// Step 1: Register colors under lock first.
 	if len(palette) > 0 {
 		if colorErr := RegisterGitHubColors(ctx, colorsPath, palette, names, params.Logger); colorErr != nil && params.Logger != nil {
-			logFailures = joinLogFailures(logFailures, params.Logger.logFailure(colorErr, "register github colors"))
+			logFailures = joinLogFailures(logFailures, params.Logger.Log(ctx, LevelWarn, LogGitHubColorsFailed, "file="+colorsPath, "cause="+colorErr.Error()))
 		}
 	}
 
