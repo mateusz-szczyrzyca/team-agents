@@ -1,10 +1,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 )
+
+// LogGitIdentity is the event name for git identity setup logging.
+const LogGitIdentity LogEvent = "git_identity"
+
+// LogSigningKeyUnreadable is the event name for unreadable signing key warnings.
+const LogSigningKeyUnreadable LogEvent = "signing_key_unreadable"
 
 // Identity holds agent identity information for git commits and environment setup.
 // It manages author/committer names, email formatting, signing configuration, and commit trailers.
@@ -120,4 +128,54 @@ func (id *Identity) Environment() map[string]string {
 	}
 
 	return env
+}
+
+// keyReadable checks if signing key is readable. Document: 4 = R_OK (read permission).
+func (id *Identity) keyReadable() bool {
+	if id.SigningKey == "" {
+		return false
+	}
+	return syscall.Access(id.SigningKey, 4) == nil
+}
+
+// Setup returns environment with configurable author format and logs identity setup.
+// Empty authorFormat defaults to "%a (team-agents)", nonempty uses exact format.
+// logger receives git_identity info (name/email/signing) and signing_key_unreadable
+// warn if key nonempty but unreadable. Nil logger = silent. Returns typed LogWriteError.
+func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logger) (map[string]string, *LogWriteError) {
+	env := make(map[string]string)
+	format := authorFormat
+	if format == "" {
+		format = "%a (team-agents)"
+	}
+
+	author := id.FormatAuthor(format)
+	email := id.Email()
+	env["GIT_AUTHOR_NAME"] = author
+	env["GIT_AUTHOR_EMAIL"] = email
+	env["GIT_COMMITTER_NAME"] = author
+	env["GIT_COMMITTER_EMAIL"] = email
+
+	signingEnabled := id.keyReadable()
+	for k, v := range id.SigningEnv() {
+		env[k] = v
+	}
+
+	if id.SigningKey != "" && !signingEnabled && logger != nil {
+		if err := logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key="+id.SigningKey, "effect=commits of this run are not signed"); err != nil {
+			return env, err
+		}
+	}
+
+	if logger != nil {
+		sigStr := "no"
+		if signingEnabled {
+			sigStr = "yes"
+		}
+		if err := logger.Log(ctx, LevelInfo, LogGitIdentity, "name="+author, "email="+email, "signing="+sigStr); err != nil {
+			return env, err
+		}
+	}
+
+	return env, nil
 }
