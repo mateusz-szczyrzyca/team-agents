@@ -640,6 +640,8 @@ tests/unit/script_split.bats	the review prompt asks for each item to fix with it
 tests/unit/coordinator_alone.bats	coordinator_alone: the coordinator, its members not at work, nothing open on the board for anyone else	source	R35B	-	planned
 tests/unit/coordinator_alone.bats	a coordinator working alone past AGENT_SOLO_COORD_STEPS is ended; its next run starts with the work to split	blackbox	R35B	-	planned
 tests/unit/coordinator_alone.bats	AGENT_COORDINATOR_PREFER names who coordinates a new team	blackbox	R35B	-	planned
+tests/unit/coordinator_takeover.bats	a failed coordinator's role goes to the first of AGENT_COORDINATOR_PREFER among its members, woken at once	blackbox	R29B	-	planned
+tests/unit/coordinator_takeover.bats	with no preference a failed coordinator's role goes to the first member at work	blackbox	R29B	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned

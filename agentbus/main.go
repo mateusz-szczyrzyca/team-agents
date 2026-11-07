@@ -1543,6 +1543,8 @@ func main() {
 		cmdBoardAdd(os.Args[2:])
 	case "board-claim":
 		cmdBoardClaim(os.Args[2:])
+	case "claim-lead":
+		cmdClaimLead(os.Args[2:])
 	case "delegate":
 		cmdDelegate(os.Args[2:])
 	default:

@@ -11,7 +11,8 @@ board() { "$BUILD_DIR/agentbus" board-dump --dir "$AGENTS_HOME/bus" --team "$1" 
 
 # open_team — a team whose coordinator (lead) and member both sleep, the team open
 open_team() {
-  scenario '{"lead": {"new": "team-lead-wait"}, "member": {"new": "idle"}, "worker": {"new": "sleep:300"}, "worker2": {"new": "sleep:300"}}'
+  printf 'AGENT_COORDINATOR_PREFER="lead"\n' >> "$AGENTS_HOME/agents.conf"   # team-sleep claims the role too
+  scenario '{"lead": {"new": "team-lead-wait"}, "member": {"new": "team-sleep"}, "worker": {"new": "sleep:300"}, "worker2": {"new": "sleep:300"}}'
   agent run --team lead,member "team task" > /dev/null
   t=$(task_of lead)
   team=$(meta "$t" TEAM)
@@ -31,6 +32,7 @@ open_team() {
 }
 
 @test "a member that finishes gives back the items designated for it" {
+  printf 'AGENT_COORDINATOR_PREFER="lead"\n' >> "$AGENTS_HOME/agents.conf"   # team-sleep claims the role too
   scenario '{"lead": {"new": "team-lead-wait"}, "member": {"new": "sleep:4"}}'
   agent run --team lead,member "team task" > /dev/null
   t=$(task_of lead); m=$(task_of member)
@@ -73,14 +75,21 @@ open_team() {
   export AGENT_BOARD_STALL_MIN=0 AGENT_EASY_TO_WORKER_MIN=0 AGENT_BOARD_RECENT_H=6
   open_team
   "$BUILD_DIR/agentbus" board-add --dir "$AGENTS_HOME/bus" --team "$team" --as lead --title "an old one" --details "d" --level easy > /dev/null
-  local t pid
-  for t in $(grep -lx "TEAM=$team" "$AGENTS_HOME"/tasks/*/meta.env | xargs -n1 dirname); do
-    for _ in $(seq 1 150); do   # its runner done writing — a last line would make the activity new again
-      pid=$(cat "$t/runner.pid" 2> /dev/null) || break
-      kill -0 "$pid" 2> /dev/null || break
-      sleep 0.2
+  local t pid busy stable=0
+  # age the team's activity once the team is still — no runner at work through five checks in a row: a member's
+  # message can wake the coordinator again, whose run would make its activity new
+  for _ in $(seq 1 100); do
+    busy=0
+    for t in $(grep -lx "TEAM=$team" "$AGENTS_HOME"/tasks/*/meta.env | xargs -n1 dirname); do
+      pid=$(cat "$t/runner.pid" 2> /dev/null) && kill -0 "$pid" 2> /dev/null && busy=1
     done
-    touch -d '-7 hours' "$t/activity.jsonl"
+    if ((busy)); then stable=0; sleep 0.2; continue; fi
+    for t in $(grep -lx "TEAM=$team" "$AGENTS_HOME"/tasks/*/meta.env | xargs -n1 dirname); do
+      touch -d '-7 hours' "$t/activity.jsonl"
+    done
+    stable=$((stable + 1))
+    ((stable < 5)) || break
+    sleep 0.3
   done
   agent _supervise
   ! grep -l "standstill" "$AGENTS_HOME"/notifications/*.md 2> /dev/null || false

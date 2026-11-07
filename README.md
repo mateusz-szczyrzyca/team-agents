@@ -314,6 +314,11 @@ round's PR the team was given; else by an open PR of the repository, from a trus
 coordinator's commit — a team that pushed its work to another team's PR. With none, the round is not reviewed and you
 hear ⛔, with what to do.
 
+**A failed coordinator is replaced.** When a team's coordinator fails, the script makes one of its members at work
+the coordinator — the first of `AGENT_COORDINATOR_PREFER` among them, else the first of them — and wakes it with what
+happened; you hear who coordinates now. A coordinator out of its team (failed, stopped, excluded, hung) can also be
+replaced by any normal member that claims the role.
+
 **A coordinator working alone is stopped.** Where the script does not know the work to split (a new round), the
 runner watches the coordinator: once its run has worked `AGENT_SOLO_COORD_STEPS` (30) steps alone — its other members
 not at work, its board with nothing open for anyone else —, the run is ended, and the next one, a fresh session,
