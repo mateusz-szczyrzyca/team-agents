@@ -106,6 +106,7 @@ func TestStartupHostnamePrecedence(t *testing.T) {
 	writeConfigFixture(t, filepath.Join(confDir, "agents.conf"), "")
 	app := newApp(OSExecutor{}, nil, nil)
 	t.Setenv("HOME", home)
+	t.Setenv("AGENTS_HOME", confDir) // its own configuration, never the one of whoever runs the tests
 	if err := app.loadStartupConfig(context.Background(), nil); err != nil {
 		t.Fatalf("loadStartupConfig failed: %v", err)
 	}
