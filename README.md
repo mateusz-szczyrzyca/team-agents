@@ -1614,10 +1614,11 @@ make integration        # real agent CLIs and accounts (costs usage)
   after a warning sink fails; log-event values support JSON decoding. R10B derives identity and author-format
   inputs from loaded run metadata and effective configuration, together with GitHub coordinator, owned PR,
   investigation byline and team fields. Name colors preserve the existing registry format and configured
-  fallback palette. These lower layers have no production callers until R22; full R10 parity remains gated
+  fallback palette. Color-registration failures emit a nonfatal `github_colors_failed` warning with
+  the registry `file` and underlying `cause`. These lower layers have no production callers until R22; full R10 parity remains gated
   on runner activation and the separate GitHub policy rounds.
 - **Go rewrite parity tracking and ledger validation.**
-  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). The current ledger tracks 659 Bats unit test cases, with 4 rows done and 655 planned, in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). R10 adds lower-layer Go coverage without activating runner or GitHub-policy rows. The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
+  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). The current ledger tracks 667 Bats unit test cases, with 4 rows done and 663 planned, in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). R10 adds lower-layer Go coverage without activating runner or GitHub-policy rows. The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
   tools/check-agent-test-map.sh              # validates tests/agent-go-map.tsv and prints summary counts
   tools/check-agent-test-map.sh --quiet      # (-q) suppresses summary output, exits 0 on success or 1 on error
