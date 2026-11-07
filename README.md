@@ -321,6 +321,12 @@ starts with the work to put on the board (0: never). `AGENT_COORDINATOR_PREFER` 
 the first of these agents in it, and on a resume whose coordinator is left out —; empty, the first to claim the role
 coordinates, as before.
 
+**A board nobody takes from.** An easy item nobody owns, waiting `AGENT_EASY_TO_WORKER_MIN` (5) minutes in a team
+with no worker member, goes to a worker: the script claims it for the coordinator and delegates it as the
+coordinator's request (`agentbus board-claim`, `agentbus delegate`). A member that finishes, or is out, gives back the
+items designated for it as well as those it claimed. A team whose members all sleep while items wait
+`AGENT_BOARD_STALL_MIN` (30) minutes tells you ⛔, once for the same items.
+
 **The script splits a fix pass.** A model left to split a team's work may not: a coordinator worked alone through a
 fix pass while its members slept. When a review sends a round back, each item the reviews list under
 `## Recommendation` (one a line, tagged `[critical]`, `[major]` or `[minor]`) is on the new team's board before any of

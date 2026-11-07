@@ -311,13 +311,17 @@ func (t *Team) sortedBoardIDs() []string {
 	return ids
 }
 
-// releaseItemsOf returns every item claimed by agent to "todo" and returns their IDs.
+// releaseItemsOf returns every item claimed by agent to "todo", and frees every item designated for it and not yet
+// claimed (nobody else may take one while it is reserved); it returns their IDs.
 func (t *Team) releaseItemsOf(agent string) []string {
 	var released []string
 	for _, id := range t.sortedBoardIDs() {
 		it := t.Board[id]
 		if it.Assignee == agent && it.Status == BoardClaimed {
 			it.Status, it.Assignee, it.Previous, it.Updated = BoardTodo, "", agent, Now()
+			released = append(released, id)
+		} else if it.For == agent && it.Status == BoardTodo {
+			it.For, it.Previous, it.Updated = "", agent, Now()
 			released = append(released, id)
 		}
 	}
@@ -1005,6 +1009,22 @@ func cmdDelegate(args []string) {
 	s := &Server{bus: &Bus{dir: *dir}, me: *as, team: *team, agentCmd: *agentCmd, home: *home,
 		info: Presence{Task: *task, Repo: *repo, Branch: *branch, Worktree: *worktree}}
 	out, err := s.delegate(*request, *context)
+	exitOn(err.asError())
+	fmt.Println(out)
+}
+
+// cmdBoardClaim (board-claim) claims a board item as a member (--as), the way that member's board_claim would; it
+// prints board_claim's answer. The script claims an easy item nobody owns for the coordinator, whose request a worker
+// then does.
+func cmdBoardClaim(args []string) {
+	fs := newFlagSet("board-claim")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	team := fs.String("team", "", "team")
+	as := fs.String("as", "", "the member that claims it")
+	id := fs.String("id", "", "the item's ID")
+	parseFlags(fs, args)
+	s := &Server{bus: &Bus{dir: *dir}, me: *as, team: *team}
+	out, err := s.boardClaim(*id)
 	exitOn(err.asError())
 	fmt.Println(out)
 }

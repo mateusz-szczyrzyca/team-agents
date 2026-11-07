@@ -1541,6 +1541,8 @@ func main() {
 		cmdBoardDump(os.Args[2:])
 	case "board-add":
 		cmdBoardAdd(os.Args[2:])
+	case "board-claim":
+		cmdBoardClaim(os.Args[2:])
 	case "delegate":
 		cmdDelegate(os.Args[2:])
 	default:
