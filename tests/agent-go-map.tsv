@@ -541,6 +541,9 @@ tests/unit/work_split.bats	what the checks and reviews send back reaches the coo
 tests/unit/work_split.bats	the human's addition reaches every member, a member with the same line	blackbox	R22	-	planned
 tests/unit/work_split.bats	the team prompt makes the board the round's plan, and a member take only its items	blackbox	R22	-	planned
 tests/unit/autopilot_review_cap.bats	--autopilot: after three pairs of reviews with findings the autopilot stops and waits for the human	blackbox	R34	-	planned
+tests/unit/board_unstick.bats	an easy item nobody owns goes to a worker as the coordinator's request; the coordinator holds it	blackbox	R22	-	planned
+tests/unit/board_unstick.bats	a member that finishes gives back the items designated for it	blackbox	R22	-	planned
+tests/unit/board_unstick.bats	a team whose members all sleep while items wait past AGENT_BOARD_STALL_MIN tells the human ⛔, once	blackbox	R22	-	planned
 tests/unit/review_pair_rotate.bats	rotate: A,B then C,D; every new pair differs from the last two; four investigators make all six pairs	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: a PR's re-review after a fix pass is done by another pair, not the one before	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: the history is shared by every PR and repository	source	R33	-	planned
