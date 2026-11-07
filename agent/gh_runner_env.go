@@ -164,7 +164,7 @@ func DeriveGitHubParams(ctx context.Context, params GitHubRunDerivationParams) (
 	// Step 1: Register colors under lock first.
 	if len(palette) > 0 {
 		if colorErr := RegisterGitHubColors(ctx, colorsPath, palette, names, params.Logger); colorErr != nil && params.Logger != nil {
-			logFailures = joinLogFailures(logFailures, params.Logger.Log(ctx, LevelWarn, LogGitHubColorsFailed, "file="+colorsPath, "cause="+colorErr.Error(), "raw=file="+colorsPath))
+			logFailures = joinLogFailures(logFailures, params.Logger.Log(ctx, LevelWarn, LogGitHubColorsFailed, "file="+colorsPath, "cause="+colorErr.Error()))
 		}
 	}
 
