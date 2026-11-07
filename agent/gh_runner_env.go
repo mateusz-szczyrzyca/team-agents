@@ -21,7 +21,7 @@ type GitHubRunDerivationParams struct {
 	// Config is the loaded agent configuration.
 	Config Config
 	// TeamLeadLookup queries the coordinator/lead for a team.
-	TeamLeadLookup func(ctx context.Context, team string) (string, error)
+	TeamLeadLookup func(ctx context.Context, team string) (string, *ProcessError)
 	// LookPath resolves executable paths on PATH.
 	LookPath func(string) (string, error)
 	// SelfExecutable is the path to this executable.
@@ -35,7 +35,7 @@ type GitHubRunDerivationParams struct {
 // ResolveCoordinator derives the team coordinator for the runner task.
 // If the task is not in a team, or is an investigation, or the lead cannot be determined,
 // or the lead is the task's own agent (coordinator itself), it returns an empty string.
-func ResolveCoordinator(ctx context.Context, meta MetaFile, leadLookup func(ctx context.Context, team string) (string, error)) string {
+func ResolveCoordinator(ctx context.Context, meta MetaFile, leadLookup func(ctx context.Context, team string) (string, *ProcessError)) string {
 	_ = ctx
 	_ = meta
 	_ = leadLookup
@@ -83,7 +83,7 @@ func CollectGitHubNames(agent string, team string, taskMetas []MetaFile, config 
 }
 
 // DeriveGitHubParams derives the GitHubSetupParams from task metadata and configuration.
-func DeriveGitHubParams(ctx context.Context, params GitHubRunDerivationParams) (GitHubSetupParams, error) {
+func DeriveGitHubParams(ctx context.Context, params GitHubRunDerivationParams) (GitHubSetupParams, *StorageError) {
 	_ = ctx
 	_ = params
 	return GitHubSetupParams{}, nil

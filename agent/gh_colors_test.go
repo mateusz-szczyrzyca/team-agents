@@ -36,7 +36,10 @@ func TestRegisterGitHubColors(t *testing.T) {
 	if err := RegisterGitHubColors(context.Background(), colorsPath, palette, names2, nil); err != nil {
 		t.Fatalf("RegisterGitHubColors() failed: %v", err)
 	}
-	data2, _ := os.ReadFile(filepath.Clean(colorsPath))
+	data2, errRead2 := os.ReadFile(filepath.Clean(colorsPath))
+	if errRead2 != nil {
+		t.Fatalf("second ReadFile() failed: %v", errRead2)
+	}
 	if !strings.Contains(string(data2), "gemini-1 #8250DF\n") {
 		t.Errorf("expected gemini-1 #8250DF in %q", string(data2))
 	}

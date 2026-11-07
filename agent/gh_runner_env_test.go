@@ -9,7 +9,7 @@ import (
 
 func TestResolveCoordinator(t *testing.T) {
 	ctx := context.Background()
-	leadLookup := func(_ context.Context, team string) (string, error) {
+	leadLookup := func(_ context.Context, team string) (string, *ProcessError) {
 		if team == "team-1" {
 			return "lead-agent", nil
 		}
@@ -213,7 +213,7 @@ func TestDeriveGitHubParams(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	leadLookup := func(_ context.Context, team string) (string, error) {
+	leadLookup := func(_ context.Context, team string) (string, *ProcessError) {
 		if team == "team-alpha" {
 			return "codex-1", nil
 		}
