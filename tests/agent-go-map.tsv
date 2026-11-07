@@ -65,11 +65,11 @@ tests/unit/delegate_jobs.bats	failed destination checkout returns a failed helpe
 tests/unit/delegate_jobs.bats	requester commits after delegation cannot change the submitted base	blackbox	R50	-	planned
 tests/unit/delegate_jobs.bats	maximum-size escaped helper task is accepted by the real lead and tracked after POST	blackbox	R50	-	planned
 tests/unit/findings.bats	the critical and major findings of a review are counted in every usual form	source	R21	-	planned
-tests/unit/failover.bats	failover_due: an exhausted quota, an overload past AGENT_FAILOVER_MIN or the third in an hour; not a short one, nor a rate limit	source	R29	-	planned
-tests/unit/failover.bats	a member whose model is out of service is replaced by a free normal agent; its work in progress is pushed on its branch	blackbox	R29	-	planned
-tests/unit/failover.bats	a coordinator whose model is out of service is replaced: the new team has a new coordinator	blackbox	R29	-	planned
-tests/unit/failover.bats	without a free normal agent the member waits its pause out, and the human hears of it	blackbox	R29	-	planned
-tests/unit/failover.bats	a coordinator's prompt says never to wait in a loop for its members	blackbox	R29	-	planned
+tests/unit/failover.bats	failover_due: an exhausted quota, an overload past AGENT_FAILOVER_MIN or the third in an hour; not a short one, nor a rate limit	source	R30B	-	planned
+tests/unit/failover.bats	a member whose model is out of service is replaced by a free normal agent; its work in progress is pushed on its branch	blackbox	R30B	-	planned
+tests/unit/failover.bats	a coordinator whose model is out of service is replaced: the new team has a new coordinator	blackbox	R30B	-	planned
+tests/unit/failover.bats	without a free normal agent the member waits its pause out, and the human hears of it	blackbox	R30B	-	planned
+tests/unit/failover.bats	a coordinator's prompt says never to wait in a loop for its members	blackbox	R30B	-	planned
 tests/unit/fix_passes_default.bats	by default --autopilot has five fix passes: the sixth failed review calls the human	source	R34	-	planned
 tests/unit/fresh_relative.bats	a resumed run starts a fresh session only past twice the task's session starts; --runs shows each run's mode	source	R17	-	planned
 tests/unit/fresh_session.bats	a run that read a large context a step is followed by a fresh session, not a resume	blackbox	R24	-	planned
@@ -389,27 +389,27 @@ tests/unit/node_two_homes.bats	a remote member that fails is out of its team on 
 tests/unit/node_two_homes.bats	resuming a team with a remote member brings the member back on its node	blackbox	R50	-	planned
 tests/unit/node_two_homes.bats	a job whose task is paused on its node can be stopped (no unit runs it)	blackbox	R50	-	planned
 tests/unit/node_two_homes.bats	a remote member's job whose team the lead's bus does not know is cancelled by agent _supervise on the lead	blackbox	R50	-	planned
-tests/unit/notify_merged_start.bats	a new solo task is announced as started	blackbox	R14	-	planned
-tests/unit/notify_merged_start.bats	a new team is announced as started once, not once a member	blackbox	R14	-	planned
-tests/unit/notify_merged_start.bats	a merge is '🟣 PR merged', with its two reviewers and their models, in a file of its own	source	R14	-	planned
-tests/unit/notify_icon_first.bats	a finished task's notification starts with its status's icon	blackbox	R14	-	planned
-tests/unit/notify_icon_first.bats	the status's icon and the note's, when another, come first; a merge's is its own	source	R14	-	planned
-tests/unit/notify_icon_first.bats	with no icon in the status nor the note the title is as before	source	R14	-	planned
-tests/unit/notify_icon_first.bats	a notification outside a task's cycle starts with the icon its text starts with	source	R14	-	planned
-tests/unit/push_text_icons.bats	every notification outside a task's cycle starts with an icon	source	R14	-	planned
-tests/unit/push_text_icons.bats	the end of the fix passes stops the work: its notification's title starts with ⛔	source	R14	-	planned
+tests/unit/notify_merged_start.bats	a new solo task is announced as started	blackbox	R53B	-	planned
+tests/unit/notify_merged_start.bats	a new team is announced as started once, not once a member	blackbox	R53B	-	planned
+tests/unit/notify_merged_start.bats	a merge is '🟣 PR merged', with its two reviewers and their models, in a file of its own	source	R53B	-	planned
+tests/unit/notify_icon_first.bats	a finished task's notification starts with its status's icon	blackbox	R53B	-	planned
+tests/unit/notify_icon_first.bats	the status's icon and the note's, when another, come first; a merge's is its own	source	R53B	-	planned
+tests/unit/notify_icon_first.bats	with no icon in the status nor the note the title is as before	source	R53B	-	planned
+tests/unit/notify_icon_first.bats	a notification outside a task's cycle starts with the icon its text starts with	source	R53B	-	planned
+tests/unit/push_text_icons.bats	every notification outside a task's cycle starts with an icon	source	R53B	-	planned
+tests/unit/push_text_icons.bats	the end of the fix passes stops the work: its notification's title starts with ⛔	source	R53B	-	planned
 tests/unit/one_pr_per_round.bats	the next round does not start while another PR of the round is open, though one of its PRs is merged	blackbox	R34	-	planned
 tests/unit/one_pr_per_round.bats	round_open_prs lists the open PRs of the team's branches, and only those	source	R31	-	planned
 tests/unit/one_pr_per_round.bats	a round resumed says which is its PR, and that every commit of the round goes there	blackbox	R31	-	planned
 tests/unit/pr_ownership.bats	pr_ownership_note: an owner's known PR with its branch, else one to open; a team's rule; nothing for a reviewer	source	R16	-	planned
 tests/unit/pr_ownership.bats	the agents' gh refuses a second PR to a task whose PR is open, and lets one be opened once it is merged	blackbox	R11	-	planned
-tests/unit/pr_by_commit.bats	round_pr_for: the PR on the branch, else the round's PR it was given, else an open PR at the branch's commit	source	R25	-	planned
-tests/unit/pr_by_commit.bats	a review whose round has no PR anywhere tells the human ⛔: no review, and what to do	source	R25	-	planned
-tests/unit/pr_by_commit.bats	closing a team finds the round's PR at its commit: no gap 'no PR from your branch'	source	R25	-	planned
-tests/unit/pr_pin.bats	agent run --pr: the team starts at the PR's head, on the PR's base, with the PR as its round's PR	blackbox	R25	-	planned
-tests/unit/pr_pin.bats	agent run --pr refuses a PR that is not open here, and starts nothing	blackbox	R25	-	planned
-tests/unit/pr_pin.bats	a task that names an open PR, without --pr, is told how to continue that PR	blackbox	R25	-	planned
-tests/unit/next_round_pr.bats	the next round starts after a merged PR the round was reviewed on, on another team's branch	blackbox	R25	-	planned
+tests/unit/pr_by_commit.bats	round_pr_for: the PR on the branch, else the round's PR it was given, else an open PR at the branch's commit	source	R32B	-	planned
+tests/unit/pr_by_commit.bats	a review whose round has no PR anywhere tells the human ⛔: no review, and what to do	source	R32B	-	planned
+tests/unit/pr_by_commit.bats	closing a team finds the round's PR at its commit: no gap 'no PR from your branch'	source	R32B	-	planned
+tests/unit/pr_pin.bats	agent run --pr: the team starts at the PR's head, on the PR's base, with the PR as its round's PR	blackbox	R32B	-	planned
+tests/unit/pr_pin.bats	agent run --pr refuses a PR that is not open here, and starts nothing	blackbox	R32B	-	planned
+tests/unit/pr_pin.bats	a task that names an open PR, without --pr, is told how to continue that PR	blackbox	R32B	-	planned
+tests/unit/next_round_pr.bats	the next round starts after a merged PR the round was reviewed on, on another team's branch	blackbox	R32B	-	planned
 tests/unit/pause_notify.bats	a remote member's pause reaches its team: the coordinator hears why and until when; back at work it is active again	blackbox	R46	-	planned
 tests/unit/pause_notify.bats	notifications that cannot be delivered are kept for a day, with the process that sent them, whatever is delivered since	blackbox	R23	-	planned
 tests/unit/pause_notify.bats	the supervisor stops an answers watch whose task no longer waits for answers, and keeps a waiting task's	blackbox	R26	-	planned
@@ -526,9 +526,9 @@ tests/unit/wake_cmd.bats	agent wake: a paused task resumes now, not at its pause
 tests/unit/wake_cmd.bats	agent wake refuses a task that is not paused	blackbox	R25	-	planned
 tests/unit/wake_cmd.bats	agent wake on a remote member's proxy task asks its node to resume it	blackbox	R46	-	planned
 tests/unit/wake_cmd.bats	a node resumes its paused member at once when the lead asks (WakesNow)	source	R46	-	planned
-tests/unit/worker_draw.bats	after a worker of one provider, a worker of another is drawn — at random among them	source	R21	-	planned
-tests/unit/worker_draw.bats	with only workers of the last provider free, one of them is drawn	source	R21	-	planned
-tests/unit/worker_draw.bats	drawn and recorded one after another, every worker gets work — openrouter-deepseek41 too	source	R21	-	planned
+tests/unit/worker_draw.bats	after a worker of one provider, a worker of another is drawn — at random among them	source	R35B	-	planned
+tests/unit/worker_draw.bats	with only workers of the last provider free, one of them is drawn	source	R35B	-	planned
+tests/unit/worker_draw.bats	drawn and recorded one after another, every worker gets work — openrouter-deepseek41 too	source	R35B	-	planned
 tests/unit/web.bats	agent _agents-json lists every configured agent and investigator	blackbox	R09	TestRound2ProductionJSON	done
 tests/unit/web.bats	the web interface shows the tasks, the agents and a task's activity	blackbox	R53	-	planned
 tests/unit/web.bats	answering in the browser resumes the task; ok accepts the recommendation	blackbox	R53	-	planned
@@ -537,18 +537,18 @@ tests/unit/web.bats	tagged devices are let in by name through tailscale serve; o
 tests/unit/web.bats	agent web refuses to listen on a non-loopback address	blackbox	R53	-	planned
 tests/unit/web.bats	dashboard shows only 20 latest entries by default and Full dashboard view shows all	blackbox	R53	-	planned
 tests/unit/web_jobs.bats	agent web passes the configured node heartbeat timeout	blackbox	R53	-	planned
-tests/unit/work_split.bats	what the checks and reviews send back reaches the coordinator alone; a member takes only its board items	blackbox	R22	-	planned
-tests/unit/work_split.bats	the human's addition reaches every member, a member with the same line	blackbox	R22	-	planned
-tests/unit/work_split.bats	the team prompt makes the board the round's plan, and a member take only its items	blackbox	R22	-	planned
+tests/unit/work_split.bats	what the checks and reviews send back reaches the coordinator alone; a member takes only its board items	blackbox	R29B	-	planned
+tests/unit/work_split.bats	the human's addition reaches every member, a member with the same line	blackbox	R29B	-	planned
+tests/unit/work_split.bats	the team prompt makes the board the round's plan, and a member take only its items	blackbox	R29B	-	planned
 tests/unit/autopilot_review_cap.bats	--autopilot: after three pairs of reviews with findings the autopilot stops and waits for the human	blackbox	R34	-	planned
-tests/unit/board_unstick.bats	an easy item nobody owns goes to a worker as the coordinator's request; the coordinator holds it	blackbox	R22	-	planned
-tests/unit/board_unstick.bats	a member that finishes gives back the items designated for it	blackbox	R22	-	planned
-tests/unit/board_unstick.bats	a team whose members all sleep while items wait past AGENT_BOARD_STALL_MIN tells the human ⛔, once	blackbox	R22	-	planned
-tests/unit/board_unstick.bats	a stopped team is neither reported at a standstill nor has its easy items given to workers	blackbox	R22	-	planned
-tests/unit/board_unstick.bats	a team none of whose members was at work in AGENT_BOARD_RECENT_H is left alone: an old one, never closed	blackbox	R22	-	planned
-tests/unit/helper_failover.bats	a worker request whose model is out of service goes to another worker; the requester hears no failure	blackbox	R21	-	planned
-tests/unit/helper_failover.bats	free_worker passes over a worker whose model is out of service while its pause lasts	source	R21	-	planned
-tests/unit/team_end_helpers.bats	a team whose coordinator announces it done stops its workers' tasks and closes its queued requests	blackbox	R21	-	planned
+tests/unit/board_unstick.bats	an easy item nobody owns goes to a worker as the coordinator's request; the coordinator holds it	blackbox	R35B	-	planned
+tests/unit/board_unstick.bats	a member that finishes gives back the items designated for it	blackbox	R35B	-	planned
+tests/unit/board_unstick.bats	a team whose members all sleep while items wait past AGENT_BOARD_STALL_MIN tells the human ⛔, once	blackbox	R35B	-	planned
+tests/unit/board_unstick.bats	a stopped team is neither reported at a standstill nor has its easy items given to workers	blackbox	R35B	-	planned
+tests/unit/board_unstick.bats	a team none of whose members was at work in AGENT_BOARD_RECENT_H is left alone: an old one, never closed	blackbox	R35B	-	planned
+tests/unit/helper_failover.bats	a worker request whose model is out of service goes to another worker; the requester hears no failure	blackbox	R30B	-	planned
+tests/unit/helper_failover.bats	free_worker passes over a worker whose model is out of service while its pause lasts	source	R30B	-	planned
+tests/unit/team_end_helpers.bats	a team whose coordinator announces it done stops its workers' tasks and closes its queued requests	blackbox	R29B	-	planned
 tests/unit/review_pair_rotate.bats	rotate: A,B then C,D; every new pair differs from the last two; four investigators make all six pairs	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: a PR's re-review after a fix pass is done by another pair, not the one before	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: the history is shared by every PR and repository	source	R33	-	planned
@@ -558,9 +558,9 @@ tests/unit/review_pair_rotate.bats	rotate: three investigators — the third pai
 tests/unit/review_pair_rotate.bats	rotate: a re-review by another investigator gets the slot's previous review as someone else's	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: the supervise timer dispatches a waiting review pair, which no run's end may do	source	R33	-	planned
 tests/unit/round_discipline.bats	the prompts say never to start the next round's work; a member out of items sleeps instead	blackbox	R31	-	planned
-tests/unit/round_check.bats	agent round-check shows a member's work not in the round's PR, the files two branches changed, the workers	blackbox	R23	-	planned
-tests/unit/round_check.bats	round_check_line sums the card up in one line	source	R23	-	planned
-tests/unit/round_check.bats	the coordinator's notification of a round carries the round's card in one line	source	R23	-	planned
+tests/unit/round_check.bats	agent round-check shows a member's work not in the round's PR, the files two branches changed, the workers	blackbox	R32B	-	planned
+tests/unit/round_check.bats	round_check_line sums the card up in one line	source	R32B	-	planned
+tests/unit/round_check.bats	the coordinator's notification of a round carries the round's card in one line	source	R32B	-	planned
 tests/unit/review_pair_repeat.bats	default draw: a PR's second review is done by the other two investigators, its third by a mixed pair	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	default draw: across PRs A+B is followed by C+D, then by a mixed pair	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	default draw: only the PR's previous pair free — it waits, and does not repeat it after AGENT_REVIEW_ROTATE_WAIT_MIN	source	R33	-	planned
@@ -631,15 +631,15 @@ tests/unit/dashboard_prompt_modes.bats	dashboard PR ownership and Serena guidanc
 tests/unit/dashboard_prompt_modes.bats	dashboard resume does not advertise Serena when disabled	source	R35	-	planned
 tests/unit/serena.bats	config/agents.conf enables AGENT_SERENA=serena and worktrees inherit .serena/project.yml from REPO_ROOT	source	R12	-	planned
 tests/unit/serena.bats	every model CLI (claude, codex, gemini, opencode) receives the Serena prompt and invokes the serena MCP server when needed	source	R12	-	planned
-tests/unit/spend.bats	agent spend: a paid model's spending, a subscription's equivalent, by model	blackbox	R11	-	planned
-tests/unit/spend.bats	agent spend: a subscription's model in MODEL_PRICES is priced at its API rates, cached input at its own	blackbox	R11	-	planned
-tests/unit/spend.bats	agent spend --days: older runs are left out; --daily shows a line a day and model	blackbox	R11	-	planned
-tests/unit/script_split.bats	fix_items: the items a review lists under Recommendation, each once; [minor] ones easy, the others normal	source	R22	-	planned
-tests/unit/script_split.bats	a fix pass puts its items on the new team's board for the members in turn, not the coordinator; a minor one also goes to a worker	blackbox	R22	-	planned
-tests/unit/script_split.bats	the review prompt asks for each item to fix with its severity; the fix pass tells the coordinator the items are on the board	blackbox	R22	-	planned
-tests/unit/coordinator_alone.bats	coordinator_alone: the coordinator, its members not at work, nothing open on the board for anyone else	source	R22	-	planned
-tests/unit/coordinator_alone.bats	a coordinator working alone past AGENT_SOLO_COORD_STEPS is ended; its next run starts with the work to split	blackbox	R22	-	planned
-tests/unit/coordinator_alone.bats	AGENT_COORDINATOR_PREFER names who coordinates a new team	blackbox	R22	-	planned
+tests/unit/spend.bats	agent spend: a paid model's spending, a subscription's equivalent, by model	blackbox	R53B	-	planned
+tests/unit/spend.bats	agent spend: a subscription's model in MODEL_PRICES is priced at its API rates, cached input at its own	blackbox	R53B	-	planned
+tests/unit/spend.bats	agent spend --days: older runs are left out; --daily shows a line a day and model	blackbox	R53B	-	planned
+tests/unit/script_split.bats	fix_items: the items a review lists under Recommendation, each once; [minor] ones easy, the others normal	source	R29B	-	planned
+tests/unit/script_split.bats	a fix pass puts its items on the new team's board for the members in turn, not the coordinator; a minor one also goes to a worker	blackbox	R29B	-	planned
+tests/unit/script_split.bats	the review prompt asks for each item to fix with its severity; the fix pass tells the coordinator the items are on the board	blackbox	R29B	-	planned
+tests/unit/coordinator_alone.bats	coordinator_alone: the coordinator, its members not at work, nothing open on the board for anyone else	source	R35B	-	planned
+tests/unit/coordinator_alone.bats	a coordinator working alone past AGENT_SOLO_COORD_STEPS is ended; its next run starts with the work to split	blackbox	R35B	-	planned
+tests/unit/coordinator_alone.bats	AGENT_COORDINATOR_PREFER names who coordinates a new team	blackbox	R35B	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
@@ -649,6 +649,6 @@ tests/unit/team_stop_followup.bats	a run that continues a team member (a bounce)
 tests/unit/team_stop_followup.bats	a wake is not held back while --investigation is in progress in its project	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a finished --investigation still marked waiting does not block a normal team	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a helper's task text is in English: the requester's context goes under Context	source	R35	-	planned
-tests/unit/tmp_sweep.bats	tmp-sweep removes the old leftovers of test runs that no process uses; it keeps fresh ones, those in use, and anything else	blackbox	R03	-	planned
-tests/unit/tmp_sweep.bats	make unit-bats runs the tests with their temporary files in BATS_TMP, after sweeping it and /tmp	blackbox	R03	-	planned
-tests/unit/tmp_sweep.bats	unit-bats.sh refuses to start without room for its temporary files, and says so	blackbox	R03	-	planned
+tests/unit/tmp_sweep.bats	tmp-sweep removes the old leftovers of test runs that no process uses; it keeps fresh ones, those in use, and anything else	blackbox	R55	-	planned
+tests/unit/tmp_sweep.bats	make unit-bats runs the tests with their temporary files in BATS_TMP, after sweeping it and /tmp	blackbox	R55	-	planned
+tests/unit/tmp_sweep.bats	unit-bats.sh refuses to start without room for its temporary files, and says so	blackbox	R55	-	planned

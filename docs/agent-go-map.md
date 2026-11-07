@@ -4,6 +4,9 @@
 rewrite. This R01 inventory does not activate candidate execution or claim Go
 coverage. The unchanged Bash implementation remains the behavioral oracle.
 
+A split round has a letter after its number (R05A, R29B); revision 2 of `rewrite-agent-in-go.md` adds
+R29B, R30B, R32B, R35B and R53B for the subsystems added after the examined base.
+
 ## Baseline
 
 - Examined commit: `940f6fdc067069f92a8023c84ed1b5eb011b95ae`.
