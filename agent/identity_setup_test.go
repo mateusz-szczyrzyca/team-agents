@@ -139,7 +139,7 @@ func TestSetupProcessEnvIndependence(t *testing.T) {
 
 // readLogLines reads JSON log lines from a file and returns them as maps.
 func readLogLines(t *testing.T, logfile string) []map[string]interface{} {
-	data, err := os.ReadFile(logfile)
+	data, err := os.ReadFile(logfile) // #nosec G304 - test-controlled path in temp directory
 	if err != nil {
 		return []map[string]interface{}{}
 	}
