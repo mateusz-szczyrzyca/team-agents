@@ -359,7 +359,9 @@ out of quota, is replaced by `agent _supervise`: its work in progress is committ
 items go back to the board, its task is stopped, and the round goes back to the team with a free agent of
 `NORMAL_AGENTS` in its place — of another CLI when one is free, never one replaced elsewhere while its pause lasts.
 A coordinator replaced, the team gets a new one. Without a free agent the member waits its pause out, and you hear
-of it (log: `failover_done`, `failover_no_agent`).
+of it (log: `failover_done`, `failover_no_agent`). A worker's request is handed over the same way: its worker's task is stopped
+without a result for the requester, and the request goes to another free worker (log: `helper_failover`); a worker
+out of service is not given work while its pause lasts.
 
 **A hand-back that waits for a run.** When `--autopilot` sends a round back to its team — after its checks, or
 for a fix pass — while a run of the team still goes on (a member still at work after its coordinator ended the

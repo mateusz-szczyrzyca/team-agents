@@ -2443,6 +2443,23 @@ failover_agent() {
   echo "${other:-$same}"
 }
 
+# helper_failover task — a worker request whose worker's model is out of service goes to another worker: the worker's
+# task is stopped — quietly: agent stop finishes no request, so the requester hears no failure —, the request queued
+# again, and dispatched at once to a free worker, never one out of service (free_worker skips FAILOVER_UNTIL)
+helper_failover() {
+  local id=$1 hid agent
+  hid=$(task_field "$id" HELPER_ID); agent=$(task_field "$id" AGENT)
+  [[ -n $hid ]] || return 0
+  "$SELF" stop "$id" > /dev/null 2>&1 || log_warn helper_failover_stop_failed "task=$id"
+  if ! try helper_state_failed bus helper-set --dir "$BUS_DIR" --id "$hid" --status queued; then
+    log_error helper_failover_failed "task=$id" "request=H$hid"
+    return 0
+  fi
+  log_info helper_failover "task=$id" "request=H$hid" "worker=$agent"
+  act "$id" info "■ the model of $agent is out of service: request H$hid goes to another worker"
+  dispatch_helpers || log_warn helper_dispatch_failed "request=H$hid"
+}
+
 # supervise_failovers — a member of an --autopilot team marked FAILOVER_PENDING is replaced: its work in progress
 # committed and pushed on its branch, its board items given back (member_out), its task stopped, and the round handed
 # back to its team (handback, which waits for runs still going on) with a free normal agent in its place; a
@@ -2455,6 +2472,7 @@ supervise_failovers() {
     id=$(basename "$(dirname "$m")")
     meta_set "$id" FAILOVER_PENDING ""
     [[ $(task_field "$id" STATUS) == paused ]] || continue   # it went on meanwhile
+    if [[ $(task_field "$id" KIND) == helper ]]; then helper_failover "$id"; continue; fi
     team=$(task_field "$id" TEAM); agent=$(task_field "$id" AGENT)
     team_agents=() keeper=""
     for t in $(grep -lx "TEAM=$team" "$TASKS"/*/meta.env 2> /dev/null | xargs -r -n1 dirname | xargs -r -n1 basename); do
@@ -5340,6 +5358,18 @@ maybe_resume_worker() { # resumes the requesting agent if the investigation was 
 
 # ------------------------------------------------------------------ worker requests (delegate)
 
+# worker_out_of_service worker — whether a task of the worker was replaced while its model is out of service, and its
+# pause has not ended yet (FAILOVER_UNTIL)
+worker_out_of_service() {
+  local m u now
+  now=$(date +%s)
+  for m in $(grep -lx "AGENT=$1" "$TASKS"/*/meta.env 2> /dev/null); do
+    u=$(sed -n 's/^FAILOVER_UNTIL=//p' "$m")
+    [[ $u =~ ^[0-9]+$ ]] && ((u > now)) && return 0
+  done
+  return 1
+}
+
 free_worker() { # a free worker, drawn at random among the free ones of another provider than the last one drawn
   # (worker-last, written by worker_drawn) — among all the free ones when none of another provider is free
   local w last others=() all=()
@@ -5347,6 +5377,7 @@ free_worker() { # a free worker, drawn at random among the free ones of another 
   for w in "${WORKER_AGENTS[@]}"; do
     [[ -n ${AGENT_TYPE[$w]:-} ]] || continue
     agent_running_task "$w" > /dev/null && continue
+    worker_out_of_service "$w" && continue
     all+=("$w")
     [[ $(agent_provider "$w") == "$last" ]] || others+=("$w")
   done
@@ -5852,7 +5883,8 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
       fi
     fi
     # an --autopilot team does not wait out a member's model out of service: _supervise replaces it (supervise_failovers)
-    if [[ $status == paused && -n ${TEAM:-} && ${REVIEW:-} != 1 && $(task_field "$id" AUTOPILOT) == 1 ]] \
+    # … nor a worker request's: another worker takes it (supervise_failovers, helper_failover)
+    if [[ $status == paused ]] && { [[ ${KIND:-} == helper ]] || [[ -n ${TEAM:-} && ${REVIEW:-} != 1 && $(task_field "$id" AUTOPILOT) == 1 ]]; } \
         && failover_due "$id" "$pause_reason" "$pause_secs"; then
       meta_set "$id" FAILOVER_UNTIL "$(( $(date +%s) + pause_secs ))"
       meta_set "$id" FAILOVER_PENDING 1
