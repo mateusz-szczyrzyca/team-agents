@@ -140,7 +140,7 @@ func (id *Identity) keyReadable() bool {
 // Empty authorFormat defaults to "%a (team-agents)", nonempty uses exact format.
 // logger receives git_identity info (name/email/signing) and signing_key_unreadable
 // warn if key nonempty but unreadable. Nil logger = silent. Logger errors are nonfatal.
-func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logger) (map[string]string, *LogWriteError) { //nolint:unparam // ctx unused when logger is nil; kept for consistent function signature
+func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logger) (map[string]string, *LogWriteError) { //nolint:unparam // Retain typed-error signature for caller compatibility; diagnostic failures are nonfatal.
 	env := make(map[string]string)
 	format := authorFormat
 	if format == "" {
