@@ -548,6 +548,7 @@ tests/unit/board_unstick.bats	a stopped team is neither reported at a standstill
 tests/unit/board_unstick.bats	a team none of whose members was at work in AGENT_BOARD_RECENT_H is left alone: an old one, never closed	blackbox	R22	-	planned
 tests/unit/helper_failover.bats	a worker request whose model is out of service goes to another worker; the requester hears no failure	blackbox	R21	-	planned
 tests/unit/helper_failover.bats	free_worker passes over a worker whose model is out of service while its pause lasts	source	R21	-	planned
+tests/unit/team_end_helpers.bats	a team whose coordinator announces it done stops its workers' tasks and closes its queued requests	blackbox	R21	-	planned
 tests/unit/review_pair_rotate.bats	rotate: A,B then C,D; every new pair differs from the last two; four investigators make all six pairs	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: a PR's re-review after a fix pass is done by another pair, not the one before	source	R33	-	planned
 tests/unit/review_pair_rotate.bats	rotate: the history is shared by every PR and repository	source	R33	-	planned
