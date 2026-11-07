@@ -451,3 +451,33 @@ func (c AgentsJSONCause) info() causeInfo { return agentsJSONCauses[c] }
 
 // String returns the cause name.
 func (c AgentsJSONCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- github_setup
+
+// GitHubSetupCause is a reason why per-run GitHub wrapper and environment setup failed.
+type GitHubSetupCause int
+
+const (
+	GitHubSetupMissingRealGH GitHubSetupCause = iota // real gh binary was not found or is recursive [NotFound]
+	GitHubSetupProcess                               // inspecting repository origin or gh user failed [Process]
+	GitHubSetupStorage                               // the shared state or a file could not be read or written [Storage]
+)
+
+// GitHubSetupError is the error of per-run GitHub wrapper and environment setup.
+type GitHubSetupError = OpError[GitHubSetupCause]
+
+// gitHubSetupCauses describes the GitHubSetupCause values (same order as the constants).
+var gitHubSetupCauses = [...]causeInfo{
+	{"MissingRealGH", ClassNotFound},
+	{"Process", ClassProcess},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (GitHubSetupCause) op() string { return "github_setup" }
+
+// info implements opCause.
+func (c GitHubSetupCause) info() causeInfo { return gitHubSetupCauses[c] }
+
+// String returns the cause name.
+func (c GitHubSetupCause) String() string { return c.info().name }
