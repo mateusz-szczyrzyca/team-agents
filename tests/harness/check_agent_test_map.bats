@@ -63,6 +63,23 @@ setup() {
   done
 }
 
+@test "check-agent-test-map accepts a split round, a letter after its number, and rejects malformed ones" {
+  local ok_map="$BATS_TEST_TMPDIR/split_ok.tsv"
+  printf 'bats_file\ttest_name\tclassification\tround\tgo_test\tstatus\n' > "$ok_map"
+  printf 'tests/unit/meta.bats\ttest name\tblackbox\tR29B\tTestGo\tplanned\n' >> "$ok_map"
+  run "$TOOL" "$ok_map"
+  [[ ! "$output" =~ "invalid round format" ]]
+  for r in R29b R29BB R57B R00A; do
+    local bad_map="$BATS_TEST_TMPDIR/split_bad_${r}.tsv"
+    printf 'bats_file\ttest_name\tclassification\tround\tgo_test\tstatus\n' > "$bad_map"
+    printf 'tests/unit/meta.bats\ttest name\tblackbox\t%s\tTestGo\tplanned\n' "$r" >> "$bad_map"
+    run "$TOOL" "$bad_map"
+    [ "$status" -ne 0 ]
+    local expected="invalid round format '$r'"
+    [[ "$output" =~ $expected ]]
+  done
+}
+
 @test "check-agent-test-map fails when unit tests directory is missing" {
   local empty_root="$BATS_TEST_TMPDIR/no_unit_dir"
   mkdir -p "$empty_root"
