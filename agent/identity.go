@@ -51,11 +51,11 @@ func (id *Identity) Email() string {
 
 // SigningEnv returns environment variables for git signing configuration.
 // Uses oracle GIT_CONFIG_COUNT pattern with indexed KEY/VALUE pairs.
-// Checks both existence and readability to match keyReadable contract.
+// Checks readability via keyReadable helper to match Setup contract.
 func (id *Identity) SigningEnv() map[string]string {
 	env := make(map[string]string)
 
-	if id.SigningKey != "" && syscall.Access(id.SigningKey, 4) == nil {
+	if id.keyReadable() {
 		// Key exists and is readable: enable signing with full config
 		env["GIT_CONFIG_COUNT"] = "4"
 		env["GIT_CONFIG_KEY_0"] = "gpg.format"
@@ -161,13 +161,15 @@ func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logg
 
 	if logger != nil {
 		if id.SigningKey != "" && !signingEnabled {
-			_ = logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key="+id.SigningKey, "effect=commits of this run are not signed") //nolint:errcheck
+			// Logger.Log logs its own failures to stderr; signing key warning is diagnostic, nonfatal
+			_ = logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key="+id.SigningKey, "effect=commits of this run are not signed")
 		}
 		sigStr := "no"
 		if signingEnabled {
 			sigStr = "yes"
 		}
-		_ = logger.Log(ctx, LevelInfo, LogGitIdentity, "name="+author, "email="+email, "signing="+sigStr) //nolint:errcheck
+		// Logger.Log logs its own failures to stderr; identity logging is diagnostic, nonfatal
+		_ = logger.Log(ctx, LevelInfo, LogGitIdentity, "name="+author, "email="+email, "signing="+sigStr)
 	}
 
 	return env, nil
