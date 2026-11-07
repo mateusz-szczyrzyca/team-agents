@@ -236,14 +236,10 @@ func TestSetupLogsIdentityDespiteRunnerFailure(t *testing.T) {
 // Both warning and git_identity must appear in runner buffer when agent.jsonl is blocked.
 func TestSetupLogsIdentityWithFailingAggregateFile(t *testing.T) {
 	tmpdir := t.TempDir()
-	// Block the agent.jsonl directory to cause file sink failures
+	// Block LogDir itself by making it a regular file, not a directory.
+	// This causes the logger to fail when trying to open agent.jsonl for writing.
 	logDir := filepath.Join(tmpdir, "logs")
-	if err := os.Mkdir(logDir, 0700); err != nil {
-		t.Fatalf("Failed to create log dir: %v", err)
-	}
-	// Create a regular file where agent.jsonl should be written, blocking it
-	jsonlPath := filepath.Join(logDir, "agent.jsonl")
-	if err := os.WriteFile(jsonlPath, []byte("blocked"), 0600); err != nil {
+	if err := os.WriteFile(logDir, []byte("blocked"), 0600); err != nil {
 		t.Fatalf("Failed to create blocking file: %v", err)
 	}
 
