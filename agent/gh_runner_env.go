@@ -159,7 +159,7 @@ func DeriveGitHubParams(ctx context.Context, params GitHubRunDerivationParams) (
 		}
 		taskMetas = append(taskMetas, parseMeta(m))
 	}
-	names := CollectGitHubNames(metaValue(meta, "AGENT"), team, taskMetas, params.Config)
+	names := CollectGitHubNames(metaValue(meta, "AGENT"), metaValue(meta, "TEAM"), taskMetas, params.Config)
 
 	// Step 1: Register colors under lock first.
 	if len(palette) > 0 {
