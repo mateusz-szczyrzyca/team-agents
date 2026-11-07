@@ -43,24 +43,32 @@ func (id *Identity) Email() string {
 }
 
 // SigningEnv returns environment variables for git signing configuration.
-// If SigningKey is set and exists, signing is enabled; otherwise disabled.
+// Uses oracle GIT_CONFIG_COUNT pattern with indexed KEY/VALUE pairs.
 func (id *Identity) SigningEnv() map[string]string {
 	env := make(map[string]string)
 
 	if id.SigningKey != "" {
 		if _, err := os.Stat(id.SigningKey); err == nil {
-			// Key exists: enable signing
-			env["GIT_COMMIT_GPGSIGN"] = "true"
-			env["GIT_TAG_GPGSIGN"] = "true"
-			env["GIT_GPG_FORMAT"] = "ssh"
-			env["GIT_COMMITTER_EMAILSIGN_KEY"] = id.SigningKey
+			// Key exists: enable signing with full config
+			env["GIT_CONFIG_COUNT"] = "4"
+			env["GIT_CONFIG_KEY_0"] = "gpg.format"
+			env["GIT_CONFIG_VALUE_0"] = "ssh"
+			env["GIT_CONFIG_KEY_1"] = "user.signingkey"
+			env["GIT_CONFIG_VALUE_1"] = id.SigningKey
+			env["GIT_CONFIG_KEY_2"] = "commit.gpgsign"
+			env["GIT_CONFIG_VALUE_2"] = "true"
+			env["GIT_CONFIG_KEY_3"] = "tag.gpgsign"
+			env["GIT_CONFIG_VALUE_3"] = "true"
 			return env
 		}
 	}
 
-	// Key missing or unreadable: disable signing
-	env["GIT_COMMIT_GPGSIGN"] = "false"
-	env["GIT_TAG_GPGSIGN"] = "false"
+	// Key missing or unreadable: disable signing (GIT_CONFIG_COUNT=2 for gpgsign false)
+	env["GIT_CONFIG_COUNT"] = "2"
+	env["GIT_CONFIG_KEY_0"] = "commit.gpgsign"
+	env["GIT_CONFIG_VALUE_0"] = "false"
+	env["GIT_CONFIG_KEY_1"] = "tag.gpgsign"
+	env["GIT_CONFIG_VALUE_1"] = "false"
 	return env
 }
 
