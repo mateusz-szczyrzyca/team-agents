@@ -642,6 +642,7 @@ tests/unit/coordinator_alone.bats	a coordinator working alone past AGENT_SOLO_CO
 tests/unit/coordinator_alone.bats	AGENT_COORDINATOR_PREFER names who coordinates a new team	blackbox	R35B	-	planned
 tests/unit/coordinator_takeover.bats	a failed coordinator's role goes to the first of AGENT_COORDINATOR_PREFER among its members, woken at once	blackbox	R29B	-	planned
 tests/unit/coordinator_takeover.bats	with no preference a failed coordinator's role goes to the first member at work	blackbox	R29B	-	planned
+tests/unit/coordinator_takeover.bats	coordinator_takeover picks a preferred member that is waking: the news of the failure woke it	source	R29B	-	planned
 tests/unit/debug_cmd.bats	agent debug <team> writes one file with the team on the bus, its board, every task, the log and the branches	blackbox	R53B	-	planned
 tests/unit/debug_cmd.bats	agent debug redacts tokens and the values of secrets.env	blackbox	R53B	-	planned
 tests/unit/debug_cmd.bats	agent debug of a task: the last activity by default, all of it with --full, in the file --out names	blackbox	R53B	-	planned

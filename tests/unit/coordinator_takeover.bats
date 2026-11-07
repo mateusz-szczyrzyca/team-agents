@@ -37,3 +37,16 @@ failed_coordinator() {
   wait_grep '"event":"coordinator_takeover"' "$AGENTS_HOME/logs/agent.jsonl"
   agent stop --running > /dev/null
 }
+
+@test "coordinator_takeover picks a preferred member that is waking: the news of the failure woke it" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/agent"
+  # shellcheck disable=SC2034 # read by preferred_coordinator
+  AGENT_COORDINATOR_PREFER="lead solo member"
+  team_json() { echo '{"lead":"lead","members":{"lead":{"state":"done","tier":"normal"},"solo":{"state":"waking","tier":"normal"},"member":{"state":"sleeping","tier":"normal"}}}'; }
+  bus() { [[ $1 == claim-lead ]] && echo "You are the coordinator"; return 0; }
+  team_lead() { echo solo; }
+  run coordinator_takeover T lead "its run failed"
+  [ "$status" -eq 0 ]
+  [ "$output" = solo ]
+}
