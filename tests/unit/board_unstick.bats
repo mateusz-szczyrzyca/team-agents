@@ -55,3 +55,15 @@ open_team() {
   grep -q "B1" "$f"
   agent stop --running > /dev/null
 }
+
+@test "a stopped team is neither reported at a standstill nor has its easy items given to workers" {
+  export AGENT_BOARD_STALL_MIN=0 AGENT_EASY_TO_WORKER_MIN=0
+  open_team
+  "$BUILD_DIR/agentbus" board-add --dir "$AGENTS_HOME/bus" --team "$team" --as lead --title "nobody's" --details "d" --level normal > /dev/null
+  "$BUILD_DIR/agentbus" board-add --dir "$AGENTS_HOME/bus" --team "$team" --as lead --title "an easy one" --details "d" --level easy > /dev/null
+  agent stop --running > /dev/null
+  agent _supervise
+  ! grep -l "standstill" "$AGENTS_HOME"/notifications/*.md 2> /dev/null || false
+  [ "$(board "$team" B2 | jq -r .status)" = todo ]
+  ! grep -q '"event":"board_stall"' "$AGENTS_HOME/logs/agent.jsonl" || false
+}
