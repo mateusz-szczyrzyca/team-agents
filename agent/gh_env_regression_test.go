@@ -148,10 +148,17 @@ func TestSetupGitHubRun_ExactEnvAndGlobalUnchanged(t *testing.T) {
 	}
 
 	expectedKeys := []string{
-		"AGENT_REAL_GH", "AGENT_GITHUB_TRUSTED_RESOLVED", "AGENT_REVIEW_BYLINE",
-		"AGENT_GITHUB_COLORS", "AGENT_GH_COORDINATOR", "AGENT_GH_TEAM",
-		"AGENT_GH_SELF", "AGENT_GH_BUS_DIR", "AGENTBUS_BIN",
-		"AGENT_GH_OWN_PR", "AGENT_GITHUB_NAME_COLORS",
+		"AGENT_REAL_GH",
+		"AGENT_GITHUB_TRUSTED_RESOLVED",
+		"AGENT_REVIEW_BYLINE",
+		"AGENT_GITHUB_COLORS",
+		"AGENT_GH_COORDINATOR",
+		"AGENT_GH_TEAM",
+		"AGENT_GH_SELF",
+		"AGENT_GH_BUS_DIR",
+		"AGENTBUS_BIN",
+		"AGENT_GH_OWN_PR",
+		"AGENT_GITHUB_NAME_COLORS",
 	}
 
 	for _, key := range expectedKeys {
@@ -227,7 +234,12 @@ func TestEnsureGHWrapper_StorageFailure(t *testing.T) {
 
 // TestExtractGitHubOwner_InvalidOrNonGitHub verifies non-matching URLs return empty string.
 func TestExtractGitHubOwner_InvalidOrNonGitHub(t *testing.T) {
-	cases := []string{"", "https://gitlab.com/owner/repo.git", "invalid-url", "ssh://git@bitbucket.org/team/repo.git"}
+	cases := []string{
+		"",
+		"https://gitlab.com/owner/repo.git",
+		"invalid-url",
+		"ssh://git@bitbucket.org/team/repo.git",
+	}
 	for _, c := range cases {
 		if got := ExtractGitHubOwner(c); got != "" {
 			t.Errorf("ExtractGitHubOwner(%q) = %q; want empty string", c, got)
@@ -276,9 +288,15 @@ func TestSetupGitHubRun_LoggerFailurePropagated(t *testing.T) {
 	logger := &Logger{LogDir: unwriteableLogDir, Subcommand: "runner"}
 
 	params := GitHubSetupParams{
-		AgentsHome: tmpDir, SelfExecutable: "/bin/agent", RepoRoot: tmpDir, RunnerID: "task-log-fail", CurrentPath: "/usr/bin:/bin",
-		LookPath: func(string) (string, error) { return "", execpkg.ErrNotFound },
-		Logger:   logger,
+		AgentsHome:     tmpDir,
+		SelfExecutable: "/bin/agent",
+		RepoRoot:       tmpDir,
+		RunnerID:       "task-log-fail",
+		CurrentPath:    "/usr/bin:/bin",
+		LookPath: func(string) (string, error) {
+			return "", execpkg.ErrNotFound
+		},
+		Logger: logger,
 	}
 
 	exec := &fakeGHExecutor{}
@@ -325,5 +343,24 @@ func TestResolveGitHubTrustedRaw_ContextCacheIsolation(t *testing.T) {
 	raw2 := ResolveGitHubTrustedRaw(ctx2, exec2, "/dummy", "")
 	if raw2 != "mateusz-szczyrzyca user-ctx2" {
 		t.Errorf("ctx2 call = %q; want 'mateusz-szczyrzyca user-ctx2'", raw2)
+	}
+}
+
+// TestResolveGitHubTrusted_ContextCacheReuse verifies repeated calls on the same context reuse the cached login.
+func TestResolveGitHubTrusted_ContextCacheReuse(t *testing.T) {
+	ctx := WithGHLoginCache(context.Background())
+	exec := &fakeGHExecutor{
+		originURL: "https://github.com/mateusz-szczyrzyca/team-agents.git",
+		ghUser:    "initial-user",
+	}
+	raw1, err1 := ResolveGitHubTrusted(ctx, exec, "/dummy", "")
+	if err1 != nil || raw1 != "mateusz-szczyrzyca initial-user" {
+		t.Fatalf("first call = (%q, %v); want ('mateusz-szczyrzyca initial-user', nil)", raw1, err1)
+	}
+
+	exec.ghUser = "changed-user"
+	raw2, err2 := ResolveGitHubTrusted(ctx, exec, "/dummy", "")
+	if err2 != nil || raw2 != "mateusz-szczyrzyca initial-user" {
+		t.Errorf("second call with changed executor = (%q, %v); want cached 'mateusz-szczyrzyca initial-user'", raw2, err2)
 	}
 }

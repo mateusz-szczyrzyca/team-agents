@@ -29,6 +29,12 @@ var (
 // ghLoginCacheKey is the context key for an isolated GitHub login cache.
 type ghLoginCacheKey struct{}
 
+// ghLoginCacheStore holds an isolated, thread-safe GitHub login cache.
+type ghLoginCacheStore struct {
+	mu    sync.Mutex // protects concurrent access to login
+	login string     // cached authenticated GitHub user login
+}
+
 // GitHubSetupParams carries the per-run inputs needed to configure the trusted gh wrapper environment.
 type GitHubSetupParams struct {
 	AgentsHome       string                       // base agents home directory ($AGENTS_HOME)
@@ -126,9 +132,12 @@ func ResolveGitHubTrustedRaw(ctx context.Context, exec Executor, repoRoot string
 		owner = ExtractGitHubOwner(gitOut.String())
 	}
 	var login string
-	var cachePtr *string
-	if ptr, ok := ctx.Value(ghLoginCacheKey{}).(*string); ok && ptr != nil {
-		cachePtr, login = ptr, *ptr
+	var store *ghLoginCacheStore
+	if s, ok := ctx.Value(ghLoginCacheKey{}).(*ghLoginCacheStore); ok && s != nil {
+		store = s
+		store.mu.Lock()
+		login = store.login
+		store.mu.Unlock()
 	} else {
 		ghLoginMu.Lock()
 		login = ghLoginCache
@@ -138,8 +147,10 @@ func ResolveGitHubTrustedRaw(ctx context.Context, exec Executor, repoRoot string
 		var ghOut bytes.Buffer
 		if res, err := exec.Execute(ctx, Command{Name: "gh", Args: []string{"api", "user", "--jq", ".login"}, Dir: repoRoot, Stdout: &ghOut}); err == nil && res.ExitCode == 0 {
 			if login = strings.TrimSpace(ghOut.String()); login != "" {
-				if cachePtr != nil {
-					*cachePtr = login
+				if store != nil {
+					store.mu.Lock()
+					store.login = login
+					store.mu.Unlock()
 				} else {
 					ghLoginMu.Lock()
 					ghLoginCache = login
@@ -158,10 +169,13 @@ func ResetGHLoginCacheForTest() {
 	ghLoginCache = ""
 }
 
-// WithGHLoginCache returns a context that carries an in-process GitHub login cache.
+// WithGHLoginCache returns a context that carries an isolated GitHub login cache.
+// If ctx already carries a cache store, the existing store is preserved.
 func WithGHLoginCache(ctx context.Context) context.Context {
-	var s string
-	return context.WithValue(ctx, ghLoginCacheKey{}, &s)
+	if ctx.Value(ghLoginCacheKey{}) != nil {
+		return ctx
+	}
+	return context.WithValue(ctx, ghLoginCacheKey{}, &ghLoginCacheStore{})
 }
 
 // ResolveGitHubTrusted resolves the trusted accounts (override, or repository owner + authenticated user).
@@ -169,7 +183,9 @@ func ResolveGitHubTrusted(ctx context.Context, exec Executor, repoRoot string, t
 	if err := ctx.Err(); err != nil {
 		return "", fromStorage(GitHubSetupStorage, storageErr(err, "resolve trusted github accounts in %s", repoRoot))
 	}
-	ctx = WithGHLoginCache(ctx)
+	if ctx.Value(ghLoginCacheKey{}) == nil {
+		ctx = WithGHLoginCache(ctx)
+	}
 	raw := ResolveGitHubTrustedRaw(ctx, exec, repoRoot, trustedOverride)
 	return strings.TrimSpace(raw), nil
 }
