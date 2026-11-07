@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	execpkg "os/exec"
@@ -59,8 +60,15 @@ func TestSetupGitHubRun_MissingGH(t *testing.T) {
 	if !strings.Contains(string(data), string(LogAgentsGHMissing)) {
 		t.Errorf("log file does not contain %s event: %s", LogAgentsGHMissing, string(data))
 	}
-	if !strings.Contains(string(data), "task=task-missing-gh") {
-		t.Errorf("log file missing task field: %s", string(data))
+	var record map[string]any
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatalf("failed to parse log record JSON: %v", err)
+	}
+	if record["task"] != "task-missing-gh" {
+		t.Errorf("log record task = %v; want %q", record["task"], "task-missing-gh")
+	}
+	if _, hasDetail := record["detail"]; hasDetail {
+		t.Errorf("log record contains spurious detail field: %v", record["detail"])
 	}
 }
 
@@ -277,8 +285,8 @@ func TestEnsureGHWrapper_RenameFailureCleanup(t *testing.T) {
 	}
 }
 
-// TestSetupGitHubRun_LoggerFailurePropagated verifies Logger.Log failure returns GitHubSetupStorage.
-func TestSetupGitHubRun_LoggerFailurePropagated(t *testing.T) {
+// TestSetupGitHubRun_LoggerFailureNonfatal verifies Logger.Log failure does not abort setup.
+func TestSetupGitHubRun_LoggerFailureNonfatal(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 	unwriteableLogDir := filepath.Join(tmpDir, "unwriteable-logs")
@@ -300,12 +308,15 @@ func TestSetupGitHubRun_LoggerFailurePropagated(t *testing.T) {
 	}
 
 	exec := &fakeGHExecutor{}
-	_, err := SetupGitHubRun(ctx, exec, params)
-	if err == nil {
-		t.Fatal("SetupGitHubRun succeeded unexpectedly when Logger.Log failed")
+	runEnv, err := SetupGitHubRun(ctx, exec, params)
+	if err != nil {
+		t.Fatalf("SetupGitHubRun failed on logger error: %v", err)
 	}
-	if err.Cause != GitHubSetupStorage {
-		t.Errorf("SetupGitHubRun error cause = %v; want GitHubSetupStorage", err.Cause)
+	if runEnv == nil {
+		t.Fatal("SetupGitHubRun returned nil runEnv")
+	}
+	if runEnv.EffectivePath != params.CurrentPath {
+		t.Errorf("EffectivePath = %q; want %q", runEnv.EffectivePath, params.CurrentPath)
 	}
 }
 

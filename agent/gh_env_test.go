@@ -23,7 +23,9 @@ func (f *fakeGHExecutor) Execute(_ context.Context, cmd Command) (CommandResult,
 			return CommandResult{ExitCode: 1}, fromProcess(ExecuteStart, processErr("git", f.gitErr, "simulate git error"))
 		}
 		if cmd.Stdout != nil {
-			_, _ = cmd.Stdout.Write([]byte(f.originURL + "\n"))
+			if _, err := cmd.Stdout.Write([]byte(f.originURL + "\n")); err != nil {
+				return CommandResult{ExitCode: 1}, fromProcess(ExecuteWait, processErr("git", err, "write stdout"))
+			}
 		}
 		return CommandResult{ExitCode: 0}, nil
 	}
@@ -32,7 +34,9 @@ func (f *fakeGHExecutor) Execute(_ context.Context, cmd Command) (CommandResult,
 			return CommandResult{ExitCode: 1}, fromProcess(ExecuteStart, processErr("gh", f.ghErr, "simulate gh error"))
 		}
 		if cmd.Stdout != nil {
-			_, _ = cmd.Stdout.Write([]byte(f.ghUser + "\n"))
+			if _, err := cmd.Stdout.Write([]byte(f.ghUser + "\n")); err != nil {
+				return CommandResult{ExitCode: 1}, fromProcess(ExecuteWait, processErr("gh", err, "write stdout"))
+			}
 		}
 		return CommandResult{ExitCode: 0}, nil
 	}
@@ -149,7 +153,10 @@ func TestEnsureGHWrapper(t *testing.T) {
 	if err3 != nil || wrapper3 != expectedWrapper {
 		t.Fatalf("EnsureGHWrapper update call failed: %v", err3)
 	}
-	target2, _ := os.Readlink(wrapper)
+	target2, readErr := os.Readlink(wrapper)
+	if readErr != nil {
+		t.Fatalf("failed to read updated wrapper symlink: %v", readErr)
+	}
 	if target2 != newSelfBin {
 		t.Errorf("updated wrapper target = %q; want %q", target2, newSelfBin)
 	}
