@@ -158,3 +158,47 @@ func readLogLines(t *testing.T, logfile string) []map[string]interface{} {
 	}
 	return entries
 }
+
+// TestSetupExistsButUnreadableKey tests SigningEnv readability handling.
+// Regression: SigningEnv uses os.Stat (exists), Setup uses keyReadable (readable).
+// File exists but unreadable should result in no signing config.
+func TestSetupExistsButUnreadableKey(t *testing.T) {
+	tmpdir := t.TempDir()
+	keyFile := filepath.Join(tmpdir, "unreadable")
+	if err := os.WriteFile(keyFile, []byte("key"), 0000); err != nil {
+		t.Fatalf("Failed to create unreadable key: %v", err)
+	}
+
+	id := &Identity{Agent: "test", SigningKey: keyFile}
+	env, err := id.Setup(context.Background(), "%a", nil)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+	if env["GIT_CONFIG_COUNT"] != "2" {
+		t.Errorf("Unreadable key should disable signing, got GIT_CONFIG_COUNT=%q, want 2", env["GIT_CONFIG_COUNT"])
+	}
+}
+
+// TestSetupLoggerFailureNonfatal tests logger errors don't block Setup.
+// Regression: Setup returns logger errors immediately (fatal).
+// Logger errors should be logged as warnings but not block operation.
+func TestSetupLoggerFailureNonfatal(t *testing.T) {
+	tmpdir := t.TempDir()
+	// Use read-only directory to force logger.Log to fail
+	baddir := filepath.Join(tmpdir, "baddir")
+	if err := os.Mkdir(baddir, 0000); err != nil {
+		t.Fatalf("Failed to create read-only dir: %v", err)
+	}
+	failLogger := &Logger{LogDir: baddir}
+	id := &Identity{Agent: "test", EmailConfig: "%a@example.com"}
+	env, err := id.Setup(context.Background(), "%a", failLogger)
+
+	// Logger failure should NOT be returned as Setup error (nonfatal)
+	if err != nil {
+		t.Errorf("Logger failure should be nonfatal, but Setup returned error: %v", err)
+	}
+	// Environment should still be populated
+	if env["GIT_AUTHOR_EMAIL"] != "test@example.com" {
+		t.Errorf("Environment should be populated despite logger failure")
+	}
+}
