@@ -637,6 +637,7 @@ AGENT_LONG_RUN_HARD="${AGENT_LONG_RUN_HARD:-200}"           # a team member's ru
 AGENT_SOLO_COORD_STEPS="${AGENT_SOLO_COORD_STEPS:-30}"   # a coordinator working alone this many steps — its members not at work, its board with nothing for them — is ended, and starts again with the work to split (0: never)
 AGENT_EASY_TO_WORKER_MIN="${AGENT_EASY_TO_WORKER_MIN:-5}"   # an easy item nobody owns this long goes to a worker, as the coordinator's request
 AGENT_BOARD_STALL_MIN="${AGENT_BOARD_STALL_MIN:-30}"         # a team whose members all sleep while items wait this long tells the human
+AGENT_BOARD_RECENT_H="${AGENT_BOARD_RECENT_H:-6}"         # a team none of whose members was at work this long is old: its board left alone
 AGENT_COORDINATOR_PREFER="${AGENT_COORDINATOR_PREFER:-}"   # who coordinates a new team: the first of these in it (empty: whoever claims the role)
 AGENT_PROMPT_ARG_MAX="${AGENT_PROMPT_ARG_MAX:-100000}"           # a longer prompt (bytes) reaches the CLI through a file: Linux takes 128 KiB per argument
 AGENT_LIMIT_TAIL_LINES="${AGENT_LIMIT_TAIL_LINES:-30}"           # how much of the end of stderr shows a provider limit
@@ -2510,12 +2511,13 @@ supervise_failovers() {
   done
 }
 
-# supervise_board — the boards of the teams at work (their coordinator's automation allowed, a member asleep). An easy item nobody owns, waiting AGENT_EASY_TO_WORKER_MIN, in a team
+# supervise_board — the boards of the teams at work (their coordinator's automation allowed, a member asleep, one at
+# work within AGENT_BOARD_RECENT_H). An easy item nobody owns, waiting AGENT_EASY_TO_WORKER_MIN, in a team
 # with no worker member, goes to a worker: the script claims it for the coordinator and delegates it as the
 # coordinator's request, whose result the coordinator gets. A team whose members all sleep while items wait
 # AGENT_BOARD_STALL_MIN tells the human ⛔ — once for the same items (stall-<team> under the bus directory).
 supervise_board() {
-  local m team lead lt tj board now id upd title details age stale mark repo
+  local m team lead lt tj board now id upd title details age stale mark repo a mt last
   local -A teams_seen=()
   now=$(date +%s)
   for m in "$TASKS"/*/meta.env; do
@@ -2532,6 +2534,12 @@ supervise_board() {
     # (agent stop leaves its bus record open), nor an old one whose members are done
     automation_allowed "$lt" || continue
     [[ $(jq '[.members[] | select(.state == "sleeping")] | length' <<< "$tj") != 0 ]] || continue
+    last=0   # and lately: a member at work within AGENT_BOARD_RECENT_H — not an old team never closed
+    for a in $(jq -r '.members[].task // empty' <<< "$tj"); do
+      mt=$(stat -c %Y "$TASKS/$a/activity.jsonl" 2> /dev/null) || continue
+      ((mt <= last)) || last=$mt
+    done
+    ((now - last <= AGENT_BOARD_RECENT_H * 3600)) || continue
     board=$(bus board-dump --dir "$BUS_DIR" --team "$team" 2> /dev/null) || continue
     if [[ -n $lt && ${#WORKER_AGENTS[@]} -gt 0 && $(jq '[.members[] | select(.tier == "worker")] | length' <<< "$tj") == 0 ]]; then
       while IFS=$'\t' read -r id upd title details; do
