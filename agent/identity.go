@@ -116,7 +116,11 @@ func (id *Identity) Trailers() []string {
 func (id *Identity) Environment() map[string]string {
 	env := make(map[string]string)
 
-	author := id.FormatAuthor("%a (team-agents)")
+	format := id.NameFormat
+	if format == "" {
+		format = "%a (team-agents)"
+	}
+	author := id.FormatAuthor(format)
 	email := id.Email()
 
 	env["GIT_AUTHOR_NAME"] = author
