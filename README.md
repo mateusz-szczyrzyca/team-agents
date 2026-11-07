@@ -1605,14 +1605,17 @@ make integration        # real agent CLIs and accounts (costs usage)
   `done`, `failed`, `stopped`, `excluded` and `hung` tasks on every call. JSON listings emit one record per
   configured agent or investigator, with `name`, `type`, `model`, `tier` and `provider` fields; investigators
   have an empty provider. The installed Bash commands retain their existing behavior.
-- **Git and GitHub run primitives (R10A).** Native lower layers return per-run identity, signing overrides,
+- **Git and GitHub run primitives (R10A/R10B).** Native lower layers return per-run identity, signing overrides,
   ordered trailers, trusted accounts and wrapper environment without process-wide identity or Git changes.
   Candidate `gh` dispatch precedes configuration and returns typed unavailable until R11/R12 implement policy.
   Runner activation remains in its planned round; the installed Bash CLI retains its existing behavior.
   Configurable identity setup checks key readability and reports identity/signing diagnostics. GitHub setup
   warns and continues if its warning log cannot be written. Identity setup still attempts its final record
-  after a warning sink fails; log-event values support JSON decoding. R10B completes derived runner metadata.
-  These lower layers have no production callers; R10A does not claim complete R10 parity.
+  after a warning sink fails; log-event values support JSON decoding. R10B derives identity and author-format
+  inputs from loaded run metadata and effective configuration, together with GitHub coordinator, owned PR,
+  investigation byline and team fields. Name colors preserve the existing registry format and configured
+  fallback palette. These lower layers have no production callers until R22; full R10 parity remains gated
+  on runner activation and the separate GitHub policy rounds.
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). The current ledger tracks 659 Bats unit test cases, with 4 rows done and 655 planned, in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). R10 adds lower-layer Go coverage without activating runner or GitHub-policy rows. The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
