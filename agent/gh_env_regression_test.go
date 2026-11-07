@@ -246,3 +246,102 @@ func TestExtractGitHubOwner_InvalidOrNonGitHub(t *testing.T) {
 		}
 	}
 }
+
+// TestEnsureGHWrapper_RenameFailureCleanup verifies temp symlink cleanup and typed storage error on rename failure.
+func TestEnsureGHWrapper_RenameFailureCleanup(t *testing.T) {
+	tmpDir := t.TempDir()
+	trustedDir := filepath.Join(tmpDir, "run", "gh-trusted")
+	if err := os.MkdirAll(trustedDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	wrapperPath := filepath.Join(trustedDir, "gh")
+	if err := os.Mkdir(wrapperPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := EnsureGHWrapper(tmpDir, "/bin/agent")
+	if err == nil {
+		t.Fatal("EnsureGHWrapper succeeded unexpectedly when destination is a directory")
+	}
+	if err.Cause != GitHubSetupStorage {
+		t.Errorf("EnsureGHWrapper error cause = %v; want GitHubSetupStorage", err.Cause)
+	}
+	entries, readErr := os.ReadDir(trustedDir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "gh.") {
+			t.Errorf("temporary symlink was not cleaned up: %s", entry.Name())
+		}
+	}
+}
+
+// TestSetupGitHubRun_LoggerFailurePropagated verifies Logger.Log failure returns GitHubSetupStorage.
+func TestSetupGitHubRun_LoggerFailurePropagated(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	unwriteableLogDir := filepath.Join(tmpDir, "unwriteable-logs")
+	if err := os.WriteFile(unwriteableLogDir, []byte("blocker"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	logger := &Logger{LogDir: unwriteableLogDir, Subcommand: "runner"}
+
+	params := GitHubSetupParams{
+		AgentsHome:     tmpDir,
+		SelfExecutable: "/bin/agent",
+		RepoRoot:       tmpDir,
+		RunnerID:       "task-log-fail",
+		CurrentPath:    "/usr/bin:/bin",
+		LookPath: func(string) (string, error) {
+			return "", execpkg.ErrNotFound
+		},
+		Logger: logger,
+	}
+
+	exec := &fakeGHExecutor{}
+	_, err := SetupGitHubRun(ctx, exec, params)
+	if err == nil {
+		t.Fatal("SetupGitHubRun succeeded unexpectedly when Logger.Log failed")
+	}
+	if err.Cause != GitHubSetupStorage {
+		t.Errorf("SetupGitHubRun error cause = %v; want GitHubSetupStorage", err.Cause)
+	}
+}
+
+// TestResolveGitHubTrustedRaw_WhitespaceOverridePreserved verifies nonempty whitespace override is preserved.
+func TestResolveGitHubTrustedRaw_WhitespaceOverridePreserved(t *testing.T) {
+	ctx := context.Background()
+	exec := &fakeGHExecutor{
+		originURL: "https://github.com/mateusz-szczyrzyca/team-agents.git",
+		ghUser:    "user",
+	}
+	got := ResolveGitHubTrustedRaw(ctx, exec, "/dummy", "   ")
+	if got != "   " {
+		t.Errorf("ResolveGitHubTrustedRaw with whitespace override = %q; want %q", got, "   ")
+	}
+}
+
+// TestResolveGitHubTrustedRaw_ContextCacheIsolation verifies cache is isolated to WithGHLoginCache context.
+func TestResolveGitHubTrustedRaw_ContextCacheIsolation(t *testing.T) {
+	ctx1 := WithGHLoginCache(context.Background())
+	ctx2 := WithGHLoginCache(context.Background())
+
+	exec1 := &fakeGHExecutor{
+		originURL: "https://github.com/mateusz-szczyrzyca/team-agents.git",
+		ghUser:    "user-ctx1",
+	}
+	raw1 := ResolveGitHubTrustedRaw(ctx1, exec1, "/dummy", "")
+	if raw1 != "mateusz-szczyrzyca user-ctx1" {
+		t.Errorf("ctx1 first call = %q; want 'mateusz-szczyrzyca user-ctx1'", raw1)
+	}
+
+	exec2 := &fakeGHExecutor{
+		originURL: "https://github.com/mateusz-szczyrzyca/team-agents.git",
+		ghUser:    "user-ctx2",
+	}
+	raw2 := ResolveGitHubTrustedRaw(ctx2, exec2, "/dummy", "")
+	if raw2 != "mateusz-szczyrzyca user-ctx2" {
+		t.Errorf("ctx2 call = %q; want 'mateusz-szczyrzyca user-ctx2'", raw2)
+	}
+}

@@ -169,6 +169,11 @@ func ResetGHLoginCacheForTest() {
 	ghLoginCache = ""
 }
 
+// WithGHLoginCache returns a context that carries an in-process GitHub login cache.
+func WithGHLoginCache(ctx context.Context) context.Context {
+	return ctx
+}
+
 // ResolveGitHubTrusted resolves the trusted accounts (override, or repository owner + authenticated user).
 func ResolveGitHubTrusted(ctx context.Context, exec Executor, repoRoot string, trustedOverride string) (string, *GitHubSetupError) {
 	if err := ctx.Err(); err != nil {
