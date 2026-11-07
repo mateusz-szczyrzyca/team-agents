@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -201,4 +202,41 @@ func TestSetupLoggerFailureNonfatal(t *testing.T) {
 	if env["GIT_AUTHOR_EMAIL"] != "test@example.com" {
 		t.Errorf("Environment should be populated despite logger failure")
 	}
+}
+
+// TestSetupLogsIdentityDespiteRunnerFailure tests that git_identity is logged to healthy sinks (agent.jsonl)
+// when the runner sink (fd 3) fails. The warning and identity records must both be present in healthy sinks.
+func TestSetupLogsIdentityDespiteRunnerFailure(t *testing.T) {
+	tmpdir := t.TempDir()
+	logDir := filepath.Join(tmpdir, "logs")
+	failRunner := &failAfterCount{limit: 0} // Fail all writes
+	logger := &Logger{LogDir: logDir, Runner: failRunner, Task: "test"}
+	id := &Identity{Agent: "test", SigningKey: "/nonexistent/key"}
+	id.Setup(context.Background(), "", logger)
+	// Both warning and git_identity should be logged to agent.jsonl despite runner failure
+	data, err := os.ReadFile(filepath.Join(logDir, "agent.jsonl"))
+	if err != nil {
+		t.Fatalf("agent.jsonl: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, `"event":"signing_key_unreadable"`) {
+		t.Error("warning not logged to agent.jsonl")
+	}
+	if !strings.Contains(content, `"event":"git_identity"`) {
+		t.Error("git_identity not logged to agent.jsonl despite runner failure")
+	}
+}
+
+// failAfterCount fails after a limit of successful writes.
+type failAfterCount struct {
+	limit int
+	count int
+}
+
+func (f *failAfterCount) Write(p []byte) (int, error) {
+	if f.count < f.limit {
+		f.count++
+		return len(p), nil
+	}
+	return 0, io.EOF
 }
