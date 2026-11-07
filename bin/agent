@@ -2510,7 +2510,7 @@ supervise_failovers() {
   done
 }
 
-# supervise_board — the boards of the open teams. An easy item nobody owns, waiting AGENT_EASY_TO_WORKER_MIN, in a team
+# supervise_board — the boards of the teams at work (their coordinator's automation allowed, a member asleep). An easy item nobody owns, waiting AGENT_EASY_TO_WORKER_MIN, in a team
 # with no worker member, goes to a worker: the script claims it for the coordinator and delegates it as the
 # coordinator's request, whose result the coordinator gets. A team whose members all sleep while items wait
 # AGENT_BOARD_STALL_MIN tells the human ⛔ — once for the same items (stall-<team> under the bus directory).
@@ -2528,6 +2528,10 @@ supervise_board() {
     lead=$(jq -r '.lead // empty' <<< "$tj")
     [[ -n $lead ]] || continue
     lt=$(jq -r --arg l "$lead" '.members[$l].task // empty' <<< "$tj")
+    # only a team at work: not stopped by the human, and a member asleep waiting for work — not one stopped
+    # (agent stop leaves its bus record open), nor an old one whose members are done
+    automation_allowed "$lt" || continue
+    [[ $(jq '[.members[] | select(.state == "sleeping")] | length' <<< "$tj") != 0 ]] || continue
     board=$(bus board-dump --dir "$BUS_DIR" --team "$team" 2> /dev/null) || continue
     if [[ -n $lt && ${#WORKER_AGENTS[@]} -gt 0 && $(jq '[.members[] | select(.tier == "worker")] | length' <<< "$tj") == 0 ]]; then
       while IFS=$'\t' read -r id upd title details; do

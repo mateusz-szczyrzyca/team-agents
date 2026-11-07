@@ -46,7 +46,8 @@ open_team() {
 @test "a team whose members all sleep while items wait past AGENT_BOARD_STALL_MIN tells the human ⛔, once" {
   export AGENT_BOARD_STALL_MIN=0 AGENT_EASY_TO_WORKER_MIN=999
   open_team
-  "$BUILD_DIR/agentbus" board-add --dir "$AGENTS_HOME/bus" --team "$team" --as lead --title "nobody's" --details "d" --level normal > /dev/null
+  # an easy item: with no worker in the team it wakes nobody (a normal one would wake a member, at work for a while)
+  "$BUILD_DIR/agentbus" board-add --dir "$AGENTS_HOME/bus" --team "$team" --as lead --title "nobody's" --details "d" --level easy > /dev/null
   agent _supervise
   agent _supervise
   [ "$(grep -l "standstill" "$AGENTS_HOME"/notifications/*.md | wc -l)" -eq 1 ]
