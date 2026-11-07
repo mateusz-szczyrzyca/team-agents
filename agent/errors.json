@@ -149,8 +149,7 @@
    "op": "github_setup",
    "what": "per-run GitHub wrapper and environment setup",
    "causes": [
-    {"name": "MissingRealGH", "class": "NotFound", "doc": "real gh binary was not found or is recursive"},
-    {"name": "Process", "class": "Process", "doc": "inspecting repository origin or gh user failed"}
+    {"name": "MissingRealGH", "class": "NotFound", "doc": "real gh binary was not found or is recursive"}
    ]
   }
  ]
