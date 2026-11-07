@@ -22,6 +22,7 @@ shift 9
 readonly -a _agent_cfg_names=("${@:2:$1}")
 shift "$(($1 + 1))"
 AGENT_SUBCOMMAND=${1:-} RUNNER_ID=""
+declare -A MODEL_PRICES=() # agents.conf prices models in it; the Bash program declares it before sourcing too
 source "$CONF"
 builtin eval "$_agent_cfg_defaults"
 for _agent_cfg_name in "${_agent_cfg_names[@]}"; do

@@ -6792,12 +6792,14 @@ resume_run() {
                --arg tier "$(task_field "$r" TIER)" \
                '.[$a] = {agent:$a, task:$t, branch:"", worktree:$w, state:"active", tier:$tier, provider:"remote"}' <<< "$json")
     done
-    jq -n --arg id "$new_team" --arg repo "$(task_field "${ids[0]}" REPO_NAME)" --arg wake "$SELF" --arg home "$AGENTS_HOME" \
+    # the old team on jq's input, not as an argument: with its board it can be past the kernel's limit for one
+    jq --arg id "$new_team" --arg repo "$(task_field "${ids[0]}" REPO_NAME)" --arg wake "$SELF" --arg home "$AGENTS_HOME" \
       --argjson members "$json" --arg from "$old_team" \
-      --arg lead "${lead:-$(jq -r 'keys[]' <<< "$json" | { mapfile -t a; preferred_coordinator "${a[@]}"; })}" --argjson old "$tj" '
-      {id:$id, repo:$repo, wake_cmd:$wake, home:$home, members:$members, lead:$lead, resumed_from:$from,
+      --arg lead "${lead:-$(jq -r 'keys[]' <<< "$json" | { mapfile -t a; preferred_coordinator "${a[@]}"; })}" '
+      . as $old
+      | {id:$id, repo:$repo, wake_cmd:$wake, home:$home, members:$members, lead:$lead, resumed_from:$from,
        next_board_id: ($old.next_board_id // 0),
-       board: (($old.board // {}) | map_values(if .status == "claimed" then .status = "todo" | .assignee = "" else . end))}' \
+       board: (($old.board // {}) | map_values(if .status == "claimed" then .status = "todo" | .assignee = "" else . end))}' <<< "$tj" \
       | bus team-create --dir "$BUS_DIR" || die "could not create the resumed team"
     try team_close_failed bus team-done --dir "$BUS_DIR" --team "$old_team"
     for r in "${remote_ids[@]}"; do
