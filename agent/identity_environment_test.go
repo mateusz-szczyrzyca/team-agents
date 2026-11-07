@@ -8,12 +8,12 @@ import (
 func TestIdentityEnvironmentHonorsNameFormat(t *testing.T) {
 	// RED: Environment should use configured NameFormat, not hardcoded format
 	id := &Identity{
-		Agent:      "test-agent",
-		Provider:   "test",
-		Model:      "test-model",
-		NameFormat: "CUSTOM:%a",
+		Agent:       "test-agent",
+		Provider:    "test",
+		Model:       "test-model",
+		NameFormat:  "CUSTOM:%a",
 		EmailConfig: "test@example.com",
-		Task:       "test-task",
+		Task:        "test-task",
 	}
 
 	env := id.Environment()
