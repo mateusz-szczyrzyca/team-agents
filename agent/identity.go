@@ -162,7 +162,7 @@ func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logg
 	}
 
 	if id.SigningKey != "" && !signingEnabled && logger != nil {
-		if err := logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key", id.SigningKey, "effect", "commits of this run are not signed"); err != nil {
+		if err := logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key="+id.SigningKey, "effect=commits of this run are not signed"); err != nil {
 			return env, err
 		}
 	}
@@ -172,7 +172,7 @@ func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logg
 		if signingEnabled {
 			sigStr = "yes"
 		}
-		if err := logger.Log(ctx, LevelInfo, LogGitIdentity, "name", author, "email", email, "signing", sigStr); err != nil {
+		if err := logger.Log(ctx, LevelInfo, LogGitIdentity, "name="+author, "email="+email, "signing="+sigStr); err != nil {
 			return env, err
 		}
 	}
