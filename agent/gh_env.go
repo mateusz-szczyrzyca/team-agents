@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	execpkg "os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 // LogAgentsGHMissing is emitted when the host environment has no gh binary available.
@@ -39,15 +41,21 @@ func (s *ghLoginCacheStore) fetch(load func() string) string {
 
 // GitHubSetupParams carries the per-run inputs needed to configure the trusted gh wrapper environment.
 type GitHubSetupParams struct {
-	AgentsHome, SelfExecutable, RepoRoot, RunnerID, Team, Agent, Coordinator, OwnPR, BusDir, AgentbusBin, ReviewByline, GitHubTrusted, GitHubColors, GitHubNameColors, CurrentPath string                       // runner paths, options, and PATH
-	LookPath                                                                                                                                                                       func(string) (string, error) // lookup for gh binary
-	Logger                                                                                                                                                                         *Logger                      // logger for warnings
+	AgentsHome, SelfExecutable, RepoRoot, RunnerID string                       // runner directories and task identifier
+	Team, Agent, Coordinator, OwnPR                string                       // team membership and task PR number
+	BusDir, AgentbusBin, ReviewByline              string                       // coordination paths and review byline
+	GitHubTrusted, GitHubColors, GitHubNameColors  string                       // trusted accounts and color preferences
+	CurrentPath                                    string                       // existing PATH to prepend wrapper directory to
+	LookPath                                       func(string) (string, error) // lookup for gh binary
+	Logger                                         *Logger                      // logger for warnings
 }
 
 // GitHubRunEnv carries the environment variables and path settings for a run.
 type GitHubRunEnv struct {
-	RealGH, WrapperPath, TrustedAccounts, RawTrusted, PrependPath, EffectivePath string            // paths and accounts
-	Env                                                                          map[string]string // exported variables
+	RealGH, WrapperPath         string            // real executable and wrapper symlink paths
+	TrustedAccounts, RawTrusted string            // normalized and raw trusted account logins
+	PrependPath, EffectivePath  string            // wrapper directory to prepend and resulting PATH
+	Env                         map[string]string // exported environment variables
 }
 
 func runCmd(ctx context.Context, exec Executor, dir, name string, args ...string) string {
@@ -94,7 +102,7 @@ func EnsureGHWrapper(home, self string) (string, *GitHubSetupError) {
 	if t, err := os.Readlink(wrap); err == nil && t == self {
 		return wrap, nil
 	}
-	tmp := wrap + ".tmp"
+	tmp := fmt.Sprintf("%s.%d.%d", wrap, os.Getpid(), time.Now().UnixNano())
 	if err := os.Symlink(self, tmp); err != nil {
 		return "", fromStorage(GitHubSetupStorage, storageErr(err, "create temporary gh wrapper symlink %s", tmp))
 	}

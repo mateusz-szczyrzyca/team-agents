@@ -9,22 +9,18 @@ import (
 func TestEnsureGHWrapper_UniqueStagingSentinelPreserved(t *testing.T) {
 	home := t.TempDir()
 	self := filepath.Join(home, "bin", "agent")
-	_ = os.MkdirAll(filepath.Dir(self), 0o750)
-	_ = os.WriteFile(self, []byte("self"), 0o755)
 	wrap := filepath.Join(home, "run", "gh-trusted", "gh")
-	_ = os.MkdirAll(filepath.Dir(wrap), 0o750)
+	if err := os.MkdirAll(filepath.Dir(wrap), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	sentinel := wrap + ".tmp"
 	if err := os.Symlink("/dev/null", sentinel); err != nil {
 		t.Fatal(err)
 	}
-	res, err := EnsureGHWrapper(home, self)
-	if err != nil {
-		t.Fatalf("EnsureGHWrapper failed with sentinel present: %v", err)
+	if res, err := EnsureGHWrapper(home, self); err != nil || res != wrap {
+		t.Fatalf("EnsureGHWrapper = (%q, %v), want (%q, nil)", res, err, wrap)
 	}
-	if res != wrap {
-		t.Fatalf("got %q, want %q", res, wrap)
-	}
-	if target, rerr := os.Readlink(sentinel); rerr != nil || target != "/dev/null" {
-		t.Fatalf("sentinel target = %q, err = %v; want /dev/null", target, rerr)
+	if target, err := os.Readlink(sentinel); err != nil || target != "/dev/null" {
+		t.Fatalf("sentinel target = %q, err = %v; want /dev/null", target, err)
 	}
 }
