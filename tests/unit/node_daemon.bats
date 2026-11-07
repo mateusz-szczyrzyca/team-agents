@@ -243,6 +243,7 @@ STUB
 }
 
 @test "agent node stops active task on stop request in heartbeat" {
+  scenario '{"solo": {"new": "hang"}}'   # works until stopped: the default action could end it before the stop came
   local real_bus="$HOME/.local/bin/agentbus"
   mv "$real_bus" "$HOME/.local/bin/real-agentbus"
   cat > "$real_bus" <<'STUB'
