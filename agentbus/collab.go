@@ -1031,3 +1031,17 @@ func cmdBoardClaim(args []string) {
 	exitOn(err.asError())
 	fmt.Println(out)
 }
+
+// cmdClaimLead (claim-lead) claims a team's coordinator role as a member (--as), the way that member's claim_lead
+// would; it prints claim_lead's answer. The script hands a failed coordinator's role to a member with it.
+func cmdClaimLead(args []string) {
+	fs := newFlagSet("claim-lead")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	team := fs.String("team", "", "team")
+	as := fs.String("as", "", "the member that claims the role")
+	parseFlags(fs, args)
+	s := &Server{bus: &Bus{dir: *dir}, me: *as, team: *team}
+	out, err := s.claimLead()
+	exitOn(err.asError())
+	fmt.Println(out)
+}

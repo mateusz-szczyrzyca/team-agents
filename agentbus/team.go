@@ -199,6 +199,18 @@ func (s *Server) teamStatus() (string, *TeamStatusError) {
 
 // claimLead (MCP claim_lead): the first normal-tier member to call it becomes the coordinator;
 // a hung coordinator can be replaced. A worker gets an explanation (a result, not an error).
+// leadIsOut reports whether a coordinator in this state is out of its team for good — hung, finished (a failed run
+// ends as done), stopped or excluded —, so that a normal member may take its role over.
+func leadIsOut(st MemberState) bool {
+	switch st {
+	case MemberHung, MemberDone, MemberStopped, MemberExcluded:
+		return true
+	case MemberActive, MemberSleeping:
+		return false
+	}
+	return false
+}
+
 func (s *Server) claimLead() (string, *ClaimLeadError) {
 	var msg string
 	err := transact(s.bus, ClaimLeadStorage, func(st *State) *ClaimLeadError {
@@ -214,10 +226,10 @@ func (s *Server) claimLead() (string, *ClaimLeadError) {
 			}
 			return nil
 		}
-		if t.Lead != "" && t.Lead != s.me && t.Members[t.Lead] != nil && t.Members[t.Lead].State == MemberHung {
-			old := t.Lead
+		if t.Lead != "" && t.Lead != s.me && t.Members[t.Lead] != nil && leadIsOut(t.Members[t.Lead].State) {
+			old, was := t.Lead, t.Members[t.Lead].State
 			t.Lead = s.me
-			msg = "You are the coordinator of team " + t.ID + " (taken over from hung " + old + ")."
+			msg = "You are the coordinator of team " + t.ID + " (taken over from " + string(was) + " " + old + ")."
 			_, serr := s.bus.post(st, s.me, teamRecipient(t.ID), EventCoordinatorTakeover{Coordinator: s.me, Previous: old})
 			return fromStorage(ClaimLeadStorage, serr)
 		}

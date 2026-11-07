@@ -1248,6 +1248,28 @@ team_helpers_end() {
   done
 }
 
+# coordinator_takeover team previous why — a member at work (active or asleep, normal) takes over the role of a
+# coordinator that is out: the first of AGENT_COORDINATOR_PREFER among them, else the first of them. The script
+# claims the role for it (agentbus claim-lead) and wakes it with what happened; it prints the new coordinator, and
+# nothing when no member is at work.
+coordinator_takeover() {
+  local team=$1 prev=$2 why=$3 next out
+  local -a cands=()
+  mapfile -t cands < <(team_json "$team" | jq -r --arg p "$prev" \
+    '.members | to_entries[] | select(.key != $p and .value.tier != "worker" and (.value.state == "active" or .value.state == "sleeping")) | .key')
+  ((${#cands[@]})) || return 1
+  next=$(preferred_coordinator "${cands[@]}")
+  next=${next:-${cands[0]}}
+  if ! out=$(bus claim-lead --dir "$BUS_DIR" --team "$team" --as "$next" 2>&1) || [[ $(team_lead "$team") != "$next" ]]; then
+    log_warn coordinator_takeover_failed "team=$team" "member=$next" "reason=${out:0:300}"
+    return 1
+  fi
+  log_info coordinator_takeover "team=$team" "coordinator=$next" "previous=$prev"
+  try takeover_message_failed bus send --dir "$BUS_DIR" --from agent --to "$next" \
+    "YOU ARE NOW THE COORDINATOR of team $team: $prev is out ($why). Read its last checkpoint, the board and the round's PR, give out the work that is left, and continue the round as its coordinator." > /dev/null
+  echo "$next"
+}
+
 finish_team() { # team reason — closes the team; sleeping members finish as done
   local team=$1 why=$2 t out
   [[ $(team_done_flag "$team") == true ]] && return 0
@@ -3122,7 +3144,9 @@ team_after_run() { # id status final note — team logic after a member's run en
       waiting) notify "$id" waiting "$final" "questions from the coordinator of team $team (members sleep until answered)" ;;
       failed)   # a failure is not the end of the team's work: the coordinator is out, the others go on
         member_out "$id" "the coordinator's run failed${note:+ ($note)}"
-        push_text "$REPO_NAME" "⚠ The coordinator $AGENT of team $team failed${note:+ ($note)}. The team stays open: its members were told to take over coordination." \
+        local next
+        next=$(coordinator_takeover "$team" "$AGENT" "its run failed${note:+ ($note)}") || next=""
+        push_text "$REPO_NAME" "⚠ The coordinator $AGENT of team $team failed${note:+ ($note)}. The team stays open: ${next:+$next coordinates it now.}${next:-its members were told to take over coordination.}" \
           "To resume it yourself: agent run --resume $team --same-round \"…\""
         return 0 ;;
       done)
