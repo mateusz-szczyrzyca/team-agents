@@ -78,23 +78,15 @@ func TestGitHubColors_PaletteNone(t *testing.T) {
 }
 
 // TestReadColorLines_UnreadableError verifies that readColorLines reports a storage error
-// when the file exists but cannot be read due to file permissions.
+// when the path exists but cannot be read as a file.
 func TestReadColorLines_UnreadableError(t *testing.T) {
 	tmp := t.TempDir()
-	colorsPath := filepath.Join(tmp, "unreadable-colors")
-	if err := os.WriteFile(colorsPath, []byte("agent-1 #0969DA\n"), 0o000); err != nil {
+	dirPath := filepath.Join(tmp, "unreadable-colors-dir")
+	if err := os.Mkdir(dirPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_ = os.Chmod(colorsPath, 0o600)
-	})
 
-	// Probe whether the OS/user permits chmod 0000 read denial (skip if running as root)
-	if _, readErr := os.ReadFile(filepath.Clean(colorsPath)); readErr == nil { //nolint:gosec // test path
-		t.Skip("environment allows reading 0000 files (running as root)")
-	}
-
-	_, storageErr := readColorLines(colorsPath)
+	_, storageErr := readColorLines(dirPath)
 	if storageErr == nil {
 		t.Fatal("expected StorageError for unreadable colors file, got nil")
 	}
