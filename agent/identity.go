@@ -26,6 +26,8 @@ type Identity struct {
 	EmailConfig string
 	// SigningKey is the path to the SSH signing key, if any.
 	SigningKey string
+	// NameFormat is the configured author name format string (%a = agent name).
+	NameFormat string
 	// Task is the task ID this run belongs to.
 	Task string
 	// Team is the team ID, if this is a team run.
