@@ -319,6 +319,9 @@ func (t *Team) releaseItemsOf(agent string) []string {
 		it := t.Board[id]
 		if it.Assignee == agent && it.Status == BoardClaimed {
 			it.Status, it.Assignee, it.Previous, it.Updated = BoardTodo, "", agent, Now()
+			if it.For == agent { // designated for it too: for nobody now, or nobody could take it
+				it.For = ""
+			}
 			released = append(released, id)
 		} else if it.For == agent && it.Status == BoardTodo {
 			it.For, it.Previous, it.Updated = "", agent, Now()
