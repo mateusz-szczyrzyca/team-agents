@@ -11,7 +11,8 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
 
 @test "a worker request whose model is out of service goes to another worker; the requester hears no failure" {
   export AGENT_FAILOVER_MIN=0
-  scenario '{"lead": {"new": "team-lead-wait"}, "member": {"new": "idle"}, "worker": {"new": "capacity"}, "worker2": {"new": "capacity"}}'
+  printf 'AGENT_COORDINATOR_PREFER="lead"\n' >> "$AGENTS_HOME/agents.conf"   # team-sleep claims the role too
+  scenario '{"lead": {"new": "team-lead-wait"}, "member": {"new": "team-sleep"}, "worker": {"new": "capacity"}, "worker2": {"new": "capacity"}}'
   agent run --team lead,member "team task" > /dev/null
   m=$(task_of member); team=$(meta "$m" TEAM)
   wait_status "$m" sleeping

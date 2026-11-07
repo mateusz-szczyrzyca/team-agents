@@ -9,7 +9,8 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
 helpers() { grep -lx 'KIND=helper' "$AGENTS_HOME"/tasks/*/meta.env 2> /dev/null | xargs -r -n1 dirname | xargs -r -n1 basename; }
 
 @test "a team whose coordinator announces it done stops its workers' tasks and closes its queued requests" {
-  scenario '{"lead": {"new": "team-lead-wait", "resume": "team-lead-done"}, "member": {"new": "idle"}, "worker": {"new": "sleep:300"}, "worker2": {"new": "sleep:300"}}'
+  printf 'AGENT_COORDINATOR_PREFER="lead"\n' >> "$AGENTS_HOME/agents.conf"   # team-sleep claims the role too
+  scenario '{"lead": {"new": "team-lead-wait", "resume": "team-lead-done"}, "member": {"new": "team-sleep"}, "worker": {"new": "sleep:300"}, "worker2": {"new": "sleep:300"}}'
   agent run --team lead,member "team task" > /dev/null
   t=$(task_of lead); m=$(task_of member); team=$(meta "$t" TEAM)
   wait_status "$t" sleeping

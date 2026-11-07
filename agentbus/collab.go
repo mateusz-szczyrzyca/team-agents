@@ -319,6 +319,9 @@ func (t *Team) releaseItemsOf(agent string) []string {
 		it := t.Board[id]
 		if it.Assignee == agent && it.Status == BoardClaimed {
 			it.Status, it.Assignee, it.Previous, it.Updated = BoardTodo, "", agent, Now()
+			if it.For == agent { // designated for it too: for nobody now, or nobody could take it
+				it.For = ""
+			}
 			released = append(released, id)
 		} else if it.For == agent && it.Status == BoardTodo {
 			it.For, it.Previous, it.Updated = "", agent, Now()
@@ -1025,6 +1028,20 @@ func cmdBoardClaim(args []string) {
 	parseFlags(fs, args)
 	s := &Server{bus: &Bus{dir: *dir}, me: *as, team: *team}
 	out, err := s.boardClaim(*id)
+	exitOn(err.asError())
+	fmt.Println(out)
+}
+
+// cmdClaimLead (claim-lead) claims a team's coordinator role as a member (--as), the way that member's claim_lead
+// would; it prints claim_lead's answer. The script hands a failed coordinator's role to a member with it.
+func cmdClaimLead(args []string) {
+	fs := newFlagSet("claim-lead")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	team := fs.String("team", "", "team")
+	as := fs.String("as", "", "the member that claims the role")
+	parseFlags(fs, args)
+	s := &Server{bus: &Bus{dir: *dir}, me: *as, team: *team}
+	out, err := s.claimLead()
 	exitOn(err.asError())
 	fmt.Println(out)
 }

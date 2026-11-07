@@ -1248,6 +1248,28 @@ team_helpers_end() {
   done
 }
 
+# coordinator_takeover team previous why — a member at work (active or asleep, normal) takes over the role of a
+# coordinator that is out: the first of AGENT_COORDINATOR_PREFER among them, else the first of them. The script
+# claims the role for it (agentbus claim-lead) and wakes it with what happened; it prints the new coordinator, and
+# nothing when no member is at work.
+coordinator_takeover() {
+  local team=$1 prev=$2 why=$3 next out
+  local -a cands=()
+  mapfile -t cands < <(team_json "$team" | jq -r --arg p "$prev" \
+    '.members | to_entries[] | select(.key != $p and .value.tier != "worker" and (.value.state == "active" or .value.state == "sleeping")) | .key')
+  ((${#cands[@]})) || return 1
+  next=$(preferred_coordinator "${cands[@]}")
+  next=${next:-${cands[0]}}
+  if ! out=$(bus claim-lead --dir "$BUS_DIR" --team "$team" --as "$next" 2>&1) || [[ $(team_lead "$team") != "$next" ]]; then
+    log_warn coordinator_takeover_failed "team=$team" "member=$next" "reason=${out:0:300}"
+    return 1
+  fi
+  log_info coordinator_takeover "team=$team" "coordinator=$next" "previous=$prev"
+  try takeover_message_failed bus send --dir "$BUS_DIR" --from agent --to "$next" \
+    "YOU ARE NOW THE COORDINATOR of team $team: $prev is out ($why). Read its last checkpoint, the board and the round's PR, give out the work that is left, and continue the round as its coordinator." > /dev/null
+  echo "$next"
+}
+
 finish_team() { # team reason — closes the team; sleeping members finish as done
   local team=$1 why=$2 t out
   [[ $(team_done_flag "$team") == true ]] && return 0
@@ -3122,7 +3144,9 @@ team_after_run() { # id status final note — team logic after a member's run en
       waiting) notify "$id" waiting "$final" "questions from the coordinator of team $team (members sleep until answered)" ;;
       failed)   # a failure is not the end of the team's work: the coordinator is out, the others go on
         member_out "$id" "the coordinator's run failed${note:+ ($note)}"
-        push_text "$REPO_NAME" "⚠ The coordinator $AGENT of team $team failed${note:+ ($note)}. The team stays open: its members were told to take over coordination." \
+        local next
+        next=$(coordinator_takeover "$team" "$AGENT" "its run failed${note:+ ($note)}") || next=""
+        push_text "$REPO_NAME" "⚠ The coordinator $AGENT of team $team failed${note:+ ($note)}. The team stays open: ${next:+$next coordinates it now.}${next:-its members were told to take over coordination.}" \
           "To resume it yourself: agent run --resume $team --same-round \"…\""
         return 0 ;;
       done)
@@ -8073,6 +8097,88 @@ cmd_spend() {
     }' | sort -t$'\t' -k1,1 -k2,2 -k3,3 | cut -f4-
 }
 
+# debug_redact — the debug file without secrets: the values of secrets.env (six characters or more), and anything
+# that looks like a GitHub, OpenAI-style, Slack or bearer token, become [redacted]
+debug_redact() {
+  local values
+  values=$(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=//p' "$AGENTS_HOME/secrets.env" 2> /dev/null \
+    | sed -E "s/^\"(.*)\"\$/\\1/; s/^'(.*)'\$/\\1/" | awk 'length($0) >= 6') || values=""   # no secrets.env: nothing of it
+  sed -E 's/(ghp|gho|ghs|ghu|github_pat)_[A-Za-z0-9_]{10,}/[redacted]/g; s/sk-[A-Za-z0-9_-]{16,}/[redacted]/g;
+          s/xox[abpr]-[A-Za-z0-9-]{10,}/[redacted]/g; s/(Bearer )[A-Za-z0-9._~+\/-]{16,}/\1[redacted]/g' \
+    | awk -v vals="$values" 'BEGIN {n = split(vals, v, "\n")}
+        {for (i = 1; i <= n; i++) if (v[i] != "") while ((p = index($0, v[i])) > 0) $0 = substr($0, 1, p - 1) "[redacted]" substr($0, p + length(v[i]))
+         print}'
+}
+
+# cmd_debug <team|task> [--full] [--out file] — everything to diagnose a team or a task, in one file: the team on the
+# bus, its board, its worker requests, every task's metadata, activity, errors, final report and checks, the script's
+# log, the bus messages, the branches, the round's PR, its card and tokens. Read-only. The last lines of each source
+# by default, all of them with --full; secrets redacted (debug_redact). It prints the file and its length.
+cmd_debug() {
+  local ref="" full=0 out="" team="" n=40 t d run usage="usage: agent debug <team|task> [--full] [--out file]"
+  local -a ids=()
+  while (($#)); do
+    case $1 in
+      --full) full=1; shift ;;
+      --out) out=${2:?$usage}; shift 2 ;;
+      -*) die "$usage" ;;
+      *) ref=$1; shift ;;
+    esac
+  done
+  [[ -n $ref ]] || die "$usage"
+  if [[ -f $TASKS/$ref/meta.env ]]; then team=$(task_field "$ref" TEAM); else team=$ref; fi
+  if [[ -n $team ]]; then
+    mapfile -t ids < <(grep -lx "TEAM=$team" "$TASKS"/*/meta.env 2> /dev/null | xargs -r -n1 dirname | xargs -r -n1 basename)
+  else
+    ids=("$ref")
+  fi
+  ((${#ids[@]})) || die "no team or task $ref"
+  ((full == 0)) || n=1000000
+  out=${out:-$AGENTS_HOME/debug/debug-${team:-$ref}-$(date +%Y%m%d-%H%M%S).txt}
+  mkdir -p "$(dirname "$out")" || die "cannot create $(dirname "$out")"
+  {
+    set +e   # a source that is missing or empty (no request, no precheck) is shown as such: it stops nothing
+    echo "agent debug ${team:-$ref} — $(date -Is) — tasks: ${ids[*]}${full:+$( ((full)) && echo ' — full')}"
+    if [[ -n $team ]]; then
+      echo; echo "== team on the bus"
+      team_json "$team" | jq '{lead, finished, members}' 2>&1 || echo "(the bus does not know it)"
+      echo; echo "== board"
+      bus board-dump --dir "$BUS_DIR" --team "$team" 2>&1 | jq -r '.board // {} | (if type == "object" then .[] else .[] end)
+        | "\(.id)  \(.status)  \(.level)  for:\(.for // "-")  by:\(.assignee // "-")  \(.updated)  \(.title)\(if (.progress // "") != "" then "\n      progress: " + .progress else "" end)"' 2>&1
+    fi
+    echo; echo "== worker requests"
+    bus helper-list --dir "$BUS_DIR" --all 2>&1 | grep -F -f <(printf '%s\n' "${ids[@]}") | tail -n "$n"
+    for t in "${ids[@]}"; do
+      d=$TASKS/$t; run=$(task_field "$t" RUN)
+      echo; echo "== task $t"
+      cat "$d/meta.env"
+      echo "-- activity"; tail -n "$n" "$d/activity.jsonl" 2> /dev/null | jq -r '.ts + " " + .k + " " + (.t // "")' 2>&1
+      echo "-- err-$run.log"; tail -n "$n" "$d/err-$run.log" 2>&1
+      echo "-- final.md"; tail -n "$n" "$d/final.md" 2>&1
+      [[ ! -f $d/precheck.log ]] || { echo "-- precheck.log"; tail -n "$n" "$d/precheck.log"; }
+      echo "-- runner.log"; tail -n "$n" "$d/runner.log" 2>&1
+    done
+    echo; echo "== the script's log"
+    grep -hF -f <(printf '%s\n' "${ids[@]}" ${team:+"$team"}) "$AGENTS_HOME/logs/agent.jsonl" 2> /dev/null | tail -n "$((n * 3))" \
+      | jq -c '{ts, level, event, task} + (del(.ts, .level, .event, .task, .component, .pid, .subcommand))' 2>&1
+    if [[ -n $team ]]; then
+      echo; echo "== bus messages"
+      grep -hF "$team" "$BUS_DIR/messages.jsonl" 2> /dev/null | tail -n "$n" | jq -c '{ts, from, to, text: ((.text // .body // "") | .[0:600])}' 2>&1
+    fi
+    echo; echo "== git"
+    for t in "${ids[@]}"; do
+      d=$(task_field "$t" WORKTREE)
+      [[ -d $d ]] || { echo "$t: no worktree"; continue; }
+      echo "$t: $(task_field "$t" BRANCH) at $(git -C "$d" rev-parse --short HEAD 2>&1), $(git -C "$d" status --porcelain 2> /dev/null | wc -l) changes$( [[ ! -f $(git -C "$d" rev-parse --git-path MERGE_HEAD 2> /dev/null) ]] || echo ', a merge in progress')"
+    done
+    echo; echo "== round"
+    round_pr_for "${ids[0]}" number,url,state 2>&1 | jq -c '.[]' 2>&1
+    if [[ -n $team ]]; then (cmd_round_check "$team") 2>&1; (cmd_tokens "$team") 2>&1 | tail -n 15; fi
+    true
+  } 2>&1 | debug_redact > "$out"
+  echo "$out ($(wc -l < "$out") lines)"
+}
+
 cmd_tokens() { # <team|task> — the tokens the runs used, from their activity's usage lines (and opencode's step lines):
   # per task — a team's members, and the helpers and investigations they asked for — and in all
   local q=${1:?usage: agent tokens <team|task>} ids=() m d id team_ids=" " per
@@ -10184,6 +10290,7 @@ agent nodes                               registered nodes on the lead
 agent kick <task>                         cut a run short: a team member sleeps (the team can wake it), solo: stopped
 agent round-check <team|task>             a round's card: its board, members' work not in its PR, files two branches changed, workers' items
 agent spend [--days N] [--daily]          where the money goes, by model: a paid model's spending, a subscription's equivalent
+agent debug <team|task> [--full] [--out file]  everything to diagnose a team or a task, in one file, secrets redacted
 agent tokens <team|task>                  the tokens its runs used: per task (a team's helpers and investigations too), in all
 agent tokens --runs <task>                a task's tokens per run, its steps (tool calls) and input per step: the costly runs
 agent wake <task>                         resume a paused task now, not at its pause's end (a remote member's: on its node)
@@ -10237,6 +10344,7 @@ main() {
     kick)    cmd_kick "$@" ;;
     wake)    cmd_wake "$@" ;;
     tokens)  cmd_tokens "$@" ;;
+    debug)   cmd_debug "$@" ;;
     spend)   cmd_spend "$@" ;;
     round-check) cmd_round_check "$@" ;;
     round-size) cmd_round_size "$@" ;;

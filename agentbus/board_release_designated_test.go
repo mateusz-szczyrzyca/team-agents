@@ -21,3 +21,19 @@ func TestReleaseItemsOfFreesDesignatedItems(t *testing.T) {
 		t.Fatalf("another member's item or a done one changed: %+v %+v", *team.Board["B2"], *team.Board["B3"])
 	}
 }
+
+// TestReleaseItemsOfFreesAClaimedItemDesignatedForTheAgent: an item designated for a member and claimed by it goes
+// back to the board designated for nobody when the member is out — a coordinator's own item, left "for" it, could
+// be taken by nobody else (the human's team, B4).
+func TestReleaseItemsOfFreesAClaimedItemDesignatedForTheAgent(t *testing.T) {
+	team := &Team{Board: map[string]*BoardItem{
+		"B4": {ID: "B4", Status: BoardClaimed, For: "codex-1", Assignee: "codex-1", Level: LevelNormal},
+	}}
+	got := team.releaseItemsOf("codex-1")
+	if len(got) != 1 || got[0] != "B4" {
+		t.Fatalf("released %v, want [B4]", got)
+	}
+	if it := team.Board["B4"]; it.For != "" || it.Assignee != "" || it.Status != BoardTodo || it.Previous != "codex-1" {
+		t.Fatalf("B4 after release: for=%q assignee=%q status=%q previous=%q", it.For, it.Assignee, it.Status, it.Previous)
+	}
+}
