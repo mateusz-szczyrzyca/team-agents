@@ -326,7 +326,9 @@ with no worker member, goes to a worker: the script claims it for the coordinato
 coordinator's request (`agentbus board-claim`, `agentbus delegate`). A member that finishes, or is out, gives back the
 items designated for it as well as those it claimed. A team whose members all sleep while items wait
 `AGENT_BOARD_STALL_MIN` (30) minutes tells you ⛔, once for the same items. All this for a team at work only: not one you stopped, nor
-one none of whose members was at work in the last `AGENT_BOARD_RECENT_H` (6) hours — an old team never closed.
+one none of whose members was at work in the last `AGENT_BOARD_RECENT_H` (6) hours — an old team never closed. A team that
+finishes, however it does, ends its worker requests: those under way are stopped, the queued ones closed, so that no
+worker goes on, or starts, with work nobody waits for.
 
 **The script splits a fix pass.** A model left to split a team's work may not: a coordinator worked alone through a
 fix pass while its members slept. When a review sends a round back, each item the reviews list under

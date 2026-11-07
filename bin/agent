@@ -1218,11 +1218,42 @@ team_summary() { # team — lines "agent: status (branch)"
   done
 }
 
+# team_helpers_end team — the worker requests a finished team's tasks made (helper-list: "from <agent> (<task>)"):
+# the queued and those under way are closed as failed — before their worker's task is stopped, so that no dispatch
+# starts them again —, and the worker tasks still at work, paused or starting are stopped
+team_helpers_end() {
+  local team=$1 ids=" " t line hid st from wt hids=() hl
+  for t in $(team_tasks "$team"); do ids+="$t "; done
+  [[ $ids != " " ]] || return 0
+  exec {hl}< <(bus helper-list --dir "$BUS_DIR" 2> /dev/null)   # a descriptor of its own: fd 3 may be another's
+  while IFS= read -r line <&"$hl"; do   # first every request closed: none can start while the workers are stopped
+    [[ $line =~ ^H([0-9]+)\ \[([a-z]+) ]] || continue
+    hid=${BASH_REMATCH[1]}; st=${BASH_REMATCH[2]}
+    [[ $st == queued || $st == starting || $st == running ]] || continue
+    [[ $line =~ \ \(([^\)]+)\):\  ]] || continue
+    from=${BASH_REMATCH[1]}
+    [[ $ids == *" $from "* ]] || continue
+    try helper_state_failed bus helper-set --dir "$BUS_DIR" --id "$hid" --status failed \
+      --summary "team $team finished: its request is no longer needed" < /dev/null
+    hids+=("$hid")
+    log_info team_helper_ended "team=$team" "request=H$hid"
+  done
+  exec {hl}<&-
+  for hid in "${hids[@]}"; do   # then the worker tasks still at work, paused or starting
+    for wt in $(grep -lx "HELPER_ID=$hid" "$TASKS"/*/meta.env 2> /dev/null | xargs -r -n1 dirname | xargs -r -n1 basename); do
+      case $(task_field "$wt" STATUS) in
+        running|paused|starting|new) "$SELF" stop "$wt" > /dev/null 2>&1 < /dev/null || log_warn team_helper_stop_failed "task=$wt" ;;
+      esac
+    done
+  done
+}
+
 finish_team() { # team reason — closes the team; sleeping members finish as done
   local team=$1 why=$2 t out
   [[ $(team_done_flag "$team") == true ]] && return 0
   log_info team_finished "team=$team" "reason=$why"
   bus team-done --dir "$BUS_DIR" --team "$team"
+  team_helpers_end "$team"   # no worker goes on, or starts, with work nobody waits for
   for t in $(team_tasks "$team"); do   # remote members: their jobs end, their grants go
     [[ $(task_field "$t" KIND) == remote-member ]] || continue
     if ! out=$("$SELF" jobs --cancel "$(task_field "$t" JOB_ID)" 2>&1); then   # an ended job cannot be cancelled
