@@ -161,18 +161,20 @@ func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logg
 
 	if logger != nil {
 		if id.SigningKey != "" && !signingEnabled {
-			// Logger already warned to stderr; prepared identity is valid; skip remaining diagnostic on failing logger
-			if logErr := logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key="+id.SigningKey, "effect=commits of this run are not signed"); logErr != nil {
-				return env, nil
+			// Log warning to all sinks. Individual sink failures are logged to stderr by Logger and do not block operation.
+			logErr := logger.Log(ctx, LevelWarn, LogSigningKeyUnreadable, "key="+id.SigningKey, "effect=commits of this run are not signed")
+			if logErr != nil {
+				// Sink failure already logged to stderr by Logger; identity remains valid; continue to git_identity.
 			}
 		}
 		sigStr := "no"
 		if signingEnabled {
 			sigStr = "yes"
 		}
-		// Logger already warned to stderr; prepared identity is valid; skip remaining diagnostic on failing logger
-		if logErr := logger.Log(ctx, LevelInfo, LogGitIdentity, "name="+author, "email="+email, "signing="+sigStr); logErr != nil {
-			return env, nil
+		// Log identity info. Preserve record in healthy sinks even if one sink fails.
+		logErr := logger.Log(ctx, LevelInfo, LogGitIdentity, "name="+author, "email="+email, "signing="+sigStr)
+		if logErr != nil {
+			// Sink failure already logged to stderr by Logger; identity record still needed for audit.
 		}
 	}
 
