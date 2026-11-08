@@ -14,7 +14,10 @@ func TestRunGHReportsInvalidJSONDiagnostic(t *testing.T) {
 	root := t.TempDir()
 	fakeGH := filepath.Join(root, "real-gh")
 	script := "#!/bin/sh\nprintf 'not-valid-json' >&1\nexit 0\n"
-	if err := os.WriteFile(fakeGH, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeGH, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(fakeGH, 0o700); err != nil { // #nosec G302 -- isolated test fixture must be executable
 		t.Fatal(err)
 	}
 
