@@ -11,24 +11,18 @@ import (
 type ghIgnoreKind string
 
 const (
-	// ghIgnoreKindComment represents a filtered comment.
-	ghIgnoreKindComment = ghIgnoreKind("comment")
-	// ghIgnoreKindReview represents a filtered review.
-	ghIgnoreKindReview = ghIgnoreKind("review")
+	ghIgnoreKindComment = ghIgnoreKind("comment") // represents a filtered comment
+	ghIgnoreKindReview  = ghIgnoreKind("review")  // represents a filtered review
 )
 
-func (k ghIgnoreKind) Valid() bool {
-	return k == ghIgnoreKindComment || k == ghIgnoreKindReview
-}
+func (k ghIgnoreKind) Valid() bool { return k == ghIgnoreKindComment || k == ghIgnoreKindReview }
 
 // ghIgnoreReason why entries were filtered.
 type ghIgnoreReason string
 
 const (
-	// ghIgnoreReasonUntrustedAuthor: entry author not in trusted list.
-	ghIgnoreReasonUntrustedAuthor = ghIgnoreReason("untrusted_author")
-	// ghIgnoreReasonMarkedIgnore: entry body starts with "ignore this mate".
-	ghIgnoreReasonMarkedIgnore = ghIgnoreReason("marked_ignore")
+	ghIgnoreReasonUntrustedAuthor = ghIgnoreReason("untrusted_author") // author not in trusted list
+	ghIgnoreReasonMarkedIgnore    = ghIgnoreReason("marked_ignore")    // body starts with "ignore this mate"
 )
 
 func (r ghIgnoreReason) Valid() bool {
@@ -37,16 +31,11 @@ func (r ghIgnoreReason) Valid() bool {
 
 // ghIgnoredEntry describes a filtered GitHub entry.
 type ghIgnoredEntry struct {
-	// Kind: comment or review.
-	Kind ghIgnoreKind
-	// Author: GitHub login.
-	Author string
-	// ID: entry ID.
-	ID string
-	// Body: first 100 chars for logging.
-	Body string
-	// Reason: why filtered.
-	Reason ghIgnoreReason
+	Kind   ghIgnoreKind   // comment or review
+	Author string         // GitHub login
+	ID     string         // entry ID
+	Body   string         // first 100 chars for logging
+	Reason ghIgnoreReason // why filtered
 }
 
 // ghFilterJSON filters GitHub JSON keeping only trusted authors not marked "ignore this mate".
@@ -55,18 +44,14 @@ func ghFilterJSON(raw []byte, trusted []string, _ bool) ([]byte, []ghIgnoredEntr
 	for _, login := range trusted {
 		trustedSet[login] = true
 	}
-
 	var data interface{}
-	// UseNumber keeps large numeric IDs exact as json.Number instead of float64.
 	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
+	dec.UseNumber() // keeps large numeric IDs exact as json.Number instead of float64
 	if err := dec.Decode(&data); err != nil {
 		return nil, nil, valueWrap(err, "invalid JSON")
 	}
-
 	var ignored []ghIgnoredEntry
 	filtered := filter(data, trustedSet, &ignored)
-
 	result, err := json.Marshal(filtered)
 	if err != nil {
 		return nil, nil, valueWrap(err, "marshal failed")
@@ -90,115 +75,81 @@ func filter(data interface{}, trusted map[string]bool, ignored *[]ghIgnoredEntry
 			}
 		}
 		return result
-
 	case map[string]interface{}:
-		// Check if this is a comment/review (has author/user, has body, NOT has comments/reviews)
 		if isEntry(v) {
 			return filterItem(v, trusted, ignored)
 		}
-		// Container: filter nested arrays
+		// Container: reuse filter on nested comment arrays so an all-rejected one stays [].
 		result := make(map[string]interface{})
 		for k, val := range v {
-			if k == "comments" || k == "reviews" || k == "latestReviews" {
-				if arr, ok := val.([]interface{}); ok {
-					var filtered []interface{}
-					for _, item := range arr {
-						if f := filterItem(item, trusted, ignored); f != nil {
-							filtered = append(filtered, f)
-						}
-					}
-					result[k] = filtered
-				} else {
-					result[k] = val
-				}
-			} else {
-				result[k] = val
+			if arr, ok := val.([]interface{}); ok && (k == "comments" || k == "reviews" || k == "latestReviews") {
+				val = filter(arr, trusted, ignored)
 			}
+			result[k] = val
 		}
 		return result
-
-	default:
-		return data
 	}
+	return data
 }
 
-// filterItem processes a single entry, returning nil if filtered out.
+// filterItem returns nil for a rejected entry. Every map from an array is
+// trust-checked: a missing or null author yields "" and fails the trusted lookup.
 func filterItem(item interface{}, trusted map[string]bool, ignored *[]ghIgnoredEntry) interface{} {
-	if m, ok := item.(map[string]interface{}); ok && isEntry(m) {
-		author := getLogin(m)
-		body, _ := m["body"].(string)
-		id := getID(m)
-
-		if !trusted[author] {
-			*ignored = append(*ignored, ghIgnoredEntry{
-				Kind: ghIgnoreKindComment, Author: author, ID: id, Body: body,
-				Reason: ghIgnoreReasonUntrustedAuthor,
-			})
-			return nil
-		}
-
-		if isMarkedIgnore(body) {
-			*ignored = append(*ignored, ghIgnoredEntry{
-				Kind: ghIgnoreKindComment, Author: author, ID: id, Body: body,
-				Reason: ghIgnoreReasonMarkedIgnore,
-			})
-			return nil
-		}
+	m, ok := item.(map[string]interface{})
+	if !ok {
+		return item
 	}
-	return item
+	author := getLogin(m)
+	body, _ := m["body"].(string)
+	id := getID(m)
+	reject := func(reason ghIgnoreReason) interface{} {
+		*ignored = append(*ignored, ghIgnoredEntry{Kind: ghIgnoreKindComment, Author: author, ID: id, Body: body, Reason: reason})
+		return nil
+	}
+	if !trusted[author] {
+		return reject(ghIgnoreReasonUntrustedAuthor)
+	}
+	if isMarkedIgnore(body) {
+		return reject(ghIgnoreReasonMarkedIgnore)
+	}
+	return m
 }
 
 // isEntry checks if object is a comment/review (has author, NOT a container).
 func isEntry(m map[string]interface{}) bool {
-	// Exclude containers
-	if _, ok := m["comments"]; ok {
-		return false
-	}
-	if _, ok := m["reviews"]; ok {
-		return false
-	}
-	if _, ok := m["latestReviews"]; ok {
-		return false
-	}
-	// Must have author or user field
-	hasAuthor := false
-	if a, ok := m["author"].(map[string]interface{}); ok {
-		if _, ok := a["login"]; ok {
-			hasAuthor = true
+	for _, key := range []string{"comments", "reviews", "latestReviews"} {
+		if _, ok := m[key]; ok {
+			return false
 		}
 	}
-	if u, ok := m["user"].(map[string]interface{}); ok {
-		if _, ok := u["login"]; ok {
-			hasAuthor = true
+	for _, field := range []string{"author", "user"} {
+		if f, ok := m[field].(map[string]interface{}); ok {
+			if _, ok := f["login"]; ok {
+				return true
+			}
 		}
 	}
-	return hasAuthor
+	return false
 }
 
 // getLogin extracts author login (prefers author.login over user.login).
 func getLogin(m map[string]interface{}) string {
-	if a, ok := m["author"].(map[string]interface{}); ok {
-		if l, ok := a["login"].(string); ok {
-			return l
-		}
-	}
-	if u, ok := m["user"].(map[string]interface{}); ok {
-		if l, ok := u["login"].(string); ok {
-			return l
+	for _, field := range []string{"author", "user"} {
+		if f, ok := m[field].(map[string]interface{}); ok {
+			if l, ok := f["login"].(string); ok {
+				return l
+			}
 		}
 	}
 	return ""
 }
 
-// getID extracts id or databaseId as string.
+// getID extracts id or databaseId as string; a null or empty id falls back to databaseId.
 func getID(m map[string]interface{}) string {
-	if id, ok := m["id"]; ok {
-		return idString(id)
+	if s := idString(m["id"]); s != "" {
+		return s
 	}
-	if id, ok := m["databaseId"]; ok {
-		return idString(id)
-	}
-	return ""
+	return idString(m["databaseId"])
 }
 
 // idString converts ID values to string.
@@ -207,17 +158,14 @@ func idString(v interface{}) string {
 	case string:
 		return x
 	case json.Number:
-		// Preserve numeric IDs exactly as they appeared in the JSON.
-		return x.String()
-	case float64:
-		// Preserve numeric IDs as strings (JSON parses numbers as float64)
-		if x == float64(int64(x)) {
+		return x.String() // exact text as it appeared in the JSON
+	case float64: // JSON decodes numbers without UseNumber as float64
+		if x == float64(int64(x)) { // integral IDs print without exponent
 			return fmt.Sprintf("%d", int64(x))
 		}
 		return fmt.Sprintf("%v", x)
-	default:
-		return ""
 	}
+	return ""
 }
 
 // isMarkedIgnore checks for "ignore this mate" (case-insensitive, leading whitespace).
