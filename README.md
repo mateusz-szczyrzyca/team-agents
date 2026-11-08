@@ -1624,7 +1624,9 @@ make integration        # real agent CLIs and accounts (costs usage)
   coordinator, and warnings retain the existing `agent-gh` JSON log schema. Unimplemented GitHub writes
   fail closed until R12; production continues to use the installed Bash wrapper.
   API option values are parsed before endpoint classification, explicit GET methods retain precedence
-  over fields, and harmless GraphQL queries remain readable. Anonymous comments and nested slurped pages
+  over fields, and harmless inline GraphQL queries remain readable; GraphQL mutations and opaque input
+  payloads are refused until R12. Trusted body-only PR and issue views retain their descriptions.
+  Anonymous comments and nested slurped pages
   receive the same trust filtering; paginated numeric IDs retain their exact values. Malformed responses
   produce CLI diagnostics, and coordinator-lookup warnings include subprocess status and bounded stderr.
 - **Go rewrite parity tracking and ledger validation.**
