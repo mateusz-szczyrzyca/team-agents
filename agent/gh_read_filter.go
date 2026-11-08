@@ -188,7 +188,19 @@ func filterEntries(data interface{}, trusted map[string]bool, ignored *[]ghIgnor
 }
 
 // isCommentEntry checks if an object looks like a comment/review entry.
+// Per oracle: entry must have body and (author|user), but NOT have comments field.
 func isCommentEntry(entry map[string]interface{}) bool {
+	// Exclude objects that are containers (have comments field)
+	if _, hasComments := entry["comments"]; hasComments {
+		return false
+	}
+	if _, hasReviews := entry["reviews"]; hasReviews {
+		return false
+	}
+	if _, hasLatestReviews := entry["latestReviews"]; hasLatestReviews {
+		return false
+	}
+
 	hasBody := false
 	hasAuthor := false
 
