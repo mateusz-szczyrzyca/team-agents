@@ -348,3 +348,88 @@ EOF
   # Should report TMPDIR error clearly
   [[ "$output" == *"TMPDIR"* ]]
 }
+
+@test "agent-bats scrubs hostile inherited environment variables in staged root (candidate lane)" {
+  local mock_repo="$BATS_TEST_TMPDIR/mock_repo_env_scrub_candidate"
+  mkdir -p "$mock_repo/tests/unit" "$mock_repo/build" "$mock_repo/tools"
+  cp "$TOOL" "$mock_repo/tools/"
+  cp "$REPO_ROOT/tools/unit-bats.sh" "$mock_repo/tools/"
+
+  cat > "$mock_repo/tests/agent-go-map.tsv" <<'EOF'
+bats_file	test_name	classification	implementation_round	go_test_or_subtests	state
+tests/unit/env_scrub.bats	inherited env vars cleared	blackbox	R10B	TestEnvScrub	active
+EOF
+
+  cat > "$mock_repo/tests/unit/env_scrub.bats" <<'EOF'
+@test "inherited env vars cleared" {
+  # Verify that hostile inherited variables are not present in the staged test
+  [[ -z ${AGENTBUS_BIN+x} ]] || exit 1
+  [[ -z ${AGENT_GH_BUS_DIR+x} ]] || exit 1
+  [[ -z ${AGENT_GH_COORDINATOR+x} ]] || exit 1
+  [[ -z ${AGENT_GH_OWN_PR+x} ]] || exit 1
+  [[ -z ${AGENT_GH_SELF+x} ]] || exit 1
+  [[ -z ${AGENT_GH_TEAM+x} ]] || exit 1
+  [[ -z ${AGENT_GITHUB_NAME_COLORS+x} ]] || exit 1
+  [[ -z ${OPENCODE_CONFIG_CONTENT+x} ]] || exit 1
+}
+EOF
+
+  cat > "$mock_repo/build/agent-go" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$mock_repo/build/agent-go"
+
+  # Run with hostile inherited variables set
+  export AGENTBUS_BIN="/hostile/agentbus"
+  export AGENT_GH_BUS_DIR="/hostile/bus"
+  export AGENT_GH_COORDINATOR="hostile-lead"
+  export AGENT_GH_OWN_PR="999"
+  export AGENT_GH_SELF="hostile-self"
+  export AGENT_GH_TEAM="hostile-team"
+  export AGENT_GITHUB_NAME_COLORS="hostile=red"
+  export OPENCODE_CONFIG_CONTENT="hostile-config"
+
+  run "$mock_repo/tools/agent-bats.sh" --repo-root "$mock_repo"
+  [ "$status" -eq 0 ]
+}
+
+@test "agent-bats scrubs hostile inherited environment variables in staged root (oracle lane)" {
+  local mock_repo="$BATS_TEST_TMPDIR/mock_repo_env_scrub_oracle"
+  mkdir -p "$mock_repo/tests/unit" "$mock_repo/bin" "$mock_repo/tools"
+  cp "$TOOL" "$mock_repo/tools/"
+  cp "$REPO_ROOT/tools/unit-bats.sh" "$mock_repo/tools/"
+
+  cat > "$mock_repo/bin/agent" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$mock_repo/bin/agent"
+
+  cat > "$mock_repo/tests/unit/env_scrub.bats" <<'EOF'
+@test "oracle inherited env vars cleared" {
+  # Verify that hostile inherited variables are not present in the staged oracle test
+  [[ -z ${AGENTBUS_BIN+x} ]] || exit 1
+  [[ -z ${AGENT_GH_BUS_DIR+x} ]] || exit 1
+  [[ -z ${AGENT_GITHUB_NAME_COLORS+x} ]] || exit 1
+  [[ -z ${OPENCODE_CONFIG_CONTENT+x} ]] || exit 1
+  [[ -z ${AGENT_GH_TEAM+x} ]] || exit 2
+  [[ -z ${AGENT_GH_SELF+x} ]] || exit 3
+  [[ -z ${AGENT_GH_COORDINATOR+x} ]] || exit 4
+  [[ -z ${AGENT_GH_OWN_PR+x} ]] || exit 5
+}
+EOF
+
+  # Run with hostile inherited variables set
+  export AGENTBUS_BIN="/hostile/agentbus"
+  export AGENT_GH_BUS_DIR="/hostile/bus"
+  export AGENT_GITHUB_NAME_COLORS="hostile=red"
+  export OPENCODE_CONFIG_CONTENT="hostile-config"
+  export AGENT_GH_TEAM="fake-team"
+  export AGENT_GH_SELF="fake-self"
+  export AGENT_GH_COORDINATOR="fake-coordinator"
+  export AGENT_GH_OWN_PR="fake-pr"
+
+  run "$mock_repo/tools/agent-bats.sh" --lane oracle --repo-root "$mock_repo"
+  [ "$status" -eq 0 ]
+}

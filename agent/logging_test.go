@@ -272,3 +272,19 @@ func TestLogEventValidRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestLogGitHubColorsFailedValidRoundTrip tests validity and JSON round-trip for LogGitHubColorsFailed.
+func TestLogGitHubColorsFailedValidRoundTrip(t *testing.T) {
+	ev := LogGitHubColorsFailed
+	if !ev.Valid() {
+		t.Fatalf("expected event %q to be valid", ev)
+	}
+	data, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("json.Marshal(%q) failed: %v", ev, err)
+	}
+	var decoded LogEvent
+	if err := json.Unmarshal(data, &decoded); err != nil || decoded != ev {
+		t.Fatalf("decoded = %q (err %v), want %q", decoded, err, ev)
+	}
+}

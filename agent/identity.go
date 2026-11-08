@@ -26,6 +26,8 @@ type Identity struct {
 	EmailConfig string
 	// SigningKey is the path to the SSH signing key, if any.
 	SigningKey string
+	// NameFormat is the configured author name format string (%a = agent name).
+	NameFormat string
 	// Task is the task ID this run belongs to.
 	Task string
 	// Team is the team ID, if this is a team run.
@@ -112,7 +114,11 @@ func (id *Identity) Trailers() []string {
 func (id *Identity) Environment() map[string]string {
 	env := make(map[string]string)
 
-	author := id.FormatAuthor("%a (team-agents)")
+	format := id.NameFormat
+	if format == "" {
+		format = "%a (team-agents)"
+	}
+	author := id.FormatAuthor(format)
 	email := id.Email()
 
 	env["GIT_AUTHOR_NAME"] = author
@@ -137,14 +143,18 @@ func (id *Identity) keyReadable() bool {
 }
 
 // Setup returns environment with configurable author format and logs identity setup.
-// Empty authorFormat defaults to "%a (team-agents)", nonempty uses exact format.
+// Format resolution: explicit authorFormat parameter > NameFormat field > default "%a (team-agents)".
 // logger receives git_identity info (name/email/signing) and signing_key_unreadable
 // warn if key nonempty but unreadable. Nil logger = silent. Logger errors are nonfatal.
 func (id *Identity) Setup(ctx context.Context, authorFormat string, logger *Logger) (map[string]string, *LogWriteError) { //nolint:unparam // Retain typed-error signature for caller compatibility; diagnostic failures are nonfatal.
 	env := make(map[string]string)
 	format := authorFormat
 	if format == "" {
-		format = "%a (team-agents)"
+		if id.NameFormat != "" {
+			format = id.NameFormat
+		} else {
+			format = "%a (team-agents)"
+		}
 	}
 
 	author := id.FormatAuthor(format)
