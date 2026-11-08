@@ -128,6 +128,10 @@ func isEntry(m map[string]interface{}) bool {
 			return false
 		}
 	}
+	// Not a comment if it's a PR/issue view response (has number field)
+	if _, ok := m["number"]; ok {
+		return false
+	}
 	// Is a comment if it has a body field (even without author or with null author)
 	_, hasBody := m["body"].(string)
 	return hasBody

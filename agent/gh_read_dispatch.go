@@ -334,13 +334,29 @@ func (p GHDispatchParams) handleView(ctx context.Context, realGH string, trusted
 		return code, err
 	}
 	if jsonf != "" {
-		return p.outputJSON(ctx, raw, jq, true)
+		// Only filter if the requested --json fields include comments/reviews/latestReviews.
+		// If user requests just --json body or --json body,title, preserve as-is.
+		hasCommentFields := strings.Contains(jsonf, "comments") ||
+			strings.Contains(jsonf, "reviews") ||
+			strings.Contains(jsonf, "latestReviews")
+		return p.outputJSON(ctx, raw, jq, hasCommentFields)
 	}
+	// Check if response has comments/reviews before filtering.
+	// If not (body-only response), preserve it as-is.
+	// If yes, filter to remove untrusted comments.
 	var d struct{ Comments, Reviews []map[string]any }
-	if raw, err = p.filterJSON(raw); err != nil {
+	if err = decodeJSON(raw, &d); err != nil {
 		return 1, err
-	} else if err = decodeJSON(raw, &d); err != nil {
-		return 1, err
+	}
+	if len(d.Comments) > 0 || len(d.Reviews) > 0 {
+		// Response has comments/reviews, apply filter
+		if raw, err = p.filterJSON(raw); err != nil {
+			return 1, err
+		}
+		// Re-decode after filtering
+		if err = decodeJSON(raw, &d); err != nil {
+			return 1, err
+		}
 	}
 	out := "\n-- comments and reviews (the trusted accounts' only) --\n"
 	for _, e := range append(d.Comments, d.Reviews...) {
