@@ -142,8 +142,10 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 	} else if rePull.MatchString(clean) {
 		isPullMut = (method != "" && !strings.EqualFold(method, "GET")) || (method == "" && fields)
 	}
-	if isMem, lead := p.checkMember(ctx); isPullMut && isMem {
-		return p.memberRefusal("api", lead)
+	if isPullMut {
+		if isMem, lead := p.checkMember(ctx); isMem {
+			return p.memberRefusal("api", lead)
+		}
 	}
 	if isPullMut || isMut {
 		return p.refuse("agent-gh: native write formatting is not implemented yet\n", 1, GHReadDispatchWriteUnavailable, "native write formatting is not implemented yet")
