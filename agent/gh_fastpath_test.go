@@ -11,14 +11,13 @@ import (
 // TestR10GHBoundary keeps unfinished gh policy fail-closed without intercepting ordinary commands.
 func TestR10GHBoundary(t *testing.T) {
 	for _, name := range []string{"gh", "/tmp/tools/gh"} {
-		err := ghFastPath(name)
-		if err == nil || err.Cause != GHFastPathUnavailable {
-			t.Fatalf("ghFastPath(%q) = %v; want unavailable policy", name, err)
+		if !ghFastPath(name) {
+			t.Fatalf("ghFastPath(%q) did not select the native wrapper", name)
 		}
 	}
 	for _, name := range []string{"agent", "/tmp/gh/agent", "gh-extra"} {
-		if err := ghFastPath(name); err != nil {
-			t.Fatalf("ordinary executable %q intercepted: %v", name, err)
+		if ghFastPath(name) {
+			t.Fatalf("ordinary executable %q intercepted", name)
 		}
 	}
 }
@@ -51,21 +50,21 @@ func TestR10GHBeforeConfiguration(t *testing.T) {
 	for _, executable := range []string{alias, binary} {
 		var output bytes.Buffer // output retains startup diagnostics from the isolated candidate process.
 		result, err := (OSExecutor{}).Execute(context.Background(), Command{Name: executable, Args: []string{"--help"}, Env: []string{"HOME=" + root, "AGENTS_HOME=" + root, "PATH=" + os.Getenv("PATH"), "AGENT_REAL_GH=" + realGH}, Stdout: &output, Stderr: &output})
-		if err != nil || result.ExitCode == 0 {
-			t.Fatalf("%s: expected refusal, got %v: %s", executable, err, output.String())
+		if err != nil {
+			t.Fatalf("%s: execution failed: %v: %s", executable, err, output.String())
 		}
 		_, statErr := os.Stat(marker)
 		if executable == alias {
-			if result.ExitCode != GHFastPathUnavailable.info().class.ExitCode() {
+			if result.ExitCode != 0 {
 				t.Fatalf("gh exit = %d; output: %s", result.ExitCode, output.String())
 			}
 			if !os.IsNotExist(statErr) {
 				t.Fatalf("gh evaluated configuration: %v", statErr)
 			}
-			if _, realErr := os.Stat(filepath.Join(root, "gh-ran")); !os.IsNotExist(realErr) {
-				t.Fatalf("unfinished gh policy forwarded to real gh: %v", realErr)
+			if _, realErr := os.Stat(filepath.Join(root, "gh-ran")); realErr != nil {
+				t.Fatalf("native gh help did not reach the fixture: %v", realErr)
 			}
-		} else if statErr != nil {
+		} else if statErr != nil || result.ExitCode == 0 {
 			t.Fatalf("ordinary agent did not evaluate configuration: %v; output: %s", statErr, output.String())
 		}
 	}

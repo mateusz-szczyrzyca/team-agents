@@ -15,6 +15,7 @@ const (
 	GHReadDispatchForkUntrustedRefused                            // the target author or repository is untrusted [Permission]
 	GHReadDispatchMemberRefused                                   // only the coordinator may mutate the round pull request [Permission]
 	GHReadDispatchSecondPRRefused                                 // the round already has an open pull request [Conflict]
+	GHReadDispatchWriteUnavailable                                // native write formatting is not implemented yet [InvalidState]
 	GHReadDispatchExecFailed                                      // a GitHub or query subprocess failed [Process]
 	GHReadDispatchInvalidJSON                                     // a filtered GitHub response is malformed [InvalidArgument]
 	GHReadDispatchStorage                                         // the shared state or a file could not be read or written [Storage]
@@ -32,6 +33,7 @@ var gHReadDispatchCauses = [...]causeInfo{
 	{"ForkUntrustedRefused", ClassPermission},
 	{"MemberRefused", ClassPermission},
 	{"SecondPRRefused", ClassConflict},
+	{"WriteUnavailable", ClassInvalidState},
 	{"ExecFailed", ClassProcess},
 	{"InvalidJSON", ClassInvalidArgument},
 	{"Storage", ClassStorage},

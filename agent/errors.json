@@ -12,6 +12,7 @@
     {"name": "ForkUntrustedRefused", "class": "Permission", "doc": "the target author or repository is untrusted"},
     {"name": "MemberRefused", "class": "Permission", "doc": "only the coordinator may mutate the round pull request"},
     {"name": "SecondPRRefused", "class": "Conflict", "doc": "the round already has an open pull request"},
+    {"name": "WriteUnavailable", "class": "InvalidState", "doc": "native write formatting is not implemented yet"},
     {"name": "ExecFailed", "class": "Process", "doc": "a GitHub or query subprocess failed"},
     {"name": "InvalidJSON", "class": "InvalidArgument", "doc": "a filtered GitHub response is malformed"}
    ]

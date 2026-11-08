@@ -1,11 +1,16 @@
 package main
 
-import "path/filepath"
+import (
+	"io"
+	"path/filepath"
+)
 
-// ghFastPath reserves gh basename dispatch before configuration; native policies arrive in R11/R12.
-func ghFastPath(argv0 string) *GHFastPathError {
-	if filepath.Base(argv0) == "gh" {
-		return opErr(GHFastPathUnavailable, "native GitHub policies are not implemented yet")
-	}
-	return nil
+// ghFastPath selects the wrapper by basename before configuration can execute.
+func ghFastPath(argv0 string) bool {
+	return filepath.Base(argv0) == "gh"
+}
+
+// runGH executes the native wrapper before configuration can run shell code.
+func runGH(_ []string, _ []string, _ io.Writer, _ io.Writer) int {
+	return 1
 }
