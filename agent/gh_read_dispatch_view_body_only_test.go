@@ -48,7 +48,9 @@ func TestGHDispatchViewBodyOnlyPreservation(t *testing.T) {
 				// First request: author check
 				if strings.Contains(args, "--json") && (strings.Contains(args, "author") || strings.Contains(args, "isCrossRepository")) {
 					if cmd.Stdout != nil {
-						_, _ = cmd.Stdout.Write([]byte(tc.authorResp))
+						if n, err := cmd.Stdout.Write([]byte(tc.authorResp)); err != nil || n < len(tc.authorResp) {
+							t.Fatalf("failed to write auth response: %v", err)
+						}
 					}
 					authorReqCount++
 					return CommandResult{ExitCode: 0}, nil
@@ -56,7 +58,9 @@ func TestGHDispatchViewBodyOnlyPreservation(t *testing.T) {
 				// Second request: actual body/comments request
 				if strings.Contains(args, "--json") {
 					if cmd.Stdout != nil {
-						_, _ = cmd.Stdout.Write([]byte(tc.bodyResp))
+						if n, err := cmd.Stdout.Write([]byte(tc.bodyResp)); err != nil || n < len(tc.bodyResp) {
+							t.Fatalf("failed to write body response: %v", err)
+						}
 					}
 					bodyReqCount++
 					return CommandResult{ExitCode: 0}, nil
