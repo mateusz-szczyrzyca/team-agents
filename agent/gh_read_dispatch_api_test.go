@@ -116,7 +116,9 @@ func TestGHDispatchAPICacheAndPassthroughFlags(t *testing.T) {
 		var capturedArgs []string
 		exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
 			capturedArgs = cmd.Args
-			_, _ = cmd.Stdout.Write([]byte(`[{"id":"1","author":{"login":"untrusted_user"},"body":"hello"}]`))
+			if _, err := cmd.Stdout.Write([]byte(`[{"id":"1","author":{"login":"untrusted_user"},"body":"hello"}]`)); err != nil {
+				t.Fatalf("stdout write failed: %v", err)
+			}
 			return CommandResult{ExitCode: 0}, nil
 		}}
 		args := []string{"api", "-c", "1h", "repos/o/r/issues/7/comments"}
