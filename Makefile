@@ -47,19 +47,20 @@ SHELL_SCRIPTS += tests/unit/investigation_completed_legacy.bats
 SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats \
 	tools/agent-bats.sh tests/harness/agent_bats.bats tests/harness/agent_bats_runner.bats \
 	tools/check-agent-parity.sh tests/harness/check_agent_parity.bats tests/harness/agent_parity_gate.bats
-SHELL_SCRIPTS += tests/unit/test_lock.bats
+SHELL_SCRIPTS += tools/test-lock.sh tests/unit/test_lock.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 
-test: unit-go unit-bats harness
+# Every target that runs tests holds the machine's test lock (tools/test-lock.sh): one test run at a time. A busy
+# lock refuses with "another tests are running now - please wait before you try again" (exit 75); GATE_WAIT=1 waits.
+test:
+	@tools/test-lock.sh test $(MAKE) --no-print-directory unit-go unit-bats harness
 
 unit-go:
-	cd agentbus && go vet ./... && go test ./...
-	cd live && go vet ./... && go test ./...
-	cd agent && go vet ./... && go test ./...
+	@tools/test-lock.sh unit-go bash -c 'set -e; for m in agentbus live agent; do (cd $$m && go vet ./... && go test ./...); done'
 
 harness:
-	bats tests/harness/*.bats
+	@tools/test-lock.sh harness bats tests/harness/*.bats
 
 # The Bats tests run in parallel, BATS_JOBS at once (GNU parallel; default: the number of processors), the slowest
 # files first (tools/unit-bats.sh). A file listed in BATS_SERIAL runs one after another with the other listed ones,
@@ -78,8 +79,8 @@ BATS_SERIAL ?= tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/
 BATS_TMP ?= $(or $(XDG_CACHE_HOME),$(HOME)/.cache)/team-agents/tmp
 
 unit-bats:
-	mkdir -p "$(BATS_TMP)" && tools/tmp-sweep.sh "$(BATS_TMP)" /tmp
-	TMPDIR="$(BATS_TMP)" BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/agent-bats.sh --lane oracle
+	@BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/test-lock.sh unit-bats bash -c \
+		'mkdir -p "$$1" && tools/tmp-sweep.sh "$$1" /tmp && TMPDIR="$$1" tools/agent-bats.sh --lane oracle' _ "$(BATS_TMP)"
 
 tools:
 	tools/install-linters.sh
@@ -87,7 +88,7 @@ tools:
 # The same checks with short output — one line per step, the failures condensed, full logs in build/gate/
 # (tools/gate.sh). Agents use this: long tool output stays in their context and is read again at every later step.
 gate:
-	@tools/gate.sh
+	@tools/test-lock.sh gate tools/gate.sh
 
 lint: check-generated lint-shell lint-go lint-docs
 
@@ -120,8 +121,7 @@ build-agent:
 
 # Lane B: active/done rows of the Bats test suite against the real Go executable.
 unit-agent-bats: build-agent
-	tools/agent-bats.sh
-	tools/check-agent-parity.sh --evidence build/agent-bats-evidence.json
+	@tools/test-lock.sh unit-agent-bats bash -c 'tools/agent-bats.sh && tools/check-agent-parity.sh --evidence build/agent-bats-evidence.json'
 
 # Verifies parity ledger, classifications, mapping, and hashes.
 check-agent-parity:

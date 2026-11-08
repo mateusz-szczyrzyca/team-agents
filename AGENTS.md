@@ -93,6 +93,12 @@ lines that tell what failed, the full logs in `build/gate/`. When you need more,
 `tail` — never print a whole log: everything a command prints stays in your context and is read again at every
 later step. (`make lint test` runs the same checks with their full output.)
 
+One test run at a time on the machine: every target that runs tests (`gate`, `test`, `unit-go`, `unit-bats`,
+`harness`, `unit-agent-bats`) holds a lock (`tools/test-lock.sh`, `/tmp/.make.command.lck`). A busy lock refuses with
+`another tests are running now - please wait before you try again` (exit 75) and names who holds it; wait and try
+again, or run `GATE_WAIT=1 make gate` to wait in line. Never run the tests around it. A run that died frees the lock at
+once; one alive past `TEST_LOCK_STALE_MIN` (10) minutes is taken for hung and stopped.
+
 - `make lint` — `shellcheck -S warning` on every Bash script, `gofmt`, `golangci-lint` (configuration:
   `.golangci.yml`) and `staticcheck` on every Go module, `doccheck`, and a check that `errors_gen.go` matches
   `errors.json`.

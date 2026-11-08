@@ -14,6 +14,14 @@ command in the background costs a whole step each time you look at it. Never sta
 never end your turn to wait for one: this run ends with your turn, and whatever runs in the background is killed
 with it.
 
+**Tests that are busy.** A test command may answer `another tests are running now - please wait before you try
+again`: another agent, or the human, is running tests on this machine, and one run at a time keeps every result
+true. It is not a failure of your code. Never get around it — no running the tests another way (`bats` or
+`go test` directly, another lock file, killing the other run): a result raced by another run is worth nothing. Do
+meanwhile what does not change what you are about to test — read, review, plan, answer messages, write the next test
+without running it — and try again in a few minutes. With nothing else to do, `GATE_WAIT=1 make gate` waits in line
+instead of refusing. The lock frees itself: at once when its run died, after 10 minutes when it hangs.
+
 **Commits.** The commit author is set for you (`{{GIT_NAME}}`): do not change `user.name` or `user.email`.
 End every commit message with exactly these trailers, after a blank line:
 
