@@ -676,6 +676,7 @@ tests/unit/test_lock.bats	a test run inside a test run (make gate's own steps, t
 tests/unit/test_lock.bats	TEST_LOCK_WAIT=1 (or GATE_WAIT=1) waits for the holder instead of refusing	source	R02	-	planned
 tests/unit/test_lock.bats	an interrupted test run stops its commands and frees the lock	source	R02	-	planned
 tests/unit/test_lock.bats	every Makefile target that runs tests goes through tools/test-lock.sh	source	R02	-	planned
+tests/unit/test_lock.bats	a test recipe copied into a repository without the lock (the harness's fixtures) still runs, unlocked	source	R02	-	planned
 tests/unit/test_lock.bats	every agent's prompt knows the busy message and what to do, and AGENTS.md describes the lock	source	R02	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned

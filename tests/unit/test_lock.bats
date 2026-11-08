@@ -87,9 +87,23 @@ hold() {
 
 @test "every Makefile target that runs tests goes through tools/test-lock.sh" {
   for target in gate test unit-go unit-bats harness unit-agent-bats; do
-    recipe=$(awk -v t="$target:" '$1 == t { on = 1; next } on && /^\t/ { print; next } on { exit }' "$REPO_ROOT/Makefile")
-    [[ $recipe == *tools/test-lock.sh* ]] || { echo "target $target has no test lock: $recipe"; false; }
+    out=$(cd "$REPO_ROOT" && make -n "$target" 2> /dev/null)
+    [[ $out == *"tools/test-lock.sh $target "* ]] || { echo "target $target has no test lock: $out"; false; }
   done
+}
+
+@test "a test recipe copied into a repository without the lock (the harness's fixtures) still runs, unlocked" {
+  # the harness copies the unit-agent-bats recipe alone into a fixture repository, which has no tools/test-lock.sh
+  d=$BATS_TEST_TMPDIR/fixture
+  mkdir -p "$d/tools"
+  printf '#!/bin/sh\necho agent-bats ran\n' > "$d/tools/agent-bats.sh"
+  printf '#!/bin/sh\necho parity ran\n' > "$d/tools/check-agent-parity.sh"
+  chmod +x "$d/tools/agent-bats.sh" "$d/tools/check-agent-parity.sh"
+  printf 'build-agent:\n\t@:\n' > "$d/Makefile"
+  awk '/^unit-agent-bats:/{copy=1} copy && /^$/{exit} copy{print}' "$REPO_ROOT/Makefile" >> "$d/Makefile"
+  run make -C "$d" --no-print-directory unit-agent-bats
+  [ "$status" -eq 0 ]
+  [[ $output == *"agent-bats ran"* && $output == *"parity ran"* ]]
 }
 
 @test "every agent's prompt knows the busy message and what to do, and AGENTS.md describes the lock" {
