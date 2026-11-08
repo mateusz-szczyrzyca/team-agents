@@ -1159,6 +1159,42 @@ team_json() {
 }
 team_lead() { team_json "$1" | jq -r '.lead // empty'; }
 team_done_flag() { team_json "$1" | jq -r '.done // false'; }
+
+# pause_lock / pause_unlock — serializes a start's look at the pause with the pause and unpause of a team: a start
+# either sees the team paused and waits, or runs before the pause stops it; none is lost between them (PAUSE_FD)
+pause_lock() { exec {PAUSE_FD}>> "$AGENTS_HOME/.pause.lock" && flock "$PAUSE_FD"; }
+pause_unlock() { exec {PAUSE_FD}>&-; }
+
+# team_paused team — whether the human paused the team (agent pause): nothing of it starts until agent unpause
+team_paused() { [[ -n ${1:-} && -f $AGENTS_HOME/paused/$1 ]]; }
+
+# task_held task — whether the task belongs to a paused team: its own team, or the team of the task that asked for it
+# (a worker's, an investigation's, a review's), up to three levels up
+task_held() {
+  local t=$1 i team
+  for i in 1 2 3; do
+    team=$(task_field "$t" TEAM)
+    if [[ -n $team ]]; then team_paused "$team"; return; fi
+    t=$(task_field "$t" PARENT_TASK)
+    [[ -n $t ]] || return 1
+  done
+  return 1
+}
+
+# team_related_tasks team — the team's tasks, and the tasks they asked for (workers, investigations, reviews), one a line
+team_related_tasks() {
+  local -A related=()
+  local t m p
+  for t in $(team_tasks "$1"); do related[$t]=1; done
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    p=$(sed -n 's/^PARENT_TASK=//p' "$m")
+    [[ -n $p && -n ${related[$p]:-} ]] || continue
+    t=${m%/meta.env}; related[${t##*/}]=1
+  done
+  ((${#related[@]})) || return 0
+  printf '%s\n' "${!related[@]}"
+}
 team_tasks() { team_json "$1" | jq -r '.members[]? | .task'; }
 
 notify_send() { # file — delivers a notification file (first line = title/thread, rest = body). A failure is logged
@@ -1274,6 +1310,7 @@ coordinator_takeover() {
 }
 
 finish_team() { # team reason — closes the team; sleeping members finish as done
+  rm -f "$AGENTS_HOME/paused/$1" || log_warn pause_clear_failed "team=$1"   # a finished team is not paused
   local team=$1 why=$2 t out
   [[ $(team_done_flag "$team") == true ]] && return 0
   log_info team_finished "team=$team" "reason=$why"
@@ -1984,6 +2021,7 @@ supervise_review_waits() { # an --autopilot review pair waiting longer than AGEN
   for m in "$TASKS"/*/meta.env; do
     grep -qx 'REVIEW_PAIR_PENDING=1' "$m" || continue
     id=${m%/meta.env}; id=${id##*/}
+    task_held "$id" && continue   # its team is paused by the human
     [[ -z $(task_field "$id" REVIEW_WAIT_TOLD) ]] || continue
     since=$(task_field "$id" REVIEW_PAIR_SINCE)
     (($(date +%s) - ${since:-0} >= AGENT_REVIEW_WAIT_MIN * 60)) || continue
@@ -2527,6 +2565,7 @@ supervise_failovers() {
   for m in "$TASKS"/*/meta.env; do
     grep -qx 'FAILOVER_PENDING=1' "$m" 2> /dev/null || continue
     id=$(basename "$(dirname "$m")")
+    task_held "$id" && continue   # its team is paused by the human: decided after agent unpause
     meta_set "$id" FAILOVER_PENDING ""
     [[ $(task_field "$id" STATUS) == paused ]] || continue   # it went on meanwhile
     if [[ $(task_field "$id" KIND) == helper ]]; then helper_failover "$id"; continue; fi
@@ -2581,6 +2620,7 @@ supervise_board() {
     team=$(sed -n 's/^TEAM=//p' "$m" 2> /dev/null) || continue
     [[ -n $team && -z ${teams_seen[$team]:-} ]] || continue
     teams_seen[$team]=1
+    team_paused "$team" && continue   # paused by the human: its board waits with it
     tj=$(team_json "$team" 2> /dev/null) || continue
     [[ -n $tj && $(jq -r '.finished // false' <<< "$tj") != true ]] || continue
     lead=$(jq -r '.lead // empty' <<< "$tj")
@@ -2641,6 +2681,7 @@ supervise_handbacks() {
   for m in "$TASKS"/*/meta.env; do
     grep -qx 'HANDBACK_PENDING=1' "$m" 2> /dev/null || continue
     id=$(basename "$(dirname "$m")"); f=$TASKS/$id/handback.args
+    task_held "$id" && continue   # its team is paused by the human
     if [[ ! -s $f ]] || ! automation_allowed "$id"; then
       meta_set "$id" HANDBACK_PENDING ""
       continue
@@ -3765,6 +3806,13 @@ build_prompt() { # id mode qfile next_round
     ((any)) && printf '\n---\n\n'
     R[QUESTIONS_WITHOUT_REC]=$QBOUNCE_PENDING
     render "$PROMPTS/questions-bounce.md"
+    printf '\n'
+    any=1
+  fi
+  if [[ -n ${UNPAUSE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    R[MINUTES]=$UNPAUSE_PENDING
+    render "$PROMPTS/unpaused.md"
     printf '\n'
     any=1
   fi
@@ -5672,6 +5720,12 @@ runner_exit() {
     [[ -n ${JOB_ID:-} && -f $TASKS/$RUNNER_ID/node-stop-requested && ${RUNNER_DELIVERED:-0} == 0 ]] || return 0
   fi
   RUNNER_DONE=1
+  if [[ -f $TASKS/$RUNNER_ID/hold-requested ]]; then   # agent pause: held with its team — not failed, not out
+    try meta_write_failed meta_set "$RUNNER_ID" STATUS held
+    try activity_write_failed act "$RUNNER_ID" info "⏸ paused with its team by the human — agent unpause resumes it where it stopped"
+    log_info run_held "reason=team paused"
+    return
+  fi
   if stopping; then   # agent stop --running: no notifications, queues or messages
     try meta_write_failed meta_set "$RUNNER_ID" STATUS stopped
     try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
@@ -5745,6 +5799,13 @@ cmd__runner() {
   export LC_ALL=C.UTF-8 MCP_TOOL_TIMEOUT=900000
   RUNNER_ID=$id
   meta_load "$id"
+  if [[ -f $dir/hold-requested ]] || task_held "$id"; then   # paused with its team before this run got going: it waits
+    meta_set "$id" HOLD_START "$mode"
+    meta_set "$id" STATUS held
+    act "$id" info "⏸ paused with its team by the human before this run started — agent unpause starts it"
+    log_info run_held "reason=team paused before the run started" "mode=$mode"
+    exit 0
+  fi
   local n=$RUN
   if [[ $mode == resume ]] && fresh_session_due "$id"; then   # not the old session: a fresh one with the handoff
     mode=fresh
@@ -5819,6 +5880,7 @@ cmd__runner() {
   meta_set "$id" SBOUNCE_PENDING ""
   meta_set "$id" NSBOUNCE_PENDING ""
   meta_set "$id" DBOUNCE_PENDING ""
+  meta_set "$id" UNPAUSE_PENDING ""
   meta_set "$id" PAUSE_RELEASED ""
   meta_set "$id" RBOUNCE_PENDING ""
   if [[ -n ${TEAM:-} && ${REMOTE_TEAM:-} != 1 ]]; then   # a remote member's state is set by the lead
@@ -6232,6 +6294,14 @@ start_runner() { # id mode
     meta_set "$id" FINISHED "$(date -Is)"
     return 0   # cancellation is a completed no-op, not a launch failure for admission to overwrite
   fi
+  pause_lock || log_warn pause_lock_failed "task=$id"
+  if task_held "$id"; then   # its team is paused by the human: the start waits for agent unpause
+    meta_set "$id" HOLD_START "$mode"
+    log_info start_held "task=$id" "mode=$mode"
+    pause_unlock
+    return 0
+  fi
+  pause_unlock
   run=$(( $(task_field "$id" RUN) + 1 ))
   meta_set "$id" RUN "$run"
   meta_set "$id" STATUS starting
@@ -7424,6 +7494,74 @@ cmd_stop() {
   echo "Stopped $id."
 }
 
+# cmd_pause team — the human pauses a team: its runs are stopped at once — its members', its coordinator's, its
+# workers' and investigators' — and held, not failed: they stay members of the team. Nothing of it starts until
+# agent unpause; the supervisor leaves it alone. (A remote member's run, on its node, is not stopped: only its wakes.)
+cmd_pause() {
+  local team=${1:?usage: agent pause <team>} t st stopped=() since
+  [[ -n $(team_json "$team") ]] || die "no team $team (see: agent status)"
+  [[ $(team_done_flag "$team") != true ]] || die "team $team is finished: nothing to pause"
+  if team_paused "$team"; then
+    since=$(sed -n 's/^since=//p' "$AGENTS_HOME/paused/$team")
+    echo "Team $team is paused already (since $(date -d "@${since:-0}" '+%H:%M')): agent unpause $team"
+    return 0
+  fi
+  mkdir -p "$AGENTS_HOME/paused" || die "cannot create $AGENTS_HOME/paused"
+  pause_lock || die "cannot lock $AGENTS_HOME/.pause.lock"
+  printf 'since=%s\nby=%s\n' "$(date +%s)" "${USER:-human}" > "$AGENTS_HOME/paused/$team" \
+    || die "cannot write $AGENTS_HOME/paused/$team"
+  pause_unlock
+  for t in $(team_related_tasks "$team"); do
+    st=$(task_field "$t" STATUS)
+    [[ $st == running || $st == starting ]] || continue
+    [[ $(task_field "$t" KIND) != remote-member ]] || continue   # its member runs on its node
+    touch "$TASKS/$t/hold-requested" || die "cannot mark $t for the pause"
+    try unit_stop_failed systemctl --user stop "$(unit_name "$t" "$(task_field "$t" RUN)").service"
+    [[ $(task_field "$t" STATUS) == held ]] || meta_set "$t" STATUS held   # no runner yet to write it
+    stopped+=("$t")
+  done
+  log_info team_paused "team=$team" "stopped=$(IFS=,; echo "${stopped[*]}")"
+  echo "Paused team $team. Stopped: ${stopped[*]:-nothing was running}. Nothing of it starts until: agent unpause $team"
+}
+
+# cmd_unpause team — the paused team goes on: the runs the pause stopped are resumed where they stopped (the same
+# session, told they were paused), and the starts that waited are made
+cmd_unpause() {
+  local team=${1:?usage: agent unpause <team>} t mode since min resumed=() started=()
+  if ! team_paused "$team"; then
+    echo "Team $team is not paused."
+    return 0
+  fi
+  since=$(sed -n 's/^since=//p' "$AGENTS_HOME/paused/$team")
+  min=$(( ($(date +%s) - ${since:-$(date +%s)}) / 60 ))
+  local -a starts=()   # "task mode" — collected under the lock, with the pause lifted: no start falls between
+  pause_lock || die "cannot lock $AGENTS_HOME/.pause.lock"
+  rm -f "$AGENTS_HOME/paused/$team" || { pause_unlock; die "cannot remove the pause of team $team"; }
+  for t in $(team_related_tasks "$team"); do
+    mode=$(task_field "$t" HOLD_START)
+    if [[ -n $mode ]]; then   # a start that waited — or a run paused before it got going: in its own mode
+      rm -f "$TASKS/$t/hold-requested"
+      meta_set "$t" HOLD_START ""
+      starts+=("$t $mode")
+      started+=("$t")
+    elif [[ -f $TASKS/$t/hold-requested || $(task_field "$t" STATUS) == held ]]; then   # stopped by the pause
+      rm -f "$TASKS/$t/hold-requested"
+      meta_set "$t" UNPAUSE_PENDING "$min"
+      starts+=("$t resume")
+      resumed+=("$t")
+    fi
+  done
+  pause_unlock
+  for t in "${starts[@]}"; do
+    start_runner "${t%% *}" "${t#* }" || log_error runner_start_failed "task=${t%% *}" "reason=agent unpause"
+  done
+  log_info team_unpaused "team=$team" "minutes=$min" "resumed=$(IFS=,; echo "${resumed[*]}")" \
+    "started=$(IFS=,; echo "${started[*]}")"
+  dispatch
+  dispatch_helpers
+  echo "Unpaused team $team after $min min. Resumed: ${resumed[*]:-none}. Started: ${started[*]:-none}."
+}
+
 cmd_clean() {
   local id; id=$(resolve_id "${1:?usage: agent clean <id>}")
   meta_load "$id"
@@ -7512,6 +7650,7 @@ supervise_deferred_wakes() {
     [[ -f $m ]] || continue
     id=${m%/meta.env}; id=${id##*/}
     [[ $(task_field "$id" WAKE_DEFERRED) == 1 ]] || continue
+    task_held "$id" && continue   # its team is paused by the human: replayed after agent unpause
     if ! automation_allowed "$id"; then meta_set "$id" WAKE_DEFERRED ""; continue; fi
     if blocking_investigation "$id" >/dev/null; then continue; fi   # still in progress: the next tick looks again
     log_info wake_replayed "task=$id"
@@ -7635,6 +7774,7 @@ supervise_merged_rounds() {
   for m in "$TASKS"/*/meta.env; do
     [[ -f $m ]] || continue
     id=$(basename "$(dirname "$m")")
+    task_held "$id" && continue   # its team is paused by the human
     st=$(task_field "$id" STATUS)
     case $st in running|starting|sleeping|waiting|paused|queued) ;; *) continue ;; esac
     lead="" team=$(task_field "$id" TEAM)
@@ -7684,6 +7824,7 @@ supervise_teams() { # an open team with no local member at work or asleep for AG
     [[ -n $team && -z ${seen[$team]:-} ]] || continue
     seen[$team]=1
     grep -qx 'REMOTE_TEAM=1' "$m" && continue                 # a remote member's task: its team lives on the lead
+    team_paused "$team" && continue                            # paused by the human: not abandoned
     [[ $(team_done_flag "$team") == false ]] || continue        # closed, or unknown to the bus
     mark="$BUS_DIR/abandoned-teams/$team"
     [[ ! -e $mark ]] || continue                                # reported already
@@ -10485,6 +10626,8 @@ agent answer <id>                         open the questions in $EDITOR, validat
 agent resume <id> ["note"]                resume after all questions are answered
 agent log <id> [--raw]                    follow the runner log (structured records rendered)
 agent stop <id>                           stop a run
+agent pause <team>                        pause a team: its runs stop, held; nothing of it starts
+agent unpause <team>                      go on: the paused runs resume where they stopped
 agent stop --running                      stop EVERYTHING that is active (teams, agents, investigations, queues)
 agent clean <id>                          remove the task's worktree (the branch is kept)
 agent inv [number | --all]                investigation queue / full record of one
@@ -10542,6 +10685,8 @@ main() {
     resume)  cmd_resume "$@" ;;
     log)     cmd_log "$@" ;;
     stop)    cmd_stop "$@" ;;
+    pause)   cmd_pause "$@" ;;
+    unpause) cmd_unpause "$@" ;;
     clean)   cmd_clean "$@" ;;
     bus)     cmd_bus "$@" ;;
     inv)     cmd_inv "$@" ;;

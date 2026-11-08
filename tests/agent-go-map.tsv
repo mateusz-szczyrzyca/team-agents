@@ -683,6 +683,8 @@ tests/unit/team_pause.bats	a paused team starts nothing: a wake waits for agent 
 tests/unit/team_pause.bats	agent unpause resumes the interrupted runs where they stopped, told what happened, and starts what waited	blackbox	R29B	-	planned
 tests/unit/team_pause.bats	the supervisor leaves a paused team alone: no stall alarm on its board	blackbox	R29B	-	planned
 tests/unit/team_pause.bats	pause and unpause: an unknown team is refused; a second pause, or unpausing a team not paused, says so	blackbox	R29B	-	planned
+tests/unit/team_pause.bats	a run that starts while its team is paused (its start passed the gate just before) waits, in its mode	blackbox	R29B	-	planned
+tests/unit/team_pause.bats	a worker's, an investigation's or a review's task is held with the team of the task that asked for it	source	R29B	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned

@@ -60,7 +60,8 @@ member_state() { "$BUILD_DIR/agentbus" team-get --dir "$AGENTS_HOME/bus" --team 
   wait_grep "paused your team" "$AGENTS_HOME/tasks/$m/prompt-2.md"
   for _ in $(seq 1 100); do [ "$(meta "$t" RUN)" -gt "$lrun" ] && break; sleep 0.2; done
   [ "$(meta "$t" RUN)" -gt "$lrun" ]
-  [ -z "$(meta "$t" HOLD_START)" ]
+  hs=$(meta "$t" HOLD_START)
+  [[ -z $hs || $hs == "''" ]]   # nothing waits: meta.env writes an empty value as ''
   grep -q '"event":"team_unpaused"' "$AGENTS_HOME/logs/agent.jsonl"
   agent stop --running > /dev/null
 }
@@ -89,4 +90,31 @@ member_state() { "$BUILD_DIR/agentbus" team-get --dir "$AGENTS_HOME/bus" --team 
   [ "$status" -eq 0 ]
   [[ $output == *"not paused"* ]]
   agent stop --running > /dev/null
+}
+
+@test "a run that starts while its team is paused (its start passed the gate just before) waits, in its mode" {
+  paused_team
+  agent pause "$team" > /dev/null
+  run=$(meta "$t" RUN)
+  agent _runner "$t" resume   # the runner a start launched just before the pause
+  [ "$(meta "$t" STATUS)" = held ]
+  [ "$(meta "$t" HOLD_START)" = resume ]
+  [ "$(meta "$t" RUN)" = "$run" ]
+  agent stop --running > /dev/null
+}
+
+@test "a worker's, an investigation's or a review's task is held with the team of the task that asked for it" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/agent"
+  mkdir -p "$TASKS/M" "$TASKS/W" "$TASKS/I" "$TASKS/S" "$AGENTS_HOME/paused"
+  printf 'ID=M\nTEAM=T1\n' > "$TASKS/M/meta.env"
+  printf 'ID=W\nKIND=helper\nPARENT_TASK=M\n' > "$TASKS/W/meta.env"
+  printf 'ID=I\nKIND=investigation\nPARENT_TASK=W\n' > "$TASKS/I/meta.env"
+  printf 'ID=S\nKIND=worker\n' > "$TASKS/S/meta.env"
+  ! task_held W || false
+  printf 'since=1\n' > "$AGENTS_HOME/paused/T1"
+  task_held M
+  task_held W
+  task_held I
+  ! task_held S || false
 }
