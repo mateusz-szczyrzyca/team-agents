@@ -43,7 +43,8 @@ ci() { git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -
   [[ $out == *"human: tests/unit/helpers.bash"*"deleted"* ]]
   git -C "$r" mv tests/unit/a.bats tests/unit/renamed.bats
   head=$(ci rename)
-  [[ $(round_rule_issues "$r" "$base" "$head" T "") == *"human: tests/unit/a.bats"*"renamed"* ]]
+  # renamed — or, when git sees too little of it in the new file, deleted: either way the existing file is reported
+  [[ $(round_rule_issues "$r" "$base" "$head" T "") == *"human: tests/unit/a.bats — an existing test file "* ]]
 }
 
 @test "B2: a suppression the PR description does not name goes back; one it names passes" {
@@ -130,5 +131,24 @@ ci() { git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -
   head=$(ci allowed)
   [ -z "$(round_rule_issues "$r" "$base" "$head" "$team" "")" ]
   [[ $(round_rule_issues "$r" "$base" "$head" other-team "") == *"human: agent/f_test.go"* ]]
+  agent stop --running > /dev/null
+}
+
+@test "--autopilot: a round that changes an existing test goes back to the team with the rule; no review starts" {
+  mkdir -p "$HOME/repo/tests"
+  printf '@test "e" {\n  true\n}\n' > "$HOME/repo/tests/existing.bats"
+  git -C "$HOME/repo" add tests/existing.bats
+  git -C "$HOME/repo" -c user.name=t -c user.email=t@t commit -qm "an existing test"
+  git -C "$HOME/repo" push -q origin main
+  echo '[{"number": 7, "url": "https://github.com/o/r/pull/7", "state": "OPEN"}]' > "$HOME/gh-prs.json"
+  echo "AGENT_REVIEW_GATE='true'" >> "$AGENTS_HOME/agents.conf"
+  scenario '{"lead": {"new": "team-lead-test-edit", "resume": "team-lead-done"}, "member": {"new": "team-sleep", "resume": "done"}, "inv": {"new": "review-ready"}}'
+  agent run --team lead,member --autopilot "team task"
+  wait_grep '"event":"precheck_rules"' "$AGENTS_HOME/logs/agent.jsonl" 150
+  for _ in $(seq 1 150); do [ "$(ls -d "$AGENTS_HOME"/tasks/*-lead/ | wc -l)" -ge 2 ] && break; sleep 0.2; done
+  next=$(ls -d "$AGENTS_HOME"/tasks/*-lead/ | sed -n 2p)
+  grep -q "only the human may allow" "$next/task.md"
+  grep -q "tests/existing.bats" "$next/task.md"
+  ! grep -lq '^REVIEW=1$' "$AGENTS_HOME"/tasks/*/meta.env || false
   agent stop --running > /dev/null
 }

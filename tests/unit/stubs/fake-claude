@@ -7,6 +7,7 @@ Actions:
   done            final message "STATUS: DONE"
   tool-done       calls list_agents (an agentbus tool), then STATUS: DONE
   commit          commits a file with the trailers from the prompt, then STATUS: DONE
+  team-lead-test-edit  claims the coordinator role, changes an existing test (tests/existing.bats), commits, TEAM DONE
   quota           the provider refuses the run: a quota error on stderr, exit code 3, no result
   idle            STATUS: SLEEPING right away, without doing anything
   questions-file  writes the questions file, STATUS: QUESTIONS
@@ -93,6 +94,17 @@ if action == "hang":
 if action.startswith("sleep:"):
     time.sleep(int(action.split(":")[1]))
     finish("STATUS: DONE")
+if action == "team-lead-test-edit":
+    # the coordinator changes an existing test (its first line removed), commits it, and ends the team
+    call("claim_lead")
+    path = "tests/existing.bats"
+    lines = open(path).read().splitlines(True)
+    open(path, "w").write("".join(lines[1:]))
+    subprocess.run(["git", "add", path], check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "change an existing test"], check=True)
+    call("checkpoint", summary="stage 1 done", next_steps="stage 2")
+    call("send_message", to="team", text="TEAM DONE")
+    finish("STATUS: DONE\nRole: coordinator")
 if action == "team-lead-done":
     call("claim_lead")
     call("checkpoint", summary="stage 1 done", next_steps="stage 2")

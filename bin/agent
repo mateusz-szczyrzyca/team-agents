@@ -1674,6 +1674,84 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
   printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
 }
 
+# team_allowed_paths team — the paths the human allowed a team to change against AGENTS.md's rules (agent allow)
+team_allowed_paths() { [[ -f $AGENTS_HOME/allowed/$1 ]] && cat "$AGENTS_HOME/allowed/$1"; return 0; }
+
+# rule_test_path / rule_judge_path / rule_production_path path — what a path is to the rule gates: a test (tests/**,
+# *_test.go, *.bats); a file that judges a round; production code (bin/, agent/, agentbus/, live/, not a test)
+rule_test_path() { [[ $1 == tests/* || $1 == *_test.go || $1 == *.bats ]]; }
+rule_judge_path() {
+  case $1 in
+    .golangci.yml | tools/gate.sh | tools/check-*.sh | tools/agent-bats.sh | tools/test-lock.sh | Makefile) return 0 ;;
+    .github/workflows/* | AGENTS.md | */AGENTS.md | CLAUDE.md | */CLAUDE.md) return 0 ;;
+  esac
+  return 1
+}
+rule_production_path() { [[ ($1 == bin/* || $1 == agent/* || $1 == agentbus/* || $1 == live/*) ]] && ! rule_test_path "$1"; }
+
+# round_rule_issues repo base head team body — what a round's own diff (base: its merge base with main) does against
+# AGENTS.md's rules, one a line. "human: ..." only the human may allow (agent allow <team> <path>); "disclose: ..." a
+# suppression the PR description (body) does not name. Prompts and reviewers held these rules alone before.
+#   B1 an existing test file changed (not whitespace), removed or renamed; tests added to it, new files, are fine
+#   B2 an added t.Skip, bats skip, //nolint, #nosec or "# shellcheck disable=" in a file the description does not name
+#   B3 production code that looks at whether it runs under test
+#   B4 a file that judges a round changed (the Makefile and checks: added to is fine; workflows, AGENTS.md: any change)
+round_rule_issues() {
+  local repo=$1 base=$2 head=$3 team=$4 body=$5 allowed st a b f del line file n text
+  allowed=$(team_allowed_paths "$team")
+  while IFS=$'\t' read -r st a b; do
+    [[ -n $st ]] || continue
+    f=$a
+    grep -qxF -- "$f" <<< "$allowed" && continue
+    if rule_test_path "$f" || { rule_judge_path "$f" && [[ $f != .github/* && $f != AGENTS.md && $f != */AGENTS.md && $f != CLAUDE.md && $f != */CLAUDE.md ]]; }; then
+      case $st in
+        D) echo "human: $f — an existing $(rule_test_path "$f" && echo test || echo check) file deleted" ;;
+        R*) echo "human: $f — an existing $(rule_test_path "$f" && echo test || echo check) file renamed to $b" ;;
+        M)
+          del=$(git -C "$repo" diff -w --numstat "$base" "$head" -- "$f" | awk '{print $2}')
+          if [[ ${del:-0} =~ ^[0-9]+$ ]] && ((del > 0)); then
+            echo "human: $f — $del line(s) of an existing $(rule_test_path "$f" && echo test || echo check) file changed or removed"
+          fi
+          ;;
+      esac
+    elif rule_judge_path "$f"; then   # workflows, AGENTS.md, CLAUDE.md: any change
+      echo "human: $f — changed ($st); AGENTS.md: never change it"
+    fi
+  done < <(git -C "$repo" diff --name-status -M "$base" "$head")
+  file="" n=0
+  while IFS= read -r line; do
+    case $line in
+      '+++ /dev/null') file="" ;;
+      '+++ b/'*) file=${line#+++ b/} ;;
+      '@@ '*) if [[ $line =~ ^@@\ -[0-9,]+\ \+([0-9]+) ]]; then n=${BASH_REMATCH[1]}; fi ;;
+      '+'*)
+        [[ -n $file ]] || continue
+        text=${line:1}
+        if ! grep -qxF -- "$file" <<< "$allowed"; then
+          if rule_production_path "$file" && [[ $text =~ (testing\.Testing\(\)|flag\.Lookup\(\"test\.|BATS_[A-Z_]+) ]]; then
+            echo "human: $file:$n — production code that looks at whether it runs under test (${BASH_REMATCH[1]})"
+          fi
+          if [[ $body != *"$file"* ]]; then
+            if rule_test_path "$file" && [[ $text =~ (t\.Skip(Now|f)?\() ]]; then
+              echo "disclose: $file:$n — t.Skip"
+            elif [[ $file == *.bats && $text =~ ^[[:space:]]*skip([[:space:]]|$) ]]; then
+              echo "disclose: $file:$n — skip"
+            elif [[ $text =~ //[[:space:]]*nolint ]]; then
+              echo "disclose: $file:$n — nolint"
+            elif [[ $text =~ \#[[:space:]]*nosec ]]; then
+              echo "disclose: $file:$n — nosec"
+            elif [[ $text =~ \#[[:space:]]*shellcheck[[:space:]]+disable= ]]; then
+              echo "disclose: $file:$n — shellcheck disable"
+            fi
+          fi
+        fi
+        n=$((n + 1))
+        ;;
+    esac
+  done < <(git -C "$repo" diff -U0 "$base" "$head")
+  return 0
+}
+
 # gh_coordinator task — the coordinator of the task's team when the task is one of its members and not the
 # coordinator itself (the agents' gh refuses such a task's gh pr create); empty for anyone else: a coordinator, a
 # solo task, an investigator, or a team whose coordinator the bus does not say
@@ -2252,6 +2330,24 @@ review_precheck() { # coordinator task id — before a review: the round's head 
   tc=$(round_test_changes "$root" "$mb" "$head")
   meta_set "$id" ROUND_TESTS "$tc"
   [[ $tc != "code=1 added=0 "* ]] || why="the round changes code but adds no test — every change of behaviour needs its test, written first"
+  local rules rpr rbody="" human disc rtext=""   # AGENTS.md's rules on the round's own diff, with the others' reasons
+  rpr=$(trusted_prs "$root" "$branch" open url | jq -r '.[0].url // empty') || rpr=""
+  if [[ -n $rpr ]]; then rbody=$(cd "$root" && gh pr view "$rpr" --json body --jq .body) || rbody=""; fi
+  rules=$(round_rule_issues "$root" "$mb" "$head" "$(task_field "$id" TEAM)" "$rbody")
+  if [[ -n $rules ]]; then
+    human=$(sed -n 's/^human: /- /p' <<< "$rules")
+    disc=$(sed -n 's/^disclose: /- /p' <<< "$rules")
+    [[ -z $human ]] || rtext+="the round changes what only the human may allow (AGENTS.md \"Never\"): revert it, or ask the human, who allows it with: agent allow $(task_field "$id" TEAM) <path>
+$human
+"
+    [[ -z $disc ]] || rtext+="the round adds suppressions its PR description does not name: name each file and why in the description, or remove it
+$disc
+"
+    why="${why:+$why
+
+}$rtext"
+    log_warn precheck_rules "task=$id" "issues=$(grep -c . <<< "$rules")"
+  fi
   if [[ -z $why ]]; then   # a round has one PR: the others' commits belong on the round's PR branch
     local round_prs n_prs
     round_prs=$(round_open_prs "$id")
@@ -7494,6 +7590,22 @@ cmd_stop() {
   echo "Stopped $id."
 }
 
+# cmd_allow team [path...] — the human allows a team's rounds to change these paths against AGENTS.md's rules (an
+# existing test, a file that judges a round): the precheck lets them pass. No path: the paths allowed so far
+cmd_allow() {
+  local team=${1:?usage: agent allow <team> [path...]} f
+  shift
+  [[ -n $(team_json "$team") ]] || die "no team $team (see: agent status)"
+  if (($# == 0)); then team_allowed_paths "$team"; return 0; fi
+  mkdir -p "$AGENTS_HOME/allowed" || die "cannot create $AGENTS_HOME/allowed"
+  for f in "$@"; do
+    grep -qxF -- "$f" "$AGENTS_HOME/allowed/$team" 2> /dev/null && continue
+    printf '%s\n' "$f" >> "$AGENTS_HOME/allowed/$team" || die "cannot write $AGENTS_HOME/allowed/$team"
+  done
+  log_info rules_allowed "team=$team" "paths=$*"
+  echo "Allowed for team $team: $*"
+}
+
 # cmd_pause team — the human pauses a team: its runs are stopped at once — its members', its coordinator's, its
 # workers' and investigators' — and held, not failed: they stay members of the team. Nothing of it starts until
 # agent unpause; the supervisor leaves it alone. (A remote member's run, on its node, is not stopped: only its wakes.)
@@ -10627,6 +10739,7 @@ agent resume <id> ["note"]                resume after all questions are answere
 agent log <id> [--raw]                    follow the runner log (structured records rendered)
 agent stop <id>                           stop a run
 agent pause <team>                        pause a team: its runs stop, held; nothing of it starts
+agent allow <team> [path...]              let a team's rounds change an existing test or a check (AGENTS.md)
 agent unpause <team>                      go on: the paused runs resume where they stopped
 agent stop --running                      stop EVERYTHING that is active (teams, agents, investigations, queues)
 agent clean <id>                          remove the task's worktree (the branch is kept)
@@ -10686,6 +10799,7 @@ main() {
     log)     cmd_log "$@" ;;
     stop)    cmd_stop "$@" ;;
     pause)   cmd_pause "$@" ;;
+    allow)   cmd_allow "$@" ;;
     unpause) cmd_unpause "$@" ;;
     clean)   cmd_clean "$@" ;;
     bus)     cmd_bus "$@" ;;

@@ -374,6 +374,14 @@ its card and tokens — and prints where it is (`~/agents/debug/` by default). I
 each source by default, all of them with `--full`. Tokens and the values of `secrets.env` are redacted, so the file
 can be shared.
 
+**AGENTS.md's rules, checked.** The precheck before a round's review checks the round's own diff (from its merge
+base with main) against AGENTS.md's rules, which held through prompts and reviewers alone before: an existing test or
+test helper changed (not whitespace), removed or renamed; production code that looks at whether it runs under test;
+the files that judge a round changed (the Makefile and the checks — added to is fine —, `.golangci.yml`,
+`.github/workflows/`, `AGENTS.md`, `CLAUDE.md`) send the round back with the reason; only you allow them, for a team:
+`agent allow <team> <path>...` (`agent allow <team>` lists them). An added `t.Skip`, `skip`, `//nolint`, `#nosec` or
+`# shellcheck disable=` passes when the PR description names its file and why. Log: `precheck_rules`.
+
 **Diagnosing a model.** `agent debug --agent NAME` — or `--model NAME`, every agent on that model — writes one file:
 a summary of its tasks of the last `--days` (30) days (by kind and status, failures and their reasons, turns without
 STATUS, pauses, long runs cut, failovers, the average duration, tokens and cost), the worker requests that failed
