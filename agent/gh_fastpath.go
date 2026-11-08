@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"path/filepath"
 )
@@ -11,6 +12,13 @@ func ghFastPath(argv0 string) bool {
 }
 
 // runGH executes the native wrapper before configuration can run shell code.
-func runGH(_ []string, _ []string, _ io.Writer, _ io.Writer) int {
-	return 1
+func runGH(args []string, env []string, stdout io.Writer, stderr io.Writer) int {
+	code, _ := ghDispatch(context.Background(), GHDispatchParams{
+		Args:   args,
+		Env:    env,
+		Stdout: stdout,
+		Stderr: stderr,
+		Exec:   OSExecutor{},
+	})
+	return code
 }
