@@ -84,36 +84,70 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			jq, i = rawArgs[i+1], i+1
 		case strings.HasPrefix(a, "--jq="):
 			jq = a[5:]
+		case strings.HasPrefix(a, "-q") && len(a) > 2:
+			if strings.HasPrefix(a, "-q=") {
+				jq = a[3:]
+			} else {
+				jq = a[2:]
+			}
 		case a == "-t" || a == "--template" || strings.HasPrefix(a, "--template="):
 			return p.refuse("agent-gh: --template is not available to the agents; use --jq\n", 2, GHReadDispatchTemplateRefused, "templates cannot bypass native read filtering")
-		case (a == "-X" || a == "--method") && i+1 < len(rawArgs):
+		case (a == "-iX" || a == "-X" || a == "--method") && i+1 < len(rawArgs):
 			method = rawArgs[i+1]
-			pass = append(pass, a, rawArgs[i+1])
+			if a == "-iX" {
+				pass = append(pass, "-i", "-X", rawArgs[i+1])
+			} else {
+				pass = append(pass, a, rawArgs[i+1])
+			}
 			i++
 		case strings.HasPrefix(a, "--method="):
 			method = a[9:]
 			pass = append(pass, a)
+		case strings.HasPrefix(a, "-iX="):
+			method = a[4:]
+			pass = append(pass, "-i", "-X", method)
+		case strings.HasPrefix(a, "-iX") && len(a) > 3:
+			method = a[3:]
+			pass = append(pass, "-i", "-X", method)
 		case strings.HasPrefix(a, "-X="):
 			method = a[3:]
 			pass = append(pass, a)
 		case strings.HasPrefix(a, "-X") && len(a) > 2:
 			method = a[2:]
 			pass = append(pass, a)
-		case (a == "-f" || a == "--raw-field" || a == "-F" || a == "--field" || a == "--input") && i+1 < len(rawArgs):
-			fields, hasInput = true, hasInput || a == "--input" || ((a == "-F" || a == "--field") && isTypedQueryFile(rawArgs[i+1]))
-			pass = append(pass, a, rawArgs[i+1])
+		case (a == "-iF" || a == "-if" || a == "-f" || a == "--raw-field" || a == "-F" || a == "--field" || a == "--input") && i+1 < len(rawArgs):
+			fields, hasInput = true, hasInput || a == "--input" || ((a == "-F" || a == "--field" || a == "-iF") && isTypedQueryFile(rawArgs[i+1]))
+			if a == "-iF" || a == "-if" {
+				pass = append(pass, "-i", "-"+a[1:], rawArgs[i+1])
+			} else {
+				pass = append(pass, a, rawArgs[i+1])
+			}
 			i++
 		case strings.HasPrefix(a, "--input="):
 			fields, hasInput = true, true
 			pass = append(pass, a)
+		case strings.HasPrefix(a, "-iF="):
+			fields, hasInput = true, hasInput || isTypedFieldArg("-F="+a[5:])
+			pass = append(pass, "-i", "-F="+a[5:])
+		case strings.HasPrefix(a, "-iF") && len(a) > 3:
+			fields, hasInput = true, hasInput || isTypedFieldArg("-"+a[2:])
+			pass = append(pass, "-i", "-"+a[2:])
+		case strings.HasPrefix(a, "-if="):
+			fields = true
+			pass = append(pass, "-i", "-f="+a[5:])
+		case strings.HasPrefix(a, "-if") && len(a) > 3:
+			fields = true
+			pass = append(pass, "-i", "-"+a[2:])
 		case strings.HasPrefix(a, "--field=") || strings.HasPrefix(a, "--raw-field=") ||
 			strings.HasPrefix(a, "-f=") || strings.HasPrefix(a, "-F=") ||
 			(strings.HasPrefix(a, "-f") && len(a) > 2) || (strings.HasPrefix(a, "-F") && len(a) > 2):
 			fields, hasInput = true, hasInput || isTypedFieldArg(a)
 			pass = append(pass, a)
-		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "-c" || a == "--preview") && i+1 < len(rawArgs):
+		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "-c" || a == "-p" || a == "--preview") && i+1 < len(rawArgs):
 			pass = append(pass, a, rawArgs[i+1])
 			i++
+		case strings.HasPrefix(a, "--preview=") || strings.HasPrefix(a, "-p="):
+			pass = append(pass, a)
 		default:
 			if path == "" && !strings.HasPrefix(a, "-") {
 				path = a
@@ -389,6 +423,9 @@ func (p GHDispatchParams) outputJSON(ctx context.Context, data any, jq string, f
 	}
 	if jq == "" {
 		return writeResult(p.Stdout, string(raw)+"\n")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("[]")) && strings.HasPrefix(strings.TrimSpace(jq), "map(") {
+		return writeResult(p.Stdout, "[]\n")
 	}
 	return p.run(ctx, "jq", []string{"-r", jq}, bytes.NewReader(raw), p.Stdout, p.Stderr)
 }
