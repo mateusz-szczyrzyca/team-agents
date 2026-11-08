@@ -70,7 +70,7 @@ func ghDispatch(ctx context.Context, p GHDispatchParams) (int, *GHReadDispatchEr
 			return p.refuse("agent-gh: native write formatting is not implemented yet\n", 1, GHReadDispatchWriteUnavailable, "native write formatting is not implemented yet")
 		}
 	}
-	return p.run(ctx, realGH, p.Args, nil, p.Stdout, p.Stderr)
+	return p.run(ctx, realGH, p.Args, p.Stdin, p.Stdout, p.Stderr)
 }
 
 // handleAPI intercepts and filters GitHub REST and GraphQL API queries.
@@ -188,7 +188,7 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 	if jq != "" {
 		pass = append(pass, "--jq", jq)
 	}
-	return p.run(ctx, realGH, pass, nil, p.Stdout, p.Stderr)
+	return p.run(ctx, realGH, pass, p.Stdin, p.Stdout, p.Stderr)
 }
 
 // checkReadFlags refuses output modes that bypass filtering only on read commands.
@@ -314,11 +314,11 @@ func (p GHDispatchParams) handleView(ctx context.Context, realGH string, trusted
 		return p.refuse("agent-gh: this "+kind+" is from a fork or opened by an account that is not trusted — it is not shown\n", 1, GHReadDispatchForkUntrustedRefused, "the target author or repository is untrusted")
 	}
 	if verb != "view" {
-		return p.run(ctx, realGH, append([]string{kind, verb}, pass...), nil, p.Stdout, p.Stderr)
+		return p.run(ctx, realGH, append([]string{kind, verb}, pass...), p.Stdin, p.Stdout, p.Stderr)
 	}
 	fld := jsonf
 	if fld == "" {
-		if code, err := p.run(ctx, realGH, vargs, nil, p.Stdout, p.Stderr); err != nil || !comments {
+		if code, err := p.run(ctx, realGH, vargs, p.Stdin, p.Stdout, p.Stderr); err != nil || !comments {
 			return code, err
 		}
 		fld = cf
