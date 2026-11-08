@@ -103,8 +103,24 @@ func TestGHDispatchAPIPaginatedIDs(t *testing.T) {
 			if tc.checkErr && (err == nil || err.Cause != tc.wantErrCause) {
 				t.Errorf("err: got %v, want cause %v", err, tc.wantErrCause)
 			}
-			if tc.wantIDMatch && !strings.Contains(stdout.String(), "123456789") && !strings.Contains(stdout.String(), "987654321") && !strings.Contains(stdout.String(), "100") {
-				t.Errorf("output missing expected ID: %q", stdout.String())
+			if tc.wantIDMatch {
+				// Check for expected IDs - specific to each test case
+				out := stdout.String()
+				switch tc.name {
+				case "mixed_pages_first_only":
+					// Should have id:1 but NOT id:3 (only first page)
+					if !strings.Contains(out, "\"id\":1") {
+						t.Errorf("output missing id:1: %q", out)
+					}
+					if strings.Contains(out, "\"id\":3") {
+						t.Errorf("output should not have id:3 (non-array page present): %q", out)
+					}
+				default:
+					// Check for various large IDs
+					if !strings.Contains(out, "123456789") && !strings.Contains(out, "987654321") && !strings.Contains(out, "100") {
+						t.Errorf("output missing expected ID: %q", out)
+					}
+				}
 			}
 		})
 	}
