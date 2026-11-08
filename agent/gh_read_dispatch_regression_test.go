@@ -42,12 +42,12 @@ func TestGHDispatchAPIFlagBeforePath(t *testing.T) {
 // TestGHDispatchAPIPaginatedIDs verifies UseNumber preservation and page handling.
 func TestGHDispatchAPIPaginatedIDs(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		pages       []string
-		wantCode    int
+		name         string
+		pages        []string
+		wantCode     int
 		wantErrCause GHReadDispatchCause
-		wantIDMatch bool
-		checkErr    bool
+		wantIDMatch  bool
+		checkErr     bool
 	}{
 		// Large ID: 1234567890123456789 becomes 1.2345678901234568e+18 in float64
 		{"large_id_preserved_single_page",
