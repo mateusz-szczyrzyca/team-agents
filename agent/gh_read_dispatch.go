@@ -36,13 +36,6 @@ func ghDispatch(ctx context.Context, p GHDispatchParams) (int, *GHReadDispatchEr
 	if realGH == "" {
 		return p.refuse("agent-gh: the real gh is not known (AGENT_REAL_GH)\n", 127, GHReadDispatchMissingRealGH, "the real GitHub executable is missing or not executable")
 	}
-	for _, a := range p.Args {
-		if a == "-t" || a == "--template" || strings.HasPrefix(a, "--template=") {
-			return p.refuse("agent-gh: --template is not available to the agents; use --jq\n", 2, GHReadDispatchTemplateRefused, "templates cannot bypass native read filtering")
-		} else if a == "-w" || a == "--web" {
-			return p.refuse("agent-gh: --web is not available to the agents\n", 2, GHReadDispatchWebRefused, "web reads cannot enforce trusted-author filtering")
-		}
-	}
 	trustedSet := make(map[string]bool)
 	for _, t := range strings.Fields(ghEnvValue(p.Env, "AGENT_GITHUB_TRUSTED_RESOLVED")) {
 		trustedSet[t] = true
@@ -152,21 +145,55 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			return code, err
 		}
 		dec, merged, pages, v := json.NewDecoder(bytes.NewReader(raw)), []any{}, 0, any(nil)
-		for dec.Decode(&v) == nil {
+		dec.UseNumber() // Preserve numeric precision for large IDs
+		var firstPage any
+		var decErr error
+		var allArrays = true // Track if all pages are arrays
+		for decErr = dec.Decode(&v); decErr == nil; decErr = dec.Decode(&v) {
 			pages++
+			if pages == 1 {
+				firstPage = v
+			}
 			if arr, ok := v.([]any); ok {
 				merged = append(merged, arr...)
+			} else {
+				allArrays = false // Non-array page found
 			}
 		}
-		if pages > 1 {
-			return p.outputJSON(ctx, merged, jq, true)
+		// Non-EOF decode error means malformed JSON
+		if decErr != nil && decErr != io.EOF {
+			return p.refuse("", 1, GHReadDispatchInvalidJSON, "a paginated GitHub response contains malformed JSON")
 		}
+		if pages == 0 {
+			return p.refuse("", 1, GHReadDispatchInvalidJSON, "a GitHub response is empty")
+		}
+		// Multiple pages: only merge arrays if ALL pages are arrays, otherwise use first page
+		if pages > 1 {
+			if allArrays && len(merged) > 0 {
+				return p.outputJSON(ctx, merged, jq, true)
+			}
+			// Any non-array page found, return first page
+			return p.outputJSON(ctx, firstPage, jq, true)
+		}
+		// Single page: return as-is (preserves original numeric format)
 		return p.outputJSON(ctx, raw, jq, true)
 	}
 	if jq != "" {
 		pass = append(pass, "--jq", jq)
 	}
 	return p.run(ctx, realGH, pass, nil, p.Stdout, p.Stderr)
+}
+
+// checkReadFlags refuses output modes that bypass filtering only on read commands.
+func (p GHDispatchParams) checkReadFlags(args []string) (int, *GHReadDispatchError) {
+	for _, a := range args {
+		if a == "-t" || a == "--template" || strings.HasPrefix(a, "--template=") {
+			return p.refuse("agent-gh: --template is not available to the agents; use --jq\n", 2, GHReadDispatchTemplateRefused, "templates cannot bypass native read filtering")
+		} else if a == "-w" || a == "--web" {
+			return p.refuse("agent-gh: --web is not available to the agents\n", 2, GHReadDispatchWebRefused, "web reads cannot enforce trusted-author filtering")
+		}
+	}
+	return 0, nil
 }
 
 // parseFlags extracts --json, --jq, and -c/--comments flags from arguments.
@@ -218,6 +245,9 @@ func decodeJSON(raw []byte, v any) *GHReadDispatchError {
 
 // handleList filters PR/issue lists by trusted authors and non-fork repositories.
 func (p GHDispatchParams) handleList(ctx context.Context, realGH string, trusted map[string]bool) (int, *GHReadDispatchError) {
+	if code, err := p.checkReadFlags(p.Args[2:]); err != nil {
+		return code, err
+	}
 	kind := p.Args[0]
 	jsonf, jq, _, rest := parseFlags(p.Args[2:])
 	flds := "number,title,state,url,author"
@@ -260,6 +290,9 @@ func (p GHDispatchParams) handleList(ctx context.Context, realGH string, trusted
 
 // handleView guards view, diff, and checkout on untrusted authors/forks and formats comments.
 func (p GHDispatchParams) handleView(ctx context.Context, realGH string, trustedSet map[string]bool) (int, *GHReadDispatchError) {
+	if code, err := p.checkReadFlags(p.Args[2:]); err != nil {
+		return code, err
+	}
 	kind, verb := p.Args[0], p.Args[1]
 	jsonf, jq, comments, pass := parseFlags(p.Args[2:])
 	idf, cf := "author", "comments"
@@ -385,11 +418,11 @@ func (p GHDispatchParams) checkMember(ctx context.Context) (bool, string) {
 			dir = filepath.Join(base, "bus")
 		}
 	}
-	var out bytes.Buffer
+	var out, errOut bytes.Buffer
 	var resp map[string]any
-	res, err := p.Exec.Execute(ctx, Command{Name: bin, Args: []string{"team-get", "--dir", dir, "--team", team}, Env: p.Env, Stdout: &out})
+	res, err := p.Exec.Execute(ctx, Command{Name: bin, Args: []string{"team-get", "--dir", dir, "--team", team}, Env: p.Env, Stdout: &out, Stderr: &errOut})
 	if err != nil || res.ExitCode != 0 || decodeJSON(out.Bytes(), &resp) != nil {
-		p.log(EventGitHubCoordinatorUnknown, "the bus did not say who coordinates the team", map[string]string{"team": team})
+		p.log(EventGitHubCoordinatorUnknown, "the bus did not say who coordinates the team", map[string]string{"team": team, "exit_code": strconv.Itoa(max(res.ExitCode, 1)), "stderr": errOut.String()[:min(errOut.Len(), 500)]})
 		return lead != "", lead
 	}
 	lead = str(resp["lead"])

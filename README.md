@@ -1623,6 +1623,10 @@ make integration        # real agent CLIs and accounts (costs usage)
   external-command failures retain their exit status. Member mutation guards use the current bus
   coordinator, and warnings retain the existing `agent-gh` JSON log schema. Unimplemented GitHub writes
   fail closed until R12; production continues to use the installed Bash wrapper.
+  API option values are parsed before endpoint classification, explicit GET methods retain precedence
+  over fields, and harmless GraphQL queries remain readable. Anonymous comments and nested slurped pages
+  receive the same trust filtering; paginated numeric IDs retain their exact values. Malformed responses
+  produce CLI diagnostics, and coordinator-lookup warnings include subprocess status and bounded stderr.
 - **Go rewrite parity tracking and ledger validation.**
   The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). The current ledger tracks 663 Bats unit test cases, with 12 rows done and 651 planned, in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). R10 adds lower-layer Go coverage; R11 activates native GitHub read and member-guard cases; four whole cases that also require coordinator writes remain planned until R12, and runner activation remains planned. The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
