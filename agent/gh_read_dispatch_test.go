@@ -135,7 +135,9 @@ func TestGHDispatchMemberRefused(t *testing.T) {
 				run: func(cmd Command) (CommandResult, *ExecuteError) {
 					if cmd.Name != "/bin/gh" && strings.Contains(cmd.Name, "agentbus") {
 						if cmd.Stdout != nil {
-							_, _ = cmd.Stdout.Write([]byte(`{"lead":""}`))
+							if n, err := cmd.Stdout.Write([]byte(`{"lead":""}`)); err != nil || n == 0 {
+								t.Fatalf("failed to write lead response: %v", err)
+							}
 						}
 						return CommandResult{ExitCode: 0}, nil
 					}
@@ -169,7 +171,9 @@ func TestGHDispatchSecondPRRefused(t *testing.T) {
 		run: func(cmd Command) (CommandResult, *ExecuteError) {
 			if len(cmd.Args) >= 4 && cmd.Args[0] == "pr" && cmd.Args[1] == "view" && cmd.Args[2] == "42" {
 				if cmd.Stdout != nil {
-					_, _ = cmd.Stdout.Write([]byte(`{"state":"OPEN"}`))
+					if n, err := cmd.Stdout.Write([]byte(`{"state":"OPEN"}`)); err != nil || n == 0 {
+						t.Fatalf("failed to write state response: %v", err)
+					}
 				}
 				return CommandResult{ExitCode: 0}, nil
 			}
@@ -266,7 +270,9 @@ func TestGHDispatchForkUntrustedRefused(t *testing.T) {
 			exec := fakeGHExec{
 				run: func(cmd Command) (CommandResult, *ExecuteError) {
 					if cmd.Stdout != nil {
-						_, _ = cmd.Stdout.Write([]byte(tc.viewJSON))
+						if n, err := cmd.Stdout.Write([]byte(tc.viewJSON)); err != nil || n == 0 {
+							t.Fatalf("failed to write view response: %v", err)
+						}
 					}
 					return CommandResult{ExitCode: 0}, nil
 				},
@@ -301,7 +307,9 @@ func TestGHDispatchListFiltering(t *testing.T) {
 		exec := fakeGHExec{
 			run: func(cmd Command) (CommandResult, *ExecuteError) {
 				if cmd.Stdout != nil {
-					_, _ = cmd.Stdout.Write([]byte(listPayload))
+					if n, err := cmd.Stdout.Write([]byte(listPayload)); err != nil || n == 0 {
+						t.Fatalf("failed to write list response: %v", err)
+					}
 				}
 				return CommandResult{ExitCode: 0}, nil
 			},
@@ -330,7 +338,9 @@ func TestGHDispatchListFiltering(t *testing.T) {
 		exec := fakeGHExec{
 			run: func(cmd Command) (CommandResult, *ExecuteError) {
 				if cmd.Stdout != nil {
-					_, _ = cmd.Stdout.Write([]byte(`[{"number":2,"author":{"login":"stranger"},"isCrossRepository":false}]`))
+					if n, err := cmd.Stdout.Write([]byte(`[{"number":2,"author":{"login":"stranger"},"isCrossRepository":false}]`)); err != nil || n == 0 {
+						t.Fatalf("failed to write pr list response: %v", err)
+					}
 				}
 				return CommandResult{ExitCode: 0}, nil
 			},
@@ -361,7 +371,9 @@ func TestGHDispatchAPIComments(t *testing.T) {
 	exec := fakeGHExec{
 		run: func(cmd Command) (CommandResult, *ExecuteError) {
 			if cmd.Stdout != nil {
-				_, _ = cmd.Stdout.Write([]byte(paginated))
+				if n, err := cmd.Stdout.Write([]byte(paginated)); err != nil || n == 0 {
+					t.Fatalf("failed to write paginated response: %v", err)
+				}
 			}
 			return CommandResult{ExitCode: 0}, nil
 		},
