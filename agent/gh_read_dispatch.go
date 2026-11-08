@@ -78,50 +78,71 @@ func ghDispatch(ctx context.Context, p GHDispatchParams) (int, *GHReadDispatchEr
 
 // handleAPI intercepts and filters GitHub REST and GraphQL API queries.
 func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *GHReadDispatchError) {
-	_, jq, _, rest := parseFlags(p.Args[1:])
-	var path string
-	var method string
-	var hasFields bool
-	for i := 0; i < len(rest); i++ {
-		a := rest[i]
-		// Check for -X <method> or --method <method>
-		if (a == "-X" || a == "--method") && i+1 < len(rest) {
-			method = strings.ToUpper(rest[i+1])
+	var pass []string
+	var jq, path, method string
+	var fields bool
+	rawArgs := p.Args[1:]
+	for i := 0; i < len(rawArgs); i++ {
+		a := rawArgs[i]
+		switch {
+		case (a == "--jq" || a == "-q") && i+1 < len(rawArgs):
+			jq, i = rawArgs[i+1], i+1
+		case strings.HasPrefix(a, "--jq="):
+			jq = a[5:]
+		case a == "-t" || a == "--template" || strings.HasPrefix(a, "--template="):
+			return p.refuse("agent-gh: --template is not available to the agents; use --jq\n", 2, GHReadDispatchTemplateRefused, "templates cannot bypass native read filtering")
+		case (a == "-X" || a == "--method") && i+1 < len(rawArgs):
+			method = rawArgs[i+1]
+			pass = append(pass, a, rawArgs[i+1])
 			i++
-		} else if strings.HasPrefix(a, "-X=") {
-			method = strings.ToUpper(a[3:])
-		} else if strings.HasPrefix(a, "--method=") {
-			method = strings.ToUpper(a[9:])
-		} else if a == "-f" || a == "-F" || a == "--field" || a == "--raw-field" || a == "--input" {
-			// Two-token field flags
-			hasFields = true
-			if i+1 < len(rest) {
-				i++
+		case strings.HasPrefix(a, "--method="):
+			method = a[9:]
+			pass = append(pass, a)
+		case strings.HasPrefix(a, "-X="):
+			method = a[3:]
+			pass = append(pass, a)
+		case strings.HasPrefix(a, "-X") && len(a) > 2:
+			method = a[2:]
+			pass = append(pass, a)
+		case (a == "-f" || a == "--raw-field" || a == "-F" || a == "--field" || a == "--input") && i+1 < len(rawArgs):
+			fields = true
+			pass = append(pass, a, rawArgs[i+1])
+			i++
+		case strings.HasPrefix(a, "--field=") || strings.HasPrefix(a, "--raw-field=") || strings.HasPrefix(a, "--input=") ||
+			strings.HasPrefix(a, "-f=") || strings.HasPrefix(a, "-F=") ||
+			(strings.HasPrefix(a, "-f") && len(a) > 2) || (strings.HasPrefix(a, "-F") && len(a) > 2):
+			fields = true
+			pass = append(pass, a)
+		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "--preview") && i+1 < len(rawArgs):
+			pass = append(pass, a, rawArgs[i+1])
+			i++
+		default:
+			if path == "" && !strings.HasPrefix(a, "-") {
+				path = a
 			}
-		} else if strings.HasPrefix(a, "--field=") || strings.HasPrefix(a, "--raw-field=") || strings.HasPrefix(a, "--input=") {
-			// Long-form field flags with value
-			hasFields = true
-		} else if a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "--preview" {
-			// Two-token non-field flags (skip next argument)
-			if i+1 < len(rest) {
-				i++
-			}
-		} else if path == "" && !strings.HasPrefix(a, "-") {
-			path = a
+			pass = append(pass, a)
 		}
 	}
-	// Compute isMut: mutation occurs with explicit non-GET method OR with fields on non-graphql path
-	isMut := (method != "" && method != "GET") || (hasFields && path != "graphql")
-	pass := append([]string{"api"}, rest...)
+	pass = append([]string{"api"}, pass...)
 	if path == "graphql" && reGraphQLBlocked.MatchString(strings.Join(pass, " ")) {
 		p.log(EventGitHubGraphQLRefused, "a GraphQL query for comments, reviews or bodies is refused: the agents read them through gh pr view --json or gh api …/comments", nil)
 		return p.refuse("agent-gh: a GraphQL query for comments, reviews or bodies is refused — use gh pr view --json comments,reviews or gh api …/comments\n", 1, GHReadDispatchGraphQLRefused, "the GraphQL query requests protected content")
 	}
 	clean := strings.Split(strings.Split(path, "?")[0], "#")[0]
-	isPullMut := rePullMerge.MatchString(clean) || (rePull.MatchString(clean) && isMut)
+	isPullMut := false
+	if rePullMerge.MatchString(clean) {
+		isPullMut = true
+	} else if rePull.MatchString(clean) {
+		if method != "" {
+			isPullMut = !strings.EqualFold(method, "GET")
+		} else if fields {
+			isPullMut = true
+		}
+	}
 	if isMem, lead := p.checkMember(ctx); isPullMut && isMem {
 		return p.memberRefusal("api", lead)
 	}
+	isMut := (method != "" && !strings.EqualFold(method, "GET")) || (method == "" && fields && path != "graphql")
 	if isPullMut || isMut {
 		return p.refuse("agent-gh: native write formatting is not implemented yet\n", 1, GHReadDispatchWriteUnavailable, "native write formatting is not implemented yet")
 	}
