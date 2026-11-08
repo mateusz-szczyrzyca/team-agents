@@ -100,7 +100,7 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			method = a[2:]
 			pass = append(pass, a)
 		case (a == "-f" || a == "--raw-field" || a == "-F" || a == "--field" || a == "--input") && i+1 < len(rawArgs):
-			fields, hasInput = true, hasInput || a == "--input"
+			fields, hasInput = true, hasInput || a == "--input" || ((a == "-F" || a == "--field") && isTypedQueryFile(rawArgs[i+1]))
 			pass = append(pass, a, rawArgs[i+1])
 			i++
 		case strings.HasPrefix(a, "--input="):
@@ -109,7 +109,7 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 		case strings.HasPrefix(a, "--field=") || strings.HasPrefix(a, "--raw-field=") ||
 			strings.HasPrefix(a, "-f=") || strings.HasPrefix(a, "-F=") ||
 			(strings.HasPrefix(a, "-f") && len(a) > 2) || (strings.HasPrefix(a, "-F") && len(a) > 2):
-			fields = true
+			fields, hasInput = true, hasInput || isTypedFieldArg(a)
 			pass = append(pass, a)
 		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "-c" || a == "--preview") && i+1 < len(rawArgs):
 			pass = append(pass, a, rawArgs[i+1])
@@ -503,5 +503,28 @@ func (p GHDispatchParams) log(event LogEvent, msg string, fields map[string]stri
 		if _, writeErr := fmt.Fprintf(p.Stderr, "agent-gh: cannot write the log %s\n", err); writeErr != nil {
 			return
 		}
+	}
+}
+
+// isTypedQueryFile reports whether parameter val sets query to a file or stdin in a typed field flag.
+func isTypedQueryFile(val string) bool {
+	k, v, ok := strings.Cut(val, "=")
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(k) == "query" && strings.HasPrefix(strings.TrimSpace(v), "@")
+}
+
+// isTypedFieldArg reports whether flag arg is a typed field flag loading a GraphQL query from a file or stdin.
+func isTypedFieldArg(arg string) bool {
+	switch {
+	case strings.HasPrefix(arg, "--field="):
+		return isTypedQueryFile(arg[len("--field="):])
+	case strings.HasPrefix(arg, "-F="):
+		return isTypedQueryFile(arg[len("-F="):])
+	case strings.HasPrefix(arg, "-F") && len(arg) > 2:
+		return isTypedQueryFile(arg[2:])
+	default:
+		return false
 	}
 }
