@@ -678,6 +678,11 @@ tests/unit/test_lock.bats	an interrupted test run stops its commands and frees t
 tests/unit/test_lock.bats	every Makefile target that runs tests goes through tools/test-lock.sh	source	R02	-	planned
 tests/unit/test_lock.bats	a test recipe copied into a repository without the lock (the harness's fixtures) still runs, unlocked	source	R02	-	planned
 tests/unit/test_lock.bats	every agent's prompt knows the busy message and what to do, and AGENTS.md describes the lock	source	R02	-	planned
+tests/unit/team_pause.bats	agent pause stops the team's runs without failing anyone: held, still members of the team	blackbox	R29B	-	planned
+tests/unit/team_pause.bats	a paused team starts nothing: a wake waits for agent unpause	blackbox	R29B	-	planned
+tests/unit/team_pause.bats	agent unpause resumes the interrupted runs where they stopped, told what happened, and starts what waited	blackbox	R29B	-	planned
+tests/unit/team_pause.bats	the supervisor leaves a paused team alone: no stall alarm on its board	blackbox	R29B	-	planned
+tests/unit/team_pause.bats	pause and unpause: an unknown team is refused; a second pause, or unpausing a team not paused, says so	blackbox	R29B	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
