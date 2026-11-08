@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -76,9 +77,18 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 	var pass []string
 	var jq, path, method string
 	var fields, hasInput bool
-	rawArgs := p.Args[1:]
+	rawArgs := slices.Clone(p.Args[1:])
 	for i := 0; i < len(rawArgs); i++ {
 		a := rawArgs[i]
+		// Normalize the current option only; values consumed below stay literal.
+		for strings.HasPrefix(a, "-i") && len(a) > 2 && a[2] != '=' {
+			pass = append(pass, "-i")
+			a = "-" + a[2:]
+		}
+		if len(a) > 2 && a[0] == '-' && strings.ContainsRune("XfFHcqtp", rune(a[1])) {
+			rawArgs = slices.Insert(rawArgs, i+1, strings.TrimPrefix(a[2:], "="))
+			a = a[:2]
+		}
 		switch {
 		case (a == "--jq" || a == "-q") && i+1 < len(rawArgs):
 			jq, i = rawArgs[i+1], i+1
@@ -111,7 +121,7 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			(strings.HasPrefix(a, "-f") && len(a) > 2) || (strings.HasPrefix(a, "-F") && len(a) > 2):
 			fields, hasInput = true, hasInput || isTypedFieldArg(a)
 			pass = append(pass, a)
-		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "-c" || a == "--preview") && i+1 < len(rawArgs):
+		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "-c" || a == "-p" || a == "--preview") && i+1 < len(rawArgs):
 			pass = append(pass, a, rawArgs[i+1])
 			i++
 		default:
