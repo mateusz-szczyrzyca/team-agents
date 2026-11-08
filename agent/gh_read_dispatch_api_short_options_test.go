@@ -3,147 +3,103 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// TestGHDispatchAPIShortOptions verifies that short options (-p, compact -q,
-// and clustered -iX / -iF) are parsed properly before endpoint extraction
-// and mutation classification.
-func TestGHDispatchAPIShortOptions(t *testing.T) {
-	// 1. Preview option -p must consume its value so it does not corrupt the endpoint path.
-	t.Run("preview_flag_preserves_endpoint", func(t *testing.T) {
-		var stdout, stderr bytes.Buffer
-		var calledArgs []string
-		exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
-			if cmd.Name == "/bin/gh" {
-				calledArgs = cmd.Args
-				if cmd.Stdout != nil {
-					if _, err := cmd.Stdout.Write([]byte(`[{"id":"1","author":{"login":"outsider"},"body":"untrusted"}]`)); err != nil {
-						t.Fatalf("stdout write failed: %v", err)
-					}
+// TestGHAPIShortOptionsExecutable keeps shorthand policy checks ahead of real processes.
+func TestGHAPIShortOptionsExecutable(t *testing.T) {
+	// endpoint identifies protected comments in the synthetic repository.
+	const endpoint = "repos/o/r/issues/1/comments"
+	// fixture honors compact queries so forwarding one really removes author metadata.
+	const fixture = `#!/bin/sh
+set -eu
+umask 077
+printf '%s\n' "$@" > "$CALLS"
+for arg do
+  case "$arg" in
+    -q?*) query=${arg#-q}; query=${query#=}; printf '%s\n' "$RESPONSE" | jq -c "$query"; exit ;;
+  esac
+done
+printf '%s\n' "$RESPONSE"
+`
+	// cases cover reads, local query semantics and writes hidden inside include clusters.
+	cases := []struct {
+		name  string              // name describes the spelling under test.
+		args  []string            // args follow gh api.
+		want  string              // want is exact stdout after native filtering and real jq.
+		argv  string              // argv is the exact forwarded argument list, one per line.
+		code  int                 // code is the required subprocess or policy exit status.
+		cause GHReadDispatchCause // cause identifies the exact refusal when code is nonzero.
+	}{
+		{"preview", []string{"-p", "nebula", endpoint}, "[]\n", "api\n-p\nnebula\n" + endpoint + "\n", 0, 0},
+		{"preview_equals", []string{"-p=nebula", endpoint}, "[]\n", "api\n-p\nnebula\n" + endpoint + "\n", 0, 0},
+		{"preview_compact", []string{"-pnebula", endpoint}, "[]\n", "api\n-p\nnebula\n" + endpoint + "\n", 0, 0},
+		{"query", []string{endpoint, "-qmap(.body)"}, "[]\n", "api\n" + endpoint + "\n", 0, 0},
+		{"query_length", []string{endpoint, "-q=map(.body)|length"}, "0\n", "api\n" + endpoint + "\n", 0, 0},
+		{"query_trusted", []string{endpoint, `-qmap(.body)|join(",")`}, "TRUSTED_BODY\n", "api\n" + endpoint + "\n", 0, 0},
+		{"template_compact", []string{endpoint, "-t{{.}}"}, "", "", 2, GHReadDispatchTemplateRefused},
+		{"include_get", []string{"repos/o/r/pulls/1", "-iXGET"}, "[]\n", "api\nrepos/o/r/pulls/1\n-i\n-X\nGET\n", 0, 0},
+		{"include_patch", []string{"repos/o/r/pulls/1", "-iXPATCH"}, "", "", 1, GHReadDispatchWriteUnavailable},
+		{"include_patch_equals", []string{"repos/o/r/pulls/1", "-iX=PATCH"}, "", "", 1, GHReadDispatchWriteUnavailable},
+		{"include_patch_separate", []string{"repos/o/r/pulls/1", "-iX", "PATCH"}, "", "", 1, GHReadDispatchWriteUnavailable},
+		{"include_raw_field", []string{"repos/o/r/pulls/1", "-ifbody=change"}, "", "", 1, GHReadDispatchWriteUnavailable},
+		{"include_query_file", []string{"graphql", "-iFquery=@payload.graphql"}, "", "", 1, GHReadDispatchWriteUnavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// dir isolates every subprocess artifact and avoids the installed agent state.
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, "agents", "logs"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			// gh is an executable fixture, never the network-enabled GitHub CLI.
+			gh := filepath.Join(dir, "gh")
+			if err := os.WriteFile(gh, []byte(fixture), 0o700); err != nil { // #nosec G306 -- executable test fixture in a private temporary directory.
+				t.Fatal(err)
+			}
+			// calls records whether gh was launched and which arguments crossed the boundary.
+			calls := filepath.Join(dir, "calls")
+			// response has only an untrusted author; include_get uses an ordinary unfiltered response.
+			response := `[{"id":1,"user":{"login":"outsider"},"body":"UNTRUSTED_BODY"}]`
+			if tc.name == "query_trusted" {
+				response = `[{"user":{"login":"alice"},"body":"TRUSTED_BODY"},{"user":{"login":"outsider"},"body":"UNTRUSTED_BODY"}]`
+			}
+			if tc.name == "include_get" {
+				response = "[]"
+			}
+			// env supplies only fixture state, real jq lookup and the native trust configuration.
+			env := []string{"HOME=" + dir, "PATH=" + os.Getenv("PATH"), "AGENT_REAL_GH=" + gh,
+				"AGENT_GITHUB_TRUSTED_RESOLVED=alice", "CALLS=" + calls, "RESPONSE=" + response}
+			// out and diagnostics retain the real subprocess streams for assertions.
+			var out, diagnostics bytes.Buffer
+			// code and failure expose subprocess status and the exact native refusal cause.
+			code, failure := ghDispatch(context.Background(), GHDispatchParams{
+				Args: append([]string{"api"}, tc.args...), Env: env, Stdout: &out, Stderr: &diagnostics, Exec: OSExecutor{},
+			})
+			if tc.code != 0 {
+				if code != tc.code || failure == nil || failure.Cause != tc.cause {
+					t.Errorf("write guard: code=%d failure=%v stderr=%s", code, failure, diagnostics.String())
 				}
+			} else if code != 0 || failure != nil {
+				t.Errorf("read: code=%d failure=%v stderr=%s", code, failure, diagnostics.String())
 			}
-			return CommandResult{ExitCode: 0}, nil
-		}}
-		args := []string{"api", "-p", "nebula", "repos/o/r/issues/1/comments"}
-		env := []string{"AGENT_REAL_GH=/bin/gh", "AGENT_GITHUB_TRUSTED_RESOLVED=alice"}
-		code, err := ghDispatch(context.Background(), GHDispatchParams{
-			Args:   args,
-			Env:    env,
-			Stdout: &stdout,
-			Stderr: &stderr,
-			Exec:   exec,
-		})
-		if code != 0 || err != nil {
-			t.Fatalf("preview option -p failed: code=%d err=%v", code, err)
-		}
-		if stdout.String() != "[]\n" {
-			t.Fatalf("preview option -p did not filter comments: got %q, want []\\n", stdout.String())
-		}
-		foundPreview, foundEndpoint := false, false
-		for idx, arg := range calledArgs {
-			if arg == "-p" && idx+1 < len(calledArgs) && calledArgs[idx+1] == "nebula" {
-				foundPreview = true
+			if out.String() != tc.want {
+				t.Errorf("stdout=%q, want %q", out.String(), tc.want)
 			}
-			if arg == "repos/o/r/issues/1/comments" {
-				foundEndpoint = true
-			}
-		}
-		if !foundPreview || !foundEndpoint {
-			t.Fatalf("preview option -p args not forwarded properly: %v", calledArgs)
-		}
-	})
-
-	// 2. Compact -q (e.g. -qmap(.body)) must be extracted into jq and stripped from real gh args.
-	t.Run("compact_jq_query_stripped_before_filter", func(t *testing.T) {
-		var stdout, stderr bytes.Buffer
-		var calledArgs []string
-		exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
-			if cmd.Name == "/bin/gh" {
-				calledArgs = cmd.Args
-				if cmd.Stdout != nil {
-					// Real gh must receive un-queried comments to preserve author metadata.
-					if _, err := cmd.Stdout.Write([]byte(`[{"id":"1","author":{"login":"outsider"},"body":"untrusted"}]`)); err != nil {
-						t.Fatalf("stdout write failed: %v", err)
-					}
+			// recorded and readErr distinguish a refused launch from an unexpected filesystem failure.
+			recorded, readErr := os.ReadFile(filepath.Clean(calls))
+			if tc.code != 0 {
+				if !os.IsNotExist(readErr) {
+					t.Errorf("refused command reached gh: argv=%q error=%v", recorded, readErr)
 				}
+			} else if readErr != nil {
+				t.Fatal(readErr)
+			} else if string(recorded) != tc.argv || strings.Contains(string(recorded), "-q") {
+				t.Errorf("forwarded argv=%q, want %q without a caller query", recorded, tc.argv)
 			}
-			return CommandResult{ExitCode: 0}, nil
-		}}
-		args := []string{"api", "repos/o/r/issues/1/comments", "-qmap(.body)"}
-		env := []string{"AGENT_REAL_GH=/bin/gh", "AGENT_GITHUB_TRUSTED_RESOLVED=alice"}
-		code, err := ghDispatch(context.Background(), GHDispatchParams{
-			Args:   args,
-			Env:    env,
-			Stdout: &stdout,
-			Stderr: &stderr,
-			Exec:   exec,
 		})
-		if code != 0 || err != nil {
-			t.Fatalf("compact -q failed: code=%d err=%v", code, err)
-		}
-		for _, arg := range calledArgs {
-			if strings.HasPrefix(arg, "-q") {
-				t.Fatalf("compact -q was forwarded to real gh before filtering: %v", calledArgs)
-			}
-		}
-		if stdout.String() != "[]\n" {
-			t.Fatalf("compact -q did not filter outsider comment: got %q, want []\\n", stdout.String())
-		}
-	})
-
-	// 3. Clustered -iXPATCH must be recognized as HTTP method PATCH and refused as write.
-	t.Run("clustered_ix_method_refused", func(t *testing.T) {
-		var stdout, stderr bytes.Buffer
-		calledRealGH := false
-		exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
-			if cmd.Name == "/bin/gh" {
-				calledRealGH = true
-			}
-			return CommandResult{ExitCode: 0}, nil
-		}}
-		args := []string{"api", "repos/o/r/pulls/1", "-iXPATCH"}
-		env := []string{"AGENT_REAL_GH=/bin/gh"}
-		code, err := ghDispatch(context.Background(), GHDispatchParams{
-			Args:   args,
-			Env:    env,
-			Stdout: &stdout,
-			Stderr: &stderr,
-			Exec:   exec,
-		})
-		if calledRealGH {
-			t.Fatalf("clustered -iXPATCH called real gh instead of refusing")
-		}
-		if code != 1 || err == nil || err.Cause != GHReadDispatchWriteUnavailable {
-			t.Fatalf("clustered -iXPATCH expected WriteUnavailable error: code=%d err=%v", code, err)
-		}
-	})
-
-	// 4. Clustered -iFquery=@file must be recognized as typed GraphQL query file and refused.
-	t.Run("clustered_if_query_file_refused", func(t *testing.T) {
-		var stdout, stderr bytes.Buffer
-		calledRealGH := false
-		exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
-			if cmd.Name == "/bin/gh" {
-				calledRealGH = true
-			}
-			return CommandResult{ExitCode: 0}, nil
-		}}
-		args := []string{"api", "graphql", "-iFquery=@payload.graphql"}
-		env := []string{"AGENT_REAL_GH=/bin/gh"}
-		code, err := ghDispatch(context.Background(), GHDispatchParams{
-			Args:   args,
-			Env:    env,
-			Stdout: &stdout,
-			Stderr: &stderr,
-			Exec:   exec,
-		})
-		if calledRealGH {
-			t.Fatalf("clustered -iFquery called real gh instead of refusing")
-		}
-		if code != 1 || err == nil || err.Cause != GHReadDispatchWriteUnavailable {
-			t.Fatalf("clustered -iFquery expected WriteUnavailable error: code=%d err=%v", code, err)
-		}
-	})
+	}
 }
