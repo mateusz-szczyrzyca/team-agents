@@ -1,5 +1,12 @@
 package main
 
+import (
+	"encoding/json"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
 // EventGitHubCommentIgnored records a comment from an untrusted author.
 const EventGitHubCommentIgnored LogEvent = "github_comment_ignored"
 
@@ -28,6 +35,28 @@ const EventGitHubSecondPRRefused LogEvent = "github_second_pr_refused"
 const EventGitHubCoordinatorUnknown LogEvent = "github_coordinator_unknown"
 
 // ghReadLog appends the wrapper's warning schema; callers report side-effect failures.
-func ghReadLog(_ []string, _ LogEvent, _ string, _ map[string]string) *StorageError {
-	return nil
+func ghReadLog(env []string, event LogEvent, message string, fields map[string]string) *StorageError {
+	record := map[string]string{"ts": time.Now().UTC().Format("2006-01-02T15:04:05Z"), "level": "warn", "component": "agent-gh", "event": string(event), "message": message}
+	for key, value := range fields {
+		record[key] = value
+	}
+	line, err := json.Marshal(record)
+	if err != nil {
+		return storageErr(err, "encode GitHub warning")
+	}
+	home := ghEnvValue(env, "AGENTS_HOME")
+	if home == "" {
+		home = filepath.Join(ghEnvValue(env, "HOME"), "agents")
+	}
+	return appendLog(filepath.Join(home, "logs", "agent.jsonl"), append(line, '\n'))
+}
+
+// ghEnvValue reads the supplied process environment without consulting global state.
+func ghEnvValue(env []string, name string) string {
+	for i := len(env) - 1; i >= 0; i-- {
+		if value, ok := strings.CutPrefix(env[i], name+"="); ok {
+			return value
+		}
+	}
+	return ""
 }
