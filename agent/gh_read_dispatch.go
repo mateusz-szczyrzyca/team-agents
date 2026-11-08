@@ -405,6 +405,9 @@ func (p GHDispatchParams) run(ctx context.Context, name string, args []string, i
 	if (execErr != nil && (errors.Is(execErr, exec.ErrNotFound) || errors.Is(execErr, os.ErrNotExist) || errors.Is(execErr, os.ErrPermission))) || res.ExitCode == 127 {
 		return p.refuse("agent-gh: "+name+": missing or not executable\n", 127, GHReadDispatchMissingRealGH, "the real GitHub executable is missing or not executable")
 	}
+	if execErr != nil {
+		return p.refuse("agent-gh: "+name+": a GitHub or query subprocess failed\n", max(res.ExitCode, 1), GHReadDispatchExecFailed, "a GitHub or query subprocess failed")
+	}
 	return max(res.ExitCode, 1), opErr(GHReadDispatchExecFailed, "a GitHub or query subprocess failed")
 }
 
