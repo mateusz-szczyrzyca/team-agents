@@ -94,8 +94,8 @@ func sortedMapKeys(m map[string]string) (keys []string) {
 // RegisterGitHubColors assigns a color from palette to each name in names that does not yet have one.
 // Assignments are stored in colorsPath ("<name> <#RRGGBB>\n").
 // Concurrency is handled via flock on colorsPath + ".lock".
-func RegisterGitHubColors(ctx context.Context, colorsPath string, palette []string, names []string, logger *Logger) (retErr *StorageError) {
-	_ = logger
+// The logger argument is reserved for caller compatibility; callers report storage failures.
+func RegisterGitHubColors(ctx context.Context, colorsPath string, palette []string, names []string, _ *Logger) (retErr *StorageError) {
 	if isPaletteDisabled(palette) || len(names) == 0 {
 		return nil
 	}
@@ -150,10 +150,8 @@ func RegisterGitHubColors(ctx context.Context, colorsPath string, palette []stri
 // It first takes remembered colors in colorsPath, then for any configured agents not in have,
 // assigns their color from the configuration's order (NORMAL_AGENTS, WORKER_AGENTS, sorted AGENT_TYPE, sorted INVESTIGATORS_TYPE).
 func FormatGitHubNameColors(colorsPath string, palette []string, config Config) string {
-	res, err := formatGitHubNameColorsWithLogger(colorsPath, palette, config, nil)
-	if err != nil {
-		return res
-	}
+	// A nil logger cannot produce a log-write error.
+	res, _ := formatGitHubNameColorsWithLogger(colorsPath, palette, config, nil)
 	return res
 }
 

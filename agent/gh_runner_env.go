@@ -52,6 +52,7 @@ func ResolveCoordinator(ctx context.Context, meta MetaFile, leadLookup func(ctx 
 		return ""
 	}
 	lead, err := leadLookup(ctx, team)
+	// Lookup failure is nonfatal: Bash team-get failure also leaves the coordinator empty.
 	if err != nil || lead == "" || lead == metaValue(meta, "AGENT") {
 		return ""
 	}
