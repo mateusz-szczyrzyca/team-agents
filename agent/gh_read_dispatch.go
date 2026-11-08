@@ -16,176 +16,130 @@ import (
 )
 
 var (
-	// rePullMerge identifies pull request merge endpoints.
-	rePullMerge = regexp.MustCompile(`(^|/)pulls/[0-9]+/merge$`)
-	// rePull identifies pull request collection and item endpoints.
-	rePull = regexp.MustCompile(`(^|/)pulls(/[0-9]+)?$`)
-	// reComments identifies issue and pull request comment/review endpoints.
-	reComments = regexp.MustCompile(`(^|/)(issues|pulls)/([0-9]+/)?(comments|reviews)(/|$|\?)|(^|/)reviews/[0-9]+/comments(/|$|\?)`)
+	rePullMerge      = regexp.MustCompile(`(^|/)pulls/[0-9]+/merge$`)                                                                      // rePullMerge identifies pull request merge endpoints.
+	rePull           = regexp.MustCompile(`(^|/)pulls(/[0-9]+)?$`)                                                                         // rePull identifies pull request collection and item endpoints.
+	reComments       = regexp.MustCompile(`(^|/)(issues|pulls)/([0-9]+/)?(comments|reviews)(/|$|\?)|(^|/)reviews/[0-9]+/comments(/|$|\?)`) // reComments identifies issue and pull request comment/review endpoints.
+	reGraphQLBlocked = regexp.MustCompile(`comments|reviews|reviewThreads|timelineItems|body`)                                             // reGraphQLBlocked identifies protected fields in GraphQL requests.
 )
 
 // GHDispatchParams supplies invocation parameters and execution dependencies for ghDispatch.
 type GHDispatchParams struct {
-	// Args: command arguments (e.g. os.Args[1:]).
-	Args []string
-	// Env: process environment variables.
-	Env []string
-	// Stdout: standard output destination.
-	Stdout io.Writer
-	// Stderr: standard error destination.
-	Stderr io.Writer
-	// Exec: command executor.
-	Exec Executor
+	Args           []string  // Args: command arguments.
+	Env            []string  // Env: process environment variables.
+	Stdout, Stderr io.Writer // Stdout, Stderr: output destinations.
+	Exec           Executor  // Exec: command executor.
 }
 
 // ghDispatch evaluates native GitHub read commands and member guards.
 func ghDispatch(ctx context.Context, p GHDispatchParams) (int, *GHReadDispatchError) {
 	realGH := ghEnvValue(p.Env, "AGENT_REAL_GH")
 	if realGH == "" {
-		return refuseArg(p, "agent-gh: the real gh is not known (AGENT_REAL_GH)\n", 127, GHReadDispatchMissingRealGH, "the real GitHub executable is missing or not executable")
+		return p.refuse("agent-gh: the real gh is not known (AGENT_REAL_GH)\n", 127, GHReadDispatchMissingRealGH, "the real GitHub executable is missing or not executable")
 	}
 	for _, a := range p.Args {
 		if a == "-t" || a == "--template" || strings.HasPrefix(a, "--template=") {
-			return refuseArg(p, "agent-gh: --template is not available to the agents; use --jq\n", 2, GHReadDispatchTemplateRefused, "templates cannot bypass native read filtering")
+			return p.refuse("agent-gh: --template is not available to the agents; use --jq\n", 2, GHReadDispatchTemplateRefused, "templates cannot bypass native read filtering")
 		} else if a == "-w" || a == "--web" {
-			return refuseArg(p, "agent-gh: --web is not available to the agents\n", 2, GHReadDispatchWebRefused, "web reads cannot enforce trusted-author filtering")
+			return p.refuse("agent-gh: --web is not available to the agents\n", 2, GHReadDispatchWebRefused, "web reads cannot enforce trusted-author filtering")
 		}
 	}
 	trustedSet := make(map[string]bool)
 	for _, t := range strings.Fields(ghEnvValue(p.Env, "AGENT_GITHUB_TRUSTED_RESOLVED")) {
 		trustedSet[t] = true
 	}
+	if len(p.Args) > 0 && p.Args[0] == "api" {
+		return p.handleAPI(ctx, realGH)
+	}
 	if len(p.Args) >= 2 && (p.Args[0] == "pr" || p.Args[0] == "issue") {
-		sub, act := p.Args[0], p.Args[1]
-		switch act {
-		case "create", "merge", "ready", "close", "reopen", "edit":
-			if sub == "pr" {
-				if isMem, lead := checkMember(ctx, p); isMem {
-					return memberRefusal(p, act, lead)
+		sub := p.Args[1]
+		switch sub {
+		case "list":
+			return p.handleList(ctx, realGH, trustedSet)
+		case "view", "diff", "checkout":
+			return p.handleView(ctx, realGH, trustedSet)
+		case "create", "merge", "ready", "close", "reopen", "edit", "comment", "review":
+			if p.Args[0] == "pr" && sub != "comment" && sub != "review" {
+				if isMem, lead := p.checkMember(ctx); isMem {
+					return p.memberRefusal(sub, lead)
 				}
-				if act == "create" {
-					if code, err := checkSecondPR(ctx, p, realGH); err != nil {
-						return code, err
+				if own := ghEnvValue(p.Env, "AGENT_GH_OWN_PR"); sub == "create" && own != "" {
+					var s map[string]any
+					if _, err := p.runJSON(ctx, realGH, []string{"pr", "view", own, "--json", "state"}, &s); err == nil && s["state"] == "OPEN" {
+						p.log(EventGitHubSecondPRRefused, "a second PR of a task whose PR is open is refused", map[string]string{"pr": own})
+						return p.refuse("agent-gh: this task's PR is #"+own+" and still open — push to its branch and keep its description up to date; open no other PR.\n", 1, GHReadDispatchSecondPRRefused, "the round already has an open pull request")
 					}
 				}
 			}
-			return refuseWrite(p)
-		case "comment", "review":
-			return refuseWrite(p)
-		case "list":
-			return handleList(ctx, p, realGH, trustedSet)
-		case "view", "diff", "checkout":
-			return handleView(ctx, p, realGH, trustedSet)
+			return p.refuse("agent-gh: native write formatting is not implemented yet\n", 1, GHReadDispatchWriteUnavailable, "native write formatting is not implemented yet")
 		}
 	}
-	if len(p.Args) > 0 && p.Args[0] == "api" {
-		return handleAPI(ctx, p, realGH)
-	}
-	return runReal(ctx, p, realGH, p.Args, p.Stdout, p.Stderr)
+	return p.run(ctx, realGH, p.Args, nil, p.Stdout, p.Stderr)
 }
 
 // handleAPI intercepts and filters GitHub REST and GraphQL API queries.
-func handleAPI(ctx context.Context, p GHDispatchParams, realGH string) (int, *GHReadDispatchError) {
-	var jq, path string
+func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *GHReadDispatchError) {
+	_, jq, _, rest := parseFlags(p.Args[1:])
+	var path string
 	var isMut bool
-	pass := []string{"api"}
-	for i := 1; i < len(p.Args); i++ {
-		a := p.Args[i]
-		switch {
-		case (a == "--jq" || a == "-q") && i+1 < len(p.Args):
-			jq, i = p.Args[i+1], i+1
-		case strings.HasPrefix(a, "--jq="):
-			jq = strings.TrimPrefix(a, "--jq=")
-		case (a == "-X" || a == "--method") && i+1 < len(p.Args):
-			if strings.ToUpper(p.Args[i+1]) != "GET" {
-				isMut = true
-			}
-			pass, i = append(pass, a, p.Args[i+1]), i+1
-		default:
-			if m := strings.ToUpper(strings.TrimPrefix(strings.TrimPrefix(a, "-X"), "--method=")); (strings.HasPrefix(a, "-X") || strings.HasPrefix(a, "--method=")) && m != "" && m != "GET" {
-				isMut = true
-			} else if strings.HasPrefix(a, "-f") || strings.HasPrefix(a, "-F") || a == "--input" {
-				isMut = true
-			} else if path == "" && !strings.HasPrefix(a, "-") {
-				path = a
-			}
-			pass = append(pass, a)
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		m := strings.TrimPrefix(strings.TrimPrefix(a, "-X"), "--method=")
+		if (a == "-X" || a == "--method") && i+1 < len(rest) {
+			isMut, i = isMut || strings.ToUpper(rest[i+1]) != "GET", i+1
+		} else if (m != a && strings.ToUpper(m) != "GET") || strings.HasPrefix(a, "-f") || strings.HasPrefix(a, "-F") || a == "--input" {
+			isMut = true
+		} else if path == "" && !strings.HasPrefix(a, "-") {
+			path = a
 		}
 	}
-	if path == "graphql" {
-		all := strings.Join(pass, " ")
-		for _, w := range []string{"comments", "reviews", "reviewThreads", "timelineItems", "body"} {
-			if strings.Contains(all, w) {
-				logGH(p.Env, p.Stderr, EventGitHubGraphQLRefused, "a GraphQL query for comments, reviews or bodies is refused: the agents read them through gh pr view --json or gh api …/comments", nil)
-				return refuseArg(p, "agent-gh: a GraphQL query for comments, reviews or bodies is refused — use gh pr view --json comments,reviews or gh api …/comments\n", 1, GHReadDispatchGraphQLRefused, "the GraphQL query requests protected content")
-			}
-		}
+	pass := append([]string{"api"}, rest...)
+	if path == "graphql" && reGraphQLBlocked.MatchString(strings.Join(pass, " ")) {
+		p.log(EventGitHubGraphQLRefused, "a GraphQL query for comments, reviews or bodies is refused: the agents read them through gh pr view --json or gh api …/comments", nil)
+		return p.refuse("agent-gh: a GraphQL query for comments, reviews or bodies is refused — use gh pr view --json comments,reviews or gh api …/comments\n", 1, GHReadDispatchGraphQLRefused, "the GraphQL query requests protected content")
 	}
 	clean := strings.Split(strings.Split(path, "?")[0], "#")[0]
 	isPullMut := rePullMerge.MatchString(clean) || (rePull.MatchString(clean) && isMut)
-	if isMem, lead := checkMember(ctx, p); isPullMut && isMem {
-		return memberRefusal(p, "api", lead)
+	if isMem, lead := p.checkMember(ctx); isPullMut && isMem {
+		return p.memberRefusal("api", lead)
 	}
 	if isPullMut || isMut {
-		return refuseWrite(p)
+		return p.refuse("agent-gh: native write formatting is not implemented yet\n", 1, GHReadDispatchWriteUnavailable, "native write formatting is not implemented yet")
 	}
 	if reComments.MatchString(path) {
-		var out bytes.Buffer
-		if code, err := runReal(ctx, p, realGH, pass, &out, p.Stderr); err != nil {
+		raw, code, err := p.runBuf(ctx, realGH, pass)
+		if err != nil {
 			return code, err
 		}
-		combined, combErr := combinePaginatedJSON(out.Bytes())
-		if combErr != nil {
-			return 1, combErr
+		dec, merged, pages, v := json.NewDecoder(bytes.NewReader(raw)), []any{}, 0, any(nil)
+		for dec.Decode(&v) == nil {
+			pages++
+			if arr, ok := v.([]any); ok {
+				merged = append(merged, arr...)
+			}
 		}
-		return outputJSON(ctx, p, combined, jq, true)
+		if pages > 1 {
+			return p.outputJSON(ctx, merged, jq, true)
+		}
+		return p.outputJSON(ctx, raw, jq, true)
 	}
 	if jq != "" {
 		pass = append(pass, "--jq", jq)
 	}
-	return runReal(ctx, p, realGH, pass, p.Stdout, p.Stderr)
-}
-
-// combinePaginatedJSON merges concatenated JSON values from gh api --paginate into a single JSON payload.
-func combinePaginatedJSON(raw []byte) ([]byte, *GHReadDispatchError) {
-	dec, vals := json.NewDecoder(bytes.NewReader(raw)), []any{}
-	dec.UseNumber()
-	for {
-		var v any
-		if err := dec.Decode(&v); err == io.EOF {
-			break
-		} else if err != nil {
-			return nil, opErr(GHReadDispatchInvalidJSON, "a filtered GitHub response is malformed")
-		}
-		vals = append(vals, v)
-	}
-	if len(vals) <= 1 {
-		return raw, nil
-	}
-	var merged []any
-	for _, v := range vals {
-		arr, ok := v.([]any)
-		if !ok {
-			return marshalJSON(vals[0])
-		}
-		merged = append(merged, arr...)
-	}
-	return marshalJSON(merged)
+	return p.run(ctx, realGH, pass, nil, p.Stdout, p.Stderr)
 }
 
 // parseFlags extracts --json, --jq, and -c/--comments flags from arguments.
 func parseFlags(args []string) (jsonf, jq string, comments bool, rest []string) {
 	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
+		switch a := args[i]; {
 		case a == "--json" && i+1 < len(args):
 			jsonf, i = args[i+1], i+1
 		case (a == "--jq" || a == "-q") && i+1 < len(args):
 			jq, i = args[i+1], i+1
 		case strings.HasPrefix(a, "--json="):
-			jsonf = strings.TrimPrefix(a, "--json=")
+			jsonf = a[7:]
 		case strings.HasPrefix(a, "--jq="):
-			jq = strings.TrimPrefix(a, "--jq=")
+			jq = a[5:]
 		case a == "-c" || a == "--comments":
 			comments = true
 		default:
@@ -199,9 +153,7 @@ func parseFlags(args []string) (jsonf, jq string, comments bool, rest []string) 
 func itemAuthor(it map[string]any) string {
 	for _, k := range []string{"author", "user"} {
 		if a, ok := it[k].(map[string]any); ok {
-			if l, ok := a["login"].(string); ok {
-				return l
-			}
+			return str(a["login"])
 		}
 	}
 	return ""
@@ -223,73 +175,50 @@ func decodeJSON(raw []byte, v any) *GHReadDispatchError {
 	return nil
 }
 
-// marshalJSON encodes value to JSON data and maps serialization failures to typed errors.
-func marshalJSON(v any) ([]byte, *GHReadDispatchError) {
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return nil, opErr(GHReadDispatchInvalidJSON, "a filtered GitHub response is malformed")
-	}
-	return raw, nil
-}
-
 // handleList filters PR/issue lists by trusted authors and non-fork repositories.
-func handleList(ctx context.Context, p GHDispatchParams, realGH string, trusted map[string]bool) (int, *GHReadDispatchError) {
+func (p GHDispatchParams) handleList(ctx context.Context, realGH string, trusted map[string]bool) (int, *GHReadDispatchError) {
 	kind := p.Args[0]
 	jsonf, jq, _, rest := parseFlags(p.Args[2:])
-	want := jsonf + ",author"
-	if jsonf == "" {
-		want = "number,title,state,url,author"
-		if kind == "pr" {
-			want += ",headRefName"
-		}
+	flds := "number,title,state,url,author"
+	if jsonf != "" {
+		flds = jsonf + ",author"
+	} else if kind == "pr" {
+		flds += ",headRefName"
 	}
 	if kind == "pr" {
-		want += ",isCrossRepository"
+		flds += ",isCrossRepository"
 	}
-	seen, flds := map[string]bool{}, []string{}
-	for _, f := range strings.Split(want, ",") {
-		if f = strings.TrimSpace(f); f != "" && !seen[f] {
-			seen[f], flds = true, append(flds, f)
-		}
-	}
-	args := append(append([]string{kind, "list"}, rest...), "--json", strings.Join(flds, ","))
 	var items []map[string]any
-	if code, err := runJSON(ctx, p, realGH, args, &items); err != nil {
+	if code, err := p.runJSON(ctx, realGH, append(append([]string{kind, "list"}, rest...), "--json", flds), &items); err != nil {
 		return code, err
 	}
 	kept := make([]map[string]any, 0, len(items))
 	for _, it := range items {
 		author, num := itemAuthor(it), fmt.Sprintf("%v", it["number"])
-		if cross, _ := it["isCrossRepository"].(bool); cross {
-			logGH(p.Env, p.Stderr, EventGitHubPRIgnored, "there is a pr from a fork and it's ignored", map[string]string{"author": author, "number": num})
-			continue
+		if it["isCrossRepository"] == true {
+			p.log(EventGitHubPRIgnored, "there is a pr from a fork and it's ignored", map[string]string{"author": author, "number": num})
 		} else if !trusted[author] {
 			ev := EventGitHubPRIgnored
 			if kind == "issue" {
 				ev = EventGitHubIssueIgnored
 			}
-			logGH(p.Env, p.Stderr, ev, fmt.Sprintf("there is unknown %s from unknown user and it's ignored", kind), map[string]string{"author": author, "number": num})
-			continue
+			p.log(ev, "there is unknown "+kind+" from unknown user and it's ignored", map[string]string{"author": author, "number": num})
+		} else {
+			kept = append(kept, it)
 		}
-		kept = append(kept, it)
 	}
 	if jsonf != "" {
-		raw, err := marshalJSON(kept)
-		if err != nil {
-			return 1, err
-		}
-		return outputJSON(ctx, p, raw, jq, false)
+		return p.outputJSON(ctx, kept, jq, false)
 	}
-	var buf strings.Builder
+	var out string
 	for _, it := range kept {
-		fmt.Fprintf(&buf, "#%v\t%s\t%s\t%s\n", it["number"], str(it["title"]), str(it["headRefName"]), str(it["state"]))
+		out += fmt.Sprintf("#%v\t%s\t%s\t%s\n", it["number"], str(it["title"]), str(it["headRefName"]), str(it["state"]))
 	}
-	writeErr := writeOut(p.Stdout, buf.String())
-	return writeCode(writeErr)
+	return writeResult(p.Stdout, out)
 }
 
 // handleView guards view, diff, and checkout on untrusted authors/forks and formats comments.
-func handleView(ctx context.Context, p GHDispatchParams, realGH string, trustedSet map[string]bool) (int, *GHReadDispatchError) {
+func (p GHDispatchParams) handleView(ctx context.Context, realGH string, trustedSet map[string]bool) (int, *GHReadDispatchError) {
 	kind, verb := p.Args[0], p.Args[1]
 	jsonf, jq, comments, pass := parseFlags(p.Args[2:])
 	idf, cf := "author", "comments"
@@ -298,57 +227,48 @@ func handleView(ctx context.Context, p GHDispatchParams, realGH string, trustedS
 	}
 	vargs := append([]string{kind, "view"}, pass...)
 	var who map[string]any
-	if code, err := runJSON(ctx, p, realGH, append(vargs, "--json", idf), &who); err != nil {
+	if code, err := p.runJSON(ctx, realGH, append(vargs, "--json", idf), &who); err != nil {
 		return code, err
 	}
-	author := itemAuthor(who)
-	cross, _ := who["isCrossRepository"].(bool)
+	author, cross := itemAuthor(who), who["isCrossRepository"] == true
 	if cross || !trustedSet[author] {
-		logGH(p.Env, p.Stderr, EventPRUntrustedIgnored, fmt.Sprintf("a %s from a fork or opened by an unknown account is not shown to the agents", kind), map[string]string{"author": author, "cross_repository": strconv.FormatBool(cross), "ref": strings.Join(pass, " ")})
-		return refuseArg(p, fmt.Sprintf("agent-gh: this %s is from a fork or opened by an account that is not trusted — it is not shown\n", kind), 1, GHReadDispatchForkUntrustedRefused, "the target author or repository is untrusted")
+		p.log(EventPRUntrustedIgnored, "a "+kind+" from a fork or opened by an unknown account is not shown to the agents", map[string]string{"author": author, "cross_repository": strconv.FormatBool(cross), "ref": strings.Join(pass, " ")})
+		return p.refuse("agent-gh: this "+kind+" is from a fork or opened by an account that is not trusted — it is not shown\n", 1, GHReadDispatchForkUntrustedRefused, "the target author or repository is untrusted")
 	}
 	if verb != "view" {
-		return runReal(ctx, p, realGH, append([]string{kind, verb}, pass...), p.Stdout, p.Stderr)
+		return p.run(ctx, realGH, append([]string{kind, verb}, pass...), nil, p.Stdout, p.Stderr)
 	}
-	if jsonf != "" {
-		var out bytes.Buffer
-		code, err := runReal(ctx, p, realGH, append(vargs, "--json", jsonf), &out, p.Stderr)
-		if err != nil {
+	fld := jsonf
+	if fld == "" {
+		if code, err := p.run(ctx, realGH, vargs, nil, p.Stdout, p.Stderr); err != nil || !comments {
 			return code, err
 		}
-		return outputJSON(ctx, p, out.Bytes(), jq, true)
+		fld = cf
 	}
-	if code, err := runReal(ctx, p, realGH, vargs, p.Stdout, p.Stderr); err != nil || !comments {
-		return code, err
-	}
-	var out bytes.Buffer
-	code, err := runReal(ctx, p, realGH, append(vargs, "--json", cf), &out, p.Stderr)
+	raw, code, err := p.runBuf(ctx, realGH, append(vargs, "--json", fld))
 	if err != nil {
 		return code, err
 	}
-	filtered, ferr := filterJSON(p, out.Bytes())
-	if ferr != nil {
-		return 1, ferr
+	if jsonf != "" {
+		return p.outputJSON(ctx, raw, jq, true)
 	}
 	var d struct{ Comments, Reviews []map[string]any }
-	if decErr := decodeJSON(filtered, &d); decErr != nil {
-		return 1, decErr
+	if raw, err = p.filterJSON(raw); err != nil {
+		return 1, err
+	} else if err = decodeJSON(raw, &d); err != nil {
+		return 1, err
 	}
-	var b strings.Builder
-	b.WriteString("\n-- comments and reviews (the trusted accounts' only) --\n")
-	for _, list := range [][]map[string]any{d.Comments, d.Reviews} {
-		for _, e := range list {
-			if a, body := itemAuthor(e), str(e["body"]); a != "" && body != "" {
-				fmt.Fprintf(&b, "%s: %s\n\n", a, body)
-			}
+	out := "\n-- comments and reviews (the trusted accounts' only) --\n"
+	for _, e := range append(d.Comments, d.Reviews...) {
+		if a, body := itemAuthor(e), str(e["body"]); a != "" && body != "" {
+			out += a + ": " + body + "\n\n"
 		}
 	}
-	writeErr := writeOut(p.Stdout, b.String())
-	return writeCode(writeErr)
+	return writeResult(p.Stdout, out)
 }
 
 // filterJSON applies trusted authors filter and logs ignored entries.
-func filterJSON(p GHDispatchParams, raw []byte) ([]byte, *GHReadDispatchError) {
+func (p GHDispatchParams) filterJSON(raw []byte) ([]byte, *GHReadDispatchError) {
 	filtered, ignored, valErr := ghFilterJSON(raw, strings.Fields(ghEnvValue(p.Env, "AGENT_GITHUB_TRUSTED_RESOLVED")), false)
 	if valErr != nil {
 		return nil, fromValue(GHReadDispatchInvalidJSON, valErr)
@@ -358,75 +278,58 @@ func filterJSON(p GHDispatchParams, raw []byte) ([]byte, *GHReadDispatchError) {
 		if e.Reason == ghIgnoreReasonMarkedIgnore {
 			ev, msg = EventGitHubCommentMarkedIgnored, "a comment that begins with \"ignore this mate\" is ignored"
 		}
-		logGH(p.Env, p.Stderr, ev, msg, map[string]string{"author": e.Author, "id": e.ID})
+		p.log(ev, msg, map[string]string{"author": e.Author, "id": e.ID})
 	}
 	return filtered, nil
 }
 
 // outputJSON writes formatted JSON or queries with jq if requested.
-func outputJSON(ctx context.Context, p GHDispatchParams, data []byte, jq string, filter bool) (int, *GHReadDispatchError) {
+func (p GHDispatchParams) outputJSON(ctx context.Context, data any, jq string, filter bool) (int, *GHReadDispatchError) {
+	raw, ok := data.([]byte)
+	if !ok {
+		var err error
+		if raw, err = json.Marshal(data); err != nil {
+			return 1, opErr(GHReadDispatchInvalidJSON, "a filtered GitHub response is malformed")
+		}
+	}
 	if filter {
 		var err *GHReadDispatchError
-		if data, err = filterJSON(p, data); err != nil {
+		if raw, err = p.filterJSON(raw); err != nil {
 			return 1, err
 		}
 	}
 	if jq == "" {
-		writeErr := writeOut(p.Stdout, string(append(data, '\n')))
-		return writeCode(writeErr)
+		return writeResult(p.Stdout, string(raw)+"\n")
 	}
-	res, err := p.Exec.Execute(ctx, Command{Name: "jq", Args: []string{"-r", jq}, Env: p.Env, Stdin: bytes.NewReader(data), Stdout: p.Stdout, Stderr: p.Stderr})
-	if err != nil || res.ExitCode != 0 {
-		code := res.ExitCode
-		if code == 0 {
-			code = 1
-		}
-		return code, opErr(GHReadDispatchExecFailed, "a GitHub or query subprocess failed")
-	}
-	return 0, nil
+	return p.run(ctx, "jq", []string{"-r", jq}, bytes.NewReader(raw), p.Stdout, p.Stderr)
 }
 
 // memberRefusal logs and formats member PR mutation refusals.
-func memberRefusal(p GHDispatchParams, action, lead string) (int, *GHReadDispatchError) {
+func (p GHDispatchParams) memberRefusal(action, lead string) (int, *GHReadDispatchError) {
 	coord := lead
 	if coord == "" {
 		coord = "none"
 	}
 	if action == "api" {
-		logGH(p.Env, p.Stderr, EventGitHubMemberPRRefused, "a team member's gh api PR mutation is refused: its coordinator owns the round's PR", map[string]string{"action": "api", "coordinator": coord})
-		return refuseArg(p, fmt.Sprintf("agent-gh: a team member does not create or change a PR through gh api — the round's PR is its coordinator's (%s), and the human (or --autopilot) merges it. Push your branch and tell the coordinator what is on it (a board item or a message).\n", coord), 1, GHReadDispatchMemberRefused, "only the coordinator may mutate the round pull request")
+		p.log(EventGitHubMemberPRRefused, "a team member's gh api PR mutation is refused: its coordinator owns the round's PR", map[string]string{"action": action, "coordinator": coord})
+		return p.refuse("agent-gh: a team member does not create or change a PR through gh api — the round's PR is its coordinator's ("+coord+"), and the human (or --autopilot) merges it. Push your branch and tell the coordinator what is on it (a board item or a message).\n", 1, GHReadDispatchMemberRefused, "only the coordinator may mutate the round pull request")
 	}
-	logGH(p.Env, p.Stderr, EventGitHubMemberPRRefused, fmt.Sprintf("a team member's gh pr %s is refused: its coordinator opens the round's PR", action), map[string]string{"action": action, "coordinator": coord})
-	verb, detail := action, fmt.Sprintf("the round's PR is its coordinator's (%s), and the human (or --autopilot) merges it", lead)
-	switch {
-	case lead == "":
-		detail = "the round has one, its coordinator's, and your team has no coordinator yet. Push your branch and tell the team what is on it (send_message to \"team\")"
-	case action == "create":
-		verb, detail = "open", fmt.Sprintf("the round has one, opened by its coordinator (%s). Push your branch and tell the coordinator what is on it (a board item or a message): it merges your work into the round's PR", lead)
-	case action == "ready":
+	p.log(EventGitHubMemberPRRefused, "a team member's gh pr "+action+" is refused: its coordinator opens the round's PR", map[string]string{"action": action, "coordinator": coord})
+	verb, detail := action, "the round's PR is its coordinator's ("+lead+"), and the human (or --autopilot) merges it"
+	switch action {
+	case "create":
+		verb, detail = "open", "the round has one, opened by its coordinator ("+lead+"). Push your branch and tell the coordinator what is on it (a board item or a message): it merges your work into the round's PR"
+	case "ready":
 		verb = "mark ready"
 	}
-	return refuseArg(p, fmt.Sprintf("agent-gh: a team member does not %s a PR — %s.\n", verb, detail), 1, GHReadDispatchMemberRefused, "only the coordinator may mutate the round pull request")
-}
-
-// checkSecondPR verifies the task does not already have an open pull request.
-// Inaccessible PR metadata is tolerated as missing or non-conflicting active PR.
-func checkSecondPR(ctx context.Context, p GHDispatchParams, realGH string) (int, *GHReadDispatchError) {
-	ownPR := ghEnvValue(p.Env, "AGENT_GH_OWN_PR")
-	if ownPR == "" {
-		return 0, nil
+	if lead == "" {
+		detail = "the round has one, its coordinator's, and your team has no coordinator yet. Push your branch and tell the team what is on it (send_message to \"team\")"
 	}
-	var s map[string]any
-	if code, err := runJSON(ctx, p, realGH, []string{"pr", "view", ownPR, "--json", "state"}, &s); err == nil && code == 0 && s["state"] == "OPEN" {
-		logGH(p.Env, p.Stderr, EventGitHubSecondPRRefused, "a second PR of a task whose PR is open is refused", map[string]string{"pr": ownPR})
-		return refuseArg(p, fmt.Sprintf("agent-gh: this task's PR is #%s and still open — push to its branch and keep its description up to date; open no other PR.\n", ownPR), 1, GHReadDispatchSecondPRRefused, "the round already has an open pull request")
-	}
-	return 0, nil
+	return p.refuse("agent-gh: a team member does not "+verb+" a PR — "+detail+".\n", 1, GHReadDispatchMemberRefused, "only the coordinator may mutate the round pull request")
 }
 
 // checkMember inspects environment and bus state to determine if caller is a team member.
-// Subprocess and JSON decoding errors fallback to AGENT_GH_COORDINATOR with diagnostic logging.
-func checkMember(ctx context.Context, p GHDispatchParams) (bool, string) {
+func (p GHDispatchParams) checkMember(ctx context.Context) (bool, string) {
 	lead, team, self := ghEnvValue(p.Env, "AGENT_GH_COORDINATOR"), ghEnvValue(p.Env, "AGENT_GH_TEAM"), ghEnvValue(p.Env, "AGENT_GH_SELF")
 	if team == "" {
 		return lead != "", lead
@@ -442,52 +345,46 @@ func checkMember(ctx context.Context, p GHDispatchParams) (bool, string) {
 		}
 	}
 	var out bytes.Buffer
-	res, err := p.Exec.Execute(ctx, Command{Name: bin, Args: []string{"team-get", "--dir", dir, "--team", team}, Env: p.Env, Stdout: &out})
 	var resp map[string]any
+	res, err := p.Exec.Execute(ctx, Command{Name: bin, Args: []string{"team-get", "--dir", dir, "--team", team}, Env: p.Env, Stdout: &out})
 	if err != nil || res.ExitCode != 0 || decodeJSON(out.Bytes(), &resp) != nil {
-		logGH(p.Env, p.Stderr, EventGitHubCoordinatorUnknown, "the bus did not say who coordinates the team", map[string]string{"team": team})
+		p.log(EventGitHubCoordinatorUnknown, "the bus did not say who coordinates the team", map[string]string{"team": team})
 		return lead != "", lead
 	}
-	rlead := str(resp["lead"])
-	return rlead == "" || rlead != self, rlead
+	lead = str(resp["lead"])
+	return lead == "" || lead != self, lead
 }
 
-// runReal executes real gh command via the supplied executor.
-func runReal(ctx context.Context, p GHDispatchParams, realGH string, args []string, out, err io.Writer) (int, *GHReadDispatchError) {
-	res, execErr := p.Exec.Execute(ctx, Command{Name: realGH, Args: args, Env: p.Env, Stdout: out, Stderr: err})
+// run executes a command via the supplied executor and converts failures to dispatch errors.
+func (p GHDispatchParams) run(ctx context.Context, name string, args []string, in io.Reader, out, err io.Writer) (int, *GHReadDispatchError) {
+	res, execErr := p.Exec.Execute(ctx, Command{Name: name, Args: args, Env: p.Env, Stdin: in, Stdout: out, Stderr: err})
 	if execErr == nil && res.ExitCode == 0 {
 		return 0, nil
 	}
 	if (execErr != nil && (errors.Is(execErr, exec.ErrNotFound) || errors.Is(execErr, os.ErrNotExist) || errors.Is(execErr, os.ErrPermission))) || res.ExitCode == 127 {
-		return refuseArg(p, fmt.Sprintf("agent-gh: %s: missing or not executable\n", realGH), 127, GHReadDispatchMissingRealGH, "the real GitHub executable is missing or not executable")
+		return p.refuse("agent-gh: "+name+": missing or not executable\n", 127, GHReadDispatchMissingRealGH, "the real GitHub executable is missing or not executable")
 	}
-	code := res.ExitCode
-	if code == 0 {
-		code = 1
-	}
-	return code, opErr(GHReadDispatchExecFailed, "a GitHub or query subprocess failed")
+	return max(res.ExitCode, 1), opErr(GHReadDispatchExecFailed, "a GitHub or query subprocess failed")
+}
+
+// runBuf executes real gh and captures stdout into a byte slice.
+func (p GHDispatchParams) runBuf(ctx context.Context, realGH string, args []string) ([]byte, int, *GHReadDispatchError) {
+	var out bytes.Buffer
+	code, err := p.run(ctx, realGH, args, nil, &out, p.Stderr)
+	return out.Bytes(), code, err
 }
 
 // runJSON queries real gh and decodes JSON output into target.
-func runJSON(ctx context.Context, p GHDispatchParams, realGH string, args []string, target any) (int, *GHReadDispatchError) {
-	var out bytes.Buffer
-	code, err := runReal(ctx, p, realGH, args, &out, p.Stderr)
-	if err != nil {
-		return code, err
+func (p GHDispatchParams) runJSON(ctx context.Context, realGH string, args []string, target any) (int, *GHReadDispatchError) {
+	raw, code, err := p.runBuf(ctx, realGH, args)
+	if err == nil && decodeJSON(raw, target) != nil {
+		return 1, opErr(GHReadDispatchInvalidJSON, "a filtered GitHub response is malformed")
 	}
-	if decErr := decodeJSON(out.Bytes(), target); decErr != nil {
-		return 1, decErr
-	}
-	return 0, nil
+	return code, err
 }
 
-// refuseWrite refuses native write requests until R12.
-func refuseWrite(p GHDispatchParams) (int, *GHReadDispatchError) {
-	return refuseArg(p, "agent-gh: native write formatting is not implemented yet\n", 1, GHReadDispatchWriteUnavailable, "native write formatting is not implemented yet")
-}
-
-// refuseArg prints an error message to stderr and returns the typed dispatch error.
-func refuseArg(p GHDispatchParams, msg string, code int, cause GHReadDispatchCause, doc string) (int, *GHReadDispatchError) {
+// refuse prints an error message to stderr and returns the typed dispatch error.
+func (p GHDispatchParams) refuse(msg string, code int, cause GHReadDispatchCause, doc string) (int, *GHReadDispatchError) {
 	if err := writeOut(p.Stderr, msg); err != nil {
 		return code, fromStorage(GHReadDispatchStorage, err)
 	}
@@ -496,8 +393,7 @@ func refuseArg(p GHDispatchParams, msg string, code int, cause GHReadDispatchCau
 
 // writeOut writes string data to destination writer and returns typed storage error on failure or short write.
 func writeOut(w io.Writer, s string) *StorageError {
-	n, err := io.WriteString(w, s)
-	if err != nil || n < len(s) {
+	if n, err := io.WriteString(w, s); err != nil || n < len(s) {
 		if err == nil {
 			err = io.ErrShortWrite
 		}
@@ -506,19 +402,18 @@ func writeOut(w io.Writer, s string) *StorageError {
 	return nil
 }
 
-// writeCode maps a storage error from a stdout write to exit code and dispatch error.
-func writeCode(err *StorageError) (int, *GHReadDispatchError) {
-	if err != nil {
+// writeResult writes string data to destination writer and returns exit code with dispatch error.
+func writeResult(w io.Writer, s string) (int, *GHReadDispatchError) {
+	if err := writeOut(w, s); err != nil {
 		return 1, fromStorage(GHReadDispatchStorage, err)
 	}
 	return 0, nil
 }
 
-// logGH records GitHub read-dispatch events to the append-only warning log.
-func logGH(env []string, stderr io.Writer, event LogEvent, msg string, fields map[string]string) {
-	if err := ghReadLog(env, event, msg, fields); err != nil {
-		if _, writeErr := fmt.Fprintf(stderr, "agent-gh: cannot write the log %s\n", err); writeErr != nil {
-			// Failed write to stderr cannot be reported further when stderr itself is broken.
+// log records GitHub read-dispatch events to the append-only warning log.
+func (p GHDispatchParams) log(event LogEvent, msg string, fields map[string]string) {
+	if err := ghReadLog(p.Env, event, msg, fields); err != nil {
+		if _, writeErr := fmt.Fprintf(p.Stderr, "agent-gh: cannot write the log %s\n", err); writeErr != nil {
 			return
 		}
 	}
