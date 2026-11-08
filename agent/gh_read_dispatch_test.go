@@ -244,4 +244,3 @@ func TestGHDispatchViewOptionFlagsPreserved(t *testing.T) {
 		t.Fatalf("expected '--repo my-org/my-repo' in args, got: %q", joined)
 	}
 }
-
