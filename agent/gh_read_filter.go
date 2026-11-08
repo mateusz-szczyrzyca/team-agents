@@ -115,7 +115,7 @@ func filterItem(item interface{}, trusted map[string]bool, ignored *[]ghIgnoredE
 	return m
 }
 
-// isEntry checks if object is a comment/review (has body, NOT a container).
+// isEntry checks if object is a comment/review (has body AND author/user field, NOT a container).
 // Recognizes comments independently of login validity so null/missing authors are still filtered.
 func isEntry(m map[string]interface{}) bool {
 	// Not a comment if it's a container (has comments, reviews, or latestReviews array)
@@ -124,9 +124,17 @@ func isEntry(m map[string]interface{}) bool {
 			return false
 		}
 	}
-	// Is a comment if it has a body field (even without author or with null author)
+	// Is a comment/review only if it has BOTH body AND author/user field (even if null).
+	// This preserves responses (like PR/issue objects) that have body without author field.
 	_, hasBody := m["body"].(string)
-	return hasBody
+	hasAuthor := false
+	for _, field := range []string{"author", "user"} {
+		if _, ok := m[field]; ok {
+			hasAuthor = true
+			break
+		}
+	}
+	return hasBody && hasAuthor
 }
 
 // getLogin extracts author login (prefers author.login over user.login).
