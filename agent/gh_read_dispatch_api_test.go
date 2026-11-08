@@ -164,4 +164,3 @@ func TestGHDispatchAPICacheAndPassthroughFlags(t *testing.T) {
 		}
 	}
 }
-
