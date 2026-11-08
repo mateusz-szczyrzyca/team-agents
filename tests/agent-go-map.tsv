@@ -653,6 +653,7 @@ tests/unit/install_model_prices.bats	the configuration template declares MODEL_P
 tests/unit/nostatus_autopilot.bats	--autopilot: a turn without STATUS goes back to the agent, continue as planned — no question for the human	blackbox	R34	-	planned
 tests/unit/nostatus_autopilot.bats	--autopilot: a second turn in a row without STATUS asks the human	blackbox	R34	-	planned
 tests/unit/nostatus_autopilot.bats	nostatus_autopilot: an investigator's or reviewer's task follows the --autopilot of the task that asked for it	source	R34	-	planned
+tests/unit/delegation_quality.bats	the prompt says a worker sees only the request, has no board, and how to write a request for it	blackbox	R16	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned

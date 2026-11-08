@@ -498,6 +498,11 @@
      "doc": "the request text is missing"
     },
     {
+     "name": "BoardInstruction",
+     "class": "InvalidArgument",
+     "doc": "the request tells the worker to use the board (claim or finish an item, the newest item), which a worker has no tools for"
+    },
+    {
      "name": "InvalidCapabilities",
      "class": "InvalidArgument",
      "doc": "requires contains an unknown or malformed capability"

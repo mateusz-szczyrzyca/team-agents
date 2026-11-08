@@ -876,6 +876,7 @@ type DelegateCause int
 const (
 	DelegateNotNormalTier       DelegateCause = iota // a worker or an investigator called it (delegate is for normal models) [Permission]
 	DelegateMissingRequest                           // the request text is missing [InvalidArgument]
+	DelegateBoardInstruction                         // the request tells the worker to use the board (claim or finish an item, the newest item), which a worker has no tools for [InvalidArgument]
 	DelegateInvalidCapabilities                      // requires contains an unknown or malformed capability [InvalidArgument]
 	DelegateSnapshotFailed                           // the requester commit could not be captured [Process]
 	DelegateStorage                                  // the shared state or a file could not be read or written [Storage]
@@ -888,6 +889,7 @@ type DelegateError = OpError[DelegateCause]
 var delegateCauses = [...]causeInfo{
 	{"NotNormalTier", ClassPermission},
 	{"MissingRequest", ClassInvalidArgument},
+	{"BoardInstruction", ClassInvalidArgument},
 	{"InvalidCapabilities", ClassInvalidArgument},
 	{"SnapshotFailed", ClassProcess},
 	{"Storage", ClassStorage},
