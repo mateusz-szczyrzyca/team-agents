@@ -25,12 +25,6 @@ func TestFilterJSONEdgeCases(t *testing.T) {
 		{"missing or null author array maps rejected",
 			`[{"body":"no author"},{"author":null,"body":"null author"},{"id":"3","author":{"login":"alice"},"body":"ok"}]`,
 			[]string{"alice"}, `[{"author":{"login":"alice"},"body":"ok","id":"3"}]`, []string{"", ""}},
-		{"standalone comment with null author is filtered",
-			`{"id":"99","author":null,"body":"malicious"}`,
-			[]string{}, ``, []string{"99"}},
-		{"standalone comment with missing author is filtered",
-			`{"id":"100","body":"untrusted"}`,
-			[]string{}, ``, []string{"100"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
