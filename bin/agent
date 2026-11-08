@@ -7855,6 +7855,7 @@ remote_member_start() { # proxy-task — grants the remote member on the lead an
 # mode: new, resume or fresh)
 runs_usage() {
   local id=$1
+  [[ -f $TASKS/$id/activity.jsonl ]] || return 0   # an investigation team's parent has none of its own
   jq -rn --arg cli "$(task_field "$id" TYPE)" '
     reduce inputs as $l ({run: 0, rows: {}, prev: {in: 0, cached: 0, out: 0}};
       ($l.t // "") as $t
@@ -8155,17 +8156,119 @@ debug_redact() {
 # bus, its board, its worker requests, every task's metadata, activity, errors, final report and checks, the script's
 # log, the bus messages, the branches, the round's PR, its card and tokens. Read-only. The last lines of each source
 # by default, all of them with --full; secrets redacted (debug_redact). It prints the file and its length.
+# cmd_debug_agent agent|model name days last full out — agent debug --agent / --model: a model's whole record in one
+# file — a summary of its tasks of the last days (by kind and status, failures and their reasons, turns without
+# STATUS, pauses, long runs cut, failovers, durations, tokens and cost), the worker requests that failed before a
+# task, the results its requesters rejected (an approximation from their messages), and the details of its last
+# tasks. Read-only; secrets redacted (debug_redact); archived tasks are not in it.
+cmd_debug_agent() {
+  local by=$1 name=$2 days=$3 last=$4 full=$5 out=$6 field=AGENT t c since total=0 failed=0 secs=0 timed=0 hid
+  local -a ids=() hids=() acts=()
+  [[ $by == model ]] && field=MODEL
+  since=$(date -d "$days days ago" +%s) || die "--days: a number of days"
+  for t in "$TASKS"/*/meta.env; do
+    [[ -f $t ]] || continue
+    t=$(basename "$(dirname "$t")")
+    [[ $(task_field "$t" "$field") == "$name" ]] || continue
+    c=$(task_field "$t" CREATED)
+    [[ -z $c ]] || (($(date -d "$c" +%s 2> /dev/null || echo 0) >= since)) || continue
+    ids+=("$t")
+  done
+  mapfile -t ids < <(for t in "${ids[@]}"; do printf '%s\t%s\n' "$(task_field "$t" CREATED)" "$t"; done | sort -r | cut -f2)
+  total=${#ids[@]}
+  for t in "${ids[@]}"; do acts+=("$TASKS/$t/activity.jsonl"); done
+  out=${out:-$AGENTS_HOME/debug/debug-$by-${name//[^A-Za-z0-9._-]/_}-$(date +%Y%m%d-%H%M%S).txt}
+  mkdir -p "$(dirname "$out")" || die "cannot create $(dirname "$out")"
+  {
+    set +e   # a missing or empty source is shown as such: it stops nothing
+    echo "agent debug --$by $name — $(date -Is) — tasks of the last $days days$( ((full)) && echo ' — full')"
+    echo; echo "== summary"
+    echo "tasks: $total"
+    ((total)) || echo "(none in this window: --days N widens it)"
+    if [[ $by == agent ]]; then echo "models: $(for t in "${ids[@]}"; do task_field "$t" MODEL; echo; done | sort -u | paste -sd' ')"
+    else echo "agents: $(for t in "${ids[@]}"; do task_field "$t" AGENT; echo; done | sort -u | paste -sd' ')"; fi
+    echo "by kind and status:"
+    for t in "${ids[@]}"; do echo "$(task_field "$t" KIND) $(task_field "$t" STATUS)"; done | sort | uniq -c
+    for t in "${ids[@]}"; do [[ $(task_field "$t" STATUS) != failed ]] || failed=$((failed + 1)); done
+    ((total == 0)) || printf 'failed: %d (%d%%)\n' "$failed" "$((100 * failed / total))"
+    echo "failure reasons (the notes of the failed tasks):"
+    for t in "${ids[@]}"; do
+      [[ $(task_field "$t" STATUS) == failed ]] || continue
+      c=$(task_field "$t" NOTE); echo "${c:-(no note)}"
+    done | sort | uniq -c | sort -rn | head -n 10
+    c=0
+    ((total == 0)) || c=$(cat "${acts[@]}" 2> /dev/null | grep -c 'turn without STATUS')
+    echo "turns without STATUS: ${c:-0}"
+    local logged
+    logged=$( ((total)) && grep -hF -f <(printf '"task":"%s"\n' "${ids[@]}") "$AGENTS_HOME/logs/agent.jsonl" 2> /dev/null)
+    c=$(jq -r 'select(.event == "task_paused") | .reason // "?"' <<< "$logged" 2> /dev/null | sort | uniq -c | awk '{printf "%s%s %s", (NR > 1 ? ", " : ""), $1, $2}')
+    echo "pauses: ${c:-none}"
+    echo "long runs cut: $(jq -r 'select(.event == "long_run_cut") | .task' <<< "$logged" 2> /dev/null | grep -c .)"
+    echo "failovers: $(jq -r 'select(.event == "helper_failover" or .event == "failover_done") | .task' <<< "$logged" 2> /dev/null | grep -c .)"
+    for t in "${ids[@]}"; do
+      c=$(task_field "$t" CREATED); local f; f=$(task_field "$t" FINISHED)
+      [[ -n $c && -n $f ]] || continue
+      secs=$((secs + $(date -d "$f" +%s) - $(date -d "$c" +%s))); timed=$((timed + 1))
+    done
+    ((timed == 0)) || echo "average duration: $((secs / timed / 60)) min ($timed tasks)"
+    if ((total)); then
+      local tin tcached tout tcost
+      read -r tin tcached tout tcost < <(cat "${acts[@]}" 2> /dev/null | jq -rs '
+        [.[] | select(.k == "info") | (.t // "") | capture("^usage: in (?<in>[0-9]+) \\(cached (?<cached>[0-9]+)\\), out (?<out>[0-9]+)(, cost \\$(?<cost>[0-9.]+))?")?]
+        | [(map(.in | tonumber) | add // 0), (map(.cached | tonumber) | add // 0), (map(.out | tonumber) | add // 0),
+           (map(.cost // "0" | tonumber) | add // 0)] | @tsv')
+      printf 'tokens: in %d (cached %d), out %d, cost $%.4f\n' "${tin:-0}" "${tcached:-0}" "${tout:-0}" "${tcost:-0}"
+    fi
+    if [[ $by == agent ]]; then
+      echo; echo "== worker requests that failed before a task"
+      c=$(bus helper-list --dir "$BUS_DIR" --all 2> /dev/null | while IFS= read -r c; do
+        [[ $c =~ ^H([0-9]+)\ \[failed\ →\ $name\] ]] || continue
+        grep -qx "HELPER_ID=${BASH_REMATCH[1]}" "$TASKS"/*/meta.env 2> /dev/null || echo "${c:0:240}"
+      done)
+      echo "${c:-(none)}"
+    fi
+    for t in "${ids[@]}"; do hid=$(task_field "$t" HELPER_ID); [[ -z $hid ]] || hids+=("$hid"); done
+    echo; echo "== results the requesters rejected (an approximation, from their messages)"
+    c=$(for hid in "${hids[@]}"; do
+      grep -hE "\\bH$hid\\b" "$BUS_DIR/messages.jsonl" 2> /dev/null \
+        | jq -r 'select((.text // "") | test("reject|not accepted|invalid|wrong"; "i")) | "\(.ts) \(.from): \((.text // "") | .[0:300])"' 2> /dev/null
+    done)
+    echo "${c:-(none)}"
+    for t in "${ids[@]:0:$( ((full)) && echo "$total" || echo "$last")}"; do
+      local d=$TASKS/$t n=$(( full ? 1000000 : 30 )) run
+      run=$(task_field "$t" RUN)
+      echo; echo "== task $t"
+      for c in AGENT KIND MODEL TYPE STATUS NOTE CREATED FINISHED RUN HELPER_ID PARENT_TASK TEAM; do
+        [[ -z $(task_field "$t" "$c") ]] || echo "$c=$(task_field "$t" "$c")"
+      done
+      echo "-- what it got"; head -n "$((full ? 1000000 : 40))" "$d/task.md" 2>&1
+      echo "-- what it returned"; tail -n "$n" "$d/final.md" 2>&1
+      [[ -z $run ]] || { echo "-- err-$run.log"; tail -n 10 "$d/err-$run.log" 2>&1; }
+      echo "-- activity"; tail -n "$((full ? 1000000 : 20))" "$d/activity.jsonl" 2> /dev/null | jq -r '.ts + " " + .k + " " + (.t // "")' 2>&1
+      ((full == 0)) || { echo "-- prompts"; cat "$d"/prompt-*.md 2> /dev/null; }
+    done
+    true
+  } 2>&1 | debug_redact > "$out"
+  echo "$out ($(wc -l < "$out") lines)"
+}
+
 cmd_debug() {
-  local ref="" full=0 out="" team="" n=40 t d run usage="usage: agent debug <team|task> [--full] [--out file]"
+  local ref="" full=0 out="" team="" n=40 t d run by="" name="" days=30 last=20
+  local usage="usage: agent debug <team|task> | --agent NAME | --model NAME [--days N] [--last N] [--full] [--out file]"
   local -a ids=()
   while (($#)); do
     case $1 in
       --full) full=1; shift ;;
       --out) out=${2:?$usage}; shift 2 ;;
+      --agent | --model) by=${1#--}; name=${2:?$usage}; shift 2 ;;
+      --days) days=${2:?$usage}; shift 2 ;;
+      --last) last=${2:?$usage}; shift 2 ;;
       -*) die "$usage" ;;
       *) ref=$1; shift ;;
     esac
   done
+  [[ ! $days =~ [^0-9] && ! $last =~ [^0-9] ]] || die "$usage"
+  if [[ -n $by ]]; then cmd_debug_agent "$by" "$name" "$days" "$last" "$full" "$out"; return; fi
   [[ -n $ref ]] || die "$usage"
   if [[ -f $TASKS/$ref/meta.env ]]; then team=$(task_field "$ref" TEAM); else team=$ref; fi
   if [[ -n $team ]]; then
@@ -10332,6 +10435,7 @@ agent kick <task>                         cut a run short: a team member sleeps 
 agent round-check <team|task>             a round's card: its board, members' work not in its PR, files two branches changed, workers' items
 agent spend [--days N] [--daily]          where the money goes, by model: a paid model's spending, a subscription's equivalent
 agent debug <team|task> [--full] [--out file]  everything to diagnose a team or a task, in one file, secrets redacted
+agent debug --agent NAME | --model NAME [--days N] [--last N] [--full] [--out file]  a model's whole record
 agent tokens <team|task>                  the tokens its runs used: per task (a team's helpers and investigations too), in all
 agent tokens --runs <task>                a task's tokens per run, its steps (tool calls) and input per step: the costly runs
 agent wake <task>                         resume a paused task now, not at its pause's end (a remote member's: on its node)

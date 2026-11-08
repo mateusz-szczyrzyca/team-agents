@@ -368,6 +368,13 @@ its card and tokens — and prints where it is (`~/agents/debug/` by default). I
 each source by default, all of them with `--full`. Tokens and the values of `secrets.env` are redacted, so the file
 can be shared.
 
+**Diagnosing a model.** `agent debug --agent NAME` — or `--model NAME`, every agent on that model — writes one file:
+a summary of its tasks of the last `--days` (30) days (by kind and status, failures and their reasons, turns without
+STATUS, pauses, long runs cut, failovers, the average duration, tokens and cost), the worker requests that failed
+before a task, the results its requesters rejected (an approximation from their messages), and the details of its
+last `--last` (20) tasks — what each got, what it returned, its errors and activity; `--full` adds every task and its
+prompts. Archived tasks are not in it.
+
 **Where the money goes.** `agent spend [--days N] [--daily]` counts every task's runs of the last N days (7) by
 model — a line a day and model with `--daily`. A model paid by the token (its CLI in `AGENT_PAID_CLIS`, `opencode` by
 default) shows what it spent: its provider's cost, else `MODEL_PRICES`'. A subscription's model (Claude Code, Codex)
