@@ -2570,7 +2570,7 @@ supervise_failovers() {
 # coordinator's request, whose result the coordinator gets. A team whose members all sleep while items wait
 # AGENT_BOARD_STALL_MIN tells the human ⛔ — once for the same items (stall-<team> under the bus directory).
 supervise_board() {
-  local m team lead lt tj board now id upd title details age stale mark repo a mt last
+  local m team lead lt tj board now id upd title details age stale mark repo a mt last out
   local -A teams_seen=()
   now=$(date +%s)
   for m in "$TASKS"/*/meta.env; do
@@ -2599,13 +2599,15 @@ supervise_board() {
         age=$((now - $(date -d "$upd" +%s 2> /dev/null || echo "$now")))
         ((age >= AGENT_EASY_TO_WORKER_MIN * 60)) || continue
         bus board-claim --dir "$BUS_DIR" --team "$team" --as "$lead" --id "$id" > /dev/null 2>&1 || continue
-        if bus delegate --dir "$BUS_DIR" --team "$team" --as "$lead" --task "$lt" --repo "$(task_field "$lt" REPO_NAME)" \
+        if out=$(bus delegate --dir "$BUS_DIR" --team "$team" --as "$lead" --task "$lt" --repo "$(task_field "$lt" REPO_NAME)" \
             --branch "$(task_field "$lt" BRANCH)" --worktree "$(task_field "$lt" WORKTREE)" --agent-cmd "$SELF" --home "$AGENTS_HOME" \
             --request "$title — board item $id of team $team: $details" \
-            --context "The coordinator $lead holds the item: your result goes to it." > /dev/null 2>&1; then
+            --context "The coordinator $lead holds the item: your result goes to it." 2>&1); then
           log_info easy_item_to_worker "team=$team" "item=$id" "for=$lead"
-        else
-          log_warn easy_item_to_worker_failed "team=$team" "item=$id"
+        else   # the coordinator holds the item now: it hears why no worker got it
+          log_warn easy_item_to_worker_failed "team=$team" "item=$id" "reason=${out:0:300}"
+          try easy_item_message_failed bus send --dir "$BUS_DIR" --from agent --to "$lead" \
+            "Easy board item $id ($title) is yours now: it could not go to a worker — ${out:0:400}. Do it yourself, or rewrite it as a request a worker can do and delegate it." > /dev/null
         fi
       done < <(jq -r '.board // {} | (if type == "object" then .[] else .[] end)
         | select(.status == "todo" and .level == "easy" and ((.for // "") == "")) | [.id, .updated, .title, ((.details // "") | gsub("[\t\n]"; " "))] | @tsv' <<< "$board")

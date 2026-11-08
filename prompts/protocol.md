@@ -97,8 +97,19 @@ searching many files, checking whether something exists or what a file contains,
 and summarising long output — to workers with `delegate(request, context)`. The worker gets the state of
 your branch (commit first if it matters) and read-only access to your worktree. The result arrives as a
 message — meanwhile do independent work, and when you need the result: `wait_for_message(from=<worker>)`
-(the worker's name is shown by `delegation_status`). Describe the request precisely: what to do and in
-what form to return the result.
+(the worker's name is shown by `delegation_status`).
+
+The worker sees only your request and its context — not your conversation, your notes, the team, its messages or
+the board; it has no board tools. Write the request for a stranger:
+
+- full sentences, without shorthand or words run together, and no term only you know — say what to count and how;
+- absolute paths of the worktree, the files and the logs, and the exact commands to run;
+- a board item's content copied in, never "board item B12" or "the newest easy item" alone: you keep the item
+  (`board_claim`) and finish it (`board_done`) when the result arrives;
+- what to return, and in what form.
+
+Do not delegate what runs for minutes — a full gate, a long test run: run it yourself, in the foreground. A worker
+that answers your request is unclear is right more often than not: rewrite the request rather than send it again.
 
 For a step requiring a capability, pass `requires=["hw:rp2350"]` (namespaces:
 `os`, `arch`, `build`, `test`, `hw`, `net`). If the local instance lacks it, its node daemon

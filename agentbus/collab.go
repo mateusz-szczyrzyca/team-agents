@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -604,6 +605,12 @@ func (s *Server) boardRelease(id, note string) (string, *BoardReleaseError) {
 // ---------------------------------------------------------------- worker requests (delegate)
 
 // delegate (MCP delegate) queues a worker request and spawns the `agent` helper dispatcher.
+// boardInstructionRE matches a request that tells a worker to use the board: its tools by name, claiming a board
+// item, or taking "the newest easy item" — a worker has no board tools and sees nothing of the team's board.
+var boardInstructionRE = regexp.MustCompile(`(?i)\bboard_(claim|done|progress|list|add)\b` +
+	`|\bclaim\b[^.\n]{0,40}\bboard item\b` +
+	`|\b(newest|next|latest)\s+(easy\s+board|easy|board)\s+item\b`)
+
 func (s *Server) delegate(request, context string, requires ...string) (string, *DelegateError) {
 	if s.tier == TierWorker || s.role == RoleInvestigator {
 		return "", opErr(DelegateNotNormalTier, "delegate is for normal models")
@@ -611,6 +618,11 @@ func (s *Server) delegate(request, context string, requires ...string) (string, 
 	request = strings.TrimSpace(request)
 	if request == "" {
 		return "", opErr(DelegateMissingRequest, "%s", missing("request"))
+	}
+	if boardInstructionRE.MatchString(request + "\n" + context) {
+		return "", opErr(DelegateBoardInstruction, "a worker has no board tools and sees nothing of the board: it cannot "+
+			"claim, read or finish a board item. Copy into the request what the item asks — absolute paths, the exact "+
+			"commands, what to return — and keep the item yourself (board_claim), finishing it (board_done) when the result arrives")
 	}
 	caps, cerr := canonicalJobCapabilities(requires)
 	if cerr != nil {
@@ -744,7 +756,10 @@ func collabToolDefs(inTeam bool, tier Tier) []map[string]any {
 		defs = append(defs,
 			tool("delegate", "Delegate a simple, mechanical task to a free worker (a cheap model) instead of doing it yourself and spending expensive tokens: "+
 				"listing and searching files, checking whether something exists, running a known command and summarising its output. "+
-				"The result will arrive as a message. In a team use the board first (board_add level=easy).",
+				"The result will arrive as a message. In a team use the board first (board_add level=easy). "+
+				"The worker sees only this request and its context — not your conversation, notes, team or board (it has no board tools): "+
+				"write full sentences without shorthand, with absolute paths and the exact commands, and say what to return. "+
+				"Do not delegate what runs for minutes, such as a full gate.",
 				obj(map[string]any{"request": str("Exactly what to do and in what form to return the result"), "context": str("Paths, commands, what to look for"), "requires": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Required declared capabilities; push your commit first when this needs another node"}}, "request")),
 			tool("delegation_status", "Status of your worker requests and of the queue.", obj(map[string]any{})),
 		)

@@ -314,6 +314,13 @@ round's PR the team was given; else by an open PR of the repository, from a trus
 coordinator's commit — a team that pushed its work to another team's PR. With none, the round is not reviewed and you
 hear ⛔, with what to do.
 
+**Requests a worker can do.** A worker sees only the request and its context — not the conversation, the team, its
+messages or the board, and it has no board tools. Every agent's prompt says how to write a request for it (full
+sentences, absolute paths, exact commands, a board item's content copied in, what to return) and not to delegate what
+runs for minutes, such as a full gate. The bus refuses at once a request that tells a worker to use the board (claim or
+finish an item, "the newest easy item"). An easy item the script could not hand to a worker is the coordinator's, and
+it hears why.
+
 **A turn without STATUS, under `--autopilot`.** An agent that ends its turn without a STATUS line — typically one
 that left a gate running in the background and stopped to wait for it — is not a question for you under
 `--autopilot`: it is resumed with "continue as planned", and told to run commands in the foreground and end with a
