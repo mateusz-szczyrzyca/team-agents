@@ -71,6 +71,13 @@ func TestGHDispatchAPIPaginatedIDs(t *testing.T) {
 				`{"id":200,"author":{"login":"alice"},"body":"non-array"}`,
 			},
 			0, 0, true, false},
+		{"mixed_pages_first_only",
+			[]string{
+				`[{"id":1,"author":{"login":"alice"},"body":"first-array"}]`,
+				`{"id":2,"author":{"login":"alice"},"body":"non-array"}`,
+				`[{"id":3,"author":{"login":"alice"},"body":"third-array"}]`,
+			},
+			0, 0, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
