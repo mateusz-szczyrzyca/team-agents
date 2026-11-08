@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -28,6 +29,7 @@ var (
 type GHDispatchParams struct {
 	Args           []string  // Args: command arguments.
 	Env            []string  // Env: process environment variables.
+	Stdin          io.Reader // Stdin: input stream for pass-through commands.
 	Stdout, Stderr io.Writer // Stdout, Stderr: output destinations.
 	Exec           Executor  // Exec: command executor.
 }
@@ -68,7 +70,7 @@ func ghDispatch(ctx context.Context, p GHDispatchParams) (int, *GHReadDispatchEr
 			return p.refuse("agent-gh: native write formatting is not implemented yet\n", 1, GHReadDispatchWriteUnavailable, "native write formatting is not implemented yet")
 		}
 	}
-	return p.run(ctx, realGH, p.Args, nil, p.Stdout, p.Stderr)
+	return p.run(ctx, realGH, p.Args, p.Stdin, p.Stdout, p.Stderr)
 }
 
 // handleAPI intercepts and filters GitHub REST and GraphQL API queries.
@@ -76,9 +78,18 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 	var pass []string
 	var jq, path, method string
 	var fields, hasInput bool
-	rawArgs := p.Args[1:]
+	rawArgs := slices.Clone(p.Args[1:])
 	for i := 0; i < len(rawArgs); i++ {
 		a := rawArgs[i]
+		// Normalize the current option only; values consumed below stay literal.
+		for strings.HasPrefix(a, "-i") && len(a) > 2 && a[2] != '=' {
+			pass = append(pass, "-i")
+			a = "-" + a[2:]
+		}
+		if len(a) > 2 && a[0] == '-' && strings.ContainsRune("XfFHcqtp", rune(a[1])) {
+			rawArgs = slices.Insert(rawArgs, i+1, strings.TrimPrefix(a[2:], "="))
+			a = a[:2]
+		}
 		switch {
 		case (a == "--jq" || a == "-q") && i+1 < len(rawArgs):
 			jq, i = rawArgs[i+1], i+1
@@ -93,12 +104,6 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 		case strings.HasPrefix(a, "--method="):
 			method = a[9:]
 			pass = append(pass, a)
-		case strings.HasPrefix(a, "-X="):
-			method = a[3:]
-			pass = append(pass, a)
-		case strings.HasPrefix(a, "-X") && len(a) > 2:
-			method = a[2:]
-			pass = append(pass, a)
 		case (a == "-f" || a == "--raw-field" || a == "-F" || a == "--field" || a == "--input") && i+1 < len(rawArgs):
 			fields, hasInput = true, hasInput || a == "--input" || ((a == "-F" || a == "--field") && isTypedQueryFile(rawArgs[i+1]))
 			pass = append(pass, a, rawArgs[i+1])
@@ -106,12 +111,10 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 		case strings.HasPrefix(a, "--input="):
 			fields, hasInput = true, true
 			pass = append(pass, a)
-		case strings.HasPrefix(a, "--field=") || strings.HasPrefix(a, "--raw-field=") ||
-			strings.HasPrefix(a, "-f=") || strings.HasPrefix(a, "-F=") ||
-			(strings.HasPrefix(a, "-f") && len(a) > 2) || (strings.HasPrefix(a, "-F") && len(a) > 2):
-			fields, hasInput = true, hasInput || isTypedFieldArg(a)
+		case strings.HasPrefix(a, "--field=") || strings.HasPrefix(a, "--raw-field="):
+			fields, hasInput = true, hasInput || (strings.HasPrefix(a, "--field=") && isTypedQueryFile(a[len("--field="):]))
 			pass = append(pass, a)
-		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "-c" || a == "--preview") && i+1 < len(rawArgs):
+		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "-c" || a == "-p" || a == "--preview") && i+1 < len(rawArgs):
 			pass = append(pass, a, rawArgs[i+1])
 			i++
 		default:
@@ -137,11 +140,7 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 	} else if rePullMerge.MatchString(clean) {
 		isPullMut = true
 	} else if rePull.MatchString(clean) {
-		if method != "" {
-			isPullMut = !strings.EqualFold(method, "GET")
-		} else if fields {
-			isPullMut = true
-		}
+		isPullMut = (method != "" && !strings.EqualFold(method, "GET")) || (method == "" && fields)
 	}
 	if isMem, lead := p.checkMember(ctx); isPullMut && isMem {
 		return p.memberRefusal("api", lead)
@@ -182,16 +181,14 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			if allArrays && len(merged) > 0 {
 				return p.outputJSON(ctx, merged, jq, true)
 			}
-			// Any non-array page found, return first page
 			return p.outputJSON(ctx, firstPage, jq, true)
 		}
-		// Single page: return as-is (preserves original numeric format)
 		return p.outputJSON(ctx, raw, jq, true)
 	}
 	if jq != "" {
 		pass = append(pass, "--jq", jq)
 	}
-	return p.run(ctx, realGH, pass, nil, p.Stdout, p.Stderr)
+	return p.run(ctx, realGH, pass, p.Stdin, p.Stdout, p.Stderr)
 }
 
 // checkReadFlags refuses output modes that bypass filtering only on read commands.
@@ -264,10 +261,7 @@ func (p GHDispatchParams) handleList(ctx context.Context, realGH string, trusted
 	if jsonf != "" {
 		flds = jsonf + ",author"
 	} else if kind == "pr" {
-		flds += ",headRefName"
-	}
-	if kind == "pr" {
-		flds += ",isCrossRepository"
+		flds += ",headRefName,isCrossRepository"
 	}
 	var items []map[string]any
 	if code, err := p.runJSON(ctx, realGH, append(append([]string{kind, "list"}, rest...), "--json", flds), &items); err != nil {
@@ -320,11 +314,11 @@ func (p GHDispatchParams) handleView(ctx context.Context, realGH string, trusted
 		return p.refuse("agent-gh: this "+kind+" is from a fork or opened by an account that is not trusted — it is not shown\n", 1, GHReadDispatchForkUntrustedRefused, "the target author or repository is untrusted")
 	}
 	if verb != "view" {
-		return p.run(ctx, realGH, append([]string{kind, verb}, pass...), nil, p.Stdout, p.Stderr)
+		return p.run(ctx, realGH, append([]string{kind, verb}, pass...), p.Stdin, p.Stdout, p.Stderr)
 	}
 	fld := jsonf
 	if fld == "" {
-		if code, err := p.run(ctx, realGH, vargs, nil, p.Stdout, p.Stderr); err != nil || !comments {
+		if code, err := p.run(ctx, realGH, vargs, p.Stdin, p.Stdout, p.Stderr); err != nil || !comments {
 			return code, err
 		}
 		fld = cf
@@ -336,9 +330,7 @@ func (p GHDispatchParams) handleView(ctx context.Context, realGH string, trusted
 	if jsonf != "" {
 		// Only filter if the requested --json fields include comments/reviews/latestReviews.
 		// If user requests just --json body or --json body,title, preserve as-is.
-		hasCommentFields := strings.Contains(jsonf, "comments") ||
-			strings.Contains(jsonf, "reviews") ||
-			strings.Contains(jsonf, "latestReviews")
+		hasCommentFields := strings.Contains(jsonf, "comments") || strings.Contains(jsonf, "reviews") || strings.Contains(jsonf, "latestReviews")
 		return p.outputJSON(ctx, raw, jq, hasCommentFields)
 	}
 	var d struct{ Comments, Reviews []map[string]any }
@@ -428,10 +420,11 @@ func (p GHDispatchParams) checkMember(ctx context.Context) (bool, string) {
 		bin = filepath.Join(ghEnvValue(p.Env, "HOME"), ".local/bin/agentbus")
 	}
 	if dir == "" {
-		dir = filepath.Join(ghEnvValue(p.Env, "HOME"), "agents/bus")
-		if base := ghEnvValue(p.Env, "AGENTS_HOME"); base != "" {
-			dir = filepath.Join(base, "bus")
+		base := ghEnvValue(p.Env, "AGENTS_HOME")
+		if base == "" {
+			base = filepath.Join(ghEnvValue(p.Env, "HOME"), "agents")
 		}
+		dir = filepath.Join(base, "bus")
 	}
 	var out, errOut bytes.Buffer
 	var resp map[string]any
@@ -514,22 +507,5 @@ func (p GHDispatchParams) log(event LogEvent, msg string, fields map[string]stri
 // isTypedQueryFile reports whether parameter val sets query to a file or stdin in a typed field flag.
 func isTypedQueryFile(val string) bool {
 	k, v, ok := strings.Cut(val, "=")
-	if !ok {
-		return false
-	}
-	return strings.TrimSpace(k) == "query" && strings.HasPrefix(strings.TrimSpace(v), "@")
-}
-
-// isTypedFieldArg reports whether flag arg is a typed field flag loading a GraphQL query from a file or stdin.
-func isTypedFieldArg(arg string) bool {
-	switch {
-	case strings.HasPrefix(arg, "--field="):
-		return isTypedQueryFile(arg[len("--field="):])
-	case strings.HasPrefix(arg, "-F="):
-		return isTypedQueryFile(arg[len("-F="):])
-	case strings.HasPrefix(arg, "-F") && len(arg) > 2:
-		return isTypedQueryFile(arg[2:])
-	default:
-		return false
-	}
+	return ok && strings.TrimSpace(k) == "query" && strings.HasPrefix(strings.TrimSpace(v), "@")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 )
 
@@ -17,6 +18,7 @@ func runGH(args []string, env []string, stdout io.Writer, stderr io.Writer) int 
 	code, err := ghDispatch(context.Background(), GHDispatchParams{
 		Args:   args,
 		Env:    env,
+		Stdin:  os.Stdin,
 		Stdout: stdout,
 		Stderr: stderr,
 		Exec:   OSExecutor{},
