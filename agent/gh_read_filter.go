@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -56,7 +57,10 @@ func ghFilterJSON(raw []byte, trusted []string, _ bool) ([]byte, []ghIgnoredEntr
 	}
 
 	var data interface{}
-	if err := json.Unmarshal(raw, &data); err != nil {
+	// UseNumber keeps large numeric IDs exact as json.Number instead of float64.
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&data); err != nil {
 		return nil, nil, valueWrap(err, "invalid JSON")
 	}
 
@@ -67,6 +71,10 @@ func ghFilterJSON(raw []byte, trusted []string, _ bool) ([]byte, []ghIgnoredEntr
 	if err != nil {
 		return nil, nil, valueWrap(err, "marshal failed")
 	}
+	// A fully ignored standalone object filters to nil; emit empty bytes, not "null".
+	if filtered == nil {
+		return []byte{}, ignored, nil
+	}
 	return result, ignored, nil
 }
 
@@ -74,7 +82,8 @@ func ghFilterJSON(raw []byte, trusted []string, _ bool) ([]byte, []ghIgnoredEntr
 func filter(data interface{}, trusted map[string]bool, ignored *[]ghIgnoredEntry) interface{} {
 	switch v := data.(type) {
 	case []interface{}:
-		var result []interface{}
+		// Start non-nil so an all-filtered array marshals as [] not null.
+		result := []interface{}{}
 		for _, item := range v {
 			if filtered := filterItem(item, trusted, ignored); filtered != nil {
 				result = append(result, filtered)
@@ -197,6 +206,9 @@ func idString(v interface{}) string {
 	switch x := v.(type) {
 	case string:
 		return x
+	case json.Number:
+		// Preserve numeric IDs exactly as they appeared in the JSON.
+		return x.String()
 	case float64:
 		// Preserve numeric IDs as strings (JSON parses numbers as float64)
 		if x == float64(int64(x)) {
