@@ -131,15 +131,34 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			return code, err
 		}
 		dec, merged, pages, v := json.NewDecoder(bytes.NewReader(raw)), []any{}, 0, any(nil)
-		for dec.Decode(&v) == nil {
+		dec.UseNumber() // Preserve numeric precision for large IDs
+		var firstPage any
+		var decErr error
+		for decErr = dec.Decode(&v); decErr == nil; decErr = dec.Decode(&v) {
 			pages++
+			if pages == 1 {
+				firstPage = v
+			}
 			if arr, ok := v.([]any); ok {
 				merged = append(merged, arr...)
 			}
 		}
-		if pages > 1 {
-			return p.outputJSON(ctx, merged, jq, true)
+		// Non-EOF decode error means malformed JSON
+		if decErr != nil && decErr != io.EOF {
+			return p.refuse("", 1, GHReadDispatchInvalidJSON, "a paginated GitHub response contains malformed JSON")
 		}
+		if pages == 0 {
+			return p.refuse("", 1, GHReadDispatchInvalidJSON, "a GitHub response is empty")
+		}
+		// Multiple pages: use merged array of all array pages, or first page if non-array
+		if pages > 1 {
+			if len(merged) > 0 {
+				return p.outputJSON(ctx, merged, jq, true)
+			}
+			// Multiple pages but no arrays found, use first page
+			return p.outputJSON(ctx, firstPage, jq, true)
+		}
+		// Single page: return as-is (preserves original numeric format)
 		return p.outputJSON(ctx, raw, jq, true)
 	}
 	if jq != "" {
