@@ -21,7 +21,9 @@ func TestGHDispatchViewOptionFlagsPreserved(t *testing.T) {
 	exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
 		capturedArgs = cmd.Args
 		if cmd.Stdout != nil {
-			_, _ = cmd.Stdout.Write([]byte(`{"author":{"login":"trusted_user"},"isCrossRepository":false}`))
+			if n, err := cmd.Stdout.Write([]byte(`{"author":{"login":"trusted_user"},"isCrossRepository":false}`)); err != nil || n == 0 {
+				t.Fatalf("failed to write response: %v", err)
+			}
 		}
 		return CommandResult{ExitCode: 0}, nil
 	}}
