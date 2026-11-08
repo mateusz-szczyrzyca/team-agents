@@ -314,6 +314,13 @@ round's PR the team was given; else by an open PR of the repository, from a trus
 coordinator's commit — a team that pushed its work to another team's PR. With none, the round is not reviewed and you
 hear ⛔, with what to do.
 
+**A turn without STATUS, under `--autopilot`.** An agent that ends its turn without a STATUS line — typically one
+that left a gate running in the background and stopped to wait for it — is not a question for you under
+`--autopilot`: it is resumed with "continue as planned", and told to run commands in the foreground and end with a
+STATUS. A reviewer or an investigator follows the `--autopilot` of the task that asked for it. You get the question
+only when the same agent does it again on its next turn (log: `nostatus_autopilot_bounced`). Without `--autopilot`
+such a turn is your question, as before.
+
 **A failed coordinator is replaced.** When a team's coordinator fails, the script makes one of its members at work
 the coordinator — the first of `AGENT_COORDINATOR_PREFER` among them, else the first of them — and wakes it with what
 happened; you hear who coordinates now. A coordinator out of its team (failed, stopped, excluded, hung) can also be
