@@ -25,7 +25,10 @@ func runGH(args []string, env []string, stdout io.Writer, stderr io.Writer) int 
 		switch err.Cause {
 		case GHReadDispatchInvalidJSON, GHReadDispatchStorage:
 			if _, werr := fmt.Fprintf(stderr, "agent-gh: %s\n", err.Message); werr != nil {
-				return 1
+				if code == 0 {
+					return 1
+				}
+				return code
 			}
 		case GHReadDispatchExecFailed:
 			// Process failure: subprocess already wrote its diagnostic to stderr; preserve its exit code.
