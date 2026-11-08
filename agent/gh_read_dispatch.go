@@ -261,7 +261,10 @@ func (p GHDispatchParams) handleList(ctx context.Context, realGH string, trusted
 	if jsonf != "" {
 		flds = jsonf + ",author"
 	} else if kind == "pr" {
-		flds += ",headRefName,isCrossRepository"
+		flds += ",headRefName"
+	}
+	if kind == "pr" {
+		flds += ",isCrossRepository"
 	}
 	var items []map[string]any
 	if code, err := p.runJSON(ctx, realGH, append(append([]string{kind, "list"}, rest...), "--json", flds), &items); err != nil {
