@@ -21,7 +21,9 @@ func TestGHDispatchAPIFlagBeforePath(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
 				if cmd.Stdout != nil {
-					_, _ = cmd.Stdout.Write([]byte(tc.untrustedComment))
+					if n, err := cmd.Stdout.Write([]byte(tc.untrustedComment)); err != nil || n == 0 {
+						t.Fatalf("failed to write untrusted comment: %v", err)
+					}
 				}
 				return CommandResult{ExitCode: 0}, nil
 			}}
@@ -85,7 +87,9 @@ func TestGHDispatchAPIPaginatedIDs(t *testing.T) {
 				// All pages written at once (simulating gh --paginate output)
 				if cmd.Stdout != nil {
 					for _, page := range tc.pages {
-						_, _ = cmd.Stdout.Write([]byte(page))
+						if n, err := cmd.Stdout.Write([]byte(page)); err != nil || n == 0 {
+							t.Fatalf("failed to write page: %v", err)
+						}
 					}
 				}
 				return CommandResult{ExitCode: 0}, nil
