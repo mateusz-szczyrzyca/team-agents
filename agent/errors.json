@@ -1,6 +1,22 @@
 {
  "operations": [
   {
+   "type": "GHReadDispatch",
+   "op": "gh_read_dispatch",
+   "what": "native GitHub read filtering",
+   "causes": [
+    {"name": "MissingRealGH", "class": "NotFound", "doc": "the real GitHub executable is missing or not executable"},
+    {"name": "TemplateRefused", "class": "InvalidArgument", "doc": "templates cannot bypass native read filtering"},
+    {"name": "WebRefused", "class": "InvalidArgument", "doc": "web reads cannot enforce trusted-author filtering"},
+    {"name": "GraphQLRefused", "class": "Permission", "doc": "the GraphQL query requests protected content"},
+    {"name": "ForkUntrustedRefused", "class": "Permission", "doc": "the target author or repository is untrusted"},
+    {"name": "MemberRefused", "class": "Permission", "doc": "only the coordinator may mutate the round pull request"},
+    {"name": "SecondPRRefused", "class": "Conflict", "doc": "the round already has an open pull request"},
+    {"name": "ExecFailed", "class": "Process", "doc": "a GitHub or query subprocess failed"},
+    {"name": "InvalidJSON", "class": "InvalidArgument", "doc": "a filtered GitHub response is malformed"}
+   ]
+  },
+  {
    "type": "Ack",
    "op": "ack",
    "what": "terminal task acknowledgement",
