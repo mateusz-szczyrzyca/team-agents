@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
 )
@@ -13,12 +14,23 @@ func ghFastPath(argv0 string) bool {
 
 // runGH executes the native wrapper before configuration can run shell code.
 func runGH(args []string, env []string, stdout io.Writer, stderr io.Writer) int {
-	code, _ := ghDispatch(context.Background(), GHDispatchParams{
+	code, err := ghDispatch(context.Background(), GHDispatchParams{
 		Args:   args,
 		Env:    env,
 		Stdout: stdout,
 		Stderr: stderr,
 		Exec:   OSExecutor{},
 	})
+	if err != nil {
+		if err.Cause == GHReadDispatchInvalidJSON {
+			if _, werr := fmt.Fprintf(stderr, "agent-gh: %s\n", err.Message); werr != nil {
+				return 1
+			}
+		}
+		if code == 0 {
+			return 1
+		}
+		return code
+	}
 	return code
 }
