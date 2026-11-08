@@ -668,6 +668,15 @@ tests/unit/fresh_member_done.bats	a member's second DONE in a row finishes it as
 tests/unit/fresh_member_done.bats	a member's DONE without a claimed item finishes it at once	blackbox	R29B	-	planned
 tests/unit/fresh_member_done.bats	a member's DONE in a finished team finishes it at once, its claimed item or not	blackbox	R29B	-	planned
 tests/unit/fresh_member_done.bats	a remote team member's DONE finishes it as before: its board lives on the lead, not on this bus	blackbox	R29B	-	planned
+tests/unit/test_lock.bats	a free lock: the command runs, its exit status comes through, and the lock is free again after it	source	R02	-	planned
+tests/unit/test_lock.bats	a busy lock refuses at once with the message every agent knows, exit 75, and says who holds it	source	R02	-	planned
+tests/unit/test_lock.bats	a holder that died frees the lock at once: no wait for the limit	source	R02	-	planned
+tests/unit/test_lock.bats	a holder alive past TEST_LOCK_STALE_MIN is taken for hung: its process group is killed, the lock taken over	source	R02	-	planned
+tests/unit/test_lock.bats	a test run inside a test run (make gate's own steps, the tests of the gate) does not lock again	source	R02	-	planned
+tests/unit/test_lock.bats	TEST_LOCK_WAIT=1 (or GATE_WAIT=1) waits for the holder instead of refusing	source	R02	-	planned
+tests/unit/test_lock.bats	an interrupted test run stops its commands and frees the lock	source	R02	-	planned
+tests/unit/test_lock.bats	every Makefile target that runs tests goes through tools/test-lock.sh	source	R02	-	planned
+tests/unit/test_lock.bats	every agent's prompt knows the busy message and what to do, and AGENTS.md describes the lock	source	R02	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
