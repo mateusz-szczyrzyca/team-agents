@@ -667,6 +667,7 @@ tests/unit/fresh_member_done.bats	a member's DONE while it holds a claimed item 
 tests/unit/fresh_member_done.bats	a member's second DONE in a row finishes it as before: its items go back to the board	blackbox	R29B	-	planned
 tests/unit/fresh_member_done.bats	a member's DONE without a claimed item finishes it at once	blackbox	R29B	-	planned
 tests/unit/fresh_member_done.bats	a member's DONE in a finished team finishes it at once, its claimed item or not	blackbox	R29B	-	planned
+tests/unit/fresh_member_done.bats	a remote team member's DONE finishes it as before: its board lives on the lead, not on this bus	blackbox	R29B	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned

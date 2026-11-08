@@ -102,3 +102,19 @@ member_claims_then_done() {
   ! grep -q '"event":"member_done_bounced"' "$AGENTS_HOME/logs/agent.jsonl" || false
   agent stop --running > /dev/null
 }
+
+@test "a remote team member's DONE finishes it as before: its board lives on the lead, not on this bus" {
+  # the runner died (exit 3) when it read the board of a team this bus does not have. The fields are written between
+  # the runs: a run reads them when it starts
+  scenario '{"solo": {"new": "questions-file", "resume": "done"}}'
+  agent run solo "a task" > /dev/null
+  t=$(task_of solo)
+  wait_status "$t" waiting
+  printf 'TEAM=T\nMEMBER=solo@node2\nREMOTE_TEAM=1\nJOB_LEAD=http://127.0.0.1:9\n' >> "$AGENTS_HOME/tasks/$t/meta.env"
+  sed -i 's/^\*\*Answer:\*\*$/**Answer:** ok/' "$AGENTS_HOME/tasks/$t/questions-1.md"
+  printf '\n** ANSWERED **\n' >> "$AGENTS_HOME/tasks/$t/questions-1.md"
+  agent _answers_saved "$t" 1
+  wait_status "$t" 'done'
+  [ "$(meta "$t" RUN)" = 2 ]
+  ! grep -q '"event":"member_done_bounced"' "$AGENTS_HOME/logs/agent.jsonl" || false
+}
