@@ -15,7 +15,7 @@ func TestGHDispatchViewBodyOnlyPreservation(t *testing.T) {
 		args          []string // pr/issue view command args
 		authorResp    string   // response from first --json author call
 		bodyResp      string   // response from second --json call for body
-		wantPreserved bool    // should body be in output unchanged
+		wantPreserved bool     // should body be in output unchanged
 	}{
 		{
 			"pr_view_json_body_title_state",
