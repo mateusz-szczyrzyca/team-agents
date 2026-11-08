@@ -16,10 +16,12 @@ import (
 )
 
 var (
-	rePullMerge      = regexp.MustCompile(`(^|/)pulls/[0-9]+/merge$`)                                                                      // rePullMerge identifies pull request merge endpoints.
-	rePull           = regexp.MustCompile(`(^|/)pulls(/[0-9]+)?$`)                                                                         // rePull identifies pull request collection and item endpoints.
-	reComments       = regexp.MustCompile(`(^|/)(issues|pulls)/([0-9]+/)?(comments|reviews)(/|$|\?)|(^|/)reviews/[0-9]+/comments(/|$|\?)`) // reComments identifies issue and pull request comment/review endpoints.
-	reGraphQLBlocked = regexp.MustCompile(`comments|reviews|reviewThreads|timelineItems|body`)                                             // reGraphQLBlocked identifies protected fields in GraphQL requests.
+	rePullMerge       = regexp.MustCompile(`(^|/)pulls/[0-9]+/merge$`)                                                                      // rePullMerge identifies pull request merge endpoints.
+	rePull            = regexp.MustCompile(`(^|/)pulls(/[0-9]+)?$`)                                                                         // rePull identifies pull request collection and item endpoints.
+	reComments        = regexp.MustCompile(`(^|/)(issues|pulls)/([0-9]+/)?(comments|reviews)(/|$|\?)|(^|/)reviews/[0-9]+/comments(/|$|\?)`) // reComments identifies issue and pull request comment/review endpoints.
+	reGraphQLBlocked  = regexp.MustCompile(`comments|reviews|reviewThreads|timelineItems|body`)                                             // reGraphQLBlocked identifies protected fields in GraphQL requests.
+	reGraphQLMutation = regexp.MustCompile(`(?i)\bmutation\b`)                                                                              // reGraphQLMutation identifies mutation operations in GraphQL queries.
+	reGraphQLPullMut  = regexp.MustCompile(`(?i)pull_?request`)                                                                             // reGraphQLPullMut identifies pull request operations in GraphQL queries.
 )
 
 // GHDispatchParams supplies invocation parameters and execution dependencies for ghDispatch.
@@ -73,7 +75,7 @@ func ghDispatch(ctx context.Context, p GHDispatchParams) (int, *GHReadDispatchEr
 func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *GHReadDispatchError) {
 	var pass []string
 	var jq, path, method string
-	var fields bool
+	var fields, hasInput bool
 	rawArgs := p.Args[1:]
 	for i := 0; i < len(rawArgs); i++ {
 		a := rawArgs[i]
@@ -98,10 +100,13 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			method = a[2:]
 			pass = append(pass, a)
 		case (a == "-f" || a == "--raw-field" || a == "-F" || a == "--field" || a == "--input") && i+1 < len(rawArgs):
-			fields = true
+			fields, hasInput = true, hasInput || a == "--input"
 			pass = append(pass, a, rawArgs[i+1])
 			i++
-		case strings.HasPrefix(a, "--field=") || strings.HasPrefix(a, "--raw-field=") || strings.HasPrefix(a, "--input=") ||
+		case strings.HasPrefix(a, "--input="):
+			fields, hasInput = true, true
+			pass = append(pass, a)
+		case strings.HasPrefix(a, "--field=") || strings.HasPrefix(a, "--raw-field=") ||
 			strings.HasPrefix(a, "-f=") || strings.HasPrefix(a, "-F=") ||
 			(strings.HasPrefix(a, "-f") && len(a) > 2) || (strings.HasPrefix(a, "-F") && len(a) > 2):
 			fields = true
@@ -117,13 +122,19 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 		}
 	}
 	pass = append([]string{"api"}, pass...)
-	if path == "graphql" && reGraphQLBlocked.MatchString(strings.Join(pass, " ")) {
-		p.log(EventGitHubGraphQLRefused, "a GraphQL query for comments, reviews or bodies is refused: the agents read them through gh pr view --json or gh api …/comments", nil)
-		return p.refuse("agent-gh: a GraphQL query for comments, reviews or bodies is refused — use gh pr view --json comments,reviews or gh api …/comments\n", 1, GHReadDispatchGraphQLRefused, "the GraphQL query requests protected content")
-	}
 	clean := strings.Split(strings.Split(path, "?")[0], "#")[0]
 	isPullMut := false
-	if rePullMerge.MatchString(clean) {
+	isMut := (method != "" && !strings.EqualFold(method, "GET")) || (method == "" && fields && path != "graphql")
+	if path == "graphql" {
+		passStr := strings.Join(pass, " ")
+		if reGraphQLBlocked.MatchString(passStr) {
+			p.log(EventGitHubGraphQLRefused, "a GraphQL query for comments, reviews or bodies is refused: the agents read them through gh pr view --json or gh api …/comments", nil)
+			return p.refuse("agent-gh: a GraphQL query for comments, reviews or bodies is refused — use gh pr view --json comments,reviews or gh api …/comments\n", 1, GHReadDispatchGraphQLRefused, "the GraphQL query requests protected content")
+		}
+		if hasInput || reGraphQLMutation.MatchString(passStr) {
+			isMut, isPullMut = true, reGraphQLPullMut.MatchString(passStr)
+		}
+	} else if rePullMerge.MatchString(clean) {
 		isPullMut = true
 	} else if rePull.MatchString(clean) {
 		if method != "" {
@@ -135,7 +146,6 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 	if isMem, lead := p.checkMember(ctx); isPullMut && isMem {
 		return p.memberRefusal("api", lead)
 	}
-	isMut := (method != "" && !strings.EqualFold(method, "GET")) || (method == "" && fields && path != "graphql")
 	if isPullMut || isMut {
 		return p.refuse("agent-gh: native write formatting is not implemented yet\n", 1, GHReadDispatchWriteUnavailable, "native write formatting is not implemented yet")
 	}
