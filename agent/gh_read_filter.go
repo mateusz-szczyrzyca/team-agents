@@ -70,6 +70,10 @@ func filter(data interface{}, trusted map[string]bool, ignored *[]ghIgnoredEntry
 		// Start non-nil so an all-filtered array marshals as [] not null.
 		result := []interface{}{}
 		for _, item := range v {
+			if arr, ok := item.([]interface{}); ok {
+				result = append(result, filter(arr, trusted, ignored))
+				continue
+			}
 			if filtered := filterItem(item, trusted, ignored); filtered != nil {
 				result = append(result, filtered)
 			}

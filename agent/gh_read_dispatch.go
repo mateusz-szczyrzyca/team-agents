@@ -106,7 +106,7 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			(strings.HasPrefix(a, "-f") && len(a) > 2) || (strings.HasPrefix(a, "-F") && len(a) > 2):
 			fields = true
 			pass = append(pass, a)
-		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "--preview") && i+1 < len(rawArgs):
+		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "-c" || a == "--preview") && i+1 < len(rawArgs):
 			pass = append(pass, a, rawArgs[i+1])
 			i++
 		default:
@@ -437,6 +437,9 @@ func (p GHDispatchParams) run(ctx context.Context, name string, args []string, i
 	}
 	if (execErr != nil && (errors.Is(execErr, exec.ErrNotFound) || errors.Is(execErr, os.ErrNotExist) || errors.Is(execErr, os.ErrPermission))) || res.ExitCode == 127 {
 		return p.refuse("agent-gh: "+name+": missing or not executable\n", 127, GHReadDispatchMissingRealGH, "the real GitHub executable is missing or not executable")
+	}
+	if execErr != nil {
+		return p.refuse("agent-gh: "+name+": a GitHub or query subprocess failed\n", max(res.ExitCode, 1), GHReadDispatchExecFailed, "a GitHub or query subprocess failed")
 	}
 	return max(res.ExitCode, 1), opErr(GHReadDispatchExecFailed, "a GitHub or query subprocess failed")
 }

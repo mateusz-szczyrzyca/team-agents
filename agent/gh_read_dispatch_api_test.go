@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -102,6 +103,64 @@ func TestGHDispatchAPIMethodFieldClassification(t *testing.T) {
 		})
 		if !calledRealGH || code != 0 || err != nil {
 			t.Fatalf("harmless graphql: called=%v code=%d err=%v stderr=%q", calledRealGH, code, err, stderr.String())
+		}
+	}
+}
+
+// TestGHDispatchAPICacheAndPassthroughFlags verifies -c cache option is treated as a two-token
+// flag without corrupting endpoint path, and --comments/--json pass through intact without stripping.
+func TestGHDispatchAPICacheAndPassthroughFlags(t *testing.T) {
+	// 1. -c 1h before comments endpoint must preserve arguments and filter comments.
+	{
+		var stdout, stderr bytes.Buffer
+		var capturedArgs []string
+		exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
+			capturedArgs = cmd.Args
+			_, _ = cmd.Stdout.Write([]byte(`[{"id":"1","author":{"login":"untrusted_user"},"body":"hello"}]`))
+			return CommandResult{ExitCode: 0}, nil
+		}}
+		args := []string{"api", "-c", "1h", "repos/o/r/issues/7/comments"}
+		env := []string{"AGENT_REAL_GH=/bin/gh", "AGENT_GITHUB_TRUSTED_RESOLVED=trusted_user"}
+		code, err := ghDispatch(context.Background(), GHDispatchParams{
+			Args:   args,
+			Env:    env,
+			Stdout: &stdout,
+			Stderr: &stderr,
+			Exec:   exec,
+		})
+		if code != 0 || err != nil {
+			t.Fatalf("code=%d err=%v stderr=%q", code, err, stderr.String())
+		}
+		if len(capturedArgs) < 4 || capturedArgs[1] != "-c" || capturedArgs[2] != "1h" {
+			t.Fatalf("captured args missing -c 1h: %v", capturedArgs)
+		}
+		if strings.Contains(stdout.String(), "untrusted_user") {
+			t.Fatalf("untrusted comment was not filtered: %q", stdout.String())
+		}
+	}
+
+	// 2. --comments and --json flags must pass through to real gh without being stripped.
+	{
+		var capturedArgs []string
+		exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
+			capturedArgs = cmd.Args
+			return CommandResult{ExitCode: 0}, nil
+		}}
+		args := []string{"api", "repos/o/r/issues/7", "--comments", "--json", "body"}
+		env := []string{"AGENT_REAL_GH=/bin/gh"}
+		code, err := ghDispatch(context.Background(), GHDispatchParams{
+			Args:   args,
+			Env:    env,
+			Stdout: &bytes.Buffer{},
+			Stderr: &bytes.Buffer{},
+			Exec:   exec,
+		})
+		if code != 0 || err != nil {
+			t.Fatalf("code=%d err=%v", code, err)
+		}
+		want := "api repos/o/r/issues/7 --comments --json body"
+		if strings.Join(capturedArgs, " ") != want {
+			t.Fatalf("captured args = %q, want %q", strings.Join(capturedArgs, " "), want)
 		}
 	}
 }
