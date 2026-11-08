@@ -660,6 +660,13 @@ tests/unit/debug_agent.bats	agent debug --model: the tasks of every agent on tha
 tests/unit/debug_agent.bats	agent debug --agent --days and --last: older tasks out of the window; the details of the last ones only	blackbox	R53B	-	planned
 tests/unit/debug_agent.bats	agent debug --agent: results the requesters rejected, an approximation from their messages	blackbox	R53B	-	planned
 tests/unit/debug_agent.bats	agent spend: a task without an activity file of its own is no jq error	blackbox	R53B	-	planned
+tests/unit/fresh_member_done.bats	a resumed claude run past AGENT_FRESH_SESSION_MAX a step is followed by a fresh session, under twice its start	source	R23	-	planned
+tests/unit/fresh_member_done.bats	a CLI without AGENT_FRESH_SESSION_MAX keeps the rule of twice its session starts	source	R23	-	planned
+tests/unit/fresh_member_done.bats	a fresh run past AGENT_FRESH_SESSION_MAX is resumed next: no fresh session after fresh session	source	R23	-	planned
+tests/unit/fresh_member_done.bats	a member's DONE while it holds a claimed item resumes it once, in a fresh session, about the item	blackbox	R29B	-	planned
+tests/unit/fresh_member_done.bats	a member's second DONE in a row finishes it as before: its items go back to the board	blackbox	R29B	-	planned
+tests/unit/fresh_member_done.bats	a member's DONE without a claimed item finishes it at once	blackbox	R29B	-	planned
+tests/unit/fresh_member_done.bats	a member's DONE in a finished team finishes it at once, its claimed item or not	blackbox	R29B	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
