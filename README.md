@@ -314,6 +314,12 @@ round's PR the team was given; else by an open PR of the repository, from a trus
 coordinator's commit — a team that pushed its work to another team's PR. With none, the round is not reviewed and you
 hear ⛔, with what to do.
 
+**A member's DONE while it holds an item.** A member that ends with `STATUS: DONE` while it holds a claimed board item
+has most likely given up, not finished: it is resumed once, in a fresh session, told which items it holds — close
+them, go on with them, or give them back with a note and sleep. A second DONE in a row finishes it as before, its
+items back on the board. A DONE without a claimed item, or in a finished team, finishes it at once
+(log: `member_done_bounced`).
+
 **Requests a worker can do.** A worker sees only the request and its context — not the conversation, the team, its
 messages or the board, and it has no board tools. Every agent's prompt says how to write a request for it (full
 sentences, absolute paths, exact commands, a board item's content copied in, what to return) and not to delegate what
@@ -782,6 +788,7 @@ Then:
 | `AGENT_PROMPT_CHECKPOINTS` | a prompt carries the team's (or task's) newest checkpoints only, and says in which file the earlier ones are; `0` all (2) |
 | `AGENT_FRESH_SESSION_TOKENS` | a run that read more context a step (its input divided by its tool calls, as `agent tokens --runs` shows) is not resumed: the next run starts a fresh session — the full prompt, the last report, the files changed, the team's checkpoint, then why it was woken; `0` never (80000) |
 | `AGENT_FRESH_SESSION_RATIO` | …and only when that run read more than this many times the median of the task's own session starts (its new and fresh runs) — a fresh session reads much from its start, and a fixed threshold alone sent nearly every run to a new one; `0` no such check (2) |
+| `AGENT_FRESH_SESSION_MAX` | `CLI=tokens` pairs, `claude=120000` by default: a resumed run of that CLI that read more context a step goes to a fresh session whatever the ratio — its context window is small (Claude's 200,000), and a model near it gives up. A fresh run past it is resumed next. Empty: none |
 | `AGENT_LONG_RUN_STEPS` | a team member's run of more tool calls is asked, in every answer of its bus server, to end; it is woken again at once, in a fresh session; `0` never (120) |
 | `AGENT_LONG_RUN_HARD` | a team member's run of this many tool calls is ended by the runner — asked to end at `AGENT_LONG_RUN_STEPS`, an agent may go on —; it sleeps and is woken at once in a fresh session; `0` never (200) |
 | `AUTO_MERGE_HUMAN_PATHS`, `AGENT_REVIEW_WAIT_MIN` | `--autopilot`: the paths whose change you merge yourself (default `install.sh .github/ systemd/ AGENTS.md`; a directory ends with `/`); how long two reviews may wait for two free investigators before you are told (30 minutes) |

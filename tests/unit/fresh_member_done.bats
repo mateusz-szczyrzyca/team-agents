@@ -63,11 +63,12 @@ member_claims_then_done() {
 
 @test "a member's DONE while it holds a claimed item resumes it once, in a fresh session, about the item" {
   member_claims_then_done
-  for _ in $(seq 1 150); do [ "$(meta "$m" RUN)" = 2 ] && break; sleep 0.2; done
+  # waits of up to 60 s: under the gate's parallel load the whole sequence takes some 20 s
+  for _ in $(seq 1 300); do [ "$(meta "$m" RUN)" = 2 ] && break; sleep 0.2; done
   [ "$(meta "$m" RUN)" = 2 ]
-  wait_grep '"event":"member_done_bounced"' "$AGENTS_HOME/logs/agent.jsonl"
-  grep -q "B1" "$AGENTS_HOME/tasks/$m/prompt-2.md"
-  grep -q "STATUS: DONE while you hold" "$AGENTS_HOME/tasks/$m/prompt-2.md"
+  wait_grep '"event":"member_done_bounced"' "$AGENTS_HOME/logs/agent.jsonl" 60
+  # the prompt is written just after RUN=2, piece by piece: wait for its whole line
+  wait_grep "STATUS: DONE while you hold board items: B1" "$AGENTS_HOME/tasks/$m/prompt-2.md" 60
   grep -q "fresh session" "$AGENTS_HOME/tasks/$m/activity.jsonl"
   ! grep -q '"event":"member_items_back"' "$AGENTS_HOME/logs/agent.jsonl" || false
   agent stop --running > /dev/null
@@ -75,7 +76,7 @@ member_claims_then_done() {
 
 @test "a member's second DONE in a row finishes it as before: its items go back to the board" {
   member_claims_then_done
-  wait_grep '"event":"member_items_back"' "$AGENTS_HOME/logs/agent.jsonl"
+  wait_grep '"event":"member_items_back"' "$AGENTS_HOME/logs/agent.jsonl" 60   # some 20 s under the gate's load
   wait_status "$m" 'done'
   [ "$(meta "$m" RUN)" = 2 ]
   [ "$(grep -c '"event":"member_done_bounced"' "$AGENTS_HOME/logs/agent.jsonl")" -eq 1 ]

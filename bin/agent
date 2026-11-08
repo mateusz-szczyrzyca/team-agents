@@ -631,6 +631,9 @@ REVIEW_HISTORY_MAX=100   # how many review pairs $AGENTS_HOME/reviews/history ke
 AGENT_SERENA="${AGENT_SERENA:-}"
 AGENT_PROMPT_CHECKPOINTS="${AGENT_PROMPT_CHECKPOINTS:-2}"       # a prompt's newest checkpoints (the rest: their file); 0 all
 AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}"
+AGENT_FRESH_SESSION_MAX="${AGENT_FRESH_SESSION_MAX-claude=120000}"   # CLI=tokens: past this a step, a resumed run of
+# that CLI is followed by a fresh session whatever the ratio below — its context window is small (Claude's 200,000);
+# empty: none
 AGENT_FRESH_SESSION_RATIO="${AGENT_FRESH_SESSION_RATIO:-2}"     # …and past this many times the task's own session starts (0: no such check) # a run that read more a step is followed by a fresh session (0: never)
 AGENT_LONG_RUN_STEPS="${AGENT_LONG_RUN_STEPS:-120}"
 AGENT_LONG_RUN_HARD="${AGENT_LONG_RUN_HARD:-200}"           # a team member's run of this many steps is ended by the runner (0: never)           # a team member's run of more tool calls is asked to end (0: never)
@@ -3765,6 +3768,13 @@ build_prompt() { # id mode qfile next_round
     printf '\n'
     any=1
   fi
+  if [[ -n ${DBOUNCE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    R[HELD]=$DBOUNCE_PENDING
+    render "$PROMPTS/done-bounce.md"
+    printf '\n'
+    any=1
+  fi
   if [[ -n ${NSBOUNCE_PENDING:-} ]]; then
     ((any)) && printf '\n---\n\n'
     render "$PROMPTS/nostatus-bounce.md"
@@ -5808,6 +5818,7 @@ cmd__runner() {
   meta_set "$id" QBOUNCE_PENDING ""
   meta_set "$id" SBOUNCE_PENDING ""
   meta_set "$id" NSBOUNCE_PENDING ""
+  meta_set "$id" DBOUNCE_PENDING ""
   meta_set "$id" PAUSE_RELEASED ""
   meta_set "$id" RBOUNCE_PENDING ""
   if [[ -n ${TEAM:-} && ${REMOTE_TEAM:-} != 1 ]]; then   # a remote member's state is set by the lead
@@ -5861,6 +5872,7 @@ cmd__runner() {
   local status note="" pending="" member_q=0 member_ns=0 fst pause_secs=0 pause_reason="" qgen=0 norec="" nsb=0
   [[ ${KIND:-worker} == worker ]] && pending=$(bus inv-pending --dir "$BUS_DIR" --task "$id")
   fst=$(final_status "$FINAL")
+  [[ $fst == DONE || -z $(task_field "$id" DONE_BOUNCED) ]] || meta_set "$id" DONE_BOUNCED ""   # a DONE again: not in a row
   [[ -z $fst || -z $(task_field "$id" NOSTATUS_BOUNCED) ]] || meta_set "$id" NOSTATUS_BOUNCED ""   # a STATUS again
   local is_member=0
   [[ -n ${TEAM:-} && ${KIND:-worker} == worker && $AGENT != "$(team_lead "$TEAM")" ]] && is_member=1
@@ -6084,6 +6096,22 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     start_runner "$id" resume || log_error resume_failed "task=$id" "reason=--autopilot questions"
     dispatch; dispatch_helpers
     return 0
+  fi
+  # a member's DONE while it holds claimed board items: back to it once, in a fresh session (a second DONE finishes it)
+  local held=""
+  if [[ $status == done && $fst == DONE && $is_member == 1 && -z $(task_field "$id" DONE_BOUNCED) \
+      && $(team_done_flag "$TEAM") != true ]]; then
+    held=$(member_claimed_items "$TEAM" "$AGENT")
+    if [[ -n $held ]]; then
+      meta_set "$id" DONE_BOUNCED 1
+      meta_set "$id" DBOUNCE_PENDING "$held"
+      RUNNER_DONE=1
+      act "$id" info "↩ STATUS: DONE while holding board items ($held) — sent back to the agent once, in a fresh session"
+      log_info member_done_bounced "task=$id" "agent=$AGENT" "items=$held"
+      start_runner "$id" resume || log_error resume_failed "task=$id" "reason=a member's DONE while holding board items"
+      dispatch; dispatch_helpers
+      return 0
+    fi
   fi
   # --autopilot: a turn without STATUS goes back to the agent — continue as planned; a second in a row asks the human
   if [[ $status == nsbounce ]]; then
@@ -7942,9 +7970,30 @@ checkpoints_latest() {
 
 # fresh_session_due task — its next run starts a fresh session (FRESH_WHY says why): its last run was marked long, or
 # read more than AGENT_FRESH_SESSION_TOKENS of context a step
+# fresh_session_max cli — the context a step past which a resumed run of that CLI goes to a fresh session
+# (AGENT_FRESH_SESSION_MAX), 0 when none is set for it
+fresh_session_max() {
+  local kv
+  for kv in $AGENT_FRESH_SESSION_MAX; do
+    [[ ${kv%%=*} == "$1" && ${kv#*=} =~ ^[0-9]+$ ]] && { printf '%s' "${kv#*=}"; return 0; }
+  done
+  printf 0
+}
+
+# member_claimed_items team agent — the board items the agent holds claimed in the team, comma-separated
+member_claimed_items() {
+  bus board-dump --dir "$BUS_DIR" --team "$1" 2> /dev/null | jq -r --arg a "$2" '.board // {}
+    | (if type == "object" then .[] else .[] end) | select(.status == "claimed" and (.assignee // "") == $a) | .id' \
+    2> /dev/null | paste -sd, -
+}
+
 fresh_session_due() {
-  local id=$1 rows last lrun steps in median
+  local id=$1 rows last lrun steps in median lmode max
   FRESH_WHY=""
+  if [[ -n $(task_field "$id" DBOUNCE_PENDING) ]]; then   # a member's DONE while holding items: back with a small context
+    FRESH_WHY="you ended your last run with STATUS: DONE while you hold board items ($(task_field "$id" DBOUNCE_PENDING))"
+    return 0
+  fi
   if [[ $(task_field "$id" SOLO_CUT) == 1 ]]; then   # ended for working alone: the work to split comes first
     meta_set "$id" SOLO_CUT ""
     FRESH_WHY="you worked alone while your members slept and your board had nothing for them, and the runner ended your run. Before anything else now, put the work on the board — items that do not overlap, each for one member (a worker for a small one), with its area, its size and when it is done — and wake each member once; implement only the items you give yourself"
@@ -7960,6 +8009,14 @@ fresh_session_due() {
   [[ -n $last ]] || return 1
   IFS=$'\t' read -r lrun steps in _ <<< "$last"
   ((steps > 0 && in / steps > AGENT_FRESH_SESSION_TOKENS)) || return 1
+  # a CLI with a small context window: a resumed session past its ceiling goes, whatever its start (not a fresh one:
+  # a session that starts past it would go fresh every run)
+  lmode=$(awk -F'\t' '{print $7}' <<< "$last")
+  max=$(fresh_session_max "$(task_field "$id" TYPE)")
+  if [[ $lmode == resume ]] && ((max > 0 && in / steps > max)); then
+    FRESH_WHY="your last run read some $((in / steps)) tokens of context a step — past the $max its CLI's context window allows before it fills"
+    return 0
+  fi
   # a fresh session reads much from its start: only a context grown past AGENT_FRESH_SESSION_RATIO times the median
   # of the task's other session starts (its new and fresh runs) is worth leaving
   median=$(awk -F'\t' -v last="$lrun" '$1 != last && ($7 == "new" || $7 == "fresh") && $2 > 0 && $3 > 0 {print int($3 / $2)}' \
