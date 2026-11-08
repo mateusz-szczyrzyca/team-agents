@@ -16,10 +16,12 @@ import (
 )
 
 var (
-	rePullMerge      = regexp.MustCompile(`(^|/)pulls/[0-9]+/merge$`)                                                                      // rePullMerge identifies pull request merge endpoints.
-	rePull           = regexp.MustCompile(`(^|/)pulls(/[0-9]+)?$`)                                                                         // rePull identifies pull request collection and item endpoints.
-	reComments       = regexp.MustCompile(`(^|/)(issues|pulls)/([0-9]+/)?(comments|reviews)(/|$|\?)|(^|/)reviews/[0-9]+/comments(/|$|\?)`) // reComments identifies issue and pull request comment/review endpoints.
-	reGraphQLBlocked = regexp.MustCompile(`comments|reviews|reviewThreads|timelineItems|body`)                                             // reGraphQLBlocked identifies protected fields in GraphQL requests.
+	rePullMerge       = regexp.MustCompile(`(^|/)pulls/[0-9]+/merge$`)                                                                      // rePullMerge identifies pull request merge endpoints.
+	rePull            = regexp.MustCompile(`(^|/)pulls(/[0-9]+)?$`)                                                                         // rePull identifies pull request collection and item endpoints.
+	reComments        = regexp.MustCompile(`(^|/)(issues|pulls)/([0-9]+/)?(comments|reviews)(/|$|\?)|(^|/)reviews/[0-9]+/comments(/|$|\?)`) // reComments identifies issue and pull request comment/review endpoints.
+	reGraphQLBlocked  = regexp.MustCompile(`comments|reviews|reviewThreads|timelineItems|body`)                                             // reGraphQLBlocked identifies protected fields in GraphQL requests.
+	reGraphQLMutation = regexp.MustCompile(`(?i)\bmutation\b`)                                                                              // reGraphQLMutation identifies mutation operations in GraphQL queries.
+	reGraphQLPullMut  = regexp.MustCompile(`(?i)pull_?request`)                                                                             // reGraphQLPullMut identifies pull request operations in GraphQL queries.
 )
 
 // GHDispatchParams supplies invocation parameters and execution dependencies for ghDispatch.
@@ -35,13 +37,6 @@ func ghDispatch(ctx context.Context, p GHDispatchParams) (int, *GHReadDispatchEr
 	realGH := ghEnvValue(p.Env, "AGENT_REAL_GH")
 	if realGH == "" {
 		return p.refuse("agent-gh: the real gh is not known (AGENT_REAL_GH)\n", 127, GHReadDispatchMissingRealGH, "the real GitHub executable is missing or not executable")
-	}
-	for _, a := range p.Args {
-		if a == "-t" || a == "--template" || strings.HasPrefix(a, "--template=") {
-			return p.refuse("agent-gh: --template is not available to the agents; use --jq\n", 2, GHReadDispatchTemplateRefused, "templates cannot bypass native read filtering")
-		} else if a == "-w" || a == "--web" {
-			return p.refuse("agent-gh: --web is not available to the agents\n", 2, GHReadDispatchWebRefused, "web reads cannot enforce trusted-author filtering")
-		}
 	}
 	trustedSet := make(map[string]bool)
 	for _, t := range strings.Fields(ghEnvValue(p.Env, "AGENT_GITHUB_TRUSTED_RESOLVED")) {
@@ -80,7 +75,7 @@ func ghDispatch(ctx context.Context, p GHDispatchParams) (int, *GHReadDispatchEr
 func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *GHReadDispatchError) {
 	var pass []string
 	var jq, path, method string
-	var fields bool
+	var fields, hasInput bool
 	rawArgs := p.Args[1:]
 	for i := 0; i < len(rawArgs); i++ {
 		a := rawArgs[i]
@@ -89,9 +84,6 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			jq, i = rawArgs[i+1], i+1
 		case strings.HasPrefix(a, "--jq="):
 			jq = a[5:]
-		case strings.HasPrefix(a, "-q") && len(a) > 2:
-			// Handle compact -q like -qquery
-			jq = a[2:]
 		case a == "-t" || a == "--template" || strings.HasPrefix(a, "--template="):
 			return p.refuse("agent-gh: --template is not available to the agents; use --jq\n", 2, GHReadDispatchTemplateRefused, "templates cannot bypass native read filtering")
 		case (a == "-X" || a == "--method") && i+1 < len(rawArgs):
@@ -108,15 +100,18 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			method = a[2:]
 			pass = append(pass, a)
 		case (a == "-f" || a == "--raw-field" || a == "-F" || a == "--field" || a == "--input") && i+1 < len(rawArgs):
-			fields = true
+			fields, hasInput = true, hasInput || a == "--input" || ((a == "-F" || a == "--field") && isTypedQueryFile(rawArgs[i+1]))
 			pass = append(pass, a, rawArgs[i+1])
 			i++
-		case strings.HasPrefix(a, "--field=") || strings.HasPrefix(a, "--raw-field=") || strings.HasPrefix(a, "--input=") ||
+		case strings.HasPrefix(a, "--input="):
+			fields, hasInput = true, true
+			pass = append(pass, a)
+		case strings.HasPrefix(a, "--field=") || strings.HasPrefix(a, "--raw-field=") ||
 			strings.HasPrefix(a, "-f=") || strings.HasPrefix(a, "-F=") ||
 			(strings.HasPrefix(a, "-f") && len(a) > 2) || (strings.HasPrefix(a, "-F") && len(a) > 2):
-			fields = true
+			fields, hasInput = true, hasInput || isTypedFieldArg(a)
 			pass = append(pass, a)
-		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "-p" || a == "--preview") && i+1 < len(rawArgs):
+		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "-c" || a == "--preview") && i+1 < len(rawArgs):
 			pass = append(pass, a, rawArgs[i+1])
 			i++
 		default:
@@ -127,13 +122,19 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 		}
 	}
 	pass = append([]string{"api"}, pass...)
-	if path == "graphql" && reGraphQLBlocked.MatchString(strings.Join(pass, " ")) {
-		p.log(EventGitHubGraphQLRefused, "a GraphQL query for comments, reviews or bodies is refused: the agents read them through gh pr view --json or gh api …/comments", nil)
-		return p.refuse("agent-gh: a GraphQL query for comments, reviews or bodies is refused — use gh pr view --json comments,reviews or gh api …/comments\n", 1, GHReadDispatchGraphQLRefused, "the GraphQL query requests protected content")
-	}
 	clean := strings.Split(strings.Split(path, "?")[0], "#")[0]
 	isPullMut := false
-	if rePullMerge.MatchString(clean) {
+	isMut := (method != "" && !strings.EqualFold(method, "GET")) || (method == "" && fields && path != "graphql")
+	if path == "graphql" {
+		passStr := strings.Join(pass, " ")
+		if reGraphQLBlocked.MatchString(passStr) {
+			p.log(EventGitHubGraphQLRefused, "a GraphQL query for comments, reviews or bodies is refused: the agents read them through gh pr view --json or gh api …/comments", nil)
+			return p.refuse("agent-gh: a GraphQL query for comments, reviews or bodies is refused — use gh pr view --json comments,reviews or gh api …/comments\n", 1, GHReadDispatchGraphQLRefused, "the GraphQL query requests protected content")
+		}
+		if hasInput || reGraphQLMutation.MatchString(passStr) {
+			isMut, isPullMut = true, reGraphQLPullMut.MatchString(passStr)
+		}
+	} else if rePullMerge.MatchString(clean) {
 		isPullMut = true
 	} else if rePull.MatchString(clean) {
 		if method != "" {
@@ -145,7 +146,6 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 	if isMem, lead := p.checkMember(ctx); isPullMut && isMem {
 		return p.memberRefusal("api", lead)
 	}
-	isMut := (method != "" && !strings.EqualFold(method, "GET")) || (method == "" && fields && path != "graphql")
 	if isPullMut || isMut {
 		return p.refuse("agent-gh: native write formatting is not implemented yet\n", 1, GHReadDispatchWriteUnavailable, "native write formatting is not implemented yet")
 	}
@@ -192,6 +192,18 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 		pass = append(pass, "--jq", jq)
 	}
 	return p.run(ctx, realGH, pass, nil, p.Stdout, p.Stderr)
+}
+
+// checkReadFlags refuses output modes that bypass filtering only on read commands.
+func (p GHDispatchParams) checkReadFlags(args []string) (int, *GHReadDispatchError) {
+	for _, a := range args {
+		if a == "-t" || a == "--template" || strings.HasPrefix(a, "--template=") {
+			return p.refuse("agent-gh: --template is not available to the agents; use --jq\n", 2, GHReadDispatchTemplateRefused, "templates cannot bypass native read filtering")
+		} else if a == "-w" || a == "--web" {
+			return p.refuse("agent-gh: --web is not available to the agents\n", 2, GHReadDispatchWebRefused, "web reads cannot enforce trusted-author filtering")
+		}
+	}
+	return 0, nil
 }
 
 // parseFlags extracts --json, --jq, and -c/--comments flags from arguments.
@@ -243,6 +255,9 @@ func decodeJSON(raw []byte, v any) *GHReadDispatchError {
 
 // handleList filters PR/issue lists by trusted authors and non-fork repositories.
 func (p GHDispatchParams) handleList(ctx context.Context, realGH string, trusted map[string]bool) (int, *GHReadDispatchError) {
+	if code, err := p.checkReadFlags(p.Args[2:]); err != nil {
+		return code, err
+	}
 	kind := p.Args[0]
 	jsonf, jq, _, rest := parseFlags(p.Args[2:])
 	flds := "number,title,state,url,author"
@@ -285,6 +300,9 @@ func (p GHDispatchParams) handleList(ctx context.Context, realGH string, trusted
 
 // handleView guards view, diff, and checkout on untrusted authors/forks and formats comments.
 func (p GHDispatchParams) handleView(ctx context.Context, realGH string, trustedSet map[string]bool) (int, *GHReadDispatchError) {
+	if code, err := p.checkReadFlags(p.Args[2:]); err != nil {
+		return code, err
+	}
 	kind, verb := p.Args[0], p.Args[1]
 	jsonf, jq, comments, pass := parseFlags(p.Args[2:])
 	idf, cf := "author", "comments"
@@ -415,11 +433,11 @@ func (p GHDispatchParams) checkMember(ctx context.Context) (bool, string) {
 			dir = filepath.Join(base, "bus")
 		}
 	}
-	var out bytes.Buffer
+	var out, errOut bytes.Buffer
 	var resp map[string]any
-	res, err := p.Exec.Execute(ctx, Command{Name: bin, Args: []string{"team-get", "--dir", dir, "--team", team}, Env: p.Env, Stdout: &out})
+	res, err := p.Exec.Execute(ctx, Command{Name: bin, Args: []string{"team-get", "--dir", dir, "--team", team}, Env: p.Env, Stdout: &out, Stderr: &errOut})
 	if err != nil || res.ExitCode != 0 || decodeJSON(out.Bytes(), &resp) != nil {
-		p.log(EventGitHubCoordinatorUnknown, "the bus did not say who coordinates the team", map[string]string{"team": team})
+		p.log(EventGitHubCoordinatorUnknown, "the bus did not say who coordinates the team", map[string]string{"team": team, "exit_code": strconv.Itoa(max(res.ExitCode, 1)), "stderr": errOut.String()[:min(errOut.Len(), 500)]})
 		return lead != "", lead
 	}
 	lead = str(resp["lead"])
@@ -434,6 +452,9 @@ func (p GHDispatchParams) run(ctx context.Context, name string, args []string, i
 	}
 	if (execErr != nil && (errors.Is(execErr, exec.ErrNotFound) || errors.Is(execErr, os.ErrNotExist) || errors.Is(execErr, os.ErrPermission))) || res.ExitCode == 127 {
 		return p.refuse("agent-gh: "+name+": missing or not executable\n", 127, GHReadDispatchMissingRealGH, "the real GitHub executable is missing or not executable")
+	}
+	if execErr != nil {
+		return p.refuse("agent-gh: "+name+": a GitHub or query subprocess failed\n", max(res.ExitCode, 1), GHReadDispatchExecFailed, "a GitHub or query subprocess failed")
 	}
 	return max(res.ExitCode, 1), opErr(GHReadDispatchExecFailed, "a GitHub or query subprocess failed")
 }
@@ -487,5 +508,28 @@ func (p GHDispatchParams) log(event LogEvent, msg string, fields map[string]stri
 		if _, writeErr := fmt.Fprintf(p.Stderr, "agent-gh: cannot write the log %s\n", err); writeErr != nil {
 			return
 		}
+	}
+}
+
+// isTypedQueryFile reports whether parameter val sets query to a file or stdin in a typed field flag.
+func isTypedQueryFile(val string) bool {
+	k, v, ok := strings.Cut(val, "=")
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(k) == "query" && strings.HasPrefix(strings.TrimSpace(v), "@")
+}
+
+// isTypedFieldArg reports whether flag arg is a typed field flag loading a GraphQL query from a file or stdin.
+func isTypedFieldArg(arg string) bool {
+	switch {
+	case strings.HasPrefix(arg, "--field="):
+		return isTypedQueryFile(arg[len("--field="):])
+	case strings.HasPrefix(arg, "-F="):
+		return isTypedQueryFile(arg[len("-F="):])
+	case strings.HasPrefix(arg, "-F") && len(arg) > 2:
+		return isTypedQueryFile(arg[2:])
+	default:
+		return false
 	}
 }

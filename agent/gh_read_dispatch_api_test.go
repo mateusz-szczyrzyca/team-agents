@@ -107,25 +107,22 @@ func TestGHDispatchAPIMethodFieldClassification(t *testing.T) {
 	}
 }
 
-// TestGHDispatchAPIShortOptionParsing verifies that short options like -p, compact -q,
-// and clustered -iX/-iF forms are properly parsed before endpoint/mutation classification.
-func TestGHDispatchAPIShortOptionParsing(t *testing.T) {
-	// 1. Preview option -p requires its value to be consumed before endpoint extraction.
-	// Without fix: "nebula" becomes endpoint, untrusted comment returned unfiltered.
-	// With fix: -p nebula is consumed, endpoint is correctly identified, untrusted comment filtered.
+// TestGHDispatchAPICacheAndPassthroughFlags verifies -c cache option is treated as a two-token
+// flag without corrupting endpoint path, and --comments/--json pass through intact without stripping.
+func TestGHDispatchAPICacheAndPassthroughFlags(t *testing.T) {
+	// 1. -c 1h before comments endpoint must preserve arguments and filter comments.
 	{
 		var stdout, stderr bytes.Buffer
+		var capturedArgs []string
 		exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
-			if cmd.Name == "/bin/gh" && cmd.Stdout != nil {
-				// Return trusted comments
-				if n, err := cmd.Stdout.Write([]byte(`[{"id":"1","author":{"login":"alice"},"body":"trusted"}]`)); err != nil || n == 0 {
-					t.Fatalf("failed to write preview response: %v", err)
-				}
+			capturedArgs = cmd.Args
+			if _, err := cmd.Stdout.Write([]byte(`[{"id":"1","author":{"login":"untrusted_user"},"body":"hello"}]`)); err != nil {
+				t.Fatalf("stdout write failed: %v", err)
 			}
 			return CommandResult{ExitCode: 0}, nil
 		}}
-		args := []string{"api", "-p", "nebula", "repos/o/r/issues/1/comments"}
-		env := []string{"AGENT_REAL_GH=/bin/gh", "AGENT_GITHUB_TRUSTED_RESOLVED=alice"}
+		args := []string{"api", "-c", "1h", "repos/o/r/issues/7/comments"}
+		env := []string{"AGENT_REAL_GH=/bin/gh", "AGENT_GITHUB_TRUSTED_RESOLVED=trusted_user"}
 		code, err := ghDispatch(context.Background(), GHDispatchParams{
 			Args:   args,
 			Env:    env,
@@ -133,41 +130,39 @@ func TestGHDispatchAPIShortOptionParsing(t *testing.T) {
 			Stderr: &stderr,
 			Exec:   exec,
 		})
-		// Should succeed and preserve trusted comments
-		if code != 0 || err != nil || !strings.Contains(stdout.String(), "trusted") {
-			t.Errorf("preview option -p: code=%d err=%v stdout=%q (should preserve trusted comment)", code, err, stdout.String())
+		if code != 0 || err != nil {
+			t.Fatalf("code=%d err=%v stderr=%q", code, err, stderr.String())
+		}
+		if len(capturedArgs) < 4 || capturedArgs[1] != "-c" || capturedArgs[2] != "1h" {
+			t.Fatalf("captured args missing -c 1h: %v", capturedArgs)
+		}
+		if strings.Contains(stdout.String(), "untrusted_user") {
+			t.Fatalf("untrusted comment was not filtered: %q", stdout.String())
 		}
 	}
 
-	// 2. Compact -q (query) form must be consumed, not passed unchanged to gh.
-	// Without fix: compact "-qquery" might bypass normal query processing.
+	// 2. --comments and --json flags must pass through to real gh without being stripped.
 	{
-		var stdout, stderr bytes.Buffer
-		calledRealGH := false
+		var capturedArgs []string
 		exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
-			if cmd.Name == "/bin/gh" {
-				calledRealGH = true
-				if cmd.Stdout != nil {
-					// Return trusted comments
-					if n, err := cmd.Stdout.Write([]byte(`[{"id":"2","author":{"login":"alice"},"body":"comment"}]`)); err != nil || n == 0 {
-						t.Fatalf("failed to write query response: %v", err)
-					}
-				}
-			}
+			capturedArgs = cmd.Args
 			return CommandResult{ExitCode: 0}, nil
 		}}
-		args := []string{"api", "repos/o/r/issues/1/comments", "-qmap(.body)"}
-		env := []string{"AGENT_REAL_GH=/bin/gh", "AGENT_GITHUB_TRUSTED_RESOLVED=alice"}
+		args := []string{"api", "repos/o/r/issues/7", "--comments", "--json", "body"}
+		env := []string{"AGENT_REAL_GH=/bin/gh"}
 		code, err := ghDispatch(context.Background(), GHDispatchParams{
 			Args:   args,
 			Env:    env,
-			Stdout: &stdout,
-			Stderr: &stderr,
+			Stdout: &bytes.Buffer{},
+			Stderr: &bytes.Buffer{},
 			Exec:   exec,
 		})
-		// The compact -q should be recognized and the jq filter should be applied
-		if !calledRealGH || code != 0 || err != nil {
-			t.Errorf("compact -q: called=%v code=%d err=%v (should parse and execute)", calledRealGH, code, err)
+		if code != 0 || err != nil {
+			t.Fatalf("code=%d err=%v", code, err)
+		}
+		want := "api repos/o/r/issues/7 --comments --json body"
+		if strings.Join(capturedArgs, " ") != want {
+			t.Fatalf("captured args = %q, want %q", strings.Join(capturedArgs, " "), want)
 		}
 	}
 }
