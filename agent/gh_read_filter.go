@@ -10,8 +10,10 @@ import (
 type ghIgnoreKind string
 
 const (
+	// ghIgnoreKindComment represents a filtered comment.
 	ghIgnoreKindComment = ghIgnoreKind("comment")
-	ghIgnoreKindReview  = ghIgnoreKind("review")
+	// ghIgnoreKindReview represents a filtered review.
+	ghIgnoreKindReview = ghIgnoreKind("review")
 )
 
 func (k ghIgnoreKind) Valid() bool {
@@ -22,8 +24,10 @@ func (k ghIgnoreKind) Valid() bool {
 type ghIgnoreReason string
 
 const (
+	// ghIgnoreReasonUntrustedAuthor: entry author not in trusted list.
 	ghIgnoreReasonUntrustedAuthor = ghIgnoreReason("untrusted_author")
-	ghIgnoreReasonMarkedIgnore    = ghIgnoreReason("marked_ignore")
+	// ghIgnoreReasonMarkedIgnore: entry body starts with "ignore this mate".
+	ghIgnoreReasonMarkedIgnore = ghIgnoreReason("marked_ignore")
 )
 
 func (r ghIgnoreReason) Valid() bool {
@@ -32,10 +36,15 @@ func (r ghIgnoreReason) Valid() bool {
 
 // ghIgnoredEntry describes a filtered GitHub entry.
 type ghIgnoredEntry struct {
-	Kind   ghIgnoreKind
+	// Kind: comment or review.
+	Kind ghIgnoreKind
+	// Author: GitHub login.
 	Author string
-	ID     string
-	Body   string
+	// ID: entry ID.
+	ID string
+	// Body: first 100 chars for logging.
+	Body string
+	// Reason: why filtered.
 	Reason ghIgnoreReason
 }
 
