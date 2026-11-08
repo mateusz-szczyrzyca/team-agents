@@ -685,6 +685,12 @@ tests/unit/team_pause.bats	the supervisor leaves a paused team alone: no stall a
 tests/unit/team_pause.bats	pause and unpause: an unknown team is refused; a second pause, or unpausing a team not paused, says so	blackbox	R29B	-	planned
 tests/unit/team_pause.bats	a run that starts while its team is paused (its start passed the gate just before) waits, in its mode	blackbox	R29B	-	planned
 tests/unit/team_pause.bats	a worker's, an investigation's or a review's task is held with the team of the task that asked for it	source	R29B	-	planned
+tests/unit/precheck_rules.bats	B1: an existing test changed, removed or renamed is the human's to allow; added tests and whitespace are not	source	R31	-	planned
+tests/unit/precheck_rules.bats	B2: a suppression the PR description does not name goes back; one it names passes	source	R31	-	planned
+tests/unit/precheck_rules.bats	B3: production code that looks at whether it runs under test is the human's to allow; a test file may	source	R31	-	planned
+tests/unit/precheck_rules.bats	B4: the files that judge a round — changed, not added to — are the human's to allow	source	R31	-	planned
+tests/unit/precheck_rules.bats	a change merged in from main is not the round's: only the round's own diff counts	source	R31	-	planned
+tests/unit/precheck_rules.bats	agent allow <team> <path>: what only the human may allow passes for that team; an unknown team is refused	blackbox	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
