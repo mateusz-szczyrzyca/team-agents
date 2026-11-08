@@ -219,7 +219,7 @@ if [[ $LANE == "candidate" ]]; then
 
   # Scrub inherited environment variables that would cause test infrastructure failures
   # when running in ordinary (non-sanitized) environments
-  # TEMPORARILY REMOVED FOR RED TEST: scrub_inherited_env
+  scrub_inherited_env
 
   # Place Go candidate binary at bin/agent (actual executable copy, not symlink)
   mkdir -p "$STAGED_ROOT/bin"
@@ -343,7 +343,7 @@ else
 
   # Scrub inherited environment variables that would cause test infrastructure failures
   # when running in ordinary (non-sanitized) environments
-  # TEMPORARILY REMOVED FOR RED TEST: scrub_inherited_env
+  scrub_inherited_env
 
   mkdir -p "$STAGED_ROOT/bin"
 
