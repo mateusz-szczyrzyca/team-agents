@@ -960,26 +960,34 @@ func isTeamStopped(snap *Snapshot, t *TeamInfo) bool {
 	return false
 }
 
-// isTeamPaused reports whether the human paused the team (agent pause writes AGENTS_HOME/paused/<team>). A file that
-// cannot be looked at for another reason than its absence is logged once and taken for not paused.
-func isTeamPaused(home, id string) bool {
-	path := filepath.Join(home, "paused", id)
-	_, err := os.Stat(path)
-	if err == nil {
-		return true
+// pausedTeams returns the teams the human paused (agent pause writes AGENTS_HOME/paused/<team>), from one listing of
+// that directory: no path is built from a team ID a request carries. A directory that cannot be listed for another
+// reason than its absence is logged once, and no team is taken for paused.
+func pausedTeams(home string) map[string]bool {
+	dir := filepath.Join(home, "paused")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			warnOnce("list-paused:"+dir, LogFileReadFailed, storageErr(err, "cannot list %s", dir), "file", dir)
+		}
+		return nil
 	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		warnOnce("stat-paused:"+path, LogFileReadFailed, storageErr(err, "cannot read %s", path), "file", path)
+	paused := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if e.Type().IsRegular() {
+			paused[e.Name()] = true
+		}
 	}
-	return false
+	return paused
 }
 
 // viewTeams (GET /teams) lists the teams, unfinished first.
 func (s *webServer) viewTeams(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
+	paused := pausedTeams(s.cfg.home)
 	var rows []teamRow
 	for id, t := range snap.Teams {
-		row := teamRow{ID: id, Lead: t.Lead, Done: t.Done, Stopped: isTeamStopped(snap, t), Paused: isTeamPaused(s.cfg.home, id),
+		row := teamRow{ID: id, Lead: t.Lead, Done: t.Done, Stopped: isTeamStopped(snap, t), Paused: paused[id],
 			Members: len(t.Members)}
 		states := map[string]int{}
 		for _, m := range t.Members {
@@ -1089,7 +1097,7 @@ func (s *webServer) viewTeam(w http.ResponseWriter, r *http.Request) {
 		viewError(s, w, r, webErr(ViewNotFound, nil, "no team %q", id))
 		return
 	}
-	d := teamData{ID: id, T: t, Stopped: isTeamStopped(snap, t), Paused: isTeamPaused(s.cfg.home, id)}
+	d := teamData{ID: id, T: t, Stopped: isTeamStopped(snap, t), Paused: pausedTeams(s.cfg.home)[id]}
 	members := map[string]bool{}
 	repo := ""
 	for name, m := range t.Members {

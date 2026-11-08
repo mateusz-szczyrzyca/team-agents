@@ -40,7 +40,7 @@ func TestDashboardPauseTeamAction(t *testing.T) {
 // unpauses it through the script (agent unpause <team>).
 func TestDashboardUnpauseTeamAction(t *testing.T) {
 	home := fixture(t)
-	if err := os.MkdirAll(filepath.Join(home, "paused"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, "paused"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, "paused", "TT-team"), []byte("since=1\n"), 0o600); err != nil {
