@@ -6,9 +6,11 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"math"
 	"net/http"
 	"net/url"
@@ -937,6 +939,7 @@ type teamRow struct {
 	ID, Lead, States string // team ID, coordinator, member states ("2 active, 1 sleeping")
 	Done             bool   // finished
 	Stopped          bool   // stopped by demand (TEAM_STOPPED=1)
+	Paused           bool   // paused by the human (agent pause): its runs held until agent unpause
 	Members          int    // number of members
 	Todo, Claimed    int    // board items to do / in progress
 	DoneItems        int    // board items done
@@ -957,12 +960,27 @@ func isTeamStopped(snap *Snapshot, t *TeamInfo) bool {
 	return false
 }
 
+// isTeamPaused reports whether the human paused the team (agent pause writes AGENTS_HOME/paused/<team>). A file that
+// cannot be looked at for another reason than its absence is logged once and taken for not paused.
+func isTeamPaused(home, id string) bool {
+	path := filepath.Join(home, "paused", id)
+	_, err := os.Stat(path)
+	if err == nil {
+		return true
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		warnOnce("stat-paused:"+path, LogFileReadFailed, storageErr(err, "cannot read %s", path), "file", path)
+	}
+	return false
+}
+
 // viewTeams (GET /teams) lists the teams, unfinished first.
 func (s *webServer) viewTeams(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	var rows []teamRow
 	for id, t := range snap.Teams {
-		row := teamRow{ID: id, Lead: t.Lead, Done: t.Done, Stopped: isTeamStopped(snap, t), Members: len(t.Members)}
+		row := teamRow{ID: id, Lead: t.Lead, Done: t.Done, Stopped: isTeamStopped(snap, t), Paused: isTeamPaused(s.cfg.home, id),
+			Members: len(t.Members)}
 		states := map[string]int{}
 		for _, m := range t.Members {
 			states[effectiveMemberState(snap, m)]++
@@ -1019,6 +1037,7 @@ type teamData struct {
 	ID       string       // team ID
 	T        *TeamInfo    // the team
 	Stopped  bool         // stopped by demand (TEAM_STOPPED=1)
+	Paused   bool         // paused by the human (agent pause): its runs held until agent unpause
 	Members  []memberRow  // its members
 	Board    []*BoardItem // its board, by number
 	Consults []consultRow // its consultations, newest first
@@ -1070,7 +1089,7 @@ func (s *webServer) viewTeam(w http.ResponseWriter, r *http.Request) {
 		viewError(s, w, r, webErr(ViewNotFound, nil, "no team %q", id))
 		return
 	}
-	d := teamData{ID: id, T: t, Stopped: isTeamStopped(snap, t)}
+	d := teamData{ID: id, T: t, Stopped: isTeamStopped(snap, t), Paused: isTeamPaused(s.cfg.home, id)}
 	members := map[string]bool{}
 	repo := ""
 	for name, m := range t.Members {
@@ -1598,6 +1617,35 @@ func (s *webServer) postTeamStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logInfo(LogWebAction, "action", "stop-team", "team", id)
+	writeText(w, strings.TrimSpace(out))
+}
+
+// postTeamPause (POST /team/{id}/pause) pauses a working team through the script (agent pause <team>): its runs stop
+// at once, held, and nothing of it starts until it is unpaused — the human's own tests run undisturbed.
+func (s *webServer) postTeamPause(w http.ResponseWriter, r *http.Request) {
+	s.teamPauseAction(w, r, "pause")
+}
+
+// postTeamUnpause (POST /team/{id}/unpause) lets a paused team go on (agent unpause <team>): its paused runs resume
+// where they stopped.
+func (s *webServer) postTeamUnpause(w http.ResponseWriter, r *http.Request) {
+	s.teamPauseAction(w, r, "unpause")
+}
+
+// teamPauseAction runs `agent pause|unpause <team>` for a team the panel knows, and answers with its output.
+func (s *webServer) teamPauseAction(w http.ResponseWriter, r *http.Request, action string) {
+	id := r.PathValue("id")
+	if s.snapshot().Teams[id] == nil {
+		http.Error(w, "no such team", http.StatusNotFound)
+		return
+	}
+	out, cerr := callAgent(s.cfg.agentCmd, action, id)
+	if cerr != nil {
+		logWarn(LogWebActionFailed, "action", action+"-team", "team", id, "cause", cerr.Cause.String(), "error", cerr.Message)
+		http.Error(w, "cannot "+action+" team: "+cerr.Message, http.StatusConflict)
+		return
+	}
+	logInfo(LogWebAction, "action", action+"-team", "team", id)
 	writeText(w, strings.TrimSpace(out))
 }
 
