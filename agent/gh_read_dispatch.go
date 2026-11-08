@@ -80,18 +80,38 @@ func ghDispatch(ctx context.Context, p GHDispatchParams) (int, *GHReadDispatchEr
 func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *GHReadDispatchError) {
 	_, jq, _, rest := parseFlags(p.Args[1:])
 	var path string
-	var isMut bool
+	var method string
+	var hasFields bool
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
-		m := strings.TrimPrefix(strings.TrimPrefix(a, "-X"), "--method=")
+		// Check for -X <method> or --method <method>
 		if (a == "-X" || a == "--method") && i+1 < len(rest) {
-			isMut, i = isMut || strings.ToUpper(rest[i+1]) != "GET", i+1
-		} else if (m != a && strings.ToUpper(m) != "GET") || strings.HasPrefix(a, "-f") || strings.HasPrefix(a, "-F") || a == "--input" {
-			isMut = true
+			method = strings.ToUpper(rest[i+1])
+			i++
+		} else if strings.HasPrefix(a, "-X=") {
+			method = strings.ToUpper(a[3:])
+		} else if strings.HasPrefix(a, "--method=") {
+			method = strings.ToUpper(a[9:])
+		} else if a == "-f" || a == "-F" || a == "--field" || a == "--raw-field" || a == "--input" {
+			// Two-token field flags
+			hasFields = true
+			if i+1 < len(rest) {
+				i++
+			}
+		} else if strings.HasPrefix(a, "--field=") || strings.HasPrefix(a, "--raw-field=") || strings.HasPrefix(a, "--input=") {
+			// Long-form field flags with value
+			hasFields = true
+		} else if a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "--preview" {
+			// Two-token non-field flags (skip next argument)
+			if i+1 < len(rest) {
+				i++
+			}
 		} else if path == "" && !strings.HasPrefix(a, "-") {
 			path = a
 		}
 	}
+	// Compute isMut: mutation occurs with explicit non-GET method OR with fields on non-graphql path
+	isMut := (method != "" && method != "GET") || (hasFields && path != "graphql")
 	pass := append([]string{"api"}, rest...)
 	if path == "graphql" && reGraphQLBlocked.MatchString(strings.Join(pass, " ")) {
 		p.log(EventGitHubGraphQLRefused, "a GraphQL query for comments, reviews or bodies is refused: the agents read them through gh pr view --json or gh api …/comments", nil)

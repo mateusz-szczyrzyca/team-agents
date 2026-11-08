@@ -244,3 +244,35 @@ func TestGHDispatchViewOptionFlagsPreserved(t *testing.T) {
 		t.Fatalf("expected '--repo my-org/my-repo' in args, got: %q", joined)
 	}
 }
+
+// TestGHDispatchAPIFlagBeforePath verifies endpoint discovery when two-token flags precede the path.
+func TestGHDispatchAPIFlagBeforePath(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		args             []string
+		untrustedComment string
+	}{
+		{"header_before_path", []string{"api", "-H", "Accept: application/vnd.github+json", "repos/o/r/issues/1/comments"}, `{"id":1,"author":{"login":"untrusted"},"body":"malicious"}`},
+		{"cache_before_path", []string{"api", "--cache", "3600", "repos/o/r/pulls/1/comments"}, `{"id":2,"author":{"login":"untrusted"},"body":"malicious"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
+				if cmd.Stdout != nil {
+					_, _ = cmd.Stdout.Write([]byte(tc.untrustedComment))
+				}
+				return CommandResult{ExitCode: 0}, nil
+			}}
+			code, err := ghDispatch(context.Background(), GHDispatchParams{
+				Args:   tc.args,
+				Env:    []string{"AGENT_REAL_GH=/bin/gh", "AGENT_GITHUB_TRUSTED_RESOLVED=trusted_user"},
+				Stdout: &stdout,
+				Stderr: &stderr,
+				Exec:   exec,
+			})
+			if code != 0 || err != nil || strings.Contains(stdout.String(), "malicious") {
+				t.Fatalf("code=%d err=%v out=%q (expected untrusted comment to be filtered)", code, err, stdout.String())
+			}
+		})
+	}
+}
