@@ -313,7 +313,12 @@ func (p GHDispatchParams) handleView(ctx context.Context, realGH string, trusted
 		return code, err
 	}
 	if jsonf != "" {
-		return p.outputJSON(ctx, raw, jq, true)
+		// Only filter if the requested --json fields include comments/reviews/latestReviews.
+		// If user requests just --json body or --json body,title, preserve as-is.
+		hasCommentFields := strings.Contains(jsonf, "comments") ||
+			strings.Contains(jsonf, "reviews") ||
+			strings.Contains(jsonf, "latestReviews")
+		return p.outputJSON(ctx, raw, jq, hasCommentFields)
 	}
 	// Check if response has comments/reviews before filtering.
 	// If not (body-only response), preserve it as-is.
