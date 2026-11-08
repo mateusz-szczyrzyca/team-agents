@@ -28,7 +28,9 @@ func TestGHDispatchAPIPaginatedExact64BitIDs(t *testing.T) {
 	exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
 		if cmd.Stdout != nil {
 			for _, page := range pages {
-				_, _ = cmd.Stdout.Write([]byte(page))
+				if _, err := cmd.Stdout.Write([]byte(page)); err != nil {
+					t.Fatalf("failed writing fake stdout page: %v", err)
+				}
 			}
 		}
 		return CommandResult{ExitCode: 0}, nil
@@ -90,7 +92,9 @@ func TestGHDispatchAPIPaginatedExact64BitIDs(t *testing.T) {
 	exec2 := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
 		if cmd.Stdout != nil {
 			for _, page := range trustedPages {
-				_, _ = cmd.Stdout.Write([]byte(page))
+				if _, err := cmd.Stdout.Write([]byte(page)); err != nil {
+					t.Fatalf("failed writing fake stdout page: %v", err)
+				}
 			}
 		}
 		return CommandResult{ExitCode: 0}, nil
