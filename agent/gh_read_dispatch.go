@@ -29,6 +29,7 @@ var (
 type GHDispatchParams struct {
 	Args           []string  // Args: command arguments.
 	Env            []string  // Env: process environment variables.
+	Stdin          io.Reader // Stdin: input stream for pass-through commands.
 	Stdout, Stderr io.Writer // Stdout, Stderr: output destinations.
 	Exec           Executor  // Exec: command executor.
 }
