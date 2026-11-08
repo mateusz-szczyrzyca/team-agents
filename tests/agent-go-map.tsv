@@ -29,13 +29,13 @@ tests/unit/agent.bats	quota reset times are read from the messages of the CLIs	s
 tests/unit/agent.bats	questions without a recommendation are sent back to the agent once	blackbox	R23	-	planned
 tests/unit/agent.bats	saving the questions file marked ANSWERED sends the answers; ok accepts the recommendation	blackbox	R24	-	planned
 tests/unit/agent.bats	a new questions file opens in the VS Code window connected to this host	blackbox	R23	-	planned
-tests/unit/agent_gh.bats	agent-gh api: unknown accounts' comments, and the trusted accounts' 'ignore this mate' ones, never reach the agent; each is logged	blackbox	R11	-	planned
-tests/unit/agent_gh.bats	agent-gh pr view --json comments,reviews keeps only the trusted accounts' ones, on open, closed and merged PRs	blackbox	R11	-	planned
-tests/unit/agent_gh.bats	agent-gh pr view --comments shows only the trusted accounts' comments	blackbox	R11	-	planned
-tests/unit/agent_gh.bats	agent-gh: a fork's PR, or one opened by an unknown account, is not shown — neither its description nor its diff	blackbox	R11	-	planned
-tests/unit/agent_gh.bats	agent-gh: a GraphQL query for comments or reviews is refused (only the filtered ways read them)	blackbox	R11	-	planned
+tests/unit/agent_gh.bats	agent-gh api: unknown accounts' comments, and the trusted accounts' 'ignore this mate' ones, never reach the agent; each is logged	blackbox	R11	TestGHDispatchAPIComments,TestFilterJSONMarkedIgnore	done
+tests/unit/agent_gh.bats	agent-gh pr view --json comments,reviews keeps only the trusted accounts' ones, on open, closed and merged PRs	blackbox	R11	TestFilterJSONNestedComments,TestGHDispatchViewOptionFlagsPreserved	done
+tests/unit/agent_gh.bats	agent-gh pr view --comments shows only the trusted accounts' comments	blackbox	R11	TestFilterJSONNestedComments	done
+tests/unit/agent_gh.bats	agent-gh: a fork's PR, or one opened by an unknown account, is not shown — neither its description nor its diff	blackbox	R11	TestGHDispatchForkUntrustedRefused	done
+tests/unit/agent_gh.bats	agent-gh: a GraphQL query for comments or reviews is refused (only the filtered ways read them)	blackbox	R11	TestGHDispatchEarlyRefusals/graphql_protected	done
 tests/unit/agent_gh.bats	the agents' CLI gets agent-gh as gh, with the trusted accounts	blackbox	R23	-	planned
-tests/unit/agent_gh.bats	agent-gh pr list and issue list show only the trusted accounts' PRs and issues, a PR only from this repository; the others are logged	blackbox	R11	-	planned
+tests/unit/agent_gh.bats	agent-gh pr list and issue list show only the trusted accounts' PRs and issues, a PR only from this repository; the others are logged	blackbox	R11	TestGHDispatchListFiltering	done
 tests/unit/authenticated.bats	each agent is checked with its own model; a failure shows the HTTP code, the model and the provider's message	blackbox	R51	-	planned
 tests/unit/authenticated.bats	a rejected key is 'needs authentication', with the provider's message	blackbox	R51	-	planned
 tests/unit/authenticated.bats	an agent name that is not configured is refused	blackbox	R51	-	planned
@@ -254,7 +254,7 @@ tests/unit/member_in_team.bats	a team task's gh knows its team and agent; a solo
 tests/unit/member_in_team.bats	a round resumed tells a member to push its own branch: its coordinator merges it into the round's PR	blackbox	R31	-	planned
 tests/unit/member_in_team.bats	a round continued again has one heading and one PR note, the newest; what its reviews sent back stays	blackbox	R31	-	planned
 tests/unit/member_in_team.bats	a round whose PR is merged continues as its follow-up, and the next round is not started early	blackbox	R31	-	planned
-tests/unit/member_in_team.bats	a team member's gh pr reopen and edit are refused, logged, and never reach gh	blackbox	R11	-	planned
+tests/unit/member_in_team.bats	a team member's gh pr reopen and edit are refused, logged, and never reach gh	blackbox	R11	TestGHDispatchMemberRefused	done
 tests/unit/member_in_team.bats	a non-coordinator member's STATUS: ROUND_DONE does not override the coordinator's WORK_ROUND	blackbox	R33	-	planned
 tests/unit/member_in_team.bats	a same-round resume prefers the coordinator's WORK_ROUND over a member's stale later round	blackbox	R56	-	planned
 tests/unit/member_in_team.bats	agent archive packs and removes each team member's own checkpoint	blackbox	R56	-	planned
@@ -265,7 +265,7 @@ tests/unit/member_out.bats	a failed member's items go back with its progress not
 tests/unit/member_out.bats	a long pause gives the member's items back; a short one keeps them	blackbox	R29	-	planned
 tests/unit/member_out.bats	a short pause (a rate limit) keeps the member's items	blackbox	R29	-	planned
 tests/unit/member_out.bats	agent _supervise finds a task whose runner died and ends it	blackbox	R29	-	planned
-tests/unit/member_pr.bats	a team member's gh pr create is refused, names its coordinator, is logged, and never reaches gh	blackbox	R11	-	planned
+tests/unit/member_pr.bats	a team member's gh pr create is refused, names its coordinator, is logged, and never reaches gh	blackbox	R11	TestGHDispatchMemberRefused/pr_create_lead	done
 tests/unit/member_pr.bats	anyone else's gh pr create goes to gh as before	blackbox	R11	-	planned
 tests/unit/member_pr.bats	gh_coordinator: a team member's coordinator; nobody for the coordinator, a solo task or an investigator	source	R23	-	planned
 tests/unit/meta.bats	concurrent meta_set calls of different keys all survive, and none fails	source	R07	TestConcurrentSetTaskMeta	done

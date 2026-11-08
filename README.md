@@ -1607,7 +1607,7 @@ make integration        # real agent CLIs and accounts (costs usage)
   have an empty provider. The installed Bash commands retain their existing behavior.
 - **Git and GitHub run primitives (R10A/R10B).** Native lower layers return per-run identity, signing overrides,
   ordered trailers, trusted accounts and wrapper environment without process-wide identity or Git changes.
-  Candidate `gh` dispatch precedes configuration and returns typed unavailable until R11/R12 implement policy.
+  Candidate `gh` dispatch precedes configuration; R11 adds read policy and R12 will add write formatting.
   Runner activation remains in its planned round; the installed Bash CLI retains its existing behavior.
   Configurable identity setup checks key readability and reports identity/signing diagnostics. GitHub setup
   warns and continues if its warning log cannot be written. Identity setup still attempts its final record
@@ -1617,8 +1617,14 @@ make integration        # real agent CLIs and accounts (costs usage)
   fallback palette. Color-registration failures emit a nonfatal `github_colors_failed` warning with
   the registry `file` and underlying `cause`. These lower layers have no production callers until R22; full R10 parity remains gated
   on runner activation and the separate GitHub policy rounds.
+- **Native GitHub read policy (R11).** The Go candidate filters untrusted and explicitly ignored comments
+  and reviews from API and PR views, excludes untrusted authors and forks from lists, and refuses reads
+  of untrusted or fork PRs. Protected GraphQL reads are refused. Filtering precedes caller `--jq` queries;
+  external-command failures retain their exit status. Member mutation guards use the current bus
+  coordinator, and warnings retain the existing `agent-gh` JSON log schema. Unimplemented GitHub writes
+  fail closed until R12; production continues to use the installed Bash wrapper.
 - **Go rewrite parity tracking and ledger validation.**
-  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). The current ledger tracks 663 Bats unit test cases, with 4 rows done and 659 planned, in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). R10 adds lower-layer Go coverage without activating runner or GitHub-policy rows. The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
+  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). The current ledger tracks 663 Bats unit test cases, with 12 rows done and 651 planned, in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). R10 adds lower-layer Go coverage; R11 activates native GitHub read and member-guard cases; four whole cases that also require coordinator writes remain planned until R12, and runner activation remains planned. The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
   tools/check-agent-test-map.sh              # validates tests/agent-go-map.tsv and prints summary counts
   tools/check-agent-test-map.sh --quiet      # (-q) suppresses summary output, exits 0 on success or 1 on error
