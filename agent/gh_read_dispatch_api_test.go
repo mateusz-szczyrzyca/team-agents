@@ -118,7 +118,9 @@ func TestGHDispatchAPIShortOptionParsing(t *testing.T) {
 		exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
 			if cmd.Name == "/bin/gh" && cmd.Stdout != nil {
 				// Return trusted comments
-				cmd.Stdout.Write([]byte(`[{"id":"1","author":{"login":"alice"},"body":"trusted"}]`))
+				if n, err := cmd.Stdout.Write([]byte(`[{"id":"1","author":{"login":"alice"},"body":"trusted"}]`)); err != nil || n == 0 {
+					t.Fatalf("failed to write preview response: %v", err)
+				}
 			}
 			return CommandResult{ExitCode: 0}, nil
 		}}
@@ -147,7 +149,9 @@ func TestGHDispatchAPIShortOptionParsing(t *testing.T) {
 				calledRealGH = true
 				if cmd.Stdout != nil {
 					// Return trusted comments
-					cmd.Stdout.Write([]byte(`[{"id":"2","author":{"login":"alice"},"body":"comment"}]`))
+					if n, err := cmd.Stdout.Write([]byte(`[{"id":"2","author":{"login":"alice"},"body":"comment"}]`)); err != nil || n == 0 {
+						t.Fatalf("failed to write query response: %v", err)
+					}
 				}
 			}
 			return CommandResult{ExitCode: 0}, nil
