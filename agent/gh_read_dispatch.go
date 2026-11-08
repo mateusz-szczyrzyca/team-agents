@@ -89,6 +89,9 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			jq, i = rawArgs[i+1], i+1
 		case strings.HasPrefix(a, "--jq="):
 			jq = a[5:]
+		case strings.HasPrefix(a, "-q") && len(a) > 2:
+			// Handle compact -q like -qquery
+			jq = a[2:]
 		case a == "-t" || a == "--template" || strings.HasPrefix(a, "--template="):
 			return p.refuse("agent-gh: --template is not available to the agents; use --jq\n", 2, GHReadDispatchTemplateRefused, "templates cannot bypass native read filtering")
 		case (a == "-X" || a == "--method") && i+1 < len(rawArgs):
@@ -113,7 +116,7 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			(strings.HasPrefix(a, "-f") && len(a) > 2) || (strings.HasPrefix(a, "-F") && len(a) > 2):
 			fields = true
 			pass = append(pass, a)
-		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "--preview") && i+1 < len(rawArgs):
+		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "-p" || a == "--preview") && i+1 < len(rawArgs):
 			pass = append(pass, a, rawArgs[i+1])
 			i++
 		default:
