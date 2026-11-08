@@ -22,10 +22,15 @@ func runGH(args []string, env []string, stdout io.Writer, stderr io.Writer) int 
 		Exec:   OSExecutor{},
 	})
 	if err != nil {
-		if err.Cause == GHReadDispatchInvalidJSON {
+		switch err.Cause {
+		case GHReadDispatchInvalidJSON, GHReadDispatchStorage:
 			if _, werr := fmt.Fprintf(stderr, "agent-gh: %s\n", err.Message); werr != nil {
 				return 1
 			}
+		case GHReadDispatchExecFailed:
+			// Process failure: subprocess already wrote its diagnostic to stderr; preserve its exit code.
+		default:
+			// Policy refusals (MissingRealGH, TemplateRefused, etc.) have already written their message via p.refuse.
 		}
 		if code == 0 {
 			return 1

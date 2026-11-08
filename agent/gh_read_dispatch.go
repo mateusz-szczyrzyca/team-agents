@@ -113,7 +113,7 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 			(strings.HasPrefix(a, "-f") && len(a) > 2) || (strings.HasPrefix(a, "-F") && len(a) > 2):
 			fields = true
 			pass = append(pass, a)
-		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "--preview") && i+1 < len(rawArgs):
+		case (a == "-H" || a == "--header" || a == "--hostname" || a == "--cache" || a == "-c" || a == "--preview") && i+1 < len(rawArgs):
 			pass = append(pass, a, rawArgs[i+1])
 			i++
 		default:
