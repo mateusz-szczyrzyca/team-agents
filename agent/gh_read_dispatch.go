@@ -155,7 +155,7 @@ func (p GHDispatchParams) handleAPI(ctx context.Context, realGH string) (int, *G
 		dec.UseNumber() // Preserve numeric precision for large IDs
 		var firstPage any
 		var decErr error
-		var allArrays bool = true // Track if all pages are arrays
+		var allArrays = true // Track if all pages are arrays
 		for decErr = dec.Decode(&v); decErr == nil; decErr = dec.Decode(&v) {
 			pages++
 			if pages == 1 {
