@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,5 +33,29 @@ func TestRunGHReportsInvalidJSONDiagnostic(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "agent-gh:") {
 		t.Fatalf("stderr does not contain diagnostic: %q", stderr.String())
+	}
+}
+
+// TestRunGHDiagnosticWriterFailurePreservesCode verifies that when writing the diagnostic to stderr
+// fails, runGH returns exit code 1 or the non-zero status instead of failing silently.
+func TestRunGHDiagnosticWriterFailurePreservesCode(t *testing.T) {
+	root := t.TempDir()
+	fakeGH := filepath.Join(root, "real-gh")
+	script := "#!/bin/sh\nprintf 'not-valid-json' >&1\nexit 0\n"
+	if err := os.WriteFile(fakeGH, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(fakeGH, 0o700); err != nil { // #nosec G302 -- isolated test fixture must be executable
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	env := []string{
+		"AGENT_REAL_GH=" + fakeGH,
+		"AGENT_GITHUB_TRUSTED_RESOLVED=alice",
+	}
+	code := runGH([]string{"api", "repos/o/r/issues/1/comments"}, env, &stdout, failWriter{err: io.ErrShortWrite})
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
 	}
 }
