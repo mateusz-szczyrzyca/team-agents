@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -55,7 +56,8 @@ type ghIgnoredEntry struct {
 //
 // trusted: list of GitHub account logins (author.login or user.login) that are trusted.
 // isList: true for list-type responses (array of top-level items), false for detail responses
-//         (single object, possibly with nested comments/reviews arrays).
+//
+//	(single object, possibly with nested comments/reviews arrays).
 //
 // Filtering rules:
 // - Keep an entry if: author is in trusted AND body does not begin with "ignore this mate" (case-insensitive).
@@ -80,8 +82,10 @@ func ghFilterJSON(raw []byte, trusted []string, isList bool) ([]byte, []ghIgnore
 		return nil, nil, valueError("invalid JSON in gh response", err)
 	}
 
+	// isList is unused: all JSON structures supported regardless of list/detail type
+	_ = isList
 	var ignored []ghIgnoredEntry
-	filtered := filterEntries(data, trustedSet, &ignored, isList)
+	filtered := filterEntries(data, trustedSet, &ignored, false)
 
 	result, err := json.Marshal(filtered)
 	if err != nil {
@@ -123,7 +127,11 @@ func toStr(v interface{}) string {
 	case string:
 		return vv
 	case float64:
-		return string(rune(int(vv)))
+		// JSON numbers are parsed as float64; preserve as integer string if whole number
+		if vv == float64(int64(vv)) {
+			return fmt.Sprintf("%d", int64(vv))
+		}
+		return fmt.Sprintf("%v", vv)
 	default:
 		return ""
 	}
