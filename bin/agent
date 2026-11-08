@@ -6099,8 +6099,9 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
   fi
   # a member's DONE while it holds claimed board items: back to it once, in a fresh session (a second DONE finishes it)
   local held=""
-  if [[ $status == done && $fst == DONE && $is_member == 1 && -z $(task_field "$id" DONE_BOUNCED) \
-      && $(team_done_flag "$TEAM") != true ]]; then
+  # (not a remote member: its board lives on the lead, which follows its state)
+  if [[ $status == done && $fst == DONE && $is_member == 1 && ${REMOTE_TEAM:-} != 1 \
+      && -z $(task_field "$id" DONE_BOUNCED) && $(team_done_flag "$TEAM") != true ]]; then
     held=$(member_claimed_items "$TEAM" "$AGENT")
     if [[ -n $held ]]; then
       meta_set "$id" DONE_BOUNCED 1
@@ -7980,11 +7981,18 @@ fresh_session_max() {
   printf 0
 }
 
-# member_claimed_items team agent — the board items the agent holds claimed in the team, comma-separated
+# member_claimed_items team agent — the board items the agent holds claimed in the team, comma-separated; none when
+# the board cannot be read (logged, unless the bus does not have the team) — a reading is no reason to end a runner
 member_claimed_items() {
-  bus board-dump --dir "$BUS_DIR" --team "$1" 2> /dev/null | jq -r --arg a "$2" '.board // {}
-    | (if type == "object" then .[] else .[] end) | select(.status == "claimed" and (.assignee // "") == $a) | .id' \
-    2> /dev/null | paste -sd, -
+  local board rc=0
+  board=$(bus board-dump --dir "$BUS_DIR" --team "$1" 2> /dev/null) || rc=$?
+  if ((rc != 0)); then
+    ((rc == BUS_NOT_FOUND)) || log_warn board_read_failed "team=$1" "exit_code=$rc"
+    return 0
+  fi
+  jq -r --arg a "$2" '.board // {} | (if type == "object" then .[] else .[] end)
+    | select(.status == "claimed" and (.assignee // "") == $a) | .id' <<< "$board" | paste -sd, - \
+    || log_warn board_parse_failed "team=$1"
 }
 
 fresh_session_due() {
