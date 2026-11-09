@@ -379,8 +379,10 @@ base with main) against AGENTS.md's rules, which held through prompts and review
 test helper changed (not whitespace), removed or renamed; production code that looks at whether it runs under test;
 the files that judge a round changed (the Makefile and the checks — added to is fine —, `.golangci.yml`,
 `.github/workflows/`, `AGENTS.md`, `CLAUDE.md`) send the round back with the reason; only you allow them, for a team:
-`agent allow <team> <path>...` (`agent allow <team>` lists them). An added `t.Skip`, `skip`, `//nolint`, `#nosec` or
-`# shellcheck disable=` passes when the PR description names its file and why. Log: `precheck_rules`.
+`agent allow <team> <path>...` (`agent allow <team>` lists them). An added lint suppression (`//nolint`, `#nosec`,
+`# shellcheck disable=`, `# noqa`, `# type: ignore`, `@ts-ignore`, `eslint-disable`, `#[allow(...)]`) passes when the
+PR description names its file and why; skipped tests are held by the round's own check (`## Skipped tests`). Log:
+`precheck_rules`.
 
 **Diagnosing a model.** `agent debug --agent NAME` — or `--model NAME`, every agent on that model — writes one file:
 a summary of its tasks of the last `--days` (30) days (by kind and status, failures and their reasons, turns without

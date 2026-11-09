@@ -1737,7 +1737,8 @@ rule_production_path() { [[ ($1 == bin/* || $1 == agent/* || $1 == agentbus/* ||
 # AGENTS.md's rules, one a line. "human: ..." only the human may allow (agent allow <team> <path>); "disclose: ..." a
 # suppression the PR description (body) does not name. Prompts and reviewers held these rules alone before.
 #   B1 an existing test file changed (not whitespace), removed or renamed; tests added to it, new files, are fine
-#   B2 an added t.Skip, bats skip, //nolint, #nosec or "# shellcheck disable=" in a file the description does not name
+#   B2 an added lint suppression (Go, shell, Python, TS/JS, Rust) in a file the description does not name; skipped
+#      tests are round_check's (the PR's "## Skipped tests" section)
 #   B3 production code that looks at whether it runs under test
 #   B4 a file that judges a round changed (the Makefile and checks: added to is fine; workflows, AGENTS.md: any change)
 round_rule_issues() {
@@ -1775,17 +1776,24 @@ round_rule_issues() {
           if rule_production_path "$file" && [[ $text =~ (testing\.Testing\(\)|flag\.Lookup\(\"test\.|BATS_[A-Z_]+) ]]; then
             echo "human: $file:$n — production code that looks at whether it runs under test (${BASH_REMATCH[1]})"
           fi
+          # lint suppressions (skipped tests are round_check's: the PR's "## Skipped tests" section)
           if [[ $body != *"$file"* ]]; then
-            if rule_test_path "$file" && [[ $text =~ (t\.Skip(Now|f)?\() ]]; then
-              echo "disclose: $file:$n — t.Skip"
-            elif [[ $file == *.bats && $text =~ ^[[:space:]]*skip([[:space:]]|$) ]]; then
-              echo "disclose: $file:$n — skip"
-            elif [[ $text =~ //[[:space:]]*nolint ]]; then
+            if [[ $text =~ //[[:space:]]*nolint ]]; then
               echo "disclose: $file:$n — nolint"
             elif [[ $text =~ \#[[:space:]]*nosec ]]; then
               echo "disclose: $file:$n — nosec"
             elif [[ $text =~ \#[[:space:]]*shellcheck[[:space:]]+disable= ]]; then
               echo "disclose: $file:$n — shellcheck disable"
+            elif [[ $text =~ \#[[:space:]]*noqa ]]; then
+              echo "disclose: $file:$n — noqa"
+            elif [[ $text =~ \#[[:space:]]*type:[[:space:]]*ignore ]]; then
+              echo "disclose: $file:$n — type: ignore"
+            elif [[ $text =~ @ts-(ignore|expect-error|nocheck) ]]; then
+              echo "disclose: $file:$n — ts-${BASH_REMATCH[1]}"
+            elif [[ $text =~ eslint-disable ]]; then
+              echo "disclose: $file:$n — eslint-disable"
+            elif [[ $text =~ ^[[:space:]]*\#!?\[allow\( ]]; then
+              echo "disclose: $file:$n — allow (Rust)"
             fi
           fi
         fi
