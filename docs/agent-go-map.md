@@ -63,3 +63,60 @@ Before activation, review every assertion, loop, failure injection, and reachabl
 dependency against the implementation available in that round. Source-coupled
 contracts receive native Go equivalents; their original Bats cases continue to
 run only against the preserved Bash oracle.
+
+## R12 reconciliation and current ledger status
+
+Following Investigation #251 and human approval (PR #71 follow-up), the initial
+reconciliation was assessed against feature merge base `d043c7b`, where the ledger
+tracked 177 Bats test files with 730 total test cases (463 blackbox, 267 source-coupled,
+12 done, 718 planned). On current `main` (`45f1e7a`), the active ledger tracks 179
+Bats test files with 739 total test cases:
+- 468 blackbox cases
+- 271 source-coupled cases
+- 12 done cases
+- 727 planned cases
+
+The approved partitioning of the original 48 R12 rows in `tests/agent-go-map.tsv` (with on-disk ledger updates
+pending human `agent allow` registration) is:
+- 29 retained cases across seven bounded write slices (R12A–R12G), with each retained
+  row assigned to its earliest completion slice (R12A: 85, 474; R12C: 583, 584, 596, 597,
+  603–608, 615; R12D: 223; R12E: 577, 578, 580–582, 592; R12F: 472, 473, 579, 609–614).
+  Native equivalents for rows 85 (`TestPRFormatIssues`) and 474 (`TestResolveAndInsertReviewByline`)
+  are implemented in R12A; on-disk ledger updates in `tests/agent-go-map.tsv` remain deferred pending
+  human `agent allow` registration under rule 1 precheck. Remaining retained cases remain `planned` until
+  their future activation slices.
+- 19 cases proposed for reassignment to their respective subsystem rounds:
+  - R16 (rendered prompt / writing guidance): 587, 590, 598
+  - R18 (Claude/Codex adapter settings): 250, 591, 617–619, 622, 633
+  - R19 (Gemini/OpenCode adapter coverage): 616, 620–621, 634
+  - R22 (runner lifecycle): 623
+  - R35 (investigation task text): 585–586
+  - R38 (pipeline phase 2/3 rendering): 588
+  - R40 (investigation resume/fresh prompts): 589
+- 4 deferred R11 cases (`member_in_team.bats:89`, `member_in_team.bats:102`, `member_pr.bats:29`,
+  `pr_ownership.bats:31` at TSV lines 251, 252, 269, 406) retain their R11 provenance and remain
+  `planned` until write activation in R12E.
+
+Scope exclusions:
+- `round_pr_for` fallback logic remains in R32B (`rewrite-agent-in-go.md:501`).
+- Round orchestration remains in R31; formatting bounce/review lifecycle remains in R34;
+  remote-job attribution remains in R41/R50.
+- Existing R10 setup/byline/registry primitives are reused.
+
+Round sizing and schedule:
+- Planning plus R12A targets 850 lines combined, with a review threshold of 1,250 lines
+  and a hard 1,500-line cap.
+- Round size is authoritative only as reported by the script in its PR description block;
+  reports are excluded per human verdict, and line counting is not done manually or via workers.
+- R12G GraphQL payload policy is fail-closed: anything not positively classified as permitted
+  is rejected with typed errors; evasion tests cover aliases, fragments, variables, several
+  operations in one document, comments, and escaped strings; unclassifiable requests are refused.
+
+Human approval authorizes metadata-only ledger edits and the replacement of only 18 transitional
+write-refusal assertions across five native test files (`gh_read_dispatch_test.go`,
+`gh_read_dispatch_api_test.go`, `gh_read_dispatch_api_short_options_test.go`,
+`gh_read_dispatch_graphql_mutation_test.go`, `gh_read_dispatch_graphql_query_file_test.go`),
+strictly in the slices activating their corresponding write routes. Existing Bash tests and stubs
+remain unchanged. Note that while metadata-only ledger edits were approved, on-disk changes to
+`tests/agent-go-map.tsv` require explicit human registration (`agent allow <team> tests/agent-go-map.tsv`)
+to satisfy rule 1 precheck; until registered, the on-disk ledger remains identical to the PR base.
