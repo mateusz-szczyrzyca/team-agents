@@ -70,15 +70,17 @@ Following Investigation #251 and human approval (PR #71 follow-up), the active
 ledger tracks 177 Bats test files with 730 total test cases:
 - 463 blackbox cases
 - 267 source-coupled cases
-- 14 done cases
-- 716 planned cases
+- 12 done cases
+- 718 planned cases
 
 The original 48 R12 rows in `tests/agent-go-map.tsv` were partitioned into:
 - 29 retained cases across seven bounded write slices (R12A–R12G), with each retained
   row assigned to its earliest completion slice (R12A: 85, 474; R12C: 583, 584, 596, 597,
   603–608, 615; R12D: 223; R12E: 577, 578, 580–582, 592; R12F: 472, 473, 579, 609–614).
-  R12A completes native equivalents for rows 85 (`TestPRFormatIssues`) and 474 (`TestResolveAndInsertReviewByline`);
-  remaining retained cases remain `planned` until their future activation slices.
+  Native equivalents for rows 85 (`TestPRFormatIssues`) and 474 (`TestResolveAndInsertReviewByline`)
+  are implemented in R12A; on-disk ledger updates in `tests/agent-go-map.tsv` remain deferred pending
+  human `agent allow` registration under rule 1 precheck. Remaining retained cases remain `planned` until
+  their future activation slices.
 - 19 reassigned cases moved to their respective subsystem rounds:
   - R16 (rendered prompt / writing guidance): 587, 590, 598
   - R18 (Claude/Codex adapter settings): 250, 591, 617–619, 622, 633
@@ -111,4 +113,6 @@ write-refusal assertions across five native test files (`gh_read_dispatch_test.g
 `gh_read_dispatch_api_test.go`, `gh_read_dispatch_api_short_options_test.go`,
 `gh_read_dispatch_graphql_mutation_test.go`, `gh_read_dispatch_graphql_query_file_test.go`),
 strictly in the slices activating their corresponding write routes. Existing Bash tests and stubs
-remain unchanged.
+remain unchanged. Note that while metadata-only ledger edits were approved, on-disk changes to
+`tests/agent-go-map.tsv` require explicit human registration (`agent allow <team> tests/agent-go-map.tsv`)
+to satisfy rule 1 precheck; until registered, the on-disk ledger remains identical to the PR base.
