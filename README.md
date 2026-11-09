@@ -1671,7 +1671,7 @@ make integration        # real agent CLIs and accounts (costs usage)
 - **Native GitHub write formatting and slices (R12A–R12G).** Following R11 read filtering, R12 covers
   GitHub write formatting, review bylines, multiline bodies, PR attribution, trusted current-round selection,
   and canonical origins across seven bounded slices (R12A–R12G), each capped at 1,500 lines:
-  - *Planning:* Reconciles R12 scope and ledger ownership (29 retained cases, 19 reassigned cases, 4 deferred
+  - *Planning:* Reconciles R12 scope and proposed ledger ownership (29 retained cases, 19 cases proposed for reassignment, 4 deferred
     R11 write cases finished in R12E).
   - *R12A:* Pure PR-body diagnostics (`pr_format_issues`) and review-body byline insertion; no write activation.
   - *R12B:* Pure publication transforms: name rendering, POSIX checksum fallback/collision behavior, recommendation
