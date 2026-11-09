@@ -82,7 +82,7 @@ tests/unit/gate.bats	passing steps take one line each; the full output is in the
 tests/unit/gate.bats	a failing Go test shows its failure, not the hundreds of passing ones	blackbox	R32	-	planned
 tests/unit/gate.bats	a failing bats test shows its name and diagnosis, capped; the linter shows its findings without code	blackbox	R32	-	planned
 tests/unit/gate.bats	every step runs even after a failure, and the summary names the failed ones	blackbox	R32	-	planned
-tests/unit/github_format.bats	pr_format_issues: commits and PRs in code format without a link, a code block without its language, plain RED and GREEN	source	R12	-	planned
+tests/unit/github_format.bats	pr_format_issues: commits and PRs in code format without a link, a code block without its language, plain RED and GREEN	source	R12A	-	planned
 tests/unit/github_format.bats	--autopilot: a PR description with an unlinked commit goes back to the team once, with what to fix; then the review starts	blackbox	R34	-	planned
 tests/unit/github_trust.bats	a fork's PR with the round's branch name is not the round's PR: it is not reviewed	blackbox	R32	-	planned
 tests/unit/github_trust.bats	a PR opened by an account that is not trusted is not the round's PR: it is not reviewed	blackbox	R32	-	planned
@@ -220,7 +220,7 @@ tests/unit/investigation_terminal_completion.bats	successful legacy handoff fini
 tests/unit/investigation_terminal_completion.bats	failed legacy handoff finishes failed and preserves its failure notification	blackbox	R39	-	planned
 tests/unit/job_attribution.bats	remote submissions attach canonical GitHub origin and no human requester task	source	R41	-	planned
 tests/unit/job_attribution.bats	non-GitHub origins do not become repository links	source	R41	-	planned
-tests/unit/job_attribution_paths.bats	repository attribution uses the first origin URL like existing GitHub operations	source	R12	-	planned
+tests/unit/job_attribution_paths.bats	repository attribution uses the first origin URL like existing GitHub operations	source	R12D	-	planned
 tests/unit/job_attribution_paths.bats	the node passes normalized origin attribution into frozen helper preparation	source	R50	-	planned
 tests/unit/kick.bats	kicking a solo task stops its run and records it	blackbox	R25	-	planned
 tests/unit/kick.bats	kicking a team member ends its run without leaving the team: it sleeps or is woken again, the coordinator is told	blackbox	R25	-	planned
@@ -247,7 +247,7 @@ tests/unit/limits.bats	a 429 the CLI retried long before the run ended does not 
 tests/unit/lint_shell_memory.bats	lint-shell bounds each process and checks every file before reporting failure	blackbox	R55	-	planned
 tests/unit/long_run_cut.bats	the watchdog ends a run at its step limit and says so	source	R20	-	planned
 tests/unit/long_run_cut.bats	a run under its step limit is not ended	source	R20	-	planned
-tests/unit/member_in_team.bats	Claude Code gets the agentbus tools up front: its tool search is off, unless CLAUDE_TOOL_SEARCH says otherwise	source	R12	-	planned
+tests/unit/member_in_team.bats	Claude Code gets the agentbus tools up front: its tool search is off, unless CLAUDE_TOOL_SEARCH says otherwise	source	R18	-	planned
 tests/unit/member_in_team.bats	a team member's gh pr merge, ready and close are refused, logged, and never reach gh	blackbox	R11	-	planned
 tests/unit/member_in_team.bats	the agents' gh asks the bus who coordinates when a PR command runs, not when the run started	blackbox	R11	-	planned
 tests/unit/member_in_team.bats	a team task's gh knows its team and agent; a solo task's and an investigator's do not	source	R23	-	planned
@@ -469,9 +469,9 @@ tests/unit/resume_alloc.bats	team creation advances past an orphaned task direct
 tests/unit/resume_members.bats	agent run --resume --team: the listed go on, a new member joins from the coordinator's branch, the others are left out	blackbox	R30	-	planned
 tests/unit/resume_members.bats	agent run --resume --team refuses a name that is not a configured agent	blackbox	R30	-	planned
 tests/unit/resume_stash.bats	a resume carries a member's changes on though one of its files was added with --intent-to-add	blackbox	R30	-	planned
-tests/unit/review_byline.bats	an investigator's review gets its byline at the top; the one at the end stays; none is doubled	blackbox	R12	-	planned
-tests/unit/review_byline.bats	a review posted by anyone but an investigator is left as it is	blackbox	R12	-	planned
-tests/unit/review_byline.bats	review_byline: the investigator, its CLI and model, the request	source	R12	-	planned
+tests/unit/review_byline.bats	an investigator's review gets its byline at the top; the one at the end stays; none is doubled	blackbox	R12F	-	planned
+tests/unit/review_byline.bats	a review posted by anyone but an investigator is left as it is	blackbox	R12F	-	planned
+tests/unit/review_byline.bats	review_byline: the investigator, its CLI and model, the request	source	R12A	-	planned
 tests/unit/review_overload.bats	review_hands_over: an exhausted quota, and an overload past AGENT_REVIEW_OVERLOAD_WAIT_MIN, hand a review over; a short overload or a rate limit do not	source	R34	-	planned
 tests/unit/review_overload.bats	a review done again goes to an investigator outside its pair, though the pair's other one is free	source	R34	-	planned
 tests/unit/review_pair_random.bats	a review pair is drawn at random: over eight PRs each of four free investigators reviews, never twice in a pair	source	R33	-	planned
@@ -574,53 +574,53 @@ tests/unit/review_pair_repeat.bats	four investigators, only the PR's previous pa
 tests/unit/review_pair_repeat.bats	three investigators: the PR's previous pair waits; once the third is free a partly new pair takes it at once	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	rotate and list: only the PR's previous pair free, after AGENT_REVIEW_ROTATE_WAIT_MIN — no review	source	R33	-	planned
 tests/unit/review_pair_repeat.bats	after AGENT_REVIEW_ROTATE_WAIT_MIN a pending pass whose PR's pair is all that is free stays pending for the timer	source	R33	-	planned
-tests/unit/github_names.bats	gh pr create --body: the coordinator and the members are bold, each in its own colour	source	R12	-	planned
-tests/unit/github_names.bats	gh pr edit --body-file: the same colours as in the PR's first round	source	R12	-	planned
-tests/unit/github_names.bats	an investigator's review: its byline at the top and at the end, bold in the investigator's colour	source	R12	-	planned
-tests/unit/github_names.bats	two names of one text with the same colour: the second gets the next colour nobody in it has	source	R12	-	planned
-tests/unit/github_names.bats	a name the map does not know gets a colour of the palette from its name, the same every time	source	R12	-	planned
-tests/unit/github_names.bats	with no colours known the text goes out as it is	source	R12	-	planned
-tests/unit/github_names.bats	agent_github_colors: the agents in the configuration's order, each its own colour; investigators apart	source	R12	-	planned
-tests/unit/github_names.bats	the runner gives the agents' gh the colours of every agent	source	R12	-	planned
-tests/unit/prompt_delivery.bats	a reviewer's task gives its review request: independence, the re-review and the previous review	source	R12	-	planned
-tests/unit/prompt_delivery.bats	a plain review request is not repeated; an investigation request keeps its question and context	source	R12	-	planned
-tests/unit/prompt_delivery.bats	a reviewer gets the rules for writing on GitHub: files and commits as links	source	R12	-	planned
-tests/unit/prompt_delivery.bats	independent investigators get the writing rules in every phase, the review's recommendation first	source	R12	-	planned
-tests/unit/prompt_delivery.bats	an independent investigator's resume does not repeat its first prompt; a fresh session has it once	source	R12	-	planned
-tests/unit/prompt_delivery.bats	a helper is not told to fill the repository's skipped tests; a solo task is	source	R12	-	planned
-tests/unit/prompt_delivery.bats	Claude Code runs with its own attribution off: no Co-Authored-By, no 'Generated with Claude Code'	source	R12	-	planned
-tests/unit/prompt_delivery.bats	the agents' gh leaves out a 'Generated with Claude Code' line from what it publishes	source	R12	-	planned
+tests/unit/github_names.bats	gh pr create --body: the coordinator and the members are bold, each in its own colour	source	R12E	-	planned
+tests/unit/github_names.bats	gh pr edit --body-file: the same colours as in the PR's first round	source	R12E	-	planned
+tests/unit/github_names.bats	an investigator's review: its byline at the top and at the end, bold in the investigator's colour	source	R12F	-	planned
+tests/unit/github_names.bats	two names of one text with the same colour: the second gets the next colour nobody in it has	source	R12E	-	planned
+tests/unit/github_names.bats	a name the map does not know gets a colour of the palette from its name, the same every time	source	R12E	-	planned
+tests/unit/github_names.bats	with no colours known the text goes out as it is	source	R12E	-	planned
+tests/unit/github_names.bats	agent_github_colors: the agents in the configuration's order, each its own colour; investigators apart	source	R12C	-	planned
+tests/unit/github_names.bats	the runner gives the agents' gh the colours of every agent	source	R12C	-	planned
+tests/unit/prompt_delivery.bats	a reviewer's task gives its review request: independence, the re-review and the previous review	source	R35	-	planned
+tests/unit/prompt_delivery.bats	a plain review request is not repeated; an investigation request keeps its question and context	source	R35	-	planned
+tests/unit/prompt_delivery.bats	a reviewer gets the rules for writing on GitHub: files and commits as links	source	R16	-	planned
+tests/unit/prompt_delivery.bats	independent investigators get the writing rules in every phase, the review's recommendation first	source	R38	-	planned
+tests/unit/prompt_delivery.bats	an independent investigator's resume does not repeat its first prompt; a fresh session has it once	source	R40	-	planned
+tests/unit/prompt_delivery.bats	a helper is not told to fill the repository's skipped tests; a solo task is	source	R16	-	planned
+tests/unit/prompt_delivery.bats	Claude Code runs with its own attribution off: no Co-Authored-By, no 'Generated with Claude Code'	source	R18	-	planned
+tests/unit/prompt_delivery.bats	the agents' gh leaves out a 'Generated with Claude Code' line from what it publishes	source	R12E	-	planned
 tests/unit/review_pair_models.bats	rotate: of the pairs without a member of the last pair, the one without its models	source	R33	-	planned
 tests/unit/review_pair_models.bats	random: of the pairs without a member of the last pair, the one without its models, whatever the draw	source	R33	-	planned
 tests/unit/review_pair_models.bats	investigators of one model: the model does not narrow the draw	source	R33	-	planned
-tests/unit/github_attribution.bats	an investigator's attribution names its CLI and model, not (?)	source	R12	-	planned
-tests/unit/github_attribution.bats	a team agent's attribution still comes from AGENT_TYPE	source	R12	-	planned
-tests/unit/github_attribution.bats	the file-link rule: deleted files at the base commit, directories as tree, encoded paths, no invented links	source	R12	-	planned
+tests/unit/github_attribution.bats	an investigator's attribution names its CLI and model, not (?)	source	R12C	-	planned
+tests/unit/github_attribution.bats	a team agent's attribution still comes from AGENT_TYPE	source	R12C	-	planned
+tests/unit/github_attribution.bats	the file-link rule: deleted files at the base commit, directories as tree, encoded paths, no invented links	source	R16	-	planned
 tests/unit/review_pair_cycle.bats	default draw: one PR's six passes take all six pairs of A, B, C, D, each once — A+B, C+D, then the mixed ones	source	R33	-	planned
 tests/unit/review_pair_cycle.bats	default draw: six PRs in a row take all six pairs, each once	source	R33	-	planned
 tests/unit/review_pair_cycle.bats	rotate: one PR's six passes take all six pairs, each once	source	R33	-	planned
 tests/unit/review_pair_cycle.bats	default draw: a PR's pass never repeats the pair of its pass before, whichever three are free	source	R33	-	planned
-tests/unit/github_name_registry.bats	a team's names keep their colours when NORMAL_AGENTS changes between rounds	source	R12	-	planned
-tests/unit/github_name_registry.bats	the coordinator, the members and every investigator each get a colour nobody else has	source	R12	-	planned
-tests/unit/github_name_registry.bats	the colours are remembered in github-colors, one name a line; a later team adds its new names only	source	R12	-	planned
-tests/unit/github_name_registry.bats	a palette used up: a new name gets the colour the fewest names have	source	R12	-	planned
-tests/unit/github_name_registry.bats	two runs starting at once never give two names one colour	source	R12	-	planned
-tests/unit/github_name_registry.bats	AGENT_GITHUB_COLORS=none: no colours, nothing remembered	source	R12	-	planned
-tests/unit/github_recommendation.bats	a Recommendation heading's line: needs changes in red, bold, with 🔧	source	R12	-	planned
-tests/unit/github_recommendation.bats	an inline recommendation as inv-astra wrote it on PR #50: the words become the coloured ones	source	R12	-	planned
-tests/unit/github_recommendation.bats	ready to merge in green, bold, with ✅; an icon already there is not doubled	source	R12	-	planned
-tests/unit/github_recommendation.bats	incomplete: red with 🧩	source	R12	-	planned
-tests/unit/github_recommendation.bats	a recommendation already in colour goes out as it is	source	R12	-	planned
-tests/unit/github_recommendation.bats	a PR comment is not a review: its words stay	source	R12	-	planned
-tests/unit/agents_gh_race.bats	runs setting up the agents' gh at once all succeed, and the link is the script	source	R12	-	planned
-tests/unit/serena.bats	Serena off by default: no serena server for any CLI	source	R12	-	planned
-tests/unit/serena.bats	claude: a serena server on the run's worktree, context claude-code, next to agentbus	source	R12	-	planned
-tests/unit/serena.bats	claude: an independent investigator gets serena, still without agentbus	source	R12	-	planned
-tests/unit/serena.bats	codex: serena with context codex and a startup time for its language servers	source	R12	-	planned
-tests/unit/serena.bats	gemini (Antigravity): serena in the workspace's MCP file, context antigravity	source	R12	-	planned
-tests/unit/serena.bats	opencode: serena as a local server, context ide, on	source	R12	-	planned
-tests/unit/serena.bats	Serena's project folder in a worktree is never committed: .serena/ is excluded	source	R12	-	planned
-tests/unit/serena.bats	the prompt tells the agent to navigate with Serena only when it is on	source	R12	-	planned
+tests/unit/github_name_registry.bats	a team's names keep their colours when NORMAL_AGENTS changes between rounds	source	R12C	-	planned
+tests/unit/github_name_registry.bats	the coordinator, the members and every investigator each get a colour nobody else has	source	R12C	-	planned
+tests/unit/github_name_registry.bats	the colours are remembered in github-colors, one name a line; a later team adds its new names only	source	R12C	-	planned
+tests/unit/github_name_registry.bats	a palette used up: a new name gets the colour the fewest names have	source	R12C	-	planned
+tests/unit/github_name_registry.bats	two runs starting at once never give two names one colour	source	R12C	-	planned
+tests/unit/github_name_registry.bats	AGENT_GITHUB_COLORS=none: no colours, nothing remembered	source	R12C	-	planned
+tests/unit/github_recommendation.bats	a Recommendation heading's line: needs changes in red, bold, with 🔧	source	R12F	-	planned
+tests/unit/github_recommendation.bats	an inline recommendation as inv-astra wrote it on PR #50: the words become the coloured ones	source	R12F	-	planned
+tests/unit/github_recommendation.bats	ready to merge in green, bold, with ✅; an icon already there is not doubled	source	R12F	-	planned
+tests/unit/github_recommendation.bats	incomplete: red with 🧩	source	R12F	-	planned
+tests/unit/github_recommendation.bats	a recommendation already in colour goes out as it is	source	R12F	-	planned
+tests/unit/github_recommendation.bats	a PR comment is not a review: its words stay	source	R12F	-	planned
+tests/unit/agents_gh_race.bats	runs setting up the agents' gh at once all succeed, and the link is the script	source	R12C	-	planned
+tests/unit/serena.bats	Serena off by default: no serena server for any CLI	source	R19	-	planned
+tests/unit/serena.bats	claude: a serena server on the run's worktree, context claude-code, next to agentbus	source	R18	-	planned
+tests/unit/serena.bats	claude: an independent investigator gets serena, still without agentbus	source	R18	-	planned
+tests/unit/serena.bats	codex: serena with context codex and a startup time for its language servers	source	R18	-	planned
+tests/unit/serena.bats	gemini (Antigravity): serena in the workspace's MCP file, context antigravity	source	R19	-	planned
+tests/unit/serena.bats	opencode: serena as a local server, context ide, on	source	R19	-	planned
+tests/unit/serena.bats	Serena's project folder in a worktree is never committed: .serena/ is excluded	source	R18	-	planned
+tests/unit/serena.bats	the prompt tells the agent to navigate with Serena only when it is on	source	R22	-	planned
 tests/unit/dashboard_lifecycle.bats	dashboard team stop persists every member and prevents wake	source	R35	-	planned
 tests/unit/dashboard_lifecycle.bats	dashboard stopped automation cannot launch a fix pass or review	source	R35	-	planned
 tests/unit/dashboard_lifecycle.bats	dashboard stopped runner exits without restarting team automation	source	R35	-	planned
@@ -630,8 +630,8 @@ tests/unit/dashboard_lifecycle.bats	dashboard ordinary investigations and other 
 tests/unit/investigation_team_admission.bats	resuming a normal team in the same project is refused while --investigation is in progress, but allowed for normal model investigations	blackbox	R37	-	planned
 tests/unit/dashboard_prompt_modes.bats	dashboard PR ownership and Serena guidance reach every role and continuation	source	R35	-	planned
 tests/unit/dashboard_prompt_modes.bats	dashboard resume does not advertise Serena when disabled	source	R35	-	planned
-tests/unit/serena.bats	config/agents.conf enables AGENT_SERENA=serena and worktrees inherit .serena/project.yml from REPO_ROOT	source	R12	-	planned
-tests/unit/serena.bats	every model CLI (claude, codex, gemini, opencode) receives the Serena prompt and invokes the serena MCP server when needed	source	R12	-	planned
+tests/unit/serena.bats	config/agents.conf enables AGENT_SERENA=serena and worktrees inherit .serena/project.yml from REPO_ROOT	source	R18	-	planned
+tests/unit/serena.bats	every model CLI (claude, codex, gemini, opencode) receives the Serena prompt and invokes the serena MCP server when needed	source	R19	-	planned
 tests/unit/spend.bats	agent spend: a paid model's spending, a subscription's equivalent, by model	blackbox	R53B	-	planned
 tests/unit/spend.bats	agent spend: a subscription's model in MODEL_PRICES is priced at its API rates, cached input at its own	blackbox	R53B	-	planned
 tests/unit/spend.bats	agent spend --days: older runs are left out; --daily shows a line a day and model	blackbox	R53B	-	planned

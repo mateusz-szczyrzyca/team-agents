@@ -63,3 +63,42 @@ Before activation, review every assertion, loop, failure injection, and reachabl
 dependency against the implementation available in that round. Source-coupled
 contracts receive native Go equivalents; their original Bats cases continue to
 run only against the preserved Bash oracle.
+
+## R12 reconciliation and current ledger status
+
+Following Investigation #251 and human approval (PR #71 follow-up), the active
+ledger tracks 177 Bats test files with 730 total test cases:
+- 463 blackbox cases
+- 267 source-coupled cases
+- 12 done cases
+- 718 planned cases
+
+The original 48 R12 rows in `tests/agent-go-map.tsv` were partitioned into:
+- 29 retained cases across seven bounded write slices (R12A–R12G), with each retained
+  row assigned to its earliest completion slice (R12A: 85, 474; R12C: 583, 584, 596, 597,
+  603–608, 615; R12D: 223; R12E: 577, 578, 580–582, 592; R12F: 472, 473, 579, 609–614).
+  All retained cases remain `planned` until full native equivalents are verified (e.g. 85 and 474 in R12A).
+- 19 reassigned cases moved to their respective subsystem rounds:
+  - R16 (rendered prompt / writing guidance): 587, 590, 598
+  - R18 (Claude/Codex adapter settings): 250, 591, 617–619, 622, 633
+  - R19 (Gemini/OpenCode adapter coverage): 616, 620–621, 634
+  - R22 (runner lifecycle): 623
+  - R35 (investigation task text): 585–586
+  - R38 (pipeline phase 2/3 rendering): 588
+  - R40 (investigation resume/fresh prompts): 589
+- 4 deferred R11 cases (`member_in_team.bats:89`, `member_in_team.bats:102`, `member_pr.bats:29`,
+  `pr_ownership.bats:31` at TSV lines 251, 252, 269, 406) retain their R11 provenance and remain
+  `planned` until write activation in R12E.
+
+Scope exclusions:
+- `round_pr_for` fallback logic remains in R32B (`rewrite-agent-in-go.md:475`).
+- Round orchestration remains in R31; formatting bounce/review lifecycle remains in R34;
+  remote-job attribution remains in R41/R50.
+- Existing R10 setup/byline/registry primitives are reused.
+
+Human approval authorizes metadata-only ledger edits and the replacement of only 18 transitional
+write-refusal assertions across five native test files (`gh_read_dispatch_test.go`,
+`gh_read_dispatch_api_test.go`, `gh_read_dispatch_api_short_options_test.go`,
+`gh_read_dispatch_graphql_mutation_test.go`, `gh_read_dispatch_graphql_query_file_test.go`),
+strictly in the slices activating their corresponding write routes. Existing Bash tests and stubs
+remain unchanged.

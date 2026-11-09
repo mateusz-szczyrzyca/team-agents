@@ -413,7 +413,7 @@ Rounds likely to need A/B splits include R20–R22, R30, R38, and R43–R49.
 | **R09** | Read/display CLI: status/ls, agents, show, ack, bus, inv listing, notes, helpers, dispatch parsing. | Exact output/status/missing-ID tests; `run_notes`, `investigation_independent_labels`. Activate only completed read entry points, not dispatch effects. |
 | **R10** | Git identity/trailers and GitHub setup: per-run environment, signing, author format, wrapper location, and `gh` fast path before config. | `identity`, `agent` identity, `github_trust`; no identity mutation outside a run. |
 | **R11** | `gh` read filtering: trusted/unknown authors, marked comments, forks, API/list/view, GraphQL refusal, `--jq`, failed `gh`. | `agent_gh`, `github_trust`; additive Go tests for every allow/reject path. |
-| **R12** | GitHub write formatting: review byline, multiline bodies, PR links/attribution, trusted current-round PR selection, canonical origins. | `github_format`, `review_byline`, `job_attribution`, `job_attribution_paths`, `one_pr_per_round`; all writes stubbed. |
+| **R12** | GitHub write formatting: review byline, multiline bodies, PR links/attribution, trusted current-round PR selection, canonical origins (split into seven bounded slices **R12A**–**R12G**; planning plus R12A in current round; hard 1,500-line cap per slice). | `github_format`, `review_byline`, `job_attribution`, `job_attribution_paths`, `one_pr_per_round`; all writes stubbed. |
 | **R13** | `git.go`: worktree/branch creation/removal, fetch/ref selection, failed-checkout cleanup, no dirty-work loss. | Core `node_checkout`; local temporary remotes, spaces in paths, failing Git boundary. |
 | **R14** | `task.go`, `task_ids.go`: allocate task/cohort IDs, collision retry, rollback partial writes, concurrent admission. | `resume_alloc`, rejected starts in `agent`; compatible ID locking and no leaked branches/tasks. |
 | **R15** | `systemd.go`: exact runner/timer/path/check units, env/cwd/self path, active checks, launch-failure rollback. | Stub systemd subprocess tests; callback paths and no unintended inherited lock descriptors. |
@@ -463,6 +463,29 @@ Completing a pure helper never authorizes activation of its whole parent command
 directly until every reachable dependency of the exact black-box case exists. Intermediate `main` remains
 safe because the installed production command stays Bash until R55.
 
+### R12 write formatting slices (R12A–R12G)
+
+Following Investigation #251 and human approval, R12 write formatting is partitioned into seven bounded slices
+plus planning reconciliation. Each slice has a hard working cap of 1,500 added plus deleted lines:
+
+| Slice | Deliverable and scope | Target lines | Review ceiling |
+|---|---|---:|---:|
+| **Planning** | Reconcile R12 scope and ledger ownership (29 retained cases, 19 reassigned cases, 4 deferred R11 write cases finished in R12E, README count corrections). No behavior changes. | 250 | 400 |
+| **R12A** | Pure PR-body diagnostics (`pr_format_issues`) and review-body byline insertion; no write activation. Completes native equivalents for rows 85 and 474. | 600 | 850 |
+| **R12B** | Pure publication transforms: name rendering, POSIX checksum fallback/collision behavior, recommendation coloring, Generated-line removal, and transform ordering. | 850 | 1,100 |
+| **R12C** | Descriptors/attribution and complete registry/setup parity using existing R10 primitives (stable order, persistence, concurrent registration/setup, and no-color path). | 950 | 1,200 |
+| **R12D** | Canonical origin resolution and read-only trusted/current-round PR primitives (metadata precedence and exact-number merge matching). Caller orchestration remains in later rounds. | 1,050 | 1,250 |
+| **R12E** | CLI writes: body/file/stdin handling, process forwarding, cleanup, dynamic member/ownership guards, and native `gh` activation. Completes deferred R11 cases 251, 252, 269, 406. | 950 | 1,200 |
+| **R12F** | REST writes: JSON body preservation, byline then recommendation then publication transform ordering, endpoint behavior, mutation response filtering, and native API activation. | 1,150 | 1,350 |
+| **R12G** | GraphQL payload inspection and permitted-request forwarding: fail-closed policy rejecting unclassifiable queries/mutations, comments, fragments, variables, multi-operations, and escaped strings hiding mutations or protected fields, with typed errors. | 1,050 | 1,300 |
+
+The current round delivers planning corrections plus R12A only; slices R12B–R12G each start on fresh branches
+after the preceding PR merges. Scope boundaries:
+- Existing R10 setup, byline formatting, and name color registry primitives are reused.
+- `round_pr_for` fallback logic remains in R32B; round orchestration remains in R31; formatting bounce/review lifecycle remains in R34; full remote-job attribution remains in R41/R50.
+- Ledger reconciliation: 29 cases retained across R12A–R12G; 19 cases reassigned to their proper subsystem rounds (R16, R18, R19, R22, R35, R38, R40); 4 deferred R11 cases (251, 252, 269, 406) finished in R12E.
+- Human approval explicitly permits metadata-only ledger edits and the replacement of only 18 transitional write-refusal assertions across five native test files (`gh_read_dispatch_test.go`, `gh_read_dispatch_api_test.go`, `gh_read_dispatch_api_short_options_test.go`, `gh_read_dispatch_graphql_mutation_test.go`, `gh_read_dispatch_graphql_query_file_test.go`), strictly in the respective future slices that activate those routes.
+
 ### Rounds added in revision 2
 
 Subsystems added to the Bash program after the examined base, each after the round it depends on, with the same
@@ -478,7 +501,7 @@ protocol and cap. Their Bats cases are assigned to them in the ledger; split aga
 
 The three `tmp_sweep` cases test the test tooling, not `bin/agent`; they belong to R55's build and tooling
 cutover. Before RED, R12, R22, R33, R34 and R35 re-estimate their size with the cases added since the base and
-split if needed.
+split if needed (R12 re-estimated and split into R12A–R12G above).
 
 ### Changing the Bash program during the migration
 

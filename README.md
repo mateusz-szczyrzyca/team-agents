@@ -1668,8 +1668,32 @@ make integration        # real agent CLIs and accounts (costs usage)
   Anonymous comments and nested slurped pages
   receive the same trust filtering; paginated numeric IDs retain their exact values. Malformed responses
   produce CLI diagnostics, and coordinator-lookup warnings include subprocess status and bounded stderr.
+- **Native GitHub write formatting and slices (R12A–R12G).** Following R11 read filtering, R12 covers
+  GitHub write formatting, review bylines, multiline bodies, PR attribution, trusted current-round selection,
+  and canonical origins across seven bounded slices (R12A–R12G), each capped at 1,500 lines:
+  - *Planning:* Reconciles R12 scope and ledger ownership (29 retained cases, 19 reassigned cases, 4 deferred
+    R11 write cases finished in R12E).
+  - *R12A:* Pure PR-body diagnostics (`pr_format_issues`) and review-body byline insertion; no write activation.
+  - *R12B:* Pure publication transforms: name rendering, POSIX checksum fallback/collision behavior, recommendation
+    coloring, Generated-line removal, and transform ordering.
+  - *R12C:* Descriptors/attribution and registry/setup parity reusing R10 primitives (stable order, persistence,
+    concurrent setup, and no-color path).
+  - *R12D:* Canonical origin resolution and read-only trusted/current-round PR primitives (metadata precedence and
+    exact-number merge matching).
+  - *R12E:* CLI writes: body/file/stdin handling, process forwarding, cleanup, dynamic member/ownership guards,
+    and completion of the four deferred R11 cases (`251`, `252`, `269`, `406`).
+  - *R12F:* REST writes: JSON body preservation, byline/recommendation/transform ordering, endpoint behavior,
+    and mutation-response filtering.
+  - *R12G:* GraphQL payload inspection: fail-closed policy rejecting unclassifiable requests, comments, fragments,
+    variables, multi-operations, and escaped strings hiding mutations or protected fields, with typed errors.
+  All rounds retain the hard 1,500-line cap. The current round delivers planning corrections plus R12A only.
+  Scope boundaries reuse existing R10 setup/byline/registry primitives and explicitly exclude `round_pr_for` (R32B),
+  round orchestration (R31), formatting bounce/review launch (R34), and remote pipelines (R41/R50).
+  Human approval permits metadata-only ledger edits and the narrow replacement of 18 transitional write-refusal
+  assertions across five native test files only in the specific future slices that activate their corresponding routes;
+  all existing Bash tests and all other native assertions remain unchanged.
 - **Go rewrite parity tracking and ledger validation.**
-  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). The current ledger tracks 663 Bats unit test cases, with 12 rows done and 651 planned, in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). R10 adds lower-layer Go coverage; R11 activates native GitHub read and member-guard cases; four whole cases that also require coordinator writes remain planned until R12, and runner activation remains planned. The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
+  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). The current ledger tracks 730 Bats unit test cases, with 12 rows done and 718 planned, in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). R10 adds lower-layer Go coverage; R11 activates native GitHub read and member-guard cases; four whole cases that also require coordinator writes remain planned until R12E, and runner activation remains planned. The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
   tools/check-agent-test-map.sh              # validates tests/agent-go-map.tsv and prints summary counts
   tools/check-agent-test-map.sh --quiet      # (-q) suppresses summary output, exits 0 on success or 1 on error
