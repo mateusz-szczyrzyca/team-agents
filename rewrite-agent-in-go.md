@@ -485,7 +485,7 @@ block without manual or worker counting, and reports are excluded). Slices R12B�
 after the preceding PR merges. Scope boundaries:
 - Existing R10 setup, byline formatting, and name color registry primitives are reused.
 - `round_pr_for` fallback logic remains in R32B; round orchestration remains in R31; formatting bounce/review lifecycle remains in R34; full remote-job attribution remains in R41/R50.
-- Ledger reconciliation: 29 cases retained across R12A–R12G; 19 cases reassigned to their proper subsystem rounds (R16, R18, R19, R22, R35, R38, R40); 4 deferred R11 cases (251, 252, 269, 406) finished in R12E.
+- Ledger reconciliation: 29 cases retained across R12A–R12G (rows 85 and 474 completed in R12A, others remaining planned until their activation slices); 19 cases reassigned to their proper subsystem rounds (R16, R18, R19, R22, R35, R38, R40); 4 deferred R11 cases (251, 252, 269, 406) finished in R12E.
 - GraphQL policy for R12G: fail-closed; anything not positively classified as permitted is rejected with typed errors; tests verify attempts to hide mutations or protected fields via aliases, fragments, variables, multiple operations in one document, comments, and escaped strings; unclassifiable requests are refused.
 - Human approval explicitly permits metadata-only ledger edits and the replacement of only 18 transitional write-refusal assertions across five native test files (`gh_read_dispatch_test.go`, `gh_read_dispatch_api_test.go`, `gh_read_dispatch_api_short_options_test.go`, `gh_read_dispatch_graphql_mutation_test.go`, `gh_read_dispatch_graphql_query_file_test.go`), strictly in the respective future slices that activate those routes.
 
