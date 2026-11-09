@@ -400,3 +400,18 @@ wait_member_state() {
   AGENT_SUPERVISE_GRACE_SEC=0 agent _supervise
   wait_job member-ghost 'stopped' 30
 }
+
+@test "the cleanup of a daemon that ignores SIGTERM ends it and its children within its limit: no hang of the run" {
+  # a gate hung for 20 minutes: teardown waited without limit for a daemon that did not end, and its child kept the
+  # test's output open
+  bash -c 'trap "" TERM; sleep 300 & wait' &
+  pid=$!
+  for _ in $(seq 1 50); do child=$(pgrep -P "$pid" | head -n 1); [[ -n $child ]] && break; sleep 0.1; done
+  [ -n "$child" ]
+  start=$(date +%s)
+  STOP_DAEMON_SEC=1 stop_daemon "$pid" 2> "$BATS_TEST_TMPDIR/err"
+  (( $(date +%s) - start < 10 ))
+  ! kill -0 "$pid" 2> /dev/null || false
+  ! kill -0 "$child" 2> /dev/null || false
+  grep -q "did not end" "$BATS_TEST_TMPDIR/err"
+}

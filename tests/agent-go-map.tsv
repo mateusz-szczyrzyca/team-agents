@@ -389,6 +389,7 @@ tests/unit/node_two_homes.bats	a remote member that fails is out of its team on 
 tests/unit/node_two_homes.bats	resuming a team with a remote member brings the member back on its node	blackbox	R50	-	planned
 tests/unit/node_two_homes.bats	a job whose task is paused on its node can be stopped (no unit runs it)	blackbox	R50	-	planned
 tests/unit/node_two_homes.bats	a remote member's job whose team the lead's bus does not know is cancelled by agent _supervise on the lead	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	the cleanup of a daemon that ignores SIGTERM ends it and its children within its limit: no hang of the run	source	R02	-	planned
 tests/unit/notify_merged_start.bats	a new solo task is announced as started	blackbox	R53B	-	planned
 tests/unit/notify_merged_start.bats	a new team is announced as started once, not once a member	blackbox	R53B	-	planned
 tests/unit/notify_merged_start.bats	a merge is '🟣 PR merged', with its two reviewers and their models, in a file of its own	source	R53B	-	planned
@@ -678,6 +679,7 @@ tests/unit/test_lock.bats	an interrupted test run stops its commands and frees t
 tests/unit/test_lock.bats	every Makefile target that runs tests goes through tools/test-lock.sh	source	R02	-	planned
 tests/unit/test_lock.bats	a test recipe copied into a repository without the lock (the harness's fixtures) still runs, unlocked	source	R02	-	planned
 tests/unit/test_lock.bats	every agent's prompt knows the busy message and what to do, and AGENTS.md describes the lock	source	R02	-	planned
+tests/unit/test_lock.bats	the test command reads /dev/null, whatever stdin the lock got: in its own process group a terminal read stops it	source	R02	-	planned
 tests/unit/team_pause.bats	agent pause stops the team's runs without failing anyone: held, still members of the team	blackbox	R29B	-	planned
 tests/unit/team_pause.bats	a paused team starts nothing: a wake waits for agent unpause	blackbox	R29B	-	planned
 tests/unit/team_pause.bats	agent unpause resumes the interrupted runs where they stopped, told what happened, and starts what waited	blackbox	R29B	-	planned

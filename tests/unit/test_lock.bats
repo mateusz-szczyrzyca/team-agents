@@ -112,3 +112,12 @@ hold() {
   grep -q "GATE_WAIT=1 make gate" "$REPO_ROOT/prompts/protocol.md"
   grep -q "tools/test-lock.sh" "$REPO_ROOT/AGENTS.md"
 }
+
+@test "the test command reads /dev/null, whatever stdin the lock got: in its own process group a terminal read stops it" {
+  # make gate runs the tests in their own process group (set -m): from an interactive terminal, a test that read the
+  # terminal would be stopped (SIGTTIN) — and hang the gate — instead of reading nothing
+  printf 'from the caller\n' > "$BATS_TEST_TMPDIR/stdin"
+  run bash -c '"$1" stdin readlink /proc/self/fd/0 < "$2"' _ "$LOCK" "$BATS_TEST_TMPDIR/stdin"
+  [ "$status" -eq 0 ]
+  [ "$output" = /dev/null ]
+}
