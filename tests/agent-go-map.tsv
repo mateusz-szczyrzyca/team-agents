@@ -695,6 +695,8 @@ tests/unit/precheck_rules.bats	a change merged in from main is not the round's: 
 tests/unit/precheck_rules.bats	agent allow <team> <path>: what only the human may allow passes for that team; an unknown team is refused	blackbox	R31	-	planned
 tests/unit/precheck_rules.bats	--autopilot: a round that changes an existing test goes back to the team with the rule; no review starts	blackbox	R31	-	planned
 tests/unit/precheck_rules.bats	B2: the lint suppressions of Python, TypeScript and Rust count too	source	R31	-	planned
+tests/unit/precheck_rules.bats	B1: a data file under tests/ named in RULE_TEST_DATA (a ledger, not a test) may change; unnamed, it may not	source	R31	-	planned
+tests/unit/precheck_rules.bats	B2: a suppression's word in a document, or in a path the round's size leaves out, is no suppression	source	R31	-	planned
 tests/unit/pr_round_size.bats	the size block is added to a description without one, replaced in one with it, and the rest kept	source	R31	-	planned
 tests/unit/pr_round_size.bats	--autopilot: the precheck writes the round's size into its PR description, the description's text kept	blackbox	R31	-	planned
 tests/unit/pr_round_size.bats	the rounds prompt tells the team the script writes the round's size into the PR: no counting for it	source	R31	-	planned

@@ -170,3 +170,29 @@ ci() { git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -
   [[ $out == *"disclose: agent/m.rs:1"*"allow"* ]]
   [ -z "$(round_rule_issues "$r" "$base" "$head" T "agent/m.py agent/m.ts agent/m.rs: why each")" ]
 }
+
+@test "B1: a data file under tests/ named in RULE_TEST_DATA (a ledger, not a test) may change; unnamed, it may not" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/agent"
+  repo
+  printf 'tests/unit/a.bats\ta\tplanned\n' > "$r/tests/map.tsv"
+  base=$(ci "a ledger")
+  sed -i 's/planned/done/' "$r/tests/map.tsv"
+  head=$(ci "a row done")
+  [[ $(round_rule_issues "$r" "$base" "$head" T "") == *"human: tests/map.tsv"* ]]
+  [ -z "$(RULE_TEST_DATA="tests/map.tsv" round_rule_issues "$r" "$base" "$head" T "")" ]
+  [ -z "$(RULE_TEST_DATA="*.tsv" round_rule_issues "$r" "$base" "$head" T "")" ]   # a file name, as ROUND_EXCLUDE's
+}
+
+@test "B2: a suppression's word in a document, or in a path the round's size leaves out, is no suppression" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/agent"
+  repo
+  mkdir -p "$r/.agents/reports" "$r/vendor/lib"
+  printf 'the tests use #nosec G302 for fixtures\n' > "$r/.agents/reports/r.md"
+  printf 'Never add //nolint without a reason.\n' >> "$r/README.md"
+  printf 'notes: # noqa is how Python silences a line\n' > "$r/notes.txt"
+  printf 'package lib\n\nfunc v() {} //nolint:unused\n' > "$r/vendor/lib/v.go"
+  head=$(ci documents)
+  [ -z "$(round_rule_issues "$r" "$base" "$head" T "")" ]
+}
