@@ -876,7 +876,10 @@ func (c BoardReleaseCause) String() string { return c.info().name }
 type DelegateCause int
 
 const (
-	DelegateNotNormalTier       DelegateCause = iota // a worker or an investigator called it (delegate is for normal models) [Permission]
+	DelegateMissingField        DelegateCause = iota // a required field of the request (goal, workdir, steps, returns) is empty [InvalidArgument]
+	DelegateWorkdirInvalid                           // the request's working directory is not absolute, or (for a local agent) not an existing directory [InvalidArgument]
+	DelegateUndefinedTerm                            // a harness identifier (a round, a board item, a request) in the request has no definition in its terms [InvalidArgument]
+	DelegateNotNormalTier                            // a worker or an investigator called it (delegate is for normal models) [Permission]
 	DelegateMissingRequest                           // the request text is missing [InvalidArgument]
 	DelegateBoardInstruction                         // the request tells the worker to use the board (claim or finish an item, the newest item), which a worker has no tools for [InvalidArgument]
 	DelegateInvalidCapabilities                      // requires contains an unknown or malformed capability [InvalidArgument]
@@ -889,6 +892,9 @@ type DelegateError = OpError[DelegateCause]
 
 // delegateCauses describes the DelegateCause values (same order as the constants).
 var delegateCauses = [...]causeInfo{
+	{"MissingField", ClassInvalidArgument},
+	{"WorkdirInvalid", ClassInvalidArgument},
+	{"UndefinedTerm", ClassInvalidArgument},
 	{"NotNormalTier", ClassPermission},
 	{"MissingRequest", ClassInvalidArgument},
 	{"BoardInstruction", ClassInvalidArgument},

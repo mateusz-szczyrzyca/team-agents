@@ -48,7 +48,7 @@ func TestDelegateWorkdirMustBeAnAbsoluteExistingDirectory(t *testing.T) {
 func TestDelegateWorkdirOfARemoteMemberIsOnItsNode(t *testing.T) {
 	b := newBus(t)
 	r := server(b, "r1", asRemote("node2"))
-	chk(t).ok(toolResult(r.delegateFields(fields("/home/node2/worktrees/x"))))   // not on this machine: not looked for
+	chk(t).ok(toolResult(r.delegateFields(fields("/home/node2/worktrees/x"))))    // not on this machine: not looked for
 	failsWith(t, DelegateWorkdirInvalid)(r.delegateFields(fields("worktrees/x"))) // still absolute
 }
 

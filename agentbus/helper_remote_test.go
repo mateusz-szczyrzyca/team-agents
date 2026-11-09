@@ -36,7 +36,7 @@ func TestDelegateRequiresCapturesCommit(t *testing.T) {
 		}
 		return []byte(regSHA + "\n"), nil
 	})
-	chk(t).ok(s.callTool("delegate", map[string]any{"request": "build", "requires": []any{"hw:rp2350", "os:linux", "hw:rp2350"}}))
+	chk(t).ok(s.callTool("delegate", delegateArgs(t, []any{"hw:rp2350", "os:linux", "hw:rp2350"})))
 	mustWith(t, b, func(st *State) {
 		h := st.Helpers["1"]
 		if h == nil || h.BaseSHA != regSHA || !reflect.DeepEqual(h.Requires, []string{"hw:rp2350", "os:linux"}) {
@@ -54,7 +54,7 @@ func TestDelegateRequiresCauses(t *testing.T) {
 	stubNodeGit(t, func(string, ...string) ([]byte, *ProcessError) { return []byte("bad-sha"), nil })
 	failsWith(t, DelegateSnapshotFailed)(s.delegate("build", "", "os:linux"))
 	for _, value := range []any{"os:linux", []any{42}, nil} {
-		_, err := s.callTool("delegate", map[string]any{"request": "build", "requires": value})
+		_, err := s.callTool("delegate", delegateArgs(t, value))
 		expectToolError(t, err, ToolCallInvalidArgument)
 	}
 }
@@ -255,4 +255,11 @@ func TestRemoteHelperLegacyFixture(t *testing.T) {
 			t.Fatalf("legacy helper changed: %+v", h)
 		}
 	})
+}
+
+// delegateArgs — a complete delegate tool call (its required fields) with the given requires.
+func delegateArgs(t *testing.T, requires any) map[string]any {
+	t.Helper()
+	return map[string]any{"goal": "Build the firmware", "workdir": t.TempDir(), "steps": "make build",
+		"returns": "the build's result", "requires": requires}
 }

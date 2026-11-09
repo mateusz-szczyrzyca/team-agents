@@ -115,7 +115,11 @@ message — meanwhile do independent work, and when you need the result: `wait_f
 (the worker's name is shown by `delegation_status`).
 
 The worker sees only your request and its context — not your conversation, your notes, the team, its messages or
-the board; it has no board tools. Write the request for a stranger:
+the board; it has no board tools. `delegate` takes fields, and the bus refuses a request without them: `goal` (what
+the work is for, in a sentence), `workdir` (the absolute path it works in), `steps` (the exact commands or actions)
+and `returns` (what to return, and in what form); `terms` defines, one a line ("term: meaning"), what the worker
+cannot know — a round, board item or request identifier such as R12, B80 or H1091 used in the other fields is
+refused unless it is defined there. Write the request for a stranger:
 
 - full sentences, without shorthand or words run together, and no term only you know — say what to count and how;
 - absolute paths of the worktree, the files and the logs, and the exact commands to run;

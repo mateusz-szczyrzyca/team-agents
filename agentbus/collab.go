@@ -688,6 +688,66 @@ var boardInstructionRE = regexp.MustCompile(`(?i)\bboard_(claim|done|progress|li
 	`|\bclaim\b[^.\n]{0,40}\bboard item\b` +
 	`|\b(newest|next|latest)\s+(easy\s+board|easy|board)\s+item\b`)
 
+// DelegateFields is a worker request as the delegate tool takes it: the worker sees nothing but what it says.
+type DelegateFields struct {
+	Goal     string   // what the work is for, in a sentence
+	Workdir  string   // the absolute path of the directory the worker works in
+	Steps    string   // the exact commands or actions, one a line
+	Returns  string   // what to return, and in what form
+	Terms    string   // definitions, "term: meaning" one a line, of what the worker cannot know
+	Requires []string // capabilities the worker's node must have
+}
+
+// harnessIDRE matches the harness's identifiers — a round (R12, R10B), a board item (B80), a request (H1091) — which
+// a worker cannot know; PR71 or SHA-like words are not matched.
+var harnessIDRE = regexp.MustCompile(`\b[RBH][0-9]+[A-Z]?\b`)
+
+// delegateFields (MCP delegate) checks a request's fields and composes from them what the worker gets: requests
+// resting on the requester's own words came back UNCLEAR (H1091, H1093). Required: goal, workdir (absolute; an
+// existing directory for a local agent — a remote member's worktree is on its node), steps, returns; a harness
+// identifier in goal, steps or returns needs its definition in terms.
+func (s *Server) delegateFields(f DelegateFields) (string, *DelegateError) {
+	for _, req := range []struct{ name, value string }{
+		{"goal", f.Goal}, {"workdir", f.Workdir}, {"steps", f.Steps}, {"returns", f.Returns},
+	} {
+		if strings.TrimSpace(req.value) == "" {
+			return "", opErr(DelegateMissingField, "the request's %s is empty: a worker sees only the request — give "+
+				"its goal, workdir (an absolute path), steps (exact commands) and what it returns", req.name)
+		}
+	}
+	dir := strings.TrimSpace(f.Workdir)
+	if !filepath.IsAbs(dir) {
+		return "", opErr(DelegateWorkdirInvalid, "workdir %q is not an absolute path", dir)
+	}
+	if s.remote == "" {
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			return "", opErr(DelegateWorkdirInvalid, "workdir %s is not an existing directory", dir)
+		}
+	}
+	var undefined []string
+	seen := map[string]bool{}
+	for _, id := range harnessIDRE.FindAllString(f.Goal+"\n"+f.Steps+"\n"+f.Returns, -1) {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if !regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(id) + `\s*:`).MatchString(f.Terms) {
+			undefined = append(undefined, id)
+		}
+	}
+	if len(undefined) > 0 {
+		return "", opErr(DelegateUndefinedTerm, "the worker cannot know %s: define each in terms (\"%s: what it is\"), "+
+			"or say what is meant instead", strings.Join(undefined, ", "), undefined[0])
+	}
+	request := "Goal: " + strings.TrimSpace(f.Goal) + "\n\nSteps:\n" + strings.TrimSpace(f.Steps) +
+		"\n\nReturn: " + strings.TrimSpace(f.Returns)
+	context := "Working directory: " + dir
+	if terms := strings.TrimSpace(f.Terms); terms != "" {
+		context += "\n\nTerms:\n" + terms
+	}
+	return s.delegate(request, context, f.Requires...)
+}
+
 func (s *Server) delegate(request, context string, requires ...string) (string, *DelegateError) {
 	if s.tier == TierWorker || s.role == RoleInvestigator {
 		return "", opErr(DelegateNotNormalTier, "delegate is for normal models")
@@ -840,7 +900,15 @@ func collabToolDefs(inTeam bool, tier Tier) []map[string]any {
 				"The worker sees only this request and its context — not your conversation, notes, team or board (it has no board tools): "+
 				"write full sentences without shorthand, with absolute paths and the exact commands, and say what to return. "+
 				"Do not delegate what runs for minutes, such as a full gate.",
-				obj(map[string]any{"request": str("Exactly what to do and in what form to return the result"), "context": str("Paths, commands, what to look for"), "requires": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Required declared capabilities; push your commit first when this needs another node"}}, "request")),
+				obj(map[string]any{
+					"goal":    str("What the work is for, in a sentence"),
+					"workdir": str("The absolute path of the directory the worker works in"),
+					"steps":   str("The exact commands or actions, one a line"),
+					"returns": str("What to return, and in what form"),
+					"terms": str("Definitions, one a line (\"term: meaning\"), of what the worker cannot know: a round, board " +
+						"item or request identifier (R12, B80, H1091) used above must be defined here"),
+					"requires": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Required declared capabilities; push your commit first when this needs another node"},
+				}, "goal", "workdir", "steps", "returns")),
 			tool("delegation_status", "Status of your worker requests and of the queue.", obj(map[string]any{})),
 		)
 	}

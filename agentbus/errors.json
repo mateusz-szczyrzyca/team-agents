@@ -493,6 +493,21 @@
    "what": "the MCP tool delegate",
    "causes": [
     {
+     "name": "MissingField",
+     "class": "InvalidArgument",
+     "doc": "a required field of the request (goal, workdir, steps, returns) is empty"
+    },
+    {
+     "name": "WorkdirInvalid",
+     "class": "InvalidArgument",
+     "doc": "the request's working directory is not absolute, or (for a local agent) not an existing directory"
+    },
+    {
+     "name": "UndefinedTerm",
+     "class": "InvalidArgument",
+     "doc": "a harness identifier (a round, a board item, a request) in the request has no definition in its terms"
+    },
+    {
      "name": "NotNormalTier",
      "class": "Permission",
      "doc": "a worker or an investigator called it (delegate is for normal models)"
