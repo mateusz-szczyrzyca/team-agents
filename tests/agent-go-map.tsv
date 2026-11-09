@@ -694,6 +694,9 @@ tests/unit/precheck_rules.bats	B4: the files that judge a round — changed, not
 tests/unit/precheck_rules.bats	a change merged in from main is not the round's: only the round's own diff counts	source	R31	-	planned
 tests/unit/precheck_rules.bats	agent allow <team> <path>: what only the human may allow passes for that team; an unknown team is refused	blackbox	R31	-	planned
 tests/unit/precheck_rules.bats	--autopilot: a round that changes an existing test goes back to the team with the rule; no review starts	blackbox	R31	-	planned
+tests/unit/pr_round_size.bats	the size block is added to a description without one, replaced in one with it, and the rest kept	source	R31	-	planned
+tests/unit/pr_round_size.bats	--autopilot: the precheck writes the round's size into its PR description, the description's text kept	blackbox	R31	-	planned
+tests/unit/pr_round_size.bats	the rounds prompt tells the team the script writes the round's size into the PR: no counting for it	source	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
