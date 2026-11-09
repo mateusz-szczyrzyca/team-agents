@@ -13,11 +13,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,6 +82,47 @@ type Helper struct {
 	HelperTask string       `json:"helper_task,omitempty"` // task ID of the helper run
 	Summary    string       `json:"summary,omitempty"`     // result text sent back to the requester
 	Created    Timestamp    `json:"created"`               // when the request was made
+}
+
+// AgentCheckVerdict is the harness's answer to a check the bus asks it (runAgentCheck).
+type AgentCheckVerdict int
+
+const (
+	AgentCheckYes     AgentCheckVerdict = iota // the harness allows it: exit 0
+	AgentCheckNo                               // the harness refuses it: exit agentCheckRefusal; its output says why
+	AgentCheckUnknown                          // no answer: no harness configured, it failed otherwise, or it timed out
+)
+
+// agentCheckRefusal is the exit status by which the harness refuses: not 1, which any failure of the script under
+// set -e gives — a failing harness must not be taken for a refusal.
+const agentCheckRefusal = 3
+
+// agentCheckTimeout bounds a check the bus waits for.
+const agentCheckTimeout = 60 * time.Second
+
+// agentCheckFn asks the harness a check and waits for its answer; a variable so that tests can intercept it.
+var agentCheckFn = runAgentCheck
+
+// runAgentCheck runs `agentCmd args...` (AGENTS_HOME=home) and waits at most agentCheckTimeout: its verdict, its
+// output, and for AgentCheckUnknown the failure.
+func runAgentCheck(agentCmd, home string, args ...string) (AgentCheckVerdict, string, *ProcessError) {
+	if agentCmd == "" {
+		return AgentCheckUnknown, "", processErr("agent", nil, "no --agent-cmd configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), agentCheckTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, agentCmd, args...) //nolint:gosec // G204: the operator configures the local agent command; no shell is involved.
+	cmd.Env = append(os.Environ(), "AGENTS_HOME="+home)
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err == nil {
+		return AgentCheckYes, text, nil
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && ctx.Err() == nil && exit.ExitCode() == agentCheckRefusal {
+		return AgentCheckNo, text, nil
+	}
+	return AgentCheckUnknown, text, processErr(agentCmd, err, "the check %v gave no answer", args)
 }
 
 // agentCmdFn runs an `agent` subcommand in the background; a variable so that tests can intercept it.
@@ -515,9 +558,24 @@ func (s *Server) boardClaim(id string) (string, *BoardClaimError) {
 
 // boardDone (MCP board_done) stores the result and sends it to the item's creator.
 func (s *Server) boardDone(id, result string) (string, *BoardDoneError) {
+	return s.boardDoneWith(id, result, "")
+}
+
+// gateNotVerified marks the result of an item submitted with a gate exception, for whoever requested it.
+const gateNotVerified = "⚠ gate not verified — "
+
+// boardDoneWith is board_done with its gate: a local agent whose item's work changed code submits its result only
+// when the harness finds a gate pass of its HEAD (gateCheck); gateException — a reason outside the work — lets it
+// through without asking, marked gateNotVerified.
+func (s *Server) boardDoneWith(id, result, gateException string) (string, *BoardDoneError) {
 	result = strings.TrimSpace(result)
 	if result == "" {
 		return "", opErr(BoardDoneMissingResult, "%s", missing("result"))
+	}
+	if gateException = strings.TrimSpace(gateException); gateException != "" {
+		result = gateNotVerified + gateException + "\n\n" + result
+	} else if err := s.gateCheck(); err != nil {
+		return "", err
 	}
 	var done string
 	err := transact(s.bus, BoardDoneStorage, func(st *State) *BoardDoneError {
@@ -542,6 +600,26 @@ func (s *Server) boardDone(id, result string) (string, *BoardDoneError) {
 		return "", err
 	}
 	return "Result saved for " + done + ". Check board_list before you sleep — there may be something for you.", nil
+}
+
+// gateCheck asks the harness whether this agent may submit an item's result: agent _board_done_check <task>. A remote
+// member (its worktree is on its node) and an agent without a task directory are not checked; a harness that gives
+// no answer lets the result through, logged.
+func (s *Server) gateCheck() *BoardDoneError {
+	if s.remote != "" || s.taskDir == "" {
+		return nil
+	}
+	task := filepath.Base(s.taskDir)
+	verdict, out, perr := agentCheckFn(s.agentCmd, s.home, "_board_done_check", task)
+	switch verdict {
+	case AgentCheckYes:
+		return nil
+	case AgentCheckNo:
+		return opErr(BoardDoneGateNotPassed, "%s", out)
+	case AgentCheckUnknown:
+		warnSideEffect("board_done gate check", perr, "task", task, "output", out)
+	}
+	return nil
 }
 
 // boardRelease (MCP board_release) returns a claimed item to "todo" with a note to its creator.
@@ -604,6 +682,12 @@ func (s *Server) boardRelease(id, note string) (string, *BoardReleaseError) {
 // ---------------------------------------------------------------- worker requests (delegate)
 
 // delegate (MCP delegate) queues a worker request and spawns the `agent` helper dispatcher.
+// boardInstructionRE matches a request that tells a worker to use the board: its tools by name, claiming a board
+// item, or taking "the newest easy item" — a worker has no board tools and sees nothing of the team's board.
+var boardInstructionRE = regexp.MustCompile(`(?i)\bboard_(claim|done|progress|list|add)\b` +
+	`|\bclaim\b[^.\n]{0,40}\bboard item\b` +
+	`|\b(newest|next|latest)\s+(easy\s+board|easy|board)\s+item\b`)
+
 func (s *Server) delegate(request, context string, requires ...string) (string, *DelegateError) {
 	if s.tier == TierWorker || s.role == RoleInvestigator {
 		return "", opErr(DelegateNotNormalTier, "delegate is for normal models")
@@ -611,6 +695,11 @@ func (s *Server) delegate(request, context string, requires ...string) (string, 
 	request = strings.TrimSpace(request)
 	if request == "" {
 		return "", opErr(DelegateMissingRequest, "%s", missing("request"))
+	}
+	if boardInstructionRE.MatchString(request + "\n" + context) {
+		return "", opErr(DelegateBoardInstruction, "a worker has no board tools and sees nothing of the board: it cannot "+
+			"claim, read or finish a board item. Copy into the request what the item asks — absolute paths, the exact "+
+			"commands, what to return — and keep the item yourself (board_claim), finishing it (board_done) when the result arrives")
 	}
 	caps, cerr := canonicalJobCapabilities(requires)
 	if cerr != nil {
@@ -726,8 +815,11 @@ func collabToolDefs(inTeam bool, tier Tier) []map[string]any {
 					"title", "details", "level")),
 			tool("board_list", "Show the team board (todo / in progress / done).", obj(map[string]any{})),
 			tool("board_claim", "Take an item from the board (workers: easy only).", obj(map[string]any{"id": str("e.g. B3")}, "id")),
-			tool("board_done", "Submit the result of an item — it is sent as a message to whoever requested it.",
-				obj(map[string]any{"id": str("e.g. B3"), "result": str("Result")}, "id", "result")),
+			tool("board_done", "Submit the result of an item — it is sent as a message to whoever requested it. When "+
+				"the item's work changed code, its gate must have passed at your HEAD first (agent gate).",
+				obj(map[string]any{"id": str("e.g. B3"), "result": str("Result"),
+					"gate_exception": str("Only when the gate fails for a reason outside your work (a flaky test, a " +
+						"broken tool): why — the result is then marked not verified")}, "id", "result")),
 			tool("board_release", "Return an item to the board (e.g. too hard for you), with a note.",
 				obj(map[string]any{"id": str("e.g. B3"), "note": str("Why")}, "id")),
 			tool("board_progress", "Record how far you got with your claimed item: what is done, the last commit (pushed), "+
@@ -744,7 +836,10 @@ func collabToolDefs(inTeam bool, tier Tier) []map[string]any {
 		defs = append(defs,
 			tool("delegate", "Delegate a simple, mechanical task to a free worker (a cheap model) instead of doing it yourself and spending expensive tokens: "+
 				"listing and searching files, checking whether something exists, running a known command and summarising its output. "+
-				"The result will arrive as a message. In a team use the board first (board_add level=easy).",
+				"The result will arrive as a message. In a team use the board first (board_add level=easy). "+
+				"The worker sees only this request and its context — not your conversation, notes, team or board (it has no board tools): "+
+				"write full sentences without shorthand, with absolute paths and the exact commands, and say what to return. "+
+				"Do not delegate what runs for minutes, such as a full gate.",
 				obj(map[string]any{"request": str("Exactly what to do and in what form to return the result"), "context": str("Paths, commands, what to look for"), "requires": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Required declared capabilities; push your commit first when this needs another node"}}, "request")),
 			tool("delegation_status", "Status of your worker requests and of the queue.", obj(map[string]any{})),
 		)

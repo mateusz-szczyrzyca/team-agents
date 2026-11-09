@@ -288,6 +288,8 @@ func (s *webServer) handler() http.Handler {
 	mux.HandleFunc("GET /logs", s.viewLogs)
 	mux.HandleFunc("POST /task/{id}/stop", s.postStop)
 	mux.HandleFunc("POST /team/{id}/stop", s.postTeamStop)
+	mux.HandleFunc("POST /team/{id}/pause", s.postTeamPause)
+	mux.HandleFunc("POST /team/{id}/unpause", s.postTeamUnpause)
 	mux.HandleFunc("POST /team/{id}/resume", s.postResume)
 	mux.HandleFunc("GET /events/dashboard", s.streamDashboard)
 	mux.HandleFunc("GET /events/dashboard/full", s.streamDashboard)

@@ -2,11 +2,11 @@
 <div class="scroll"><table>
 <thead><tr><th>Team</th><th>Coordinator</th><th>Members</th><th class="hide-narrow">Board</th><th>Action</th></tr></thead>
 <tbody>{{range .Rows}}<tr class="{{if .Done}}st-dim{{end}}">
-  <td><a href="/team/{{.ID}}">{{.ID}}</a>{{if .Done}} <span class="tag">finished</span>{{end}}</td>
+  <td><a href="/team/{{.ID}}">{{.ID}}</a>{{if .Done}} <span class="tag">finished</span>{{end}}{{if .Paused}} <span class="tag">paused</span>{{end}}</td>
   <td>{{.Lead}}</td>
   <td>{{.Members}} <span class="dim">({{.States}})</span></td>
   <td class="hide-narrow">{{.Todo}} to do · {{.Claimed}} in progress · {{.DoneItems}} done</td>
-  <td>{{if not .Stopped}}<button type="button" class="btn stop-team" hx-post="/team/{{.ID}}/stop" hx-confirm="Stop this team and disable automatic resumption?" hx-swap="outerHTML">Stop this team</button>{{else}}<span class="dim">stopped</span>{{end}}</td>
+  <td>{{if and (not .Stopped) (not .Done)}}{{if .Paused}}<button type="button" class="btn unpause-team" hx-post="/team/{{.ID}}/unpause" hx-confirm="Unpause this team? Its paused runs resume where they stopped." hx-swap="outerHTML">Unpause this team</button>{{else}}<button type="button" class="btn pause-team" hx-post="/team/{{.ID}}/pause" hx-confirm="Pause this team? Its runs stop now, held — Unpause resumes them where they stopped." hx-swap="outerHTML">Pause this team</button>{{end}} {{end}}{{if not .Stopped}}<button type="button" class="btn stop-team" hx-post="/team/{{.ID}}/stop" hx-confirm="Stop this team and disable automatic resumption?" hx-swap="outerHTML">Stop this team</button>{{else}}<span class="dim">stopped</span>{{end}}</td>
 </tr>{{else}}<tr><td colspan="5" class="dim">(no teams)</td></tr>{{end}}</tbody>
 </table></div>
 {{if .Cut}}<p><a class="btn" href="/teams?all=1">Show all {{.Total}} teams</a></p>{{end}}

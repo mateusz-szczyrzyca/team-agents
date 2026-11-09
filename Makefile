@@ -18,7 +18,7 @@ SHELL_SCRIPTS += tests/unit/review_pair_models.bats tests/unit/github_attributio
 SHELL_SCRIPTS += tests/unit/remote_answer_round.bats tests/unit/remote_questions_atomic.bats \
 	tests/unit/remote_questions_preparation_retry.bats
 SHELL_SCRIPTS += tests/unit/handover_failed.bats tests/unit/prompt_file.bats tests/unit/review_byline.bats tests/unit/tokens.bats \
-	tests/unit/context_hygiene.bats tests/unit/fresh_session.bats tests/unit/review_pair_random.bats tests/unit/resume_members.bats tests/unit/prompt_checkpoints.bats tests/unit/long_run_cut.bats tests/unit/round_only.bats tests/unit/fresh_relative.bats tests/unit/coordination.bats tests/unit/resume_stash.bats tests/unit/one_pr_per_round.bats tests/unit/investigation_mcp_off.bats tests/unit/round_discipline.bats tests/unit/member_pr.bats tests/unit/merged_elsewhere.bats tests/unit/foreground_commands.bats tests/unit/pr_ownership.bats tests/unit/tmp_sweep.bats tests/unit/review_overload.bats tests/unit/handback_wait.bats tests/unit/failover.bats tests/unit/worker_draw.bats tests/unit/fix_passes_default.bats tests/unit/fresh_session_id.bats tests/unit/notify_merged_start.bats tests/unit/notify_icon_first.bats tests/unit/push_text_icons.bats tests/unit/work_split.bats tests/unit/round_check.bats tests/unit/spend.bats tests/unit/script_split.bats tests/unit/coordinator_alone.bats tests/unit/pr_by_commit.bats tests/unit/pr_pin.bats tests/unit/next_round_pr.bats tests/unit/board_unstick.bats tests/unit/helper_failover.bats tests/unit/team_end_helpers.bats tests/unit/coordinator_takeover.bats tests/unit/debug_cmd.bats tests/unit/resume_large_board.bats tests/unit/install_model_prices.bats tests/unit/member_in_team.bats
+	tests/unit/context_hygiene.bats tests/unit/fresh_session.bats tests/unit/review_pair_random.bats tests/unit/resume_members.bats tests/unit/prompt_checkpoints.bats tests/unit/long_run_cut.bats tests/unit/round_only.bats tests/unit/fresh_relative.bats tests/unit/coordination.bats tests/unit/resume_stash.bats tests/unit/one_pr_per_round.bats tests/unit/investigation_mcp_off.bats tests/unit/round_discipline.bats tests/unit/member_pr.bats tests/unit/merged_elsewhere.bats tests/unit/foreground_commands.bats tests/unit/pr_ownership.bats tests/unit/tmp_sweep.bats tests/unit/review_overload.bats tests/unit/handback_wait.bats tests/unit/failover.bats tests/unit/worker_draw.bats tests/unit/fix_passes_default.bats tests/unit/fresh_session_id.bats tests/unit/notify_merged_start.bats tests/unit/notify_icon_first.bats tests/unit/push_text_icons.bats tests/unit/work_split.bats tests/unit/round_check.bats tests/unit/spend.bats tests/unit/script_split.bats tests/unit/coordinator_alone.bats tests/unit/pr_by_commit.bats tests/unit/pr_pin.bats tests/unit/next_round_pr.bats tests/unit/board_unstick.bats tests/unit/helper_failover.bats tests/unit/team_end_helpers.bats tests/unit/coordinator_takeover.bats tests/unit/debug_cmd.bats tests/unit/resume_large_board.bats tests/unit/install_model_prices.bats tests/unit/nostatus_autopilot.bats tests/unit/delegation_quality.bats tests/unit/debug_agent.bats tests/unit/fresh_member_done.bats tests/unit/test_lock.bats tests/unit/team_pause.bats tests/unit/precheck_rules.bats tests/unit/pr_round_size.bats tests/unit/agent_gate.bats tests/unit/board_done_gate.bats tests/unit/member_in_team.bats
 SHELL_SCRIPTS += tests/unit/remote_control_notifications.bats
 SHELL_SCRIPTS += tests/unit/lint_shell_memory.bats tests/unit/remote_control_review.bats \
 
@@ -47,18 +47,23 @@ SHELL_SCRIPTS += tests/unit/investigation_completed_legacy.bats
 SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats \
 	tools/agent-bats.sh tests/harness/agent_bats.bats tests/harness/agent_bats_runner.bats \
 	tools/check-agent-parity.sh tests/harness/check_agent_parity.bats tests/harness/agent_parity_gate.bats
+SHELL_SCRIPTS += tools/test-lock.sh
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 
-test: unit-go unit-bats harness
+# Every target that runs tests holds the machine's test lock (tools/test-lock.sh): one test run at a time. A busy
+# lock refuses with "another tests are running now - please wait before you try again" (exit 75); GATE_WAIT=1 waits.
+# A recipe copied alone into another Makefile (the harness's fixtures) finds TEST_LOCK empty there and runs unlocked.
+TEST_LOCK = tools/test-lock.sh $@
+
+test:
+	@$(TEST_LOCK) $(MAKE) --no-print-directory unit-go unit-bats harness
 
 unit-go:
-	cd agentbus && go vet ./... && go test ./...
-	cd live && go vet ./... && go test ./...
-	cd agent && go vet ./... && go test ./...
+	@$(TEST_LOCK) bash -c 'set -e; for m in agentbus live agent; do (cd $$m && go vet ./... && go test ./...); done'
 
 harness:
-	bats tests/harness/*.bats
+	@$(TEST_LOCK) bats tests/harness/*.bats
 
 # The Bats tests run in parallel, BATS_JOBS at once (GNU parallel; default: the number of processors), the slowest
 # files first (tools/unit-bats.sh). A file listed in BATS_SERIAL runs one after another with the other listed ones,
@@ -77,8 +82,8 @@ BATS_SERIAL ?= tests/unit/node_daemon.bats tests/unit/node_two_homes.bats tests/
 BATS_TMP ?= $(or $(XDG_CACHE_HOME),$(HOME)/.cache)/team-agents/tmp
 
 unit-bats:
-	mkdir -p "$(BATS_TMP)" && tools/tmp-sweep.sh "$(BATS_TMP)" /tmp
-	TMPDIR="$(BATS_TMP)" BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/agent-bats.sh --lane oracle
+	@$(TEST_LOCK) bash -c 'mkdir -p "$(BATS_TMP)" && tools/tmp-sweep.sh "$(BATS_TMP)" /tmp && \
+		TMPDIR="$(BATS_TMP)" BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/agent-bats.sh --lane oracle'
 
 tools:
 	tools/install-linters.sh
@@ -86,7 +91,7 @@ tools:
 # The same checks with short output — one line per step, the failures condensed, full logs in build/gate/
 # (tools/gate.sh). Agents use this: long tool output stays in their context and is read again at every later step.
 gate:
-	@tools/gate.sh
+	@$(TEST_LOCK) tools/gate.sh
 
 lint: check-generated lint-shell lint-go lint-docs
 
@@ -119,8 +124,7 @@ build-agent:
 
 # Lane B: active/done rows of the Bats test suite against the real Go executable.
 unit-agent-bats: build-agent
-	tools/agent-bats.sh
-	tools/check-agent-parity.sh --evidence build/agent-bats-evidence.json
+	@$(TEST_LOCK) bash -c 'tools/agent-bats.sh && tools/check-agent-parity.sh --evidence build/agent-bats-evidence.json'
 
 # Verifies parity ledger, classifications, mapping, and hashes.
 check-agent-parity:

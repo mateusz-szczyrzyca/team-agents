@@ -18,11 +18,11 @@ a major review finding. The rules in detail, with a worked example: `docs/tdd.md
 
 Everything a command prints stays in your context and is read again at every later step: a long output is paid
 for many times — in a run of 300 steps, 1,000 tokens printed early cost some 300,000 tokens of input. Use the quiet
-check target the repository offers (in team-agents: `make gate`), run single tests while you work, send long output
+check target the repository offers (its gate: `agent gate`), run single tests while you work, send long output
 to a file and read only what you need (`grep -n`, `tail -n 40`). Do not print whole logs, whole large files or full
 test listings:
 
-- A large file (in team-agents: `bin/agent`, over 7,000 lines) is read in parts: find the place with `grep -n`, then
+- A large file (thousands of lines) is read in parts: find the place with `grep -n`, then
   read some 150 lines around it (`sed -n '120,270p' <file>`). Do not read again what you have read and not changed
   since: note what you learnt instead.
 - A diff is read in steps: `git diff --stat` first, then one file at a time (`git diff <base> -- <file>`).
@@ -30,7 +30,9 @@ test listings:
 ## Rounds — every PR stays reviewable
 
 The PR of this task {{ROUND_LIMIT_TEXT}}: added plus deleted lines against the base, tests included, generated and
-vendored files not counted. Check it at any time: `{{ROUND_SIZE_CMD}}`. A task bigger than that is done in rounds:
+vendored files not counted. Check it at any time: `{{ROUND_SIZE_CMD}}`. The script writes the round's size into the PR description
+itself, in a block of its own rewritten at each check: do not count lines for the PR yourself, nor ask a worker to.
+A task bigger than that is done in rounds:
 
 - At the start, estimate the whole change. If it does not fit one round, plan rounds of about {{ROUND_SOFT}} lines —
   what each contains and in which order — and ask the human to approve the plan (a questions file, with your

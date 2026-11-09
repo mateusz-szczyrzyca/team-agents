@@ -950,7 +950,7 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 	case "board_claim":
 		return toolResult(s.boardClaim(a.str("id")))
 	case "board_done":
-		return toolResult(s.boardDone(a.str("id"), a.str("result")))
+		return toolResult(s.boardDoneWith(a.str("id"), a.str("result"), a.str("gate_exception")))
 	case "board_release":
 		return toolResult(s.boardRelease(a.str("id"), a.str("note")))
 	case "board_progress":

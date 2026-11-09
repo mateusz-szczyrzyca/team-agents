@@ -631,6 +631,9 @@ REVIEW_HISTORY_MAX=100   # how many review pairs $AGENTS_HOME/reviews/history ke
 AGENT_SERENA="${AGENT_SERENA:-}"
 AGENT_PROMPT_CHECKPOINTS="${AGENT_PROMPT_CHECKPOINTS:-2}"       # a prompt's newest checkpoints (the rest: their file); 0 all
 AGENT_FRESH_SESSION_TOKENS="${AGENT_FRESH_SESSION_TOKENS:-80000}"
+AGENT_FRESH_SESSION_MAX="${AGENT_FRESH_SESSION_MAX-claude=120000}"   # CLI=tokens: past this a step, a resumed run of
+# that CLI is followed by a fresh session whatever the ratio below — its context window is small (Claude's 200,000);
+# empty: none
 AGENT_FRESH_SESSION_RATIO="${AGENT_FRESH_SESSION_RATIO:-2}"     # …and past this many times the task's own session starts (0: no such check) # a run that read more a step is followed by a fresh session (0: never)
 AGENT_LONG_RUN_STEPS="${AGENT_LONG_RUN_STEPS:-120}"
 AGENT_LONG_RUN_HARD="${AGENT_LONG_RUN_HARD:-200}"           # a team member's run of this many steps is ended by the runner (0: never)           # a team member's run of more tool calls is asked to end (0: never)
@@ -686,6 +689,10 @@ AGENT_REVIEW_GATE="${AGENT_REVIEW_GATE:-auto}"        # the gate's command: auto
 AGENT_REVIEW_GATE_MIN="${AGENT_REVIEW_GATE_MIN:-30}"  # its time limit, in minutes
 AGENT_STAGE_POLL_SEC="${AGENT_STAGE_POLL_SEC:-2}"     # how often the gate's progress is shown on the dashboard
 AGENT_PRECHECK_MAX="${AGENT_PRECHECK_MAX:-2}"         # how many times a round goes back for its gate or its tests
+# agent gate: one gate run at a time on the machine (AGENTS_HOME/gate.lock), the precheck's included; a run holding the
+# lock longer than this many minutes is taken for hung: stopped, and the lock taken over
+AGENT_GATE_STALE_MIN="${AGENT_GATE_STALE_MIN:-10}"
+GATE_BUSY_MESSAGE="another tests are running now - please wait before you try again"   # every agent's prompt knows it
 # --autopilot: after two ready-to-merge reviews the script merges — not a PR touching one of these paths (a directory
 # ends with /), nor one changing existing tests: those wait for the human
 AUTO_MERGE_HUMAN_PATHS="${AUTO_MERGE_HUMAN_PATHS-install.sh .github/ systemd/ AGENTS.md}"
@@ -696,6 +703,9 @@ AGENT_HUMAN_GITHUB="${AGENT_HUMAN_GITHUB:-}"
 ROUND_MAX_LINES="${ROUND_MAX_LINES:-3000}"
 ROUND_EXCLUDE="${ROUND_EXCLUDE:-*_gen.go go.sum package-lock.json vendor/}"
 ROUND_BOUNCES="${ROUND_BOUNCES:-2}"
+# The round's size in its PR description, between these markers: the precheck rewrites it at each check
+PR_SIZE_START="<!-- round-size: written by the script at each check, do not edit -->"
+PR_SIZE_END="<!-- /round-size -->"
 declare -p ROUND_MAX_LINES_REPO >/dev/null 2>&1 || declare -gA ROUND_MAX_LINES_REPO=()   # a query: set in agents.conf?
 # NODE_REPOS: repositories a node may run jobs for, name → local clone path (empty: no job is accepted).
 declare -p NODE_REPOS >/dev/null 2>&1 || declare -gA NODE_REPOS=()
@@ -1156,6 +1166,42 @@ team_json() {
 }
 team_lead() { team_json "$1" | jq -r '.lead // empty'; }
 team_done_flag() { team_json "$1" | jq -r '.done // false'; }
+
+# pause_lock / pause_unlock — serializes a start's look at the pause with the pause and unpause of a team: a start
+# either sees the team paused and waits, or runs before the pause stops it; none is lost between them (PAUSE_FD)
+pause_lock() { exec {PAUSE_FD}>> "$AGENTS_HOME/.pause.lock" && flock "$PAUSE_FD"; }
+pause_unlock() { exec {PAUSE_FD}>&-; }
+
+# team_paused team — whether the human paused the team (agent pause): nothing of it starts until agent unpause
+team_paused() { [[ -n ${1:-} && -f $AGENTS_HOME/paused/$1 ]]; }
+
+# task_held task — whether the task belongs to a paused team: its own team, or the team of the task that asked for it
+# (a worker's, an investigation's, a review's), up to three levels up
+task_held() {
+  local t=$1 i team
+  for i in 1 2 3; do
+    team=$(task_field "$t" TEAM)
+    if [[ -n $team ]]; then team_paused "$team"; return; fi
+    t=$(task_field "$t" PARENT_TASK)
+    [[ -n $t ]] || return 1
+  done
+  return 1
+}
+
+# team_related_tasks team — the team's tasks, and the tasks they asked for (workers, investigations, reviews), one a line
+team_related_tasks() {
+  local -A related=()
+  local t m p
+  for t in $(team_tasks "$1"); do related[$t]=1; done
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    p=$(sed -n 's/^PARENT_TASK=//p' "$m")
+    [[ -n $p && -n ${related[$p]:-} ]] || continue
+    t=${m%/meta.env}; related[${t##*/}]=1
+  done
+  ((${#related[@]})) || return 0
+  printf '%s\n' "${!related[@]}"
+}
 team_tasks() { team_json "$1" | jq -r '.members[]? | .task'; }
 
 notify_send() { # file — delivers a notification file (first line = title/thread, rest = body). A failure is logged
@@ -1271,6 +1317,7 @@ coordinator_takeover() {
 }
 
 finish_team() { # team reason — closes the team; sleeping members finish as done
+  rm -f "$AGENTS_HOME/paused/$1" || log_warn pause_clear_failed "team=$1"   # a finished team is not paused
   local team=$1 why=$2 t out
   [[ $(team_done_flag "$team") == true ]] && return 0
   log_info team_finished "team=$team" "reason=$why"
@@ -1634,6 +1681,299 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
   printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
 }
 
+# pr_body_with_round_size body block — the PR description with the round's size block (PR_SIZE_START...PR_SIZE_END)
+# in place of the old one, or added at its end; the rest of the description as it was
+pr_body_with_round_size() {
+  local body=$1 block=$2
+  if [[ $body == *"$PR_SIZE_START"*"$PR_SIZE_END"* ]]; then
+    printf '%s%s%s' "${body%%"$PR_SIZE_START"*}" "$block" "${body#*"$PR_SIZE_END"}"
+  elif [[ -z $body ]]; then
+    printf '%s' "$block"
+  else
+    printf '%s\n\n%s' "$body" "$block"
+  fi
+}
+
+# pr_write_round_size task root pr body — writes the round's size into its PR description (body: the description as
+# read just before), counted as the round limit counts it: teams counted lines for their PRs by rules of their own
+# and sent workers to recount them. Nothing changes when the size is the same; a failure is logged
+pr_write_round_size() {
+  local id=$1 root=$2 pr=$3 body=$4 json repo limit block new
+  repo=$(task_field "$id" REPO_NAME); limit=$(round_limit "$repo")
+  if ! json=$(bus round-size --json --repo "$(task_field "$id" WORKTREE)" --base "$(round_base_ref "$id")" \
+      --exclude "$ROUND_EXCLUDE $ROUND_ALWAYS_EXCLUDE" 2>&1); then
+    log_warn pr_round_size_failed "task=$id" "pr=$pr" "error=$json"
+    return 0
+  fi
+  if ! block=$(jq -r --arg s "$PR_SIZE_START" --arg e "$PR_SIZE_END" --arg soft "$(round_soft "$repo")" \
+      --arg hard "$limit" --arg ex "$ROUND_EXCLUDE $ROUND_ALWAYS_EXCLUDE" '[$s,
+      "**Round size**, counted by the script as the round limit counts it: \(.lines) lines (+\(.added) -\(.deleted)) in \(.files) files"
+      + (if ($hard | tonumber) > 0 then "; limits: soft \($soft), hard \($hard)" else "" end) + ". Not counted: \($ex).",
+      $e] | join("\n")' <<< "$json" 2>&1); then
+    log_warn pr_round_size_failed "task=$id" "pr=$pr" "error=$block"
+    return 0
+  fi
+  new=$(pr_body_with_round_size "$body" "$block")
+  [[ $new != "$body" ]] || return 0
+  if (cd "$root" && gh pr edit "$pr" --body "$new" > /dev/null); then
+    log_info pr_round_size_written "task=$id" "pr=$pr" "lines=$(jq -r .lines <<< "$json")"
+  else
+    log_warn pr_round_size_failed "task=$id" "pr=$pr" "error=gh pr edit failed"
+  fi
+}
+
+# task_of_dir dir — the task whose worktree holds dir (the newest, when several had it); empty: none
+task_of_dir() {
+  local top m w found=""
+  top=$(git -C "$1" rev-parse --show-toplevel 2> /dev/null) || return 0
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    w=$(sed -n 's/^WORKTREE=//p' "$m")
+    if [[ $w == "$top" ]]; then found=${m%/meta.env}; found=${found##*/}; fi
+  done
+  printf '%s' "$found"
+}
+
+# gate_holder field — a field of the gate lock's holder (label, task, dir, pid, pgid, start)
+gate_holder() { sed -n "s/^$1=//p" "$AGENTS_HOME/gate.lock" 2> /dev/null | head -n 1; }
+gate_holder_line() {
+  local s; s=$(gate_holder start); [[ $s =~ ^[0-9]+$ ]] || s=$(date +%s)
+  printf '%s of task %s in %s (pid %s), for %s min' "$(gate_holder label)" "$(gate_holder task)" "$(gate_holder dir)" \
+    "$(gate_holder pid)" "$(( ($(date +%s) - s) / 60 ))"
+}
+
+# gate_lock wait task dir — takes the machine's gate lock (fd GATE_FD, inherited by the gate run, so it holds the
+# lock while it runs): at once when free; busy: refuses with GATE_BUSY_MESSAGE, exit 75 (wait=1: waits); a holder
+# past AGENT_GATE_STALE_MIN minutes is taken for hung — its process group stopped, the lock taken over
+gate_lock() {
+  local wait=$1 task=$2 dir=$3 start pg
+  exec {GATE_FD}>> "$AGENTS_HOME/gate.lock" || die "cannot open $AGENTS_HOME/gate.lock"
+  while ! flock -n "$GATE_FD"; do
+    start=$(gate_holder start)
+    [[ $start =~ ^[0-9]+$ ]] || start=$(stat -c %Y "$AGENTS_HOME/gate.lock")
+    if (($(date +%s) - start >= AGENT_GATE_STALE_MIN * 60)); then
+      echo "agent gate: $(gate_holder_line) — past $AGENT_GATE_STALE_MIN min, taken for hung: its run is stopped" >&2
+      log_warn gate_lock_taken_over "holder=$(gate_holder task)" "pgid=$(gate_holder pgid)"
+      pg=$(gate_holder pgid)
+      if [[ $pg =~ ^[0-9]+$ ]] && ((pg > 1)); then
+        kill -TERM -- "-$pg" 2> /dev/null || echo "agent gate: its process group $pg is gone already" >&2
+        flock -w 10 "$GATE_FD" && break
+        kill -KILL -- "-$pg" 2> /dev/null || echo "agent gate: its process group $pg is gone already" >&2
+      fi
+      flock -w 10 "$GATE_FD" && break
+      die "the hung gate run did not let go of the lock; see: cat $AGENTS_HOME/gate.lock"
+    fi
+    if ((wait == 0)); then
+      printf '%s\n  holder: %s; taken for hung after %s min\n' "$GATE_BUSY_MESSAGE" "$(gate_holder_line)" \
+        "$AGENT_GATE_STALE_MIN" >&2
+      exit 75
+    fi
+    flock -w 15 "$GATE_FD" && break
+  done
+  printf 'label=gate\ntask=%s\ndir=%s\npid=%s\npgid=\nstart=%s\n' "$task" "$dir" "$$" "$(date +%s)" \
+    > "$AGENTS_HOME/gate.lock"
+}
+# gate_lock_pgid pgid — the run's process group into the holder, once started: written in place (never sed -i, which
+# puts a new file in the lock's place — another run would lock that one while this run still holds the old)
+gate_lock_pgid() {
+  local holder
+  holder=$(sed "s/^pgid=.*/pgid=$1/" "$AGENTS_HOME/gate.lock")
+  printf '%s\n' "$holder" > "$AGENTS_HOME/gate.lock"
+}
+gate_unlock() { exec {GATE_FD}>&-; }
+
+# gate_record task sha clean rc seconds command log — records a gate run in AGENTS_HOME/gates: the task's latest
+# (<task>.json) and the machine's history (history.jsonl)
+gate_record() {
+  local rec
+  mkdir -p "$AGENTS_HOME/gates" || { log_warn gate_record_failed "task=$1" "reason=cannot create the directory"; return 0; }
+  rec=$(jq -nc --arg task "$1" --arg sha "$2" --argjson clean "$3" --argjson rc "$4" --argjson secs "$5" \
+    --arg cmd "$6" --arg log "$7" --arg at "$(date -Is)" \
+    '{task: $task, sha: $sha, clean: $clean, status: (if $rc == 0 then "pass" else "fail" end), exit: $rc,
+      seconds: $secs, command: $cmd, log: $log, at: $at}')
+  if ! printf '%s\n' "$rec" > "$AGENTS_HOME/gates/$1.json" || ! printf '%s\n' "$rec" >> "$AGENTS_HOME/gates/history.jsonl"; then
+    log_warn gate_record_failed "task=$1"
+  fi
+  log_info gate_recorded "task=$1" "sha=$2" "clean=$3" "exit=$4"
+}
+
+# gate_verdict task — whether the task's last recorded gate run is a pass of its HEAD on a clean tree; says why not
+gate_verdict() {
+  local id=$1 wt head rec sha clean status rc at
+  wt=$(task_field "$id" WORKTREE)
+  head=$(git -C "$wt" rev-parse HEAD 2> /dev/null) || { echo "task $id has no worktree"; return 1; }
+  rec=$AGENTS_HOME/gates/$id.json
+  if [[ ! -f $rec ]]; then echo "no gate run recorded for task $id (HEAD ${head:0:7}) — run: agent gate"; return 1; fi
+  sha=$(jq -r .sha "$rec"); clean=$(jq -r .clean "$rec"); status=$(jq -r .status "$rec"); rc=$(jq -r .exit "$rec")
+  at=$(jq -r .at "$rec")
+  if [[ $sha != "$head" ]]; then
+    echo "no gate run for HEAD ${head:0:7}: the last ($status) was of ${sha:0:7} — run: agent gate"; return 1
+  fi
+  if [[ $clean != true ]]; then
+    echo "the last gate run of HEAD ${head:0:7} was on a tree not clean — commit, then run: agent gate"; return 1
+  fi
+  if [[ $status != pass ]]; then echo "FAIL at ${head:0:7} (exit $rc), $at — log: $(jq -r .log "$rec")"; return 1; fi
+  echo "PASS at ${head:0:7} on a clean tree, $at — log: $(jq -r .log "$rec")"
+}
+
+# gate_task [task] — the task named, or the one whose worktree the current directory is in
+gate_task() {
+  local id
+  if [[ -n ${1:-} ]]; then resolve_id "$1"; return; fi
+  id=$(task_of_dir "$PWD")
+  [[ -n $id ]] || die "not in a task's worktree: name the task (agent gate <task>)"
+  printf '%s' "$id"
+}
+
+# cmd_gate [task] [--wait] — runs the repository's gate (review_gate_cmd: as the precheck) in the task's worktree,
+# one run at a time on the machine, and records the commit, the tree's cleanliness and the result: a claimed gate
+# result can be checked (agent gate-status). Its output's end, then the verdict; exit: the gate's
+cmd_gate() {
+  local id="" wait=0 a wt gate sha clean=true rc=0 log start child
+  for a in "$@"; do case $a in --wait) wait=1 ;; *) id=$a ;; esac; done
+  id=$(gate_task "$id")
+  wt=$(task_field "$id" WORKTREE)
+  [[ -d $wt ]] || die "task $id has no worktree"
+  gate=$(review_gate_cmd "$wt")
+  [[ -n $gate ]] || die "the repository has no gate (AGENT_REVIEW_GATE=$AGENT_REVIEW_GATE)"
+  gate_lock "$wait" "$id" "$wt"
+  sha=$(git -C "$wt" rev-parse HEAD)
+  [[ -z $(git -C "$wt" status --porcelain) ]] || clean=false
+  mkdir -p "$AGENTS_HOME/gates" || die "cannot create $AGENTS_HOME/gates"
+  log=$AGENTS_HOME/gates/$id-$(date +%Y%m%d-%H%M%S).log
+  start=$(date +%s)
+  set -m   # the run in its own process group: a hung one is stopped whole, the agent's shell around it is not
+  (cd "$wt" && exec timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") < /dev/null > "$log" 2>&1 &
+  child=$!
+  set +m
+  gate_lock_pgid "$child"
+  trap 'kill -TERM -- "-$child" 2> /dev/null; exit 143' INT TERM HUP
+  wait "$child" || rc=$?
+  trap - INT TERM HUP
+  gate_unlock
+  tail -n 60 "$log"
+  if ((rc == 75)) && grep -qF "$GATE_BUSY_MESSAGE" "$log"; then   # the repository's own lock: not a result
+    echo "gate: not run — the repository's own test lock is busy; nothing recorded"
+    return 75
+  fi
+  gate_record "$id" "$sha" "$clean" "$rc" "$(($(date +%s) - start))" "$gate" "$log"
+  echo "gate: $( ((rc == 0)) && echo PASS || echo "FAIL (exit $rc)") at ${sha:0:7}$([[ $clean == true ]] || echo ", tree not clean: not a pass of HEAD") — recorded; full log: $log"
+  return "$rc"
+}
+
+# cmd__board_done_check task — the bus asks before a local agent submits an item's result (board_done): exit 0 yes;
+# exit 3 no — its work changed code since its round's base and no gate pass of its HEAD on a clean tree is recorded
+# (what to do on stdout). Any other exit is no answer: the bus lets the result through, logged.
+cmd__board_done_check() {
+  local id=${1:?usage: agent _board_done_check <task>} wt gate base tc verdict
+  wt=$(task_field "$id" WORKTREE)
+  if [[ ! -d $wt ]]; then echo "no worktree: not checked"; return 0; fi
+  gate=$(review_gate_cmd "$wt")
+  if [[ -z $gate ]]; then echo "the repository has no gate: not checked"; return 0; fi
+  base=$(round_base_ref "$id")
+  if ! tc=$(round_test_changes "$wt" "$base" HEAD); then echo "cannot compare with the round's base: not checked"; return 0; fi
+  if [[ $tc != code=1* ]]; then echo "no change of code: no gate needed"; return 0; fi
+  if verdict=$(gate_verdict "$id"); then echo "$verdict"; return 0; fi
+  echo "This item's work changes code: its gate must pass at your HEAD before you submit it — $verdict."
+  echo "Run \`agent gate\` in your worktree (commit first), then board_done again. If the gate fails for a reason outside"
+  echo "your work (a flaky test, a broken tool), submit with gate_exception: <why> — the result is then marked not verified."
+  log_info board_done_refused "task=$id"
+  return 3
+}
+
+# cmd_gate_status [task] — whether the task's last recorded gate run is a pass of its HEAD on a clean tree (exit 0)
+cmd_gate_status() {
+  local id
+  id=$(gate_task "${1:-}")
+  gate_verdict "$id"
+}
+
+# team_allowed_paths team — the paths the human allowed a team to change against AGENTS.md's rules (agent allow)
+team_allowed_paths() { [[ -f $AGENTS_HOME/allowed/$1 ]] && cat "$AGENTS_HOME/allowed/$1"; return 0; }
+
+# rule_test_path / rule_judge_path / rule_production_path path — what a path is to the rule gates: a test (tests/**,
+# *_test.go, *.bats); a file that judges a round; production code (bin/, agent/, agentbus/, live/, not a test)
+rule_test_path() { [[ $1 == tests/* || $1 == *_test.go || $1 == *.bats ]]; }
+rule_judge_path() {
+  case $1 in
+    .golangci.yml | tools/gate.sh | tools/check-*.sh | tools/agent-bats.sh | tools/test-lock.sh | Makefile) return 0 ;;
+    .github/workflows/* | AGENTS.md | */AGENTS.md | CLAUDE.md | */CLAUDE.md) return 0 ;;
+  esac
+  return 1
+}
+rule_production_path() { [[ ($1 == bin/* || $1 == agent/* || $1 == agentbus/* || $1 == live/*) ]] && ! rule_test_path "$1"; }
+
+# round_rule_issues repo base head team body — what a round's own diff (base: its merge base with main) does against
+# AGENTS.md's rules, one a line. "human: ..." only the human may allow (agent allow <team> <path>); "disclose: ..." a
+# suppression the PR description (body) does not name. Prompts and reviewers held these rules alone before.
+#   B1 an existing test file changed (not whitespace), removed or renamed; tests added to it, new files, are fine
+#   B2 an added lint suppression (Go, shell, Python, TS/JS, Rust) in a file the description does not name; skipped
+#      tests are round_check's (the PR's "## Skipped tests" section)
+#   B3 production code that looks at whether it runs under test
+#   B4 a file that judges a round changed (the Makefile and checks: added to is fine; workflows, AGENTS.md: any change)
+round_rule_issues() {
+  local repo=$1 base=$2 head=$3 team=$4 body=$5 allowed st a b f del line file n text
+  allowed=$(team_allowed_paths "$team")
+  while IFS=$'\t' read -r st a b; do
+    [[ -n $st ]] || continue
+    f=$a
+    grep -qxF -- "$f" <<< "$allowed" && continue
+    if rule_test_path "$f" || { rule_judge_path "$f" && [[ $f != .github/* && $f != AGENTS.md && $f != */AGENTS.md && $f != CLAUDE.md && $f != */CLAUDE.md ]]; }; then
+      case $st in
+        D) echo "human: $f — an existing $(rule_test_path "$f" && echo test || echo check) file deleted" ;;
+        R*) echo "human: $f — an existing $(rule_test_path "$f" && echo test || echo check) file renamed to $b" ;;
+        M)
+          del=$(git -C "$repo" diff -w --numstat "$base" "$head" -- "$f" | awk '{print $2}')
+          if [[ ${del:-0} =~ ^[0-9]+$ ]] && ((del > 0)); then
+            echo "human: $f — $del line(s) of an existing $(rule_test_path "$f" && echo test || echo check) file changed or removed"
+          fi
+          ;;
+      esac
+    elif rule_judge_path "$f"; then   # workflows, AGENTS.md, CLAUDE.md: any change
+      echo "human: $f — changed ($st); AGENTS.md: never change it"
+    fi
+  done < <(git -C "$repo" diff --name-status -M "$base" "$head")
+  file="" n=0
+  while IFS= read -r line; do
+    case $line in
+      '+++ /dev/null') file="" ;;
+      '+++ b/'*) file=${line#+++ b/} ;;
+      '@@ '*) if [[ $line =~ ^@@\ -[0-9,]+\ \+([0-9]+) ]]; then n=${BASH_REMATCH[1]}; fi ;;
+      '+'*)
+        [[ -n $file ]] || continue
+        text=${line:1}
+        if ! grep -qxF -- "$file" <<< "$allowed"; then
+          if rule_production_path "$file" && [[ $text =~ (testing\.Testing\(\)|flag\.Lookup\(\"test\.|BATS_[A-Z_]+) ]]; then
+            echo "human: $file:$n — production code that looks at whether it runs under test (${BASH_REMATCH[1]})"
+          fi
+          # lint suppressions (skipped tests are round_check's: the PR's "## Skipped tests" section)
+          if [[ $body != *"$file"* ]]; then
+            if [[ $text =~ //[[:space:]]*nolint ]]; then
+              echo "disclose: $file:$n — nolint"
+            elif [[ $text =~ \#[[:space:]]*nosec ]]; then
+              echo "disclose: $file:$n — nosec"
+            elif [[ $text =~ \#[[:space:]]*shellcheck[[:space:]]+disable= ]]; then
+              echo "disclose: $file:$n — shellcheck disable"
+            elif [[ $text =~ \#[[:space:]]*noqa ]]; then
+              echo "disclose: $file:$n — noqa"
+            elif [[ $text =~ \#[[:space:]]*type:[[:space:]]*ignore ]]; then
+              echo "disclose: $file:$n — type: ignore"
+            elif [[ $text =~ @ts-(ignore|expect-error|nocheck) ]]; then
+              echo "disclose: $file:$n — ts-${BASH_REMATCH[1]}"
+            elif [[ $text =~ eslint-disable ]]; then
+              echo "disclose: $file:$n — eslint-disable"
+            elif [[ $text =~ ^[[:space:]]*\#!?\[allow\( ]]; then
+              echo "disclose: $file:$n — allow (Rust)"
+            fi
+          fi
+        fi
+        n=$((n + 1))
+        ;;
+    esac
+  done < <(git -C "$repo" diff -U0 "$base" "$head")
+  return 0
+}
+
 # gh_coordinator task — the coordinator of the task's team when the task is one of its members and not the
 # coordinator itself (the agents' gh refuses such a task's gh pr create); empty for anyone else: a coordinator, a
 # solo task, an investigator, or a team whose coordinator the bus does not say
@@ -1981,6 +2321,7 @@ supervise_review_waits() { # an --autopilot review pair waiting longer than AGEN
   for m in "$TASKS"/*/meta.env; do
     grep -qx 'REVIEW_PAIR_PENDING=1' "$m" || continue
     id=${m%/meta.env}; id=${id##*/}
+    task_held "$id" && continue   # its team is paused by the human
     [[ -z $(task_field "$id" REVIEW_WAIT_TOLD) ]] || continue
     since=$(task_field "$id" REVIEW_PAIR_SINCE)
     (($(date +%s) - ${since:-0} >= AGENT_REVIEW_WAIT_MIN * 60)) || continue
@@ -2211,6 +2552,28 @@ review_precheck() { # coordinator task id — before a review: the round's head 
   tc=$(round_test_changes "$root" "$mb" "$head")
   meta_set "$id" ROUND_TESTS "$tc"
   [[ $tc != "code=1 added=0 "* ]] || why="the round changes code but adds no test — every change of behaviour needs its test, written first"
+  local rules rpr rbody="" rbody_read=0 human disc rtext=""   # AGENTS.md's rules on the round's diff, with the others'
+  rpr=$(trusted_prs "$root" "$branch" open url | jq -r '.[0].url // empty') || rpr=""
+  if [[ -n $rpr ]]; then
+    if rbody=$(cd "$root" && gh pr view "$rpr" --json body --jq .body); then rbody_read=1; else rbody=""; fi
+  fi
+  # the round's size into its PR description — only over a description just read: never one written over blind
+  ((rbody_read)) && pr_write_round_size "$id" "$root" "$rpr" "$rbody"
+  rules=$(round_rule_issues "$root" "$mb" "$head" "$(task_field "$id" TEAM)" "$rbody")
+  if [[ -n $rules ]]; then
+    human=$(sed -n 's/^human: /- /p' <<< "$rules")
+    disc=$(sed -n 's/^disclose: /- /p' <<< "$rules")
+    [[ -z $human ]] || rtext+="the round changes what only the human may allow (AGENTS.md \"Never\"): revert it, or ask the human, who allows it with: agent allow $(task_field "$id" TEAM) <path>
+$human
+"
+    [[ -z $disc ]] || rtext+="the round adds suppressions its PR description does not name: name each file and why in the description, or remove it
+$disc
+"
+    why="${why:+$why
+
+}$rtext"
+    log_warn precheck_rules "task=$id" "issues=$(grep -c . <<< "$rules")"
+  fi
   if [[ -z $why ]]; then   # a round has one PR: the others' commits belong on the round's PR branch
     local round_prs n_prs
     round_prs=$(round_open_prs "$id")
@@ -2242,14 +2605,22 @@ $issues"
     fi
     return 0; }
     rc=0
+    auto_stage "$id" "checks before review: waiting for the machine's gate lock"
+    gate_lock 1 "$id" "$wt"   # one gate run at a time on the machine: the agents' and this one
     auto_stage "$id" "checks before review: $gate"
-    (cd "$wt" && timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") > "$TASKS/$id/precheck.log" 2>&1 10>&- &
+    local gstart; gstart=$(date +%s)
+    set -m
+    (cd "$wt" && timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") < /dev/null > "$TASKS/$id/precheck.log" 2>&1 10>&- &
     local gpid=$!
+    set +m
+    gate_lock_pgid "$gpid"
     while kill -0 "$gpid" 2>/dev/null; do   # its progress on the dashboard while it runs ("no such process": it ended)
       auto_stage "$id" "checks before review: $gate$(gate_progress "$TASKS/$id/precheck.log")"
       sleep "$AGENT_STAGE_POLL_SEC"
     done
     wait "$gpid" || rc=$?
+    gate_unlock
+    gate_record "$id" "$head" true "$rc" "$(($(date +%s) - gstart))" "$gate" "$TASKS/$id/precheck.log"
     git -C "$root" worktree remove --force "$wt" 10>&- || log_warn precheck_worktree_left "worktree=$wt"
     act "$id" info "before the review: the gate ($gate) at ${head:0:7} — exit $rc"
     ((rc == 0)) || why="the gate (\`$gate\`) fails at ${head:0:7} (exit $rc); its output ends with:
@@ -2524,6 +2895,7 @@ supervise_failovers() {
   for m in "$TASKS"/*/meta.env; do
     grep -qx 'FAILOVER_PENDING=1' "$m" 2> /dev/null || continue
     id=$(basename "$(dirname "$m")")
+    task_held "$id" && continue   # its team is paused by the human: decided after agent unpause
     meta_set "$id" FAILOVER_PENDING ""
     [[ $(task_field "$id" STATUS) == paused ]] || continue   # it went on meanwhile
     if [[ $(task_field "$id" KIND) == helper ]]; then helper_failover "$id"; continue; fi
@@ -2570,7 +2942,7 @@ supervise_failovers() {
 # coordinator's request, whose result the coordinator gets. A team whose members all sleep while items wait
 # AGENT_BOARD_STALL_MIN tells the human ⛔ — once for the same items (stall-<team> under the bus directory).
 supervise_board() {
-  local m team lead lt tj board now id upd title details age stale mark repo a mt last
+  local m team lead lt tj board now id upd title details age stale mark repo a mt last out
   local -A teams_seen=()
   now=$(date +%s)
   for m in "$TASKS"/*/meta.env; do
@@ -2578,6 +2950,7 @@ supervise_board() {
     team=$(sed -n 's/^TEAM=//p' "$m" 2> /dev/null) || continue
     [[ -n $team && -z ${teams_seen[$team]:-} ]] || continue
     teams_seen[$team]=1
+    team_paused "$team" && continue   # paused by the human: its board waits with it
     tj=$(team_json "$team" 2> /dev/null) || continue
     [[ -n $tj && $(jq -r '.finished // false' <<< "$tj") != true ]] || continue
     lead=$(jq -r '.lead // empty' <<< "$tj")
@@ -2599,13 +2972,15 @@ supervise_board() {
         age=$((now - $(date -d "$upd" +%s 2> /dev/null || echo "$now")))
         ((age >= AGENT_EASY_TO_WORKER_MIN * 60)) || continue
         bus board-claim --dir "$BUS_DIR" --team "$team" --as "$lead" --id "$id" > /dev/null 2>&1 || continue
-        if bus delegate --dir "$BUS_DIR" --team "$team" --as "$lead" --task "$lt" --repo "$(task_field "$lt" REPO_NAME)" \
+        if out=$(bus delegate --dir "$BUS_DIR" --team "$team" --as "$lead" --task "$lt" --repo "$(task_field "$lt" REPO_NAME)" \
             --branch "$(task_field "$lt" BRANCH)" --worktree "$(task_field "$lt" WORKTREE)" --agent-cmd "$SELF" --home "$AGENTS_HOME" \
             --request "$title — board item $id of team $team: $details" \
-            --context "The coordinator $lead holds the item: your result goes to it." > /dev/null 2>&1; then
+            --context "The coordinator $lead holds the item: your result goes to it." 2>&1); then
           log_info easy_item_to_worker "team=$team" "item=$id" "for=$lead"
-        else
-          log_warn easy_item_to_worker_failed "team=$team" "item=$id"
+        else   # the coordinator holds the item now: it hears why no worker got it
+          log_warn easy_item_to_worker_failed "team=$team" "item=$id" "reason=${out:0:300}"
+          try easy_item_message_failed bus send --dir "$BUS_DIR" --from agent --to "$lead" \
+            "Easy board item $id ($title) is yours now: it could not go to a worker — ${out:0:400}. Do it yourself, or rewrite it as a request a worker can do and delegate it." > /dev/null
         fi
       done < <(jq -r '.board // {} | (if type == "object" then .[] else .[] end)
         | select(.status == "todo" and .level == "easy" and ((.for // "") == "")) | [.id, .updated, .title, ((.details // "") | gsub("[\t\n]"; " "))] | @tsv' <<< "$board")
@@ -2636,6 +3011,7 @@ supervise_handbacks() {
   for m in "$TASKS"/*/meta.env; do
     grep -qx 'HANDBACK_PENDING=1' "$m" 2> /dev/null || continue
     id=$(basename "$(dirname "$m")"); f=$TASKS/$id/handback.args
+    task_held "$id" && continue   # its team is paused by the human
     if [[ ! -s $f ]] || ! automation_allowed "$id"; then
       meta_set "$id" HANDBACK_PENDING ""
       continue
@@ -3760,6 +4136,26 @@ build_prompt() { # id mode qfile next_round
     ((any)) && printf '\n---\n\n'
     R[QUESTIONS_WITHOUT_REC]=$QBOUNCE_PENDING
     render "$PROMPTS/questions-bounce.md"
+    printf '\n'
+    any=1
+  fi
+  if [[ -n ${UNPAUSE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    R[MINUTES]=$UNPAUSE_PENDING
+    render "$PROMPTS/unpaused.md"
+    printf '\n'
+    any=1
+  fi
+  if [[ -n ${DBOUNCE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    R[HELD]=$DBOUNCE_PENDING
+    render "$PROMPTS/done-bounce.md"
+    printf '\n'
+    any=1
+  fi
+  if [[ -n ${NSBOUNCE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    render "$PROMPTS/nostatus-bounce.md"
     printf '\n'
     any=1
   fi
@@ -5593,6 +5989,18 @@ final_status() { # last message → DONE|ROUND_DONE|FAILED|QUESTIONS|INVESTIGATI
   sed 's/[*`]//g' <<< "$1" | { grep -oE '^[[:space:]]*STATUS:[[:space:]]*[A-Z_]+' || (($? == 1)); } | head -1 | sed -E 's/.*STATUS:[[:space:]]*//'
 }
 
+# nostatus_autopilot task — whether a turn without STATUS goes back to the agent instead of to the human: the task
+# runs --autopilot, or the task that asked for it does (an investigator's or a reviewer's has no AUTOPILOT of its
+# own), and the human has not turned it off
+nostatus_autopilot() {
+  local t p
+  p=$(task_field "$1" PARENT_TASK)
+  for t in "$1" ${p:+"$p"}; do
+    [[ $(task_field "$t" AUTOPILOT) == 1 && $(task_field "$t" AUTOPILOT_OFF) != 1 ]] && return 0
+  done
+  return 1
+}
+
 questions_from_nostatus() { # message id round — questions file used when the agent ended its turn without a STATUS line
   printf '# Questions — %s (round %s)\n\n' "$2" "$3"
   printf '_The agent ended its turn without a STATUS line — most likely it stopped halfway or is waiting for permission. Its last message is below._\n\n'
@@ -5642,6 +6050,12 @@ runner_exit() {
     [[ -n ${JOB_ID:-} && -f $TASKS/$RUNNER_ID/node-stop-requested && ${RUNNER_DELIVERED:-0} == 0 ]] || return 0
   fi
   RUNNER_DONE=1
+  if [[ -f $TASKS/$RUNNER_ID/hold-requested ]]; then   # agent pause: held with its team — not failed, not out
+    try meta_write_failed meta_set "$RUNNER_ID" STATUS held
+    try activity_write_failed act "$RUNNER_ID" info "⏸ paused with its team by the human — agent unpause resumes it where it stopped"
+    log_info run_held "reason=team paused"
+    return
+  fi
   if stopping; then   # agent stop --running: no notifications, queues or messages
     try meta_write_failed meta_set "$RUNNER_ID" STATUS stopped
     try meta_write_failed meta_set "$RUNNER_ID" FINISHED "$(date -Is)"
@@ -5715,6 +6129,13 @@ cmd__runner() {
   export LC_ALL=C.UTF-8 MCP_TOOL_TIMEOUT=900000
   RUNNER_ID=$id
   meta_load "$id"
+  if [[ -f $dir/hold-requested ]] || task_held "$id"; then   # paused with its team before this run got going: it waits
+    meta_set "$id" HOLD_START "$mode"
+    meta_set "$id" STATUS held
+    act "$id" info "⏸ paused with its team by the human before this run started — agent unpause starts it"
+    log_info run_held "reason=team paused before the run started" "mode=$mode"
+    exit 0
+  fi
   local n=$RUN
   if [[ $mode == resume ]] && fresh_session_due "$id"; then   # not the old session: a fresh one with the handoff
     mode=fresh
@@ -5787,6 +6208,9 @@ cmd__runner() {
   meta_set "$id" BOUNCE_PENDING ""
   meta_set "$id" QBOUNCE_PENDING ""
   meta_set "$id" SBOUNCE_PENDING ""
+  meta_set "$id" NSBOUNCE_PENDING ""
+  meta_set "$id" DBOUNCE_PENDING ""
+  meta_set "$id" UNPAUSE_PENDING ""
   meta_set "$id" PAUSE_RELEASED ""
   meta_set "$id" RBOUNCE_PENDING ""
   if [[ -n ${TEAM:-} && ${REMOTE_TEAM:-} != 1 ]]; then   # a remote member's state is set by the lead
@@ -5837,9 +6261,11 @@ cmd__runner() {
   done
   printf '%s\n' "$FINAL" > "$dir/final.md"
 
-  local status note="" pending="" member_q=0 member_ns=0 fst pause_secs=0 pause_reason="" qgen=0 norec=""
+  local status note="" pending="" member_q=0 member_ns=0 fst pause_secs=0 pause_reason="" qgen=0 norec="" nsb=0
   [[ ${KIND:-worker} == worker ]] && pending=$(bus inv-pending --dir "$BUS_DIR" --task "$id")
   fst=$(final_status "$FINAL")
+  [[ $fst == DONE || -z $(task_field "$id" DONE_BOUNCED) ]] || meta_set "$id" DONE_BOUNCED ""   # a DONE again: not in a row
+  [[ -z $fst || -z $(task_field "$id" NOSTATUS_BOUNCED) ]] || meta_set "$id" NOSTATUS_BOUNCED ""   # a STATUS again
   local is_member=0
   [[ -n ${TEAM:-} && ${KIND:-worker} == worker && $AGENT != "$(team_lead "$TEAM")" ]] && is_member=1
 
@@ -5848,6 +6274,8 @@ cmd__runner() {
   if ! is_independent_investigation "$id" && [[ ! -s $qfile && -z $fst && -n ${FINAL//[[:space:]]/} && $RC == 0 && $HUNG == 0 && -z $pending ]]; then
     if ((is_member)); then
       member_ns=1
+    elif [[ ${KIND:-worker} != helper ]] && nostatus_autopilot "$id" && [[ -z $(task_field "$id" NOSTATUS_BOUNCED) ]]; then
+      nsb=1   # --autopilot: back to the agent, "continue as planned"; a second turn in a row asks the human
     elif [[ ${KIND:-worker} != helper ]]; then
       questions_from_nostatus "$FINAL" "$id" "$next_round" > "$qfile"; qgen=1
       act "$id" info "turn without STATUS — the last message was passed to you as a question ($qfile)"
@@ -5956,6 +6384,8 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
       meta_set "$id" FAILOVER_UNTIL "$(( $(date +%s) + pause_secs ))"
       meta_set "$id" FAILOVER_PENDING 1
     fi
+  elif ((nsb)); then
+    status=nsbounce
   elif [[ -s $qfile ]]; then
     # every question the agent wrote must carry a recommendation; without one it gets the file back once
     if ((qgen == 0)) && [[ $(task_field "$id" QUESTIONS_BOUNCED) != "$next_round" ]]; then
@@ -6056,6 +6486,34 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     act "$id" info "↩ --autopilot: nobody answers questions — they go back to the agent once; it decides and lists its decisions in the PR"
     log_info questions_autopilot_bounced "task=$id" "file=$decided"
     start_runner "$id" resume || log_error resume_failed "task=$id" "reason=--autopilot questions"
+    dispatch; dispatch_helpers
+    return 0
+  fi
+  # a member's DONE while it holds claimed board items: back to it once, in a fresh session (a second DONE finishes it)
+  local held=""
+  # (not a remote member: its board lives on the lead, which follows its state)
+  if [[ $status == done && $fst == DONE && $is_member == 1 && ${REMOTE_TEAM:-} != 1 \
+      && -z $(task_field "$id" DONE_BOUNCED) && $(team_done_flag "$TEAM") != true ]]; then
+    held=$(member_claimed_items "$TEAM" "$AGENT")
+    if [[ -n $held ]]; then
+      meta_set "$id" DONE_BOUNCED 1
+      meta_set "$id" DBOUNCE_PENDING "$held"
+      RUNNER_DONE=1
+      act "$id" info "↩ STATUS: DONE while holding board items ($held) — sent back to the agent once, in a fresh session"
+      log_info member_done_bounced "task=$id" "agent=$AGENT" "items=$held"
+      start_runner "$id" resume || log_error resume_failed "task=$id" "reason=a member's DONE while holding board items"
+      dispatch; dispatch_helpers
+      return 0
+    fi
+  fi
+  # --autopilot: a turn without STATUS goes back to the agent — continue as planned; a second in a row asks the human
+  if [[ $status == nsbounce ]]; then
+    meta_set "$id" NOSTATUS_BOUNCED 1
+    meta_set "$id" NSBOUNCE_PENDING 1
+    RUNNER_DONE=1
+    act "$id" info "↩ --autopilot: a turn without STATUS — sent back to the agent: continue as planned"
+    log_info nostatus_autopilot_bounced "task=$id" "agent=$AGENT" "model=${MODEL:-}"
+    start_runner "$id" resume || log_error resume_failed "task=$id" "reason=a turn without STATUS"
     dispatch; dispatch_helpers
     return 0
   fi
@@ -6166,6 +6624,14 @@ start_runner() { # id mode
     meta_set "$id" FINISHED "$(date -Is)"
     return 0   # cancellation is a completed no-op, not a launch failure for admission to overwrite
   fi
+  pause_lock || log_warn pause_lock_failed "task=$id"
+  if task_held "$id"; then   # its team is paused by the human: the start waits for agent unpause
+    meta_set "$id" HOLD_START "$mode"
+    log_info start_held "task=$id" "mode=$mode"
+    pause_unlock
+    return 0
+  fi
+  pause_unlock
   run=$(( $(task_field "$id" RUN) + 1 ))
   meta_set "$id" RUN "$run"
   meta_set "$id" STATUS starting
@@ -7358,6 +7824,90 @@ cmd_stop() {
   echo "Stopped $id."
 }
 
+# cmd_allow team [path...] — the human allows a team's rounds to change these paths against AGENTS.md's rules (an
+# existing test, a file that judges a round): the precheck lets them pass. No path: the paths allowed so far
+cmd_allow() {
+  local team=${1:?usage: agent allow <team> [path...]} f
+  shift
+  [[ -n $(team_json "$team") ]] || die "no team $team (see: agent status)"
+  if (($# == 0)); then team_allowed_paths "$team"; return 0; fi
+  mkdir -p "$AGENTS_HOME/allowed" || die "cannot create $AGENTS_HOME/allowed"
+  for f in "$@"; do
+    grep -qxF -- "$f" "$AGENTS_HOME/allowed/$team" 2> /dev/null && continue
+    printf '%s\n' "$f" >> "$AGENTS_HOME/allowed/$team" || die "cannot write $AGENTS_HOME/allowed/$team"
+  done
+  log_info rules_allowed "team=$team" "paths=$*"
+  echo "Allowed for team $team: $*"
+}
+
+# cmd_pause team — the human pauses a team: its runs are stopped at once — its members', its coordinator's, its
+# workers' and investigators' — and held, not failed: they stay members of the team. Nothing of it starts until
+# agent unpause; the supervisor leaves it alone. (A remote member's run, on its node, is not stopped: only its wakes.)
+cmd_pause() {
+  local team=${1:?usage: agent pause <team>} t st stopped=() since
+  [[ -n $(team_json "$team") ]] || die "no team $team (see: agent status)"
+  [[ $(team_done_flag "$team") != true ]] || die "team $team is finished: nothing to pause"
+  if team_paused "$team"; then
+    since=$(sed -n 's/^since=//p' "$AGENTS_HOME/paused/$team")
+    echo "Team $team is paused already (since $(date -d "@${since:-0}" '+%H:%M')): agent unpause $team"
+    return 0
+  fi
+  mkdir -p "$AGENTS_HOME/paused" || die "cannot create $AGENTS_HOME/paused"
+  pause_lock || die "cannot lock $AGENTS_HOME/.pause.lock"
+  printf 'since=%s\nby=%s\n' "$(date +%s)" "${USER:-human}" > "$AGENTS_HOME/paused/$team" \
+    || die "cannot write $AGENTS_HOME/paused/$team"
+  pause_unlock
+  for t in $(team_related_tasks "$team"); do
+    st=$(task_field "$t" STATUS)
+    [[ $st == running || $st == starting ]] || continue
+    [[ $(task_field "$t" KIND) != remote-member ]] || continue   # its member runs on its node
+    touch "$TASKS/$t/hold-requested" || die "cannot mark $t for the pause"
+    try unit_stop_failed systemctl --user stop "$(unit_name "$t" "$(task_field "$t" RUN)").service"
+    [[ $(task_field "$t" STATUS) == held ]] || meta_set "$t" STATUS held   # no runner yet to write it
+    stopped+=("$t")
+  done
+  log_info team_paused "team=$team" "stopped=$(IFS=,; echo "${stopped[*]}")"
+  echo "Paused team $team. Stopped: ${stopped[*]:-nothing was running}. Nothing of it starts until: agent unpause $team"
+}
+
+# cmd_unpause team — the paused team goes on: the runs the pause stopped are resumed where they stopped (the same
+# session, told they were paused), and the starts that waited are made
+cmd_unpause() {
+  local team=${1:?usage: agent unpause <team>} t mode since min resumed=() started=()
+  if ! team_paused "$team"; then
+    echo "Team $team is not paused."
+    return 0
+  fi
+  since=$(sed -n 's/^since=//p' "$AGENTS_HOME/paused/$team")
+  min=$(( ($(date +%s) - ${since:-$(date +%s)}) / 60 ))
+  local -a starts=()   # "task mode" — collected under the lock, with the pause lifted: no start falls between
+  pause_lock || die "cannot lock $AGENTS_HOME/.pause.lock"
+  rm -f "$AGENTS_HOME/paused/$team" || { pause_unlock; die "cannot remove the pause of team $team"; }
+  for t in $(team_related_tasks "$team"); do
+    mode=$(task_field "$t" HOLD_START)
+    if [[ -n $mode ]]; then   # a start that waited — or a run paused before it got going: in its own mode
+      rm -f "$TASKS/$t/hold-requested"
+      meta_set "$t" HOLD_START ""
+      starts+=("$t $mode")
+      started+=("$t")
+    elif [[ -f $TASKS/$t/hold-requested || $(task_field "$t" STATUS) == held ]]; then   # stopped by the pause
+      rm -f "$TASKS/$t/hold-requested"
+      meta_set "$t" UNPAUSE_PENDING "$min"
+      starts+=("$t resume")
+      resumed+=("$t")
+    fi
+  done
+  pause_unlock
+  for t in "${starts[@]}"; do
+    start_runner "${t%% *}" "${t#* }" || log_error runner_start_failed "task=${t%% *}" "reason=agent unpause"
+  done
+  log_info team_unpaused "team=$team" "minutes=$min" "resumed=$(IFS=,; echo "${resumed[*]}")" \
+    "started=$(IFS=,; echo "${started[*]}")"
+  dispatch
+  dispatch_helpers
+  echo "Unpaused team $team after $min min. Resumed: ${resumed[*]:-none}. Started: ${started[*]:-none}."
+}
+
 cmd_clean() {
   local id; id=$(resolve_id "${1:?usage: agent clean <id>}")
   meta_load "$id"
@@ -7446,6 +7996,7 @@ supervise_deferred_wakes() {
     [[ -f $m ]] || continue
     id=${m%/meta.env}; id=${id##*/}
     [[ $(task_field "$id" WAKE_DEFERRED) == 1 ]] || continue
+    task_held "$id" && continue   # its team is paused by the human: replayed after agent unpause
     if ! automation_allowed "$id"; then meta_set "$id" WAKE_DEFERRED ""; continue; fi
     if blocking_investigation "$id" >/dev/null; then continue; fi   # still in progress: the next tick looks again
     log_info wake_replayed "task=$id"
@@ -7569,6 +8120,7 @@ supervise_merged_rounds() {
   for m in "$TASKS"/*/meta.env; do
     [[ -f $m ]] || continue
     id=$(basename "$(dirname "$m")")
+    task_held "$id" && continue   # its team is paused by the human
     st=$(task_field "$id" STATUS)
     case $st in running|starting|sleeping|waiting|paused|queued) ;; *) continue ;; esac
     lead="" team=$(task_field "$id" TEAM)
@@ -7618,6 +8170,7 @@ supervise_teams() { # an open team with no local member at work or asleep for AG
     [[ -n $team && -z ${seen[$team]:-} ]] || continue
     seen[$team]=1
     grep -qx 'REMOTE_TEAM=1' "$m" && continue                 # a remote member's task: its team lives on the lead
+    team_paused "$team" && continue                            # paused by the human: not abandoned
     [[ $(team_done_flag "$team") == false ]] || continue        # closed, or unknown to the bus
     mark="$BUS_DIR/abandoned-teams/$team"
     [[ ! -e $mark ]] || continue                                # reported already
@@ -7818,6 +8371,7 @@ remote_member_start() { # proxy-task — grants the remote member on the lead an
 # mode: new, resume or fresh)
 runs_usage() {
   local id=$1
+  [[ -f $TASKS/$id/activity.jsonl ]] || return 0   # an investigation team's parent has none of its own
   jq -rn --arg cli "$(task_field "$id" TYPE)" '
     reduce inputs as $l ({run: 0, rows: {}, prev: {in: 0, cached: 0, out: 0}};
       ($l.t // "") as $t
@@ -7904,9 +8458,37 @@ checkpoints_latest() {
 
 # fresh_session_due task — its next run starts a fresh session (FRESH_WHY says why): its last run was marked long, or
 # read more than AGENT_FRESH_SESSION_TOKENS of context a step
+# fresh_session_max cli — the context a step past which a resumed run of that CLI goes to a fresh session
+# (AGENT_FRESH_SESSION_MAX), 0 when none is set for it
+fresh_session_max() {
+  local kv
+  for kv in $AGENT_FRESH_SESSION_MAX; do
+    [[ ${kv%%=*} == "$1" && ${kv#*=} =~ ^[0-9]+$ ]] && { printf '%s' "${kv#*=}"; return 0; }
+  done
+  printf 0
+}
+
+# member_claimed_items team agent — the board items the agent holds claimed in the team, comma-separated; none when
+# the board cannot be read (logged, unless the bus does not have the team) — a reading is no reason to end a runner
+member_claimed_items() {
+  local board rc=0
+  board=$(bus board-dump --dir "$BUS_DIR" --team "$1" 2> /dev/null) || rc=$?
+  if ((rc != 0)); then
+    ((rc == BUS_NOT_FOUND)) || log_warn board_read_failed "team=$1" "exit_code=$rc"
+    return 0
+  fi
+  jq -r --arg a "$2" '.board // {} | (if type == "object" then .[] else .[] end)
+    | select(.status == "claimed" and (.assignee // "") == $a) | .id' <<< "$board" | paste -sd, - \
+    || log_warn board_parse_failed "team=$1"
+}
+
 fresh_session_due() {
-  local id=$1 rows last lrun steps in median
+  local id=$1 rows last lrun steps in median lmode max
   FRESH_WHY=""
+  if [[ -n $(task_field "$id" DBOUNCE_PENDING) ]]; then   # a member's DONE while holding items: back with a small context
+    FRESH_WHY="you ended your last run with STATUS: DONE while you hold board items ($(task_field "$id" DBOUNCE_PENDING))"
+    return 0
+  fi
   if [[ $(task_field "$id" SOLO_CUT) == 1 ]]; then   # ended for working alone: the work to split comes first
     meta_set "$id" SOLO_CUT ""
     FRESH_WHY="you worked alone while your members slept and your board had nothing for them, and the runner ended your run. Before anything else now, put the work on the board — items that do not overlap, each for one member (a worker for a small one), with its area, its size and when it is done — and wake each member once; implement only the items you give yourself"
@@ -7922,6 +8504,14 @@ fresh_session_due() {
   [[ -n $last ]] || return 1
   IFS=$'\t' read -r lrun steps in _ <<< "$last"
   ((steps > 0 && in / steps > AGENT_FRESH_SESSION_TOKENS)) || return 1
+  # a CLI with a small context window: a resumed session past its ceiling goes, whatever its start (not a fresh one:
+  # a session that starts past it would go fresh every run)
+  lmode=$(awk -F'\t' '{print $7}' <<< "$last")
+  max=$(fresh_session_max "$(task_field "$id" TYPE)")
+  if [[ $lmode == resume ]] && ((max > 0 && in / steps > max)); then
+    FRESH_WHY="your last run read some $((in / steps)) tokens of context a step — past the $max its CLI's context window allows before it fills"
+    return 0
+  fi
   # a fresh session reads much from its start: only a context grown past AGENT_FRESH_SESSION_RATIO times the median
   # of the task's other session starts (its new and fresh runs) is worth leaving
   median=$(awk -F'\t' -v last="$lrun" '$1 != last && ($7 == "new" || $7 == "fresh") && $2 > 0 && $3 > 0 {print int($3 / $2)}' \
@@ -8118,17 +8708,119 @@ debug_redact() {
 # bus, its board, its worker requests, every task's metadata, activity, errors, final report and checks, the script's
 # log, the bus messages, the branches, the round's PR, its card and tokens. Read-only. The last lines of each source
 # by default, all of them with --full; secrets redacted (debug_redact). It prints the file and its length.
+# cmd_debug_agent agent|model name days last full out — agent debug --agent / --model: a model's whole record in one
+# file — a summary of its tasks of the last days (by kind and status, failures and their reasons, turns without
+# STATUS, pauses, long runs cut, failovers, durations, tokens and cost), the worker requests that failed before a
+# task, the results its requesters rejected (an approximation from their messages), and the details of its last
+# tasks. Read-only; secrets redacted (debug_redact); archived tasks are not in it.
+cmd_debug_agent() {
+  local by=$1 name=$2 days=$3 last=$4 full=$5 out=$6 field=AGENT t c since total=0 failed=0 secs=0 timed=0 hid
+  local -a ids=() hids=() acts=()
+  [[ $by == model ]] && field=MODEL
+  since=$(date -d "$days days ago" +%s) || die "--days: a number of days"
+  for t in "$TASKS"/*/meta.env; do
+    [[ -f $t ]] || continue
+    t=$(basename "$(dirname "$t")")
+    [[ $(task_field "$t" "$field") == "$name" ]] || continue
+    c=$(task_field "$t" CREATED)
+    [[ -z $c ]] || (($(date -d "$c" +%s 2> /dev/null || echo 0) >= since)) || continue
+    ids+=("$t")
+  done
+  mapfile -t ids < <(for t in "${ids[@]}"; do printf '%s\t%s\n' "$(task_field "$t" CREATED)" "$t"; done | sort -r | cut -f2)
+  total=${#ids[@]}
+  for t in "${ids[@]}"; do acts+=("$TASKS/$t/activity.jsonl"); done
+  out=${out:-$AGENTS_HOME/debug/debug-$by-${name//[^A-Za-z0-9._-]/_}-$(date +%Y%m%d-%H%M%S).txt}
+  mkdir -p "$(dirname "$out")" || die "cannot create $(dirname "$out")"
+  {
+    set +e   # a missing or empty source is shown as such: it stops nothing
+    echo "agent debug --$by $name — $(date -Is) — tasks of the last $days days$( ((full)) && echo ' — full')"
+    echo; echo "== summary"
+    echo "tasks: $total"
+    ((total)) || echo "(none in this window: --days N widens it)"
+    if [[ $by == agent ]]; then echo "models: $(for t in "${ids[@]}"; do task_field "$t" MODEL; echo; done | sort -u | paste -sd' ')"
+    else echo "agents: $(for t in "${ids[@]}"; do task_field "$t" AGENT; echo; done | sort -u | paste -sd' ')"; fi
+    echo "by kind and status:"
+    for t in "${ids[@]}"; do echo "$(task_field "$t" KIND) $(task_field "$t" STATUS)"; done | sort | uniq -c
+    for t in "${ids[@]}"; do [[ $(task_field "$t" STATUS) != failed ]] || failed=$((failed + 1)); done
+    ((total == 0)) || printf 'failed: %d (%d%%)\n' "$failed" "$((100 * failed / total))"
+    echo "failure reasons (the notes of the failed tasks):"
+    for t in "${ids[@]}"; do
+      [[ $(task_field "$t" STATUS) == failed ]] || continue
+      c=$(task_field "$t" NOTE); echo "${c:-(no note)}"
+    done | sort | uniq -c | sort -rn | head -n 10
+    c=0
+    ((total == 0)) || c=$(cat "${acts[@]}" 2> /dev/null | grep -c 'turn without STATUS')
+    echo "turns without STATUS: ${c:-0}"
+    local logged
+    logged=$( ((total)) && grep -hF -f <(printf '"task":"%s"\n' "${ids[@]}") "$AGENTS_HOME/logs/agent.jsonl" 2> /dev/null)
+    c=$(jq -r 'select(.event == "task_paused") | .reason // "?"' <<< "$logged" 2> /dev/null | sort | uniq -c | awk '{printf "%s%s %s", (NR > 1 ? ", " : ""), $1, $2}')
+    echo "pauses: ${c:-none}"
+    echo "long runs cut: $(jq -r 'select(.event == "long_run_cut") | .task' <<< "$logged" 2> /dev/null | grep -c .)"
+    echo "failovers: $(jq -r 'select(.event == "helper_failover" or .event == "failover_done") | .task' <<< "$logged" 2> /dev/null | grep -c .)"
+    for t in "${ids[@]}"; do
+      c=$(task_field "$t" CREATED); local f; f=$(task_field "$t" FINISHED)
+      [[ -n $c && -n $f ]] || continue
+      secs=$((secs + $(date -d "$f" +%s) - $(date -d "$c" +%s))); timed=$((timed + 1))
+    done
+    ((timed == 0)) || echo "average duration: $((secs / timed / 60)) min ($timed tasks)"
+    if ((total)); then
+      local tin tcached tout tcost
+      read -r tin tcached tout tcost < <(cat "${acts[@]}" 2> /dev/null | jq -rs '
+        [.[] | select(.k == "info") | (.t // "") | capture("^usage: in (?<in>[0-9]+) \\(cached (?<cached>[0-9]+)\\), out (?<out>[0-9]+)(, cost \\$(?<cost>[0-9.]+))?")?]
+        | [(map(.in | tonumber) | add // 0), (map(.cached | tonumber) | add // 0), (map(.out | tonumber) | add // 0),
+           (map(.cost // "0" | tonumber) | add // 0)] | @tsv')
+      printf 'tokens: in %d (cached %d), out %d, cost $%.4f\n' "${tin:-0}" "${tcached:-0}" "${tout:-0}" "${tcost:-0}"
+    fi
+    if [[ $by == agent ]]; then
+      echo; echo "== worker requests that failed before a task"
+      c=$(bus helper-list --dir "$BUS_DIR" --all 2> /dev/null | while IFS= read -r c; do
+        [[ $c =~ ^H([0-9]+)\ \[failed\ →\ $name\] ]] || continue
+        grep -qx "HELPER_ID=${BASH_REMATCH[1]}" "$TASKS"/*/meta.env 2> /dev/null || echo "${c:0:240}"
+      done)
+      echo "${c:-(none)}"
+    fi
+    for t in "${ids[@]}"; do hid=$(task_field "$t" HELPER_ID); [[ -z $hid ]] || hids+=("$hid"); done
+    echo; echo "== results the requesters rejected (an approximation, from their messages)"
+    c=$(for hid in "${hids[@]}"; do
+      grep -hE "\\bH$hid\\b" "$BUS_DIR/messages.jsonl" 2> /dev/null \
+        | jq -r 'select((.text // "") | test("reject|not accepted|invalid|wrong"; "i")) | "\(.ts) \(.from): \((.text // "") | .[0:300])"' 2> /dev/null
+    done)
+    echo "${c:-(none)}"
+    for t in "${ids[@]:0:$( ((full)) && echo "$total" || echo "$last")}"; do
+      local d=$TASKS/$t n=$(( full ? 1000000 : 30 )) run
+      run=$(task_field "$t" RUN)
+      echo; echo "== task $t"
+      for c in AGENT KIND MODEL TYPE STATUS NOTE CREATED FINISHED RUN HELPER_ID PARENT_TASK TEAM; do
+        [[ -z $(task_field "$t" "$c") ]] || echo "$c=$(task_field "$t" "$c")"
+      done
+      echo "-- what it got"; head -n "$((full ? 1000000 : 40))" "$d/task.md" 2>&1
+      echo "-- what it returned"; tail -n "$n" "$d/final.md" 2>&1
+      [[ -z $run ]] || { echo "-- err-$run.log"; tail -n 10 "$d/err-$run.log" 2>&1; }
+      echo "-- activity"; tail -n "$((full ? 1000000 : 20))" "$d/activity.jsonl" 2> /dev/null | jq -r '.ts + " " + .k + " " + (.t // "")' 2>&1
+      ((full == 0)) || { echo "-- prompts"; cat "$d"/prompt-*.md 2> /dev/null; }
+    done
+    true
+  } 2>&1 | debug_redact > "$out"
+  echo "$out ($(wc -l < "$out") lines)"
+}
+
 cmd_debug() {
-  local ref="" full=0 out="" team="" n=40 t d run usage="usage: agent debug <team|task> [--full] [--out file]"
+  local ref="" full=0 out="" team="" n=40 t d run by="" name="" days=30 last=20
+  local usage="usage: agent debug <team|task> | --agent NAME | --model NAME [--days N] [--last N] [--full] [--out file]"
   local -a ids=()
   while (($#)); do
     case $1 in
       --full) full=1; shift ;;
       --out) out=${2:?$usage}; shift 2 ;;
+      --agent | --model) by=${1#--}; name=${2:?$usage}; shift 2 ;;
+      --days) days=${2:?$usage}; shift 2 ;;
+      --last) last=${2:?$usage}; shift 2 ;;
       -*) die "$usage" ;;
       *) ref=$1; shift ;;
     esac
   done
+  [[ ! $days =~ [^0-9] && ! $last =~ [^0-9] ]] || die "$usage"
+  if [[ -n $by ]]; then cmd_debug_agent "$by" "$name" "$days" "$last" "$full" "$out"; return; fi
   [[ -n $ref ]] || die "$usage"
   if [[ -f $TASKS/$ref/meta.env ]]; then team=$(task_field "$ref" TEAM); else team=$ref; fi
   if [[ -n $team ]]; then
@@ -10280,6 +10972,11 @@ agent answer <id>                         open the questions in $EDITOR, validat
 agent resume <id> ["note"]                resume after all questions are answered
 agent log <id> [--raw]                    follow the runner log (structured records rendered)
 agent stop <id>                           stop a run
+agent pause <team>                        pause a team: its runs stop, held; nothing of it starts
+agent allow <team> [path...]              let a team's rounds change an existing test or a check (AGENTS.md)
+agent gate [task] [--wait]                run the repository's gate in a task's worktree, one at a time; recorded
+agent gate-status [task]                  whether the task's HEAD has a recorded gate pass on a clean tree
+agent unpause <team>                      go on: the paused runs resume where they stopped
 agent stop --running                      stop EVERYTHING that is active (teams, agents, investigations, queues)
 agent clean <id>                          remove the task's worktree (the branch is kept)
 agent inv [number | --all]                investigation queue / full record of one
@@ -10295,6 +10992,7 @@ agent kick <task>                         cut a run short: a team member sleeps 
 agent round-check <team|task>             a round's card: its board, members' work not in its PR, files two branches changed, workers' items
 agent spend [--days N] [--daily]          where the money goes, by model: a paid model's spending, a subscription's equivalent
 agent debug <team|task> [--full] [--out file]  everything to diagnose a team or a task, in one file, secrets redacted
+agent debug --agent NAME | --model NAME [--days N] [--last N] [--full] [--out file]  a model's whole record
 agent tokens <team|task>                  the tokens its runs used: per task (a team's helpers and investigations too), in all
 agent tokens --runs <task>                a task's tokens per run, its steps (tool calls) and input per step: the costly runs
 agent wake <task>                         resume a paused task now, not at its pause's end (a remote member's: on its node)
@@ -10336,6 +11034,12 @@ main() {
     resume)  cmd_resume "$@" ;;
     log)     cmd_log "$@" ;;
     stop)    cmd_stop "$@" ;;
+    pause)   cmd_pause "$@" ;;
+    allow)   cmd_allow "$@" ;;
+    gate)    cmd_gate "$@" ;;
+    gate-status) cmd_gate_status "$@" ;;
+    _board_done_check) cmd__board_done_check "$@" ;;
+    unpause) cmd_unpause "$@" ;;
     clean)   cmd_clean "$@" ;;
     bus)     cmd_bus "$@" ;;
     inv)     cmd_inv "$@" ;;

@@ -462,6 +462,11 @@
      "name": "NotYourItem",
      "class": "Permission",
      "doc": "the item does not exist or is claimed by someone else"
+    },
+    {
+     "name": "GateNotPassed",
+     "class": "InvalidState",
+     "doc": "the item's work changed code and no gate pass of the caller's HEAD on a clean tree is recorded (agent gate)"
     }
    ]
   },
@@ -496,6 +501,11 @@
      "name": "MissingRequest",
      "class": "InvalidArgument",
      "doc": "the request text is missing"
+    },
+    {
+     "name": "BoardInstruction",
+     "class": "InvalidArgument",
+     "doc": "the request tells the worker to use the board (claim or finish an item, the newest item), which a worker has no tools for"
     },
     {
      "name": "InvalidCapabilities",

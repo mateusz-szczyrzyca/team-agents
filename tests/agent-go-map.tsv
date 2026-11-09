@@ -389,6 +389,7 @@ tests/unit/node_two_homes.bats	a remote member that fails is out of its team on 
 tests/unit/node_two_homes.bats	resuming a team with a remote member brings the member back on its node	blackbox	R50	-	planned
 tests/unit/node_two_homes.bats	a job whose task is paused on its node can be stopped (no unit runs it)	blackbox	R50	-	planned
 tests/unit/node_two_homes.bats	a remote member's job whose team the lead's bus does not know is cancelled by agent _supervise on the lead	blackbox	R50	-	planned
+tests/unit/node_two_homes.bats	the cleanup of a daemon that ignores SIGTERM ends it and its children within its limit: no hang of the run	source	R02	-	planned
 tests/unit/notify_merged_start.bats	a new solo task is announced as started	blackbox	R53B	-	planned
 tests/unit/notify_merged_start.bats	a new team is announced as started once, not once a member	blackbox	R53B	-	planned
 tests/unit/notify_merged_start.bats	a merge is '🟣 PR merged', with its two reviewers and their models, in a file of its own	source	R53B	-	planned
@@ -650,6 +651,65 @@ tests/unit/debug_cmd.bats	agent debug refuses an ID that is no team and no task	
 tests/unit/resume_large_board.bats	a team whose board is larger than one argument can hold is resumed, its board carried	blackbox	R30	-	planned
 tests/unit/install_model_prices.bats	install.sh reads an agents.conf whose models are priced in MODEL_PRICES, with no declaration of it	blackbox	R55	-	planned
 tests/unit/install_model_prices.bats	the configuration template declares MODEL_PRICES: prices added to it load in a plain bash	blackbox	R55	-	planned
+tests/unit/nostatus_autopilot.bats	--autopilot: a turn without STATUS goes back to the agent, continue as planned — no question for the human	blackbox	R34	-	planned
+tests/unit/nostatus_autopilot.bats	--autopilot: a second turn in a row without STATUS asks the human	blackbox	R34	-	planned
+tests/unit/nostatus_autopilot.bats	nostatus_autopilot: an investigator's or reviewer's task follows the --autopilot of the task that asked for it	source	R34	-	planned
+tests/unit/delegation_quality.bats	the prompt says a worker sees only the request, has no board, and how to write a request for it	blackbox	R16	-	planned
+tests/unit/delegation_quality.bats	an easy item that cannot go to a worker is the coordinator's: it hears why	blackbox	R35B	-	planned
+tests/unit/debug_agent.bats	agent debug --agent: a summary of its tasks and their failures, and the details of its tasks only	blackbox	R53B	-	planned
+tests/unit/debug_agent.bats	agent debug --model: the tasks of every agent on that model	blackbox	R53B	-	planned
+tests/unit/debug_agent.bats	agent debug --agent --days and --last: older tasks out of the window; the details of the last ones only	blackbox	R53B	-	planned
+tests/unit/debug_agent.bats	agent debug --agent: results the requesters rejected, an approximation from their messages	blackbox	R53B	-	planned
+tests/unit/debug_agent.bats	agent spend: a task without an activity file of its own is no jq error	blackbox	R53B	-	planned
+tests/unit/fresh_member_done.bats	a resumed claude run past AGENT_FRESH_SESSION_MAX a step is followed by a fresh session, under twice its start	source	R23	-	planned
+tests/unit/fresh_member_done.bats	a CLI without AGENT_FRESH_SESSION_MAX keeps the rule of twice its session starts	source	R23	-	planned
+tests/unit/fresh_member_done.bats	a fresh run past AGENT_FRESH_SESSION_MAX is resumed next: no fresh session after fresh session	source	R23	-	planned
+tests/unit/fresh_member_done.bats	a member's DONE while it holds a claimed item resumes it once, in a fresh session, about the item	blackbox	R29B	-	planned
+tests/unit/fresh_member_done.bats	a member's second DONE in a row finishes it as before: its items go back to the board	blackbox	R29B	-	planned
+tests/unit/fresh_member_done.bats	a member's DONE without a claimed item finishes it at once	blackbox	R29B	-	planned
+tests/unit/fresh_member_done.bats	a member's DONE in a finished team finishes it at once, its claimed item or not	blackbox	R29B	-	planned
+tests/unit/fresh_member_done.bats	a remote team member's DONE finishes it as before: its board lives on the lead, not on this bus	blackbox	R29B	-	planned
+tests/unit/test_lock.bats	a free lock: the command runs, its exit status comes through, and the lock is free again after it	source	R02	-	planned
+tests/unit/test_lock.bats	a busy lock refuses at once with the message every agent knows, exit 75, and says who holds it	source	R02	-	planned
+tests/unit/test_lock.bats	a holder that died frees the lock at once: no wait for the limit	source	R02	-	planned
+tests/unit/test_lock.bats	a holder alive past TEST_LOCK_STALE_MIN is taken for hung: its process group is killed, the lock taken over	source	R02	-	planned
+tests/unit/test_lock.bats	a test run inside a test run (make gate's own steps, the tests of the gate) does not lock again	source	R02	-	planned
+tests/unit/test_lock.bats	TEST_LOCK_WAIT=1 (or GATE_WAIT=1) waits for the holder instead of refusing	source	R02	-	planned
+tests/unit/test_lock.bats	an interrupted test run stops its commands and frees the lock	source	R02	-	planned
+tests/unit/test_lock.bats	every Makefile target that runs tests goes through tools/test-lock.sh	source	R02	-	planned
+tests/unit/test_lock.bats	a test recipe copied into a repository without the lock (the harness's fixtures) still runs, unlocked	source	R02	-	planned
+tests/unit/test_lock.bats	every agent's prompt knows the busy message and what to do, and AGENTS.md describes the lock	source	R02	-	planned
+tests/unit/test_lock.bats	the test command reads /dev/null, whatever stdin the lock got: in its own process group a terminal read stops it	source	R02	-	planned
+tests/unit/team_pause.bats	agent pause stops the team's runs without failing anyone: held, still members of the team	blackbox	R29B	-	planned
+tests/unit/team_pause.bats	a paused team starts nothing: a wake waits for agent unpause	blackbox	R29B	-	planned
+tests/unit/team_pause.bats	agent unpause resumes the interrupted runs where they stopped, told what happened, and starts what waited	blackbox	R29B	-	planned
+tests/unit/team_pause.bats	the supervisor leaves a paused team alone: no stall alarm on its board	blackbox	R29B	-	planned
+tests/unit/team_pause.bats	pause and unpause: an unknown team is refused; a second pause, or unpausing a team not paused, says so	blackbox	R29B	-	planned
+tests/unit/team_pause.bats	a run that starts while its team is paused (its start passed the gate just before) waits, in its mode	blackbox	R29B	-	planned
+tests/unit/team_pause.bats	a worker's, an investigation's or a review's task is held with the team of the task that asked for it	source	R29B	-	planned
+tests/unit/precheck_rules.bats	B1: an existing test changed, removed or renamed is the human's to allow; added tests and whitespace are not	source	R31	-	planned
+tests/unit/precheck_rules.bats	B2: a lint suppression the PR description does not name goes back; one it names passes; skips are not B2's	source	R31	-	planned
+tests/unit/precheck_rules.bats	B3: production code that looks at whether it runs under test is the human's to allow; a test file may	source	R31	-	planned
+tests/unit/precheck_rules.bats	B4: the files that judge a round — changed, not added to — are the human's to allow	source	R31	-	planned
+tests/unit/precheck_rules.bats	a change merged in from main is not the round's: only the round's own diff counts	source	R31	-	planned
+tests/unit/precheck_rules.bats	agent allow <team> <path>: what only the human may allow passes for that team; an unknown team is refused	blackbox	R31	-	planned
+tests/unit/precheck_rules.bats	--autopilot: a round that changes an existing test goes back to the team with the rule; no review starts	blackbox	R31	-	planned
+tests/unit/precheck_rules.bats	B2: the lint suppressions of Python, TypeScript and Rust count too	source	R31	-	planned
+tests/unit/pr_round_size.bats	the size block is added to a description without one, replaced in one with it, and the rest kept	source	R31	-	planned
+tests/unit/pr_round_size.bats	--autopilot: the precheck writes the round's size into its PR description, the description's text kept	blackbox	R31	-	planned
+tests/unit/pr_round_size.bats	the rounds prompt tells the team the script writes the round's size into the PR: no counting for it	source	R31	-	planned
+tests/unit/pr_round_size.bats	a PR description that cannot be read is not written over: no size this time	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	a passing gate is recorded for the task's HEAD on a clean tree; gate-status says so and exits 0	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	a failing gate is recorded as FAIL with its exit status; gate-status exits non-zero	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	a pass on a dirty tree, or of an older commit, is not a pass of the task's HEAD	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	without a task, agent gate and gate-status take the task whose worktree they run in	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	one gate run at a time on the machine: a second refuses with the message every agent knows, exit 75	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	a gate run alive past AGENT_GATE_STALE_MIN is taken for hung: stopped, and the lock taken over	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	the prompts send agents to agent gate, not to one repository's make gate	source	R31	-	planned
+tests/unit/board_done_gate.bats	work without a change of code needs no gate: exit 0	blackbox	R31	-	planned
+tests/unit/board_done_gate.bats	a change of code without a gate pass of HEAD is refused (exit 3) and says what to do; after agent gate, passes	blackbox	R31	-	planned
+tests/unit/board_done_gate.bats	a repository without a gate is not held: exit 0	blackbox	R31	-	planned
+tests/unit/board_done_gate.bats	the protocol tells agents that a code item's result needs its gate, and when gate_exception is right	source	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned

@@ -9,10 +9,25 @@ described below.
 descriptions, the report, code comments — is written in **{{REPO_LANGUAGE}}**. What only the human reads —
 questions and your final message — is written in **{{LANGUAGE}}**.
 
-**Commands.** Run commands in the foreground and wait for them, `make gate` included: waiting costs nothing, while a
+**Commands.** Run commands in the foreground and wait for them, `agent gate` included: waiting costs nothing, while a
 command in the background costs a whole step each time you look at it. Never start a command in the background, and
 never end your turn to wait for one: this run ends with your turn, and whatever runs in the background is killed
 with it.
+
+**Tests that are busy.** A test command may answer `another tests are running now - please wait before you try
+again`: another agent, or the human, is running tests on this machine, and one run at a time keeps every result
+true. It is not a failure of your code. Never get around it — no running the tests another way (`bats` or
+`go test` directly, another lock file, killing the other run): a result raced by another run is worth nothing. Do
+meanwhile what does not change what you are about to test — read, review, plan, answer messages, write the next test
+without running it — and try again in a few minutes. With nothing else to do, `agent gate --wait` waits in line
+instead of refusing. The lock frees itself: at once when its run died, after 10 minutes when it hangs.
+
+**The gate.** Run the repository's gate with `agent gate`, in your worktree: it runs what the repository calls its
+gate, one run at a time on the machine, and records the result for your commit. A gate result counts only from
+`agent gate`, on a committed, clean tree; `agent gate-status` says whether your HEAD has one. Do not claim a gate result
+you cannot show there. A board item whose work changed code is submitted (board_done) only with its gate passed at
+your HEAD; when the gate fails for a reason outside your work — a flaky test, a broken tool — submit it with
+gate_exception and the reason: it is then marked not verified for whoever asked for it.
 
 **Commits.** The commit author is set for you (`{{GIT_NAME}}`): do not change `user.name` or `user.email`.
 End every commit message with exactly these trailers, after a blank line:
@@ -97,8 +112,19 @@ searching many files, checking whether something exists or what a file contains,
 and summarising long output — to workers with `delegate(request, context)`. The worker gets the state of
 your branch (commit first if it matters) and read-only access to your worktree. The result arrives as a
 message — meanwhile do independent work, and when you need the result: `wait_for_message(from=<worker>)`
-(the worker's name is shown by `delegation_status`). Describe the request precisely: what to do and in
-what form to return the result.
+(the worker's name is shown by `delegation_status`).
+
+The worker sees only your request and its context — not your conversation, your notes, the team, its messages or
+the board; it has no board tools. Write the request for a stranger:
+
+- full sentences, without shorthand or words run together, and no term only you know — say what to count and how;
+- absolute paths of the worktree, the files and the logs, and the exact commands to run;
+- a board item's content copied in, never "board item B12" or "the newest easy item" alone: you keep the item
+  (`board_claim`) and finish it (`board_done`) when the result arrives;
+- what to return, and in what form.
+
+Do not delegate what runs for minutes — a full gate, a long test run: run it yourself, in the foreground. A worker
+that answers your request is unclear is right more often than not: rewrite the request rather than send it again.
 
 For a step requiring a capability, pass `requires=["hw:rp2350"]` (namespaces:
 `os`, `arch`, `build`, `test`, `hw`, `net`). If the local instance lacks it, its node daemon

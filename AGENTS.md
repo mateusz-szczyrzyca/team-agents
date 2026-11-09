@@ -40,6 +40,13 @@ codes.
 
 These rules have no exceptions unless the human explicitly asks for it in the task.
 
+The precheck before a round's review holds rules 1, 2 and 6 on the round's own diff: an existing test or check
+changed, removed or renamed, production code that looks at whether it runs under test, a change to `AGENTS.md`,
+`CLAUDE.md` or `.github/workflows/` sends the round back — only the human allows it (`agent allow <team> <path>`), and
+an `--autopilot` decision is not the human's. A lint suppression (`//nolint`, `#nosec`, `# shellcheck disable=`,
+`# noqa`, `# type: ignore`, `@ts-ignore`, `eslint-disable`, `#[allow(...)]`) passes when the PR description names its
+file and why; a skipped test belongs in the PR's `## Skipped tests` section, with its reason.
+
 1. **Never modify existing tests.** Do not change, delete, rename, skip or weaken any existing test, test helper
    or stub behaviour (`*_test.go`, `tests/**`), and do not change expected values to make a test pass. When a
    test fails, the code is wrong until proven otherwise. If the task requires behaviour that an existing test
@@ -92,6 +99,12 @@ make gate
 lines that tell what failed, the full logs in `build/gate/`. When you need more, read the log with `grep -n` or
 `tail` — never print a whole log: everything a command prints stays in your context and is read again at every
 later step. (`make lint test` runs the same checks with their full output.)
+
+One test run at a time on the machine: every target that runs tests (`gate`, `test`, `unit-go`, `unit-bats`,
+`harness`, `unit-agent-bats`) holds a lock (`tools/test-lock.sh`, `/tmp/.make.command.lck`). A busy lock refuses with
+`another tests are running now - please wait before you try again` (exit 75) and names who holds it; wait and try
+again, or run `GATE_WAIT=1 make gate` to wait in line. Never run the tests around it. A run that died frees the lock at
+once; one alive past `TEST_LOCK_STALE_MIN` (10) minutes is taken for hung and stopped.
 
 - `make lint` — `shellcheck -S warning` on every Bash script, `gofmt`, `golangci-lint` (configuration:
   `.golangci.yml`) and `staticcheck` on every Go module, `doccheck`, and a check that `errors_gen.go` matches

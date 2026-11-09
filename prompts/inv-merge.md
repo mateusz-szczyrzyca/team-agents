@@ -45,7 +45,7 @@ and open (or update) a pull request on GitHub.
 3. **Merge and integrate:**
    - Keep what is unique across findings and code implementations.
    - Drop redundant duplicates and near-duplicates; resolve contradictions.
-   - Follow repository rules (`AGENTS.md`, test-first / TDD, `make gate` verification).
+   - Follow repository rules (`AGENTS.md`, test-first / TDD, the gate: `agent gate`).
    - Preserve test-first history (do NOT squash RED/GREEN commit progressions).
    - Commit and push your changes to `origin {{BRANCH}}`.
 4. **Pull Request lifecycle (PR then precheck):**
