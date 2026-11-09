@@ -724,6 +724,8 @@ tests/unit/helper_unclear.bats	the former shape — STATUS: FAILED with Result: 
 tests/unit/helper_unclear.bats	a worker's plain STATUS: FAILED is still a failure	blackbox	R31	-	planned
 tests/unit/helper_unclear.bats	the worker's prompt has STATUS: UNCLEAR; the protocol tells a requester what to do with it	source	R31	-	planned
 tests/unit/helper_unclear.bats	agent debug --agent counts a worker's unclear answers apart from its failures	blackbox	R31	-	planned
+tests/unit/delegation_feedback.bats	helper-list shows a request's rating; agent debug --agent counts a worker's results by their ratings	blackbox	R31	-	planned
+tests/unit/delegation_feedback.bats	the protocol tells a requester to rate each done result with delegation_feedback	source	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
