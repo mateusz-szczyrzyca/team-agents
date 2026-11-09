@@ -470,7 +470,7 @@ plus planning reconciliation. Each slice has a hard working cap of 1,500 added p
 
 | Slice | Deliverable and scope | Target lines | Review ceiling |
 |---|---|---:|---:|
-| **Planning** | Reconcile R12 scope and ledger ownership (29 retained cases, 19 reassigned cases, 4 deferred R11 write cases finished in R12E, README count corrections). No behavior changes. | 250 | 400 |
+| **Planning** | Reconcile R12 scope and proposed ledger ownership (29 retained cases, 19 cases proposed for reassignment, 4 deferred R11 write cases finished in R12E, README count corrections). No behavior changes. | 250 | 400 |
 | **R12A** | Pure PR-body diagnostics (`pr_format_issues`) and review-body byline insertion; no write activation. Implements native equivalents for rows 85 and 474; on-disk ledger marking deferred pending human `agent allow`. | 600 | 850 |
 | **R12B** | Pure publication transforms: name rendering, POSIX checksum fallback/collision behavior, recommendation coloring, Generated-line removal, and transform ordering. | 850 | 1,100 |
 | **R12C** | Descriptors/attribution and complete registry/setup parity using existing R10 primitives (stable order, persistence, concurrent registration/setup, and no-color path). | 950 | 1,200 |
@@ -485,7 +485,7 @@ block without manual or worker counting, and reports are excluded). Slices R12B�
 after the preceding PR merges. Scope boundaries:
 - Existing R10 setup, byline formatting, and name color registry primitives are reused.
 - `round_pr_for` fallback logic remains in R32B; round orchestration remains in R31; formatting bounce/review lifecycle remains in R34; full remote-job attribution remains in R41/R50.
-- Ledger reconciliation: planned partitioning of 29 cases retained across R12A–R12G (native equivalents for rows 85 and 474 implemented in R12A; on-disk ledger updates deferred pending human `agent allow` registration under rule 1 precheck); 19 cases reassigned to their proper subsystem rounds (R16, R18, R19, R22, R35, R38, R40); 4 deferred R11 cases (251, 252, 269, 406) finished in R12E.
+- Ledger reconciliation: planned partitioning of 29 cases retained across R12A–R12G (native equivalents for rows 85 and 474 implemented in R12A; on-disk ledger updates deferred pending human `agent allow` registration under rule 1 precheck); 19 cases proposed for reassignment to their proper subsystem rounds (R16, R18, R19, R22, R35, R38, R40); 4 deferred R11 cases (251, 252, 269, 406) finished in R12E.
 - GraphQL policy for R12G: fail-closed; anything not positively classified as permitted is rejected with typed errors; tests verify attempts to hide mutations or protected fields via aliases, fragments, variables, multiple operations in one document, comments, and escaped strings; unclassifiable requests are refused.
 - Human approval explicitly permits metadata-only ledger edits and the replacement of only 18 transitional write-refusal assertions across five native test files (`gh_read_dispatch_test.go`, `gh_read_dispatch_api_test.go`, `gh_read_dispatch_api_short_options_test.go`, `gh_read_dispatch_graphql_mutation_test.go`, `gh_read_dispatch_graphql_query_file_test.go`), strictly in the respective future slices that activate those routes.
 

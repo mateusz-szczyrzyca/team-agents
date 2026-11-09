@@ -73,7 +73,8 @@ ledger tracks 177 Bats test files with 730 total test cases:
 - 12 done cases
 - 718 planned cases
 
-The original 48 R12 rows in `tests/agent-go-map.tsv` were partitioned into:
+The approved partitioning of the original 48 R12 rows in `tests/agent-go-map.tsv` (with on-disk ledger updates
+pending human `agent allow` registration) is:
 - 29 retained cases across seven bounded write slices (R12A–R12G), with each retained
   row assigned to its earliest completion slice (R12A: 85, 474; R12C: 583, 584, 596, 597,
   603–608, 615; R12D: 223; R12E: 577, 578, 580–582, 592; R12F: 472, 473, 579, 609–614).
@@ -81,7 +82,7 @@ The original 48 R12 rows in `tests/agent-go-map.tsv` were partitioned into:
   are implemented in R12A; on-disk ledger updates in `tests/agent-go-map.tsv` remain deferred pending
   human `agent allow` registration under rule 1 precheck. Remaining retained cases remain `planned` until
   their future activation slices.
-- 19 reassigned cases moved to their respective subsystem rounds:
+- 19 cases proposed for reassignment to their respective subsystem rounds:
   - R16 (rendered prompt / writing guidance): 587, 590, 598
   - R18 (Claude/Codex adapter settings): 250, 591, 617–619, 622, 633
   - R19 (Gemini/OpenCode adapter coverage): 616, 620–621, 634
