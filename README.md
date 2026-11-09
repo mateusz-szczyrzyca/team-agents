@@ -1684,9 +1684,14 @@ make integration        # real agent CLIs and accounts (costs usage)
     and completion of the four deferred R11 cases (`251`, `252`, `269`, `406`).
   - *R12F:* REST writes: JSON body preservation, byline/recommendation/transform ordering, endpoint behavior,
     and mutation-response filtering.
-  - *R12G:* GraphQL payload inspection: fail-closed policy rejecting unclassifiable requests, comments, fragments,
-    variables, multi-operations, and escaped strings hiding mutations or protected fields, with typed errors.
-  All rounds retain the hard 1,500-line cap. The current round delivers planning corrections plus R12A only.
+  - *R12G:* GraphQL payload inspection: fail-closed policy rejecting anything not positively classified as
+    permitted with typed errors. Tests verify refusal of attempts to hide mutations or protected fields via
+    aliases, fragments, variables, several operations in one document, comments, or escaped strings; unclassifiable
+    constructs are refused rather than forwarded.
+  Planning plus R12A targets 850 lines together with a combined review threshold of 1,250 lines; all rounds
+  retain the hard 1,500-line cap. The round size is authoritative only as written by the script into its PR
+  description block (reports are excluded; do not count lines manually or through workers). The current round
+  delivers planning corrections plus R12A only.
   Scope boundaries reuse existing R10 setup/byline/registry primitives and explicitly exclude `round_pr_for` (R32B),
   round orchestration (R31), formatting bounce/review launch (R34), and remote pipelines (R41/R50).
   Human approval permits metadata-only ledger edits and the narrow replacement of 18 transitional write-refusal

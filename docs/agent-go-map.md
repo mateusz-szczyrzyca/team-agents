@@ -96,6 +96,15 @@ Scope exclusions:
   remote-job attribution remains in R41/R50.
 - Existing R10 setup/byline/registry primitives are reused.
 
+Round sizing and schedule:
+- Planning plus R12A targets 850 lines combined, with a review threshold of 1,250 lines
+  and a hard 1,500-line cap.
+- Round size is authoritative only as reported by the script in its PR description block;
+  reports are excluded per human verdict, and line counting is not done manually or via workers.
+- R12G GraphQL payload policy is fail-closed: anything not positively classified as permitted
+  is rejected with typed errors; evasion tests cover aliases, fragments, variables, several
+  operations in one document, comments, and escaped strings; unclassifiable requests are refused.
+
 Human approval authorizes metadata-only ledger edits and the replacement of only 18 transitional
 write-refusal assertions across five native test files (`gh_read_dispatch_test.go`,
 `gh_read_dispatch_api_test.go`, `gh_read_dispatch_api_short_options_test.go`,
