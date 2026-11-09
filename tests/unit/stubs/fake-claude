@@ -7,6 +7,9 @@ Actions:
   done            final message "STATUS: DONE"
   tool-done       calls list_agents (an agentbus tool), then STATUS: DONE
   commit          commits a file with the trailers from the prompt, then STATUS: DONE
+  unclear         a worker's STATUS: UNCLEAR with its questions
+  unclear-legacy  a worker's former UNCLEAR: STATUS: FAILED, Result: UNCLEAR: ...
+  failed-result   a worker's STATUS: FAILED with a result
   team-lead-test-edit  claims the coordinator role, changes an existing test (tests/existing.bats), commits, TEAM DONE
   quota           the provider refuses the run: a quota error on stderr, exit code 3, no result
   idle            STATUS: SLEEPING right away, without doing anything
@@ -105,6 +108,15 @@ if action == "team-lead-test-edit":
     call("checkpoint", summary="stage 1 done", next_steps="stage 2")
     call("send_message", to="team", text="TEAM DONE")
     finish("STATUS: DONE\nRole: coordinator")
+if action == "unclear":
+    # a worker that cannot do the request without an answer: its questions, as a result of their own
+    finish("STATUS: UNCLEAR\nQuestions:\n- Which directory holds the files to count?\n- Hidden files too?")
+if action == "unclear-legacy":
+    # the former shape of the same: a failure whose result is UNCLEAR
+    finish("STATUS: FAILED\nResult: UNCLEAR: Which directory holds the files to count?\nHow: -\nNotes: none")
+if action == "failed-result":
+    # a worker that tried and failed
+    finish("STATUS: FAILED\nResult: the count could not be made: find exited 1\nHow: find . -type f\nNotes: none")
 if action == "team-lead-done":
     call("claim_lead")
     call("checkpoint", summary="stage 1 done", next_steps="stage 2")
