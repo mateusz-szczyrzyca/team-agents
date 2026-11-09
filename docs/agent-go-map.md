@@ -70,14 +70,15 @@ Following Investigation #251 and human approval (PR #71 follow-up), the active
 ledger tracks 177 Bats test files with 730 total test cases:
 - 463 blackbox cases
 - 267 source-coupled cases
-- 12 done cases
-- 718 planned cases
+- 14 done cases
+- 716 planned cases
 
 The original 48 R12 rows in `tests/agent-go-map.tsv` were partitioned into:
 - 29 retained cases across seven bounded write slices (R12A–R12G), with each retained
   row assigned to its earliest completion slice (R12A: 85, 474; R12C: 583, 584, 596, 597,
   603–608, 615; R12D: 223; R12E: 577, 578, 580–582, 592; R12F: 472, 473, 579, 609–614).
-  All retained cases remain `planned` until full native equivalents are verified (e.g. 85 and 474 in R12A).
+  R12A completes native equivalents for rows 85 (`TestPRFormatIssues`) and 474 (`TestResolveAndInsertReviewByline`);
+  remaining retained cases remain `planned` until their future activation slices.
 - 19 reassigned cases moved to their respective subsystem rounds:
   - R16 (rendered prompt / writing guidance): 587, 590, 598
   - R18 (Claude/Codex adapter settings): 250, 591, 617–619, 622, 633

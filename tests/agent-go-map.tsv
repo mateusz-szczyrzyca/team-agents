@@ -82,7 +82,7 @@ tests/unit/gate.bats	passing steps take one line each; the full output is in the
 tests/unit/gate.bats	a failing Go test shows its failure, not the hundreds of passing ones	blackbox	R32	-	planned
 tests/unit/gate.bats	a failing bats test shows its name and diagnosis, capped; the linter shows its findings without code	blackbox	R32	-	planned
 tests/unit/gate.bats	every step runs even after a failure, and the summary names the failed ones	blackbox	R32	-	planned
-tests/unit/github_format.bats	pr_format_issues: commits and PRs in code format without a link, a code block without its language, plain RED and GREEN	source	R12A	-	planned
+tests/unit/github_format.bats	pr_format_issues: commits and PRs in code format without a link, a code block without its language, plain RED and GREEN	source	R12A	TestPRFormatIssues	done
 tests/unit/github_format.bats	--autopilot: a PR description with an unlinked commit goes back to the team once, with what to fix; then the review starts	blackbox	R34	-	planned
 tests/unit/github_trust.bats	a fork's PR with the round's branch name is not the round's PR: it is not reviewed	blackbox	R32	-	planned
 tests/unit/github_trust.bats	a PR opened by an account that is not trusted is not the round's PR: it is not reviewed	blackbox	R32	-	planned
@@ -471,7 +471,7 @@ tests/unit/resume_members.bats	agent run --resume --team refuses a name that is 
 tests/unit/resume_stash.bats	a resume carries a member's changes on though one of its files was added with --intent-to-add	blackbox	R30	-	planned
 tests/unit/review_byline.bats	an investigator's review gets its byline at the top; the one at the end stays; none is doubled	blackbox	R12F	-	planned
 tests/unit/review_byline.bats	a review posted by anyone but an investigator is left as it is	blackbox	R12F	-	planned
-tests/unit/review_byline.bats	review_byline: the investigator, its CLI and model, the request	source	R12A	-	planned
+tests/unit/review_byline.bats	review_byline: the investigator, its CLI and model, the request	source	R12A	TestResolveAndInsertReviewByline	done
 tests/unit/review_overload.bats	review_hands_over: an exhausted quota, and an overload past AGENT_REVIEW_OVERLOAD_WAIT_MIN, hand a review over; a short overload or a rate limit do not	source	R34	-	planned
 tests/unit/review_overload.bats	a review done again goes to an investigator outside its pair, though the pair's other one is free	source	R34	-	planned
 tests/unit/review_pair_random.bats	a review pair is drawn at random: over eight PRs each of four free investigators reviews, never twice in a pair	source	R33	-	planned
