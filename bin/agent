@@ -689,6 +689,10 @@ AGENT_REVIEW_GATE="${AGENT_REVIEW_GATE:-auto}"        # the gate's command: auto
 AGENT_REVIEW_GATE_MIN="${AGENT_REVIEW_GATE_MIN:-30}"  # its time limit, in minutes
 AGENT_STAGE_POLL_SEC="${AGENT_STAGE_POLL_SEC:-2}"     # how often the gate's progress is shown on the dashboard
 AGENT_PRECHECK_MAX="${AGENT_PRECHECK_MAX:-2}"         # how many times a round goes back for its gate or its tests
+# agent gate: one gate run at a time on the machine (AGENTS_HOME/gate.lock), the precheck's included; a run holding the
+# lock longer than this many minutes is taken for hung: stopped, and the lock taken over
+AGENT_GATE_STALE_MIN="${AGENT_GATE_STALE_MIN:-10}"
+GATE_BUSY_MESSAGE="another tests are running now - please wait before you try again"   # every agent's prompt knows it
 # --autopilot: after two ready-to-merge reviews the script merges — not a PR touching one of these paths (a directory
 # ends with /), nor one changing existing tests: those wait for the human
 AUTO_MERGE_HUMAN_PATHS="${AUTO_MERGE_HUMAN_PATHS-install.sh .github/ systemd/ AGENTS.md}"
@@ -1718,6 +1722,152 @@ pr_write_round_size() {
   fi
 }
 
+# task_of_dir dir — the task whose worktree holds dir (the newest, when several had it); empty: none
+task_of_dir() {
+  local top m w found=""
+  top=$(git -C "$1" rev-parse --show-toplevel 2> /dev/null) || return 0
+  for m in "$TASKS"/*/meta.env; do
+    [[ -f $m ]] || continue
+    w=$(sed -n 's/^WORKTREE=//p' "$m")
+    if [[ $w == "$top" ]]; then found=${m%/meta.env}; found=${found##*/}; fi
+  done
+  printf '%s' "$found"
+}
+
+# gate_holder field — a field of the gate lock's holder (label, task, dir, pid, pgid, start)
+gate_holder() { sed -n "s/^$1=//p" "$AGENTS_HOME/gate.lock" 2> /dev/null | head -n 1; }
+gate_holder_line() {
+  local s; s=$(gate_holder start); [[ $s =~ ^[0-9]+$ ]] || s=$(date +%s)
+  printf '%s of task %s in %s (pid %s), for %s min' "$(gate_holder label)" "$(gate_holder task)" "$(gate_holder dir)" \
+    "$(gate_holder pid)" "$(( ($(date +%s) - s) / 60 ))"
+}
+
+# gate_lock wait task dir — takes the machine's gate lock (fd GATE_FD, inherited by the gate run, so it holds the
+# lock while it runs): at once when free; busy: refuses with GATE_BUSY_MESSAGE, exit 75 (wait=1: waits); a holder
+# past AGENT_GATE_STALE_MIN minutes is taken for hung — its process group stopped, the lock taken over
+gate_lock() {
+  local wait=$1 task=$2 dir=$3 start pg
+  exec {GATE_FD}>> "$AGENTS_HOME/gate.lock" || die "cannot open $AGENTS_HOME/gate.lock"
+  while ! flock -n "$GATE_FD"; do
+    start=$(gate_holder start)
+    [[ $start =~ ^[0-9]+$ ]] || start=$(stat -c %Y "$AGENTS_HOME/gate.lock")
+    if (($(date +%s) - start >= AGENT_GATE_STALE_MIN * 60)); then
+      echo "agent gate: $(gate_holder_line) — past $AGENT_GATE_STALE_MIN min, taken for hung: its run is stopped" >&2
+      log_warn gate_lock_taken_over "holder=$(gate_holder task)" "pgid=$(gate_holder pgid)"
+      pg=$(gate_holder pgid)
+      if [[ $pg =~ ^[0-9]+$ ]] && ((pg > 1)); then
+        kill -TERM -- "-$pg" 2> /dev/null || echo "agent gate: its process group $pg is gone already" >&2
+        flock -w 10 "$GATE_FD" && break
+        kill -KILL -- "-$pg" 2> /dev/null || echo "agent gate: its process group $pg is gone already" >&2
+      fi
+      flock -w 10 "$GATE_FD" && break
+      die "the hung gate run did not let go of the lock; see: cat $AGENTS_HOME/gate.lock"
+    fi
+    if ((wait == 0)); then
+      printf '%s\n  holder: %s; taken for hung after %s min\n' "$GATE_BUSY_MESSAGE" "$(gate_holder_line)" \
+        "$AGENT_GATE_STALE_MIN" >&2
+      exit 75
+    fi
+    flock -w 15 "$GATE_FD" && break
+  done
+  printf 'label=gate\ntask=%s\ndir=%s\npid=%s\npgid=\nstart=%s\n' "$task" "$dir" "$$" "$(date +%s)" \
+    > "$AGENTS_HOME/gate.lock"
+}
+# gate_lock_pgid pgid — the run's process group into the holder, once started: written in place (never sed -i, which
+# puts a new file in the lock's place — another run would lock that one while this run still holds the old)
+gate_lock_pgid() {
+  local holder
+  holder=$(sed "s/^pgid=.*/pgid=$1/" "$AGENTS_HOME/gate.lock")
+  printf '%s\n' "$holder" > "$AGENTS_HOME/gate.lock"
+}
+gate_unlock() { exec {GATE_FD}>&-; }
+
+# gate_record task sha clean rc seconds command log — records a gate run in AGENTS_HOME/gates: the task's latest
+# (<task>.json) and the machine's history (history.jsonl)
+gate_record() {
+  local rec
+  mkdir -p "$AGENTS_HOME/gates" || { log_warn gate_record_failed "task=$1" "reason=cannot create the directory"; return 0; }
+  rec=$(jq -nc --arg task "$1" --arg sha "$2" --argjson clean "$3" --argjson rc "$4" --argjson secs "$5" \
+    --arg cmd "$6" --arg log "$7" --arg at "$(date -Is)" \
+    '{task: $task, sha: $sha, clean: $clean, status: (if $rc == 0 then "pass" else "fail" end), exit: $rc,
+      seconds: $secs, command: $cmd, log: $log, at: $at}')
+  if ! printf '%s\n' "$rec" > "$AGENTS_HOME/gates/$1.json" || ! printf '%s\n' "$rec" >> "$AGENTS_HOME/gates/history.jsonl"; then
+    log_warn gate_record_failed "task=$1"
+  fi
+  log_info gate_recorded "task=$1" "sha=$2" "clean=$3" "exit=$4"
+}
+
+# gate_verdict task — whether the task's last recorded gate run is a pass of its HEAD on a clean tree; says why not
+gate_verdict() {
+  local id=$1 wt head rec sha clean status rc at
+  wt=$(task_field "$id" WORKTREE)
+  head=$(git -C "$wt" rev-parse HEAD 2> /dev/null) || { echo "task $id has no worktree"; return 1; }
+  rec=$AGENTS_HOME/gates/$id.json
+  if [[ ! -f $rec ]]; then echo "no gate run recorded for task $id (HEAD ${head:0:7}) — run: agent gate"; return 1; fi
+  sha=$(jq -r .sha "$rec"); clean=$(jq -r .clean "$rec"); status=$(jq -r .status "$rec"); rc=$(jq -r .exit "$rec")
+  at=$(jq -r .at "$rec")
+  if [[ $sha != "$head" ]]; then
+    echo "no gate run for HEAD ${head:0:7}: the last ($status) was of ${sha:0:7} — run: agent gate"; return 1
+  fi
+  if [[ $clean != true ]]; then
+    echo "the last gate run of HEAD ${head:0:7} was on a tree not clean — commit, then run: agent gate"; return 1
+  fi
+  if [[ $status != pass ]]; then echo "FAIL at ${head:0:7} (exit $rc), $at — log: $(jq -r .log "$rec")"; return 1; fi
+  echo "PASS at ${head:0:7} on a clean tree, $at — log: $(jq -r .log "$rec")"
+}
+
+# gate_task [task] — the task named, or the one whose worktree the current directory is in
+gate_task() {
+  local id
+  if [[ -n ${1:-} ]]; then resolve_id "$1"; return; fi
+  id=$(task_of_dir "$PWD")
+  [[ -n $id ]] || die "not in a task's worktree: name the task (agent gate <task>)"
+  printf '%s' "$id"
+}
+
+# cmd_gate [task] [--wait] — runs the repository's gate (review_gate_cmd: as the precheck) in the task's worktree,
+# one run at a time on the machine, and records the commit, the tree's cleanliness and the result: a claimed gate
+# result can be checked (agent gate-status). Its output's end, then the verdict; exit: the gate's
+cmd_gate() {
+  local id="" wait=0 a wt gate sha clean=true rc=0 log start child
+  for a in "$@"; do case $a in --wait) wait=1 ;; *) id=$a ;; esac; done
+  id=$(gate_task "$id")
+  wt=$(task_field "$id" WORKTREE)
+  [[ -d $wt ]] || die "task $id has no worktree"
+  gate=$(review_gate_cmd "$wt")
+  [[ -n $gate ]] || die "the repository has no gate (AGENT_REVIEW_GATE=$AGENT_REVIEW_GATE)"
+  gate_lock "$wait" "$id" "$wt"
+  sha=$(git -C "$wt" rev-parse HEAD)
+  [[ -z $(git -C "$wt" status --porcelain) ]] || clean=false
+  mkdir -p "$AGENTS_HOME/gates" || die "cannot create $AGENTS_HOME/gates"
+  log=$AGENTS_HOME/gates/$id-$(date +%Y%m%d-%H%M%S).log
+  start=$(date +%s)
+  set -m   # the run in its own process group: a hung one is stopped whole, the agent's shell around it is not
+  (cd "$wt" && exec timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") < /dev/null > "$log" 2>&1 &
+  child=$!
+  set +m
+  gate_lock_pgid "$child"
+  trap 'kill -TERM -- "-$child" 2> /dev/null; exit 143' INT TERM HUP
+  wait "$child" || rc=$?
+  trap - INT TERM HUP
+  gate_unlock
+  tail -n 60 "$log"
+  if ((rc == 75)) && grep -qF "$GATE_BUSY_MESSAGE" "$log"; then   # the repository's own lock: not a result
+    echo "gate: not run — the repository's own test lock is busy; nothing recorded"
+    return 75
+  fi
+  gate_record "$id" "$sha" "$clean" "$rc" "$(($(date +%s) - start))" "$gate" "$log"
+  echo "gate: $( ((rc == 0)) && echo PASS || echo "FAIL (exit $rc)") at ${sha:0:7}$([[ $clean == true ]] || echo ", tree not clean: not a pass of HEAD") — recorded; full log: $log"
+  return "$rc"
+}
+
+# cmd_gate_status [task] — whether the task's last recorded gate run is a pass of its HEAD on a clean tree (exit 0)
+cmd_gate_status() {
+  local id
+  id=$(gate_task "${1:-}")
+  gate_verdict "$id"
+}
+
 # team_allowed_paths team — the paths the human allowed a team to change against AGENTS.md's rules (agent allow)
 team_allowed_paths() { [[ -f $AGENTS_HOME/allowed/$1 ]] && cat "$AGENTS_HOME/allowed/$1"; return 0; }
 
@@ -2435,14 +2585,22 @@ $issues"
     fi
     return 0; }
     rc=0
+    auto_stage "$id" "checks before review: waiting for the machine's gate lock"
+    gate_lock 1 "$id" "$wt"   # one gate run at a time on the machine: the agents' and this one
     auto_stage "$id" "checks before review: $gate"
-    (cd "$wt" && timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") > "$TASKS/$id/precheck.log" 2>&1 10>&- &
+    local gstart; gstart=$(date +%s)
+    set -m
+    (cd "$wt" && timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") < /dev/null > "$TASKS/$id/precheck.log" 2>&1 10>&- &
     local gpid=$!
+    set +m
+    gate_lock_pgid "$gpid"
     while kill -0 "$gpid" 2>/dev/null; do   # its progress on the dashboard while it runs ("no such process": it ended)
       auto_stage "$id" "checks before review: $gate$(gate_progress "$TASKS/$id/precheck.log")"
       sleep "$AGENT_STAGE_POLL_SEC"
     done
     wait "$gpid" || rc=$?
+    gate_unlock
+    gate_record "$id" "$head" true "$rc" "$(($(date +%s) - gstart))" "$gate" "$TASKS/$id/precheck.log"
     git -C "$root" worktree remove --force "$wt" 10>&- || log_warn precheck_worktree_left "worktree=$wt"
     act "$id" info "before the review: the gate ($gate) at ${head:0:7} — exit $rc"
     ((rc == 0)) || why="the gate (\`$gate\`) fails at ${head:0:7} (exit $rc); its output ends with:
@@ -10796,6 +10954,8 @@ agent log <id> [--raw]                    follow the runner log (structured reco
 agent stop <id>                           stop a run
 agent pause <team>                        pause a team: its runs stop, held; nothing of it starts
 agent allow <team> [path...]              let a team's rounds change an existing test or a check (AGENTS.md)
+agent gate [task] [--wait]                run the repository's gate in a task's worktree, one at a time; recorded
+agent gate-status [task]                  whether the task's HEAD has a recorded gate pass on a clean tree
 agent unpause <team>                      go on: the paused runs resume where they stopped
 agent stop --running                      stop EVERYTHING that is active (teams, agents, investigations, queues)
 agent clean <id>                          remove the task's worktree (the branch is kept)
@@ -10856,6 +11016,8 @@ main() {
     stop)    cmd_stop "$@" ;;
     pause)   cmd_pause "$@" ;;
     allow)   cmd_allow "$@" ;;
+    gate)    cmd_gate "$@" ;;
+    gate-status) cmd_gate_status "$@" ;;
     unpause) cmd_unpause "$@" ;;
     clean)   cmd_clean "$@" ;;
     bus)     cmd_bus "$@" ;;

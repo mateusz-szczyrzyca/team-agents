@@ -9,13 +9,13 @@ load helpers
 
 meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
 
-# with_task gate — a solo task asleep in its worktree, the gate's command set; sets t and wt
+# with_task gate — a solo task waiting (on its questions) in its worktree, the gate's command set; sets t and wt
 with_task() {
   printf "AGENT_REVIEW_GATE='%s'\n" "$1" >> "$AGENTS_HOME/agents.conf"
-  scenario '{"solo": {"new": "idle"}}'
+  scenario '{"solo": {"new": "questions-file"}}'
   agent run solo "a task" > /dev/null
   t=$(task_of solo)
-  wait_status "$t" sleeping
+  wait_status "$t" waiting
   wt=$(meta "$t" WORKTREE)
 }
 

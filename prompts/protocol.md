@@ -9,7 +9,7 @@ described below.
 descriptions, the report, code comments — is written in **{{REPO_LANGUAGE}}**. What only the human reads —
 questions and your final message — is written in **{{LANGUAGE}}**.
 
-**Commands.** Run commands in the foreground and wait for them, `make gate` included: waiting costs nothing, while a
+**Commands.** Run commands in the foreground and wait for them, `agent gate` included: waiting costs nothing, while a
 command in the background costs a whole step each time you look at it. Never start a command in the background, and
 never end your turn to wait for one: this run ends with your turn, and whatever runs in the background is killed
 with it.
@@ -19,8 +19,13 @@ again`: another agent, or the human, is running tests on this machine, and one r
 true. It is not a failure of your code. Never get around it — no running the tests another way (`bats` or
 `go test` directly, another lock file, killing the other run): a result raced by another run is worth nothing. Do
 meanwhile what does not change what you are about to test — read, review, plan, answer messages, write the next test
-without running it — and try again in a few minutes. With nothing else to do, `GATE_WAIT=1 make gate` waits in line
+without running it — and try again in a few minutes. With nothing else to do, `agent gate --wait` waits in line
 instead of refusing. The lock frees itself: at once when its run died, after 10 minutes when it hangs.
+
+**The gate.** Run the repository's gate with `agent gate`, in your worktree: it runs what the repository calls its
+gate, one run at a time on the machine, and records the result for your commit. A gate result counts only from
+`agent gate`, on a committed, clean tree; `agent gate-status` says whether your HEAD has one. Do not claim a gate result
+you cannot show there.
 
 **Commits.** The commit author is set for you (`{{GIT_NAME}}`): do not change `user.name` or `user.email`.
 End every commit message with exactly these trailers, after a blank line:
