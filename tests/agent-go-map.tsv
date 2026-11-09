@@ -538,6 +538,7 @@ tests/unit/tokens.bats	agent tokens --runs shows each run's input per step: abou
 tests/unit/tokens.bats	codex reports a resumed session's tokens cumulatively: a run's are its difference from the session's run before	blackbox	R53	-	planned
 tests/unit/tokens_round.bats	agent tokens <team>: every task reachable from the team's, at any depth, each with its role and round	blackbox	R53	-	planned
 tests/unit/tokens_round.bats	agent tokens <task> ends its row with the role and the round; a task made before rounds shows -	blackbox	R53	-	planned
+tests/unit/tokens_round.bats	an old task without ROUND_ID does not inherit the caller's ambient value	blackbox	R53	-	planned
 tests/unit/tokens_round.bats	agent tokens --round R12: R12 and the rounds inside it, never R120 or R1; sums per role and model, the total	blackbox	R53	-	planned
 tests/unit/tokens_round.bats	agent tokens --round without a task of that round says so	blackbox	R53	-	planned
 tests/unit/verify_loop.bats	--last-team resumes the newest team of the repository	blackbox	R32	-	planned

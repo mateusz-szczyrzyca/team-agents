@@ -85,6 +85,20 @@ team_fixture() {
   [ "$(col S0 1)" = - ]
 }
 
+@test "an old task without ROUND_ID does not inherit the caller's ambient value" {
+  task Old $'ID=Old\nAGENT=solo\nKIND=worker\n'
+  act Old 'usage: in 10 (cached 0), out 1'
+  task Unknown $'ID=Unknown\nAGENT=solo\nKIND=worker\nROUND_ID=\'?\'\n'
+  act Unknown 'usage: in 20 (cached 0), out 2'
+  run env ROUND_ID='?' agent tokens Old
+  [ "$status" -eq 0 ]
+  [ "$(col Old 1)" = - ]
+  run env ROUND_ID='?' agent tokens --round '?'
+  [ "$status" -eq 0 ]
+  [[ $output == *Unknown* ]]
+  [[ $output != *Old* ]]
+}
+
 # round_fixture — tasks of rounds R12, R12/A, R12/A/#74 and of R120, R1 and none, in several roles and models
 round_fixture() {
   task r12 $'ID=r12\nAGENT=lead\nMODEL=opus\nTEAM=R-team\nKIND=worker\nROUND_ID=R12\n'
