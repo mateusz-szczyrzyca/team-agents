@@ -147,7 +147,8 @@ ci() { git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -
   wait_grep '"event":"precheck_rules"' "$AGENTS_HOME/logs/agent.jsonl" 150
   for _ in $(seq 1 150); do [ "$(ls -d "$AGENTS_HOME"/tasks/*-lead/ | wc -l)" -ge 2 ] && break; sleep 0.2; done
   next=$(ls -d "$AGENTS_HOME"/tasks/*-lead/ | sed -n 2p)
-  grep -q "only the human may allow" "$next/task.md"
+  # its directory comes a moment before its task.md: wait for the file's text, not the directory
+  wait_grep "only the human may allow" "$next/task.md" 60
   grep -q "tests/existing.bats" "$next/task.md"
   ! grep -lq '^REVIEW=1$' "$AGENTS_HOME"/tasks/*/meta.env || false
   agent stop --running > /dev/null
