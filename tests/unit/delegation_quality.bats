@@ -37,3 +37,8 @@ load helpers
   for f in goal workdir steps returns terms; do grep -q "\`$f\`" "$REPO_ROOT/prompts/protocol.md" || { echo "no $f"; false; }; done
   grep -q "R12" "$REPO_ROOT/prompts/protocol.md"
 }
+
+@test "the protocol tells a requester to answer an unclear result with answers_to and answers" {
+  grep -q "answers_to" "$REPO_ROOT/prompts/protocol.md"
+  grep -q "\`answers\`" "$REPO_ROOT/prompts/protocol.md"
+}
