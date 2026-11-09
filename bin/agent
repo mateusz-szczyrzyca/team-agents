@@ -794,8 +794,9 @@ meta_load() { # loads the task's meta.env variables into the current shell
   source "$f"
 }
 
+# task_field task key reads one persisted metadata field without inheriting an ambient shell variable when it is absent.
 # shellcheck source=/dev/null
-task_field() { ( source "$(meta_file "$1")"; printf '%s' "${!2:-}" ) }
+task_field() { ( unset "$2"; source "$(meta_file "$1")"; printf '%s' "${!2:-}" ) }
 
 resolve_id() { # exact task ID or an unambiguous fragment → task ID
   local q=$1 m=()
