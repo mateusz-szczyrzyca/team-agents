@@ -706,6 +706,10 @@ tests/unit/agent_gate.bats	without a task, agent gate and gate-status take the t
 tests/unit/agent_gate.bats	one gate run at a time on the machine: a second refuses with the message every agent knows, exit 75	blackbox	R31	-	planned
 tests/unit/agent_gate.bats	a gate run alive past AGENT_GATE_STALE_MIN is taken for hung: stopped, and the lock taken over	blackbox	R31	-	planned
 tests/unit/agent_gate.bats	the prompts send agents to agent gate, not to one repository's make gate	source	R31	-	planned
+tests/unit/board_done_gate.bats	work without a change of code needs no gate: exit 0	blackbox	R31	-	planned
+tests/unit/board_done_gate.bats	a change of code without a gate pass of HEAD is refused (exit 3) and says what to do; after agent gate, passes	blackbox	R31	-	planned
+tests/unit/board_done_gate.bats	a repository without a gate is not held: exit 0	blackbox	R31	-	planned
+tests/unit/board_done_gate.bats	the protocol tells agents that a code item's result needs its gate, and when gate_exception is right	source	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
