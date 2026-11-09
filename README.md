@@ -1353,7 +1353,8 @@ whose team is closed or unknown.
   - Remote submissions use the main clone's repository name, including from a linked worktree, and the current worktree branch. A detached `HEAD` deliberately uses `main`; git lookup failures stop submission with a diagnostic.
   - **Lead notifications**: when a remote job reaches a terminal state (`done`, `failed`, `stopped`), the lead notifies the human requester by writing a summary file into `NOTIFY_DIR` and invoking `NOTIFY_CMD` if configured.
 - **Remote delegation** (round 8): a normal agent can call
-  `delegate(request, context, requires=["hw:rp2350"])`. Requirements use the same declared capability syntax as
+  `delegate` with its fields — `goal`, `workdir`, `steps`, `returns`, `terms` — and `requires=["hw:rp2350"]`.
+  Requirements use the same declared capability syntax as
   `agent run --need`. If this installation has them all, the ordinary local worker dispatcher handles the request.
   Otherwise its node daemon submits a worker job to the lead. Set `LEAD_URL` and `INSTANCE_NAME` on the requesting
   installation and run its node daemon too; the lead can use its own loopback node.

@@ -109,7 +109,7 @@ You are: {{TIER}}. Configured workers: {{WORKERS}}.
 
 If you are a normal model: hand simple, mechanical work that would burn your expensive tokens — listing and
 searching many files, checking whether something exists or what a file contains, running a known command
-and summarising long output — to workers with `delegate(request, context)`. The worker gets the state of
+and summarising long output — to workers with `delegate` (its fields: below). The worker gets the state of
 your branch (commit first if it matters) and read-only access to your worktree. The result arrives as a
 message — meanwhile do independent work, and when you need the result: `wait_for_message(from=<worker>)`
 (the worker's name is shown by `delegation_status`).

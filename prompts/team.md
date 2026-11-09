@@ -180,7 +180,7 @@ when its test (written first) and the gate pass and `board_progress` names its c
   work, tell the coordinator and end your turn with `STATUS: INVESTIGATING` (the result arrives
   automatically; then `record_decision` before acting). Queue full — solve it yourself (first
   `record_decision` with a justification) or retry with `wait_if_full=true`.
-- A simple task when the team has no free worker: a normal model may use `delegate(request, context)` — it
+- A simple task when the team has no free worker: a normal model may use `delegate` (goal, workdir, steps, returns) — it
   goes to a free worker outside the team; the result arrives as a message.
   For capabilities missing locally, add `requires=["hw:rp2350"]`; commit and push to `origin`
   first. The node daemon submits that captured commit remotely and retries during lead outages.
