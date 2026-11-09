@@ -4861,7 +4861,7 @@ investigation_resume_tick() {
 
 # investigation_resume_admit parent reserves the whole original cohort before creating all review worktrees.
 investigation_resume_admit() {
-  local parent=$1 names=() roots=() repos=() available=() launchable=() name root repo base stamp text child children='' members='[]' state kv target
+  local parent=$1 names=() roots=() repos=() available=() launchable=() name root repo base stamp text child children='' members='[]' state kv target round
   local -A AGENT_TYPE=() AGENT_MODEL=() AGENT_EXTRA_ARGS=()
   IFS=, read -r -a names <<< "$(task_field "$parent" INVESTIGATION_TEAM)"
   mapfile -t available < <(free_investigator_list)
@@ -4877,6 +4877,8 @@ investigation_resume_admit() {
   text="Advisory review of the existing PR: propose improvements and other points of view, with an explicit VERDICT. Do not apply changes, commit suggestions, merge, delegate, or contact other investigators. The human decides what to apply.
 $(cat "$TASKS/$parent/task.md")"
   if [[ -f $TASKS/$parent/resume-request.md ]]; then text+=$'\n\n'$(<"$TASKS/$parent/resume-request.md"); fi
+  # the round the resume text named (agent run --resume), else the investigation team's
+  round=$(investigation_field "$parent" INVESTIGATION_RESUME_ROUND_ID); round=${round:-$(task_round_id "$parent")}
   for name in "${names[@]}"; do
     roots+=("$root"); repos+=("$repo")
     AGENT_TYPE[$name]=${INVESTIGATORS_TYPE[$name]}
@@ -4896,7 +4898,7 @@ $(cat "$TASKS/$parent/task.md")"
   meta_set "$parent" STATUS running
   for name in "${names[@]}"; do
     child="$stamp-$name"
-    if create_task "$name" "$text" "$root" "$root" "$target" "$stamp" "" "$base"; then
+    if create_task "$name" "$text" "$root" "$root" "$target" "$stamp" "" "$base" "$round"; then
       for kv in 'KIND=investigation' "INVESTIGATION_TEAM=$parent" 'INVESTIGATION_PHASE=5' \
           "PARENT_TASK=$parent" 'PARENT_WORKTREE=' "INV_ID=$child" 'TEAM=' 'TIER=normal' 'REVIEW=1' \
           "PR_URL=$(investigation_field "$parent" PR_URL)" "PR_NUMBER=$(investigation_field "$parent" PR_NUMBER)"; do
@@ -4914,9 +4916,10 @@ $(cat "$TASKS/$parent/task.md")"
   investigation_resume_tick "$parent"
 }
 
-# investigation_resume parent verify same-round addition validates the recorded PR before scheduling advisory reviews.
+# investigation_resume parent verify same-round addition [round] validates the recorded PR before scheduling advisory
+# reviews; round: the one the addition names ("" none: the reviews take the investigation team's)
 investigation_resume() {
-  local parent=$1 verify=$2 same_round=$3 addition=$4 root branch url prs pr state head count resume_fd
+  local parent=$1 verify=$2 same_round=$3 addition=$4 round=${5:-} root branch url prs pr state head count resume_fd
   ((verify == 0 && same_round == 0)) || die 'investigation resume cannot use --verify or --same-round'
   ((${#RESUME_MEMBERS[@]} == 0)) || die 'investigation resume uses every original investigator; --team cannot change membership'
   exec {resume_fd}>"$AGENTS_HOME/dispatch.lock"
@@ -4948,6 +4951,7 @@ investigation_resume() {
   printf '%s\n' "$addition" > "$TASKS/$parent/resume-request.md"
   meta_set "$parent" INVESTIGATION_RESUME_COUNT "$((count + 1))"
   meta_set "$parent" INVESTIGATION_RESUME_HEAD "$head"
+  meta_set "$parent" INVESTIGATION_RESUME_ROUND_ID "$round"
   meta_set "$parent" INVESTIGATION_COMMENTED ''
   meta_set "$parent" INVESTIGATION_NOTIFIED ''
   meta_set "$parent" INVESTIGATION_HANDOFF_PENDING ''
@@ -5203,7 +5207,7 @@ $text"
   # A crash after this record leaves an unstarted child that the next dispatch can fail and replace.
   meta_set "$parent" "INVESTIGATION_${key}" "$name"
   meta_set "$parent" "INVESTIGATION_${key}_TASK" "$child"
-  if create_task "$name" "$text" "$root" "$root" "$target" "$stamp" "" "$base"; then
+  if create_task "$name" "$text" "$root" "$root" "$target" "$stamp" "" "$base" "$(task_round_id "$parent")"; then
     for kv in 'KIND=investigation' "INVESTIGATION_TEAM=$parent" "INVESTIGATION_PHASE=$phase" \
         "PARENT_TASK=$parent" 'PARENT_WORKTREE=' "INV_ID=$child" 'TEAM=' 'TIER=normal' \
         "REVIEW=$(if [[ $phase == 3 ]]; then printf 1; fi)" \
@@ -5658,7 +5662,7 @@ investigation_team_admit() {
   members='[]'
   for name in "${names[@]}"; do
     child="$stamp-$name"; state=new; branch="$BRANCH_PREFIX/$name/$stamp"
-    if create_task "$name" "$text" "$root" "$root" "$base" "$stamp" "" "$base"; then
+    if create_task "$name" "$text" "$root" "$root" "$base" "$stamp" "" "$base" "$(task_round_id "$parent")"; then
       for kv in 'KIND=investigation' "INVESTIGATION_TEAM=$parent" 'INVESTIGATION_PHASE=1' \
           "PARENT_TASK=$parent" 'PARENT_WORKTREE=' 'INV_ID=' 'TEAM=' 'REVIEW=' 'TIER=normal' \
           "INVESTIGATION_TOPIC_SLUG=$(task_field "$parent" INVESTIGATION_TOPIC_SLUG)"; do
@@ -5702,7 +5706,7 @@ investigation_teams_admit() {
 
 # cmd__investigation_team [--pipeline] --team names [-f topic-file] [--] [topic] starts a cohort.
 cmd__investigation_team() {
-  local csv="" file="" text="" root common repo base slug stamp parent kv pipeline=0 target
+  local csv="" file="" text="" root common repo base slug stamp parent kv pipeline=0 target round
   local names=(investigation-team) roots=() repos=()
   while (($#)); do
     case $1 in
@@ -5717,6 +5721,7 @@ cmd__investigation_team() {
   csv=$(printf '%s' "$csv" | sed 's/[[:space:]]*,[[:space:]]*/,/g; s/^[[:space:]]*//; s/[[:space:]]*$//')
   if [[ -n $file ]]; then text=$(cat "$file"); elif [[ -z $text && ! -t 0 ]]; then text=$(cat); fi
   [[ -n ${text//[[:space:]]/} ]] || die "an investigation topic is required"
+  round=$(round_id_of "$text") || die "$round"   # before anything starts
   root=$(git rev-parse --show-toplevel)
   common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)
   root=$(dirname "$common"); repo=$(basename "$root")
@@ -5729,7 +5734,7 @@ cmd__investigation_team() {
   : > "$TASKS/$parent/meta.env"
   printf '%s\n' "$text" > "$TASKS/$parent/task.md"
   for kv in "ID=$parent" 'AGENT=investigation-team' 'KIND=investigation_team' 'TYPE=internal' 'MODEL=' 'EXTRA_ARGS=' \
-      'TEAM=' 'TIER=normal' 'SESSION_ID=' 'ROUND=0' 'RUN=0' 'RUNNER_DONE=1' 'STATUS=new' "CREATED=$(date -Is)" \
+      'TEAM=' 'TIER=normal' 'SESSION_ID=' 'ROUND=0' "ROUND_ID=$round" 'RUN=0' 'RUNNER_DONE=1' 'STATUS=new' "CREATED=$(date -Is)" \
       "REPO_NAME=$repo" "REPO_ROOT=$root" "WORKTREE=$root" 'BRANCH=' "BASE=$base" \
       'INVESTIGATION_PHASE=1' "INVESTIGATION_TEAM=$csv" "INVESTIGATION_BASE_SHA=$base" \
       "INVESTIGATION_TOPIC_SLUG=${slug:-topic}" 'INVESTIGATION_PHASE1_TASKS=' 'INVESTIGATION_LEASE=' 'PR_URL=' 'PR_NUMBER=' \
@@ -5814,7 +5819,8 @@ start_investigation() { # request-json (status "starting") investigator-name
             "PARENT_TASK=$from_task" "FROM_AGENT=$from_agent" "PARENT_WORKTREE=$p_wt" \
             "TYPE=${INVESTIGATORS_TYPE[$iname]}" "MODEL=${INVESTIGATORS_MODEL[$iname]:-}" "EXTRA_ARGS=${INVESTIGATORS_EXTRA_ARGS[$iname]:-}" \
             "REPO_NAME=$p_repo" "REPO_ROOT=$p_root" "WORKTREE=$wt" "BRANCH=$branch" \
-            "BASE=$p_branch" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)"; do
+            "BASE=$p_branch" "SESSION_ID=$sid" "ROUND=0" "ROUND_ID=$(task_round_id "$from_task")" "RUN=0" "STATUS=new" \
+            "CREATED=$(date -Is)"; do
     meta_set "$id" "${kv%%=*}" "${kv#*=}"
   done
   if [[ $kind == review ]]; then
@@ -5972,7 +5978,8 @@ start_helper() { # request-json worker
   for kv in "ID=$id" "AGENT=$w" "KIND=helper" "TIER=worker" "HELPER_ID=$hid" "PARENT_TASK=$from_task" \
             "FROM_AGENT=$from" "PARENT_WORKTREE=$p_wt" "TYPE=${AGENT_TYPE[$w]}" "MODEL=${AGENT_MODEL[$w]:-}" \
             "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$w]:-}" "REPO_NAME=$p_repo" "REPO_ROOT=$p_root" "WORKTREE=$wt" \
-            "BRANCH=$branch" "BASE=$p_branch" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)"; do
+            "BRANCH=$branch" "BASE=$p_branch" "SESSION_ID=$sid" "ROUND=0" "ROUND_ID=$(task_round_id "$from_task")" \
+            "RUN=0" "STATUS=new" "CREATED=$(date -Is)"; do
     meta_set "$id" "${kv%%=*}" "${kv#*=}"
   done
   bus helper-set --dir "$BUS_DIR" --id "$hid" --status running --task "$id"
@@ -6789,8 +6796,8 @@ allocate_run_ids() {
   done
 }
 
-create_task() { # name text root main_root base ts [team [start]] — uses a claimed task directory; sets NEW_ID; start defaults to HEAD; returns 1 with nothing left behind when a step fails
-  local name=$1 task=$2 root=$3 main_root=$4 base=$5 ts=$6 team=${7:-} start=${8:-HEAD}
+create_task() { # name text root main_root base ts [team [start [round]]] — uses a claimed task directory; sets NEW_ID; start defaults to HEAD, round (ROUND_ID) to "?"; returns 1 with nothing left behind when a step fails
+  local name=$1 task=$2 root=$3 main_root=$4 base=$5 ts=$6 team=${7:-} start=${8:-HEAD} round=${9:-?}
   local id repo_name branch wt dir err
   id="$ts-$name"
   repo_name=$(basename "$main_root")
@@ -6832,7 +6839,7 @@ create_task() { # name text root main_root base ts [team [start]] — uses a cla
   for kv in "ID=$id" "AGENT=$name" "KIND=worker" "TEAM=$team" "TIER=$(agent_tier "$name")" "TYPE=${AGENT_TYPE[$name]}" "MODEL=${AGENT_MODEL[$name]:-}" \
             "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$name]:-}" \
             "REPO_NAME=$repo_name" "REPO_ROOT=$main_root" "WORKTREE=$wt" "BRANCH=$branch" \
-            "BASE=$base" "SESSION_ID=$sid" "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" \
+            "BASE=$base" "SESSION_ID=$sid" "ROUND=0" "ROUND_ID=$round" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" \
             "AGENTS_MD=$agents_md"; do
     if ! meta_set "$id" "${kv%%=*}" "${kv#*=}"; then
       drop_unstarted_task "$root" "$wt" "$branch" "$dir"
@@ -6913,7 +6920,7 @@ prepare_job_task() {
   fi
   names=("$name"); roots=("$root"); repos=("$(basename "$root")")
   ts=$(allocate_run_ids 0 names roots repos)
-  if ! create_task "$name" "$task" "$root" "$root" "$base" "$ts" "" "$commit"; then
+  if ! create_task "$name" "$task" "$root" "$root" "$base" "$ts" "" "$commit" "$(job_round_id "$job" "$task")"; then
     NODE_PREPARE_ERROR=${CREATE_TASK_ERROR:-task worktree could not be created}
     unlock_task_ids
     log_error node_checkout_failed "job=$job" "repo=$repo" "base=$base" "reason=${CREATE_TASK_ERROR:-task worktree could not be created}"
@@ -7030,6 +7037,13 @@ resume_run() {
   if [[ ${1:-} == -f ]]; then [[ -r ${2:-} ]] || die "file not found: ${2:-}"; add=$(<"$2")
   elif (($#)); then add="$*"
   elif [[ ! -t 0 ]]; then add=$(cat); fi
+  # the round of the new tasks: the one the human's addition names, else the previous team's (below). A hand-back's
+  # text (a fix pass, a check before the review, a failover: AGENT_HANDBACK_LEAD) is the system's: it names none
+  local add_round=""
+  if [[ -z ${AGENT_HANDBACK_LEAD:-} ]]; then
+    add_round=$(round_id_of "$add") || die "$add_round"
+    [[ $add_round != '?' ]] || add_round=""
+  fi
 
   lock_task_ids
 
@@ -7046,7 +7060,7 @@ resume_run() {
   done
   if [[ -n $parent_ref ]]; then
     unlock_task_ids
-    investigation_resume "$parent_ref" "$verify" "$same_round" "$add"
+    investigation_resume "$parent_ref" "$verify" "$same_round" "$add" "$add_round"
     return
   fi
   # find the interrupted team (by team ID or a member's task ID) or a single task
@@ -7172,6 +7186,14 @@ resume_run() {
   [[ -n $old_team ]] && with_team=1
   ts=$(allocate_run_ids "$with_team" names roots repos)
   [[ -n $old_team ]] && new_team="$ts-team"
+  local round=$add_round
+  if [[ -z $round ]]; then   # the previous team's: its coordinator's task's, else the first task's that has one
+    for t in "${olds[@]}" "${remote_olds[@]}"; do
+      [[ -n $(task_field "$t" ROUND_ID) ]] || continue
+      if [[ -z $round || $(task_field "$t" AGENT) == "$rlead" ]]; then round=$(task_field "$t" ROUND_ID); fi
+    done
+    round=${round:-?}
+  fi
   local remote_ids=() r rtext
   for r in "${remote_olds[@]}"; do   # the old members' jobs end first: their agents must be free to come back
     "$SELF" jobs --cancel "$(task_field "$r" JOB_ID)" >/dev/null 2>&1 \
@@ -7189,7 +7211,7 @@ resume_run() {
         printf '\n\n## Addition from the human (resumed %s)\n\n%s\n' "$(date '+%Y-%m-%d %H:%M')" "$add"
       fi)
     remote_ids+=("$(remote_member_task "$(task_field "$r" AGENT)" "$rtext" "$new_team" "$(task_field "$r" BASE)" \
-      "$(task_field "$r" REPO_ROOT)" "$ts" resume)")
+      "$(task_field "$r" REPO_ROOT)" "$ts" resume "$round")")
   done
   RESUME_NEW_IDS+=("${remote_ids[@]}")
   local split_lead=""   # the coordinator: what the checks and reviews send back is its alone (the bus, else handback)
@@ -7281,7 +7303,7 @@ resume_run() {
               "TYPE=${AGENT_TYPE[$name]}" "MODEL=${AGENT_MODEL[$name]:-}" "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$name]:-}" \
               "REPO_NAME=$(task_field "$old" REPO_NAME)" "REPO_ROOT=$root" "WORKTREE=$wt" \
               "BRANCH=$branch" "PREV_BRANCH=$( ((fresh)) && echo "$prev")" "BASE=$(task_field "$old" BASE)" "SESSION_ID=$sid" \
-              "ROUND=0" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" "RESUMED_FROM=$old" "FIX_PASS=${AGENT_FIX_PASS:-0}" \
+              "ROUND=0" "ROUND_ID=$round" "RUN=0" "STATUS=new" "CREATED=$(date -Is)" "RESUMED_FROM=$old" "FIX_PASS=${AGENT_FIX_PASS:-0}" \
               "VERIFY=$( ((verify)) && echo 1 || task_field "$old" VERIFY)" \
               "AUTOPILOT=$( ((${autopilot:-0})) && echo 1 || task_field "$old" AUTOPILOT)" "PRECHECK_PASS=${AGENT_PRECHECK_PASS:-0}" \
               "AUTOPILOT_OFF=$( ((${autopilot:-0})) || task_field "$old" AUTOPILOT_OFF)" \
@@ -7377,6 +7399,8 @@ validate_investigation_topic() {
     die "give the task text (argument, -f file or stdin)"
   fi
   [[ -n ${topic//[[:space:]]/} ]] || die "empty task"
+  local round
+  round=$(round_id_of "$topic") || die "$round"
   printf '%s\n' "$topic"
 }
 
@@ -7446,6 +7470,8 @@ cmd_run() {
       die "give the task text (argument, -f file or stdin)"
     fi
     [[ -n ${task//[[:space:]]/} ]] || die "empty task"
+    local round   # the node reads it from the job's text (job_round_id): a text it would not take is refused here
+    round=$(round_id_of "$task") || die "$round"
     submit_remote_job "$selector" "$target_node" "$task" "${need_caps[@]}"
     return
   fi
@@ -7504,6 +7530,8 @@ cmd_run() {
     die "give the task text (argument, -f file or stdin)"
   fi
   [[ -n ${task//[[:space:]]/} ]] || die "empty task"
+  local round   # every task of the run records it (ROUND_ID)
+  round=$(round_id_of "$task") || die "$round"
 
   local root common main_root
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "run this inside a git repository"
@@ -7550,7 +7578,7 @@ cmd_run() {
   [[ -z $pin_base ]] || base=$pin_base   # a team on a PR (--pr): the PR's base
   ((${#members[@]} + ${#remotes[@]} > 1)) && team="$ts-team"
   for m in "${members[@]}"; do
-    if ! create_task "$m" "$task" "$root" "$main_root" "$base" "$ts" "$team" "$pin_start"; then
+    if ! create_task "$m" "$task" "$root" "$main_root" "$base" "$ts" "$team" "$pin_start" "$round"; then
       abandon_run "could not create task for $m: ${CREATE_TASK_ERROR:-worktree creation failed}" "${ids[@]}"
     fi
     ids+=("$NEW_ID")
@@ -7571,7 +7599,7 @@ cmd_run() {
     done
     local r rid remote_ids=()
     for r in "${remotes[@]}"; do   # a remote member: its proxy task here, a member like any other in the team
-      rid=$(remote_member_task "$r" "$task" "$team" "$base" "$main_root" "$ts") || abandon_run "could not prepare remote member $r" "${ids[@]}"
+      rid=$(remote_member_task "$r" "$task" "$team" "$base" "$main_root" "$ts" "" "$round") || abandon_run "could not prepare remote member $r" "${ids[@]}"
       remote_ids+=("$rid")
       json=$(jq --arg a "$r" --arg t "$rid" --arg w "remote:${r#*@}" --arg tier "$(task_field "$rid" TIER)" \
                '.[$a] = {agent:$a, task:$t, branch:"", worktree:$w, state:"active", tier:$tier, provider:"remote"}' <<< "$json")
@@ -8244,10 +8272,10 @@ supervise_teams() { # an open team with no local member at work or asleep for AG
   done
 }
 
-remote_member_task() { # member task team base main-root ts — a remote member's proxy task on the lead (no worktree, no
+remote_member_task() { # member task team base main-root ts [resuming [round]] — a remote member's proxy task on the lead (no worktree, no
   # runner: the member runs on its node); checks first that this is a lead, the node is online with the agent free,
   # and the base is on origin (the node starts from there). Prints the task ID.
-  local member=$1 task=$2 team=$3 base=$4 root=$5 ts=$6 resuming=${7:-} agent node nodes row tier sha id
+  local member=$1 task=$2 team=$3 base=$4 root=$5 ts=$6 resuming=${7:-} round=${8:-?} agent node nodes row tier sha id
   agent=${member%@*}; node=${member#*@}
   [[ -n ${LEAD_LISTEN:-} ]] || die "remote member $member: this installation is not a lead (LEAD_LISTEN)"
   nodes=$(bus node-request --url "$(lead_url)" --path /v1/nodes --get) || die "remote member $member: cannot list the nodes"
@@ -8271,7 +8299,7 @@ remote_member_task() { # member task team base main-root ts — a remote member'
   meta_set "$id" ID "$id"; meta_set "$id" AGENT "$member"; meta_set "$id" KIND remote-member
   meta_set "$id" REMOTE_NODE "$node"; meta_set "$id" REMOTE_AGENT "$agent"; meta_set "$id" TEAM "$team"
   meta_set "$id" TIER "$tier"; meta_set "$id" STATUS remote; meta_set "$id" CREATED "$(date -Is)"
-  meta_set "$id" ROUND 0; meta_set "$id" RUN 0   # what every task has (agent status reads them)
+  meta_set "$id" ROUND 0; meta_set "$id" ROUND_ID "$round"; meta_set "$id" RUN 0   # what every task has (agent status reads them)
   meta_set "$id" REPO_NAME "$(basename "$root")"; meta_set "$id" REPO_ROOT "$root"
   meta_set "$id" BASE "$base"; meta_set "$id" BASE_SHA "$sha"; meta_set "$id" BRANCH ""; meta_set "$id" WORKTREE ""
   meta_set "$id" JOB_ID "member-$id"
@@ -8937,9 +8965,149 @@ cmd_debug() {
   echo "$out ($(wc -l < "$out") lines)"
 }
 
-cmd_tokens() { # <team|task> — the tokens the runs used, from their activity's usage lines (and opencode's step lines):
-  # per task — a team's members, and the helpers and investigations they asked for — and in all
-  local q=${1:?usage: agent tokens <team|task>} ids=() m d id team_ids=" " per
+# ------------------------------------------------------------------ rounds of work (Round: <id>, ROUND_ID)
+
+# round_id_of text — the round of a task text: its one line "Round: <id>", blanks around the ID ignored; "?" when it
+# has none. An ID is parts of letters, digits, ".", "_" and "-" separated by "/" (R12, R12/A); a round includes the
+# rounds whose ID starts with its own and "/". Two such lines, or an ID that breaks the pattern: prints which line is
+# wrong and returns 1 — agent run refuses the text.
+round_id_of() {
+  local line n=0 at=0 id="" v
+  while IFS= read -r line; do
+    n=$((n + 1))
+    [[ $line == Round:* ]] || continue
+    line=${line%$'\r'}
+    if ((at)); then
+      printf 'line %s of the text, "%s", is a second Round: line (the first is line %s) — a task has one round' "$n" "$line" "$at"
+      return 1
+    fi
+    at=$n
+    v=${line#Round:}
+    v=${v#"${v%%[![:space:]]*}"}; v=${v%"${v##*[![:space:]]}"}
+    if [[ ! $v =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]]; then
+      printf 'line %s of the text, "%s", names no round: a round ID is parts of letters, digits, ".", "_" and "-" separated by "/" (Round: R12/A)' "$n" "$line"
+      return 1
+    fi
+    id=$v
+  done <<< "$1"
+  printf '%s' "${id:-?}"
+}
+
+# task_round_id task — the round a task made for this one inherits: its ROUND_ID; "?" when it has none (a task made
+# before rounds were recorded, or no task)
+task_round_id() {
+  local r=""
+  [[ -z $1 || ! -f $(meta_file "$1") ]] || r=$(task_field "$1" ROUND_ID)
+  printf '%s' "${r:-?}"
+}
+
+# job_round_id job text — the round of a node job's task: from its text, as agent run reads it on the lead; a text the
+# lead's agent run would refuse (an older lead; a resumed remote member's text with the human's own Round: line) is
+# no reason to refuse the job: its round is "?", and the log says why
+job_round_id() {
+  local r
+  if ! r=$(round_id_of "$2"); then
+    log_warn job_round_unreadable "job=$1" "reason=${r:0:300}"
+    r='?'
+  fi
+  printf '%s' "$r"
+}
+
+# team_task_closure team — a team's tasks: those whose TEAM is the team (none: the team ID as a task, an investigation
+# team), and every task reachable from them through PARENT_TASK or INVESTIGATION_TEAM, at any depth; never a task of
+# another team. Each task once — a cycle in the links ends where it closes —, the team's own first.
+team_task_closure() {
+  local team=$1 f key val id t
+  local -A team_of=() kids=() seen=()
+  local -a queue=() metas=()
+  for f in "$TASKS"/*/meta.env; do [[ ! -f $f ]] || metas+=("$f"); done
+  ((${#metas[@]})) || return 0
+  # one read of all metadata: who points to whom. Task and team IDs carry no character %q quotes; an empty value
+  # is written as ''
+  while IFS= read -r f; do
+    key=${f#*:}; val=${key#*=}; key=${key%%=*}
+    [[ $val != "''" ]] || val=""
+    id=${f%%:*}; id=${id%/meta.env}; id=${id##*/}
+    case $key in
+      TEAM) team_of[$id]=$val; [[ $val != "$team" ]] || queue+=("$id") ;;
+      PARENT_TASK | INVESTIGATION_TEAM) [[ -z $val ]] || kids[$val]+=" $id" ;;
+    esac
+  done < <(grep -H -E '^(TEAM|PARENT_TASK|INVESTIGATION_TEAM)=' "${metas[@]}" \
+    || (($? == 1)) || log_warn team_tasks_read_failed "team=$team")   # 1: no task has one of them — no error
+  ((${#queue[@]})) || [[ ! -f $TASKS/$team/meta.env ]] || queue=("$team")
+  local i=0
+  while ((i < ${#queue[@]})); do
+    id=${queue[i]}; i=$((i + 1))
+    [[ -z ${seen[$id]:-} ]] || continue
+    seen[$id]=1
+    printf '%s\n' "$id"
+    for t in ${kids[$id]:-}; do
+      [[ -z ${seen[$t]:-} ]] || continue
+      [[ -z ${team_of[$t]:-} || ${team_of[$t]} == "$team" ]] || continue   # another team's task: not this team's
+      queue+=("$t")
+    done
+  done
+}
+
+# task_role task — what the task was in its work: review (REVIEW=1), worker (KIND=helper), investigation (an
+# investigation or an investigation team), coordinator (its team's coordinator, on the bus; a task without a team
+# leads its own work), member (another task of a team). A team's coordinator is looked up once, kept in the caller's
+# associative array TOKENS_LEADS (team → its coordinator's task; "" none)
+task_role() {
+  local id=$1 team lead
+  if [[ $(task_field "$id" REVIEW) == 1 ]]; then echo review; return; fi
+  case $(task_field "$id" KIND) in
+    helper) echo worker; return ;;
+    investigation | investigation_team) echo investigation; return ;;
+  esac
+  team=$(task_field "$id" TEAM)
+  if [[ -z $team ]]; then echo coordinator; return; fi
+  if [[ -v TOKENS_LEADS[$team] ]]; then lead=${TOKENS_LEADS[$team]}
+  else
+    lead=$(team_lead "$team"); [[ -z $lead ]] || lead=$(team_lead_task "$team" "$lead")
+    TOKENS_LEADS[$team]=$lead
+  fi
+  if [[ $id == "$lead" ]]; then echo coordinator; else echo member; fi
+}
+
+# tokens_table [--sums] task… — agent tokens' table: per task its runs' sums (in, cached, out, cost; a task without
+# usage says so), then its ROLE and ROUND ("-": a task made before rounds were recorded), and the total; --sums: the
+# sums per role and per model before the total
+tokens_table() {
+  local sums=0 id usage row in cached out cost role round all=""
+  [[ ${1:-} != --sums ]] || { sums=1; shift; }
+  local -A TOKENS_LEADS=()
+  printf '%-40s %-24s %-13s %12s %12s %10s %10s %-13s %s\n' TASK AGENT KIND IN CACHED OUT COST ROLE ROUND
+  for id in "$@"; do   # in the order given; a task without usage says so
+    role=$(task_role "$id"); round=$(task_field "$id" ROUND_ID); round=${round:--}
+    usage=""
+    if [[ -f $TASKS/$id/activity.jsonl ]]; then   # the sum of its runs (runs_usage — codex's per-run difference included)
+      usage=$(runs_usage "$id" | awk -F'\t' '{i += $3; c += $4; o += $5; k += $6} END {if (i + o > 0) printf "%d\t%d\t%d\t%.6f", i, c, o, k}')
+    fi
+    if [[ -z $usage ]]; then
+      printf '%-40s %-24s %-13s %-47s %-13s %s\n' "$id" "$(task_field "$id" AGENT)" "$(task_field "$id" KIND)" "no usage reported" "$role" "$round"
+      continue
+    fi
+    IFS=$'\t' read -r in cached out cost <<< "$usage"
+    printf '%-40s %-24s %-13s %12s %12s %10s %10.4f %-13s %s\n' "$id" "$(task_field "$id" AGENT)" "$(task_field "$id" KIND)" "$in" "$cached" "$out" "$cost" "$role" "$round"
+    all+=$(jq -nc --arg role "$role" --arg model "$(task_model "$id")" --argjson in "$in" --argjson cached "$cached" \
+      --argjson out "$out" --argjson cost "$cost" '{role: $role, model: $model, in: $in, cached: $cached, out: $out, cost: $cost}')$'\n'
+  done
+  if ((sums)); then
+    jq -rs '(group_by(.role) | map("role " + .[0].role)), (group_by(.model) | map("model " + .[0].model)) | .[]' <<< "$all" \
+      | while IFS= read -r row; do
+          jq -rs --arg k "${row%% *}" --arg v "${row#* }" \
+            'map(select(.[$k] == $v)) | [(map(.in) | add), (map(.cached) | add), (map(.out) | add), (map(.cost) | add)] | @tsv' <<< "$all" \
+            | { IFS=$'\t' read -r in cached out cost; printf '%-40s %-24s %-13s %12s %12s %10s %10.4f\n' "$row" "" "" "$in" "$cached" "$out" "$cost"; }
+        done
+  fi
+  jq -rs '[(map(.in) | add // 0), (map(.cached) | add // 0), (map(.out) | add // 0), (map(.cost) | add // 0)] | @tsv' <<< "$all" \
+    | { IFS=$'\t' read -r in cached out cost; printf '%-40s %-24s %-13s %12s %12s %10s %10.4f\n' total "" "" "$in" "$cached" "$out" "$cost"; }
+}
+
+cmd_tokens() { # <team|task> | --round <id> | --runs <task> — the tokens the runs used, from their activity's usage
+  # lines (and opencode's step lines): per task — a team's tasks (team_task_closure), a round's — and in all
+  local q=${1:?usage: agent tokens <team|task> | --round <id> | --runs <task>} ids=() m d id per want r
   if [[ $q == --runs ]]; then   # one task, per run: its steps (tool calls) and tokens
     id=$(resolve_id "${2:?usage: agent tokens --runs <task>}")
     printf '%-5s %7s %12s %12s %10s %10s %10s  %s\n' RUN STEPS IN CACHED OUT COST IN/STEP MODE
@@ -8951,41 +9119,26 @@ cmd_tokens() { # <team|task> — the tokens the runs used, from their activity's
         done
     return 0
   fi
-  if [[ $q == *-team ]]; then
+  if [[ $q == --round ]]; then   # every task of the round or of a round inside it (<id>/…), then its sums
+    want=${2:-}
+    [[ -n $want ]] || die "usage: agent tokens --round <id> (the ID of a task text's Round: line, or ? for none)"
     for m in "$TASKS"/*/meta.env; do
       [[ -f $m ]] || continue
-      grep -qx "TEAM=$q" "$m" || continue
-      d=${m%/meta.env}; ids+=("${d##*/}"); team_ids+="${d##*/} "
+      d=${m%/meta.env}; id=${d##*/}
+      r=$(task_field "$id" ROUND_ID)   # none: made before rounds were recorded, of no round
+      [[ -n $r && ( $r == "$want" || $r == "$want"/* ) ]] && ids+=("$id")
     done
+    ((${#ids[@]})) || die "no task of round $want (ROUND_ID $want or $want/…)"
+    tokens_table --sums "${ids[@]}"
+    return 0
+  fi
+  if [[ $q == *-team ]]; then
+    mapfile -t ids < <(team_task_closure "$q")
     ((${#ids[@]})) || die "no task of team $q"
-    for m in "$TASKS"/*/meta.env; do   # what the members asked for
-      [[ -f $m ]] || continue
-      id=$(sed -n 's/^PARENT_TASK=//p' "$m")
-      [[ -n $id && $team_ids == *" $id "* ]] || continue
-      d=${m%/meta.env}; ids+=("${d##*/}")
-    done
   else
     ids=("$(resolve_id "$q")")
   fi
-  local sums
-  sums=$(for id in "${ids[@]}"; do   # per task: the sum of its runs (runs_usage — codex's per-run difference included)
-    [[ -f $TASKS/$id/activity.jsonl ]] || continue
-    runs_usage "$id" | awk -F'\t' -v id="$id" '{i += $3; c += $4; o += $5; k += $6}
-      END {if (i + o > 0) printf "{\"id\":\"%s\",\"in\":%d,\"cached\":%d,\"out\":%d,\"cost\":%.6f}\n", id, i, c, o, k}'
-  done | jq -s '.')
-  local row
-  printf '%-40s %-24s %-13s %12s %12s %10s %10s\n' TASK AGENT KIND IN CACHED OUT COST
-  for id in "${ids[@]}"; do   # in the team's order; a task without usage says so
-    row=$(jq -r --arg id "$id" '.[] | select(.id == $id) | [.in, .cached, .out, .cost] | @tsv' <<< "$sums")
-    if [[ -z $row ]]; then
-      printf '%-40s %-24s %-13s %12s\n' "$id" "$(task_field "$id" AGENT)" "$(task_field "$id" KIND)" "no usage reported"
-      continue
-    fi
-    IFS=$'\t' read -r in cached out cost <<< "$row"
-    printf '%-40s %-24s %-13s %12s %12s %10s %10.4f\n' "$id" "$(task_field "$id" AGENT)" "$(task_field "$id" KIND)" "$in" "$cached" "$out" "$cost"
-  done
-  jq -r '[(map(.in) | add // 0), (map(.cached) | add // 0), (map(.out) | add // 0), (map(.cost) | add // 0)] | @tsv' <<< "$sums" \
-    | { IFS=$'\t' read -r in cached out cost; printf '%-40s %-24s %-13s %12s %12s %10s %10.4f\n' total "" "" "$in" "$cached" "$out" "$cost"; }
+  tokens_table "${ids[@]}"
 }
 
 cmd_wake() { # <task> — a paused task resumes now, not at its pause's end (its provider's limit lifted early, a bigger
@@ -11056,6 +11209,7 @@ agent spend [--days N] [--daily]          where the money goes, by model: a paid
 agent debug <team|task> [--full] [--out file]  everything to diagnose a team or a task, in one file, secrets redacted
 agent debug --agent NAME | --model NAME [--days N] [--last N] [--full] [--out file]  a model's whole record
 agent tokens <team|task>                  the tokens its runs used: per task (a team's helpers and investigations too), in all
+agent tokens --round <id>                 the tokens of a round's tasks (Round: <id>, and <id>/…): per task, role, model, in all
 agent tokens --runs <task>                a task's tokens per run, its steps (tool calls) and input per step: the costly runs
 agent wake <task>                         resume a paused task now, not at its pause's end (a remote member's: on its node)
 agent round-size <task>                   size of a task's change against the round limit (README "Rounds")

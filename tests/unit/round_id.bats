@@ -137,6 +137,7 @@ asked() {
     sleep 0.2
   done
   w=$(basename "$(dirname "$w")")
+  wait_status "$w" 'new|starting|running|done|failed'   # its metadata is written field by field: STATUS comes after ROUND_ID
   [ "$(round_of "$w")" = R12/A ]
   sed -i 's|^ROUND_ID=.*|ROUND_ID=R13|' "$AGENTS_HOME/tasks/$m/meta.env"
   [ "$(round_of "$w")" = R12/A ]
@@ -158,6 +159,7 @@ asked() {
   local r=""
   for _ in $(seq 1 100); do r=$(ls "$AGENTS_HOME/tasks" | grep -- '-inv[0-9]*$' || true); [ -n "$r" ] && break; sleep 0.2; done
   [ -n "$r" ]
+  wait_status "$r" 'starting|running|done|failed'   # REVIEW is written after the task's first fields
   [ "$(meta "$r" REVIEW)" = 1 ]
   [ "$(round_of "$r")" = R12/C ]
   wait_status "$r" '^(done|failed)$'
