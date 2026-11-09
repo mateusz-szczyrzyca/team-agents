@@ -702,6 +702,9 @@ AGENT_REVIEW_WAIT_MIN="${AGENT_REVIEW_WAIT_MIN:-30}"  # a review pair waiting lo
 AGENT_HUMAN_GITHUB="${AGENT_HUMAN_GITHUB:-}"
 ROUND_MAX_LINES="${ROUND_MAX_LINES:-3000}"
 ROUND_EXCLUDE="${ROUND_EXCLUDE:-*_gen.go go.sum package-lock.json vendor/}"
+# Files under a test directory that are data, not tests — a ledger, a list the rounds update — which the precheck's
+# rule on existing tests (B1) leaves out; ROUND_EXCLUDE's patterns. It depends on the repository: empty by default
+RULE_TEST_DATA="${RULE_TEST_DATA:-}"
 ROUND_BOUNCES="${ROUND_BOUNCES:-2}"
 # The round's size in its PR description, between these markers: the precheck rewrites it at each check
 PR_SIZE_START="<!-- round-size: written by the script at each check, do not edit -->"
@@ -1903,6 +1906,28 @@ rule_judge_path() {
 }
 rule_production_path() { [[ ($1 == bin/* || $1 == agent/* || $1 == agentbus/* || $1 == live/*) ]] && ! rule_test_path "$1"; }
 
+# rule_path_matches path pattern... — whether a path matches one of the patterns as ROUND_EXCLUDE's do: "name/" a
+# directory of that name on its way, a pattern with a slash the whole path, any other the file's name
+rule_path_matches() {
+  local f=$1 p dir
+  shift
+  dir=$(dirname "$f")
+  for p in "$@"; do
+    case $p in
+      */) [[ /$dir/ == *"/$p"* ]] && return 0 ;;
+      */*)
+        # shellcheck disable=SC2053  # $p is unquoted on purpose: a pattern is a glob, as round-size's
+        [[ $f == $p ]] && return 0
+        ;;
+      *)
+        # shellcheck disable=SC2053  # $p is unquoted on purpose: a pattern is a glob, as round-size's
+        [[ ${f##*/} == $p ]] && return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
 # round_rule_issues repo base head team body — what a round's own diff (base: its merge base with main) does against
 # AGENTS.md's rules, one a line. "human: ..." only the human may allow (agent allow <team> <path>); "disclose: ..." a
 # suppression the PR description (body) does not name. Prompts and reviewers held these rules alone before.
@@ -1913,11 +1938,15 @@ rule_production_path() { [[ ($1 == bin/* || $1 == agent/* || $1 == agentbus/* ||
 #   B4 a file that judges a round changed (the Makefile and checks: added to is fine; workflows, AGENTS.md: any change)
 round_rule_issues() {
   local repo=$1 base=$2 head=$3 team=$4 body=$5 allowed st a b f del line file n text
+  local -a test_data excluded
+  read -r -a test_data <<< "$RULE_TEST_DATA"                            # data under a test directory: no tests
+  read -r -a excluded <<< "$ROUND_EXCLUDE $ROUND_ALWAYS_EXCLUDE"        # what the round's size leaves out
   allowed=$(team_allowed_paths "$team")
   while IFS=$'\t' read -r st a b; do
     [[ -n $st ]] || continue
     f=$a
     grep -qxF -- "$f" <<< "$allowed" && continue
+    if ((${#test_data[@]})) && rule_test_path "$f" && rule_path_matches "$f" "${test_data[@]}"; then continue; fi
     if rule_test_path "$f" || { rule_judge_path "$f" && [[ $f != .github/* && $f != AGENTS.md && $f != */AGENTS.md && $f != CLAUDE.md && $f != */CLAUDE.md ]]; }; then
       case $st in
         D) echo "human: $f — an existing $(rule_test_path "$f" && echo test || echo check) file deleted" ;;
@@ -1946,8 +1975,9 @@ round_rule_issues() {
           if rule_production_path "$file" && [[ $text =~ (testing\.Testing\(\)|flag\.Lookup\(\"test\.|BATS_[A-Z_]+) ]]; then
             echo "human: $file:$n — production code that looks at whether it runs under test (${BASH_REMATCH[1]})"
           fi
-          # lint suppressions (skipped tests are round_check's: the PR's "## Skipped tests" section)
-          if [[ $body != *"$file"* ]]; then
+          # lint suppressions (skipped tests are round_check's: the PR's "## Skipped tests" section) — in code: not
+          # in a document, nor in what the round's size leaves out (reports, generated or vendored files)
+          if [[ $body != *"$file"* && $file != *.md && $file != *.txt ]] && ! rule_path_matches "$file" "${excluded[@]}"; then
             if [[ $text =~ //[[:space:]]*nolint ]]; then
               echo "disclose: $file:$n — nolint"
             elif [[ $text =~ \#[[:space:]]*nosec ]]; then
