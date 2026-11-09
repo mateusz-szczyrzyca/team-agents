@@ -47,7 +47,7 @@ ci() { git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -
   [[ $(round_rule_issues "$r" "$base" "$head" T "") == *"human: tests/unit/a.bats — an existing test file "* ]]
 }
 
-@test "B2: a suppression the PR description does not name goes back; one it names passes" {
+@test "B2: a lint suppression the PR description does not name goes back; one it names passes; skips are not B2's" {
   # shellcheck source=/dev/null
   source "$REPO_ROOT/bin/agent"
   repo
@@ -57,9 +57,9 @@ ci() { git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -
   printf '# shellcheck disable=SC2034\nx=1\n' > "$r/tools/new.sh"
   head=$(ci suppress)
   out=$(round_rule_issues "$r" "$base" "$head" T "")
-  [[ $out == *"disclose: agent/f_test.go:"*"t.Skip"* ]]
+  # skipped tests are round_check's: listed in the PR's "## Skipped tests" section, with their reasons
+  [[ $out != *"agent/f_test.go"* && $out != *"tests/unit/a.bats"* ]]
   [[ $out == *"disclose: agent/f.go:"*"nolint"* ]]
-  [[ $out == *"disclose: tests/unit/a.bats:"*"skip"* ]]
   [[ $out == *"disclose: tools/new.sh:"*"shellcheck disable"* ]]
   body="Suppressions: agent/f_test.go (pending), agent/f.go (unused), tests/unit/a.bats, tools/new.sh (SC2034)"
   [ -z "$(round_rule_issues "$r" "$base" "$head" T "$body")" ]
@@ -152,4 +152,21 @@ ci() { git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -
   grep -q "tests/existing.bats" "$next/task.md"
   ! grep -lq '^REVIEW=1$' "$AGENTS_HOME"/tasks/*/meta.env || false
   agent stop --running > /dev/null
+}
+
+@test "B2: the lint suppressions of Python, TypeScript and Rust count too" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/agent"
+  repo
+  printf 'import os  # noqa: F401\nx: int = "a"  # type: ignore\n' > "$r/agent/m.py"
+  printf '// @ts-ignore\nconst a: number = "x";\n/* eslint-disable no-console */\n' > "$r/agent/m.ts"
+  printf '#[allow(dead_code)]\nfn f() {}\n' > "$r/agent/m.rs"
+  head=$(ci others)
+  out=$(round_rule_issues "$r" "$base" "$head" T "")
+  [[ $out == *"disclose: agent/m.py:1"*"noqa"* ]]
+  [[ $out == *"disclose: agent/m.py:2"*"type: ignore"* ]]
+  [[ $out == *"disclose: agent/m.ts:1"*"ts-ignore"* ]]
+  [[ $out == *"disclose: agent/m.ts:3"*"eslint-disable"* ]]
+  [[ $out == *"disclose: agent/m.rs:1"*"allow"* ]]
+  [ -z "$(round_rule_issues "$r" "$base" "$head" T "agent/m.py agent/m.ts agent/m.rs: why each")" ]
 }
