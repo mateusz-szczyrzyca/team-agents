@@ -699,6 +699,9 @@ AGENT_HUMAN_GITHUB="${AGENT_HUMAN_GITHUB:-}"
 ROUND_MAX_LINES="${ROUND_MAX_LINES:-3000}"
 ROUND_EXCLUDE="${ROUND_EXCLUDE:-*_gen.go go.sum package-lock.json vendor/}"
 ROUND_BOUNCES="${ROUND_BOUNCES:-2}"
+# The round's size in its PR description, between these markers: the precheck rewrites it at each check
+PR_SIZE_START="<!-- round-size: written by the script at each check, do not edit -->"
+PR_SIZE_END="<!-- /round-size -->"
 declare -p ROUND_MAX_LINES_REPO >/dev/null 2>&1 || declare -gA ROUND_MAX_LINES_REPO=()   # a query: set in agents.conf?
 # NODE_REPOS: repositories a node may run jobs for, name → local clone path (empty: no job is accepted).
 declare -p NODE_REPOS >/dev/null 2>&1 || declare -gA NODE_REPOS=()
@@ -1674,6 +1677,47 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
   printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
 }
 
+# pr_body_with_round_size body block — the PR description with the round's size block (PR_SIZE_START...PR_SIZE_END)
+# in place of the old one, or added at its end; the rest of the description as it was
+pr_body_with_round_size() {
+  local body=$1 block=$2
+  if [[ $body == *"$PR_SIZE_START"*"$PR_SIZE_END"* ]]; then
+    printf '%s%s%s' "${body%%"$PR_SIZE_START"*}" "$block" "${body#*"$PR_SIZE_END"}"
+  elif [[ -z $body ]]; then
+    printf '%s' "$block"
+  else
+    printf '%s\n\n%s' "$body" "$block"
+  fi
+}
+
+# pr_write_round_size task root pr body — writes the round's size into its PR description (body: the description as
+# read just before), counted as the round limit counts it: teams counted lines for their PRs by rules of their own
+# and sent workers to recount them. Nothing changes when the size is the same; a failure is logged
+pr_write_round_size() {
+  local id=$1 root=$2 pr=$3 body=$4 json repo limit block new
+  repo=$(task_field "$id" REPO_NAME); limit=$(round_limit "$repo")
+  if ! json=$(bus round-size --json --repo "$(task_field "$id" WORKTREE)" --base "$(round_base_ref "$id")" \
+      --exclude "$ROUND_EXCLUDE $ROUND_ALWAYS_EXCLUDE" 2>&1); then
+    log_warn pr_round_size_failed "task=$id" "pr=$pr" "error=$json"
+    return 0
+  fi
+  if ! block=$(jq -r --arg s "$PR_SIZE_START" --arg e "$PR_SIZE_END" --arg soft "$(round_soft "$repo")" \
+      --arg hard "$limit" --arg ex "$ROUND_EXCLUDE $ROUND_ALWAYS_EXCLUDE" '[$s,
+      "**Round size**, counted by the script as the round limit counts it: \(.lines) lines (+\(.added) -\(.deleted)) in \(.files) files"
+      + (if ($hard | tonumber) > 0 then "; limits: soft \($soft), hard \($hard)" else "" end) + ". Not counted: \($ex).",
+      $e] | join("\n")' <<< "$json" 2>&1); then
+    log_warn pr_round_size_failed "task=$id" "pr=$pr" "error=$block"
+    return 0
+  fi
+  new=$(pr_body_with_round_size "$body" "$block")
+  [[ $new != "$body" ]] || return 0
+  if (cd "$root" && gh pr edit "$pr" --body "$new" > /dev/null); then
+    log_info pr_round_size_written "task=$id" "pr=$pr" "lines=$(jq -r .lines <<< "$json")"
+  else
+    log_warn pr_round_size_failed "task=$id" "pr=$pr" "error=gh pr edit failed"
+  fi
+}
+
 # team_allowed_paths team — the paths the human allowed a team to change against AGENTS.md's rules (agent allow)
 team_allowed_paths() { [[ -f $AGENTS_HOME/allowed/$1 ]] && cat "$AGENTS_HOME/allowed/$1"; return 0; }
 
@@ -2330,9 +2374,13 @@ review_precheck() { # coordinator task id — before a review: the round's head 
   tc=$(round_test_changes "$root" "$mb" "$head")
   meta_set "$id" ROUND_TESTS "$tc"
   [[ $tc != "code=1 added=0 "* ]] || why="the round changes code but adds no test — every change of behaviour needs its test, written first"
-  local rules rpr rbody="" human disc rtext=""   # AGENTS.md's rules on the round's own diff, with the others' reasons
+  local rules rpr rbody="" rbody_read=0 human disc rtext=""   # AGENTS.md's rules on the round's diff, with the others'
   rpr=$(trusted_prs "$root" "$branch" open url | jq -r '.[0].url // empty') || rpr=""
-  if [[ -n $rpr ]]; then rbody=$(cd "$root" && gh pr view "$rpr" --json body --jq .body) || rbody=""; fi
+  if [[ -n $rpr ]]; then
+    if rbody=$(cd "$root" && gh pr view "$rpr" --json body --jq .body); then rbody_read=1; else rbody=""; fi
+  fi
+  # the round's size into its PR description — only over a description just read: never one written over blind
+  ((rbody_read)) && pr_write_round_size "$id" "$root" "$rpr" "$rbody"
   rules=$(round_rule_issues "$root" "$mb" "$head" "$(task_field "$id" TEAM)" "$rbody")
   if [[ -n $rules ]]; then
     human=$(sed -n 's/^human: /- /p' <<< "$rules")

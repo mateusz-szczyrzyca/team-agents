@@ -697,6 +697,7 @@ tests/unit/precheck_rules.bats	--autopilot: a round that changes an existing tes
 tests/unit/pr_round_size.bats	the size block is added to a description without one, replaced in one with it, and the rest kept	source	R31	-	planned
 tests/unit/pr_round_size.bats	--autopilot: the precheck writes the round's size into its PR description, the description's text kept	blackbox	R31	-	planned
 tests/unit/pr_round_size.bats	the rounds prompt tells the team the script writes the round's size into the PR: no counting for it	source	R31	-	planned
+tests/unit/pr_round_size.bats	a PR description that cannot be read is not written over: no size this time	blackbox	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned

@@ -40,3 +40,21 @@ More." "$newer")
   grep -q "writes the round's size into the PR description" "$REPO_ROOT/prompts/tdd-rounds.md"
   grep -q "nor ask a worker" "$REPO_ROOT/prompts/tdd-rounds.md"
 }
+
+@test "a PR description that cannot be read is not written over: no size this time" {
+  echo '[{"number": 7, "url": "https://github.com/o/r/pull/7", "state": "OPEN"}]' > "$HOME/gh-prs.json"
+  printf '## Summary\nThe round.\n' > "$HOME/gh-pr-body.md"
+  touch "$HOME/gh-pr-view-fails"
+  echo "AGENT_REVIEW_GATE='true'" >> "$AGENTS_HOME/agents.conf"
+  scenario '{"lead": {"new": "team-lead-done", "resume": "team-lead-done"}, "member": {"new": "team-sleep", "resume": "done"}, "inv": {"new": "review-ready"}}'
+  agent run --team lead,member --autopilot "team task"
+  # the precheck writes the description right after reading it, before its next gh call: once a gh call follows the
+  # failed read, it has gone past that point
+  wait_grep "gh pr view https://github.com/o/r/pull/7" "$HOME/gh.log" 150
+  after() { sed -n '\|gh pr view https://github.com/o/r/pull/7|{n;p;q}' "$HOME/gh.log"; }
+  for _ in $(seq 1 150); do [[ -n $(after) ]] && break; sleep 0.2; done
+  [[ -n $(after) ]]
+  grep -q "gh pr view https://github.com/o/r/pull/7" "$HOME/gh.log"
+  ! grep -q "gh pr edit" "$HOME/gh.log" || false
+  agent stop --running > /dev/null
+}
