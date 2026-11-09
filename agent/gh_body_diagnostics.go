@@ -14,7 +14,11 @@ func PRFormatIssues(body, repoURL string) string {
 	}
 	// POSIX matching preserves Bash's leftmost-longest diagnostic selection.
 	fence := regexp.MustCompilePOSIX("^[[:space:]]*```(.*)$")
-	blank := regexp.MustCompilePOSIX("^[[:space:]]*$")
+	// isBlankFence checks if fence language is all whitespace (including Unicode).
+	// Bash's C.UTF-8 treatment of IFS includes Unicode whitespace; match it.
+	isBlankFence := func(fenceLanguage string) bool {
+		return strings.TrimSpace(fenceLanguage) == ""
+	}
 	commit := regexp.MustCompilePOSIX("(^|[^[])`([0-9a-f]{7,40})`(.*)$")
 	pr := regexp.MustCompilePOSIX("(^|[^[])`#([0-9]+)`(.*)$")
 	tdd := regexp.MustCompilePOSIX(`(^|[^a-zA-Z{])(\*\*)?(RED|GREEN)(\*\*)?:`)
@@ -24,7 +28,7 @@ func PRFormatIssues(body, repoURL string) string {
 	inFence := false
 	for _, line := range strings.Split(body, "\n") {
 		if match := fence.FindStringSubmatch(line); match != nil {
-			if !inFence && blank.MatchString(match[1]) {
+			if !inFence && isBlankFence(match[1]) {
 				issues = append(issues, "a code block without its language: open it with ```go, ```bash, ```json…")
 			}
 			inFence = !inFence
