@@ -462,6 +462,11 @@
      "name": "NotYourItem",
      "class": "Permission",
      "doc": "the item does not exist or is claimed by someone else"
+    },
+    {
+     "name": "GateNotPassed",
+     "class": "InvalidState",
+     "doc": "the item's work changed code and no gate pass of the caller's HEAD on a clean tree is recorded (agent gate)"
     }
    ]
   },

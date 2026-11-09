@@ -1861,6 +1861,26 @@ cmd_gate() {
   return "$rc"
 }
 
+# cmd__board_done_check task — the bus asks before a local agent submits an item's result (board_done): exit 0 yes;
+# exit 3 no — its work changed code since its round's base and no gate pass of its HEAD on a clean tree is recorded
+# (what to do on stdout). Any other exit is no answer: the bus lets the result through, logged.
+cmd__board_done_check() {
+  local id=${1:?usage: agent _board_done_check <task>} wt gate base tc verdict
+  wt=$(task_field "$id" WORKTREE)
+  if [[ ! -d $wt ]]; then echo "no worktree: not checked"; return 0; fi
+  gate=$(review_gate_cmd "$wt")
+  if [[ -z $gate ]]; then echo "the repository has no gate: not checked"; return 0; fi
+  base=$(round_base_ref "$id")
+  if ! tc=$(round_test_changes "$wt" "$base" HEAD); then echo "cannot compare with the round's base: not checked"; return 0; fi
+  if [[ $tc != code=1* ]]; then echo "no change of code: no gate needed"; return 0; fi
+  if verdict=$(gate_verdict "$id"); then echo "$verdict"; return 0; fi
+  echo "This item's work changes code: its gate must pass at your HEAD before you submit it — $verdict."
+  echo "Run \`agent gate\` in your worktree (commit first), then board_done again. If the gate fails for a reason outside"
+  echo "your work (a flaky test, a broken tool), submit with gate_exception: <why> — the result is then marked not verified."
+  log_info board_done_refused "task=$id"
+  return 3
+}
+
 # cmd_gate_status [task] — whether the task's last recorded gate run is a pass of its HEAD on a clean tree (exit 0)
 cmd_gate_status() {
   local id
@@ -11018,6 +11038,7 @@ main() {
     allow)   cmd_allow "$@" ;;
     gate)    cmd_gate "$@" ;;
     gate-status) cmd_gate_status "$@" ;;
+    _board_done_check) cmd__board_done_check "$@" ;;
     unpause) cmd_unpause "$@" ;;
     clean)   cmd_clean "$@" ;;
     bus)     cmd_bus "$@" ;;

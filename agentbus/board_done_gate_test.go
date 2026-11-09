@@ -27,10 +27,11 @@ func fakeAgentCheck(t *testing.T, verdict AgentCheckVerdict, out string) *[][]st
 	return calls
 }
 
-// withTask makes a test server a local agent of the task dir, with an agent command: one the gate check applies to.
-func withTask(dir string) func(*Server) {
-	return func(s *Server) { s.taskDir, s.agentCmd = dir, "agent" }
-}
+// testTaskDir is the task directory of a local test agent: its task is T1.
+const testTaskDir = "/home/x/agents/tasks/T1"
+
+// asLocalAgent makes a test server a local agent of task T1, with an agent command: one the gate check applies to.
+func asLocalAgent(s *Server) { s.taskDir, s.agentCmd = testTaskDir, "agent" }
 
 // asRemote makes a test server a remote member, working on node n.
 func asRemote(n string) func(*Server) { return func(s *Server) { s.remote = n } }
@@ -59,7 +60,7 @@ func itemOf(t *testing.T, b *Bus) BoardItem {
 
 func TestBoardDoneRefusedWithoutAGatePassOfHEAD(t *testing.T) {
 	calls := fakeAgentCheck(t, AgentCheckNo, "This item's work changes code: run agent gate")
-	b, m := claimedItem(t, withTask("/home/x/agents/tasks/T1"))
+	b, m := claimedItem(t, asLocalAgent)
 	failsWith(t, BoardDoneGateNotPassed)(m.boardDoneWith("B1", "done", ""))
 	if len(*calls) != 1 || strings.Join((*calls)[0], " ") != "_board_done_check T1" {
 		t.Fatalf("harness calls = %v, want one: _board_done_check T1", *calls)
@@ -71,7 +72,7 @@ func TestBoardDoneRefusedWithoutAGatePassOfHEAD(t *testing.T) {
 
 func TestBoardDoneWithAGatePassOfHEAD(t *testing.T) {
 	fakeAgentCheck(t, AgentCheckYes, "PASS at abc1234 on a clean tree")
-	b, m := claimedItem(t, withTask("/home/x/agents/tasks/T1"))
+	b, m := claimedItem(t, asLocalAgent)
 	chk(t).ok(toolResult(m.boardDoneWith("B1", "parser done", "")))
 	if it := itemOf(t, b); it.Status != BoardDone || it.Result != "parser done" {
 		t.Fatalf("B1 = %s %q, want done with its result", it.Status, it.Result)
@@ -80,7 +81,7 @@ func TestBoardDoneWithAGatePassOfHEAD(t *testing.T) {
 
 func TestBoardDoneWhenTheHarnessCannotAnswer(t *testing.T) {
 	fakeAgentCheck(t, AgentCheckUnknown, "")
-	b, m := claimedItem(t, withTask("/home/x/agents/tasks/T1"))
+	b, m := claimedItem(t, asLocalAgent)
 	chk(t).ok(toolResult(m.boardDoneWith("B1", "parser done", "")))
 	if it := itemOf(t, b); it.Status != BoardDone {
 		t.Fatalf("B1 is not done: a harness that cannot answer must not hold the team")
@@ -89,7 +90,7 @@ func TestBoardDoneWhenTheHarnessCannotAnswer(t *testing.T) {
 
 func TestBoardDoneGateExceptionMarksTheResultNotVerified(t *testing.T) {
 	calls := fakeAgentCheck(t, AgentCheckNo, "no gate pass")
-	b, m := claimedItem(t, withTask("/home/x/agents/tasks/T1"))
+	b, m := claimedItem(t, asLocalAgent)
 	chk(t).ok(toolResult(m.boardDoneWith("B1", "parser done", "TestFlaky fails on main too")))
 	if len(*calls) != 0 {
 		t.Fatalf("the harness was asked although the result came with an exception: %v", *calls)
@@ -103,7 +104,7 @@ func TestBoardDoneGateExceptionMarksTheResultNotVerified(t *testing.T) {
 
 func TestBoardDoneNotCheckedForARemoteMemberOrWithoutATask(t *testing.T) {
 	calls := fakeAgentCheck(t, AgentCheckNo, "no gate pass")
-	_, remote := claimedItem(t, withTask("/home/x/agents/tasks/T1"), asRemote("node2"))
+	_, remote := claimedItem(t, asLocalAgent, asRemote("node2"))
 	chk(t).ok(toolResult(remote.boardDoneWith("B1", "done", "")))
 	_, taskless := claimedItem(t)
 	chk(t).ok(toolResult(taskless.boardDoneWith("B1", "done", "")))

@@ -25,7 +25,9 @@ instead of refusing. The lock frees itself: at once when its run died, after 10 
 **The gate.** Run the repository's gate with `agent gate`, in your worktree: it runs what the repository calls its
 gate, one run at a time on the machine, and records the result for your commit. A gate result counts only from
 `agent gate`, on a committed, clean tree; `agent gate-status` says whether your HEAD has one. Do not claim a gate result
-you cannot show there.
+you cannot show there. A board item whose work changed code is submitted (board_done) only with its gate passed at
+your HEAD; when the gate fails for a reason outside your work — a flaky test, a broken tool — submit it with
+gate_exception and the reason: it is then marked not verified for whoever asked for it.
 
 **Commits.** The commit author is set for you (`{{GIT_NAME}}`): do not change `user.name` or `user.email`.
 End every commit message with exactly these trailers, after a blank line:
