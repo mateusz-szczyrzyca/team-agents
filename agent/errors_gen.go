@@ -2,6 +2,52 @@
 
 package main
 
+// ---------------------------------------------------------------- gh_read_dispatch
+
+// GHReadDispatchCause is a reason why native GitHub read filtering failed.
+type GHReadDispatchCause int
+
+const (
+	GHReadDispatchMissingRealGH        GHReadDispatchCause = iota // the real GitHub executable is missing or not executable [NotFound]
+	GHReadDispatchTemplateRefused                                 // templates cannot bypass native read filtering [InvalidArgument]
+	GHReadDispatchWebRefused                                      // web reads cannot enforce trusted-author filtering [InvalidArgument]
+	GHReadDispatchGraphQLRefused                                  // the GraphQL query requests protected content [Permission]
+	GHReadDispatchForkUntrustedRefused                            // the target author or repository is untrusted [Permission]
+	GHReadDispatchMemberRefused                                   // only the coordinator may mutate the round pull request [Permission]
+	GHReadDispatchSecondPRRefused                                 // the round already has an open pull request [Conflict]
+	GHReadDispatchWriteUnavailable                                // native write formatting is not implemented yet [InvalidState]
+	GHReadDispatchExecFailed                                      // a GitHub or query subprocess failed [Process]
+	GHReadDispatchInvalidJSON                                     // a filtered GitHub response is malformed [InvalidArgument]
+	GHReadDispatchStorage                                         // the shared state or a file could not be read or written [Storage]
+)
+
+// GHReadDispatchError is the error of native GitHub read filtering.
+type GHReadDispatchError = OpError[GHReadDispatchCause]
+
+// gHReadDispatchCauses describes the GHReadDispatchCause values (same order as the constants).
+var gHReadDispatchCauses = [...]causeInfo{
+	{"MissingRealGH", ClassNotFound},
+	{"TemplateRefused", ClassInvalidArgument},
+	{"WebRefused", ClassInvalidArgument},
+	{"GraphQLRefused", ClassPermission},
+	{"ForkUntrustedRefused", ClassPermission},
+	{"MemberRefused", ClassPermission},
+	{"SecondPRRefused", ClassConflict},
+	{"WriteUnavailable", ClassInvalidState},
+	{"ExecFailed", ClassProcess},
+	{"InvalidJSON", ClassInvalidArgument},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (GHReadDispatchCause) op() string { return "gh_read_dispatch" }
+
+// info implements opCause.
+func (c GHReadDispatchCause) info() causeInfo { return gHReadDispatchCauses[c] }
+
+// String returns the cause name.
+func (c GHReadDispatchCause) String() string { return c.info().name }
+
 // ---------------------------------------------------------------- ack
 
 // AckCause is a reason why terminal task acknowledgement failed.
