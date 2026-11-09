@@ -5358,7 +5358,9 @@ _investigator_is_busy() {
   return 1
 }
 
-# investigation_phase_pick parent phase selects an eligible investigator for phase 2 (merger) or phase 3 (reviewer).
+# investigation_phase_pick parent phase selects an eligible investigator for phase 2 (merger) or phase 3 (reviewer):
+# the merger from outside the team (a team of every investigator: one of it that finished phase 1); the reviewer
+# from outside the team while one is left, else from the team — never the merger. Drawn at random among the free.
 # Sets shell globals INVESTIGATION_PICK (chosen name or empty) and INVESTIGATION_ELIGIBLE (count of untried candidates).
 investigation_phase_pick() {
   local parent=$1 phase=$2
@@ -5372,17 +5374,24 @@ investigation_phase_pick() {
     local p1_done=()
     mapfile -t p1_done < <(jq_soft investigation_phase_parse -r '.members[] | select(.status == "done") | .agent' "$file")
     local team_raw cur_merger tried_mergers
-    team_raw=$(investigation_field "$parent" INVESTIGATION_TEAM)
+    team_raw=$(investigation_field "$parent" INVESTIGATION_TEAM); team_raw=${team_raw// /}
     cur_merger=$(investigation_field "$parent" INVESTIGATION_MERGER)
     tried_mergers=$(investigation_field "$parent" INVESTIGATION_TRIED_MERGERS)
     tried_mergers+=",${cur_merger:-}"
-    for m in "${p1_done[@]}"; do
-      [[ -n $m ]] || continue
-      [[ -n ${INVESTIGATORS_TYPE[$m]:-} ]] || continue
-      [[ ,${team_raw}, == *",$m,"* ]] || continue
-      [[ ,${tried_mergers}, == *",$m,"* ]] && continue
+    # the merger comes from outside the team: an investigator that did not take part in phase 1
+    for m in "${!INVESTIGATORS_TYPE[@]}"; do
+      [[ ,${team_raw}, == *",$m,"* || ,${tried_mergers}, == *",$m,"* ]] && continue
       eligible+=("$m")
     done
+    if ((${#eligible[@]} == 0)); then   # a team of every investigator: one of it that finished phase 1
+      for m in "${p1_done[@]}"; do
+        [[ -n $m ]] || continue
+        [[ -n ${INVESTIGATORS_TYPE[$m]:-} ]] || continue
+        [[ ,${team_raw}, == *",$m,"* ]] || continue
+        [[ ,${tried_mergers}, == *",$m,"* ]] && continue
+        eligible+=("$m")
+      done
+    fi
   elif [[ $phase -eq 3 ]]; then
     local team_raw cur_merger cur_reviewer tried_reviewers
     team_raw=$(investigation_field "$parent" INVESTIGATION_TEAM)
@@ -5390,8 +5399,14 @@ investigation_phase_pick() {
     cur_reviewer=$(investigation_field "$parent" INVESTIGATION_REVIEWER)
     tried_reviewers=$(investigation_field "$parent" INVESTIGATION_TRIED_REVIEWERS)
     tried_reviewers+=",${cur_reviewer:-}"
+    # the reviewer comes from outside the team while one is left, and is never the merger (who may be an outsider)
+    for m in "${!INVESTIGATORS_TYPE[@]}"; do
+      [[ ,${team_raw// /}, == *",$m,"* || $m == "$cur_merger" || ,${tried_reviewers}, == *",$m,"* ]] && continue
+      eligible+=("$m")
+    done
     local raw_members=()
     IFS=, read -r -a raw_members <<< "$team_raw"
+    ((${#eligible[@]} == 0)) || raw_members=()   # someone outside the team reviews: the team is not drawn from
     for m in "${raw_members[@]}"; do
       m=$(echo "$m" | tr -d ' ')
       [[ -n $m ]] || continue

@@ -148,7 +148,7 @@ EOF
   base=$(git -C "$HOME/repo" rev-parse HEAD)
   id="20261101-000004-investigation-team"
   dir="$AGENTS_HOME/tasks/$id"
-  create_parent_task "$id" 'inv,inv2' "$base"
+  create_parent_task "$id" 'inv,inv2,inv3' "$base"
 
   c1=$(git -C "$HOME/repo" commit-tree -p "$base" -m "c1" "$base^{tree}")
   c2=$(git -C "$HOME/repo" commit-tree -p "$base" -m "c2" "$base^{tree}")
@@ -183,7 +183,7 @@ EOF
   base=$(git -C "$HOME/repo" rev-parse HEAD)
   id="20261101-000005-investigation-team"
   dir="$AGENTS_HOME/tasks/$id"
-  create_parent_task "$id" 'inv,inv2' "$base"
+  create_parent_task "$id" 'inv,inv2,inv3' "$base"
 
   c1=$(git -C "$HOME/repo" commit-tree -p "$base" -m "c1" "$base^{tree}")
   c2=$(git -C "$HOME/repo" commit-tree -p "$base" -m "c2" "$base^{tree}")
@@ -226,7 +226,7 @@ EOF
   base=$(git -C "$HOME/repo" rev-parse HEAD)
   id="20261101-000006-investigation-team"
   dir="$AGENTS_HOME/tasks/$id"
-  create_parent_task "$id" 'inv,inv2' "$base"
+  create_parent_task "$id" 'inv,inv2,inv3' "$base"
 
   c1=$(git -C "$HOME/repo" commit-tree -p "$base" -m "c1" "$base^{tree}")
   c2=$(git -C "$HOME/repo" commit-tree -p "$base" -m "c2" "$base^{tree}")
@@ -457,7 +457,7 @@ META
   [ "$(field "$id" STATUS)" = failed ]
   [ -z "$(field "$id" INVESTIGATION_LEASE)" ]
   next="$id-next"
-  create_parent_task "$next" "$abandoned,$replacement" "$base"
+  create_parent_task "$next" 'inv,inv2,inv3' "$base"
   meta_put "$next" INVESTIGATION_PHASE 2
   printf '{"version":1,"members":[{"agent":"%s","status":"done","commit":"%s"}]}\n' \
     "$abandoned" "$base" > "$AGENTS_HOME/tasks/$next/phase1.json"
