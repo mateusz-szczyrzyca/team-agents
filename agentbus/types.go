@@ -109,12 +109,13 @@ const (
 	HelperRunning  HelperStatus = "running"  // the worker is working on it
 	HelperDone     HelperStatus = "done"     // the result was sent to the requester
 	HelperFailed   HelperStatus = "failed"   // the worker failed, hung or the request was cancelled
+	HelperUnclear  HelperStatus = "unclear"  // the worker could not do it without answers: its questions went to the requester
 )
 
 // Valid reports whether s is one of the defined statuses.
 func (s HelperStatus) Valid() bool {
 	switch s {
-	case HelperQueued, HelperStarting, HelperRunning, HelperDone, HelperFailed:
+	case HelperQueued, HelperStarting, HelperRunning, HelperDone, HelperFailed, HelperUnclear:
 		return true
 	}
 	return false

@@ -60,3 +60,13 @@ helper_task() { grep -lx 'KIND=helper' "$AGENTS_HOME"/tasks/*/meta.env | head -n
   grep -q "STATUS: DONE | FAILED | UNCLEAR" "$REPO_ROOT/prompts/helper.md"
   grep -q "\[unclear\]" "$REPO_ROOT/prompts/protocol.md"
 }
+
+@test "agent debug --agent counts a worker's unclear answers apart from its failures" {
+  asked unclear
+  ends_as unclear
+  w=$(meta "$(helper_task)" AGENT)
+  agent debug --agent "$w" --out "$BATS_TEST_TMPDIR/d.txt" > /dev/null
+  grep -q "== worker requests it answered with questions (unclear)" "$BATS_TEST_TMPDIR/d.txt"
+  grep -q "^H1 \[unclear" "$BATS_TEST_TMPDIR/d.txt"
+  agent stop --running > /dev/null
+}

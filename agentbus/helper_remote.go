@@ -5,8 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// workerAskedRE matches a worker's result that is its questions, not an answer: STATUS: UNCLEAR or QUESTIONS, or the
+// former shape, STATUS: FAILED with Result: UNCLEAR. A node reports only its job's state and the result's text.
+var workerAskedRE = regexp.MustCompile(`(?m)^[ \t]*(STATUS:[ \t]*(UNCLEAR|QUESTIONS)\b|Result:[ \t]*UNCLEAR\b)`)
 
 // remoteHelperResult carries the bounded terminal outcome back to the requesting local bus.
 type remoteHelperResult struct {
@@ -136,7 +141,11 @@ func finishRemoteHelper(b *Bus, id int64, result remoteHelperResult) *HelperRemo
 		if !h.Status.Open() {
 			return nil
 		}
-		summary := fmt.Sprintf("RESULT H%d [%s]: node %s; branch %s", id, result.State, result.Node, result.Branch)
+		label := string(result.State) // what the requester reads: the job's state, or unclear for the worker's questions
+		if result.State != JobStopped && workerAskedRE.MatchString(result.Result) {
+			label = string(HelperUnclear)
+		}
+		summary := fmt.Sprintf("RESULT H%d [%s]: node %s; branch %s", id, label, result.Node, result.Branch)
 		if result.PRURL != "" {
 			summary += "; PR " + result.PRURL
 		}
@@ -146,6 +155,7 @@ func finishRemoteHelper(b *Bus, id int64, result remoteHelperResult) *HelperRemo
 			return fromStorage(HelperRemoteFinishStorage, serr)
 		}
 		delivered := false // suppress a repeated local notice after a failed state save
+		unclear := false   // the worker's result was its questions: the job is done, the request unclear
 		for _, msg := range msgs {
 			if msg.ID >= st.NextID {
 				st.NextID = msg.ID + 1
@@ -161,11 +171,14 @@ func finishRemoteHelper(b *Bus, id int64, result remoteHelperResult) *HelperRemo
 				delivered = true
 				summary = event.Body
 				result.State = JobState(event.Fields["status"])
+				if HelperStatus(event.Fields["status"]) == HelperUnclear {
+					unclear, result.State = true, JobDone
+				}
 				break
 			}
 		}
 		if !delivered {
-			_, serr = b.post(st, "agentbus", h.From, EventScript{Notice: NoticeHelperResult, Body: summary, Fields: map[string]string{"request": fmt.Sprintf("H%d", id), "requesting_task": h.FromTask, "status": string(result.State), "node": result.Node, "branch": result.Branch}})
+			_, serr = b.post(st, "agentbus", h.From, EventScript{Notice: NoticeHelperResult, Body: summary, Fields: map[string]string{"request": fmt.Sprintf("H%d", id), "requesting_task": h.FromTask, "status": label, "node": result.Node, "branch": result.Branch}})
 			if serr != nil {
 				return fromStorage(HelperRemoteFinishStorage, serr)
 			}
@@ -173,6 +186,9 @@ func finishRemoteHelper(b *Bus, id int64, result remoteHelperResult) *HelperRemo
 		h.Status, h.Summary = HelperFailed, summary
 		if result.State == JobDone {
 			h.Status = HelperDone
+		}
+		if unclear || label == string(HelperUnclear) {
+			h.Status = HelperUnclear
 		}
 		return nil
 	})

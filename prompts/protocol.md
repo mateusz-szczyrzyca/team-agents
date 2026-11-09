@@ -127,8 +127,9 @@ refused unless it is defined there. Write the request for a stranger:
   (`board_claim`) and finish it (`board_done`) when the result arrives;
 - what to return, and in what form.
 
-Do not delegate what runs for minutes — a full gate, a long test run: run it yourself, in the foreground. A worker
-that answers your request is unclear is right more often than not: rewrite the request rather than send it again.
+Do not delegate what runs for minutes — a full gate, a long test run: run it yourself, in the foreground. A result
+marked [unclear] carries the worker's questions: an honest answer, not a failure — it is right more often than not.
+Answer the questions in a new request (define in its terms what was asked about) rather than send the same again.
 
 For a step requiring a capability, pass `requires=["hw:rp2350"]` (namespaces:
 `os`, `arch`, `build`, `test`, `hw`, `net`). If the local instance lacks it, its node daemon

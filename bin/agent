@@ -5982,13 +5982,14 @@ start_helper() { # request-json worker
   fi
 }
 
-helper_finish() { # worker-task-id status text — the result goes back to the requester as a message
+helper_finish() { # worker-task-id status text — the result goes back to the requester as a message; status: done,
+  # unclear (the worker's questions: the request needs answers, not a failure), anything else failed
   local id=$1 status=$2 text=$3
   local hid from
   hid=$(task_field "$id" HELPER_ID); from=$(task_field "$id" FROM_AGENT)
   [[ -n $text ]] || text="(no result — see: agent log $id)"
-  local st=done
-  [[ $status == done ]] || st=failed
+  local st
+  case $status in done | unclear) st=$status ;; *) st=failed ;; esac
   try helper_state_failed bus helper-set --dir "$BUS_DIR" --id "$hid" --status "$st" --summary "${text:0:2000}"
   notice helper_result "$(task_field "$id" AGENT)" "$from" "RESULT H$hid [$st]: ${text:0:3500}" "request=H$hid" "status=$st"
   act "$id" info "■ result H$hid sent to $from ($st)"
@@ -6467,13 +6468,18 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     if [[ $(team_done_flag "$TEAM") == true ]]; then status=done; else status=sleeping; fi
     note="forwarded to ${to}"
   elif [[ $fst == QUESTIONS ]]; then
-    if [[ ${KIND:-worker} == helper ]]; then
-      status=done; note="the worker returned questions instead of a result"
+    if [[ ${KIND:-worker} == helper ]]; then   # a worker's questions: its request is unclear, not done
+      status=done; HELPER_UNCLEAR=1; note="the worker returned questions instead of a result"
     else
       status=failed; note="the agent reported questions but they could not be saved ($qfile)"
     fi
   elif [[ $fst == INVESTIGATING ]]; then
     status=failed; note="the agent reported INVESTIGATING but no investigation was accepted"
+  elif [[ ${KIND:-worker} == helper ]] && ((RC == 0)) && { [[ $fst == UNCLEAR ]] ||
+      { [[ $fst == FAILED ]] && grep -qE '^[[:space:]]*Result:[[:space:]]*UNCLEAR' <<< "$FINAL"; }; }; then
+    # a worker that cannot do the request without answers (the former shape: FAILED with Result: UNCLEAR): its task
+    # is done — a valid answer; its request is unclear, the questions the requester's result — not a failure
+    status=done; HELPER_UNCLEAR=1; note="the worker cannot do it without answers: its questions go to the requester"
   elif ((RC != 0)) || [[ $fst == FAILED || -z ${FINAL//[[:space:]]/} ]]; then
     status=failed
     if ((RC != 0)); then
@@ -6648,7 +6654,7 @@ Answer: the investigator hung ($AGENT_HANG_STRIKES times without progress) — n
         fi ;;
     esac
   elif [[ ${KIND:-worker} == helper && $status != waiting && $status != investigating && $status != paused ]]; then
-    helper_finish "$id" "$status" "$FINAL"
+    helper_finish "$id" "$( ((${HELPER_UNCLEAR:-0})) && echo unclear || echo "$status")" "$FINAL"
   elif [[ -n ${TEAM:-} ]]; then
     team_after_run "$id" "$status" "$FINAL" "$note"
   elif [[ $status == investigating ]]; then
@@ -8822,6 +8828,11 @@ cmd_debug_agent() {
         [[ $c =~ ^H([0-9]+)\ \[failed\ →\ $name\] ]] || continue
         grep -qx "HELPER_ID=${BASH_REMATCH[1]}" "$TASKS"/*/meta.env 2> /dev/null || echo "${c:0:240}"
       done)
+      echo "${c:-(none)}"
+      # an honest question is no failure: counted apart (a model that asks looks worse when it is counted as one)
+      echo; echo "== worker requests it answered with questions (unclear)"
+      c=$(bus helper-list --dir "$BUS_DIR" --all 2> /dev/null | { grep -E "^H[0-9]+ \[unclear → $name\]" || (($? == 1)); } \
+        | cut -c1-240)   # grep's 1 is "none", not a failure
       echo "${c:-(none)}"
     fi
     for t in "${ids[@]}"; do hid=$(task_field "$t" HELPER_ID); [[ -z $hid ]] || hids+=("$hid"); done

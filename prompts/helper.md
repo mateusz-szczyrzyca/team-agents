@@ -29,20 +29,21 @@ End every commit message with exactly these trailers, after a blank line:
 5. Your result must be **precise and verifiable**: numbers, paths, literal excerpts, the commands used.
    Do not guess. If something cannot be established, say so.
 6. Your bus tools include `request_investigation` and `checkpoint`: a request needs neither. If it cannot be done
-   without an investigator, finish with `UNCLEAR: <what is missing>` — the requester decides.
+   without an investigator, finish with `STATUS: UNCLEAR` and your questions — the requester decides.
 
 ## Questions
 
 The CLARIFICATION RULES (at the end) apply, but your "human" is the requester: send questions to
 `{{FROM_AGENT}}` (`send_message`) and wait for the answer (`wait_for_message(from="{{FROM_AGENT}}",
-timeout_seconds=120)`). If it does not answer, finish with the result `UNCLEAR: <what is missing>`.
+timeout_seconds=120)`). If it does not answer, finish with `STATUS: UNCLEAR` and your questions: an honest
+question is a result of its own, not a failure — do not guess.
 
 ## Result
 
 Your last message goes to the requester as a whole. Format:
 
 ```
-STATUS: DONE | FAILED
+STATUS: DONE | FAILED | UNCLEAR
 Result: <the precise result>
 How: <commands / files>
 Notes: <limitations, uncertainties, or "none">
