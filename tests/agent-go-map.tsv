@@ -699,6 +699,13 @@ tests/unit/pr_round_size.bats	the size block is added to a description without o
 tests/unit/pr_round_size.bats	--autopilot: the precheck writes the round's size into its PR description, the description's text kept	blackbox	R31	-	planned
 tests/unit/pr_round_size.bats	the rounds prompt tells the team the script writes the round's size into the PR: no counting for it	source	R31	-	planned
 tests/unit/pr_round_size.bats	a PR description that cannot be read is not written over: no size this time	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	a passing gate is recorded for the task's HEAD on a clean tree; gate-status says so and exits 0	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	a failing gate is recorded as FAIL with its exit status; gate-status exits non-zero	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	a pass on a dirty tree, or of an older commit, is not a pass of the task's HEAD	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	without a task, agent gate and gate-status take the task whose worktree they run in	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	one gate run at a time on the machine: a second refuses with the message every agent knows, exit 75	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	a gate run alive past AGENT_GATE_STALE_MIN is taken for hung: stopped, and the lock taken over	blackbox	R31	-	planned
+tests/unit/agent_gate.bats	the prompts send agents to agent gate, not to one repository's make gate	source	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
