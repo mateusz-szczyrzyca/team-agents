@@ -656,6 +656,7 @@ tests/unit/nostatus_autopilot.bats	--autopilot: a second turn in a row without S
 tests/unit/nostatus_autopilot.bats	nostatus_autopilot: an investigator's or reviewer's task follows the --autopilot of the task that asked for it	source	R34	-	planned
 tests/unit/delegation_quality.bats	the prompt says a worker sees only the request, has no board, and how to write a request for it	blackbox	R16	-	planned
 tests/unit/delegation_quality.bats	an easy item that cannot go to a worker is the coordinator's: it hears why	blackbox	R35B	-	planned
+tests/unit/delegation_quality.bats	the protocol describes delegate's fields, and that a harness identifier needs its definition in terms	source	R31	-	planned
 tests/unit/debug_agent.bats	agent debug --agent: a summary of its tasks and their failures, and the details of its tasks only	blackbox	R53B	-	planned
 tests/unit/debug_agent.bats	agent debug --model: the tasks of every agent on that model	blackbox	R53B	-	planned
 tests/unit/debug_agent.bats	agent debug --agent --days and --last: older tasks out of the window; the details of the last ones only	blackbox	R53B	-	planned

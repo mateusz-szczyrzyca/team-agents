@@ -32,3 +32,8 @@ load helpers
   wait_grep 'Easy board item B1 (count files) is yours now' "$AGENTS_HOME/bus/messages.jsonl"
   agent stop --running > /dev/null
 }
+
+@test "the protocol describes delegate's fields, and that a harness identifier needs its definition in terms" {
+  for f in goal workdir steps returns terms; do grep -q "\`$f\`" "$REPO_ROOT/prompts/protocol.md" || { echo "no $f"; false; }; done
+  grep -q "R12" "$REPO_ROOT/prompts/protocol.md"
+}
