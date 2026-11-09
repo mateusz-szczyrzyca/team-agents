@@ -69,21 +69,23 @@ type Helper struct {
 	BaseSHA   string      `json:"base_sha,omitempty"`   // requester HEAD captured at delegation time
 	RemoteJob *JobRequest `json:"remote_job,omitempty"` // immutable verified submission retained for retry
 
-	ID         int64        `json:"id"`                    // sequential number shown as "H<ID>"
-	From       string       `json:"from"`                  // requesting agent
-	FromTask   string       `json:"from_task"`             // requesting task
-	Repo       string       `json:"repo"`                  // repository name
-	Branch     string       `json:"branch"`                // requester's branch (the helper starts from its tip)
-	Worktree   string       `json:"worktree"`              // requester's worktree (read-only for the helper)
-	Request    string       `json:"request"`               // what to do and in what form to return the result
-	Context    string       `json:"context"`               // paths, commands, what to look for
-	Status     HelperStatus `json:"status"`                // queued | starting | running | done | failed | unclear
-	Worker     string       `json:"worker,omitempty"`      // assigned worker agent
-	HelperTask string       `json:"helper_task,omitempty"` // task ID of the helper run
-	Summary    string       `json:"summary,omitempty"`     // result text sent back to the requester
-	Created    Timestamp    `json:"created"`               // when the request was made
-	AnsweredBy int64        `json:"answered_by,omitempty"` // the request that answered this unclear one's questions
-	FollowsUp  int64        `json:"follows_up,omitempty"`  // the unclear request whose questions this one answers
+	ID          int64           `json:"id"`                     // sequential number shown as "H<ID>"
+	From        string          `json:"from"`                   // requesting agent
+	FromTask    string          `json:"from_task"`              // requesting task
+	Repo        string          `json:"repo"`                   // repository name
+	Branch      string          `json:"branch"`                 // requester's branch (the helper starts from its tip)
+	Worktree    string          `json:"worktree"`               // requester's worktree (read-only for the helper)
+	Request     string          `json:"request"`                // what to do and in what form to return the result
+	Context     string          `json:"context"`                // paths, commands, what to look for
+	Status      HelperStatus    `json:"status"`                 // queued | starting | running | done | failed | unclear
+	Worker      string          `json:"worker,omitempty"`       // assigned worker agent
+	HelperTask  string          `json:"helper_task,omitempty"`  // task ID of the helper run
+	Summary     string          `json:"summary,omitempty"`      // result text sent back to the requester
+	Created     Timestamp       `json:"created"`                // when the request was made
+	Verdict     FeedbackVerdict `json:"verdict,omitempty"`      // the requester's rating of a done result
+	VerdictNote string          `json:"verdict_note,omitempty"` // what was wrong with a corrected or discarded result
+	AnsweredBy  int64           `json:"answered_by,omitempty"`  // the request that answered this unclear one's questions
+	FollowsUp   int64           `json:"follows_up,omitempty"`   // the unclear request whose questions this one answers
 }
 
 // AgentCheckVerdict is the harness's answer to a check the bus asks it (runAgentCheck).
@@ -690,6 +692,81 @@ var boardInstructionRE = regexp.MustCompile(`(?i)\bboard_(claim|done|progress|li
 	`|\bclaim\b[^.\n]{0,40}\bboard item\b` +
 	`|\b(newest|next|latest)\s+(easy\s+board|easy|board)\s+item\b`)
 
+// FeedbackVerdict is a requester's rating of a worker's done result (delegation_feedback).
+type FeedbackVerdict string
+
+const (
+	VerdictUsed      FeedbackVerdict = "used"      // the result was used as it came
+	VerdictCorrected FeedbackVerdict = "corrected" // the result was used after fixing it
+	VerdictDiscarded FeedbackVerdict = "discarded" // the result could not be used
+)
+
+// Valid reports whether v is one of the verdicts.
+func (v FeedbackVerdict) Valid() bool {
+	return v == VerdictUsed || v == VerdictCorrected || v == VerdictDiscarded
+}
+
+// delegationFeedback (MCP delegation_feedback) records the requester's rating of a worker's done result: a worker's
+// "done" said nothing of whether its result was right. A corrected or discarded result needs a note; a result is rated
+// once, by its requester.
+func (s *Server) delegationFeedback(id, verdict, note string) (string, *DelegationFeedbackError) {
+	v := FeedbackVerdict(strings.TrimSpace(verdict))
+	if !v.Valid() {
+		return "", opErr(DelegationFeedbackInvalidVerdict, "verdict %q: used, corrected or discarded", verdict)
+	}
+	note = strings.TrimSpace(note)
+	if v != VerdictUsed && note == "" {
+		return "", opErr(DelegationFeedbackMissingNote, "a %s result needs a note: what was wrong with it", v)
+	}
+	n, err := strconv.ParseInt(strings.TrimPrefix(strings.TrimSpace(id), "H"), 10, 64)
+	if err != nil || n <= 0 {
+		return "", opErr(DelegationFeedbackNoSuchRequest, "%q is no request (H<n>)", id)
+	}
+	serr := transact(s.bus, DelegationFeedbackStorage, func(st *State) *DelegationFeedbackError {
+		h := st.Helpers[helperKey(n)]
+		switch {
+		case h == nil:
+			return opErr(DelegationFeedbackNoSuchRequest, "no worker request H%d", n)
+		case h.From != s.me:
+			return opErr(DelegationFeedbackNotYours, "H%d is %s's request", n, h.From)
+		case h.Status != HelperDone:
+			return opErr(DelegationFeedbackNotDone, "H%d is %s: only a done result is rated", n, h.Status)
+		case h.Verdict != "":
+			return opErr(DelegationFeedbackAlreadyRated, "H%d was rated %s already", n, h.Verdict)
+		}
+		h.Verdict, h.VerdictNote = v, note
+		return nil
+	})
+	if serr != nil {
+		return "", serr
+	}
+	return fmt.Sprintf("H%d rated %s.", n, v), nil
+}
+
+// rated — " rated <verdict>" for a rated result (after its state in a listing), else nothing
+func rated(h *Helper) string {
+	if h.Verdict == "" {
+		return ""
+	}
+	return " rated " + string(h.Verdict)
+}
+
+// unratedResults lists the done worker results of the agent's current task it has not rated, sorted (H<n>).
+func unratedResults(st *State, me, task string) []string {
+	var ids []int64
+	for _, h := range st.Helpers {
+		if h.From == me && h.FromTask == task && h.Status == HelperDone && h.Verdict == "" {
+			ids = append(ids, h.ID)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = fmt.Sprintf("H%d", id)
+	}
+	return out
+}
+
 // DelegateFields is a worker request as the delegate tool takes it: the worker sees nothing but what it says.
 type DelegateFields struct {
 	Goal      string   // what the work is for, in a sentence
@@ -727,6 +804,12 @@ func (s *Server) delegateFields(f DelegateFields) (string, *DelegateError) {
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 			return "", opErr(DelegateWorkdirInvalid, "workdir %s is not an existing directory", dir)
 		}
+	}
+	if st, serr := s.bus.load(); serr != nil {
+		return "", fromStorage(DelegateStorage, serr)
+	} else if unrated := unratedResults(st, s.me, s.info.Task); len(unrated) > 0 {
+		return "", opErr(DelegateUnratedResult, "first rate your task's worker results — %s: delegation_feedback(id, "+
+			"verdict: used | corrected | discarded, note: what was wrong, for the last two)", strings.Join(unrated, ", "))
 	}
 	var follows int64
 	var first *Helper
@@ -869,7 +952,7 @@ func (s *Server) delegationStatus() (string, *DelegationStatusError) {
 			if h.Worker != "" {
 				w = " → " + h.Worker
 			}
-			fmt.Fprintf(&sb, "- H%d [%s%s] from %s: %s\n", h.ID, h.Status, w, h.From, trunc(h.Request, 120))
+			fmt.Fprintf(&sb, "- H%d [%s%s]%s from %s: %s\n", h.ID, h.Status, w, rated(h), h.From, trunc(h.Request, 120))
 			if h.Summary != "" && h.FromTask == s.info.Task {
 				fmt.Fprintf(&sb, "    result: %s\n", trunc(h.Summary, 300))
 			}
@@ -970,6 +1053,10 @@ func collabToolDefs(inTeam bool, tier Tier) []map[string]any {
 					"answers":    str("With answers_to: the answers to its worker's questions"),
 				}, "goal", "workdir", "steps", "returns")),
 			tool("delegation_status", "Status of your worker requests and of the queue.", obj(map[string]any{})),
+			tool("delegation_feedback", "Rate a worker's done result: used, corrected (used after fixing it) or "+
+				"discarded. Your next request waits until your task's done results are rated.",
+				obj(map[string]any{"id": str("The request, e.g. H12"), "verdict": str("used | corrected | discarded"),
+					"note": str("For corrected or discarded: what was wrong")}, "id", "verdict")),
 		)
 	}
 	return defs
@@ -1067,7 +1154,7 @@ func cmdHelperList(args []string) {
 			if h.Worker != "" {
 				w = " → " + h.Worker
 			}
-			out.printf("H%d [%s%s] from %s (%s): %s\n", h.ID, h.Status, w, h.From, h.FromTask, trunc(h.Request, 100))
+			out.printf("H%d [%s%s]%s from %s (%s): %s\n", h.ID, h.Status, w, rated(h), h.From, h.FromTask, trunc(h.Request, 100))
 		}
 		if n == 0 {
 			out.println("No worker requests.")

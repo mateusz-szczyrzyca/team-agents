@@ -870,13 +870,52 @@ func (c BoardReleaseCause) info() causeInfo { return boardReleaseCauses[c] }
 // String returns the cause name.
 func (c BoardReleaseCause) String() string { return c.info().name }
 
+// ---------------------------------------------------------------- delegation_feedback
+
+// DelegationFeedbackCause is a reason why the MCP tool delegation_feedback failed.
+type DelegationFeedbackCause int
+
+const (
+	DelegationFeedbackInvalidVerdict DelegationFeedbackCause = iota // the verdict is none of used, corrected, discarded [InvalidArgument]
+	DelegationFeedbackMissingNote                                   // a corrected or discarded result needs a note: what was wrong [InvalidArgument]
+	DelegationFeedbackNoSuchRequest                                 // no worker request has that ID [NotFound]
+	DelegationFeedbackNotYours                                      // the request is another requester's [Permission]
+	DelegationFeedbackNotDone                                       // the request has no done result to rate (an unclear one is answered, not rated) [InvalidState]
+	DelegationFeedbackAlreadyRated                                  // the result was rated already [Conflict]
+	DelegationFeedbackStorage                                       // the shared state or a file could not be read or written [Storage]
+)
+
+// DelegationFeedbackError is the error of the MCP tool delegation_feedback.
+type DelegationFeedbackError = OpError[DelegationFeedbackCause]
+
+// delegationFeedbackCauses describes the DelegationFeedbackCause values (same order as the constants).
+var delegationFeedbackCauses = [...]causeInfo{
+	{"InvalidVerdict", ClassInvalidArgument},
+	{"MissingNote", ClassInvalidArgument},
+	{"NoSuchRequest", ClassNotFound},
+	{"NotYours", ClassPermission},
+	{"NotDone", ClassInvalidState},
+	{"AlreadyRated", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (DelegationFeedbackCause) op() string { return "delegation_feedback" }
+
+// info implements opCause.
+func (c DelegationFeedbackCause) info() causeInfo { return delegationFeedbackCauses[c] }
+
+// String returns the cause name.
+func (c DelegationFeedbackCause) String() string { return c.info().name }
+
 // ---------------------------------------------------------------- delegate
 
 // DelegateCause is a reason why the MCP tool delegate failed.
 type DelegateCause int
 
 const (
-	DelegateAnswersToInvalid    DelegateCause = iota // answers_to names no unclear request of the requester's own that is still unanswered [InvalidState]
+	DelegateUnratedResult       DelegateCause = iota // the requester's task has a done worker result it has not rated (delegation_feedback) [InvalidState]
+	DelegateAnswersToInvalid                         // answers_to names no unclear request of the requester's own that is still unanswered [InvalidState]
 	DelegateMissingField                             // a required field of the request (goal, workdir, steps, returns) is empty [InvalidArgument]
 	DelegateWorkdirInvalid                           // the request's working directory is not absolute, or (for a local agent) not an existing directory [InvalidArgument]
 	DelegateUndefinedTerm                            // a harness identifier (a round, a board item, a request) in the request has no definition in its terms [InvalidArgument]
@@ -893,6 +932,7 @@ type DelegateError = OpError[DelegateCause]
 
 // delegateCauses describes the DelegateCause values (same order as the constants).
 var delegateCauses = [...]causeInfo{
+	{"UnratedResult", ClassInvalidState},
 	{"AnswersToInvalid", ClassInvalidState},
 	{"MissingField", ClassInvalidArgument},
 	{"WorkdirInvalid", ClassInvalidArgument},

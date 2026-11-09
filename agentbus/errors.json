@@ -488,10 +488,52 @@
    ]
   },
   {
+   "type": "DelegationFeedback",
+   "op": "delegation_feedback",
+   "what": "the MCP tool delegation_feedback",
+   "causes": [
+    {
+     "name": "InvalidVerdict",
+     "class": "InvalidArgument",
+     "doc": "the verdict is none of used, corrected, discarded"
+    },
+    {
+     "name": "MissingNote",
+     "class": "InvalidArgument",
+     "doc": "a corrected or discarded result needs a note: what was wrong"
+    },
+    {
+     "name": "NoSuchRequest",
+     "class": "NotFound",
+     "doc": "no worker request has that ID"
+    },
+    {
+     "name": "NotYours",
+     "class": "Permission",
+     "doc": "the request is another requester's"
+    },
+    {
+     "name": "NotDone",
+     "class": "InvalidState",
+     "doc": "the request has no done result to rate (an unclear one is answered, not rated)"
+    },
+    {
+     "name": "AlreadyRated",
+     "class": "Conflict",
+     "doc": "the result was rated already"
+    }
+   ]
+  },
+  {
    "type": "Delegate",
    "op": "delegate",
    "what": "the MCP tool delegate",
    "causes": [
+    {
+     "name": "UnratedResult",
+     "class": "InvalidState",
+     "doc": "the requester's task has a done worker result it has not rated (delegation_feedback)"
+    },
     {
      "name": "AnswersToInvalid",
      "class": "InvalidState",

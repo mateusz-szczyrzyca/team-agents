@@ -8829,6 +8829,12 @@ cmd_debug_agent() {
         grep -qx "HELPER_ID=${BASH_REMATCH[1]}" "$TASKS"/*/meta.env 2> /dev/null || echo "${c:0:240}"
       done)
       echo "${c:-(none)}"
+      # what its done results were worth, as the requesters rated them (delegation_feedback)
+      echo; echo "== its results, as their requesters rated them"
+      c=$(bus helper-list --dir "$BUS_DIR" --all 2> /dev/null | { grep -E "^H[0-9]+ \[done → $name\]" || (($? == 1)); } \
+        | sed -E 's/^H[0-9]+ \[[^]]*\]( rated ([a-z]+))?.*/\2/; s/^$/unrated/' | sort | uniq -c \
+        | awk '{ printf "%s%s %d", (NR > 1 ? ", " : ""), $2, $1 } END { if (NR) print "" }')
+      echo "${c:-(none)}"
       # an honest question is no failure: counted apart (a model that asks looks worse when it is counted as one)
       echo; echo "== worker requests it answered with questions (unclear)"
       c=$(bus helper-list --dir "$BUS_DIR" --all 2> /dev/null | { grep -E "^H[0-9]+ \[unclear → $name\]" || (($? == 1)); } \

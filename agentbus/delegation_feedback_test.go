@@ -8,22 +8,22 @@ package main
 
 import "testing"
 
-// doneResult — H<id>, a done result of task's request by from
-func doneResult(t *testing.T, b *Bus, id int64, from, task string) {
+// doneResult — H<id>, a done result of n1's request in task
+func doneResult(t *testing.T, b *Bus, id int64, task string) {
 	t.Helper()
 	mustWith(t, b, func(st *State) {
 		if st.NextHelperID < id {
 			st.NextHelperID = id
 		}
-		st.Helpers[helperKey(id)] = &Helper{ID: id, From: from, FromTask: task, Worker: "w", Request: "Goal: count",
+		st.Helpers[helperKey(id)] = &Helper{ID: id, From: "n1", FromTask: task, Worker: "w", Request: "Goal: count",
 			Status: HelperDone, Summary: "STATUS: DONE\nResult: 42"}
 	})
 }
 
 func TestDelegationFeedbackRecordsAVerdict(t *testing.T) {
 	b := newBus(t)
-	doneResult(t, b, 1, "n1", "task-n1")
-	doneResult(t, b, 2, "n1", "task-n1")
+	doneResult(t, b, 1, "task-n1")
+	doneResult(t, b, 2, "task-n1")
 	n := server(b, "n1")
 	chk(t).ok(toolResult(n.delegationFeedback("H1", "used", "")))
 	chk(t).ok(toolResult(n.delegationFeedback("H2", "corrected", "the count left out hidden files")))
@@ -37,7 +37,7 @@ func TestDelegationFeedbackRecordsAVerdict(t *testing.T) {
 
 func TestDelegationFeedbackRefusals(t *testing.T) {
 	b := newBus(t)
-	doneResult(t, b, 1, "n1", "task-n1")
+	doneResult(t, b, 1, "task-n1")
 	mustWith(t, b, func(st *State) {
 		st.Helpers[helperKey(2)] = &Helper{ID: 2, From: "n1", FromTask: "task-n1", Status: HelperUnclear}
 	})
@@ -53,8 +53,8 @@ func TestDelegationFeedbackRefusals(t *testing.T) {
 
 func TestDelegateWaitsForTheRatingsOfItsTasksResults(t *testing.T) {
 	b := newBus(t)
-	doneResult(t, b, 1, "n1", "task-n1")
-	doneResult(t, b, 2, "n1", "an-earlier-task") // made before ratings existed, or in another task: no hold
+	doneResult(t, b, 1, "task-n1")
+	doneResult(t, b, 2, "an-earlier-task") // made before ratings existed, or in another task: no hold
 	n := server(b, "n1")
 	failsWith(t, DelegateUnratedResult)(n.delegateFields(fields(t.TempDir())))
 	chk(t).ok(toolResult(n.delegationFeedback("H1", "discarded", "the wrong directory was counted")))

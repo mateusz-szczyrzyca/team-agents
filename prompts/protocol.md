@@ -132,6 +132,10 @@ marked [unclear] carries the worker's questions: an honest answer, not a failure
 Answer the questions in a new request with `answers_to` (the unclear request, e.g. H12) and `answers`: its worker
 gets your first request, the questions and your answers. Define in its terms what was asked about.
 
+Rate every done result with `delegation_feedback` — used, corrected (used after fixing it: say what was wrong) or
+discarded (say why) — once you have checked it. Your next request waits until your task's done results are rated:
+the ratings, not the workers' own DONE, show which models can be trusted with what.
+
 For a step requiring a capability, pass `requires=["hw:rp2350"]` (namespaces:
 `os`, `arch`, `build`, `test`, `hw`, `net`). If the local instance lacks it, its node daemon
 routes the request remotely. Commit and push your branch to `origin` first; the job uses
