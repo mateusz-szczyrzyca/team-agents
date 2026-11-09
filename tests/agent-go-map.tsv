@@ -710,6 +710,11 @@ tests/unit/board_done_gate.bats	work without a change of code needs no gate: exi
 tests/unit/board_done_gate.bats	a change of code without a gate pass of HEAD is refused (exit 3) and says what to do; after agent gate, passes	blackbox	R31	-	planned
 tests/unit/board_done_gate.bats	a repository without a gate is not held: exit 0	blackbox	R31	-	planned
 tests/unit/board_done_gate.bats	the protocol tells agents that a code item's result needs its gate, and when gate_exception is right	source	R31	-	planned
+tests/unit/investigation_roles.bats	a team of one: its merger is one of the three others, its reviewer one of the two left	source	R31	-	planned
+tests/unit/investigation_roles.bats	a team of two: its merger is one of the two others, its reviewer the last one	source	R31	-	planned
+tests/unit/investigation_roles.bats	a team of three: its merger is the last investigator, its reviewer one of the team	source	R31	-	planned
+tests/unit/investigation_roles.bats	a team of every investigator: its merger comes from the team, its reviewer never the merger	source	R31	-	planned
+tests/unit/investigation_roles.bats	an outsider that is busy is waited for: no team member takes its place	source	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
