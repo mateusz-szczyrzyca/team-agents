@@ -129,7 +129,8 @@ refused unless it is defined there. Write the request for a stranger:
 
 Do not delegate what runs for minutes — a full gate, a long test run: run it yourself, in the foreground. A result
 marked [unclear] carries the worker's questions: an honest answer, not a failure — it is right more often than not.
-Answer the questions in a new request (define in its terms what was asked about) rather than send the same again.
+Answer the questions in a new request with `answers_to` (the unclear request, e.g. H12) and `answers`: its worker
+gets your first request, the questions and your answers. Define in its terms what was asked about.
 
 For a step requiring a capability, pass `requires=["hw:rp2350"]` (namespaces:
 `os`, `arch`, `build`, `test`, `hw`, `net`). If the local instance lacks it, its node daemon

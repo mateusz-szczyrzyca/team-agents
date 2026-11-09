@@ -493,6 +493,11 @@
    "what": "the MCP tool delegate",
    "causes": [
     {
+     "name": "AnswersToInvalid",
+     "class": "InvalidState",
+     "doc": "answers_to names no unclear request of the requester's own that is still unanswered"
+    },
+    {
      "name": "MissingField",
      "class": "InvalidArgument",
      "doc": "a required field of the request (goal, workdir, steps, returns) is empty"

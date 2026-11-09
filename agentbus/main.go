@@ -957,7 +957,8 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 		return toolResult(s.boardProgress(a.str("id"), a.str("note")))
 	case "delegate":
 		return toolResult(s.delegateFields(DelegateFields{Goal: a.str("goal"), Workdir: a.str("workdir"), Steps: a.str("steps"),
-			Returns: a.str("returns"), Terms: a.str("terms"), Requires: a.strings("requires")}))
+			Returns: a.str("returns"), Terms: a.str("terms"), Requires: a.strings("requires"),
+			AnswersTo: a.str("answers_to"), Answers: a.str("answers")}))
 	case "delegation_status":
 		return toolResult(s.delegationStatus())
 	}

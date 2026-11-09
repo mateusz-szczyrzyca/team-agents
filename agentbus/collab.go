@@ -77,11 +77,13 @@ type Helper struct {
 	Worktree   string       `json:"worktree"`              // requester's worktree (read-only for the helper)
 	Request    string       `json:"request"`               // what to do and in what form to return the result
 	Context    string       `json:"context"`               // paths, commands, what to look for
-	Status     HelperStatus `json:"status"`                // queued | starting | running | done | failed
+	Status     HelperStatus `json:"status"`                // queued | starting | running | done | failed | unclear
 	Worker     string       `json:"worker,omitempty"`      // assigned worker agent
 	HelperTask string       `json:"helper_task,omitempty"` // task ID of the helper run
 	Summary    string       `json:"summary,omitempty"`     // result text sent back to the requester
 	Created    Timestamp    `json:"created"`               // when the request was made
+	AnsweredBy int64        `json:"answered_by,omitempty"` // the request that answered this unclear one's questions
+	FollowsUp  int64        `json:"follows_up,omitempty"`  // the unclear request whose questions this one answers
 }
 
 // AgentCheckVerdict is the harness's answer to a check the bus asks it (runAgentCheck).
@@ -690,12 +692,14 @@ var boardInstructionRE = regexp.MustCompile(`(?i)\bboard_(claim|done|progress|li
 
 // DelegateFields is a worker request as the delegate tool takes it: the worker sees nothing but what it says.
 type DelegateFields struct {
-	Goal     string   // what the work is for, in a sentence
-	Workdir  string   // the absolute path of the directory the worker works in
-	Steps    string   // the exact commands or actions, one a line
-	Returns  string   // what to return, and in what form
-	Terms    string   // definitions, "term: meaning" one a line, of what the worker cannot know
-	Requires []string // capabilities the worker's node must have
+	Goal      string   // what the work is for, in a sentence
+	Workdir   string   // the absolute path of the directory the worker works in
+	Steps     string   // the exact commands or actions, one a line
+	Returns   string   // what to return, and in what form
+	Terms     string   // definitions, "term: meaning" one a line, of what the worker cannot know
+	Requires  []string // capabilities the worker's node must have
+	AnswersTo string   // "H<n>": the requester's unclear request whose worker's questions this one answers
+	Answers   string   // the answers to those questions (required with AnswersTo)
 }
 
 // harnessIDRE matches the harness's identifiers — a round (R12, R10B), a board item (B80), a request (H1091) — which
@@ -724,9 +728,28 @@ func (s *Server) delegateFields(f DelegateFields) (string, *DelegateError) {
 			return "", opErr(DelegateWorkdirInvalid, "workdir %s is not an existing directory", dir)
 		}
 	}
+	var follows int64
+	var first *Helper
+	if at := strings.TrimSpace(f.AnswersTo); at != "" {
+		if strings.TrimSpace(f.Answers) == "" {
+			return "", opErr(DelegateMissingField, "answers_to %s needs answers: the answers to its worker's questions", at)
+		}
+		n, err := strconv.ParseInt(strings.TrimPrefix(at, "H"), 10, 64)
+		if err != nil || n <= 0 {
+			return "", opErr(DelegateAnswersToInvalid, "answers_to %q is no request (H<n>)", at)
+		}
+		st, serr := s.bus.load()
+		if serr != nil {
+			return "", fromStorage(DelegateStorage, serr)
+		}
+		if first = st.Helpers[helperKey(n)]; answerable(first, s.me) != "" {
+			return "", opErr(DelegateAnswersToInvalid, "H%d: %s", n, answerable(first, s.me))
+		}
+		follows = n
+	}
 	var undefined []string
 	seen := map[string]bool{}
-	for _, id := range harnessIDRE.FindAllString(f.Goal+"\n"+f.Steps+"\n"+f.Returns, -1) {
+	for _, id := range harnessIDRE.FindAllString(f.Goal+"\n"+f.Steps+"\n"+f.Returns+"\n"+f.Answers, -1) {
 		if seen[id] {
 			continue
 		}
@@ -745,10 +768,37 @@ func (s *Server) delegateFields(f DelegateFields) (string, *DelegateError) {
 	if terms := strings.TrimSpace(f.Terms); terms != "" {
 		context += "\n\nTerms:\n" + terms
 	}
-	return s.delegate(request, context, f.Requires...)
+	if first != nil {
+		context += fmt.Sprintf("\n\nThis request follows H%d, which its worker could not do without answers.\n"+
+			"H%d's request:\n%s\n\nIts worker's questions:\n%s\n\nThe answers:\n%s", follows, follows,
+			trunc(first.Request, 2000), trunc(first.Summary, 2000), strings.TrimSpace(f.Answers))
+	}
+	return s.delegateWith(request, context, follows, f.Requires...)
+}
+
+// answerable says why request h cannot be answered by requester me (empty: it can): it must be me's own, unclear,
+// and not answered yet.
+func answerable(h *Helper, me string) string {
+	switch {
+	case h == nil:
+		return "no such request"
+	case h.From != me:
+		return "not your request"
+	case h.Status != HelperUnclear:
+		return fmt.Sprintf("its state is %s, not unclear", h.Status)
+	case h.AnsweredBy != 0:
+		return fmt.Sprintf("answered already, by H%d", h.AnsweredBy)
+	}
+	return ""
 }
 
 func (s *Server) delegate(request, context string, requires ...string) (string, *DelegateError) {
+	return s.delegateWith(request, context, 0, requires...)
+}
+
+// delegateWith is delegate for a request that may answer an unclear one (follows: its ID, or 0): checked again, and
+// both linked, in the transaction that writes the new request.
+func (s *Server) delegateWith(request, context string, follows int64, requires ...string) (string, *DelegateError) {
 	if s.tier == TierWorker || s.role == RoleInvestigator {
 		return "", opErr(DelegateNotNormalTier, "delegate is for normal models")
 	}
@@ -780,8 +830,16 @@ func (s *Server) delegate(request, context string, requires ...string) (string, 
 	err := transact(s.bus, DelegateStorage, func(st *State) *DelegateError {
 		s.touch(st)
 		st.NextHelperID++
+		if follows != 0 {
+			first := st.Helpers[helperKey(follows)]
+			if why := answerable(first, s.me); why != "" {
+				return opErr(DelegateAnswersToInvalid, "H%d: %s", follows, why)
+			}
+			first.AnsweredBy = st.NextHelperID
+		}
 		h := &Helper{ID: st.NextHelperID, From: s.me, FromTask: s.info.Task, Repo: s.info.Repo, Branch: s.info.Branch,
-			Worktree: s.info.Worktree, Request: request, Context: strings.TrimSpace(context), Status: HelperQueued, Created: Now(), Requires: caps, BaseSHA: sha}
+			Worktree: s.info.Worktree, Request: request, Context: strings.TrimSpace(context), Status: HelperQueued, Created: Now(), Requires: caps, BaseSHA: sha,
+			FollowsUp: follows}
 		st.Helpers[helperKey(h.ID)] = h
 		id = h.ID
 		_, serr := s.bus.post(st, s.me, "all", EventWorkerRequest{ID: h.ID, Request: request})
@@ -907,7 +965,9 @@ func collabToolDefs(inTeam bool, tier Tier) []map[string]any {
 					"returns": str("What to return, and in what form"),
 					"terms": str("Definitions, one a line (\"term: meaning\"), of what the worker cannot know: a round, board " +
 						"item or request identifier (R12, B80, H1091) used above must be defined here"),
-					"requires": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Required declared capabilities; push your commit first when this needs another node"},
+					"requires":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Required declared capabilities; push your commit first when this needs another node"},
+					"answers_to": str("Only when this request answers a worker's questions: the unclear request, e.g. H12"),
+					"answers":    str("With answers_to: the answers to its worker's questions"),
 				}, "goal", "workdir", "steps", "returns")),
 			tool("delegation_status", "Status of your worker requests and of the queue.", obj(map[string]any{})),
 		)
