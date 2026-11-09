@@ -109,7 +109,7 @@ hold() {
 @test "every agent's prompt knows the busy message and what to do, and AGENTS.md describes the lock" {
   grep -q "another tests are running now - please wait before you try" "$REPO_ROOT/prompts/protocol.md"
   grep -q "Never get around it" "$REPO_ROOT/prompts/protocol.md"
-  grep -q "GATE_WAIT=1 make gate" "$REPO_ROOT/prompts/protocol.md"
+  grep -q "agent gate --wait" "$REPO_ROOT/prompts/protocol.md"   # waiting in line, in any repository
   grep -q "tools/test-lock.sh" "$REPO_ROOT/AGENTS.md"
 }
 
