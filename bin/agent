@@ -5820,7 +5820,7 @@ start_investigation() { # request-json (status "starting") investigator-name
             "TYPE=${INVESTIGATORS_TYPE[$iname]}" "MODEL=${INVESTIGATORS_MODEL[$iname]:-}" "EXTRA_ARGS=${INVESTIGATORS_EXTRA_ARGS[$iname]:-}" \
             "REPO_NAME=$p_repo" "REPO_ROOT=$p_root" "WORKTREE=$wt" "BRANCH=$branch" \
             "BASE=$p_branch" "SESSION_ID=$sid" "ROUND=0" "ROUND_ID=$(task_round_id "$from_task")" "RUN=0" "STATUS=new" \
-            "CREATED=$(date -Is)"; do
+            "CREATED=$(date -Is)" "REQUESTER_PR=$(run_pr "$from_task")"; do
     meta_set "$id" "${kv%%=*}" "${kv#*=}"
   done
   if [[ $kind == review ]]; then
@@ -5979,7 +5979,7 @@ start_helper() { # request-json worker
             "FROM_AGENT=$from" "PARENT_WORKTREE=$p_wt" "TYPE=${AGENT_TYPE[$w]}" "MODEL=${AGENT_MODEL[$w]:-}" \
             "EXTRA_ARGS=${AGENT_EXTRA_ARGS[$w]:-}" "REPO_NAME=$p_repo" "REPO_ROOT=$p_root" "WORKTREE=$wt" \
             "BRANCH=$branch" "BASE=$p_branch" "SESSION_ID=$sid" "ROUND=0" "ROUND_ID=$(task_round_id "$from_task")" \
-            "RUN=0" "STATUS=new" "CREATED=$(date -Is)"; do
+            "RUN=0" "STATUS=new" "CREATED=$(date -Is)" "REQUESTER_PR=$(run_pr "$from_task")"; do
     meta_set "$id" "${kv%%=*}" "${kv#*=}"
   done
   bus helper-set --dir "$BUS_DIR" --id "$hid" --status running --task "$id"
@@ -6222,7 +6222,9 @@ cmd__runner() {
   RUNNER_ID=$id RUNNER_DONE=0 RUNNER_DELIVERED=1
   echo $$ > "$dir/runner.pid"
   rm -f "$dir/acked" "$dir/long-run"
-  act "$id" info "▶ run $n ($mode)"
+  local sub_pr   # the run's marker: the round and the PR it goes into (agent tokens --round sums sub-rounds by it)
+  sub_pr=$(run_pr "$id")
+  act "$id" info "▶ run $n ($mode) round $(task_round_id "$id") pr ${sub_pr:+#}${sub_pr:--}"
   [[ $mode != fresh ]] || act "$id" info "■ fresh session: $FRESH_WHY"
   AGENT_RUN_LONG_AT=0   # the steps after which a team member's run is long (the normalizer marks it)
   AGENT_RUN_HARD_AT=0   # the steps at which the watchdog ends a team member's run
@@ -9001,6 +9003,19 @@ task_round_id() {
   printf '%s' "${r:-?}"
 }
 
+# run_pr task — the PR a run of the task goes into, its sub-round: its own (PR_NUMBER), else its team's round PR
+# (round_pr_of_team), else the round's PR it carries (ROUND_PR), else — a worker, an investigation — the PR of the task
+# it was made for when it was made (REQUESTER_PR); "" before there is one
+run_pr() {
+  local p team
+  p=$(task_field "$1" PR_NUMBER)
+  team=$(task_field "$1" TEAM)
+  [[ -n $p || -z $team ]] || p=$(round_pr_of_team "$team")
+  [[ -n $p ]] || p=$(task_field "$1" ROUND_PR)
+  [[ -n $p ]] || p=$(task_field "$1" REQUESTER_PR)
+  printf '%s' "$p"
+}
+
 # job_round_id job text — the round of a node job's task: from its text, as agent run reads it on the lead; a text the
 # lead's agent run would refuse (an older lead; a resumed remote member's text with the human's own Round: line) is
 # no reason to refuse the job: its round is "?", and the log says why
@@ -9070,11 +9085,31 @@ task_role() {
   if [[ $id == "$lead" ]]; then echo coordinator; else echo member; fi
 }
 
+# run_subrounds task runs — the task's usage per run, labelled with the run's sub-round from its start line's marker
+# ("▶ run N (mode) round <id> pr #<n>" or "pr -"): "<id>/#<n>", "<id>/(no PR)" before a PR, "<the task's round>/?"
+# for a run without a marker (made before the marker, or usage before the first run). runs: runs_usage's rows. One
+# line per run: label, in, cached, out, cost (tab-separated)
+run_subrounds() {
+  local id=$1 runs=$2 base markers n l run steps in cached out cost mode
+  local -A label=()
+  base=$(task_field "$id" ROUND_ID); base=${base:-?}
+  markers=$(jq_soft run_markers_unreadable -r 'select(.k == "info" and ((.t // "") | test("^▶ run [0-9]+")))
+      | (.t | capture("^▶ run (?<n>[0-9]+)").n) as $n
+      | ((.t | capture(" round (?<r>[^ ]+) pr (?<p>#[0-9]+|-)$")) // null) as $m
+      | select($m != null) | [$n, $m.r + "/" + (if $m.p == "-" then "(no PR)" else $m.p end)] | @tsv' \
+    < "$TASKS/$id/activity.jsonl")
+  while IFS=$'\t' read -r n l; do [[ -z $n ]] || label[$n]=$l; done <<< "$markers"
+  while IFS=$'\t' read -r run steps in cached out cost mode; do
+    [[ -n $run ]] || continue
+    printf '%s\t%s\t%s\t%s\t%s\n' "${label[$run]:-$base/?}" "$in" "$cached" "$out" "$cost"
+  done <<< "$runs"
+}
+
 # tokens_table [--sums] task… — agent tokens' table: per task its runs' sums (in, cached, out, cost; a task without
 # usage says so), then its ROLE and ROUND ("-": a task made before rounds were recorded), and the total; --sums: the
-# sums per role and per model before the total
+# sums per role, per model and per sub-round (run_subrounds) before the total
 tokens_table() {
-  local sums=0 id usage row in cached out cost role round all=""
+  local sums=0 id usage runs row in cached out cost role round all="" subs=""
   [[ ${1:-} != --sums ]] || { sums=1; shift; }
   local -A TOKENS_LEADS=()
   printf '%-40s %-24s %-13s %12s %12s %10s %10s %-13s %s\n' TASK AGENT KIND IN CACHED OUT COST ROLE ROUND
@@ -9082,7 +9117,9 @@ tokens_table() {
     role=$(task_role "$id"); round=$(task_field "$id" ROUND_ID); round=${round:--}
     usage=""
     if [[ -f $TASKS/$id/activity.jsonl ]]; then   # the sum of its runs (runs_usage — codex's per-run difference included)
-      usage=$(runs_usage "$id" | awk -F'\t' '{i += $3; c += $4; o += $5; k += $6} END {if (i + o > 0) printf "%d\t%d\t%d\t%.6f", i, c, o, k}')
+      runs=$(runs_usage "$id")
+      usage=$(awk -F'\t' '{i += $3; c += $4; o += $5; k += $6} END {if (i + o > 0) printf "%d\t%d\t%d\t%.6f", i, c, o, k}' <<< "$runs")
+      if ((sums)) && [[ -n $usage ]]; then subs+=$(run_subrounds "$id" "$runs")$'\n'; fi
     fi
     if [[ -z $usage ]]; then
       printf '%-40s %-24s %-13s %-47s %-13s %s\n' "$id" "$(task_field "$id" AGENT)" "$(task_field "$id" KIND)" "no usage reported" "$role" "$round"
@@ -9100,6 +9137,9 @@ tokens_table() {
             'map(select(.[$k] == $v)) | [(map(.in) | add), (map(.cached) | add), (map(.out) | add), (map(.cost) | add)] | @tsv' <<< "$all" \
             | { IFS=$'\t' read -r in cached out cost; printf '%-40s %-24s %-13s %12s %12s %10s %10.4f\n' "$row" "" "" "$in" "$cached" "$out" "$cost"; }
         done
+    awk -F'\t' 'NF >= 5 {i[$1] += $2; c[$1] += $3; o[$1] += $4; k[$1] += $5}
+      END {for (l in i) printf "%-40s %-24s %-13s %12d %12d %10d %10.4f\n", "sub-round " l, "", "", i[l], c[l], o[l], k[l]}' <<< "$subs" \
+      | sort
   fi
   jq -rs '[(map(.in) | add // 0), (map(.cached) | add // 0), (map(.out) | add // 0), (map(.cost) | add // 0)] | @tsv' <<< "$all" \
     | { IFS=$'\t' read -r in cached out cost; printf '%-40s %-24s %-13s %12s %12s %10s %10.4f\n' total "" "" "$in" "$cached" "$out" "$cost"; }

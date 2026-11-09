@@ -25,7 +25,8 @@ act() { jq -nc --arg t "$2" '{ts: "2026-11-09 10:00:00", k: "info", t: $t}' >> "
   agent _wake "$t"
   wait_status "$t" done
   [ "$(starts "$t" | sed -n 2p)" = '▶ run 2 (resume) round R12/A pr #74' ]
-  # the parsers of the start line still read it: two runs, the second a resume
+  # the parsers of the start line still read it: two runs, the second a resume (with usage: the fake CLI reports none)
+  act "$t" 'usage: in 10 (cached 0), out 1'
   run agent tokens --runs "$t"
   [ "$status" -eq 0 ]
   [[ $(grep '^2 ' <<< "$output") == *resume ]]

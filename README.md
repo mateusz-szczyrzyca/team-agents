@@ -570,7 +570,17 @@ have no `ROUND_ID` and belong to no round (`-` in the reports).
 investigation team's merger and reviewer), never another team's. Each row ends with the task's `ROLE` —
 `coordinator` (the team's, on the bus; a task without a team leads its own work), `member`, `worker`, `investigation`,
 `review` — and its `ROUND`. `agent tokens --round R12` reports every task of R12 and of the rounds inside it, one row
-per task, then the sums per role (`role <name>`) and per model (`model <name>`), then the total.
+per task, then the sums per role (`role <name>`), per model (`model <name>`) and per sub-round (`sub-round <label>`),
+then the total.
+
+**Sub-rounds.** A round's work goes into PRs: the sub-round of a run is `<round ID>/#<n>`, the PR it went into, or
+`<round ID>/(no PR)` before there is one. When a run starts, the runner appends the round and the PR to its start
+line in `activity.jsonl` — `▶ run 7 (resume) round R12/A pr #74`, `pr -` before a PR. The PR is the task's own
+(`PR_NUMBER`), else its team's round PR, else the round's PR it carries (`ROUND_PR`); a worker or an investigation
+without one goes into the PR of the task it was made for, recorded when it was made (`REQUESTER_PR` in its
+`meta.env`), even when that task has moved on to another PR. The sums per sub-round come from these markers: a run
+whose start line has none (made before) counts under `<round ID>/?`, never dropped. A task's row stays one per task.
+The usage of remote members' runs on their nodes is not in these reports yet ([docs/node-improvements.md](docs/node-improvements.md)).
 
 ### Test first
 
