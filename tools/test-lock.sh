@@ -81,9 +81,11 @@ acquire() {
 acquire
 export TEST_LOCK_HELD=$$
 
-# the command in its own process group: a hung run is stopped as a whole, the agent's shell around it is not
+# the command in its own process group: a hung run is stopped as a whole, the agent's shell around it is not. Job
+# control leaves a background command the caller's stdin: from an interactive terminal, a test that read it would be
+# stopped (SIGTTIN) and hang the run, so the tests read /dev/null
 set -m
-"$@" &
+"$@" < /dev/null &
 child=$!
 set +m
 {

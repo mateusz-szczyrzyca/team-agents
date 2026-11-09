@@ -8,20 +8,36 @@
 load helpers
 
 # teardown — stops the node and the lead even when an assertion fails, and the stub agents of both installations.
+# stop_daemon pid — SIGTERM, then STOP_DAEMON_SEC (20) seconds for the daemon to end; one still there is killed, its
+# children first (agent node's node-doorbell would keep the test's output open, and bats would wait for it): a daemon
+# that does not end must not hang the run
+stop_daemon() {
+  local pid=$1 i rc=0
+  kill -TERM "$pid"
+  for ((i = 0; i < ${STOP_DAEMON_SEC:-20} * 5; i++)); do
+    kill -0 "$pid" 2> /dev/null || break
+    sleep 0.2
+  done
+  if kill -0 "$pid" 2> /dev/null; then
+    echo "cleanup: pid $pid did not end ${STOP_DAEMON_SEC:-20} s after SIGTERM — killed, with its children" >&2
+    pkill -KILL -P "$pid" || echo "cleanup: pid $pid had no child left to kill" >&2
+    kill -KILL "$pid" 2> /dev/null || echo "cleanup: pid $pid ended once its children were killed" >&2
+  fi
+  wait "$pid" || rc=$?
+  # 143: stopped by SIGTERM; 137: killed above (said already); anything else is a cleanup failure to show
+  if [[ $rc -ne 0 && $rc -ne 143 && $rc -ne 137 ]]; then
+    echo "cleanup of pid $pid: exit $rc" >&2
+  fi
+}
+
 teardown() {
-  local f pid rc
+  local f pid
   for f in "$BATS_TEST_TMPDIR/node2/node.pid" "$HOME/lead.pid"; do
     [[ -f $f ]] || continue
     pid=$(cat "$f")
     # A process already reaped by the test is an expected non-running answer (as in lead.bats).
     if kill -0 "$pid" 2> /dev/null; then
-      kill -TERM "$pid"
-      rc=0
-      wait "$pid" || rc=$?
-      # 143 is the expected status of a process stopped by SIGTERM; anything else is a cleanup failure to show.
-      if [[ $rc -ne 0 && $rc -ne 143 ]]; then
-        echo "cleanup of $f: exit $rc" >&2
-      fi
+      stop_daemon "$pid"
     fi
   done
   for p in "$BATS_TEST_TMPDIR"/node2/units/*.pid "$STUB_UNITS"/*.pid; do
@@ -412,6 +428,8 @@ wait_member_state() {
   STOP_DAEMON_SEC=1 stop_daemon "$pid" 2> "$BATS_TEST_TMPDIR/err"
   (( $(date +%s) - start < 10 ))
   ! kill -0 "$pid" 2> /dev/null || false
-  ! kill -0 "$child" 2> /dev/null || false
+  # a killed child is gone a moment later (the process that adopts it reaps it); a zombie is dead already
+  for _ in $(seq 1 25); do [[ -z $(ps -o stat= -p "$child" | grep -v '^Z') ]] && break; sleep 0.2; done
+  [[ -z $(ps -o stat= -p "$child" | grep -v '^Z') ]]
   grep -q "did not end" "$BATS_TEST_TMPDIR/err"
 }
