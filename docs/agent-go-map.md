@@ -66,12 +66,15 @@ run only against the preserved Bash oracle.
 
 ## R12 reconciliation and current ledger status
 
-Following Investigation #251 and human approval (PR #71 follow-up), the active
-ledger tracks 177 Bats test files with 730 total test cases:
-- 463 blackbox cases
-- 267 source-coupled cases
+Following Investigation #251 and human approval (PR #71 follow-up), the initial
+reconciliation was assessed against feature merge base `d043c7b`, where the ledger
+tracked 177 Bats test files with 730 total test cases (463 blackbox, 267 source-coupled,
+12 done, 718 planned). On current `main` (`45f1e7a`), the active ledger tracks 179
+Bats test files with 739 total test cases:
+- 468 blackbox cases
+- 271 source-coupled cases
 - 12 done cases
-- 718 planned cases
+- 727 planned cases
 
 The approved partitioning of the original 48 R12 rows in `tests/agent-go-map.tsv` (with on-disk ledger updates
 pending human `agent allow` registration) is:
@@ -95,7 +98,7 @@ pending human `agent allow` registration) is:
   `planned` until write activation in R12E.
 
 Scope exclusions:
-- `round_pr_for` fallback logic remains in R32B (`rewrite-agent-in-go.md:475`).
+- `round_pr_for` fallback logic remains in R32B (`rewrite-agent-in-go.md:501`).
 - Round orchestration remains in R31; formatting bounce/review lifecycle remains in R34;
   remote-job attribution remains in R41/R50.
 - Existing R10 setup/byline/registry primitives are reused.
