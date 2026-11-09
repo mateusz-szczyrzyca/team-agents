@@ -438,7 +438,7 @@ it also says so in a comment on the round's PR, mentioning the repository's owne
 progress and notes that need no reaction with `send_message` `wake: false`, read on the next run. Each wake is
 logged with its cause (`member_woken_by`: the message, an unread one, new work on the board). A message longer than 2000 characters reaches its readers
 cut, with `read_message id=N` to read it whole. The runs' token usage (claude, codex, gemini/agy, opencode) is in their activity;
-`agent tokens <team|task>` sums it. An investigator's
+`agent tokens <team|task>` sums it (see "Round accounting" below). An investigator's
 review on GitHub begins with who wrote it — "Review by the team-agents investigator `inv-astra` (codex, model
 …), request #66." — as well as ending with it.
 
@@ -549,6 +549,38 @@ PR each:
   round starts on **new branches from the updated base** (the previous branches are kept and named in the task).
   `--resume` refuses while the round's PR is not merged; to keep working on the same round — review fixes —
   use `agent run --resume <team|task> --same-round "…"`.
+
+### Round accounting
+
+A task text names the unit of work it belongs to with one line `Round: <id>` — `Round: R12`, `Round: R12/A`: parts
+of letters, digits, `.`, `_` and `-`, separated by `/`. A round includes every round whose ID starts with its own and
+`/` (R12 includes R12/A and R12/A/#74). A text without such a line is of the round `?`; `agent run` (and
+`--investigation`, `--resume`, `--need`, `--on`) refuses a text with two `Round:` lines or an ID that breaks the
+pattern, before anything starts, saying which line is wrong.
+
+Every task records its round in its `meta.env` when it is made (`ROUND_ID`): the tasks of `agent run` from its text;
+those of `agent run --resume` from the resume text when it has a `Round:` line, else the previous team's (the text of
+a hand-back — a fix pass, a check before the review, a failover — is the system's and never names one); a task made
+for another — a worker, an investigation, a review, an investigation team's phases, a replacement after a failover —
+from that task, at that moment: it keeps its round when the other's changes. Tasks made before this was recorded
+have no `ROUND_ID` and belong to no round (`-` in the reports).
+
+`agent tokens <team>` counts a team's tasks: those of the team and every task reachable from them through
+`PARENT_TASK` or `INVESTIGATION_TEAM`, at any depth (a member's worker, the investigation it asked for, an
+investigation team's merger and reviewer), never another team's. Each row ends with the task's `ROLE` —
+`coordinator` (the team's, on the bus; a task without a team leads its own work), `member`, `worker`, `investigation`,
+`review` — and its `ROUND`. `agent tokens --round R12` reports every task of R12 and of the rounds inside it, one row
+per task, then the sums per role (`role <name>`), per model (`model <name>`) and per sub-round (`sub-round <label>`),
+then the total.
+
+**Sub-rounds.** A round's work goes into PRs: the sub-round of a run is `<round ID>/#<n>`, the PR it went into, or
+`<round ID>/(no PR)` before there is one. When a run starts, the runner appends the round and the PR to its start
+line in `activity.jsonl` — `▶ run 7 (resume) round R12/A pr #74`, `pr -` before a PR. The PR is the task's own
+(`PR_NUMBER`), else its team's round PR, else the round's PR it carries (`ROUND_PR`); a worker or an investigation
+without one goes into the PR of the task it was made for, recorded when it was made (`REQUESTER_PR` in its
+`meta.env`), even when that task has moved on to another PR. The sums per sub-round come from these markers: a run
+whose start line has none (made before) counts under `<round ID>/?`, never dropped. A task's row stays one per task.
+The usage of remote members' runs on their nodes is not in these reports yet ([docs/node-improvements.md](docs/node-improvements.md)).
 
 ### Test first
 
@@ -926,6 +958,7 @@ agent run --resume <team|task> --same-round   continue an unmerged round on the 
 agent run --last-team [--same-round] ["…"]    the same, for the newest team of this repository (no ID to look up)
 agent kick <task>                             cut a run short: a team member sleeps (its team can wake it), solo: stopped
 agent tokens <team|task>                      the tokens its runs used: per task (a team's helpers and investigations too), in all
+agent tokens --round <id>                     the tokens of a round's tasks (Round: <id>, and <id>/…): per task, role, model, in all
 agent tokens --runs <task>                    a task's tokens per run, its steps (tool calls) and input per step: the costly runs
 agent wake <task>                             resume a paused task now, not at its pause's end (a remote member's: on its node)
 agent round-size <task>                       size of a task's change against the round limit

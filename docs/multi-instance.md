@@ -434,6 +434,12 @@ finished". The doorbell (`GET /v1/events`, node-initiated, server-sent events) o
 the ordinary heartbeat, so nothing has to be replayed after a broken stream. A lead's shutdown cancels the
 streams (its requests' base context), or draining would wait for them.
 
+## Still to be made
+
+[node-improvements.md](node-improvements.md) lists the improvements to the work of remote nodes still to be made —
+first, that usage is not synchronised from nodes, so a lead's report (`agent tokens`) does not see the runs of its
+remote members.
+
 ## Delivery and verification history
 
 The original nine rounds delivered registry, storage, authenticated HTTP,
