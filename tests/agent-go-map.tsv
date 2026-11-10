@@ -491,6 +491,25 @@ tests/unit/round_handover.bats	a same-round resume carries the round's PR to the
 tests/unit/round_handover.bats	a new coordinator's PR closes the round's earlier PR as superseded, and links back to it	source	R31	-	planned
 tests/unit/round_handover.bats	--autopilot hands a decision to the human on the PR too: a comment says what waits for them	blackbox	R34	-	planned
 tests/unit/round_handover.bats	AUTO_MERGE_HOLD_TEST_CHANGES=no: changed existing tests no longer keep --autopilot from merging	source	R34	-	planned
+tests/unit/round_id.bats	round_id_of: none gives ?, one line its ID with blanks trimmed, two lines or a broken ID are refused	source	R53	-	planned
+tests/unit/round_id.bats	agent run refuses a text with two Round: lines, or a broken ID, before anything starts	blackbox	R53	-	planned
+tests/unit/round_id.bats	agent run records the round of its text in every task it makes; a text without one gives ?	blackbox	R53	-	planned
+tests/unit/round_id.bats	agent run --investigation records the round in the investigation team and in each of its phases	blackbox	R53	-	planned
+tests/unit/round_id.bats	agent run --investigation refuses a broken Round: line before anything starts	blackbox	R53	-	planned
+tests/unit/round_id.bats	agent run --resume keeps the previous round, takes the resume text's own Round: line, refuses a broken one	blackbox	R53	-	planned
+tests/unit/round_id.bats	a hand-back's text (the system's, not the human's) never decides the round: the previous one is kept	blackbox	R53	-	planned
+tests/unit/round_id.bats	a worker gets its requester's round when it is made, and keeps it when the requester's changes	blackbox	R53	-	planned
+tests/unit/round_id.bats	an investigation and a review asked for by a task get that task's round	blackbox	R53	-	planned
+tests/unit/round_id.bats	an investigation (not a review) asked for by a task gets that task's round, and keeps it when the task's changes	blackbox	R53	-	planned
+tests/unit/round_id.bats	every place that makes a task's metadata (ROUND=0) records its ROUND_ID with it	source	R53	-	planned
+tests/unit/round_runs.bats	a run's start line carries the round and the PR, or pr - before the task has one	blackbox	R53	-	planned
+tests/unit/round_runs.bats	a task without a Round: line marks its runs with round ?	blackbox	R53	-	planned
+tests/unit/round_runs.bats	a worker made while its requester was on PR #74 counts under #74 after the requester moved to #75	blackbox	R53	-	planned
+tests/unit/round_runs.bats	agent tokens --round: a member's usage split by its runs' PRs; its row keeps the task's total	blackbox	R53	-	planned
+tests/unit/round_runs.bats	agent tokens --round: runs without a marker count under <round>/?, never dropped; the total unchanged	blackbox	R53	-	planned
+tests/unit/round_runs.bats	docs/node-improvements.md lists the nodes' future work, first the usage of remote members; multi-instance links it	source	R53	-	planned
+tests/unit/round_runs.bats	a worker's later run still goes into the PR its requester was on when the worker was made, not the requester's new one	source	R53	-	planned
+tests/unit/round_team_run.bats	a team run and an investigation team of round R20: every task with its role, its round and the right sums	blackbox	R53	-	planned
 tests/unit/round_only.bats	a fix pass's text is for its round only; the human's addition is not	blackbox	R31	-	planned
 tests/unit/round_only.bats	the next round's text leaves out what was for the round before only	source	R17	-	planned
 tests/unit/round_reports.bats	a report under .agents/reports/ does not count towards the round size	blackbox	R31	-	planned
@@ -520,6 +539,11 @@ tests/unit/tokens.bats	agent tokens shows a task whose runs reported no usage, i
 tests/unit/tokens.bats	agent tokens --runs <task>: per run, its steps (tool calls) and tokens	blackbox	R53	-	planned
 tests/unit/tokens.bats	agent tokens --runs shows each run's input per step: about the size of its context	blackbox	R53	-	planned
 tests/unit/tokens.bats	codex reports a resumed session's tokens cumulatively: a run's are its difference from the session's run before	blackbox	R53	-	planned
+tests/unit/tokens_round.bats	agent tokens <team>: every task reachable from the team's, at any depth, each with its role and round	blackbox	R53	-	planned
+tests/unit/tokens_round.bats	agent tokens <task> ends its row with the role and the round; a task made before rounds shows -	blackbox	R53	-	planned
+tests/unit/tokens_round.bats	an old task without ROUND_ID does not inherit the caller's ambient value	blackbox	R53	-	planned
+tests/unit/tokens_round.bats	agent tokens --round R12: R12 and the rounds inside it, never R120 or R1; sums per role and model, the total	blackbox	R53	-	planned
+tests/unit/tokens_round.bats	agent tokens --round without a task of that round says so	blackbox	R53	-	planned
 tests/unit/verify_loop.bats	--last-team resumes the newest team of the repository	blackbox	R32	-	planned
 tests/unit/verify_loop.bats	--same-round on a team that did not end a round continues on the same branches	blackbox	R32	-	planned
 tests/unit/verify_loop.bats	a review with major findings wakes the team with them, twice at most; then the human is called on the PR	blackbox	R32	-	planned
