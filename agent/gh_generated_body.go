@@ -50,3 +50,15 @@ func isBlankLine(line string) bool {
 	}
 	return true
 }
+
+// isBashBlankLine stub for Unicode parity tests (to be implemented).
+func isBashBlankLine(s string) bool {
+	// Stub implementation; TODO: use isBashSpace semantics.
+	_ = trimBashSpaces(s)
+	return false
+}
+
+// trimBashSpaces stub for Unicode parity tests (to be implemented).
+func trimBashSpaces(s string) string {
+	return s
+}
