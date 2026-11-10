@@ -20,8 +20,12 @@ act() { jq -nc --arg t "$2" '{ts: "2026-11-09 10:00:00", k: "info", t: $t}' >> "
   t=$(task_of solo)
   wait_status "$t" paused
   [ "$(starts "$t")" = '▶ run 1 (new) round R12/A pr -' ]
-  printf 'PR_NUMBER=74\n' >> "$AGENTS_HOME/tasks/$t/meta.env"
-  sed -i 's/^WAKE_AT=.*/WAKE_AT=1/' "$AGENTS_HOME/tasks/$t/meta.env"
+  # STATUS=paused precedes the runner's final metadata writes; share its lock so neither update is lost.
+  (
+    source "$REPO_ROOT/bin/agent"
+    meta_set "$t" PR_NUMBER 74
+    meta_set "$t" WAKE_AT 1
+  )
   agent _wake "$t"
   wait_status "$t" "done"
   [ "$(starts "$t" | sed -n 2p)" = '▶ run 2 (resume) round R12/A pr #74' ]
