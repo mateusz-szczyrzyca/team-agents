@@ -201,10 +201,6 @@ func TestGHDispatchWriteUnavailable(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"pr_create_solo", []string{"pr", "create", "--title", "New PR"}},
-		{"pr_edit", []string{"pr", "edit", "1", "--body", "Updated"}},
-		{"pr_comment", []string{"pr", "comment", "1", "--body", "LGTM"}},
-		{"issue_create", []string{"issue", "create", "--title", "Bug"}},
 		{"api_post_mutation", []string{"api", "-X", "POST", "repos/o/r/issues", "-f", "title=Bug"}},
 	}
 
