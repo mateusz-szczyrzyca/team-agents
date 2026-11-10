@@ -1728,12 +1728,13 @@ pr_write_round_size() {
 
 # task_of_dir dir — the task whose worktree holds dir (the newest, when several had it); empty: none
 task_of_dir() {
-  local top m w found=""
+  local top m w r found=""
   top=$(git -C "$1" rev-parse --show-toplevel 2> /dev/null) || return 0
   for m in "$TASKS"/*/meta.env; do
     [[ -f $m ]] || continue
-    w=$(sed -n 's/^WORKTREE=//p' "$m")
-    if [[ $w == "$top" ]]; then found=${m%/meta.env}; found=${found##*/}; fi
+    w=$(sed -n 's/^WORKTREE=//p' "$m"); r=$(sed -n 's/^REPO_ROOT=//p' "$m")
+    # the repository's own checkout is nobody's worktree, though a task (an investigation team's) names it its own
+    if [[ $w == "$top" && $w != "$r" ]]; then found=${m%/meta.env}; found=${found##*/}; fi
   done
   printf '%s' "$found"
 }
