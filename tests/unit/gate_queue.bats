@@ -146,3 +146,13 @@ with_task() {
   [ -z "$output" ]
   agent stop --running > /dev/null
 }
+
+@test "the precheck runs the repository's gate with AGENT_GATE_RUN too: under its own gate lock, never sent to agent gate" {
+  echo '[{"number": 7, "url": "https://github.com/o/r/pull/7", "state": "OPEN"}]' > "$HOME/gh-prs.json"
+  printf "AGENT_REVIEW_GATE='printenv AGENT_GATE_RUN >> %s; exit 1'\n" "$BATS_TEST_TMPDIR/run" >> "$AGENTS_HOME/agents.conf"
+  scenario '{"lead": {"new": "team-lead-done", "resume": "team-lead-done"}, "member": {"new": "team-sleep", "resume": "done"}, "inv": {"new": "review-ready"}}'
+  agent run --team lead,member --autopilot "team task"
+  wait_grep "gate" "$HOME/notifications.log" 150
+  grep -q -- "-lead$" "$BATS_TEST_TMPDIR/run"
+  agent stop --running > /dev/null
+}

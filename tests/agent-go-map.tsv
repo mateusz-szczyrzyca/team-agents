@@ -758,6 +758,7 @@ tests/unit/gate_queue.bats	test lock: inside agent gate, outside a task's worktr
 tests/unit/gate_queue.bats	agent gate: --wait goes after the one in line before it; without --wait it refuses while one waits	blackbox	R31	-	planned
 tests/unit/gate_queue.bats	agent gate runs the repository's gate with AGENT_GATE_RUN, its task: the gate knows it runs inside agent gate	blackbox	R31	-	planned
 tests/unit/gate_queue.bats	agent _task_of_dir names the task whose worktree a directory is in, and nothing elsewhere	blackbox	R31	-	planned
+tests/unit/gate_queue.bats	the precheck runs the repository's gate with AGENT_GATE_RUN too: under its own gate lock, never sent to agent gate	blackbox	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
