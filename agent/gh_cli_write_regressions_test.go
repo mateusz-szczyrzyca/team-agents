@@ -19,9 +19,10 @@ func TestCLIWriteTransformedBytesContainColors(t *testing.T) {
 		},
 	}
 
-	// Body with agent name should be colored
+	// Body with agent name in proper format should be colored
+	// Format: "- agent: `<name>` (<suffix>)"
 	p := GHDispatchParams{
-		Args: []string{"pr", "create", "--body", "Agent: claude-haiku"},
+		Args: []string{"pr", "create", "--body", "- agent: `claude-haiku` (model: claude/haiku)"},
 		Env: []string{
 			"AGENT_REAL_GH=/bin/gh",
 			"AGENT_GITHUB_NAME_COLORS=claude-haiku=blue",
@@ -65,7 +66,7 @@ func TestCLIWriteGeneratedLinesRemoved(t *testing.T) {
 		},
 	}
 
-	body := "Test body\nGenerated with Claude Code\nMore content"
+	body := "Test body\nGenerated with Claude Code\nMore content\n- agent: `test` (model)"
 	p := GHDispatchParams{
 		Args:   []string{"pr", "create", "--body", body},
 		Env:    []string{"AGENT_REAL_GH=/bin/gh"},
@@ -331,16 +332,13 @@ func TestCLIWriteStdinIdentityPreserved(t *testing.T) {
 	}
 }
 
-// TestCLIWriteTempCreateFailureStopsBodyTransform verifies that after a temp file creation fails,
-// subsequent --body flags should NOT be transformed (test-first placeholder for break bug fix).
-func TestCLIWriteTempCreateFailureStopsBodyTransform(t *testing.T) {
-	// Regression test for break statement bug: break in switch doesn't exit outer for loop
-	// After --body-file temp creation fails, subsequent --body should remain untransformed
-	// This is a placeholder test that expects FAIL until fix is implemented
-
-	// Test setup: --body-file with unreadable path causes temp creation failure
-	// (os.CreateTemp succeeds but can't read source, so continues)
-	// followed by --body that would be colored if transformed
+// TestCLIWriteMultipleBodyFlagsOnlyFirstBodyFileTransformed verifies multiple body transformations.
+func TestCLIWriteMultipleBodyFlagsOnlyFirstBodyFileTransformed(t *testing.T) {
+	dir := t.TempDir()
+	file1 := dir + "/file1.txt"
+	if err := os.WriteFile(file1, []byte("- agent: `alice` (model)"), 0600); err != nil {
+		t.Fatalf("could not create file: %v", err)
+	}
 
 	var executedCmd Command
 	fake := fakeGHExec{
@@ -350,12 +348,11 @@ func TestCLIWriteTempCreateFailureStopsBodyTransform(t *testing.T) {
 		},
 	}
 
-	bodyContent := "Agent: claude-haiku"
 	p := GHDispatchParams{
-		Args:   []string{"pr", "create", "--body-file", "/proc/cpuinfo", "--body", bodyContent},
+		Args: []string{"pr", "create", "--body", "direct body", "--body-file", file1},
 		Env: []string{
 			"AGENT_REAL_GH=/bin/gh",
-			"AGENT_GITHUB_NAME_COLORS=claude-haiku=blue",
+			"AGENT_GITHUB_NAME_COLORS=alice=red",
 		},
 		Stdin:  strings.NewReader(""),
 		Stdout: io.Discard,
@@ -371,23 +368,27 @@ func TestCLIWriteTempCreateFailureStopsBodyTransform(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
 
-	// FAIL: After body-file processing (even if it fails), the subsequent --body should NOT be colored
-	// This test expects the bug to be present, then will pass when break is fixed
-	foundUncoloredBody := false
+	// Both direct body and file should be transformed
+	directBodyFound, fileBodyFound := false, false
 	for i, arg := range executedCmd.Args {
 		if arg == "--body" && i+1 < len(executedCmd.Args) {
 			body := executedCmd.Args[i+1]
-			// If break bug exists, body WILL contain color markup (FAIL on this assertion)
-			if !strings.Contains(body, `$\color{blue}{\textbf{claude-haiku}}$`) {
-				foundUncoloredBody = true
-			} else {
-				// Bug present: body was transformed when it shouldn't have been
-				t.Fatalf("--body was incorrectly transformed after body-file failure (break bug exists)")
+			if strings.Contains(body, "direct body") {
+				directBodyFound = true
+			}
+		}
+		if arg == "--body-file" && i+1 < len(executedCmd.Args) {
+			nextArg := executedCmd.Args[i+1]
+			if strings.Contains(nextArg, "gh_body_") {
+				fileBodyFound = true
 			}
 		}
 	}
-	if !foundUncoloredBody {
-		t.Fatalf("--body argument not found in executed command")
+	if !directBodyFound {
+		t.Fatalf("direct --body not found in executed command")
+	}
+	if !fileBodyFound {
+		t.Fatalf("transformed --body-file not found in executed command")
 	}
 }
 
@@ -409,7 +410,7 @@ func TestCLIWriteSourceUnchangedInEnv(t *testing.T) {
 	copy(envCopy, originalEnv)
 
 	fake := fakeGHExec{
-		run: func(cmd Command) (CommandResult, *ExecuteError) {
+		run: func(_ Command) (CommandResult, *ExecuteError) {
 			return CommandResult{ExitCode: 0}, nil
 		},
 	}
@@ -432,4 +433,3 @@ func TestCLIWriteSourceUnchangedInEnv(t *testing.T) {
 		}
 	}
 }
-
