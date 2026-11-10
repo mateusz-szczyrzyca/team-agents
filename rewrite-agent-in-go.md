@@ -479,10 +479,11 @@ plus planning reconciliation. Each slice has a hard working cap of 1,500 added p
 | **R12F** | REST writes: JSON body preservation, byline then recommendation then publication transform ordering, endpoint behavior, mutation response filtering, and native API activation. | 1,150 | 1,350 |
 | **R12G** | GraphQL payload inspection and permitted-request forwarding: fail-closed policy rejecting anything not positively classified as permitted with typed errors. Tests verify refusal of evasion attempts hiding mutations or protected fields via aliases, fragments, variables, several operations in one document, comments, or escaped strings; unclassifiable constructs refused. | 1,050 | 1,300 |
 
-The current round delivers planning corrections plus R12A only (targeting 850 lines combined, with a review
-threshold of 1,250 lines and a hard 1,500-line cap; round size is authoritative only in the script's PR description
-block without manual or worker counting, and reports are excluded). Slices R12B–R12G each start on fresh branches
-after the preceding PR merges. Scope boundaries:
+R12A and R12B are merged in PRs #72 and #75. The current round is R12C: descriptors/attribution and
+registry/setup parity, targeting 950 lines with a review threshold of 1,200 lines and a hard 1,500-line cap.
+Round size is authoritative only in the script's PR description block without manual or worker counting;
+reports are excluded. Each subsequent slice starts on a fresh branch after the preceding PR merges.
+Scope boundaries:
 - Existing R10 setup, byline formatting, and name color registry primitives are reused.
 - `round_pr_for` fallback logic remains in R32B; round orchestration remains in R31; formatting bounce/review lifecycle remains in R34; full remote-job attribution remains in R41/R50.
 - Ledger reconciliation: planned partitioning of 29 cases retained across R12A–R12G (native equivalents for rows 85 and 474 implemented in R12A; on-disk ledger updates deferred pending human `agent allow` registration under rule 1 precheck); 19 cases proposed for reassignment to their proper subsystem rounds (R16, R18, R19, R22, R35, R38, R40); 4 deferred R11 cases (251, 252, 269, 406) finished in R12E.
