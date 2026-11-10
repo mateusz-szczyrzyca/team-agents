@@ -544,6 +544,9 @@ tests/unit/tokens_round.bats	agent tokens <task> ends its row with the role and 
 tests/unit/tokens_round.bats	an old task without ROUND_ID does not inherit the caller's ambient value	blackbox	R53	-	planned
 tests/unit/tokens_round.bats	agent tokens --round R12: R12 and the rounds inside it, never R120 or R1; sums per role and model, the total	blackbox	R53	-	planned
 tests/unit/tokens_round.bats	agent tokens --round without a task of that round says so	blackbox	R53	-	planned
+tests/unit/usage_honest.bats	agent tokens prices a run whose provider reported no cost from MODEL_PRICES, marked; a reported cost stays	blackbox	R31	-	planned
+tests/unit/usage_honest.bats	agent tokens and agent spend say that opencode's usage is short: its runs' last step is not reported	blackbox	R31	-	planned
+tests/unit/usage_honest.bats	agent debug --agent counts the runs in which the agent did nothing: no command, edit or tool call	blackbox	R31	-	planned
 tests/unit/verify_loop.bats	--last-team resumes the newest team of the repository	blackbox	R32	-	planned
 tests/unit/verify_loop.bats	--same-round on a team that did not end a round continues on the same branches	blackbox	R32	-	planned
 tests/unit/verify_loop.bats	a review with major findings wakes the team with them, twice at most; then the human is called on the PR	blackbox	R32	-	planned
