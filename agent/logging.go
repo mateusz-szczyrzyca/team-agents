@@ -42,6 +42,8 @@ const (
 	LogCommandFailed LogEvent = "command_failed"
 	// LogInvListFailed reports a failed best-effort investigation list query.
 	LogInvListFailed LogEvent = "inv_list_failed"
+	// LogJobOriginLookupFailed reports failure querying git remote get-url origin.
+	LogJobOriginLookupFailed LogEvent = "job_origin_lookup_failed"
 )
 
 // Logger owns destinations and immutable invocation metadata; Log serializes writes.
