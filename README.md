@@ -1726,8 +1726,9 @@ make integration        # real agent CLIs and accounts (costs usage)
     permitted with typed errors. Tests verify refusal of attempts to hide mutations or protected fields via
     aliases, fragments, variables, several operations in one document, comments, or escaped strings; unclassifiable
     constructs are refused rather than forwarded.
-  R12E targets 950 lines with a review threshold of 1,200 lines and a hard 1,500-line cap. An autopilot decision approved
-  completing the cohesive R12E scope above the 1,200-line threshold while strictly retaining the approved 1,500-line hard cap.
+  R12E targets 950 lines with a review threshold of 1,200 lines and a hard 1,500-line cap. An autopilot decision permits
+  continuation of the cohesive R12E scope above the 1,200-line threshold while strictly retaining the approved 1,500-line hard cap
+  (an autopilot decision is not human approval).
   The round size is authoritative only as written by the script into its PR description block (reports are excluded; do not count
   lines manually or through workers). Merged R12B delivered pure transforms: `GitHubColorConfig{NameColors, Palette}` for raw environment
   colors, pure name rendering (`RenderGitHubNames`) with POSIX `cksum` fallback and intra-document collision resolution,
@@ -1737,10 +1738,12 @@ make integration        # real agent CLIs and accounts (costs usage)
   model fallbacks, exact raw team metadata, task order, and duplicate member entries. Merged R12D added canonical origin resolution
   (`CanonicalGitHubRepoURL`, `ResolveGitHubRepoURL`), pure task PR metadata precedence selection (`RoundPROfTasks`), resume
   guidance formatting (`FormatRoundPRNote`), and read-only trusted PR merge matching (`FilterTrustedPRs`, `MatchRoundPRMerged`).
+  PR identity keys are case-sensitive, response framing accepts only JSON whitespace, and lifecycle states are validated
+  before merge matching; malformed or unknown states cannot establish a merge.
   R12E activates native GitHub CLI write forwarding (`handleCLIWrite`), preserving member draft requirements and open-round PR
   modification guards before forwarding. It transforms create/edit/comment bodies with color rendering and Generated-line removal,
   preserving Bash file, stdin, newline, and fallback behavior, and cleans up temporary files after process completion. It replaces
-  only the four authorized transitional CLI refusal cases (`issue comment`, `pr comment`, `pr create`, `pr edit`), completing
+  only the four authorized transitional CLI refusal cases (`issue create`, `pr comment`, `pr create`, `pr edit`), completing
   deferred R11 cases (`251`, `252`, `269`, `406`). REST write activation remains deferred to R12F, GraphQL payload inspection/activation
   remains deferred to R12G, and installed production commands remain Bash until R55.
   Scope boundaries reuse existing R10 setup/byline/registry primitives and explicitly exclude `round_pr_for` (R32B),

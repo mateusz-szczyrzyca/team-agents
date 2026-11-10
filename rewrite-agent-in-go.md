@@ -482,8 +482,9 @@ plus planning reconciliation. Each slice has a hard working cap of 1,500 added p
 R12A, R12B, R12C, and R12D are merged in PRs #72, #75, #76, and #77. The current round is R12E: CLI write
 activation, body/file/stdin handling, process forwarding, cleanup, dynamic member/ownership guards, and native
 `gh` CLI write activation, completing deferred R11 cases 251, 252, 269, and 406. R12E targets 950 lines with a
-review threshold of 1,200 lines and a hard 1,500-line cap. An autopilot decision approved completing the full
-R12E scope above the 1,200-line re-estimate threshold while strictly retaining the approved 1,500-line hard cap.
+review threshold of 1,200 lines and a hard 1,500-line cap. An autopilot decision permits continuation of the full
+R12E scope above the 1,200-line re-estimate threshold while strictly retaining the approved 1,500-line hard cap
+(an autopilot decision is not human approval).
 REST write activation remains deferred to R12F, GraphQL payload inspection/activation remains deferred to R12G,
 and installed production commands remain Bash until R55.
 Round size is authoritative only in the script's PR description block without manual or worker counting;
@@ -493,7 +494,7 @@ Scope boundaries:
 - `round_pr_for` fallback logic remains in R32B; round orchestration remains in R31; formatting bounce/review launch remains in R34; full remote-job attribution remains in R41/R50.
 - Ledger reconciliation: planned partitioning of 29 cases retained across R12A–R12G (native equivalents for rows 85 and 474 implemented in R12A; on-disk ledger updates deferred pending human `agent allow` registration under rule 1 precheck); 19 cases proposed for reassignment to their proper subsystem rounds (R16, R18, R19, R22, R35, R38, R40); 4 deferred R11 cases (251, 252, 269, 406) finished in R12E.
 - GraphQL policy for R12G: fail-closed; anything not positively classified as permitted is rejected with typed errors; tests verify attempts to hide mutations or protected fields via aliases, fragments, variables, multiple operations in one document, comments, and escaped strings; unclassifiable requests are refused.
-- Human approval explicitly permits metadata-only ledger edits and the replacement of only 18 transitional write-refusal assertions across five native test files (`gh_read_dispatch_test.go`, `gh_read_dispatch_api_test.go`, `gh_read_dispatch_api_short_options_test.go`, `gh_read_dispatch_graphql_mutation_test.go`, `gh_read_dispatch_graphql_query_file_test.go`), strictly in the respective future slices that activate those routes (only 4 CLI cases replaced in R12E; REST and GraphQL remain deferred to R12F/G).
+- Human approval explicitly permits metadata-only ledger edits and the replacement of only 18 transitional write-refusal assertions across five native test files (`gh_read_dispatch_test.go`, `gh_read_dispatch_api_test.go`, `gh_read_dispatch_api_short_options_test.go`, `gh_read_dispatch_graphql_mutation_test.go`, `gh_read_dispatch_graphql_query_file_test.go`), strictly in the respective future slices that activate those routes (only 4 CLI cases replaced in R12E: `issue_create`, `pr_comment`, `pr_create_solo`, `pr_edit`; REST and GraphQL remain deferred to R12F/G).
 
 ### Rounds added in revision 2
 
