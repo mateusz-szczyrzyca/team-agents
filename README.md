@@ -367,12 +367,16 @@ human's addition, which still reaches everyone. The coordinator puts the work on
 overlap, each with one owner (a worker, through `request_helper`, for a small, concrete one), its area, its size in
 lines and when it is done —, merges each item as it is done, and redoes none of a member's work.
 
-**Diagnosing a team.** `agent debug <team|task> [--full] [--out file]` writes one file with everything a diagnosis
-needs — the team on the bus, its board, its worker requests, every task's metadata, activity, errors, final report,
-checks and runner log, the script's log, the bus messages, the branches (a merge in progress too), the round's PR,
-its card and tokens — and prints where it is (`~/agents/debug/` by default). It changes nothing. The last lines of
-each source by default, all of them with `--full`. Tokens and the values of `secrets.env` are redacted, so the file
-can be shared.
+**Diagnosing a team.** `agent debug <team|task> [--full|--all] [--out file]` writes one file with everything a
+diagnosis needs — the team on the bus, its board, its checkpoints and its worker requests; for every task — the team's
+own and every task made for them (workers, investigations, reviews), at any depth — its metadata, its text (the task's
+part of `task.md`; with `--full` the whole of it and every run's prompt), its request on the bus in full (request,
+context, result, rating, links) and the requests it made, its questions and the human's answers, its checkpoints, its
+gate results, its activity, errors, final report, checks, other files and runner log, and the bus messages to and from
+its agent; then the script's log, the branches (a merge in progress too), the round's PR, its card and tokens — and
+prints where it is (`~/agents/debug/` by default). It changes nothing. The last lines of each source by default, all of
+them with `--full` (or `--all`), with each agent's whole activity too. Tokens and the values of `secrets.env` are
+redacted, so the file can be shared.
 
 **AGENTS.md's rules, checked.** The precheck before a round's review checks the round's own diff (from its merge
 base with main) against AGENTS.md's rules, which held through prompts and reviewers alone before: an existing test or

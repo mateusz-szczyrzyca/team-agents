@@ -8943,13 +8943,89 @@ cmd_debug_agent() {
   echo "$out ($(wc -l < "$out") lines)"
 }
 
+# debug_task_text file — the task's own text in a prompt: from its heading (# TASK, # TEAM TASK, # REQUEST H<n>,
+# # INVESTIGATION REQUEST #<n>, # PR REVIEW REQUEST #<n>) to the clarification rules; the whole file without one
+debug_task_text() {
+  awk '/^# (TASK|TEAM TASK|REQUEST H[0-9]+|INVESTIGATION REQUEST #[0-9]+|PR REVIEW REQUEST #[0-9]+)$/ { on = 1; found = 1 }
+    on && /CLARIFICATION RULES \(apply to everything above\)/ { on = 0 }
+    on { print }
+    END { exit !found }' "$1" || cat "$1"
+}
+
+# debug_task task lines full — one task's section of agent debug: everything to diagnose it — its metadata, its text
+# (with full: the whole task.md and every run's prompt), its request on the bus and the requests it made, its
+# questions and the human's answers, its checkpoint, its gate results, its activity, logs and other files, and the
+# bus messages to and from its agent since it was made. lines: how much of a long source (its end); full: all of it
+debug_task() {
+  local t=$1 n=$2 full=$3 d=$TASKS/$1 f run agent hid since cut=600
+  local -a files=()
+  ((full == 0)) || cut=1000000
+  run=$(task_field "$t" RUN); agent=$(task_field "$t" AGENT); hid=$(task_field "$t" HELPER_ID)
+  echo; echo "== task $t"
+  cat "$d/meta.env"
+  if ((full)); then
+    echo "-- task.md"; cat "$d/task.md"
+  else
+    echo "-- the task: its own text in task.md (all of task.md and every run's prompt: --full)"; debug_task_text "$d/task.md"
+  fi
+  mapfile -t files < <(compgen -G "$d/prompt-*.md" | sort -V)
+  for f in "${files[@]}"; do
+    f=${f##*/}
+    echo "-- prompt of run $(sed 's/^prompt-//; s/\.md$//' <<< "$f"): $f, $(wc -l < "$d/$f") lines"
+    ((full == 0)) || cat "$d/$f"
+  done
+  if [[ -n $hid ]]; then
+    echo "-- its request on the bus (H$hid)"
+    jq --arg k "$hid" '.helpers[$k] // "the bus does not know it"' "$BUS_DIR/state.json"
+  fi
+  echo "-- requests it made"
+  jq --arg t "$t" --argjson cut "$cut" '[.helpers[]? | select(.from_task == $t)
+    | .summary = ((.summary // "") | .[0:$cut]) | .context = ((.context // "") | .[0:$cut])]
+    | if length == 0 then "none" else . end' "$BUS_DIR/state.json"
+  mapfile -t files < <(compgen -G "$d/questions-*.md" | sort -V)
+  for f in "${files[@]}"; do echo "-- ${f##*/}"; cat "$f"; done
+  if [[ -f $BUS_DIR/checkpoints/task-$t.md ]]; then
+    echo "-- its checkpoints (task-$t.md)"; tail -n "$((n * 2))" "$BUS_DIR/checkpoints/task-$t.md"
+  fi
+  echo "-- gate results"
+  if [[ -f $AGENTS_HOME/gates/$t.json ]]; then
+    jq -c . "$AGENTS_HOME/gates/$t.json"
+    grep -F "\"$t\"" "$AGENTS_HOME/gates/history.jsonl" | tail -n "$n"
+  else
+    echo "none"
+  fi
+  echo "-- activity"; tail -n "$n" "$d/activity.jsonl" | jq -r '.ts + " " + .k + " " + (.t // "")'
+  ((full == 0)) || { echo "-- activity-full.jsonl"; cat "$d/activity-full.jsonl"; }
+  if ((full)); then
+    mapfile -t files < <(compgen -G "$d/err-*.log" | sort -V)
+    for f in "${files[@]}"; do echo "-- ${f##*/}"; cat "$f"; done
+  else
+    echo "-- err-$run.log"; tail -n "$n" "$d/err-$run.log"
+  fi
+  echo "-- final.md"; tail -n "$n" "$d/final.md"
+  mapfile -t files < <(compgen -G "$d/last-*.md" | sort -V)
+  for f in "$d/result.md" "$d/history.md" "$d/handback.md" "$d/fix-pass.md" "$d/resume-request.md" "${files[@]}" \
+    "$d/precheck.log" "$d/postmerge.log"; do
+    [[ ! -f $f ]] || { echo "-- ${f##*/}"; tail -n "$n" "$f"; }
+  done
+  echo "-- runner.log"; tail -n "$n" "$d/runner.log"
+  if [[ -n $agent ]]; then
+    # the bus stamps its messages in local time, "2006-01-02 15:04:05": compared in the same form
+    since=$(date -d "$(task_field "$t" CREATED)" '+%Y-%m-%d %H:%M:%S' 2> /dev/null) || since=""
+    echo "-- bus messages to and from $agent${since:+ since $since}"
+    jq -c --arg a "$agent" --arg since "$since" --argjson cut "$cut" 'select((.from == $a or .to == $a)
+      and ((.ts // "") >= $since)) | {ts, from, to, text: ((.text // .body // "") | .[0:$cut])}' \
+      "$BUS_DIR/messages.jsonl" | tail -n "$n"
+  fi
+}
+
 cmd_debug() {
   local ref="" full=0 out="" team="" n=40 t d run by="" name="" days=30 last=20
-  local usage="usage: agent debug <team|task> | --agent NAME | --model NAME [--days N] [--last N] [--full] [--out file]"
+  local usage="usage: agent debug <team|task> | --agent NAME | --model NAME [--days N] [--last N] [--full|--all] [--out file]"
   local -a ids=()
   while (($#)); do
     case $1 in
-      --full) full=1; shift ;;
+      --full | --all) full=1; shift ;;
       --out) out=${2:?$usage}; shift 2 ;;
       --agent | --model) by=${1#--}; name=${2:?$usage}; shift 2 ;;
       --days) days=${2:?$usage}; shift 2 ;;
@@ -8962,11 +9038,8 @@ cmd_debug() {
   if [[ -n $by ]]; then cmd_debug_agent "$by" "$name" "$days" "$last" "$full" "$out"; return; fi
   [[ -n $ref ]] || die "$usage"
   if [[ -f $TASKS/$ref/meta.env ]]; then team=$(task_field "$ref" TEAM); else team=$ref; fi
-  if [[ -n $team ]]; then
-    mapfile -t ids < <(grep -lx "TEAM=$team" "$TASKS"/*/meta.env 2> /dev/null | xargs -r -n1 dirname | xargs -r -n1 basename)
-  else
-    ids=("$ref")
-  fi
+  # the team's tasks, or the task, and every task made for them — workers, investigations, reviews — at any depth
+  mapfile -t ids < <(team_task_closure "${team:-$ref}")
   ((${#ids[@]})) || die "no team or task $ref"
   ((full == 0)) || n=1000000
   out=${out:-$AGENTS_HOME/debug/debug-${team:-$ref}-$(date +%Y%m%d-%H%M%S).txt}
@@ -8983,16 +9056,10 @@ cmd_debug() {
     fi
     echo; echo "== worker requests"
     bus helper-list --dir "$BUS_DIR" --all 2>&1 | grep -F -f <(printf '%s\n' "${ids[@]}") | tail -n "$n"
-    for t in "${ids[@]}"; do
-      d=$TASKS/$t; run=$(task_field "$t" RUN)
-      echo; echo "== task $t"
-      cat "$d/meta.env"
-      echo "-- activity"; tail -n "$n" "$d/activity.jsonl" 2> /dev/null | jq -r '.ts + " " + .k + " " + (.t // "")' 2>&1
-      echo "-- err-$run.log"; tail -n "$n" "$d/err-$run.log" 2>&1
-      echo "-- final.md"; tail -n "$n" "$d/final.md" 2>&1
-      [[ ! -f $d/precheck.log ]] || { echo "-- precheck.log"; tail -n "$n" "$d/precheck.log"; }
-      echo "-- runner.log"; tail -n "$n" "$d/runner.log" 2>&1
-    done
+    if [[ -n $team && -f $BUS_DIR/checkpoints/team-$team.md ]]; then
+      echo; echo "== the team's checkpoints"; tail -n "$((n * 2))" "$BUS_DIR/checkpoints/team-$team.md"
+    fi
+    for t in "${ids[@]}"; do debug_task "$t" "$n" "$full"; done
     echo; echo "== the script's log"
     grep -hF -f <(printf '%s\n' "${ids[@]}" ${team:+"$team"}) "$AGENTS_HOME/logs/agent.jsonl" 2> /dev/null | tail -n "$((n * 3))" \
       | jq -c '{ts, level, event, task} + (del(.ts, .level, .event, .task, .component, .pid, .subcommand))' 2>&1
@@ -9008,7 +9075,9 @@ cmd_debug() {
     done
     echo; echo "== round"
     round_pr_for "${ids[0]}" number,url,state 2>&1 | jq -c '.[]' 2>&1
-    if [[ -n $team ]]; then (cmd_round_check "$team") 2>&1; (cmd_tokens "$team") 2>&1 | tail -n 15; fi
+    if [[ -n $team ]]; then (cmd_round_check "$team") 2>&1; (cmd_tokens "$team") 2>&1 | tail -n 15; else
+      echo; echo "== tokens"; (cmd_tokens "$ref") 2>&1 | tail -n 15
+    fi
     true
   } 2>&1 | debug_redact > "$out"
   echo "$out ($(wc -l < "$out") lines)"
