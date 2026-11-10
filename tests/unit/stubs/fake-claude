@@ -9,6 +9,7 @@ Actions:
   commit          commits a file with the trailers from the prompt, then STATUS: DONE
   unclear         a worker's STATUS: UNCLEAR with its questions
   unclear-legacy  a worker's former UNCLEAR: STATUS: FAILED, Result: UNCLEAR: ...
+  look-unclear    a worker's STATUS: UNCLEAR after running a command
   failed-result   a worker's STATUS: FAILED with a result
   team-lead-test-edit  claims the coordinator role, changes an existing test (tests/existing.bats), commits, TEAM DONE
   quota           the provider refuses the run: a quota error on stderr, exit code 3, no result
@@ -111,6 +112,11 @@ if action == "team-lead-test-edit":
 if action == "unclear":
     # a worker that cannot do the request without an answer: its questions, as a result of their own
     finish("STATUS: UNCLEAR\nQuestions:\n- Which directory holds the files to count?\n- Hidden files too?")
+if action == "look-unclear":
+    # a worker that looked (ran a command) before it asked
+    print(json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}}), flush=True)
+    finish("STATUS: UNCLEAR\nQuestions:\n- Which directory holds the files to count?")
 if action == "unclear-legacy":
     # the former shape of the same: a failure whose result is UNCLEAR
     finish("STATUS: FAILED\nResult: UNCLEAR: Which directory holds the files to count?\nHow: -\nNotes: none")
