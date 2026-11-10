@@ -500,6 +500,7 @@ tests/unit/round_id.bats	agent run --resume keeps the previous round, takes the 
 tests/unit/round_id.bats	a hand-back's text (the system's, not the human's) never decides the round: the previous one is kept	blackbox	R53	-	planned
 tests/unit/round_id.bats	a worker gets its requester's round when it is made, and keeps it when the requester's changes	blackbox	R53	-	planned
 tests/unit/round_id.bats	an investigation and a review asked for by a task get that task's round	blackbox	R53	-	planned
+tests/unit/round_id.bats	an investigation (not a review) asked for by a task gets that task's round, and keeps it when the task's changes	blackbox	R53	-	planned
 tests/unit/round_id.bats	every place that makes a task's metadata (ROUND=0) records its ROUND_ID with it	source	R53	-	planned
 tests/unit/round_runs.bats	a run's start line carries the round and the PR, or pr - before the task has one	blackbox	R53	-	planned
 tests/unit/round_runs.bats	a task without a Round: line marks its runs with round ?	blackbox	R53	-	planned
@@ -507,6 +508,8 @@ tests/unit/round_runs.bats	a worker made while its requester was on PR #74 count
 tests/unit/round_runs.bats	agent tokens --round: a member's usage split by its runs' PRs; its row keeps the task's total	blackbox	R53	-	planned
 tests/unit/round_runs.bats	agent tokens --round: runs without a marker count under <round>/?, never dropped; the total unchanged	blackbox	R53	-	planned
 tests/unit/round_runs.bats	docs/node-improvements.md lists the nodes' future work, first the usage of remote members; multi-instance links it	source	R53	-	planned
+tests/unit/round_runs.bats	a worker's later run still goes into the PR its requester was on when the worker was made, not the requester's new one	source	R53	-	planned
+tests/unit/round_team_run.bats	a team run and an investigation team of round R20: every task with its role, its round and the right sums	blackbox	R53	-	planned
 tests/unit/round_only.bats	a fix pass's text is for its round only; the human's addition is not	blackbox	R31	-	planned
 tests/unit/round_only.bats	the next round's text leaves out what was for the round before only	source	R17	-	planned
 tests/unit/round_reports.bats	a report under .agents/reports/ does not count towards the round size	blackbox	R31	-	planned

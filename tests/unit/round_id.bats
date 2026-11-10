@@ -73,6 +73,10 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
     n=$((n + 1))
   done
   ((n >= 3))   # phase 1, the merger, the reviewer
+  sed -i 's|^ROUND_ID=.*|ROUND_ID=R13|' "$AGENTS_HOME/tasks/$parent/meta.env"   # the investigation team's changes later
+  for t in $(grep -lx "INVESTIGATION_TEAM=$parent" "$AGENTS_HOME"/tasks/*/meta.env | xargs -n1 dirname | xargs -n1 basename); do
+    [ "$(round_of "$t")" = R12/inv ] || { echo "$t: $(round_of "$t")"; false; }
+  done
 }
 
 @test "agent run --investigation refuses a broken Round: line before anything starts" {
@@ -169,7 +173,36 @@ asked() {
   wait_status "$r" 'starting|running|done|failed'   # REVIEW is written after the task's first fields
   [ "$(meta "$r" REVIEW)" = 1 ]
   [ "$(round_of "$r")" = R12/C ]
+  sed -i 's|^ROUND_ID=.*|ROUND_ID=R13|' "$AGENTS_HOME/tasks/$s/meta.env"   # the requester's changes later
+  [ "$(round_of "$r")" = R12/C ]
   wait_status "$r" '^(done|failed)$'
+  agent stop --running > /dev/null
+}
+
+@test "an investigation (not a review) asked for by a task gets that task's round, and keeps it when the task's changes" {
+  scenario '{"solo": {"new": "sleep:300"}, "inv": {"new": "done"}}'
+  agent run solo $'Round: R12/D\nsolo work' > /dev/null
+  s=$(task_of solo)
+  wait_status "$s" running
+  "$BUILD_DIR/agentbus" inv-add --dir "$AGENTS_HOME/bus" --kind '' --from-agent solo --from-task "$s" --repo repo \
+    --branch "$(meta "$s" BRANCH)" --tasks-dir "$AGENTS_HOME/tasks" --question "why does it fail?" > /dev/null
+  agent dispatch > /dev/null
+  local i="" d
+  for _ in $(seq 1 100); do
+    for d in "$AGENTS_HOME"/tasks/*-inv*; do
+      [[ -d $d && ${d##*/} =~ -inv[0-9]*$ ]] && { i=${d##*/}; break; }
+    done
+    [ -n "$i" ] && break
+    sleep 0.2
+  done
+  [ -n "$i" ]
+  wait_status "$i" 'starting|running|done|failed'   # its metadata is written field by field: STATUS comes after ROUND_ID
+  [ "$(meta "$i" KIND)" = investigation ]
+  [ -z "$(meta "$i" REVIEW)" ]
+  [ "$(round_of "$i")" = R12/D ]
+  sed -i 's|^ROUND_ID=.*|ROUND_ID=R13|' "$AGENTS_HOME/tasks/$s/meta.env"
+  [ "$(round_of "$i")" = R12/D ]
+  wait_status "$i" '^(done|failed)$'
   agent stop --running > /dev/null
 }
 

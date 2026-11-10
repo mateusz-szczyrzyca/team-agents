@@ -117,4 +117,14 @@ member_fixture() {
   grep -q 'run marker' "$f"
   grep -q 'synchronis' "$f"
   grep -q 'node-improvements.md' "$REPO_ROOT/docs/multi-instance.md"
+  grep -qF '](node-improvements.md)' "$REPO_ROOT/docs/multi-instance.md"   # a link, not only the name
+}
+
+@test "a worker's later run still goes into the PR its requester was on when the worker was made, not the requester's new one" {
+  task L $'ID=L\nAGENT=lead\nKIND=worker\nPR_NUMBER=75\nROUND_ID=R12/A\n'
+  task W $'ID=W\nAGENT=worker\nKIND=helper\nPARENT_TASK=L\nREQUESTER_PR=74\nROUND_ID=R12/A\n'
+  task V $'ID=V\nAGENT=worker\nKIND=helper\nPARENT_TASK=L\nREQUESTER_PR=\'\'\nROUND_ID=R12/A\n'
+  source "$REPO_ROOT/bin/agent"
+  [ "$(run_pr W)" = 74 ]   # the marker of each of its runs: pr #74
+  [ -z "$(run_pr V)" ]     # made before its requester had a PR: pr -, never the requester's later one
 }
