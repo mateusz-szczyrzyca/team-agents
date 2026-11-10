@@ -1726,17 +1726,19 @@ make integration        # real agent CLIs and accounts (costs usage)
     permitted with typed errors. Tests verify refusal of attempts to hide mutations or protected fields via
     aliases, fragments, variables, several operations in one document, comments, or escaped strings; unclassifiable
     constructs are refused rather than forwarded.
-  R12C targets 950 lines with a stop threshold of 1,200 lines and a hard 1,500-line cap. The round size is authoritative
+  R12D targets 1,050 lines with a stop threshold of 1,250 lines and a hard 1,500-line cap. The round size is authoritative
   only as written by the script into its PR description block (reports are excluded; do not count lines manually or through
   workers). Merged R12B delivers pure transforms: `GitHubColorConfig{NameColors, Palette}` for raw environment
   colors, pure name rendering (`RenderGitHubNames`) with POSIX `cksum` fallback and intra-document collision resolution,
   verdict formatting (`RenderGitHubRecommendation`), Claude Code Generated-line removal (`RemoveGeneratedLines`), and ordered
   transformations (`TransformPublishBody` and `TransformReviewBody`). These transforms remain pure and unwired to subprocess
-  dispatch or write endpoints. R12C adds pure agent descriptors (`FormatAgentDescriptor`) and attribution footers
-  (`FormatAttributionBlock`), preserving configured model fallbacks, exact raw team metadata, task order and duplicate
-  member entries. It reuses the existing R10 color registry and wrapper setup, with coverage of persistent assignments,
-  incremental rosters, exhausted palettes, process concurrency and disabled colors. Registry files keep their existing
-  format; descriptors introduce no persisted state. Native write activation remains deferred to R12E–G.
+  dispatch or write endpoints. Merged R12C added pure agent descriptors (`FormatAgentDescriptor`), attribution footers
+  (`FormatAttributionBlock`), and setup/registry parity, preserving configured model fallbacks, exact raw team metadata,
+  task order, and duplicate member entries. R12D adds canonical origin resolution (`CanonicalGitHubRepoURL`,
+  `ResolveGitHubRepoURL`, where the resolver only reads git remote origin), pure task PR metadata precedence selection
+  (`RoundPROfTasks`), resume guidance formatting (`FormatRoundPRNote`), and read-only trusted PR merge matching
+  (`FilterTrustedPRs`, `MatchRoundPRMerged`). All R12D helpers remain read-only and unwired to native CLI or REST write dispatch;
+  native write activation remains deferred to R12E–G.
   Scope boundaries reuse existing R10 setup/byline/registry primitives and explicitly exclude `round_pr_for` (R32B),
   round orchestration (R31), formatting bounce/review launch (R34), and remote pipelines (R41/R50).
   Human approval permits metadata-only ledger edits and the narrow replacement of 18 transitional write-refusal
@@ -1744,7 +1746,7 @@ make integration        # real agent CLIs and accounts (costs usage)
   all existing Bash tests and all other native assertions remain unchanged (on-disk ledger modification remains deferred
   pending human `agent allow` registration under rule 1 precheck).
 - **Go rewrite parity tracking and ledger validation.**
-  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). At the round merge base (`d043c7b`), the ledger tracked 730 Bats unit test cases (12 done, 718 planned); on current `main` (`bcd335a`), the active ledger tracks 772 Bats unit test cases in 184 files (497 blackbox, 275 source; 12 done, 760 planned) in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). R10 adds lower-layer Go coverage; R11 activates native GitHub read and member-guard cases; R12A implemented native PR-body diagnostics (`TestPRFormatIssues`) and review-body byline insertion (`TestResolveAndInsertReviewByline`); R12B adds pure publication and review body transformation helpers (`RenderGitHubNames`, `RenderGitHubRecommendation`, `RemoveGeneratedLines`, `TransformPublishBody`, `TransformReviewBody`), while marking ledger rows in `tests/agent-go-map.tsv` remains deferred pending human `agent allow` registration under rule 1 precheck; four whole cases that also require coordinator writes remain planned until R12E, and runner activation remains planned. The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
+  The baseline architecture and contracts of `bin/agent` are inventoried in [`docs/agent-inventory.md`](docs/agent-inventory.md). At the round merge base (`d043c7b`), the ledger tracked 730 Bats unit test cases (12 done, 718 planned); on current `main` (`bcd335a`), the active ledger tracks 772 Bats unit test cases in 184 files (497 blackbox, 275 source; 12 done, 760 planned) in [`tests/agent-go-map.tsv`](tests/agent-go-map.tsv). R10 adds lower-layer Go coverage; R11 activates native GitHub read and member-guard cases; R12A implemented native PR-body diagnostics (`TestPRFormatIssues`) and review-body byline insertion (`TestResolveAndInsertReviewByline`); R12B added pure publication and review body transformation helpers (`RenderGitHubNames`, `RenderGitHubRecommendation`, `RemoveGeneratedLines`, `TransformPublishBody`, `TransformReviewBody`); R12C added pure agent descriptors (`FormatAgentDescriptor`), attribution footers (`FormatAttributionBlock`), and setup/registry parity; R12D adds canonical origin resolution and read-only trusted/current-round PR metadata primitives, while marking ledger rows in `tests/agent-go-map.tsv` remains deferred pending human `agent allow` registration under rule 1 precheck; four whole cases that also require coordinator writes remain planned until R12E, and runner activation remains planned. The developer validator `tools/check-agent-test-map.sh` verifies the ledger against `tests/unit/*.bats`:
   ```bash
   tools/check-agent-test-map.sh              # validates tests/agent-go-map.tsv and prints summary counts
   tools/check-agent-test-map.sh --quiet      # (-q) suppresses summary output, exits 0 on success or 1 on error

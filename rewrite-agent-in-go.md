@@ -479,8 +479,11 @@ plus planning reconciliation. Each slice has a hard working cap of 1,500 added p
 | **R12F** | REST writes: JSON body preservation, byline then recommendation then publication transform ordering, endpoint behavior, mutation response filtering, and native API activation. | 1,150 | 1,350 |
 | **R12G** | GraphQL payload inspection and permitted-request forwarding: fail-closed policy rejecting anything not positively classified as permitted with typed errors. Tests verify refusal of evasion attempts hiding mutations or protected fields via aliases, fragments, variables, several operations in one document, comments, or escaped strings; unclassifiable constructs refused. | 1,050 | 1,300 |
 
-R12A and R12B are merged in PRs #72 and #75. The current round is R12C: descriptors/attribution and
-registry/setup parity, targeting 950 lines with a review threshold of 1,200 lines and a hard 1,500-line cap.
+R12A, R12B, and R12C are merged in PRs #72, #75, and #76. The current round is R12D: canonical origin
+resolution and read-only trusted/current-round PR primitives (metadata precedence and exact-number merge
+matching), targeting 1,050 lines with a review threshold of 1,250 lines and a hard 1,500-line cap.
+All implemented primitives remain unwired to native CLI or REST write dispatch; canonical origin resolution
+only reads git remote origin, while PR metadata and note helpers are pure in-memory functions. Native write activation remains deferred to R12E–G.
 Round size is authoritative only in the script's PR description block without manual or worker counting;
 reports are excluded. Each subsequent slice starts on a fresh branch after the preceding PR merges.
 Scope boundaries:
