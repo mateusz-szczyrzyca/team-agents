@@ -18,7 +18,8 @@ func RemoveGeneratedLines(body string) string {
 	// - Generated with [Claude Code]
 	// - Generated with Claude Code(v1.0)
 	// Leading/trailing whitespace is handled separately using isBashSpace to match Bash [[:space:]].
-	generatedRe := regexp.MustCompile(`^(?:🤖[ \t\v\f\r]*)?Generated with \[?Claude Code\]?(?:\([^)]*\))?$`)
+	// Optional leading emoji and its trailing Bash whitespace are stripped before matching.
+	generatedRe := regexp.MustCompile(`^Generated with \[?Claude Code\]?(?:\([^)]*\))?$`)
 
 	lines := strings.Split(body, "\n")
 	var result []string
@@ -27,7 +28,11 @@ func RemoveGeneratedLines(body string) string {
 	for _, line := range lines {
 		// Strip leading and trailing Bash whitespace for matching
 		trimmed := trimBashSpaces(line)
-		if generatedRe.MatchString(trimmed) {
+		target := trimmed
+		if strings.HasPrefix(target, "🤖") {
+			target = strings.TrimLeftFunc(strings.TrimPrefix(target, "🤖"), isBashSpace)
+		}
+		if generatedRe.MatchString(target) {
 			drop = true
 			continue
 		}
@@ -48,24 +53,7 @@ func RemoveGeneratedLines(body string) string {
 
 // trimBashSpaces removes leading and trailing characters that match Bash's [[:space:]] set.
 func trimBashSpaces(s string) string {
-	start := 0
-	for i, r := range s {
-		if !isBashSpace(r) {
-			start = i
-			break
-		}
-	}
-	if start >= len(s) {
-		return ""
-	}
-	end := len(s)
-	for i := len(s) - 1; i >= start; i-- {
-		if !isBashSpace(rune(s[i])) {
-			end = i + 1
-			break
-		}
-	}
-	return s[start:end]
+	return strings.TrimFunc(s, isBashSpace)
 }
 
 // isBashBlankLine returns true if all characters in the line are Bash whitespace.
