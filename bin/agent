@@ -1844,6 +1844,22 @@ gate_record() {
   log_info gate_recorded "task=$1" "sha=$2" "clean=$3" "exit=$4"
 }
 
+# gate_refused task worktree — an agent's gate of its own uncommitted tree: what to do instead, and a line in the
+# gates' history (status refused) — the task's last run, which gate-status and board_done read, stays as it was
+gate_refused() {
+  local id=$1 wt=$2 rec
+  printf '%s\n' "gate: not run — the tree has uncommitted changes: a gate on them counts for nothing (board_done needs a" \
+    "pass of a committed HEAD) and holds the machine for minutes. While you work, run single tests and the linter of" \
+    "what you change; commit — remove what a build left (git status below) —, then run agent gate once." \
+    "Uncommitted:" >&2
+  git -C "$wt" status --porcelain | head -n 10 >&2
+  rec=$(jq -nc --arg task "$id" --arg sha "$(git -C "$wt" rev-parse HEAD)" --arg at "$(date -Is)" \
+    '{task: $task, sha: $sha, clean: false, status: "refused", reason: "an agent'"'"'s own uncommitted tree", at: $at}')
+  mkdir -p "$AGENTS_HOME/gates" && printf '%s\n' "$rec" >> "$AGENTS_HOME/gates/history.jsonl" \
+    || log_warn gate_record_failed "task=$id" "reason=the refusal could not be kept"
+  log_info gate_refused "task=$id" "reason=uncommitted"
+}
+
 # gate_verdict task — whether the task's last recorded gate run is a pass of its HEAD on a clean tree; says why not
 gate_verdict() {
   local id=$1 wt head rec sha clean status rc at
@@ -1883,6 +1899,12 @@ cmd_gate() {
   [[ -d $wt ]] || die "task $id has no worktree"
   gate=$(review_gate_cmd "$wt")
   [[ -n $gate ]] || die "the repository has no gate (AGENT_REVIEW_GATE=$AGENT_REVIEW_GATE)"
+  # an agent's gate of its own task on uncommitted work counts for nothing (board_done needs a pass of a committed
+  # HEAD) and holds the machine for minutes: refused, with what to do — a human's, or another task's, runs
+  if [[ ${AGENT_RUN_TASK:-} == "$id" && -n $(git -C "$wt" status --porcelain) ]]; then
+    gate_refused "$id" "$wt"
+    return 2
+  fi
   gate_lock "$wait" "$id" "$wt"
   sha=$(git -C "$wt" rev-parse HEAD)
   [[ -z $(git -C "$wt" status --porcelain) ]] || clean=false
@@ -6235,6 +6257,7 @@ cmd__runner() {
   exec >>"$dir/runner.log" 2>&1 3>&1   # fd 3: structured log records (log_event)
   export LC_ALL=C.UTF-8 MCP_TOOL_TIMEOUT=900000
   RUNNER_ID=$id
+  export AGENT_RUN_TASK=$id   # the agent's commands know their run's task: agent gate refuses its own uncommitted tree
   meta_load "$id"
   if [[ -f $dir/hold-requested ]] || task_held "$id"; then   # paused with its team before this run got going: it waits
     meta_set "$id" HOLD_START "$mode"
@@ -9031,6 +9054,10 @@ debug_task() {
     echo "-- its checkpoints (task-$t.md)"; tail -n "$((n * 2))" "$BUS_DIR/checkpoints/task-$t.md"
   fi
   echo "-- gate results"
+  jq -rs --arg t "$t" 'map(select(.task == $t)) as $h | ($h | map(select(.status != "refused"))) as $r
+    | select($h | length > 0)
+    | "gate runs: \($r | length) (on an uncommitted tree: \($r | map(select(.clean == false)) | length)); refused on an uncommitted tree: \($h | map(select(.status == "refused")) | length)"' \
+    "$AGENTS_HOME/gates/history.jsonl" 2> /dev/null
   if [[ -f $AGENTS_HOME/gates/$t.json ]]; then
     jq -c . "$AGENTS_HOME/gates/$t.json"
     grep -F "\"$t\"" "$AGENTS_HOME/gates/history.jsonl" | tail -n "$n"

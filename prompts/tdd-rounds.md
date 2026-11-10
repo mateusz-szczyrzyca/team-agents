@@ -27,6 +27,10 @@ test listings:
   since: note what you learnt instead.
 - A diff is read in steps: `git diff --stat` first, then one file at a time (`git diff <base> -- <file>`).
 
+`agent gate` refuses an uncommitted tree of your own task: a gate on uncommitted work counts for nothing and holds
+the machine for minutes. While you work, run single tests and the linter of what you change; run the gate once, on
+your commit.
+
 ## Rounds — every PR stays reviewable
 
 The PR of this task {{ROUND_LIMIT_TEXT}}: added plus deleted lines against the base, tests included, generated and
