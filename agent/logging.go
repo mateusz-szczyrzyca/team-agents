@@ -407,7 +407,8 @@ func (event LogEvent) Valid() bool {
 		event == LogGitIdentity || event == LogSigningKeyUnreadable || event == LogAgentsGHMissing || event == LogGitHubColorsFailed ||
 		event == EventGitHubCommentIgnored || event == EventGitHubCommentMarkedIgnored || event == EventGitHubPRIgnored ||
 		event == EventGitHubIssueIgnored || event == EventPRUntrustedIgnored || event == EventGitHubGraphQLRefused ||
-		event == EventGitHubMemberPRRefused || event == EventGitHubSecondPRRefused || event == EventGitHubCoordinatorUnknown
+		event == EventGitHubMemberPRRefused || event == EventGitHubSecondPRRefused || event == EventGitHubCoordinatorUnknown ||
+		event == LogJobOriginLookupFailed
 }
 
 // UnmarshalJSON validates the event; errors contain *ValueError.
