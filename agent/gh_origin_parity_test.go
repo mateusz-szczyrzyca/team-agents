@@ -72,7 +72,9 @@ func TestResolveGitHubRepoURL_LoggingAndTrailingLF(t *testing.T) {
 		exec := fakeGHExec{
 			run: func(cmd Command) (CommandResult, *ExecuteError) {
 				if cmd.Stdout != nil {
-					_, _ = cmd.Stdout.Write([]byte("fatal: not a git repository\n"))
+					if _, err := cmd.Stdout.Write([]byte("fatal: not a git repository\n")); err != nil {
+						t.Fatalf("failed to write stdout: %v", err)
+					}
 				}
 				return CommandResult{ExitCode: 128}, nil
 			},
@@ -98,7 +100,9 @@ func TestResolveGitHubRepoURL_LoggingAndTrailingLF(t *testing.T) {
 		exec := fakeGHExec{
 			run: func(cmd Command) (CommandResult, *ExecuteError) {
 				if cmd.Stdout != nil {
-					_, _ = cmd.Stdout.Write([]byte("https://github.com/owner/repo\n\n"))
+					if _, err := cmd.Stdout.Write([]byte("https://github.com/owner/repo\n\n")); err != nil {
+						t.Fatalf("failed to write stdout: %v", err)
+					}
 				}
 				return CommandResult{ExitCode: 0}, nil
 			},
