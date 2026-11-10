@@ -8840,7 +8840,15 @@ cmd_spend() {
         printf "1\t%s\t%s%-36s %-9s %-12s %5d %12d %12d %10d %10s %10s\n", k, (D ? sprintf("%-11s", kd[1]) : ""), m, cli[k], bill[k], runs[k], tin[k], ca[k], out[k], sp, eq
       }
       printf "2\t\t\t%s%-36s %-9s %-12s %5s %12s %12s %10s %10.4f %10.4f\n", (D ? sprintf("%-11s", "") : ""), "total", "", "", "", "", "", "", ts, te
-    }' | sort -t$'\t' -k1,1 -k2,2 -k3,3 | cut -f4-
+    }' | sort -t$'\t' -k1,1 -k2,2 -k3,3 | cut -f4- | spend_note
+}
+
+# spend_note — agent spend's table, then the note on opencode's short usage when a row is opencode's
+spend_note() {
+  local table
+  table=$(cat)
+  printf '%s\n' "$table"
+  ! grep -qE '[[:space:]]opencode[[:space:]]' <<< "$table" || echo "$OPENCODE_SHORT"
 }
 
 # debug_redact — the debug file without secrets: the values of secrets.env (six characters or more), and anything
@@ -8895,6 +8903,10 @@ cmd_debug_agent() {
     for t in "${ids[@]}"; do echo "$(task_field "$t" KIND) $(task_field "$t" STATUS)"; done | sort | uniq -c
     for t in "${ids[@]}"; do [[ $(task_field "$t" STATUS) != failed ]] || failed=$((failed + 1)); done
     ((total == 0)) || printf 'failed: %d (%d%%)\n' "$failed" "$((100 * failed / total))"
+    # the runs in which the agent did nothing — no command, edit or tool call: it answered from its prompt alone
+    read -r idle runs < <(for t in "${ids[@]}"; do run_idle_counts "$t"; done | awk '{i += $1; r += $2} END {print i + 0, r + 0}')
+    ((runs == 0)) || printf 'runs without an action (no command, edit or tool call): %d of %d (%d%%)\n' "$idle" "$runs" \
+      "$((100 * idle / runs))"
     echo "failure reasons (the notes of the failed tasks):"
     for t in "${ids[@]}"; do
       [[ $(task_field "$t" STATUS) == failed ]] || continue
@@ -9255,8 +9267,29 @@ run_subrounds() {
 # tokens_table [--sums] task… — agent tokens' table: per task its runs' sums (in, cached, out, cost; a task without
 # usage says so), then its ROLE and ROUND ("-": a task made before rounds were recorded), and the total; --sums: the
 # sums per role, per model and per sub-round (run_subrounds) before the total
+# OPENCODE_SHORT — the note on opencode's usage: it never reports the usage of a run's last step (2.1.3: 596 of 622
+# runs lacked exactly that step_finish), so its numbers are short — a run that answered at once reported nothing
+OPENCODE_SHORT="opencode does not report the usage of a run's last step: its IN, OUT and costs are short — a run that answered at once, by all of it"
+
+# model_price_cost model in cached out — what MODEL_PRICES puts on that usage ("input cached output" in $ per 1M
+# tokens; cached tokens are part of in), as agent spend prices a run its provider reported no cost for; status 1:
+# the model has no price
+model_price_cost() {
+  local price=${MODEL_PRICES[$1]:-}
+  [[ -n $price ]] || return 1
+  awk -v p="$price" -v i="$2" -v c="$3" -v o="$4" 'BEGIN {split(p, a, " "); printf "%.6f", ((i - c) * a[1] + c * a[2] + o * a[3]) / 1e6}'
+}
+
+# run_idle_counts task — its runs in which the agent did nothing (no command, edit or tool call: it answered from its
+# prompt alone) and all its runs, from its activity: "<idle> <runs>"
+run_idle_counts() {
+  awk '/"k":"info"/ && /"t":"▶ run / { if (on && n == 0) idle++; runs++; on = 1; n = 0; next }
+    /"k":"(cmd|edit|mcp|tool)"/ { n++ }
+    END { if (on && n == 0) idle++; print idle + 0, runs + 0 }' "$TASKS/$1/activity.jsonl" 2> /dev/null || echo "0 0"
+}
+
 tokens_table() {
-  local sums=0 id usage runs row in cached out cost role round all="" subs=""
+  local sums=0 id usage runs row in cached out cost role round all="" subs="" mark priced=0 short=0 p
   [[ ${1:-} != --sums ]] || { sums=1; shift; }
   local -A TOKENS_LEADS=()
   printf '%-40s %-24s %-13s %12s %12s %10s %10s %-13s %s\n' TASK AGENT KIND IN CACHED OUT COST ROLE ROUND
@@ -9273,7 +9306,12 @@ tokens_table() {
       continue
     fi
     IFS=$'\t' read -r in cached out cost <<< "$usage"
-    printf '%-40s %-24s %-13s %12s %12s %10s %10.4f %-13s %s\n' "$id" "$(task_field "$id" AGENT)" "$(task_field "$id" KIND)" "$in" "$cached" "$out" "$cost" "$role" "$round"
+    mark=""   # *: priced from MODEL_PRICES — the provider reported no cost (as agent spend prices it)
+    if [[ $(awk -v c="$cost" 'BEGIN {print (c == 0)}') == 1 ]] && p=$(model_price_cost "$(task_model "$id")" "$in" "$cached" "$out"); then
+      cost=$p; mark="*"; priced=1
+    fi
+    [[ $(task_field "$id" TYPE) != opencode ]] || short=1
+    printf '%-40s %-24s %-13s %12s %12s %10s %10s %-13s %s\n' "$id" "$(task_field "$id" AGENT)" "$(task_field "$id" KIND)" "$in" "$cached" "$out" "$(printf '%.4f%s' "$cost" "$mark")" "$role" "$round"
     all+=$(jq -nc --arg role "$role" --arg model "$(task_model "$id")" --argjson in "$in" --argjson cached "$cached" \
       --argjson out "$out" --argjson cost "$cost" '{role: $role, model: $model, in: $in, cached: $cached, out: $out, cost: $cost}')$'\n'
   done
@@ -9290,6 +9328,8 @@ tokens_table() {
   fi
   jq -rs '[(map(.in) | add // 0), (map(.cached) | add // 0), (map(.out) | add // 0), (map(.cost) | add // 0)] | @tsv' <<< "$all" \
     | { IFS=$'\t' read -r in cached out cost; printf '%-40s %-24s %-13s %12s %12s %10s %10.4f\n' total "" "" "$in" "$cached" "$out" "$cost"; }
+  ((priced == 0)) || echo "* priced from MODEL_PRICES: the provider reported no cost"
+  ((short == 0)) || echo "$OPENCODE_SHORT"
 }
 
 cmd_tokens() { # <team|task> | --round <id> | --runs <task> — the tokens the runs used, from their activity's usage

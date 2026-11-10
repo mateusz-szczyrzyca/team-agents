@@ -18,7 +18,7 @@ act() { jq -nc --arg k "$2" --arg t "$3" '{ts: "2026-10-31 10:00:00", k: $k, t: 
   task P-free $'ID=P-free\nAGENT=w\nKIND=helper\nMODEL=deepinfra/m\nTYPE=claude\n'
   act P-free info 'usage: in 1000000 (cached 500000), out 250000, cost $0.0000'
   task P-paid $'ID=P-paid\nAGENT=w\nKIND=helper\nMODEL=deepinfra/m\nTYPE=claude\n'
-  act P-paid info 'usage: in 1000, out 10, cost $0.0420'
+  act P-paid info 'usage: in 1000 (cached 0), out 10, cost $0.0420'
   run agent tokens P-free
   [ "$status" -eq 0 ]
   [[ $(grep '^P-free ' <<< "$output") == *" 1.7500* "* ]]   # (500k × 1 + 500k × 0.5 + 250k × 4) / 1M
@@ -31,11 +31,12 @@ act() { jq -nc --arg k "$2" --arg t "$3" '{ts: "2026-10-31 10:00:00", k: $k, t: 
 
 @test "agent tokens and agent spend say that opencode's usage is short: its runs' last step is not reported" {
   task O-1 $'ID=O-1\nAGENT=w\nKIND=helper\nMODEL=deepinfra/m\nTYPE=opencode\nCREATED=2026-10-31T10:00:00+01:00\n'
+  act O-1 info '▶ run 1 (new)'   # agent spend dates a run by its start
   act O-1 info 'step: tool-calls, tokens in/out 1000/50, cost $0.0010'
   run agent tokens O-1
   [[ $output == *"opencode does not report the usage of a run's last step"* ]]
   task C-1 $'ID=C-1\nAGENT=w\nKIND=helper\nMODEL=m\nTYPE=claude\n'
-  act C-1 info 'usage: in 1000, out 10, cost $0.0420'
+  act C-1 info 'usage: in 1000 (cached 0), out 10, cost $0.0420'
   run agent tokens C-1
   [[ $output != *"opencode does not report"* ]]
   run agent spend --days 100000
