@@ -1726,13 +1726,17 @@ make integration        # real agent CLIs and accounts (costs usage)
     permitted with typed errors. Tests verify refusal of attempts to hide mutations or protected fields via
     aliases, fragments, variables, several operations in one document, comments, or escaped strings; unclassifiable
     constructs are refused rather than forwarded.
-  R12B targets 850 lines with a stop threshold of 1,100 lines and a hard 1,500-line cap. The round size is authoritative
+  R12C targets 950 lines with a stop threshold of 1,200 lines and a hard 1,500-line cap. The round size is authoritative
   only as written by the script into its PR description block (reports are excluded; do not count lines manually or through
-  workers). The current round delivers R12B pure transforms: `GitHubColorConfig{NameColors, Palette}` for raw environment
+  workers). Merged R12B delivers pure transforms: `GitHubColorConfig{NameColors, Palette}` for raw environment
   colors, pure name rendering (`RenderGitHubNames`) with POSIX `cksum` fallback and intra-document collision resolution,
   verdict formatting (`RenderGitHubRecommendation`), Claude Code Generated-line removal (`RemoveGeneratedLines`), and ordered
   transformations (`TransformPublishBody` and `TransformReviewBody`). These transforms remain pure and unwired to subprocess
-  dispatch or write endpoints; registry persistence and write activation remain deferred to later slices.
+  dispatch or write endpoints. R12C adds pure agent descriptors (`FormatAgentDescriptor`) and attribution footers
+  (`FormatAttributionBlock`), preserving configured model fallbacks, exact raw team metadata, task order and duplicate
+  member entries. It reuses the existing R10 color registry and wrapper setup, with coverage of persistent assignments,
+  incremental rosters, exhausted palettes, process concurrency and disabled colors. Registry files keep their existing
+  format; descriptors introduce no persisted state. Native write activation remains deferred to R12E–G.
   Scope boundaries reuse existing R10 setup/byline/registry primitives and explicitly exclude `round_pr_for` (R32B),
   round orchestration (R31), formatting bounce/review launch (R34), and remote pipelines (R41/R50).
   Human approval permits metadata-only ledger edits and the narrow replacement of 18 transitional write-refusal
