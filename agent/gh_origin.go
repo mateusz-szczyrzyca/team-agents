@@ -71,20 +71,27 @@ func ResolveGitHubRepoURL(ctx context.Context, exec Executor, repoRoot string, l
 	}
 
 	raw := out.String()
+	if raw == "" && err != nil {
+		raw = err.Error()
+	}
 	if exitCode == 2 {
 		return ""
 	}
 	if exitCode != 0 {
 		if logger != nil {
 			reason := raw
-			if len(reason) > 300 {
-				reason = reason[:300]
+			runes := []rune(reason)
+			if len(runes) > 300 {
+				reason = string(runes[:300])
 			}
-			_ = logger.Log(ctx, LevelWarn, LogJobOriginLookupFailed, "repository="+repoRoot, "exit="+strconv.Itoa(exitCode), "reason="+reason)
+			if logErr := logger.Log(ctx, LevelWarn, LogJobOriginLookupFailed, "repository="+repoRoot, "exit="+strconv.Itoa(exitCode), "reason="+reason); logErr != nil {
+				// Side effect: log write failure is nonfatal per the Bash oracle; Logger.Log already emits diagnostics.
+				return ""
+			}
 		}
 		return ""
 	}
 
-	cleaned := strings.TrimRight(raw, "\r\n")
+	cleaned := strings.TrimRight(raw, "\n")
 	return CanonicalGitHubRepoURL(cleaned)
 }
