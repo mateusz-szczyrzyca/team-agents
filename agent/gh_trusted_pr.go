@@ -6,6 +6,21 @@ import (
 	"math/big"
 )
 
+// RoundPRState is a GitHub pull request lifecycle state.
+type RoundPRState string
+
+const (
+	RoundPROpen   RoundPRState = "OPEN"   // RoundPROpen identifies an open PR.
+	RoundPRClosed RoundPRState = "CLOSED" // RoundPRClosed identifies a closed, unmerged PR.
+	RoundPRMerged RoundPRState = "MERGED" // RoundPRMerged identifies a merged PR.
+)
+
+// Valid reports whether the state belongs to GitHub's PR lifecycle.
+func (RoundPRState) Valid() bool { return false }
+
+// UnmarshalJSON validates the state; errors contain *ValueError.
+func (*RoundPRState) UnmarshalJSON([]byte) error { return nil }
+
 // IgnoredPR identifies a PR rejected by the round's repository and author policy.
 type IgnoredPR struct {
 	Number string // Number preserves the JSON number for diagnostics; absent numbers are "null".
