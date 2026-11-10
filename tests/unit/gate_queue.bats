@@ -156,3 +156,16 @@ with_task() {
   grep -q -- "-lead$" "$BATS_TEST_TMPDIR/run"
   agent stop --running > /dev/null
 }
+
+@test "the repository's own checkout is no task's worktree, even where a task (an investigation team's) names it" {
+  with_task 'true'
+  root=$(meta "$t" REPO_ROOT)
+  inv=20261110-000001-investigation-team
+  mkdir -p "$AGENTS_HOME/tasks/$inv"
+  printf 'ID=%s\nKIND=investigation_team\nREPO_ROOT=%s\nWORKTREE=%s\n' "$inv" "$root" "$root" > "$AGENTS_HOME/tasks/$inv/meta.env"
+  run agent _task_of_dir "$root"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]   # a human's make gate there runs as before, not through agent gate
+  [ "$(agent _task_of_dir "$wt")" = "$t" ]
+  agent stop --running > /dev/null
+}
