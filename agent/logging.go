@@ -44,6 +44,8 @@ const (
 	LogInvListFailed LogEvent = "inv_list_failed"
 	// LogJobOriginLookupFailed reports failure querying git remote get-url origin.
 	LogJobOriginLookupFailed LogEvent = "job_origin_lookup_failed"
+	// EventGitHubNamesFailed reports temporary file creation failure for body transformation.
+	EventGitHubNamesFailed LogEvent = "github_names_failed"
 )
 
 // Logger owns destinations and immutable invocation metadata; Log serializes writes.
@@ -408,7 +410,7 @@ func (event LogEvent) Valid() bool {
 		event == EventGitHubCommentIgnored || event == EventGitHubCommentMarkedIgnored || event == EventGitHubPRIgnored ||
 		event == EventGitHubIssueIgnored || event == EventPRUntrustedIgnored || event == EventGitHubGraphQLRefused ||
 		event == EventGitHubMemberPRRefused || event == EventGitHubSecondPRRefused || event == EventGitHubCoordinatorUnknown ||
-		event == LogJobOriginLookupFailed
+		event == LogJobOriginLookupFailed || event == EventGitHubNamesFailed
 }
 
 // UnmarshalJSON validates the event; errors contain *ValueError.
