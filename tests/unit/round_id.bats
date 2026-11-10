@@ -48,16 +48,16 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
   agent run solo $'Round: R7\nsolo work' > /dev/null
   s=$(task_of solo)
   [ "$(round_of "$s")" = R7 ]
-  wait_status "$s" done
+  wait_status "$s" "done"
   agent run solo 'more solo work' > /dev/null
   s2=$(task_of solo)
   [ "$(round_of "$s2")" = '?' ]
-  wait_status "$s2" done
+  wait_status "$s2" "done"
   agent run --team lead,member $'Build the parser.\n\nRound:  R12/A \n' > /dev/null
   [ "$(round_of "$(task_of lead)")" = R12/A ]
   [ "$(round_of "$(task_of member)")" = R12/A ]
-  wait_status "$(task_of lead)" done
-  wait_status "$(task_of member)" done
+  wait_status "$(task_of lead)" "done"
+  wait_status "$(task_of member)" "done"
 }
 
 @test "agent run --investigation records the round in the investigation team and in each of its phases" {
@@ -87,17 +87,17 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
   scenario '{"solo": {"new": "done"}}'
   agent run solo $'Round: R12\nsolo work' > /dev/null
   s=$(task_of solo)
-  wait_status "$s" done
+  wait_status "$s" "done"
   agent run --resume "$s" "go on" > /dev/null
   s2=$(task_of solo)
   [ "$s2" != "$s" ]
   [ "$(round_of "$s2")" = R12 ]
-  wait_status "$s2" done
+  wait_status "$s2" "done"
   agent run --resume "$s2" $'the next part\nRound: R12/B' > /dev/null
   s3=$(task_of solo)
   [ "$(round_of "$s3")" = R12/B ]
   [ "$(round_of "$s2")" = R12 ]   # the task before keeps its own
-  wait_status "$s3" done
+  wait_status "$s3" "done"
   run agent run --resume "$s3" $'Round: R12/B/\nwork'
   [ "$status" -ne 0 ]
   [[ $output == *"line 1"* ]]
@@ -108,12 +108,12 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
   scenario '{"solo": {"new": "done"}}'
   agent run solo $'Round: R12\nsolo work' > /dev/null
   s=$(task_of solo)
-  wait_status "$s" done
+  wait_status "$s" "done"
   AGENT_HANDBACK_LEAD=solo agent run --resume "$s" $'review findings\nRound: 2 of 3 is next' > /dev/null
   s2=$(task_of solo)
   [ "$s2" != "$s" ]
   [ "$(round_of "$s2")" = R12 ]
-  wait_status "$s2" done
+  wait_status "$s2" "done"
 }
 
 # asked — a team (round R12/A) whose member asks a worker to count files; sets m and team
@@ -156,8 +156,11 @@ asked() {
     --branch "$(meta "$s" BRANCH)" --tasks-dir "$AGENTS_HOME/tasks" --question "review it" \
     --pr-url https://github.com/example/repo/pull/74 --pr-number 74 > /dev/null
   agent dispatch > /dev/null
-  local r=""
-  for _ in $(seq 1 100); do r=$(ls "$AGENTS_HOME/tasks" | grep -- '-inv[0-9]*$' || true); [ -n "$r" ] && break; sleep 0.2; done
+  local r="" d
+  for _ in $(seq 1 100); do
+    for d in "$AGENTS_HOME/tasks"/*-inv[0-9]*; do [[ -d $d ]] && { r=${d##*/}; break 2; }; done
+    sleep 0.2
+  done
   [ -n "$r" ]
   wait_status "$r" 'starting|running|done|failed'   # REVIEW is written after the task's first fields
   [ "$(meta "$r" REVIEW)" = 1 ]

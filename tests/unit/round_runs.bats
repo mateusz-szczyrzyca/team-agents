@@ -23,7 +23,7 @@ act() { jq -nc --arg t "$2" '{ts: "2026-11-09 10:00:00", k: "info", t: $t}' >> "
   printf 'PR_NUMBER=74\n' >> "$AGENTS_HOME/tasks/$t/meta.env"
   sed -i 's/^WAKE_AT=.*/WAKE_AT=1/' "$AGENTS_HOME/tasks/$t/meta.env"
   agent _wake "$t"
-  wait_status "$t" done
+  wait_status "$t" "done"
   [ "$(starts "$t" | sed -n 2p)" = '▶ run 2 (resume) round R12/A pr #74' ]
   # the parsers of the start line still read it: two runs, the second a resume (with usage: the fake CLI reports none)
   act "$t" 'usage: in 10 (cached 0), out 1'
@@ -36,7 +36,7 @@ act() { jq -nc --arg t "$2" '{ts: "2026-11-09 10:00:00", k: "info", t: $t}' >> "
   scenario '{"solo": {"new": "done"}}'
   agent run solo 'work' > /dev/null
   t=$(task_of solo)
-  wait_status "$t" done
+  wait_status "$t" "done"
   [ "$(starts "$t")" = '▶ run 1 (new) round ? pr -' ]
 }
 
