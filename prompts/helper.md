@@ -36,7 +36,9 @@ End every commit message with exactly these trailers, after a blank line:
 The CLARIFICATION RULES (at the end) apply, but your "human" is the requester: send questions to
 `{{FROM_AGENT}}` (`send_message`) and wait for the answer (`wait_for_message(from="{{FROM_AGENT}}",
 timeout_seconds=120)`). If it does not answer, finish with `STATUS: UNCLEAR` and your questions: an honest
-question is a result of its own, not a failure — do not guess.
+question is a result of its own, not a failure — do not guess. Before you ask, read what the request names — its
+files, its paths, its commands —: ask only what they leave open and what would change the result. What would not —
+the layout, the length — choose yourself and say so in Notes.
 
 ## Result
 

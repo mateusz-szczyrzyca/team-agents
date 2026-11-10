@@ -4243,6 +4243,12 @@ build_prompt() { # id mode qfile next_round
     printf '\n'
     any=1
   fi
+  if [[ -n ${UBOUNCE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    render "$PROMPTS/unclear-bounce.md"
+    printf '\n'
+    any=1
+  fi
   if [[ -n ${ABOUNCE_PENDING:-} ]]; then
     ((any)) && printf '\n---\n\n'
     R[DECIDED_FILE]=$ABOUNCE_PENDING
@@ -6310,6 +6316,7 @@ cmd__runner() {
   meta_set "$id" BOUNCE_PENDING ""
   meta_set "$id" QBOUNCE_PENDING ""
   meta_set "$id" SBOUNCE_PENDING ""
+  meta_set "$id" UBOUNCE_PENDING ""
   meta_set "$id" NSBOUNCE_PENDING ""
   meta_set "$id" DBOUNCE_PENDING ""
   meta_set "$id" UNPAUSE_PENDING ""
@@ -6572,6 +6579,11 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     note="woken again and again without anything to do (wake-loop guard) — paused until $(date -d "@$(( $(date +%s) + pause_secs ))" '+%H:%M')"
   fi
   # questions without recommendations go back to the agent once (the same questions file, the same round)
+  # a worker's UNCLEAR from a run with no action — no command, no edit, no tool call: it asked without looking at
+  # anything — goes back to it once (H1121: four of its five questions were answered by the files the request named)
+  if ((${HELPER_UNCLEAR:-0})) && [[ -z ${UNCLEAR_BOUNCED:-} ]] && (($(run_actions "$id") == 0)); then
+    status=ubounce; HELPER_UNCLEAR=0
+  fi
   if [[ $status == qbounce ]]; then
     meta_set "$id" QUESTIONS_BOUNCED "$next_round"
     meta_set "$id" QBOUNCE_PENDING "$norec"
@@ -6621,6 +6633,17 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
     act "$id" info "↩ --autopilot: a turn without STATUS — sent back to the agent: continue as planned"
     log_info nostatus_autopilot_bounced "task=$id" "agent=$AGENT" "model=${MODEL:-}"
     start_runner "$id" resume || log_error resume_failed "task=$id" "reason=a turn without STATUS"
+    dispatch; dispatch_helpers
+    return 0
+  fi
+  # a worker's UNCLEAR without looking at anything goes back to it once, with what to do; not sent to the requester
+  if [[ $status == ubounce ]]; then
+    meta_set "$id" UNCLEAR_BOUNCED "$(task_field "$id" RUN)"
+    meta_set "$id" UBOUNCE_PENDING 1
+    RUNNER_DONE=1
+    act "$id" info "↩ UNCLEAR without looking at anything — sent back once: read what the request names, ask only what it leaves open"
+    log_info unclear_bounced "task=$id" "agent=$AGENT" "model=${MODEL:-}"
+    start_runner "$id" resume || log_error resume_failed "task=$id" "reason=an UNCLEAR without looking at anything"
     dispatch; dispatch_helpers
     return 0
   fi
@@ -8941,6 +8964,13 @@ cmd_debug_agent() {
     true
   } 2>&1 | debug_redact > "$out"
   echo "$out ($(wc -l < "$out") lines)"
+}
+
+# run_actions task — how many actions (a command, an edit, a tool call) its agent took in its current run: the
+# activity entries after the run's start line
+run_actions() {
+  awk '/"k":"info"/ && /"t":"▶ run / { n = 0; next } /"k":"(cmd|edit|mcp|tool)"/ { n++ } END { print n + 0 }' \
+    "$TASKS/$1/activity.jsonl" 2> /dev/null || echo 0
 }
 
 # debug_task_text file — the task's own text in a prompt: from its heading (# TASK, # TEAM TASK, # REQUEST H<n>,
