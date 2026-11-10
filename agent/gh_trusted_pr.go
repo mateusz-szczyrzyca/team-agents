@@ -16,10 +16,23 @@ const (
 )
 
 // Valid reports whether the state belongs to GitHub's PR lifecycle.
-func (RoundPRState) Valid() bool { return false }
+func (state RoundPRState) Valid() bool {
+	return state == RoundPROpen || state == RoundPRClosed || state == RoundPRMerged
+}
 
 // UnmarshalJSON validates the state; errors contain *ValueError.
-func (*RoundPRState) UnmarshalJSON([]byte) error { return nil }
+func (state *RoundPRState) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err != nil {
+		return valueWrap(err, "invalid PR state").asError()
+	}
+	candidate := RoundPRState(text)
+	if !candidate.Valid() {
+		return valueErr("unknown PR state %q", text).asError()
+	}
+	*state = candidate
+	return nil
+}
 
 // IgnoredPR identifies a PR rejected by the round's repository and author policy.
 type IgnoredPR struct {
@@ -94,18 +107,18 @@ func MatchRoundPRMerged(raw []byte, number string) (bool, *ValueError) {
 			continue
 		}
 		matches++
-		var state string
+		var state RoundPRState
 		if decodeErr := json.Unmarshal(fields["state"], &state); decodeErr != nil {
 			continue
 		}
-		merged = state == "MERGED"
+		merged = state == RoundPRMerged
 	}
 	return matches == 1 && merged, nil
 }
 
 // roundPRObjects validates the response shape before either read-only operation uses it.
 func roundPRObjects(raw []byte) ([]json.RawMessage, *ValueError) {
-	raw = bytes.TrimSpace(raw)
+	raw = bytes.Trim(raw, " \t\r\n")
 	if len(raw) == 0 || raw[0] != '[' {
 		return nil, valueErr("expected a JSON PR list")
 	}
@@ -123,24 +136,27 @@ func roundPRObjects(raw []byte) ([]json.RawMessage, *ValueError) {
 
 // roundPRLogin applies jq's missing/null default while preserving an explicit empty login.
 func roundPRLogin(raw []byte, fallback string) (string, bool) {
-	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+	if len(raw) == 0 || bytes.Equal(bytes.Trim(raw, " \t\r\n"), []byte("null")) {
 		return fallback, true
 	}
-	var identity struct {
-		Login *string `json:"login"` // Login is nil when missing or null.
-	}
+	var identity map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &identity); err != nil {
 		return "", false
 	}
-	if identity.Login == nil {
+	login := identity["login"]
+	if len(login) == 0 || bytes.Equal(login, []byte("null")) {
 		return fallback, true
 	}
-	return *identity.Login, true
+	var text string
+	if err := json.Unmarshal(login, &text); err != nil {
+		return "", false
+	}
+	return text, true
 }
 
 // roundPRNumber compares JSON numbers exactly, without a float64 precision loss.
 func roundPRNumber(raw []byte) *big.Rat {
-	raw = bytes.TrimSpace(raw)
+	raw = bytes.Trim(raw, " \t\r\n")
 	if len(raw) == 0 || (raw[0] != '-' && (raw[0] < '0' || raw[0] > '9')) || !json.Valid(raw) {
 		return nil
 	}

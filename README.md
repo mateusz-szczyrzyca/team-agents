@@ -1739,6 +1739,8 @@ make integration        # real agent CLIs and accounts (costs usage)
   (`RoundPROfTasks`), resume guidance formatting (`FormatRoundPRNote`), and read-only trusted PR merge matching
   (`FilterTrustedPRs`, `MatchRoundPRMerged`). All R12D helpers remain read-only and unwired to native CLI or REST write dispatch;
   native write activation remains deferred to R12E–G.
+  PR identity keys are case-sensitive, response framing accepts only JSON whitespace, and lifecycle states are validated
+  before merge matching; malformed or unknown states cannot establish a merge.
   Scope boundaries reuse existing R10 setup/byline/registry primitives and explicitly exclude `round_pr_for` (R32B),
   round orchestration (R31), formatting bounce/review launch (R34), and remote pipelines (R41/R50).
   Human approval permits metadata-only ledger edits and the narrow replacement of 18 transitional write-refusal
