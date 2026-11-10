@@ -192,10 +192,14 @@ func (f *fakeExecutor) Execute(_ context.Context, cmd Command) (CommandResult, *
 		return CommandResult{ExitCode: 1}, nil
 	}
 	if cmd.Stdout != nil {
-		_, _ = cmd.Stdout.Write(result.stdout)
+		if _, err := cmd.Stdout.Write(result.stdout); err != nil {
+			return CommandResult{}, fromProcess(ExecuteWait, processErr(cmd.Name, err, "failed to write stdout"))
+		}
 	}
 	if cmd.Stderr != nil {
-		_, _ = cmd.Stderr.Write(result.stderr)
+		if _, err := cmd.Stderr.Write(result.stderr); err != nil {
+			return CommandResult{}, fromProcess(ExecuteWait, processErr(cmd.Name, err, "failed to write stderr"))
+		}
 	}
 	return CommandResult{ExitCode: result.exitCode}, nil
 }

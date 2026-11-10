@@ -15,7 +15,11 @@ func TestResolveGitHubRepoURL_CRLFAndCRRejection(t *testing.T) {
 	ctx := context.Background()
 	for _, input := range []string{"https://github.com/owner/repo\r\n", "https://github.com/owner/repo\r"} {
 		exec := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
-			_, _ = cmd.Stdout.Write([]byte(input))
+			if cmd.Stdout != nil {
+				if _, err := cmd.Stdout.Write([]byte(input)); err != nil {
+					t.Fatalf("failed to write stdout: %v", err)
+				}
+			}
 			return CommandResult{ExitCode: 0}, nil
 		}}
 		if got := ResolveGitHubRepoURL(ctx, exec, "/repo", nil); got != "" {
@@ -38,7 +42,11 @@ func TestResolveGitHubRepoURL_ErrorHandling(t *testing.T) {
 	}
 
 	execRune := fakeGHExec{run: func(cmd Command) (CommandResult, *ExecuteError) {
-		_, _ = cmd.Stdout.Write([]byte(strings.Repeat("日", 305) + "\n"))
+		if cmd.Stdout != nil {
+			if _, err := cmd.Stdout.Write([]byte(strings.Repeat("日", 305) + "\n")); err != nil {
+				t.Fatalf("failed to write stdout: %v", err)
+			}
+		}
 		return CommandResult{ExitCode: 1}, nil
 	}}
 	_ = ResolveGitHubRepoURL(ctx, execRune, "/repo", logger)
