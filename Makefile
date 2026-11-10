@@ -44,6 +44,7 @@ SHELL_SCRIPTS += tests/unit/investigation_single_pipeline.bats tests/unit/invest
 SHELL_SCRIPTS += tests/unit/investigation_resume_independence.bats
 SHELL_SCRIPTS += tests/unit/investigation_independent_labels.bats
 SHELL_SCRIPTS += tests/unit/investigation_completed_legacy.bats
+SHELL_SCRIPTS += tests/unit/round_id.bats tests/unit/round_runs.bats tests/unit/tokens_round.bats tests/unit/round_team_run.bats
 SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats \
 	tools/agent-bats.sh tests/harness/agent_bats.bats tests/harness/agent_bats_runner.bats \
 	tools/check-agent-parity.sh tests/harness/check_agent_parity.bats tests/harness/agent_parity_gate.bats
