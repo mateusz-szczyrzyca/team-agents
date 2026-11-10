@@ -1746,34 +1746,76 @@ gate_holder_line() {
     "$(gate_holder pid)" "$(( ($(date +%s) - s) / 60 ))"
 }
 
-# gate_lock wait task dir — takes the machine's gate lock (fd GATE_FD, inherited by the gate run, so it holds the
-# lock while it runs): at once when free; busy: refuses with GATE_BUSY_MESSAGE, exit 75 (wait=1: waits); a holder
-# past AGENT_GATE_STALE_MIN minutes is taken for hung — its process group stopped, the lock taken over
+# gate_waiters — the live waiters' places in line for the gate lock (AGENTS_HOME/gate.queue: a file each, <start in
+# ns>-<pid>), oldest first; a dead waiter's place is removed
+gate_waiters() {
+  local f pid
+  for f in "$AGENTS_HOME/gate.queue"/*; do
+    [[ -e $f ]] || continue
+    pid=${f##*-}
+    if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2> /dev/null; then
+      printf '%s\n' "${f##*/}"
+    else
+      rm -f "$f"
+    fi
+  done
+}
+
+# gate_take_over — stops a gate run holding the lock past AGENT_GATE_STALE_MIN and takes the lock (status 0); 1: the
+# holder is not stale
+gate_take_over() {
+  local start pg
+  start=$(gate_holder start)
+  [[ $start =~ ^[0-9]+$ ]] || start=$(stat -c %Y "$AGENTS_HOME/gate.lock")
+  (($(date +%s) - start >= AGENT_GATE_STALE_MIN * 60)) || return 1
+  echo "agent gate: $(gate_holder_line) — past $AGENT_GATE_STALE_MIN min, taken for hung: its run is stopped" >&2
+  log_warn gate_lock_taken_over "holder=$(gate_holder task)" "pgid=$(gate_holder pgid)"
+  pg=$(gate_holder pgid)
+  if [[ $pg =~ ^[0-9]+$ ]] && ((pg > 1)); then
+    kill -TERM -- "-$pg" 2> /dev/null || echo "agent gate: its process group $pg is gone already" >&2
+    flock -w 10 "$GATE_FD" && return 0
+    kill -KILL -- "-$pg" 2> /dev/null || echo "agent gate: its process group $pg is gone already" >&2
+  fi
+  flock -w 10 "$GATE_FD" && return 0
+  die "the hung gate run did not let go of the lock; see: cat $AGENTS_HOME/gate.lock"
+}
+
+# gate_lock wait task dir — takes the machine's gate lock in turn (fd GATE_FD, inherited by the gate run, so it holds
+# the lock while it runs): at once when free and nobody waits; busy or someone waiting: refuses with
+# GATE_BUSY_MESSAGE, exit 75, or with wait=1 takes a place in line (AGENTS_HOME/gate.queue) and waits for its turn —
+# the lock goes in turn, not to whoever retries when it is let go. The first in line stops a holder past
+# AGENT_GATE_STALE_MIN minutes, taken for hung, and takes the lock over
 gate_lock() {
-  local wait=$1 task=$2 dir=$3 start pg
+  local wait=$1 task=$2 dir=$3 mine="" first n
   exec {GATE_FD}>> "$AGENTS_HOME/gate.lock" || die "cannot open $AGENTS_HOME/gate.lock"
-  while ! flock -n "$GATE_FD"; do
-    start=$(gate_holder start)
-    [[ $start =~ ^[0-9]+$ ]] || start=$(stat -c %Y "$AGENTS_HOME/gate.lock")
-    if (($(date +%s) - start >= AGENT_GATE_STALE_MIN * 60)); then
-      echo "agent gate: $(gate_holder_line) — past $AGENT_GATE_STALE_MIN min, taken for hung: its run is stopped" >&2
-      log_warn gate_lock_taken_over "holder=$(gate_holder task)" "pgid=$(gate_holder pgid)"
-      pg=$(gate_holder pgid)
-      if [[ $pg =~ ^[0-9]+$ ]] && ((pg > 1)); then
-        kill -TERM -- "-$pg" 2> /dev/null || echo "agent gate: its process group $pg is gone already" >&2
-        flock -w 10 "$GATE_FD" && break
-        kill -KILL -- "-$pg" 2> /dev/null || echo "agent gate: its process group $pg is gone already" >&2
-      fi
-      flock -w 10 "$GATE_FD" && break
-      die "the hung gate run did not let go of the lock; see: cat $AGENTS_HOME/gate.lock"
+  if ((wait)); then
+    mkdir -p "$AGENTS_HOME/gate.queue" || die "cannot create $AGENTS_HOME/gate.queue"
+    mine="$(date +%s%N)-$$"
+    : > "$AGENTS_HOME/gate.queue/$mine" || die "cannot take a place in $AGENTS_HOME/gate.queue"
+  fi
+  while :; do
+    first=$(gate_waiters | head -n 1)
+    if [[ -z $first || $first == "$mine" ]]; then
+      flock -n "$GATE_FD" && break
+      gate_take_over && break
     fi
     if ((wait == 0)); then
-      printf '%s\n  holder: %s; taken for hung after %s min\n' "$GATE_BUSY_MESSAGE" "$(gate_holder_line)" \
-        "$AGENT_GATE_STALE_MIN" >&2
+      n=$(gate_waiters | wc -l)
+      if ((n > 0)); then
+        printf '%s\n  %s waiting in line for it\n' "$GATE_BUSY_MESSAGE" "$n" >&2
+      else
+        printf '%s\n  holder: %s; taken for hung after %s min\n' "$GATE_BUSY_MESSAGE" "$(gate_holder_line)" \
+          "$AGENT_GATE_STALE_MIN" >&2
+      fi
       exit 75
     fi
-    flock -w 15 "$GATE_FD" && break
+    if [[ $first == "$mine" ]]; then
+      flock -w 15 "$GATE_FD" && break
+    else
+      sleep 1
+    fi
   done
+  [[ -z $mine ]] || rm -f "$AGENTS_HOME/gate.queue/$mine"
   printf 'label=gate\ntask=%s\ndir=%s\npid=%s\npgid=\nstart=%s\n' "$task" "$dir" "$$" "$(date +%s)" \
     > "$AGENTS_HOME/gate.lock"
 }
@@ -1847,7 +1889,9 @@ cmd_gate() {
   log=$AGENTS_HOME/gates/$id-$(date +%Y%m%d-%H%M%S).log
   start=$(date +%s)
   set -m   # the run in its own process group: a hung one is stopped whole, the agent's shell around it is not
-  (cd "$wt" && exec timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") < /dev/null > "$log" 2>&1 &
+  # AGENT_GATE_RUN: the repository's gate knows it runs inside agent gate (a tool of its own that would send its
+  # gate through agent gate runs it as it is)
+  (cd "$wt" && AGENT_GATE_RUN=$id exec timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") < /dev/null > "$log" 2>&1 &
   child=$!
   set +m
   gate_lock_pgid "$child"
@@ -2167,7 +2211,7 @@ gate_at() { # repo rev log — runs the repository's gate at a revision in a tem
   [[ -n $gate ]] || return 0
   wt=$(mktemp -d)
   git -C "$repo" worktree add -q --detach "$wt" "$rev" 10>&- || { rmdir "$wt"; echo "cannot check out $rev" > "$log"; return 1; }
-  (cd "$wt" && timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") > "$log" 2>&1 10>&- || rc=$?
+  (cd "$wt" && AGENT_GATE_RUN=$rev timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") > "$log" 2>&1 10>&- || rc=$?
   git -C "$repo" worktree remove --force "$wt" 10>&- || log_warn gate_worktree_left "worktree=$wt"
   return "$rc"
 }
@@ -2641,7 +2685,9 @@ $issues"
     auto_stage "$id" "checks before review: $gate"
     local gstart; gstart=$(date +%s)
     set -m
-    (cd "$wt" && timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") < /dev/null > "$TASKS/$id/precheck.log" 2>&1 10>&- &
+    # AGENT_GATE_RUN: run under the gate lock it holds — a repository's own tool must not send it to agent gate again
+    (cd "$wt" && AGENT_GATE_RUN=$id timeout "${AGENT_REVIEW_GATE_MIN}m" bash -c "$gate") < /dev/null \
+      > "$TASKS/$id/precheck.log" 2>&1 10>&- &
     local gpid=$!
     set +m
     gate_lock_pgid "$gpid"
@@ -11296,6 +11342,7 @@ main() {
     gate)    cmd_gate "$@" ;;
     gate-status) cmd_gate_status "$@" ;;
     _board_done_check) cmd__board_done_check "$@" ;;
+    _task_of_dir) task_of_dir "${1:-$PWD}"; echo ;;   # the task whose worktree a directory is in, or nothing
     unpause) cmd_unpause "$@" ;;
     clean)   cmd_clean "$@" ;;
     bus)     cmd_bus "$@" ;;

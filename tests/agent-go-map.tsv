@@ -750,6 +750,15 @@ tests/unit/helper_unclear.bats	the worker's prompt has STATUS: UNCLEAR; the prot
 tests/unit/helper_unclear.bats	agent debug --agent counts a worker's unclear answers apart from its failures	blackbox	R31	-	planned
 tests/unit/delegation_feedback.bats	helper-list shows a request's rating; agent debug --agent counts a worker's results by their ratings	blackbox	R31	-	planned
 tests/unit/delegation_feedback.bats	the protocol tells a requester to rate each done result with delegation_feedback	source	R31	-	planned
+tests/unit/gate_queue.bats	test lock: a waiter goes after the one in line before it, even with the lock free	blackbox	R31	-	planned
+tests/unit/gate_queue.bats	test lock: a run that does not wait refuses while someone waits in line, even with the lock free	blackbox	R31	-	planned
+tests/unit/gate_queue.bats	test lock: a dead waiter's place does not hold the line	blackbox	R31	-	planned
+tests/unit/gate_queue.bats	test lock: the gate in a task's worktree runs through agent gate, so its result is recorded	blackbox	R31	-	planned
+tests/unit/gate_queue.bats	test lock: inside agent gate, outside a task's worktree, or for another target, it runs as before	blackbox	R31	-	planned
+tests/unit/gate_queue.bats	agent gate: --wait goes after the one in line before it; without --wait it refuses while one waits	blackbox	R31	-	planned
+tests/unit/gate_queue.bats	agent gate runs the repository's gate with AGENT_GATE_RUN, its task: the gate knows it runs inside agent gate	blackbox	R31	-	planned
+tests/unit/gate_queue.bats	agent _task_of_dir names the task whose worktree a directory is in, and nothing elsewhere	blackbox	R31	-	planned
+tests/unit/gate_queue.bats	the precheck runs the repository's gate with AGENT_GATE_RUN too: under its own gate lock, never sent to agent gate	blackbox	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
