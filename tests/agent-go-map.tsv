@@ -687,6 +687,12 @@ tests/unit/debug_agent.bats	agent debug --model: the tasks of every agent on tha
 tests/unit/debug_agent.bats	agent debug --agent --days and --last: older tasks out of the window; the details of the last ones only	blackbox	R53B	-	planned
 tests/unit/debug_agent.bats	agent debug --agent: results the requesters rejected, an approximation from their messages	blackbox	R53B	-	planned
 tests/unit/debug_agent.bats	agent spend: a task without an activity file of its own is no jq error	blackbox	R53B	-	planned
+tests/unit/debug_all.bats	the task's text by default; with --full, the whole task.md and every run's prompt	blackbox	R31	-	planned
+tests/unit/debug_all.bats	--all is --full	blackbox	R31	-	planned
+tests/unit/debug_all.bats	a task's questions and the human's answers, its checkpoint and its gate results	blackbox	R31	-	planned
+tests/unit/debug_all.bats	a worker's task shows its request on the bus in full: the request, its result and state	blackbox	R31	-	planned
+tests/unit/debug_all.bats	a requester's task shows the requests it made, and the bus messages to and from its agent	blackbox	R31	-	planned
+tests/unit/debug_all.bats	a task's debug takes in the tasks made for it — workers, investigations, reviews — at any depth	blackbox	R31	-	planned
 tests/unit/fresh_member_done.bats	a resumed claude run past AGENT_FRESH_SESSION_MAX a step is followed by a fresh session, under twice its start	source	R23	-	planned
 tests/unit/fresh_member_done.bats	a CLI without AGENT_FRESH_SESSION_MAX keeps the rule of twice its session starts	source	R23	-	planned
 tests/unit/fresh_member_done.bats	a fresh run past AGENT_FRESH_SESSION_MAX is resumed next: no fresh session after fresh session	source	R23	-	planned
