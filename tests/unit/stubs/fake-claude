@@ -15,6 +15,7 @@ Actions:
   quota           the provider refuses the run: a quota error on stderr, exit code 3, no result
   idle            STATUS: SLEEPING right away, without doing anything
   questions-file  writes the questions file, STATUS: QUESTIONS
+  say-run-task    STATUS: DONE with the AGENT_RUN_TASK its run gave it
   questions-text  asks questions only in the final message
   questions-norec writes a questions file without recommendations, STATUS: QUESTIONS
   review-majors   a --verify review result with two major findings, STATUS: DONE
@@ -81,6 +82,9 @@ def finish(text):
     sys.exit(0)
 
 
+if action == "say-run-task":
+    # what the runner tells the agent's commands about their run: its task
+    finish("STATUS: DONE\nRUN_TASK=" + os.environ.get("AGENT_RUN_TASK", ""))
 if action == "questions-file":
     q = re.search(r"(/\S*questions-\d+\.md)", prompt).group(1)
     open(q, "w").write("# Questions\n\n## 1. Which board?\na) A\nb) B\n\n**Recommended:** a) — the simpler one (fake)\n\n**Answer:**\n")

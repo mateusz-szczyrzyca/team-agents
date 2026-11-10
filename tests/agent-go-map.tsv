@@ -773,6 +773,11 @@ tests/unit/gate_queue.bats	agent gate runs the repository's gate with AGENT_GATE
 tests/unit/gate_queue.bats	agent _task_of_dir names the task whose worktree a directory is in, and nothing elsewhere	blackbox	R31	-	planned
 tests/unit/gate_queue.bats	the precheck runs the repository's gate with AGENT_GATE_RUN too: under its own gate lock, never sent to agent gate	blackbox	R31	-	planned
 tests/unit/gate_queue.bats	the repository's own checkout is no task's worktree, even where a task (an investigation team's) names it	blackbox	R31	-	planned
+tests/unit/gate_dirty.bats	an agent's gate of its own task on an uncommitted tree is refused, with what to do; nothing runs	blackbox	R31	-	planned
+tests/unit/gate_dirty.bats	a human's gate, or one of another task, on an uncommitted tree runs as before; an agent's on a commit runs	blackbox	R31	-	planned
+tests/unit/gate_dirty.bats	the runner gives the agent's commands AGENT_RUN_TASK, its task	blackbox	R31	-	planned
+tests/unit/gate_dirty.bats	agent debug counts a task's gate runs, those on an uncommitted tree, and the refused ones	blackbox	R31	-	planned
+tests/unit/gate_dirty.bats	the agents' prompt: agent gate refuses an uncommitted tree; single tests and the linter while working	source	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
