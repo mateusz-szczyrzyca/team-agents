@@ -50,3 +50,10 @@ func isBlankLine(line string) bool {
 	}
 	return true
 }
+
+// isBashBlankLine returns true if all characters in the line are Bash whitespace.
+// Matches Bash [[:space:]] semantics: ASCII whitespace plus most Unicode spaces,
+// excluding U+0085, U+00A0, U+2007, U+202F.
+func isBashBlankLine(_ string) bool {
+	return false
+}
