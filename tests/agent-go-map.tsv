@@ -795,6 +795,9 @@ tests/unit/investigation_task_in_pr.bats	--investigation: the PR description get
 tests/unit/investigation_task_in_pr.bats	the merger is told the script keeps the task first in the PR description	source	R31	-	planned
 tests/unit/serena_project_sync.bats	a run copies the repository's Serena project file over a worktree's that differs	blackbox	R31	-	planned
 tests/unit/serena_project_sync.bats	a repository without a Serena project file leaves the worktree's as it is	blackbox	R31	-	planned
+tests/unit/allow_task.bats	the allowances of a task's rounds are kept under its team or, of no team, under the task itself	blackbox	R31	-	planned
+tests/unit/allow_task.bats	agent allow <task> for a task of no team: its rounds may change those paths; a task of a team is sent to its team	blackbox	R31	-	planned
+tests/unit/allow_task.bats	the precheck's refusal prints the whole allow command: the key and each flagged path once, without line numbers	blackbox	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
