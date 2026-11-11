@@ -79,7 +79,7 @@ mod approval_round {
         assert_refused_with(|_, reviews| {
             let mut invented = reviews[0].clone();
             invented.reviewer = "inv-invented".parse().unwrap();
-            invented.task = "task-20261111-199999-zzzz".parse().unwrap();
+            invented.task = "task-20261111-194009-zzzz".parse().unwrap();
             reviews.push(invented);
         });
     }

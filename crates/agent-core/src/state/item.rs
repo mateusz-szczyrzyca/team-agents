@@ -375,11 +375,14 @@ checked!(ItemProgress, ItemProgressWire, check_item_progress);
 pub type ItemMut<'a> = CheckedMut<'a, ItemProgress>;
 
 impl CheckedMut<'_, ItemProgress> {
-    /// See [`ItemProgress::advance`].
+    /// See [`ItemProgress::advance`]. An item in review is approved only with the pull request and the reviews it has:
+    /// the outcomes reach it through [`CheckedMut::submit_review`], not through the phase handed in.
     ///
     /// # Errors
-    /// [`AdvanceError`], as for [`ItemProgress::advance`].
+    /// [`AdvanceError`], as for [`ItemProgress::advance`]; [`AdvanceError::RoundNotKept`] when an approval carries
+    /// another pull request, other reviews, or an outcome that was not submitted.
     pub fn advance(&mut self, next: ItemPhase) -> Result<(), AdvanceError> {
+        self.value.check_round_kept(&next)?;
         self.value.advance(next)
     }
 
@@ -646,6 +649,28 @@ impl ItemProgress {
             self.fix_passes.push(FixPass { requested_by: reviews });
         }
         Ok(())
+    }
+
+    /// Checks that an approval of an item in review carries exactly its pull request and reviews. Any other change
+    /// is left to [`ItemProgress::advance`].
+    ///
+    /// # Errors
+    /// [`AdvanceError::RoundNotKept`] when `next` approves the item with another round than the one recorded.
+    fn check_round_kept(&self, next: &ItemPhase) -> Result<(), AdvanceError> {
+        let (
+            ItemPhase::InReview {
+                pr: kept_pr,
+                reviews: kept,
+            },
+            ItemPhase::Approved { pr, reviews },
+        ) = (&self.phase, next)
+        else {
+            return Ok(());
+        };
+        if kept_pr == pr && kept == reviews {
+            return Ok(());
+        }
+        Err(AdvanceError::RoundNotKept { item: self.id })
     }
 
     /// Records the verdict that the reviewer task `task` reported for the item's pull request.
