@@ -1641,6 +1641,8 @@ make integration        # real agent CLIs and accounts (costs usage)
   process model and rules. Nothing of it is installed or used by the installation yet: `cargo run -p agent --
   --version` and `cargo run -p agent-web -- --version` are all it does so far. It needs `rustup`; the toolchain of
   `rust-toolchain.toml` installs itself on the first cargo command. `make gate` runs `make rust` as its `rust` step.
+  `make lint` also runs the full Rust gate, so the existing CI lint step checks Rust formatting, clippy, tests and
+  documentation. `make test` includes it too.
 
 - **Go candidate boundaries (R03).** The Go application (`agent/`) owns injected executor, clock and
   random boundaries; unconfigured execution is denied. Subprocess execution covers argv, env, dir,

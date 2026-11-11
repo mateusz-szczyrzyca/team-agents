@@ -139,9 +139,10 @@ cargo test --workspace --all-features --locked          # doctests included, und
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
 ```
 
-It is a step of `make gate` and of `make test`. CI (`.github/workflows/test.yml`) is to run it too, after
-`rustup toolchain install`. Item 1.1 explicitly authorizes that workflow change, but publication requires a
-GitHub token with the `workflow` scope. The investigation token lacks that scope; CI integration remains outstanding.
+It is a step of `make gate`, `make test` and `make lint`. The existing CI workflow
+([`.github/workflows/test.yml`](../.github/workflows/test.yml)) runs `make lint`, so it also runs the complete Rust
+gate. The Ubuntu runner supplies rustup; the first cargo command installs the pinned toolchain and its components.
+No workflow edit is needed. This also avoids requiring the investigation token to have the `workflow` scope.
 
 The lints are the baseline of the developer rules' appendix, in `[workspace.lints]` of `Cargo.toml`; every crate has
 `[lints] workspace = true`. They are `warn` there and fatal through `-D warnings` in the gate. A lint is suppressed

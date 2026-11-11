@@ -228,8 +228,8 @@ model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows
   it. For these PRs this limit replaces the 3000 lines of "Rounds". An item that would exceed it is split before
   coding, and the split is recorded in the PR.
 - **Check:** `make rust` — `cargo fmt --check`, clippy with `-D warnings`, the tests and `cargo doc` with warnings
-  denied, all `--locked`. It is a step of `make gate` and `make test` (CI: pending a token with `workflow` scope). The lint baseline is
-  `[workspace.lints]` in `Cargo.toml`; a lint is suppressed only with `#[expect(..., reason = "...")]` on the smallest
+  denied, all `--locked`. It is a step of `make gate`, `make test` and `make lint`; the existing CI workflow runs
+  `make lint`, including the Rust gate. The lint baseline is `[workspace.lints]` in `Cargo.toml`; a lint is suppressed only with `#[expect(..., reason = "...")]` on the smallest
   item, listed in the PR.
 - **Tests first** as in [`docs/tdd.md`](docs/tdd.md): the RED commit's bodies are compiling stubs that return a wrong
   value, never `todo!()`.

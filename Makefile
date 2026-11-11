@@ -1,6 +1,6 @@
 # Developer tasks. Before every commit: `make lint test` (see AGENTS.md).
 #   make tools   installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
-#   make lint    every static check; fails when a linter is missing (run make tools)
+#   make lint    every static check and the Rust gate (also the CI entry point); fails when a tool is missing
 #   make test    unit tests: Go (agent, agentbus, agentlive), bats (the agent script) and the Rust workspace
 #   make rust    the Rust workspace's checks: fmt, clippy -D warnings, tests, docs (docs/architecture.md)
 .PHONY: gate test unit-go unit-bats harness lint lint-go lint-shell lint-docs tools integration build generate check-generated build-agent unit-agent-bats check-agent-parity rust
@@ -49,7 +49,7 @@ SHELL_SCRIPTS += tests/unit/round_id.bats tests/unit/round_runs.bats tests/unit/
 SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats \
 	tools/agent-bats.sh tests/harness/agent_bats.bats tests/harness/agent_bats_runner.bats \
 	tools/check-agent-parity.sh tests/harness/check_agent_parity.bats tests/harness/agent_parity_gate.bats
-SHELL_SCRIPTS += tools/test-lock.sh tests/harness/gate_rust.bats
+SHELL_SCRIPTS += tools/test-lock.sh tests/harness/gate_rust.bats tests/harness/gate_rust_ci.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 
@@ -105,7 +105,8 @@ tools:
 gate:
 	@$(TEST_LOCK) tools/gate.sh
 
-lint: check-generated lint-shell lint-go lint-docs
+# CI already runs this target; include the complete Rust gate in that same entry point.
+lint: check-generated lint-shell lint-go lint-docs rust
 
 lint-shell:
 	@command -v shellcheck >/dev/null || { echo "shellcheck is missing: run make tools"; exit 1; }
