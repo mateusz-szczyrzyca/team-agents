@@ -212,7 +212,29 @@ pub struct InvalidName {
 
 /// Checks `text` against the rules of a name of `kind`.
 fn check_name(kind: NameKind, text: &str) -> Result<(), InvalidName> {
-    let _ = (kind, text);
+    let refuse = |rule| {
+        Err(InvalidName {
+            kind,
+            value: text.to_owned(),
+            rule,
+        })
+    };
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return refuse(NameRule::Empty);
+    };
+    if text.len() > MAX_NAME_LEN {
+        return refuse(NameRule::TooLong);
+    }
+    if !first.is_ascii_lowercase() {
+        return refuse(NameRule::FirstNotLetter);
+    }
+    if let Some(bad) = chars.find(|&c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')) {
+        return refuse(NameRule::ForbiddenChar(bad));
+    }
+    if text.ends_with('-') {
+        return refuse(NameRule::LastHyphen);
+    }
     Ok(())
 }
 
@@ -404,14 +426,44 @@ fn separator(bytes: &mut impl Iterator<Item = u8>) -> Option<()> {
 
 /// Checks `text` against the rules of a generated ID of `kind`.
 fn check_id(kind: IdKind, text: &str) -> Result<(), InvalidId> {
-    let _ = (kind, text);
-    Ok(())
+    let Some(rest) = text.strip_prefix(kind.prefix()).and_then(|rest| rest.strip_prefix('-')) else {
+        return Err(InvalidId::Prefix {
+            kind,
+            value: text.to_owned(),
+        });
+    };
+    let Some(stamp) = Stamp::read(rest) else {
+        return Err(InvalidId::Shape {
+            kind,
+            value: text.to_owned(),
+        });
+    };
+    stamp.check().map_err(|source| InvalidId::Timestamp {
+        kind,
+        value: text.to_owned(),
+        source,
+    })
 }
 
 /// The text of a new ID of `kind`: the time `clock` gives and [`SUFFIX_LEN`] characters drawn from `rng`.
 fn generate_id(kind: IdKind, clock: &impl Clock, rng: &mut impl Rng) -> Result<String, GenerateIdError> {
-    let _ = (kind, clock.now(), rng);
-    Ok(String::new())
+    let now = clock.now();
+    let year = now.year();
+    if !(0..=MAX_YEAR).contains(&year) {
+        return Err(GenerateIdError { kind, year });
+    }
+    let suffix: String = (0..SUFFIX_LEN)
+        .map(|_| suffix_char(rng.random_range(0..SUFFIX_RADIX)))
+        .collect();
+    Ok(format!(
+        "{}-{year:04}{:02}{:02}-{:02}{:02}{:02}-{suffix}",
+        kind.prefix(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+    ))
 }
 
 /// The suffix character for `n`, which is below [`SUFFIX_RADIX`]: `0-9`, then `a-z`.
@@ -473,10 +525,12 @@ impl FromStr for ItemId {
     type Err = InvalidItemId;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let _ = text;
+        let Some((feature, item)) = text.split_once('.') else {
+            return Err(InvalidItemId::Shape { value: text.to_owned() });
+        };
         Ok(Self {
-            feature: NonZeroU16::MIN,
-            item: NonZeroU16::MIN,
+            feature: item_number(text, ItemIdPart::Feature, feature)?,
+            item: item_number(text, ItemIdPart::Item, item)?,
         })
     }
 }
@@ -656,7 +710,53 @@ pub struct InvalidBranchName {
     reason = "`.lock` is git's reserved component suffix, not a file extension, and git compares it case-sensitively"
 )]
 fn check_branch(text: &str) -> Result<(), InvalidBranchName> {
-    let _ = text;
+    let refuse = |rule| {
+        Err(InvalidBranchName {
+            value: text.to_owned(),
+            rule,
+        })
+    };
+    if text.is_empty() {
+        return refuse(BranchRule::Empty);
+    }
+    if text.len() > MAX_BRANCH_LEN {
+        return refuse(BranchRule::TooLong);
+    }
+    if text == "HEAD" {
+        return refuse(BranchRule::Head);
+    }
+    if text == "@" {
+        return refuse(BranchRule::At);
+    }
+    if text.starts_with('-') {
+        return refuse(BranchRule::FirstHyphen);
+    }
+    if let Some(bad) = text
+        .chars()
+        .find(|c| c.is_ascii_control() || BRANCH_FORBIDDEN.contains(c))
+    {
+        return refuse(BranchRule::ForbiddenChar(bad));
+    }
+    if text.contains("..") {
+        return refuse(BranchRule::DoubleDot);
+    }
+    if text.contains("@{") {
+        return refuse(BranchRule::AtBrace);
+    }
+    if text.ends_with('.') {
+        return refuse(BranchRule::LastDot);
+    }
+    for component in text.split('/') {
+        if component.is_empty() {
+            return refuse(BranchRule::EmptyComponent);
+        }
+        if component.starts_with('.') {
+            return refuse(BranchRule::ComponentStartsWithDot);
+        }
+        if component.ends_with(".lock") {
+            return refuse(BranchRule::ComponentEndsWithLock);
+        }
+    }
     Ok(())
 }
 
