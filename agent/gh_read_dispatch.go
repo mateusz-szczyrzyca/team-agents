@@ -67,7 +67,7 @@ func ghDispatch(ctx context.Context, p GHDispatchParams) (int, *GHReadDispatchEr
 					}
 				}
 			}
-			return p.refuse("agent-gh: native write formatting is not implemented yet\n", 1, GHReadDispatchWriteUnavailable, "native write formatting is not implemented yet")
+			return p.handleCLIWrite(ctx, realGH)
 		}
 	}
 	return p.run(ctx, realGH, p.Args, p.Stdin, p.Stdout, p.Stderr)

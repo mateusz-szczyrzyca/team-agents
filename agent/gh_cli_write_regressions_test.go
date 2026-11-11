@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -19,8 +23,6 @@ func TestCLIWriteTransformedBytesContainColors(t *testing.T) {
 		},
 	}
 
-	// Body with agent name in proper format should be colored
-	// Format: "- agent: `<name>` (<suffix>)"
 	p := GHDispatchParams{
 		Args: []string{"pr", "create", "--body", "- agent: `claude-haiku` (model: claude/haiku)"},
 		Env: []string{
@@ -41,7 +43,6 @@ func TestCLIWriteTransformedBytesContainColors(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
 
-	// Check that color markup was applied to agent name
 	found := false
 	for i, arg := range executedCmd.Args {
 		if arg == "--body" && i+1 < len(executedCmd.Args) {
@@ -52,7 +53,7 @@ func TestCLIWriteTransformedBytesContainColors(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("body does not contain color markup for agent name")
+		t.Fatalf("body does not contain color markup for agent name: %v", executedCmd.Args)
 	}
 }
 
@@ -84,18 +85,17 @@ func TestCLIWriteGeneratedLinesRemoved(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
 
-	// Check that Generated line was removed
 	found := false
 	for i, arg := range executedCmd.Args {
 		if arg == "--body" && i+1 < len(executedCmd.Args) {
 			transformed := executedCmd.Args[i+1]
-			if !strings.Contains(transformed, "Generated with Claude Code") {
+			if !strings.Contains(transformed, "Generated with Claude Code") && strings.Contains(transformed, "More content") {
 				found = true
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("Generated line was not removed")
+		t.Fatalf("Generated line was not removed: %v", executedCmd.Args)
 	}
 }
 
@@ -103,20 +103,17 @@ func TestCLIWriteGeneratedLinesRemoved(t *testing.T) {
 func TestCLIWriteTrailingLFPreservedInFile(t *testing.T) {
 	dir := t.TempDir()
 	bodyFile := dir + "/body.txt"
-	// File content with trailing newline
-	if err := os.WriteFile(bodyFile, []byte("file content\n"), 0600); err != nil {
+	if err := os.WriteFile(bodyFile, []byte("file content\n\n"), 0600); err != nil {
 		t.Fatalf("could not create body file: %v", err)
 	}
 
 	var readTempContent []byte
 	fake := fakeGHExec{
 		run: func(cmd Command) (CommandResult, *ExecuteError) {
-			// Read the temp file to verify its content
 			for i, arg := range cmd.Args {
 				if arg == "--body-file" && i+1 < len(cmd.Args) {
-					tempPath := cmd.Args[i+1]
 					// #nosec G304 -- temp file path from gh_cli_write transformation
-					if tmpContent, err := os.ReadFile(tempPath); err == nil {
+					if tmpContent, err := os.ReadFile(cmd.Args[i+1]); err == nil {
 						readTempContent = tmpContent
 					}
 				}
@@ -142,12 +139,11 @@ func TestCLIWriteTrailingLFPreservedInFile(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
 
-	// Check that transformed file preserves trailing LF
 	if len(readTempContent) == 0 {
 		t.Fatalf("temp file was not read during execution")
 	}
-	if !strings.HasSuffix(string(readTempContent), "\n") {
-		t.Fatalf("transformed file content does not end with newline")
+	if !strings.HasSuffix(string(readTempContent), "\n\n") {
+		t.Fatalf("transformed file content does not end with double newline: %q", string(readTempContent))
 	}
 }
 
@@ -188,18 +184,24 @@ func TestCLIWriteFirstBodyFileOnly(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
 
-	// Check that only first --body-file was transformed (temp file)
 	tempFileCount := 0
+	secondFileUnmodified := false
 	for i, arg := range executedCmd.Args {
 		if arg == "--body-file" && i+1 < len(executedCmd.Args) {
 			nextArg := executedCmd.Args[i+1]
 			if strings.Contains(nextArg, "gh_body_") {
 				tempFileCount++
 			}
+			if nextArg == file2 {
+				secondFileUnmodified = true
+			}
 		}
 	}
 	if tempFileCount != 1 {
 		t.Fatalf("expected 1 temp file, got %d", tempFileCount)
+	}
+	if !secondFileUnmodified {
+		t.Fatalf("second body-file was modified, want %q", file2)
 	}
 }
 
@@ -207,7 +209,7 @@ func TestCLIWriteFirstBodyFileOnly(t *testing.T) {
 func TestCLIWriteFailedReadThenValidFile(t *testing.T) {
 	dir := t.TempDir()
 	validFile := dir + "/valid.txt"
-	if err := os.WriteFile(validFile, []byte("valid content"), 0600); err != nil {
+	if err := os.WriteFile(validFile, []byte("valid content\n"), 0600); err != nil {
 		t.Fatalf("could not create valid file: %v", err)
 	}
 
@@ -220,7 +222,7 @@ func TestCLIWriteFailedReadThenValidFile(t *testing.T) {
 	}
 
 	p := GHDispatchParams{
-		Args:   []string{"pr", "create", "--body-file", "/nonexistent", "--body-file", validFile},
+		Args:   []string{"pr", "create", "--body-file", "/nonexistent/missing.txt", "--body-file", validFile},
 		Env:    []string{"AGENT_REAL_GH=/bin/gh"},
 		Stdin:  strings.NewReader(""),
 		Stdout: io.Discard,
@@ -236,22 +238,101 @@ func TestCLIWriteFailedReadThenValidFile(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
 
-	// First failed file should be forwarded as-is, second valid should be transformed
-	found := false
+	foundMissing := false
+	foundTransformedValid := false
 	for i, arg := range executedCmd.Args {
 		if arg == "--body-file" && i+1 < len(executedCmd.Args) {
-			// Should have the failed nonexistent path and the temp file for valid
-			if executedCmd.Args[i+1] == "/nonexistent" {
-				found = true
+			nextArg := executedCmd.Args[i+1]
+			if nextArg == "/nonexistent/missing.txt" {
+				foundMissing = true
+			}
+			if strings.Contains(nextArg, "gh_body_") {
+				foundTransformedValid = true
 			}
 		}
 	}
-	if !found {
-		t.Fatalf("failed file path not forwarded as expected")
+	if !foundMissing {
+		t.Fatalf("unreadable file path not forwarded: %v", executedCmd.Args)
+	}
+	if !foundTransformedValid {
+		t.Fatalf("subsequent valid file not transformed: %v", executedCmd.Args)
 	}
 }
 
-// TestCLIWriteCleanupAfterExecutorFailure verifies temp file cleanup on executor error.
+// TestCLIWriteTempCreateFailureStopsBodyTransform verifies that after temp creation fails,
+// subsequent --body flags remain untransformed and EventGitHubNamesFailed is logged.
+func TestCLIWriteTempCreateFailureStopsBodyTransform(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()+"/nonexistent_dir")
+	agentsHome := t.TempDir()
+	if err := os.Mkdir(filepath.Join(agentsHome, "logs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	var executedCmd Command
+	fake := fakeGHExec{
+		run: func(cmd Command) (CommandResult, *ExecuteError) {
+			executedCmd = cmd
+			return CommandResult{ExitCode: 0}, nil
+		},
+	}
+
+	origArgs := []string{"pr", "create", "--body-file", "/any/file.txt", "--body", "- agent: `claude-haiku` (model: claude/haiku)"}
+	p := GHDispatchParams{
+		Args: append([]string(nil), origArgs...),
+		Env: []string{
+			"AGENT_REAL_GH=/bin/gh",
+			"AGENT_GITHUB_NAME_COLORS=claude-haiku=blue",
+			"AGENTS_HOME=" + agentsHome,
+		},
+		Stdin:  strings.NewReader(""),
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+		Exec:   fake,
+	}
+
+	code, err := p.handleCLIWrite(context.Background(), "/bin/gh")
+	if err != nil {
+		t.Fatalf("handleCLIWrite failed: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+
+	if executedCmd.Name != "/bin/gh" {
+		t.Fatalf("expected realGH /bin/gh to be executed, got %q", executedCmd.Name)
+	}
+	if !slices.Equal(executedCmd.Args, origArgs) {
+		t.Fatalf("expected args to remain unchanged %v, got %v", origArgs, executedCmd.Args)
+	}
+
+	// Because temp creation failed, loop broke immediately.
+	// Neither body-file nor subsequent --body should be transformed.
+	for i, arg := range executedCmd.Args {
+		if arg == "--body" && i+1 < len(executedCmd.Args) {
+			body := executedCmd.Args[i+1]
+			if strings.Contains(body, `\color{`) {
+				t.Fatalf("subsequent --body was transformed despite temp creation failure: %q", body)
+			}
+		}
+	}
+
+	raw, logErr := fs.ReadFile(os.DirFS(agentsHome), "logs/agent.jsonl")
+	if logErr != nil {
+		t.Fatalf("could not read log file: %v", logErr)
+	}
+	var record map[string]string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(raw))), &record); err != nil {
+		t.Fatalf("unmarshal log failed: %v, raw: %s", err, raw)
+	}
+	if record["event"] != string(EventGitHubNamesFailed) || record["component"] != "agent-gh" || record["level"] != "warn" {
+		t.Fatalf("unexpected log record: %v", record)
+	}
+	if !strings.Contains(record["message"], "no temporary file") {
+		t.Fatalf("expected message mentioning no temporary file, got %q", record["message"])
+	}
+}
+
+// TestCLIWriteCleanupAfterExecutorFailure verifies temp file is removed even when executor fails.
 func TestCLIWriteCleanupAfterExecutorFailure(t *testing.T) {
 	dir := t.TempDir()
 	bodyFile := dir + "/body.txt"
@@ -262,7 +343,6 @@ func TestCLIWriteCleanupAfterExecutorFailure(t *testing.T) {
 	var tempFilePath string
 	fake := fakeGHExec{
 		run: func(cmd Command) (CommandResult, *ExecuteError) {
-			// Capture the temp file path
 			for i, arg := range cmd.Args {
 				if arg == "--body-file" && i+1 < len(cmd.Args) {
 					nextArg := cmd.Args[i+1]
@@ -271,8 +351,7 @@ func TestCLIWriteCleanupAfterExecutorFailure(t *testing.T) {
 					}
 				}
 			}
-			// Simulate executor failure
-			return CommandResult{}, &ExecuteError{Err: errors.New("simulated failure")}
+			return CommandResult{ExitCode: 1}, &ExecuteError{Err: errors.New("simulated executor failure")}
 		},
 	}
 
@@ -285,25 +364,26 @@ func TestCLIWriteCleanupAfterExecutorFailure(t *testing.T) {
 		Exec:   fake,
 	}
 
-	_, _ = p.handleCLIWrite(context.Background(), "/bin/gh")
+	code, err := p.handleCLIWrite(context.Background(), "/bin/gh")
+	if code != 1 || err == nil || err.Cause != GHReadDispatchExecFailed {
+		t.Fatalf("expected code 1 and GHReadDispatchExecFailed, got code %d, err %v", code, err)
+	}
 
-	// Verify temp file was cleaned up
-	if tempFilePath != "" {
-		if _, statErr := os.Stat(tempFilePath); statErr == nil {
-			t.Fatalf("temp file was not cleaned up after executor failure: %s", tempFilePath)
-		}
+	if tempFilePath == "" {
+		t.Fatalf("temp file was not passed to executor")
+	}
+	if _, statErr := os.Stat(tempFilePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected temp file to not exist after executor failure, got: %v", statErr)
 	}
 }
 
-// TestCLIWriteStdinIdentityPreserved verifies original stdin reader is used when not reading from stdin.
+// TestCLIWriteStdinIdentityPreserved verifies original stdin reader is forwarded to executor.
 func TestCLIWriteStdinIdentityPreserved(t *testing.T) {
-	originalStdinContent := "original stdin"
-	originalStdin := strings.NewReader(originalStdinContent)
+	originalStdin := strings.NewReader("original stdin")
 
 	var passedStdin io.Reader
 	fake := fakeGHExec{
 		run: func(cmd Command) (CommandResult, *ExecuteError) {
-			// This will be called with the stdin reader
 			passedStdin = cmd.Stdin
 			return CommandResult{ExitCode: 0}, nil
 		},
@@ -326,77 +406,29 @@ func TestCLIWriteStdinIdentityPreserved(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
 
-	// Verify stdin passed to executor is the original
 	if passedStdin != originalStdin {
-		t.Fatalf("stdin identity was not preserved")
+		t.Fatalf("stdin identity was not preserved: got %v, want %v", passedStdin, originalStdin)
 	}
 }
 
-// TestCLIWriteMultipleBodyFlagsOnlyFirstBodyFileTransformed verifies multiple body transformations.
-func TestCLIWriteMultipleBodyFlagsOnlyFirstBodyFileTransformed(t *testing.T) {
-	dir := t.TempDir()
-	file1 := dir + "/file1.txt"
-	if err := os.WriteFile(file1, []byte("- agent: `alice` (model)"), 0600); err != nil {
-		t.Fatalf("could not create file: %v", err)
-	}
-
-	var executedCmd Command
-	fake := fakeGHExec{
-		run: func(cmd Command) (CommandResult, *ExecuteError) {
-			executedCmd = cmd
-			return CommandResult{ExitCode: 0}, nil
-		},
-	}
-
-	p := GHDispatchParams{
-		Args: []string{"pr", "create", "--body", "direct body", "--body-file", file1},
-		Env: []string{
-			"AGENT_REAL_GH=/bin/gh",
-			"AGENT_GITHUB_NAME_COLORS=alice=red",
-		},
-		Stdin:  strings.NewReader(""),
-		Stdout: io.Discard,
-		Stderr: io.Discard,
-		Exec:   fake,
-	}
-
-	code, err := p.handleCLIWrite(context.Background(), "/bin/gh")
-	if err != nil {
-		t.Fatalf("handleCLIWrite failed: %v", err)
-	}
-	if code != 0 {
-		t.Fatalf("expected exit code 0, got %d", code)
-	}
-
-	// Both direct body and file should be transformed
-	directBodyFound, fileBodyFound := false, false
-	for i, arg := range executedCmd.Args {
-		if arg == "--body" && i+1 < len(executedCmd.Args) {
-			body := executedCmd.Args[i+1]
-			if strings.Contains(body, "direct body") {
-				directBodyFound = true
-			}
-		}
-		if arg == "--body-file" && i+1 < len(executedCmd.Args) {
-			nextArg := executedCmd.Args[i+1]
-			if strings.Contains(nextArg, "gh_body_") {
-				fileBodyFound = true
-			}
-		}
-	}
-	if !directBodyFound {
-		t.Fatalf("direct --body not found in executed command")
-	}
-	if !fileBodyFound {
-		t.Fatalf("transformed --body-file not found in executed command")
-	}
-}
-
-// TestCLIWriteEventGitHubNamesFailedValidation verifies EventGitHubNamesFailed is valid.
+// TestCLIWriteEventGitHubNamesFailedValidation verifies EventGitHubNamesFailed is valid and round-trips JSON.
 func TestCLIWriteEventGitHubNamesFailedValidation(t *testing.T) {
-	// Verify that EventGitHubNamesFailed is a valid log event
 	if !EventGitHubNamesFailed.Valid() {
 		t.Fatalf("EventGitHubNamesFailed is not valid")
+	}
+	data, err := json.Marshal(EventGitHubNamesFailed)
+	if err != nil {
+		t.Fatalf("marshal EventGitHubNamesFailed failed: %v", err)
+	}
+	if string(data) != `"github_names_failed"` {
+		t.Fatalf("marshaled EventGitHubNamesFailed = %s, want %q", data, "github_names_failed")
+	}
+	var unmarshaled LogEvent
+	if err := json.Unmarshal(data, &unmarshaled); err != nil {
+		t.Fatalf("unmarshal EventGitHubNamesFailed failed: %v", err)
+	}
+	if unmarshaled != EventGitHubNamesFailed {
+		t.Fatalf("unmarshaled = %s, want %s", unmarshaled, EventGitHubNamesFailed)
 	}
 }
 
@@ -424,12 +456,17 @@ func TestCLIWriteSourceUnchangedInEnv(t *testing.T) {
 		Exec:   fake,
 	}
 
-	_, _ = p.handleCLIWrite(context.Background(), "/bin/gh")
+	code, err := p.handleCLIWrite(context.Background(), "/bin/gh")
+	if err != nil {
+		t.Fatalf("handleCLIWrite failed: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
 
-	// Verify environment slice was not modified
 	for i, e := range originalEnv {
 		if e != envCopy[i] {
-			t.Fatalf("environment was modified during handleCLIWrite")
+			t.Fatalf("environment was modified during handleCLIWrite: %q != %q", e, envCopy[i])
 		}
 	}
 }

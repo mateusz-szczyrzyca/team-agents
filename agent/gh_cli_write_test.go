@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestHandleCLIWriteBodyFlag tests --body flag transformation.
+// TestHandleCLIWriteBodyFlag tests --body flag transformation and forwarding of realGH.
 func TestHandleCLIWriteBodyFlag(t *testing.T) {
 	var executedCmd Command
 	fake := fakeGHExec{
@@ -19,15 +19,15 @@ func TestHandleCLIWriteBodyFlag(t *testing.T) {
 	}
 
 	p := GHDispatchParams{
-		Args:   []string{"pr", "create", "--body", "test body"},
-		Env:    []string{"AGENT_REAL_GH=/bin/gh"},
+		Args:   []string{"pr", "create", "--body", "test body\n\n"},
+		Env:    []string{"AGENT_REAL_GH=/usr/bin/gh"},
 		Stdin:  strings.NewReader(""),
 		Stdout: io.Discard,
 		Stderr: io.Discard,
 		Exec:   fake,
 	}
 
-	code, err := p.handleCLIWrite(context.Background(), "/bin/gh")
+	code, err := p.handleCLIWrite(context.Background(), "/usr/bin/gh")
 	if err != nil {
 		t.Fatalf("handleCLIWrite failed: %v", err)
 	}
@@ -35,7 +35,11 @@ func TestHandleCLIWriteBodyFlag(t *testing.T) {
 		t.Fatalf("handleCLIWrite returned code %d, want 0", code)
 	}
 
-	// Body should be transformed (LF stripped after transformation)
+	if executedCmd.Name != "/usr/bin/gh" {
+		t.Fatalf("executedCmd.Name = %q, want %q", executedCmd.Name, "/usr/bin/gh")
+	}
+
+	// Body should be transformed (trailing LF stripped after transformation)
 	foundBody := false
 	for i, arg := range executedCmd.Args {
 		if arg == "--body" && i+1 < len(executedCmd.Args) {
@@ -62,7 +66,7 @@ func TestHandleCLIWriteBodyEqualsFormat(t *testing.T) {
 	}
 
 	p := GHDispatchParams{
-		Args:   []string{"pr", "edit", "--body=test value"},
+		Args:   []string{"pr", "edit", "--body=test value\n"},
 		Env:    []string{"AGENT_REAL_GH=/bin/gh"},
 		Stdin:  strings.NewReader(""),
 		Stdout: io.Discard,
@@ -78,7 +82,7 @@ func TestHandleCLIWriteBodyEqualsFormat(t *testing.T) {
 		t.Fatalf("handleCLIWrite returned code %d, want 0", code)
 	}
 
-	// Check body= format
+	// Check body= format with trailing LF stripped
 	foundBody := false
 	for _, arg := range executedCmd.Args {
 		if strings.HasPrefix(arg, "--body=") {
@@ -129,14 +133,23 @@ func TestHandleCLIWritePassthrough(t *testing.T) {
 func TestHandleCLIWriteBodyFile(t *testing.T) {
 	dir := t.TempDir()
 	bodyFile := dir + "/body.txt"
-	if err := os.WriteFile(bodyFile, []byte("file content"), 0600); err != nil {
+	if err := os.WriteFile(bodyFile, []byte("file content\n"), 0600); err != nil {
 		t.Fatalf("could not create body file: %v", err)
 	}
 
 	var executedCmd Command
+	var readTempBytes []byte
 	fake := fakeGHExec{
 		run: func(cmd Command) (CommandResult, *ExecuteError) {
 			executedCmd = cmd
+			for i, arg := range cmd.Args {
+				if arg == "--body-file" && i+1 < len(cmd.Args) {
+					// #nosec G304 -- reading temporary file during test executor run
+					if data, err := os.ReadFile(cmd.Args[i+1]); err == nil {
+						readTempBytes = data
+					}
+				}
+			}
 			return CommandResult{ExitCode: 0}, nil
 		},
 	}
@@ -158,14 +171,30 @@ func TestHandleCLIWriteBodyFile(t *testing.T) {
 		t.Fatalf("handleCLIWrite returned code %d, want 0", code)
 	}
 
-	// Check that a temp file was created and used
+	// Verify temp file was used and content preserves trailing newline
+	if len(readTempBytes) == 0 {
+		t.Fatalf("temp file was not read during execution")
+	}
+	if string(readTempBytes) != "file content\n" {
+		t.Fatalf("temp file content = %q, want %q", string(readTempBytes), "file content\n")
+	}
+
+	// Verify original file on disk is unmodified
+	origContent, readErr := os.ReadFile(bodyFile) // #nosec G304 -- path belongs to temporary test directory
+	if readErr != nil {
+		t.Fatalf("failed reading original bodyFile: %v", readErr)
+	}
+	if string(origContent) != "file content\n" {
+		t.Fatalf("original file modified: %q", string(origContent))
+	}
+
+	// Check that temp file was cleaned up after handleCLIWrite returns
 	foundTempFile := false
 	for i, arg := range executedCmd.Args {
 		if arg == "--body-file" && i+1 < len(executedCmd.Args) {
 			nextArg := executedCmd.Args[i+1]
 			if nextArg != bodyFile && strings.Contains(nextArg, "gh_body_") {
 				foundTempFile = true
-				// Temp file should be cleaned up after execution
 				if _, statErr := os.Stat(nextArg); statErr == nil {
 					t.Fatalf("temp file was not cleaned up: %s", nextArg)
 				}
@@ -219,18 +248,28 @@ func TestHandleCLIWriteUnreadableFile(t *testing.T) {
 // TestHandleCLIWriteStdinBody tests --body-file with stdin input.
 func TestHandleCLIWriteStdinBody(t *testing.T) {
 	var executedCmd Command
+	var readTempBytes []byte
 	fake := fakeGHExec{
 		run: func(cmd Command) (CommandResult, *ExecuteError) {
 			executedCmd = cmd
+			for i, arg := range cmd.Args {
+				if arg == "--body-file" && i+1 < len(cmd.Args) {
+					// #nosec G304 -- reading temporary file during test execution
+					if data, err := os.ReadFile(cmd.Args[i+1]); err == nil {
+						readTempBytes = data
+					}
+				}
+			}
 			return CommandResult{ExitCode: 0}, nil
 		},
 	}
 
-	stdinContent := "stdin body content"
+	stdinContent := "stdin body content\n"
+	stdinReader := strings.NewReader(stdinContent)
 	p := GHDispatchParams{
 		Args:   []string{"pr", "create", "--body-file", "-"},
 		Env:    []string{"AGENT_REAL_GH=/bin/gh"},
-		Stdin:  strings.NewReader(stdinContent),
+		Stdin:  stdinReader,
 		Stdout: io.Discard,
 		Stderr: io.Discard,
 		Exec:   fake,
@@ -244,7 +283,15 @@ func TestHandleCLIWriteStdinBody(t *testing.T) {
 		t.Fatalf("handleCLIWrite returned code %d, want 0", code)
 	}
 
-	// stdin should be consumed, so temp file should be used
+	if string(readTempBytes) != stdinContent {
+		t.Fatalf("temp file from stdin = %q, want %q", string(readTempBytes), stdinContent)
+	}
+
+	if executedCmd.Stdin != stdinReader {
+		t.Fatalf("expected stdin identity forwarded to Command.Stdin, got %v, want %v", executedCmd.Stdin, stdinReader)
+	}
+
+	// Stdin body-file should be replaced by temp file
 	foundTempFile := false
 	for i, arg := range executedCmd.Args {
 		if arg == "--body-file" && i+1 < len(executedCmd.Args) {
@@ -269,7 +316,7 @@ func TestHandleCLIWriteNotApplicableVerb(t *testing.T) {
 	}
 
 	p := GHDispatchParams{
-		Args:   []string{"repo", "create", "--description", "test"},
+		Args:   []string{"repo", "create", "--description", "test", "--body", "ignored"},
 		Env:    []string{"AGENT_REAL_GH=/bin/gh"},
 		Stdin:  strings.NewReader(""),
 		Stdout: io.Discard,

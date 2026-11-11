@@ -9,7 +9,6 @@ import (
 )
 
 // handleCLIWrite handles CLI write forwarding with body transformation for pr/issue create/edit/comment.
-// nolint:unparam // realGH forwarded to p.run; caller varies the value in production
 func (p GHDispatchParams) handleCLIWrite(ctx context.Context, realGH string) (int, *GHReadDispatchError) {
 	// Guard: only transform body args for pr/issue create/edit/comment
 	if len(p.Args) < 2 ||
@@ -20,7 +19,6 @@ func (p GHDispatchParams) handleCLIWrite(ctx context.Context, realGH string) (in
 
 	args := slices.Clone(p.Args)
 	var tmpFile string
-	stdinReader := p.Stdin
 
 	// Prepare color config from environment
 	cfg := GitHubColorConfig{
@@ -38,7 +36,6 @@ func (p GHDispatchParams) handleCLIWrite(ctx context.Context, realGH string) (in
 	}()
 
 	// Process arguments for body transformations
-	bodyFileProcessed := false
 argLoop:
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -56,9 +53,11 @@ argLoop:
 			transformed := TransformPublishBody(value, cfg)
 			args[i] = "--body=" + strings.TrimRight(transformed, "\n")
 
-		case (arg == "--body-file" || arg == "-F") && !bodyFileProcessed:
-			// Only process first body-file
-			bodyFileProcessed = true
+		case arg == "--body-file" || arg == "-F":
+			// Only process first successfully transformed body-file
+			if tmpFile != "" {
+				continue
+			}
 
 			// Get the file path
 			if i+1 >= len(args) {
@@ -70,7 +69,7 @@ argLoop:
 			tmp, tmpfileErr := os.CreateTemp("", "gh_body_*.txt")
 			if tmpfileErr != nil {
 				// Log temp creation failure and exit loop, forward current args
-				p.log(EventGitHubNamesFailed, "temporary file creation failed", map[string]string{"reason": tmpfileErr.Error()})
+				p.log(EventGitHubNamesFailed, "the names could not be coloured: no temporary file", map[string]string{"reason": tmpfileErr.Error()})
 				break argLoop
 			}
 			tmpFileName := tmp.Name()
@@ -82,7 +81,7 @@ argLoop:
 			var bodyText string
 			if filePath == "-" {
 				// Read from stdin
-				data, readErr := io.ReadAll(stdinReader)
+				data, readErr := io.ReadAll(p.Stdin)
 				if readErr != nil {
 					// Cleanup and retain original path in args
 					if removeErr := os.Remove(tmpFileName); removeErr != nil {
@@ -91,8 +90,6 @@ argLoop:
 					continue
 				}
 				bodyText = string(data)
-				// Preserve original reader object instead of replacing with empty reader
-				// This ensures stdin identity is maintained
 			} else {
 				// Read from file: user-provided path via --body-file
 				data, readErr := os.ReadFile(filePath) // #nosec G304 -- path provided via --body-file forwarded to gh
@@ -125,5 +122,5 @@ argLoop:
 	}
 
 	// Execute the real gh command with transformed args
-	return p.run(ctx, realGH, args, stdinReader, p.Stdout, p.Stderr)
+	return p.run(ctx, realGH, args, p.Stdin, p.Stdout, p.Stderr)
 }
