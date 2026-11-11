@@ -15,7 +15,7 @@ use crate::status::{InvalidTransition, StatusMachine, TaskStatus};
 
 /// Who works in a task: a normal agent, a worker or an investigator, by the tier of the configuration they are in.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(tag = "tier", content = "name", rename_all = "snake_case")]
+#[serde(tag = "tier", content = "name", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Participant {
     /// A normal agent.
     Normal(AgentName),

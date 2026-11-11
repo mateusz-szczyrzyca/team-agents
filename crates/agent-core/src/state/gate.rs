@@ -20,8 +20,10 @@ pub struct GateResult {
 }
 
 /// How the gate ended.
+///
+/// Read through a private wire enum that refuses a field the variant does not have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", from = "GateOutcomeWire")]
 pub enum GateOutcome {
     /// The command exited with 0: the commit may be reviewed.
     Passed,
@@ -32,4 +34,32 @@ pub enum GateOutcome {
     },
     /// The command ran longer than the configured gate timeout and was stopped.
     TimedOut,
+}
+
+/// What a [`GateOutcome`] is read as.
+///
+/// serde skips an unknown field next to the tag of a unit variant of an internally tagged enum, even with
+/// `deny_unknown_fields`; a variant with a (here empty) struct body does refuse it.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum GateOutcomeWire {
+    /// See [`GateOutcome::Passed`].
+    Passed {},
+    /// See [`GateOutcome::Failed`].
+    Failed {
+        /// See [`GateOutcome::Failed`].
+        exit_code: i32,
+    },
+    /// See [`GateOutcome::TimedOut`].
+    TimedOut {},
+}
+
+impl From<GateOutcomeWire> for GateOutcome {
+    fn from(wire: GateOutcomeWire) -> Self {
+        match wire {
+            GateOutcomeWire::Passed {} => Self::Passed,
+            GateOutcomeWire::Failed { exit_code } => Self::Failed { exit_code },
+            GateOutcomeWire::TimedOut {} => Self::TimedOut,
+        }
+    }
 }
