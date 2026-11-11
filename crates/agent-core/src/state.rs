@@ -648,6 +648,15 @@ mod tests {
     }
 
     #[test]
+    fn a_state_of_exactly_the_limit_is_read_not_refused_for_its_size() {
+        let text = " ".repeat(MAX_STATE_BYTES);
+
+        let err = State::from_json(&text).unwrap_err();
+
+        assert!(matches!(err, StateError::Malformed { .. }), "{err:?}");
+    }
+
+    #[test]
     fn serde_reads_a_state_through_the_same_checks() {
         let good = State::new().to_json().unwrap();
         let other_version = "{\"schema_version\": 2, \"teams\": []}";

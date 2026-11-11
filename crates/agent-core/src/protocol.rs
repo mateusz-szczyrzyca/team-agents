@@ -349,6 +349,21 @@ mod tests {
     }
 
     #[test]
+    fn a_line_of_exactly_the_limit_is_read() {
+        let request = request_line("{\"command\":\"status\"}");
+        let padded = format!("{request}{}", " ".repeat(MAX_REQUEST_BYTES - request.len()));
+        let frame = Frame::Response(Response::ok(RequestId(3), Reply::Subscribed))
+            .to_line()
+            .unwrap();
+        let padded_frame = format!("{frame}{}", " ".repeat(MAX_FRAME_BYTES - frame.len()));
+
+        assert_eq!(padded.len(), MAX_REQUEST_BYTES);
+        assert_eq!(padded_frame.len(), MAX_FRAME_BYTES);
+        Request::from_line(&padded).unwrap();
+        Frame::from_line(&padded_frame).unwrap();
+    }
+
+    #[test]
     fn a_task_list_of_the_largest_size_fits_in_a_request_line() {
         let list = format!("{}\n", "x".repeat(crate::task_list::MAX_TASK_LIST_BYTES - 1));
         let text = crate::state::TaskListText::new(list).unwrap();

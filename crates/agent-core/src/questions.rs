@@ -1433,6 +1433,22 @@ b) on disk
     }
 
     #[test]
+    fn a_line_that_only_starts_with_the_marker_is_not_the_marker() {
+        for line in [
+            "**ANSWERED** thanks",
+            "**ANSWERED**!",
+            "**ANSWERED** **",
+            "x **ANSWERED**",
+            "**ANSWERED*",
+        ] {
+            let file = QuestionsFile::parse(&format!("## 1. Q\nbody\n{line}\n")).unwrap();
+
+            assert!(!file.is_answered(), "{line:?}");
+            assert_eq!(file.entry(n(1)).unwrap().body(), format!("body\n{line}"), "{line:?}");
+        }
+    }
+
+    #[test]
     fn windows_line_endings_are_read_like_unix_ones() {
         let file =
             QuestionsFile::parse("# T\r\n\r\n## 1. Q\r\nbody\r\n\r\n**Verdict:** ok\r\n\r\n**ANSWERED**\r\n").unwrap();
