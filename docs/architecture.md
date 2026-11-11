@@ -109,7 +109,7 @@ review rules from the main checkout, where the review file is named `rust-review
 - **One item, one PR.** The PR description quotes the item in full under `## Task`; the reviewers check the PR
   against it and run its checks. A file outside the item's expected list, an expected part left out, or a check that
   cannot pass yet needs its reason in the PR description. Each round starts from its own file,
-  `rounds/round-N.M.md` (this item: [`rounds/round-1.1.md`](../rounds/round-1.1.md)).
+  `rounds/round-N.M.md` ([`rounds/round-1.1.md`](../rounds/round-1.1.md), [`rounds/round-2.1.md`](../rounds/round-2.1.md)).
 - **Every item stands alone:** it compiles and passes the whole gate on `main` without the other items of its
   feature, and uses only code from the features its feature's "Depends on" line names, all of them merged. Items of
   one feature are taken in order; features whose dependencies are merged run in parallel.
