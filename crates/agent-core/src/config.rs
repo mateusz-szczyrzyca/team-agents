@@ -1,12 +1,12 @@
 //! The configuration: the typed model of `agents.toml` (see `docs/configuration.md`).
 //!
 //! [`Config::from_toml_str`] turns the text of the file into a [`Config`], and only into a valid one: unknown keys are
-//! refused (`deny_unknown_fields`), every value is parsed into its type ([`values`]), and the lists of agents are
+//! refused (`deny_unknown_fields`), every value is parsed into its type (the newtypes of this module), and the lists of agents are
 //! checked against each other. The type does no I/O; whoever reads the file passes its text in.
 
 mod values;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU32;
 
 use serde::Deserialize;
@@ -332,6 +332,163 @@ pub struct Config {
     repos: BTreeMap<RepoName, RepoConfig>,
 }
 
+/// The contents of `[tiers]`: which agents are normal and which are workers.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct RawTiers {
+    /// The normal agents.
+    normal: Vec<AgentName>,
+    /// The workers, in the order of delegation.
+    workers: Vec<AgentName>,
+}
+
+/// What the file says, before its lists are checked against its agents: every value is valid, but the lists need
+/// not fit the agents.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawConfig {
+    /// See [`Config::language`].
+    #[serde(default)]
+    language: Language,
+    /// The `[agents.NAME]` tables.
+    #[serde(default)]
+    agents: BTreeMap<AgentName, AgentConfig>,
+    /// The `[investigators.NAME]` tables.
+    #[serde(default)]
+    investigators: BTreeMap<InvestigatorName, InvestigatorConfig>,
+    /// The `[tiers]` table.
+    #[serde(default)]
+    tiers: RawTiers,
+    /// See [`Config::binaries`].
+    #[serde(default)]
+    binaries: Binaries,
+    /// See [`Config::watchdog`].
+    #[serde(default)]
+    watchdog: Watchdog,
+    /// See [`Config::limits`].
+    #[serde(default)]
+    limits: Limits,
+    /// See [`Config::review`].
+    #[serde(default)]
+    review: Review,
+    /// See [`Config::git`].
+    #[serde(default)]
+    git: GitIdentity,
+    /// See [`Config::github`].
+    #[serde(default)]
+    github: Github,
+    /// See [`Config::notifications`].
+    #[serde(default)]
+    notifications: Notifications,
+    /// See [`Config::web`].
+    #[serde(default)]
+    web: Web,
+    /// The `[repos.NAME]` tables.
+    #[serde(default)]
+    repos: BTreeMap<RepoName, RepoConfig>,
+}
+
+impl RawConfig {
+    /// Checks the lists against the agents and the investigators; the first rule broken is the error. Checked in
+    /// this order: a name in a list that is no agent, a name twice in a list, a name in both lists, an agent in no
+    /// list, a name that is both an agent and an investigator.
+    fn validate(self) -> Result<Config, ConfigError> {
+        let Self {
+            language,
+            agents,
+            investigators,
+            tiers: RawTiers { normal, workers },
+            binaries,
+            watchdog,
+            limits,
+            review,
+            git,
+            github,
+            notifications,
+            web,
+            repos,
+        } = self;
+        check_list(Tier::Normal, &normal, &agents)?;
+        check_list(Tier::Worker, &workers, &agents)?;
+        check_tiers(&normal, &workers, &agents, &investigators)?;
+        Ok(Config {
+            language,
+            agents,
+            normal,
+            workers,
+            investigators,
+            binaries,
+            watchdog,
+            limits,
+            review,
+            git,
+            github,
+            notifications,
+            web,
+            repos,
+        })
+    }
+}
+
+/// Checks that every name of the `list` of `names` is an agent and is named once.
+fn check_list(list: Tier, names: &[AgentName], agents: &BTreeMap<AgentName, AgentConfig>) -> Result<(), ConfigError> {
+    let mut seen = HashSet::new();
+    for name in names {
+        if !agents.contains_key(name) {
+            return Err(ConfigError::UnknownName {
+                list,
+                name: name.clone(),
+            });
+        }
+        if !seen.insert(name) {
+            return Err(ConfigError::DuplicateName {
+                list,
+                name: name.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Checks that no name is in two lists, and that every agent is in one: in `normal` or in `workers`, and not also an
+/// investigator.
+fn check_tiers(
+    normal: &[AgentName],
+    workers: &[AgentName],
+    agents: &BTreeMap<AgentName, AgentConfig>,
+    investigators: &BTreeMap<InvestigatorName, InvestigatorConfig>,
+) -> Result<(), ConfigError> {
+    let normal: HashSet<&AgentName> = normal.iter().collect();
+    let workers: HashSet<&AgentName> = workers.iter().collect();
+    if let Some(name) = workers.iter().find(|name| normal.contains(**name)) {
+        return Err(ConfigError::NameInTwoLists {
+            name: name.to_string(),
+            first: Tier::Normal,
+            second: Tier::Worker,
+        });
+    }
+    if let Some(name) = agents
+        .keys()
+        .find(|name| !normal.contains(name) && !workers.contains(name))
+    {
+        return Err(ConfigError::AgentInNoList { name: name.clone() });
+    }
+    let investigators: HashSet<&str> = investigators.keys().map(InvestigatorName::as_str).collect();
+    if let Some(name) = agents.keys().find(|name| investigators.contains(name.as_str())) {
+        let first = if normal.contains(name) {
+            Tier::Normal
+        } else {
+            Tier::Worker
+        };
+        return Err(ConfigError::NameInTwoLists {
+            name: name.to_string(),
+            first,
+            second: Tier::Investigator,
+        });
+    }
+    Ok(())
+}
+
 impl Config {
     /// Parses and validates the text of an `agents.toml`.
     ///
@@ -340,8 +497,15 @@ impl Config {
     /// valid TOML or not the format of the file; [`ConfigError::UnknownName`], [`ConfigError::DuplicateName`],
     /// [`ConfigError::NameInTwoLists`] and [`ConfigError::AgentInNoList`] for lists that do not fit the agents.
     pub fn from_toml_str(text: &str) -> Result<Self, ConfigError> {
-        let _ = text;
-        Ok(Self::default())
+        if text.len() > MAX_CONFIG_BYTES {
+            return Err(ConfigError::TooLarge {
+                len: text.len(),
+                max: MAX_CONFIG_BYTES,
+            });
+        }
+        toml::from_str::<RawConfig>(text)
+            .map_err(ConfigError::Parse)?
+            .validate()
     }
 
     /// The language of the texts only the human reads.
@@ -842,13 +1006,19 @@ workers = ["qwen", "qwen"]"#,
             "[notifications]\ncmd = [\"x\"]",
             "[web]\nlogins = []",
             "[repos.x]\nbase_branch = \"main\"\ngate = [\"make\"]\ntimeout = 3",
-            "[unknown_section]\nx = 1",
         ];
         for text in cases {
             let err = failure(text);
             let marker = text.lines().last().unwrap();
             assert_eq!(error_line(text, &err), Some(line_of(text, marker)), "{text:?}");
         }
+    }
+
+    #[test]
+    fn an_unknown_section_is_refused_with_the_line_of_its_header() {
+        let text = "language = \"English\"\n\n[unknown_section]\nx = 1\n";
+        let err = failure(text);
+        assert_eq!(error_line(text, &err), Some(3));
     }
 
     #[test]
@@ -879,7 +1049,7 @@ workers = ["qwen", "qwen"]"#,
             "language = \"Brazilian Portuguese\"",
             "language = 5",
             "[repos.\"a/b\"]\nbase_branch = \"main\"\ngate = [\"make\"]",
-            "[repos.x]\nbase_branch = \"bad branch\"\ngate = [\"make\"]",
+            "[repos.x]\ngate = [\"make\"]\nbase_branch = \"bad branch\"",
             "[repos.x]\nbase_branch = \"main\"\ngate = [\"./make\"]",
             "[repos.x]\nbase_branch = \"main\"\ngate = [\"make\"]\ngate_timeout_minutes = 0",
         ];
