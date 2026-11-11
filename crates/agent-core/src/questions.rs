@@ -141,11 +141,7 @@ impl<'de> serde::Deserialize<'de> for Verdict {
 pub struct OwnAnswer(String);
 
 impl OwnAnswer {
-    /// The answer's text, trimmed.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
+    getter!("The answer's text, trimmed.", pub fn as_str(&self) -> &str = &self.0);
 }
 
 /// A line of an answer that the file format would read as the start of a question, a label or the `ANSWERED` marker.
@@ -440,23 +436,14 @@ impl Entry {
         Ok(self)
     }
 
-    /// The question's number.
-    #[must_use]
-    pub const fn number(&self) -> NonZeroU32 {
-        self.number
-    }
+    getter!("The question's number.", pub const fn number(&self) -> NonZeroU32 = self.number);
 
-    /// The rest of the `## N.` line.
-    #[must_use]
-    pub fn title(&self) -> &str {
-        &self.title
-    }
+    getter!("The rest of the `## N.` line.", pub fn title(&self) -> &str = &self.title);
 
-    /// The text between the title and the first labelled part; empty when there is none.
-    #[must_use]
-    pub fn body(&self) -> &str {
-        &self.body
-    }
+    getter!(
+        "The text between the title and the first labelled part; empty when there is none.",
+        pub fn body(&self) -> &str = &self.body
+    );
 
     /// The text of the `**Recommended:**` part; `None` when the question has none or it is empty.
     #[must_use]
@@ -629,29 +616,16 @@ impl QuestionsFile {
         out
     }
 
-    /// The title, if the file has one.
-    #[must_use]
-    pub fn title(&self) -> Option<&str> {
-        self.title.as_deref()
-    }
+    getter!("The title, if the file has one.", pub fn title(&self) -> Option<&str> = self.title.as_deref());
 
-    /// The instructions for the human; empty when there are none.
-    #[must_use]
-    pub fn instructions(&self) -> &str {
-        &self.instructions
-    }
+    getter!("The instructions for the human; empty when there are none.", pub fn instructions(&self) -> &str = &self.instructions);
 
-    /// The free text between the instructions and the first question; empty when there is none.
-    #[must_use]
-    pub fn intro(&self) -> &str {
-        &self.intro
-    }
+    getter!(
+        "The free text between the instructions and the first question; empty when there is none.",
+        pub fn intro(&self) -> &str = &self.intro
+    );
 
-    /// The questions, in the order written.
-    #[must_use]
-    pub fn entries(&self) -> &[Entry] {
-        &self.entries
-    }
+    getter!("The questions, in the order written.", pub fn entries(&self) -> &[Entry] = &self.entries);
 
     /// The question numbered `number`, if the file has it.
     #[must_use]
@@ -659,11 +633,10 @@ impl QuestionsFile {
         self.entries.iter().find(|entry| entry.number == number)
     }
 
-    /// Whether the last non-empty line was the `**ANSWERED**` marker: the human says they are done.
-    #[must_use]
-    pub const fn is_answered(&self) -> bool {
-        self.answered
-    }
+    getter!(
+        "Whether the last non-empty line was the `**ANSWERED**` marker: the human says they are done.",
+        pub const fn is_answered(&self) -> bool = self.answered
+    );
 
     /// Puts `text` under the title as the instructions, in place of any there are; a blank text removes them. Doing
     /// it twice with the same text changes nothing.

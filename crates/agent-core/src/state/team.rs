@@ -46,17 +46,9 @@ impl TaskListText {
         Ok(Self { text, list })
     }
 
-    /// The text, as given.
-    #[must_use]
-    pub fn text(&self) -> &str {
-        &self.text
-    }
+    getter!("The text, as given.", pub fn text(&self) -> &str = &self.text);
 
-    /// The parsed list.
-    #[must_use]
-    pub const fn list(&self) -> &TaskList {
-        &self.list
-    }
+    getter!("The parsed list.", pub const fn list(&self) -> &TaskList = &self.list);
 }
 
 impl TryFrom<String> for TaskListText {
@@ -181,11 +173,10 @@ impl Crew {
         }
     }
 
-    /// Every member with its role: the solo agent, or the coordinator, the members and the workers in that order.
-    #[must_use]
-    pub fn roster(&self) -> Vec<(Role, &Member)> {
-        self.shape.roster()
-    }
+    getter!(
+        "Every member with its role: the solo agent, or the coordinator, the members and the workers in that order.",
+        pub fn roster(&self) -> Vec<(Role, &Member)> = self.shape.roster()
+    );
 
     /// The member of task `task` with its role.
     #[must_use]
@@ -401,41 +392,17 @@ impl Team {
         }
     }
 
-    /// The team's ID.
-    #[must_use]
-    pub const fn id(&self) -> &TeamId {
-        &self.id
-    }
+    getter!("The team's ID.", pub const fn id(&self) -> &TeamId = &self.id);
 
-    /// The repository the team works on.
-    #[must_use]
-    pub const fn repo(&self) -> &RepoName {
-        &self.repo
-    }
+    getter!("The repository the team works on.", pub const fn repo(&self) -> &RepoName = &self.repo);
 
-    /// When the team was started.
-    #[must_use]
-    pub const fn created_at(&self) -> Timestamp {
-        self.created_at
-    }
+    getter!("When the team was started.", pub const fn created_at(&self) -> Timestamp = self.created_at);
 
-    /// What happens to an approved pull request.
-    #[must_use]
-    pub const fn merge(&self) -> MergeMode {
-        self.merge
-    }
+    getter!("What happens to an approved pull request.", pub const fn merge(&self) -> MergeMode = self.merge);
 
-    /// The task list the team works through.
-    #[must_use]
-    pub const fn task_list(&self) -> &TaskListText {
-        &self.task_list
-    }
+    getter!("The task list the team works through.", pub const fn task_list(&self) -> &TaskListText = &self.task_list);
 
-    /// The progress of each item, in the order of the task list.
-    #[must_use]
-    pub fn items(&self) -> &[ItemProgress] {
-        &self.items
-    }
+    getter!("The progress of each item, in the order of the task list.", pub fn items(&self) -> &[ItemProgress] = &self.items);
 
     /// The progress of item `id`.
     #[must_use]
@@ -448,22 +415,14 @@ impl Team {
         self.items.iter_mut().find(|item| item.id() == id).map(ItemMut::new)
     }
 
-    /// The people of the team.
-    #[must_use]
-    pub const fn crew(&self) -> &Crew {
-        &self.crew
-    }
+    getter!("The people of the team.", pub const fn crew(&self) -> &Crew = &self.crew);
 
     /// The people of the team, to change their tasks through the operations of [`CrewMut`].
     pub const fn crew_mut(&mut self) -> CrewMut<'_> {
         CrewMut::new(&mut self.crew)
     }
 
-    /// The investigators that review the team's pull requests.
-    #[must_use]
-    pub fn reviewers(&self) -> &[Member] {
-        &self.reviewers
-    }
+    getter!("The investigators that review the team's pull requests.", pub fn reviewers(&self) -> &[Member] = &self.reviewers);
 
     /// The reviewers, to change their tasks through the operations of [`MemberMut`], in the order of
     /// [`Team::reviewers`].

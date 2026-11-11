@@ -89,35 +89,15 @@ impl Question {
         }
     }
 
-    /// The round, counted from 1 for each task.
-    #[must_use]
-    pub const fn round(&self) -> NonZeroU32 {
-        self.round
-    }
+    getter!("The round, counted from 1 for each task.", pub const fn round(&self) -> NonZeroU32 = self.round);
 
-    /// The questions file.
-    #[must_use]
-    pub const fn file(&self) -> &AbsolutePath {
-        &self.file
-    }
+    getter!("The questions file.", pub const fn file(&self) -> &AbsolutePath = &self.file);
 
-    /// When the questions were put to the human.
-    #[must_use]
-    pub const fn asked_at(&self) -> Timestamp {
-        self.asked_at
-    }
+    getter!("When the questions were put to the human.", pub const fn asked_at(&self) -> Timestamp = self.asked_at);
 
-    /// Whether the human has answered.
-    #[must_use]
-    pub const fn state(&self) -> &QuestionState {
-        &self.state
-    }
+    getter!("Whether the human has answered.", pub const fn state(&self) -> &QuestionState = &self.state);
 
-    /// Whether the human has not answered yet.
-    #[must_use]
-    pub const fn is_open(&self) -> bool {
-        matches!(self.state, QuestionState::Open)
-    }
+    getter!("Whether the human has not answered yet.", pub const fn is_open(&self) -> bool = matches!(self.state, QuestionState::Open));
 
     /// Records the human's answer.
     ///

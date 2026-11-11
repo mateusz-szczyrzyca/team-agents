@@ -50,22 +50,7 @@ pub const MAX_STATE_BYTES: usize = 64 << 20;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SchemaVersion;
 
-impl Serialize for SchemaVersion {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_u32(SCHEMA_VERSION)
-    }
-}
-
-impl<'de> Deserialize<'de> for SchemaVersion {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let found = u64::deserialize(deserializer)?;
-        if found == u64::from(SCHEMA_VERSION) {
-            Ok(Self)
-        } else {
-            Err(serde::de::Error::custom(UnsupportedSchema { found }))
-        }
-    }
-}
+version_type!(SchemaVersion, SCHEMA_VERSION, UnsupportedSchema);
 
 /// A state of a schema version this build does not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -211,50 +196,7 @@ impl State {
     ///
     /// The handle does not give out the team as a value to overwrite, so no change can bring in a second team with
     /// one ID or a member that the team's checks did not see. Each of these is refused by the compiler:
-    ///
-    /// ```compile_fail
-    /// # use agent_core::state::State;
-    /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
-    /// # let team = state.teams()[0].id().clone();
-    /// # let other = state.teams()[1].clone();
-    /// *state.team_mut(&team).unwrap() = other;
-    /// ```
-    ///
-    /// ```compile_fail
-    /// # use agent_core::state::State;
-    /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
-    /// # let team = state.teams()[0].id().clone();
-    /// # let other = state.teams()[1].clone();
-    /// let _ = std::mem::replace(&mut *state.team_mut(&team).unwrap(), other);
-    /// ```
-    ///
-    /// ```compile_fail
-    /// # use agent_core::state::State;
-    /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
-    /// # let team = state.teams()[0].id().clone();
-    /// # let other = state.teams()[1].clone();
-    /// let item = other.items()[0].clone();
-    /// let id = item.id();
-    /// *state.team_mut(&team).unwrap().item_mut(id).unwrap() = item;
-    /// ```
-    ///
-    /// ```compile_fail
-    /// # use agent_core::state::State;
-    /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
-    /// # let team = state.teams()[0].id().clone();
-    /// # let other = state.teams()[1].clone();
-    /// let crew = other.crew().clone();
-    /// *state.team_mut(&team).unwrap().crew_mut() = crew;
-    /// ```
-    ///
-    /// ```compile_fail
-    /// # use agent_core::state::State;
-    /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
-    /// # let team = state.teams()[0].id().clone();
-    /// # let other = state.teams()[1].clone();
-    /// let reviewer = state.teams()[0].reviewers()[0].clone();
-    /// state.team_mut(&team).unwrap().reviewers_mut()[0] = reviewer;
-    /// ```
+    #[doc = include_str!("../tests/docs/team-mut.md")]
     pub fn team_mut(&mut self, id: &TeamId) -> Option<TeamMut<'_>> {
         self.teams.iter_mut().find(|team| team.id() == id).map(TeamMut::new)
     }
@@ -269,16 +211,7 @@ impl State {
 
     /// The member of task `task`, to change its task through the checked operations of [`MemberMut`] only; the
     /// member cannot be overwritten with another one:
-    ///
-    /// ```compile_fail
-    /// # use agent_core::state::State;
-    /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
-    /// # let team = state.teams()[0].id().clone();
-    /// # let other = state.teams()[1].clone();
-    /// let task = state.teams()[0].crew().roster()[0].1.task().clone();
-    /// let member = other.crew().roster()[0].1.clone();
-    /// *state.find_task_mut(&task).unwrap().1 = member;
-    /// ```
+    #[doc = include_str!("../tests/docs/find-task-mut.md")]
     pub fn find_task_mut(&mut self, task: &TaskId) -> Option<(Role, MemberMut<'_>)> {
         self.teams.iter_mut().find_map(|team| team.find_mut(task))
     }

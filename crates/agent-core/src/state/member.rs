@@ -219,53 +219,27 @@ impl Member {
         }
     }
 
-    /// The task's ID.
-    #[must_use]
-    pub const fn task(&self) -> &TaskId {
-        &self.task
-    }
+    getter!("The task's ID.", pub const fn task(&self) -> &TaskId = &self.task);
 
-    /// Who works in the task.
-    #[must_use]
-    pub const fn agent(&self) -> &Participant {
-        &self.agent
-    }
+    getter!("Who works in the task.", pub const fn agent(&self) -> &Participant = &self.agent);
 
-    /// Where the task is in its life.
-    #[must_use]
-    pub const fn status(&self) -> TaskStatus {
-        self.status
-    }
+    getter!("Where the task is in its life.", pub const fn status(&self) -> TaskStatus = self.status);
 
-    /// The runs, oldest first.
-    #[must_use]
-    pub fn runs(&self) -> &[Run] {
-        &self.runs
-    }
+    getter!("The runs, oldest first.", pub fn runs(&self) -> &[Run] = &self.runs);
 
-    /// The rounds of questions, oldest first.
-    #[must_use]
-    pub fn questions(&self) -> &[Question] {
-        &self.questions
-    }
+    getter!("The rounds of questions, oldest first.", pub fn questions(&self) -> &[Question] = &self.questions);
 
-    /// The run that is going, if one is.
-    #[must_use]
-    pub fn current_run(&self) -> Option<&Run> {
-        self.runs.last().filter(|run| run.is_running())
-    }
+    getter!("The run that is going, if one is.", pub fn current_run(&self) -> Option<&Run> = self.runs.last().filter(|run| run.is_running()));
 
-    /// The round of questions that waits for the human, if there is one.
-    #[must_use]
-    pub fn open_question(&self) -> Option<&Question> {
-        self.questions.last().filter(|question| question.is_open())
-    }
+    getter!(
+        "The round of questions that waits for the human, if there is one.",
+        pub fn open_question(&self) -> Option<&Question> = self.questions.last().filter(|question| question.is_open())
+    );
 
-    /// The session of the latest run that has one: the one a new run resumes.
-    #[must_use]
-    pub fn last_session(&self) -> Option<&SessionId> {
-        self.runs.iter().rev().find_map(Run::session)
-    }
+    getter!(
+        "The session of the latest run that has one: the one a new run resumes.",
+        pub fn last_session(&self) -> Option<&SessionId> = self.runs.iter().rev().find_map(Run::session)
+    );
 
     /// Changes the task's status.
     ///

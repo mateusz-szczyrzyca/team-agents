@@ -490,29 +490,13 @@ impl ItemProgress {
         }
     }
 
-    /// The item's number in the task list.
-    #[must_use]
-    pub const fn id(&self) -> ItemId {
-        self.id
-    }
+    getter!("The item's number in the task list.", pub const fn id(&self) -> ItemId = self.id);
 
-    /// Where the item is.
-    #[must_use]
-    pub const fn phase(&self) -> &ItemPhase {
-        &self.phase
-    }
+    getter!("Where the item is.", pub const fn phase(&self) -> &ItemPhase = &self.phase);
 
-    /// The item status the phase shows.
-    #[must_use]
-    pub const fn status(&self) -> ItemStatus {
-        self.phase.kind().status()
-    }
+    getter!("The item status the phase shows.", pub const fn status(&self) -> ItemStatus = self.phase.kind().status());
 
-    /// The fix passes so far, oldest first.
-    #[must_use]
-    pub fn fix_passes(&self) -> &[FixPass] {
-        &self.fix_passes
-    }
+    getter!("The fix passes so far, oldest first.", pub fn fix_passes(&self) -> &[FixPass] = &self.fix_passes);
 
     /// Moves the item to `next`. Leaving `in_review` for `fixing` records the round's reviews as a fix pass.
     ///

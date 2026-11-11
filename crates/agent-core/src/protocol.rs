@@ -39,22 +39,7 @@ pub const MAX_FRAME_BYTES: usize = 32 << 20;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProtocolVersion;
 
-impl Serialize for ProtocolVersion {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_u32(PROTOCOL_VERSION)
-    }
-}
-
-impl<'de> Deserialize<'de> for ProtocolVersion {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let found = u64::deserialize(deserializer)?;
-        if found == u64::from(PROTOCOL_VERSION) {
-            Ok(Self)
-        } else {
-            Err(serde::de::Error::custom(UnsupportedVersion { found }))
-        }
-    }
-}
+version_type!(ProtocolVersion, PROTOCOL_VERSION, UnsupportedVersion);
 
 /// A line of a protocol version this build does not speak.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

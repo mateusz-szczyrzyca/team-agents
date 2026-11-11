@@ -125,29 +125,16 @@ impl Run {
         }
     }
 
-    /// The run's ID.
-    #[must_use]
-    pub const fn id(&self) -> &RunId {
-        &self.id
-    }
+    getter!("The run's ID.", pub const fn id(&self) -> &RunId = &self.id);
 
-    /// When the CLI was started.
-    #[must_use]
-    pub const fn started_at(&self) -> Timestamp {
-        self.started_at
-    }
+    getter!("When the CLI was started.", pub const fn started_at(&self) -> Timestamp = self.started_at);
 
-    /// The CLI's session ID, if it has reported one.
-    #[must_use]
-    pub const fn session(&self) -> Option<&SessionId> {
-        self.session.as_ref()
-    }
+    getter!(
+        "The CLI's session ID, if it has reported one.",
+        pub const fn session(&self) -> Option<&SessionId> = self.session.as_ref()
+    );
 
-    /// Whether the run is going or how it ended.
-    #[must_use]
-    pub const fn state(&self) -> &RunState {
-        &self.state
-    }
+    getter!("Whether the run is going or how it ended.", pub const fn state(&self) -> &RunState = &self.state);
 
     /// Whether the run is going.
     #[must_use]

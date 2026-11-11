@@ -30,21 +30,9 @@ const SHA256_HEX_LEN: usize = 64;
 ///
 /// The year is 0000 to 9999. Parsing accepts any UTC offset and converts to UTC; the text form is always UTC with a
 /// `Z`, and fractions of a second only when there are some. Timestamps order by time.
-///
-/// ```
-/// # fn main() -> Result<(), agent_core::state::InvalidTimestamp> {
-/// let at: agent_core::state::Timestamp = "2026-11-11T20:15:54+01:00".parse()?;
-/// assert_eq!(at.to_string(), "2026-11-11T19:15:54Z");
-/// # Ok(())
-/// # }
-/// ```
-///
-/// The only way to a value is through the checks:
-///
-/// ```compile_fail,E0603
-/// let at = agent_core::state::Timestamp(time::UtcDateTime::UNIX_EPOCH);
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[doc = include_str!("../../tests/docs/timestamp.md")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct Timestamp(UtcDateTime);
 
 /// Why a text or a time is not a [`Timestamp`].
@@ -129,29 +117,12 @@ impl From<Timestamp> for String {
     }
 }
 
-impl Serialize for Timestamp {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for Timestamp {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(serde::de::Error::custom)
-    }
-}
-
 /// The session ID a model CLI gave a run, which a later run resumes: opaque text such as
 /// `5f3c9a3e-86f3-4b0e-9d2c-0a8f1c7d5b21`.
 ///
 /// 1 to 200 bytes without whitespace or control characters. Refused, with the [`ValueRule`](crate::config::ValueRule) it breaks: the empty
 /// text, a longer one, and any whitespace or control character.
-///
-/// ```compile_fail,E0603
-/// let id = agent_core::state::SessionId(String::from("x"));
-/// ```
+#[doc = include_str!("../../tests/docs/session-id.md")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(try_from = "String")]
 pub struct SessionId(String);
@@ -172,10 +143,7 @@ impl From<SessionId> for String {
 }
 
 /// A git commit ID: 40 (SHA-1) or 64 (SHA-256) lowercase hexadecimal digits.
-///
-/// ```compile_fail,E0603
-/// let id = agent_core::state::CommitId(String::from("x"));
-/// ```
+#[doc = include_str!("../../tests/docs/commit-id.md")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(try_from = "String")]
 pub struct CommitId(String);
