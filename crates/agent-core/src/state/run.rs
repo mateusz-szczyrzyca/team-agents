@@ -1,19 +1,21 @@
 //! Runs: one start of a model CLI for a task, and how it ended.
 
-use serde::{Deserialize, Serialize};
-
 use super::strict::{checked, strict_enum};
 use super::values::{SessionId, Timestamp};
 use crate::ids::RunId;
 use crate::status::RunOutcome;
 
+checked! {
+    Run, "self::Run", serde(deny_unknown_fields), |run: &Run| match &run.state {
+    RunState::Ended { at, .. } => check_end(&run.id, run.started_at, *at),
+    RunState::Running => Ok(()),
+};
 /// One run of a model CLI for a task: when it started, the session the CLI gave it, and how it ended.
 ///
 /// Made by [`Member::begin_run`](super::Member::begin_run) and ended by
 /// [`Member::end_run`](super::Member::end_run), so a run never ends before it started; reading a state checks that
 /// too.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Run {
     /// The run's ID.
     id: RunId,
@@ -25,17 +27,14 @@ pub struct Run {
     /// Whether it is still going, or how it ended.
     state: RunState,
 }
+}
 
-checked!(Run, |run: &Run| match &run.state {
-    RunState::Ended { at, .. } => check_end(&run.id, run.started_at, *at),
-    RunState::Running => Ok(()),
-});
-
+strict_enum! {
+    RunState, "self::RunState", serde(tag = "status", rename_all = "snake_case", deny_unknown_fields);
 /// Whether a run is going or over.
 ///
 /// Deserialization refuses fields that the variant does not have.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunState {
     /// The CLI process is going.
     Running,
@@ -47,12 +46,17 @@ pub enum RunState {
         end: RunEnd,
     },
 }
+}
 
+strict_enum! {
+    RunEnd, "self::RunEnd", serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields), |end| match end {
+    RunEnd::QuotaExhausted { .. } => &["resets_at"][..],
+    RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::RateLimited | RunEnd::Hung | RunEnd::Stopped => &[],
+};
 /// How a run ended: what the agent reported, or what the harness found.
 ///
 /// Deserialization refuses fields that the variant does not have.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunEnd {
     /// The agent's final message ended with `STATUS: <outcome>`.
     Reported {
@@ -77,12 +81,7 @@ pub enum RunEnd {
     /// The human stopped it.
     Stopped,
 }
-
-strict_enum!(RunState);
-strict_enum!(RunEnd, |end| match end {
-    RunEnd::QuotaExhausted { .. } => &["resets_at"][..],
-    RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::RateLimited | RunEnd::Hung | RunEnd::Stopped => &[],
-});
+}
 
 /// Why a run could not be started, ended or given a session.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

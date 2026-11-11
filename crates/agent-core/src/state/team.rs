@@ -276,13 +276,14 @@ impl From<Crew> for Shape {
     }
 }
 
+checked! {
+    Team, "self::Team", serde(deny_unknown_fields), check_team;
 /// A team: its repository, its task list, the progress of each item, its crew and the investigators that review it.
 ///
 /// The progress has one entry for each item of the task list, in its order, and an item the list marks `[x]` is done
 /// from the start; [`Team::new`] makes it so and reading a state checks it. Reviewers are investigators outside the
 /// crew.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Team {
     /// The team's ID.
     id: TeamId,
@@ -302,8 +303,7 @@ pub struct Team {
     #[serde(default)]
     reviewers: Vec<Member>,
 }
-
-checked!(Team, check_team);
+}
 
 /// Why a team's parts do not fit together.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

@@ -54,13 +54,14 @@ impl Participant {
     }
 }
 
+checked! {
+    Member, "self::Member", serde(deny_unknown_fields), check_member;
 /// A participant and its task: the status of the task, its runs and its rounds of questions.
 ///
 /// The status changes only through [`Member::transition`]; runs and questions are added and ended through the
 /// methods below, which keep them in order: at most the last run is going, at most the last question is open, and
 /// question rounds count 1, 2, 3, … Reading a state checks the same.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
     /// The task's ID.
     task: TaskId,
@@ -75,8 +76,7 @@ pub struct Member {
     #[serde(default)]
     questions: Vec<Question>,
 }
-
-checked!(Member, check_member);
+}
 
 /// A member inside a state or a team, to change through its operations only.
 ///

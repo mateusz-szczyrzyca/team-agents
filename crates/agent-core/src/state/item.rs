@@ -96,11 +96,12 @@ pub struct Review {
     pub outcome: ReviewOutcome,
 }
 
+strict_enum! {
+    ReviewOutcome, "self::ReviewOutcome", serde(tag = "status", rename_all = "snake_case", deny_unknown_fields);
 /// Whether a reviewer has answered.
 ///
 /// Deserialization refuses fields that the variant does not have.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewOutcome {
     /// The review is not in yet.
     Pending,
@@ -112,6 +113,7 @@ pub enum ReviewOutcome {
         at: Timestamp,
     },
 }
+}
 
 /// A fix pass: the reviews that sent an item back to its team.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,11 +123,12 @@ pub struct FixPass {
     pub requested_by: Vec<Review>,
 }
 
+strict_enum! {
+    Completion, "self::Completion", serde(tag = "how", rename_all = "snake_case", deny_unknown_fields);
 /// How an item came to be done.
 ///
 /// Deserialization refuses fields that the variant does not have.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "how", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Completion {
     /// The task list marked it `[x]` when the team started.
     Listed,
@@ -137,12 +140,14 @@ pub enum Completion {
         at: Timestamp,
     },
 }
+}
 
+strict_enum! {
+    ItemPhase, "self::ItemPhase", serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields), |_| &[], ItemPhase::check_reviews;
 /// Where an item is, with exactly the data that phase has.
 ///
 /// Deserialization refuses unknown fields and applies [`ItemPhase::check_reviews`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ItemPhase {
     /// Not started.
     Pending,
@@ -182,10 +187,7 @@ pub enum ItemPhase {
         completion: Completion,
     },
 }
-
-strict_enum!(ReviewOutcome);
-strict_enum!(Completion);
-strict_enum!(ItemPhase, |_| &[], ItemPhase::check_reviews);
+}
 
 impl ItemPhase {
     /// Which phase this is.
@@ -285,14 +287,15 @@ fn check_fix_pass(round: &[Review]) -> Result<(), InvalidReviews> {
     Ok(())
 }
 
+checked! {
+    ItemProgress, "self::ItemProgress", serde(deny_unknown_fields), check_item_progress;
 /// An item's progress: its phase, the fix passes behind it and its last gate result.
 ///
 /// The phase changes only through [`ItemProgress::advance`], which follows [`PhaseKind::successors`].
 ///
 /// Reading checks what the item's own constructors check: a phase with its data ([`ItemPhase`]), a fixing item with
 /// a fix pass, and that every fix pass was asked for by reviews that fit it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemProgress {
     /// The item's number in the task list.
     id: ItemId,
@@ -305,8 +308,7 @@ pub struct ItemProgress {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate: Option<GateResult>,
 }
-
-checked!(ItemProgress, check_item_progress);
+}
 
 /// An item's progress inside a team, to change through its operations only.
 ///

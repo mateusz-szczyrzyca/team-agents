@@ -22,11 +22,12 @@ pub struct GateResult {
     pub log: AbsolutePath,
 }
 
+strict_enum! {
+    GateOutcome, "self::GateOutcome", serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields);
 /// How the gate ended.
 ///
 /// Deserialization refuses fields that the variant does not have.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateOutcome {
     /// The command exited with 0: the commit may be reviewed.
     Passed,
@@ -38,8 +39,7 @@ pub enum GateOutcome {
     /// The command ran longer than the configured gate timeout and was stopped.
     TimedOut,
 }
-
-strict_enum!(GateOutcome);
+}
 
 #[cfg(test)]
 mod tests {
