@@ -1,0 +1,7 @@
+# Clippy settings of the workspace (prompts/agent/rust-developer.md, appendix): panics, indexing and printing are a
+# failed test inside tests, so tests may use them.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-print-in-tests = true
