@@ -234,6 +234,7 @@ pub enum AnswerPayload {
     /// Complete Markdown text of `questions-<round>.md`, marked with `**ANSWERED**`.
     FileContent(String),
     /// Per-question verdicts keyed by 1-based question number.
+    #[serde(with = "crate::questions::verdict_map")]
     Verdicts(BTreeMap<NonZeroU32, Verdict>),
 }
 
@@ -257,28 +258,79 @@ pub enum ErrorCode {
     Internal,
 }
 
-/// Validates a deserialized [`Request`] envelope (stubbed in RED).
-fn check_raw_request(_version: u32, _req: Request) -> Result<Request, ProtocolError> {
-    Err(ProtocolError::UnsupportedVersion {
-        found: 0,
-        supported: PROTOCOL_VERSION,
-    })
+/// Minimal JSON header inspected before full frame deserialization so future protocol versions with unknown commands,
+/// responses, or events are still refused with [`ProtocolError::UnsupportedVersion`].
+#[derive(Deserialize)]
+struct VersionHeader {
+    /// Wire protocol version field in JSON.
+    version: u32,
 }
 
-/// Validates a deserialized [`Response`] envelope (stubbed in RED).
-fn check_raw_response(_version: u32, _resp: Response) -> Result<Response, ProtocolError> {
-    Err(ProtocolError::UnsupportedVersion {
-        found: 0,
-        supported: PROTOCOL_VERSION,
-    })
+/// Checks that `version` equals [`PROTOCOL_VERSION`].
+const fn check_version(version: u32) -> Result<(), ProtocolError> {
+    if version != PROTOCOL_VERSION {
+        return Err(ProtocolError::UnsupportedVersion {
+            found: version,
+            supported: PROTOCOL_VERSION,
+        });
+    }
+    Ok(())
 }
 
-/// Validates a deserialized [`Event`] envelope (stubbed in RED).
-fn check_raw_event(_version: u32, _event: Event) -> Result<Event, ProtocolError> {
-    Err(ProtocolError::UnsupportedVersion {
-        found: 0,
-        supported: PROTOCOL_VERSION,
-    })
+/// Checks size, single-line framing, and [`PROTOCOL_VERSION`] on `line`, returning the trimmed JSON slice.
+fn prepare_frame_line(line: &str) -> Result<&str, ProtocolError> {
+    if line.len() > MAX_MESSAGE_BYTES {
+        return Err(ProtocolError::TooLarge {
+            size: line.len(),
+            max: MAX_MESSAGE_BYTES,
+        });
+    }
+    let without_trailing_newline = line.strip_suffix('\n').unwrap_or(line);
+    let without_cr = without_trailing_newline
+        .strip_suffix('\r')
+        .unwrap_or(without_trailing_newline);
+    if without_cr.contains(['\n', '\r']) {
+        return Err(ProtocolError::EmbeddedNewline);
+    }
+    let trimmed = without_cr.trim();
+    if trimmed.is_empty() {
+        return Err(ProtocolError::EmptyLine);
+    }
+    let header: VersionHeader = serde_json::from_str(trimmed).map_err(ProtocolError::Parse)?;
+    check_version(header.version)?;
+    Ok(trimmed)
+}
+
+/// Serializes `value` as a single `\n`-terminated JSON line within [`MAX_MESSAGE_BYTES`].
+fn encode_frame_line<T: Serialize>(value: &T) -> Result<String, ProtocolError> {
+    let mut line = serde_json::to_string(value).map_err(ProtocolError::Parse)?;
+    line.push('\n');
+    if line.len() > MAX_MESSAGE_BYTES {
+        return Err(ProtocolError::TooLarge {
+            size: line.len(),
+            max: MAX_MESSAGE_BYTES,
+        });
+    }
+    Ok(line)
+}
+
+/// Validates a deserialized [`Request`] envelope.
+fn check_raw_request(version: u32, req: Request) -> Result<Request, ProtocolError> {
+    check_version(version)?;
+    req.validate()?;
+    Ok(req)
+}
+
+/// Validates a deserialized [`Response`] envelope.
+fn check_raw_response(version: u32, resp: Response) -> Result<Response, ProtocolError> {
+    check_version(version)?;
+    Ok(resp)
+}
+
+/// Validates a deserialized [`Event`] envelope.
+fn check_raw_event(version: u32, event: Event) -> Result<Event, ProtocolError> {
+    check_version(version)?;
+    Ok(event)
 }
 
 versioned_protocol_enum! {
@@ -391,7 +443,54 @@ impl Request {
     ///
     /// Returns [`ProtocolError`] if any required text or collection is empty.
     pub fn validate(&self) -> Result<(), ProtocolError> {
-        Err(ProtocolError::EmptyLine)
+        match self {
+            Self::Run { topic, target, .. } => {
+                if topic.trim().is_empty() {
+                    return Err(ProtocolError::EmptyTopic);
+                }
+                match target {
+                    RunTarget::Solo { prompt, .. } => {
+                        if prompt.trim().is_empty() {
+                            return Err(ProtocolError::EmptyPrompt);
+                        }
+                    }
+                    RunTarget::Team { agents, task_list, .. } => {
+                        if agents.is_empty() {
+                            return Err(ProtocolError::EmptyAgents);
+                        }
+                        if task_list.trim().is_empty() {
+                            return Err(ProtocolError::EmptyTaskList);
+                        }
+                    }
+                }
+            }
+            Self::Answer { payload, .. } => match payload {
+                AnswerPayload::FileContent(content) => {
+                    if content.trim().is_empty() {
+                        return Err(ProtocolError::EmptyAnswerFile);
+                    }
+                }
+                AnswerPayload::Verdicts(verdicts) => {
+                    if verdicts.is_empty() {
+                        return Err(ProtocolError::EmptyVerdicts);
+                    }
+                }
+            },
+            Self::Say { message, .. } => {
+                if message.trim().is_empty() {
+                    return Err(ProtocolError::EmptyMessage);
+                }
+            }
+            Self::Status { .. }
+            | Self::Show { .. }
+            | Self::Stop { .. }
+            | Self::Pause { .. }
+            | Self::Unpause { .. }
+            | Self::Resume { .. }
+            | Self::Gate { .. }
+            | Self::Subscribe { .. } => {}
+        }
+        Ok(())
     }
 
     /// Parses a single JSON line into a [`Request`], checking frame bounds and [`PROTOCOL_VERSION`] first.
@@ -400,8 +499,10 @@ impl Request {
     ///
     /// Returns [`ProtocolError`] if the frame is empty, contains multiple lines, exceeds [`MAX_MESSAGE_BYTES`],
     /// carries an unsupported `version`, or fails JSON/invariant validation.
-    pub fn from_json_line(_line: &str) -> Result<Self, ProtocolError> {
-        Err(ProtocolError::EmptyLine)
+    pub fn from_json_line(line: &str) -> Result<Self, ProtocolError> {
+        let trimmed = prepare_frame_line(line)?;
+        let raw: RawRequest = serde_json::from_str(trimmed).map_err(ProtocolError::Parse)?;
+        Self::try_from(raw)
     }
 
     /// Serializes this [`Request`] as a single `\n`-terminated JSON line after validating its invariants.
@@ -410,7 +511,8 @@ impl Request {
     ///
     /// Returns [`ProtocolError`] if [`Self::validate`] fails or the serialized frame exceeds [`MAX_MESSAGE_BYTES`].
     pub fn to_json_line(&self) -> Result<String, ProtocolError> {
-        Err(ProtocolError::EmptyLine)
+        self.validate()?;
+        encode_frame_line(self)
     }
 }
 
@@ -512,8 +614,10 @@ impl Response {
     ///
     /// Returns [`ProtocolError`] if the frame is empty, contains multiple lines, exceeds [`MAX_MESSAGE_BYTES`],
     /// carries an unsupported `version`, or fails JSON validation.
-    pub fn from_json_line(_line: &str) -> Result<Self, ProtocolError> {
-        Err(ProtocolError::EmptyLine)
+    pub fn from_json_line(line: &str) -> Result<Self, ProtocolError> {
+        let trimmed = prepare_frame_line(line)?;
+        let raw: RawResponse = serde_json::from_str(trimmed).map_err(ProtocolError::Parse)?;
+        Self::try_from(raw)
     }
 
     /// Serializes this [`Response`] as a single `\n`-terminated JSON line.
@@ -522,7 +626,7 @@ impl Response {
     ///
     /// Returns [`ProtocolError::TooLarge`] if the serialized frame exceeds [`MAX_MESSAGE_BYTES`].
     pub fn to_json_line(&self) -> Result<String, ProtocolError> {
-        Err(ProtocolError::EmptyLine)
+        encode_frame_line(self)
     }
 }
 
@@ -698,8 +802,10 @@ impl Event {
     ///
     /// Returns [`ProtocolError`] if the frame is empty, contains multiple lines, exceeds [`MAX_MESSAGE_BYTES`],
     /// carries an unsupported `version`, or fails JSON validation.
-    pub fn from_json_line(_line: &str) -> Result<Self, ProtocolError> {
-        Err(ProtocolError::EmptyLine)
+    pub fn from_json_line(line: &str) -> Result<Self, ProtocolError> {
+        let trimmed = prepare_frame_line(line)?;
+        let raw: RawEvent = serde_json::from_str(trimmed).map_err(ProtocolError::Parse)?;
+        Self::try_from(raw)
     }
 
     /// Serializes this [`Event`] as a single `\n`-terminated JSON line.
@@ -708,7 +814,7 @@ impl Event {
     ///
     /// Returns [`ProtocolError::TooLarge`] if the serialized frame exceeds [`MAX_MESSAGE_BYTES`].
     pub fn to_json_line(&self) -> Result<String, ProtocolError> {
-        Err(ProtocolError::EmptyLine)
+        encode_frame_line(self)
     }
 }
 

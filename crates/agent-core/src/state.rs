@@ -651,6 +651,7 @@ pub enum AnswerSource {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedAnswer {
     /// Map from question number (`1`, `2`, ...) to its [`Verdict`].
+    #[serde(with = "crate::questions::verdict_map")]
     pub verdicts: BTreeMap<NonZeroU32, Verdict>,
     /// Channel through which the answers arrived.
     pub source: AnswerSource,

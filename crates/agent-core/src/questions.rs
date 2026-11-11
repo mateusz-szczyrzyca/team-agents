@@ -200,6 +200,39 @@ impl From<Verdict> for String {
     }
 }
 
+/// Serde adapter for `BTreeMap<NonZeroU32, Verdict>` so stringified JSON map keys deserialize inside flattened
+/// protocol envelopes as well as direct structs.
+pub(crate) mod verdict_map {
+    use std::collections::BTreeMap;
+    use std::num::NonZeroU32;
+
+    use serde::de::Error as _;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::Verdict;
+
+    /// Serializes a question-number-to-verdict map.
+    pub(crate) fn serialize<S: Serializer>(
+        map: &BTreeMap<NonZeroU32, Verdict>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        map.serialize(serializer)
+    }
+
+    /// Deserializes a question-number-to-verdict map from string keys.
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BTreeMap<NonZeroU32, Verdict>, D::Error> {
+        let raw = BTreeMap::<String, Verdict>::deserialize(deserializer)?;
+        let mut out = BTreeMap::new();
+        for (key, verdict) in raw {
+            let number = key.parse::<NonZeroU32>().map_err(D::Error::custom)?;
+            out.insert(number, verdict);
+        }
+        Ok(out)
+    }
+}
+
 keyword_enum! {
     /// Whether a questions file is still being edited or ends with the `**ANSWERED**` marker.
     pub enum AnswerStatus: "answer status" {
