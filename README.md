@@ -1627,13 +1627,20 @@ for human contributors): architecture, conventions, checks, and what must never 
 ```bash
 make tools              # installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
 make lint               # shellcheck, gofmt, golangci-lint, staticcheck, doccheck, generated-code check
-make test               # Go unit tests (agent, agentbus, agentlive), bats suite, and test-map harness
+make test               # Go unit tests (agent, agentbus, agentlive), bats suite, test-map harness, and make rust
+make rust               # the Rust workspace: cargo fmt --check, clippy -D warnings, tests, cargo doc (warnings denied)
 make build-agent        # builds the Go agent CLI binary to build/agent-go
 make unit-agent-bats    # Lane B: active/done blackbox Bats tests against staged real Go binary
 make check-agent-parity # validates parity ledger, classifications, mapping, and test digests
 make harness            # test harness suite (tests/harness/*.bats: test map, runner, and gate checks)
 make integration        # real agent CLIs and accounts (costs usage)
 ```
+
+- **The Rust rewrite.** `bin/agent` is being rewritten in Rust, in the Cargo workspace `Cargo.toml` / `crates/`
+  (`agent-core`, `agent-runtime`, `agent`, `agent-web`); [`docs/architecture.md`](docs/architecture.md) has its layout,
+  process model and rules. Nothing of it is installed or used by the installation yet: `cargo run -p agent --
+  --version` and `cargo run -p agent-web -- --version` are all it does so far. It needs `rustup`; the toolchain of
+  `rust-toolchain.toml` installs itself on the first cargo command. `make gate` runs `make rust` as its `rust` step.
 
 - **Go candidate boundaries (R03).** The Go application (`agent/`) owns injected executor, clock and
   random boundaries; unconfigured execution is denied. Subprocess execution covers argv, env, dir,
