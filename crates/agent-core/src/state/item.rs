@@ -550,6 +550,7 @@ impl ItemProgress {
     ///
     /// # Errors
     /// [`AdvanceError::Transition`] when [`PhaseKind::successors`] does not allow the change;
+    /// [`AdvanceError::ListedCompletion`] when the change completes the item as listed;
     /// [`AdvanceError::Reviews`] when the reviews of the new phase do not fit it ([`ItemPhase::check_reviews`]), or
     /// when no review asked for the fix pass the change would record.
     pub fn advance(&mut self, next: ItemPhase) -> Result<(), AdvanceError> {
@@ -561,6 +562,14 @@ impl ItemProgress {
                 to,
             }
             .into());
+        }
+        if matches!(
+            next,
+            ItemPhase::Done {
+                completion: Completion::Listed
+            }
+        ) {
+            return Err(AdvanceError::ListedCompletion { item: self.id });
         }
         next.check_reviews()
             .map_err(|source| AdvanceError::Reviews { item: self.id, source })?;
@@ -585,7 +594,25 @@ impl ItemProgress {
         verdict: ReviewVerdict,
         at: Timestamp,
     ) -> Result<(), SubmitReviewError> {
-        let _ = (reviewer, verdict, at);
+        let ItemPhase::InReview { reviews, .. } = &mut self.phase else {
+            return Err(SubmitReviewError::NotInReview {
+                item: self.id,
+                phase: self.phase.kind(),
+            });
+        };
+        let Some(review) = reviews.iter_mut().find(|review| review.reviewer == *reviewer) else {
+            return Err(SubmitReviewError::UnknownReviewer {
+                item: self.id,
+                reviewer: reviewer.clone(),
+            });
+        };
+        if !matches!(review.outcome, ReviewOutcome::Pending) {
+            return Err(SubmitReviewError::AlreadySubmitted {
+                item: self.id,
+                reviewer: reviewer.clone(),
+            });
+        }
+        review.outcome = ReviewOutcome::Submitted { verdict, at };
         Ok(())
     }
 
