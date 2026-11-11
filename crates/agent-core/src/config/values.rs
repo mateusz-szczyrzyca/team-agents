@@ -359,10 +359,6 @@ impl NameTemplate {
     }
 
     /// A template written as a literal in this crate; the test `defaults_pass_their_own_checks` keeps it valid.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by the defaults of the configuration sections")
-    )]
     pub(crate) fn literal(text: &'static str) -> Self {
         Self(text.to_owned())
     }
@@ -393,10 +389,6 @@ impl AbsolutePath {
     }
 
     /// A path written as a literal in this crate; the test `defaults_pass_their_own_checks` keeps it valid.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by the defaults of the configuration sections")
-    )]
     pub(crate) fn literal(text: &'static str) -> Self {
         Self(PathBuf::from(text))
     }
@@ -456,10 +448,6 @@ impl Program {
     }
 
     /// A program written as a literal in this crate; the test `defaults_pass_their_own_checks` keeps it valid.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by the defaults of the configuration sections")
-    )]
     pub(crate) fn literal(text: &'static str) -> Self {
         Self(PathBuf::from(text))
     }
@@ -574,7 +562,6 @@ pub struct Minutes(NonZeroU32);
 
 impl Minutes {
     /// A number of minutes written as a literal in this crate.
-    #[expect(dead_code, reason = "used by the defaults of the configuration sections")]
     pub(crate) const fn literal(minutes: NonZeroU32) -> Self {
         Self(minutes)
     }
