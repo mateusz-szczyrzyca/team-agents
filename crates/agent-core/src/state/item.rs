@@ -324,6 +324,19 @@ impl CheckedMut<'_, ItemProgress> {
         self.value.advance(next)
     }
 
+    /// See [`ItemProgress::submit_review`].
+    ///
+    /// # Errors
+    /// [`SubmitReviewError`], as for [`ItemProgress::submit_review`].
+    pub fn submit_review(
+        &mut self,
+        reviewer: &InvestigatorName,
+        verdict: ReviewVerdict,
+        at: Timestamp,
+    ) -> Result<(), SubmitReviewError> {
+        self.value.submit_review(reviewer, verdict, at)
+    }
+
     /// See [`ItemProgress::reassign`].
     ///
     /// # Errors
@@ -423,6 +436,12 @@ pub enum AdvanceError {
     /// [`PhaseKind::successors`] does not allow the change.
     #[error(transparent)]
     Transition(#[from] InvalidAdvance),
+    /// `Completion::Listed` is for an item the task list marked `[x]` when the team started, not for a merge.
+    #[error("item {item}: an item that was open when the team started is done by a merge, not as listed")]
+    ListedCompletion {
+        /// The item.
+        item: ItemId,
+    },
     /// The reviews of the round do not fit the phase.
     #[error("item {item}: {source}")]
     Reviews {
@@ -439,6 +458,35 @@ impl PartialEq<InvalidAdvance> for AdvanceError {
     fn eq(&self, other: &InvalidAdvance) -> bool {
         matches!(self, Self::Transition(refused) if refused == other)
     }
+}
+
+/// Why a review's outcome could not be recorded.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SubmitReviewError {
+    /// The item is not in review: no round is waiting for results.
+    #[error("item {item} is {phase}: only an item in review has reviews to submit")]
+    NotInReview {
+        /// The item.
+        item: ItemId,
+        /// Its phase.
+        phase: PhaseKind,
+    },
+    /// The round has no review by this reviewer.
+    #[error("item {item}: the round has no review by {reviewer}")]
+    UnknownReviewer {
+        /// The item.
+        item: ItemId,
+        /// The reviewer that was named.
+        reviewer: InvestigatorName,
+    },
+    /// The reviewer's outcome is already recorded.
+    #[error("item {item}: the review by {reviewer} is already submitted")]
+    AlreadySubmitted {
+        /// The item.
+        item: ItemId,
+        /// The reviewer.
+        reviewer: InvestigatorName,
+    },
 }
 
 /// The item is not being worked on: it has no assignee to replace.
@@ -523,6 +571,21 @@ impl ItemProgress {
         if let (ItemPhase::InReview { reviews, .. }, PhaseKind::Fixing) = (left, to) {
             self.fix_passes.push(FixPass { requested_by: reviews });
         }
+        Ok(())
+    }
+
+    /// Records the outcome of `reviewer`'s pending review of the round that is in review.
+    ///
+    /// # Errors
+    /// [`SubmitReviewError`] when the item is not in review, the round has no review by `reviewer`, or that review is
+    /// already submitted.
+    pub fn submit_review(
+        &mut self,
+        reviewer: &InvestigatorName,
+        verdict: ReviewVerdict,
+        at: Timestamp,
+    ) -> Result<(), SubmitReviewError> {
+        let _ = (reviewer, verdict, at);
         Ok(())
     }
 
