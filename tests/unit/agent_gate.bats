@@ -89,14 +89,14 @@ commit_in() { git -C "$wt" -c user.name=t -c user.email=t@t commit -q --allow-em
 }
 
 @test "a gate run alive past AGENT_GATE_STALE_MIN is taken for hung: stopped, and the lock taken over" {
-  with_task 'sleep 300'
+  with_task 'sleep 3017'   # a duration no other test uses: the files run in parallel
   agent gate "$t" > /dev/null 2>&1 &
   for _ in $(seq 1 50); do grep -qs '^pid=' "$AGENTS_HOME/gate.lock" && break; sleep 0.1; done
   sed -i "s/^AGENT_REVIEW_GATE=.*/AGENT_REVIEW_GATE='true'/" "$AGENTS_HOME/agents.conf"
   AGENT_GATE_STALE_MIN=0 run agent gate "$t"
   [ "$status" -eq 0 ]
   [[ $output == *hung* ]]
-  ! pgrep -f "sleep 300" > /dev/null || false
+  ! pgrep -fx "sleep 3017" > /dev/null || false
   agent stop --running > /dev/null
 }
 
