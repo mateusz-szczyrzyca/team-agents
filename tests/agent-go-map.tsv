@@ -789,6 +789,10 @@ tests/unit/gate_scopes.bats	the gate of a change: the first scope covering every
 tests/unit/gate_scopes.bats	the paths are the change's own: what the base gained since does not count; uncommitted work in a worktree does	blackbox	R31	-	planned
 tests/unit/gate_scopes.bats	an entry without '=>' or without a command is skipped and logged; no scopes: the full gate as before	blackbox	R31	-	planned
 tests/unit/gate_scopes.bats	agent gate in a task's worktree runs the scope's command for a change inside it, and records it	blackbox	R31	-	planned
+tests/unit/investigation_task_in_pr.bats	the task block goes first in a PR description, replaced in place later; without it, the agents' text remains	blackbox	R31	-	planned
+tests/unit/investigation_task_in_pr.bats	a task longer than the PR description can hold is cut, saying so; the reviewers still get it whole	blackbox	R31	-	planned
+tests/unit/investigation_task_in_pr.bats	--investigation: the PR description gets the task first, and the reviewer's prompt holds it as the task under review	blackbox	R31	-	planned
+tests/unit/investigation_task_in_pr.bats	the merger is told the script keeps the task first in the PR description	source	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
