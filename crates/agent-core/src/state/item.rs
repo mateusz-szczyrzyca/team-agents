@@ -504,6 +504,12 @@ pub enum AdvanceError {
         #[source]
         source: InvalidReviews,
     },
+    /// The approval does not carry the pull request and the reviews of the round the item is in.
+    #[error("item {item}: an approval carries the item's own pull request and reviews, as recorded")]
+    RoundNotKept {
+        /// The item.
+        item: ItemId,
+    },
     /// `Completion::Listed` is for an item the task list already marked done: a team finishes an item by its merge.
     #[error("item {item} cannot be completed as listed: only an item the task list marks done starts that way")]
     ListedCompletion {
