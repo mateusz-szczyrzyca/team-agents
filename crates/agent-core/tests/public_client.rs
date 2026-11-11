@@ -8,7 +8,7 @@ mod public_client {
     use serde_json::{Value, json};
 
     /// Asserts that `Client::deserialize(value)`, the call a caller can write, fails with a data error.
-    fn assert_client_refused(value: Value) {
+    fn assert_client_refused(value: &Value) {
         let err = Client::deserialize(value.clone()).expect_err(&format!("{value} should be refused"));
         assert_eq!(err.classify(), serde_json::error::Category::Data, "{value}: {err}");
     }
@@ -49,9 +49,9 @@ mod public_client {
 
     #[test]
     fn a_direct_deserialize_of_a_client_refuses_an_unknown_field() {
-        assert_client_refused(json!({"kind": "cli", "extra": 1}));
-        assert_client_refused(json!({"kind": "cli", "login": "you@example.com"}));
-        assert_client_refused(json!({"kind": "dashboard", "login": "you@example.com", "extra": 1}));
+        assert_client_refused(&json!({"kind": "cli", "extra": 1}));
+        assert_client_refused(&json!({"kind": "cli", "login": "you@example.com"}));
+        assert_client_refused(&json!({"kind": "dashboard", "login": "you@example.com", "extra": 1}));
         assert_eq!(Client::deserialize(json!({"kind": "cli"})).unwrap(), Client::Cli);
     }
 }
