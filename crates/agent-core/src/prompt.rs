@@ -73,8 +73,8 @@ pub enum NameRule {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid variable name {name:?}: {rule}")]
 pub struct InvalidVariableName {
-    /// The refused text; at most one byte over [`MAX_VARIABLE_NAME_LEN`] characters of it, so that a huge text
-    /// does not become a huge message.
+    /// The refused text, cut after 65 characters (one more than the longest valid name), so that a huge text does
+    /// not become a huge message.
     pub name: String,
     /// The rule the text breaks.
     pub rule: NameRule,
@@ -102,8 +102,32 @@ impl FromStr for VariableName {
     type Err = InvalidVariableName;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Ok(Self(text.to_owned()))
+        match check_variable_name(text) {
+            None => Ok(Self(text.to_owned())),
+            Some(rule) => Err(InvalidVariableName {
+                name: text.chars().take(MAX_VARIABLE_NAME_LEN + 1).collect(),
+                rule,
+            }),
+        }
     }
+}
+
+/// The rule `text` breaks as a variable name, if it breaks one.
+fn check_variable_name(text: &str) -> Option<NameRule> {
+    if text.is_empty() {
+        return Some(NameRule::Empty);
+    }
+    if text.len() > MAX_VARIABLE_NAME_LEN {
+        return Some(NameRule::TooLong {
+            max: MAX_VARIABLE_NAME_LEN,
+        });
+    }
+    if !text.starts_with(|c: char| c.is_ascii_lowercase()) {
+        return Some(NameRule::FirstNotLowercaseLetter);
+    }
+    text.chars()
+        .find(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_'))
+        .map(NameRule::ForbiddenChar)
 }
 
 /// Why a value could not be added to [`Variables`].
@@ -136,8 +160,12 @@ impl Variables {
     /// # Errors
     /// [`VariablesError::InvalidName`] when `name` is not a valid [`VariableName`]; [`VariablesError::Duplicate`]
     /// when the variable has a value already.
-    pub fn with(self, name: &str, value: impl Into<String>) -> Result<Self, VariablesError> {
-        let _ = (name, value.into());
+    pub fn with(mut self, name: &str, value: impl Into<String>) -> Result<Self, VariablesError> {
+        let name: VariableName = name.parse()?;
+        if self.0.contains_key(&name) {
+            return Err(VariablesError::Duplicate { name });
+        }
+        self.0.insert(name, value.into());
         Ok(self)
     }
 
@@ -213,14 +241,49 @@ impl Template {
     /// [`TemplateError::Unclosed`] for a `{{` that is never closed, [`TemplateError::InvalidName`] for a
     /// placeholder that does not hold a valid name (`{{ name }}`, `{{Name}}`, `{{}}`); both say the line.
     pub fn parse(text: &str) -> Result<Self, TemplateError> {
-        let _ = text;
-        Ok(Self { parts: Vec::new() })
+        let mut parts = Vec::new();
+        let mut literal = String::new();
+        let mut rest = text;
+        let mut line = 1;
+        while let Some((before, after_open)) = rest.split_once(PLACEHOLDER_OPEN) {
+            line += count_lines(before);
+            if let Some(unescaped) = before.strip_suffix(ESCAPE) {
+                literal.push_str(unescaped);
+                literal.push_str(PLACEHOLDER_OPEN);
+                rest = after_open;
+                continue;
+            }
+            literal.push_str(before);
+            let Some((inner, after_close)) = after_open.split_once(PLACEHOLDER_CLOSE) else {
+                return Err(TemplateError::Unclosed { line });
+            };
+            let name = inner
+                .parse::<VariableName>()
+                .map_err(|source| TemplateError::InvalidName { line, source })?;
+            if !literal.is_empty() {
+                parts.push(Part::Text(std::mem::take(&mut literal)));
+            }
+            parts.push(Part::Variable(name));
+            line += count_lines(inner);
+            rest = after_close;
+        }
+        literal.push_str(rest);
+        if !literal.is_empty() {
+            parts.push(Part::Text(literal));
+        }
+        Ok(Self { parts })
     }
 
     /// The variables the text uses, in order, each once.
     #[must_use]
     pub fn variables(&self) -> BTreeSet<&VariableName> {
-        BTreeSet::new()
+        self.parts
+            .iter()
+            .filter_map(|part| match part {
+                Part::Text(_) => None,
+                Part::Variable(name) => Some(name),
+            })
+            .collect()
     }
 
     /// The text with every placeholder replaced by its value.
@@ -229,9 +292,29 @@ impl Template {
     /// [`RenderError::Missing`] when the text uses a variable that has no value, [`RenderError::Unknown`] when a
     /// value is for a variable the text does not use.
     pub fn render(&self, values: &Variables) -> Result<String, RenderError> {
-        let _ = values;
-        Ok(String::new())
+        let used = self.variables();
+        if let Some(name) = values.names().find(|name| !used.contains(name)) {
+            return Err(RenderError::Unknown { name: name.clone() });
+        }
+        let mut rendered = String::new();
+        for part in &self.parts {
+            match part {
+                Part::Text(text) => rendered.push_str(text),
+                Part::Variable(name) => {
+                    let value = values
+                        .get(name)
+                        .ok_or_else(|| RenderError::Missing { name: name.clone() })?;
+                    rendered.push_str(value);
+                }
+            }
+        }
+        Ok(rendered)
     }
+}
+
+/// How many line breaks `text` holds: the lines a template's reading position moves down by.
+fn count_lines(text: &str) -> usize {
+    text.matches('\n').count()
 }
 
 /// Who reads a prompt.
@@ -309,8 +392,17 @@ impl PromptSpec {
     /// own version first, then English. Only a text for the human has a version per language.
     #[must_use]
     pub fn candidates(&self, language: &Language) -> Vec<PathBuf> {
-        let _ = language;
-        Vec::new()
+        let english = PathBuf::from(self.path);
+        match self.audience {
+            Audience::Human if !language.is_english() => {
+                // The language is ASCII letters, digits and '-' (checked by `Language`): a single path component.
+                let own = PathBuf::from(LANGUAGE_DIR)
+                    .join(language.as_str().to_ascii_lowercase())
+                    .join(self.path);
+                vec![own, english]
+            }
+            Audience::Human | Audience::Model => vec![english],
+        }
     }
 
     /// Renders `text`, the content of one of this prompt's files, with `values`.
@@ -320,8 +412,19 @@ impl PromptSpec {
     /// variable the catalog does not list; [`PromptError::Unused`] when it leaves one out;
     /// [`PromptError::Render`] when `values` give no value for a listed variable or one for another.
     pub fn render(&self, text: &str, values: &Variables) -> Result<String, PromptError> {
-        let _ = (text, values);
-        Ok(String::new())
+        let template = Template::parse(text)?;
+        let used = template.variables();
+        if let Some(name) = used.iter().find(|name| !self.variables.contains(&name.as_str())) {
+            return Err(PromptError::Undeclared { name: (*name).clone() });
+        }
+        if let Some(name) = self
+            .variables
+            .iter()
+            .find(|listed| !used.iter().any(|name| name.as_str() == **listed))
+        {
+            return Err(PromptError::Unused { name });
+        }
+        Ok(template.render(values)?)
     }
 }
 
@@ -622,8 +725,8 @@ mod tests {
     fn the_language_version_comes_first_and_english_is_the_fallback() {
         let english = PathBuf::from("harness/questions/header.md");
 
-        assert_eq!(HUMAN.candidates(&language("English")), [english.clone()]);
-        assert_eq!(HUMAN.candidates(&language("ENGLISH")), [english.clone()]);
+        assert_eq!(HUMAN.candidates(&language("English")), std::slice::from_ref(&english));
+        assert_eq!(HUMAN.candidates(&language("ENGLISH")), std::slice::from_ref(&english));
         assert_eq!(
             HUMAN.candidates(&language("Polish")),
             [
@@ -655,7 +758,12 @@ mod tests {
             let spec = id.spec();
             assert!(ids.insert(id), "{id:?} is listed twice");
             assert!(paths.insert(spec.path()), "{} is used by two prompts", spec.path());
-            assert!(spec.path().ends_with(".md"), "{}", spec.path());
+            assert_eq!(
+                PathBuf::from(spec.path()).extension(),
+                Some("md".as_ref()),
+                "{}",
+                spec.path()
+            );
             assert!(
                 !spec.path().starts_with('/') && !spec.path().split('/').any(|part| part.is_empty() || part == ".."),
                 "{}",
