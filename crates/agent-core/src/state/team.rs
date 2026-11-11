@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::checked::CheckedMut;
 use super::item::{Completion, ItemMut, ItemPhase, ItemProgress};
 use super::member::{Member, MemberMut, Participant};
+use super::strict::checked;
 use super::values::Timestamp;
 use crate::config::RepoName;
 use crate::ids::{ItemId, TaskId, TeamId};
@@ -290,7 +291,7 @@ impl From<Crew> for Shape {
 /// from the start; [`Team::new`] makes it so and reading a state checks it. Reviewers are investigators outside the
 /// crew.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "TeamWire")]
+#[serde(remote = "Self", deny_unknown_fields)]
 pub struct Team {
     /// The team's ID.
     id: TeamId,
@@ -307,31 +308,11 @@ pub struct Team {
     /// The people of the team.
     crew: Crew,
     /// The investigators that review the team's pull requests, with their tasks.
-    reviewers: Vec<Member>,
-}
-
-/// What a [`Team`] is written as, before its checks.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TeamWire {
-    /// See [`Team`].
-    id: TeamId,
-    /// See [`Team`].
-    repo: RepoName,
-    /// See [`Team`].
-    created_at: Timestamp,
-    /// See [`Team`].
-    merge: MergeMode,
-    /// See [`Team`].
-    task_list: TaskListText,
-    /// See [`Team`].
-    items: Vec<ItemProgress>,
-    /// See [`Team`].
-    crew: Crew,
-    /// See [`Team`].
     #[serde(default)]
     reviewers: Vec<Member>,
 }
+
+checked!(Team, check_team);
 
 /// Why a team's parts do not fit together.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -492,27 +473,7 @@ impl Team {
 
     /// Adds a reviewer.
     pub(super) fn add_reviewer(&mut self, member: Member) -> Result<(), ReviewerProblem> {
-        let name = member.agent().name();
-        if !tier_fits(Role::Reviewer, member.agent()) {
-            return Err(ReviewerProblem::NotInvestigator {
-                agent: member.agent().clone(),
-            });
-        }
-        if self.crew.roster().iter().any(|(_, crew)| crew.agent().name() == name) {
-            return Err(ReviewerProblem::InCrew {
-                agent: member.agent().clone(),
-            });
-        }
-        if self.reviewers.iter().any(|reviewer| reviewer.agent().name() == name) {
-            return Err(ReviewerProblem::DuplicateName {
-                agent: member.agent().clone(),
-            });
-        }
-        if self.find(member.task()).is_some() {
-            return Err(ReviewerProblem::DuplicateTask {
-                task: member.task().clone(),
-            });
-        }
+        check_reviewer(&self.crew, &self.reviewers, &member)?;
         self.reviewers.push(member);
         Ok(())
     }
@@ -615,29 +576,43 @@ fn check_items(team: &TeamId, task_list: &TaskListText, items: &[ItemProgress]) 
     Ok(())
 }
 
-impl TryFrom<TeamWire> for Team {
-    type Error = TeamError;
-
-    fn try_from(wire: TeamWire) -> Result<Self, Self::Error> {
-        check_items(&wire.id, &wire.task_list, &wire.items)?;
-        let mut team = Self {
-            id: wire.id,
-            repo: wire.repo,
-            created_at: wire.created_at,
-            merge: wire.merge,
-            task_list: wire.task_list,
-            items: wire.items,
-            crew: wire.crew,
-            reviewers: Vec::new(),
-        };
-        for reviewer in wire.reviewers {
-            team.add_reviewer(reviewer).map_err(|reason| TeamError::Reviewer {
-                team: team.id.clone(),
-                reason,
-            })?;
-        }
-        Ok(team)
+/// Checks a proposed reviewer against a crew and the reviewers already before it.
+fn check_reviewer(crew: &Crew, reviewers: &[Member], member: &Member) -> Result<(), ReviewerProblem> {
+    let name = member.agent().name();
+    if !tier_fits(Role::Reviewer, member.agent()) {
+        return Err(ReviewerProblem::NotInvestigator {
+            agent: member.agent().clone(),
+        });
     }
+    if crew.roster().iter().any(|(_, crew)| crew.agent().name() == name) {
+        return Err(ReviewerProblem::InCrew {
+            agent: member.agent().clone(),
+        });
+    }
+    if reviewers.iter().any(|reviewer| reviewer.agent().name() == name) {
+        return Err(ReviewerProblem::DuplicateName {
+            agent: member.agent().clone(),
+        });
+    }
+    if crew.find(member.task()).is_some() || reviewers.iter().any(|reviewer| reviewer.task() == member.task()) {
+        return Err(ReviewerProblem::DuplicateTask {
+            task: member.task().clone(),
+        });
+    }
+    Ok(())
+}
+
+/// Checks that a team's items and reviewers fit its task list, crew and one another.
+fn check_team(team: &Team) -> Result<(), TeamError> {
+    check_items(&team.id, &team.task_list, &team.items)?;
+    for (index, reviewer) in team.reviewers.iter().enumerate() {
+        let previous = team.reviewers.get(..index).unwrap_or_default();
+        check_reviewer(&team.crew, previous, reviewer).map_err(|reason| TeamError::Reviewer {
+            team: team.id.clone(),
+            reason,
+        })?;
+    }
+    Ok(())
 }
 
 /// Whether a participant has the tier a role needs.
@@ -665,6 +640,48 @@ mod tests {
     };
     use crate::status::{ItemStatus, TaskStatus};
     use crate::task_list::ItemMark;
+
+    /// A team's serialized shape, used to construct teams that the public constructors refuse.
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct TeamWire {
+        /// See [`Team`].
+        id: TeamId,
+        /// See [`Team`].
+        repo: RepoName,
+        /// See [`Team`].
+        created_at: Timestamp,
+        /// See [`Team`].
+        merge: MergeMode,
+        /// See [`Team`].
+        task_list: TaskListText,
+        /// See [`Team`].
+        items: Vec<ItemProgress>,
+        /// See [`Team`].
+        crew: Crew,
+        /// See [`Team`].
+        #[serde(default)]
+        reviewers: Vec<Member>,
+    }
+
+    impl TryFrom<TeamWire> for Team {
+        type Error = TeamError;
+
+        fn try_from(wire: TeamWire) -> Result<Self, Self::Error> {
+            let team = Self {
+                id: wire.id,
+                repo: wire.repo,
+                created_at: wire.created_at,
+                merge: wire.merge,
+                task_list: wire.task_list,
+                items: wire.items,
+                crew: wire.crew,
+                reviewers: wire.reviewers,
+            };
+            check_team(&team)?;
+            Ok(team)
+        }
+    }
 
     /// The task list item `id`, as a number.
     fn item(id: &str) -> ItemId {

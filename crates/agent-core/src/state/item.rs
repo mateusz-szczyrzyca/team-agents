@@ -3,11 +3,11 @@
 
 use std::collections::HashSet;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use super::checked::CheckedMut;
 use super::gate::GateResult;
-use super::strict::strict_enum;
+use super::strict::{checked, strict_enum};
 use super::values::{PrNumber, Timestamp};
 use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, TaskId};
 use crate::kinds::keyword_enum;
@@ -291,7 +291,8 @@ fn check_fix_pass(round: &[Review]) -> Result<(), InvalidReviews> {
 ///
 /// Reading checks what the item's own constructors check: a phase with its data ([`ItemPhase`]), a fixing item with
 /// a fix pass, and that every fix pass was asked for by reviews that fit it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
 pub struct ItemProgress {
     /// The item's number in the task list.
     id: ItemId,
@@ -305,21 +306,7 @@ pub struct ItemProgress {
     pub gate: Option<GateResult>,
 }
 
-/// What an [`ItemProgress`] is written as, before its check.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ItemProgressWire {
-    /// See [`ItemProgress`].
-    id: ItemId,
-    /// See [`ItemProgress`].
-    phase: ItemPhase,
-    /// See [`ItemProgress`].
-    #[serde(default)]
-    fix_passes: Vec<FixPass>,
-    /// See [`ItemProgress`].
-    #[serde(default)]
-    gate: Option<GateResult>,
-}
+checked!(ItemProgress, check_item_progress);
 
 /// An item's progress inside a team, to change through its operations only.
 ///
@@ -362,6 +349,17 @@ struct InvalidFixPass {
     /// What is wrong with it.
     #[source]
     source: InvalidReviews,
+}
+
+/// Either independently typed invariant violation found while reading an item's progress.
+#[derive(Debug, thiserror::Error)]
+enum InvalidItemProgress {
+    /// A fixing item has no pass.
+    #[error(transparent)]
+    Fixing(#[from] FixingWithoutFixPass),
+    /// A pass has invalid reviews.
+    #[error(transparent)]
+    Reviews(#[from] InvalidFixPass),
 }
 
 /// An item that is fixing but has no fix pass behind it.
@@ -453,40 +451,25 @@ pub struct NotWorkedOn {
     pub phase: PhaseKind,
 }
 
-impl TryFrom<ItemProgressWire> for ItemProgress {
-    type Error = FixingWithoutFixPass;
-
-    fn try_from(wire: ItemProgressWire) -> Result<Self, Self::Error> {
-        if wire.phase.kind() == PhaseKind::Fixing && wire.fix_passes.is_empty() {
-            return Err(FixingWithoutFixPass { item: wire.id });
-        }
-        Ok(Self {
-            id: wire.id,
-            phase: wire.phase,
-            fix_passes: wire.fix_passes,
-            gate: wire.gate,
-        })
+/// Checks that a fixing item has a fix pass behind it.
+fn check_has_fix_pass(progress: &ItemProgress) -> Result<(), FixingWithoutFixPass> {
+    if progress.phase.kind() == PhaseKind::Fixing && progress.fix_passes.is_empty() {
+        return Err(FixingWithoutFixPass { item: progress.id });
     }
+    Ok(())
 }
 
-/// The check of a fixing item, then that of every fix pass. Written by hand, not with `try_from`, because the first
-/// check has its own error type; the error type here is the `Deserializer`'s, which the interface requires (a
-/// `FixingWithoutFixPass` or an `InvalidFixPass` inside).
-impl<'de> Deserialize<'de> for ItemProgress {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let wire = ItemProgressWire::deserialize(deserializer)?;
-        let progress = Self::try_from(wire).map_err(serde::de::Error::custom)?;
-        for (index, pass) in progress.fix_passes.iter().enumerate() {
-            check_fix_pass(&pass.requested_by).map_err(|source| {
-                serde::de::Error::custom(InvalidFixPass {
-                    item: progress.id,
-                    pass: index.saturating_add(1),
-                    source,
-                })
-            })?;
-        }
-        Ok(progress)
+/// Checks the fixing phase and the reviews of every fix pass, with the pass's number in the latter error.
+fn check_item_progress(progress: &ItemProgress) -> Result<(), InvalidItemProgress> {
+    check_has_fix_pass(progress)?;
+    for (index, pass) in progress.fix_passes.iter().enumerate() {
+        check_fix_pass(&pass.requested_by).map_err(|source| InvalidFixPass {
+            item: progress.id,
+            pass: index.saturating_add(1),
+            source,
+        })?;
     }
+    Ok(())
 }
 
 impl ItemProgress {
@@ -606,6 +589,37 @@ mod tests {
         (PhaseKind::Approved, "approved"),
         (PhaseKind::Done, "done"),
     ];
+
+    /// An item's serialized shape, used to construct states that the public constructors refuse.
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ItemProgressWire {
+        /// See [`ItemProgress`].
+        id: ItemId,
+        /// See [`ItemProgress`].
+        phase: ItemPhase,
+        /// See [`ItemProgress`].
+        #[serde(default)]
+        fix_passes: Vec<FixPass>,
+        /// See [`ItemProgress`].
+        #[serde(default)]
+        gate: Option<GateResult>,
+    }
+
+    impl TryFrom<ItemProgressWire> for ItemProgress {
+        type Error = FixingWithoutFixPass;
+
+        fn try_from(wire: ItemProgressWire) -> Result<Self, Self::Error> {
+            let progress = Self {
+                id: wire.id,
+                phase: wire.phase,
+                fix_passes: wire.fix_passes,
+                gate: wire.gate,
+            };
+            check_has_fix_pass(&progress)?;
+            Ok(progress)
+        }
+    }
 
     /// The id of the item of these tests.
     fn id() -> ItemId {

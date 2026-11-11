@@ -11,7 +11,7 @@ use time::UtcDateTime;
 use time::error::Parse;
 use time::format_description::well_known::Rfc3339;
 
-use crate::config::{InvalidValue, check_text};
+use crate::config::{InvalidValue, check_text, text_value};
 use crate::ids::Clock;
 
 /// Latest year a [`Timestamp`] can have: RFC 3339 writes the year with four digits.
@@ -152,41 +152,11 @@ impl<'de> Deserialize<'de> for Timestamp {
 /// ```compile_fail,E0603
 /// let id = agent_core::state::SessionId(String::from("x"));
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(try_from = "String")]
 pub struct SessionId(String);
 
-impl SessionId {
-    /// The ID's text.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for SessionId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl FromStr for SessionId {
-    type Err = InvalidValue;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        check_session_id(text)?;
-        Ok(Self(text.to_owned()))
-    }
-}
-
-impl TryFrom<String> for SessionId {
-    type Error = InvalidValue;
-
-    fn try_from(text: String) -> Result<Self, Self::Error> {
-        check_session_id(&text)?;
-        Ok(Self(text))
-    }
-}
+text_value!(SessionId, check_session_id, std::convert::identity);
 
 /// Checks the rules of a [`SessionId`].
 fn check_session_id(text: &str) -> Result<(), InvalidValue> {
@@ -206,8 +176,8 @@ impl From<SessionId> for String {
 /// ```compile_fail,E0603
 /// let id = agent_core::state::CommitId(String::from("x"));
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(try_from = "String")]
 pub struct CommitId(String);
 
 /// A text that is not a [`CommitId`].
@@ -218,37 +188,7 @@ pub struct InvalidCommitId {
     pub value: String,
 }
 
-impl CommitId {
-    /// The ID's text.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for CommitId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl FromStr for CommitId {
-    type Err = InvalidCommitId;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        check_commit_id(text)?;
-        Ok(Self(text.to_owned()))
-    }
-}
-
-impl TryFrom<String> for CommitId {
-    type Error = InvalidCommitId;
-
-    fn try_from(text: String) -> Result<Self, Self::Error> {
-        check_commit_id(&text)?;
-        Ok(Self(text))
-    }
-}
+text_value!(CommitId, check_commit_id, std::convert::identity, InvalidCommitId);
 
 /// Checks the rules of a [`CommitId`].
 fn check_commit_id(text: &str) -> Result<(), InvalidCommitId> {

@@ -176,6 +176,49 @@ pub struct SubscribeRequest {
     pub team: Option<TeamId>,
 }
 
+/// Implements borrowing and checked `Vec` conversion for a nonempty, bounded list with unique keys.
+macro_rules! checked_list {
+    ($ty:ident, $entry:ty, $error:ident, $max:expr, $field:ident, $key:expr) => {
+        impl $ty {
+            /// The entries, in the order given.
+            #[must_use]
+            pub fn as_slice(&self) -> &[$entry] {
+                &self.0
+            }
+        }
+
+        impl TryFrom<Vec<$entry>> for $ty {
+            type Error = $error;
+
+            fn try_from(value: Vec<$entry>) -> Result<Self, Self::Error> {
+                if value.is_empty() {
+                    return Err($error::Empty);
+                }
+                if value.len() > $max {
+                    return Err($error::TooMany {
+                        count: value.len(),
+                        max: $max,
+                    });
+                }
+                let mut seen = HashSet::new();
+                for entry in &value {
+                    let key = $key(entry);
+                    if !seen.insert(key.clone()) {
+                        return Err($error::Duplicate { $field: key });
+                    }
+                }
+                Ok(Self(value))
+            }
+        }
+
+        impl From<$ty> for Vec<$entry> {
+            fn from(list: $ty) -> Self {
+                list.0
+            }
+        }
+    };
+}
+
 /// The agents of a `run`: at least one, at most [`MAX_RUN_AGENTS`], none twice, in the order given.
 ///
 /// Whether each is configured, and as which tier, is for the daemon to decide: the names have one form.
@@ -205,40 +248,14 @@ pub enum AgentListError {
     },
 }
 
-impl AgentList {
-    /// The agents, in the order given.
-    #[must_use]
-    pub fn as_slice(&self) -> &[AgentName] {
-        &self.0
-    }
-}
-
-impl TryFrom<Vec<AgentName>> for AgentList {
-    type Error = AgentListError;
-
-    fn try_from(names: Vec<AgentName>) -> Result<Self, Self::Error> {
-        if names.is_empty() {
-            return Err(AgentListError::Empty);
-        }
-        if names.len() > MAX_RUN_AGENTS {
-            return Err(AgentListError::TooMany {
-                count: names.len(),
-                max: MAX_RUN_AGENTS,
-            });
-        }
-        let mut seen = HashSet::new();
-        if let Some(name) = names.iter().find(|name| !seen.insert(*name)) {
-            return Err(AgentListError::Duplicate { name: name.clone() });
-        }
-        Ok(Self(names))
-    }
-}
-
-impl From<AgentList> for Vec<AgentName> {
-    fn from(list: AgentList) -> Self {
-        list.0
-    }
-}
+checked_list!(
+    AgentList,
+    AgentName,
+    AgentListError,
+    MAX_RUN_AGENTS,
+    name,
+    |name: &AgentName| (*name).clone()
+);
 
 /// The verdict the human gave one question of a round.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,42 +294,14 @@ pub enum AnswerListError {
     },
 }
 
-impl AnswerList {
-    /// The answers, in the order given.
-    #[must_use]
-    pub fn as_slice(&self) -> &[AnswerInput] {
-        &self.0
-    }
-}
-
-impl TryFrom<Vec<AnswerInput>> for AnswerList {
-    type Error = AnswerListError;
-
-    fn try_from(answers: Vec<AnswerInput>) -> Result<Self, Self::Error> {
-        if answers.is_empty() {
-            return Err(AnswerListError::Empty);
-        }
-        if answers.len() > MAX_ANSWERS {
-            return Err(AnswerListError::TooMany {
-                count: answers.len(),
-                max: MAX_ANSWERS,
-            });
-        }
-        let mut seen = HashSet::new();
-        if let Some(answer) = answers.iter().find(|answer| !seen.insert(answer.question)) {
-            return Err(AnswerListError::Duplicate {
-                question: answer.question,
-            });
-        }
-        Ok(Self(answers))
-    }
-}
-
-impl From<AnswerList> for Vec<AnswerInput> {
-    fn from(list: AnswerList) -> Self {
-        list.0
-    }
-}
+checked_list!(
+    AnswerList,
+    AnswerInput,
+    AnswerListError,
+    MAX_ANSWERS,
+    question,
+    |answer: &AnswerInput| answer.question
+);
 
 /// The text of a `say`: not blank, at most [`MAX_SAY_BYTES`], without NUL. Lines are fine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

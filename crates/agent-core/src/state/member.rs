@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::checked::CheckedMut;
 use super::question::{AnswerBeforeQuestion, AnsweredVia, Question};
 use super::run::{Run, RunEnd, RunError};
+use super::strict::checked;
 use super::values::{SessionId, Timestamp};
 use crate::ids::{AgentName, InvestigatorName, RunId, TaskId};
 use crate::kinds::Tier;
@@ -59,7 +60,7 @@ impl Participant {
 /// methods below, which keep them in order: at most the last run is going, at most the last question is open, and
 /// question rounds count 1, 2, 3, … Reading a state checks the same.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "MemberWire")]
+#[serde(remote = "Self", deny_unknown_fields)]
 pub struct Member {
     /// The task's ID.
     task: TaskId,
@@ -68,28 +69,14 @@ pub struct Member {
     /// Where the task is in its life.
     status: TaskStatus,
     /// Its runs, oldest first.
+    #[serde(default)]
     runs: Vec<Run>,
     /// Its rounds of questions, oldest first.
+    #[serde(default)]
     questions: Vec<Question>,
 }
 
-/// What a [`Member`] is written as, before its checks.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MemberWire {
-    /// See [`Member`].
-    task: TaskId,
-    /// See [`Member`].
-    agent: Participant,
-    /// See [`Member`].
-    status: TaskStatus,
-    /// See [`Member`].
-    #[serde(default)]
-    runs: Vec<Run>,
-    /// See [`Member`].
-    #[serde(default)]
-    questions: Vec<Question>,
-}
+checked!(Member, check_member);
 
 /// A member inside a state or a team, to change through its operations only.
 ///
@@ -415,20 +402,10 @@ fn check_questions(task: &TaskId, questions: &[Question]) -> Result<(), MemberEr
     Ok(())
 }
 
-impl TryFrom<MemberWire> for Member {
-    type Error = MemberError;
-
-    fn try_from(wire: MemberWire) -> Result<Self, Self::Error> {
-        check_runs(&wire.task, &wire.runs)?;
-        check_questions(&wire.task, &wire.questions)?;
-        Ok(Self {
-            task: wire.task,
-            agent: wire.agent,
-            status: wire.status,
-            runs: wire.runs,
-            questions: wire.questions,
-        })
-    }
+/// Checks the run and question invariants of a complete member.
+fn check_member(member: &Member) -> Result<(), MemberError> {
+    check_runs(&member.task, &member.runs)?;
+    check_questions(&member.task, &member.questions)
 }
 
 #[cfg(test)]
@@ -440,6 +417,40 @@ mod tests {
     use crate::state::QuestionState;
     use crate::state::fixtures::{assert_refused, at, inv, member, normal, nz, path, run, task, worker};
     use crate::status::RunOutcome;
+
+    /// A member's serialized shape, used to construct states that the public constructors refuse.
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct MemberWire {
+        /// See [`Member`].
+        task: TaskId,
+        /// See [`Member`].
+        agent: Participant,
+        /// See [`Member`].
+        status: TaskStatus,
+        /// See [`Member`].
+        #[serde(default)]
+        runs: Vec<Run>,
+        /// See [`Member`].
+        #[serde(default)]
+        questions: Vec<Question>,
+    }
+
+    impl TryFrom<MemberWire> for Member {
+        type Error = MemberError;
+
+        fn try_from(wire: MemberWire) -> Result<Self, Self::Error> {
+            let member = Self {
+                task: wire.task,
+                agent: wire.agent,
+                status: wire.status,
+                runs: wire.runs,
+                questions: wire.questions,
+            };
+            check_member(&member)?;
+            Ok(member)
+        }
+    }
 
     /// A queued member of task 1: `codex-1`.
     fn codex() -> Member {

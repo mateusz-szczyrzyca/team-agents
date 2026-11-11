@@ -155,6 +155,9 @@ pub(crate) fn check_text(
 /// `$check`, then `$normalize` makes the stored text.
 macro_rules! text_value {
     ($ty:ident, $check:path, $normalize:path) => {
+        text_value!($ty, $check, $normalize, InvalidValue);
+    };
+    ($ty:ident, $check:path, $normalize:path, $error:ty) => {
         impl $ty {
             /// The value's text, as it is stored.
             #[must_use]
@@ -176,7 +179,7 @@ macro_rules! text_value {
         }
 
         impl FromStr for $ty {
-            type Err = InvalidValue;
+            type Err = $error;
 
             fn from_str(text: &str) -> Result<Self, Self::Err> {
                 $check(text)?;
@@ -185,7 +188,7 @@ macro_rules! text_value {
         }
 
         impl TryFrom<String> for $ty {
-            type Error = InvalidValue;
+            type Error = $error;
 
             fn try_from(text: String) -> Result<Self, Self::Error> {
                 $check(&text)?;
@@ -194,6 +197,8 @@ macro_rules! text_value {
         }
     };
 }
+
+pub(crate) use text_value;
 
 /// Keeps a text as it is.
 fn keep(text: String) -> String {
