@@ -9,5 +9,6 @@
 pub mod config;
 pub mod ids;
 pub mod kinds;
+pub mod questions;
 pub mod status;
 pub mod task_list;
