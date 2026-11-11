@@ -1,0 +1,11 @@
+{"protocol":1,"id":1,"client":{"kind":"cli"},"request":{"command":"run","repo":"team-agents","checkout":"/home/dev/projects/team-agents","agents":["codex-1","inv-opus"],"task_list":"Brief.\n\n1. Typo\n[ ] 1.1 Fix it\n    Change \"teh\" to \"the\".\n","coordinator":"inv-opus","merge":"no_merge"}}
+{"protocol":1,"id":2,"client":{"kind":"cli"},"request":{"command":"status"}}
+{"protocol":1,"id":3,"client":{"kind":"cli"},"request":{"command":"show","target":{"team":"team-20261111-193000-a1b2"}}}
+{"protocol":1,"id":4,"client":{"kind":"dashboard","login":"you@example.com"},"request":{"command":"answer","task":"task-20261111-193002-k3x9","round":1,"answers":[{"question":1,"verdict":"ok"},{"question":2,"verdict":"Bile, please.\nIt is clearer."}]}}
+{"protocol":1,"id":5,"client":{"kind":"cli"},"request":{"command":"stop","target":{"task":"task-20261111-193002-k3x9"}}}
+{"protocol":1,"id":6,"client":{"kind":"cli"},"request":{"command":"pause","target":{"team":"team-20261111-193000-a1b2"}}}
+{"protocol":1,"id":7,"client":{"kind":"cli"},"request":{"command":"unpause","target":{"team":"team-20261111-193000-a1b2"}}}
+{"protocol":1,"id":8,"client":{"kind":"cli"},"request":{"command":"resume","target":{"task":"task-20261111-193002-k3x9"}}}
+{"protocol":1,"id":9,"client":{"kind":"cli"},"request":{"command":"say","target":{"team":"team-20261111-193000-a1b2"},"text":"Please run the gate again."}}
+{"protocol":1,"id":10,"client":{"kind":"cli"},"request":{"command":"gate","task":"task-20261111-193002-k3x9"}}
+{"protocol":1,"id":11,"client":{"kind":"dashboard","login":"you@example.com"},"request":{"command":"subscribe"}}

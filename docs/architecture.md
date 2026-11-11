@@ -29,7 +29,8 @@ config/agents.example.toml, config/systemd/
 docs/architecture.md, docs/configuration.md, docs/state.md, docs/task-list.md
 ```
 
-The workspace exists with its four crates; the other files of this list arrive with the items that need them.
+The workspace exists with its four crates; the other files of this list arrive with the items that need them
+(`docs/state.md` came with the state, the protocol and the questions files).
 
 - **`agent-core`** decides and does no I/O: no `std::fs`, `std::process`, `std::net`, no `tokio`. What it needs from
   the world comes in as arguments — the clock ([`Clock`](../crates/agent-core/src/ids.rs)) and the random source
@@ -73,6 +74,17 @@ item:  pending -> in_progress -> in_review -> approved -> done (final)
 
 Both take text, not paths: reading `agents.toml`, `secrets.toml` (and the file mode `Secrets::parse` needs) and a
 `-f` task list is the runtime's job, so the core stays free of I/O.
+
+### State, protocol and questions files (`agent-core`)
+
+| Module | Types |
+|---|---|
+| `state` | `State` (with its schema version), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
+| `protocol` | `Request`, `Command`, `Response`, `Reply`, `Failure`, `Event`, `EventKind`, `Frame`, with the protocol version and `ProtocolError`. JSON lines over the daemon's socket. See [`state.md`](state.md) |
+| `questions` | `QuestionsFile`, `Entry`, `Verdict`: parsing and rendering of the questions file, the `ok` verdict, the `**ANSWERED**` marker. See [`state.md`](state.md) |
+
+They take and give text too (`State::from_json`, `Request::from_line`, `QuestionsFile::parse`): the state store, the
+socket and the files are the runtime's. `serde_json` is a dependency of `agent-core` for that; it does no I/O.
 
 ## Process model
 
