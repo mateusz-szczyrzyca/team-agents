@@ -332,6 +332,22 @@ pub struct AnswersError {
     pub problems: Vec<(NonZeroU32, AnswerProblem)>,
 }
 
+/// Why [`QuestionsFile::expand`] gave no text.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ExpandError {
+    /// The file is not answered properly.
+    #[error(transparent)]
+    Answers(#[from] AnswersError),
+    /// The words for accepting the recommendation of this question cannot be a verdict.
+    #[error("the words that accept the recommendation of question {question} cannot be a verdict")]
+    AcceptedText {
+        /// The question.
+        question: NonZeroU32,
+        /// Why the words are no verdict.
+        source: OwnAnswerError,
+    },
+}
+
 /// What the human answered to one question.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Answer {
@@ -704,8 +720,10 @@ impl QuestionsFile {
     /// replaced by `accepted(recommendation)` — the words that tell the agent the human accepted it.
     ///
     /// # Errors
-    /// [`AnswersError`] as for [`QuestionsFile::answers`]: an unanswered file is not handed to the agent.
-    pub fn expand(&self, accepted: impl Fn(&str) -> String) -> Result<String, AnswersError> {
+    /// [`ExpandError::Answers`] as for [`QuestionsFile::answers`]: an unanswered file is not handed to the agent;
+    /// [`ExpandError::AcceptedText`] when the words for an accepted recommendation are not a possible verdict (blank,
+    /// `ok`, or a line that would read as the file's structure).
+    pub fn expand(&self, accepted: impl Fn(&str) -> String) -> Result<String, ExpandError> {
         self.answers()?;
         Ok(self.render_as(&Rendering::Agent { accepted: &accepted }))
     }
@@ -1667,10 +1685,63 @@ taken
     }
 
     #[test]
+    fn words_for_accepting_that_are_no_verdict_are_refused_with_the_question_and_why() {
+        let mut file = QuestionsFile::parse(AGENT_FILE).unwrap();
+        file.set_verdict(n(1), Some(own("mine"))).unwrap();
+        file.set_verdict(n(2), Some(Verdict::Accept)).unwrap();
+        let before = file.clone();
+
+        let blank = file.expand(|_| String::from("  ")).unwrap_err();
+        let ok = file.expand(|_| String::from("OK")).unwrap_err();
+        let structural = file.expand(|rec| format!("accepted\n**Verdict:** {rec}")).unwrap_err();
+
+        assert_eq!(
+            blank,
+            ExpandError::AcceptedText {
+                question: n(2),
+                source: OwnAnswerError::Blank
+            }
+        );
+        assert_eq!(
+            ok,
+            ExpandError::AcceptedText {
+                question: n(2),
+                source: OwnAnswerError::IsOk
+            }
+        );
+        assert_eq!(
+            structural,
+            ExpandError::AcceptedText {
+                question: n(2),
+                source: OwnAnswerError::Structural { line: line(2) }
+            }
+        );
+        assert_eq!(file, before);
+    }
+
+    #[test]
+    fn the_words_for_accepting_are_asked_only_for_the_questions_that_accepted() {
+        let mut file = QuestionsFile::parse(AGENT_FILE).unwrap();
+        file.set_verdict(n(1), Some(own("mine"))).unwrap();
+        file.set_verdict(n(2), Some(Verdict::Accept)).unwrap();
+        let asked = std::cell::RefCell::new(Vec::new());
+
+        file.expand(|recommendation| {
+            asked.borrow_mut().push(recommendation.to_owned());
+            String::from("accepted")
+        })
+        .unwrap();
+
+        assert_eq!(asked.into_inner(), ["bile — the \"żółć\" key is\ntaken"]);
+    }
+
+    #[test]
     fn an_unanswered_file_cannot_be_expanded() {
         let file = QuestionsFile::parse(AGENT_FILE).unwrap();
 
-        let err = file.expand(str::to_owned).unwrap_err();
+        let ExpandError::Answers(err) = file.expand(str::to_owned).unwrap_err() else {
+            panic!("not an answers error");
+        };
 
         assert_eq!(
             err.problems,

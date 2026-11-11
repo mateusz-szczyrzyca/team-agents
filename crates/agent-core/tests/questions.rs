@@ -6,7 +6,7 @@
 mod questions_file {
     use std::num::NonZeroU32;
 
-    use agent_core::questions::{Answer, Choice, Entry, QuestionsFile, Verdict};
+    use agent_core::questions::{Answer, Choice, Entry, ExpandError, QuestionsFile, Verdict};
 
     /// The instructions template, as shipped.
     const INSTRUCTIONS: &str = include_str!("../../../prompts/harness/questions/instructions.md");
@@ -92,7 +92,10 @@ mod questions_file {
 
         assert!(!saved.is_answered());
         assert_eq!(saved.answers().unwrap_err().problems.len(), 2);
-        assert_eq!(saved.expand(str::to_owned).unwrap_err().problems.len(), 2);
+        let ExpandError::Answers(err) = saved.expand(str::to_owned).unwrap_err() else {
+            panic!("not an answers error");
+        };
+        assert_eq!(err.problems.len(), 2);
     }
 
     #[test]
