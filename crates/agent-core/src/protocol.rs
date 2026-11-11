@@ -352,7 +352,7 @@ mod tests {
     fn a_line_of_exactly_the_limit_is_read() {
         let request = request_line("{\"command\":\"status\"}");
         let padded = format!("{request}{}", " ".repeat(MAX_REQUEST_BYTES - request.len()));
-        let frame = Frame::Response(Response::ok(RequestId(3), Reply::Subscribed))
+        let frame = Frame::Response(Response::ok(RequestId(3), Reply::Subscribed { teams: vec![] }))
             .to_line()
             .unwrap();
         let padded_frame = format!("{frame}{}", " ".repeat(MAX_FRAME_BYTES - frame.len()));
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn a_response_and_an_event_are_told_apart_by_their_type() {
-        let response = Frame::Response(Response::ok(RequestId(3), Reply::Subscribed));
+        let response = Frame::Response(Response::ok(RequestId(3), Reply::Subscribed { teams: vec![] }));
         let event = Frame::Event(Event::new(at(0), EventKind::TeamStarted { team: team_id(1) }));
 
         let response_line = response.to_line().unwrap();
@@ -398,7 +398,7 @@ mod tests {
 
         assert_eq!(
             response_line,
-            "{\"type\":\"response\",\"protocol\":1,\"id\":3,\"result\":{\"status\":\"ok\",\"reply\":{\"kind\":\"subscribed\"}}}\n"
+            "{\"type\":\"response\",\"protocol\":1,\"id\":3,\"result\":{\"status\":\"ok\",\"reply\":{\"kind\":\"subscribed\",\"teams\":[]}}}\n"
         );
         assert_eq!(
             event_line,

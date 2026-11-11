@@ -80,8 +80,13 @@ pub enum Reply {
         /// The result.
         result: GateResult,
     },
-    /// `subscribe`: events follow on this connection.
-    Subscribed,
+    /// `subscribe`: the teams subscribed to as they are now, in short; the events follow on this connection and
+    /// change them from this state on, so a dashboard starts without a gap or a race.
+    Subscribed {
+        /// One summary for each team subscribed to.
+        #[serde(skip)]
+        teams: Vec<TeamSummary>,
+    },
 }
 
 /// Why a request was not carried out.
@@ -359,6 +364,23 @@ mod tests {
     }
 
     #[test]
+    fn a_subscription_starts_from_the_summaries_of_its_teams() {
+        let state = state();
+        let summary = TeamSummary::from(state.team(&team_id(1)).unwrap());
+        let reply = Reply::Subscribed {
+            teams: vec![summary.clone()],
+        };
+
+        let value = serde_json::to_value(&reply).unwrap();
+
+        assert_eq!(
+            value,
+            json!({"kind": "subscribed", "teams": [serde_json::to_value(&summary).unwrap()]})
+        );
+        assert_eq!(serde_json::from_value::<Reply>(value).unwrap(), reply);
+    }
+
+    #[test]
     fn a_team_summary_is_written_with_counts_and_members_and_reads_back() {
         let state = state();
         let summary = TeamSummary::from(state.team(&team_id(1)).unwrap());
@@ -422,7 +444,10 @@ mod tests {
                 Reply::Gate { result: gate.clone() },
                 json!({"kind": "gate", "result": serde_json::to_value(&gate).unwrap()}),
             ),
-            (Reply::Subscribed, json!({"kind": "subscribed"})),
+            (
+                Reply::Subscribed { teams: vec![] },
+                json!({"kind": "subscribed", "teams": []}),
+            ),
         ];
         for (reply, expected) in cases {
             let value = serde_json::to_value(&reply).unwrap();
@@ -438,6 +463,7 @@ mod tests {
             json!({"kind": "started", "team": TASK, "tasks": []}),
             json!({"kind": "started", "team": TEAM}),
             json!({"kind": "teams"}),
+            json!({"kind": "subscribed"}),
             json!({"kind": "team", "team": {}}),
             json!({"kind": "applied", "tasks": [TEAM]}),
             json!({"kind": "rebooted"}),
@@ -448,7 +474,7 @@ mod tests {
 
     #[test]
     fn a_response_is_ok_with_a_reply_or_an_error_with_a_failure() {
-        let ok = Response::ok(RequestId(3), Reply::Subscribed);
+        let ok = Response::ok(RequestId(3), Reply::Subscribed { teams: vec![] });
         let failed = Response::error(
             RequestId(4),
             Failure {
@@ -461,12 +487,12 @@ mod tests {
         assert_eq!(
             ok.result,
             Outcome::Ok {
-                reply: Reply::Subscribed
+                reply: Reply::Subscribed { teams: vec![] }
             }
         );
         assert_eq!(
             serde_json::to_value(&ok).unwrap(),
-            json!({"protocol": 1, "id": 3, "result": {"status": "ok", "reply": {"kind": "subscribed"}}})
+            json!({"protocol": 1, "id": 3, "result": {"status": "ok", "reply": {"kind": "subscribed", "teams": []}}})
         );
         assert_eq!(
             serde_json::to_value(&failed).unwrap(),
@@ -493,7 +519,7 @@ mod tests {
         assert_refused::<FailureKind>(&json!("oops"));
         assert_refused::<Response>(&json!({"protocol": 1, "id": 1, "result": {"status": "maybe"}}));
         assert_refused::<Response>(
-            &json!({"protocol": 2, "id": 1, "result": {"status": "ok", "reply": {"kind": "subscribed"}}}),
+            &json!({"protocol": 2, "id": 1, "result": {"status": "ok", "reply": {"kind": "subscribed", "teams": []}}}),
         );
         assert_refused::<Failure>(&json!({"kind": "invalid"}));
     }

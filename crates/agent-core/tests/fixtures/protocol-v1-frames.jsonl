@@ -1,7 +1,7 @@
 {"type":"response","protocol":1,"id":1,"result":{"status":"ok","reply":{"kind":"started","team":"team-20261111-193000-a1b2","tasks":["task-20261111-193001-k3x9","task-20261111-193002-k3x9"]}}}
 {"type":"response","protocol":1,"id":5,"result":{"status":"ok","reply":{"kind":"applied","tasks":["task-20261111-193002-k3x9"]}}}
 {"type":"response","protocol":1,"id":10,"result":{"status":"error","error":{"kind":"conflict","message":"the task is running: stop it or wait before running the gate"}}}
-{"type":"response","protocol":1,"id":11,"result":{"status":"ok","reply":{"kind":"subscribed"}}}
+{"type":"response","protocol":1,"id":11,"result":{"status":"ok","reply":{"kind":"subscribed","teams":[]}}}
 {"type":"event","protocol":1,"at":"2026-11-11T19:48:00Z","event":{"kind":"question_asked","team":"team-20261111-193000-a1b2","task":"task-20261111-193002-k3x9","round":1}}
 {"type":"event","protocol":1,"at":"2026-11-11T19:49:10Z","event":{"kind":"controlled","team":"team-20261111-193000-a1b2","action":"pause","by":{"kind":"dashboard","login":"you@example.com"}}}
 {"type":"event","protocol":1,"at":"2026-11-11T19:50:00Z","event":{"kind":"run_ended","team":"team-20261111-193000-a1b2","task":"task-20261111-193002-k3x9","run":"run-20261111-193011-r7q2","end":{"kind":"quota_exhausted","resets_at":"2026-11-11T21:00:00Z"}}}
