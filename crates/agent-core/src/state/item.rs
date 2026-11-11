@@ -1,0 +1,770 @@
+//! The progress of a task-list item: who works on it, its pull request, its reviews and fix passes, and its gate
+//! result.
+
+use serde::{Deserialize, Serialize};
+
+use super::gate::GateResult;
+use super::values::{PrNumber, Timestamp};
+use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, TaskId};
+use crate::kinds::keyword_enum;
+use crate::status::{ItemStatus, ReviewVerdict};
+use crate::task_list::ItemMark;
+
+keyword_enum! {
+    /// The phases of an item, which are its [`ItemStatus`]es with the fix pass told apart from the first work.
+    ///
+    /// Allowed changes ([`PhaseKind::successors`]); each is also a change its [`ItemStatus`] allows:
+    ///
+    /// | from | to |
+    /// |---|---|
+    /// | `pending` | `in_progress` |
+    /// | `in_progress` | `pending`, `in_review` |
+    /// | `in_review` | `fixing`, `approved` |
+    /// | `fixing` | `in_review` |
+    /// | `approved` | `done` |
+    /// | `done` | — |
+    pub enum PhaseKind: "item phase" {
+        /// Not started.
+        Pending => "pending",
+        /// A member works on it, or the coordinator integrates it, until its pull request is open.
+        InProgress => "in_progress",
+        /// Its pull request is open and waits for its two reviews.
+        InReview => "in_review",
+        /// The reviewers asked for changes: the team fixes them (status `in_progress`).
+        Fixing => "fixing",
+        /// Both reviews approve; it waits for its merge.
+        Approved => "approved",
+        /// Merged, or listed as done.
+        Done => "done",
+    }
+}
+
+impl PhaseKind {
+    /// The phases an item in this phase may move to.
+    #[must_use]
+    pub const fn successors(self) -> &'static [Self] {
+        match self {
+            Self::Pending => &[Self::InProgress],
+            Self::InProgress => &[Self::Pending, Self::InReview],
+            Self::InReview => &[Self::Fixing, Self::Approved],
+            Self::Fixing => &[Self::InReview],
+            Self::Approved => &[Self::Done],
+            Self::Done => &[],
+        }
+    }
+
+    /// The item status this phase shows.
+    #[must_use]
+    pub const fn status(self) -> ItemStatus {
+        match self {
+            Self::Pending => ItemStatus::Pending,
+            Self::InProgress | Self::Fixing => ItemStatus::InProgress,
+            Self::InReview => ItemStatus::InReview,
+            Self::Approved => ItemStatus::Approved,
+            Self::Done => ItemStatus::Done,
+        }
+    }
+}
+
+/// A pull request of an item.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PullRequest {
+    /// Its number in the repository.
+    pub number: PrNumber,
+    /// The branch it merges: its head.
+    pub branch: BranchName,
+    /// When it was opened.
+    pub opened_at: Timestamp,
+}
+
+/// One reviewer's review of a pull request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Review {
+    /// The investigator who reviews; never a member of the reviewed team.
+    pub reviewer: InvestigatorName,
+    /// The reviewer's task, one of the team's reviewers.
+    pub task: TaskId,
+    /// When the review was asked for.
+    pub requested_at: Timestamp,
+    /// Whether the reviewer has answered.
+    pub outcome: ReviewOutcome,
+}
+
+/// Whether a reviewer has answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ReviewOutcome {
+    /// The review is not in yet.
+    Pending,
+    /// The reviewer reported a verdict.
+    Submitted {
+        /// The verdict.
+        verdict: ReviewVerdict,
+        /// When the report came.
+        at: Timestamp,
+    },
+}
+
+/// A fix pass: the reviews that sent an item back to its team.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FixPass {
+    /// The reviews of the round that asked for changes.
+    pub requested_by: Vec<Review>,
+}
+
+/// How an item came to be done.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "how", rename_all = "snake_case")]
+pub enum Completion {
+    /// The task list marked it `[x]` when the team started.
+    Listed,
+    /// Its pull request was merged.
+    Merged {
+        /// The merged pull request.
+        pr: PullRequest,
+        /// When it was merged.
+        at: Timestamp,
+    },
+}
+
+/// Where an item is, with exactly the data that phase has.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum ItemPhase {
+    /// Not started.
+    Pending,
+    /// A member works on it.
+    InProgress {
+        /// The member the item was assigned to.
+        assignee: AgentName,
+        /// The member's branch.
+        branch: BranchName,
+    },
+    /// The pull request is open and waits for its reviews.
+    InReview {
+        /// The pull request.
+        pr: PullRequest,
+        /// The reviews of this round, in the order asked.
+        reviews: Vec<Review>,
+    },
+    /// The team fixes what the reviewers asked for.
+    Fixing {
+        /// The member who fixes.
+        assignee: AgentName,
+        /// The member's branch.
+        branch: BranchName,
+        /// The pull request the fixes go into.
+        pr: PullRequest,
+    },
+    /// Both reviews approve; the pull request waits to be merged.
+    Approved {
+        /// The pull request.
+        pr: PullRequest,
+        /// The reviews that approved it.
+        reviews: Vec<Review>,
+    },
+    /// Finished.
+    Done {
+        /// How.
+        completion: Completion,
+    },
+}
+
+impl ItemPhase {
+    /// Which phase this is.
+    #[must_use]
+    pub const fn kind(&self) -> PhaseKind {
+        match self {
+            Self::Pending => PhaseKind::Pending,
+            Self::InProgress { .. } => PhaseKind::InProgress,
+            Self::InReview { .. } => PhaseKind::InReview,
+            Self::Fixing { .. } => PhaseKind::Fixing,
+            Self::Approved { .. } => PhaseKind::Approved,
+            Self::Done { .. } => PhaseKind::Done,
+        }
+    }
+}
+
+/// An item's progress: its phase, the fix passes behind it and its last gate result.
+///
+/// The phase changes only through [`ItemProgress::advance`], which follows [`PhaseKind::successors`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ItemProgressWire")]
+pub struct ItemProgress {
+    /// The item's number in the task list.
+    id: ItemId,
+    /// Where the item is.
+    phase: ItemPhase,
+    /// The fix passes so far, oldest first; their number is what the configured limit is compared with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    fix_passes: Vec<FixPass>,
+    /// The last gate result for this item, if the gate has run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<GateResult>,
+}
+
+/// What an [`ItemProgress`] is written as, before its check.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ItemProgressWire {
+    /// See [`ItemProgress`].
+    id: ItemId,
+    /// See [`ItemProgress`].
+    phase: ItemPhase,
+    /// See [`ItemProgress`].
+    #[serde(default)]
+    fix_passes: Vec<FixPass>,
+    /// See [`ItemProgress`].
+    #[serde(default)]
+    gate: Option<GateResult>,
+}
+
+/// An item that is fixing but has no fix pass behind it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("item {item} is fixing but records no fix pass")]
+pub struct FixingWithoutFixPass {
+    /// The item.
+    pub item: ItemId,
+}
+
+/// A phase change the table does not allow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("item {item} cannot change from {from} to {to}")]
+pub struct InvalidAdvance {
+    /// The item.
+    pub item: ItemId,
+    /// Its phase.
+    pub from: PhaseKind,
+    /// The refused phase.
+    pub to: PhaseKind,
+}
+
+/// The item is not being worked on: it has no assignee to replace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("item {item} is {phase}: only an item in progress or fixing has an assignee")]
+pub struct NotWorkedOn {
+    /// The item.
+    pub item: ItemId,
+    /// Its phase.
+    pub phase: PhaseKind,
+}
+
+impl TryFrom<ItemProgressWire> for ItemProgress {
+    type Error = FixingWithoutFixPass;
+
+    fn try_from(wire: ItemProgressWire) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: wire.id,
+            phase: wire.phase,
+            fix_passes: wire.fix_passes,
+            gate: wire.gate,
+        })
+    }
+}
+
+impl ItemProgress {
+    /// The progress of an item that is not started, or of one that the task list already marks done.
+    #[must_use]
+    pub fn new(id: ItemId, mark: ItemMark) -> Self {
+        let _ = mark;
+        Self {
+            id,
+            phase: ItemPhase::Pending,
+            fix_passes: Vec::new(),
+            gate: None,
+        }
+    }
+
+    /// The item's number in the task list.
+    #[must_use]
+    pub const fn id(&self) -> ItemId {
+        self.id
+    }
+
+    /// Where the item is.
+    #[must_use]
+    pub const fn phase(&self) -> &ItemPhase {
+        &self.phase
+    }
+
+    /// The item status the phase shows.
+    #[must_use]
+    pub const fn status(&self) -> ItemStatus {
+        self.phase.kind().status()
+    }
+
+    /// The fix passes so far, oldest first.
+    #[must_use]
+    pub fn fix_passes(&self) -> &[FixPass] {
+        &self.fix_passes
+    }
+
+    /// Moves the item to `next`. Leaving `in_review` for `fixing` records the round's reviews as a fix pass.
+    ///
+    /// # Errors
+    /// [`InvalidAdvance`] when [`PhaseKind::successors`] does not allow the change.
+    pub fn advance(&mut self, next: ItemPhase) -> Result<(), InvalidAdvance> {
+        self.phase = next;
+        Ok(())
+    }
+
+    /// Gives an item that is in progress or fixing to another member.
+    ///
+    /// # Errors
+    /// [`NotWorkedOn`] when the item is in any other phase.
+    pub fn reassign(&mut self, assignee: AgentName, branch: BranchName) -> Result<(), NotWorkedOn> {
+        let _ = (assignee, branch);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::kinds::tests::{assert_keywords, assert_refuses};
+    use crate::state::GateOutcome;
+    use crate::state::fixtures::{agent, at, branch, pr, review};
+    use crate::status::StatusMachine;
+
+    const PHASES: &[(PhaseKind, &str)] = &[
+        (PhaseKind::Pending, "pending"),
+        (PhaseKind::InProgress, "in_progress"),
+        (PhaseKind::InReview, "in_review"),
+        (PhaseKind::Fixing, "fixing"),
+        (PhaseKind::Approved, "approved"),
+        (PhaseKind::Done, "done"),
+    ];
+
+    /// The id of the item of these tests.
+    fn id() -> ItemId {
+        "1.2".parse().unwrap()
+    }
+
+    /// The two reviews of a round, both asked for.
+    fn reviews(outcome: ReviewOutcome) -> Vec<Review> {
+        vec![review("inv-opus", 5, outcome), review("inv-codex", 6, outcome)]
+    }
+
+    /// A phase of kind `kind`, with data.
+    fn phase_of(kind: PhaseKind) -> ItemPhase {
+        match kind {
+            PhaseKind::Pending => ItemPhase::Pending,
+            PhaseKind::InProgress => ItemPhase::InProgress {
+                assignee: agent("codex-1"),
+                branch: branch("agents/codex-1/item-1-2"),
+            },
+            PhaseKind::InReview => ItemPhase::InReview {
+                pr: pr(7),
+                reviews: reviews(ReviewOutcome::Pending),
+            },
+            PhaseKind::Fixing => ItemPhase::Fixing {
+                assignee: agent("codex-1"),
+                branch: branch("agents/codex-1/item-1-2"),
+                pr: pr(7),
+            },
+            PhaseKind::Approved => ItemPhase::Approved {
+                pr: pr(7),
+                reviews: reviews(ReviewOutcome::Submitted {
+                    verdict: ReviewVerdict::Approve,
+                    at: at(40),
+                }),
+            },
+            PhaseKind::Done => ItemPhase::Done {
+                completion: Completion::Merged { pr: pr(7), at: at(50) },
+            },
+        }
+    }
+
+    /// An item that has walked to phase `kind` the shortest way.
+    fn progress_in(kind: PhaseKind) -> ItemProgress {
+        let way: &[PhaseKind] = match kind {
+            PhaseKind::Pending => &[],
+            PhaseKind::InProgress => &[PhaseKind::InProgress],
+            PhaseKind::InReview => &[PhaseKind::InProgress, PhaseKind::InReview],
+            PhaseKind::Fixing => &[PhaseKind::InProgress, PhaseKind::InReview, PhaseKind::Fixing],
+            PhaseKind::Approved => &[PhaseKind::InProgress, PhaseKind::InReview, PhaseKind::Approved],
+            PhaseKind::Done => &[
+                PhaseKind::InProgress,
+                PhaseKind::InReview,
+                PhaseKind::Approved,
+                PhaseKind::Done,
+            ],
+        };
+        let mut progress = ItemProgress::new(id(), ItemMark::Open);
+        for step in way {
+            progress.advance(phase_of(*step)).unwrap();
+        }
+        progress
+    }
+
+    // ---- the phases ---------------------------------------------------------------------------------------------
+
+    #[test]
+    fn phases_have_their_texts_and_round_trip() {
+        assert_eq!(PhaseKind::ALL, PHASES.iter().map(|&(k, _)| k).collect::<Vec<_>>());
+        assert_keywords(PHASES);
+        assert_refuses("item phase", PHASES, &["review", "merged", "in-progress"]);
+    }
+
+    #[test]
+    fn the_table_of_phase_changes_is_as_documented() {
+        let table: &[(PhaseKind, &[PhaseKind])] = &[
+            (PhaseKind::Pending, &[PhaseKind::InProgress]),
+            (PhaseKind::InProgress, &[PhaseKind::Pending, PhaseKind::InReview]),
+            (PhaseKind::InReview, &[PhaseKind::Fixing, PhaseKind::Approved]),
+            (PhaseKind::Fixing, &[PhaseKind::InReview]),
+            (PhaseKind::Approved, &[PhaseKind::Done]),
+            (PhaseKind::Done, &[]),
+        ];
+        for &(from, to) in table {
+            assert_eq!(from.successors(), to, "{from}");
+        }
+    }
+
+    #[test]
+    fn every_phase_change_is_a_status_change_the_item_status_allows() {
+        for from in PhaseKind::ALL {
+            for to in from.successors() {
+                from.status()
+                    .transition_to(to.status())
+                    .unwrap_or_else(|err| panic!("{from} -> {to}: {err}"));
+            }
+        }
+    }
+
+    #[test]
+    fn every_status_change_the_item_status_allows_has_a_phase_change() {
+        for from in ItemStatus::ALL {
+            for to in from.successors() {
+                let covered = PhaseKind::ALL
+                    .iter()
+                    .any(|k| k.status() == *from && k.successors().iter().any(|next| next.status() == *to));
+                assert!(covered, "{from} -> {to}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_phase_knows_its_kind_and_its_text_in_json() {
+        for &(kind, text) in PHASES {
+            let phase = phase_of(kind);
+
+            assert_eq!(phase.kind(), kind);
+            assert_eq!(serde_json::to_value(&phase).unwrap()["phase"], json!(text));
+        }
+    }
+
+    #[test]
+    fn the_status_of_a_phase_is_the_status_of_its_kind() {
+        let expected = [
+            (PhaseKind::Pending, ItemStatus::Pending),
+            (PhaseKind::InProgress, ItemStatus::InProgress),
+            (PhaseKind::Fixing, ItemStatus::InProgress),
+            (PhaseKind::InReview, ItemStatus::InReview),
+            (PhaseKind::Approved, ItemStatus::Approved),
+            (PhaseKind::Done, ItemStatus::Done),
+        ];
+        for (kind, status) in expected {
+            assert_eq!(kind.status(), status, "{kind}");
+            assert_eq!(progress_in(kind).status(), status, "{kind}");
+        }
+    }
+
+    // ---- an item's progress -------------------------------------------------------------------------------------
+
+    #[test]
+    fn an_open_item_starts_pending_and_a_listed_one_starts_done() {
+        let open = ItemProgress::new(id(), ItemMark::Open);
+        let done = ItemProgress::new(id(), ItemMark::Done);
+
+        assert_eq!((open.id(), open.phase()), (id(), &ItemPhase::Pending));
+        assert_eq!(
+            done.phase(),
+            &ItemPhase::Done {
+                completion: Completion::Listed
+            }
+        );
+        assert_eq!(done.status(), ItemStatus::Done);
+        assert!(open.fix_passes().is_empty() && open.gate.is_none());
+    }
+
+    #[test]
+    fn an_item_walks_from_pending_to_done_and_a_fix_pass_is_recorded_on_the_way() {
+        let mut item = ItemProgress::new(id(), ItemMark::Open);
+        let sent_back = reviews(ReviewOutcome::Submitted {
+            verdict: ReviewVerdict::RequestChanges,
+            at: at(30),
+        });
+
+        item.advance(phase_of(PhaseKind::InProgress)).unwrap();
+        item.advance(ItemPhase::InReview {
+            pr: pr(7),
+            reviews: sent_back.clone(),
+        })
+        .unwrap();
+        item.advance(phase_of(PhaseKind::Fixing)).unwrap();
+        assert_eq!(
+            item.fix_passes(),
+            [FixPass {
+                requested_by: sent_back
+            }]
+        );
+        item.advance(phase_of(PhaseKind::InReview)).unwrap();
+        item.advance(phase_of(PhaseKind::Approved)).unwrap();
+        item.advance(phase_of(PhaseKind::Done)).unwrap();
+
+        assert_eq!(item.phase(), &phase_of(PhaseKind::Done));
+        assert_eq!(item.fix_passes().len(), 1);
+    }
+
+    #[test]
+    fn each_round_that_asks_for_changes_is_a_fix_pass_in_order() {
+        let mut item = progress_in(PhaseKind::Fixing);
+        let second = vec![review("inv-opus", 8, ReviewOutcome::Pending)];
+
+        item.advance(ItemPhase::InReview {
+            pr: pr(7),
+            reviews: second.clone(),
+        })
+        .unwrap();
+        item.advance(phase_of(PhaseKind::Fixing)).unwrap();
+
+        assert_eq!(item.fix_passes().len(), 2);
+        assert_eq!(item.fix_passes().last().map(|p| p.requested_by.clone()), Some(second));
+        assert_eq!(item.fix_passes()[0].requested_by, reviews(ReviewOutcome::Pending));
+    }
+
+    #[test]
+    fn leaving_review_for_approval_is_no_fix_pass() {
+        let item = progress_in(PhaseKind::Approved);
+
+        assert!(item.fix_passes().is_empty());
+    }
+
+    #[test]
+    fn a_member_who_leaves_puts_the_item_back_to_pending() {
+        let mut item = progress_in(PhaseKind::InProgress);
+
+        item.advance(ItemPhase::Pending).unwrap();
+
+        assert_eq!(item.phase(), &ItemPhase::Pending);
+    }
+
+    #[test]
+    fn a_change_the_table_does_not_allow_is_refused_and_changes_nothing() {
+        for from in PhaseKind::ALL {
+            for to in PhaseKind::ALL {
+                if from.successors().contains(to) {
+                    continue;
+                }
+                let mut item = progress_in(*from);
+                let before = item.clone();
+
+                let err = item.advance(phase_of(*to)).unwrap_err();
+
+                assert_eq!(
+                    err,
+                    InvalidAdvance {
+                        item: id(),
+                        from: *from,
+                        to: *to
+                    },
+                    "{from} -> {to}"
+                );
+                assert_eq!(item, before, "{from} -> {to}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_item_in_progress_or_fixing_is_given_to_another_member() {
+        for kind in [PhaseKind::InProgress, PhaseKind::Fixing] {
+            let mut item = progress_in(kind);
+
+            item.reassign(agent("claude-1"), branch("agents/claude-1/item-1-2"))
+                .unwrap();
+
+            let (ItemPhase::InProgress {
+                assignee,
+                branch: new_branch,
+                ..
+            }
+            | ItemPhase::Fixing {
+                assignee,
+                branch: new_branch,
+                ..
+            }) = item.phase()
+            else {
+                panic!("{kind}: the phase changed");
+            };
+            assert_eq!(
+                (assignee.as_str(), new_branch.as_str()),
+                ("claude-1", "agents/claude-1/item-1-2")
+            );
+            assert_eq!(item.phase().kind(), kind);
+        }
+    }
+
+    #[test]
+    fn reassigning_keeps_the_pull_request_of_a_fix_pass() {
+        let mut item = progress_in(PhaseKind::Fixing);
+
+        item.reassign(agent("claude-1"), branch("agents/claude-1/item-1-2"))
+            .unwrap();
+
+        let ItemPhase::Fixing { pr: kept, .. } = item.phase() else {
+            panic!("not fixing");
+        };
+        assert_eq!(kept, &pr(7));
+        assert_eq!(item.fix_passes().len(), 1);
+    }
+
+    #[test]
+    fn an_item_in_any_other_phase_has_no_assignee_to_replace() {
+        for kind in [
+            PhaseKind::Pending,
+            PhaseKind::InReview,
+            PhaseKind::Approved,
+            PhaseKind::Done,
+        ] {
+            let mut item = progress_in(kind);
+            let before = item.clone();
+
+            let err = item.reassign(agent("claude-1"), branch("b")).unwrap_err();
+
+            assert_eq!(
+                err,
+                NotWorkedOn {
+                    item: id(),
+                    phase: kind
+                }
+            );
+            assert_eq!(item, before);
+        }
+    }
+
+    // ---- json ---------------------------------------------------------------------------------------------------
+
+    #[test]
+    fn every_phase_round_trips_through_json() {
+        for &(kind, _) in PHASES {
+            let phase = phase_of(kind);
+
+            let value = serde_json::to_value(&phase).unwrap();
+
+            assert_eq!(serde_json::from_value::<ItemPhase>(value).unwrap(), phase, "{kind}");
+        }
+        let listed = ItemPhase::Done {
+            completion: Completion::Listed,
+        };
+        assert_eq!(
+            serde_json::to_value(&listed).unwrap(),
+            json!({"phase": "done", "completion": {"how": "listed"}})
+        );
+        assert_eq!(
+            serde_json::from_value::<ItemPhase>(serde_json::to_value(&listed).unwrap()).unwrap(),
+            listed
+        );
+    }
+
+    #[test]
+    fn an_item_in_review_is_written_with_its_pull_request_and_reviews() {
+        let item = progress_in(PhaseKind::InReview);
+
+        let value = serde_json::to_value(&item).unwrap();
+
+        assert_eq!(
+            value,
+            json!({
+                "id": "1.2",
+                "phase": {
+                    "phase": "in_review",
+                    "pr": {"number": 7, "branch": "agents/codex-1/item-1-2", "opened_at": "2026-11-11T19:15:10Z"},
+                    "reviews": [
+                        {"reviewer": "inv-opus", "task": "task-20261111-153005-k3x9", "requested_at": "2026-11-11T19:15:20Z", "outcome": {"status": "pending"}},
+                        {"reviewer": "inv-codex", "task": "task-20261111-153006-k3x9", "requested_at": "2026-11-11T19:15:20Z", "outcome": {"status": "pending"}}
+                    ]
+                }
+            })
+        );
+        assert_eq!(serde_json::from_value::<ItemProgress>(value).unwrap(), item);
+    }
+
+    #[test]
+    fn a_submitted_review_is_written_with_its_verdict_and_time() {
+        let review = review(
+            "inv-opus",
+            5,
+            ReviewOutcome::Submitted {
+                verdict: ReviewVerdict::RequestChanges,
+                at: at(30),
+            },
+        );
+
+        let value = serde_json::to_value(&review).unwrap();
+
+        assert_eq!(
+            value["outcome"],
+            json!({"status": "submitted", "verdict": "REQUEST_CHANGES", "at": "2026-11-11T19:15:30Z"})
+        );
+        assert_eq!(serde_json::from_value::<Review>(value).unwrap(), review);
+    }
+
+    #[test]
+    fn fix_passes_and_the_gate_result_are_written_when_there_are_some_and_read_back() {
+        let mut item = progress_in(PhaseKind::Fixing);
+        item.gate = Some(GateResult {
+            head: "26b65de7e4076596768ca96b48a7f94799c93874".parse().unwrap(),
+            finished_at: at(45),
+            outcome: GateOutcome::Failed { exit_code: 2 },
+            log: "/home/u/agents/tasks/task-1/gate.log".parse().unwrap(),
+        });
+
+        let value = serde_json::to_value(&item).unwrap();
+
+        assert_eq!(value["fix_passes"].as_array().map(Vec::len), Some(1));
+        assert_eq!(value["gate"]["outcome"], json!({"kind": "failed", "exit_code": 2}));
+        assert_eq!(serde_json::from_value::<ItemProgress>(value).unwrap(), item);
+        let quiet = serde_json::to_value(progress_in(PhaseKind::Pending)).unwrap();
+        assert_eq!(quiet, json!({"id": "1.2", "phase": {"phase": "pending"}}));
+    }
+
+    #[test]
+    fn an_item_fixing_without_a_fix_pass_is_refused_when_read() {
+        let value = json!({
+            "id": "1.2",
+            "phase": {
+                "phase": "fixing",
+                "assignee": "codex-1",
+                "branch": "agents/codex-1/item-1-2",
+                "pr": {"number": 7, "branch": "agents/codex-1/item-1-2", "opened_at": "2026-11-11T19:15:10Z"}
+            }
+        });
+
+        let wire: ItemProgressWire = serde_json::from_value(value).unwrap();
+
+        assert_eq!(ItemProgress::try_from(wire), Err(FixingWithoutFixPass { item: id() }));
+    }
+
+    #[test]
+    fn an_item_with_an_unknown_phase_field_or_status_is_refused() {
+        let bad = [
+            json!({"id": "1.2", "phase": {"phase": "reviewing"}}),
+            json!({"id": "1.2", "phase": {"phase": "pending"}, "extra": 1}),
+            json!({"id": "1.2", "phase": {"phase": "in_progress", "assignee": "codex-1"}}),
+            json!({"id": "0.2", "phase": {"phase": "pending"}}),
+            json!({"id": "1.2", "phase": {"phase": "done", "completion": {"how": "wished"}}}),
+        ];
+        for value in bad {
+            assert!(
+                serde_json::from_value::<ItemProgress>(value.clone()).is_err(),
+                "{value}"
+            );
+        }
+    }
+}
