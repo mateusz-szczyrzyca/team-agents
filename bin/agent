@@ -1747,6 +1747,21 @@ gate_holder_line() {
     "$(gate_holder pid)" "$(( ($(date +%s) - s) / 60 ))"
 }
 
+# gate_busy_for task — whether a gate run of the task holds the machine's gate lock (its holder's agent gate still
+# alive: the holder's line stays in gate.lock after the run) or waits in line for it (a place names its task)
+gate_busy_for() {
+  local id=$1 f pid
+  pid=$(gate_holder pid)
+  if [[ $(gate_holder task) == "$id" && $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2> /dev/null; then return 0; fi
+  for f in "$AGENTS_HOME/gate.queue"/*; do
+    [[ -f $f ]] || continue
+    pid=${f##*-}
+    [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2> /dev/null || continue
+    [[ $(head -n 1 "$f" 2> /dev/null) == "$id" ]] && return 0
+  done
+  return 1
+}
+
 # gate_waiters — the live waiters' places in line for the gate lock (AGENTS_HOME/gate.queue: a file each, <start in
 # ns>-<pid>), oldest first; a dead waiter's place is removed
 gate_waiters() {
@@ -1792,7 +1807,7 @@ gate_lock() {
   if ((wait)); then
     mkdir -p "$AGENTS_HOME/gate.queue" || die "cannot create $AGENTS_HOME/gate.queue"
     mine="$(date +%s%N)-$$"
-    : > "$AGENTS_HOME/gate.queue/$mine" || die "cannot take a place in $AGENTS_HOME/gate.queue"
+    printf '%s\n' "$task" > "$AGENTS_HOME/gate.queue/$mine" || die "cannot take a place in $AGENTS_HOME/gate.queue"
   fi
   while :; do
     first=$(gate_waiters | head -n 1)
@@ -1901,7 +1916,9 @@ cmd_gate() {
   [[ -n $gate ]] || die "the repository has no gate (AGENT_REVIEW_GATE=$AGENT_REVIEW_GATE)"
   # an agent's gate of its own task on uncommitted work counts for nothing (board_done needs a pass of a committed
   # HEAD) and holds the machine for minutes: refused, with what to do — a human's, or another task's, runs
-  if [[ ${AGENT_RUN_TASK:-} == "$id" && -n $(git -C "$wt" status --porcelain) ]]; then
+  # a merge in progress excepted: a coordinator checks the tree it merged before it commits the merge
+  if [[ ${AGENT_RUN_TASK:-} == "$id" && -n $(git -C "$wt" status --porcelain) ]] \
+    && ! git -C "$wt" rev-parse -q --verify MERGE_HEAD > /dev/null; then
     gate_refused "$id" "$wt"
     return 2
   fi
@@ -1959,8 +1976,35 @@ cmd_gate_status() {
   gate_verdict "$id"
 }
 
-# team_allowed_paths team — the paths the human allowed a team to change against AGENTS.md's rules (agent allow)
-team_allowed_paths() { [[ -f $AGENTS_HOME/allowed/$1 ]] && cat "$AGENTS_HOME/allowed/$1"; return 0; }
+# team_lineage team — the team and the teams it was resumed from, newest first: a resume makes a new team of new
+# tasks whose RESUMED_FROM names the old team's tasks (a member the resume added names none)
+team_lineage() {
+  local team=$1 m tid prev n=0
+  local -A visited=()
+  while [[ -n $team && -z ${visited[$team]:-} ]] && ((n++ < 100)); do
+    visited[$team]=1
+    printf '%s\n' "$team"
+    prev=""
+    while IFS= read -r m; do
+      tid=${m%/meta.env}; tid=${tid##*/}
+      prev=$(task_field "$tid" RESUMED_FROM)
+      [[ -z $prev ]] || break
+    done < <(grep -lx -- "TEAM=$team" "$TASKS"/*/meta.env 2> /dev/null)
+    [[ -n $prev && -d $TASKS/$prev ]] || return 0
+    team=$(task_field "$prev" TEAM)
+  done
+}
+
+# team_allowed_paths team — the paths the human allowed a team to change against AGENTS.md's rules (agent allow):
+# allowed to the team or to a team it was resumed from — a resume keeps the human's allowances, also one given to the
+# old team after the resume (the precheck names the team of the round it checked)
+team_allowed_paths() {
+  local t
+  while IFS= read -r t; do
+    [[ -f $AGENTS_HOME/allowed/$t ]] && cat "$AGENTS_HOME/allowed/$t"
+  done < <(team_lineage "$1")
+  return 0
+}
 
 # rule_test_path / rule_judge_path / rule_production_path path — what a path is to the rule gates: a test (tests/**,
 # *_test.go, *.bats); a file that judges a round; production code (bin/, agent/, agentbus/, live/, not a test)
@@ -4403,6 +4447,9 @@ watch_run() { # pid dir n — waits for a CLI run; kills it after AGENT_HANG_MIN
     if ((hard > 0 || solo > 0)) && [[ -f $dir/activity.jsonl ]]; then   # this run's steps: the activity since it started
       steps=$(tail -n +"$((from + 1))" "$dir/activity.jsonl" \
         | jq_soft activity_parse -c 'select(.k != "info" and .k != "text" and .k != "err")' | awk 'NF {n++} END {print n + 0}')
+      # a run whose own gate runs or waits for the lock is not ended: the gate would end with it — asked at the next
+      # poll again
+      if ((solo > 0 || hard > 0)) && gate_busy_for "$RUNNER_ID"; then continue; fi
       if ((solo > 0 && !solo_checked && steps >= solo)) && kill -0 "$pid" 2>/dev/null; then
         solo_checked=1   # asked once a run
         if coordinator_alone "$RUNNER_ID"; then
@@ -6113,6 +6160,37 @@ verify_gaps() { # coordinator-id — gaps before closing a --verify team (empty 
   return 0
 }
 
+# verify_gaps_new task gaps — the gaps less the member-branch ones a coordinator this task was resumed from was sent
+# back for already, word for word: its report explains them, and the same unmerged commits need no second explanation
+# in each resumed task's report (new commits change the line, and it counts again)
+verify_gaps_new() {
+  local id=$1 gaps=$2 t known="" line n=0
+  t=$(task_field "$id" RESUMED_FROM)
+  while [[ -n $t && -d $TASKS/$t ]] && ((n++ < 100)); do
+    [[ -f $TASKS/$t/verify-gaps.md ]] && known+=$(cat "$TASKS/$t/verify-gaps.md")$'\n'
+    t=$(task_field "$t" RESUMED_FROM)
+  done
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    if [[ $line == "- member "* ]] && grep -qxF -- "$line" <<< "$known"; then
+      log_info verify_gap_settled "task=$id" "gap=$line"
+      continue
+    fi
+    printf '%s\n' "$line"
+  done <<< "$gaps"
+}
+
+# verify_bounce_gaps task — the gaps that send a closing --verify coordinator back (empty: none), recorded in its
+# verify-gaps.md for the coordinators resumed from it
+verify_bounce_gaps() {
+  local id=$1 gaps
+  gaps=$(verify_gaps_new "$id" "$(verify_gaps "$id")")
+  if [[ -n $gaps ]] && ! printf '%s\n' "$gaps" > "$TASKS/$id/verify-gaps.md"; then
+    log_warn verify_gaps_record_failed "task=$id"
+  fi
+  printf '%s' "$gaps"
+}
+
 final_status() { # last message → DONE|ROUND_DONE|FAILED|QUESTIONS|INVESTIGATING|SLEEPING|EXCLUDED or nothing
   # no STATUS line → empty output (grep exits 1, which is the expected "not found")
   sed 's/[*`]//g' <<< "$1" | { grep -oE '^[[:space:]]*STATUS:[[:space:]]*[A-Z_]+' || (($? == 1)); } | head -1 | sed -E 's/.*STATUS:[[:space:]]*//'
@@ -6705,7 +6783,7 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
   # --verify: the coordinator may not close a team with gaps — send it back once with the list of gaps
   if [[ $status == done && -n ${TEAM:-} && ${VERIFY:-} == 1 && ${VERIFY_BOUNCED:-} != 1 \
         && ${KIND:-worker} == worker && $AGENT == "$(team_lead "$TEAM")" ]]; then
-    local gaps; gaps=$(verify_gaps "$id")
+    local gaps; gaps=$(verify_bounce_gaps "$id")
     if [[ -n $gaps ]]; then
       meta_set "$id" VERIFY_BOUNCED 1
       meta_set "$id" BOUNCE_PENDING "$gaps"

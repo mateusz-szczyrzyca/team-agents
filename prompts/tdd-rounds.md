@@ -29,7 +29,7 @@ test listings:
 
 `agent gate` refuses an uncommitted tree of your own task: a gate on uncommitted work counts for nothing and holds
 the machine for minutes. While you work, run single tests and the linter of what you change; run the gate once, on
-your commit.
+your commit. A merge in progress is the exception: check the merged tree with the gate before you commit the merge.
 
 ## Rounds — every PR stays reviewable
 
