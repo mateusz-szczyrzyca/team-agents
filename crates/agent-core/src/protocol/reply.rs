@@ -274,7 +274,7 @@ mod tests {
                 branch: "agents/codex-1/item-1-2".parse().unwrap(),
             })
             .unwrap();
-        let (_, codex) = team.crew_mut().find_mut(&task(2)).unwrap();
+        let (_, mut codex) = team.crew_mut().find_mut(&task(2)).unwrap();
         codex
             .ask_question(Question::new(nz(1), path("/home/u/tasks/q-1.md"), at(30)))
             .unwrap();

@@ -364,3 +364,8 @@ These choices are in the model and are expensive to change once state files exis
     line stays small.
 14. **Strict in both files and lines**: unknown fields are errors, and the protocol version is checked first. A newer
     client against an older daemon is told so, not misread.
+15. **A state is changed through handles, never through `&mut` to a whole value**: `State::team_mut` gives a `TeamMut`,
+    which gives an `ItemMut`, a `CrewMut` and `MemberMut`s. Each reads like the value it stands for (`Deref`) and offers
+    only that value's checked operations (`advance`, `transition`, `begin_run`, ...), so no caller can overwrite a team,
+    an item, the crew or a member and bypass the checks that keep IDs unique and phases in order. The compiler refuses
+    the overwrite (compile-fail doctests on `State::team_mut` and `State::find_task_mut`).

@@ -17,13 +17,15 @@ mod values;
 
 pub use gate::{GateOutcome, GateResult};
 pub use item::{
-    AdvanceError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemPhase, ItemProgress,
-    NotWorkedOn, PhaseKind, PullRequest, Review, ReviewOutcome,
+    AdvanceError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut, ItemPhase,
+    ItemProgress, NotWorkedOn, PhaseKind, PullRequest, Review, ReviewOutcome,
 };
-pub use member::{Member, MemberError, Participant, QuestionError};
+pub use member::{Member, MemberError, MemberMut, Participant, QuestionError};
 pub use question::{AnswerBeforeQuestion, AnsweredVia, Question, QuestionState};
 pub use run::{Run, RunEnd, RunError, RunState};
-pub use team::{Crew, CrewError, MergeMode, ReviewerProblem, TaskListText, Team, TeamError, TeamMembers};
+pub use team::{
+    Crew, CrewError, CrewMut, MergeMode, ReviewerProblem, TaskListText, Team, TeamError, TeamMembers, TeamMut,
+};
 pub use values::{CommitId, InvalidCommitId, InvalidTimestamp, PrNumber, SessionId, Timestamp};
 
 use std::collections::{HashMap, HashSet};
@@ -247,11 +249,11 @@ impl State {
     /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
     /// # let team = state.teams()[0].id().clone();
     /// # let other = state.teams()[1].clone();
-    /// let reviewer = other.reviewers()[0].clone();
+    /// let reviewer = state.teams()[0].reviewers()[0].clone();
     /// state.team_mut(&team).unwrap().reviewers_mut()[0] = reviewer;
     /// ```
-    pub fn team_mut(&mut self, id: &TeamId) -> Option<&mut Team> {
-        self.teams.iter_mut().find(|team| team.id() == id)
+    pub fn team_mut(&mut self, id: &TeamId) -> Option<TeamMut<'_>> {
+        self.teams.iter_mut().find(|team| team.id() == id).map(TeamMut::new)
     }
 
     /// The task `task`, with its team and its role.
@@ -274,7 +276,7 @@ impl State {
     /// let member = other.crew().roster()[0].1.clone();
     /// *state.find_task_mut(&task).unwrap().1 = member;
     /// ```
-    pub fn find_task_mut(&mut self, task: &TaskId) -> Option<(Role, &mut Member)> {
+    pub fn find_task_mut(&mut self, task: &TaskId) -> Option<(Role, MemberMut<'_>)> {
         self.teams.iter_mut().find_map(|team| team.find_mut(task))
     }
 
@@ -316,7 +318,7 @@ impl State {
             }
             .into());
         }
-        match self.team_mut(team) {
+        match self.teams.iter_mut().find(|found| found.id() == team) {
             Some(found) => found.add_reviewer(reviewer).map_err(AddReviewerError::from),
             None => Err(AddReviewerError::UnknownTeam { team: team.clone() }),
         }
@@ -512,7 +514,7 @@ mod tests {
             Some((team_id(1), Role::Reviewer))
         );
         assert!(state.find_task(&task(40)).is_none());
-        let (role, found) = state.find_task_mut(&task(12)).unwrap();
+        let (role, mut found) = state.find_task_mut(&task(12)).unwrap();
         assert_eq!(role, Role::Member);
         found.transition(TaskStatus::Running).unwrap();
         assert_eq!(

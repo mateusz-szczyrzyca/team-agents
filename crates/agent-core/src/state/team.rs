@@ -1,11 +1,12 @@
 //! Teams: who is in them and in which role, the task list they work through and the progress of each item.
 
 use std::collections::HashSet;
+use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
 
-use super::item::{Completion, ItemPhase, ItemProgress};
-use super::member::{Member, Participant};
+use super::item::{Completion, ItemMut, ItemPhase, ItemProgress};
+use super::member::{Member, MemberMut, Participant};
 use super::values::Timestamp;
 use crate::config::RepoName;
 use crate::ids::{ItemId, TaskId, TeamId};
@@ -191,9 +192,9 @@ impl Crew {
         self.roster().into_iter().find(|(_, member)| member.task() == task)
     }
 
-    /// The member of task `task`, to change its task.
-    pub fn find_mut(&mut self, task: &TaskId) -> Option<(Role, &mut Member)> {
-        match &mut self.shape {
+    /// The member of task `task`, to change its task through the operations of [`MemberMut`].
+    pub fn find_mut(&mut self, task: &TaskId) -> Option<(Role, MemberMut<'_>)> {
+        let (role, member) = match &mut self.shape {
             Shape::Solo { member } => (member.task() == task).then_some((Role::Solo, member)),
             Shape::Team {
                 coordinator,
@@ -203,7 +204,35 @@ impl Crew {
                 .chain(members.iter_mut().map(|member| (Role::Member, member)))
                 .chain(workers.iter_mut().map(|worker| (Role::Worker, worker)))
                 .find(|(_, member)| member.task() == task),
-        }
+        }?;
+        Some((role, MemberMut::new(member)))
+    }
+}
+
+/// The people of a team inside a state, to change through their members' operations only.
+///
+/// It reads like a [`Crew`] (it dereferences to one) but is not a `&mut Crew`: the crew cannot be overwritten with
+/// another, so the roles, names and task IDs the crew checked stay as they were.
+#[derive(Debug)]
+pub struct CrewMut<'a> {
+    /// The crew; never given out as a `&mut`.
+    crew: &'a mut Crew,
+}
+
+impl<'a> CrewMut<'a> {
+    /// The member of task `task` with its role, to change its task. Takes the handle, so that the member handle
+    /// lives as long as the borrow of the team, not as long as this temporary.
+    #[must_use]
+    pub fn find_mut(self, task: &TaskId) -> Option<(Role, MemberMut<'a>)> {
+        self.crew.find_mut(task)
+    }
+}
+
+impl Deref for CrewMut<'_> {
+    type Target = Crew;
+
+    fn deref(&self) -> &Crew {
+        self.crew
     }
 }
 
@@ -445,9 +474,9 @@ impl Team {
         self.items.iter().find(|item| item.id() == id)
     }
 
-    /// The progress of item `id`, to change it.
-    pub fn item_mut(&mut self, id: ItemId) -> Option<&mut ItemProgress> {
-        self.items.iter_mut().find(|item| item.id() == id)
+    /// The progress of item `id`, to change it through the operations of [`ItemMut`].
+    pub fn item_mut(&mut self, id: ItemId) -> Option<ItemMut<'_>> {
+        self.items.iter_mut().find(|item| item.id() == id).map(ItemMut::new)
     }
 
     /// The people of the team.
@@ -456,9 +485,9 @@ impl Team {
         &self.crew
     }
 
-    /// The people of the team, to change their tasks.
-    pub const fn crew_mut(&mut self) -> &mut Crew {
-        &mut self.crew
+    /// The people of the team, to change their tasks through the operations of [`CrewMut`].
+    pub const fn crew_mut(&mut self) -> CrewMut<'_> {
+        CrewMut { crew: &mut self.crew }
     }
 
     /// The investigators that review the team's pull requests.
@@ -467,9 +496,10 @@ impl Team {
         &self.reviewers
     }
 
-    /// The reviewers, to change their tasks.
-    pub fn reviewers_mut(&mut self) -> &mut [Member] {
-        &mut self.reviewers
+    /// The reviewers, to change their tasks through the operations of [`MemberMut`], in the order of
+    /// [`Team::reviewers`].
+    pub fn reviewers_mut(&mut self) -> Vec<MemberMut<'_>> {
+        self.reviewers.iter_mut().map(MemberMut::new).collect()
     }
 
     /// Adds a reviewer.
@@ -500,14 +530,14 @@ impl Team {
     }
 
     /// The member of task `task`, in the crew or among the reviewers, with its role, to change its task.
-    pub fn find_mut(&mut self, task: &TaskId) -> Option<(Role, &mut Member)> {
+    pub fn find_mut(&mut self, task: &TaskId) -> Option<(Role, MemberMut<'_>)> {
         if let Some(found) = self.crew.find_mut(task) {
             return Some(found);
         }
         self.reviewers
             .iter_mut()
             .find(|member| member.task() == task)
-            .map(|member| (Role::Reviewer, member))
+            .map(|member| (Role::Reviewer, MemberMut::new(member)))
     }
 
     /// The member of task `task`, in the crew or among the reviewers, with its role.
@@ -519,6 +549,52 @@ impl Team {
                 .find(|member| member.task() == task)
                 .map(|member| (Role::Reviewer, member))
         })
+    }
+}
+
+/// A team inside a state, to change through its operations only.
+///
+/// It reads like a [`Team`] (it dereferences to one) but is not a `&mut Team`: the team cannot be overwritten with
+/// another, so the state keeps one team for each ID and the team keeps its items, crew and reviewers as they were
+/// checked. What may change is reached through the checked handles below.
+#[derive(Debug)]
+pub struct TeamMut<'a> {
+    /// The team; never given out as a `&mut`.
+    team: &'a mut Team,
+}
+
+impl<'a> TeamMut<'a> {
+    /// A handle to `team`.
+    pub(super) const fn new(team: &'a mut Team) -> Self {
+        Self { team }
+    }
+
+    /// See [`Team::item_mut`].
+    pub fn item_mut(&mut self, id: ItemId) -> Option<ItemMut<'_>> {
+        self.team.item_mut(id)
+    }
+
+    /// See [`Team::crew_mut`].
+    pub const fn crew_mut(&mut self) -> CrewMut<'_> {
+        self.team.crew_mut()
+    }
+
+    /// See [`Team::reviewers_mut`].
+    pub fn reviewers_mut(&mut self) -> Vec<MemberMut<'_>> {
+        self.team.reviewers_mut()
+    }
+
+    /// See [`Team::find_mut`].
+    pub fn find_mut(&mut self, task: &TaskId) -> Option<(Role, MemberMut<'_>)> {
+        self.team.find_mut(task)
+    }
+}
+
+impl Deref for TeamMut<'_> {
+    type Target = Team;
+
+    fn deref(&self) -> &Team {
+        self.team
     }
 }
 
@@ -920,7 +996,7 @@ mod tests {
         );
         assert_eq!(crew.find(&task(3)).map(|(role, _)| role), Some(Role::Worker));
         assert_eq!(crew.find(&task(9)), None);
-        let (role, found) = crew.find_mut(&task(2)).unwrap();
+        let (role, mut found) = crew.find_mut(&task(2)).unwrap();
         assert_eq!(role, Role::Member);
         found.transition(TaskStatus::Running).unwrap();
         assert_eq!(crew.find(&task(2)).map(|(_, m)| m.status()), Some(TaskStatus::Running));
@@ -1039,7 +1115,7 @@ mod tests {
         assert_eq!(team.find(&task(2)).map(|(role, _)| role), Some(Role::Member));
         assert_eq!(team.find(&task(7)).map(|(role, _)| role), Some(Role::Reviewer));
         assert!(team.find(&task(9)).is_none());
-        let (role, found) = team.find_mut(&task(7)).unwrap();
+        let (role, mut found) = team.find_mut(&task(7)).unwrap();
         assert_eq!(role, Role::Reviewer);
         found.transition(TaskStatus::Running).unwrap();
         assert_eq!(team.reviewers()[0].status(), TaskStatus::Running);

@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::num::NonZeroU32;
+use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
 
@@ -88,6 +89,82 @@ struct MemberWire {
     /// See [`Member`].
     #[serde(default)]
     questions: Vec<Question>,
+}
+
+/// A member inside a state or a team, to change through its operations only.
+///
+/// It reads like a [`Member`] (it dereferences to one) but is not a `&mut Member`: the member cannot be overwritten
+/// with another one, so its task and its agent stay as the crew and the state checked them.
+#[derive(Debug)]
+pub struct MemberMut<'a> {
+    /// The member; never given out as a `&mut`.
+    member: &'a mut Member,
+}
+
+impl<'a> MemberMut<'a> {
+    /// A handle to `member`.
+    pub(super) const fn new(member: &'a mut Member) -> Self {
+        Self { member }
+    }
+
+    /// See [`Member::transition`].
+    ///
+    /// # Errors
+    /// [`InvalidTransition`] when the status's table does not allow the change.
+    pub fn transition(&mut self, next: TaskStatus) -> Result<(), InvalidTransition<TaskStatus>> {
+        self.member.transition(next)
+    }
+
+    /// See [`Member::begin_run`].
+    ///
+    /// # Errors
+    /// [`RunError::AlreadyRunning`] when a run is going; [`RunError::DuplicateRun`] when the task has a run with
+    /// this ID.
+    pub fn begin_run(&mut self, id: RunId, at: Timestamp, session: Option<SessionId>) -> Result<(), RunError> {
+        self.member.begin_run(id, at, session)
+    }
+
+    /// See [`Member::attach_session`].
+    ///
+    /// # Errors
+    /// [`RunError::NotRunning`] when no run is going.
+    pub fn attach_session(&mut self, session: SessionId) -> Result<(), RunError> {
+        self.member.attach_session(session)
+    }
+
+    /// See [`Member::end_run`].
+    ///
+    /// # Errors
+    /// [`RunError::NotRunning`] when no run is going; [`RunError::EndsBeforeStart`] when `at` is before the run
+    /// started.
+    pub fn end_run(&mut self, at: Timestamp, end: RunEnd) -> Result<(), RunError> {
+        self.member.end_run(at, end)
+    }
+
+    /// See [`Member::ask_question`].
+    ///
+    /// # Errors
+    /// [`QuestionError`]: the last round is open, the round is not the next one, or the rounds are exhausted.
+    pub fn ask_question(&mut self, question: Question) -> Result<(), QuestionError> {
+        self.member.ask_question(question)
+    }
+
+    /// See [`Member::answer_question`].
+    ///
+    /// # Errors
+    /// [`QuestionError::NoSuchRound`], [`QuestionError::AlreadyAnswered`], or
+    /// [`QuestionError::AnswerBeforeQuestion`].
+    pub fn answer_question(&mut self, round: NonZeroU32, at: Timestamp, via: AnsweredVia) -> Result<(), QuestionError> {
+        self.member.answer_question(round, at, via)
+    }
+}
+
+impl Deref for MemberMut<'_> {
+    type Target = Member;
+
+    fn deref(&self) -> &Member {
+        self.member
+    }
 }
 
 /// Why a round of questions could not be added or answered.
