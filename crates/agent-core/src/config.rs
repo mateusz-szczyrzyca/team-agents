@@ -408,8 +408,8 @@ struct RawConfig {
 
 impl RawConfig {
     /// Checks the lists against the agents and the investigators; the first rule broken is the error. Checked in
-    /// this order: a name in a list that is no agent, a name twice in a list, a name in both lists, an agent in no
-    /// list, a name that is both an agent and an investigator.
+    /// this order: `normal`, then `workers`, name by name, for a name that is no agent or is listed twice; a name in
+    /// both lists; an agent in no list; a name that is both an agent and an investigator.
     fn validate(self) -> Result<Config, ConfigError> {
         let Self {
             language,

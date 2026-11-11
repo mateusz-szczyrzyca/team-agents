@@ -82,7 +82,9 @@ so put the stronger ones first. The order of `normal` is kept as written. Rules,
 | `NameInTwoLists { name, first, second }` | an agent is in both lists, or a name is both an agent and an investigator |
 | `AgentInNoList { name }` | an `[agents.NAME]` table that neither list names |
 
-They are checked in this order, and the first one found is reported.
+They are checked in this order, and the first fault found is the one reported: `normal`, then `workers`, name by name
+(an unknown or repeated name); then a name in both lists; then an agent in no list; then a name that is both an agent
+and an investigator.
 
 ### `[binaries]`
 
