@@ -26,6 +26,8 @@ pub use run::{Run, RunEnd, RunError, RunState};
 pub use team::{Crew, CrewError, MergeMode, ReviewerProblem, TaskListText, Team, TeamError, TeamMembers};
 pub use values::{CommitId, InvalidCommitId, InvalidTimestamp, PrNumber, SessionId, Timestamp};
 
+use std::collections::{HashMap, HashSet};
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::ids::{TaskId, TeamId};
@@ -228,12 +230,7 @@ impl State {
                 team: team.id().clone(),
             });
         }
-        let tasks = team
-            .crew()
-            .roster()
-            .into_iter()
-            .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)));
-        for (_, member) in tasks {
+        for member in team_members(&team) {
             if let Some(owner) = self.find_task(member.task()) {
                 return Err(InvalidState::DuplicateTask {
                     task: member.task().clone(),
@@ -301,6 +298,15 @@ impl State {
     }
 }
 
+/// Every member of `team`: its crew, then its reviewers.
+fn team_members(team: &Team) -> impl Iterator<Item = &Member> {
+    team.crew()
+        .roster()
+        .into_iter()
+        .map(|(_, member)| member)
+        .chain(team.reviewers())
+}
+
 impl Default for State {
     fn default() -> Self {
         Self::new()
@@ -311,14 +317,28 @@ impl TryFrom<StateWire> for State {
     type Error = InvalidState;
 
     fn try_from(wire: StateWire) -> Result<Self, Self::Error> {
-        let mut state = Self {
-            schema_version: wire.schema_version,
-            teams: Vec::with_capacity(wire.teams.len()),
-        };
-        for team in wire.teams {
-            state.insert_team(team)?;
+        let mut teams = HashSet::new();
+        let mut owners: HashMap<&TaskId, &TeamId> = HashMap::new();
+        for team in &wire.teams {
+            if !teams.insert(team.id()) {
+                return Err(InvalidState::DuplicateTeam {
+                    team: team.id().clone(),
+                });
+            }
+            for member in team_members(team) {
+                if let Some(first) = owners.insert(member.task(), team.id()) {
+                    return Err(InvalidState::DuplicateTask {
+                        task: member.task().clone(),
+                        first: first.clone(),
+                        second: team.id().clone(),
+                    });
+                }
+            }
         }
-        Ok(state)
+        Ok(Self {
+            schema_version: wire.schema_version,
+            teams: wire.teams,
+        })
     }
 }
 

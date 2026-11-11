@@ -741,7 +741,8 @@ impl QuestionsFile {
         let mut expanded = self.clone();
         expanded.instructions.clear();
         expanded.answered = false;
-        for answer in answers {
+        // `answers` has one answer for each question, in the order of the questions.
+        for (entry, answer) in expanded.entries.iter_mut().zip(answers) {
             let Choice::Recommendation(recommendation) = answer.choice else {
                 continue;
             };
@@ -749,13 +750,7 @@ impl QuestionsFile {
                 question: answer.number,
                 source,
             })?;
-            for entry in expanded
-                .entries
-                .iter_mut()
-                .filter(|entry| entry.number == answer.number)
-            {
-                entry.set_verdict(Some(Verdict::Own(words.clone())));
-            }
+            entry.set_verdict(Some(Verdict::Own(words)));
         }
         Ok(expanded.render())
     }
