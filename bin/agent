@@ -2824,11 +2824,11 @@ review_precheck() { # coordinator task id — before a review: the round's head 
     pr_write_task "$id" "$root" "$rpr"
   fi
   rbody=$(pr_body_without_task "$rbody")   # the rules read the agents' text, not the task
-  rules=$(round_rule_issues "$root" "$mb" "$head" "$(task_field "$id" TEAM)" "$rbody")
+  rules=$(round_rule_issues "$root" "$mb" "$head" "$(rule_allow_key "$id")" "$rbody")
   if [[ -n $rules ]]; then
     human=$(sed -n 's/^human: /- /p' <<< "$rules")
     disc=$(sed -n 's/^disclose: /- /p' <<< "$rules")
-    [[ -z $human ]] || rtext+="the round changes what only the human may allow (AGENTS.md \"Never\"): revert it, or ask the human, who allows it with: agent allow $(task_field "$id" TEAM) <path>
+    [[ -z $human ]] || rtext+="the round changes what only the human may allow (AGENTS.md \"Never\"): revert it, or ask the human, who allows it with: $(rule_allow_command "$(rule_allow_key "$id")" "$human")
 $human
 "
     [[ -z $disc ]] || rtext+="the round adds suppressions its PR description does not name: name each file and why in the description, or remove it
@@ -8206,12 +8206,41 @@ cmd_stop() {
   echo "Stopped $id."
 }
 
-# cmd_allow team [path...] — the human allows a team's rounds to change these paths against AGENTS.md's rules (an
-# existing test, a file that judges a round): the precheck lets them pass. No path: the paths allowed so far
+# rule_allow_key task — the key the human's allowances for a task's rounds are kept under (agent allow): its team,
+# or for a task of no team (an --investigation, a solo task) the task itself
+rule_allow_key() {
+  local team
+  team=$(task_field "$1" TEAM)
+  printf '%s' "${team:-$1}"
+}
+
+# rule_allow_command key human-lines — the agent allow command that lets the flagged paths pass: "- <path> — why"
+# lines (a "<path>:<line>" counts as its path), each path once
+rule_allow_command() {
+  local key=$1 line p
+  local -a allow_paths=()
+  while IFS= read -r line; do
+    [[ $line == "- "* ]] || continue
+    p=${line#- }; p=${p%% — *}
+    [[ $p =~ ^(.+):[0-9]+$ ]] && p=${BASH_REMATCH[1]}
+    [[ -n $p && " ${allow_paths[*]} " != *" $p "* ]] && allow_paths+=("$p")
+  done <<< "$2"
+  printf 'agent allow %s' "$key"
+  if ((${#allow_paths[@]})); then printf ' %q' "${allow_paths[@]}"; fi
+}
+
+# cmd_allow team|task [path...] — the human allows a team's rounds, or a task's of no team (an --investigation, a
+# solo task), to change these paths against AGENTS.md's rules (an existing test, a file that judges a round): the
+# precheck lets them pass. No path: the paths allowed so far
 cmd_allow() {
-  local team=${1:?usage: agent allow <team> [path...]} f
+  local team=${1:?usage: agent allow <team|task> [path...]} f what=team owner
   shift
-  [[ -n $(team_json "$team") ]] || die "no team $team (see: agent status)"
+  if [[ -z $(team_json "$team") ]]; then
+    [[ -f $TASKS/$team/meta.env ]] || die "no team or task $team (see: agent status)"
+    owner=$(task_field "$team" TEAM)
+    [[ -z $owner ]] || die "task $team is of team $owner: its allowances are the team's — agent allow $owner <path>"
+    what=task
+  fi
   if (($# == 0)); then team_allowed_paths "$team"; return 0; fi
   mkdir -p "$AGENTS_HOME/allowed" || die "cannot create $AGENTS_HOME/allowed"
   for f in "$@"; do
@@ -8219,7 +8248,7 @@ cmd_allow() {
     printf '%s\n' "$f" >> "$AGENTS_HOME/allowed/$team" || die "cannot write $AGENTS_HOME/allowed/$team"
   done
   log_info rules_allowed "team=$team" "paths=$*"
-  echo "Allowed for team $team: $*"
+  echo "Allowed for $what $team: $*"
 }
 
 # cmd_pause team — the human pauses a team: its runs are stopped at once — its members', its coordinator's, its
