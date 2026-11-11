@@ -9,6 +9,7 @@ use super::{EncodeError, MAX_REQUEST_BYTES, ProtocolError, ProtocolVersion, deco
 use crate::config::{AbsolutePath, RepoName, TailscaleLogin};
 use crate::ids::{AgentName, TaskId, TeamId};
 use crate::questions::Verdict;
+use crate::state::strict::strict_enum;
 use crate::state::{MergeMode, TaskListText};
 
 /// Most agents one `run` may name.
@@ -42,9 +43,13 @@ pub struct Request {
 #[serde(transparent)]
 pub struct RequestId(pub u64);
 
+strict_enum! {
+    Client, "self::Client", serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields);
 /// Who sends a request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+///
+/// Deserialization refuses fields that the variant does not have, also for `cli` (serde skips that check for the unit
+/// variant of an internally tagged enum).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Client {
     /// The `agent` command line: the human at the terminal.
     Cli,
@@ -53,6 +58,7 @@ pub enum Client {
         /// The Tailscale login the dashboard saw.
         login: TailscaleLogin,
     },
+}
 }
 
 /// What a client asks of the daemon.
