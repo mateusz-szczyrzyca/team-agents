@@ -1,0 +1,1 @@
+Answer every question after **Verdict:** — `ok` accepts the recommendation. When you are done, put **ANSWERED** on the last line and save: the answers are sent at once (or run `agent answer {{task_id}}`).

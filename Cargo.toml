@@ -18,7 +18,7 @@ rand = { version = "0.10.3", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
-time = { version = "0.3.55", default-features = false, features = ["std"] }
+time = { version = "0.3.55", default-features = false, features = ["std", "formatting", "parsing"] }
 toml = { version = "1.2.1", default-features = false, features = ["std", "serde", "parse"] }
 
 # The lint baseline of prompts/agent/rust-developer.md (appendix). `warn` here and `-D warnings` in the gate

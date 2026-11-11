@@ -1651,12 +1651,15 @@ make integration        # real agent CLIs and accounts (costs usage)
   `rust-toolchain.toml` installs itself on the first cargo command. `make gate` runs `make rust` as its `rust` step.
   `make lint` also runs the full Rust gate, so the existing CI lint step checks Rust formatting, clippy, tests and
   documentation. `make test` includes it too.
-  `agent-core` already holds two public contracts of the new `agent`, both pure parsers with no file access yet:
-  the configuration (`agents.toml`, `secrets.toml`; `Config`, `Secrets`) and the task list that `agent run` will take
-  (`TaskList::parse`). Their formats and rules are in [`docs/configuration.md`](docs/configuration.md) and
-  [`docs/task-list.md`](docs/task-list.md); [`config/agents.example.toml`](config/agents.example.toml) is the
-  configuration template to copy. The installation does not read either file or accept the task list format until
-  the runtime items of the plan (4.1 and later) wire them in: today they are checked by tests only.
+  `agent-core` already holds the public contracts of the new `agent`, all of them pure, with no file or socket access
+  yet: the configuration (`agents.toml`, `secrets.toml`; `Config`, `Secrets`), the task list that `agent run` will
+  take (`TaskList::parse`), the persistent state (`State`: teams, members, items, runs, questions, pull requests,
+  reviews, gate results, with a schema version), the JSON-lines control protocol of the daemon's socket (`Request`,
+  `Response`, `Event`, with a protocol version) and the questions file (`QuestionsFile`). Their formats and rules are
+  in [`docs/configuration.md`](docs/configuration.md), [`docs/task-list.md`](docs/task-list.md) and
+  [`docs/state.md`](docs/state.md); [`config/agents.example.toml`](config/agents.example.toml) is the configuration
+  template to copy. The installation does not read these files, speak this protocol or accept the task list format
+  until the runtime items of the plan (4.1 and later) wire them in: today they are checked by tests only.
 
 - **Go candidate boundaries (R03).** The Go application (`agent/`) owns injected executor, clock and
   random boundaries; unconfigured execution is denied. Subprocess execution covers argv, env, dir,
