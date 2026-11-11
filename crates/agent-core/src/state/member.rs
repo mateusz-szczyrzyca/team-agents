@@ -1,6 +1,7 @@
 //! Members: an agent or investigator and the task it works in, with the task's status, runs and questions.
 
 use std::collections::HashSet;
+use std::fmt;
 use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,12 @@ pub enum Participant {
     Worker(AgentName),
     /// An investigator.
     Investigator(InvestigatorName),
+}
+
+impl fmt::Display for Participant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.name(), self.tier())
+    }
 }
 
 impl Participant {

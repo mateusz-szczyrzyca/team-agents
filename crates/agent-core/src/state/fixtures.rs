@@ -7,7 +7,8 @@ use serde::de::DeserializeOwned;
 use serde_json::error::Category;
 
 use super::{
-    Crew, Member, MergeMode, Participant, PrNumber, PullRequest, Review, ReviewOutcome, TaskListText, Team, Timestamp,
+    Crew, Member, MergeMode, Participant, PrNumber, PullRequest, Review, ReviewOutcome, TaskListText, Team,
+    TeamMembers, Timestamp,
 };
 use crate::config::{AbsolutePath, RepoName};
 use crate::ids::{AgentName, BranchName, InvestigatorName, RunId, TaskId, TeamId};
@@ -135,11 +136,11 @@ pub(crate) fn team(n: u32) -> Team {
 
 /// The team of [`team`] with ID `n` whose tasks are `first_task`, the next and the one after.
 pub(crate) fn team_of(n: u32, first_task: u32) -> Team {
-    let crew = Crew::team(
-        member(first_task, inv("inv-opus")),
-        vec![member(first_task + 1, normal("codex-1"))],
-        vec![member(first_task + 2, worker("worker-1"))],
-    )
+    let crew = Crew::team(TeamMembers {
+        coordinator: member(first_task, inv("inv-opus")),
+        members: vec![member(first_task + 1, normal("codex-1"))],
+        workers: vec![member(first_task + 2, worker("worker-1"))],
+    })
     .unwrap();
     Team::new(team_id(n), repo(), at(0), MergeMode::Autopilot, list(), crew)
 }

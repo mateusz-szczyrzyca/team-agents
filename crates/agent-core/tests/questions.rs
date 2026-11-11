@@ -26,11 +26,13 @@ mod questions_file {
 
     /// A file with two questions that have recommendations, with the instructions of the template.
     fn asked() -> QuestionsFile {
-        let first = Entry::new(n(1), "Which store?", "a) in memory\nb) on disk")
+        let first = Entry::new(n(1), "Which store?")
+            .unwrap()
+            .with_body("a) in memory\nb) on disk")
             .unwrap()
             .recommend("a) — simpler (inv-opus)")
             .unwrap();
-        let second = Entry::new(n(2), "Żółć or bile?", "")
+        let second = Entry::new(n(2), "Żółć or bile?")
             .unwrap()
             .recommend("bile — the key is taken")
             .unwrap();
@@ -63,7 +65,7 @@ mod questions_file {
             Verdict::from_text("Bile, and please rename the key.\nIt is confusing.").unwrap(),
         )
         .unwrap();
-        file.mark_answered(true);
+        file.mark_answered();
 
         // What the human saved in the editor is what the daemon reads.
         let saved = QuestionsFile::parse(&file.render()).unwrap();
@@ -103,7 +105,7 @@ mod questions_file {
         let mut file = asked();
         file.set_verdict(n(1), Some(Verdict::Accept)).unwrap();
         file.set_verdict(n(2), Verdict::from_text("bile").unwrap()).unwrap();
-        file.mark_answered(true);
+        file.mark_answered();
         let saved = QuestionsFile::parse(&file.render()).unwrap();
 
         let handed = saved

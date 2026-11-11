@@ -101,6 +101,18 @@ enum Shape {
     },
 }
 
+/// The people of a team, by role, for [`Crew::team`]: named, so that members and workers cannot be swapped by
+/// accident.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamMembers {
+    /// The coordinator: a normal agent or an investigator.
+    pub coordinator: Member,
+    /// The members who take items: normal agents or investigators, at least one.
+    pub members: Vec<Member>,
+    /// The workers who serve `delegate` requests, in the configured order.
+    pub workers: Vec<Member>,
+}
+
 /// Why a crew cannot be made from its members.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CrewError {
@@ -118,10 +130,10 @@ pub enum CrewError {
     #[error("a team needs at least one member besides its coordinator")]
     NoMembers,
     /// A name appears twice.
-    #[error("{name} is in the crew twice")]
+    #[error("{agent} is in the crew twice")]
     DuplicateAgent {
-        /// The repeated name.
-        name: String,
+        /// The second participant with the name.
+        agent: Participant,
     },
     /// A task ID appears twice.
     #[error("task {task} is in the crew twice")]
@@ -145,7 +157,12 @@ impl Crew {
     ///
     /// # Errors
     /// [`CrewError`]: a participant of the wrong tier for its role, no member, a name or a task ID twice.
-    pub fn team(coordinator: Member, members: Vec<Member>, workers: Vec<Member>) -> Result<Self, CrewError> {
+    pub fn team(people: TeamMembers) -> Result<Self, CrewError> {
+        let TeamMembers {
+            coordinator,
+            members,
+            workers,
+        } = people;
         Self::try_from(Shape::Team {
             coordinator,
             members,
@@ -222,7 +239,7 @@ impl Shape {
         let mut names = HashSet::new();
         if let Some((_, member)) = roster.iter().find(|(_, member)| !names.insert(member.agent().name())) {
             return Err(CrewError::DuplicateAgent {
-                name: member.agent().name().to_owned(),
+                agent: member.agent().clone(),
             });
         }
         let mut tasks = HashSet::new();
@@ -338,22 +355,22 @@ pub enum TeamError {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReviewerProblem {
     /// The reviewer is not an investigator.
-    #[error("{name} reviews but is not an investigator")]
+    #[error("{agent} reviews but is not an investigator")]
     NotInvestigator {
-        /// The reviewer's name.
-        name: String,
+        /// The reviewer.
+        agent: Participant,
     },
     /// The reviewer is in the team's crew: reviewers are outside it.
-    #[error("{name} reviews its own team")]
+    #[error("{agent} reviews its own team")]
     InCrew {
-        /// The reviewer's name.
-        name: String,
+        /// The reviewer.
+        agent: Participant,
     },
     /// The reviewer's name appears twice among the reviewers.
-    #[error("{name} is a reviewer twice")]
+    #[error("{agent} is a reviewer twice")]
     DuplicateName {
-        /// The repeated name.
-        name: String,
+        /// The second reviewer with the name.
+        agent: Participant,
     },
     /// A task ID appears twice among the reviewers or is the crew's.
     #[error("task {task} is used twice")]
@@ -459,13 +476,19 @@ impl Team {
     pub(super) fn add_reviewer(&mut self, member: Member) -> Result<(), ReviewerProblem> {
         let name = member.agent().name();
         if !tier_fits(Role::Reviewer, member.agent()) {
-            return Err(ReviewerProblem::NotInvestigator { name: name.to_owned() });
+            return Err(ReviewerProblem::NotInvestigator {
+                agent: member.agent().clone(),
+            });
         }
         if self.crew.roster().iter().any(|(_, crew)| crew.agent().name() == name) {
-            return Err(ReviewerProblem::InCrew { name: name.to_owned() });
+            return Err(ReviewerProblem::InCrew {
+                agent: member.agent().clone(),
+            });
         }
         if self.reviewers.iter().any(|reviewer| reviewer.agent().name() == name) {
-            return Err(ReviewerProblem::DuplicateName { name: name.to_owned() });
+            return Err(ReviewerProblem::DuplicateName {
+                agent: member.agent().clone(),
+            });
         }
         if self.find(member.task()).is_some() {
             return Err(ReviewerProblem::DuplicateTask {
@@ -692,11 +715,11 @@ mod tests {
 
     #[test]
     fn a_team_lists_its_coordinator_members_and_workers_in_that_order_with_their_roles() {
-        let crew = Crew::team(
-            member(1, inv("inv-opus")),
-            vec![member(2, normal("codex-1")), member(3, inv("inv-codex"))],
-            vec![member(4, worker("worker-1")), member(5, worker("worker-2"))],
-        )
+        let crew = Crew::team(TeamMembers {
+            coordinator: member(1, inv("inv-opus")),
+            members: vec![member(2, normal("codex-1")), member(3, inv("inv-codex"))],
+            workers: vec![member(4, worker("worker-1")), member(5, worker("worker-2"))],
+        })
         .unwrap();
 
         let roster: Vec<(Role, &str)> = crew
@@ -720,11 +743,11 @@ mod tests {
 
     #[test]
     fn a_team_may_have_a_normal_coordinator_and_no_workers() {
-        let crew = Crew::team(
-            member(1, normal("claude-1")),
-            vec![member(2, normal("codex-1"))],
-            vec![],
-        )
+        let crew = Crew::team(TeamMembers {
+            coordinator: member(1, normal("claude-1")),
+            members: vec![member(2, normal("codex-1"))],
+            workers: vec![],
+        })
         .unwrap();
 
         assert_eq!(crew.roster().len(), 2);
@@ -734,7 +757,11 @@ mod tests {
     fn a_role_refuses_a_participant_of_the_wrong_tier() {
         let cases = [
             (
-                Crew::team(member(1, worker("w")), vec![member(2, normal("a"))], vec![]),
+                Crew::team(TeamMembers {
+                    coordinator: member(1, worker("w")),
+                    members: vec![member(2, normal("a"))],
+                    workers: vec![],
+                }),
                 CrewError::WrongTier {
                     task: task(1),
                     role: Role::Coordinator,
@@ -742,7 +769,11 @@ mod tests {
                 },
             ),
             (
-                Crew::team(member(1, normal("a")), vec![member(2, worker("w"))], vec![]),
+                Crew::team(TeamMembers {
+                    coordinator: member(1, normal("a")),
+                    members: vec![member(2, worker("w"))],
+                    workers: vec![],
+                }),
                 CrewError::WrongTier {
                     task: task(2),
                     role: Role::Member,
@@ -750,11 +781,11 @@ mod tests {
                 },
             ),
             (
-                Crew::team(
-                    member(1, normal("a")),
-                    vec![member(2, normal("b"))],
-                    vec![member(3, normal("c"))],
-                ),
+                Crew::team(TeamMembers {
+                    coordinator: member(1, normal("a")),
+                    members: vec![member(2, normal("b"))],
+                    workers: vec![member(3, normal("c"))],
+                }),
                 CrewError::WrongTier {
                     task: task(3),
                     role: Role::Worker,
@@ -762,11 +793,11 @@ mod tests {
                 },
             ),
             (
-                Crew::team(
-                    member(1, normal("a")),
-                    vec![member(2, normal("b"))],
-                    vec![member(3, inv("i"))],
-                ),
+                Crew::team(TeamMembers {
+                    coordinator: member(1, normal("a")),
+                    members: vec![member(2, normal("b"))],
+                    workers: vec![member(3, inv("i"))],
+                }),
                 CrewError::WrongTier {
                     task: task(3),
                     role: Role::Worker,
@@ -782,11 +813,21 @@ mod tests {
     #[test]
     fn a_team_needs_a_member_besides_its_coordinator_and_workers_do_not_count() {
         assert_eq!(
-            Crew::team(member(1, normal("a")), vec![], vec![]).unwrap_err(),
+            Crew::team(TeamMembers {
+                coordinator: member(1, normal("a")),
+                members: vec![],
+                workers: vec![]
+            })
+            .unwrap_err(),
             CrewError::NoMembers
         );
         assert_eq!(
-            Crew::team(member(1, normal("a")), vec![], vec![member(2, worker("w"))]).unwrap_err(),
+            Crew::team(TeamMembers {
+                coordinator: member(1, normal("a")),
+                members: vec![],
+                workers: vec![member(2, worker("w"))]
+            })
+            .unwrap_err(),
             CrewError::NoMembers
         );
     }
@@ -794,42 +835,70 @@ mod tests {
     #[test]
     fn a_name_is_in_the_crew_once() {
         let cases = [
-            Crew::team(member(1, normal("a")), vec![member(2, normal("a"))], vec![]),
-            Crew::team(
-                member(1, normal("a")),
-                vec![member(2, normal("b")), member(3, normal("b"))],
-                vec![],
-            ),
-            Crew::team(member(1, normal("a")), vec![member(2, inv("a"))], vec![]),
-            Crew::team(
-                member(1, normal("a")),
-                vec![member(2, normal("b"))],
-                vec![member(3, worker("a"))],
-            ),
+            Crew::team(TeamMembers {
+                coordinator: member(1, normal("a")),
+                members: vec![member(2, normal("a"))],
+                workers: vec![],
+            }),
+            Crew::team(TeamMembers {
+                coordinator: member(1, normal("a")),
+                members: vec![member(2, normal("b")), member(3, normal("b"))],
+                workers: vec![],
+            }),
+            Crew::team(TeamMembers {
+                coordinator: member(1, normal("a")),
+                members: vec![member(2, inv("a"))],
+                workers: vec![],
+            }),
+            Crew::team(TeamMembers {
+                coordinator: member(1, normal("a")),
+                members: vec![member(2, normal("b"))],
+                workers: vec![member(3, worker("a"))],
+            }),
         ];
         for result in cases {
             assert!(matches!(result, Err(CrewError::DuplicateAgent { .. })), "{result:?}");
         }
         assert_eq!(
-            Crew::team(member(1, normal("a")), vec![member(2, normal("a"))], vec![]).unwrap_err(),
-            CrewError::DuplicateAgent {
-                name: String::from("a")
-            }
+            Crew::team(TeamMembers {
+                coordinator: member(1, normal("a")),
+                members: vec![member(2, normal("a"))],
+                workers: vec![]
+            })
+            .unwrap_err(),
+            CrewError::DuplicateAgent { agent: normal("a") }
         );
     }
 
     #[test]
     fn a_task_is_in_the_crew_once() {
-        let err = Crew::team(member(1, normal("a")), vec![member(1, normal("b"))], vec![]).unwrap_err();
+        let err = Crew::team(TeamMembers {
+            coordinator: member(1, normal("a")),
+            members: vec![member(1, normal("b"))],
+            workers: vec![],
+        })
+        .unwrap_err();
 
         assert_eq!(err, CrewError::DuplicateTask { task: task(1) });
     }
 
     #[test]
     fn the_crew_is_checked_tiers_first_then_members_then_names_then_tasks() {
-        let tier_and_name = Crew::team(member(1, worker("a")), vec![member(2, normal("a"))], vec![]);
-        let members_and_name = Crew::team(member(1, normal("a")), vec![], vec![member(2, worker("a"))]);
-        let name_and_task = Crew::team(member(1, normal("a")), vec![member(1, normal("a"))], vec![]);
+        let tier_and_name = Crew::team(TeamMembers {
+            coordinator: member(1, worker("a")),
+            members: vec![member(2, normal("a"))],
+            workers: vec![],
+        });
+        let members_and_name = Crew::team(TeamMembers {
+            coordinator: member(1, normal("a")),
+            members: vec![],
+            workers: vec![member(2, worker("a"))],
+        });
+        let name_and_task = Crew::team(TeamMembers {
+            coordinator: member(1, normal("a")),
+            members: vec![member(1, normal("a"))],
+            workers: vec![],
+        });
 
         assert!(matches!(tier_and_name, Err(CrewError::WrongTier { .. })));
         assert_eq!(members_and_name, Err(CrewError::NoMembers));
@@ -838,11 +907,11 @@ mod tests {
 
     #[test]
     fn a_member_is_found_by_its_task_with_its_role_and_can_be_changed() {
-        let mut crew = Crew::team(
-            member(1, inv("inv-opus")),
-            vec![member(2, normal("codex-1"))],
-            vec![member(3, worker("worker-1"))],
-        )
+        let mut crew = Crew::team(TeamMembers {
+            coordinator: member(1, inv("inv-opus")),
+            members: vec![member(2, normal("codex-1"))],
+            workers: vec![member(3, worker("worker-1"))],
+        })
         .unwrap();
 
         assert_eq!(
@@ -866,11 +935,11 @@ mod tests {
     #[test]
     fn a_crew_is_written_by_its_kind_and_read_back() {
         let solo = Crew::solo(member(1, normal("codex-1"))).unwrap();
-        let team = Crew::team(
-            member(1, inv("inv-opus")),
-            vec![member(2, normal("codex-1"))],
-            vec![member(3, worker("worker-1"))],
-        )
+        let team = Crew::team(TeamMembers {
+            coordinator: member(1, inv("inv-opus")),
+            members: vec![member(2, normal("codex-1"))],
+            workers: vec![member(3, worker("worker-1"))],
+        })
         .unwrap();
 
         let solo_value = serde_json::to_value(&solo).unwrap();
@@ -990,31 +1059,27 @@ mod tests {
             (
                 member(8, normal("claude-1")),
                 ReviewerProblem::NotInvestigator {
-                    name: String::from("claude-1"),
+                    agent: normal("claude-1"),
                 },
             ),
             (
                 member(8, worker("worker-9")),
                 ReviewerProblem::NotInvestigator {
-                    name: String::from("worker-9"),
+                    agent: worker("worker-9"),
                 },
             ),
             (
                 member(8, inv("inv-opus")),
-                ReviewerProblem::InCrew {
-                    name: String::from("inv-opus"),
-                },
+                ReviewerProblem::InCrew { agent: inv("inv-opus") },
             ),
             (
                 member(8, inv("codex-1")),
-                ReviewerProblem::InCrew {
-                    name: String::from("codex-1"),
-                },
+                ReviewerProblem::InCrew { agent: inv("codex-1") },
             ),
             (
                 member(8, inv("inv-codex")),
                 ReviewerProblem::DuplicateName {
-                    name: String::from("inv-codex"),
+                    agent: inv("inv-codex"),
                 },
             ),
             (
@@ -1144,19 +1209,17 @@ mod tests {
             (
                 investigator(7, "normal", "claude-1"),
                 ReviewerProblem::NotInvestigator {
-                    name: String::from("claude-1"),
+                    agent: normal("claude-1"),
                 },
             ),
             (
                 investigator(7, "investigator", "inv-opus"),
-                ReviewerProblem::InCrew {
-                    name: String::from("inv-opus"),
-                },
+                ReviewerProblem::InCrew { agent: inv("inv-opus") },
             ),
             (
                 investigator(7, "investigator", "inv-gemini"),
                 ReviewerProblem::DuplicateName {
-                    name: String::from("inv-gemini"),
+                    agent: inv("inv-gemini"),
                 },
             ),
             (
@@ -1177,7 +1240,7 @@ mod tests {
             ]);
             if problem
                 == (ReviewerProblem::DuplicateName {
-                    name: String::from("inv-gemini"),
+                    agent: inv("inv-gemini"),
                 })
             {
                 value["reviewers"] = json!([investigator(7, "investigator", "inv-gemini"), reviewer]);

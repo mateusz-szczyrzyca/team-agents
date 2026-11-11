@@ -257,9 +257,27 @@ pub enum ParseError {
         line: NonZeroUsize,
         /// The number of the question.
         number: NonZeroU32,
-        /// The repeated label: `Recommended` or `Verdict`.
-        label: &'static str,
+        /// The repeated label.
+        label: RepeatedLabel,
     },
+}
+
+/// The labels a question may have once only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepeatedLabel {
+    /// `**Recommended:**`.
+    Recommended,
+    /// `**Verdict:**`.
+    Verdict,
+}
+
+impl fmt::Display for RepeatedLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Recommended => RECOMMENDED_LABEL,
+            Self::Verdict => VERDICT_LABEL,
+        })
+    }
 }
 
 /// Why [`QuestionsFile::new`] refused its arguments.
@@ -288,7 +306,7 @@ pub enum EntryField {
     Recommendation,
 }
 
-/// Why [`Entry::new`] or [`Entry::recommend`] refused a text.
+/// Why [`Entry::new`], [`Entry::with_body`] or [`Entry::recommend`] refused a text.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EntryError {
     /// The title is blank or has more than one line.
@@ -369,30 +387,37 @@ pub enum Choice {
 }
 
 impl Entry {
-    /// A question with a title and a text (the options, the context), and an empty `**Verdict:**` part for the human
-    /// to fill.
+    /// A question with a title and an empty `**Verdict:**` part for the human to fill.
     ///
     /// # Errors
-    /// [`EntryError::InvalidTitle`] for a blank title or one with more than one line;
-    /// [`EntryError::Structural`] when a line of `body` would be read as the start of a question, a label or the
-    /// `ANSWERED` marker.
-    pub fn new(number: NonZeroU32, title: &str, body: &str) -> Result<Self, EntryError> {
+    /// [`EntryError::InvalidTitle`] for a blank title or one with more than one line.
+    pub fn new(number: NonZeroU32, title: &str) -> Result<Self, EntryError> {
         let title = title.trim();
         if title.is_empty() || title.contains(['\n', '\r']) {
             return Err(EntryError::InvalidTitle);
         }
+        Ok(Self {
+            number,
+            title: title.to_owned(),
+            body: String::new(),
+            parts: vec![Part::Verdict(None)],
+        })
+    }
+
+    /// The question with a text under its title (the options, the context), in place of any it had.
+    ///
+    /// # Errors
+    /// [`EntryError::Structural`] when a line of `body` would be read as the start of a question, a label or the
+    /// `ANSWERED` marker.
+    pub fn with_body(mut self, body: &str) -> Result<Self, EntryError> {
         if let Some(line) = first_structural_line(body) {
             return Err(EntryError::Structural {
                 field: EntryField::Body,
                 line,
             });
         }
-        Ok(Self {
-            number,
-            title: title.to_owned(),
-            body: body.trim().to_owned(),
-            parts: vec![Part::Verdict(None)],
-        })
+        body.trim().clone_into(&mut self.body);
+        Ok(self)
     }
 
     /// The question with a `**Recommended:**` part, in place of any it had.
@@ -660,9 +685,14 @@ impl QuestionsFile {
         Ok(())
     }
 
-    /// Puts the `**ANSWERED**` marker on the last line (`true`) or takes it away (`false`).
-    pub const fn mark_answered(&mut self, answered: bool) {
-        self.answered = answered;
+    /// Puts the `**ANSWERED**` marker on the last line.
+    pub const fn mark_answered(&mut self) {
+        self.answered = true;
+    }
+
+    /// Takes the `**ANSWERED**` marker away.
+    pub const fn unmark_answered(&mut self) {
+        self.answered = false;
     }
 
     /// The numbers of the questions without a recommendation, in file order.
@@ -792,8 +822,8 @@ impl<'a> Draft<'a> {
             return Ok(());
         };
         let (kind, repeated) = match label {
-            RECOMMENDED_LABEL => (SectionKind::Recommended, Some(RECOMMENDED_LABEL)),
-            VERDICT_LABEL => (SectionKind::Verdict, Some(VERDICT_LABEL)),
+            RECOMMENDED_LABEL => (SectionKind::Recommended, Some(RepeatedLabel::Recommended)),
+            VERDICT_LABEL => (SectionKind::Verdict, Some(RepeatedLabel::Verdict)),
             other => (SectionKind::Other(other), None),
         };
         if let Some(label) = repeated.filter(|_| self.sections.iter().any(|section| section.kind == kind)) {
@@ -1142,7 +1172,10 @@ Free text about the second question.
 
     #[test]
     fn an_entry_has_its_number_title_text_and_an_empty_verdict() {
-        let entry = Entry::new(n(3), "  Which store? ", "a) memory\nb) disk\n").unwrap();
+        let entry = Entry::new(n(3), "  Which store? ")
+            .unwrap()
+            .with_body("a) memory\nb) disk\n")
+            .unwrap();
 
         assert_eq!(entry.number(), n(3));
         assert_eq!(entry.title(), "Which store?");
@@ -1154,7 +1187,7 @@ Free text about the second question.
     #[test]
     fn an_entry_refuses_a_blank_or_multiline_title() {
         for title in ["", "  ", "\n", "one\ntwo", "one\r\ntwo"] {
-            assert_eq!(Entry::new(n(1), title, ""), Err(EntryError::InvalidTitle), "{title:?}");
+            assert_eq!(Entry::new(n(1), title), Err(EntryError::InvalidTitle), "{title:?}");
         }
     }
 
@@ -1167,7 +1200,7 @@ Free text about the second question.
             ("**ANSWERED**", 1),
         ] {
             assert_eq!(
-                Entry::new(n(1), "Q", body),
+                Entry::new(n(1), "Q").unwrap().with_body(body),
                 Err(EntryError::Structural {
                     field: EntryField::Body,
                     line: line(at)
@@ -1179,7 +1212,7 @@ Free text about the second question.
 
     #[test]
     fn a_recommendation_is_trimmed_and_may_have_several_lines() {
-        let entry = Entry::new(n(1), "Q", "")
+        let entry = Entry::new(n(1), "Q")
             .unwrap()
             .recommend("  a) why\nand more \n")
             .unwrap();
@@ -1189,7 +1222,7 @@ Free text about the second question.
 
     #[test]
     fn a_recommendation_refuses_blank_text_and_structure() {
-        let entry = Entry::new(n(1), "Q", "").unwrap();
+        let entry = Entry::new(n(1), "Q").unwrap();
 
         assert_eq!(entry.clone().recommend(" \n"), Err(EntryError::BlankRecommendation));
         assert_eq!(
@@ -1203,7 +1236,7 @@ Free text about the second question.
 
     #[test]
     fn a_file_needs_a_one_line_title_questions_and_unique_numbers() {
-        let q = |number| Entry::new(n(number), "Q", "").unwrap();
+        let q = |number| Entry::new(n(number), "Q").unwrap();
 
         assert_eq!(QuestionsFile::new("", vec![q(1)]), Err(ComposeError::InvalidTitle));
         assert_eq!(QuestionsFile::new("a\nb", vec![q(1)]), Err(ComposeError::InvalidTitle));
@@ -1224,11 +1257,13 @@ Free text about the second question.
 
     #[test]
     fn a_composed_file_renders_in_the_format_the_agents_write() {
-        let first = Entry::new(n(1), "Which store?", "a) in memory\nb) on disk")
+        let first = Entry::new(n(1), "Which store?")
+            .unwrap()
+            .with_body("a) in memory\nb) on disk")
             .unwrap()
             .recommend("a) — simpler (inv-opus)")
             .unwrap();
-        let second = Entry::new(n(2), "Sure?", "").unwrap();
+        let second = Entry::new(n(2), "Sure?").unwrap();
         let file = QuestionsFile::new("Questions — task-1", vec![first, second]).unwrap();
 
         assert_eq!(
@@ -1303,12 +1338,12 @@ b) on disk
     fn the_marker_is_the_last_line_and_can_be_taken_away() {
         let mut file = QuestionsFile::parse(AGENT_FILE).unwrap();
 
-        file.mark_answered(true);
+        file.mark_answered();
         assert!(file.is_answered());
         assert!(file.render().ends_with("**Verdict:**\n\n**ANSWERED**\n"));
-        file.mark_answered(true);
+        file.mark_answered();
         assert_eq!(file.render().matches("**ANSWERED**").count(), 1);
-        file.mark_answered(false);
+        file.unmark_answered();
 
         assert!(!file.is_answered());
         assert!(!file.render().contains("ANSWERED"));
@@ -1526,7 +1561,7 @@ b) on disk
             Err(ParseError::DuplicateLabel {
                 line: line(4),
                 number: n(1),
-                label: "Recommended"
+                label: RepeatedLabel::Recommended
             })
         );
         assert_eq!(
@@ -1534,7 +1569,7 @@ b) on disk
             Err(ParseError::DuplicateLabel {
                 line: line(7),
                 number: n(2),
-                label: "Verdict"
+                label: RepeatedLabel::Verdict
             })
         );
     }
@@ -1674,7 +1709,7 @@ b) on disk
         file.set_instructions("Answer every question.");
         file.set_verdict(n(1), Some(Verdict::Accept)).unwrap();
         file.set_verdict(n(2), Some(own("something else"))).unwrap();
-        file.mark_answered(true);
+        file.mark_answered();
 
         let expanded = file
             .expand(|recommendation| format!("accepted: {recommendation}"))

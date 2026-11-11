@@ -23,7 +23,7 @@ pub use item::{
 pub use member::{Member, MemberError, Participant, QuestionError};
 pub use question::{AnswerBeforeQuestion, AnsweredVia, Question, QuestionState};
 pub use run::{Run, RunEnd, RunError, RunState};
-pub use team::{Crew, CrewError, MergeMode, ReviewerProblem, TaskListText, Team, TeamError};
+pub use team::{Crew, CrewError, MergeMode, ReviewerProblem, TaskListText, Team, TeamError, TeamMembers};
 pub use values::{CommitId, InvalidCommitId, InvalidTimestamp, PrNumber, SessionId, Timestamp};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -113,7 +113,7 @@ pub enum StateError {
     #[error(transparent)]
     UnsupportedSchema(#[from] UnsupportedSchema),
     /// The text is not a state: not JSON, a field missing or unknown, or a value that is not valid.
-    #[error("the state is not valid: {source}")]
+    #[error("the state is not valid")]
     Malformed {
         /// The parser's reason, with the line and column.
         source: serde_json::Error,
@@ -480,7 +480,7 @@ mod tests {
         assert_eq!(
             state.add_reviewer(&team_id(1), member(32, normal("claude-1"))),
             Err(AddReviewerError::Problem(ReviewerProblem::NotInvestigator {
-                name: String::from("claude-1")
+                agent: normal("claude-1")
             }))
         );
         assert_eq!(state, before);

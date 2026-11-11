@@ -79,7 +79,7 @@ pub enum ProtocolError {
     #[error(transparent)]
     UnsupportedVersion(#[from] UnsupportedVersion),
     /// The line is not a message: not JSON, a field missing or unknown, or a value that is not valid.
-    #[error("the line is not a valid message: {source}")]
+    #[error("the line is not a valid message")]
     Malformed {
         /// The parser's reason, with the column.
         source: serde_json::Error,
