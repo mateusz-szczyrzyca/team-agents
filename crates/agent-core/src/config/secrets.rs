@@ -60,8 +60,17 @@ impl TryFrom<String> for Secret {
     type Error = InvalidSecret;
 
     fn try_from(text: String) -> Result<Self, Self::Error> {
-        let _ = (MAX_SECRET_LEN, &text);
-        Ok(Self(text))
+        let refuse = |rule| Err(InvalidSecret { rule });
+        if text.is_empty() {
+            return refuse(ValueRule::Empty);
+        }
+        if text.len() > MAX_SECRET_LEN {
+            return refuse(ValueRule::TooLong { max: MAX_SECRET_LEN });
+        }
+        match text.chars().find(|c| c.is_control()) {
+            Some(bad) => refuse(ValueRule::ForbiddenChar(bad)),
+            None => Ok(Self(text)),
+        }
     }
 }
 
@@ -76,8 +85,21 @@ pub struct Position {
 
 /// What to add to the message of [`SecretsError::Parse`] for the place of the fault, if it is known.
 fn place(at: Option<Position>) -> String {
-    let _ = at;
-    String::new()
+    match at {
+        Some(Position { line, column }) => format!(" at line {line}, column {column}"),
+        None => String::new(),
+    }
+}
+
+/// Where in `text` the fault `err` is, if `toml` says and it is a place in the text.
+fn position(text: &str, err: &toml::de::Error) -> Option<Position> {
+    let before = text.get(..err.span()?.start)?;
+    let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
+    let column = before.get(line_start..)?.chars().count();
+    Some(Position {
+        line: NonZeroUsize::MIN.saturating_add(before.matches('\n').count()),
+        column: NonZeroUsize::MIN.saturating_add(column),
+    })
 }
 
 /// Why a `secrets.toml` text is not valid [`Secrets`].
@@ -119,6 +141,21 @@ pub struct Secrets {
     notification_env: BTreeMap<EnvName, Secret>,
 }
 
+/// The shape of `secrets.toml`; [`Secrets::parse`] is the only way to read one.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSecrets {
+    /// See [`Secrets::github_token`].
+    #[serde(default)]
+    github_token: Option<Secret>,
+    /// The `[agent_env]` table.
+    #[serde(default)]
+    agent_env: BTreeMap<EnvName, Secret>,
+    /// The `[notification_env]` table.
+    #[serde(default)]
+    notification_env: BTreeMap<EnvName, Secret>,
+}
+
 impl Secrets {
     /// Reads the text of a `secrets.toml` whose file has the permission bits `file_mode` (`st_mode`, file type
     /// bits allowed). The mode is a parameter so that no secret is read from a file others can read.
@@ -128,8 +165,30 @@ impl Secrets {
     /// [`MAX_SECRETS_BYTES`]; [`SecretsError::Parse`] for text that is not valid TOML or not the format of the file.
     /// The mode is checked first, then the size, then the text.
     pub fn parse(text: &str, file_mode: u32) -> Result<Self, SecretsError> {
-        let _ = (text, file_mode, GROUP_AND_OTHER_BITS, PERMISSION_BITS);
-        Ok(Self::default())
+        if file_mode & GROUP_AND_OTHER_BITS != 0 {
+            return Err(SecretsError::Mode {
+                mode: file_mode & PERMISSION_BITS,
+            });
+        }
+        if text.len() > MAX_SECRETS_BYTES {
+            return Err(SecretsError::TooLarge {
+                len: text.len(),
+                max: MAX_SECRETS_BYTES,
+            });
+        }
+        // `toml`'s error is not kept: it quotes the refused line, which may hold a secret (SEC-2).
+        let RawSecrets {
+            github_token,
+            agent_env,
+            notification_env,
+        } = toml::from_str(text).map_err(|err| SecretsError::Parse {
+            at: position(text, &err),
+        })?;
+        Ok(Self {
+            github_token,
+            agent_env,
+            notification_env,
+        })
     }
 
     /// The token of the GitHub account the agents act as, if the file has one.
