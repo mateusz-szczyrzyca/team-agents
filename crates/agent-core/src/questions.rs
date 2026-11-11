@@ -472,8 +472,8 @@ impl Entry {
         }
     }
 
-    /// The question as text for `rendering`: its line, its text and its parts, each part after a blank line.
-    fn render_as(&self, rendering: &Rendering<'_>) -> String {
+    /// The question as text: its line, its text and its parts, each part after a blank line.
+    fn render(&self) -> String {
         let mut out = if self.title.is_empty() {
             format!("{QUESTION_PREFIX}{}.\n", self.number)
         } else {
@@ -487,25 +487,12 @@ impl Entry {
             out.push('\n');
             out.push_str(&match part {
                 Part::Recommended(text) => labelled(RECOMMENDED_LABEL, text),
-                Part::Verdict(verdict) => labelled(VERDICT_LABEL, &self.verdict_text(verdict.as_ref(), rendering)),
+                Part::Verdict(verdict) => labelled(VERDICT_LABEL, verdict_text(verdict.as_ref())),
                 Part::Other { label, text } => labelled(label, text),
             });
             out.push('\n');
         }
         out
-    }
-
-    /// The text of a verdict part for `rendering`: for the agent, `ok` becomes the words that say the human accepted
-    /// the recommendation.
-    fn verdict_text(&self, verdict: Option<&Verdict>, rendering: &Rendering<'_>) -> String {
-        match (verdict, rendering) {
-            (None, _) => String::new(),
-            (Some(Verdict::Own(own)), _) => own.as_str().to_owned(),
-            (Some(Verdict::Accept), Rendering::Human) => ACCEPT_WORD.to_owned(),
-            (Some(Verdict::Accept), Rendering::Agent { accepted }) => {
-                accepted(self.recommendation().unwrap_or_default())
-            }
-        }
     }
 }
 
@@ -548,6 +535,7 @@ impl QuestionsFile {
                 max: MAX_QUESTIONS_BYTES,
             });
         }
+        // A byte order mark that an editor put at the start is not part of the text; without one the text is as it is.
         let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         let mut preamble: Vec<&str> = Vec::new();
         let mut drafts: Vec<Draft<'_>> = Vec::new();
@@ -592,16 +580,11 @@ impl QuestionsFile {
     /// The file as text. Parsing it gives an equal file.
     #[must_use]
     pub fn render(&self) -> String {
-        self.render_as(&Rendering::Human)
-    }
-
-    /// The file as text for `rendering`.
-    fn render_as(&self, rendering: &Rendering<'_>) -> String {
         let mut blocks: Vec<String> = Vec::new();
         if let Some(title) = &self.title {
             blocks.push(format!("{TITLE_PREFIX}{title}"));
         }
-        if matches!(rendering, Rendering::Human) && !self.instructions.is_empty() {
+        if !self.instructions.is_empty() {
             blocks.push(quote(&self.instructions));
         }
         if !self.intro.is_empty() {
@@ -611,9 +594,9 @@ impl QuestionsFile {
         if !out.is_empty() {
             out.push_str("\n\n");
         }
-        let entries: Vec<String> = self.entries.iter().map(|entry| entry.render_as(rendering)).collect();
+        let entries: Vec<String> = self.entries.iter().map(Entry::render).collect();
         out.push_str(&entries.join("\n"));
-        if matches!(rendering, Rendering::Human) && self.answered {
+        if self.answered {
             out.push('\n');
             out.push_str(MARKER_LINE);
             out.push('\n');
@@ -724,21 +707,37 @@ impl QuestionsFile {
     /// [`ExpandError::AcceptedText`] when the words for an accepted recommendation are not a possible verdict (blank,
     /// `ok`, or a line that would read as the file's structure).
     pub fn expand(&self, accepted: impl Fn(&str) -> String) -> Result<String, ExpandError> {
-        self.answers()?;
-        Ok(self.render_as(&Rendering::Agent { accepted: &accepted }))
+        let answers = self.answers()?;
+        let mut expanded = self.clone();
+        expanded.instructions.clear();
+        expanded.answered = false;
+        for answer in answers {
+            let Choice::Recommendation(recommendation) = answer.choice else {
+                continue;
+            };
+            let words = OwnAnswer::try_from(accepted(&recommendation)).map_err(|source| ExpandError::AcceptedText {
+                question: answer.number,
+                source,
+            })?;
+            for entry in expanded
+                .entries
+                .iter_mut()
+                .filter(|entry| entry.number == answer.number)
+            {
+                entry.set_verdict(Some(Verdict::Own(words.clone())));
+            }
+        }
+        Ok(expanded.render())
     }
 }
 
-/// Who a file is rendered for.
-enum Rendering<'a> {
-    /// The human: the instructions, the verdicts as written and the marker.
-    Human,
-    /// The agent that asked: no instructions and no marker, and `accepted` turns the recommendation of a question
-    /// whose verdict is `ok` into the words that tell the agent it was accepted.
-    Agent {
-        /// Makes the words of an accepted recommendation.
-        accepted: &'a dyn Fn(&str) -> String,
-    },
+/// The text of a verdict part: nothing, `ok` or the own answer.
+const fn verdict_text(verdict: Option<&Verdict>) -> &str {
+    match verdict {
+        None => "",
+        Some(Verdict::Accept) => ACCEPT_WORD,
+        Some(Verdict::Own(answer)) => answer.0.as_str(),
+    }
 }
 
 /// A question being read: its lines, not yet told apart.
@@ -880,8 +879,7 @@ fn read_preamble(lines: &[&str]) -> Preamble {
     while lines.next_if(|line| line.trim().is_empty()).is_some() {}
     let mut quoted: Vec<&str> = Vec::new();
     while let Some(line) = lines.next_if(|line| line.starts_with('>')) {
-        let unquoted = line.strip_prefix('>').unwrap_or(line);
-        quoted.push(unquoted.strip_prefix(' ').unwrap_or(unquoted));
+        quoted.push(unquote(line));
     }
     let intro: Vec<&str> = lines.collect();
     Preamble {
@@ -889,6 +887,12 @@ fn read_preamble(lines: &[&str]) -> Preamble {
         instructions: trimmed(&quoted),
         intro: trimmed(&intro),
     }
+}
+
+/// A line of a block quote without its `>` and the one space after it; a line that is not quoted stays as it is.
+fn unquote(line: &str) -> &str {
+    let rest = line.strip_prefix('>').unwrap_or(line);
+    rest.strip_prefix(' ').unwrap_or(rest)
 }
 
 /// `## N. title` read as a question's line; `None` for any other line.

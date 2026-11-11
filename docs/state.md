@@ -314,7 +314,8 @@ there is no recommendation — so that the human is told all at once.
 `QuestionsFile::expand` returns the answered file for the agent: the instructions and the marker removed, and a verdict
 `ok` replaced by words that tell the agent the human accepted the recommendation, followed by the recommendation. The
 words are a template (`prompts/harness/questions/accepted.md`, variable `{{recommendation}}`) that the runtime renders and
-passes in. An unanswered file is not expanded.
+passes in. An unanswered file is not expanded, and words that cannot be a verdict (blank, `ok`, a line that reads as the
+file's structure) are an error that names the question.
 
 ### Reading and writing
 
