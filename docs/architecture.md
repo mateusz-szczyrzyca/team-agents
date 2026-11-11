@@ -64,6 +64,16 @@ item:  pending -> in_progress -> in_review -> approved -> done (final)
        in_progress -> pending (its member left)    in_review -> in_progress (a fix pass)
 ```
 
+### The configuration and the task list (`agent-core`)
+
+| Module | Types |
+|---|---|
+| `config` | `Config` (read from `agents.toml`) with its `AgentConfig`, `InvestigatorConfig`, `RepoConfig` and sections; `Secrets` (from `secrets.toml`) with `Secret`; the typed values (`Language`, `Program`, `AbsolutePath`, `CommandLine`, `Minutes`, `LoopbackAddr`, ...); `ConfigError`, `SecretsError`, `InvalidValue`. See [`configuration.md`](configuration.md) |
+| `task_list` | `TaskList`, `Feature`, `Item` (title, description, expected result, checks) and `TaskListError`, whose every variant but two carries its line. See [`task-list.md`](task-list.md) |
+
+Both take text, not paths: reading `agents.toml`, `secrets.toml` (and the file mode `Secrets::parse` needs) and a
+`-f` task list is the runtime's job, so the core stays free of I/O.
+
 ## Process model
 
 `agent daemon`, a systemd user service, is the only owner of the state and of every model run. Every other command
@@ -99,7 +109,7 @@ review rules from the main checkout, where the review file is named `rust-review
 - **One item, one PR.** The PR description quotes the item in full under `## Task`; the reviewers check the PR
   against it and run its checks. A file outside the item's expected list, an expected part left out, or a check that
   cannot pass yet needs its reason in the PR description. Each round starts from its own file,
-  `rounds/round-N.M.md` (this item: [`rounds/round-1.1.md`](../rounds/round-1.1.md)).
+  `rounds/round-N.M.md` ([`rounds/round-1.1.md`](../rounds/round-1.1.md), [`rounds/round-2.1.md`](../rounds/round-2.1.md)).
 - **Every item stands alone:** it compiles and passes the whole gate on `main` without the other items of its
   feature, and uses only code from the features its feature's "Depends on" line names, all of them merged. Items of
   one feature are taken in order; features whose dependencies are merged run in parallel.

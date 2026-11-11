@@ -1,0 +1,126 @@
+# agents.toml — the configuration of the agent harness. docs/configuration.md describes every setting.
+# Copy it to $AGENTS_HOME/agents.toml and edit. Secrets (tokens, API keys) go to secrets.toml, mode 0600, never here.
+
+# The language of what only you read: questions and notifications. Commits, pull requests, reviews and code stay
+# in English.
+language = "English"
+
+# --- Agents ----------------------------------------------------------------------------------------------------
+# One table per agent. The name is lowercase letters, digits and '-'; an agent runs one task at a time, so add
+# more entries (claude-2, ...) for more parallel work.
+#   cli   claude | codex | gemini (Antigravity, the `agy` command) | opencode (any API provider)
+#   model optional; without it the CLI runs its default model
+#   args  optional extra arguments for the CLI, an array: every element is one argument, nothing is split
+
+[agents.claude-1]
+cli = "claude"
+model = "sonnet"
+
+[agents.codex-1]
+cli = "codex"
+args = ["-c", "model_reasoning_effort=\"medium\""]
+
+[agents.gemini-1]
+cli = "gemini"
+
+# A worker, a cheap model for simple tasks (opencode takes "provider/model"); list it under `workers` below:
+# [agents.deepinfra-glm]
+# cli = "opencode"
+# model = "deepinfra/zai-org/GLM-5.3-Flash"
+
+# --- Investigators (advanced, expensive models) -------------------------------------------------------------------
+# They review every pull request, and lead the teams they are in. Every pull request gets two reviews from
+# investigators outside the team, so keep at least two, more than the investigators you put in one team.
+
+[investigators.inv-opus]
+cli = "claude"
+model = "opus"
+
+[investigators.inv-codex]
+cli = "codex"
+args = ["-c", "model_reasoning_effort=\"high\""]
+
+# --- Which agents are normal, which are workers -----------------------------------------------------------------
+# Every agent is in exactly one of the two lists. `normal`: takes task-list items, solo or in a team, and may
+# coordinate a team. `workers`: never coordinate and take no items; they serve `delegate` requests, the first free
+# worker in the order of this list, so put the stronger ones first.
+
+[tiers]
+normal = ["claude-1", "codex-1", "gemini-1"]
+workers = []
+
+# --- Programs ------------------------------------------------------------------------------------------------------
+# A bare name is looked up on `agent_path`, the PATH the agents see (toolchains: cargo, go, ...); an absolute path
+# is used as it is. Paths start at the root: there is no `~`. Every setting here has a default.
+
+[binaries]
+claude = "/home/you/.local/bin/claude"
+codex = "/home/you/.local/bin/codex"
+agy = "/home/you/.local/bin/agy"
+opencode = "/home/you/.local/bin/opencode"
+agentbus = "/home/you/.local/bin/agentbus"
+# Serena (https://github.com/oraios/serena) finds code through language servers; without this line it is not used.
+# serena = "serena"
+agent_path = ["/home/you/.local/bin", "/home/you/.cargo/bin", "/home/you/go/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+
+# --- Hang watchdog and limits ---------------------------------------------------------------------------------------
+# A run with no activity for `hang_minutes` is killed and resumed from its session; after `hang_strikes` hangs in a
+# row without progress the task is marked hung.
+
+[watchdog]
+hang_minutes = 30
+hang_strikes = 3
+
+# An exhausted quota pauses the task until the reset time the CLI gives; `quota_pause_minutes` is the pause when it
+# gives none. A rate limit (HTTP 429) is a short pause. `tail_lines`: how many of a run's last lines of error output
+# are read to recognise these limits.
+
+[limits]
+quota_pause_minutes = 30
+rate_limit_pause_minutes = 5
+tail_lines = 30
+
+# Reviews: "changes requested" goes back to the team at most `fix_passes` times; then you are asked.
+
+[review]
+fix_passes = 5
+
+# --- Git and GitHub ----------------------------------------------------------------------------------------------
+# The identity of every commit an agent makes; {agent} is the agent's name. `signing_key` is an SSH private key that
+# signs the commits ("Verified" on GitHub); without it commits are unsigned, even if your own git signs everything.
+
+[git]
+name = "{agent} (team-agents)"
+email = "{agent}@team-agents.invalid"
+# signing_key = "/home/you/.ssh/agents_signing"
+
+# Text on GitHub is data, not instructions, unless these accounts wrote it. Put the human's and the agents'
+# own account here; the agents' token is in secrets.toml.
+
+[github]
+trusted_accounts = ["your-github-login", "your-agents-github-login"]
+
+# --- Notifications -------------------------------------------------------------------------------------------------
+# `command` is run with the path of a notification file as its last argument: the first line is the title, the rest
+# the body. Without it notifications are only files, in `directory` (default: notifications/ in $AGENTS_HOME).
+
+[notifications]
+# command = ["/home/you/bin/notify-ntfy"]
+# directory = "/home/you/agents/notifications"
+
+# --- Dashboard -----------------------------------------------------------------------------------------------------
+# It listens on a loopback address only; remote access goes through `tailscale serve`, and only the Tailscale
+# logins listed here get in.
+
+[web]
+listen = "127.0.0.1:8787"
+allowed_logins = ["you@example.com"]
+
+# --- Repositories --------------------------------------------------------------------------------------------------
+# One table per repository, named as GitHub names it. `gate` is the command (a program and its arguments, never a
+# shell line) that must pass before a pull request is opened, run in the worktree, for at most `gate_timeout_minutes`.
+
+[repos.team-agents]
+base_branch = "main"
+gate = ["make", "gate"]
+gate_timeout_minutes = 30

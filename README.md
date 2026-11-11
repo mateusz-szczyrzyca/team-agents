@@ -1646,6 +1646,12 @@ make integration        # real agent CLIs and accounts (costs usage)
   `rust-toolchain.toml` installs itself on the first cargo command. `make gate` runs `make rust` as its `rust` step.
   `make lint` also runs the full Rust gate, so the existing CI lint step checks Rust formatting, clippy, tests and
   documentation. `make test` includes it too.
+  `agent-core` already holds two public contracts of the new `agent`, both pure parsers with no file access yet:
+  the configuration (`agents.toml`, `secrets.toml`; `Config`, `Secrets`) and the task list that `agent run` will take
+  (`TaskList::parse`). Their formats and rules are in [`docs/configuration.md`](docs/configuration.md) and
+  [`docs/task-list.md`](docs/task-list.md); [`config/agents.example.toml`](config/agents.example.toml) is the
+  configuration template to copy. The installation does not read either file or accept the task list format until
+  the runtime items of the plan (4.1 and later) wire them in: today they are checked by tests only.
 
 - **Go candidate boundaries (R03).** The Go application (`agent/`) owns injected executor, clock and
   random boundaries; unconfigured execution is denied. Subprocess execution covers argv, env, dir,
