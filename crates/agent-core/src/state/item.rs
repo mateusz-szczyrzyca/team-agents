@@ -551,7 +551,8 @@ impl ItemProgress {
     /// # Errors
     /// [`AdvanceError::Transition`] when [`PhaseKind::successors`] does not allow the change;
     /// [`AdvanceError::Reviews`] when the reviews of the new phase do not fit it ([`ItemPhase::check_reviews`]), or
-    /// when no review asked for the fix pass the change would record.
+    /// when no review asked for the fix pass the change would record; [`AdvanceError::ListedCompletion`] when
+    /// `next` completes the item as [`Completion::Listed`], which only [`ItemProgress::new`] gives.
     pub fn advance(&mut self, next: ItemPhase) -> Result<(), AdvanceError> {
         let (from, to) = (self.phase.kind(), next.kind());
         if !from.successors().contains(&to) {
@@ -561,6 +562,14 @@ impl ItemProgress {
                 to,
             }
             .into());
+        }
+        if matches!(
+            next,
+            ItemPhase::Done {
+                completion: Completion::Listed
+            }
+        ) {
+            return Err(AdvanceError::ListedCompletion { item: self.id });
         }
         next.check_reviews()
             .map_err(|source| AdvanceError::Reviews { item: self.id, source })?;
@@ -581,14 +590,31 @@ impl ItemProgress {
     /// already has its outcome.
     pub fn submit_review(
         &mut self,
-        _task: &TaskId,
-        _verdict: ReviewVerdict,
-        _at: Timestamp,
+        task: &TaskId,
+        verdict: ReviewVerdict,
+        at: Timestamp,
     ) -> Result<(), SubmitReviewError> {
-        Err(SubmitReviewError::NotInReview {
-            item: self.id,
-            phase: self.phase.kind(),
-        })
+        let item = self.id;
+        let phase = self.phase.kind();
+        let ItemPhase::InReview { reviews, .. } = &mut self.phase else {
+            return Err(SubmitReviewError::NotInReview { item, phase });
+        };
+        let Some(review) = reviews.iter_mut().find(|review| &review.task == task) else {
+            return Err(SubmitReviewError::UnknownReview {
+                item,
+                task: task.clone(),
+            });
+        };
+        match review.outcome {
+            ReviewOutcome::Pending => {
+                review.outcome = ReviewOutcome::Submitted { verdict, at };
+                Ok(())
+            }
+            ReviewOutcome::Submitted { .. } => Err(SubmitReviewError::AlreadySubmitted {
+                item,
+                task: task.clone(),
+            }),
+        }
     }
 
     /// Gives an item that is in progress or fixing to another member.

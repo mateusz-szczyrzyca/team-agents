@@ -157,6 +157,13 @@ a round that every reviewer approved, and contains a submitted `REQUEST_CHANGES`
 the new phase and of the round it leaves, and reading checks the same (the phase, and every fix pass), so a state
 that `advance` could not have made is not read. Other reviews in a fix-pass round may still be pending.
 
+A review that waits (`pending`) receives its outcome through `submit_review` (`ItemMut::submit_review`): by the
+reviewer's task, only while the item is `in_review`, and once — a second outcome for the same review is an error, and
+so is a task that was not asked for a review. The round is then `advance`d: to `fixing` once a `REQUEST_CHANGES` is in,
+to `approved` with every review approving. `done` as `listed` is only the starting state of an item the list marks
+`[x]`: `advance` refuses it (`ListedCompletion`), because the state would save but not load again; an item a team
+finishes is `done` as `merged`.
+
 #### Values
 
 | Value | Form |
