@@ -793,6 +793,13 @@ tests/unit/investigation_task_in_pr.bats	the task block goes first in a PR descr
 tests/unit/investigation_task_in_pr.bats	a task longer than the PR description can hold is cut, saying so; the reviewers still get it whole	blackbox	R31	-	planned
 tests/unit/investigation_task_in_pr.bats	--investigation: the PR description gets the task first, and the reviewer's prompt holds it as the task under review	blackbox	R31	-	planned
 tests/unit/investigation_task_in_pr.bats	the merger is told the script keeps the task first in the PR description	source	R31	-	planned
+tests/unit/investigation_fix_loop.bats	a review asking for changes sends the merger back on its branch with the findings: the same PR, no other	blackbox	R31	-	planned
+tests/unit/investigation_fix_loop.bats	an incomplete review is a pass to fix as well	blackbox	R31	-	planned
+tests/unit/investigation_fix_loop.bats	after VERIFY_MAX_FIX_PASSES passes a review asking for changes goes to the human	blackbox	R31	-	planned
+tests/unit/investigation_fix_loop.bats	a ready review ends the loop as before: the PR waits for the human's merge	blackbox	R31	-	planned
+tests/unit/investigation_fix_loop.bats	once its PR exists a merger that fails is not replaced: no other PR, the human decides	blackbox	R31	-	planned
+tests/unit/investigation_fix_loop.bats	each pass is reviewed by a new outsider; with every outsider used, the one whose review is the oldest	blackbox	R31	-	planned
+tests/unit/investigation_fix_loop.bats	the prompts: a reviewer commits nothing and opens no PR; a merger sent back pushes to its branch	source	R31	-	planned
 tests/unit/serena_project_sync.bats	a run copies the repository's Serena project file over a worktree's that differs	blackbox	R31	-	planned
 tests/unit/serena_project_sync.bats	a repository without a Serena project file leaves the worktree's as it is	blackbox	R31	-	planned
 tests/unit/allow_task.bats	the allowances of a task's rounds are kept under its team or, of no team, under the task itself	blackbox	R31	-	planned
