@@ -43,8 +43,10 @@ pub struct Request {
 pub struct RequestId(pub u64);
 
 /// Who sends a request.
+///
+/// Reading refuses fields that the variant does not have, `cli` included (see `ClientWire`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(from = "ClientWire", tag = "kind", rename_all = "snake_case")]
 pub enum Client {
     /// The `agent` command line: the human at the terminal.
     Cli,
@@ -53,6 +55,29 @@ pub enum Client {
         /// The Tailscale login the dashboard saw.
         login: TailscaleLogin,
     },
+}
+
+/// A [`Client`] as it is read. serde ignores the fields beside the tag of an internally tagged unit variant, so `cli`
+/// is read as a variant without fields, which refuses them like every other variant.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum ClientWire {
+    /// See [`Client::Cli`].
+    Cli {},
+    /// See [`Client::Dashboard`].
+    Dashboard {
+        /// See [`Client::Dashboard`].
+        login: TailscaleLogin,
+    },
+}
+
+impl From<ClientWire> for Client {
+    fn from(wire: ClientWire) -> Self {
+        match wire {
+            ClientWire::Cli {} => Self::Cli,
+            ClientWire::Dashboard { login } => Self::Dashboard { login },
+        }
+    }
 }
 
 /// What a client asks of the daemon.
