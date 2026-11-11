@@ -135,7 +135,7 @@ An item's progress is `{id, phase, fix_passes?, gate?}`. The `phase` carries exa
 | `in_review` | `pr`, `reviews[]` | `in_review` | `fixing` (changes requested), `approved` |
 | `fixing` | `assignee`, `branch`, `pr` | `in_progress` | `in_review` |
 | `approved` | `pr`, `reviews[]` | `approved` | `done` |
-| `done` | `completion`: `listed` (the list marked it `[x]`) or `merged` (`pr`, `at`) | `done` | — |
+| `done` | `completion`: `listed` (the list marked it `[x]`; never set by `advance`) or `merged` (`pr`, `at`) | `done` | — |
 
 The table is `PhaseKind::successors`; every change in it is a change `ItemStatus` allows, and every change `ItemStatus`
 allows is in it (two tests). The phase `fixing` exists so that the pull request survives a fix pass. Leaving
@@ -155,7 +155,9 @@ The reviews of a round (`in_review`, `approved`, a fix pass) name no reviewer an
 carries at least one review and every one is a submitted `APPROVE`. A fix pass records at least one review, is not
 a round that every reviewer approved, and contains a submitted `REQUEST_CHANGES`. `advance` checks the reviews of
 the new phase and of the round it leaves, and reading checks the same (the phase, and every fix pass), so a state
-that `advance` could not have made is not read. Other reviews in a fix-pass round may still be pending.
+that `advance` could not have made is not read. Other reviews in a fix-pass round may still be pending. A pending review
+of the round in `in_review` receives its outcome once, through `submit_review`; a rejection that arrives that way then
+sends the item to `fixing`.
 
 #### Values
 
@@ -366,8 +368,10 @@ These choices are in the model and are expensive to change once state files exis
     little to change a summary (what does a new team look like? which count does an item leaving `pending`
     change when others are pending or in review?). The daemon sends `team_updated` after every change that alters a
     summary, right after the event that says what happened.
-14. **Strict in both files and lines**: unknown fields are errors, and the protocol version is checked first. A newer
-    client against an older daemon is told so, not misread.
+14. **Strict in both files and lines**: unknown fields are errors (also beside a unit variant such as the `cli` client),
+    and the protocol version is checked first. A newer client against an older daemon is told so, not misread. Checked
+    types and tagged enums have no public raw `Type::deserialize`: the derive is on a private copy, so every way in
+    validates.
 15. **A state is changed through handles, never through `&mut` to a whole value**: `State::team_mut` gives a `TeamMut`,
     which gives an `ItemMut`, a `CrewMut` and `MemberMut`s. Each reads like the value it stands for (`Deref`) and offers
     only that value's checked operations (`advance`, `transition`, `begin_run`, ...), so no caller can overwrite a team,
