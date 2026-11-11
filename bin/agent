@@ -4662,7 +4662,8 @@ serena_args() {
 }
 
 # worktree_exclude path — that path of the worktree never committed: a line in the repository's info/exclude (shared
-# by its worktrees), added once. For .serena/, also seeds .serena/project.yml from REPO_ROOT when present.
+# by its worktrees), added once. For .serena/, also copies REPO_ROOT's .serena/project.yml over the worktree's when
+# they differ: the repository's is the one the human edits (a language added reaches the worktrees already made)
 worktree_exclude() {
   local excl
   excl="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude" || return 1
@@ -4670,9 +4671,11 @@ worktree_exclude() {
   if [[ ! -f $excl ]] || ! grep -qxF "$1" "$excl"; then
     echo "$1" >> "$excl"
   fi
-  if [[ $1 == .serena/ && -n ${REPO_ROOT:-} && -f $REPO_ROOT/.serena/project.yml && ! -f $WORKTREE/.serena/project.yml ]]; then
-    mkdir -p "$WORKTREE/.serena"
-    cp "$REPO_ROOT/.serena/project.yml" "$WORKTREE/.serena/project.yml"
+  if [[ $1 == .serena/ && -n ${REPO_ROOT:-} && $REPO_ROOT != "$WORKTREE" && -f $REPO_ROOT/.serena/project.yml ]] \
+    && ! cmp -s "$REPO_ROOT/.serena/project.yml" "$WORKTREE/.serena/project.yml"; then
+    mkdir -p "$WORKTREE/.serena" || return 1
+    cp "$REPO_ROOT/.serena/project.yml" "$WORKTREE/.serena/project.yml" || return 1
+    log_info serena_project_synced "task=${RUNNER_ID:-}" "worktree=$WORKTREE"
   fi
 }
 
