@@ -467,6 +467,9 @@ fn generate_id(kind: IdKind, clock: &impl Clock, rng: &mut impl Rng) -> Result<S
 }
 
 /// The suffix character for `n`, which is below [`SUFFIX_RADIX`]: `0-9`, then `a-z`.
+///
+/// # Panics
+/// In debug builds, when `n` is not below [`SUFFIX_RADIX`].
 fn suffix_char(n: u8) -> char {
     debug_assert!(n < SUFFIX_RADIX, "suffix digit {n} out of range");
     char::from(if n < 10 { b'0' + n } else { b'a' + (n - 10) })
