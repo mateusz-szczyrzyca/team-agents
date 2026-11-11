@@ -275,7 +275,7 @@ impl Member {
     ///
     /// # Errors
     /// [`QuestionError::StillOpen`] when the last round is open; [`QuestionError::WrongRound`] when the round is not
-    /// the next one.
+    /// the next one; [`QuestionError::RoundsExhausted`] when the last round is the largest a round can be.
     pub fn ask_question(&mut self, question: Question) -> Result<(), QuestionError> {
         check_next_question(self.questions.last(), &question)?;
         self.questions.push(question);
@@ -306,7 +306,13 @@ fn check_next_question(last: Option<&Question>, question: &Question) -> Result<(
     if let Some(open) = last.filter(|last| last.is_open()) {
         return Err(QuestionError::StillOpen { round: open.round() });
     }
-    let expected = last.map_or(NonZeroU32::MIN, |last| last.round().saturating_add(1));
+    let expected = match last {
+        None => NonZeroU32::MIN,
+        Some(last) => last
+            .round()
+            .checked_add(1)
+            .ok_or(QuestionError::RoundsExhausted { last: last.round() })?,
+    };
     if question.round() != expected {
         return Err(QuestionError::WrongRound {
             expected,
