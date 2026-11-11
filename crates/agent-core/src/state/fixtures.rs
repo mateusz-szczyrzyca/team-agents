@@ -1,6 +1,10 @@
 //! Builders for the tests of the state: names, IDs, times and a small team.
 
+use std::fmt::Debug;
 use std::num::NonZeroU32;
+
+use serde::de::DeserializeOwned;
+use serde_json::error::Category;
 
 use super::{
     Crew, Member, MergeMode, Participant, PrNumber, PullRequest, Review, ReviewOutcome, TaskListText, Team, Timestamp,
@@ -78,11 +82,10 @@ pub(crate) fn member(n: u32, agent: Participant) -> Member {
     Member::new(task(n), agent)
 }
 
-/// `seconds` after 19:15:00 UTC on 2026-11-11, for up to an hour.
+/// `seconds` after 19:15:00 UTC on 2026-11-11.
 pub(crate) fn at(seconds: u32) -> Timestamp {
-    format!("2026-11-11T19:{:02}:{:02}Z", 15 + seconds / 60, seconds % 60)
-        .parse()
-        .unwrap()
+    let start: Timestamp = "2026-11-11T19:15:00Z".parse().unwrap();
+    Timestamp::from_utc(start.as_utc() + time::Duration::seconds(i64::from(seconds))).unwrap()
 }
 
 /// An absolute path.
@@ -139,4 +142,10 @@ pub(crate) fn team_of(n: u32, first_task: u32) -> Team {
     )
     .unwrap();
     Team::new(team_id(n), repo(), at(0), MergeMode::Autopilot, list(), crew)
+}
+
+/// Asserts that `value` is refused as a `T` because its data is not valid for it, not because it is no JSON.
+pub(crate) fn assert_refused<T: DeserializeOwned + Debug>(value: &serde_json::Value) {
+    let err = serde_json::from_value::<T>(value.clone()).unwrap_err();
+    assert_eq!(err.classify(), Category::Data, "{value}: {err}");
 }

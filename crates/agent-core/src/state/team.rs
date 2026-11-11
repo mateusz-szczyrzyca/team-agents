@@ -1,14 +1,16 @@
 //! Teams: who is in them and in which role, the task list they work through and the progress of each item.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
-use super::item::ItemProgress;
+use super::item::{Completion, ItemPhase, ItemProgress};
 use super::member::{Member, Participant};
 use super::values::Timestamp;
 use crate::config::RepoName;
 use crate::ids::{ItemId, TaskId, TeamId};
 use crate::kinds::{Role, Tier, keyword_enum};
-use crate::task_list::{TaskList, TaskListError};
+use crate::task_list::{ItemMark, TaskList, TaskListError};
 
 keyword_enum! {
     /// What happens to a pull request that both reviewers approve.
@@ -135,9 +137,7 @@ impl Crew {
     /// # Errors
     /// [`CrewError::WrongTier`] for a worker.
     pub fn solo(member: Member) -> Result<Self, CrewError> {
-        Ok(Self {
-            shape: Shape::Solo { member },
-        })
+        Self::try_from(Shape::Solo { member })
     }
 
     /// A coordinator (a normal agent or an investigator), members who take items (normal agents or investigators) and
@@ -146,12 +146,10 @@ impl Crew {
     /// # Errors
     /// [`CrewError`]: a participant of the wrong tier for its role, no member, a name or a task ID twice.
     pub fn team(coordinator: Member, members: Vec<Member>, workers: Vec<Member>) -> Result<Self, CrewError> {
-        Ok(Self {
-            shape: Shape::Team {
-                coordinator,
-                members,
-                workers,
-            },
+        Self::try_from(Shape::Team {
+            coordinator,
+            members,
+            workers,
         })
     }
 
@@ -167,17 +165,7 @@ impl Crew {
     /// Every member with its role: the solo agent, or the coordinator, the members and the workers in that order.
     #[must_use]
     pub fn roster(&self) -> Vec<(Role, &Member)> {
-        match &self.shape {
-            Shape::Solo { member } => vec![(Role::Solo, member)],
-            Shape::Team {
-                coordinator,
-                members,
-                workers,
-            } => std::iter::once((Role::Coordinator, coordinator))
-                .chain(members.iter().map(|member| (Role::Member, member)))
-                .chain(workers.iter().map(|worker| (Role::Worker, worker)))
-                .collect(),
-        }
+        self.shape.roster()
     }
 
     /// The member of task `task` with its role.
@@ -202,10 +190,56 @@ impl Crew {
     }
 }
 
+impl Shape {
+    /// Every member with its role: the solo agent, or the coordinator, the members and the workers in that order.
+    fn roster(&self) -> Vec<(Role, &Member)> {
+        match self {
+            Self::Solo { member } => vec![(Role::Solo, member)],
+            Self::Team {
+                coordinator,
+                members,
+                workers,
+            } => std::iter::once((Role::Coordinator, coordinator))
+                .chain(members.iter().map(|member| (Role::Member, member)))
+                .chain(workers.iter().map(|worker| (Role::Worker, worker)))
+                .collect(),
+        }
+    }
+
+    /// Checks the rules of a crew, in this order: the tiers, a member besides the coordinator, the names, the tasks.
+    fn check(&self) -> Result<(), CrewError> {
+        let roster = self.roster();
+        if let Some((role, member)) = roster.iter().find(|(role, member)| !tier_fits(*role, member.agent())) {
+            return Err(CrewError::WrongTier {
+                task: member.task().clone(),
+                role: *role,
+                tier: member.agent().tier(),
+            });
+        }
+        if matches!(self, Self::Team { members, .. } if members.is_empty()) {
+            return Err(CrewError::NoMembers);
+        }
+        let mut names = HashSet::new();
+        if let Some((_, member)) = roster.iter().find(|(_, member)| !names.insert(member.agent().name())) {
+            return Err(CrewError::DuplicateAgent {
+                name: member.agent().name().to_owned(),
+            });
+        }
+        let mut tasks = HashSet::new();
+        if let Some((_, member)) = roster.iter().find(|(_, member)| !tasks.insert(member.task())) {
+            return Err(CrewError::DuplicateTask {
+                task: member.task().clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
 impl TryFrom<Shape> for Crew {
     type Error = CrewError;
 
     fn try_from(shape: Shape) -> Result<Self, Self::Error> {
+        shape.check()?;
         Ok(Self { shape })
     }
 }
@@ -281,14 +315,14 @@ pub enum TeamError {
         found: Option<ItemId>,
     },
     /// An item the task list marks `[x]` is not done, or the other way round.
-    #[error("team {team}: item {item} is listed {listed} but its progress says otherwise")]
+    #[error("team {team}: item {item} is listed {listed:?} but its progress says otherwise")]
     ListedMismatch {
         /// The team.
         team: TeamId,
         /// The item.
         item: ItemId,
-        /// What the list says: `done` or `open`.
-        listed: &'static str,
+        /// What the list says.
+        listed: ItemMark,
     },
     /// A reviewer is not an investigator, or is in the crew, or two reviewers share a name or a task.
     #[error("team {team}: {reason}")]
@@ -345,8 +379,8 @@ impl Team {
             repo,
             created_at,
             merge,
+            items: initial_items(&task_list),
             task_list,
-            items: Vec::new(),
             crew,
             reviewers: Vec::new(),
         }
@@ -423,6 +457,21 @@ impl Team {
 
     /// Adds a reviewer.
     pub(super) fn add_reviewer(&mut self, member: Member) -> Result<(), ReviewerProblem> {
+        let name = member.agent().name();
+        if !tier_fits(Role::Reviewer, member.agent()) {
+            return Err(ReviewerProblem::NotInvestigator { name: name.to_owned() });
+        }
+        if self.crew.roster().iter().any(|(_, crew)| crew.agent().name() == name) {
+            return Err(ReviewerProblem::InCrew { name: name.to_owned() });
+        }
+        if self.reviewers.iter().any(|reviewer| reviewer.agent().name() == name) {
+            return Err(ReviewerProblem::DuplicateName { name: name.to_owned() });
+        }
+        if self.find(member.task()).is_some() {
+            return Err(ReviewerProblem::DuplicateTask {
+                task: member.task().clone(),
+            });
+        }
         self.reviewers.push(member);
         Ok(())
     }
@@ -450,11 +499,58 @@ impl Team {
     }
 }
 
+/// The progress of every item of `task_list` as a team starts: pending, or done for an item marked `[x]`.
+fn initial_items(task_list: &TaskListText) -> Vec<ItemProgress> {
+    task_list
+        .list()
+        .items()
+        .map(|item| ItemProgress::new(item.id, item.mark))
+        .collect()
+}
+
+/// Checks that `items` is one entry for each item of `task_list`, in order, and that an entry is done as listed if
+/// and only if the list marks its item `[x]`.
+fn check_items(team: &TeamId, task_list: &TaskListText, items: &[ItemProgress]) -> Result<(), TeamError> {
+    let listed: Vec<(ItemId, ItemMark)> = task_list.list().items().map(|item| (item.id, item.mark)).collect();
+    for position in 0..listed.len().max(items.len()) {
+        let expected = listed.get(position).map(|&(id, _)| id);
+        let found = items.get(position).map(ItemProgress::id);
+        if expected != found {
+            return Err(TeamError::ItemsMismatch {
+                team: team.clone(),
+                position,
+                expected,
+                found,
+            });
+        }
+    }
+    for (&(item, mark), progress) in listed.iter().zip(items) {
+        let done_as_listed = matches!(
+            progress.phase(),
+            ItemPhase::Done {
+                completion: Completion::Listed
+            }
+        );
+        match (mark, done_as_listed) {
+            (ItemMark::Done, true) | (ItemMark::Open, false) => {}
+            (ItemMark::Done | ItemMark::Open, _) => {
+                return Err(TeamError::ListedMismatch {
+                    team: team.clone(),
+                    item,
+                    listed: mark,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 impl TryFrom<TeamWire> for Team {
     type Error = TeamError;
 
     fn try_from(wire: TeamWire) -> Result<Self, Self::Error> {
-        Ok(Self {
+        check_items(&wire.id, &wire.task_list, &wire.items)?;
+        let mut team = Self {
             id: wire.id,
             repo: wire.repo,
             created_at: wire.created_at,
@@ -462,8 +558,15 @@ impl TryFrom<TeamWire> for Team {
             task_list: wire.task_list,
             items: wire.items,
             crew: wire.crew,
-            reviewers: wire.reviewers,
-        })
+            reviewers: Vec::new(),
+        };
+        for reviewer in wire.reviewers {
+            team.add_reviewer(reviewer).map_err(|reason| TeamError::Reviewer {
+                team: team.id.clone(),
+                reason,
+            })?;
+        }
+        Ok(team)
     }
 }
 
@@ -487,7 +590,9 @@ mod tests {
     use super::*;
     use crate::ids::AgentName;
     use crate::kinds::tests::{assert_keywords, assert_refuses};
-    use crate::state::fixtures::{LIST, at, inv, list, member, normal, repo, task, team, team_id, worker};
+    use crate::state::fixtures::{
+        LIST, assert_refused, at, inv, list, member, normal, repo, task, team, team_id, worker,
+    };
     use crate::status::{ItemStatus, TaskStatus};
     use crate::task_list::ItemMark;
 
@@ -534,8 +639,9 @@ mod tests {
 
         assert_eq!(value, json!(LIST));
         assert_eq!(serde_json::from_value::<TaskListText>(value).unwrap(), kept);
-        assert!(serde_json::from_value::<TaskListText>(json!("not a list")).is_err());
-        assert!(serde_json::from_value::<TaskListText>(json!(5)).is_err());
+        assert_refused::<TaskListText>(&json!("1. Feature\n[ ] 1.x Broken\n"));
+        assert_refused::<TaskListText>(&json!(""));
+        assert_refused::<TaskListText>(&json!(5));
     }
 
     #[test]
@@ -795,7 +901,7 @@ mod tests {
             json!({"kind": "solo", "member": one(1, "normal", "a"), "extra": 1}),
         ];
         for value in bad {
-            assert!(serde_json::from_value::<Crew>(value.clone()).is_err(), "{value}");
+            assert_refused::<Crew>(&value.clone());
         }
     }
 
@@ -834,7 +940,7 @@ mod tests {
         assert_eq!(team.merge(), MergeMode::Autopilot);
         assert_eq!(team.task_list(), &list());
         assert_eq!(team.crew().roster().len(), 3);
-        assert!(team.reviewers().is_empty());
+        assert_eq!(team.reviewers(), []);
     }
 
     #[test]
@@ -969,7 +1075,7 @@ mod tests {
 
         let team = serde_json::from_value::<Team>(value).unwrap();
 
-        assert!(team.reviewers().is_empty());
+        assert_eq!(team.reviewers(), []);
     }
 
     #[test]
@@ -1010,7 +1116,7 @@ mod tests {
             Err(TeamError::ListedMismatch {
                 team: team_id(1),
                 item: item("1.1"),
-                listed: "done"
+                listed: ItemMark::Done
             })
         );
         assert_eq!(
@@ -1018,7 +1124,7 @@ mod tests {
             Err(TeamError::ListedMismatch {
                 team: team_id(1),
                 item: item("1.2"),
-                listed: "open"
+                listed: ItemMark::Open
             })
         );
     }
@@ -1095,7 +1201,7 @@ mod tests {
             let mut value = team_json();
             value.as_object_mut().unwrap().remove(key);
 
-            assert!(serde_json::from_value::<Team>(value).is_err(), "without {key}");
+            assert_refused::<Team>(&value);
         }
         let mut extra = team_json();
         extra["extra"] = json!(1);
@@ -1104,8 +1210,8 @@ mod tests {
         let mut repo = team_json();
         repo["repo"] = json!("a/b");
 
-        assert!(serde_json::from_value::<Team>(extra).is_err());
-        assert!(serde_json::from_value::<Team>(merge).is_err());
-        assert!(serde_json::from_value::<Team>(repo).is_err());
+        assert_refused::<Team>(&extra);
+        assert_refused::<Team>(&merge);
+        assert_refused::<Team>(&repo);
     }
 }

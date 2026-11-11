@@ -146,7 +146,7 @@ impl<'de> Deserialize<'de> for Timestamp {
 /// The session ID a model CLI gave a run, which a later run resumes: opaque text such as
 /// `5f3c9a3e-86f3-4b0e-9d2c-0a8f1c7d5b21`.
 ///
-/// 1 to 200 bytes without whitespace or control characters. Refused, with the [`ValueRule`] it breaks: the empty
+/// 1 to 200 bytes without whitespace or control characters. Refused, with the [`ValueRule`](crate::config::ValueRule) it breaks: the empty
 /// text, a longer one, and any whitespace or control character.
 ///
 /// ```compile_fail,E0603

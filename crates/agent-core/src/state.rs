@@ -2,7 +2,7 @@
 //! item, runs, questions, pull requests, reviews and gate results (see `docs/state.md`).
 //!
 //! The daemon owns one [`State`], saves it as JSON and reads it back; the CLI and the dashboard see parts of it
-//! through the control protocol ([`crate::protocol`]). Everything here is pure data with its rules: a value that
+//! through the control protocol (the `protocol` module). Everything here is pure data with its rules: a value that
 //! exists is a valid one, and a text that is not valid is refused when it is read.
 
 #[cfg(test)]
@@ -223,6 +223,25 @@ impl State {
     /// # Errors
     /// [`InvalidState`] when the state has a team with this ID or a task with one of the team's task IDs.
     pub fn insert_team(&mut self, team: Team) -> Result<(), InvalidState> {
+        if self.team(team.id()).is_some() {
+            return Err(InvalidState::DuplicateTeam {
+                team: team.id().clone(),
+            });
+        }
+        let tasks = team
+            .crew()
+            .roster()
+            .into_iter()
+            .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)));
+        for (_, member) in tasks {
+            if let Some(owner) = self.find_task(member.task()) {
+                return Err(InvalidState::DuplicateTask {
+                    task: member.task().clone(),
+                    first: owner.team.id().clone(),
+                    second: team.id().clone(),
+                });
+            }
+        }
         self.teams.push(team);
         Ok(())
     }
@@ -233,8 +252,19 @@ impl State {
     /// [`AddReviewerError`] when the state has no such team, or the reviewer is not an investigator, is in the team's
     /// crew or among its reviewers already, or its task ID is in use.
     pub fn add_reviewer(&mut self, team: &TeamId, reviewer: Member) -> Result<(), AddReviewerError> {
-        let _ = (team, reviewer);
-        Ok(())
+        if self.team(team).is_none() {
+            return Err(AddReviewerError::UnknownTeam { team: team.clone() });
+        }
+        if self.find_task(reviewer.task()).is_some() {
+            return Err(ReviewerProblem::DuplicateTask {
+                task: reviewer.task().clone(),
+            }
+            .into());
+        }
+        match self.team_mut(team) {
+            Some(found) => found.add_reviewer(reviewer).map_err(AddReviewerError::from),
+            None => Err(AddReviewerError::UnknownTeam { team: team.clone() }),
+        }
     }
 
     /// Reads a state from JSON text.
@@ -243,8 +273,21 @@ impl State {
     /// [`StateError`]: the text is too large, declares another schema version (checked first, so that a state of a
     /// newer version is refused as such and not as malformed), is not a valid state, or has clashing teams or tasks.
     pub fn from_json(text: &str) -> Result<Self, StateError> {
-        let _ = text;
-        Ok(Self::new())
+        if text.len() > MAX_STATE_BYTES {
+            return Err(StateError::TooLarge {
+                len: text.len(),
+                max: MAX_STATE_BYTES,
+            });
+        }
+        let probe: SchemaProbe = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
+        if probe.schema_version != u64::from(SCHEMA_VERSION) {
+            return Err(UnsupportedSchema {
+                found: probe.schema_version,
+            }
+            .into());
+        }
+        let wire: StateWire = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
+        Ok(Self::try_from(wire)?)
     }
 
     /// The state as JSON text, indented, ending with a newline.
@@ -252,7 +295,9 @@ impl State {
     /// # Errors
     /// [`RenderError`] when the serializer fails.
     pub fn to_json(&self) -> Result<String, RenderError> {
-        Ok(String::new())
+        let mut text = serde_json::to_string_pretty(self).map_err(|source| RenderError { source })?;
+        text.push('\n');
+        Ok(text)
     }
 }
 
@@ -266,18 +311,23 @@ impl TryFrom<StateWire> for State {
     type Error = InvalidState;
 
     fn try_from(wire: StateWire) -> Result<Self, Self::Error> {
-        Ok(Self {
+        let mut state = Self {
             schema_version: wire.schema_version,
-            teams: wire.teams,
-        })
+            teams: Vec::with_capacity(wire.teams.len()),
+        };
+        for team in wire.teams {
+            state.insert_team(team)?;
+        }
+        Ok(state)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::error::Category;
     use serde_json::json;
 
-    use super::fixtures::{inv, member, normal, task, team_id, team_of};
+    use super::fixtures::{assert_refused, inv, member, normal, task, team_id, team_of};
     use super::*;
     use crate::state::ItemPhase;
     use crate::status::TaskStatus;
@@ -296,7 +346,7 @@ mod tests {
     fn a_new_state_has_no_teams() {
         let state = State::new();
 
-        assert!(state.teams().is_empty());
+        assert_eq!(state.teams(), []);
         assert_eq!(state, State::default());
         assert!(state.team(&team_id(1)).is_none());
     }
@@ -456,7 +506,7 @@ mod tests {
             json!(1.5),
             json!(null),
         ] {
-            assert!(serde_json::from_value::<SchemaVersion>(bad.clone()).is_err(), "{bad}");
+            assert_refused::<SchemaVersion>(&bad.clone());
         }
     }
 
@@ -573,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn a_task_twice_in_one_team_is_refused_with_the_team_twice() {
+    fn a_reviewer_with_a_task_of_its_teams_crew_is_refused_when_read() {
         let mut value = serde_json::to_value(team_of(1, 1)).unwrap();
         value["reviewers"] = json!([{
             "task": "task-20261111-153002-k3x9",
@@ -583,11 +633,7 @@ mod tests {
 
         let err = State::from_json(&json!({"schema_version": 1, "teams": [value]}).to_string()).unwrap_err();
 
-        assert!(matches!(
-            err,
-            StateError::Invalid(InvalidState::DuplicateTask { task: t, first, second })
-                if t == task(2) && first == team_id(1) && second == team_id(1)
-        ));
+        assert!(matches!(err, StateError::Malformed { .. }), "{err:?}");
     }
 
     #[test]
@@ -609,7 +655,10 @@ mod tests {
         let duplicate = json!({"schema_version": 1, "teams": [one, one]}).to_string();
 
         assert_eq!(serde_json::from_str::<State>(&good).unwrap(), State::new());
-        assert!(serde_json::from_str::<State>(other_version).is_err());
-        assert!(serde_json::from_str::<State>(&duplicate).is_err());
+        for text in [other_version, duplicate.as_str()] {
+            let err = serde_json::from_str::<State>(text).unwrap_err();
+
+            assert_eq!(err.classify(), Category::Data, "{text}");
+        }
     }
 }

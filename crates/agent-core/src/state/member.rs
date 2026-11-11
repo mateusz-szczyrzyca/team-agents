@@ -1,5 +1,6 @@
 //! Members: an agent or investigator and the task it works in, with the task's status, runs and questions.
 
+use std::collections::HashSet;
 use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
@@ -136,20 +137,12 @@ pub enum MemberError {
         run: RunId,
     },
     /// The question rounds are not 1, 2, 3, … or an earlier one is still open.
-    #[error("task {task}: {source}")]
+    #[error("task {task}: the rounds of questions are out of order")]
     Questions {
         /// The task.
         task: TaskId,
         /// What is wrong.
         source: QuestionError,
-    },
-    /// A run is out of order in itself.
-    #[error("task {task}: {source}")]
-    Run {
-        /// The task.
-        task: TaskId,
-        /// What is wrong.
-        source: RunError,
     },
 }
 
@@ -219,7 +212,7 @@ impl Member {
     /// # Errors
     /// [`InvalidTransition`] when the status's table does not allow the change.
     pub fn transition(&mut self, next: TaskStatus) -> Result<(), InvalidTransition<TaskStatus>> {
-        self.status = next;
+        self.status = self.status.transition_to(next)?;
         Ok(())
     }
 
@@ -229,7 +222,13 @@ impl Member {
     /// [`RunError::AlreadyRunning`] when a run is going; [`RunError::DuplicateRun`] when the task has a run with
     /// this ID.
     pub fn begin_run(&mut self, id: RunId, at: Timestamp, session: Option<SessionId>) -> Result<(), RunError> {
-        let _ = (id, at, session);
+        if let Some(run) = self.current_run() {
+            return Err(RunError::AlreadyRunning { run: run.id().clone() });
+        }
+        if self.runs.iter().any(|run| run.id() == &id) {
+            return Err(RunError::DuplicateRun { run: id });
+        }
+        self.runs.push(Run::started(id, at, session));
         Ok(())
     }
 
@@ -238,7 +237,7 @@ impl Member {
     /// # Errors
     /// [`RunError::NotRunning`] when no run is going.
     pub fn attach_session(&mut self, session: SessionId) -> Result<(), RunError> {
-        let _ = session;
+        self.current_run_mut()?.attach_session(session);
         Ok(())
     }
 
@@ -248,8 +247,15 @@ impl Member {
     /// [`RunError::NotRunning`] when no run is going; [`RunError::EndsBeforeStart`] when `at` is before the run
     /// started.
     pub fn end_run(&mut self, at: Timestamp, end: RunEnd) -> Result<(), RunError> {
-        let _ = (at, end);
-        Ok(())
+        self.current_run_mut()?.end(at, end)
+    }
+
+    /// The run that is going, to change it.
+    fn current_run_mut(&mut self) -> Result<&mut Run, RunError> {
+        self.runs
+            .last_mut()
+            .filter(|run| run.is_running())
+            .ok_or(RunError::NotRunning)
     }
 
     /// Records that a round of questions was put to the human.
@@ -258,7 +264,8 @@ impl Member {
     /// [`QuestionError::StillOpen`] when the last round is open; [`QuestionError::WrongRound`] when the round is not
     /// the next one.
     pub fn ask_question(&mut self, question: Question) -> Result<(), QuestionError> {
-        let _ = question;
+        check_next_question(self.questions.last(), &question)?;
+        self.questions.push(question);
         Ok(())
     }
 
@@ -268,15 +275,73 @@ impl Member {
     /// [`QuestionError::NoSuchRound`], [`QuestionError::AlreadyAnswered`], or
     /// [`QuestionError::AnswerBeforeQuestion`].
     pub fn answer_question(&mut self, round: NonZeroU32, at: Timestamp, via: AnsweredVia) -> Result<(), QuestionError> {
-        let _ = (round, at, via);
+        let question = self
+            .questions
+            .iter_mut()
+            .find(|question| question.round() == round)
+            .ok_or(QuestionError::NoSuchRound { round })?;
+        if !question.is_open() {
+            return Err(QuestionError::AlreadyAnswered { round });
+        }
+        question.answer(at, via)?;
         Ok(())
     }
+}
+
+/// Checks that `question` may follow `last`, the latest round so far: it is answered and `question` is the next round.
+fn check_next_question(last: Option<&Question>, question: &Question) -> Result<(), QuestionError> {
+    if let Some(open) = last.filter(|last| last.is_open()) {
+        return Err(QuestionError::StillOpen { round: open.round() });
+    }
+    let expected = last.map_or(NonZeroU32::MIN, |last| last.round().saturating_add(1));
+    if question.round() != expected {
+        return Err(QuestionError::WrongRound {
+            expected,
+            got: question.round(),
+        });
+    }
+    Ok(())
+}
+
+/// Checks the order of the runs of task `task`: no ID twice, and only the last may be going.
+fn check_runs(task: &TaskId, runs: &[Run]) -> Result<(), MemberError> {
+    let mut seen = HashSet::new();
+    for (index, run) in runs.iter().enumerate() {
+        if !seen.insert(run.id()) {
+            return Err(MemberError::DuplicateRun {
+                task: task.clone(),
+                run: run.id().clone(),
+            });
+        }
+        if run.is_running() && index + 1 != runs.len() {
+            return Err(MemberError::RunningNotLast {
+                task: task.clone(),
+                run: run.id().clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Checks the rounds of questions of task `task`: they count 1, 2, 3, … and only the last may be open.
+fn check_questions(task: &TaskId, questions: &[Question]) -> Result<(), MemberError> {
+    let mut previous: Option<&Question> = None;
+    for question in questions {
+        check_next_question(previous, question).map_err(|source| MemberError::Questions {
+            task: task.clone(),
+            source,
+        })?;
+        previous = Some(question);
+    }
+    Ok(())
 }
 
 impl TryFrom<MemberWire> for Member {
     type Error = MemberError;
 
     fn try_from(wire: MemberWire) -> Result<Self, Self::Error> {
+        check_runs(&wire.task, &wire.runs)?;
+        check_questions(&wire.task, &wire.questions)?;
         Ok(Self {
             task: wire.task,
             agent: wire.agent,
@@ -294,7 +359,7 @@ mod tests {
     use super::*;
     use crate::kinds::tests::assert_keywords;
     use crate::state::QuestionState;
-    use crate::state::fixtures::{at, inv, member, normal, nz, path, run, task, worker};
+    use crate::state::fixtures::{assert_refused, at, inv, member, normal, nz, path, run, task, worker};
     use crate::status::RunOutcome;
 
     /// A queued member of task 1: `codex-1`.
@@ -363,7 +428,7 @@ mod tests {
             json!({"tier": "normal"}),
             json!({"name": "codex-1"}),
         ] {
-            assert!(serde_json::from_value::<Participant>(value.clone()).is_err(), "{value}");
+            assert_refused::<Participant>(&value.clone());
         }
     }
 
@@ -730,7 +795,7 @@ mod tests {
         let mut status = busy_json();
         status["status"] = json!("sleeping");
 
-        assert!(serde_json::from_value::<Member>(extra).is_err());
-        assert!(serde_json::from_value::<Member>(status).is_err());
+        assert_refused::<Member>(&extra);
+        assert_refused::<Member>(&status);
     }
 }

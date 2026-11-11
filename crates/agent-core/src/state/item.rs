@@ -256,6 +256,9 @@ impl TryFrom<ItemProgressWire> for ItemProgress {
     type Error = FixingWithoutFixPass;
 
     fn try_from(wire: ItemProgressWire) -> Result<Self, Self::Error> {
+        if wire.phase.kind() == PhaseKind::Fixing && wire.fix_passes.is_empty() {
+            return Err(FixingWithoutFixPass { item: wire.id });
+        }
         Ok(Self {
             id: wire.id,
             phase: wire.phase,
@@ -269,10 +272,15 @@ impl ItemProgress {
     /// The progress of an item that is not started, or of one that the task list already marks done.
     #[must_use]
     pub fn new(id: ItemId, mark: ItemMark) -> Self {
-        let _ = mark;
+        let phase = match mark {
+            ItemMark::Open => ItemPhase::Pending,
+            ItemMark::Done => ItemPhase::Done {
+                completion: Completion::Listed,
+            },
+        };
         Self {
             id,
-            phase: ItemPhase::Pending,
+            phase,
             fix_passes: Vec::new(),
             gate: None,
         }
@@ -307,7 +315,18 @@ impl ItemProgress {
     /// # Errors
     /// [`InvalidAdvance`] when [`PhaseKind::successors`] does not allow the change.
     pub fn advance(&mut self, next: ItemPhase) -> Result<(), InvalidAdvance> {
-        self.phase = next;
+        let (from, to) = (self.phase.kind(), next.kind());
+        if !from.successors().contains(&to) {
+            return Err(InvalidAdvance {
+                item: self.id,
+                from,
+                to,
+            });
+        }
+        let left = std::mem::replace(&mut self.phase, next);
+        if let (ItemPhase::InReview { reviews, .. }, PhaseKind::Fixing) = (left, to) {
+            self.fix_passes.push(FixPass { requested_by: reviews });
+        }
         Ok(())
     }
 
@@ -316,8 +335,27 @@ impl ItemProgress {
     /// # Errors
     /// [`NotWorkedOn`] when the item is in any other phase.
     pub fn reassign(&mut self, assignee: AgentName, branch: BranchName) -> Result<(), NotWorkedOn> {
-        let _ = (assignee, branch);
-        Ok(())
+        match &mut self.phase {
+            ItemPhase::InProgress {
+                assignee: current,
+                branch: current_branch,
+            }
+            | ItemPhase::Fixing {
+                assignee: current,
+                branch: current_branch,
+                ..
+            } => {
+                *current = assignee;
+                *current_branch = branch;
+                Ok(())
+            }
+            ItemPhase::Pending | ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. } => {
+                Err(NotWorkedOn {
+                    item: self.id,
+                    phase: self.phase.kind(),
+                })
+            }
+        }
     }
 }
 
@@ -328,7 +366,7 @@ mod tests {
     use super::*;
     use crate::kinds::tests::{assert_keywords, assert_refuses};
     use crate::state::GateOutcome;
-    use crate::state::fixtures::{agent, at, branch, pr, review};
+    use crate::state::fixtures::{agent, assert_refused, at, branch, pr, review};
     use crate::status::StatusMachine;
 
     const PHASES: &[(PhaseKind, &str)] = &[
@@ -543,7 +581,7 @@ mod tests {
     fn leaving_review_for_approval_is_no_fix_pass() {
         let item = progress_in(PhaseKind::Approved);
 
-        assert!(item.fix_passes().is_empty());
+        assert_eq!(item.fix_passes(), []);
     }
 
     #[test]
@@ -761,10 +799,7 @@ mod tests {
             json!({"id": "1.2", "phase": {"phase": "done", "completion": {"how": "wished"}}}),
         ];
         for value in bad {
-            assert!(
-                serde_json::from_value::<ItemProgress>(value.clone()).is_err(),
-                "{value}"
-            );
+            assert_refused::<ItemProgress>(&value.clone());
         }
     }
 }

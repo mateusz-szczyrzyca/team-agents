@@ -161,15 +161,34 @@ impl Run {
 
     /// Ends the run.
     pub(super) fn end(&mut self, at: Timestamp, end: RunEnd) -> Result<(), RunError> {
-        let _ = (at, end);
+        if !self.is_running() {
+            return Err(RunError::NotRunning);
+        }
+        check_end(&self.id, self.started_at, at)?;
+        self.state = RunState::Ended { at, end };
         Ok(())
     }
+}
+
+/// Checks that a run that started at `started_at` may end at `at`.
+fn check_end(id: &RunId, started_at: Timestamp, at: Timestamp) -> Result<(), RunError> {
+    if at < started_at {
+        return Err(RunError::EndsBeforeStart {
+            run: id.clone(),
+            started_at,
+            at,
+        });
+    }
+    Ok(())
 }
 
 impl TryFrom<RunWire> for Run {
     type Error = RunError;
 
     fn try_from(wire: RunWire) -> Result<Self, Self::Error> {
+        if let RunState::Ended { at, .. } = &wire.state {
+            check_end(&wire.id, wire.started_at, *at)?;
+        }
         Ok(Self {
             id: wire.id,
             started_at: wire.started_at,
@@ -184,7 +203,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::state::fixtures::{at, run as run_id};
+    use crate::state::fixtures::{assert_refused, at, run as run_id};
 
     /// A run that started at 5 seconds with no session yet.
     fn started() -> Run {
@@ -366,7 +385,7 @@ mod tests {
             json!({"id": "team-20261111-153001-r7q2", "started_at": "2026-11-11T19:15:05Z", "state": {"status": "running"}}),
         ];
         for value in bad {
-            assert!(serde_json::from_value::<Run>(value.clone()).is_err(), "{value}");
+            assert_refused::<Run>(&value.clone());
         }
     }
 }

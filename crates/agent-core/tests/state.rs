@@ -8,7 +8,7 @@ mod state_file {
     use agent_core::kinds::Role;
     use agent_core::state::{
         AnsweredVia, GateOutcome, ItemPhase, MergeMode, Participant, QuestionState, ReviewOutcome, RunEnd, RunState,
-        State, StateError, UnsupportedSchema,
+        SessionId, State, StateError, UnsupportedSchema,
     };
     use agent_core::status::{ItemStatus, ReviewVerdict, RunOutcome, TaskStatus};
 
@@ -55,7 +55,7 @@ mod state_file {
         assert_eq!((toy.repo().as_str(), toy.merge()), ("toy-repo", MergeMode::NoMerge));
         assert_eq!(team.task_list().list().items().count(), 3);
         assert_eq!(team.reviewers().len(), 2);
-        assert!(toy.reviewers().is_empty());
+        assert_eq!(toy.reviewers(), []);
     }
 
     #[test]
@@ -128,7 +128,7 @@ mod state_file {
             member.current_run().map(|run| run.id().to_string()),
             Some(String::from("run-20261111-193004-r7q2"))
         );
-        assert_eq!(member.last_session().map(|s| s.as_str()), Some("ses_3c1f9a2b0ffe"));
+        assert_eq!(member.last_session().map(SessionId::as_str), Some("ses_3c1f9a2b0ffe"));
         let RunState::Ended { end, .. } = member.runs()[1].state() else {
             panic!("the second run goes");
         };

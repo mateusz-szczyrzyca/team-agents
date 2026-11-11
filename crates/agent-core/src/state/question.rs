@@ -128,15 +128,31 @@ impl Question {
     /// # Errors
     /// [`AnswerBeforeQuestion`] when `at` is earlier than the time the questions were asked.
     pub fn answer(&mut self, at: Timestamp, via: AnsweredVia) -> Result<(), AnswerBeforeQuestion> {
-        let _ = (at, via);
+        check_answer(self.round, self.asked_at, at)?;
+        self.state = QuestionState::Answered { at, via };
         Ok(())
     }
+}
+
+/// Checks that questions of `round`, asked at `asked_at`, may be answered at `answered_at`.
+fn check_answer(round: NonZeroU32, asked_at: Timestamp, answered_at: Timestamp) -> Result<(), AnswerBeforeQuestion> {
+    if answered_at < asked_at {
+        return Err(AnswerBeforeQuestion {
+            round,
+            asked_at,
+            answered_at,
+        });
+    }
+    Ok(())
 }
 
 impl TryFrom<QuestionWire> for Question {
     type Error = AnswerBeforeQuestion;
 
     fn try_from(wire: QuestionWire) -> Result<Self, Self::Error> {
+        if let QuestionState::Answered { at, .. } = &wire.state {
+            check_answer(wire.round, wire.asked_at, *at)?;
+        }
         Ok(Self {
             round: wire.round,
             file: wire.file,
@@ -151,7 +167,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::state::fixtures::{at, nz, path};
+    use crate::state::fixtures::{assert_refused, at, nz, path};
 
     /// Questions of round 1 asked at 5 seconds.
     fn asked() -> Question {
@@ -224,7 +240,7 @@ mod tests {
             assert_eq!(serde_json::to_value(via).unwrap(), json!(text));
             assert_eq!(serde_json::from_value::<AnsweredVia>(json!(text)).unwrap(), via);
         }
-        assert!(serde_json::from_value::<AnsweredVia>(json!("telepathy")).is_err());
+        assert_refused::<AnsweredVia>(&json!("telepathy"));
     }
 
     #[test]
@@ -261,7 +277,7 @@ mod tests {
             "state": {"status": "answered", "at": "2026-11-11T19:15:04Z", "via": "command"}
         });
 
-        assert!(serde_json::from_value::<Question>(value).is_err());
+        assert_refused::<Question>(&value);
     }
 
     #[test]
@@ -279,7 +295,7 @@ mod tests {
             let mut value = good.clone();
             value[key] = bad;
 
-            assert!(serde_json::from_value::<Question>(value.clone()).is_err(), "{value}");
+            assert_refused::<Question>(&value.clone());
         }
     }
 }
