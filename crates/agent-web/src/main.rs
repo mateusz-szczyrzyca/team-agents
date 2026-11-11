@@ -7,7 +7,10 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+
+/// Exit status of a command line that clap refuses: its own convention for usage errors.
+const USAGE_ERROR: u8 = 2;
 
 /// The command line of `agent-web`.
 #[derive(Debug, Parser)]
@@ -31,8 +34,32 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let _ = (args.into_iter().count(), out, err);
-    Ok(ExitCode::SUCCESS)
+    let code = match Cli::try_parse_from(args) {
+        // No command yet: the help says what there is.
+        Ok(Cli {}) => {
+            write_text(out, &Cli::command().render_help().to_string())?;
+            ExitCode::SUCCESS
+        }
+        // `--version` and `--help` arrive here too, as "errors" meant for stdout.
+        Err(answer) if !answer.use_stderr() => {
+            write_text(out, &answer.render().to_string())?;
+            ExitCode::SUCCESS
+        }
+        Err(refusal) => {
+            write_text(err, &refusal.render().to_string())?;
+            ExitCode::from(USAGE_ERROR)
+        }
+    };
+    Ok(code)
+}
+
+/// Writes all of `text` to `to` and flushes it.
+///
+/// # Errors
+/// [`OutputError::Write`] when `to` refuses the text.
+fn write_text(to: &mut impl Write, text: &str) -> Result<(), OutputError> {
+    to.write_all(text.as_bytes()).map_err(OutputError::Write)?;
+    to.flush().map_err(OutputError::Write)
 }
 
 fn main() -> Result<ExitCode, OutputError> {
