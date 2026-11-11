@@ -107,6 +107,12 @@ pub enum QuestionError {
         /// The refused round.
         got: NonZeroU32,
     },
+    /// The last possible round was asked and answered: there is no round after it to count.
+    #[error("round {last} of the questions was the last possible round; the task cannot ask another")]
+    RoundsExhausted {
+        /// The last round, the largest number a round can have.
+        last: NonZeroU32,
+    },
     /// The task has no such round.
     #[error("the task has no round {round} of questions")]
     NoSuchRound {
@@ -804,5 +810,32 @@ mod tests {
 
         assert_refused::<Member>(&extra);
         assert_refused::<Member>(&status);
+    }
+
+    // ---- the last possible round --------------------------------------------------------------------------------
+
+    #[test]
+    fn after_the_last_possible_round_has_been_answered_no_further_round_is_accepted() {
+        let mut last = asked(u32::MAX, 10);
+        last.answer(at(20), AnsweredVia::Command).unwrap();
+
+        let err = check_next_question(Some(&last), &asked(u32::MAX, 30)).unwrap_err();
+
+        assert_eq!(err, QuestionError::RoundsExhausted { last: nz(u32::MAX) });
+    }
+
+    #[test]
+    fn the_round_before_the_last_possible_one_is_still_followed_by_it() {
+        let mut before = asked(u32::MAX - 1, 10);
+        before.answer(at(20), AnsweredVia::Command).unwrap();
+
+        assert_eq!(check_next_question(Some(&before), &asked(u32::MAX, 30)), Ok(()));
+        assert_eq!(
+            check_next_question(Some(&before), &asked(u32::MAX - 1, 30)),
+            Err(QuestionError::WrongRound {
+                expected: nz(u32::MAX),
+                got: nz(u32::MAX - 1)
+            })
+        );
     }
 }
