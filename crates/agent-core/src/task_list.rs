@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::num::{NonZeroU16, NonZeroUsize};
+use std::num::{NonZeroU16, NonZeroUsize, ParseIntError};
 use std::str::FromStr;
 
 use crate::ids::{AgentName, InvalidItemId, InvalidName, ItemId};
@@ -122,6 +122,17 @@ impl fmt::Display for ItemPart {
     }
 }
 
+/// What is wrong with a feature number, in a feature line or after `Depends on:`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum NumberProblem {
+    /// It is not ASCII digits without a leading zero: `x`, `-1`, `+1`, `1.5`, `01`.
+    #[error("it must be digits without a leading zero")]
+    Shape,
+    /// It is digits, but not a number from 1 to 65535: `0`, `65536`.
+    #[error("it must be from 1 to 65535")]
+    Range(#[source] ParseIntError),
+}
+
 /// What is wrong with an item line.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ItemProblem {
@@ -170,6 +181,9 @@ pub enum TaskListError {
         line: NonZeroUsize,
         /// The text before the `.`.
         text: String,
+        /// What is wrong with it.
+        #[source]
+        problem: NumberProblem,
     },
     /// A feature line has no title.
     #[error("line {line}: the feature has no title")]
@@ -227,8 +241,11 @@ pub enum TaskListError {
     MalformedDependsOn {
         /// The line.
         line: NonZeroUsize,
-        /// What follows `Depends on:`.
+        /// What follows `Depends on:`, without the spaces around it.
         text: String,
+        /// What is wrong with the first word that is not a feature number; `None` when there is no word at all.
+        #[source]
+        problem: Option<NumberProblem>,
     },
     /// A `Depends on:` line names a feature that is not defined before this one.
     #[error("line {line}: feature {number} is not defined before this feature")]
@@ -397,12 +414,12 @@ fn has_item_mark(line: &str) -> bool {
 }
 
 /// Parses a feature or dependency number: ASCII digits, no leading zero, from 1 to 65535.
-fn parse_number(digits: &str) -> Option<NonZeroU16> {
+fn parse_number(text: &str) -> Result<NonZeroU16, NumberProblem> {
     // `parse` alone would also take a leading `+`.
-    if !digits.bytes().all(|b| b.is_ascii_digit()) || (digits.len() > 1 && digits.starts_with('0')) {
-        return None;
+    if !text.bytes().all(|b| b.is_ascii_digit()) || (text.len() > 1 && text.starts_with('0')) {
+        return Err(NumberProblem::Shape);
     }
-    digits.parse().ok()
+    text.parse().map_err(NumberProblem::Range)
 }
 
 /// The parts of a valid item line.
@@ -656,12 +673,11 @@ impl<'a> Parser<'a> {
     /// A feature line with the `digits` of its number and its `title`: closes the open item and opens a feature.
     fn feature(&mut self, line: NonZeroUsize, digits: &str, title: &str) -> Result<(), TaskListError> {
         self.close_item()?;
-        let Some(number) = parse_number(digits) else {
-            return Err(TaskListError::FeatureNumber {
-                line,
-                text: digits.to_owned(),
-            });
-        };
+        let number = parse_number(digits).map_err(|problem| TaskListError::FeatureNumber {
+            line,
+            text: digits.to_owned(),
+            problem,
+        })?;
         if title.is_empty() {
             return Err(TaskListError::FeatureWithoutTitle { line });
         }
@@ -692,9 +708,10 @@ impl<'a> Parser<'a> {
         if self.item.is_some() || !self.depends_allowed {
             return Err(TaskListError::MisplacedDependsOn { line });
         }
-        let malformed = || TaskListError::MalformedDependsOn {
+        let malformed = |problem| TaskListError::MalformedDependsOn {
             line,
             text: rest.trim().to_owned(),
+            problem,
         };
         let mut depends_on = Vec::new();
         if !rest.trim().eq_ignore_ascii_case(NO_DEPENDENCIES) {
@@ -702,10 +719,10 @@ impl<'a> Parser<'a> {
                 .split(|c: char| c == ',' || c.is_whitespace())
                 .filter(|word| !word.is_empty());
             for word in words {
-                depends_on.push(parse_number(word).ok_or_else(malformed)?);
+                depends_on.push(parse_number(word).map_err(|problem| malformed(Some(problem)))?);
             }
             if depends_on.is_empty() {
-                return Err(malformed());
+                return Err(malformed(None));
             }
         }
         if let Some(&number) = depends_on
@@ -1270,21 +1287,24 @@ Depends on: 2,3,1,
 
     #[test]
     fn a_bad_feature_number_or_title_is_refused_with_its_line() {
-        for (head, text) in [
-            ("0. Zero", "0"),
-            ("01. Leading zero", "01"),
-            ("65536. Too big", "65536"),
-            ("99999999999999999999. Huge", "99999999999999999999"),
+        let too_big = |text: &str| NumberProblem::Range(text.parse::<NonZeroU16>().unwrap_err());
+        for (head, text, problem) in [
+            ("0. Zero", "0", too_big("0")),
+            ("01. Leading zero", "01", NumberProblem::Shape),
+            ("65536. Too big", "65536", too_big("65536")),
+            (
+                "99999999999999999999. Huge",
+                "99999999999999999999",
+                too_big("99999999999999999999"),
+            ),
         ] {
             let all = format!("Brief\n{head}\n");
-            assert_eq!(
-                failure(&all),
-                TaskListError::FeatureNumber {
-                    line: line(2),
-                    text: text.to_owned()
-                },
-                "{head:?}"
-            );
+            let expected = TaskListError::FeatureNumber {
+                line: line(2),
+                text: text.to_owned(),
+                problem,
+            };
+            assert_eq!(failure(&all), expected, "{head:?}");
         }
         for head in ["1.", "1.   ", "1.\t"] {
             let all = format!("Brief\n{head}\n");
@@ -1299,18 +1319,30 @@ Depends on: 2,3,1,
 
     #[test]
     fn a_depends_on_line_that_is_not_none_or_numbers_is_refused() {
-        for text in [
-            "x", "", "  ", "0", "01", "1.5", "none, 1", "1 none", "1, x", "-1", "+1", "65536", ",",
+        let out_of_range = |text: &str| Some(NumberProblem::Range(text.parse::<NonZeroU16>().unwrap_err()));
+        let shape = Some(NumberProblem::Shape);
+        for (text, problem) in [
+            ("x", shape.clone()),
+            ("", None),
+            ("  ", None),
+            (",", None),
+            ("0", out_of_range("0")),
+            ("01", shape.clone()),
+            ("1.5", shape.clone()),
+            ("none, 1", shape.clone()),
+            ("1 none", shape.clone()),
+            ("1, x", shape.clone()),
+            ("-1", shape.clone()),
+            ("+1", shape.clone()),
+            ("65536", out_of_range("65536")),
         ] {
             let all = format!("1. A\n2. B\nDepends on: {text}\n");
-            assert_eq!(
-                failure(&all),
-                TaskListError::MalformedDependsOn {
-                    line: line(3),
-                    text: text.trim().to_owned()
-                },
-                "{text:?}"
-            );
+            let expected = TaskListError::MalformedDependsOn {
+                line: line(3),
+                text: text.trim().to_owned(),
+                problem,
+            };
+            assert_eq!(failure(&all), expected, "{text:?}");
         }
     }
 

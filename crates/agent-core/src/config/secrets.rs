@@ -39,8 +39,8 @@ const PERMISSION_BITS: u32 = 0o777;
 /// ```
 ///
 /// ```compile_fail,E0277
-/// fn show(secret: &agent_core::config::Secret) -> String {
-///     serde_json::to_string(secret).unwrap()
+/// fn show(secret: &agent_core::config::Secret) -> serde_json::Result<String> {
+///     serde_json::to_string(secret)
 /// }
 /// ```
 ///

@@ -72,14 +72,14 @@ mark, blank lines and the coordinator line count). The first fault in the text i
 | `Empty` | nothing in the text but blank lines, or only a `Coordinator:` line |
 | `TooLarge` | the text is over 1 MiB |
 | `InvalidCoordinator` | the `Coordinator:` line has no valid name |
-| `FeatureNumber` | the number of a feature is `0`, has a leading zero, or is over 65535 |
+| `FeatureNumber` | the number of a feature is `0`, has a leading zero, or is over 65535; `NumberProblem` says which: `Shape` (not digits, or a leading zero) or `Range` (`0`, over 65535) |
 | `FeatureWithoutTitle` | `N.` with no title |
 | `DuplicateFeature` | a feature number is used again (the first line is in the error) |
 | `MalformedItem` | a line at column 0 inside a feature that starts with `[` is not a valid item line; `ItemProblem` says why: `BadMark` (not `[ ]` or `[x]`), `NoSpaceAfterMark`, `BadId` (the item number is invalid), `MissingTitle` |
 | `ItemBeforeFeature` | an item (`[ ]` or `[x]`) before the first feature; other lines starting with `[` in the brief are text |
 | `ItemInOtherFeature` | `2.1` under feature 1 |
 | `DuplicateItem` | an item number is used again (the first line is in the error) |
-| `MalformedDependsOn` | `Depends on:` is not `none` or feature numbers |
+| `MalformedDependsOn` | `Depends on:` is not `none` or feature numbers; the `NumberProblem` of the first word that is not one, none when there is no word |
 | `UnknownDependency` | `Depends on:` names a feature that is not defined earlier (itself included) |
 | `MisplacedDependsOn` | `Depends on:` after an item, or a second one |
 | `TextBeforeItem` | an indented line in a feature before its first item |
