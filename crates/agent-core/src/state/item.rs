@@ -353,6 +353,62 @@ pub struct InvalidAdvance {
     pub to: PhaseKind,
 }
 
+/// Reviews that do not fit the phase or the fix pass that carries them.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum InvalidReviews {
+    /// An approved item carries no review: nothing approved it.
+    #[error("an approved item must carry the reviews that approved it, and has none")]
+    ApprovedWithoutReviews,
+    /// An approved item carries a review that is not an approval.
+    #[error("the review by {reviewer} is not an approval: an approved item carries only approving reviews")]
+    ApprovedNotByAll {
+        /// The reviewer whose review is pending or asks for changes.
+        reviewer: InvestigatorName,
+    },
+    /// One reviewer has two reviews in one round.
+    #[error("the reviewer {reviewer} has two reviews in one round")]
+    DuplicateReviewer {
+        /// The repeated reviewer.
+        reviewer: InvestigatorName,
+    },
+    /// One reviewer task has two reviews in one round.
+    #[error("the task {task} has two reviews in one round")]
+    DuplicateTask {
+        /// The repeated task.
+        task: TaskId,
+    },
+    /// A fix pass records no review: nothing sent the item back.
+    #[error("a fix pass must record the reviews that sent the item back, and has none")]
+    FixPassWithoutReviews,
+    /// Every review of the round approved: the item is approved, not sent back.
+    #[error("every review of the round approved: the item cannot go back for a fix pass")]
+    FixPassApproved,
+}
+
+/// Why an item could not move to another phase.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AdvanceError {
+    /// [`PhaseKind::successors`] does not allow the change.
+    #[error(transparent)]
+    Transition(#[from] InvalidAdvance),
+    /// The reviews of the round do not fit the phase.
+    #[error("item {item}: {source}")]
+    Reviews {
+        /// The item.
+        item: ItemId,
+        /// What is wrong with the reviews.
+        #[source]
+        source: InvalidReviews,
+    },
+}
+
+/// An [`AdvanceError`] equals the refused change it wraps, so that a caller can compare it with the edge it expects.
+impl PartialEq<InvalidAdvance> for AdvanceError {
+    fn eq(&self, other: &InvalidAdvance) -> bool {
+        matches!(self, Self::Transition(refused) if refused == other)
+    }
+}
+
 /// The item is not being worked on: it has no assignee to replace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("item {item} is {phase}: only an item in progress or fixing has an assignee")]
@@ -424,15 +480,16 @@ impl ItemProgress {
     /// Moves the item to `next`. Leaving `in_review` for `fixing` records the round's reviews as a fix pass.
     ///
     /// # Errors
-    /// [`InvalidAdvance`] when [`PhaseKind::successors`] does not allow the change.
-    pub fn advance(&mut self, next: ItemPhase) -> Result<(), InvalidAdvance> {
+    /// [`AdvanceError`] when [`PhaseKind::successors`] does not allow the change.
+    pub fn advance(&mut self, next: ItemPhase) -> Result<(), AdvanceError> {
         let (from, to) = (self.phase.kind(), next.kind());
         if !from.successors().contains(&to) {
             return Err(InvalidAdvance {
                 item: self.id,
                 from,
                 to,
-            });
+            }
+            .into());
         }
         let left = std::mem::replace(&mut self.phase, next);
         if let (ItemPhase::InReview { reviews, .. }, PhaseKind::Fixing) = (left, to) {
@@ -914,5 +971,258 @@ mod tests {
         for value in bad {
             assert_refused::<ItemProgress>(&value.clone());
         }
+    }
+
+    // ---- the reviews of a round ---------------------------------------------------------------------------------
+
+    /// A submitted review of `reviewer` (task `n`) with `verdict`.
+    fn submitted(reviewer: &str, n: u32, verdict: ReviewVerdict) -> Review {
+        review(reviewer, n, ReviewOutcome::Submitted { verdict, at: at(40) })
+    }
+
+    /// An item in review with `round`.
+    fn in_review_with(round: Vec<Review>) -> ItemProgress {
+        let mut item = progress_in(PhaseKind::InProgress);
+        item.advance(ItemPhase::InReview {
+            pr: pr(7),
+            reviews: round,
+        })
+        .unwrap();
+        item
+    }
+
+    /// What `advance` says to the item in review `from` moving to approval with `round`, and the item after it.
+    fn approve_with(round: Vec<Review>) -> (Result<(), AdvanceError>, ItemProgress, ItemProgress) {
+        let mut item = progress_in(PhaseKind::InReview);
+        let before = item.clone();
+        let result = item.advance(ItemPhase::Approved {
+            pr: pr(7),
+            reviews: round,
+        });
+        (result, before, item)
+    }
+
+    #[test]
+    fn an_item_is_approved_only_with_reviews_that_all_approved() {
+        let cases = [
+            (vec![], InvalidReviews::ApprovedWithoutReviews),
+            (
+                reviews(ReviewOutcome::Pending),
+                InvalidReviews::ApprovedNotByAll {
+                    reviewer: "inv-opus".parse().unwrap(),
+                },
+            ),
+            (
+                vec![
+                    submitted("inv-opus", 5, ReviewVerdict::Approve),
+                    submitted("inv-codex", 6, ReviewVerdict::RequestChanges),
+                ],
+                InvalidReviews::ApprovedNotByAll {
+                    reviewer: "inv-codex".parse().unwrap(),
+                },
+            ),
+        ];
+        for (round, cause) in cases {
+            let (result, before, after) = approve_with(round);
+
+            assert_eq!(
+                result,
+                Err(AdvanceError::Reviews {
+                    item: id(),
+                    source: cause
+                })
+            );
+            assert_eq!(after, before);
+        }
+    }
+
+    #[test]
+    fn an_item_whose_reviews_all_approved_is_approved() {
+        let (result, _, after) = approve_with(vec![
+            submitted("inv-opus", 5, ReviewVerdict::Approve),
+            submitted("inv-codex", 6, ReviewVerdict::Approve),
+        ]);
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(after.status(), ItemStatus::Approved);
+    }
+
+    #[test]
+    fn a_reviewer_or_a_task_twice_in_one_round_is_refused() {
+        let cases = [
+            (
+                vec![
+                    review("inv-opus", 5, ReviewOutcome::Pending),
+                    review("inv-opus", 6, ReviewOutcome::Pending),
+                ],
+                InvalidReviews::DuplicateReviewer {
+                    reviewer: "inv-opus".parse().unwrap(),
+                },
+            ),
+            (
+                vec![
+                    review("inv-opus", 5, ReviewOutcome::Pending),
+                    review("inv-codex", 5, ReviewOutcome::Pending),
+                ],
+                InvalidReviews::DuplicateTask {
+                    task: crate::state::fixtures::task(5),
+                },
+            ),
+        ];
+        for (round, cause) in cases {
+            let mut item = progress_in(PhaseKind::InProgress);
+            let before = item.clone();
+
+            let result = item.advance(ItemPhase::InReview {
+                pr: pr(7),
+                reviews: round,
+            });
+
+            assert_eq!(
+                result,
+                Err(AdvanceError::Reviews {
+                    item: id(),
+                    source: cause
+                })
+            );
+            assert_eq!(item, before);
+        }
+    }
+
+    #[test]
+    fn a_round_that_asked_for_changes_or_is_not_complete_sends_the_item_back() {
+        for round in [
+            vec![
+                submitted("inv-opus", 5, ReviewVerdict::Approve),
+                submitted("inv-codex", 6, ReviewVerdict::RequestChanges),
+            ],
+            vec![
+                submitted("inv-opus", 5, ReviewVerdict::RequestChanges),
+                review("inv-codex", 6, ReviewOutcome::Pending),
+            ],
+        ] {
+            let mut item = in_review_with(round);
+
+            assert_eq!(item.advance(phase_of(PhaseKind::Fixing)), Ok(()));
+            assert_eq!(item.fix_passes().len(), 1);
+        }
+    }
+
+    #[test]
+    fn an_item_cannot_go_back_for_a_fix_pass_that_no_review_asked_for() {
+        let cases = [
+            (vec![], InvalidReviews::FixPassWithoutReviews),
+            (
+                vec![
+                    submitted("inv-opus", 5, ReviewVerdict::Approve),
+                    submitted("inv-codex", 6, ReviewVerdict::Approve),
+                ],
+                InvalidReviews::FixPassApproved,
+            ),
+        ];
+        for (round, cause) in cases {
+            let mut item = in_review_with(round);
+            let before = item.clone();
+
+            let result = item.advance(phase_of(PhaseKind::Fixing));
+
+            assert_eq!(
+                result,
+                Err(AdvanceError::Reviews {
+                    item: id(),
+                    source: cause
+                })
+            );
+            assert_eq!(item, before);
+        }
+    }
+
+    #[test]
+    fn an_advance_error_equals_the_refused_change_it_wraps_and_nothing_else() {
+        let refused = InvalidAdvance {
+            item: id(),
+            from: PhaseKind::Pending,
+            to: PhaseKind::Done,
+        };
+        let error = AdvanceError::from(refused);
+
+        assert_eq!(error, refused);
+        assert_ne!(
+            AdvanceError::Reviews {
+                item: id(),
+                source: InvalidReviews::ApprovedWithoutReviews
+            },
+            refused
+        );
+    }
+
+    /// The JSON of an approved phase with `reviews`.
+    fn approved_json(reviews: &serde_json::Value) -> serde_json::Value {
+        json!({
+            "phase": "approved",
+            "pr": {"number": 7, "branch": "agents/codex-1/item-1-2", "opened_at": "2026-11-11T19:15:10Z"},
+            "reviews": reviews
+        })
+    }
+
+    /// The JSON of a review of `reviewer` (task `n`) with `outcome`.
+    fn review_json(reviewer: &str, n: u32, outcome: &serde_json::Value) -> serde_json::Value {
+        json!({"reviewer": reviewer, "task": format!("task-20261111-1530{n:02}-k3x9"), "requested_at": "2026-11-11T19:15:20Z", "outcome": outcome})
+    }
+
+    #[test]
+    fn an_approved_phase_whose_reviews_did_not_all_approve_is_refused_when_read() {
+        let approve = json!({"status": "submitted", "verdict": "APPROVE", "at": "2026-11-11T19:15:30Z"});
+        let changes = json!({"status": "submitted", "verdict": "REQUEST_CHANGES", "at": "2026-11-11T19:15:30Z"});
+        let pending = json!({"status": "pending"});
+        assert_refused::<ItemPhase>(&approved_json(&json!([])));
+        assert_refused::<ItemPhase>(&approved_json(&json!([review_json("inv-opus", 5, &pending)])));
+        assert_refused::<ItemPhase>(&approved_json(&json!([
+            review_json("inv-opus", 5, &approve),
+            review_json("inv-codex", 6, &changes)
+        ])));
+        serde_json::from_value::<ItemPhase>(approved_json(&json!([
+            review_json("inv-opus", 5, &approve),
+            review_json("inv-codex", 6, &approve)
+        ])))
+        .unwrap();
+    }
+
+    #[test]
+    fn a_round_with_a_reviewer_twice_is_refused_when_read() {
+        let pending = json!({"status": "pending"});
+        let value = json!({
+            "phase": "in_review",
+            "pr": {"number": 7, "branch": "agents/codex-1/item-1-2", "opened_at": "2026-11-11T19:15:10Z"},
+            "reviews": [review_json("inv-opus", 5, &pending), review_json("inv-opus", 6, &pending)]
+        });
+
+        assert_refused::<ItemPhase>(&value);
+    }
+
+    #[test]
+    fn a_fix_pass_without_reviews_or_that_all_approved_is_refused_when_read() {
+        let approve = json!({"status": "submitted", "verdict": "APPROVE", "at": "2026-11-11T19:15:30Z"});
+        let changes = json!({"status": "submitted", "verdict": "REQUEST_CHANGES", "at": "2026-11-11T19:15:30Z"});
+        let fixing = |requested_by: &serde_json::Value| {
+            json!({
+                "id": "1.2",
+                "phase": {
+                    "phase": "fixing",
+                    "assignee": "codex-1",
+                    "branch": "agents/codex-1/item-1-2",
+                    "pr": {"number": 7, "branch": "agents/codex-1/item-1-2", "opened_at": "2026-11-11T19:15:10Z"}
+                },
+                "fix_passes": [{"requested_by": requested_by}]
+            })
+        };
+
+        assert_refused::<ItemProgress>(&fixing(&json!([])));
+        assert_refused::<ItemProgress>(&fixing(&json!([review_json("inv-opus", 5, &approve)])));
+        assert_refused::<ItemProgress>(&fixing(&json!([
+            review_json("inv-opus", 5, &changes),
+            review_json("inv-opus", 6, &changes)
+        ])));
+        serde_json::from_value::<ItemProgress>(fixing(&json!([review_json("inv-opus", 5, &changes)]))).unwrap();
     }
 }

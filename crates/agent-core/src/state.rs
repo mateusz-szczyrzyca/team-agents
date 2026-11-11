@@ -17,8 +17,8 @@ mod values;
 
 pub use gate::{GateOutcome, GateResult};
 pub use item::{
-    Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, ItemPhase, ItemProgress, NotWorkedOn, PhaseKind,
-    PullRequest, Review, ReviewOutcome,
+    AdvanceError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemPhase, ItemProgress,
+    NotWorkedOn, PhaseKind, PullRequest, Review, ReviewOutcome,
 };
 pub use member::{Member, MemberError, Participant, QuestionError};
 pub use question::{AnswerBeforeQuestion, AnsweredVia, Question, QuestionState};
