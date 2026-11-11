@@ -133,8 +133,16 @@ fn refuse(what: &'static str, text: &str, rule: ValueRule) -> InvalidValue {
 
 /// Checks that `text` is not empty, has at most `max` bytes and only characters `allowed` accepts.
 fn check_text(what: &'static str, text: &str, max: usize, allowed: impl Fn(char) -> bool) -> Result<(), InvalidValue> {
-    let _ = (what, text, max, allowed);
-    Ok(())
+    if text.is_empty() {
+        return Err(refuse(what, text, ValueRule::Empty));
+    }
+    if text.len() > max {
+        return Err(refuse(what, text, ValueRule::TooLong { max }));
+    }
+    match text.chars().find(|&c| !allowed(c)) {
+        Some(bad) => Err(refuse(what, text, ValueRule::ForbiddenChar(bad))),
+        None => Ok(()),
+    }
 }
 
 /// Implements `as_str`, `Display`, `FromStr` and `TryFrom<String>` (which serde deserializes through) for a text
@@ -181,7 +189,8 @@ fn keep(text: String) -> String {
 }
 
 /// Makes a text lowercase: GitHub and Tailscale logins do not distinguish case.
-fn lowercase(text: String) -> String {
+fn lowercase(mut text: String) -> String {
+    text.make_ascii_lowercase();
     text
 }
 
@@ -195,7 +204,9 @@ fn lowercase(text: String) -> String {
 pub struct Language(String);
 
 fn check_language(text: &str) -> Result<(), InvalidValue> {
-    check_text("language", text, MAX_LANGUAGE_LEN, |c| c.is_ascii_alphanumeric() || c == '-')
+    check_text("language", text, MAX_LANGUAGE_LEN, |c| {
+        c.is_ascii_alphanumeric() || c == '-'
+    })
 }
 
 text_value!(Language, check_language, keep);
@@ -204,7 +215,7 @@ impl Language {
     /// Whether this is English, the language every text exists in; any case.
     #[must_use]
     pub fn is_english(&self) -> bool {
-        false
+        self.0.eq_ignore_ascii_case("english")
     }
 
     /// A language written as a literal in this crate; the test `defaults_pass_their_own_checks` keeps it valid.
@@ -228,7 +239,9 @@ impl Default for Language {
 pub struct ModelName(String);
 
 fn check_model(text: &str) -> Result<(), InvalidValue> {
-    check_text("model name", text, MAX_MODEL_LEN, |c| !c.is_control() && !c.is_whitespace())
+    check_text("model name", text, MAX_MODEL_LEN, |c| {
+        !c.is_control() && !c.is_whitespace()
+    })
 }
 
 text_value!(ModelName, check_model, keep);
@@ -244,7 +257,11 @@ pub struct RepoName(String);
 fn check_repo(text: &str) -> Result<(), InvalidValue> {
     check_text("repository name", text, MAX_REPO_LEN, |c| {
         c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')
-    })
+    })?;
+    if matches!(text, "." | "..") {
+        return Err(refuse("repository name", text, ValueRule::DotName));
+    }
+    Ok(())
 }
 
 text_value!(RepoName, check_repo, keep);
@@ -260,7 +277,11 @@ pub struct EnvName(String);
 fn check_env_name(text: &str) -> Result<(), InvalidValue> {
     check_text("environment variable name", text, MAX_ENV_NAME_LEN, |c| {
         c.is_ascii_alphanumeric() || c == '_'
-    })
+    })?;
+    if text.starts_with(|c: char| c.is_ascii_digit()) {
+        return Err(refuse("environment variable name", text, ValueRule::StartsWithDigit));
+    }
+    Ok(())
 }
 
 text_value!(EnvName, check_env_name, keep);
@@ -276,7 +297,14 @@ pub struct GithubLogin(String);
 fn check_github_login(text: &str) -> Result<(), InvalidValue> {
     check_text("GitHub login", text, MAX_GITHUB_LOGIN_LEN, |c| {
         c.is_ascii_alphanumeric() || c == '-'
-    })
+    })?;
+    if text.starts_with('-') || text.ends_with('-') {
+        return Err(refuse("GitHub login", text, ValueRule::HyphenAtEdge));
+    }
+    if text.contains("--") {
+        return Err(refuse("GitHub login", text, ValueRule::DoubleHyphen));
+    }
+    Ok(())
 }
 
 text_value!(GithubLogin, check_github_login, lowercase);
@@ -293,7 +321,11 @@ pub struct TailscaleLogin(String);
 fn check_tailscale_login(text: &str) -> Result<(), InvalidValue> {
     check_text("Tailscale login", text, MAX_TAILSCALE_LOGIN_LEN, |c| {
         !c.is_control() && !c.is_whitespace() && c != '<' && c != '>'
-    })
+    })?;
+    match text.split_once('@') {
+        Some((user, domain)) if !user.is_empty() && !domain.is_empty() && !domain.contains('@') => Ok(()),
+        _ => Err(refuse("Tailscale login", text, ValueRule::NotLogin)),
+    }
 }
 
 text_value!(TailscaleLogin, check_tailscale_login, lowercase);
@@ -310,7 +342,11 @@ pub struct NameTemplate(String);
 fn check_template(text: &str) -> Result<(), InvalidValue> {
     check_text("name template", text, MAX_TEMPLATE_LEN, |c| {
         !c.is_control() && c != '<' && c != '>'
-    })
+    })?;
+    if text.replace(AGENT_PLACEHOLDER, "").contains(['{', '}']) {
+        return Err(refuse("name template", text, ValueRule::StrayBrace));
+    }
+    Ok(())
 }
 
 text_value!(NameTemplate, check_template, keep);
@@ -319,12 +355,14 @@ impl NameTemplate {
     /// The text with every `{agent}` replaced by `agent`'s name.
     #[must_use]
     pub fn render(&self, agent: &AgentName) -> String {
-        let _ = (agent, AGENT_PLACEHOLDER);
-        String::new()
+        self.0.replace(AGENT_PLACEHOLDER, agent.as_str())
     }
 
     /// A template written as a literal in this crate; the test `defaults_pass_their_own_checks` keeps it valid.
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by the defaults of the configuration sections"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by the defaults of the configuration sections")
+    )]
     pub(crate) fn literal(text: &'static str) -> Self {
         Self(text.to_owned())
     }
@@ -340,7 +378,10 @@ impl NameTemplate {
 pub struct AbsolutePath(PathBuf);
 
 fn check_absolute(text: &str) -> Result<(), InvalidValue> {
-    let _ = text;
+    check_text("path", text, MAX_PATH_LEN, |c| c != '\0')?;
+    if !Path::new(text).is_absolute() {
+        return Err(refuse("path", text, ValueRule::NotAbsolute));
+    }
     Ok(())
 }
 
@@ -352,7 +393,10 @@ impl AbsolutePath {
     }
 
     /// A path written as a literal in this crate; the test `defaults_pass_their_own_checks` keeps it valid.
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by the defaults of the configuration sections"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by the defaults of the configuration sections")
+    )]
     pub(crate) fn literal(text: &'static str) -> Self {
         Self(PathBuf::from(text))
     }
@@ -385,7 +429,16 @@ impl TryFrom<String> for AbsolutePath {
 pub struct Program(PathBuf);
 
 fn check_program(text: &str) -> Result<(), InvalidValue> {
-    let _ = text;
+    check_text("program", text, MAX_PATH_LEN, |c| c != '\0')?;
+    let has_separator = text.contains('/');
+    let usable = if has_separator {
+        Path::new(text).is_absolute()
+    } else {
+        !matches!(text, "." | "..")
+    };
+    if !usable {
+        return Err(refuse("program", text, ValueRule::NotBareOrAbsolute));
+    }
     Ok(())
 }
 
@@ -399,11 +452,14 @@ impl Program {
     /// Whether this is a bare command name, to be looked up on `PATH`, rather than an absolute path.
     #[must_use]
     pub fn is_bare_name(&self) -> bool {
-        true
+        !self.0.is_absolute()
     }
 
     /// A program written as a literal in this crate; the test `defaults_pass_their_own_checks` keeps it valid.
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by the defaults of the configuration sections"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by the defaults of the configuration sections")
+    )]
     pub(crate) fn literal(text: &'static str) -> Self {
         Self(PathBuf::from(text))
     }
@@ -438,7 +494,16 @@ pub struct CliArgs(Vec<String>);
 
 /// Checks the arguments `args` of a command line.
 fn check_args(args: &[String]) -> Result<(), InvalidValue> {
-    let _ = args;
+    let refuse_args = |rule| Err(refuse("argument", &args.join(" "), rule));
+    if args.len() > MAX_ARGS {
+        return refuse_args(ValueRule::TooMany { max: MAX_ARGS });
+    }
+    if args.iter().any(|arg| arg.len() > MAX_ARG_LEN) {
+        return refuse_args(ValueRule::TooLong { max: MAX_ARG_LEN });
+    }
+    if args.iter().any(|arg| arg.contains('\0')) {
+        return refuse_args(ValueRule::ForbiddenChar('\0'));
+    }
     Ok(())
 }
 
@@ -490,10 +555,13 @@ impl TryFrom<Vec<String>> for CommandLine {
     type Error = InvalidValue;
 
     fn try_from(words: Vec<String>) -> Result<Self, Self::Error> {
-        let _ = words;
+        let mut words = words.into_iter();
+        let Some(program) = words.next() else {
+            return Err(refuse("command", "", ValueRule::Empty));
+        };
         Ok(Self {
-            program: Program::literal("true"),
-            args: CliArgs::default(),
+            program: Program::try_from(program)?,
+            args: CliArgs::try_from(words.collect::<Vec<_>>())?,
         })
     }
 }
@@ -506,7 +574,7 @@ pub struct Minutes(NonZeroU32);
 
 impl Minutes {
     /// A number of minutes written as a literal in this crate.
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by the defaults of the configuration sections"))]
+    #[expect(dead_code, reason = "used by the defaults of the configuration sections")]
     pub(crate) const fn literal(minutes: NonZeroU32) -> Self {
         Self(minutes)
     }
@@ -514,7 +582,8 @@ impl Minutes {
     /// The span of time, in whole seconds.
     #[must_use]
     pub fn as_duration(self) -> Duration {
-        Duration::ZERO
+        // A u32 count of minutes in seconds is below 2^38: it fits a u64.
+        Duration::from_secs(u64::from(self.0.get()) * SECS_PER_MINUTE)
     }
 }
 
@@ -530,8 +599,17 @@ pub struct LoopbackAddr(SocketAddr);
 
 /// Checks that `text` is a loopback `address:port` and returns it.
 fn parse_loopback(text: &str) -> Result<SocketAddr, InvalidValue> {
-    let _ = text;
-    Ok(SocketAddr::from(([0, 0, 0, 0], 0)))
+    // The parse error says no more than `NotSocketAddr` and the refused text do.
+    let Ok(addr) = text.parse::<SocketAddr>() else {
+        return Err(refuse("listen address", text, ValueRule::NotSocketAddr));
+    };
+    if !addr.ip().is_loopback() {
+        return Err(refuse("listen address", text, ValueRule::NotLoopback));
+    }
+    if addr.port() == 0 {
+        return Err(refuse("listen address", text, ValueRule::ZeroPort));
+    }
+    Ok(addr)
 }
 
 impl LoopbackAddr {
@@ -615,7 +693,14 @@ mod tests {
 
     #[test]
     fn language_accepts_names_and_codes() {
-        for text in ["English", "Polish", "pt-BR", "de", "Brazilian-Portuguese", &repeated('a', 32)] {
+        for text in [
+            "English",
+            "Polish",
+            "pt-BR",
+            "de",
+            "Brazilian-Portuguese",
+            &repeated('a', 32),
+        ] {
             assert_eq!(accepts::<Language>(text).as_str(), text);
         }
     }
@@ -921,7 +1006,10 @@ mod tests {
         ] {
             let parsed = CliArgs::try_from(words.clone()).unwrap();
             assert_eq!(parsed.as_slice(), words.as_slice());
-            assert_eq!(serde_json::from_str::<CliArgs>(&serde_json::to_string(&words).unwrap()).unwrap(), parsed);
+            assert_eq!(
+                serde_json::from_str::<CliArgs>(&serde_json::to_string(&words).unwrap()).unwrap(),
+                parsed
+            );
         }
     }
 
@@ -966,8 +1054,18 @@ mod tests {
         let cases = [
             (vec![], "command", String::new(), ValueRule::Empty),
             (vec![String::new()], "program", String::new(), ValueRule::Empty),
-            (vec!["./x".to_owned()], "program", "./x".to_owned(), ValueRule::NotBareOrAbsolute),
-            (many.clone(), "argument", many[1..].join(" "), ValueRule::TooMany { max: 64 }),
+            (
+                vec!["./x".to_owned()],
+                "program",
+                "./x".to_owned(),
+                ValueRule::NotBareOrAbsolute,
+            ),
+            (
+                many.clone(),
+                "argument",
+                many[1..].join(" "),
+                ValueRule::TooMany { max: 64 },
+            ),
         ];
         for (words, what, value, rule) in cases {
             let expected = InvalidValue { what, value, rule };
