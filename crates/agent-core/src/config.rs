@@ -1,9 +1,11 @@
-//! The configuration: the typed model of `agents.toml` (see `docs/configuration.md`).
+//! The configuration: the typed model of `agents.toml` ([`Config`]) and of `secrets.toml` ([`Secrets`]), see
+//! `docs/configuration.md`.
 //!
 //! [`Config::from_toml_str`] turns the text of the file into a [`Config`], and only into a valid one: unknown keys are
 //! refused (`deny_unknown_fields`), every value is parsed into its type (the newtypes of this module), and the lists of agents are
 //! checked against each other. The type does no I/O; whoever reads the file passes its text in.
 
+mod secrets;
 mod values;
 
 use std::collections::{BTreeMap, HashSet};
@@ -14,6 +16,7 @@ use serde::Deserialize;
 use crate::ids::{AgentName, BranchName, InvestigatorName};
 use crate::kinds::{CliKind, Tier};
 
+pub use secrets::{InvalidSecret, MAX_SECRETS_BYTES, Position, Secret, Secrets, SecretsError};
 pub use values::{
     AbsolutePath, CliArgs, CommandLine, EnvName, GithubLogin, InvalidValue, Language, LoopbackAddr, Minutes, ModelName,
     NameTemplate, Program, RepoName, TailscaleLogin, ValueRule,
