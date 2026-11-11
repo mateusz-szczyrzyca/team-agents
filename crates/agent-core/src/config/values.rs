@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::ids::AgentName;
 
@@ -180,6 +180,12 @@ macro_rules! text_value {
                 Ok(Self($normalize(text)))
             }
         }
+
+        impl From<$ty> for String {
+            fn from(value: $ty) -> Self {
+                value.0
+            }
+        }
     };
 }
 
@@ -213,8 +219,8 @@ fn lowercase(mut text: String) -> String {
 /// ```compile_fail,E0423
 /// let language = agent_core::config::Language(String::from("not valid!"));
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
-#[serde(try_from = "String")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct Language(String);
 
 fn check_language(text: &str) -> Result<(), InvalidValue> {
@@ -248,8 +254,8 @@ impl Default for Language {
 ///
 /// 1 to 200 bytes without whitespace or control characters. Refused, with the [`ValueRule`] it breaks: the empty
 /// text, a longer one, whitespace and control characters. An agent without a model uses its CLI's default.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
-#[serde(try_from = "String")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct ModelName(String);
 
 fn check_model(text: &str) -> Result<(), InvalidValue> {
@@ -264,8 +270,8 @@ text_value!(ModelName, check_model, keep);
 ///
 /// 1 to 100 bytes of ASCII letters, digits, `-`, `_` and `.`, other than `.` and `..`. Refused, with the
 /// [`ValueRule`] it breaks: the empty text, a longer one, any other character and the two dot names.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
-#[serde(try_from = "String")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct RepoName(String);
 
 fn check_repo(text: &str) -> Result<(), InvalidValue> {
@@ -383,7 +389,7 @@ impl NameTemplate {
 ///
 /// 1 to 4096 bytes without NUL. Refused, with the [`ValueRule`] it breaks: the empty text, a longer one, a NUL and a
 /// relative path (`bin/x`, `./x`, `~/x`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String")]
 pub struct AbsolutePath(PathBuf);
 

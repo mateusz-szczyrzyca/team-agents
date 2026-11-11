@@ -257,7 +257,8 @@ const fn after_open_fallback(text: &str) -> &str {
 }
 
 /// One numbered question in a [`QuestionsFile`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawQuestion", into = "RawQuestion")]
 pub struct Question {
     /// The question number from `## <number>.`, starting at 1.
     number: NonZeroU32,
@@ -271,6 +272,41 @@ pub struct Question {
     recommended: String,
     /// The verdict after `**Verdict:**`, if the human has written one.
     verdict: Option<Verdict>,
+}
+
+/// Wire representation of [`Question`] so deserialization re-runs [`Question::new`].
+#[derive(Serialize, Deserialize)]
+struct RawQuestion {
+    /// The question number from `## <number>.`, starting at 1.
+    number: NonZeroU32,
+    /// The title after `## <number>. `.
+    title: String,
+    /// The lines between the heading and `**Recommended:**`.
+    body: String,
+    /// The text after `**Recommended:**`.
+    recommended: String,
+    /// The verdict after `**Verdict:**`, if any.
+    verdict: Option<Verdict>,
+}
+
+impl TryFrom<RawQuestion> for Question {
+    type Error = QuestionsError;
+
+    fn try_from(raw: RawQuestion) -> Result<Self, Self::Error> {
+        Self::new(raw.number, &raw.title, &raw.body, &raw.recommended, raw.verdict)
+    }
+}
+
+impl From<Question> for RawQuestion {
+    fn from(question: Question) -> Self {
+        Self {
+            number: question.number,
+            title: question.title,
+            body: question.body,
+            recommended: question.recommended,
+            verdict: question.verdict,
+        }
+    }
 }
 
 impl Question {
