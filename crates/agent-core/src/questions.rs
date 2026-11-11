@@ -26,11 +26,36 @@
 //! Nothing here reads a file or knows a wording: the text of the instructions and the words that tell the agent a
 //! recommendation was accepted come from templates under `prompts/harness/questions/` and are passed in.
 
+use std::collections::HashSet;
 use std::fmt;
-use std::num::{NonZeroU32, NonZeroUsize};
+use std::num::{NonZeroU32, NonZeroUsize, ParseIntError};
 
 /// Largest questions file accepted, in bytes: a bound on untrusted input, far above any real file.
 pub const MAX_QUESTIONS_BYTES: usize = 1 << 20;
+
+/// The label of the part that holds the human's answer.
+const VERDICT_LABEL: &str = "Verdict";
+
+/// The label of the part that holds the recommended answer.
+const RECOMMENDED_LABEL: &str = "Recommended";
+
+/// The verdict that accepts the recommendation, in any case.
+const ACCEPT_WORD: &str = "ok";
+
+/// The word of the marker line that says the answers are ready.
+const ANSWERED_WORD: &str = "ANSWERED";
+
+/// The marker line as it is written.
+const MARKER_LINE: &str = "**ANSWERED**";
+
+/// The start of a bold label or of the marker line: `**`.
+const BOLD: &str = "**";
+
+/// The start of the title line.
+const TITLE_PREFIX: &str = "# ";
+
+/// The start of a question's line, before its number.
+const QUESTION_PREFIX: &str = "## ";
 
 /// A parsed or composed questions file.
 ///
@@ -103,6 +128,14 @@ impl OwnAnswer {
     }
 }
 
+/// A line of an answer that the file format would read as the start of a question, a label or the `ANSWERED` marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("line {line} of the answer would be read as part of the file's structure")]
+pub struct StructuralLine {
+    /// The line, counted from 1.
+    pub line: NonZeroUsize,
+}
+
 /// Why a text is not an own answer.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OwnAnswerError {
@@ -124,7 +157,17 @@ impl TryFrom<String> for OwnAnswer {
     type Error = OwnAnswerError;
 
     fn try_from(text: String) -> Result<Self, Self::Error> {
-        Ok(Self(text))
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(OwnAnswerError::Blank);
+        }
+        if text.eq_ignore_ascii_case(ACCEPT_WORD) {
+            return Err(OwnAnswerError::IsOk);
+        }
+        if let Some(line) = first_structural_line(text) {
+            return Err(OwnAnswerError::Structural { line });
+        }
+        Ok(Self(text.to_owned()))
     }
 }
 
@@ -133,11 +176,25 @@ impl Verdict {
     /// otherwise the trimmed text as an own answer.
     ///
     /// # Errors
-    /// [`OwnAnswerError::Structural`] when a line of the text would be read as the start of a question, a label or the
+    /// [`StructuralLine`] when a line of the text would be read as the start of a question, a label or the
     /// `ANSWERED` marker.
-    pub fn from_text(text: &str) -> Result<Option<Self>, OwnAnswerError> {
-        let _ = text;
-        Ok(None)
+    pub fn from_text(text: &str) -> Result<Option<Self>, StructuralLine> {
+        let text = text.trim();
+        match first_structural_line(text) {
+            Some(line) => Err(StructuralLine { line }),
+            None => Ok(Self::from_section(text)),
+        }
+    }
+
+    /// Reads the trimmed text of a verdict part, which the parser has already split at every label.
+    fn from_section(text: &str) -> Option<Self> {
+        if text.is_empty() {
+            None
+        } else if text.eq_ignore_ascii_case(ACCEPT_WORD) {
+            Some(Self::Accept)
+        } else {
+            Some(Self::Own(OwnAnswer(text.to_owned())))
+        }
     }
 }
 
@@ -162,6 +219,8 @@ pub enum ParseError {
         line: NonZeroUsize,
         /// The digits that were read.
         digits: String,
+        /// Why the digits are not a number in that range.
+        source: ParseIntError,
     },
     /// Two questions have the same number.
     #[error("line {line}: question {number} appears twice")]
@@ -282,22 +341,41 @@ impl Entry {
     /// [`EntryError::Structural`] when a line of `body` would be read as the start of a question, a label or the
     /// `ANSWERED` marker.
     pub fn new(number: NonZeroU32, title: &str, body: &str) -> Result<Self, EntryError> {
-        let _ = (title, body);
+        let title = title.trim();
+        if title.is_empty() || title.contains(['\n', '\r']) {
+            return Err(EntryError::InvalidTitle);
+        }
+        if let Some(line) = first_structural_line(body) {
+            return Err(EntryError::Structural {
+                field: EntryField::Body,
+                line,
+            });
+        }
         Ok(Self {
             number,
-            title: String::new(),
-            body: String::new(),
-            parts: Vec::new(),
+            title: title.to_owned(),
+            body: body.trim().to_owned(),
+            parts: vec![Part::Verdict(None)],
         })
     }
 
-    /// The question with a `**Recommended:**` part.
+    /// The question with a `**Recommended:**` part, in place of any it had.
     ///
     /// # Errors
     /// [`EntryError::BlankRecommendation`] for a blank text; [`EntryError::Structural`] when a line of it would be
     /// read as the start of a question, a label or the `ANSWERED` marker.
-    pub fn recommend(self, text: &str) -> Result<Self, EntryError> {
-        let _ = text;
+    pub fn recommend(mut self, text: &str) -> Result<Self, EntryError> {
+        if text.trim().is_empty() {
+            return Err(EntryError::BlankRecommendation);
+        }
+        if let Some(line) = first_structural_line(text) {
+            return Err(EntryError::Structural {
+                field: EntryField::Recommendation,
+                line,
+            });
+        }
+        self.parts.retain(|part| !matches!(part, Part::Recommended(_)));
+        self.parts.insert(0, Part::Recommended(text.trim().to_owned()));
         Ok(self)
     }
 
@@ -338,6 +416,63 @@ impl Entry {
     }
 }
 
+impl Entry {
+    /// Replaces the verdict part's text, or adds the part when there is something to put in it.
+    fn set_verdict(&mut self, verdict: Option<Verdict>) {
+        match self.parts.iter_mut().find(|part| matches!(part, Part::Verdict(_))) {
+            Some(part) => *part = Part::Verdict(verdict),
+            None if verdict.is_some() => self.parts.push(Part::Verdict(verdict)),
+            None => {}
+        }
+    }
+
+    /// The answer the verdict gives, or why it gives none.
+    fn answer(&self) -> Result<Choice, AnswerProblem> {
+        match (self.verdict(), self.recommendation()) {
+            (None, _) => Err(AnswerProblem::MissingVerdict),
+            (Some(Verdict::Accept), None) => Err(AnswerProblem::AcceptWithoutRecommendation),
+            (Some(Verdict::Accept), Some(recommendation)) => Ok(Choice::Recommendation(recommendation.to_owned())),
+            (Some(Verdict::Own(own)), _) => Ok(Choice::Own(own.as_str().to_owned())),
+        }
+    }
+
+    /// The question as text for `rendering`: its line, its text and its parts, each part after a blank line.
+    fn render_as(&self, rendering: &Rendering<'_>) -> String {
+        let mut out = if self.title.is_empty() {
+            format!("{QUESTION_PREFIX}{}.\n", self.number)
+        } else {
+            format!("{QUESTION_PREFIX}{}. {}\n", self.number, self.title)
+        };
+        if !self.body.is_empty() {
+            out.push_str(&self.body);
+            out.push('\n');
+        }
+        for part in &self.parts {
+            out.push('\n');
+            out.push_str(&match part {
+                Part::Recommended(text) => labelled(RECOMMENDED_LABEL, text),
+                Part::Verdict(verdict) => labelled(VERDICT_LABEL, &self.verdict_text(verdict.as_ref(), rendering)),
+                Part::Other { label, text } => labelled(label, text),
+            });
+            out.push('\n');
+        }
+        out
+    }
+
+    /// The text of a verdict part for `rendering`: for the agent, `ok` becomes the words that say the human accepted
+    /// the recommendation.
+    fn verdict_text(&self, verdict: Option<&Verdict>, rendering: &Rendering<'_>) -> String {
+        match (verdict, rendering) {
+            (None, _) => String::new(),
+            (Some(Verdict::Own(own)), _) => own.as_str().to_owned(),
+            (Some(Verdict::Accept), Rendering::Human) => ACCEPT_WORD.to_owned(),
+            (Some(Verdict::Accept), Rendering::Agent { accepted }) => {
+                accepted(self.recommendation().unwrap_or_default())
+            }
+        }
+    }
+}
+
 impl QuestionsFile {
     /// A questions file with a title and questions, not yet answered and without instructions.
     ///
@@ -345,8 +480,24 @@ impl QuestionsFile {
     /// [`ComposeError`]: the title is blank or has more than one line, there are no questions, or two have the same
     /// number.
     pub fn new(title: &str, entries: Vec<Entry>) -> Result<Self, ComposeError> {
-        let _ = (title, entries);
-        Err(ComposeError::NoQuestions)
+        let title = title.trim();
+        if title.is_empty() || title.contains(['\n', '\r']) {
+            return Err(ComposeError::InvalidTitle);
+        }
+        if entries.is_empty() {
+            return Err(ComposeError::NoQuestions);
+        }
+        let mut seen = HashSet::new();
+        if let Some(entry) = entries.iter().find(|entry| !seen.insert(entry.number)) {
+            return Err(ComposeError::DuplicateNumber { number: entry.number });
+        }
+        Ok(Self {
+            title: Some(title.to_owned()),
+            instructions: String::new(),
+            intro: String::new(),
+            entries,
+            answered: false,
+        })
     }
 
     /// Parses the text of a questions file.
@@ -355,14 +506,83 @@ impl QuestionsFile {
     /// [`ParseError`]: the text is over [`MAX_QUESTIONS_BYTES`], has no questions, a question number that is 0 or too
     /// large, two questions with one number, or a question with two `**Recommended:**` or two `**Verdict:**` parts.
     pub fn parse(text: &str) -> Result<Self, ParseError> {
-        let _ = text;
-        Err(ParseError::NoQuestions)
+        if text.len() > MAX_QUESTIONS_BYTES {
+            return Err(ParseError::TooLarge {
+                len: text.len(),
+                max: MAX_QUESTIONS_BYTES,
+            });
+        }
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+        let mut preamble: Vec<&str> = Vec::new();
+        let mut drafts: Vec<Draft<'_>> = Vec::new();
+        let mut seen = HashSet::new();
+        for (index, line) in text.lines().enumerate() {
+            let at = NonZeroUsize::MIN.saturating_add(index);
+            if let Some(header) = read_header(line) {
+                let number = header.number(at)?;
+                if !seen.insert(number) {
+                    return Err(ParseError::DuplicateNumber { line: at, number });
+                }
+                drafts.push(Draft::new(number, header.title));
+            } else if is_marker(line) {
+                // Wherever it stands, the marker is not part of a question's text.
+            } else if let Some(draft) = drafts.last_mut() {
+                draft.push_line(line, at)?;
+            } else {
+                preamble.push(line);
+            }
+        }
+        if drafts.is_empty() {
+            return Err(ParseError::NoQuestions);
+        }
+        let Preamble {
+            title,
+            instructions,
+            intro,
+        } = read_preamble(&preamble);
+        Ok(Self {
+            title,
+            instructions,
+            intro,
+            entries: drafts.into_iter().map(Draft::finish).collect(),
+            answered: text
+                .lines()
+                .rev()
+                .find(|line| !line.trim().is_empty())
+                .is_some_and(is_marker),
+        })
     }
 
     /// The file as text. Parsing it gives an equal file.
     #[must_use]
     pub fn render(&self) -> String {
-        String::new()
+        self.render_as(&Rendering::Human)
+    }
+
+    /// The file as text for `rendering`.
+    fn render_as(&self, rendering: &Rendering<'_>) -> String {
+        let mut blocks: Vec<String> = Vec::new();
+        if let Some(title) = &self.title {
+            blocks.push(format!("{TITLE_PREFIX}{title}"));
+        }
+        if matches!(rendering, Rendering::Human) && !self.instructions.is_empty() {
+            blocks.push(quote(&self.instructions));
+        }
+        if !self.intro.is_empty() {
+            blocks.push(self.intro.clone());
+        }
+        let mut out = blocks.join("\n\n");
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        let entries: Vec<String> = self.entries.iter().map(|entry| entry.render_as(rendering)).collect();
+        out.push_str(&entries.join("\n"));
+        if matches!(rendering, Rendering::Human) && self.answered {
+            out.push('\n');
+            out.push_str(MARKER_LINE);
+            out.push('\n');
+        }
+        out
     }
 
     /// The title, if the file has one.
@@ -404,7 +624,7 @@ impl QuestionsFile {
     /// Puts `text` under the title as the instructions, in place of any there are; a blank text removes them. Doing
     /// it twice with the same text changes nothing.
     pub fn set_instructions(&mut self, text: &str) {
-        let _ = text;
+        text.trim().clone_into(&mut self.instructions);
     }
 
     /// Sets the verdict of a question; `None` empties it.
@@ -412,19 +632,28 @@ impl QuestionsFile {
     /// # Errors
     /// [`UnknownQuestion`] when the file has no question `number`.
     pub fn set_verdict(&mut self, number: NonZeroU32, verdict: Option<Verdict>) -> Result<(), UnknownQuestion> {
-        let _ = (number, verdict);
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.number == number)
+            .ok_or(UnknownQuestion { number })?;
+        entry.set_verdict(verdict);
         Ok(())
     }
 
     /// Puts the `**ANSWERED**` marker on the last line (`true`) or takes it away (`false`).
-    pub fn mark_answered(&mut self, answered: bool) {
-        let _ = answered;
+    pub const fn mark_answered(&mut self, answered: bool) {
+        self.answered = answered;
     }
 
     /// The numbers of the questions without a recommendation, in file order.
     #[must_use]
     pub fn missing_recommendations(&self) -> Vec<NonZeroU32> {
-        Vec::new()
+        self.entries
+            .iter()
+            .filter(|entry| entry.recommendation().is_none())
+            .map(Entry::number)
+            .collect()
     }
 
     /// What the human answered, question by question.
@@ -432,7 +661,23 @@ impl QuestionsFile {
     /// # Errors
     /// [`AnswersError`] listing every question without a verdict and every `ok` without a recommendation.
     pub fn answers(&self) -> Result<Vec<Answer>, AnswersError> {
-        Ok(Vec::new())
+        let mut answers = Vec::with_capacity(self.entries.len());
+        let mut problems = Vec::new();
+        for entry in &self.entries {
+            match entry.answer() {
+                Ok(choice) => answers.push(Answer {
+                    number: entry.number,
+                    title: entry.title.clone(),
+                    choice,
+                }),
+                Err(problem) => problems.push((entry.number, problem)),
+            }
+        }
+        if problems.is_empty() {
+            Ok(answers)
+        } else {
+            Err(AnswersError { problems })
+        }
     }
 
     /// The answered file as the agent gets it: without the instructions and the marker, and with the verdict `ok`
@@ -441,9 +686,242 @@ impl QuestionsFile {
     /// # Errors
     /// [`AnswersError`] as for [`QuestionsFile::answers`]: an unanswered file is not handed to the agent.
     pub fn expand(&self, accepted: impl Fn(&str) -> String) -> Result<String, AnswersError> {
-        let _ = accepted;
-        Ok(String::new())
+        self.answers()?;
+        Ok(self.render_as(&Rendering::Agent { accepted: &accepted }))
     }
+}
+
+/// Who a file is rendered for.
+enum Rendering<'a> {
+    /// The human: the instructions, the verdicts as written and the marker.
+    Human,
+    /// The agent that asked: no instructions and no marker, and `accepted` turns the recommendation of a question
+    /// whose verdict is `ok` into the words that tell the agent it was accepted.
+    Agent {
+        /// Makes the words of an accepted recommendation.
+        accepted: &'a dyn Fn(&str) -> String,
+    },
+}
+
+/// A question being read: its lines, not yet told apart.
+struct Draft<'a> {
+    /// The question's number.
+    number: NonZeroU32,
+    /// The rest of the `## N.` line.
+    title: &'a str,
+    /// The lines before the first label.
+    body: Vec<&'a str>,
+    /// The labelled parts, in the order written.
+    sections: Vec<Section<'a>>,
+}
+
+/// A labelled part being read.
+struct Section<'a> {
+    /// Which label starts it.
+    kind: SectionKind<'a>,
+    /// The text on the label's line, then the lines up to the next label.
+    lines: Vec<&'a str>,
+}
+
+/// The label of a part.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SectionKind<'a> {
+    /// `**Recommended:**`.
+    Recommended,
+    /// `**Verdict:**`.
+    Verdict,
+    /// Any other label: its words.
+    Other(&'a str),
+}
+
+impl<'a> Draft<'a> {
+    /// A question that has only its `## N.` line so far.
+    const fn new(number: NonZeroU32, title: &'a str) -> Self {
+        Self {
+            number,
+            title,
+            body: Vec::new(),
+            sections: Vec::new(),
+        }
+    }
+
+    /// Takes a line of the question: a label starts a part, any other line belongs to the part before it.
+    fn push_line(&mut self, line: &'a str, at: NonZeroUsize) -> Result<(), ParseError> {
+        let Some((label, rest)) = split_label(line) else {
+            match self.sections.last_mut() {
+                Some(section) => section.lines.push(line),
+                None => self.body.push(line),
+            }
+            return Ok(());
+        };
+        let (kind, repeated) = match label {
+            RECOMMENDED_LABEL => (SectionKind::Recommended, Some(RECOMMENDED_LABEL)),
+            VERDICT_LABEL => (SectionKind::Verdict, Some(VERDICT_LABEL)),
+            other => (SectionKind::Other(other), None),
+        };
+        if let Some(label) = repeated.filter(|_| self.sections.iter().any(|section| section.kind == kind)) {
+            return Err(ParseError::DuplicateLabel {
+                line: at,
+                number: self.number,
+                label,
+            });
+        }
+        self.sections.push(Section {
+            kind,
+            lines: vec![rest],
+        });
+        Ok(())
+    }
+
+    /// The question, its lines told apart.
+    fn finish(self) -> Entry {
+        let parts = self
+            .sections
+            .into_iter()
+            .map(|section| {
+                let text = trimmed(&section.lines);
+                match section.kind {
+                    SectionKind::Recommended => Part::Recommended(text),
+                    SectionKind::Verdict => Part::Verdict(Verdict::from_section(&text)),
+                    SectionKind::Other(label) => Part::Other {
+                        label: label.to_owned(),
+                        text,
+                    },
+                }
+            })
+            .collect();
+        Entry {
+            number: self.number,
+            title: self.title.to_owned(),
+            body: trimmed(&self.body),
+            parts,
+        }
+    }
+}
+
+/// A `## N. title` line, read but not yet checked.
+struct Header<'a> {
+    /// The digits of the number.
+    digits: &'a str,
+    /// The text after the dot, without the spaces around it.
+    title: &'a str,
+}
+
+impl Header<'_> {
+    /// The number, which must be 1 or more and fit in 32 bits.
+    fn number(&self, at: NonZeroUsize) -> Result<NonZeroU32, ParseError> {
+        self.digits.parse().map_err(|source| ParseError::InvalidNumber {
+            line: at,
+            digits: self.digits.to_owned(),
+            source,
+        })
+    }
+}
+
+/// What comes before the first question.
+struct Preamble {
+    /// The `# ` line.
+    title: Option<String>,
+    /// The block quote under it, unquoted.
+    instructions: String,
+    /// Everything else.
+    intro: String,
+}
+
+/// Reads the lines before the first question: an optional title, an optional block quote, free text.
+fn read_preamble(lines: &[&str]) -> Preamble {
+    let mut lines = lines
+        .iter()
+        .copied()
+        .skip_while(|line| line.trim().is_empty())
+        .peekable();
+    let title = lines
+        .next_if(|line| line.starts_with(TITLE_PREFIX))
+        .and_then(|line| line.strip_prefix(TITLE_PREFIX))
+        .map(|title| title.trim().to_owned());
+    while lines.next_if(|line| line.trim().is_empty()).is_some() {}
+    let mut quoted: Vec<&str> = Vec::new();
+    while let Some(line) = lines.next_if(|line| line.starts_with('>')) {
+        let unquoted = line.strip_prefix('>').unwrap_or(line);
+        quoted.push(unquoted.strip_prefix(' ').unwrap_or(unquoted));
+    }
+    let intro: Vec<&str> = lines.collect();
+    Preamble {
+        title,
+        instructions: trimmed(&quoted),
+        intro: trimmed(&intro),
+    }
+}
+
+/// `## N. title` read as a question's line; `None` for any other line.
+fn read_header(line: &str) -> Option<Header<'_>> {
+    let (digits, title) = line.strip_prefix(QUESTION_PREFIX)?.split_once('.')?;
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then_some(Header {
+        digits,
+        title: title.trim(),
+    })
+}
+
+/// `**Label:** text` read as a label and its text; `None` for any other line. The label is words and spaces, and
+/// spaces inside the asterisks are tolerated.
+fn split_label(line: &str) -> Option<(&str, &str)> {
+    let rest = line.strip_prefix(BOLD)?.trim_start();
+    if !rest.chars().next()?.is_alphabetic() {
+        return None;
+    }
+    let end = rest.find(|c: char| !(c.is_alphabetic() || c == ' '))?;
+    let (label, rest) = rest.split_at_checked(end)?;
+    let text = rest.strip_prefix(':')?.trim_start().strip_prefix(BOLD)?;
+    Some((label.trim_end(), text.trim_start()))
+}
+
+/// Whether the line is the `**ANSWERED**` marker alone.
+fn is_marker(line: &str) -> bool {
+    line.trim()
+        .strip_prefix(BOLD)
+        .and_then(|rest| rest.trim_start().strip_prefix(ANSWERED_WORD))
+        .and_then(|rest| rest.trim_start().strip_prefix(BOLD))
+        .is_some_and(str::is_empty)
+}
+
+/// Whether the parser would read the line as the start of a question, a label or the marker.
+fn is_structural(line: &str) -> bool {
+    read_header(line).is_some() || split_label(line).is_some() || is_marker(line)
+}
+
+/// The first line of `text` that [`is_structural`], counted from 1.
+fn first_structural_line(text: &str) -> Option<NonZeroUsize> {
+    text.lines()
+        .position(is_structural)
+        .map(|index| NonZeroUsize::MIN.saturating_add(index))
+}
+
+/// The lines joined, without the empty lines and spaces at both ends.
+fn trimmed(lines: &[&str]) -> String {
+    lines.join("\n").trim().to_owned()
+}
+
+/// A labelled part: the label and, when there is any, its text on the same line.
+fn labelled(label: &str, text: &str) -> String {
+    if text.is_empty() {
+        format!("{BOLD}{label}:{BOLD}")
+    } else {
+        format!("{BOLD}{label}:{BOLD} {text}")
+    }
+}
+
+/// The text as a block quote: each line after `> `, an empty line as `>`.
+fn quote(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if line.is_empty() {
+                String::from(">")
+            } else {
+                format!("> {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl fmt::Display for AnswerProblem {
@@ -556,7 +1034,7 @@ Free text about the second question.
         for (text, at) in cases {
             assert_eq!(
                 Verdict::from_text(text),
-                Err(OwnAnswerError::Structural { line: line(at) }),
+                Err(StructuralLine { line: line(at) }),
                 "{text:?}"
             );
         }
@@ -912,17 +1390,19 @@ b) on disk
             QuestionsFile::parse("## 1. A\n\n## 0. B\n"),
             Err(ParseError::InvalidNumber {
                 line: line(3),
-                digits: String::from("0")
+                digits: String::from("0"),
+                source: "0".parse::<NonZeroU32>().unwrap_err()
             })
         );
         assert_eq!(
             QuestionsFile::parse("## 4294967296. A\n"),
             Err(ParseError::InvalidNumber {
                 line: line(1),
-                digits: String::from("4294967296")
+                digits: String::from("4294967296"),
+                source: "4294967296".parse::<NonZeroU32>().unwrap_err()
             })
         );
-        assert!(QuestionsFile::parse("## 4294967295. A\n").is_ok());
+        QuestionsFile::parse("## 4294967295. A\n").unwrap();
     }
 
     #[test]
@@ -968,7 +1448,7 @@ b) on disk
             })
         );
         let at_the_limit = format!("## 1. A\n{}", "x".repeat(MAX_QUESTIONS_BYTES - "## 1. A\n".len()));
-        assert!(QuestionsFile::parse(&at_the_limit).is_ok());
+        QuestionsFile::parse(&at_the_limit).unwrap();
     }
 
     // ---- answering ----------------------------------------------------------------------------------------------
