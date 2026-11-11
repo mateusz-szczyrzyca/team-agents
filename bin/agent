@@ -5355,6 +5355,7 @@ investigation_team_tick() {
   fi
   if ((successful)) && [[ $(investigation_field "$parent" INVESTIGATION_PIPELINE) == 1 ]]; then
     meta_set "$parent" INVESTIGATION_PHASE 2
+    if investigation_solo "$parent"; then investigation_solo_owner "$parent"; return; fi
     investigation_phase_choose "$parent" 2
     return
   fi
@@ -5511,9 +5512,87 @@ investigation_phase_choose() {
   fi
 }
 
-# investigation_phase_failed parent phase permits one different investigator to replace a failed run.
+# investigation_solo parent — whether the investigation's team is one investigator: its result is the only one,
+# there is nothing to merge
+investigation_solo() {
+  local team
+  team=$(investigation_field "$1" INVESTIGATION_TEAM); team=${team// /}
+  [[ -n $team && $team != *,* ]]
+}
+
+# investigation_solo_owner parent — a team of one: no merger runs. Its investigator owns the PR (its phase-one task
+# stands for the merger's): the PR is opened from its branch, and it fixes what the checks and the reviews find
+investigation_solo_owner() {
+  local parent=$1 agent task
+  agent=$(jq_soft investigation_phase_parse -r '[.members[] | select(.status == "done")][0].agent // empty' "$TASKS/$parent/phase1.json")
+  task=$(jq_soft investigation_phase_parse -r '[.members[] | select(.status == "done")][0].task // empty' "$TASKS/$parent/phase1.json")
+  if [[ -z $agent || -z $task ]]; then investigation_handoff "$parent" 'waits for you: no result to open a PR from' failed; return; fi
+  meta_set "$parent" INVESTIGATION_MERGER "$agent"
+  meta_set "$parent" INVESTIGATION_MERGER_TASK "$task"
+  log_info investigation_solo_owner "task=$parent" "agent=$agent" "child=$task"
+  auto_stage "$parent" "opening the PR of $agent's branch (one investigator: nothing to merge)"
+}
+
+# investigation_solo_pr parent child base — opens the PR of a team of one investigator, from its branch; the checks and
+# the reviews follow as for a merged PR
+investigation_solo_pr() {
+  local parent=$1 child=$2 base=$3 root branch agent round line title
+  root=$(task_field "$parent" REPO_ROOT); branch=$(task_field "$child" BRANCH); agent=$(task_field "$child" AGENT)
+  round=$(round_id_of "$(<"$TASKS/$parent/task.md")" 2> /dev/null) || round=""
+  line=$(grep -m 1 -vE '^[[:space:]]*($|Round:)' "$TASKS/$parent/task.md")
+  title="${round:+$round: }${line:-investigation by $agent}"
+  title=${title:0:72}
+  if (cd "$root" && gh pr create --base "$base" --head "$branch" --title "$title" \
+      --body "The work of $agent for this investigation. A team of one investigator has nothing to merge: the script opened this PR from its branch; investigators from outside the team review it, and $agent fixes what they find, on this branch." > /dev/null); then
+    log_info investigation_solo_pr_opened "task=$parent" "branch=$branch"
+    return 0
+  fi
+  log_warn investigation_solo_pr_failed "task=$parent" "branch=$branch"
+  return 1
+}
+
+# investigation_fix_pass parent review-task review-text — the review asks for changes: the merger fixes them on its
+# branch, the same PR (phase 2 again: its checks, then a new review), up to VERIFY_MAX_FIX_PASSES passes; after them
+# the human decides. The reviewer joins the past reviewers, most recent last: the next pass is reviewed by another
+investigation_fix_pass() {
+  local parent=$1 review=$2 text=$3 passes merger reviewer past p rest=""
+  passes=$(investigation_field "$parent" INVESTIGATION_FIX_PASSES)
+  if ((${passes:-0} >= VERIFY_MAX_FIX_PASSES)); then
+    investigation_handoff "$parent" \
+      "waits for you: the review still asks for changes after ${passes:-0} fix passes (#$(investigation_field "$parent" PR_NUMBER))" done
+    return
+  fi
+  passes=$((${passes:-0} + 1))
+  merger=$(investigation_field "$parent" INVESTIGATION_MERGER_TASK)
+  reviewer=$(task_field "$review" AGENT)
+  past=$(investigation_field "$parent" INVESTIGATION_PAST_REVIEWERS)
+  local -a past_list=()
+  IFS=, read -r -a past_list <<< "$past"
+  for p in "${past_list[@]}"; do [[ -z $p || $p == "$reviewer" ]] || rest+="${rest:+,}$p"; done
+  meta_set "$parent" INVESTIGATION_PAST_REVIEWERS "${rest:+$rest,}$reviewer"
+  meta_set "$parent" INVESTIGATION_FIX_PASSES "$passes"
+  meta_set "$parent" INVESTIGATION_PHASE 2
+  meta_set "$parent" INVESTIGATION_PRECHECK ""
+  meta_set "$parent" INVESTIGATION_MERGE_RETRIES ""
+  meta_set "$parent" INVESTIGATION_REVIEWER ""
+  meta_set "$parent" INVESTIGATION_REVIEWER_TASK ""
+  meta_set "$parent" INVESTIGATION_TRIED_REVIEWERS ""
+  meta_set "$parent" INVESTIGATION_REVIEW_RETRIES ""
+  printf '\n# Review findings to fix (pass %s of %s)\n\nThe review of PR #%s by %s asks for changes. Fix them on this branch and push it: the PR updates. Do not open another pull request, and do not close this one. Where a finding is wrong, say why in a comment on the PR instead of changing the code.\n\n%s\n' \
+    "$passes" "$VERIFY_MAX_FIX_PASSES" "$(investigation_field "$parent" PR_NUMBER)" "$reviewer" "$text" >> "$TASKS/$merger/task.md"
+  log_info investigation_fix_pass "task=$parent" "pass=$passes" "merger=$merger" "reviewer=$reviewer"
+  if ! start_runner "$merger" resume; then meta_set "$merger" STATUS failed; fi
+  auto_stage "$parent" "merging: $(task_field "$merger" AGENT) (fix pass $passes/$VERIFY_MAX_FIX_PASSES after review)"
+}
+
+# investigation_phase_failed parent phase permits one different investigator to replace a failed run. A merger is not
+# replaced once its PR exists: the replacement would open another PR — the human decides
 investigation_phase_failed() {
   local parent=$1 phase=$2 key count role prior tried
+  if [[ $phase == 2 && -n $(investigation_field "$parent" INVESTIGATION_PR) ]]; then
+    investigation_handoff "$parent" "waits for you: merge failed on PR #$(investigation_field "$parent" PR_NUMBER)" failed
+    return
+  fi
   if [[ $phase == 2 ]]; then key=INVESTIGATION_MERGER_REPLACEMENTS; role=MERGER
   else key=INVESTIGATION_REVIEW_RETRIES; role=REVIEWER; fi
   count=$(investigation_field "$parent" "$key")
@@ -5561,9 +5640,12 @@ investigation_pipeline_tick() {
     verdict=$(review_verdict "$text")
     if [[ -n $verdict ]]; then verdict=$(review_task_verdict "$child" "$text"); fi
     case $verdict in
-      ready-to-merge|needs-fixes|incomplete)
+      ready-to-merge)
         meta_set "$parent" INVESTIGATION_VERDICT "$verdict"
         investigation_handoff "$parent" "waits for you: review ready (#$(investigation_field "$parent" PR_NUMBER))" done ;;
+      needs-fixes|incomplete)
+        meta_set "$parent" INVESTIGATION_VERDICT "$verdict"
+        investigation_fix_pass "$parent" "$child" "$text" ;;
       *) investigation_phase_failed "$parent" 3 ;;
     esac
     return
@@ -5609,8 +5691,15 @@ investigation_pipeline_tick() {
     return
   fi
   expected_base=$(task_field "$child" BASE)
+  if investigation_solo "$parent"; then expected_base=$(investigation_field "$parent" INVESTIGATION_TARGET_BRANCH); fi
   prs=$(jq --arg base "$expected_base" '[.[] | select(.baseRefName == $base)]' <<< "$prs")
   url=$(jq -r '.[0].url // empty' <<< "$prs"); number=$(jq -r '.[0].number // empty' <<< "$prs")
+  if [[ -z $url || -z $number ]] && investigation_solo "$parent"; then   # a team of one: its PR, from its branch
+    if ! investigation_solo_pr "$parent" "$child" "$expected_base"; then
+      investigation_handoff "$parent" "waits for you: the PR of $branch could not be opened" failed
+    fi
+    return   # the next pass finds it
+  fi
   if [[ -z $url || -z $number ]]; then investigation_phase_failed "$parent" 2; return; fi
   meta_set "$parent" INVESTIGATION_PR "$url"
   meta_set "$parent" PR_URL "$url"; meta_set "$parent" PR_NUMBER "$number"
@@ -5704,11 +5793,24 @@ investigation_phase_pick() {
     cur_reviewer=$(investigation_field "$parent" INVESTIGATION_REVIEWER)
     tried_reviewers=$(investigation_field "$parent" INVESTIGATION_TRIED_REVIEWERS)
     tried_reviewers+=",${cur_reviewer:-}"
-    # the reviewer comes from outside the team while one is left, and is never the merger (who may be an outsider)
+    # the reviewer comes from outside the team while one is left, and is never the merger (who may be an outsider);
+    # each fix pass by one who has not reviewed yet, else by the one whose review is the oldest
+    local past_reviewers outside=() past_list=()
+    past_reviewers=$(investigation_field "$parent" INVESTIGATION_PAST_REVIEWERS)
     for m in "${!INVESTIGATORS_TYPE[@]}"; do
       [[ ,${team_raw// /}, == *",$m,"* || $m == "$cur_merger" || ,${tried_reviewers}, == *",$m,"* ]] && continue
+      outside+=("$m")
+      [[ ,${past_reviewers}, == *",$m,"* ]] && continue
       eligible+=("$m")
     done
+    if ((${#eligible[@]} == 0 && ${#outside[@]} > 0)); then
+      IFS=, read -r -a past_list <<< "$past_reviewers"
+      for m in "${past_list[@]}"; do
+        [[ " ${outside[*]} " == *" $m "* ]] || continue
+        eligible=("$m")
+        break
+      done
+    fi
     local raw_members=()
     IFS=, read -r -a raw_members <<< "$team_raw"
     ((${#eligible[@]} == 0)) || raw_members=()   # someone outside the team reviews: the team is not drawn from

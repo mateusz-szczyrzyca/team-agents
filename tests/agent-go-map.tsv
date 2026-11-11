@@ -142,7 +142,7 @@ tests/unit/investigation_team_cli.bats	the topic can be given as a file with -f	
 tests/unit/investigation_team_cli.bats	a missing topic file given with -f is refused	blackbox	R36	-	planned
 tests/unit/investigation_team_handoff.bats	a completed pipeline opens a PR and uses the unchanged review prompt	blackbox	R39	-	planned
 tests/unit/investigation_team_handoff.bats	handoff records the stage comments mentions the owner and never merges	blackbox	R39	-	planned
-tests/unit/investigation_team_handoff.bats	failed checks bounce once then replace the merger once and finish as failed	blackbox	R39	-	planned
+tests/unit/investigation_team_handoff.bats	failed checks bounce once, then the human decides: the PR is open, no replacement merger opens another	blackbox	R39	-	planned
 tests/unit/investigation_team_handoff.bats	a review without a verdict is replaced only once before human handoff	blackbox	R39	-	planned
 tests/unit/investigation_team_handoff.bats	findings without an explicit verdict still fail the investigation review	blackbox	R39	-	planned
 tests/unit/investigation_team_handoff.bats	supervision completes an interrupted phase four handoff only once	blackbox	R39	-	planned

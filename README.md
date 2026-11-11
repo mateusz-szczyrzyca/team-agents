@@ -175,6 +175,11 @@ and code following TDD. `agent run --investigation` runs the complete initial pi
 (phases 1–4: independent investigation, merge, PR, prechecks, review, and terminal completion).
 On successful completion, the PR is ready for normal review and merge without waiting for a human decision; failed investigations are reported as failures only for real flow issues (failed merge, review, or prechecks).
 Investigators, mergers, and reviewers can ask clarification questions if the subject matter is unclear or may be interpreted multiple ways (ending with `STATUS: QUESTIONS`); clarification answers are handled by the human through questions files.
+One PR per investigation: a review asking for changes (`needs-fixes`, `incomplete`) sends the owner of the PR's
+branch — the merger, or the one investigator of a team of one, whose branch is the PR (no merge phase runs) — back
+to fix them on that branch; its checks and a review by a new investigator from outside the team follow (when all have
+reviewed, the one whose review is the oldest), up to `VERIFY_MAX_FIX_PASSES` passes, then you decide. Once the PR
+exists a failed merger is not replaced, so no second PR is opened.
 Resuming an investigation team with an open PR (`agent run --resume <team>`) runs Phase 5 advisory reviews
 across all team investigators concurrently proposing improvements without applying changes or auto-merging (`review: N investigators reviewing (#<pr>)`).
 Resuming an investigation team whose PR is already merged or closed is refused (`the PR is merged — a new topic is a new run` or `the PR is closed — a new topic is a new run`).

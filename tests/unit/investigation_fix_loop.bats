@@ -8,7 +8,8 @@
 
 load helpers
 
-meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
+# meta task key — a field as the harness reads it (meta_set quotes values for the shell)
+meta() { bash -c 'source "$1"; printf "%s" "${!2-}"' _ "$AGENTS_HOME/tasks/$1/meta.env" "$2"; }
 
 # inv [phase] — investigation P (team a,b; merger c, an outsider; outsiders d,e) with PR #81 of merger M's branch,
 # reviewed by d in task R, whose review asks for changes

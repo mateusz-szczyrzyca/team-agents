@@ -67,15 +67,15 @@ launch_pipeline() {
   [[ $(grep -c 'gh pr comment' "$HOME/gh.log") == 1 ]]
 }
 
-@test "failed checks bounce once then replace the merger once and finish as failed" {
+@test "failed checks bounce once, then the human decides: the PR is open, no replacement merger opens another" {
   pipeline_setup
   printf '\nAGENT_REVIEW_GATE=false\n' >> "$AGENTS_HOME/agents.conf"
   launch_pipeline inv,inv2
   wait_status "$PIPELINE_PARENT" '^failed$' 60
   [[ $(parent_field "$PIPELINE_PARENT" INVESTIGATION_MERGE_RETRIES) == 1 ]]
-  [[ $(parent_field "$PIPELINE_PARENT" INVESTIGATION_MERGER_REPLACEMENTS) == 1 ]]
-  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'failed: merge failed' ]]
-  [[ $(jq -s '[.[] | select(.phase == "2")] | length' "$HOME/pipeline-calls.jsonl") == 3 ]]
+  [[ -z $(parent_field "$PIPELINE_PARENT" INVESTIGATION_MERGER_REPLACEMENTS) ]]
+  [[ $(parent_field "$PIPELINE_PARENT" AUTO_STAGE) == 'failed: merge failed on PR #'* ]]
+  [[ $(jq -s '[.[] | select(.phase == "2")] | length' "$HOME/pipeline-calls.jsonl") == 2 ]]
   [[ $(jq -s '[.[] | select(.phase == "3")] | length' "$HOME/pipeline-calls.jsonl") == 0 ]]
   run grep -q 'gh pr merge' "$HOME/gh.log"
   [ "$status" -eq 1 ]

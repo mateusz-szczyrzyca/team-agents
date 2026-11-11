@@ -59,6 +59,8 @@ and open (or update) a pull request on GitHub.
      - What was taken (with links to relevant commit SHAs).
      - What was dropped and why ("duplicate of X's ...", "superseded by Y's ...").
      - Any absent or failed results, documented factually.
+   - One pull request for the whole investigation: when you are sent back (checks or review findings to fix), fix
+     on this branch and push it, and never open another pull request.
    - The script writes the task you were given first in the PR description, between its
      `<!-- task: ... -->` and `<!-- /task -->` marks, at every check: keep that part as it is when you edit
      the description, and write your own text after it.
