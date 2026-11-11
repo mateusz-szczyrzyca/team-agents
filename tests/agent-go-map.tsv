@@ -798,6 +798,10 @@ tests/unit/serena_project_sync.bats	a repository without a Serena project file l
 tests/unit/allow_task.bats	the allowances of a task's rounds are kept under its team or, of no team, under the task itself	blackbox	R31	-	planned
 tests/unit/allow_task.bats	agent allow <task> for a task of no team: its rounds may change those paths; a task of a team is sent to its team	blackbox	R31	-	planned
 tests/unit/allow_task.bats	the precheck's refusal prints the whole allow command: the key and each flagged path once, without line numbers	blackbox	R31	-	planned
+tests/unit/investigation_allow_wait.bats	checks that find only what the human must allow wait for the human: paused, with the allow command, not failed	blackbox	R31	-	planned
+tests/unit/investigation_allow_wait.bats	checks that also find what the team can fix fail as before: the merger goes back with the reasons	blackbox	R31	-	planned
+tests/unit/investigation_allow_wait.bats	while the allowance is pending the pipeline waits: the merger is not sent back and no retry is spent	blackbox	R31	-	planned
+tests/unit/investigation_allow_wait.bats	agent allow for an investigation waiting on it runs its checks again	blackbox	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
