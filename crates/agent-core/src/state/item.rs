@@ -525,6 +525,9 @@ pub enum InvalidReviews {
     /// Every review of the round approved: the item is approved, not sent back.
     #[error("every review of the round approved: the item cannot go back for a fix pass")]
     FixPassApproved,
+    /// No reviewer submitted `REQUEST_CHANGES`: the item was not sent back.
+    #[error("a fix pass must record at least one submitted REQUEST_CHANGES review")]
+    FixPassNotRequested,
 }
 
 /// Why an item could not move to another phase.
@@ -772,7 +775,17 @@ mod tests {
         };
         let mut progress = ItemProgress::new(id(), ItemMark::Open);
         for step in way {
-            progress.advance(phase_of(*step)).unwrap();
+            let next = match step {
+                PhaseKind::InReview if way.contains(&PhaseKind::Fixing) => ItemPhase::InReview {
+                    pr: pr(7),
+                    reviews: reviews(ReviewOutcome::Submitted {
+                        verdict: ReviewVerdict::RequestChanges,
+                        at: at(30),
+                    }),
+                },
+                _ => phase_of(*step),
+            };
+            progress.advance(next).unwrap();
         }
         progress
     }
@@ -899,8 +912,12 @@ mod tests {
 
     #[test]
     fn each_round_that_asks_for_changes_is_a_fix_pass_in_order() {
+        let requested = ReviewOutcome::Submitted {
+            verdict: ReviewVerdict::RequestChanges,
+            at: at(30),
+        };
         let mut item = progress_in(PhaseKind::Fixing);
-        let second = vec![review("inv-opus", 8, ReviewOutcome::Pending)];
+        let second = vec![review("inv-opus", 8, requested)];
 
         item.advance(ItemPhase::InReview {
             pr: pr(7),
@@ -911,7 +928,7 @@ mod tests {
 
         assert_eq!(item.fix_passes().len(), 2);
         assert_eq!(item.fix_passes().last().map(|p| p.requested_by.clone()), Some(second));
-        assert_eq!(item.fix_passes()[0].requested_by, reviews(ReviewOutcome::Pending));
+        assert_eq!(item.fix_passes()[0].requested_by, reviews(requested));
     }
 
     #[test]
@@ -1288,6 +1305,14 @@ mod tests {
                 ],
                 InvalidReviews::FixPassApproved,
             ),
+            (reviews(ReviewOutcome::Pending), InvalidReviews::FixPassNotRequested),
+            (
+                vec![
+                    submitted("inv-opus", 5, ReviewVerdict::Approve),
+                    review("inv-codex", 6, ReviewOutcome::Pending),
+                ],
+                InvalidReviews::FixPassNotRequested,
+            ),
         ];
         for (round, cause) in cases {
             let mut item = in_review_with(round);
@@ -1370,9 +1395,10 @@ mod tests {
     }
 
     #[test]
-    fn a_fix_pass_without_reviews_or_that_all_approved_is_refused_when_read() {
+    fn a_fix_pass_without_a_request_for_changes_is_refused_when_read() {
         let approve = json!({"status": "submitted", "verdict": "APPROVE", "at": "2026-11-11T19:15:30Z"});
         let changes = json!({"status": "submitted", "verdict": "REQUEST_CHANGES", "at": "2026-11-11T19:15:30Z"});
+        let pending = json!({"status": "pending"});
         let fixing = |requested_by: &serde_json::Value| {
             json!({
                 "id": "1.2",
@@ -1388,6 +1414,7 @@ mod tests {
 
         assert_refused::<ItemProgress>(&fixing(&json!([])));
         assert_refused::<ItemProgress>(&fixing(&json!([review_json("inv-opus", 5, &approve)])));
+        assert_refused::<ItemProgress>(&fixing(&json!([review_json("inv-opus", 5, &pending)])));
         assert_refused::<ItemProgress>(&fixing(&json!([
             review_json("inv-opus", 5, &changes),
             review_json("inv-opus", 6, &changes)
