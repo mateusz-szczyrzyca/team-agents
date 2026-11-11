@@ -119,13 +119,34 @@ pub trait StatusMachine: Copy + PartialEq + fmt::Debug + fmt::Display + 'static 
 
 impl StatusMachine for TaskStatus {
     fn successors(self) -> &'static [Self] {
-        &[]
+        match self {
+            Self::Queued => &[Self::Running, Self::Paused, Self::Stopped],
+            Self::Running => &[
+                Self::Queued,
+                Self::Waiting,
+                Self::Questions,
+                Self::Paused,
+                Self::Stopped,
+                Self::Failed,
+                Self::Done,
+            ],
+            Self::Waiting => &[Self::Queued, Self::Paused, Self::Stopped, Self::Done],
+            Self::Questions | Self::Paused | Self::Failed => &[Self::Queued, Self::Stopped],
+            Self::Stopped => &[Self::Queued],
+            Self::Done => &[],
+        }
     }
 }
 
 impl StatusMachine for ItemStatus {
     fn successors(self) -> &'static [Self] {
-        &[]
+        match self {
+            Self::Pending => &[Self::InProgress],
+            Self::InProgress => &[Self::Pending, Self::InReview],
+            Self::InReview => &[Self::InProgress, Self::Approved],
+            Self::Approved => &[Self::Done],
+            Self::Done => &[],
+        }
     }
 }
 

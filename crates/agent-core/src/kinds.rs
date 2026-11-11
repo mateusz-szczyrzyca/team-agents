@@ -44,6 +44,7 @@ macro_rules! keyword_enum {
 
             fn from_str(text: &str) -> Result<Self, Self::Err> {
                 match text {
+                    $($text => Ok(Self::$variant),)+
                     _ => Err($crate::kinds::UnknownKeyword {
                         what: $what,
                         value: text.to_owned(),
