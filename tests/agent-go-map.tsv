@@ -778,6 +778,13 @@ tests/unit/gate_dirty.bats	a human's gate, or one of another task, on an uncommi
 tests/unit/gate_dirty.bats	the runner gives the agent's commands AGENT_RUN_TASK, its task	blackbox	R31	-	planned
 tests/unit/gate_dirty.bats	agent debug counts a task's gate runs, those on an uncommitted tree, and the refused ones	blackbox	R31	-	planned
 tests/unit/gate_dirty.bats	the agents' prompt: agent gate refuses an uncommitted tree; single tests and the linter while working	source	R31	-	planned
+tests/unit/team_lineage.bats	team_lineage: a team and the teams it was resumed from, newest first; a member added on resume does not end it	blackbox	R31	-	planned
+tests/unit/team_lineage.bats	an allowance the human gave a team holds for the teams resumed from it, also one given after the resume	blackbox	R31	-	planned
+tests/unit/team_lineage.bats	--verify: unmerged member commits a coordinator before the resume was sent back for do not send it back again	blackbox	R31	-	planned
+tests/unit/gate_own_run.bats	gate_busy_for: the task's gate holds the gate lock or waits in line for it; another task's or an ended one does not	blackbox	R31	-	planned
+tests/unit/gate_own_run.bats	a coordinator working alone is not ended while its own gate runs; once the gate is over, it is	blackbox	R31	-	planned
+tests/unit/gate_own_run.bats	an agent's gate of its own task during a merge in progress runs: the merged tree is checked before its commit	blackbox	R31	-	planned
+tests/unit/gate_own_run.bats	the agents' prompt: a merge in progress may be gated before its commit	source	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
