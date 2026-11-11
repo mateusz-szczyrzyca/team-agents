@@ -153,6 +153,7 @@ mod subscription {
         assert_eq!(serde_json::from_value::<EventKind>(value.clone()).unwrap(), event);
         let mut extra = value;
         extra["summary"]["extra"] = json!(1);
-        assert!(serde_json::from_value::<EventKind>(extra).is_err());
+        let err = serde_json::from_value::<EventKind>(extra).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
     }
 }

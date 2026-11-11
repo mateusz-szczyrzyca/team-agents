@@ -250,6 +250,7 @@ wrong and what to do — and carries no internals.
 | `kind` | Other fields |
 |---|---|
 | `team_started` | |
+| `team_updated` | `summary`: the team's whole new summary |
 | `task_status` | `task`, `status` |
 | `item_status` | `item`, `status` |
 | `run_started` | `task`, `run` |
@@ -361,7 +362,11 @@ These choices are in the model and are expensive to change once state files exis
 12. **`status` returns summaries, `show` the whole record**: a list of teams stays small, however long the task lists.
 13. **`subscribe` starts from the state**: its reply carries the summaries of the teams, taken when the events start,
     so a dashboard needs no separate `status` and loses no event between the two. Summaries, not whole teams: one
-    line stays small.
+    line stays small. The events keep them up to date through `team_updated`, which carries the whole new summary
+    (`EventKind::apply_to` is the client's reducer): `team_started` and `item_status` say what happened but are too
+    little to change a summary (what does a new team look like? which count does an item leaving `pending`
+    change when others are pending or in review?). The daemon sends `team_updated` after every change that alters a
+    summary, right after the event that says what happened.
 14. **Strict in both files and lines**: unknown fields are errors, and the protocol version is checked first. A newer
     client against an older daemon is told so, not misread.
 15. **A state is changed through handles, never through `&mut` to a whole value**: `State::team_mut` gives a `TeamMut`,

@@ -81,7 +81,9 @@ pub enum Reply {
         result: GateResult,
     },
     /// `subscribe`: the teams subscribed to as they are now, in short; the events follow on this connection and
-    /// change them from this state on, so a dashboard starts without a gap or a race.
+    /// change them from this state on, so a dashboard starts without a gap or a race. A client keeps the summaries
+    /// up to date with [`EventKind::apply_to`](super::EventKind::apply_to): each `team_updated` event carries the
+    /// whole new summary of its team.
     Subscribed {
         /// One summary for each team subscribed to.
         teams: Vec<TeamSummary>,

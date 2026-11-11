@@ -161,8 +161,18 @@ pub enum EventKind {
 impl EventKind {
     /// Brings `teams`, the summaries of a subscription (the `teams` of [`Reply::Subscribed`](super::Reply)), up to
     /// date with this event.
+    ///
+    /// Only [`EventKind::TeamUpdated`] changes them: it replaces the summary of its team, or adds it at the end when
+    /// the client has none (a team started after the subscription; teams are listed oldest first). The other events
+    /// say what happened and carry too little to change a summary on their own, so they leave `teams` as it is.
     pub fn apply_to(&self, teams: &mut Vec<TeamSummary>) {
-        let _ = (self, teams);
+        let Self::TeamUpdated { summary } = self else {
+            return;
+        };
+        match teams.iter_mut().find(|known| known.id == summary.id) {
+            Some(known) => known.clone_from(summary),
+            None => teams.push(summary.as_ref().clone()),
+        }
     }
 }
 
