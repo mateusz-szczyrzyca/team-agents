@@ -81,7 +81,7 @@ pub enum RunEnd {
 strict_enum!(RunState);
 strict_enum!(RunEnd, |end| match end {
     RunEnd::QuotaExhausted { .. } => &["resets_at"][..],
-    _ => &[],
+    RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::RateLimited | RunEnd::Hung | RunEnd::Stopped => &[],
 });
 
 /// Why a run could not be started, ended or given a session.
