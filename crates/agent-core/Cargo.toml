@@ -1,6 +1,6 @@
 [package]
 name = "agent-core"
-description = "Pure core of the agent harness: identifiers, kinds and statuses"
+description = "Pure core of the agent harness: identifiers, kinds, statuses, configuration and the task list"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,7 @@ rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 time.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
