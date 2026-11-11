@@ -145,8 +145,8 @@ what `[review] fix_passes` of the configuration is compared with. A member who l
 
 `pr` is `{number, branch, opened_at}`. A `review` is `{reviewer, task, requested_at, outcome}`; its outcome is `pending`
 or `submitted` with the `APPROVE` / `REQUEST_CHANGES` verdict and a time. A `gate` result is
-`{head, finished_at, outcome, log}`: the commit it ran on, `passed`, `failed` (`exit_code`) or `timed_out`, and the file
-with the gate's output.
+`{head, finished_at, outcome, log}`: the commit it ran on, `passed`, `failed` (`exit_code`, never 0: a zero is a pass
+and is refused when read) or `timed_out`, and the file with the gate's output.
 
 Invariants: one progress entry per item of the task list, in its order; an item the list marks `[x]` is `done` as
 `listed` from the start, and only such an item is; an item `fixing` records at least one fix pass.

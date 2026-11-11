@@ -274,7 +274,9 @@ mod tests {
                 EventKind::GateFinished {
                     team: team_id(1),
                     task: task(2),
-                    outcome: GateOutcome::Failed { exit_code: 2 },
+                    outcome: GateOutcome::Failed {
+                        exit_code: std::num::NonZeroI32::new(2).unwrap(),
+                    },
                 },
                 json!({"kind": "gate_finished", "team": TEAM, "task": TASK, "outcome": {"kind": "failed", "exit_code": 2}}),
             ),

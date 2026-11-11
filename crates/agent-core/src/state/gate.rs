@@ -1,5 +1,7 @@
 //! Gate results: what the repository's gate command said about a commit.
 
+use std::num::NonZeroI32;
+
 use serde::{Deserialize, Serialize};
 
 use super::values::{CommitId, Timestamp};
@@ -29,8 +31,8 @@ pub enum GateOutcome {
     Passed,
     /// The command exited with a non-zero code.
     Failed {
-        /// The exit code.
-        exit_code: i32,
+        /// The exit code; never 0, which is a pass.
+        exit_code: NonZeroI32,
     },
     /// The command ran longer than the configured gate timeout and was stopped.
     TimedOut,
@@ -48,7 +50,7 @@ enum GateOutcomeWire {
     /// See [`GateOutcome::Failed`].
     Failed {
         /// See [`GateOutcome::Failed`].
-        exit_code: i32,
+        exit_code: NonZeroI32,
     },
     /// See [`GateOutcome::TimedOut`].
     TimedOut {},

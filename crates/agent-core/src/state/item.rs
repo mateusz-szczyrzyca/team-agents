@@ -870,7 +870,9 @@ mod tests {
         item.gate = Some(GateResult {
             head: "26b65de7e4076596768ca96b48a7f94799c93874".parse().unwrap(),
             finished_at: at(45),
-            outcome: GateOutcome::Failed { exit_code: 2 },
+            outcome: GateOutcome::Failed {
+                exit_code: std::num::NonZeroI32::new(2).unwrap(),
+            },
             log: "/home/u/agents/tasks/task-1/gate.log".parse().unwrap(),
         });
 
