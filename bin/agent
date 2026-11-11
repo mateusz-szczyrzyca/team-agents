@@ -2775,7 +2775,10 @@ cmd__precheck() { # coordinator task — once its team's members have settled: t
     local check_passed=0
     if review_precheck "$id"; then check_passed=1; fi
     [[ $(task_field "$id" STATUS) != stopped && ! -f $TASKS/$id/stop-requested ]] || return 0
+    local allow
+    allow=$(investigation_field "$id" INVESTIGATION_PRECHECK_ALLOW)
     if ((check_passed)); then meta_set "$id" INVESTIGATION_PRECHECK passed
+    elif [[ -n $allow ]]; then investigation_wait_allow "$id" "$allow"
     else meta_set "$id" INVESTIGATION_PRECHECK failed; fi
     dispatch
     return
@@ -2790,8 +2793,9 @@ cmd__precheck() { # coordinator task — once its team's members have settled: t
 
 review_precheck() { # coordinator task id — before a review: the round's head adds tests for a change of code and passes
   # the gate; else the team goes on with the reason (AGENT_PRECHECK_MAX times), then the human decides. 0 = review it
-  local id=$1 root branch base head mb tc gate wt rc why="" pass ref repo args=() out
+  local id=$1 root branch base head mb tc gate wt rc why="" pass ref repo args=() out allow_cmd=""
   automation_allowed "$id" || return 1
+  if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then meta_set "$id" INVESTIGATION_PRECHECK_ALLOW ""; fi
   root=$(task_field "$id" REPO_ROOT); branch=$(task_field "$id" BRANCH); base=$(task_field "$id" BASE)
   git -C "$root" fetch -q origin 10>&- || log_warn precheck_fetch_failed "task=$id"   # then the local refs are checked
   head=$(git -C "$root" rev-parse -q --verify "origin/$branch^{commit}" 10>&-) \
@@ -2834,6 +2838,8 @@ $human
     [[ -z $disc ]] || rtext+="the round adds suppressions its PR description does not name: name each file and why in the description, or remove it
 $disc
 "
+    # only the human's allowance missing: what the team cannot fix — an investigation waits for the human on it
+    if [[ -n $human && -z $disc && -z $why ]]; then allow_cmd=$(rule_allow_command "$(rule_allow_key "$id")" "$human"); fi
     why="${why:+$why
 
 }$rtext"
@@ -2899,6 +2905,7 @@ $(tail -n 40 "$TASKS/$id/precheck.log")
   [[ -n $why ]] || return 0
   if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
     meta_set "$id" INVESTIGATION_PRECHECK_REASON "$why"
+    meta_set "$id" INVESTIGATION_PRECHECK_ALLOW "$allow_cmd"
     log_warn review_precheck_failed "task=$id" "reason=${why:0:200}"
     return 1
   fi
@@ -5571,6 +5578,7 @@ investigation_pipeline_tick() {
       meta_set "$parent" INVESTIGATION_PRECHECK failed
       log_warn investigation_precheck_interrupted "task=$parent" "unit=$unit"
       return ;;
+    human) return ;;   # waits for the human's allowance (investigation_wait_allow): agent allow runs the checks again
     passed)
       meta_set "$parent" INVESTIGATION_PHASE 3
       investigation_phase_choose "$parent" 3
@@ -5621,6 +5629,17 @@ investigation_pipeline_tick() {
     meta_set "$parent" INVESTIGATION_PRECHECK failed
     log_error precheck_unit_failed "task=$parent"
   fi
+}
+
+# investigation_wait_allow parent command — the investigation's checks found only what the human must allow: it
+# waits for the human (INVESTIGATION_PRECHECK=human), told the command; the merger is not sent back, no retry is
+# spent. agent allow for it runs the checks again
+investigation_wait_allow() {
+  local parent=$1 cmd=$2
+  meta_set "$parent" INVESTIGATION_PRECHECK human
+  auto_stage "$parent" "waits for you: $cmd"
+  log_info investigation_waits_for_allow "task=$parent" "command=$cmd"
+  ( notify "$parent" paused "" "PR #$(investigation_field "$parent" PR_NUMBER) changes what only you may allow (AGENTS.md \"Never\") — review it, then run: $cmd — its checks run again, then its review" )
 }
 
 # Helpers for investigation team phase 2 (merger) and phase 3 (reviewer) candidate selection.
@@ -8249,6 +8268,14 @@ cmd_allow() {
   done
   log_info rules_allowed "team=$team" "paths=$*"
   echo "Allowed for $what $team: $*"
+  if [[ $what == task && $(investigation_field "$team" INVESTIGATION_PRECHECK) == human ]]; then
+    meta_set "$team" INVESTIGATION_PRECHECK ""
+    meta_set "$team" INVESTIGATION_PRECHECK_ALLOW ""
+    auto_stage "$team" "checks before review: again, after your allowance"
+    log_info investigation_precheck_again "task=$team"
+    echo "The investigation's checks run again, then its review."
+    dispatch
+  fi
 }
 
 # cmd_pause team — the human pauses a team: its runs are stopped at once — its members', its coordinator's, its
