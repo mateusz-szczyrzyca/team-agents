@@ -42,7 +42,8 @@ cannot read it would lose the teams of an installation.
 - **Typed.** Every value is parsed into its type when the file is read: IDs by their form, times as RFC 3339, enums by
   their texts. A value its type refuses is an error at its line and column.
 - **Checked.** What the types cannot say, reading checks too (the invariants below). A state that is read is as valid
-  as one that was built through the API.
+  as one that was built through the API. There is one way to read a value, the `Deserialize` trait: the field-by-field
+  reading that serde derives lives on a private mirror type (`remote`), so no public `T::deserialize` skips the checks.
 - **Versioned.** `State::from_json` reads `schema_version` **first**. A state of another version is refused with
   `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build reads version 1
   only. A change that old files do not satisfy raises the version and comes with a migration, a fixture of the old

@@ -16,8 +16,7 @@ use crate::config::AbsolutePath;
 /// Made by [`Question::new`] and answered by [`Question::answer`] (through
 /// [`Member::answer_question`](super::Member::answer_question)), so an answer is never earlier than the question;
 /// reading a state checks that too.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Question {
     /// The round, counted from 1 for each task: the number in the file's name.
     round: NonZeroU32,
@@ -29,7 +28,17 @@ pub struct Question {
     state: QuestionState,
 }
 
-checked!(Question, |question: &Question| match &question.state {
+/// How a [`Question`] is read; see [`checked!`].
+#[derive(Deserialize)]
+#[serde(remote = "Question", deny_unknown_fields)]
+struct QuestionWire {
+    round: NonZeroU32,
+    file: AbsolutePath,
+    asked_at: Timestamp,
+    state: QuestionState,
+}
+
+checked!(Question, QuestionWire, |question: &Question| match &question.state {
     QuestionState::Answered { at, .. } => check_answer(question.round, question.asked_at, *at),
     QuestionState::Open => Ok(()),
 });
@@ -37,8 +46,8 @@ checked!(Question, |question: &Question| match &question.state {
 /// Whether the human has answered a [`Question`].
 ///
 /// Deserialization refuses fields that the variant does not have.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum QuestionState {
     /// The human has not answered yet.
     Open,
@@ -51,7 +60,20 @@ pub enum QuestionState {
     },
 }
 
-strict_enum!(QuestionState);
+/// How a [`QuestionState`] is read; see [`strict_enum!`].
+#[derive(Deserialize)]
+#[serde(
+    remote = "QuestionState",
+    tag = "status",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+enum QuestionStateWire {
+    Open,
+    Answered { at: Timestamp, via: AnsweredVia },
+}
+
+strict_enum!(QuestionState, QuestionStateWire);
 
 /// The channel an answer came through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

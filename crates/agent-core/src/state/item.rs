@@ -99,8 +99,8 @@ pub struct Review {
 /// Whether a reviewer has answered.
 ///
 /// Deserialization refuses fields that the variant does not have.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum ReviewOutcome {
     /// The review is not in yet.
     Pending,
@@ -124,8 +124,8 @@ pub struct FixPass {
 /// How an item came to be done.
 ///
 /// Deserialization refuses fields that the variant does not have.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "how", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "how", rename_all = "snake_case")]
 pub enum Completion {
     /// The task list marked it `[x]` when the team started.
     Listed,
@@ -141,8 +141,8 @@ pub enum Completion {
 /// Where an item is, with exactly the data that phase has.
 ///
 /// Deserialization refuses unknown fields and applies [`ItemPhase::check_reviews`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
 pub enum ItemPhase {
     /// Not started.
     Pending,
@@ -183,9 +183,57 @@ pub enum ItemPhase {
     },
 }
 
-strict_enum!(ReviewOutcome);
-strict_enum!(Completion);
-strict_enum!(ItemPhase, |_| &[], ItemPhase::check_reviews);
+/// How a [`ReviewOutcome`] is read; see [`strict_enum!`].
+#[derive(Deserialize)]
+#[serde(
+    remote = "ReviewOutcome",
+    tag = "status",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+enum ReviewOutcomeWire {
+    Pending,
+    Submitted { verdict: ReviewVerdict, at: Timestamp },
+}
+
+/// How a [`Completion`] is read; see [`strict_enum!`].
+#[derive(Deserialize)]
+#[serde(remote = "Completion", tag = "how", rename_all = "snake_case", deny_unknown_fields)]
+enum CompletionWire {
+    Listed,
+    Merged { pr: PullRequest, at: Timestamp },
+}
+
+/// How an [`ItemPhase`] is read; see [`strict_enum!`].
+#[derive(Deserialize)]
+#[serde(remote = "ItemPhase", tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
+enum ItemPhaseWire {
+    Pending,
+    InProgress {
+        assignee: AgentName,
+        branch: BranchName,
+    },
+    InReview {
+        pr: PullRequest,
+        reviews: Vec<Review>,
+    },
+    Fixing {
+        assignee: AgentName,
+        branch: BranchName,
+        pr: PullRequest,
+    },
+    Approved {
+        pr: PullRequest,
+        reviews: Vec<Review>,
+    },
+    Done {
+        completion: Completion,
+    },
+}
+
+strict_enum!(ReviewOutcome, ReviewOutcomeWire);
+strict_enum!(Completion, CompletionWire);
+strict_enum!(ItemPhase, ItemPhaseWire, |_| &[], ItemPhase::check_reviews);
 
 impl ItemPhase {
     /// Which phase this is.
@@ -291,22 +339,33 @@ fn check_fix_pass(round: &[Review]) -> Result<(), InvalidReviews> {
 ///
 /// Reading checks what the item's own constructors check: a phase with its data ([`ItemPhase`]), a fixing item with
 /// a fix pass, and that every fix pass was asked for by reviews that fit it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ItemProgress {
     /// The item's number in the task list.
     id: ItemId,
     /// Where the item is.
     phase: ItemPhase,
     /// The fix passes so far, oldest first; their number is what the configured limit is compared with.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     fix_passes: Vec<FixPass>,
     /// The last gate result for this item, if the gate has run.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<GateResult>,
 }
 
-checked!(ItemProgress, check_item_progress);
+/// How an [`ItemProgress`] is read; see [`checked!`].
+#[derive(Deserialize)]
+#[serde(remote = "ItemProgress", deny_unknown_fields)]
+struct ItemProgressWire {
+    id: ItemId,
+    phase: ItemPhase,
+    #[serde(default)]
+    fix_passes: Vec<FixPass>,
+    #[serde(default)]
+    gate: Option<GateResult>,
+}
+
+checked!(ItemProgress, ItemProgressWire, check_item_progress);
 
 /// An item's progress inside a team, to change through its operations only.
 ///

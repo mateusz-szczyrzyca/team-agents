@@ -25,8 +25,8 @@ pub struct GateResult {
 /// How the gate ended.
 ///
 /// Deserialization refuses fields that the variant does not have.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum GateOutcome {
     /// The command exited with 0: the commit may be reviewed.
     Passed,
@@ -39,7 +39,16 @@ pub enum GateOutcome {
     TimedOut,
 }
 
-strict_enum!(GateOutcome);
+/// How a [`GateOutcome`] is read; see [`strict_enum!`].
+#[derive(Deserialize)]
+#[serde(remote = "GateOutcome", tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum GateOutcomeWire {
+    Passed,
+    Failed { exit_code: NonZeroI32 },
+    TimedOut,
+}
+
+strict_enum!(GateOutcome, GateOutcomeWire);
 
 #[cfg(test)]
 mod tests {

@@ -59,8 +59,7 @@ impl Participant {
 /// The status changes only through [`Member::transition`]; runs and questions are added and ended through the
 /// methods below, which keep them in order: at most the last run is going, at most the last question is open, and
 /// question rounds count 1, 2, 3, … Reading a state checks the same.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Member {
     /// The task's ID.
     task: TaskId,
@@ -69,14 +68,25 @@ pub struct Member {
     /// Where the task is in its life.
     status: TaskStatus,
     /// Its runs, oldest first.
-    #[serde(default)]
     runs: Vec<Run>,
     /// Its rounds of questions, oldest first.
+    questions: Vec<Question>,
+}
+
+/// How a [`Member`] is read; see [`checked!`].
+#[derive(Deserialize)]
+#[serde(remote = "Member", deny_unknown_fields)]
+struct MemberWire {
+    task: TaskId,
+    agent: Participant,
+    status: TaskStatus,
+    #[serde(default)]
+    runs: Vec<Run>,
     #[serde(default)]
     questions: Vec<Question>,
 }
 
-checked!(Member, check_member);
+checked!(Member, MemberWire, check_member);
 
 /// A member inside a state or a team, to change through its operations only.
 ///

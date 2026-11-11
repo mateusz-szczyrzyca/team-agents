@@ -12,8 +12,7 @@ use crate::status::RunOutcome;
 /// Made by [`Member::begin_run`](super::Member::begin_run) and ended by
 /// [`Member::end_run`](super::Member::end_run), so a run never ends before it started; reading a state checks that
 /// too.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Run {
     /// The run's ID.
     id: RunId,
@@ -26,7 +25,17 @@ pub struct Run {
     state: RunState,
 }
 
-checked!(Run, |run: &Run| match &run.state {
+/// How a [`Run`] is read; see [`checked!`].
+#[derive(Deserialize)]
+#[serde(remote = "Run", deny_unknown_fields)]
+struct RunWire {
+    id: RunId,
+    started_at: Timestamp,
+    session: Option<SessionId>,
+    state: RunState,
+}
+
+checked!(Run, RunWire, |run: &Run| match &run.state {
     RunState::Ended { at, .. } => check_end(&run.id, run.started_at, *at),
     RunState::Running => Ok(()),
 });
@@ -34,8 +43,8 @@ checked!(Run, |run: &Run| match &run.state {
 /// Whether a run is going or over.
 ///
 /// Deserialization refuses fields that the variant does not have.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum RunState {
     /// The CLI process is going.
     Running,
@@ -51,8 +60,8 @@ pub enum RunState {
 /// How a run ended: what the agent reported, or what the harness found.
 ///
 /// Deserialization refuses fields that the variant does not have.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunEnd {
     /// The agent's final message ended with `STATUS: <outcome>`.
     Reported {
@@ -78,10 +87,30 @@ pub enum RunEnd {
     Stopped,
 }
 
-strict_enum!(RunState);
-strict_enum!(RunEnd, |end| match end {
+/// How a [`RunState`] is read; see [`strict_enum!`].
+#[derive(Deserialize)]
+#[serde(remote = "RunState", tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+enum RunStateWire {
+    Running,
+    Ended { at: Timestamp, end: RunEnd },
+}
+
+/// How a [`RunEnd`] is read; see [`strict_enum!`].
+#[derive(Deserialize)]
+#[serde(remote = "RunEnd", tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum RunEndWire {
+    Reported { outcome: RunOutcome },
+    NoStatus { exit_code: Option<i32> },
+    QuotaExhausted { resets_at: Option<Timestamp> },
+    RateLimited,
+    Hung,
+    Stopped,
+}
+
+strict_enum!(RunState, RunStateWire);
+strict_enum!(RunEnd, RunEndWire, |end| match end {
     RunEnd::QuotaExhausted { .. } => &["resets_at"][..],
-    _ => &[],
+    RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::RateLimited | RunEnd::Hung | RunEnd::Stopped => &[],
 });
 
 /// Why a run could not be started, ended or given a session.

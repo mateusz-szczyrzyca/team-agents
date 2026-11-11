@@ -281,8 +281,7 @@ impl From<Crew> for Shape {
 /// The progress has one entry for each item of the task list, in its order, and an item the list marks `[x]` is done
 /// from the start; [`Team::new`] makes it so and reading a state checks it. Reviewers are investigators outside the
 /// crew.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Team {
     /// The team's ID.
     id: TeamId,
@@ -299,11 +298,25 @@ pub struct Team {
     /// The people of the team.
     crew: Crew,
     /// The investigators that review the team's pull requests, with their tasks.
+    reviewers: Vec<Member>,
+}
+
+/// How a [`Team`] is read; see [`checked!`].
+#[derive(Deserialize)]
+#[serde(remote = "Team", deny_unknown_fields)]
+struct TeamWire {
+    id: TeamId,
+    repo: RepoName,
+    created_at: Timestamp,
+    merge: MergeMode,
+    task_list: TaskListText,
+    items: Vec<ItemProgress>,
+    crew: Crew,
     #[serde(default)]
     reviewers: Vec<Member>,
 }
 
-checked!(Team, check_team);
+checked!(Team, TeamWire, check_team);
 
 /// Why a team's parts do not fit together.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
