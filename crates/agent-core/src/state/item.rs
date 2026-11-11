@@ -1,7 +1,9 @@
 //! The progress of a task-list item: who works on it, its pull request, its reviews and fix passes, and its gate
 //! result.
 
-use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::gate::GateResult;
 use super::values::{PrNumber, Timestamp};
@@ -136,9 +138,10 @@ pub enum Completion {
 
 /// Where an item is, with exactly the data that phase has.
 ///
-/// Read through a private wire enum that refuses a field the variant does not have.
+/// Read through a private wire enum that refuses a field the variant does not have, and then
+/// [`ItemPhase::check_reviews`]: a phase that carries reviews of a round that does not fit it is not read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "phase", rename_all = "snake_case", from = "ItemPhaseWire")]
+#[serde(tag = "phase", rename_all = "snake_case", try_from = "ItemPhaseWire")]
 pub enum ItemPhase {
     /// Not started.
     Pending,
@@ -271,16 +274,20 @@ enum ItemPhaseWire {
     },
 }
 
-impl From<ItemPhaseWire> for ItemPhase {
-    fn from(wire: ItemPhaseWire) -> Self {
-        match wire {
+impl TryFrom<ItemPhaseWire> for ItemPhase {
+    type Error = InvalidReviews;
+
+    fn try_from(wire: ItemPhaseWire) -> Result<Self, Self::Error> {
+        let phase = match wire {
             ItemPhaseWire::Pending {} => Self::Pending,
             ItemPhaseWire::InProgress { assignee, branch } => Self::InProgress { assignee, branch },
             ItemPhaseWire::InReview { pr, reviews } => Self::InReview { pr, reviews },
             ItemPhaseWire::Fixing { assignee, branch, pr } => Self::Fixing { assignee, branch, pr },
             ItemPhaseWire::Approved { pr, reviews } => Self::Approved { pr, reviews },
             ItemPhaseWire::Done { completion } => Self::Done { completion },
-        }
+        };
+        phase.check_reviews()?;
+        Ok(phase)
     }
 }
 
@@ -297,13 +304,87 @@ impl ItemPhase {
             Self::Done { .. } => PhaseKind::Done,
         }
     }
+
+    /// Checks the reviews this phase carries: a round names no reviewer and no task twice, and an approved item
+    /// carries at least one review, each an approval.
+    ///
+    /// # Errors
+    /// [`InvalidReviews`] for the first review that does not fit.
+    pub fn check_reviews(&self) -> Result<(), InvalidReviews> {
+        match self {
+            Self::InReview { reviews, .. } => check_round(reviews),
+            Self::Approved { reviews, .. } => {
+                check_round(reviews)?;
+                check_approving(reviews)
+            }
+            Self::Pending | Self::InProgress { .. } | Self::Fixing { .. } | Self::Done { .. } => Ok(()),
+        }
+    }
+}
+
+/// Whether `review` is a submitted approval.
+const fn approves(review: &Review) -> bool {
+    matches!(
+        review.outcome,
+        ReviewOutcome::Submitted {
+            verdict: ReviewVerdict::Approve,
+            ..
+        }
+    )
+}
+
+/// Checks that `round` names no reviewer and no task twice.
+fn check_round(round: &[Review]) -> Result<(), InvalidReviews> {
+    let mut reviewers = HashSet::new();
+    let mut tasks = HashSet::new();
+    for review in round {
+        if !reviewers.insert(&review.reviewer) {
+            return Err(InvalidReviews::DuplicateReviewer {
+                reviewer: review.reviewer.clone(),
+            });
+        }
+        if !tasks.insert(&review.task) {
+            return Err(InvalidReviews::DuplicateTask {
+                task: review.task.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Checks that `round` is the reviews of an approved item: some, and every one an approval.
+fn check_approving(round: &[Review]) -> Result<(), InvalidReviews> {
+    if round.is_empty() {
+        return Err(InvalidReviews::ApprovedWithoutReviews);
+    }
+    match round.iter().find(|review| !approves(review)) {
+        Some(review) => Err(InvalidReviews::ApprovedNotByAll {
+            reviewer: review.reviewer.clone(),
+        }),
+        None => Ok(()),
+    }
+}
+
+/// Checks that `round` can be the reviews of a fix pass: a valid round with at least one review, and not one that
+/// every reviewer approved.
+fn check_fix_pass(round: &[Review]) -> Result<(), InvalidReviews> {
+    check_round(round)?;
+    if round.is_empty() {
+        return Err(InvalidReviews::FixPassWithoutReviews);
+    }
+    if round.iter().all(approves) {
+        return Err(InvalidReviews::FixPassApproved);
+    }
+    Ok(())
 }
 
 /// An item's progress: its phase, the fix passes behind it and its last gate result.
 ///
 /// The phase changes only through [`ItemProgress::advance`], which follows [`PhaseKind::successors`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "ItemProgressWire")]
+///
+/// Reading checks what the item's own constructors check: a phase with its data ([`ItemPhase`]), a fixing item with
+/// a fix pass, and that every fix pass was asked for by reviews that fit it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ItemProgress {
     /// The item's number in the task list.
     id: ItemId,
@@ -331,6 +412,19 @@ struct ItemProgressWire {
     /// See [`ItemProgress`].
     #[serde(default)]
     gate: Option<GateResult>,
+}
+
+/// A fix pass that no review asked for, found when reading an item.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("item {item}: fix pass {pass} is not valid: {source}")]
+struct InvalidFixPass {
+    /// The item.
+    item: ItemId,
+    /// The fix pass, counted from 1.
+    pass: usize,
+    /// What is wrong with it.
+    #[source]
+    source: InvalidReviews,
 }
 
 /// An item that is fixing but has no fix pass behind it.
@@ -435,6 +529,26 @@ impl TryFrom<ItemProgressWire> for ItemProgress {
     }
 }
 
+/// The check of a fixing item, then that of every fix pass. Written by hand, not with `try_from`, because the first
+/// check has its own error type; the error type here is the `Deserializer`'s, which the interface requires (a
+/// `FixingWithoutFixPass` or an `InvalidFixPass` inside).
+impl<'de> Deserialize<'de> for ItemProgress {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = ItemProgressWire::deserialize(deserializer)?;
+        let progress = Self::try_from(wire).map_err(serde::de::Error::custom)?;
+        for (index, pass) in progress.fix_passes.iter().enumerate() {
+            check_fix_pass(&pass.requested_by).map_err(|source| {
+                serde::de::Error::custom(InvalidFixPass {
+                    item: progress.id,
+                    pass: index.saturating_add(1),
+                    source,
+                })
+            })?;
+        }
+        Ok(progress)
+    }
+}
+
 impl ItemProgress {
     /// The progress of an item that is not started, or of one that the task list already marks done.
     #[must_use]
@@ -480,7 +594,9 @@ impl ItemProgress {
     /// Moves the item to `next`. Leaving `in_review` for `fixing` records the round's reviews as a fix pass.
     ///
     /// # Errors
-    /// [`AdvanceError`] when [`PhaseKind::successors`] does not allow the change.
+    /// [`AdvanceError::Transition`] when [`PhaseKind::successors`] does not allow the change;
+    /// [`AdvanceError::Reviews`] when the reviews of the new phase do not fit it ([`ItemPhase::check_reviews`]), or
+    /// when no review asked for the fix pass the change would record.
     pub fn advance(&mut self, next: ItemPhase) -> Result<(), AdvanceError> {
         let (from, to) = (self.phase.kind(), next.kind());
         if !from.successors().contains(&to) {
@@ -490,6 +606,11 @@ impl ItemProgress {
                 to,
             }
             .into());
+        }
+        next.check_reviews()
+            .map_err(|source| AdvanceError::Reviews { item: self.id, source })?;
+        if let (ItemPhase::InReview { reviews, .. }, PhaseKind::Fixing) = (&self.phase, to) {
+            check_fix_pass(reviews).map_err(|source| AdvanceError::Reviews { item: self.id, source })?;
         }
         let left = std::mem::replace(&mut self.phase, next);
         if let (ItemPhase::InReview { reviews, .. }, PhaseKind::Fixing) = (left, to) {

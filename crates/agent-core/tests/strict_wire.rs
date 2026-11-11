@@ -35,6 +35,16 @@ mod strict_wire {
         json!({"number": 7, "branch": "agents/codex-1/item-1-2", "opened_at": AT})
     }
 
+    /// An approving review, as written.
+    fn approval() -> Value {
+        json!({
+            "reviewer": "inv-opus",
+            "task": "task-20261111-153005-k3x9",
+            "requested_at": AT,
+            "outcome": {"status": "submitted", "verdict": "APPROVE", "at": AT}
+        })
+    }
+
     #[test]
     fn an_item_phase_refuses_an_unknown_field_in_every_variant() {
         for plain in [
@@ -42,7 +52,7 @@ mod strict_wire {
             json!({"phase": "in_progress", "assignee": "codex-1", "branch": "agents/codex-1/item-1-2"}),
             json!({"phase": "in_review", "pr": pr(), "reviews": []}),
             json!({"phase": "fixing", "assignee": "codex-1", "branch": "agents/codex-1/item-1-2", "pr": pr()}),
-            json!({"phase": "approved", "pr": pr(), "reviews": []}),
+            json!({"phase": "approved", "pr": pr(), "reviews": [approval()]}),
             json!({"phase": "done", "completion": {"how": "listed"}}),
         ] {
             assert_unknown_field_refused::<ItemPhase>(&plain);
