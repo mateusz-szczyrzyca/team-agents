@@ -202,7 +202,54 @@ impl State {
         self.teams.iter().find(|team| team.id() == id)
     }
 
-    /// The team `id`, to change it.
+    /// The team `id`, to change it through the checked operations of [`TeamMut`] only.
+    ///
+    /// The handle does not give out the team as a value to overwrite, so no change can bring in a second team with
+    /// one ID or a member that the team's checks did not see. Each of these is refused by the compiler:
+    ///
+    /// ```compile_fail
+    /// # use agent_core::state::State;
+    /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
+    /// # let team = state.teams()[0].id().clone();
+    /// # let other = state.teams()[1].clone();
+    /// *state.team_mut(&team).unwrap() = other;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// # use agent_core::state::State;
+    /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
+    /// # let team = state.teams()[0].id().clone();
+    /// # let other = state.teams()[1].clone();
+    /// let _ = std::mem::replace(&mut *state.team_mut(&team).unwrap(), other);
+    /// ```
+    ///
+    /// ```compile_fail
+    /// # use agent_core::state::State;
+    /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
+    /// # let team = state.teams()[0].id().clone();
+    /// # let other = state.teams()[1].clone();
+    /// let item = other.items()[0].clone();
+    /// let id = item.id();
+    /// *state.team_mut(&team).unwrap().item_mut(id).unwrap() = item;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// # use agent_core::state::State;
+    /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
+    /// # let team = state.teams()[0].id().clone();
+    /// # let other = state.teams()[1].clone();
+    /// let crew = other.crew().clone();
+    /// *state.team_mut(&team).unwrap().crew_mut() = crew;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// # use agent_core::state::State;
+    /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
+    /// # let team = state.teams()[0].id().clone();
+    /// # let other = state.teams()[1].clone();
+    /// let reviewer = other.reviewers()[0].clone();
+    /// state.team_mut(&team).unwrap().reviewers_mut()[0] = reviewer;
+    /// ```
     pub fn team_mut(&mut self, id: &TeamId) -> Option<&mut Team> {
         self.teams.iter_mut().find(|team| team.id() == id)
     }
@@ -215,7 +262,18 @@ impl State {
             .find_map(|team| team.find(task).map(|(role, member)| TaskRef { team, role, member }))
     }
 
-    /// The member of task `task`, to change its task.
+    /// The member of task `task`, to change its task through the checked operations of [`MemberMut`] only; the
+    /// member cannot be overwritten with another one:
+    ///
+    /// ```compile_fail
+    /// # use agent_core::state::State;
+    /// # let mut state = State::from_json(include_str!("../tests/fixtures/state-v1.json")).unwrap();
+    /// # let team = state.teams()[0].id().clone();
+    /// # let other = state.teams()[1].clone();
+    /// let task = state.teams()[0].crew().roster()[0].1.task().clone();
+    /// let member = other.crew().roster()[0].1.clone();
+    /// *state.find_task_mut(&task).unwrap().1 = member;
+    /// ```
     pub fn find_task_mut(&mut self, task: &TaskId) -> Option<(Role, &mut Member)> {
         self.teams.iter_mut().find_map(|team| team.find_mut(task))
     }
