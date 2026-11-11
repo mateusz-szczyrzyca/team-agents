@@ -84,7 +84,6 @@ pub enum Reply {
     /// change them from this state on, so a dashboard starts without a gap or a race.
     Subscribed {
         /// One summary for each team subscribed to.
-        #[serde(skip)]
         teams: Vec<TeamSummary>,
     },
 }

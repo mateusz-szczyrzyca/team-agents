@@ -229,7 +229,7 @@ round (every question answered, `ok` only where there is a recommendation).
 | `task` | `team`, `role`, `member` |
 | `applied` | `tasks`: the tasks the command reached |
 | `gate` | `result`: a gate result |
-| `subscribed` | |
+| `subscribed` | `teams`: the summaries of the teams subscribed to (all, or the one asked for), as they are when the events start |
 
 `error.kind` is one of `invalid` (well-formed but asks for something that makes no sense: an unknown agent, a worker as
 coordinator), `not_found`, `conflict` (the state does not allow it now), `refused` (the harness refuses to start: too
@@ -352,5 +352,8 @@ These choices are in the model and are expensive to change once state files exis
 11. **`answer` carries verdicts, not a file**: the client reads the file (`--file`, or the editor) and sends the verdicts;
     a file saved with the marker is read by the daemon itself. Both go through the same code.
 12. **`status` returns summaries, `show` the whole record**: a list of teams stays small, however long the task lists.
-13. **Strict in both files and lines**: unknown fields are errors, and the protocol version is checked first. A newer
+13. **`subscribe` starts from the state**: its reply carries the summaries of the teams, taken when the events start,
+    so a dashboard needs no separate `status` and loses no event between the two. Summaries, not whole teams: one
+    line stays small.
+14. **Strict in both files and lines**: unknown fields are errors, and the protocol version is checked first. A newer
     client against an older daemon is told so, not misread.
