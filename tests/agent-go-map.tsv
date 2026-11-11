@@ -785,6 +785,10 @@ tests/unit/gate_own_run.bats	gate_busy_for: the task's gate holds the gate lock 
 tests/unit/gate_own_run.bats	a coordinator working alone is not ended while its own gate runs; once the gate is over, it is	blackbox	R31	-	planned
 tests/unit/gate_own_run.bats	an agent's gate of its own task during a merge in progress runs: the merged tree is checked before its commit	blackbox	R31	-	planned
 tests/unit/gate_own_run.bats	the agents' prompt: a merge in progress may be gated before its commit	source	R31	-	planned
+tests/unit/gate_scopes.bats	the gate of a change: the first scope covering every changed path; otherwise, and for no change, the full gate	blackbox	R31	-	planned
+tests/unit/gate_scopes.bats	the paths are the change's own: what the base gained since does not count; uncommitted work in a worktree does	blackbox	R31	-	planned
+tests/unit/gate_scopes.bats	an entry without '=>' or without a command is skipped and logged; no scopes: the full gate as before	blackbox	R31	-	planned
+tests/unit/gate_scopes.bats	agent gate in a task's worktree runs the scope's command for a change inside it, and records it	blackbox	R31	-	planned
 tests/unit/team_stop_followup.bats	the automation check of a team task runs without a shell error	source	R35	-	planned
 tests/unit/team_stop_followup.bats	stopping a team keeps its finished members done, with their finishing time	source	R35	-	planned
 tests/unit/team_stop_followup.bats	a member of a stopped team is not resumed with its answers, and the human is told why	source	R35	-	planned
