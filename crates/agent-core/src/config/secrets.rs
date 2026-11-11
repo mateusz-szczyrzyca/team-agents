@@ -29,6 +29,26 @@ const PERMISSION_BITS: u32 = 0o777;
 /// 1 to 8192 bytes without control characters, so it fits on one line. Refused, with the [`ValueRule`] it breaks:
 /// the empty text, a longer one and a control character. An empty secret is refused rather than ignored: a
 /// variable that is set but empty is not the same as one that is not set.
+///
+/// It cannot be printed, formatted or serialized by accident:
+///
+/// ```compile_fail,E0277
+/// fn show(secret: &agent_core::config::Secret) -> String {
+///     format!("{secret}")
+/// }
+/// ```
+///
+/// ```compile_fail,E0277
+/// fn show(secret: &agent_core::config::Secret) -> String {
+///     serde_json::to_string(secret).unwrap()
+/// }
+/// ```
+///
+/// The only way to a value is through that check:
+///
+/// ```compile_fail,E0423
+/// let secret = agent_core::config::Secret(String::new());
+/// ```
 #[derive(Clone, Deserialize)]
 #[serde(try_from = "String")]
 pub struct Secret(String);
@@ -131,6 +151,17 @@ pub enum SecretsError {
 
 /// The validated contents of `secrets.toml`: the GitHub token and the environment variables of the processes the
 /// harness starts.
+///
+/// ```
+/// # fn main() -> Result<(), agent_core::config::SecretsError> {
+/// use agent_core::config::Secrets;
+/// let secrets = Secrets::parse("github_token = \"ghp_example\"\n", 0o600)?;
+/// assert_eq!(secrets.github_token().map(|token| token.expose()), Some("ghp_example"));
+/// // A file that others can read is refused before it is looked at.
+/// assert!(Secrets::parse("github_token = \"ghp_example\"\n", 0o644).is_err());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct Secrets {
     /// The token of the GitHub account the agents act as.

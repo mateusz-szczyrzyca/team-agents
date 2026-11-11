@@ -199,6 +199,20 @@ fn lowercase(mut text: String) -> String {
 /// 1 to 32 bytes of ASCII letters, digits and `-`, so that it can name a directory of prompt overrides. Refused,
 /// with the [`ValueRule`] it breaks: the empty text, a longer one and any other character (spaces, `.`, `/`,
 /// non-ASCII letters). The default is `English`.
+///
+/// ```
+/// # fn main() -> Result<(), agent_core::config::InvalidValue> {
+/// let language: agent_core::config::Language = "Polish".parse()?;
+/// assert!(!language.is_english());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// The only way to a value is through that check; the same holds for the other values of this module:
+///
+/// ```compile_fail,E0423
+/// let language = agent_core::config::Language(String::from("not valid!"));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(try_from = "String")]
 pub struct Language(String);
@@ -416,6 +430,10 @@ impl TryFrom<String> for AbsolutePath {
 ///
 /// 1 to 4096 bytes without NUL. Refused, with the [`ValueRule`] it breaks: the empty text, a longer one, a NUL, and a
 /// path that is not absolute but has a `/` (`./x`, `bin/x`), and `.` and `..`.
+///
+/// ```compile_fail,E0423
+/// let program = agent_core::config::Program(std::path::PathBuf::from("./x"));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(try_from = "String")]
 pub struct Program(PathBuf);

@@ -277,6 +277,15 @@ pub enum TaskListError {
 impl TaskList {
     /// Parses a task list.
     ///
+    /// ```
+    /// # fn main() -> Result<(), agent_core::task_list::TaskListError> {
+    /// let list = agent_core::task_list::TaskList::parse("Brief.\n\n1. Feature\n[ ] 1.1 Item\n    Do it.\n")?;
+    /// assert_eq!(list.brief(), "Brief.");
+    /// assert_eq!(list.items().count(), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     /// # Errors
     /// A [`TaskListError`]: the text is empty or over [`MAX_TASK_LIST_BYTES`], or a line is not valid where it is;
     /// all but those two carry the line.

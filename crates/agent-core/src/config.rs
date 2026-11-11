@@ -303,6 +303,21 @@ pub struct Web {
 /// Made only by [`Config::from_toml_str`], so every value is valid and the lists are consistent: each name in
 /// `normal` and `workers` has a `[agents.NAME]` table, no list names an agent twice, no agent is in both lists or
 /// in neither, and no name is both an agent and an investigator. `Config::default()` is what an empty file gives.
+///
+/// ```
+/// # fn main() -> Result<(), agent_core::config::ConfigError> {
+/// let text = "[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n";
+/// let config = agent_core::config::Config::from_toml_str(text)?;
+/// assert_eq!(config.normal_agents().len(), 1);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// The only way to a value with agents is through that check:
+///
+/// ```compile_fail
+/// let config = agent_core::config::Config { language: Default::default() };
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     /// The language of the texts only the human reads.
