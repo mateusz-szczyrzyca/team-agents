@@ -43,8 +43,14 @@ pub enum GateOutcome {
 #[derive(Deserialize)]
 #[serde(remote = "GateOutcome", tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum GateOutcomeWire {
+    /// See [`GateOutcome::Passed`].
     Passed,
-    Failed { exit_code: NonZeroI32 },
+    /// See [`GateOutcome::Failed`].
+    Failed {
+        /// See [`GateOutcome::Failed`].
+        exit_code: NonZeroI32,
+    },
+    /// See [`GateOutcome::TimedOut`].
     TimedOut,
 }
 

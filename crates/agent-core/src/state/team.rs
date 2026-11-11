@@ -305,13 +305,21 @@ pub struct Team {
 #[derive(Deserialize)]
 #[serde(remote = "Team", deny_unknown_fields)]
 struct TeamWire {
+    /// See [`Team`].
     id: TeamId,
+    /// See [`Team`].
     repo: RepoName,
+    /// See [`Team`].
     created_at: Timestamp,
+    /// See [`Team`].
     merge: MergeMode,
+    /// See [`Team`].
     task_list: TaskListText,
+    /// See [`Team`].
     items: Vec<ItemProgress>,
+    /// See [`Team`].
     crew: Crew,
+    /// See [`Team`]; a team written without reviewers has none.
     #[serde(default)]
     reviewers: Vec<Member>,
 }

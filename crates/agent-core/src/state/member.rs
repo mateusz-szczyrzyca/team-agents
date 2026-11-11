@@ -77,11 +77,16 @@ pub struct Member {
 #[derive(Deserialize)]
 #[serde(remote = "Member", deny_unknown_fields)]
 struct MemberWire {
+    /// See [`Member`].
     task: TaskId,
+    /// See [`Member`].
     agent: Participant,
+    /// See [`Member`].
     status: TaskStatus,
+    /// See [`Member`]; a member written without runs has none.
     #[serde(default)]
     runs: Vec<Run>,
+    /// See [`Member`]; a member written without questions has none.
     #[serde(default)]
     questions: Vec<Question>,
 }

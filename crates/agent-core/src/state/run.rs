@@ -29,9 +29,13 @@ pub struct Run {
 #[derive(Deserialize)]
 #[serde(remote = "Run", deny_unknown_fields)]
 struct RunWire {
+    /// See [`Run`].
     id: RunId,
+    /// See [`Run`].
     started_at: Timestamp,
+    /// See [`Run`]; absent when the CLI has not reported a session.
     session: Option<SessionId>,
+    /// See [`Run`].
     state: RunState,
 }
 
@@ -91,19 +95,41 @@ pub enum RunEnd {
 #[derive(Deserialize)]
 #[serde(remote = "RunState", tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 enum RunStateWire {
+    /// See [`RunState::Running`].
     Running,
-    Ended { at: Timestamp, end: RunEnd },
+    /// See [`RunState::Ended`].
+    Ended {
+        /// See [`RunState::Ended`].
+        at: Timestamp,
+        /// See [`RunState::Ended`].
+        end: RunEnd,
+    },
 }
 
 /// How a [`RunEnd`] is read; see [`strict_enum!`].
 #[derive(Deserialize)]
 #[serde(remote = "RunEnd", tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum RunEndWire {
-    Reported { outcome: RunOutcome },
-    NoStatus { exit_code: Option<i32> },
-    QuotaExhausted { resets_at: Option<Timestamp> },
+    /// See [`RunEnd::Reported`].
+    Reported {
+        /// See [`RunEnd::Reported`].
+        outcome: RunOutcome,
+    },
+    /// See [`RunEnd::NoStatus`].
+    NoStatus {
+        /// See [`RunEnd::NoStatus`].
+        exit_code: Option<i32>,
+    },
+    /// See [`RunEnd::QuotaExhausted`].
+    QuotaExhausted {
+        /// See [`RunEnd::QuotaExhausted`].
+        resets_at: Option<Timestamp>,
+    },
+    /// See [`RunEnd::RateLimited`].
     RateLimited,
+    /// See [`RunEnd::Hung`].
     Hung,
+    /// See [`RunEnd::Stopped`].
     Stopped,
 }
 

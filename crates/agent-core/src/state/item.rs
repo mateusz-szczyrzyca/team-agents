@@ -192,41 +192,71 @@ pub enum ItemPhase {
     deny_unknown_fields
 )]
 enum ReviewOutcomeWire {
+    /// See [`ReviewOutcome::Pending`].
     Pending,
-    Submitted { verdict: ReviewVerdict, at: Timestamp },
+    /// See [`ReviewOutcome::Submitted`].
+    Submitted {
+        /// See [`ReviewOutcome::Submitted`].
+        verdict: ReviewVerdict,
+        /// See [`ReviewOutcome::Submitted`].
+        at: Timestamp,
+    },
 }
 
 /// How a [`Completion`] is read; see [`strict_enum!`].
 #[derive(Deserialize)]
 #[serde(remote = "Completion", tag = "how", rename_all = "snake_case", deny_unknown_fields)]
 enum CompletionWire {
+    /// See [`Completion::Listed`].
     Listed,
-    Merged { pr: PullRequest, at: Timestamp },
+    /// See [`Completion::Merged`].
+    Merged {
+        /// See [`Completion::Merged`].
+        pr: PullRequest,
+        /// See [`Completion::Merged`].
+        at: Timestamp,
+    },
 }
 
 /// How an [`ItemPhase`] is read; see [`strict_enum!`].
 #[derive(Deserialize)]
 #[serde(remote = "ItemPhase", tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
 enum ItemPhaseWire {
+    /// See [`ItemPhase::Pending`].
     Pending,
+    /// See [`ItemPhase::InProgress`].
     InProgress {
+        /// See [`ItemPhase::InProgress`].
         assignee: AgentName,
+        /// See [`ItemPhase::InProgress`].
         branch: BranchName,
     },
+    /// See [`ItemPhase::InReview`].
     InReview {
+        /// See [`ItemPhase::InReview`].
         pr: PullRequest,
+        /// See [`ItemPhase::InReview`].
         reviews: Vec<Review>,
     },
+    /// See [`ItemPhase::Fixing`].
     Fixing {
+        /// See [`ItemPhase::Fixing`].
         assignee: AgentName,
+        /// See [`ItemPhase::Fixing`].
         branch: BranchName,
+        /// See [`ItemPhase::Fixing`].
         pr: PullRequest,
     },
+    /// See [`ItemPhase::Approved`].
     Approved {
+        /// See [`ItemPhase::Approved`].
         pr: PullRequest,
+        /// See [`ItemPhase::Approved`].
         reviews: Vec<Review>,
     },
+    /// See [`ItemPhase::Done`].
     Done {
+        /// See [`ItemPhase::Done`].
         completion: Completion,
     },
 }
@@ -357,10 +387,14 @@ pub struct ItemProgress {
 #[derive(Deserialize)]
 #[serde(remote = "ItemProgress", deny_unknown_fields)]
 struct ItemProgressWire {
+    /// See [`ItemProgress`].
     id: ItemId,
+    /// See [`ItemProgress`].
     phase: ItemPhase,
+    /// See [`ItemProgress`]; an item written without fix passes has none.
     #[serde(default)]
     fix_passes: Vec<FixPass>,
+    /// See [`ItemProgress`]; absent until the gate has run.
     #[serde(default)]
     gate: Option<GateResult>,
 }

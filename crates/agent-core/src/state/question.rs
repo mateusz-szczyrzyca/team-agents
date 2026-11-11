@@ -32,9 +32,13 @@ pub struct Question {
 #[derive(Deserialize)]
 #[serde(remote = "Question", deny_unknown_fields)]
 struct QuestionWire {
+    /// See [`Question`].
     round: NonZeroU32,
+    /// See [`Question`].
     file: AbsolutePath,
+    /// See [`Question`].
     asked_at: Timestamp,
+    /// See [`Question`].
     state: QuestionState,
 }
 
@@ -69,8 +73,15 @@ pub enum QuestionState {
     deny_unknown_fields
 )]
 enum QuestionStateWire {
+    /// See [`QuestionState::Open`].
     Open,
-    Answered { at: Timestamp, via: AnsweredVia },
+    /// See [`QuestionState::Answered`].
+    Answered {
+        /// See [`QuestionState::Answered`].
+        at: Timestamp,
+        /// See [`QuestionState::Answered`].
+        via: AnsweredVia,
+    },
 }
 
 strict_enum!(QuestionState, QuestionStateWire);
