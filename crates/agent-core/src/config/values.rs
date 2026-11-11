@@ -123,7 +123,7 @@ pub enum ValueRule {
 }
 
 /// An [`InvalidValue`] for `text`.
-fn refuse(what: &'static str, text: &str, rule: ValueRule) -> InvalidValue {
+pub(crate) fn refuse(what: &'static str, text: &str, rule: ValueRule) -> InvalidValue {
     InvalidValue {
         what,
         value: text.to_owned(),
@@ -132,7 +132,12 @@ fn refuse(what: &'static str, text: &str, rule: ValueRule) -> InvalidValue {
 }
 
 /// Checks that `text` is not empty, has at most `max` bytes and only characters `allowed` accepts.
-fn check_text(what: &'static str, text: &str, max: usize, allowed: impl Fn(char) -> bool) -> Result<(), InvalidValue> {
+pub(crate) fn check_text(
+    what: &'static str,
+    text: &str,
+    max: usize,
+    allowed: impl Fn(char) -> bool,
+) -> Result<(), InvalidValue> {
     if text.is_empty() {
         return Err(refuse(what, text, ValueRule::Empty));
     }
@@ -145,8 +150,9 @@ fn check_text(what: &'static str, text: &str, max: usize, allowed: impl Fn(char)
     }
 }
 
-/// Implements `as_str`, `Display`, `FromStr` and `TryFrom<String>` (which serde deserializes through) for a text
-/// newtype `$ty(String)`: both conversions run `$check`, then `$normalize` makes the stored text.
+/// Implements `as_str`, `Display`, `FromStr`, `TryFrom<String>` (which serde deserializes through) and `Serialize`
+/// (the stored text, which parses back to an equal value) for a text newtype `$ty(String)`: both conversions run
+/// `$check`, then `$normalize` makes the stored text.
 macro_rules! text_value {
     ($ty:ident, $check:path, $normalize:path) => {
         impl $ty {
@@ -160,6 +166,12 @@ macro_rules! text_value {
         impl fmt::Display for $ty {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str(&self.0)
+            }
+        }
+
+        impl serde::Serialize for $ty {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(&self.0)
             }
         }
 
@@ -393,6 +405,12 @@ fn check_absolute(text: &str) -> Result<(), InvalidValue> {
         return Err(refuse("path", text, ValueRule::NotAbsolute));
     }
     Ok(())
+}
+
+impl serde::Serialize for AbsolutePath {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
 }
 
 impl AbsolutePath {
