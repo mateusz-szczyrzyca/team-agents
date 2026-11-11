@@ -366,8 +366,8 @@ fn check_approving(round: &[Review]) -> Result<(), InvalidReviews> {
     }
 }
 
-/// Checks that `round` can be the reviews of a fix pass: a valid round with at least one review, and not one that
-/// every reviewer approved.
+/// Checks that `round` can be the reviews of a fix pass: a valid, non-empty round that is not wholly approving and
+/// contains a submitted request for changes.
 fn check_fix_pass(round: &[Review]) -> Result<(), InvalidReviews> {
     check_round(round)?;
     if round.is_empty() {
@@ -375,6 +375,17 @@ fn check_fix_pass(round: &[Review]) -> Result<(), InvalidReviews> {
     }
     if round.iter().all(approves) {
         return Err(InvalidReviews::FixPassApproved);
+    }
+    if !round.iter().any(|review| {
+        matches!(
+            review.outcome,
+            ReviewOutcome::Submitted {
+                verdict: ReviewVerdict::RequestChanges,
+                ..
+            }
+        )
+    }) {
+        return Err(InvalidReviews::FixPassNotRequested);
     }
     Ok(())
 }

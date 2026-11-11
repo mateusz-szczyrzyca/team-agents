@@ -152,11 +152,10 @@ Invariants: one progress entry per item of the task list, in its order; an item 
 `listed` from the start, and only such an item is; an item `fixing` records at least one fix pass.
 
 The reviews of a round (`in_review`, `approved`, a fix pass) name no reviewer and no task twice. An `approved` item
-carries at least one review and every one is a submitted `APPROVE`. A fix pass records at least one review and is not
-a round that every reviewer approved: such a round is approved, not sent back. `advance` checks the reviews of the
-new phase and of the round it leaves, and reading checks the same (the phase, and every fix pass), so a state that
-`advance` could not have made is not read. A round that has only pending reviews, or any mix without an approval
-of all, may still become a fix pass; that a fix pass has a `REQUEST_CHANGES` review is not checked yet.
+carries at least one review and every one is a submitted `APPROVE`. A fix pass records at least one review, is not
+a round that every reviewer approved, and contains a submitted `REQUEST_CHANGES`. `advance` checks the reviews of
+the new phase and of the round it leaves, and reading checks the same (the phase, and every fix pass), so a state
+that `advance` could not have made is not read. Other reviews in a fix-pass round may still be pending.
 
 #### Values
 
