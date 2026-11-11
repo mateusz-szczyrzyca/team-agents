@@ -121,8 +121,14 @@ fn encode<T: Serialize>(message: &T) -> Result<String, EncodeError> {
 
 /// Reads a line of at most `max` bytes, checking its protocol version before the rest.
 fn decode<T: DeserializeOwned>(line: &str, max: usize) -> Result<T, ProtocolError> {
-    let _ = (line, max);
-    Err(ProtocolError::TooLong { len: 0, max: 0 })
+    if line.len() > max {
+        return Err(ProtocolError::TooLong { len: line.len(), max });
+    }
+    let probe: VersionProbe = serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
+    if probe.protocol != u64::from(PROTOCOL_VERSION) {
+        return Err(UnsupportedVersion { found: probe.protocol }.into());
+    }
+    serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })
 }
 
 impl Frame {
@@ -223,7 +229,7 @@ mod tests {
         let line = request.to_line().unwrap();
 
         assert_eq!(line.matches('\n').count(), 1);
-        assert!(line.ends_with("\n"));
+        assert!(line.ends_with('\n'));
         assert_eq!(Request::from_line(&line).unwrap(), request);
     }
 

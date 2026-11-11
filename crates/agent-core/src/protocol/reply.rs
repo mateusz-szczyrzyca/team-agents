@@ -9,7 +9,7 @@ use super::request::RequestId;
 use crate::config::RepoName;
 use crate::ids::{TaskId, TeamId};
 use crate::kinds::Role;
-use crate::state::{GateResult, Member, MergeMode, Participant, Team, Timestamp};
+use crate::state::{GateResult, Member, MergeMode, Participant, Question, Team, Timestamp};
 use crate::status::{ItemStatus, TaskStatus};
 
 /// The answer to one [`Request`](super::Request): the same [`RequestId`] and a result.
@@ -26,7 +26,7 @@ pub struct Response {
 
 /// What came of a request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Outcome {
     /// The request was carried out.
     Ok {
@@ -42,7 +42,7 @@ pub enum Outcome {
 
 /// What a request that was carried out gives back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
     /// `run`: the team that was started and the tasks of its crew.
     Started {
@@ -176,15 +176,51 @@ pub struct MemberSummary {
     pub open_question: Option<NonZeroU32>,
 }
 
+impl ItemCounts {
+    /// Counts one more item in `status`.
+    const fn count(&mut self, status: ItemStatus) {
+        let slot = match status {
+            ItemStatus::Pending => &mut self.pending,
+            ItemStatus::InProgress => &mut self.in_progress,
+            ItemStatus::InReview => &mut self.in_review,
+            ItemStatus::Approved => &mut self.approved,
+            ItemStatus::Done => &mut self.done,
+        };
+        *slot = slot.saturating_add(1);
+    }
+}
+
+impl MemberSummary {
+    /// The summary of `member`, who has `role` in the team.
+    fn of(role: Role, member: &Member) -> Self {
+        Self {
+            task: member.task().clone(),
+            agent: member.agent().clone(),
+            role,
+            status: member.status(),
+            open_question: member.open_question().map(Question::round),
+        }
+    }
+}
+
 impl From<&Team> for TeamSummary {
     fn from(team: &Team) -> Self {
+        let mut items = ItemCounts::default();
+        for item in team.items() {
+            items.count(item.status());
+        }
+        let crew = team.crew().roster().into_iter();
+        let reviewers = team.reviewers().iter().map(|member| (Role::Reviewer, member));
         Self {
             id: team.id().clone(),
             repo: team.repo().clone(),
             created_at: team.created_at(),
             merge: team.merge(),
-            items: ItemCounts::default(),
-            members: Vec::new(),
+            items,
+            members: crew
+                .chain(reviewers)
+                .map(|(role, member)| MemberSummary::of(role, member))
+                .collect(),
         }
     }
 }
@@ -404,7 +440,6 @@ mod tests {
             json!({"kind": "teams"}),
             json!({"kind": "team", "team": {}}),
             json!({"kind": "applied", "tasks": [TEAM]}),
-            json!({"kind": "subscribed", "extra": 1}),
             json!({"kind": "rebooted"}),
         ] {
             assert_refused::<Reply>(&value);

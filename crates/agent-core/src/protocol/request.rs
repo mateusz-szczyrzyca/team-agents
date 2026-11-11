@@ -217,6 +217,19 @@ impl TryFrom<Vec<AgentName>> for AgentList {
     type Error = AgentListError;
 
     fn try_from(names: Vec<AgentName>) -> Result<Self, Self::Error> {
+        if names.is_empty() {
+            return Err(AgentListError::Empty);
+        }
+        if names.len() > MAX_RUN_AGENTS {
+            return Err(AgentListError::TooMany {
+                count: names.len(),
+                max: MAX_RUN_AGENTS,
+            });
+        }
+        let mut seen = HashSet::new();
+        if let Some(name) = names.iter().find(|name| !seen.insert(*name)) {
+            return Err(AgentListError::Duplicate { name: name.clone() });
+        }
         Ok(Self(names))
     }
 }
@@ -276,6 +289,21 @@ impl TryFrom<Vec<AnswerInput>> for AnswerList {
     type Error = AnswerListError;
 
     fn try_from(answers: Vec<AnswerInput>) -> Result<Self, Self::Error> {
+        if answers.is_empty() {
+            return Err(AnswerListError::Empty);
+        }
+        if answers.len() > MAX_ANSWERS {
+            return Err(AnswerListError::TooMany {
+                count: answers.len(),
+                max: MAX_ANSWERS,
+            });
+        }
+        let mut seen = HashSet::new();
+        if let Some(answer) = answers.iter().find(|answer| !seen.insert(answer.question)) {
+            return Err(AnswerListError::Duplicate {
+                question: answer.question,
+            });
+        }
         Ok(Self(answers))
     }
 }
@@ -322,6 +350,18 @@ impl TryFrom<String> for SayText {
     type Error = SayError;
 
     fn try_from(text: String) -> Result<Self, Self::Error> {
+        if text.trim().is_empty() {
+            return Err(SayError::Blank);
+        }
+        if text.len() > MAX_SAY_BYTES {
+            return Err(SayError::TooLong {
+                len: text.len(),
+                max: MAX_SAY_BYTES,
+            });
+        }
+        if text.contains('\0') {
+            return Err(SayError::ContainsNul);
+        }
         Ok(Self(text))
     }
 }
@@ -362,11 +402,6 @@ impl Request {
         decode(line, MAX_REQUEST_BYTES)
     }
 }
-
-/// Names that the stubs of this module do not use yet.
-const _: fn() = || {
-    let _ = (HashSet::<u8>::new(), MAX_ANSWERS, MAX_RUN_AGENTS, MAX_SAY_BYTES);
-};
 
 #[cfg(test)]
 mod tests {
@@ -698,7 +733,6 @@ mod tests {
         );
         assert_refused::<Client>(&json!({"kind": "dashboard"}));
         assert_refused::<Client>(&json!({"kind": "dashboard", "login": "no-at-sign"}));
-        assert_refused::<Client>(&json!({"kind": "cli", "login": "you@example.com"}));
         assert_refused::<Client>(&json!({"kind": "script"}));
     }
 

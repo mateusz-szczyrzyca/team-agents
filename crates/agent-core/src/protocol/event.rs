@@ -40,7 +40,7 @@ pub enum ControlAction {
 
 /// What happened.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EventKind {
     /// A team was started.
     TeamStarted {
@@ -177,8 +177,18 @@ mod tests {
         RUN.parse().unwrap()
     }
 
+    /// Asserts that each event is written as its JSON and that the JSON reads back as the event.
+    fn assert_json_round_trips(cases: Vec<(EventKind, serde_json::Value)>) {
+        for (kind, expected) in cases {
+            let value = serde_json::to_value(&kind).unwrap();
+
+            assert_eq!(value, expected);
+            assert_eq!(serde_json::from_value::<EventKind>(value).unwrap(), kind);
+        }
+    }
+
     #[test]
-    fn every_event_has_its_json_and_reads_back_equal() {
+    fn the_events_of_teams_tasks_items_and_runs_have_their_json_and_read_back_equal() {
         let item: ItemId = "1.2".parse().unwrap();
         let cases: Vec<(EventKind, serde_json::Value)> = vec![
             (
@@ -218,6 +228,14 @@ mod tests {
                 },
                 json!({"kind": "run_ended", "team": TEAM, "task": TASK, "run": RUN, "end": {"kind": "hung"}}),
             ),
+        ];
+        assert_json_round_trips(cases);
+    }
+
+    #[test]
+    fn the_events_of_questions_pull_requests_reviews_gates_and_controls_have_their_json_and_read_back_equal() {
+        let item: ItemId = "1.2".parse().unwrap();
+        let cases: Vec<(EventKind, serde_json::Value)> = vec![
             (
                 EventKind::QuestionAsked {
                     team: team_id(1),
@@ -281,12 +299,7 @@ mod tests {
                 json!({"kind": "controlled", "team": TEAM, "action": "say", "by": {"kind": "dashboard", "login": "you@example.com"}}),
             ),
         ];
-        for (kind, expected) in cases {
-            let value = serde_json::to_value(&kind).unwrap();
-
-            assert_eq!(value, expected);
-            assert_eq!(serde_json::from_value::<EventKind>(value).unwrap(), kind);
-        }
+        assert_json_round_trips(cases);
     }
 
     #[test]

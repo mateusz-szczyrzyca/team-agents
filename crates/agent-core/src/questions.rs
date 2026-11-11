@@ -27,6 +27,7 @@
 //! recommendation was accepted come from templates under `prompts/harness/questions/` and are passed in.
 
 use std::collections::HashSet;
+
 use std::fmt;
 use std::num::{NonZeroU32, NonZeroUsize, ParseIntError};
 
@@ -116,14 +117,19 @@ pub enum Verdict {
 /// A verdict is written as its text — `ok`, or the own answer — so that a client can send what the human typed.
 impl serde::Serialize for Verdict {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str("")
+        serializer.serialize_str(match self {
+            Self::Accept => ACCEPT_WORD,
+            Self::Own(answer) => answer.as_str(),
+        })
     }
 }
 
 impl<'de> serde::Deserialize<'de> for Verdict {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let _ = deserializer;
-        Ok(Self::Accept)
+        let text = String::deserialize(deserializer)?;
+        Self::from_text(&text)
+            .map_err(serde::de::Error::custom)?
+            .ok_or_else(|| serde::de::Error::custom(OwnAnswerError::Blank))
     }
 }
 
