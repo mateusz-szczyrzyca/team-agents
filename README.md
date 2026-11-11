@@ -180,6 +180,10 @@ branch — the merger, or the one investigator of a team of one, whose branch is
 to fix them on that branch; its checks and a review by a new investigator from outside the team follow (when all have
 reviewed, the one whose review is the oldest), up to `VERIFY_MAX_FIX_PASSES` passes, then you decide. Once the PR
 exists a failed merger is not replaced, so no second PR is opened.
+`agent run --investigation --pr N --team … -f fixes.md` continues an open PR #N instead of opening one: the
+investigators start at its head, the PR's earlier task (from its description) is added to the topic for the
+reviewers, and the work — the one investigator's, or the merger's, which opens no PR — is pushed onto PR #N's branch
+as a fast-forward; its checks and the review loop follow on PR #N.
 Resuming an investigation team with an open PR (`agent run --resume <team>`) runs Phase 5 advisory reviews
 across all team investigators concurrently proposing improvements without applying changes or auto-merging (`review: N investigators reviewing (#<pr>)`).
 Resuming an investigation team whose PR is already merged or closed is refused (`the PR is merged — a new topic is a new run` or `the PR is closed — a new topic is a new run`).

@@ -1733,6 +1733,16 @@ pr_body_without_task() {
   printf '%s' "$body"
 }
 
+# pr_body_task_text body — the task text in a PR description's task block (without its heading); nothing without one
+pr_body_task_text() {
+  local body=$1
+  [[ $body == *"$PR_TASK_START"*"$PR_TASK_END"* ]] || return 0
+  body=${body#*"$PR_TASK_START"}; body=${body%%"$PR_TASK_END"*}
+  awk '!started && /^[[:space:]]*$/ { next }            # the blank lines before the text
+       !started && !headed && /^## Task$/ { headed = 1; next }   # its heading
+       { started = 1; print }' <<< "$body"
+}
+
 # pr_task_block task — the task block of the task's text (its task.md) for its PR description, cut at
 # PR_TASK_MAX_CHARS with a note; fails without the text
 pr_task_block() {
@@ -4238,7 +4248,10 @@ pr_ownership_note() {
     investigation) [[ ${INVESTIGATION_PHASE:-} == 2 ]] || return 0 ;;   # an investigation's merger opens its PR
     *) return 0 ;;
   esac
-  if [[ -n $num ]]; then
+  if [[ -n $num && -n ${ROUND_PR_BRANCH:-} && ${ROUND_PR_BRANCH:-} != "${BRANCH:-}" ]]; then   # a solo task on --pr
+    printf "\n**Pull requests.** This task's PR is #%s, branch %s: push every commit of this task there (git push origin HEAD:%s), and keep its description up to date. Open no other PR — a second one is refused.\n" \
+      "$num" "$ROUND_PR_BRANCH" "$ROUND_PR_BRANCH"
+  elif [[ -n $num ]]; then
     printf "\n**Pull requests.** This task's PR is #%s%s: every commit of this task goes to its branch, and its description is the one you keep up to date. Open no other PR — a second one is refused.\n" \
       "$num" "${BRANCH:+ (branch $BRANCH)}"
   else
@@ -5478,6 +5491,9 @@ $text"
       meta_set "$child" "${kv%%=*}" "${kv#*=}"
     done
     if [[ $phase == 2 ]]; then meta_set "$parent" INVESTIGATION_MERGER_BRANCH "$(task_field "$child" BRANCH)"; fi
+    if [[ $phase == 2 && -n $(investigation_field "$parent" INVESTIGATION_PR_BRANCH) ]]; then
+      investigation_pr_merger_note "$parent" "$child"
+    fi
     unlock_task_ids
     if ! start_runner "$child" new; then meta_set "$child" STATUS failed; fi
   else
@@ -5531,6 +5547,31 @@ investigation_solo_owner() {
   meta_set "$parent" INVESTIGATION_MERGER_TASK "$task"
   log_info investigation_solo_owner "task=$parent" "agent=$agent" "child=$task"
   auto_stage "$parent" "opening the PR of $agent's branch (one investigator: nothing to merge)"
+}
+
+# investigation_pr_merger_note parent merger-task — the merger of an investigation on an open PR (--pr) opens none:
+# its task says so, and that the script brings its commits onto the PR
+investigation_pr_merger_note() {
+  local parent=$1 child=$2 num pr_branch
+  num=$(investigation_field "$parent" PR_NUMBER); pr_branch=$(investigation_field "$parent" INVESTIGATION_PR_BRANCH)
+  printf "\n# This investigation's PR\n\nThis investigation continues PR #%s (branch %s), which exists already. Do not open a pull request. Push your branch: the script brings your commits onto PR #%s's branch. Write your merge rationale as a comment on PR #%s instead of a new description.\n" \
+    "$num" "$pr_branch" "$num" "$num" >> "$TASKS/$child/task.md"
+}
+
+# investigation_pr_sync parent child — an investigation on an open PR (--pr): the child's published commit (its
+# branch, started from the PR's head) goes onto the PR's branch as a fast-forward — refused, and false, when that
+# branch moved meanwhile
+investigation_pr_sync() {
+  local parent=$1 child=$2 root pr_branch commit
+  root=$(task_field "$parent" REPO_ROOT); pr_branch=$(investigation_field "$parent" INVESTIGATION_PR_BRANCH)
+  commit=${INVESTIGATION_RESULT_COMMIT:-}
+  [[ -n $commit ]] || commit=$(git -C "$root" rev-parse -q --verify "origin/$(task_field "$child" BRANCH)^{commit}") || return 1
+  if git -C "$root" push -q origin "$commit:refs/heads/$pr_branch" 10>&-; then
+    log_info investigation_pr_synced "task=$parent" "child=$child" "commit=$commit" "branch=$pr_branch"
+    return 0
+  fi
+  log_warn investigation_pr_sync_failed "task=$parent" "child=$child" "commit=$commit" "branch=$pr_branch"
+  return 1
 }
 
 # investigation_solo_pr parent child base — opens the PR of a team of one investigator, from its branch; the checks and
@@ -5686,25 +5727,38 @@ investigation_pipeline_tick() {
     investigation_phase_failed "$parent" 2; return
   fi
   root=$(task_field "$parent" REPO_ROOT); branch=$(task_field "$child" BRANCH)
-  if ! prs=$(trusted_prs "$root" "$branch" open 'url,number,baseRefName'); then
-    log_warn investigation_pr_lookup_failed "task=$parent" "child=$child"
-    return
-  fi
-  expected_base=$(task_field "$child" BASE)
-  if investigation_solo "$parent"; then expected_base=$(investigation_field "$parent" INVESTIGATION_TARGET_BRANCH); fi
-  prs=$(jq --arg base "$expected_base" '[.[] | select(.baseRefName == $base)]' <<< "$prs")
-  url=$(jq -r '.[0].url // empty' <<< "$prs"); number=$(jq -r '.[0].number // empty' <<< "$prs")
-  if [[ -z $url || -z $number ]] && investigation_solo "$parent"; then   # a team of one: its PR, from its branch
-    if ! investigation_solo_pr "$parent" "$child" "$expected_base"; then
-      investigation_handoff "$parent" "waits for you: the PR of $branch could not be opened" failed
+  local pr_branch
+  pr_branch=$(investigation_field "$parent" INVESTIGATION_PR_BRANCH)
+  if [[ -n $pr_branch ]]; then   # an investigation on an open PR (--pr): its work goes onto that PR, no other opens
+    if ! investigation_pr_sync "$parent" "$child"; then
+      investigation_handoff "$parent" \
+        "waits for you: the work could not be brought onto PR #$(investigation_field "$parent" PR_NUMBER) (its branch $pr_branch moved?)" failed
+      return
     fi
-    return   # the next pass finds it
+    url=$(investigation_field "$parent" PR_URL); number=$(investigation_field "$parent" PR_NUMBER); branch=$pr_branch
+    expected_base=$(investigation_field "$parent" INVESTIGATION_TARGET_BRANCH)
+  else
+    if ! prs=$(trusted_prs "$root" "$branch" open 'url,number,baseRefName'); then
+      log_warn investigation_pr_lookup_failed "task=$parent" "child=$child"
+      return
+    fi
+    expected_base=$(task_field "$child" BASE)
+    if investigation_solo "$parent"; then expected_base=$(investigation_field "$parent" INVESTIGATION_TARGET_BRANCH); fi
+    prs=$(jq --arg base "$expected_base" '[.[] | select(.baseRefName == $base)]' <<< "$prs")
+    url=$(jq -r '.[0].url // empty' <<< "$prs"); number=$(jq -r '.[0].number // empty' <<< "$prs")
+    if [[ -z $url || -z $number ]] && investigation_solo "$parent"; then   # a team of one: its PR, from its branch
+      if ! investigation_solo_pr "$parent" "$child" "$expected_base"; then
+        investigation_handoff "$parent" "waits for you: the PR of $branch could not be opened" failed
+      fi
+      return   # the next pass finds it
+    fi
+    if [[ -z $url || -z $number ]]; then investigation_phase_failed "$parent" 2; return; fi
   fi
-  if [[ -z $url || -z $number ]]; then investigation_phase_failed "$parent" 2; return; fi
   meta_set "$parent" INVESTIGATION_PR "$url"
   meta_set "$parent" PR_URL "$url"; meta_set "$parent" PR_NUMBER "$number"
   meta_set "$parent" BRANCH "$branch"
-  meta_set "$parent" BASE "$(task_field "$child" BASE)"
+  if [[ -n $pr_branch ]]; then meta_set "$parent" BASE "$expected_base"   # the whole PR is checked, against its base
+  else meta_set "$parent" BASE "$(task_field "$child" BASE)"; fi
   check_run=$(investigation_field "$parent" INVESTIGATION_PRECHECK_RUN)
   check_run=$((${check_run:-0} + 1))
   unit="agent-$parent-precheck-$check_run"
@@ -6080,10 +6134,12 @@ investigation_teams_admit() {
 # cmd__investigation_team [--pipeline] --team names [-f topic-file] [--] [topic] starts a cohort.
 cmd__investigation_team() {
   local csv="" file="" text="" root common repo base slug stamp parent kv pipeline=0 target round
+  local pin_pr="" pin_json="" pin_branch="" pin_url="" earlier=""
   local names=(investigation-team) roots=() repos=()
   while (($#)); do
     case $1 in
       --pipeline) pipeline=1; shift ;;
+      --pr) pin_pr=${2:-}; [[ $pin_pr =~ ^[0-9]+$ ]] || die "--pr takes the number of an open PR"; shift 2 ;;
       --team) (($# >= 2)) || die "--team needs investigator names"; csv=$2; shift 2 ;;
       -f) (($# >= 2)) || die "-f needs a topic file"; file=$2; shift 2 ;;
       --) shift; text="${text:+$text }$*"; break ;;
@@ -6100,17 +6156,37 @@ cmd__investigation_team() {
   root=$(dirname "$common"); repo=$(basename "$root")
   base=$(git rev-parse HEAD)
   target=$(git symbolic-ref --quiet --short HEAD) || target=main
+  if [[ -n $pin_pr ]]; then   # an investigation on an open PR: from its head, on its base, its work onto that PR
+    [[ $pipeline == 1 ]] || die "--pr needs the investigation pipeline"
+    pin_json=$(trusted_prs "$root" "" open number,url,headRefName,headRefOid,baseRefName \
+      | jq -c --argjson n "$pin_pr" '[.[] | select(.number == $n)][0] // empty') || die "could not look up PR #$pin_pr"
+    [[ -n $pin_json ]] || die "PR #$pin_pr is not an open PR of this repository from a trusted account"
+    pin_branch=$(jq -r .headRefName <<< "$pin_json"); pin_url=$(jq -r .url <<< "$pin_json")
+    base=$(jq -r .headRefOid <<< "$pin_json"); target=$(jq -r '.baseRefName // "main"' <<< "$pin_json")
+    git -C "$root" fetch -q origin "$pin_branch" || die "could not fetch PR #$pin_pr's branch $pin_branch"
+    git -C "$root" cat-file -e "$base^{commit}" || die "PR #$pin_pr's head $base is not here after a fetch"
+    # the task the PR was opened for stays the reviewers' too: the new task comes first, that one after it
+    if earlier=$(cd "$root" && gh pr view "$pin_pr" --json body --jq .body 2> /dev/null); then
+      earlier=$(pr_body_task_text "$earlier" | grep -v '^Round:')
+    else
+      earlier=""
+    fi
+  fi
   slug=$(printf '%s\n' "${text%%$'\n'*}" | LC_ALL=C tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/--*/-/g; s/^-//; s/-$//' | cut -c1-64)
   roots=("$root"); repos=("$repo")
   lock_task_ids
   stamp=$(allocate_run_ids 0 names roots repos); parent="$stamp-investigation-team"
   : > "$TASKS/$parent/meta.env"
   printf '%s\n' "$text" > "$TASKS/$parent/task.md"
+  if [[ -n ${earlier//[[:space:]]/} ]]; then
+    printf '\n## The task PR #%s was opened for\n\n%s\n' "$pin_pr" "$earlier" >> "$TASKS/$parent/task.md"
+  fi
   for kv in "ID=$parent" 'AGENT=investigation-team' 'KIND=investigation_team' 'TYPE=internal' 'MODEL=' 'EXTRA_ARGS=' \
       'TEAM=' 'TIER=normal' 'SESSION_ID=' 'ROUND=0' "ROUND_ID=$round" 'RUN=0' 'RUNNER_DONE=1' 'STATUS=new' "CREATED=$(date -Is)" \
       "REPO_NAME=$repo" "REPO_ROOT=$root" "WORKTREE=$root" 'BRANCH=' "BASE=$base" \
       'INVESTIGATION_PHASE=1' "INVESTIGATION_TEAM=$csv" "INVESTIGATION_BASE_SHA=$base" \
-      "INVESTIGATION_TOPIC_SLUG=${slug:-topic}" 'INVESTIGATION_PHASE1_TASKS=' 'INVESTIGATION_LEASE=' 'PR_URL=' 'PR_NUMBER=' \
+      "INVESTIGATION_TOPIC_SLUG=${slug:-topic}" 'INVESTIGATION_PHASE1_TASKS=' 'INVESTIGATION_LEASE=' \
+      "PR_URL=$pin_url" "PR_NUMBER=$pin_pr" "INVESTIGATION_PR=$pin_url" "INVESTIGATION_PR_BRANCH=$pin_branch" \
       "INVESTIGATION_PIPELINE=$pipeline" "INVESTIGATION_SEED=${AGENT_INVESTIGATION_SEED:-}" \
       "INVESTIGATION_TARGET_BRANCH=$target"; do
     meta_set "$parent" "${kv%%=*}" "${kv#*=}"
@@ -7867,7 +7943,7 @@ cmd_run() {
     validate_investigation_team "$team_list"
     local topic
     topic=$(validate_investigation_topic "$@") || return
-    cmd__investigation_team --pipeline --team "$team_list" -- "$topic"
+    cmd__investigation_team --pipeline --team "$team_list" ${pin_pr:+--pr "$pin_pr"} -- "$topic"
     return
   fi
   if ((resolve_last_team)); then
