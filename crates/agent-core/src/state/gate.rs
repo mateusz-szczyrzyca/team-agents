@@ -63,3 +63,32 @@ impl From<GateOutcomeWire> for GateOutcome {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::state::fixtures::assert_refused;
+
+    #[test]
+    fn a_failed_gate_with_exit_code_zero_is_refused_when_read() {
+        assert_refused::<GateOutcome>(&json!({"kind": "failed", "exit_code": 0}));
+    }
+
+    #[test]
+    fn a_failed_gate_keeps_any_other_exit_code_the_way_it_was_written() {
+        for code in [1, 2, 127, -1, i32::MIN, i32::MAX] {
+            let value = json!({"kind": "failed", "exit_code": code});
+
+            let outcome: GateOutcome = serde_json::from_value(value.clone()).unwrap();
+
+            assert_eq!(serde_json::to_value(outcome).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn a_failed_gate_without_an_exit_code_is_refused_when_read() {
+        assert_refused::<GateOutcome>(&json!({"kind": "failed"}));
+    }
+}
