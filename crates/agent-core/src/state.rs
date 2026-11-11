@@ -5,6 +5,7 @@
 //! through the control protocol ([`crate::protocol`]). Everything here is pure data with its rules: a value that
 //! exists is a valid one, and a text that is not valid is refused when it is read.
 
+mod checked;
 #[cfg(test)]
 pub(crate) mod fixtures;
 mod gate;
@@ -16,6 +17,7 @@ mod strict;
 mod team;
 mod values;
 
+pub use checked::CheckedMut;
 pub use gate::{GateOutcome, GateResult};
 pub use item::{
     AdvanceError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut, ItemPhase,

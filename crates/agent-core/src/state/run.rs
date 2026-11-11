@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::strict::strict_enum;
+use super::strict::{checked, strict_enum};
 use super::values::{SessionId, Timestamp};
 use crate::ids::RunId;
 use crate::status::RunOutcome;
@@ -13,7 +13,7 @@ use crate::status::RunOutcome;
 /// [`Member::end_run`](super::Member::end_run), so a run never ends before it started; reading a state checks that
 /// too.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "RunWire")]
+#[serde(remote = "Self", deny_unknown_fields)]
 pub struct Run {
     /// The run's ID.
     id: RunId,
@@ -26,20 +26,10 @@ pub struct Run {
     state: RunState,
 }
 
-/// What a [`Run`] is written as, before its checks.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RunWire {
-    /// See [`Run`].
-    id: RunId,
-    /// See [`Run`].
-    started_at: Timestamp,
-    /// See [`Run`].
-    #[serde(default)]
-    session: Option<SessionId>,
-    /// See [`Run`].
-    state: RunState,
-}
+checked!(Run, |run: &Run| match &run.state {
+    RunState::Ended { at, .. } => check_end(&run.id, run.started_at, *at),
+    RunState::Running => Ok(()),
+});
 
 /// Whether a run is going or over.
 ///
@@ -191,22 +181,6 @@ fn check_end(id: &RunId, started_at: Timestamp, at: Timestamp) -> Result<(), Run
         });
     }
     Ok(())
-}
-
-impl TryFrom<RunWire> for Run {
-    type Error = RunError;
-
-    fn try_from(wire: RunWire) -> Result<Self, Self::Error> {
-        if let RunState::Ended { at, .. } = &wire.state {
-            check_end(&wire.id, wire.started_at, *at)?;
-        }
-        Ok(Self {
-            id: wire.id,
-            started_at: wire.started_at,
-            session: wire.session,
-            state: wire.state,
-        })
-    }
 }
 
 #[cfg(test)]

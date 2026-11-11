@@ -2,10 +2,10 @@
 //! result.
 
 use std::collections::HashSet;
-use std::ops::Deref;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+use super::checked::CheckedMut;
 use super::gate::GateResult;
 use super::strict::strict_enum;
 use super::values::{PrNumber, Timestamp};
@@ -326,24 +326,15 @@ struct ItemProgressWire {
 /// It reads like an [`ItemProgress`] (it dereferences to one) but is not a `&mut ItemProgress`: the progress cannot be
 /// overwritten with another, so the phase changes only through [`ItemMut::advance`], which keeps to the table of
 /// phase changes and checks the reviews.
-#[derive(Debug)]
-pub struct ItemMut<'a> {
-    /// The progress; never given out as a `&mut`.
-    progress: &'a mut ItemProgress,
-}
+pub type ItemMut<'a> = CheckedMut<'a, ItemProgress>;
 
-impl<'a> ItemMut<'a> {
-    /// A handle to `progress`.
-    pub(super) const fn new(progress: &'a mut ItemProgress) -> Self {
-        Self { progress }
-    }
-
+impl CheckedMut<'_, ItemProgress> {
     /// See [`ItemProgress::advance`].
     ///
     /// # Errors
     /// [`AdvanceError`], as for [`ItemProgress::advance`].
     pub fn advance(&mut self, next: ItemPhase) -> Result<(), AdvanceError> {
-        self.progress.advance(next)
+        self.value.advance(next)
     }
 
     /// See [`ItemProgress::reassign`].
@@ -351,20 +342,12 @@ impl<'a> ItemMut<'a> {
     /// # Errors
     /// [`NotWorkedOn`] when the item is in any other phase than in progress or fixing.
     pub fn reassign(&mut self, assignee: AgentName, branch: BranchName) -> Result<(), NotWorkedOn> {
-        self.progress.reassign(assignee, branch)
+        self.value.reassign(assignee, branch)
     }
 
     /// Records the last gate result for the item, replacing the one before.
     pub fn set_gate(&mut self, result: GateResult) {
-        self.progress.gate = Some(result);
-    }
-}
-
-impl Deref for ItemMut<'_> {
-    type Target = ItemProgress;
-
-    fn deref(&self) -> &ItemProgress {
-        self.progress
+        self.value.gate = Some(result);
     }
 }
 

@@ -1,10 +1,10 @@
 //! Teams: who is in them and in which role, the task list they work through and the progress of each item.
 
 use std::collections::HashSet;
-use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
 
+use super::checked::CheckedMut;
 use super::item::{Completion, ItemMut, ItemPhase, ItemProgress};
 use super::member::{Member, MemberMut, Participant};
 use super::values::Timestamp;
@@ -213,26 +213,14 @@ impl Crew {
 ///
 /// It reads like a [`Crew`] (it dereferences to one) but is not a `&mut Crew`: the crew cannot be overwritten with
 /// another, so the roles, names and task IDs the crew checked stay as they were.
-#[derive(Debug)]
-pub struct CrewMut<'a> {
-    /// The crew; never given out as a `&mut`.
-    crew: &'a mut Crew,
-}
+pub type CrewMut<'a> = CheckedMut<'a, Crew>;
 
-impl<'a> CrewMut<'a> {
+impl<'a> CheckedMut<'a, Crew> {
     /// The member of task `task` with its role, to change its task. Takes the handle, so that the member handle
     /// lives as long as the borrow of the team, not as long as this temporary.
     #[must_use]
     pub fn find_mut(self, task: &TaskId) -> Option<(Role, MemberMut<'a>)> {
-        self.crew.find_mut(task)
-    }
-}
-
-impl Deref for CrewMut<'_> {
-    type Target = Crew;
-
-    fn deref(&self) -> &Crew {
-        self.crew
+        self.value.find_mut(task)
     }
 }
 
@@ -487,7 +475,7 @@ impl Team {
 
     /// The people of the team, to change their tasks through the operations of [`CrewMut`].
     pub const fn crew_mut(&mut self) -> CrewMut<'_> {
-        CrewMut { crew: &mut self.crew }
+        CrewMut::new(&mut self.crew)
     }
 
     /// The investigators that review the team's pull requests.
@@ -557,44 +545,27 @@ impl Team {
 /// It reads like a [`Team`] (it dereferences to one) but is not a `&mut Team`: the team cannot be overwritten with
 /// another, so the state keeps one team for each ID and the team keeps its items, crew and reviewers as they were
 /// checked. What may change is reached through the checked handles below.
-#[derive(Debug)]
-pub struct TeamMut<'a> {
-    /// The team; never given out as a `&mut`.
-    team: &'a mut Team,
-}
+pub type TeamMut<'a> = CheckedMut<'a, Team>;
 
-impl<'a> TeamMut<'a> {
-    /// A handle to `team`.
-    pub(super) const fn new(team: &'a mut Team) -> Self {
-        Self { team }
-    }
-
+impl CheckedMut<'_, Team> {
     /// See [`Team::item_mut`].
     pub fn item_mut(&mut self, id: ItemId) -> Option<ItemMut<'_>> {
-        self.team.item_mut(id)
+        self.value.item_mut(id)
     }
 
     /// See [`Team::crew_mut`].
     pub const fn crew_mut(&mut self) -> CrewMut<'_> {
-        self.team.crew_mut()
+        self.value.crew_mut()
     }
 
     /// See [`Team::reviewers_mut`].
     pub fn reviewers_mut(&mut self) -> Vec<MemberMut<'_>> {
-        self.team.reviewers_mut()
+        self.value.reviewers_mut()
     }
 
     /// See [`Team::find_mut`].
     pub fn find_mut(&mut self, task: &TaskId) -> Option<(Role, MemberMut<'_>)> {
-        self.team.find_mut(task)
-    }
-}
-
-impl Deref for TeamMut<'_> {
-    type Target = Team;
-
-    fn deref(&self) -> &Team {
-        self.team
+        self.value.find_mut(task)
     }
 }
 

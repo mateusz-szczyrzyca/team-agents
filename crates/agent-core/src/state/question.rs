@@ -7,7 +7,7 @@ use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
 
-use super::strict::strict_enum;
+use super::strict::{checked, strict_enum};
 use super::values::Timestamp;
 use crate::config::AbsolutePath;
 
@@ -17,7 +17,7 @@ use crate::config::AbsolutePath;
 /// [`Member::answer_question`](super::Member::answer_question)), so an answer is never earlier than the question;
 /// reading a state checks that too.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "QuestionWire")]
+#[serde(remote = "Self", deny_unknown_fields)]
 pub struct Question {
     /// The round, counted from 1 for each task: the number in the file's name.
     round: NonZeroU32,
@@ -29,19 +29,10 @@ pub struct Question {
     state: QuestionState,
 }
 
-/// What a [`Question`] is written as, before its checks.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct QuestionWire {
-    /// See [`Question`].
-    round: NonZeroU32,
-    /// See [`Question`].
-    file: AbsolutePath,
-    /// See [`Question`].
-    asked_at: Timestamp,
-    /// See [`Question`].
-    state: QuestionState,
-}
+checked!(Question, |question: &Question| match &question.state {
+    QuestionState::Answered { at, .. } => check_answer(question.round, question.asked_at, *at),
+    QuestionState::Open => Ok(()),
+});
 
 /// Whether the human has answered a [`Question`].
 ///
@@ -149,22 +140,6 @@ fn check_answer(round: NonZeroU32, asked_at: Timestamp, answered_at: Timestamp) 
         });
     }
     Ok(())
-}
-
-impl TryFrom<QuestionWire> for Question {
-    type Error = AnswerBeforeQuestion;
-
-    fn try_from(wire: QuestionWire) -> Result<Self, Self::Error> {
-        if let QuestionState::Answered { at, .. } = &wire.state {
-            check_answer(wire.round, wire.asked_at, *at)?;
-        }
-        Ok(Self {
-            round: wire.round,
-            file: wire.file,
-            asked_at: wire.asked_at,
-            state: wire.state,
-        })
-    }
 }
 
 #[cfg(test)]
