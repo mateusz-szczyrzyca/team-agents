@@ -67,47 +67,59 @@ mod item_lifecycle {
         }
     }
 
+    /// The reviews `before`, with the outcome of the review of `task` replaced by `verdict` given at [`later`].
+    fn with_outcome(before: &[Review], task: &TaskId, verdict: ReviewVerdict) -> Vec<Review> {
+        before
+            .iter()
+            .cloned()
+            .map(|mut review| {
+                if &review.task == task {
+                    review.outcome = ReviewOutcome::Submitted { verdict, at: later() };
+                }
+                review
+            })
+            .collect()
+    }
+
     #[test]
     fn a_pending_review_receives_its_rejection_and_the_item_goes_back_for_a_fix_pass() {
         with_item(|item| {
             let passes_before = item.fix_passes().len();
+            let reviews_before = round(item);
 
             item.submit_review(&pending_task(), ReviewVerdict::RequestChanges, later())
                 .unwrap();
             let next = fixing(item);
-            item.advance(next).unwrap();
+            item.advance(next.clone()).unwrap();
 
-            assert_eq!(item.phase().kind(), PhaseKind::Fixing);
+            assert_eq!(item.phase(), &next);
             assert_eq!(item.fix_passes().len(), passes_before + 1);
-            let recorded = item.fix_passes().last().unwrap();
-            assert!(recorded.requested_by.iter().any(|review| review.task == pending_task()
-                && review.outcome
-                    == ReviewOutcome::Submitted {
-                        verdict: ReviewVerdict::RequestChanges,
-                        at: later()
-                    }));
+            assert_eq!(
+                item.fix_passes().last().unwrap().requested_by,
+                with_outcome(&reviews_before, &pending_task(), ReviewVerdict::RequestChanges)
+            );
         });
     }
 
     #[test]
     fn a_submitted_outcome_is_kept_in_the_round_beside_the_other_review() {
         with_item(|item| {
+            let reviews_before = round(item);
+            assert_eq!(
+                reviews_before
+                    .iter()
+                    .map(|review| review.task.clone())
+                    .collect::<Vec<_>>(),
+                [approving_task(), pending_task()]
+            );
+
             item.submit_review(&pending_task(), ReviewVerdict::Approve, later())
                 .unwrap();
 
-            let reviews = round(item);
-            assert_eq!(reviews.len(), 2);
             assert_eq!(
-                reviews.iter().map(|review| review.task.clone()).collect::<Vec<_>>(),
-                [approving_task(), pending_task()]
+                round(item),
+                with_outcome(&reviews_before, &pending_task(), ReviewVerdict::Approve)
             );
-            assert!(reviews.iter().all(|review| matches!(
-                review.outcome,
-                ReviewOutcome::Submitted {
-                    verdict: ReviewVerdict::Approve,
-                    ..
-                }
-            )));
         });
     }
 
