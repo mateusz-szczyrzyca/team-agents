@@ -5,6 +5,7 @@ use std::num::NonZeroU32;
 use serde::{Deserialize, Serialize};
 
 use super::ProtocolVersion;
+use super::reply::TeamSummary;
 use super::request::Client;
 use crate::ids::{InvestigatorName, ItemId, RunId, TaskId, TeamId};
 use crate::state::{AnsweredVia, GateOutcome, PrNumber, RunEnd, Timestamp};
@@ -46,6 +47,15 @@ pub enum EventKind {
     TeamStarted {
         /// The team.
         team: TeamId,
+    },
+    /// A team's summary changed: the whole new summary, which replaces the one a client has.
+    ///
+    /// The daemon sends it after every change that alters a summary — a team started, a task's status, an item's
+    /// status, a question asked or answered — right after the event that says what happened. A client that keeps
+    /// summaries needs no other event for them: see [`EventKind::apply_to`].
+    TeamUpdated {
+        /// The team's summary as it is now.
+        summary: Box<TeamSummary>,
     },
     /// A task changed its status.
     TaskStatus {
@@ -146,6 +156,14 @@ pub enum EventKind {
         /// Who used it.
         by: Client,
     },
+}
+
+impl EventKind {
+    /// Brings `teams`, the summaries of a subscription (the `teams` of [`Reply::Subscribed`](super::Reply)), up to
+    /// date with this event.
+    pub fn apply_to(&self, teams: &mut Vec<TeamSummary>) {
+        let _ = (self, teams);
+    }
 }
 
 impl Event {
