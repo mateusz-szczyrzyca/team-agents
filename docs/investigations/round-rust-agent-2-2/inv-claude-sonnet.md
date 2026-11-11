@@ -38,12 +38,13 @@ git grep -nE 'std::(fs|process|net)|tokio' -- crates/agent-core/src    # one hit
 
 Every behaviour was seen failing first: each cycle has a $\color{red}{\textbf{RED}}$ commit (bodies that compile and
 return a wrong value, the failing counts in the message) and a $\color{green}{\textbf{GREEN}}$ commit. After the last
-green I broke `36` conditions one at a time (a `<` to `<=`, a check removed, two fields swapped, a table entry added)
-and ran the suite: `33` were caught at once; the `3` that survived were real gaps (the marker line may not carry other
-text; the state and a protocol line are read at exactly their limit and refused one byte over) and got tests, each
-seen to catch its mutation. One more mutation (the `year > 9999` half of `Timestamp::from_utc`) cannot be killed:
-`time` without its `large-dates` feature cannot hold such a year; the check stays because another crate of the
-workspace could turn that feature on (features are additive).
+green I broke `34` conditions one at a time (a `<` to `<=`, a check removed, two fields swapped, a table entry added;
+script not committed) and ran the suite: `29` were caught at once and `5` survived. Three were real gaps — the marker
+line may not carry other text; the state and a protocol line are read at exactly their limit and refused one byte over —
+and got tests, each seen to catch its mutation. One survivor was an edit that changed only a comment (equivalent). The
+last, the `year > 9999` half of `Timestamp::from_utc`, cannot be killed: `time` without its `large-dates` feature cannot
+hold such a year; the check stays because another crate of the workspace could turn that feature on (features are
+additive). `cargo-mutants` is not installed here.
 
 ## Self-review before the report
 
