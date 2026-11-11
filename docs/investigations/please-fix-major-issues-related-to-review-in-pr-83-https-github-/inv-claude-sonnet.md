@@ -57,10 +57,10 @@ commit (its failing run in the message) and a $\color{green}{\textbf{GREEN}}$ co
 - `GATE_WAIT=1 make gate`: PASS at
   [`6e2c1e9`](https://github.com/mateusz-szczyrzyca/team-agents/commit/6e2c1e935ae5d4b45d566eb5fbd54ff9cb5886ce)
   (all steps, including `make rust`: fmt, clippy `-D warnings`, tests, doc).
-- `agent-core`: `366` unit tests, `6` integration test binaries, `32` doctests (`9` + `23`), all passing.
+- `agent-core`: `366` unit tests, `8` integration test binaries (`48` tests), `32` doctests (`9` + `23`), all passing.
 - Fixture `state-v1.json` still loads and writes back to the same text (`tests/state.rs`).
 - No lint suppression, no `unsafe`, no `#[ignore]` added.
-- Diff vs the PR head: `+1,383 / −55` in `12` files (`+719` of it in tests/doctests and docs); within PR-1.
+- Diff vs the PR head: `+1,383 / −55` in `12` files, of which `277` are the two new integration test files; the new unit tests and doctests are in the production files.
 
 ## Existing test code I had to touch (rule 1) — decide
 
