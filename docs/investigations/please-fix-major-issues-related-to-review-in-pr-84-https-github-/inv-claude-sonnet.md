@@ -69,7 +69,51 @@ and a save/load round trip.
   `a_direct_deserialize_of_a_client_refuses_an_unknown_field`.
 - `submit_review` does not check `at` against `requested_at`; existing reads do not either, and a stricter read is a
   schema change (`docs/state.md`, "Reading and its rules").
-- PR size: the fix pass adds about `+1,000` lines, tests included; the PR-1 count (tests excluded) of #84 was `4,974`, so
-  the merger should re-measure with the PR-1 command before merging the stack into one PR.
+- PR size: see "Pass 2" below.
 - Suggestion for `AGENTS.md` / `rust-developer.md` (not changed): `#[serde(remote = "Self")]` on a public type is a
   TYP-2 violation; say so in the rules.
+
+## Pass 2 — the review of PR #85 by `inv-opus` and `inv-astra`
+
+| # | Finding | Fix |
+|---|---|---|
+| `N1` / `M1` | `advance` from `in_review` to `approved` accepts any `pr` and `reviews` | `ItemMut::advance` refuses an approval that is not the recorded round: `AdvanceError::RoundNotKept`. $\color{red}{\textbf{RED}}$ [`afc42cd`](https://github.com/mateusz-szczyrzyca/team-agents/commit/afc42cd15ad14ae59e3cc04285e693afad8d2472) / $\color{green}{\textbf{GREEN}}$ [`018f9ad`](https://github.com/mateusz-szczyrzyca/team-agents/commit/018f9adca5fe53dc61b14fdb8e0efc9c0da26461), `tests/approval_round.rs` (`5` tests: dropped review, invented reviewer, other pull request, claimed outcome of a pending review, the recorded round accepted) |
+| `N3` / `M3` | The twelve private `*Wire` types have no docs on fields and variants | Every field and variant points at the public type it mirrors (`DOC-2`), as `ClientWire` does |
+| `N4` / `M4` | The PR description is only the script's text | Rewritten with the `PR-9` sections; the script's blocks are kept |
+| `N2` / `M2` | The PR is over the `PR-1` limit against `main` | The PR is re-targeted to #84's branch, see below |
+| `N5` | Loose assertions | See below |
+
+### N1 — how
+
+The check is in `ItemMut::advance`, the handle through which a caller outside the crate changes an item: an approval of
+an item in review must equal the item's own `pr` and `reviews`. The outcomes reach the round through `submit_review`
+only, so a forged approval of a pending review (same reviewer, outcome set by the caller) is refused as well, and a
+round that does not approve is refused by the existing check of `Approved`. The check is not in
+`ItemProgress::advance`: the existing unit tests of that method approve from a round whose reviews are pending, and
+`AGENTS.md` rule 1 forbids changing them. `ItemProgress` cannot be written back by a caller (a clone is detached), so
+the public mutation path is closed; if the human wants the same strictness in `ItemProgress::advance`, those unit
+tests (`an_item_whose_reviews_all_approved_is_approved`, the helpers `progress_in` / `phase_of`) must change first.
+
+The RED commit's test that invents a reviewer used a task id that is not a valid time, so it failed in parsing instead of in
+the check; the GREEN commit corrects the id (my own test, one commit old).
+
+### N2 — size
+
+`bash` with the `PR-1` command, `docs/investigations/` excluded:
+
+- against `main`: `5,503` lines, because the PR contains all of #84 (`4,974` at its head by its own count);
+- against #84's head `5c0e6a4`: `645` lines (the fix pass, docs of the wire types included).
+
+#84's branch is an ancestor of this one, so the PR is re-targeted to `agents/inv-kimi/20261111-205632`: it then holds
+the fix pass only, `645` lines, and #84 merges first (GitHub re-targets #85 to `main` when it does). No test was removed
+or shortened.
+
+### N5
+
+The two assertions in `item_lifecycle.rs` that use `any(…)` / `matches!` belong to a file added in the first pass; the
+new `approval_round.rs` compares whole values with `assert_eq!`. I did not rewrite the first pass's assertions here.
+
+### Not done
+
+- `make gate` here runs the Rust gate only: `PASS` at [`f712cc1`](https://github.com/mateusz-szczyrzyca/team-agents/commit/f712cc1f1ea148d11a2d09affee85d1e3906b979). The `unit-bats` failure of `inv-opus` and `inv-astra`
+  (investigation tests that time out) is on `main`, outside this change; the human should look at `main`.
