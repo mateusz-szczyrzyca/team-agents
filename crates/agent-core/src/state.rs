@@ -6,7 +6,7 @@
 //! exists is a valid one, and a text that is not valid is refused when it is read.
 
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;
 mod gate;
 mod item;
 mod member;

@@ -113,6 +113,20 @@ pub enum Verdict {
     Own(OwnAnswer),
 }
 
+/// A verdict is written as its text — `ok`, or the own answer — so that a client can send what the human typed.
+impl serde::Serialize for Verdict {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str("")
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Verdict {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let _ = deserializer;
+        Ok(Self::Accept)
+    }
+}
+
 /// The text of an own answer: not blank, not `ok`, and no line that the file format would read as structure.
 ///
 /// Made by [`Verdict::from_text`] or [`TryFrom<String>`]; the checks keep an answer inside its `**Verdict:**` part
@@ -935,6 +949,8 @@ impl fmt::Display for AnswerProblem {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     /// A question number from a literal.
@@ -1049,6 +1065,49 @@ Free text about the second question.
             OwnAnswer::try_from(String::from("a\n## 1. b")),
             Err(OwnAnswerError::Structural { line: line(2) })
         );
+    }
+
+    // ---- verdicts as JSON ---------------------------------------------------------------------------------------
+
+    #[test]
+    fn a_verdict_is_written_as_its_text() {
+        assert_eq!(serde_json::to_value(Verdict::Accept).unwrap(), json!("ok"));
+        assert_eq!(
+            serde_json::to_value(own("b) on disk\nbecause")).unwrap(),
+            json!("b) on disk\nbecause")
+        );
+    }
+
+    #[test]
+    fn a_verdict_is_read_from_its_text_with_ok_in_any_case_accepting() {
+        for (text, expected) in [
+            ("ok", Verdict::Accept),
+            ("  OK ", Verdict::Accept),
+            (" Żółć ", own("Żółć")),
+        ] {
+            let read: Verdict = serde_json::from_value(json!(text)).unwrap();
+
+            assert_eq!(read, expected, "{text:?}");
+            let again: Verdict = serde_json::from_value(serde_json::to_value(&read).unwrap()).unwrap();
+            assert_eq!(again, read);
+        }
+    }
+
+    #[test]
+    fn a_blank_or_structural_or_non_text_verdict_is_refused_when_read() {
+        for bad in [
+            json!(""),
+            json!("  "),
+            json!("x\n## 2. y"),
+            json!("**Verdict:** z"),
+            json!(null),
+            json!(5),
+            json!(["ok"]),
+        ] {
+            let err = serde_json::from_value::<Verdict>(bad.clone()).unwrap_err();
+
+            assert_eq!(err.classify(), serde_json::error::Category::Data, "{bad}");
+        }
     }
 
     // ---- composing ----------------------------------------------------------------------------------------------
