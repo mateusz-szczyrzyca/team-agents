@@ -951,14 +951,25 @@ struct RawState {
     tasks: Vec<Member>,
 }
 
+/// Minimal JSON header inspected before full [`State`] deserialization so future schema versions with altered
+/// inner fields are still rejected with [`StateError::UnsupportedVersion`].
+#[derive(Deserialize)]
+struct StateVersionHeader {
+    /// Schema version field in JSON.
+    schema_version: u32,
+}
+
 impl TryFrom<RawState> for State {
     type Error = StateError;
 
-    fn try_from(_raw: RawState) -> Result<Self, Self::Error> {
-        Err(StateError::UnsupportedVersion {
-            found: 0,
-            supported: SCHEMA_VERSION,
-        })
+    fn try_from(raw: RawState) -> Result<Self, Self::Error> {
+        if raw.schema_version != SCHEMA_VERSION {
+            return Err(StateError::UnsupportedVersion {
+                found: raw.schema_version,
+                supported: SCHEMA_VERSION,
+            });
+        }
+        Self::from_teams_and_tasks(raw.teams, raw.tasks)
     }
 }
 
@@ -995,11 +1006,15 @@ impl State {
     ///
     /// Returns [`StateError`] if any team or task ID is duplicated, a member's participant tier and role disagree,
     /// or a team references an unknown member task.
-    pub fn from_teams_and_tasks(_teams: Vec<Team>, _tasks: Vec<Member>) -> Result<Self, StateError> {
-        Err(StateError::UnsupportedVersion {
-            found: 0,
-            supported: SCHEMA_VERSION,
-        })
+    pub fn from_teams_and_tasks(teams: Vec<Team>, tasks: Vec<Member>) -> Result<Self, StateError> {
+        let mut state = Self::new();
+        for member in tasks {
+            state.insert_task(member)?;
+        }
+        for team in teams {
+            state.insert_team(team)?;
+        }
+        Ok(state)
     }
 
     /// Schema version of this state snapshot (always [`SCHEMA_VERSION`]).
@@ -1038,11 +1053,13 @@ impl State {
     ///
     /// Returns [`StateError::DuplicateTask`] if `member.task_id` already exists, or
     /// [`StateError::InvalidMemberRole`] if its participant tier does not permit its role.
-    pub fn insert_task(&mut self, _member: Member) -> Result<(), StateError> {
-        Err(StateError::UnsupportedVersion {
-            found: 0,
-            supported: SCHEMA_VERSION,
-        })
+    pub fn insert_task(&mut self, member: Member) -> Result<(), StateError> {
+        member.validate()?;
+        if self.tasks.contains_key(&member.task_id) {
+            return Err(StateError::DuplicateTask(member.task_id));
+        }
+        self.tasks.insert(member.task_id.clone(), member);
+        Ok(())
     }
 
     /// Inserts a new [`Team`] after checking that all its `member_tasks` exist in [`Self::tasks`].
@@ -1051,11 +1068,20 @@ impl State {
     ///
     /// Returns [`StateError::DuplicateTeam`] if `team.team_id` already exists, or
     /// [`StateError::UnknownMemberTask`] if any referenced member task is missing.
-    pub fn insert_team(&mut self, _team: Team) -> Result<(), StateError> {
-        Err(StateError::UnsupportedVersion {
-            found: 0,
-            supported: SCHEMA_VERSION,
-        })
+    pub fn insert_team(&mut self, team: Team) -> Result<(), StateError> {
+        if self.teams.contains_key(&team.team_id) {
+            return Err(StateError::DuplicateTeam(team.team_id));
+        }
+        for task_id in &team.member_tasks {
+            if !self.tasks.contains_key(task_id) {
+                return Err(StateError::UnknownMemberTask {
+                    team_id: team.team_id,
+                    task_id: task_id.clone(),
+                });
+            }
+        }
+        self.teams.insert(team.team_id.clone(), team);
+        Ok(())
     }
 
     /// Deserializes a [`State`] from a JSON string, checking size and `schema_version` first.
@@ -1065,23 +1091,34 @@ impl State {
     /// Returns [`StateError::TooLarge`] if `json` exceeds [`MAX_STATE_BYTES`],
     /// [`StateError::UnsupportedVersion`] if `schema_version` is not [`SCHEMA_VERSION`],
     /// [`StateError::Parse`] if the JSON is malformed, or invariant errors if records conflict.
-    pub fn from_json_str(_json: &str) -> Result<Self, StateError> {
-        Err(StateError::UnsupportedVersion {
-            found: 0,
-            supported: SCHEMA_VERSION,
-        })
+    pub fn from_json_str(json: &str) -> Result<Self, StateError> {
+        if json.len() > MAX_STATE_BYTES {
+            return Err(StateError::TooLarge {
+                size: json.len(),
+                max: MAX_STATE_BYTES,
+            });
+        }
+        let header: StateVersionHeader = serde_json::from_str(json).map_err(StateError::Parse)?;
+        if header.schema_version != SCHEMA_VERSION {
+            return Err(StateError::UnsupportedVersion {
+                found: header.schema_version,
+                supported: SCHEMA_VERSION,
+            });
+        }
+        let raw: RawState = serde_json::from_str(json).map_err(StateError::Parse)?;
+        Self::try_from(raw)
     }
 
     /// Serializes this [`State`] to compact JSON.
     #[must_use]
     pub fn to_json_string(&self) -> String {
-        String::new()
+        serde_json::to_string(self).unwrap_or_default()
     }
 
     /// Serializes this [`State`] to pretty-printed JSON.
     #[must_use]
     pub fn to_json_string_pretty(&self) -> String {
-        String::new()
+        serde_json::to_string_pretty(self).unwrap_or_default()
     }
 }
 
