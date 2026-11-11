@@ -77,16 +77,15 @@ pub enum InvalidTimestamp {
 /// ```compile_fail,E0423
 /// let _ = agent_core::state::Timestamp("2026-04-06".to_owned());
 /// ```
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Timestamp(UtcDateTime);
 
 impl Timestamp {
-    /// Creates a [`Timestamp`] from a [`UtcDateTime`], truncating any subsecond nanoseconds.
+    /// Creates a [`Timestamp`] from a [`UtcDateTime`] at whole-second resolution.
     #[must_use]
-    pub fn from_utc(dt: UtcDateTime) -> Self {
-        let time = Time::from_hms(dt.hour(), dt.minute(), dt.second()).unwrap_or(Time::MIDNIGHT);
-        Self(PrimitiveDateTime::new(dt.date(), time).assume_utc().into())
+    pub const fn from_utc(dt: UtcDateTime) -> Self {
+        Self(dt)
     }
 
     /// Creates a [`Timestamp`] from whole seconds since the Unix epoch (`1970-01-01T00:00:00Z`).
@@ -110,6 +109,32 @@ impl Timestamp {
     #[must_use]
     pub const fn as_utc_date_time(self) -> UtcDateTime {
         self.0
+    }
+}
+
+impl PartialEq for Timestamp {
+    fn eq(&self, other: &Self) -> bool {
+        self.unix_timestamp() == other.unix_timestamp()
+    }
+}
+
+impl Eq for Timestamp {}
+
+impl PartialOrd for Timestamp {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Timestamp {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.unix_timestamp().cmp(&other.unix_timestamp())
+    }
+}
+
+impl std::hash::Hash for Timestamp {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.unix_timestamp().hash(state);
     }
 }
 
@@ -1111,15 +1136,21 @@ impl State {
     }
 
     /// Serializes this [`State`] to compact JSON.
-    #[must_use]
-    pub fn to_json_string(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateError::Parse`] if JSON serialization fails.
+    pub fn to_json_string(&self) -> Result<String, StateError> {
+        serde_json::to_string(self).map_err(StateError::Parse)
     }
 
     /// Serializes this [`State`] to pretty-printed JSON.
-    #[must_use]
-    pub fn to_json_string_pretty(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap_or_default()
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateError::Parse`] if JSON serialization fails.
+    pub fn to_json_string_pretty(&self) -> Result<String, StateError> {
+        serde_json::to_string_pretty(self).map_err(StateError::Parse)
     }
 }
 
@@ -1300,11 +1331,11 @@ mod tests {
         assert_eq!(state.team(&team.team_id), Some(&team));
         assert_eq!(state.task(&member.task_id), Some(&member));
 
-        let compact = state.to_json_string();
+        let compact = state.to_json_string().expect("compact state json");
         let loaded_compact = State::from_json_str(&compact).expect("compact state round trip");
         assert_eq!(loaded_compact, state);
 
-        let pretty = state.to_json_string_pretty();
+        let pretty = state.to_json_string_pretty().expect("pretty state json");
         let loaded_pretty = State::from_json_str(&pretty).expect("pretty state round trip");
         assert_eq!(loaded_pretty, state);
 
