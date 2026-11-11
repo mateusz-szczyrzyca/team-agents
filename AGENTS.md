@@ -24,6 +24,7 @@ installation right now, started by the same `agent` script you are about to chan
 | prompts | `prompts/*.md` | Markdown | the protocol given to the agents; `{{PLACEHOLDERS}}` are filled by `build_prompt` in `bin/agent` |
 | `errgen` | `tools/errgen/` | Go | generates the per-operation error types `agentbus/errors_gen.go` from `agentbus/errors.json` |
 | `doccheck` | `tools/doccheck/` | Go | fails when a constant, variable, type or struct field has no comment |
+| Rust workspace | `Cargo.toml`, `crates/` | Rust | the rewrite of `bin/agent` ([`docs/architecture.md`](docs/architecture.md)): `agent-core`, `agent-runtime`, `agent`, `agent-web`; runs only in tests until its cutover |
 | tests | `agentbus/*_test.go`, `live/*_test.go`, `tests/unit/` (bats with stub CLIs), `tests/integration/` (real CLIs, opt-in) | | |
 
 ### How the parts talk
@@ -86,6 +87,8 @@ file and why; a skipped test belongs in the PR's `## Skipped tests` section, wit
   do not skip the check and do not install other versions. Missing system packages: install them only if the
   prompt says you have sudo; otherwise report what is missing.
 - The `live` module downloads its dependencies (Bubble Tea) through the Go module proxy on first build.
+- Rust: `rustup` (no sudo, `~/.cargo/bin` in `PATH`). The first cargo command in the repository installs the toolchain
+  of `rust-toolchain.toml` with `rustfmt` and `clippy`; cargo downloads the crates of `Cargo.lock` on first build.
 
 ## Workflow and checks
 
@@ -101,7 +104,7 @@ lines that tell what failed, the full logs in `build/gate/`. When you need more,
 later step. (`make lint test` runs the same checks with their full output.)
 
 One test run at a time on the machine: every target that runs tests (`gate`, `test`, `unit-go`, `unit-bats`,
-`harness`, `unit-agent-bats`) holds a lock (`tools/test-lock.sh`, `/tmp/.make.command.lck`). A busy lock refuses with
+`harness`, `unit-agent-bats`, `rust`) holds a lock (`tools/test-lock.sh`, `/tmp/.make.command.lck`). A busy lock refuses with
 `another tests are running now - please wait before you try again` (exit 75) and names who holds it; wait and try
 again, or run `GATE_WAIT=1 make gate` to wait in line. Never run the tests around it. A run that died frees the lock at
 once; one alive past `TEST_LOCK_STALE_MIN` (10) minutes is taken for hung and stopped.
@@ -210,6 +213,28 @@ func (s *Server) quizStart(question string) (string, *QuizStartError)
 - Configuration variables get a default with `${VAR:-default}` and a comment, and appear in
   `config/agents.conf` and the README.
 
+## Rust (`Cargo.toml`, `crates/`)
+
+The Rust rewrite of `bin/agent` is a Cargo workspace beside the old implementation. Read
+[`docs/architecture.md`](docs/architecture.md) before you change anything under `crates/`: its layout, its process
+model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows.
+
+- **Rules:** `prompts/agent/rust-developer.md` (writing Rust) and `prompts/investigator/code-review.md` (reviewing it),
+  cited by rule ID (ERR-2, PR-1, ...). For code under `crates/` they take the place of the Go and Bash sections of this
+  file; the rules of "Never", "Tests", "Commits and pull requests" and "Definition of done" still hold.
+- **Size of a PR of the Rust plan — relaxed:** PR-1's limit is **5000** changed lines per PR, tests not counted, and
+  PR-2's threshold for planning a split is about **4000**. Everything else in PR-1 and PR-2 applies as written: how
+  lines are counted (the PR-1 command, not `agent round-size`), a ceiling not a target, never fewer tests because of
+  it. For these PRs this limit replaces the 3000 lines of "Rounds". An item that would exceed it is split before
+  coding, and the split is recorded in the PR.
+- **Check:** `make rust` — `cargo fmt --check`, clippy with `-D warnings`, the tests and `cargo doc` with warnings
+  denied, all `--locked`. It is a step of `make gate`, `make test` and `make lint`; the existing CI workflow runs
+  `make lint`, including the Rust gate. The lint baseline is `[workspace.lints]` in `Cargo.toml`; a lint is suppressed only with `#[expect(..., reason = "...")]` on the smallest
+  item, listed in the PR.
+- **Tests first** as in [`docs/tdd.md`](docs/tdd.md): the RED commit's bodies are compiling stubs that return a wrong
+  value, never `todo!()`.
+- **Never the live installation:** new code runs and is tested against its own `AGENTS_HOME`, never `~/agents`.
+
 ## Prompts (`prompts/*.md`)
 
 - English. Placeholders `{{NAME}}` must be set in `build_prompt` (`R[...]`); a placeholder that is not set stays
@@ -259,7 +284,8 @@ A PR changes at most 3000 lines (added + deleted, tests included, generated and 
 round `main` builds and passes `make lint test`; unfinished work is dead code or a stub returning a typed "not
 implemented" error; no test is written ahead of its round, and a skip is an exception
 with a reason outside the code, listed in the PR's `## Skipped tests` section (`docs/tdd.md`, "Skipped tests").
-Check the size with `agent round-size <task>`.
+Check the size with `agent round-size <task>`. A PR of the Rust plan counts and limits its size as PR-1 does, with the
+relaxed limit of "Rust".
 
 ## Definition of done
 

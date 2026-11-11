@@ -6,7 +6,7 @@
 # Why: a tool's output stays in an agent's context and is read again at every later step of its session. Read the
 # logs with grep or tail when the excerpt is not enough — never print a whole log.
 #
-#   tools/gate.sh                    all steps of make lint test
+#   tools/gate.sh                    all steps of make lint test (rust: the Rust workspace, make rust)
 #   tools/gate.sh unit-go lint-go    only these Makefile targets
 set -euo pipefail
 
@@ -16,6 +16,9 @@ MAX_LINES=${GATE_MAX_LINES:-25}                        # at most this many lines
 STEPS=(check-generated lint-shell lint-go lint-docs unit-go unit-bats harness)
 if grep -q '^[[:space:]]*unit-agent-bats:' "$ROOT/Makefile" || grep -q '^\.PHONY:.*unit-agent-bats' "$ROOT/Makefile"; then
   STEPS+=(unit-agent-bats)
+fi
+if grep -q '^[[:space:]]*rust:' "$ROOT/Makefile"; then   # the Rust workspace's checks (make rust)
+  STEPS+=(rust)
 fi
 if (($# > 0)); then STEPS=("$@"); fi
 
@@ -32,6 +35,8 @@ excerpt() {
       { grep -E '^[^[:space:]].*:[0-9]+(:[0-9]+)?: |^[0-9]+ issues?|undocumented declarations' "$2" || (($? == 1)); } ;;
     lint-shell) # where (file and line) and what (the SC code and message); bash -n syntax errors
       { grep -E '^In .* line [0-9]+:|^[[:space:]]*\^-- SC[0-9]+|: line [0-9]+: ' "$2" || (($? == 1)); } ;;
+    rust) # compiler and clippy diagnostics with their location, rustfmt diffs, failed tests and panics, the summary
+      { grep -E '^(error|warning)(\[[A-Z][0-9]+\])?: |^[[:space:]]*--> |^Diff in |^test .* FAILED$|^---- .* ----$|panicked at |^test result: FAILED' "$2" || (($? == 1)); } ;;
     *) tail -n "$MAX_LINES" "$2" ;;
   esac | sed -n "1,${MAX_LINES}p" | sed 's/^/  /'   # sed reads to the end: no SIGPIPE for the writer
 }

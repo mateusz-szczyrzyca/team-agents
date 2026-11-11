@@ -1,0 +1,6 @@
+# The Rust toolchain of the workspace: the stable release current when the workspace was created. rustup installs it
+# (with the gate's components) on the first cargo command in this repository.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

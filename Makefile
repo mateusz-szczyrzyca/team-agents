@@ -1,8 +1,9 @@
 # Developer tasks. Before every commit: `make lint test` (see AGENTS.md).
 #   make tools   installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
-#   make lint    every static check; fails when a linter is missing (run make tools)
-#   make test    unit tests: Go (agent, agentbus, agentlive) and bats (the agent script)
-.PHONY: gate test unit-go unit-bats harness lint lint-go lint-shell lint-docs tools integration build generate check-generated build-agent unit-agent-bats check-agent-parity
+#   make lint    every static check and the Rust gate (also the CI entry point); fails when a tool is missing
+#   make test    unit tests: Go (agent, agentbus, agentlive), bats (the agent script) and the Rust workspace
+#   make rust    the Rust workspace's checks: fmt, clippy -D warnings, tests, docs (docs/architecture.md)
+.PHONY: gate test unit-go unit-bats harness lint lint-go lint-shell lint-docs tools integration build generate check-generated build-agent unit-agent-bats check-agent-parity rust
 
 # Go modules of this repository (each has its own go.mod).
 GO_MODULES := agentbus live agent tools/doccheck tools/errgen
@@ -48,7 +49,7 @@ SHELL_SCRIPTS += tests/unit/round_id.bats tests/unit/round_runs.bats tests/unit/
 SHELL_SCRIPTS += tools/check-agent-test-map.sh tests/harness/check_agent_test_map.bats tests/harness/gate.bats \
 	tools/agent-bats.sh tests/harness/agent_bats.bats tests/harness/agent_bats_runner.bats \
 	tools/check-agent-parity.sh tests/harness/check_agent_parity.bats tests/harness/agent_parity_gate.bats
-SHELL_SCRIPTS += tools/test-lock.sh
+SHELL_SCRIPTS += tools/test-lock.sh tests/harness/gate_rust.bats tests/harness/gate_rust_ci.bats
 # Linters are looked up in PATH and in ~/.local/bin, where `make tools` installs them.
 export PATH := $(HOME)/.local/bin:$(PATH)
 
@@ -58,7 +59,7 @@ export PATH := $(HOME)/.local/bin:$(PATH)
 TEST_LOCK = tools/test-lock.sh $@
 
 test:
-	@$(TEST_LOCK) $(MAKE) --no-print-directory unit-go unit-bats harness
+	@$(TEST_LOCK) $(MAKE) --no-print-directory unit-go unit-bats harness rust
 
 unit-go:
 	@$(TEST_LOCK) bash -c 'set -e; for m in agentbus live agent; do (cd $$m && go vet ./... && go test ./...); done'
@@ -86,6 +87,16 @@ unit-bats:
 	@$(TEST_LOCK) bash -c 'mkdir -p "$(BATS_TMP)" && tools/tmp-sweep.sh "$(BATS_TMP)" /tmp && \
 		TMPDIR="$(BATS_TMP)" BATS_JOBS="$(BATS_JOBS)" BATS_FILES="$(BATS_FILES)" BATS_SERIAL="$(BATS_SERIAL)" tools/agent-bats.sh --lane oracle'
 
+# The Rust workspace (Cargo.toml, crates/; see docs/architecture.md): formatting, clippy with every warning an error,
+# the tests (doctests included) and the docs with every warning an error. --locked: Cargo.lock is committed and must
+# match. rustup installs the toolchain of rust-toolchain.toml with its components.
+rust:
+	@command -v cargo >/dev/null || { echo "cargo is missing: install rustup (https://rustup.rs)"; exit 1; }
+	cargo fmt --all -- --check
+	cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+	@$(TEST_LOCK) cargo test --workspace --all-features --locked
+	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
+
 tools:
 	tools/install-linters.sh
 
@@ -94,7 +105,8 @@ tools:
 gate:
 	@$(TEST_LOCK) tools/gate.sh
 
-lint: check-generated lint-shell lint-go lint-docs
+# CI already runs this target; include the complete Rust gate in that same entry point.
+lint: check-generated lint-shell lint-go lint-docs rust
 
 lint-shell:
 	@command -v shellcheck >/dev/null || { echo "shellcheck is missing: run make tools"; exit 1; }

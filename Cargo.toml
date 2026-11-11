@@ -1,0 +1,64 @@
+# The Rust rewrite of `bin/agent`: see docs/architecture.md for the layout, the process model and the rules.
+[workspace]
+resolver = "3"
+members = ["crates/agent-core", "crates/agent-runtime", "crates/agent", "crates/agent-web"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+publish = false
+
+# Every dependency is declared once here, with its minimal features (DEP-2); members use `workspace = true`.
+[workspace.dependencies]
+agent-core = { path = "crates/agent-core" }
+clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+rand = { version = "0.10.3", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+time = { version = "0.3.55", default-features = false, features = ["std"] }
+
+# The lint baseline of prompts/agent/rust-developer.md (appendix). `warn` here and `-D warnings` in the gate
+# (`make rust`): fatal in CI, not while editing.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+let_underscore_drop = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# ERR-3, TYP-9: no panic paths
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+indexing_slicing = "warn"
+string_slice = "warn"
+# ERR-2: no ignored errors
+let_underscore_must_use = "warn"
+unused_result_ok = "warn"
+map_err_ignore = "warn"
+# LINT-3: suppressions carry a reason and expire
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+# hygiene
+assertions_on_result_states = "warn"
+clone_on_ref_ptr = "warn"
+dbg_macro = "warn"
+exit = "warn"
+mem_forget = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
+# optional, stricter
+# missing_docs_in_private_items = "warn"  # enforces DOC-2; also wants docs on private functions
+# arithmetic_side_effects = "warn"        # every unchecked + - * / on integers
