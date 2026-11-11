@@ -710,6 +710,11 @@ ROUND_BOUNCES="${ROUND_BOUNCES:-2}"
 PR_SIZE_START="<!-- round-size: written by the script at each check, do not edit -->"
 PR_SIZE_END="<!-- /round-size -->"
 declare -p ROUND_MAX_LINES_REPO >/dev/null 2>&1 || declare -gA ROUND_MAX_LINES_REPO=()   # a query: set in agents.conf?
+# Gate scopes: entries "patterns => command", e.g. ("crates/ Cargo.toml Cargo.lock => make rust-gate"). A change whose
+# every path matches one entry's patterns (as ROUND_EXCLUDE's: "name/" a directory on its way, a pattern with a slash
+# the whole path, any other the file's name) runs that entry's command instead of the full gate (AGENT_REVIEW_GATE);
+# the first such entry wins. For new code written next to old code whose tests it cannot reach.
+declare -p AGENT_GATE_SCOPES >/dev/null 2>&1 || declare -ga AGENT_GATE_SCOPES=()   # a query: set in agents.conf?
 # NODE_REPOS: repositories a node may run jobs for, name → local clone path (empty: no job is accepted).
 declare -p NODE_REPOS >/dev/null 2>&1 || declare -gA NODE_REPOS=()
 # Node daemon (agentnode.service, `agent node`; README "Several instances"): LEAD_URL is the lead's HTTP address
@@ -1912,7 +1917,7 @@ cmd_gate() {
   id=$(gate_task "$id")
   wt=$(task_field "$id" WORKTREE)
   [[ -d $wt ]] || die "task $id has no worktree"
-  gate=$(review_gate_cmd "$wt")
+  gate=$(review_gate_cmd "$wt" "$(round_base_ref "$id")")
   [[ -n $gate ]] || die "the repository has no gate (AGENT_REVIEW_GATE=$AGENT_REVIEW_GATE)"
   # an agent's gate of its own task on uncommitted work counts for nothing (board_done needs a pass of a committed
   # HEAD) and holds the machine for minutes: refused, with what to do — a human's, or another task's, runs
@@ -1956,9 +1961,9 @@ cmd__board_done_check() {
   local id=${1:?usage: agent _board_done_check <task>} wt gate base tc verdict
   wt=$(task_field "$id" WORKTREE)
   if [[ ! -d $wt ]]; then echo "no worktree: not checked"; return 0; fi
-  gate=$(review_gate_cmd "$wt")
-  if [[ -z $gate ]]; then echo "the repository has no gate: not checked"; return 0; fi
   base=$(round_base_ref "$id")
+  gate=$(review_gate_cmd "$wt" "$base" HEAD)
+  if [[ -z $gate ]]; then echo "the repository has no gate: not checked"; return 0; fi
   if ! tc=$(round_test_changes "$wt" "$base" HEAD); then echo "cannot compare with the round's base: not checked"; return 0; fi
   if [[ $tc != code=1* ]]; then echo "no change of code: no gate needed"; return 0; fi
   if verdict=$(gate_verdict "$id"); then echo "$verdict"; return 0; fi
@@ -2271,10 +2276,10 @@ merge_blockers() { # repo base head round-tests — what keeps --autopilot from 
   fi
 }
 
-gate_at() { # repo rev log — runs the repository's gate at a revision in a temporary worktree; its exit status (0 when
-  # the repository has no gate)
-  local repo=$1 rev=$2 log=$3 gate wt rc=0
-  gate=$(review_gate_cmd "$repo")
+gate_at() { # repo rev log [from] — runs the repository's gate at a revision in a temporary worktree; its exit status (0
+  # when the repository has no gate). With from, the gate of the change from...rev (review_gate_cmd)
+  local repo=$1 rev=$2 log=$3 from=${4:-} gate wt rc=0
+  gate=$(review_gate_cmd "$repo" "$from" "${from:+$rev}")
   [[ -n $gate ]] || return 0
   wt=$(mktemp -d)
   git -C "$repo" worktree add -q --detach "$wt" "$rev" 10>&- || { rmdir "$wt"; echo "cannot check out $rev" > "$log"; return 1; }
@@ -2407,7 +2412,7 @@ cmd__merge() { # coordinator task — --autopilot after two ready-to-merge revie
   auto_stage "$id" "PR #$num merged — the gate on the merged $base"
   act "$id" info "--autopilot: PR #$num merged (both reviews: ready to merge)"
   git -C "$root" fetch -q origin "$base" 10>&- || log_warn merge_fetch_failed "task=$id" "base=$base"
-  if ! gate_at "$root" "origin/$base" "$TASKS/$id/postmerge.log"; then
+  if ! gate_at "$root" "origin/$base" "$TASKS/$id/postmerge.log" "origin/$base^1"; then   # the PR's merge commit
     auto_stage "$id" "waits for you: the gate fails on $base after the merge"
     notify "$id" failed "" "⛔ autopilot stopped: PR #$num is merged, but the gate fails on $base — your decision is needed: $(tail -n 15 "$TASKS/$id/postmerge.log" | tr '\n' ' ')"
     log_warn autopilot_postmerge_gate_failed "task=$id" "base=$base"
@@ -2472,7 +2477,55 @@ supervise_review_waits() { # an --autopilot review pair waiting longer than AGEN
   done
 }
 
-review_gate_cmd() { # repo — the gate a round's head must pass before a review (nothing: none)
+# gate_change_paths repo base [head] — the paths a change touches, one a line, counted from its merge base with base
+# (what the base gained since is not the change's): base...head, or with no head the worktree, its uncommitted and
+# untracked files too. Renames count both paths. Fails when git cannot tell
+gate_change_paths() {
+  local repo=$1 base=$2 head=${3:-} mb
+  if [[ -n $head ]]; then
+    git -C "$repo" diff --name-only --no-renames "$base...$head" || return 1
+    return 0
+  fi
+  mb=$(git -C "$repo" merge-base "$base" HEAD) || return 1
+  git -C "$repo" diff --name-only --no-renames "$mb" || return 1
+  git -C "$repo" ls-files --others --exclude-standard || return 1
+}
+
+# gate_scope_for paths — the command of the first AGENT_GATE_SCOPES entry whose patterns match every one of the
+# paths (one a line, at least one); status 1: none. An entry without " => ", patterns or a command is skipped, logged
+gate_scope_for() {
+  local entry pats cmd p ok
+  local -a scope_patterns
+  [[ -n ${1//[[:space:]]/} ]] || return 1
+  for entry in "${AGENT_GATE_SCOPES[@]}"; do
+    pats=${entry%% => *}; cmd=${entry#* => }
+    if [[ $entry != *' => '* || -z ${pats//[[:space:]]/} || -z ${cmd//[[:space:]]/} ]]; then
+      log_warn gate_scope_invalid "entry=$entry" "reason=not \"patterns => command\""
+      continue
+    fi
+    read -r -a scope_patterns <<< "$pats"
+    ok=1
+    while IFS= read -r p; do
+      [[ -n $p ]] || continue
+      rule_path_matches "$p" "${scope_patterns[@]}" || { ok=0; break; }
+    done <<< "$1"
+    if ((ok)); then printf '%s' "$cmd"; return 0; fi
+  done
+  return 1
+}
+
+# review_gate_cmd repo [base [head]] — the gate a change must pass (nothing: none): with a range, the first
+# AGENT_GATE_SCOPES entry covering every path the change touches (gate_change_paths); otherwise — no range, no
+# scope covering it, a change of nothing — the full gate
+review_gate_cmd() {
+  local paths scoped
+  if [[ -n ${2:-} ]] && ((${#AGENT_GATE_SCOPES[@]})); then
+    if paths=$(gate_change_paths "$1" "$2" "${3:-}"); then
+      if scoped=$(gate_scope_for "$paths"); then printf '%s' "$scoped"; return 0; fi
+    else
+      log_warn gate_scope_paths_failed "repo=$1" "base=$2" "head=${3:-worktree}"
+    fi
+  fi
   case $AGENT_REVIEW_GATE in
     off|"") ;;
     auto) if make -C "$1" -n gate >/dev/null 2>&1; then printf 'make gate'; fi ;;   # a repository without a gate target: none
@@ -2738,7 +2791,7 @@ $issues"
       fi
     fi
   fi
-  gate=$(review_gate_cmd "$root")
+  gate=$(review_gate_cmd "$root" "$mb" "$head")
   if [[ -z $why && -n $gate ]]; then
     wt=$(mktemp -d)
     git -C "$root" worktree add -q --detach "$wt" "$head" 10>&- || { log_warn precheck_worktree_failed "task=$id"; rmdir "$wt"; if [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
