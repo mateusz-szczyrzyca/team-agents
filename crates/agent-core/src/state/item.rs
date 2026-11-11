@@ -7,6 +7,7 @@ use std::ops::Deref;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::gate::GateResult;
+use super::strict::strict_enum;
 use super::values::{PrNumber, Timestamp};
 use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, TaskId};
 use crate::kinds::keyword_enum;
@@ -97,9 +98,9 @@ pub struct Review {
 
 /// Whether a reviewer has answered.
 ///
-/// Read through a private wire enum that refuses a field the variant does not have.
+/// Deserialization refuses fields that the variant does not have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case", from = "ReviewOutcomeWire")]
+#[serde(remote = "Self", tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReviewOutcome {
     /// The review is not in yet.
     Pending,
@@ -122,9 +123,9 @@ pub struct FixPass {
 
 /// How an item came to be done.
 ///
-/// Read through a private wire enum that refuses a field the variant does not have.
+/// Deserialization refuses fields that the variant does not have.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "how", rename_all = "snake_case", from = "CompletionWire")]
+#[serde(remote = "Self", tag = "how", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Completion {
     /// The task list marked it `[x]` when the team started.
     Listed,
@@ -139,10 +140,9 @@ pub enum Completion {
 
 /// Where an item is, with exactly the data that phase has.
 ///
-/// Read through a private wire enum that refuses a field the variant does not have, and then
-/// [`ItemPhase::check_reviews`]: a phase that carries reviews of a round that does not fit it is not read.
+/// Deserialization refuses unknown fields and applies [`ItemPhase::check_reviews`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "phase", rename_all = "snake_case", try_from = "ItemPhaseWire")]
+#[serde(remote = "Self", tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ItemPhase {
     /// Not started.
     Pending,
@@ -183,114 +183,9 @@ pub enum ItemPhase {
     },
 }
 
-/// What a [`ReviewOutcome`] is read as: an empty struct body for the unit variant, which refuses an unknown field
-/// (serde skips one next to the tag of a unit variant of an internally tagged enum).
-#[derive(Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
-enum ReviewOutcomeWire {
-    /// See [`ReviewOutcome::Pending`].
-    Pending {},
-    /// See [`ReviewOutcome::Submitted`].
-    Submitted {
-        /// See [`ReviewOutcome::Submitted`].
-        verdict: ReviewVerdict,
-        /// See [`ReviewOutcome::Submitted`].
-        at: Timestamp,
-    },
-}
-
-impl From<ReviewOutcomeWire> for ReviewOutcome {
-    fn from(wire: ReviewOutcomeWire) -> Self {
-        match wire {
-            ReviewOutcomeWire::Pending {} => Self::Pending,
-            ReviewOutcomeWire::Submitted { verdict, at } => Self::Submitted { verdict, at },
-        }
-    }
-}
-
-/// What a [`Completion`] is read as; see [`ReviewOutcomeWire`].
-#[derive(Deserialize)]
-#[serde(tag = "how", rename_all = "snake_case", deny_unknown_fields)]
-enum CompletionWire {
-    /// See [`Completion::Listed`].
-    Listed {},
-    /// See [`Completion::Merged`].
-    Merged {
-        /// See [`Completion::Merged`].
-        pr: PullRequest,
-        /// See [`Completion::Merged`].
-        at: Timestamp,
-    },
-}
-
-impl From<CompletionWire> for Completion {
-    fn from(wire: CompletionWire) -> Self {
-        match wire {
-            CompletionWire::Listed {} => Self::Listed,
-            CompletionWire::Merged { pr, at } => Self::Merged { pr, at },
-        }
-    }
-}
-
-/// What an [`ItemPhase`] is read as; see [`ReviewOutcomeWire`].
-#[derive(Deserialize)]
-#[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
-enum ItemPhaseWire {
-    /// See [`ItemPhase::Pending`].
-    Pending {},
-    /// See [`ItemPhase::InProgress`].
-    InProgress {
-        /// See [`ItemPhase::InProgress`].
-        assignee: AgentName,
-        /// See [`ItemPhase::InProgress`].
-        branch: BranchName,
-    },
-    /// See [`ItemPhase::InReview`].
-    InReview {
-        /// See [`ItemPhase::InReview`].
-        pr: PullRequest,
-        /// See [`ItemPhase::InReview`].
-        reviews: Vec<Review>,
-    },
-    /// See [`ItemPhase::Fixing`].
-    Fixing {
-        /// See [`ItemPhase::Fixing`].
-        assignee: AgentName,
-        /// See [`ItemPhase::Fixing`].
-        branch: BranchName,
-        /// See [`ItemPhase::Fixing`].
-        pr: PullRequest,
-    },
-    /// See [`ItemPhase::Approved`].
-    Approved {
-        /// See [`ItemPhase::Approved`].
-        pr: PullRequest,
-        /// See [`ItemPhase::Approved`].
-        reviews: Vec<Review>,
-    },
-    /// See [`ItemPhase::Done`].
-    Done {
-        /// See [`ItemPhase::Done`].
-        completion: Completion,
-    },
-}
-
-impl TryFrom<ItemPhaseWire> for ItemPhase {
-    type Error = InvalidReviews;
-
-    fn try_from(wire: ItemPhaseWire) -> Result<Self, Self::Error> {
-        let phase = match wire {
-            ItemPhaseWire::Pending {} => Self::Pending,
-            ItemPhaseWire::InProgress { assignee, branch } => Self::InProgress { assignee, branch },
-            ItemPhaseWire::InReview { pr, reviews } => Self::InReview { pr, reviews },
-            ItemPhaseWire::Fixing { assignee, branch, pr } => Self::Fixing { assignee, branch, pr },
-            ItemPhaseWire::Approved { pr, reviews } => Self::Approved { pr, reviews },
-            ItemPhaseWire::Done { completion } => Self::Done { completion },
-        };
-        phase.check_reviews()?;
-        Ok(phase)
-    }
-}
+strict_enum!(ReviewOutcome);
+strict_enum!(Completion);
+strict_enum!(ItemPhase, |_| &[], ItemPhase::check_reviews);
 
 impl ItemPhase {
     /// Which phase this is.

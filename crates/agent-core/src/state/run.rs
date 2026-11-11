@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::strict::strict_enum;
 use super::values::{SessionId, Timestamp};
 use crate::ids::RunId;
 use crate::status::RunOutcome;
@@ -42,9 +43,9 @@ struct RunWire {
 
 /// Whether a run is going or over.
 ///
-/// Read through a private wire enum that refuses a field the variant does not have.
+/// Deserialization refuses fields that the variant does not have.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case", from = "RunStateWire")]
+#[serde(remote = "Self", tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RunState {
     /// The CLI process is going.
     Running,
@@ -59,9 +60,9 @@ pub enum RunState {
 
 /// How a run ended: what the agent reported, or what the harness found.
 ///
-/// Read through a private wire enum that refuses a field the variant does not have.
+/// Deserialization refuses fields that the variant does not have.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", from = "RunEndWire")]
+#[serde(remote = "Self", tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RunEnd {
     /// The agent's final message ended with `STATUS: <outcome>`.
     Reported {
@@ -87,71 +88,11 @@ pub enum RunEnd {
     Stopped,
 }
 
-/// What a [`RunState`] is read as: unit variants with an empty struct body, which refuse an unknown field (serde
-/// skips one next to the tag of a unit variant of an internally tagged enum).
-#[derive(Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
-enum RunStateWire {
-    /// See [`RunState::Running`].
-    Running {},
-    /// See [`RunState::Ended`].
-    Ended {
-        /// See [`RunState::Ended`].
-        at: Timestamp,
-        /// See [`RunState::Ended`].
-        end: RunEnd,
-    },
-}
-
-impl From<RunStateWire> for RunState {
-    fn from(wire: RunStateWire) -> Self {
-        match wire {
-            RunStateWire::Running {} => Self::Running,
-            RunStateWire::Ended { at, end } => Self::Ended { at, end },
-        }
-    }
-}
-
-/// What a [`RunEnd`] is read as; see [`RunStateWire`].
-#[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum RunEndWire {
-    /// See [`RunEnd::Reported`].
-    Reported {
-        /// See [`RunEnd::Reported`].
-        outcome: RunOutcome,
-    },
-    /// See [`RunEnd::NoStatus`].
-    NoStatus {
-        /// See [`RunEnd::NoStatus`].
-        exit_code: Option<i32>,
-    },
-    /// See [`RunEnd::QuotaExhausted`].
-    QuotaExhausted {
-        /// See [`RunEnd::QuotaExhausted`].
-        #[serde(default)]
-        resets_at: Option<Timestamp>,
-    },
-    /// See [`RunEnd::RateLimited`].
-    RateLimited {},
-    /// See [`RunEnd::Hung`].
-    Hung {},
-    /// See [`RunEnd::Stopped`].
-    Stopped {},
-}
-
-impl From<RunEndWire> for RunEnd {
-    fn from(wire: RunEndWire) -> Self {
-        match wire {
-            RunEndWire::Reported { outcome } => Self::Reported { outcome },
-            RunEndWire::NoStatus { exit_code } => Self::NoStatus { exit_code },
-            RunEndWire::QuotaExhausted { resets_at } => Self::QuotaExhausted { resets_at },
-            RunEndWire::RateLimited {} => Self::RateLimited,
-            RunEndWire::Hung {} => Self::Hung,
-            RunEndWire::Stopped {} => Self::Stopped,
-        }
-    }
-}
+strict_enum!(RunState);
+strict_enum!(RunEnd, |end| match end {
+    RunEnd::QuotaExhausted { .. } => &["resets_at"][..],
+    _ => &[],
+});
 
 /// Why a run could not be started, ended or given a session.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

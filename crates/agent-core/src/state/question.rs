@@ -7,6 +7,7 @@ use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
 
+use super::strict::strict_enum;
 use super::values::Timestamp;
 use crate::config::AbsolutePath;
 
@@ -44,9 +45,9 @@ struct QuestionWire {
 
 /// Whether the human has answered a [`Question`].
 ///
-/// Read through a private wire enum that refuses a field the variant does not have.
+/// Deserialization refuses fields that the variant does not have.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case", from = "QuestionStateWire")]
+#[serde(remote = "Self", tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum QuestionState {
     /// The human has not answered yet.
     Open,
@@ -59,30 +60,7 @@ pub enum QuestionState {
     },
 }
 
-/// What a [`QuestionState`] is read as: an empty struct body for the unit variant, which refuses an unknown field
-/// (serde skips one next to the tag of a unit variant of an internally tagged enum).
-#[derive(Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
-enum QuestionStateWire {
-    /// See [`QuestionState::Open`].
-    Open {},
-    /// See [`QuestionState::Answered`].
-    Answered {
-        /// See [`QuestionState::Answered`].
-        at: Timestamp,
-        /// See [`QuestionState::Answered`].
-        via: AnsweredVia,
-    },
-}
-
-impl From<QuestionStateWire> for QuestionState {
-    fn from(wire: QuestionStateWire) -> Self {
-        match wire {
-            QuestionStateWire::Open {} => Self::Open,
-            QuestionStateWire::Answered { at, via } => Self::Answered { at, via },
-        }
-    }
-}
+strict_enum!(QuestionState);
 
 /// The channel an answer came through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -12,6 +12,7 @@ mod item;
 mod member;
 mod question;
 mod run;
+mod strict;
 mod team;
 mod values;
 
