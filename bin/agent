@@ -709,6 +709,12 @@ ROUND_BOUNCES="${ROUND_BOUNCES:-2}"
 # The round's size in its PR description, between these markers: the precheck rewrites it at each check
 PR_SIZE_START="<!-- round-size: written by the script at each check, do not edit -->"
 PR_SIZE_END="<!-- /round-size -->"
+# The task an --investigation was given (agent run -f), written first in its PR description at each check: what its
+# reviewers check and what the human sees on the PR. GitHub keeps 65536 characters of a description: the task's part
+# is cut at PR_TASK_MAX_CHARS, the reviewers get it whole in their prompt
+PR_TASK_START="<!-- task: written by the script from the task the investigation was given, do not edit -->"
+PR_TASK_END="<!-- /task -->"
+PR_TASK_MAX_CHARS="${PR_TASK_MAX_CHARS:-40000}"
 declare -p ROUND_MAX_LINES_REPO >/dev/null 2>&1 || declare -gA ROUND_MAX_LINES_REPO=()   # a query: set in agents.conf?
 # Gate scopes: entries "patterns => command", e.g. ("crates/ Cargo.toml Cargo.lock => make rust-gate"). A change whose
 # every path matches one entry's patterns (as ROUND_EXCLUDE's: "name/" a directory on its way, a pattern with a slash
@@ -1700,6 +1706,65 @@ pr_body_with_round_size() {
     printf '%s' "$block"
   else
     printf '%s\n\n%s' "$body" "$block"
+  fi
+}
+
+# pr_body_with_task body block — the PR description with the task block (PR_TASK_START...PR_TASK_END) in place of the
+# old one, or put first; the rest of the description as it was
+pr_body_with_task() {
+  local body=$1 block=$2
+  if [[ $body == *"$PR_TASK_START"*"$PR_TASK_END"* ]]; then
+    printf '%s%s%s' "${body%%"$PR_TASK_START"*}" "$block" "${body#*"$PR_TASK_END"}"
+  elif [[ -z $body ]]; then
+    printf '%s' "$block"
+  else
+    printf '%s\n\n%s' "$block" "$body"
+  fi
+}
+
+# pr_body_without_task body — the PR description less the task block: the text the agents wrote, for the checks of
+# their text (the task is the human's, written as it was given)
+pr_body_without_task() {
+  local body=$1
+  if [[ $body == *"$PR_TASK_START"*"$PR_TASK_END"* ]]; then
+    body="${body%%"$PR_TASK_START"*}${body#*"$PR_TASK_END"}"
+    body=${body#"${body%%[![:space:]]*}"}
+  fi
+  printf '%s' "$body"
+}
+
+# pr_task_block task — the task block of the task's text (its task.md) for its PR description, cut at
+# PR_TASK_MAX_CHARS with a note; fails without the text
+pr_task_block() {
+  local text
+  [[ -f $TASKS/$1/task.md ]] || return 1
+  text=$(<"$TASKS/$1/task.md")
+  if ((${#text} > PR_TASK_MAX_CHARS)); then
+    text="${text:0:PR_TASK_MAX_CHARS}
+
+… (cut at $PR_TASK_MAX_CHARS of ${#text} characters; the reviewers get the whole task)"
+  fi
+  printf '%s\n## Task\n\n%s\n%s' "$PR_TASK_START" "$text" "$PR_TASK_END"
+}
+
+# pr_write_task task root pr — writes the task first in its PR description, the description read again here (a write
+# just before may have changed it). Nothing changes when it is there already; a failure is logged
+pr_write_task() {
+  local id=$1 root=$2 pr=$3 body block new
+  if ! body=$(cd "$root" && gh pr view "$pr" --json body --jq .body); then
+    log_warn pr_task_failed "task=$id" "pr=$pr" "error=gh pr view failed"
+    return 0
+  fi
+  if ! block=$(pr_task_block "$id"); then
+    log_warn pr_task_failed "task=$id" "pr=$pr" "error=the task has no task.md"
+    return 0
+  fi
+  new=$(pr_body_with_task "$body" "$block")
+  [[ $new != "$body" ]] || return 0
+  if (cd "$root" && gh pr edit "$pr" --body "$new" > /dev/null); then
+    log_info pr_task_written "task=$id" "pr=$pr"
+  else
+    log_warn pr_task_failed "task=$id" "pr=$pr" "error=gh pr edit failed"
   fi
 }
 
@@ -2754,6 +2819,11 @@ review_precheck() { # coordinator task id — before a review: the round's head 
   fi
   # the round's size into its PR description — only over a description just read: never one written over blind
   ((rbody_read)) && pr_write_round_size "$id" "$root" "$rpr" "$rbody"
+  # an investigation's task first in its PR description: what its reviewers check, what the human sees
+  if ((rbody_read)) && [[ $(investigation_field "$id" INVESTIGATION_PIPELINE) == 1 ]]; then
+    pr_write_task "$id" "$root" "$rpr"
+  fi
+  rbody=$(pr_body_without_task "$rbody")   # the rules read the agents' text, not the task
   rules=$(round_rule_issues "$root" "$mb" "$head" "$(task_field "$id" TEAM)" "$rbody")
   if [[ -n $rules ]]; then
     human=$(sed -n 's/^human: /- /p' <<< "$rules")
@@ -2783,7 +2853,7 @@ $disc
     pr_url=$(trusted_prs "$root" "$branch" open url | jq -r '.[0].url // empty') || pr_url=""
     if [[ -n $pr_url ]]; then
       body=$(cd "$root" && gh pr view "$pr_url" --json body --jq .body) || body=""
-      issues=$(pr_format_issues "$body" "$(github_repo_url "$root")")
+      issues=$(pr_format_issues "$(pr_body_without_task "$body")" "$(github_repo_url "$root")")
       if [[ -n $issues ]]; then
         why="the PR description does not follow the conventions for texts on GitHub (sent back once) — fix:
 $issues"
@@ -4230,7 +4300,10 @@ build_prompt() { # id mode qfile next_round
         *) render "$PROMPTS/inv-work.md" ;;
       esac
       render "$PROMPTS/writing.md"
-      printf '\n# TOPIC\n\n'
+      case ${INVESTIGATION_PHASE:-1} in   # a reviewer gets the task as the task under review, with what to check
+        3|5) printf '\n'; render "$PROMPTS/inv-review-task.md"; printf '\n' ;;
+        *) printf '\n# TOPIC\n\n' ;;
+      esac
       cat "$TASKS/$id/task.md"
       return
     fi

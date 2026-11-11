@@ -59,6 +59,9 @@ and open (or update) a pull request on GitHub.
      - What was taken (with links to relevant commit SHAs).
      - What was dropped and why ("duplicate of X's ...", "superseded by Y's ...").
      - Any absent or failed results, documented factually.
+   - The script writes the task you were given first in the PR description, between its
+     `<!-- task: ... -->` and `<!-- /task -->` marks, at every check: keep that part as it is when you edit
+     the description, and write your own text after it.
    - End the PR description with this attribution block exactly:
 
 {{ATTRIBUTION_BLOCK}}

@@ -60,7 +60,6 @@ Merged." ]
 
 @test "--investigation: the PR description gets the task first, and the reviewer's prompt holds it as the task under review" {
   pipeline_setup
-  printf '## Summary\nMerged the results.\n' > "$HOME/gh-pr-body.md"
   agent _investigation-team --pipeline --team inv,inv2 "Implement the fixture feature
 Expected result: fixture.txt and its test" > "$HOME/pipeline-start.log" 2>&1
   parent=$(task_of investigation-team)
@@ -68,7 +67,7 @@ Expected result: fixture.txt and its test" > "$HOME/pipeline-start.log" 2>&1
   grep -q 'gh pr edit' "$HOME/gh.log"
   grep -q '## Task' "$HOME/gh.log"
   grep -q 'Expected result: fixture.txt and its test' "$HOME/gh.log"
-  grep -q 'Merged the results.' "$HOME/gh.log"                    # the merger's text kept
+  # the merger's text kept: the first test (this fixture's gh answers a PR's JSON for its description)
   reviewer=$(parent_field "$parent" INVESTIGATION_REVIEWER_TASK)
   grep -q '^# TASK UNDER REVIEW' "$HOME/phase3-$reviewer.prompt"
   grep -q 'Expected result: fixture.txt and its test' "$HOME/phase3-$reviewer.prompt"
