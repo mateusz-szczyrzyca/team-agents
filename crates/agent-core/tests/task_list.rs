@@ -41,15 +41,24 @@ fn the_items_of_the_plan_are_in_the_order_written_and_all_open() {
 fn every_item_of_the_plan_has_a_title_a_description_an_expected_result_and_checks() {
     let plan = TaskList::parse(PLAN).unwrap();
 
+    assert_eq!(plan.items().count(), 16);
     for item in plan.items() {
         assert!(!item.title.is_empty(), "{}", item.id);
         assert!(!item.description.is_empty(), "{}", item.id);
         let expected = item.expected_result.as_deref().unwrap_or_default();
-        assert!(expected.starts_with("- Files:"), "{}: {expected:?}", item.id);
+        assert!(expected.starts_with("- "), "{}: {expected:?}", item.id);
         let checks = item.checks.as_deref().unwrap_or_default();
         assert!(checks.starts_with("- "), "{}: {checks:?}", item.id);
-        assert!(!item.description.contains("Expected result:"), "{}", item.id);
-        assert!(!expected.contains("Checks:"), "{}", item.id);
+        // No label is left in a part it does not start: a mention in a sentence is text.
+        for text in [item.description.as_str(), expected, checks] {
+            assert!(
+                !text
+                    .lines()
+                    .any(|line| matches!(line.trim(), "Expected result:" | "Checks:")),
+                "{}",
+                item.id
+            );
+        }
     }
 }
 

@@ -20,6 +20,7 @@
 //! [`TaskList::parse`] reads the text of an inline task list and of a `-f` file alike — it takes text, so the two
 //! cannot differ — and every fault is a [`TaskListError`] with the number of the line it is on.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::num::{NonZeroU16, NonZeroUsize};
 use std::str::FromStr;
@@ -28,6 +29,18 @@ use crate::ids::{AgentName, InvalidItemId, InvalidName, ItemId};
 
 /// Largest task list accepted, in bytes: a bound on untrusted input, far above any real list.
 pub const MAX_TASK_LIST_BYTES: usize = 1 << 20;
+
+/// The byte order mark some editors put at the start of a file; it is not part of the text.
+const BYTE_ORDER_MARK: char = '\u{feff}';
+
+/// The text that starts the optional first line naming the coordinator.
+const COORDINATOR_PREFIX: &str = "Coordinator:";
+
+/// The text that starts the line listing the features a feature waits for.
+const DEPENDS_ON_PREFIX: &str = "Depends on:";
+
+/// What `Depends on:` says for a feature that waits for none; any case.
+const NO_DEPENDENCIES: &str = "none";
 
 /// Whether an item is marked as done in the text: `[ ]` or `[x]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -59,7 +72,7 @@ impl Item {
     /// Whether the text marks the item as done.
     #[must_use]
     pub fn is_done(&self) -> bool {
-        false
+        self.mark == ItemMark::Done
     }
 }
 
@@ -268,12 +281,18 @@ impl TaskList {
     /// A [`TaskListError`]: the text is empty or over [`MAX_TASK_LIST_BYTES`], or a line is not valid where it is;
     /// all but those two carry the line.
     pub fn parse(text: &str) -> Result<Self, TaskListError> {
-        let _ = text;
-        Ok(Self {
-            coordinator: None,
-            brief: String::new(),
-            features: Vec::new(),
-        })
+        if text.len() > MAX_TASK_LIST_BYTES {
+            return Err(TaskListError::TooLarge {
+                len: text.len(),
+                max: MAX_TASK_LIST_BYTES,
+            });
+        }
+        let text = text.strip_prefix(BYTE_ORDER_MARK).unwrap_or(text);
+        let mut parser = Parser::default();
+        for (index, line) in text.lines().enumerate() {
+            parser.accept(NonZeroUsize::MIN.saturating_add(index), line)?;
+        }
+        parser.finish()
     }
 
     /// The name from the `Coordinator:` line, if the list starts with one. It may name a normal agent or an
@@ -310,6 +329,457 @@ impl TaskList {
     #[must_use]
     pub fn item(&self, id: ItemId) -> Option<&Item> {
         self.items().find(|item| item.id == id)
+    }
+}
+
+/// What a line of the text is, by its first characters.
+enum LineKind<'a> {
+    /// Nothing but whitespace.
+    Blank,
+    /// Starts with a space or a tab.
+    Indented,
+    /// `N. Title`: the digits before the `.` and the title after it.
+    Feature {
+        /// The text before the `.`, which is all ASCII digits.
+        digits: &'a str,
+        /// The text after the `.`, without the spaces around it.
+        title: &'a str,
+    },
+    /// `Depends on: ...`: the text after the label.
+    DependsOn(&'a str),
+    /// Starts with `[`: an item line, or something that was meant to be one.
+    Item,
+    /// Anything else.
+    Text,
+}
+
+/// Tells what kind of line `line` is.
+fn classify(line: &str) -> LineKind<'_> {
+    if line.trim().is_empty() {
+        return LineKind::Blank;
+    }
+    if line.starts_with([' ', '\t']) {
+        return LineKind::Indented;
+    }
+    if let Some(rest) = line.strip_prefix(DEPENDS_ON_PREFIX) {
+        return LineKind::DependsOn(rest);
+    }
+    if line.starts_with('[') {
+        return LineKind::Item;
+    }
+    match line.split_once('.') {
+        Some((digits, rest))
+            if !digits.is_empty()
+                && digits.bytes().all(|b| b.is_ascii_digit())
+                && (rest.is_empty() || rest.starts_with(char::is_whitespace)) =>
+        {
+            LineKind::Feature {
+                digits,
+                title: rest.trim(),
+            }
+        }
+        _ => LineKind::Text,
+    }
+}
+
+/// Whether `line` starts with the mark of a valid item line: `[ ]`, `[x]` or `[X]`.
+fn has_item_mark(line: &str) -> bool {
+    ["[ ]", "[x]", "[X]"].iter().any(|mark| line.starts_with(mark))
+}
+
+/// Parses a feature or dependency number: ASCII digits, no leading zero, from 1 to 65535.
+fn parse_number(digits: &str) -> Option<NonZeroU16> {
+    // `parse` alone would also take a leading `+`.
+    if !digits.bytes().all(|b| b.is_ascii_digit()) || (digits.len() > 1 && digits.starts_with('0')) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+/// The parts of a valid item line.
+struct ItemLine {
+    /// The mark.
+    mark: ItemMark,
+    /// The item's number.
+    id: ItemId,
+    /// The title.
+    title: String,
+}
+
+/// Parses an item line, which starts with `[`.
+fn parse_item_line(line: &str) -> Result<ItemLine, ItemProblem> {
+    let after_bracket = line.strip_prefix('[').ok_or(ItemProblem::BadMark)?;
+    let mark = match after_bracket.chars().next() {
+        Some(' ') => ItemMark::Open,
+        Some('x' | 'X') => ItemMark::Done,
+        _ => return Err(ItemProblem::BadMark),
+    };
+    // The mark's character is one byte, so `get(1..)` is the rest.
+    let after_mark = after_bracket
+        .get(1..)
+        .and_then(|rest| rest.strip_prefix(']'))
+        .ok_or(ItemProblem::BadMark)?;
+    if !after_mark.starts_with(char::is_whitespace) {
+        return Err(ItemProblem::NoSpaceAfterMark);
+    }
+    let after_mark = after_mark.trim();
+    let (token, title) = after_mark
+        .split_once(char::is_whitespace)
+        .map_or((after_mark, ""), |(token, title)| (token, title.trim()));
+    let id = token.parse::<ItemId>().map_err(ItemProblem::BadId)?;
+    if title.is_empty() {
+        return Err(ItemProblem::MissingTitle);
+    }
+    Ok(ItemLine {
+        mark,
+        id,
+        title: title.to_owned(),
+    })
+}
+
+/// The number of leading spaces and tabs of `line`.
+fn indentation(line: &str) -> usize {
+    line.chars().take_while(|c| matches!(c, ' ' | '\t')).count()
+}
+
+/// `line` without its first `width` spaces or tabs; a blank line is empty.
+fn dedent(line: &str, width: usize) -> &str {
+    if line.trim().is_empty() {
+        return "";
+    }
+    let mut rest = line;
+    for _ in 0..width {
+        match rest.strip_prefix([' ', '\t']) {
+            Some(shorter) => rest = shorter,
+            None => break,
+        }
+    }
+    rest
+}
+
+/// The lines joined by `\n`, without blank lines at the start and the end.
+fn join_trimmed(lines: &[&str]) -> String {
+    let mut kept: Vec<&str> = lines
+        .iter()
+        .skip_while(|line| line.trim().is_empty())
+        .copied()
+        .collect();
+    kept.truncate(
+        kept.iter()
+            .rposition(|line| !line.trim().is_empty())
+            .map_or(0, |last| last + 1),
+    );
+    kept.join("\n")
+}
+
+/// The part a label line starts, if `line` is one: `Expected result:` or `Checks:` alone on the line, at the
+/// indentation `base` of the item's first text line.
+fn label_of(line: &str, base: usize) -> Option<ItemPart> {
+    if indentation(line) != base {
+        return None;
+    }
+    match line.trim() {
+        "Expected result:" => Some(ItemPart::ExpectedResult),
+        "Checks:" => Some(ItemPart::Checks),
+        _ => None,
+    }
+}
+
+/// The lines of an item after its item line, with their numbers.
+type ItemBody<'a> = Vec<(NonZeroUsize, &'a str)>;
+
+/// The three parts of an item's text.
+struct ItemText {
+    /// The text before the first label.
+    description: String,
+    /// The text after `Expected result:`.
+    expected_result: Option<String>,
+    /// The text after `Checks:`.
+    checks: Option<String>,
+}
+
+/// A part of an item's text while its lines are collected.
+struct OpenPart<'a> {
+    /// The label that started the part.
+    part: ItemPart,
+    /// The line of the label.
+    line: NonZeroUsize,
+    /// The lines after the label, dedented.
+    lines: Vec<&'a str>,
+}
+
+impl OpenPart<'_> {
+    /// The part's text, or the error for a label with nothing after it.
+    fn text(&self) -> Result<String, TaskListError> {
+        match join_trimmed(&self.lines) {
+            text if text.is_empty() => Err(TaskListError::EmptyPart {
+                line: self.line,
+                part: self.part,
+            }),
+            text => Ok(text),
+        }
+    }
+}
+
+/// Splits the lines of an item's body into its description and its labelled parts.
+fn split_item_text(body: &[(NonZeroUsize, &str)]) -> Result<ItemText, TaskListError> {
+    let mut text_lines = body
+        .iter()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(_, line)| indentation(line));
+    let Some(base) = text_lines.next() else {
+        return Ok(ItemText {
+            description: String::new(),
+            expected_result: None,
+            checks: None,
+        });
+    };
+    let narrowest = text_lines.fold(base, usize::min);
+
+    let mut description = Vec::new();
+    let mut parts: Vec<OpenPart<'_>> = Vec::new();
+    for &(line, text) in body {
+        if let Some(part) = label_of(text, base) {
+            if parts.iter().any(|open| open.part == part) {
+                return Err(TaskListError::DuplicatePart { line, part });
+            }
+            parts.push(OpenPart {
+                part,
+                line,
+                lines: Vec::new(),
+            });
+        } else {
+            let lines = parts.last_mut().map_or(&mut description, |open| &mut open.lines);
+            lines.push(dedent(text, narrowest));
+        }
+    }
+    let mut item = ItemText {
+        description: join_trimmed(&description),
+        expected_result: None,
+        checks: None,
+    };
+    for open in &parts {
+        let text = Some(open.text()?);
+        match open.part {
+            ItemPart::ExpectedResult => item.expected_result = text,
+            ItemPart::Checks => item.checks = text,
+        }
+    }
+    Ok(item)
+}
+
+/// An item whose line has been read and whose body is being collected.
+struct OpenItem<'a> {
+    /// The item line's mark, number and title.
+    line: ItemLine,
+    /// The lines that follow it.
+    body: ItemBody<'a>,
+}
+
+/// The state of the parse: what has been read so far and what the next line may be.
+#[derive(Default)]
+struct Parser<'a> {
+    /// Whether a line that is not blank has been seen: only the first one may be the `Coordinator:` line.
+    started: bool,
+    /// The coordinator named by the first line.
+    coordinator: Option<AgentName>,
+    /// The lines before the first feature.
+    brief: Vec<&'a str>,
+    /// The features read so far; the last one is the current one.
+    features: Vec<Feature>,
+    /// The lines of the features' headings, by number, to refuse a repeated number.
+    feature_lines: HashMap<NonZeroU16, NonZeroUsize>,
+    /// The lines of the item lines, by number, to refuse a repeated number.
+    item_lines: HashMap<ItemId, NonZeroUsize>,
+    /// Whether the current feature may still get its `Depends on:` line: it has not got one, and no item yet.
+    depends_allowed: bool,
+    /// The item whose body is being read.
+    item: Option<OpenItem<'a>>,
+}
+
+impl<'a> Parser<'a> {
+    /// Reads the line `text` that is line number `line` of the input.
+    fn accept(&mut self, line: NonZeroUsize, text: &'a str) -> Result<(), TaskListError> {
+        if !self.started && !text.trim().is_empty() {
+            self.started = true;
+            if let Some(name) = text.strip_prefix(COORDINATOR_PREFIX) {
+                self.coordinator = Some(
+                    name.trim()
+                        .parse()
+                        .map_err(|source| TaskListError::InvalidCoordinator { line, source })?,
+                );
+                return Ok(());
+            }
+        }
+        match classify(text) {
+            LineKind::Blank => self.blank(line, text),
+            LineKind::Indented => self.indented(line, text)?,
+            LineKind::Feature { digits, title } => self.feature(line, digits, title)?,
+            LineKind::DependsOn(rest) => self.depends_on(line, text, rest)?,
+            LineKind::Item => self.item_line(line, text)?,
+            LineKind::Text if self.features.is_empty() => self.brief.push(text),
+            LineKind::Text => return Err(TaskListError::UnexpectedLine { line }),
+        }
+        Ok(())
+    }
+
+    /// A blank line: part of the open item's body or of the brief, and nothing in a feature outside an item.
+    fn blank(&mut self, line: NonZeroUsize, text: &'a str) {
+        if let Some(open) = &mut self.item {
+            open.body.push((line, text));
+        } else if self.features.is_empty() {
+            self.brief.push(text);
+        }
+    }
+
+    /// An indented line: part of the open item's body or of the brief.
+    fn indented(&mut self, line: NonZeroUsize, text: &'a str) -> Result<(), TaskListError> {
+        if let Some(open) = &mut self.item {
+            open.body.push((line, text));
+        } else if self.features.is_empty() {
+            self.brief.push(text);
+        } else {
+            return Err(TaskListError::TextBeforeItem { line });
+        }
+        Ok(())
+    }
+
+    /// A feature line with the `digits` of its number and its `title`: closes the open item and opens a feature.
+    fn feature(&mut self, line: NonZeroUsize, digits: &str, title: &str) -> Result<(), TaskListError> {
+        self.close_item()?;
+        let Some(number) = parse_number(digits) else {
+            return Err(TaskListError::FeatureNumber {
+                line,
+                text: digits.to_owned(),
+            });
+        };
+        if title.is_empty() {
+            return Err(TaskListError::FeatureWithoutTitle { line });
+        }
+        if let Some(&first_line) = self.feature_lines.get(&number) {
+            return Err(TaskListError::DuplicateFeature {
+                line,
+                number,
+                first_line,
+            });
+        }
+        self.feature_lines.insert(number, line);
+        self.features.push(Feature {
+            number,
+            title: title.to_owned(),
+            depends_on: Vec::new(),
+            items: Vec::new(),
+        });
+        self.depends_allowed = true;
+        Ok(())
+    }
+
+    /// A `Depends on:` line, whose text after the label is `rest`; in the brief it is text.
+    fn depends_on(&mut self, line: NonZeroUsize, text: &'a str, rest: &str) -> Result<(), TaskListError> {
+        let Some((current, earlier)) = self.features.split_last_mut() else {
+            self.brief.push(text);
+            return Ok(());
+        };
+        if self.item.is_some() || !self.depends_allowed {
+            return Err(TaskListError::MisplacedDependsOn { line });
+        }
+        let malformed = || TaskListError::MalformedDependsOn {
+            line,
+            text: rest.trim().to_owned(),
+        };
+        let mut depends_on = Vec::new();
+        if !rest.trim().eq_ignore_ascii_case(NO_DEPENDENCIES) {
+            let words = rest
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .filter(|word| !word.is_empty());
+            for word in words {
+                depends_on.push(parse_number(word).ok_or_else(malformed)?);
+            }
+            if depends_on.is_empty() {
+                return Err(malformed());
+            }
+        }
+        if let Some(&number) = depends_on
+            .iter()
+            .find(|number| earlier.iter().all(|f| f.number != **number))
+        {
+            return Err(TaskListError::UnknownDependency { line, number });
+        }
+        current.depends_on = depends_on;
+        self.depends_allowed = false;
+        Ok(())
+    }
+
+    /// A line that starts with `[`: an item line in a feature, text in the brief unless it has an item's mark.
+    fn item_line(&mut self, line: NonZeroUsize, text: &'a str) -> Result<(), TaskListError> {
+        let Some(feature) = self.features.last() else {
+            if has_item_mark(text) {
+                return Err(TaskListError::ItemBeforeFeature { line });
+            }
+            self.brief.push(text);
+            return Ok(());
+        };
+        let feature = feature.number;
+        self.close_item()?;
+        let item = parse_item_line(text).map_err(|problem| TaskListError::MalformedItem { line, problem })?;
+        if item.id.feature() != feature {
+            return Err(TaskListError::ItemInOtherFeature {
+                line,
+                id: item.id,
+                feature,
+            });
+        }
+        if let Some(&first_line) = self.item_lines.get(&item.id) {
+            return Err(TaskListError::DuplicateItem {
+                line,
+                id: item.id,
+                first_line,
+            });
+        }
+        self.item_lines.insert(item.id, line);
+        self.depends_allowed = false;
+        self.item = Some(OpenItem {
+            line: item,
+            body: Vec::new(),
+        });
+        Ok(())
+    }
+
+    /// Ends the open item, if any: splits its body into its parts and adds it to the current feature.
+    fn close_item(&mut self) -> Result<(), TaskListError> {
+        let Some(OpenItem { line, body }) = self.item.take() else {
+            return Ok(());
+        };
+        let ItemText {
+            description,
+            expected_result,
+            checks,
+        } = split_item_text(&body)?;
+        if let Some(feature) = self.features.last_mut() {
+            feature.items.push(Item {
+                id: line.id,
+                title: line.title,
+                mark: line.mark,
+                description,
+                expected_result,
+                checks,
+            });
+        }
+        Ok(())
+    }
+
+    /// Ends the text: the list, or [`TaskListError::Empty`] when there is nothing in it.
+    fn finish(mut self) -> Result<TaskList, TaskListError> {
+        self.close_item()?;
+        let brief = join_trimmed(&self.brief);
+        if brief.is_empty() && self.features.is_empty() {
+            return Err(TaskListError::Empty);
+        }
+        Ok(TaskList {
+            coordinator: self.coordinator,
+            brief,
+            features: self.features,
+        })
     }
 }
 
@@ -821,7 +1291,7 @@ Depends on: 2,3,1,
     #[test]
     fn a_depends_on_line_that_is_not_none_or_numbers_is_refused() {
         for text in [
-            "x", "", "  ", "0", "01", "1.5", "none, 1", "1 none", "1, x", "-1", "65536", ",",
+            "x", "", "  ", "0", "01", "1.5", "none, 1", "1 none", "1, x", "-1", "+1", "65536", ",",
         ] {
             let all = format!("1. A\n2. B\nDepends on: {text}\n");
             assert_eq!(
