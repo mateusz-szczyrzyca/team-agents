@@ -17,6 +17,7 @@ use crate::ids::{AgentName, BranchName, InvestigatorName};
 use crate::kinds::{CliKind, Tier};
 
 pub use secrets::{InvalidSecret, MAX_SECRETS_BYTES, Position, Secret, Secrets, SecretsError};
+pub(crate) use values::check_text;
 pub use values::{
     AbsolutePath, CliArgs, CommandLine, EnvName, GithubLogin, InvalidValue, Language, LoopbackAddr, Minutes, ModelName,
     NameTemplate, Program, RepoName, TailscaleLogin, ValueRule,

@@ -11,7 +11,7 @@ use time::UtcDateTime;
 use time::error::Parse;
 use time::format_description::well_known::Rfc3339;
 
-use crate::config::{InvalidValue, ValueRule};
+use crate::config::{InvalidValue, check_text};
 use crate::ids::Clock;
 
 /// Latest year a [`Timestamp`] can have: RFC 3339 writes the year with four digits.
@@ -72,6 +72,10 @@ impl Timestamp {
     /// # Errors
     /// [`InvalidTimestamp::YearOutOfRange`] when the year is not 0000 to 9999.
     pub const fn from_utc(value: UtcDateTime) -> Result<Self, InvalidTimestamp> {
+        let year = value.year();
+        if year < 0 || year > MAX_YEAR {
+            return Err(InvalidTimestamp::YearOutOfRange { year });
+        }
         Ok(Self(value))
     }
 
@@ -92,7 +96,10 @@ impl Timestamp {
 
 impl fmt::Display for Timestamp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("")
+        // `from_utc` keeps the year in 0000 to 9999, the one thing RFC 3339 formatting refuses; `fmt::Error` has no
+        // room for the cause, so a failure that cannot happen here is reported as the formatter's own error.
+        let text = self.0.format(&Rfc3339).map_err(|_unreachable| fmt::Error)?;
+        f.write_str(&text)
     }
 }
 
@@ -100,10 +107,11 @@ impl FromStr for Timestamp {
     type Err = InvalidTimestamp;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Err(InvalidTimestamp::YearOutOfRange { year: MAX_YEAR + 1 }).or_else(|err: InvalidTimestamp| {
-            let _ = (text, Rfc3339);
-            Err(err)
-        })
+        let value = UtcDateTime::parse(text, &Rfc3339).map_err(|source| InvalidTimestamp::NotRfc3339 {
+            value: text.to_owned(),
+            source,
+        })?;
+        Self::from_utc(value)
     }
 }
 
@@ -166,6 +174,7 @@ impl FromStr for SessionId {
     type Err = InvalidValue;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
+        check_session_id(text)?;
         Ok(Self(text.to_owned()))
     }
 }
@@ -174,8 +183,16 @@ impl TryFrom<String> for SessionId {
     type Error = InvalidValue;
 
     fn try_from(text: String) -> Result<Self, Self::Error> {
+        check_session_id(&text)?;
         Ok(Self(text))
     }
+}
+
+/// Checks the rules of a [`SessionId`].
+fn check_session_id(text: &str) -> Result<(), InvalidValue> {
+    check_text("session ID", text, MAX_SESSION_LEN, |c| {
+        !c.is_control() && !c.is_whitespace()
+    })
 }
 
 impl From<SessionId> for String {
@@ -219,7 +236,7 @@ impl FromStr for CommitId {
     type Err = InvalidCommitId;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let _ = (SHA1_HEX_LEN, SHA256_HEX_LEN);
+        check_commit_id(text)?;
         Ok(Self(text.to_owned()))
     }
 }
@@ -228,7 +245,18 @@ impl TryFrom<String> for CommitId {
     type Error = InvalidCommitId;
 
     fn try_from(text: String) -> Result<Self, Self::Error> {
+        check_commit_id(&text)?;
         Ok(Self(text))
+    }
+}
+
+/// Checks the rules of a [`CommitId`].
+fn check_commit_id(text: &str) -> Result<(), InvalidCommitId> {
+    let digits_only = text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if digits_only && matches!(text.len(), SHA1_HEX_LEN | SHA256_HEX_LEN) {
+        Ok(())
+    } else {
+        Err(InvalidCommitId { value: text.to_owned() })
     }
 }
 
@@ -269,6 +297,7 @@ mod tests {
     use time::{Date, Month, Time};
 
     use super::*;
+    use crate::config::ValueRule;
 
     /// A clock that stands still.
     struct FixedClock(UtcDateTime);
@@ -473,14 +502,15 @@ mod tests {
     #[test]
     fn anything_else_is_not_a_commit_id() {
         let sha1 = "26b65de7e4076596768ca96b48a7f94799c93874";
+        let short = "26b65de7e4076596768ca96b48a7f94799c9387";
         for text in [
             "",
             "26b65de",
-            &sha1[..39],
+            short,
             &format!("{sha1}0"),
             &sha1.to_uppercase(),
-            &format!("{}g", &sha1[..39]),
-            &format!(" {}", &sha1[..39]),
+            &format!("{short}g"),
+            &format!(" {short}"),
             &format!("{sha1}\n"),
             &"a".repeat(63),
             &"a".repeat(65),
