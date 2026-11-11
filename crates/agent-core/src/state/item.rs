@@ -410,11 +410,13 @@ pub type ItemMut<'a> = CheckedMut<'a, ItemProgress>;
 
 impl CheckedMut<'_, ItemProgress> {
     /// See [`ItemProgress::advance`]. An item in review is approved only with the pull request and the reviews it has:
-    /// the outcomes reach it through [`CheckedMut::submit_review`], not through the phase handed in.
+    /// the outcomes reach it through [`CheckedMut::submit_review`], not through the phase handed in. The pull request
+    /// that was reviewed is also the one the item is fixed on and merged with.
     ///
     /// # Errors
     /// [`AdvanceError`], as for [`ItemProgress::advance`]; [`AdvanceError::RoundNotKept`] when an approval carries
-    /// another pull request, other reviews, or an outcome that was not submitted.
+    /// another pull request, other reviews, or an outcome that was not submitted, or when a fix pass or a merge
+    /// carries another pull request than the reviewed one.
     pub fn advance(&mut self, next: ItemPhase) -> Result<(), AdvanceError> {
         self.value.check_round_kept(&next)?;
         self.value.advance(next)
@@ -541,8 +543,11 @@ pub enum AdvanceError {
         #[source]
         source: InvalidReviews,
     },
-    /// The approval does not carry the pull request and the reviews of the round the item is in.
-    #[error("item {item}: an approval carries the item's own pull request and reviews, as recorded")]
+    /// The change does not carry the round the item is in: an approval is not made of the pull request and the reviews
+    /// as recorded, or a fix pass or a merge is not on the reviewed pull request.
+    #[error(
+        "item {item}: an approval carries the item's own pull request and reviews, and a fix pass or a merge its reviewed pull request, as recorded"
+    )]
     RoundNotKept {
         /// The item.
         item: ItemId,
@@ -685,23 +690,31 @@ impl ItemProgress {
         Ok(())
     }
 
-    /// Checks that an approval of an item in review carries exactly its pull request and reviews. Any other change
-    /// is left to [`ItemProgress::advance`].
+    /// Checks that the round an item has is kept: an approval carries exactly its pull request and reviews, and the
+    /// pull request that was reviewed is the one the item goes back to be fixed on and is merged with. Any other
+    /// change is left to [`ItemProgress::advance`].
     ///
     /// # Errors
-    /// [`AdvanceError::RoundNotKept`] when `next` approves the item with another round than the one recorded.
+    /// [`AdvanceError::RoundNotKept`] when `next` carries another round than the one recorded.
     fn check_round_kept(&self, next: &ItemPhase) -> Result<(), AdvanceError> {
-        let (
-            ItemPhase::InReview {
-                pr: kept_pr,
-                reviews: kept,
-            },
-            ItemPhase::Approved { pr, reviews },
-        ) = (&self.phase, next)
-        else {
-            return Ok(());
+        let kept = match (&self.phase, next) {
+            (
+                ItemPhase::InReview {
+                    pr: kept_pr,
+                    reviews: kept,
+                },
+                ItemPhase::Approved { pr, reviews },
+            ) => kept_pr == pr && kept == reviews,
+            (ItemPhase::InReview { pr: kept_pr, .. }, ItemPhase::Fixing { pr, .. })
+            | (
+                ItemPhase::Approved { pr: kept_pr, .. },
+                ItemPhase::Done {
+                    completion: Completion::Merged { pr, .. },
+                },
+            ) => kept_pr == pr,
+            _ => true,
         };
-        if kept_pr == pr && kept == reviews {
+        if kept {
             return Ok(());
         }
         Err(AdvanceError::RoundNotKept { item: self.id })
