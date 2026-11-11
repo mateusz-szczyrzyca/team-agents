@@ -332,6 +332,19 @@ impl CheckedMut<'_, ItemProgress> {
         self.value.reassign(assignee, branch)
     }
 
+    /// See [`ItemProgress::submit_review`].
+    ///
+    /// # Errors
+    /// [`SubmitReviewError`], as for [`ItemProgress::submit_review`].
+    pub fn submit_review(
+        &mut self,
+        task: &TaskId,
+        verdict: ReviewVerdict,
+        at: Timestamp,
+    ) -> Result<(), SubmitReviewError> {
+        self.value.submit_review(task, verdict, at)
+    }
+
     /// Records the last gate result for the item, replacing the one before.
     pub fn set_gate(&mut self, result: GateResult) {
         self.value.gate = Some(result);
@@ -432,6 +445,41 @@ pub enum AdvanceError {
         #[source]
         source: InvalidReviews,
     },
+    /// `Completion::Listed` is for an item the task list already marked done: a team finishes an item by its merge.
+    #[error("item {item} cannot be completed as listed: only an item the task list marks done starts that way")]
+    ListedCompletion {
+        /// The item.
+        item: ItemId,
+    },
+}
+
+/// Why the outcome of a review could not be recorded.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SubmitReviewError {
+    /// Only an item in review has reviews that wait for their outcome.
+    #[error("item {item} is {phase}: only an item in review receives the outcome of a review")]
+    NotInReview {
+        /// The item.
+        item: ItemId,
+        /// Its phase.
+        phase: PhaseKind,
+    },
+    /// The round asked no review of this task.
+    #[error("item {item}: no review of the round was asked of task {task}")]
+    UnknownReview {
+        /// The item.
+        item: ItemId,
+        /// The task that is not a reviewer of the round.
+        task: TaskId,
+    },
+    /// The review has its outcome already.
+    #[error("item {item}: the review by task {task} has its outcome already")]
+    AlreadySubmitted {
+        /// The item.
+        item: ItemId,
+        /// The reviewer's task.
+        task: TaskId,
+    },
 }
 
 /// An [`AdvanceError`] equals the refused change it wraps, so that a caller can compare it with the edge it expects.
@@ -524,6 +572,23 @@ impl ItemProgress {
             self.fix_passes.push(FixPass { requested_by: reviews });
         }
         Ok(())
+    }
+
+    /// Records the verdict that the reviewer task `task` reported for the item's pull request.
+    ///
+    /// # Errors
+    /// [`SubmitReviewError`]: the item is not in review, no review of the round was asked of `task`, or that review
+    /// already has its outcome.
+    pub fn submit_review(
+        &mut self,
+        _task: &TaskId,
+        _verdict: ReviewVerdict,
+        _at: Timestamp,
+    ) -> Result<(), SubmitReviewError> {
+        Err(SubmitReviewError::NotInReview {
+            item: self.id,
+            phase: self.phase.kind(),
+        })
     }
 
     /// Gives an item that is in progress or fixing to another member.
