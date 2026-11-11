@@ -9,6 +9,7 @@
 pub mod config;
 pub mod ids;
 pub mod kinds;
+pub mod protocol;
 pub mod questions;
 pub mod state;
 pub mod status;
