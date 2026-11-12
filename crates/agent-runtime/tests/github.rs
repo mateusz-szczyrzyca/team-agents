@@ -246,6 +246,15 @@ mod github_client {
     }
 
     #[test]
+    fn a_retry_after_of_exactly_the_maximum_is_waited_for_and_one_nanosecond_more_is_not() {
+        let retry = policy(5, Jitter::None);
+        let maximum = Duration::from_secs(8);
+
+        assert_eq!(retry.delay_before(2, Some(maximum)), Some(maximum));
+        assert_eq!(retry.delay_before(2, Some(maximum + Duration::from_nanos(1))), None);
+    }
+
+    #[test]
     fn a_spread_delay_is_between_half_and_all_of_the_growing_one() {
         let retry = policy(5, Jitter::Spread);
 

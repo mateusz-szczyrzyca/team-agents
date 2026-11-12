@@ -1813,6 +1813,35 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_whose_record_does_not_parse_is_unexpected_not_part_of_the_agent_before() {
+        let first = "  claude-1 — task-20261112-134008-ab12 (agents/claude-1/item-1) pid 4242, status: idle\n";
+        let cases = [
+            // `agentbus serve` without `--task` and `--branch`: empty task and branch.
+            "  codex-1 —  () pid 77, status: idle\n",
+            // A task that is no task name.
+            "  codex-1 — Not A Task (agents/x) pid 77, status: idle\n",
+            // An agent name that is none.
+            "  Codex-1 — task-20261112-134009-cd34 (agents/x) pid 77, status: idle\n",
+        ];
+        for second in cases {
+            let text = format!("Active agents:\n{first}{second}Reservations:\nNo reservations.\n");
+
+            let error = parse_status(&text).unwrap_err();
+
+            assert!(
+                matches!(
+                    error,
+                    AgentBusError::Unexpected {
+                        command: BusCommand::Status,
+                        ..
+                    }
+                ),
+                "{text:?}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_status_report_that_is_not_in_the_format_is_unexpected() {
         let cases = [
             "",

@@ -997,6 +997,40 @@ mod agentbus_commands {
     }
 
     #[tokio::test]
+    async fn status_does_not_hide_an_agent_that_the_bus_lists_without_a_task() {
+        let fixture = fixture();
+        let _first = serve_and_call(&fixture, "claude-1", "aaa1", &[]).await;
+        // No `--task` and no `--branch`: the bus lists this agent with an empty task and branch.
+        let _second = Command::new(agentbus_binary())
+            .arg("serve")
+            .args(["--agent", "codex-1", "--dir"])
+            .arg(fixture.bus.bus_dir())
+            .env("AGENTS_HOME", fixture.dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            match fixture.bus.status().await {
+                Err(AgentBusError::Unexpected {
+                    command: BusCommand::Status,
+                    ..
+                }) => break,
+                Err(other) => panic!("{other:?}"),
+                Ok(status) => {
+                    let glued = status.agents.iter().any(|listed| listed.status.contains(" pid "));
+                    assert!(!glued, "an agent was added to the status of another: {status:?}");
+                }
+            }
+            assert!(Instant::now() < deadline, "the status never showed the second agent");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tokio::test]
     async fn status_keeps_the_line_breaks_of_an_agents_status_and_of_a_reservation() {
         let fixture = fixture();
         let set_status = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"set_status","arguments":{"status":"Reviewing\nWaiting for tests: żółć"}}}"#;
