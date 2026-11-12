@@ -269,7 +269,7 @@ fn shell_calls_are_commands_and_code_calls_are_tool_calls_and_the_last_text_is_t
     );
     let final_message = replay.output.final_message.ok_or("no final message")?;
     assert!(final_message.starts_with("STATUS: DONE\nResult: `make gate`"));
-    assert_eq!(replay.output.stream, StreamOutcome::Incomplete);
+    assert_eq!(replay.output.stream, StreamOutcome::Succeeded);
     Ok(())
 }
 
@@ -333,7 +333,6 @@ fn the_error_tail_has_stderr_first_and_the_error_lines_of_the_stream_after_it() 
 #[test]
 fn an_output_cut_at_any_byte_gives_a_typed_error_and_no_panic() -> TestResult {
     let text = fixture("opencode", "done.jsonl")?;
-    let complete = text.trim_end().len();
 
     for (cut, _) in text.char_indices() {
         let replay = replay(&OpencodeAdapter, text.get(..cut).ok_or("a cut inside a character")?, "")?;
@@ -347,7 +346,7 @@ fn an_output_cut_at_any_byte_gives_a_typed_error_and_no_panic() -> TestResult {
             "cut {cut}: {:?}",
             replay.errors
         );
-        if cut < complete {
+        if replay.output.final_message.is_none() {
             assert_eq!(replay.output.stream, StreamOutcome::Incomplete, "cut {cut}");
         }
     }
@@ -444,5 +443,73 @@ fn only_a_stop_ends_the_run_successfully() -> TestResult {
         outcome(&[finish("stop"), finish("tool-calls")])?,
         StreamOutcome::Succeeded
     );
+    Ok(())
+}
+
+// Rule: opencode ends a run that answered with its text: recorded runs that the old harness reported as done end on
+// the `text` line, with no `step_finish`. A text that a tool call, a finished step, a new step or an error follows is
+// not the end.
+#[test]
+fn a_run_that_ends_on_its_answer_succeeds_without_a_stop() -> TestResult {
+    let start = r#"{"type":"step_start","sessionID":"ses_1","part":{"type":"step-start"}}"#;
+    let text =
+        |text: &str| format!(r#"{{"type":"text","sessionID":"ses_1","part":{{"type":"text","text":"{text}"}}}}"#);
+    let tool = r#"{"type":"tool_use","sessionID":"ses_1","part":{"type":"tool","tool":"shell","state":{"status":"completed","input":{"command":"ls"}}}}"#;
+    let finish = r#"{"type":"step_finish","sessionID":"ses_1","part":{"type":"step-finish","reason":"tool-calls"}}"#;
+    let error = r#"{"type":"error","sessionID":"ses_1","error":{"name":"APIError","data":{"message":"boom"}}}"#;
+    let answer = text("STATUS: DONE");
+    let table = [
+        (vec![start, answer.as_str()], StreamOutcome::Succeeded),
+        (vec![answer.as_str()], StreamOutcome::Succeeded),
+        (vec![start, answer.as_str(), tool], StreamOutcome::Incomplete),
+        (vec![start, answer.as_str(), tool, finish], StreamOutcome::Incomplete),
+        (
+            vec![start, answer.as_str(), tool, finish, start],
+            StreamOutcome::Incomplete,
+        ),
+        (vec![start, answer.as_str(), start], StreamOutcome::Incomplete),
+        (vec![start, answer.as_str(), error], StreamOutcome::Failed),
+        (vec![start, tool, finish], StreamOutcome::Incomplete),
+    ];
+
+    for (lines, expected) in table {
+        let mut parser = OpencodeAdapter.parser();
+        for line in &lines {
+            parser.push_line(line)?;
+        }
+        let output = parser.finish("", std::num::NonZeroU32::MIN);
+
+        assert_eq!(output.stream, expected, "{lines:?}");
+    }
+    let blank = text("  ");
+    let mut parser = OpencodeAdapter.parser();
+    parser.push_line(start)?;
+    parser.push_line(&blank)?;
+    assert_eq!(
+        parser.finish("", std::num::NonZeroU32::MIN).stream,
+        StreamOutcome::Incomplete
+    );
+    Ok(())
+}
+
+// Rule: an event that reports an error with an empty `sessionID` (a recorded run's refusal of an id it does not know)
+// is an error of the run, not a bad session ID that hides it.
+#[test]
+fn an_error_event_with_an_empty_session_id_is_still_the_error_of_the_run() -> TestResult {
+    let line = r#"{"type":"error","timestamp":1,"sessionID":"","error":{"type":"unknown","message":"Expected a string starting with \"ses\""}}"#;
+    let mut parser = OpencodeAdapter.parser();
+
+    let events = parser.push_line(line)?;
+
+    assert_eq!(
+        events,
+        [ActivityEvent::Error(
+            "Expected a string starting with \"ses\"".to_owned()
+        )]
+    );
+    let output = parser.finish("", std::num::NonZeroU32::MIN);
+    assert_eq!(output.stream, StreamOutcome::Failed);
+    assert_eq!(output.session_id, None);
+    assert_eq!(output.error_tail.lines(), [line]);
     Ok(())
 }
