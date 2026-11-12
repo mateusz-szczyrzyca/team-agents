@@ -480,7 +480,15 @@ impl Follow<'_> {
 
     /// Reads what is left of the output after the process ended, the last line without a newline included.
     async fn drain(&mut self) -> Result<(), RunError> {
-        self.read_new().await?;
+        // One look reads a bounded part: the end reads, part by part, all that was written when the process was over.
+        let end = self.tail.len().await?;
+        loop {
+            let before = self.tail.offset();
+            self.read_new().await?;
+            if self.tail.offset() >= end || self.tail.offset() == before {
+                break;
+            }
+        }
         if let Some(last) = self.tail.finish() {
             self.feed(&[last]).await?;
         }

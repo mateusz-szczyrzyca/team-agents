@@ -57,6 +57,22 @@ impl OutputTail {
         self.dropped
     }
 
+    /// Where the next read starts, in bytes from the start of the file.
+    pub(super) const fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// The length of the file now, in bytes.
+    pub(super) async fn len(&self) -> Result<u64, RunError> {
+        let metadata = tokio::fs::metadata(&self.path)
+            .await
+            .map_err(|source| RunError::Output {
+                path: self.path.clone(),
+                source,
+            })?;
+        Ok(metadata.len())
+    }
+
     /// The complete lines written since the last call.
     pub(super) async fn read_new(&mut self) -> Result<Vec<String>, RunError> {
         let path = self.path.clone();
