@@ -1245,4 +1245,24 @@ mod github_client {
         );
         assert_eq!(server.requests().len(), 2);
     }
+
+    #[tokio::test]
+    async fn a_review_in_a_state_that_is_not_known_is_a_decode_error() {
+        let server = FakeServer::always(reply(200, &json!([review_json(10, "octo-cat", "WEIRD")])))
+            .await
+            .unwrap();
+
+        let error = github(&server).list_reviews(number(7)).await.unwrap_err();
+
+        assert!(
+            matches!(
+                error,
+                GitHubError::Decode {
+                    operation: GitHubOperation::ListReviews,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
 }

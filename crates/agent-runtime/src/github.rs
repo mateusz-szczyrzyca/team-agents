@@ -19,12 +19,13 @@ use std::time::Duration;
 
 use agent_core::config::{GithubLogin, Secret};
 use agent_core::ids::BranchName;
+use agent_core::kinds::{Keyword, UnknownKeyword};
 use agent_core::state::{CommitId, PrNumber, Timestamp};
 use agent_core::status::ReviewVerdict;
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, RETRY_AFTER};
 use reqwest::{Method, Url};
+use serde::Deserialize;
 use serde::de::{DeserializeOwned, Error as _};
-use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 
 /// The base URL of the public GitHub API.
@@ -621,9 +622,21 @@ pub struct NewReview {
     pub commit: CommitId,
 }
 
-/// What state a posted review is in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString)]
-#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
+/// What state a posted review is in; GitHub writes it in capitals, such as `CHANGES_REQUESTED`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<ReviewState>)]
 pub enum ReviewState {
     /// Approved.
     Approved,
@@ -635,6 +648,18 @@ pub enum ReviewState {
     Dismissed,
     /// Not submitted yet.
     Pending,
+}
+
+impl Keyword for ReviewState {
+    const WHAT: &'static str = "review state";
+}
+
+impl TryFrom<String> for ReviewState {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
 }
 
 /// A review of a pull request.
@@ -1245,16 +1270,6 @@ fn decode<T: DeserializeOwned>(operation: GitHubOperation, body: &[u8]) -> Resul
     serde_json::from_slice(body).map_err(|source| GitHubError::Decode { operation, source })
 }
 
-/// Reads a keyword that GitHub writes in capitals, such as a review's state.
-fn keyword<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: FromStr,
-    T::Err: fmt::Display,
-{
-    String::deserialize(deserializer)?.parse().map_err(D::Error::custom)
-}
-
 /// The body of an error answer.
 #[derive(Deserialize)]
 struct RawError {
@@ -1343,7 +1358,6 @@ struct RawReview {
     /// What it says.
     body: Option<String>,
     /// Its state.
-    #[serde(deserialize_with = "keyword")]
     state: ReviewState,
     /// The head it is about.
     commit_id: Option<CommitId>,
