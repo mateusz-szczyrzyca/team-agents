@@ -139,6 +139,7 @@ Loaded from `config/agents.conf` with defaults initialized in `bin/agent`:
 - `AGENT_HUMAN_GITHUB` (GitHub username of human maintainer for mentions)
 - `AGENT_REVIEW_GATE` (gate check command: `auto` for `make gate`, or `off`; default: `auto`)
 - `AGENT_REVIEW_GATE_MIN` (timeout for precheck gate run in minutes; default: `30`)
+- `AGENT_PRECHECK_TESTS` (`off`: the precheck does not send back a round that changes code without a new test; default: `on`)
 - `AGENT_GATE_SCOPES` (array of `"patterns => command"`: the gate of a change whose every path matches an entry; default: empty)
 - `AGENT_STAGE_POLL_SEC` (interval for reporting gate progress; default: `2`)
 - `AGENT_PRECHECK_MAX` (maximum retries for precheck gate failures; default: `2`)
