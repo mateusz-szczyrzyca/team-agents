@@ -2,9 +2,7 @@
 
 use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{AgentName, InvestigatorName, RunId, TaskId, TeamId};
-use agent_core::state::{
-    Crew, Member, MergeMode, Participant, State, TaskListText, Team, TeamMembers, Timestamp,
-};
+use agent_core::state::{Crew, Member, MergeMode, Participant, State, TaskListText, Team, TeamMembers, Timestamp};
 
 /// The task list of the sample teams: one feature of two items.
 pub(crate) const LIST: &str = "\
@@ -108,6 +106,8 @@ pub(crate) fn team_state() -> State {
     );
     let mut state = State::new();
     state.insert_team(team).unwrap();
-    state.add_reviewer(&team_id(0), member(4, investigator("inv-codex"))).unwrap();
+    state
+        .add_reviewer(&team_id(0), member(4, investigator("inv-codex")))
+        .unwrap();
     state
 }

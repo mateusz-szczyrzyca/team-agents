@@ -56,7 +56,12 @@ fn sleeping_waits_excluded_is_over_and_questions_ask() {
 
 #[test]
 fn a_reported_failure_fails_the_task_and_tells_the_human_what_the_agent_said() {
-    let settled = settle(Role::Solo, &reported(RunOutcome::Failed), None, Some("It broke.\nSTATUS: FAILED"));
+    let settled = settle(
+        Role::Solo,
+        &reported(RunOutcome::Failed),
+        None,
+        Some("It broke.\nSTATUS: FAILED"),
+    );
 
     assert_eq!(
         settled,
@@ -83,12 +88,7 @@ fn only_the_end_of_a_long_message_is_kept_for_the_human() {
 fn a_failure_without_a_message_has_an_empty_one() {
     let settled = settle(Role::Solo, &reported(RunOutcome::Failed), None, None);
 
-    assert_eq!(
-        settled,
-        Settled::Failed(Notice::Failed {
-            message: String::new()
-        })
-    );
+    assert_eq!(settled, Settled::Failed(Notice::Failed { message: String::new() }));
 }
 
 #[test]
@@ -105,8 +105,16 @@ fn an_end_without_a_status_fails_the_task_with_its_exit_code() {
 fn a_limit_pauses_the_task_with_the_pause_the_classifier_gave() {
     let given = pause(60);
 
-    for end in [RunEnd::QuotaExhausted { resets_at: Some(at(50)) }, RunEnd::RateLimited] {
-        assert_eq!(settle(Role::Solo, &end, Some(&given), None), Settled::Paused(given.clone()));
+    for end in [
+        RunEnd::QuotaExhausted {
+            resets_at: Some(at(50)),
+        },
+        RunEnd::RateLimited,
+    ] {
+        assert_eq!(
+            settle(Role::Solo, &end, Some(&given), None),
+            Settled::Paused(given.clone())
+        );
     }
 }
 
@@ -194,5 +202,8 @@ fn a_pause_that_would_end_after_the_year_9999_is_an_error() {
 
     let error = wake_time(&RunEnd::RateLimited, late, &limits()).unwrap_err();
 
-    assert!(matches!(error, ClassifyError::PauseOverflow { now } if now == late), "{error:?}");
+    assert!(
+        matches!(error, ClassifyError::PauseOverflow { now } if now == late),
+        "{error:?}"
+    );
 }

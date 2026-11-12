@@ -7,9 +7,12 @@ use super::*;
 use crate::fixtures::{at, task};
 
 async fn texts() -> HarnessPrompts {
-    HarnessPrompts::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"), &Language::default())
-        .await
-        .unwrap()
+    HarnessPrompts::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &Language::default(),
+    )
+    .await
+    .unwrap()
 }
 
 /// The title and the body of the notification of `notice` about task 1 of `claude-1`.
@@ -29,7 +32,10 @@ async fn every_notice_has_a_title_that_names_the_agent_and_the_task() {
             file: PathBuf::from("/h/tasks/t/questions-1.md"),
             reason: "no such file".to_owned(),
         },
-        Notice::Hung { minutes: 30, strikes: 3 },
+        Notice::Hung {
+            minutes: 30,
+            strikes: 3,
+        },
         Notice::Paused {
             until: at(3600),
             reason: PauseReason::Quota,
@@ -60,7 +66,11 @@ async fn the_body_of_a_notice_has_the_facts_of_it() {
         file: PathBuf::from("/h/tasks/t/questions-2.md"),
     })
     .await;
-    let (_, hung) = rendered(&Notice::Hung { minutes: 30, strikes: 3 }).await;
+    let (_, hung) = rendered(&Notice::Hung {
+        minutes: 30,
+        strikes: 3,
+    })
+    .await;
     let (title, paused) = rendered(&Notice::Paused {
         until: at(3600),
         reason: PauseReason::RateLimit,
@@ -70,7 +80,10 @@ async fn the_body_of_a_notice_has_the_facts_of_it() {
     let (_, none) = rendered(&Notice::NoStatus { exit: None }).await;
     let (_, code) = rendered(&Notice::NoStatus { exit: Some(3) }).await;
 
-    assert!(questions.contains("Round 2") && questions.contains("/h/tasks/t/questions-2.md"), "{questions}");
+    assert!(
+        questions.contains("Round 2") && questions.contains("/h/tasks/t/questions-2.md"),
+        "{questions}"
+    );
     assert!(hung.contains("30 minutes") && hung.contains("3 times"), "{hung}");
     assert!(title.contains("2026-11-11T20:15:00Z"), "{title}");
     assert!(paused.contains("rate_limit") && paused.contains("HTTP 429"), "{paused}");

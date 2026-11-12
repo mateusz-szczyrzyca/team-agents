@@ -3,7 +3,10 @@
 use agent_core::config::Limits;
 use agent_core::decide::outcome::ClassifyError;
 use agent_core::ids::TaskId;
-use agent_core::state::{State, Timestamp};
+use agent_core::state::{Run, RunEnd, RunError, RunState, State, Timestamp};
+use agent_core::status::{InvalidTransition, TaskStatus};
+
+use super::settle::wake_time;
 
 /// What recovery found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -17,13 +20,27 @@ pub(super) struct Recovery {
 /// Why the state cannot be recovered.
 #[derive(Debug, thiserror::Error)]
 pub(super) enum RecoveryError {
-    /// The state refused a change that its own data call for.
-    #[error("the state of task {task} cannot be recovered")]
-    State {
+    /// A task listed in the state cannot be found in it.
+    #[error("task {task} is in the state but cannot be found in it")]
+    Missing {
         /// The task.
         task: TaskId,
-        /// What the state said.
-        message: String,
+    },
+    /// The run of a task cannot be ended.
+    #[error("the run of task {task} cannot be ended")]
+    Run {
+        /// The task.
+        task: TaskId,
+        /// What the state refused.
+        source: RunError,
+    },
+    /// The status of a task cannot be changed.
+    #[error("the status of task {task} cannot be changed")]
+    Status {
+        /// The task.
+        task: TaskId,
+        /// What the state refused.
+        source: InvalidTransition<TaskStatus>,
     },
     /// A pause cannot be timed.
     #[error("the pause of task {task} cannot be timed")]
@@ -40,8 +57,63 @@ pub(super) enum RecoveryError {
 /// # Errors
 /// [`RecoveryError`] when the state refuses a change or a pause cannot be timed.
 pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Result<Recovery, RecoveryError> {
-    let _ = (state, now, limits);
-    Ok(Recovery::default())
+    let mut recovery = Recovery::default();
+    for task in all_tasks(state) {
+        let (_, mut member) = state
+            .find_task_mut(&task)
+            .ok_or_else(|| RecoveryError::Missing { task: task.clone() })?;
+        let was_going = member.current_run().is_some();
+        let was_running = member.status() == TaskStatus::Running;
+        if was_going {
+            // No code: the restart ended the process by a signal, or its end was never seen.
+            member
+                .end_run(now, RunEnd::NoStatus { exit_code: None })
+                .map_err(|source| RecoveryError::Run {
+                    task: task.clone(),
+                    source,
+                })?;
+        }
+        if was_running {
+            member
+                .transition(TaskStatus::Queued)
+                .map_err(|source| RecoveryError::Status {
+                    task: task.clone(),
+                    source,
+                })?;
+        }
+        if was_going || was_running {
+            recovery.interrupted.push(task.clone());
+        }
+        if member.status() == TaskStatus::Paused
+            && let Some(wake) = paused_until(member.runs().last(), limits).map_err(|source| RecoveryError::Pause {
+                task: task.clone(),
+                source,
+            })?
+        {
+            recovery.wakes.push((wake, task));
+        }
+    }
+    Ok(recovery)
+}
+
+/// When a task whose last run is `last` goes on, if its pause is a provider's limit.
+fn paused_until(last: Option<&Run>, limits: &Limits) -> Result<Option<Timestamp>, ClassifyError> {
+    match last.map(Run::state) {
+        Some(RunState::Ended { at, end }) => wake_time(end, *at, limits),
+        Some(RunState::Running) | None => Ok(None),
+    }
+}
+
+/// Every task of the state: the crew of each team and its reviewers, team by team.
+fn all_tasks(state: &State) -> Vec<TaskId> {
+    state
+        .teams()
+        .iter()
+        .flat_map(|team| {
+            let crew = team.crew().roster().into_iter().map(|(_, member)| member);
+            crew.chain(team.reviewers().iter()).map(|member| member.task().clone())
+        })
+        .collect()
 }
 
 #[cfg(test)]

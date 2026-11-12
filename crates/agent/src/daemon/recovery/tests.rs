@@ -82,9 +82,21 @@ fn reviewers_are_recovered_like_the_crew() {
 fn everything_else_is_left_as_it_is() {
     let mut state = team_state();
     start(&mut state, 1, Some("ses-a"));
-    end(&mut state, 1, RunEnd::Reported { outcome: RunOutcome::Sleeping }, TaskStatus::Waiting);
+    end(
+        &mut state,
+        1,
+        RunEnd::Reported {
+            outcome: RunOutcome::Sleeping,
+        },
+        TaskStatus::Waiting,
+    );
     start(&mut state, 2, None);
-    end(&mut state, 2, RunEnd::NoStatus { exit_code: Some(1) }, TaskStatus::Failed);
+    end(
+        &mut state,
+        2,
+        RunEnd::NoStatus { exit_code: Some(1) },
+        TaskStatus::Failed,
+    );
     let before = state.to_json().unwrap();
 
     let recovery = recover(&mut state, at(100), &limits()).unwrap();
@@ -98,7 +110,12 @@ fn a_task_paused_by_a_limit_is_woken_when_the_limit_is_over() {
     let mut state = team_state();
     start(&mut state, 2, Some("ses-1"));
     let reset: Timestamp = "2026-11-11T22:15:00Z".parse().unwrap();
-    end(&mut state, 2, RunEnd::QuotaExhausted { resets_at: Some(reset) }, TaskStatus::Paused);
+    end(
+        &mut state,
+        2,
+        RunEnd::QuotaExhausted { resets_at: Some(reset) },
+        TaskStatus::Paused,
+    );
     start(&mut state, 3, None);
     end(&mut state, 3, RunEnd::RateLimited, TaskStatus::Paused);
 
@@ -107,7 +124,11 @@ fn a_task_paused_by_a_limit_is_woken_when_the_limit_is_over() {
     let quota_wake = Timestamp::from_utc(reset.as_utc() + RESET_MARGIN).unwrap();
     let rate_wake = Timestamp::from_utc(at(20).as_utc() + time::Duration::minutes(5) + RESET_MARGIN).unwrap();
     assert_eq!(recovery.wakes, [(quota_wake, task(2)), (rate_wake, task(3))]);
-    assert_eq!(status(&state, 2), TaskStatus::Paused, "a pause is not ended by recovery");
+    assert_eq!(
+        status(&state, 2),
+        TaskStatus::Paused,
+        "a pause is not ended by recovery"
+    );
 }
 
 #[test]

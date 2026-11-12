@@ -79,16 +79,62 @@ pub(super) enum NoticeError {
 
 impl Notice {
     /// The notification of this notice about `task`, whose agent is `agent`.
+    ///
+    /// # Errors
+    /// [`NoticeError`] when the text of the notice cannot be rendered or is not a notification.
     pub(super) fn render(
         &self,
         texts: &HarnessPrompts,
         agent: &str,
         task: &TaskId,
     ) -> Result<Notification, NoticeError> {
-        let _ = (texts, agent, task);
-        Ok(Notification::new("?", "?")?)
+        let common = Variables::new().with("agent", agent)?.with("task", task.as_str())?;
+        let (text, values) = match self {
+            Self::Questions { round, file } => (
+                HarnessPrompt::NoticeQuestions,
+                common
+                    .with("round", round.to_string())?
+                    .with("file", file.display().to_string())?,
+            ),
+            Self::QuestionsMissing { file, reason } => (
+                HarnessPrompt::NoticeQuestionsMissing,
+                common
+                    .with("file", file.display().to_string())?
+                    .with("reason", reason)?,
+            ),
+            Self::Hung { minutes, strikes } => (
+                HarnessPrompt::NoticeHung,
+                common
+                    .with("minutes", minutes.to_string())?
+                    .with("strikes", strikes.to_string())?,
+            ),
+            Self::Paused {
+                until,
+                reason,
+                evidence,
+            } => (
+                HarnessPrompt::NoticePaused,
+                common
+                    .with("until", until.to_string())?
+                    .with("reason", reason.to_string())?
+                    .with("evidence", evidence)?,
+            ),
+            Self::Failed { message } => (HarnessPrompt::NoticeFailed, common.with("message", message)?),
+            Self::NoStatus { exit } => (
+                HarnessPrompt::NoticeNoStatus,
+                common.with("exit", exit.map_or_else(|| SIGNAL.to_owned(), |code| code.to_string()))?,
+            ),
+            Self::StartFailed { reason } => (HarnessPrompt::NoticeStartFailed, common.with("reason", reason)?),
+        };
+        let rendered = texts.render(text, &values)?;
+        // The first line is the title, what follows is the body.
+        let (title, body) = rendered.split_once('\n').unwrap_or((rendered.as_str(), ""));
+        Ok(Notification::new(title.trim_end(), body.trim())?)
     }
 }
+
+/// What the exit of a process that a signal ended is called in a notification: it has no code.
+const SIGNAL: &str = "signal";
 
 #[cfg(test)]
 mod tests;
