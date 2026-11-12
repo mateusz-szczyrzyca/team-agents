@@ -7,11 +7,19 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_core::protocol::{Client, Command, EncodeError, Failure, ProtocolError, Reply, Request, RequestId};
+use agent_core::protocol::{
+    Client, Command, EncodeError, Failure, Frame, MAX_FRAME_BYTES, Outcome, ProtocolError, Reply, Request, RequestId,
+    Response,
+};
 use tokio::io::BufReader;
+use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::time::timeout;
 
-use crate::lines::LineError;
+use crate::lines::{LineError, read_line, write_line};
+
+/// The number of a connection's first request.
+const FIRST_REQUEST: u64 = 1;
 
 /// How long a connection may take to be made.
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -95,8 +103,39 @@ impl Connection {
     /// [`ClientError::NotRunning`] when nothing listens there, [`ClientError::Connect`] and
     /// [`ClientError::ConnectTimeout`].
     pub(crate) async fn connect(socket: &Path) -> Result<Self, ClientError> {
-        let _ = socket;
-        Err(ClientError::Closed)
+        let stream = match timeout(CONNECT_TIMEOUT, UnixStream::connect(socket)).await {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(source))
+                if matches!(
+                    source.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                ) =>
+            {
+                return Err(ClientError::NotRunning {
+                    socket: socket.to_path_buf(),
+                    source,
+                });
+            }
+            Ok(Err(source)) => {
+                return Err(ClientError::Connect {
+                    socket: socket.to_path_buf(),
+                    source,
+                });
+            }
+            // The elapsed time carries nothing but the fact; the error names how long it was waited.
+            Err(_elapsed) => {
+                return Err(ClientError::ConnectTimeout {
+                    socket: socket.to_path_buf(),
+                    waited: CONNECT_TIMEOUT,
+                });
+            }
+        };
+        let (read, writer) = stream.into_split();
+        Ok(Self {
+            reader: BufReader::new(read),
+            writer,
+            next_id: FIRST_REQUEST,
+        })
     }
 
     /// Sends `command` as `client` and returns the daemon's reply.
@@ -104,8 +143,45 @@ impl Connection {
     /// # Errors
     /// [`ClientError`]: the conversation failed, or the daemon answered with an error.
     pub(crate) async fn request(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
-        let _ = (client, command, &mut self.next_id, &mut self.writer, &mut self.reader);
-        Err(ClientError::Closed)
+        let id = RequestId(self.next_id);
+        self.next_id = self.next_id.saturating_add(1);
+        let line = Request::new(id, client, command).to_line()?;
+        let conversation = async {
+            write_line(&mut self.writer, &line).await?;
+            self.read_response(id).await
+        };
+        let response = match timeout(REQUEST_TIMEOUT, conversation).await {
+            Ok(response) => response?,
+            // The elapsed time carries nothing but the fact; the error names how long it was waited.
+            Err(_elapsed) => {
+                return Err(ClientError::Timeout {
+                    waited: REQUEST_TIMEOUT,
+                });
+            }
+        };
+        match response.result {
+            Outcome::Ok { reply } => Ok(reply),
+            Outcome::Error { error } => Err(ClientError::Refused(error)),
+        }
+    }
+
+    /// Reads frames until the answer to request `id`; events a subscription would send are skipped.
+    async fn read_response(&mut self, id: RequestId) -> Result<Response, ClientError> {
+        loop {
+            let line = read_line(&mut self.reader, MAX_FRAME_BYTES)
+                .await?
+                .ok_or(ClientError::Closed)?;
+            match Frame::from_line(&line)? {
+                Frame::Response(response) if response.id == id => return Ok(response),
+                Frame::Response(response) => {
+                    return Err(ClientError::WrongAnswer {
+                        expected: id,
+                        found: response.id,
+                    });
+                }
+                Frame::Event(_) => {}
+            }
+        }
     }
 }
 

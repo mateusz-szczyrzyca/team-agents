@@ -1,6 +1,6 @@
 use agent_core::config::Limits;
 use agent_core::decide::outcome::{ClassifyError, RESET_MARGIN};
-use agent_core::state::{RunEnd, RunState, State, Timestamp};
+use agent_core::state::{RunEnd, RunState, SessionId, State, Timestamp};
 use agent_core::status::{RunOutcome, TaskStatus};
 
 use super::*;
@@ -48,7 +48,7 @@ fn a_run_that_was_going_is_ended_as_interrupted_and_its_task_queued_with_its_ses
             end: RunEnd::NoStatus { exit_code: None }
         }
     );
-    assert_eq!(member.last_session().map(|id| id.as_str()), Some("ses-1"));
+    assert_eq!(member.last_session().map(SessionId::as_str), Some("ses-1"));
 }
 
 #[test]

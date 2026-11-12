@@ -23,8 +23,8 @@ mod lines;
 #[cfg(test)]
 mod testing;
 
-use crate::client::ClientError;
-use crate::commands::status::StatusError;
+use crate::client::{ClientError, Connection};
+use crate::commands::status::{StatusError, status};
 use crate::environment::{Environment, EnvironmentError};
 
 /// Exit status of a command line that clap refuses: its own convention for usage errors.
@@ -181,8 +181,14 @@ fn execute_blocking(environment: &Environment, command: Command, out: &mut impl 
 /// # Errors
 /// [`CommandError`].
 async fn execute(environment: &Environment, command: Command, out: &mut impl Write) -> Result<(), CommandError> {
-    let _ = (environment, command, out);
-    Ok(())
+    match command {
+        Command::Status(args) => {
+            let home = environment.home()?;
+            let mut connection = Connection::connect(&home.socket_file()).await?;
+            status(&mut connection, args.target, out).await?;
+            Ok(())
+        }
+    }
 }
 
 /// Writes all of `text` to `to` and flushes it.

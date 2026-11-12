@@ -1,6 +1,7 @@
 //! What a command reads from the process's environment, once, at its start.
 
 use std::ffi::OsString;
+use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_runtime::store::Home;
@@ -55,8 +56,15 @@ impl Environment {
     /// # Errors
     /// [`EnvironmentError`] when `AGENTS_HOME` is not set, not text or not an absolute path.
     pub(crate) fn home(&self) -> Result<Home, EnvironmentError> {
-        let _ = &self.home;
-        Err(EnvironmentError::NoHome)
+        let value = self.home.as_ref().ok_or(EnvironmentError::NoHome)?;
+        let text = value
+            .to_str()
+            .ok_or_else(|| EnvironmentError::NotText { value: value.clone() })?;
+        let root = AbsolutePath::from_str(text).map_err(|source| EnvironmentError::NotAbsolute {
+            value: text.to_owned(),
+            source,
+        })?;
+        Ok(Home::new(&root))
     }
 }
 

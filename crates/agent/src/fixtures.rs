@@ -1,6 +1,6 @@
 //! Builders of states for the tests of the daemon.
 
-use agent_core::config::{AbsolutePath, RepoName};
+use agent_core::config::RepoName;
 use agent_core::ids::{AgentName, InvestigatorName, RunId, TaskId, TeamId};
 use agent_core::state::{Crew, Member, MergeMode, Participant, State, TaskListText, Team, TeamMembers, Timestamp};
 
@@ -59,11 +59,6 @@ pub(crate) fn investigator(name: &str) -> Participant {
 /// A member of task `n`.
 pub(crate) fn member(n: u32, agent: Participant) -> Member {
     Member::new(task(n), agent)
-}
-
-/// An absolute path.
-pub(crate) fn path(text: &str) -> AbsolutePath {
-    text.parse().unwrap()
 }
 
 /// The repository the sample teams work on.

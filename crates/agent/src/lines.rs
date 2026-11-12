@@ -3,7 +3,7 @@
 use std::io;
 use std::string::FromUtf8Error;
 
-use tokio::io::{AsyncBufRead, AsyncWrite};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Why a line could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -39,8 +39,30 @@ pub(crate) async fn read_line<R: AsyncBufRead + Unpin>(
     reader: &mut R,
     max: usize,
 ) -> Result<Option<String>, LineError> {
-    let _ = (reader, max);
-    Ok(None)
+    let mut line: Vec<u8> = Vec::new();
+    loop {
+        let available = reader.fill_buf().await.map_err(LineError::Read)?;
+        if available.is_empty() {
+            return if line.is_empty() {
+                Ok(None)
+            } else {
+                Err(LineError::Truncated)
+            };
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let end = newline.unwrap_or(available.len());
+        if line.len().saturating_add(end) > max {
+            return Err(LineError::TooLong { max });
+        }
+        // `end` is at most the length of `available`, so the slice is there.
+        line.extend_from_slice(available.get(..end).unwrap_or_default());
+        let consumed = if newline.is_some() { end.saturating_add(1) } else { end };
+        reader.consume(consumed);
+        if newline.is_some() {
+            break;
+        }
+    }
+    String::from_utf8(line).map(Some).map_err(LineError::NotUtf8)
 }
 
 /// Writes `line`, which already ends with its newline, and flushes.
@@ -48,8 +70,8 @@ pub(crate) async fn read_line<R: AsyncBufRead + Unpin>(
 /// # Errors
 /// [`LineError::Write`].
 pub(crate) async fn write_line<W: AsyncWrite + Unpin>(writer: &mut W, line: &str) -> Result<(), LineError> {
-    let _ = (writer, line);
-    Ok(())
+    writer.write_all(line.as_bytes()).await.map_err(LineError::Write)?;
+    writer.flush().await.map_err(LineError::Write)
 }
 
 #[cfg(test)]
