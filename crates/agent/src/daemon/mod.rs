@@ -12,20 +12,32 @@
 //! them as interrupted, the notifier delivers what is queued, and the socket is removed.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::config::Language;
 use agent_runtime::clock::SharedClock;
-use agent_runtime::harness_prompts::HarnessPromptsError;
-use agent_runtime::prompts::PromptLoadError;
-use agent_runtime::run::RunTimings;
-use agent_runtime::settings::SettingsError;
-use agent_runtime::store::{Home, StoreError};
+use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
+use agent_runtime::notify::Notifier;
+use agent_runtime::process::Supervisor;
+use agent_runtime::prompts::{PromptLoadError, PromptLoader};
+use agent_runtime::run::{EngineParts, RunEngine, RunTimings};
+use agent_runtime::settings::{Settings, SettingsError};
+use agent_runtime::store::{Home, StateStore, StoreError};
+use rand::SeedableRng;
+use rand::rngs::{StdRng, SysError, SysRng};
 use time::UtcOffset;
+use tokio::sync::{broadcast, mpsc};
+use tokio::task::{JoinError, JoinSet};
 use tokio_util::sync::CancellationToken;
 
+use self::owner::{EVENT_BACKLOG, INBOX, MAX_RUNS, Owner, OwnerError, OwnerParts};
+use self::server::ServerError;
+
 mod notice;
+mod notifier;
+mod owner;
 mod recovery;
+mod server;
 mod settle;
 
 #[cfg(test)]
@@ -79,6 +91,21 @@ pub(crate) enum DaemonError {
     /// The rules cannot be loaded.
     #[error("cannot load the rules")]
     Prompts(#[from] PromptLoadError),
+    /// The operating system gives no entropy for the IDs.
+    #[error("cannot seed the generator of IDs from the operating system")]
+    Entropy(#[source] SysError),
+    /// The socket cannot be made.
+    #[error("cannot make the socket of the daemon")]
+    Socket(#[from] ServerError),
+    /// The socket cannot be removed.
+    #[error("cannot remove the socket of the daemon")]
+    RemoveSocket(#[source] std::io::Error),
+    /// The owner of the state stopped with an error.
+    #[error("the owner of the state stopped")]
+    Owner(#[from] OwnerError),
+    /// The socket server or the notifier failed.
+    #[error("a task of the daemon (the socket server or the notifier) failed")]
+    Join(#[source] JoinError),
 }
 
 /// Runs the daemon until `shutdown` is cancelled.
@@ -86,6 +113,70 @@ pub(crate) enum DaemonError {
 /// # Errors
 /// [`DaemonError`].
 pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Result<(), DaemonError> {
-    let _ = (setup, shutdown, Language::default());
-    Ok(())
+    let store = match StateStore::open(setup.home.clone()).await {
+        Ok(store) => Arc::new(store),
+        Err(StoreError::HomeLocked { path }) => return Err(DaemonError::AlreadyRunning { path }),
+        Err(error) => return Err(error.into()),
+    };
+    let settings = Arc::new(Settings::load(&setup.home).await?);
+    let language = settings.config.language().clone();
+    let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);
+    let rules = Arc::new(PromptLoader::load(&setup.prompts_dir, &language).await?);
+    let state = store.load().await?;
+    let timings = setup.timings.unwrap_or_else(|| Timings {
+        tick: TICK,
+        run: RunTimings::from_config(settings.config.watchdog()),
+    });
+    let rng = StdRng::try_from_rng(&mut SysRng).map_err(DaemonError::Entropy)?;
+    let engine = RunEngine::new(EngineParts {
+        store: Arc::clone(&store),
+        texts: Arc::clone(&texts),
+        config: Arc::new(settings.config.clone()),
+        secrets: Arc::new(settings.secrets.clone()),
+        supervisor: Supervisor::new(MAX_RUNS),
+        clock: setup.clock.clone(),
+        local_offset: setup.local_offset,
+        timings: timings.run,
+    });
+    let notifier = Notifier::from_config(settings.config.notifications(), store.home(), &settings.secrets);
+    let listener = server::bind(&setup.home).await?;
+
+    let (inbox, requests) = mpsc::channel(INBOX);
+    let (notices, deliveries) = mpsc::channel(notifier::QUEUE);
+    let (events, _unused) = broadcast::channel(EVENT_BACKLOG);
+    let mut sides: JoinSet<()> = JoinSet::new();
+    let serving = shutdown.clone();
+    sides.spawn(server::serve(listener, inbox, serving));
+    let delivering = Arc::clone(&texts);
+    sides.spawn(notifier::run(deliveries, delivering, notifier));
+
+    let owner = Owner::new(
+        OwnerParts {
+            store,
+            state,
+            settings,
+            texts,
+            rules,
+            engine,
+            clock: setup.clock.clone(),
+            rng,
+            notices,
+            events,
+            tick: timings.tick,
+        },
+        shutdown.clone(),
+    );
+    let owned_end = owner.run(requests).await;
+    // Whatever ended the owner, the rest of the daemon ends with it.
+    shutdown.cancel();
+    let mut failure = None;
+    while let Some(joined) = sides.join_next().await {
+        if let Err(source) = joined {
+            tracing::error!(%source, "a task of the daemon failed");
+            failure.get_or_insert(DaemonError::Join(source));
+        }
+    }
+    server::remove(&setup.home).await.map_err(DaemonError::RemoveSocket)?;
+    owned_end?;
+    failure.map_or(Ok(()), Err)
 }

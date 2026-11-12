@@ -177,3 +177,22 @@ fn a_pause_that_cannot_be_timed_is_an_error_naming_the_task() {
         "{error:?}"
     );
 }
+
+#[test]
+fn a_clock_set_back_does_not_end_a_run_before_it_started() {
+    let mut state = team_state();
+    start(&mut state, 2, Some("ses-1"));
+
+    let recovery = recover(&mut state, at(5), &limits()).unwrap();
+
+    assert_eq!(recovery.interrupted, [task(2)]);
+    let member = state.find_task(&task(2)).unwrap().member;
+    assert_eq!(
+        member.runs().last().unwrap().state(),
+        &RunState::Ended {
+            at: at(10),
+            end: RunEnd::NoStatus { exit_code: None }
+        },
+        "the run ends when it started at the earliest"
+    );
+}

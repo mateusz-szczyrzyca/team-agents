@@ -19,7 +19,7 @@ pub(super) struct Recovery {
 
 /// Why the state cannot be recovered.
 #[derive(Debug, thiserror::Error)]
-pub(super) enum RecoveryError {
+pub(crate) enum RecoveryError {
     /// A task listed in the state cannot be found in it.
     #[error("task {task} is in the state but cannot be found in it")]
     Missing {
@@ -64,10 +64,11 @@ pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Res
             .ok_or_else(|| RecoveryError::Missing { task: task.clone() })?;
         let was_going = member.current_run().is_some();
         let was_running = member.status() == TaskStatus::Running;
-        if was_going {
-            // No code: the restart ended the process by a signal, or its end was never seen.
+        if let Some(started_at) = member.current_run().map(Run::started_at) {
+            // No code: the restart ended the process by a signal, or its end was never seen. A clock that was set back
+            // since the run started would end it before its start: it ends when it started, at the earliest.
             member
-                .end_run(now, RunEnd::NoStatus { exit_code: None })
+                .end_run(now.max(started_at), RunEnd::NoStatus { exit_code: None })
                 .map_err(|source| RecoveryError::Run {
                     task: task.clone(),
                     source,

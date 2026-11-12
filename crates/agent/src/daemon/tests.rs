@@ -104,9 +104,22 @@ impl Fixture {
 
     /// Starts the daemon and waits until its socket is there.
     async fn start(&mut self) {
-        self.daemon = Some(tokio::spawn(run(self.setup(), self.shutdown.clone())));
+        let daemon = tokio::spawn(run(self.setup(), self.shutdown.clone()));
         let socket = self.home.socket_file();
-        eventually("the socket of the daemon", || socket.exists()).await;
+        let deadline = Instant::now() + PATIENCE;
+        while !socket.exists() {
+            assert!(
+                !daemon.is_finished(),
+                "the daemon ended at its start: {:?}",
+                daemon.await
+            );
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for the socket of the daemon"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        self.daemon = Some(daemon);
     }
 
     /// Stops the daemon and returns how it ended.
@@ -350,6 +363,27 @@ async fn after_the_configured_strikes_the_task_is_hung_and_the_human_is_told() {
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].starts_with("claude-1 is hung"), "{}", notes[0]);
     assert!(notes[0].contains("2 times"), "{}", notes[0]);
+}
+
+#[tokio::test]
+async fn a_clock_set_back_during_a_run_does_not_end_the_daemon() {
+    let mut f = Fixture::new(&solo_state(), 1, "hang").await;
+    f.start().await;
+    let state = f.status_is(TaskStatus::Running).await;
+    let started_at = member_one(&state).runs()[0].started_at();
+
+    f.clock.advance(time::Duration::hours(-1));
+    let state = f.status_is(TaskStatus::Failed).await;
+    f.stop().await.unwrap();
+
+    let run = &member_one(&state).runs()[0];
+    assert_eq!(
+        run.state(),
+        &RunState::Ended {
+            at: started_at,
+            end: RunEnd::Hung
+        }
+    );
 }
 
 // ---- limits ------------------------------------------------------------------------------------------------------

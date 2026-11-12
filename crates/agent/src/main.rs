@@ -11,6 +11,7 @@ use agent_core::ids::InvalidId;
 use agent_core::protocol::Target;
 use clap::{Args, CommandFactory, Parser, Subcommand};
 
+mod chain;
 mod client;
 #[cfg(test)]
 mod command_tests;
@@ -23,6 +24,7 @@ mod lines;
 #[cfg(test)]
 mod testing;
 
+use crate::chain::chain;
 use crate::client::{ClientError, Connection};
 use crate::commands::status::{StatusError, status};
 use crate::environment::{Environment, EnvironmentError};
@@ -153,18 +155,6 @@ where
         }
     };
     Ok(code)
-}
-
-/// The error and its causes on one line.
-fn chain(error: &dyn std::error::Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 /// Runs `command` on a runtime of its own.
