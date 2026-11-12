@@ -106,8 +106,16 @@ pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Res
 
 /// How many of the last `runs` hung in a row. A run a restart interrupted is no strike and does not end the row.
 /// Whether a hung run had made progress is not saved: after a restart, every hang of the row counts.
-const fn trailing_hangs(_runs: &[Run]) -> u32 {
-    0
+fn trailing_hangs(runs: &[Run]) -> u32 {
+    let ends = runs.iter().rev().filter_map(|run| match run.state() {
+        RunState::Ended { end, .. } => Some(end),
+        RunState::Running => None,
+    });
+    let hangs = ends
+        .filter(|end| !matches!(end, RunEnd::NoStatus { exit_code: None }))
+        .take_while(|end| matches!(end, RunEnd::Hung))
+        .count();
+    u32::try_from(hangs).unwrap_or(u32::MAX)
 }
 
 /// When a task whose last run is `last` goes on, if its pause is a provider's limit.
