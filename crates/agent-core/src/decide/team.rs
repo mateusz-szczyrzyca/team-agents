@@ -14,7 +14,7 @@
 //! the explicit coordinator is configured, is not a worker and is one of the requested agents; some requested agent
 //! can take items; a team has a member besides its coordinator; enough investigators stay outside.
 
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 use super::REVIEWS_REQUIRED;
 use crate::config::Config;
@@ -84,10 +84,10 @@ pub enum TeamPlanError {
         workers: Vec<AgentName>,
     },
     /// A team needs a member besides its coordinator, and the others named are workers.
-    #[error("{coordinator} would coordinate, but the others named are workers, which take no items")]
+    #[error("{} would coordinate, but the others named are workers, which take no items", .coordinator.name())]
     NoMember {
         /// The coordinator the team would have.
-        coordinator: AgentName,
+        coordinator: Participant,
         /// The workers named.
         workers: Vec<AgentName>,
     },
@@ -121,17 +121,145 @@ pub enum TeamPlanError {
 ///
 /// # Errors
 /// A [`TeamPlanError`], by the order of checks in the module documentation.
-pub fn plan_team(request: &TeamRequest<'_>, _config: &Config, _rng: &mut impl Rng) -> Result<TeamPlan, TeamPlanError> {
-    let first = request.agents.as_slice().first().cloned();
-    match first {
-        Some(name) => Ok(TeamPlan::Solo {
-            agent: Participant::Normal(name),
-        }),
-        None => Err(TeamPlanError::TooFewInvestigators {
-            configured: 0,
-            required: REVIEWS_REQUIRED,
-        }),
+pub fn plan_team(request: &TeamRequest<'_>, config: &Config, rng: &mut impl Rng) -> Result<TeamPlan, TeamPlanError> {
+    let people = request
+        .agents
+        .as_slice()
+        .iter()
+        .map(|name| resolve(name, config).ok_or_else(|| TeamPlanError::UnknownAgent { name: name.clone() }))
+        .collect::<Result<Vec<_>, _>>()?;
+    let explicit = request
+        .flag_coordinator
+        .or(request.listed_coordinator)
+        .map(|name| explicit_coordinator(name, &people, config))
+        .transpose()?;
+    let takers = || people.iter().filter(|person| takes_items(person));
+    let coordinator = match explicit {
+        Some(coordinator) => Some(coordinator),
+        None => draw(takers().filter(|person| is_investigator(person)), rng).or_else(|| draw(takers(), rng)),
+    };
+    let Some(coordinator) = coordinator else {
+        return Err(TeamPlanError::OnlyWorkers {
+            workers: worker_names(people.iter()),
+        });
+    };
+    let in_team = people.iter().filter(|person| is_investigator(person)).count();
+    let plan = match people.as_slice() {
+        [only] => TeamPlan::Solo { agent: only.clone() },
+        _ => TeamPlan::Team(roster(&coordinator, &people, config)?),
+    };
+    check_reviewers(in_team, config)?;
+    Ok(plan)
+}
+
+/// The people of a team of more than one agent, with `coordinator` coordinating.
+fn roster(coordinator: &Participant, people: &[Participant], config: &Config) -> Result<TeamRoster, TeamPlanError> {
+    let members: Vec<Participant> = people
+        .iter()
+        .filter(|person| takes_items(person) && *person != coordinator)
+        .cloned()
+        .collect();
+    let workers: Vec<Participant> = config
+        .worker_agents()
+        .iter()
+        .map(|name| Participant::Worker(name.clone()))
+        .filter(|worker| people.contains(worker))
+        .collect();
+    if members.is_empty() {
+        return Err(TeamPlanError::NoMember {
+            coordinator: coordinator.clone(),
+            workers: worker_names(workers.iter()),
+        });
     }
+    Ok(TeamRoster {
+        coordinator: coordinator.clone(),
+        members,
+        workers,
+    })
+}
+
+/// The participant the configuration knows as `name`: a normal agent, a worker or an investigator.
+fn resolve(name: &AgentName, config: &Config) -> Option<Participant> {
+    if config.normal_agents().contains(name) {
+        return Some(Participant::Normal(name.clone()));
+    }
+    if config.worker_agents().contains(name) {
+        return Some(Participant::Worker(name.clone()));
+    }
+    config
+        .investigators()
+        .keys()
+        .find(|investigator| investigator.as_str() == name.as_str())
+        .map(|investigator| Participant::Investigator(investigator.clone()))
+}
+
+/// The coordinator `name` asked for, if it may coordinate: configured, not a worker, and among the `people` named.
+fn explicit_coordinator(
+    name: &AgentName,
+    people: &[Participant],
+    config: &Config,
+) -> Result<Participant, TeamPlanError> {
+    let participant = resolve(name, config).ok_or_else(|| TeamPlanError::UnknownAgent { name: name.clone() })?;
+    if !takes_items(&participant) {
+        return Err(TeamPlanError::WorkerCoordinator { name: name.clone() });
+    }
+    if !people.contains(&participant) {
+        return Err(TeamPlanError::CoordinatorNotRequested { name: name.clone() });
+    }
+    Ok(participant)
+}
+
+/// Draws one of `candidates`, each as likely as the others; `None` when there is none.
+///
+/// Reservoir sampling: the n-th candidate replaces the pick with probability 1/n, so no candidate is looked up by an
+/// index and the draw needs no unchecked access.
+fn draw<'a>(mut candidates: impl Iterator<Item = &'a Participant>, rng: &mut impl Rng) -> Option<Participant> {
+    let mut pick = candidates.next()?;
+    for (n, candidate) in (2_u32..).zip(candidates) {
+        if rng.random_range(0..n) == 0 {
+            pick = candidate;
+        }
+    }
+    Some(pick.clone())
+}
+
+/// Checks that the investigators the team does not have are enough for the reviews of its pull requests.
+fn check_reviewers(in_team: usize, config: &Config) -> Result<(), TeamPlanError> {
+    let configured = config.investigators().len();
+    if configured.saturating_sub(in_team) >= REVIEWS_REQUIRED {
+        return Ok(());
+    }
+    if in_team == 0 {
+        return Err(TeamPlanError::TooFewInvestigators {
+            configured,
+            required: REVIEWS_REQUIRED,
+        });
+    }
+    Err(TeamPlanError::TooManyInvestigators {
+        in_team,
+        configured,
+        required: REVIEWS_REQUIRED,
+    })
+}
+
+/// Whether `person` may coordinate and take items: everyone but a worker.
+const fn takes_items(person: &Participant) -> bool {
+    !matches!(person, Participant::Worker(_))
+}
+
+/// Whether `person` is an investigator.
+const fn is_investigator(person: &Participant) -> bool {
+    matches!(person, Participant::Investigator(_))
+}
+
+/// The names of the workers among `people`, in the order given.
+fn worker_names<'a>(people: impl Iterator<Item = &'a Participant>) -> Vec<AgentName> {
+    people
+        .filter_map(|person| match person {
+            Participant::Worker(name) => Some(name.clone()),
+            Participant::Normal(_) | Participant::Investigator(_) => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -169,8 +297,25 @@ normal = ["claude-1", "codex-1", "gemini-1"]
 workers = ["glm", "qwen"]
 "#;
 
-    /// The configuration with two investigators, for the cases that leave too few outside a team.
+    /// The configuration with two investigators and a worker, for the cases that leave too few outside a team.
     const TWO_INVESTIGATORS: &str = r#"
+[agents.claude-1]
+cli = "claude"
+[agents.codex-1]
+cli = "codex"
+[agents.glm]
+cli = "opencode"
+[investigators.inv-opus]
+cli = "claude"
+[investigators.inv-codex]
+cli = "codex"
+[tiers]
+normal = ["claude-1", "codex-1"]
+workers = ["glm"]
+"#;
+
+    /// The configuration with four investigators: a team may have two and leave two outside.
+    const FOUR_INVESTIGATORS: &str = r#"
 [agents.claude-1]
 cli = "claude"
 [agents.codex-1]
@@ -179,6 +324,10 @@ cli = "codex"
 cli = "claude"
 [investigators.inv-codex]
 cli = "codex"
+[investigators.inv-gemini]
+cli = "gemini"
+[investigators.inv-glm]
+cli = "opencode"
 [tiers]
 normal = ["claude-1", "codex-1"]
 "#;
@@ -263,9 +412,14 @@ normal = ["claude-1"]
     }
 
     /// The coordinators that seeds 0 to 63 give for the team of `names` in `CONFIG`.
-    fn coordinators_over_seeds(names: &[&str]) -> BTreeSet<String> {
+    fn coordinators_over_seeds(text: &str, names: &[&str]) -> BTreeSet<String> {
         (0..64)
-            .map(|seed| roster(plan(names, None, None, seed)).coordinator.name().to_owned())
+            .map(|seed| {
+                roster(plan_in(text, names, None, None, seed))
+                    .coordinator
+                    .name()
+                    .to_owned()
+            })
             .collect()
     }
 
@@ -361,9 +515,15 @@ normal = ["claude-1"]
     // Rule: among two or more investigators the coordinator is drawn, and only among them.
     #[test]
     fn the_coordinator_is_drawn_among_the_investigators_of_the_team() {
-        let drawn = coordinators_over_seeds(&["claude-1", "inv-opus", "codex-1", "inv-codex"]);
+        let drawn = coordinators_over_seeds(FOUR_INVESTIGATORS, &["claude-1", "inv-opus", "codex-1", "inv-codex"]);
         assert_eq!(drawn, BTreeSet::from(["inv-opus".to_owned(), "inv-codex".to_owned()]));
-        let team = roster(plan(&["claude-1", "inv-opus", "codex-1", "inv-codex"], None, None, 1));
+        let team = roster(plan_in(
+            FOUR_INVESTIGATORS,
+            &["claude-1", "inv-opus", "codex-1", "inv-codex"],
+            None,
+            None,
+            1,
+        ));
         assert_eq!(team.members.len(), 3);
         assert!(!team.members.contains(&team.coordinator));
     }
@@ -380,7 +540,7 @@ normal = ["claude-1"]
     // Rule: without investigators a normal agent coordinates, drawn among the normal agents named.
     #[test]
     fn a_normal_agent_is_drawn_when_no_investigator_is_in_the_team() {
-        let drawn = coordinators_over_seeds(&["claude-1", "codex-1", "gemini-1"]);
+        let drawn = coordinators_over_seeds(CONFIG, &["claude-1", "codex-1", "gemini-1"]);
         assert_eq!(
             drawn,
             BTreeSet::from(["claude-1".to_owned(), "codex-1".to_owned(), "gemini-1".to_owned()])
@@ -390,7 +550,7 @@ normal = ["claude-1"]
     // Rule: workers never coordinate, whatever the draw.
     #[test]
     fn a_worker_is_never_drawn_as_coordinator() {
-        let drawn = coordinators_over_seeds(&["glm", "claude-1", "qwen", "codex-1"]);
+        let drawn = coordinators_over_seeds(CONFIG, &["glm", "claude-1", "qwen", "codex-1"]);
         assert_eq!(drawn, BTreeSet::from(["claude-1".to_owned(), "codex-1".to_owned()]));
     }
 
@@ -474,7 +634,7 @@ normal = ["claude-1"]
         assert_eq!(
             plan(&["claude-1", "glm", "qwen"], None, None, 0),
             Err(TeamPlanError::NoMember {
-                coordinator: name("claude-1"),
+                coordinator: normal("claude-1"),
                 workers: vec![name("glm"), name("qwen")]
             })
         );
@@ -597,7 +757,7 @@ normal = ["claude-1"]
         assert_eq!(
             plan_in(TWO_INVESTIGATORS, &["inv-opus", "glm"], None, None, 0),
             Err(TeamPlanError::NoMember {
-                coordinator: name("inv-opus"),
+                coordinator: investigator("inv-opus"),
                 workers: vec![name("glm")]
             })
         );
