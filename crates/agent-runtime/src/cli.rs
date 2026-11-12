@@ -7,8 +7,11 @@
 //! four, and the run engine relies on them:
 //!
 //! - **MCP servers.** `RunRequest::mcp_servers` carries the complete command of every server the run is given. The one
-//!   thing an adapter adds is Serena's `--context <client>`, which depends on the CLI. A server that is not given is
-//!   not configured: the run gets none. What an adapter puts inside the worktree (`.agents/mcp_config.json`) or
+//!   thing an adapter adds is Serena's `--context <client>`, which depends on the CLI. An adapter
+//!   configures only the servers of the request and adds none of its own, but it does not shut out the human's: a CLI
+//!   merges its own user and project configuration with what the adapter gives it (Claude Code, Codex and opencode do),
+//!   so a server that is not given can still be there. The one exception is a Claude Code run with no server at all,
+//!   which gets `--strict-mcp-config`. What an adapter puts inside the worktree (`.agents/mcp_config.json`) or
 //!   Serena's folder there (`.serena/`) is listed in
 //!   [`RunSpec::worktree_excludes`](agent_core::cli::RunSpec::worktree_excludes). The runtime creates the directories
 //!   of a [`RunFile`] before it writes it.
