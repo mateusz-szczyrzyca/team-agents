@@ -106,7 +106,34 @@ its failures name the file.
 An adapter is pure: `CliAdapter::build_run` turns a `RunRequest` into a `RunSpec` (program, arguments, environment,
 the files to write first, what to keep out of git), the runtime starts it, feeds the CLI's stdout line by line into
 an `OutputParser` and its stderr at the end, and gets the final message, the session ID, how the stream says the run
-ended and the error tail. The adapters of the four CLIs come with feature 5.
+ended and the error tail.
+
+### The adapters (`agent-runtime`)
+
+`agent_runtime::cli` has one `CliAdapter` per CLI — `claude::ClaudeAdapter`, `codex::CodexAdapter`,
+`agy::AgyAdapter` (`CliKind::Gemini`), `opencode::OpencodeAdapter` — and `adapter_for(CliKind)`, which the run engine
+uses to pick one from the configuration. The module's documentation lists the rules all four follow; the ones the run
+engine relies on:
+
+| Per CLI | New run | Resumed run | MCP servers | Final message |
+|---|---|---|---|---|
+| Claude Code | `claude -p --output-format stream-json --verbose … --session-id ID` | `--resume ID` | `mcp.json` and `claude-settings.json` in the run's directory | the `result` event |
+| Codex | `codex exec --json … -C DIR -c mcp_servers.…` | `… resume ID PROMPT` | `-c` settings (TOML) | the last message of a completed turn |
+| Antigravity | `agy --output-format stream-json … --print-timeout 8h -p PROMPT` | `--conversation ID` | `.agents/mcp_config.json` in the worktree, kept out of git | the `result` event |
+| opencode | `opencode run --standalone --format json --auto … -- PROMPT` | `--session ID` | `OPENCODE_CONFIG_CONTENT` (and a copy in the run's directory) | the last `text` |
+
+- The request carries each MCP server's whole command line; the adapter adds only Serena's `--context <client>`
+  (`claude-code`, `codex`, `antigravity`, `ide`). A server that is not in the request is not configured.
+- The error tail is the CLI's stderr followed by the lines of the stream that report an error: the classifier of run
+  outcomes reads only the tail, and opencode reports a provider's refusal on stdout.
+- The quirk settings are constants of the adapters: Claude's turn limit (300) and Bash timeout (20 minutes), `agy`'s
+  print timeout (8 hours), opencode's Bash timeout (10 minutes). Other flags, such as `--effort high`, are the
+  agent's `args`.
+- Not in the adapters, because they are not pure: laying down a `RunFile` (creating its directories), keeping
+  `worktree_excludes` out of git, a prompt too long for one command-line argument, and opencode's `session export`
+  for a resumed session whose result it did not print. They come with the run engine (6.1).
+- Recorded output of each CLI is in `crates/agent-runtime/tests/fixtures/cli/`; its README says which files were
+  recorded and which were written by hand.
 
 ### The decisions (`agent-core`)
 
