@@ -14,8 +14,8 @@ mod github_client {
     use agent_core::state::{CommitId, PrNumber};
     use agent_core::status::ReviewVerdict;
     use agent_runtime::github::{
-        ApiBase, GitHub, GitHubError, GitHubOperation, GitHubSettings, InvalidApiBase, InvalidRepoSlug, Jitter,
-        MergeMethod, MergeRequest, Mergeable, NewPullRequest, NewReview, Origin, PullRequestUpdate, PullState,
+        ApiBase, CommentReview, GitHub, GitHubError, GitHubOperation, GitHubSettings, InvalidApiBase, InvalidRepoSlug,
+        Jitter, MergeMethod, MergeRequest, Mergeable, NewPullRequest, NewReview, Origin, PullRequestUpdate, PullState,
         Readiness, Rejection, RemotePullRequest, RepoSlug, RetryPolicy, ReviewState, StateChange,
     };
     use serde_json::{Value, json};
@@ -871,6 +871,62 @@ mod github_client {
                 json!({"event": event, "body": "Checked the diff.", "commit_id": HEAD})
             );
         }
+    }
+
+    #[tokio::test]
+    async fn post_comment_review_sends_a_comment_event_for_the_head_it_is_about() {
+        let server = FakeServer::always(reply(200, &review_json(56, "ms-ai-agents", "COMMENTED")))
+            .await
+            .unwrap();
+        let review = CommentReview {
+            body: "VERDICT: approve. Zażółć gęślą jaźń.".to_owned(),
+            commit: commit(HEAD),
+        };
+
+        let posted = github(&server).post_comment_review(number(7), &review).await.unwrap();
+
+        assert_eq!(
+            (posted.id, posted.author.as_str(), posted.state),
+            (56, "ms-ai-agents", ReviewState::Commented)
+        );
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1);
+        let request = requests.first().unwrap();
+        assert_eq!(
+            (request.method.as_str(), request.target.as_str()),
+            ("POST", "/repos/octo/widgets/pulls/7/reviews")
+        );
+        assert_eq!(
+            body_of(request),
+            json!({"event": "COMMENT", "body": "VERDICT: approve. Zażółć gęślą jaźń.", "commit_id": HEAD})
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn post_comment_review_is_made_once() {
+        let server = FakeServer::always(reply(503, &json!({}))).await.unwrap();
+        let review = CommentReview {
+            body: "x".to_owned(),
+            commit: commit(HEAD),
+        };
+
+        let error = github(&server)
+            .post_comment_review(number(7), &review)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                error,
+                GitHubError::Status {
+                    operation: GitHubOperation::PostReview,
+                    reason: Rejection::Server,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert_eq!(server.requests().len(), 1);
     }
 
     #[tokio::test]

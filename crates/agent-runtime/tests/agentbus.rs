@@ -1021,7 +1021,10 @@ mod agentbus_commands {
         assert_eq!(status.reservations.len(), 1);
         let reservation = status.reservations.first().unwrap();
         assert!(reservation.starts_with("- lab: claude-1"), "{reservation}");
-        assert!(reservation.ends_with("purpose: flashing\nthe second board"), "{reservation}");
+        assert!(
+            reservation.ends_with("purpose: flashing\nthe second board"),
+            "{reservation}"
+        );
     }
 
     // ------------------------------------------------------------ what can go wrong with the process

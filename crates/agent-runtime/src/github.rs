@@ -617,6 +617,17 @@ pub struct NewReview {
     pub commit: CommitId,
 }
 
+/// A review that is only a comment: it carries no verdict. GitHub refuses `APPROVE` and `REQUEST_CHANGES` by the
+/// author of a pull request, and the harness opens its pull requests and posts its reviews with one account, so the
+/// verdict of such a review is in its `body`, for the caller to read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentReview {
+    /// What the review says.
+    pub body: String,
+    /// The head the review is about.
+    pub commit: CommitId,
+}
+
 /// What state a posted review is in; GitHub writes it in capitals, such as `CHANGES_REQUESTED`.
 #[derive(
     Debug,
@@ -1017,6 +1028,32 @@ impl GitHub {
         let operation = GitHubOperation::PostReview;
         let body = json!({
             "event": review.verdict.to_string(),
+            "body": review.body,
+            "commit_id": review.commit.as_str(),
+        });
+        let answer = self
+            .call(Call {
+                operation,
+                method: Method::POST,
+                path: self.repo_path(&format!("pulls/{number}/reviews")),
+                body: Some(body.to_string()),
+                idempotency: Idempotency::Once,
+            })
+            .await?;
+        let raw: RawReview = decode(operation, &answer)?;
+        let author = raw.author_or_decode_error(operation)?;
+        Ok(raw.into_review(author))
+    }
+
+    /// Posts a review that is only a comment, with no verdict: what the author of a pull request can post on it.
+    /// Not retried.
+    ///
+    /// # Errors
+    /// The errors of a call.
+    pub async fn post_comment_review(&self, number: PrNumber, review: &CommentReview) -> Result<Review, GitHubError> {
+        let operation = GitHubOperation::PostReview;
+        let body = json!({
+            "event": "APPROVE",
             "body": review.body,
             "commit_id": review.commit.as_str(),
         });
