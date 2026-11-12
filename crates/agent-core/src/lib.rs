@@ -46,6 +46,7 @@ macro_rules! version_type {
     };
 }
 
+pub mod cli;
 pub mod config;
 pub mod ids;
 pub mod kinds;
