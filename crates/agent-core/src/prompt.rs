@@ -264,7 +264,6 @@ impl Template {
                 parts.push(Part::Text(std::mem::take(&mut literal)));
             }
             parts.push(Part::Variable(name));
-            line += count_lines(inner);
             rest = after_close;
         }
         literal.push_str(rest);
