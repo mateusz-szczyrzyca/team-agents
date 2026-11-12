@@ -39,6 +39,7 @@ mod owner;
 mod recovery;
 mod server;
 mod settle;
+mod team;
 
 #[cfg(test)]
 mod tests;
