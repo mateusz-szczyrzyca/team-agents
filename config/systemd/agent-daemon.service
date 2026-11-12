@@ -1,0 +1,29 @@
+# agent-daemon.service — the daemon of the Rust `agent` as a systemd user service (docs/architecture.md, "The daemon").
+#
+# Install it for your user:
+#   mkdir -p ~/.config/systemd/user
+#   cp config/systemd/agent-daemon.service ~/.config/systemd/user/
+#   (edit ExecStart to where `agent` is installed and AGENTS_HOME to the home with agents.toml, secrets.toml and prompts/)
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agent-daemon
+#
+# `systemctl --user stop agent-daemon` sends SIGTERM: the daemon stops its runs whole and records them as interrupted,
+# so that the next start resumes them from their sessions.
+
+[Unit]
+Description=team-agents daemon: the owner of the state and of every model run
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=AGENTS_HOME=%h/agents-rs
+ExecStart=%h/.local/bin/agent daemon
+# SIGTERM goes to the daemon alone; it ends its runs itself. Whatever is still alive when the time is up is killed.
+KillMode=mixed
+TimeoutStopSec=60
+# A daemon that stopped with an error starts again, and recovers what it left half done; one that was stopped stays so.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
