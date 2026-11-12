@@ -353,6 +353,24 @@ mod run_engine {
     }
 
     #[tokio::test]
+    async fn a_run_that_ends_by_itself_leaves_no_process_it_started() {
+        let env = env().await;
+
+        let run = env.finished("done-child").await;
+
+        assert_eq!(
+            run.classified.end,
+            RunEnd::Reported {
+                outcome: RunOutcome::Done
+            }
+        );
+        assert_eq!(run.finish.stopped_by, StoppedBy::Nobody);
+        // The signal is delivered a moment after it is sent.
+        let child = env.child();
+        eventually("the child of the run to be gone", || is_gone(child)).await;
+    }
+
+    #[tokio::test]
     async fn a_cancelled_run_is_stopped_whole_and_keeps_its_session() {
         let env = env().await;
         let cancel = CancellationToken::new();

@@ -4,6 +4,7 @@
 # by a test, so that no test races an `exec` of a file that is still open for writing.
 #
 #   done                  a short run that ends with STATUS: DONE
+#   done-child            ends like `done`, leaving a child behind (pid in .fake-child)
 #   fail                  ends with STATUS: FAILED
 #   nostatus              ends cleanly without a STATUS line
 #   crash                 exits with status 3 and prints nothing
@@ -53,6 +54,11 @@ finish_done() {
 
 case $scenario in
   done) finish_done ;;
+  done-child)
+    sleep 600 &
+    echo $! > .fake-child
+    finish_done
+    ;;
   fail) init; result false 'I could not do it.\nSTATUS: FAILED' ;;
   nostatus) init; result false 'I think that is all.' ;;
   crash) exit 3 ;;
