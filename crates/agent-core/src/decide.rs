@@ -6,6 +6,7 @@
 //! what the daemon is to do, never doing it: no file, process or network is touched here (`docs/architecture.md`).
 
 pub mod assign;
+pub mod outcome;
 pub mod round;
 pub mod team;
 
