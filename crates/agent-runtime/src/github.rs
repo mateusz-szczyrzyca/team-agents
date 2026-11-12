@@ -924,7 +924,8 @@ impl GitHub {
     /// REST API cannot do it, so this is a GraphQL mutation. The mutation is not retried.
     ///
     /// # Errors
-    /// [`GitHubError::GraphQl`] and the errors of a call.
+    /// [`GitHubError::GraphQl`] when GraphQL refuses, [`GitHubError::StillDraft`] when it answers that the pull
+    /// request is a draft still, [`GitHubError::Decode`] for an answer with no result, and the errors of a call.
     pub async fn mark_ready(&self, number: PrNumber) -> Result<(), GitHubError> {
         let operation = GitHubOperation::MarkReady;
         let pull = self.read_pull(operation, number).await?;
@@ -945,13 +946,23 @@ impl GitHub {
             })
             .await?;
         let reply: GraphQlReply = decode(operation, &answer)?;
-        match reply.errors.into_iter().next() {
-            Some(first) => Err(GitHubError::GraphQl {
+        if let Some(first) = reply.errors.into_iter().next() {
+            return Err(GitHubError::GraphQl {
                 operation,
                 message: first.message.chars().take(MAX_MESSAGE_CHARS).collect(),
-            }),
-            None => Ok(()),
+            });
         }
+        // No error is not success: the answer has to say that the pull request is out of draft.
+        let Some(data) = reply.data else {
+            return Err(GitHubError::Decode {
+                operation,
+                source: serde_json::Error::custom("the answer has neither errors nor data"),
+            });
+        };
+        if data.ready.pull_request.is_draft {
+            return Err(GitHubError::StillDraft { operation });
+        }
+        Ok(())
     }
 
     /// Merges a pull request at `request.expected_head`. Not retried: a second try after a lost answer would be
@@ -1287,6 +1298,33 @@ struct GraphQlReply {
     /// The errors it reports; none when it worked.
     #[serde(default)]
     errors: Vec<GraphQlMessage>,
+    /// The result of the mutation; none when it failed, or when the answer has no `data`.
+    #[serde(default)]
+    data: Option<MarkReadyData>,
+}
+
+/// The `data` of the answer to the mutation that marks a pull request ready.
+#[derive(Deserialize)]
+struct MarkReadyData {
+    /// The payload of the mutation.
+    #[serde(rename = "markPullRequestReadyForReview")]
+    ready: MarkReadyPayload,
+}
+
+/// The payload of the mutation that marks a pull request ready.
+#[derive(Deserialize)]
+struct MarkReadyPayload {
+    /// The pull request as it is after the mutation.
+    #[serde(rename = "pullRequest")]
+    pull_request: DraftFlag,
+}
+
+/// Whether the pull request is a draft, as GraphQL writes it.
+#[derive(Deserialize)]
+struct DraftFlag {
+    /// True while it is a draft.
+    #[serde(rename = "isDraft")]
+    is_draft: bool,
 }
 
 /// One error of a GraphQL answer.
