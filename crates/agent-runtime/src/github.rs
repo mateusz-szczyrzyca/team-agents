@@ -392,17 +392,6 @@ pub enum GitHubError {
         /// What the client said.
         source: reqwest::Error,
     },
-    /// The token has a character an HTTP header cannot carry. The token is not repeated here.
-    #[error("the GitHub token cannot be sent in an HTTP header")]
-    InvalidToken,
-    /// The request could not be encoded.
-    #[error("cannot encode the request of {operation}")]
-    Encode {
-        /// The call.
-        operation: GitHubOperation,
-        /// What the encoder said.
-        source: serde_json::Error,
-    },
     /// The network failed the call, or the connection broke.
     #[error("{operation} failed after {attempts} attempt(s)")]
     Transport {
