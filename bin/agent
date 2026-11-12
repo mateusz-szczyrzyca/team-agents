@@ -689,6 +689,7 @@ AGENT_REVIEW_GATE="${AGENT_REVIEW_GATE:-auto}"        # the gate's command: auto
 AGENT_REVIEW_GATE_MIN="${AGENT_REVIEW_GATE_MIN:-30}"  # its time limit, in minutes
 AGENT_STAGE_POLL_SEC="${AGENT_STAGE_POLL_SEC:-2}"     # how often the gate's progress is shown on the dashboard
 AGENT_PRECHECK_MAX="${AGENT_PRECHECK_MAX:-2}"         # how many times a round goes back for its gate or its tests
+AGENT_PRECHECK_TESTS="${AGENT_PRECHECK_TESTS:-on}"    # off: a round that changes code without a new test is not sent back
 # agent gate: one gate run at a time on the machine (AGENTS_HOME/gate.lock), the precheck's included; a run holding the
 # lock longer than this many minutes is taken for hung: stopped, and the lock taken over
 AGENT_GATE_STALE_MIN="${AGENT_GATE_STALE_MIN:-10}"
@@ -2834,7 +2835,9 @@ review_precheck() { # coordinator task id — before a review: the round's head 
   meta_set "$id" ROUND_TESTS "$tc"
   local no_new_tests
   no_new_tests=$(grep -m 1 -iE '^[[:space:]>*-]*No new tests:[[:space:]]*[^[:space:]]' "$TASKS/$id/task.md" 2> /dev/null) || no_new_tests=""
-  if [[ $tc == "code=1 added=0 "* && -n $no_new_tests ]]; then   # the human's task says why none: a refactoring
+  if [[ $tc == "code=1 added=0 "* && $AGENT_PRECHECK_TESTS == off ]]; then   # the human turned the rule off
+    log_info precheck_tests_off "task=$id"
+  elif [[ $tc == "code=1 added=0 "* && -n $no_new_tests ]]; then   # the human's task says why none: a refactoring
     log_info precheck_no_new_tests "task=$id" "reason=${no_new_tests:0:200}"
   elif [[ $tc == "code=1 added=0 "* ]]; then
     why="the round changes code but adds no test — every change of behaviour needs its test, written first (a task that changes no behaviour says so on a line \"No new tests: <why>\")"
