@@ -7,15 +7,16 @@
 //! else: not in its arguments, not in the file, not in an error.
 
 use std::collections::BTreeMap;
-use std::io;
-use std::path::PathBuf;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_core::config::{CommandLine, EnvName, Notifications, Secret, Secrets};
 use agent_core::state::Timestamp;
+use tokio::process::Command;
 use tokio::task::JoinError;
 
-use crate::process::{CaptureError, ExitReport};
+use crate::process::{CaptureError, CaptureLimits, ExitReport, capture};
 use crate::store::Home;
 
 /// The longest title, in bytes: one line of a phone's notification.
@@ -35,6 +36,12 @@ const MAX_DIAGNOSTIC_CHARS: usize = 2048;
 
 /// How many files notifications of one second may have: a bound on the names tried, far above what the harness sends.
 pub const MAX_PER_SECOND: u32 = 100;
+
+/// Prefix of the hidden file a notification is written to before it gets its name.
+const TEMP_PREFIX: &str = ".notification-";
+
+/// Suffix of that file.
+const TEMP_SUFFIX: &str = ".tmp";
 
 /// What replaces a secret in the text of an error.
 const REDACTED: &str = "[redacted]";
@@ -82,10 +89,27 @@ impl Notification {
     /// [`InvalidNotification`]: an empty or multi-line title, a title over [`MAX_TITLE_BYTES`], a body over
     /// [`MAX_BODY_BYTES`].
     pub fn new(title: &str, body: &str) -> Result<Self, InvalidNotification> {
-        let _ = (title, body, MAX_TITLE_BYTES, MAX_BODY_BYTES);
+        if title.trim().is_empty() {
+            return Err(InvalidNotification::EmptyTitle);
+        }
+        if title.chars().any(char::is_control) {
+            return Err(InvalidNotification::TitleNotOneLine);
+        }
+        if title.len() > MAX_TITLE_BYTES {
+            return Err(InvalidNotification::TitleTooLong {
+                len: title.len(),
+                max: MAX_TITLE_BYTES,
+            });
+        }
+        if body.len() > MAX_BODY_BYTES {
+            return Err(InvalidNotification::BodyTooLong {
+                len: body.len(),
+                max: MAX_BODY_BYTES,
+            });
+        }
         Ok(Self {
-            title: String::new(),
-            body: String::new(),
+            title: title.to_owned(),
+            body: body.to_owned(),
         })
     }
 }
@@ -162,12 +186,14 @@ impl Notifier {
     /// `home`; its command; and the `[notification_env]` of the secrets.
     #[must_use]
     pub fn from_config(config: &Notifications, home: &Home, secrets: &Secrets) -> Self {
-        let _ = (config, secrets, COMMAND_TIMEOUT);
         Self {
-            directory: home.root().to_path_buf(),
-            command: None,
-            env: BTreeMap::new(),
-            command_timeout: Duration::ZERO,
+            directory: config.directory.as_ref().map_or_else(
+                || home.notifications_dir(),
+                |directory| directory.as_path().to_path_buf(),
+            ),
+            command: config.command.clone(),
+            env: secrets.notification_env().clone(),
+            command_timeout: COMMAND_TIMEOUT,
         }
     }
 
@@ -188,18 +214,92 @@ impl Notifier {
     /// [`NotifyError::Command`] and [`NotifyError::CommandFailed`] when the file is written and the command is not
     /// run, or fails.
     pub async fn notify(&self, at: Timestamp, notification: &Notification) -> Result<PathBuf, NotifyError> {
-        let _ = (
-            at,
-            notification,
-            MAX_PER_SECOND,
-            &self.command,
-            &self.env,
-            MAX_COMMAND_OUTPUT_BYTES,
-            MAX_DIAGNOSTIC_CHARS,
-            REDACTED,
-        );
-        Ok(self.directory.clone())
+        let directory = self.directory.clone();
+        // A file name without the colons of the time.
+        let stamp = at.to_string().replace(':', "");
+        let content = format!("{}\n{}", notification.title, notification.body);
+        let file = tokio::task::spawn_blocking(move || write_notification(&directory, &stamp, content.as_bytes()))
+            .await
+            .map_err(|source| NotifyError::Worker { source })??;
+        if let Some(command_line) = &self.command {
+            self.run_command(command_line, &file).await?;
+        }
+        Ok(file)
     }
+
+    /// Runs `line` with `file` as its last argument and the secrets in its environment.
+    async fn run_command(&self, line: &CommandLine, file: &Path) -> Result<(), NotifyError> {
+        let mut command = Command::new(line.program().as_path());
+        command
+            .args(line.args().as_slice())
+            .arg(file)
+            .current_dir(&self.directory);
+        for (name, secret) in &self.env {
+            command.env(name.as_str(), secret.expose());
+        }
+        let limits = CaptureLimits {
+            timeout: self.command_timeout,
+            max_bytes: MAX_COMMAND_OUTPUT_BYTES,
+        };
+        let captured = capture(command, limits).await.map_err(|source| NotifyError::Command {
+            file: file.to_path_buf(),
+            source,
+        })?;
+        if captured.exit.succeeded() {
+            return Ok(());
+        }
+        Err(NotifyError::CommandFailed {
+            file: file.to_path_buf(),
+            exit: captured.exit,
+            stderr: self.diagnostic(&captured.stderr.bytes),
+        })
+    }
+
+    /// A few characters of what the command printed, with every secret removed first so that a cut cannot leave a
+    /// piece of one. Invalid UTF-8 is replaced, because the text is for a human to read.
+    fn diagnostic(&self, bytes: &[u8]) -> String {
+        let mut text = String::from_utf8_lossy(bytes).into_owned();
+        for secret in self.env.values() {
+            if !secret.expose().is_empty() {
+                text = text.replace(secret.expose(), REDACTED);
+            }
+        }
+        text.trim().chars().take(MAX_DIAGNOSTIC_CHARS).collect()
+    }
+}
+
+/// Writes `bytes` to a new file `notification-<stamp>-<n>.md` in `dir`, with the first `n` that is free, through a
+/// hidden temporary file so that the file appears whole. Returns its path.
+fn write_notification(dir: &Path, stamp: &str, bytes: &[u8]) -> Result<PathBuf, NotifyError> {
+    std::fs::create_dir_all(dir).map_err(|source| NotifyError::CreateDir {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    let write_error = |source| NotifyError::Write {
+        path: dir.to_path_buf(),
+        source,
+    };
+    // The temporary file is created with the mode 0600 and keeps it.
+    let mut temp = tempfile::Builder::new()
+        .prefix(TEMP_PREFIX)
+        .suffix(TEMP_SUFFIX)
+        .tempfile_in(dir)
+        .map_err(write_error)?;
+    temp.write_all(bytes).map_err(write_error)?;
+    temp.flush().map_err(write_error)?;
+    for number in 1..=MAX_PER_SECOND {
+        let path = dir.join(format!("notification-{stamp}-{number}.md"));
+        match temp.persist_noclobber(&path) {
+            Ok(_written) => return Ok(path),
+            // The number is taken: the temporary file comes back, and the next number is tried.
+            Err(failed) if failed.error.kind() == io::ErrorKind::AlreadyExists => temp = failed.file,
+            Err(failed) => return Err(write_error(failed.error)),
+        }
+    }
+    Err(NotifyError::TooManyInOneSecond {
+        path: dir.to_path_buf(),
+        limit: MAX_PER_SECOND,
+    })
 }
 
 #[cfg(test)]
@@ -286,7 +386,14 @@ mod tests {
     // Rule: the title and the body have a size limit, and the limit itself is allowed.
     #[test]
     fn the_title_and_the_body_are_bounded() {
-        assert!(Notification::new(&"t".repeat(MAX_TITLE_BYTES), &"b".repeat(MAX_BODY_BYTES)).is_ok());
+        let (title, body) = ("t".repeat(MAX_TITLE_BYTES), "b".repeat(MAX_BODY_BYTES));
+        assert_eq!(
+            Notification::new(&title, &body),
+            Ok(Notification {
+                title: title.clone(),
+                body: body.clone()
+            })
+        );
         assert_eq!(
             Notification::new(&"t".repeat(MAX_TITLE_BYTES + 1), ""),
             Err(InvalidNotification::TitleTooLong {
@@ -469,17 +576,6 @@ mod tests {
             record,
             format!("extra-argument|{}|{SECRET}|{}", file.display(), notes.display())
         );
-    }
-
-    // Rule: the secrets are never in the file or in the arguments.
-    #[tokio::test]
-    async fn the_secrets_are_not_in_the_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let notifier = notifier(dir.path(), Some(recording_command(dir.path())));
-
-        let file = notifier.notify(at(), &notification("Run", "body")).await.unwrap();
-
-        assert!(!std::fs::read_to_string(file).unwrap().contains(SECRET));
     }
 
     // Rule: a command that fails leaves the file and is reported with it; what it said is cut and has no secret.

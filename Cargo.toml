@@ -22,7 +22,7 @@ strum = { version = "0.28.0", default-features = false, features = ["derive"] }
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 time = { version = "0.3.55", default-features = false, features = ["std", "formatting", "parsing"] }
-tokio = { version = "1.54.1", default-features = false, features = ["rt", "process", "time", "io-util", "fs", "sync"] }
+tokio = { version = "1.54.1", default-features = false, features = ["rt", "process", "time", "io-util", "fs", "sync", "macros"] }
 toml = { version = "1.2.1", default-features = false, features = ["std", "serde", "parse"] }
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 
