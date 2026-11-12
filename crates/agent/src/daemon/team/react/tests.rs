@@ -36,13 +36,13 @@ fn a_member_that_is_done_tells_the_coordinator_which_item_and_branch_are_ready()
         BusNotice::MemberFinished {
             member: agent("claude-1"),
             item: Some("1.1".parse().unwrap()),
-            branch: Some("agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap()),
+            branch: "agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap(),
         }
     );
 }
 
 #[test]
-fn a_member_of_a_list_without_items_that_is_done_names_no_item() {
+fn a_member_of_a_list_without_items_that_is_done_names_no_item_and_its_task_branch() {
     let team = crew_of(PLAIN, 1, 0);
 
     let told = told(&team, 2, &reported(RunOutcome::Done), None).unwrap();
@@ -52,7 +52,7 @@ fn a_member_of_a_list_without_items_that_is_done_names_no_item() {
         BusNotice::MemberFinished {
             member: agent("claude-1"),
             item: None,
-            branch: None,
+            branch: "agents/claude-1/task-20261111-153002-k3x9".parse().unwrap(),
         }
     );
 }
@@ -67,7 +67,6 @@ fn a_member_that_failed_says_so_with_the_end_of_its_message() {
         told.notice,
         BusNotice::MemberFailed {
             member: agent("claude-1"),
-            item: Some("1.1".parse().unwrap()),
             message: "I could not do it.".to_owned(),
         }
     );
@@ -83,7 +82,6 @@ fn a_member_that_ended_without_a_status_says_so() {
         told.notice,
         BusNotice::MemberNoStatus {
             member: agent("claude-1"),
-            item: Some("1.1".parse().unwrap()),
         }
     );
 }

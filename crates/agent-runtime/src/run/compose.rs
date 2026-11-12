@@ -145,7 +145,10 @@ fn first_sections(texts: &PromptTexts<'_>, input: &PromptInput<'_>) -> Result<Ve
 }
 
 /// The sections of an item: the item itself, then its expected result and its checks, those it has.
-fn item_sections(texts: &PromptTexts<'_>, item: &Item) -> Result<Vec<String>, ComposeError> {
+///
+/// # Errors
+/// [`ComposeError`] when a text does not take the values this function gives it.
+pub fn item_sections(texts: &PromptTexts<'_>, item: &Item) -> Result<Vec<String>, ComposeError> {
     let values = Variables::new()
         .with("item_id", item.id.to_string())?
         .with("item_title", &item.title)?

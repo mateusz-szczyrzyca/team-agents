@@ -8,6 +8,8 @@
 mod assign;
 mod close;
 mod form;
+mod jobs;
+mod prompts;
 mod react;
 #[cfg(test)]
 mod support;

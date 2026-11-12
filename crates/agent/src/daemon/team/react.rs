@@ -4,8 +4,9 @@ use agent_core::ids::{AgentName, BranchName, ItemId};
 use agent_core::kinds::Role;
 use agent_core::state::{ItemPhase, Member, RunEnd, Team};
 use agent_core::status::RunOutcome;
+use agent_runtime::agentbus::RequestId;
 
-use super::assign::agent_name;
+use super::assign::{agent_name, task_branch};
 use crate::daemon::settle::end_of;
 
 /// A notice for the bus: what happened to a member.
@@ -17,15 +18,13 @@ pub(in crate::daemon) enum BusNotice {
         member: AgentName,
         /// The item it worked on, if the team has items.
         item: Option<ItemId>,
-        /// The branch it worked on.
-        branch: Option<BranchName>,
+        /// The branch it worked on: its item's, or its task's.
+        branch: BranchName,
     },
     /// A member reported `FAILED`.
     MemberFailed {
         /// The member.
         member: AgentName,
-        /// The item it worked on, if the team has items.
-        item: Option<ItemId>,
         /// The end of its final message.
         message: String,
     },
@@ -33,8 +32,24 @@ pub(in crate::daemon) enum BusNotice {
     MemberNoStatus {
         /// The member.
         member: AgentName,
-        /// The item it worked on, if the team has items.
-        item: Option<ItemId>,
+    },
+    /// A worker finished a request of a member: the result goes to the member.
+    HelperResult {
+        /// The request.
+        request: RequestId,
+        /// The worker.
+        worker: AgentName,
+        /// What the worker reported.
+        summary: String,
+    },
+    /// A worker could not do a request of a member.
+    HelperFailed {
+        /// The request.
+        request: RequestId,
+        /// The worker.
+        worker: AgentName,
+        /// Why, for the requester.
+        reason: String,
     },
 }
 
@@ -53,6 +68,9 @@ pub(in crate::daemon) enum NoticeError {
     /// A name of the team is not an agent name.
     #[error("the name of a member of the team is not an agent name")]
     Name(#[from] agent_core::ids::InvalidName),
+    /// The branch of the task is not a valid branch name.
+    #[error("the branch of a task of the team is not a valid branch name")]
+    Branch(#[from] agent_core::ids::InvalidBranchName),
 }
 
 /// What the end `end` of a run of `member` (role `role`) tells the coordinator of `team`; `message` is the run's final
@@ -75,24 +93,27 @@ pub(in crate::daemon) fn notice_for(
     };
     let to = agent_name(coordinator.agent())?;
     let who = agent_name(member.agent())?;
-    let worked_on = worked_on(team, member);
-    let item = worked_on.as_ref().map(|(item, _)| *item);
     let notice = match end {
         RunEnd::Reported {
             outcome: RunOutcome::Done,
-        } => BusNotice::MemberFinished {
-            member: who,
-            item,
-            branch: worked_on.map(|(_, branch)| branch),
-        },
+        } => {
+            let (item, branch) = match worked_on(team, member) {
+                Some((item, branch)) => (Some(item), branch),
+                None => (None, task_branch(&who, member.task())?),
+            };
+            BusNotice::MemberFinished {
+                member: who,
+                item,
+                branch,
+            }
+        }
         RunEnd::Reported {
             outcome: RunOutcome::Failed,
         } => BusNotice::MemberFailed {
             member: who,
-            item,
             message: end_of(message.unwrap_or_default()),
         },
-        RunEnd::NoStatus { .. } => BusNotice::MemberNoStatus { member: who, item },
+        RunEnd::NoStatus { .. } => BusNotice::MemberNoStatus { member: who },
         RunEnd::Reported { .. }
         | RunEnd::QuotaExhausted { .. }
         | RunEnd::RateLimited
