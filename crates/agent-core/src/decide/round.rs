@@ -15,6 +15,7 @@
 
 use std::num::NonZeroU32;
 
+use super::REVIEWS_REQUIRED;
 use crate::config::Review as ReviewConfig;
 use crate::ids::InvestigatorName;
 use crate::state::{CommitId, MergeMode, PhaseKind, PrNumber};
@@ -270,10 +271,19 @@ impl RoundState {
         }
     }
 
-    /// The phase the item is in while the round is in this state: what the state records.
+    /// The phase the item is in while the round is in this state: what the state records. Every transition keeps it or
+    /// moves along [`PhaseKind::successors`].
     #[must_use]
     pub const fn item_phase(&self) -> PhaseKind {
-        PhaseKind::Done
+        match self {
+            Self::MemberWork { stage } | Self::Integration { stage } | Self::Publishing { stage, .. } => match stage {
+                Stage::First => PhaseKind::InProgress,
+                Stage::Fixing { .. } => PhaseKind::Fixing,
+            },
+            Self::InReview { .. } | Self::AskingHuman { .. } => PhaseKind::InReview,
+            Self::Approved { .. } => PhaseKind::Approved,
+            Self::Done { .. } => PhaseKind::Done,
+        }
     }
 
     /// Applies `event` to the round.
@@ -283,12 +293,182 @@ impl RoundState {
     /// take it, [`RoundError::DuplicateReview`], [`RoundError::HeadChanged`] and [`RoundError::OtherPullRequest`]
     /// for data that contradicts what the round knows.
     pub fn transition(&self, event: &RoundEvent, policy: RoundPolicy) -> Result<Step, RoundError> {
-        let _ = (event, policy);
-        Ok(Step {
-            state: self.clone(),
-            action: RoundAction::AwaitReviews,
-        })
+        match self {
+            Self::MemberWork { stage } => match event {
+                RoundEvent::MemberDone => Ok(Step::to(
+                    Self::Integration { stage: *stage },
+                    RoundAction::IntegrateBranch,
+                )),
+                RoundEvent::GateGreen { .. }
+                | RoundEvent::GateFailed
+                | RoundEvent::PullRequestPublished { .. }
+                | RoundEvent::ReviewSubmitted { .. }
+                | RoundEvent::Merged { .. }
+                | RoundEvent::HumanAnswered => Err(self.refuse(event)),
+            },
+            Self::Integration { stage } => match event {
+                RoundEvent::GateGreen { head } => Ok(Step::to(
+                    Self::Publishing {
+                        stage: *stage,
+                        head: head.clone(),
+                    },
+                    RoundAction::PublishPullRequest,
+                )),
+                RoundEvent::GateFailed => Ok(Step::to(self.clone(), RoundAction::FixGate)),
+                RoundEvent::MemberDone
+                | RoundEvent::PullRequestPublished { .. }
+                | RoundEvent::ReviewSubmitted { .. }
+                | RoundEvent::Merged { .. }
+                | RoundEvent::HumanAnswered => Err(self.refuse(event)),
+            },
+            Self::Publishing { stage, head } => match event {
+                RoundEvent::PullRequestPublished { pr, head: published } => publish(*stage, head, *pr, published),
+                RoundEvent::MemberDone
+                | RoundEvent::GateGreen { .. }
+                | RoundEvent::GateFailed
+                | RoundEvent::ReviewSubmitted { .. }
+                | RoundEvent::Merged { .. }
+                | RoundEvent::HumanAnswered => Err(self.refuse(event)),
+            },
+            Self::InReview { pr, passes, approvals } => match event {
+                RoundEvent::ReviewSubmitted { reviewer, verdict } => {
+                    review(*pr, *passes, approvals, reviewer, *verdict, policy)
+                }
+                RoundEvent::MemberDone
+                | RoundEvent::GateGreen { .. }
+                | RoundEvent::GateFailed
+                | RoundEvent::PullRequestPublished { .. }
+                | RoundEvent::Merged { .. }
+                | RoundEvent::HumanAnswered => Err(self.refuse(event)),
+            },
+            Self::Approved { pr } => match event {
+                RoundEvent::Merged { pr: merged } if merged == pr => {
+                    Ok(Step::to(Self::Done { pr: *pr }, RoundAction::CompleteItem))
+                }
+                RoundEvent::Merged { pr: merged } => Err(RoundError::OtherPullRequest {
+                    open: *pr,
+                    other: *merged,
+                }),
+                RoundEvent::MemberDone
+                | RoundEvent::GateGreen { .. }
+                | RoundEvent::GateFailed
+                | RoundEvent::PullRequestPublished { .. }
+                | RoundEvent::ReviewSubmitted { .. }
+                | RoundEvent::HumanAnswered => Err(self.refuse(event)),
+            },
+            Self::AskingHuman { pr, passes } => match event {
+                RoundEvent::HumanAnswered => Ok(start_fix_pass(*pr, *passes)),
+                RoundEvent::MemberDone
+                | RoundEvent::GateGreen { .. }
+                | RoundEvent::GateFailed
+                | RoundEvent::PullRequestPublished { .. }
+                | RoundEvent::ReviewSubmitted { .. }
+                | RoundEvent::Merged { .. } => Err(self.refuse(event)),
+            },
+            Self::Done { .. } => Err(self.refuse(event)),
+        }
     }
+
+    /// The error for an event that does not fit this state.
+    fn refuse(&self, event: &RoundEvent) -> RoundError {
+        RoundError::NotExpected {
+            phase: self.phase(),
+            event: event.kind(),
+        }
+    }
+}
+
+impl RoundEvent {
+    /// Which kind of event this is.
+    #[must_use]
+    pub const fn kind(&self) -> RoundEventKind {
+        match self {
+            Self::MemberDone => RoundEventKind::MemberDone,
+            Self::GateGreen { .. } => RoundEventKind::GateGreen,
+            Self::GateFailed => RoundEventKind::GateFailed,
+            Self::PullRequestPublished { .. } => RoundEventKind::PullRequestPublished,
+            Self::ReviewSubmitted { .. } => RoundEventKind::ReviewSubmitted,
+            Self::Merged { .. } => RoundEventKind::Merged,
+            Self::HumanAnswered => RoundEventKind::HumanAnswered,
+        }
+    }
+}
+
+impl Step {
+    /// A step to `state` that asks for `action`.
+    const fn to(state: RoundState, action: RoundAction) -> Self {
+        Self { state, action }
+    }
+}
+
+/// The pull request is published for `published` while the gate passed on `gated`: the reviews start, for the first
+/// attempt or for the fix pass `stage` says.
+fn publish(stage: Stage, gated: &CommitId, pr: PrNumber, published: &CommitId) -> Result<Step, RoundError> {
+    if gated != published {
+        return Err(RoundError::HeadChanged {
+            gated: gated.clone(),
+            published: published.clone(),
+        });
+    }
+    let passes = match stage {
+        Stage::First => 0,
+        Stage::Fixing { pr: open, .. } if open != pr => return Err(RoundError::OtherPullRequest { open, other: pr }),
+        Stage::Fixing { pass, .. } => pass.get(),
+    };
+    Ok(Step::to(
+        RoundState::InReview {
+            pr,
+            passes,
+            approvals: Vec::new(),
+        },
+        RoundAction::RequestReviews,
+    ))
+}
+
+/// A reviewer's verdict in a round that has had `passes` fix passes and the approvals of `approvals` so far.
+fn review(
+    pr: PrNumber,
+    passes: u32,
+    approvals: &[InvestigatorName],
+    reviewer: &InvestigatorName,
+    verdict: ReviewVerdict,
+    policy: RoundPolicy,
+) -> Result<Step, RoundError> {
+    match verdict {
+        ReviewVerdict::RequestChanges if passes >= policy.fix_passes => {
+            Ok(Step::to(RoundState::AskingHuman { pr, passes }, RoundAction::AskHuman))
+        }
+        ReviewVerdict::RequestChanges => Ok(start_fix_pass(pr, passes)),
+        ReviewVerdict::Approve if approvals.contains(reviewer) => Err(RoundError::DuplicateReview {
+            reviewer: reviewer.clone(),
+        }),
+        ReviewVerdict::Approve => {
+            let mut approvals = approvals.to_vec();
+            approvals.push(reviewer.clone());
+            if approvals.len() < REVIEWS_REQUIRED {
+                return Ok(Step::to(
+                    RoundState::InReview { pr, passes, approvals },
+                    RoundAction::AwaitReviews,
+                ));
+            }
+            let action = match policy.merge {
+                MergeMode::Autopilot => RoundAction::Merge,
+                MergeMode::NoMerge => RoundAction::HandToHuman,
+            };
+            Ok(Step::to(RoundState::Approved { pr }, action))
+        }
+    }
+}
+
+/// The team starts the fix pass after the `passes` it has had: its work, on the pull request `pr`.
+fn start_fix_pass(pr: PrNumber, passes: u32) -> Step {
+    let pass = NonZeroU32::MIN.saturating_add(passes);
+    Step::to(
+        RoundState::MemberWork {
+            stage: Stage::Fixing { pr, pass },
+        },
+        RoundAction::StartFixPass { pass },
+    )
 }
 
 #[cfg(test)]
