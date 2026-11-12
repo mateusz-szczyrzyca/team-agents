@@ -11,6 +11,7 @@ use std::process::ExitCode;
 
 use agent_core::ids::{AgentName, InvalidId};
 use agent_core::protocol::Target;
+use agent_core::state::MergeMode;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 mod client;
@@ -35,7 +36,7 @@ mod testing;
 
 use crate::client::{ClientError, Connection};
 use crate::commands::daemon::{DaemonCommandError, daemon};
-use crate::commands::run::{RunError, RunInput};
+use crate::commands::run::{RunError, RunInput, prepare, start};
 use crate::commands::status::{StatusError, status};
 use crate::environment::{Environment, EnvironmentError};
 use agent_runtime::process::error_chain;
@@ -291,7 +292,26 @@ async fn execute(environment: &Environment, command: Command, out: &mut impl Wri
 /// # Errors
 /// [`CommandError`].
 async fn execute_run(environment: &Environment, args: RunArgs, out: &mut impl Write) -> Result<(), CommandError> {
-    let _ = (environment, args, out);
+    let directory = environment.directory()?;
+    let home = environment.home()?;
+    let merge = if args.no_merge {
+        MergeMode::NoMerge
+    } else {
+        MergeMode::Autopilot
+    };
+    // Everything the command can find wrong by itself is found before the daemon is looked for.
+    let request = prepare(
+        directory,
+        RunInput {
+            words: args.words,
+            file: args.file,
+            coordinator: args.coordinator,
+            merge,
+        },
+    )
+    .await?;
+    let mut connection = Connection::connect(&home.socket_file()).await?;
+    start(&mut connection, &home, request, out).await?;
     Ok(())
 }
 

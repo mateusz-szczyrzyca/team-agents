@@ -185,6 +185,18 @@ fn rebuild_with(team: &Team, merge: MergeMode) -> Team {
     )
 }
 
+/// Starts what `input` says in the repository `directory` is in, through `connection`, and writes what started to `out`.
+async fn run(
+    connection: &mut Connection,
+    home: &Home,
+    directory: &Path,
+    input: RunInput,
+    out: &mut impl Write,
+) -> Result<(), RunError> {
+    let request = prepare(directory, input).await?;
+    start(connection, home, request, out).await
+}
+
 // ---- the command -------------------------------------------------------------------------------------------------
 
 /// A git checkout in a temporary directory, with `origin` at `origin`.

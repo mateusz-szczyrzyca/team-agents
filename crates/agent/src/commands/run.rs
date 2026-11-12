@@ -228,17 +228,12 @@ pub(crate) fn render_started(home: &Home, team: &Team) -> String {
     text
 }
 
-/// Starts what `input` says in the repository `directory` is in, through `connection`, and writes what started to `out`.
+/// The request that starts what `input` says in the repository `directory` is in: nothing is asked of the daemon yet.
 ///
 /// # Errors
-/// [`RunError`].
-pub(crate) async fn run(
-    connection: &mut Connection,
-    home: &Home,
-    directory: &Path,
-    input: RunInput,
-    out: &mut impl Write,
-) -> Result<(), RunError> {
+/// [`RunError`] for words that make no task, a task list that cannot be read or parsed, and a directory that is in no
+/// repository or in one without an `origin`.
+pub(crate) async fn prepare(directory: &Path, input: RunInput) -> Result<RunRequest, RunError> {
     let (agents, inline) = split_words(&input.words, input.file.is_some())?;
     let text = match (&input.file, inline) {
         (Some(path), _) => read_list(path).await?,
@@ -247,14 +242,26 @@ pub(crate) async fn run(
     };
     let task_list = TaskListText::new(text)?;
     let (checkout, repo) = repository(directory).await?;
-    let request = RunRequest {
+    Ok(RunRequest {
         repo,
         checkout,
         agents,
         task_list,
         coordinator: input.coordinator,
         merge: input.merge,
-    };
+    })
+}
+
+/// Asks the daemon, through `connection`, to start `request`, and writes what started to `out`.
+///
+/// # Errors
+/// [`RunError`].
+pub(crate) async fn start(
+    connection: &mut Connection,
+    home: &Home,
+    request: RunRequest,
+    out: &mut impl Write,
+) -> Result<(), RunError> {
     let reply = connection.request(Client::Cli, Command::Run(request)).await?;
     let Reply::Started { team, .. } = reply else {
         return Err(RunError::UnexpectedReply { kind: kind_of(&reply) });
