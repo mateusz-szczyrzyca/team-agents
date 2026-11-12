@@ -6,4 +6,5 @@
 
 pub mod git;
 pub mod process;
+pub mod prompts;
 pub mod store;
