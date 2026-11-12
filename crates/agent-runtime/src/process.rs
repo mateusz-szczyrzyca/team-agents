@@ -523,7 +523,7 @@ pub(crate) struct Captured {
 
 /// Why a captured run failed.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum CaptureError {
+pub enum CaptureError {
     /// The program cannot be started.
     #[error("cannot start the program")]
     Spawn {

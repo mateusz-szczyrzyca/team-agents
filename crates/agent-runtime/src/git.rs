@@ -10,16 +10,19 @@
 //! environment and `-c` options: nothing is written to a git configuration file.
 
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
+use std::fmt;
+use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::string::FromUtf8Error;
 use std::time::Duration;
 
 use agent_core::config::{AbsolutePath, EnvName, GitIdentity};
 use agent_core::ids::{AgentName, BranchName};
-use agent_core::state::CommitId;
+use agent_core::state::{CommitId, InvalidCommitId};
+use tokio::process::Command;
 
-use crate::process::{CaptureError, ExitReport};
+use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture};
 
 /// How long a local git command may run before its group is killed.
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -99,6 +102,18 @@ pub enum Revision {
     Branch(BranchName),
     /// A commit.
     Commit(CommitId),
+}
+
+impl fmt::Display for Revision {
+    /// The revision as git is given it; a branch is spelled out as its reference so that a tag of the same name
+    /// cannot stand in for it.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Head => f.write_str("HEAD"),
+            Self::Branch(branch) => write!(f, "refs/heads/{branch}"),
+            Self::Commit(commit) => write!(f, "{commit}"),
+        }
+    }
 }
 
 /// What git was asked to do, for an error message.
@@ -186,6 +201,14 @@ pub enum GitError {
         operation: GitOperation,
         /// What it printed, cut.
         output: String,
+    },
+    /// What git printed for a revision is not a commit ID.
+    #[error("git {operation} did not print a commit ID")]
+    NotACommit {
+        /// What was asked.
+        operation: GitOperation,
+        /// Why the text is not a commit ID.
+        source: InvalidCommitId,
     },
     /// The message of a merge is empty.
     #[error("the message of a merge must not be empty")]
@@ -313,8 +336,39 @@ impl Git {
     /// [`GitError::UnknownRevision`] when it names no commit; [`GitError::Run`], [`GitError::Failed`],
     /// [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and [`GitError::Unexpected`].
     pub async fn rev_parse(&self, revision: &Revision) -> Result<CommitId, GitError> {
-        let _ = revision;
-        Err(GitError::EmptyMessage)
+        let operation = GitOperation::RevParse;
+        let spec = format!("{revision}^{{commit}}");
+        let captured = self
+            .run(
+                operation,
+                Reach::Local,
+                &[
+                    arg("rev-parse"),
+                    arg("--verify"),
+                    arg("--quiet"),
+                    arg("--end-of-options"),
+                    arg(&spec),
+                ],
+            )
+            .await?;
+        match captured.exit {
+            ExitReport::Exited { code: 0 } => {}
+            // With `--verify --quiet`, 1 is git's answer for a revision that names nothing.
+            ExitReport::Exited { code: 1 } => {
+                return Err(GitError::UnknownRevision {
+                    revision: revision.to_string(),
+                });
+            }
+            ExitReport::Exited { .. } | ExitReport::Signaled { .. } => return Err(failed(operation, &captured)),
+        }
+        let printed = text(operation, &captured.stdout)?;
+        printed
+            .trim_end()
+            .parse()
+            .map_err(|_malformed: InvalidCommitId| GitError::Unexpected {
+                operation,
+                output: diagnostic(printed.as_bytes()),
+            })
     }
 
     /// The tip of `branch`, or `None` when there is no such branch.
@@ -322,8 +376,12 @@ impl Git {
     /// # Errors
     /// The errors of [`Git::rev_parse`] other than an unknown revision.
     pub async fn branch_tip(&self, branch: &BranchName) -> Result<Option<CommitId>, GitError> {
-        let _ = branch;
-        Err(GitError::EmptyMessage)
+        match self.rev_parse(&Revision::Branch(branch.clone())).await {
+            Ok(tip) => Ok(Some(tip)),
+            // A branch that does not exist is the answer, not a failure.
+            Err(GitError::UnknownRevision { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// Makes `branch` point at `start`.
@@ -331,8 +389,14 @@ impl Git {
     /// # Errors
     /// [`GitError::Failed`] when the branch exists or `start` is unknown; [`GitError::Run`].
     pub async fn branch_create(&self, branch: &BranchName, start: &Revision) -> Result<(), GitError> {
-        let _ = (branch, start);
-        Err(GitError::EmptyMessage)
+        let start = start.to_string();
+        self.run_ok(
+            GitOperation::BranchCreate,
+            Reach::Local,
+            &[arg("branch"), arg(branch.as_str()), arg(&start)],
+        )
+        .await
+        .map(drop)
     }
 
     /// Deletes `branch`.
@@ -341,8 +405,17 @@ impl Git {
     /// [`GitError::Failed`] when it does not exist, is out in a worktree, or (with [`DeleteMode::Merged`]) is not
     /// merged; [`GitError::Run`].
     pub async fn branch_delete(&self, branch: &BranchName, mode: DeleteMode) -> Result<(), GitError> {
-        let _ = (branch, mode);
-        Err(GitError::EmptyMessage)
+        let flag = match mode {
+            DeleteMode::Merged => "-d",
+            DeleteMode::Force => "-D",
+        };
+        self.run_ok(
+            GitOperation::BranchDelete,
+            Reach::Local,
+            &[arg("branch"), arg(flag), arg(branch.as_str())],
+        )
+        .await
+        .map(drop)
     }
 
     /// Adds a worktree at `path` with `branch` out.
@@ -351,8 +424,35 @@ impl Git {
     /// [`GitError::Failed`] when the path is taken, the branch exists (for a new one) or is out elsewhere (for an
     /// existing one); [`GitError::Run`].
     pub async fn worktree_add(&self, path: &AbsolutePath, branch: &WorktreeBranch) -> Result<(), GitError> {
-        let _ = (path, branch);
-        Err(GitError::EmptyMessage)
+        let path = path.as_path().as_os_str();
+        let captured = match branch {
+            WorktreeBranch::New { branch, start } => {
+                let start = start.to_string();
+                self.run_ok(
+                    GitOperation::WorktreeAdd,
+                    Reach::Local,
+                    &[
+                        arg("worktree"),
+                        arg("add"),
+                        arg("-b"),
+                        arg(branch.as_str()),
+                        path,
+                        arg(&start),
+                    ],
+                )
+                .await?
+            }
+            WorktreeBranch::Existing(branch) => {
+                self.run_ok(
+                    GitOperation::WorktreeAdd,
+                    Reach::Local,
+                    &[arg("worktree"), arg("add"), path, arg(branch.as_str())],
+                )
+                .await?
+            }
+        };
+        drop(captured);
+        Ok(())
     }
 
     /// Removes the worktree at `path`.
@@ -361,8 +461,14 @@ impl Git {
     /// [`GitError::Failed`] when it is not a worktree, or has changes and `mode` is [`RemoveMode::Clean`];
     /// [`GitError::Run`].
     pub async fn worktree_remove(&self, path: &AbsolutePath, mode: RemoveMode) -> Result<(), GitError> {
-        let _ = (path, mode);
-        Err(GitError::EmptyMessage)
+        let path = path.as_path().as_os_str();
+        let args: &[&OsStr] = match mode {
+            RemoveMode::Clean => &[arg("worktree"), arg("remove"), path],
+            RemoveMode::Force => &[arg("worktree"), arg("remove"), arg("--force"), path],
+        };
+        self.run_ok(GitOperation::WorktreeRemove, Reach::Local, args)
+            .await
+            .map(drop)
     }
 
     /// Whether the checkout has changes, and which.
@@ -370,7 +476,26 @@ impl Git {
     /// # Errors
     /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`] and [`GitError::Unexpected`].
     pub async fn tree_state(&self) -> Result<TreeState, GitError> {
-        Err(GitError::EmptyMessage)
+        let operation = GitOperation::Status;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("--no-optional-locks"),
+                    arg("status"),
+                    arg("--porcelain=v1"),
+                    arg("-z"),
+                    arg("--untracked-files=all"),
+                ],
+            )
+            .await?;
+        let entries = parse_status(operation, whole(operation, &captured.stdout, self.limits)?)?;
+        Ok(if entries.is_empty() {
+            TreeState::Clean
+        } else {
+            TreeState::Dirty(entries)
+        })
     }
 
     /// Whether a merge is under way.
@@ -378,7 +503,20 @@ impl Git {
     /// # Errors
     /// [`GitError::Run`] and [`GitError::Failed`].
     pub async fn merge_state(&self) -> Result<MergeState, GitError> {
-        Err(GitError::EmptyMessage)
+        let operation = GitOperation::MergeState;
+        let captured = self
+            .run(
+                operation,
+                Reach::Local,
+                &[arg("rev-parse"), arg("-q"), arg("--verify"), arg("MERGE_HEAD")],
+            )
+            .await?;
+        match captured.exit {
+            ExitReport::Exited { code: 0 } => Ok(MergeState::InProgress),
+            // With `-q --verify`, 1 is git's answer for a reference that does not exist.
+            ExitReport::Exited { code: 1 } => Ok(MergeState::NotMerging),
+            ExitReport::Exited { .. } | ExitReport::Signaled { .. } => Err(failed(operation, &captured)),
+        }
     }
 
     /// Merges `branch` into what the checkout has out, always with a merge commit (no fast-forward), made with
@@ -390,8 +528,37 @@ impl Git {
     /// [`GitError::EmptyMessage`]; [`GitError::Failed`] when git refuses without a conflict (an unknown branch, a
     /// dirty tree that the merge would overwrite); [`GitError::Run`] and the errors of [`Git::rev_parse`].
     pub async fn merge_no_ff(&self, branch: &BranchName, message: &str) -> Result<MergeOutcome, GitError> {
-        let _ = (branch, message);
-        Err(GitError::EmptyMessage)
+        if message.trim().is_empty() {
+            return Err(GitError::EmptyMessage);
+        }
+        let before = self.rev_parse(&Revision::Head).await?;
+        let target = Revision::Branch(branch.clone()).to_string();
+        let captured = self
+            .run(
+                GitOperation::Merge,
+                Reach::Local,
+                &[
+                    arg("merge"),
+                    arg("--no-ff"),
+                    arg("--no-edit"),
+                    arg("-m"),
+                    arg(message),
+                    arg(&target),
+                ],
+            )
+            .await?;
+        if captured.exit.succeeded() {
+            let after = self.rev_parse(&Revision::Head).await?;
+            return Ok(if after == before {
+                MergeOutcome::AlreadyUpToDate
+            } else {
+                MergeOutcome::Merged { head: after }
+            });
+        }
+        match self.merge_state().await? {
+            MergeState::InProgress => Ok(MergeOutcome::Conflicted),
+            MergeState::NotMerging => Err(failed(GitOperation::Merge, &captured)),
+        }
     }
 
     /// Abandons the merge that is under way and restores the tree.
@@ -399,7 +566,9 @@ impl Git {
     /// # Errors
     /// [`GitError::Failed`] when no merge is under way; [`GitError::Run`].
     pub async fn merge_abort(&self) -> Result<(), GitError> {
-        Err(GitError::EmptyMessage)
+        self.run_ok(GitOperation::MergeAbort, Reach::Local, &[arg("merge"), arg("--abort")])
+            .await
+            .map(drop)
     }
 
     /// Pushes `branch` to `origin` and makes it the branch's upstream.
@@ -408,9 +577,148 @@ impl Git {
     /// [`GitError::Failed`] when there is no `origin`, the remote refuses (a branch that is not a fast-forward), or
     /// the credentials fail; [`GitError::Run`], for example when the command ran over its time.
     pub async fn push(&self, branch: &BranchName) -> Result<(), GitError> {
-        let _ = (branch, REMOTE, OsStr::new(""));
-        Err(GitError::EmptyMessage)
+        let reference = format!("refs/heads/{branch}:refs/heads/{branch}");
+        self.run_ok(
+            GitOperation::Push,
+            Reach::Network,
+            &[arg("push"), arg("--set-upstream"), arg(REMOTE), arg(&reference)],
+        )
+        .await
+        .map(drop)
     }
+
+    /// The command `git` with this handle's identity, signing and environment, and `args`.
+    fn command(&self, args: &[&OsStr]) -> Command {
+        let mut command = Command::new("git");
+        command.current_dir(self.dir.as_path());
+        match &self.identity.signing_key {
+            Some(key) => {
+                let mut signing_key = OsString::from("user.signingkey=");
+                signing_key.push(key.as_path());
+                command
+                    .args(["-c", "commit.gpgsign=true", "-c", "gpg.format=ssh", "-c"])
+                    .arg(signing_key);
+            }
+            // The human's own configuration may sign every commit with a key the harness does not have.
+            None => {
+                command.args(["-c", "commit.gpgsign=false"]);
+            }
+        }
+        command
+            .args(args)
+            .env("GIT_AUTHOR_NAME", &self.identity.name)
+            .env("GIT_AUTHOR_EMAIL", &self.identity.email)
+            .env("GIT_COMMITTER_NAME", &self.identity.name)
+            .env("GIT_COMMITTER_EMAIL", &self.identity.email)
+            // Nobody answers a prompt for credentials; a missing credential must fail, not wait.
+            .env("GIT_TERMINAL_PROMPT", "0")
+            // Messages that are matched or shown are in one language.
+            .env("LC_ALL", "C");
+        for (name, value) in &self.env {
+            command.env(name.as_str(), value);
+        }
+        command
+    }
+
+    /// Runs git with `args` and returns what it did, whether it succeeded or not.
+    async fn run(&self, operation: GitOperation, reach: Reach, args: &[&OsStr]) -> Result<Captured, GitError> {
+        let timeout = match reach {
+            Reach::Local => self.limits.local_timeout,
+            Reach::Network => self.limits.network_timeout,
+        };
+        let limits = CaptureLimits {
+            timeout,
+            max_bytes: self.limits.max_output_bytes,
+        };
+        capture(self.command(args), limits)
+            .await
+            .map_err(|source| GitError::Run { operation, source })
+    }
+
+    /// Runs git with `args`; a command that ends with a failure is an error.
+    async fn run_ok(&self, operation: GitOperation, reach: Reach, args: &[&OsStr]) -> Result<Captured, GitError> {
+        let captured = self.run(operation, reach, args).await?;
+        if captured.exit.succeeded() {
+            Ok(captured)
+        } else {
+            Err(failed(operation, &captured))
+        }
+    }
+}
+
+/// Where a command goes, which decides its time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    /// The local repository only.
+    Local,
+    /// A remote.
+    Network,
+}
+
+/// `text` as an argument.
+fn arg(text: &str) -> &OsStr {
+    OsStr::new(text)
+}
+
+/// A few characters of what git (or a file) printed, for an error message: invalid UTF-8 is replaced, because the
+/// text is for a human to read.
+fn diagnostic(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .trim()
+        .chars()
+        .take(MAX_DIAGNOSTIC_CHARS)
+        .collect()
+}
+
+/// The error for a command that ended with a failure.
+fn failed(operation: GitOperation, captured: &Captured) -> GitError {
+    GitError::Failed {
+        operation,
+        exit: captured.exit,
+        stderr: diagnostic(&captured.stderr.bytes),
+    }
+}
+
+/// The bytes of `stream`, when it is whole.
+fn whole(operation: GitOperation, stream: &Stream, limits: GitLimits) -> Result<&[u8], GitError> {
+    if stream.dropped > 0 {
+        return Err(GitError::OutputTooLong {
+            operation,
+            limit: limits.max_output_bytes,
+        });
+    }
+    Ok(&stream.bytes)
+}
+
+/// The text of `stream`.
+fn text(operation: GitOperation, stream: &Stream) -> Result<String, GitError> {
+    String::from_utf8(stream.bytes.clone()).map_err(|source| GitError::NotUtf8 { operation, source })
+}
+
+/// Reads the output of `git status --porcelain=v1 -z`: `XY path` entries, a renamed or copied path followed by the
+/// path it came from.
+fn parse_status(operation: GitOperation, bytes: &[u8]) -> Result<Vec<StatusEntry>, GitError> {
+    let mut entries = Vec::new();
+    let mut tokens = bytes.split(|byte| *byte == 0).filter(|token| !token.is_empty());
+    while let Some(token) = tokens.next() {
+        let unexpected = || GitError::Unexpected {
+            operation,
+            output: diagnostic(token),
+        };
+        let Some(&[index, worktree, b' ']) = token.first_chunk::<3>() else {
+            return Err(unexpected());
+        };
+        let path = token.get(3..).filter(|path| !path.is_empty()).ok_or_else(unexpected)?;
+        if matches!(index, b'R' | b'C') || matches!(worktree, b'R' | b'C') {
+            tokens.next().ok_or_else(unexpected)?;
+        }
+        entries.push(StatusEntry {
+            index: char::from(index),
+            worktree: char::from(worktree),
+            path: PathBuf::from(OsStr::from_bytes(path)),
+        });
+    }
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -549,7 +857,7 @@ mod tests {
         let result = fixture.git().rev_parse(&Revision::Branch(branch("nothing"))).await;
 
         assert!(
-            matches!(&result, Err(GitError::UnknownRevision { revision }) if revision == "nothing"),
+            matches!(&result, Err(GitError::UnknownRevision { revision }) if revision == "refs/heads/nothing"),
             "{result:?}"
         );
     }
