@@ -24,7 +24,7 @@ holds chosen lines of one longer run, in their order; `opencode/mcp-tools.jsonl`
 | `opencode/rate-limit.jsonl` | a run the provider refused with HTTP 429: steps, then an `error` |
 
 Written by hand after the CLI's documented format, because no recording of the case exists (the old harness's runs
-ended in none of them): `claude/max-turns.jsonl`, `claude/api-error.jsonl` and `codex/failed.jsonl`.
+ended in none of them): `claude/max-turns.jsonl`, `claude/api-error.jsonl`, `claude/errors-only.jsonl` (an error result with its messages in `errors` and no `result`) and `codex/failed.jsonl`.
 
 ## What was changed in a recording
 

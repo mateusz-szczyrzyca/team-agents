@@ -261,6 +261,27 @@ fn a_result_that_reports_an_error_failed_and_keeps_its_text() -> TestResult {
 }
 
 #[test]
+fn an_error_result_without_a_result_text_keeps_its_errors_in_the_activity_and_the_error_tail() -> TestResult {
+    let replay = replay(&ClaudeAdapter, &fixture("claude", "errors-only.jsonl")?, "")?;
+
+    assert!(replay.errors.is_empty(), "{:?}", replay.errors);
+    assert_eq!(replay.output.stream, StreamOutcome::Failed);
+    assert_eq!(replay.output.final_message, None);
+    assert_eq!(
+        replay.output.error_tail.lines(),
+        ["API Error: 429 rate limit exceeded", "Request failed after 3 retries"]
+    );
+    assert!(
+        replay
+            .events
+            .contains(&ActivityEvent::Error("API Error: 429 rate limit exceeded".to_owned())),
+        "{:?}",
+        replay.events
+    );
+    Ok(())
+}
+
+#[test]
 fn a_killed_run_is_incomplete_but_knows_its_session() -> TestResult {
     let replay = replay(&ClaudeAdapter, &fixture("claude", "cut.jsonl")?, "")?;
 

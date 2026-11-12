@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","cwd":"/home/example/work","session_id":"4d7a2e90-5c3b-4a68-b1f4-8e0c9d2a6b13","model":"claude-sonnet-5-5","permissionMode":"bypassPermissions"}
+{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":2,"errors":["API Error: 429 rate limit exceeded","Request failed after 3 retries"],"session_id":"4d7a2e90-5c3b-4a68-b1f4-8e0c9d2a6b13","total_cost_usd":0.1}
