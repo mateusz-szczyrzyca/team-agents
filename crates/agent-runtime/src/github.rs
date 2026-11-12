@@ -22,7 +22,7 @@ use agent_core::ids::BranchName;
 use agent_core::kinds::{Keyword, UnknownKeyword};
 use agent_core::state::{CommitId, PrNumber, Timestamp};
 use agent_core::status::ReviewVerdict;
-use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, RETRY_AFTER};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, LINK, RETRY_AFTER};
 use reqwest::{Method, Url};
 use serde::Deserialize;
 use serde::de::{DeserializeOwned, Error as _};
@@ -145,36 +145,51 @@ fn check_slug_part(part: &str, which: &'static str) -> Result<(), InvalidRepoSlu
     Ok(())
 }
 
+/// A part of a URL that an API base must not have; the name is what a refusal says, never the part itself, which may
+/// be a secret.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
+pub enum ForbiddenPart {
+    /// A user name or a password.
+    #[strum(serialize = "credentials")]
+    Credentials,
+    /// A query (`?...`).
+    #[strum(serialize = "a query")]
+    Query,
+    /// A fragment (`#...`).
+    #[strum(serialize = "a fragment")]
+    Fragment,
+}
+
 /// Why a text is not an [`ApiBase`].
+///
+/// None of the variants keeps the text that was refused: it may hold a password or a token, and an error is logged
+/// and shown. What a variant names is a part that the URL parser has already separated and that cannot hold a secret:
+/// the scheme or the host.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum InvalidApiBase {
     /// The text is not a URL.
-    #[error("{value:?} is not a URL")]
+    #[error("the API base is not a URL")]
     NotAUrl {
-        /// The refused text.
-        value: String,
-        /// What the URL parser found wrong.
+        /// What the URL parser found wrong; it names the problem, not the text.
         source: <Url as FromStr>::Err,
     },
     /// The scheme is neither `https` nor `http`.
-    #[error("the API base {value:?} must start with https:// (or http:// for a loopback address)")]
+    #[error("the API base must start with https:// (or http:// for a loopback address), not {scheme}://")]
     Scheme {
-        /// The refused text.
-        value: String,
+        /// The refused scheme.
+        scheme: String,
     },
     /// It is `http://` to a host that is not this machine: the token would travel in the clear.
-    #[error(
-        "the API base {value:?} is http:// to a host that is not a loopback address: the token would not be protected"
-    )]
+    #[error("the API base is http:// to {host}, which is not a loopback address: the token would not be protected")]
     InsecureHost {
-        /// The refused text.
-        value: String,
+        /// The refused host.
+        host: String,
     },
     /// The URL has a user name, a password, a query or a fragment, none of which a base may have.
-    #[error("the API base {value:?} must not have credentials, a query or a fragment")]
+    #[error("the API base must not have {part}")]
     Decorated {
-        /// The refused text.
-        value: String,
+        /// The first part found.
+        part: ForbiddenPart,
     },
 }
 
@@ -202,23 +217,38 @@ impl FromStr for ApiBase {
     type Err = InvalidApiBase;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let url = Url::parse(text).map_err(|source| InvalidApiBase::NotAUrl {
-            value: text.to_owned(),
-            source,
-        })?;
-        let value = || text.to_owned();
+        let url = Url::parse(text).map_err(|source| InvalidApiBase::NotAUrl { source })?;
         match url.scheme() {
             "https" => {}
             "http" if is_loopback(&url) => {}
-            "http" => return Err(InvalidApiBase::InsecureHost { value: value() }),
-            _ => return Err(InvalidApiBase::Scheme { value: value() }),
+            "http" => {
+                return Err(InvalidApiBase::InsecureHost {
+                    host: url.host_str().unwrap_or_default().to_owned(),
+                });
+            }
+            other => {
+                return Err(InvalidApiBase::Scheme {
+                    scheme: other.to_owned(),
+                });
+            }
         }
-        let decorated =
-            !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some();
-        if decorated {
-            return Err(InvalidApiBase::Decorated { value: value() });
+        if let Some(part) = forbidden_part(&url) {
+            return Err(InvalidApiBase::Decorated { part });
         }
         Ok(Self(url.as_str().trim_end_matches('/').to_owned()))
+    }
+}
+
+/// The first part of `url` that an API base must not have.
+fn forbidden_part(url: &Url) -> Option<ForbiddenPart> {
+    if !url.username().is_empty() || url.password().is_some() {
+        Some(ForbiddenPart::Credentials)
+    } else if url.query().is_some() {
+        Some(ForbiddenPart::Query)
+    } else if url.fragment().is_some() {
+        Some(ForbiddenPart::Fragment)
+    } else {
+        None
     }
 }
 
@@ -782,6 +812,25 @@ struct Call {
     idempotency: Idempotency,
 }
 
+/// Whether an answer says that a page follows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NextPage {
+    /// The `Link` header has a `rel="next"`.
+    Follows,
+    /// The `Link` header is there and has no `rel="next"`: this is the last page.
+    None,
+    /// There is no `Link` header, so nothing is known: a full page may be followed by another.
+    Unknown,
+}
+
+/// The answer to a call that succeeded.
+struct Answer {
+    /// The body, at most [`MAX_RESPONSE_BYTES`].
+    body: Vec<u8>,
+    /// What the `Link` header says about the page after this one.
+    next_page: NextPage,
+}
+
 /// Why one attempt of a call failed.
 enum Failure {
     /// The connection or the answer broke.
@@ -1166,12 +1215,12 @@ impl GitHub {
         Ok(raw.into_read(&self.repo).pull)
     }
 
-    /// Reads every page of a list, at most [`MAX_PAGES`].
+    /// Reads every page of a list, at most [`MAX_PAGES`]. A list that is longer gives [`GitHubError::TooManyPages`].
     async fn pages<R: DeserializeOwned>(&self, operation: GitHubOperation, path: &str) -> Result<Vec<R>, GitHubError> {
         let mut items = Vec::new();
         for page in 1..=MAX_PAGES {
             let answer = self
-                .call(Call {
+                .answer(Call {
                     operation,
                     method: Method::GET,
                     path: format!("{path}?per_page={PAGE_SIZE}&page={page}"),
@@ -1179,8 +1228,10 @@ impl GitHub {
                     idempotency: Idempotency::Idempotent,
                 })
                 .await?;
-            let mut on_page: Vec<R> = decode(operation, &answer)?;
-            let last = on_page.len() < PAGE_SIZE;
+            let mut on_page: Vec<R> = decode(operation, &answer.body)?;
+            // A short page is the last. A full page is the last when GitHub says there is no next one, which is how a
+            // list of exactly `MAX_PAGES` full pages is told from a longer one.
+            let last = on_page.len() < PAGE_SIZE || answer.next_page == NextPage::None;
             items.append(&mut on_page);
             if last {
                 return Ok(items);
@@ -1216,6 +1267,11 @@ impl GitHub {
 
     /// Makes a call, again after a transient failure when it is idempotent, and returns the body of the answer.
     async fn call(&self, call: Call) -> Result<Vec<u8>, GitHubError> {
+        self.answer(call).await.map(|answer| answer.body)
+    }
+
+    /// Makes a call as [`Self::call`] does and returns the whole answer.
+    async fn answer(&self, call: Call) -> Result<Answer, GitHubError> {
         let allowed = match call.idempotency {
             Idempotency::Idempotent => self.settings.retry.max_attempts.get(),
             Idempotency::Once => 1,
@@ -1223,7 +1279,7 @@ impl GitHub {
         let mut attempt = 1_u32;
         loop {
             let failure = match self.attempt(&call).await {
-                Ok(body) => return Ok(body),
+                Ok(answer) => return Ok(answer),
                 Err(failure) => failure,
             };
             let next = attempt.saturating_add(1);
@@ -1242,7 +1298,7 @@ impl GitHub {
     }
 
     /// One attempt of a call, within the time of an attempt.
-    async fn attempt(&self, call: &Call) -> Result<Vec<u8>, Failure> {
+    async fn attempt(&self, call: &Call) -> Result<Answer, Failure> {
         match tokio::time::timeout(self.settings.timeout, self.exchange(call)).await {
             Ok(result) => result,
             Err(_elapsed) => Err(Failure::TimedOut),
@@ -1250,7 +1306,7 @@ impl GitHub {
     }
 
     /// Sends the request and reads the whole answer, bounded.
-    async fn exchange(&self, call: &Call) -> Result<Vec<u8>, Failure> {
+    async fn exchange(&self, call: &Call) -> Result<Answer, Failure> {
         let url = format!("{}/{}", self.settings.base.as_str(), call.path);
         let mut request = self
             .http
@@ -1262,6 +1318,7 @@ impl GitHub {
         let mut response = request.send().await.map_err(Failure::Transport)?;
         let status = response.status();
         let retry_after = retry_after(response.headers());
+        let next_page = next_page(response.headers());
         let quota_exhausted = response
             .headers()
             .get("x-ratelimit-remaining")
@@ -1277,7 +1334,7 @@ impl GitHub {
             body.extend_from_slice(&chunk);
         }
         if status.is_success() {
-            return Ok(body);
+            return Ok(Answer { body, next_page });
         }
         let code = status.as_u16();
         Err(Failure::Rejected {
@@ -1317,6 +1374,28 @@ fn rejection(status: u16, limited: bool) -> Rejection {
         500..=599 => Rejection::Server,
         _ => Rejection::Other,
     }
+}
+
+/// What the `Link` header says about a following page. A header that is not text counts as no header.
+fn next_page(headers: &HeaderMap) -> NextPage {
+    let mut seen = false;
+    for value in headers.get_all(LINK) {
+        let Ok(text) = value.to_str() else {
+            continue;
+        };
+        seen = true;
+        // `<url>; rel="next", <url>; rel="last"`: the relations are what follows `rel=` in each entry.
+        let follows = text.split(',').any(|entry| {
+            entry.split(';').skip(1).any(|param| {
+                let relations = param.trim().strip_prefix("rel=").unwrap_or_default().replace('"', "");
+                relations.split_whitespace().any(|relation| relation == "next")
+            })
+        });
+        if follows {
+            return NextPage::Follows;
+        }
+    }
+    if seen { NextPage::None } else { NextPage::Unknown }
 }
 
 /// How long `Retry-After` asks to wait. Only the form of a number of seconds is read, which is what GitHub sends; a
