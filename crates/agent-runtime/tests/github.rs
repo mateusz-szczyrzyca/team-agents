@@ -1050,6 +1050,61 @@ mod github_client {
         assert_eq!(server.requests().len(), 20);
     }
 
+    /// A page of 100 comments by a trusted account, with the `Link` header GitHub sends: `rel="next"` unless it is the
+    /// last page.
+    fn full_page_reply(page: usize, last: bool) -> Reply {
+        let items: Vec<Value> = (1..=100)
+            .map(|id| comment_json((page * 100 + id) as u64, "octo-cat", "x"))
+            .collect();
+        let link = if last {
+            r#"<https://api.example.com/p?page=1>; rel="prev", <https://api.example.com/p?page=1>; rel="first""#
+        } else {
+            r#"<https://api.example.com/p?page=2>; rel="next", <https://api.example.com/p?page=20>; rel="last""#
+        };
+        reply(200, &Value::Array(items)).with_header("Link", link)
+    }
+
+    #[tokio::test]
+    async fn a_list_that_ends_exactly_at_the_page_cap_is_complete() {
+        let server = FakeServer::start(|n, _| full_page_reply(n, n == 19)).await.unwrap();
+
+        let list = github(&server).list_comments(number(7)).await.unwrap();
+
+        assert_eq!(list.trusted.len(), 2000);
+        assert_eq!(server.requests().len(), 20);
+    }
+
+    #[tokio::test]
+    async fn a_list_that_has_a_next_page_after_the_page_cap_is_refused() {
+        let server = FakeServer::start(|n, _| full_page_reply(n, false)).await.unwrap();
+
+        let error = github(&server).list_comments(number(7)).await.unwrap_err();
+
+        assert!(
+            matches!(error, GitHubError::TooManyPages { pages: 20, .. }),
+            "{error:?}"
+        );
+        assert_eq!(server.requests().len(), 20);
+    }
+
+    #[test]
+    fn a_refused_api_base_does_not_repeat_what_may_be_a_secret() {
+        for text in [
+            "https://user:hunter2@github.example.com",
+            "http://user:hunter2@github.example.com",
+            "ftp://user:hunter2@github.example.com",
+            "https://github.example.com/?token=hunter2",
+            "https://github.example.com/#hunter2",
+            "https://user:hunter2@github.example.com:notaport",
+        ] {
+            let refused = text.parse::<ApiBase>().unwrap_err();
+
+            for shown in [refused.to_string(), format!("{refused:?}")] {
+                assert!(!shown.contains("hunter2"), "{text} -> {shown}");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn list_reviews_keeps_the_trusted_accounts_with_their_states() {
         let page = json!([
