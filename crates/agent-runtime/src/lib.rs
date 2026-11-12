@@ -4,6 +4,7 @@
 //! Everything here does I/O on behalf of the daemon; the decisions it carries out live in `agent-core`.
 #![forbid(unsafe_code)]
 
+pub mod agentbus;
 pub mod git;
 pub mod github;
 pub mod notify;

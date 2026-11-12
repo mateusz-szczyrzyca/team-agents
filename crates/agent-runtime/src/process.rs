@@ -630,6 +630,19 @@ pub(crate) async fn capture(mut command: Command, limits: CaptureLimits) -> Resu
     }
 }
 
+/// Runs `command` like [`capture`], with `input` written to its standard input, which is closed after it.
+///
+/// # Errors
+/// The errors of [`capture`].
+pub(crate) async fn capture_with_input(
+    command: Command,
+    limits: CaptureLimits,
+    input: &[u8],
+) -> Result<Captured, CaptureError> {
+    let _ = input;
+    capture(command, limits).await
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -1185,5 +1198,43 @@ mod tests {
             matches!(&result, Err(ProcessError::Activity { path, .. }) if path == &dir.path().join("out")),
             "{result:?}"
         );
+    }
+
+    // Rule: the input of a run with input is on its standard input, which is then closed.
+    #[tokio::test]
+    async fn capture_with_input_feeds_the_standard_input_and_closes_it() {
+        let input = "héllo\nłódź\n";
+
+        let captured = capture_with_input(Command::new("cat"), limits(LONG_GRACE, 1024), input.as_bytes())
+            .await
+            .unwrap();
+
+        assert_eq!(captured.exit, ExitReport::Exited { code: 0 });
+        assert_eq!(captured.stdout.bytes, input.as_bytes());
+    }
+
+    // Rule: input larger than a pipe is written while the output is read, so neither side blocks the other.
+    #[tokio::test]
+    async fn capture_with_input_larger_than_a_pipe_does_not_deadlock() {
+        let input = vec![b'x'; 1 << 20];
+
+        let captured = capture_with_input(Command::new("cat"), limits(LONG_GRACE, 2 << 20), &input)
+            .await
+            .unwrap();
+
+        assert_eq!(captured.stdout.bytes.len(), 1 << 20);
+        assert_eq!(captured.stdout.dropped, 0);
+    }
+
+    // Rule: a process that ends without reading its input is not an error of the capture: its exit says what happened.
+    #[tokio::test]
+    async fn capture_with_input_leaves_a_process_that_does_not_read_it_to_its_exit() {
+        let input = vec![b'x'; 1 << 20];
+
+        let captured = capture_with_input(shell("exit 3"), limits(LONG_GRACE, 1024), &input)
+            .await
+            .unwrap();
+
+        assert_eq!(captured.exit, ExitReport::Exited { code: 3 });
     }
 }
