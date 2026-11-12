@@ -14,15 +14,20 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 
 mod chain;
 mod client;
+// Test code lives under `tests/`: the builders of states, the stand-in for the daemon's socket and the tests of the
+// command line. The modules keep their names, so `crate::fixtures` is still `crate::fixtures`.
 #[cfg(test)]
+#[path = "tests/commands.rs"]
 mod command_tests;
 mod commands;
 mod daemon;
 mod environment;
 #[cfg(test)]
+#[path = "tests/fixtures.rs"]
 mod fixtures;
 mod lines;
 #[cfg(test)]
+#[path = "tests/testing.rs"]
 mod testing;
 
 use crate::chain::chain;
