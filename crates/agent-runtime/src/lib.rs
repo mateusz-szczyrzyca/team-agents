@@ -8,6 +8,7 @@ pub mod agentbus;
 pub mod cli;
 pub mod git;
 pub mod github;
+pub mod harness_prompts;
 pub mod notify;
 pub mod process;
 pub mod prompts;

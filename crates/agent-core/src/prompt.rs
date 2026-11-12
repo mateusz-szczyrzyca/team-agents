@@ -30,6 +30,10 @@ use std::str::FromStr;
 
 use crate::config::Language;
 
+mod harness;
+
+pub use harness::HarnessPrompt;
+
 /// The directory of the prompts, in the repository and in an installation; every path of the catalog is relative
 /// to it.
 pub const PROMPTS_DIR: &str = "prompts";
