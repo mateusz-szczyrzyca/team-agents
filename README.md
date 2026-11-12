@@ -184,6 +184,9 @@ A round that changes code but adds no test is sent back, unless the task you gav
 `No new tests: <why>` (a refactoring with no behaviour change): only your task text can waive it, and the review
 still checks the rest. A resumed investigation run gets what the script added to its task since its last run (checks
 or review findings to fix).
+Rust tests are counted in every `.rs` file, by their attribute (`#[test]`, `#[tokio::test]`, …), since Rust keeps its
+unit tests next to the code. With `--pr`, an investigator who has nothing to change leaves the PR as it is, and its
+checks and review follow — a way to put an open PR through them again.
 `agent run --investigation --pr N --team … -f fixes.md` continues an open PR #N instead of opening one: the
 investigators start at its head, the PR's earlier task (from its description) is added to the topic for the
 reviewers, and the work — the one investigator's, or the merger's, which opens no PR — is pushed onto PR #N's branch

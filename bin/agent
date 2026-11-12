@@ -1687,10 +1687,17 @@ round_test_changes() { # repo base head — what a round did to the tests: "code
     [[ -n $f ]] || continue
     case $f in *.md|*.txt|*.rst|docs/*|LICENSE*) ;; *) code=1 ;; esac
   done < <(git -C "$repo" diff --name-only "$base" "$head")
-  local plus minus diff
-  diff=$(git -C "$repo" diff -U0 "$base" "$head" -- "${TEST_PATHSPECS[@]}")
-  plus=$({ grep -cE '^\+[[:space:]]*(@test |func Test|def test_|#\[test\]|(it|test)\()' || (($? == 1)); } <<< "$diff")
-  minus=$({ grep -cE '^-[[:space:]]*(@test |func Test|def test_|#\[test\]|(it|test)\()' || (($? == 1)); } <<< "$diff")
+  local plus minus diff rsdiff rsplus rsminus rstest
+  diff=$(git -C "$repo" diff -U0 "$base" "$head" -- "${TEST_PATHSPECS[@]}" ':(exclude,glob)**/*.rs')
+  plus=$({ grep -cE '^\+[[:space:]]*(@test |func Test|def test_|(it|test)\()' || (($? == 1)); } <<< "$diff")
+  minus=$({ grep -cE '^-[[:space:]]*(@test |func Test|def test_|(it|test)\()' || (($? == 1)); } <<< "$diff")
+  # Rust keeps its unit tests next to the code (#[cfg(test)] in src/): every .rs file counts, a test by its attribute —
+  # #[test], #[tokio::test], #[tokio::test(...)], #[rstest], #[test_case(...)]
+  rstest='#\[([A-Za-z_][A-Za-z0-9_]*::)*(test|rstest|test_case)(\]|\()'
+  rsdiff=$(git -C "$repo" diff -U0 "$base" "$head" -- ':(glob)**/*.rs')
+  rsplus=$({ grep -cE "^\+[[:space:]]*$rstest" || (($? == 1)); } <<< "$rsdiff")
+  rsminus=$({ grep -cE "^-[[:space:]]*$rstest" || (($? == 1)); } <<< "$rsdiff")
+  plus=$((plus + rsplus)); minus=$((minus + rsminus))
   added=$((plus > minus ? plus - minus : 0))   # a test whose declaring line changed is not a new one
   changed=$(git -C "$repo" diff --numstat "$base" "$head" -- "${TEST_PATHSPECS[@]}" | awk '$2 > 0 { n++ } END { print n + 0 }')
   printf 'code=%s added=%s changed=%s' "$code" "$added" "$changed"
@@ -5276,6 +5283,16 @@ investigation_published() {
   if ! INVESTIGATION_RESULT_COMMIT=$(git -C "$wt" rev-parse --verify HEAD 2>&1); then
     INVESTIGATION_RESULT_COMMIT=""
     return 1
+  fi
+  # an investigation on an open PR (--pr) whose investigator had nothing to change: its result is the PR as it is (its
+  # head, the base of this run, already on origin) — the checks and the review follow
+  local parent
+  parent=$(task_field "$child" PARENT_TASK)
+  if [[ -n $parent && -n $(investigation_field "$parent" INVESTIGATION_PR_BRANCH) ]] \
+    && [[ $(git -C "$wt" rev-parse --verify "$base^{commit}" 2> /dev/null) == "$INVESTIGATION_RESULT_COMMIT" ]] \
+    && git -C "$wt" diff --quiet HEAD -- 2> /dev/null; then
+    INVESTIGATION_RESULT_ERROR=""
+    return 0
   fi
   if ! git -C "$wt" merge-base --is-ancestor "$base" "$INVESTIGATION_RESULT_COMMIT"; then return 1; fi
   if git -C "$wt" diff --quiet "$base" "$INVESTIGATION_RESULT_COMMIT" --; then
