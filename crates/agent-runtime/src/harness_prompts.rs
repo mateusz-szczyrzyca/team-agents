@@ -6,11 +6,12 @@
 
 use std::collections::BTreeMap;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 
 use agent_core::config::Language;
 use agent_core::prompt::{HarnessPrompt, PromptError, Variables, VariablesError};
+use tokio::io::AsyncReadExt;
 
 /// The most bytes a text file may have: a bound on input from the disk, far above any text of the catalog.
 pub const MAX_TEXT_BYTES: usize = 1 << 20;
@@ -102,9 +103,22 @@ impl HarnessPrompts {
     /// # Errors
     /// [`HarnessPromptsError`] with every file that is missing, unreadable, too large, not UTF-8 or not valid for its
     /// entry.
-    pub async fn load(dir: &std::path::Path, language: &Language) -> Result<Self, HarnessPromptsError> {
-        let _ = (dir, language);
-        Ok(Self { texts: BTreeMap::new() })
+    pub async fn load(dir: &Path, language: &Language) -> Result<Self, HarnessPromptsError> {
+        let mut texts = BTreeMap::new();
+        let mut problems = Vec::new();
+        for id in HarnessPrompt::ALL {
+            match load_one(dir, *id, language).await {
+                Ok(text) => {
+                    texts.insert(*id, text);
+                }
+                Err(problem) => problems.push(problem),
+            }
+        }
+        if problems.is_empty() {
+            Ok(Self { texts })
+        } else {
+            Err(HarnessPromptsError { problems })
+        }
     }
 
     /// Renders `id` with `values`.
@@ -113,7 +127,75 @@ impl HarnessPrompts {
     /// [`RenderTextError::Render`] when `values` give no value for a variable of the text or one for another;
     /// [`RenderTextError::NotLoaded`] for a loader that holds no text for `id`.
     pub fn render(&self, id: HarnessPrompt, values: &Variables) -> Result<String, RenderTextError> {
-        let _ = values;
-        Err(RenderTextError::NotLoaded { id })
+        let text = self.texts.get(&id).ok_or(RenderTextError::NotLoaded { id })?;
+        id.spec()
+            .render(text, values)
+            .map_err(|source| RenderTextError::Render { id, source })
     }
+}
+
+/// Reads the text of `id` and checks it against the catalog.
+async fn load_one(dir: &Path, id: HarnessPrompt, language: &Language) -> Result<String, TextProblem> {
+    let spec = id.spec();
+    let candidates = spec.candidates(language);
+    let problem = |path: &Path, cause| TextProblem {
+        id,
+        path: path.to_path_buf(),
+        cause,
+    };
+    let english = Path::new(spec.path());
+    let (path, text) = match read_first(dir, &candidates).await {
+        Ok(Some(found)) => found,
+        Ok(None) => {
+            return Err(problem(english, ProblemCause::Missing { tried: candidates }));
+        }
+        Err((path, cause)) => return Err(problem(&path, cause)),
+    };
+    // The text has to render with a value for each variable the catalog lists, and with nothing else: the check of
+    // the text against the catalog is the check the later rendering will make, with empty values.
+    let values = spec
+        .variables()
+        .iter()
+        .try_fold(Variables::new(), |values, name| values.with(name, ""))
+        .map_err(|source| problem(&path, ProblemCause::Catalog(source)))?;
+    spec.render(&text, &values)
+        .map_err(|source| problem(&path, ProblemCause::Invalid(source)))?;
+    Ok(text)
+}
+
+/// Reads the first of `candidates` (paths in `dir`) that exists: its path and its text, or `None` when none exists.
+///
+/// A file that exists but cannot be read is a problem, never a reason to try the next one: a broken translation must
+/// not silently turn into English.
+async fn read_first(dir: &Path, candidates: &[PathBuf]) -> Result<Option<(PathBuf, String)>, (PathBuf, ProblemCause)> {
+    for candidate in candidates {
+        let path = dir.join(candidate);
+        match read_file(&path).await {
+            Ok(Some(text)) => return Ok(Some((path, text))),
+            // A candidate that is not there is the specified way to fall back to the next one.
+            Ok(None) => {}
+            Err(cause) => return Err((path, cause)),
+        }
+    }
+    Ok(None)
+}
+
+/// The text of the file at `path`, or `None` when there is no such file.
+async fn read_file(path: &Path) -> Result<Option<String>, ProblemCause> {
+    let file = match tokio::fs::File::open(path).await {
+        Ok(file) => file,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(ProblemCause::Read(source)),
+    };
+    // One byte more than the limit tells a file that is too long from one that has exactly the limit.
+    let read_limit = u64::try_from(MAX_TEXT_BYTES).map_or(u64::MAX, |limit| limit.saturating_add(1));
+    let mut bytes = Vec::new();
+    file.take(read_limit)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(ProblemCause::Read)?;
+    if bytes.len() > MAX_TEXT_BYTES {
+        return Err(ProblemCause::TooLarge);
+    }
+    String::from_utf8(bytes).map(Some).map_err(ProblemCause::NotUtf8)
 }
