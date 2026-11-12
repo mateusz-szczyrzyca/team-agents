@@ -249,6 +249,24 @@ fn a_run_that_was_stopped_is_incomplete_and_has_no_final_message() -> TestResult
     Ok(())
 }
 
+// Rule: the final message is the last message of a turn that completed; a turn that failed has none.
+#[test]
+fn a_turn_that_fails_after_an_agent_message_has_no_final_message() -> TestResult {
+    let stream = [
+        r#"{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a53"}"#,
+        r#"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"STATUS: DONE"}}"#,
+        r#"{"type":"turn.failed","error":{"message":"stream disconnected"}}"#,
+    ]
+    .join("\n");
+
+    let replay = replay(&CodexAdapter, &stream, "")?;
+
+    assert!(replay.errors.is_empty(), "{:?}", replay.errors);
+    assert_eq!(replay.output.stream, StreamOutcome::Failed);
+    assert_eq!(replay.output.final_message, None);
+    Ok(())
+}
+
 #[test]
 fn a_failed_turn_fails_and_reports_the_provider_message() -> TestResult {
     let replay = replay(&CodexAdapter, &fixture("codex", "at-capacity.jsonl")?, "")?;

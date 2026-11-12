@@ -172,6 +172,18 @@ fn the_same_configuration_is_kept_in_a_file_of_the_run() -> TestResult {
 }
 
 #[test]
+fn a_model_that_is_only_a_provider_prefix_is_not_registered() -> TestResult {
+    let mut request = request(new_run()?, Servers::Bus)?;
+    request.model = Some("openrouter/".parse()?);
+
+    let spec = OpencodeAdapter.build_run(&request)?;
+
+    let config = configuration(&spec)?;
+    assert_eq!(config["provider"]["openrouter"]["models"], Value::Null);
+    Ok(())
+}
+
+#[test]
 fn a_model_of_a_known_provider_is_registered_with_it_and_other_models_are_not() -> TestResult {
     let cases = [
         ("deepinfra/Qwen/Qwen3-Coder", Some(("deepinfra", "Qwen/Qwen3-Coder"))),

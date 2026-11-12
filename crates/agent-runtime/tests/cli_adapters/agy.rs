@@ -338,6 +338,21 @@ fn responses_that_are_never_done_are_bounded_in_number_and_the_open_ones_stay_us
     Ok(())
 }
 
+// Rule: only a result that says SUCCESS succeeded; one with no status did not.
+#[test]
+fn a_result_without_a_status_is_a_failed_run_that_keeps_its_response() -> TestResult {
+    let replay = replay(
+        &AgyAdapter,
+        r#"{"event":"result","result":{"response":"STATUS: DONE"}}"#,
+        "",
+    )?;
+
+    assert!(replay.errors.is_empty(), "{:?}", replay.errors);
+    assert_eq!(replay.output.stream, StreamOutcome::Failed);
+    assert_eq!(replay.output.final_message.as_deref(), Some("STATUS: DONE"));
+    Ok(())
+}
+
 #[test]
 fn events_with_nothing_to_show_show_nothing() -> TestResult {
     let mut parser = AgyAdapter.parser();
