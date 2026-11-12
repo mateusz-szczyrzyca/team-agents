@@ -333,6 +333,27 @@ mod run_engine {
     }
 
     #[tokio::test]
+    async fn the_status_after_more_output_than_one_look_reads_is_still_seen() {
+        // No look at the output before the CLI ends: the end reads all of its 18 MB at once.
+        let slow = RunTimings {
+            poll: Duration::from_mins(10),
+            hang: Duration::from_mins(20),
+            stop_grace: Duration::from_secs(5),
+        };
+        let env = env_with(&fake_cli(), "", slow).await;
+
+        let run = env.finished("flood").await;
+
+        assert_eq!(
+            run.classified.end,
+            RunEnd::Reported {
+                outcome: RunOutcome::Done
+            }
+        );
+        assert_eq!(run.final_message.as_deref(), Some("Finished the item.\nSTATUS: DONE"));
+    }
+
+    #[tokio::test]
     async fn a_silent_run_is_killed_by_the_watchdog_with_everything_it_started() {
         let env = env().await;
 

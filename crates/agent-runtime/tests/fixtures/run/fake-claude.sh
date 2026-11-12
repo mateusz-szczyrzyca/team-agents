@@ -9,6 +9,7 @@
 #   nostatus              ends cleanly without a STATUS line
 #   crash                 exits with status 3 and prints nothing
 #   garbage               prints a line that is not JSON, then ends like `done`
+#   flood                 prints three lines of 6 MB that are not JSON, then ends like `done`
 #   questions PATH        writes a questions file to PATH, ends with STATUS: QUESTIONS
 #   questions-nofile      ends with STATUS: QUESTIONS without writing the file
 #   hang                  prints its first line and then nothing; leaves a child behind (pid in .fake-child)
@@ -63,6 +64,10 @@ case $scenario in
   nostatus) init; result false 'I think that is all.' ;;
   crash) exit 3 ;;
   garbage) echo 'this line is not JSON'; finish_done ;;
+  flood)
+    for _ in 1 2 3; do head -c 6000000 /dev/zero | tr '\0' x; echo; done
+    finish_done
+    ;;
   questions\ *)
     init
     path=${scenario#questions }
