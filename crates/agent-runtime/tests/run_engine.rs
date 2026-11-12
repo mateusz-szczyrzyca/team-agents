@@ -22,7 +22,8 @@ mod run_engine {
     use agent_runtime::harness_prompts::HarnessPrompts;
     use agent_runtime::process::Supervisor;
     use agent_runtime::run::{
-        EngineParts, FinishedRun, MAX_PROMPT_ARGUMENT_BYTES, RunEngine, RunError, RunJob, RunTimings, RunVerdict,
+        EngineParts, FinishedRun, MAX_PROMPT_ARGUMENT_BYTES, Progress, RunEngine, RunError, RunJob, RunTimings,
+        RunVerdict,
     };
     use agent_runtime::store::{Home, StateStore};
     use time::UtcDateTime;
@@ -187,7 +188,7 @@ mod run_engine {
         assert_eq!(run.finish.stopped_by, StoppedBy::Nobody);
         assert_eq!(run.session, Some(SessionId::from_str(SESSION).unwrap()));
         assert_eq!(run.final_message.as_deref(), Some("Finished the item.\nSTATUS: DONE"));
-        assert!(run.made_progress);
+        assert_eq!(run.progress, Progress::Made);
     }
 
     #[tokio::test]
@@ -272,7 +273,7 @@ mod run_engine {
         assert_eq!(clean.classified.end, RunEnd::NoStatus { exit_code: Some(0) });
         assert_eq!(crashed.classified.end, RunEnd::NoStatus { exit_code: Some(3) });
         assert_eq!(crashed.session, None);
-        assert!(!crashed.made_progress);
+        assert_eq!(crashed.progress, Progress::Nothing);
     }
 
     #[tokio::test]

@@ -25,7 +25,7 @@ use agent_core::status::{InvalidTransition, TaskStatus};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::prompts::PromptLoader;
-use agent_runtime::run::{FinishedRun, RunEngine, RunError as EngineError, RunVerdict};
+use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict};
 use agent_runtime::settings::Settings;
 use agent_runtime::store::{StateStore, StoreError};
 use rand::rngs::StdRng;
@@ -446,20 +446,19 @@ impl Owner {
                 };
                 (TaskStatus::Paused, Some(notice))
             }
-            Settled::Hung => self.hung(task, run.made_progress)?,
+            Settled::Hung => self.hung(task, run.progress)?,
         };
         self.move_to(task, &located.team, status, &mut events)?;
         self.commit(task, &located, now, events, notice).await
     }
 
     /// What follows a hung run: it is resumed, or after the last strike the task fails and the human is told.
-    fn hung(&mut self, task: &TaskId, made_progress: bool) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+    fn hung(&mut self, task: &TaskId, progress: Progress) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
         let watchdog = self.parts.settings.config.watchdog();
         // A run that did something before it went silent starts the count again.
-        let count = if made_progress {
-            1
-        } else {
-            self.hangs.get(task).copied().unwrap_or(0).saturating_add(1)
+        let count = match progress {
+            Progress::Made => 1,
+            Progress::Nothing => self.hangs.get(task).copied().unwrap_or(0).saturating_add(1),
         };
         self.hangs.insert(task.clone(), count);
         let session = self

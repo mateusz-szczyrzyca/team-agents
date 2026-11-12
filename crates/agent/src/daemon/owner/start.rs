@@ -155,7 +155,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         .last_session()
         .map(|session| SessionId::from_str(session.as_str()))
         .transpose()?;
-    let kind = prompt_kind(member, session.is_some(), config);
+    let kind = prompt_kind(member, session.as_ref(), config);
     let item = assigned_item(team, participant);
     let input = PromptInput {
         kind,
@@ -245,8 +245,8 @@ pub(super) fn next_round(member: &Member) -> Option<NonZeroU32> {
 }
 
 /// What the prompt of the next run tells: the whole task, or what interrupted the session it resumes.
-fn prompt_kind(member: &Member, has_session: bool, config: &Config) -> PromptKind {
-    if !has_session {
+fn prompt_kind(member: &Member, session: Option<&SessionId>, config: &Config) -> PromptKind {
+    if session.is_none() {
         return PromptKind::First;
     }
     let last_end = member.runs().last().and_then(|run| match run.state() {

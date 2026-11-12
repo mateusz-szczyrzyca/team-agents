@@ -126,8 +126,17 @@ pub struct FinishedRun {
     pub session: Option<SessionId>,
     /// The agent's final message.
     pub final_message: Option<String>,
-    /// Whether the run did anything but start: a step, an edit, a message.
-    pub made_progress: bool,
+    /// Whether the run did anything but start.
+    pub progress: Progress,
+}
+
+/// Whether a run did anything but start: what tells a run that hangs after some work from one that hangs at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Progress {
+    /// It started, and printed nothing more than information or errors.
+    Nothing,
+    /// It made a step, an edit or a message.
+    Made,
 }
 
 /// What became of a run.
@@ -312,7 +321,7 @@ impl RunEngine {
             task: &job.task,
             tail: OutputTail::new(stdout),
             parser: launch.parser,
-            made_progress: false,
+            progress: Progress::Nothing,
             unreadable: Unreadable::default(),
         };
         let supervise = |source| RunError::Supervise {
@@ -381,7 +390,7 @@ impl RunEngine {
             finish,
             session: output.session_id,
             final_message: output.final_message,
-            made_progress: follow.made_progress,
+            progress: follow.progress,
         })))
     }
 
@@ -466,7 +475,7 @@ struct Follow<'a> {
     /// The adapter's parser.
     parser: Box<dyn OutputParser>,
     /// Whether an event that is more than the start or an error was seen.
-    made_progress: bool,
+    progress: Progress,
     /// What the parser refused.
     unreadable: Unreadable,
 }
@@ -509,7 +518,9 @@ impl Follow<'_> {
                 }
             };
             for event in events {
-                self.made_progress |= !matches!(event, ActivityEvent::Info(_) | ActivityEvent::Error(_));
+                if !matches!(event, ActivityEvent::Info(_) | ActivityEvent::Error(_)) {
+                    self.progress = Progress::Made;
+                }
                 let at = Timestamp::now(&self.engine.parts.clock)?;
                 self.engine
                     .parts
