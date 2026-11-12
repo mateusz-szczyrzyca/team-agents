@@ -779,6 +779,64 @@ mod github_client {
         );
     }
 
+    /// A draft that GraphQL is asked to make ready, and the answer the fake server gives to the mutation.
+    async fn mark_ready_answered_with(answer: serde_json::Value) -> GitHubError {
+        let mut draft = pr_json(7);
+        draft["draft"] = json!(true);
+        let server = FakeServer::start(move |n, _| match n {
+            0 => reply(200, &draft),
+            _ => reply(200, &answer),
+        })
+        .await
+        .unwrap();
+
+        github(&server).mark_ready(number(7)).await.unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn mark_ready_is_still_draft_when_graphql_says_the_pull_request_is_a_draft() {
+        let error = mark_ready_answered_with(
+            json!({"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": true}}}}),
+        )
+        .await;
+
+        assert!(
+            matches!(
+                error,
+                GitHubError::StillDraft {
+                    operation: GitHubOperation::MarkReady
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_ready_is_a_decode_error_when_graphql_answers_without_the_result() {
+        let answers = [
+            json!({}),
+            json!({"data": null}),
+            json!({"data": {}}),
+            json!({"data": {"markPullRequestReadyForReview": null}}),
+            json!({"data": {"markPullRequestReadyForReview": {"pullRequest": null}}}),
+            json!({"data": {"markPullRequestReadyForReview": {"pullRequest": {}}}}),
+        ];
+        for answer in answers {
+            let error = mark_ready_answered_with(answer.clone()).await;
+
+            assert!(
+                matches!(
+                    error,
+                    GitHubError::Decode {
+                        operation: GitHubOperation::MarkReady,
+                        ..
+                    }
+                ),
+                "{answer}: {error:?}"
+            );
+        }
+    }
+
     // ---------------------------------------------------------------- reviews and comments
 
     #[tokio::test]

@@ -450,6 +450,12 @@ pub enum GitHubError {
         /// The first message GraphQL gave, cut to a bounded length.
         message: String,
     },
+    /// GraphQL answered without errors, but the pull request is still a draft.
+    #[error("{operation} did not take the pull request out of draft")]
+    StillDraft {
+        /// The call.
+        operation: GitHubOperation,
+    },
     /// A list has more pages than are read.
     #[error("{operation} has more than {pages} pages")]
     TooManyPages {
