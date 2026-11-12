@@ -72,7 +72,7 @@ AgentBus (real binary, `go build` of `agentbus/` once into `CARGO_TARGET_TMPDIR`
 - exit statuses to `FailureClass` for the classes the bus gives in these commands (`InvalidArgument`, `NotFound`, `NotInTeam`, `Permission`, `Conflict`), `Unclassified` for status `1`, `Run`/`Timeout` for a lock held by the test (`flock` on `bus.lock`) with the paused clock, `Run`/`Spawn` for a missing program
 - in the crate: the exit-status table `2..=10`, signals, output over the limit, non-UTF-8, and each reader of what a command prints with the formats of the Go code
 
-Mutation checks (a change to the code, the tests must go red): `18` mutations were tried (merge retried, trust everyone, redirects followed, `404` retried, no paging, page size off by one, no token, timeouts not retried, long `Retry-After` capped instead of refused, no backoff growth, draft flag, `mark_ready` always mutating, level fixed, no `--` before the text, summary dropped, board wake confused, state fixed, lead dropped). Two survived at first (page size off by one, board level) and got tests; one survives by design (see Deviations: the dispatcher).
+Mutation checks (a change to the code, the tests must go red): about twenty mutations were tried (merge retried, trust everyone, redirects followed, `404` retried, no paging, page size off by one, no token, timeouts not retried, long `Retry-After` capped instead of refused, no backoff growth, draft flag, `mark_ready` always mutating, level fixed, no `--` before the text, summary dropped, board wake confused, state fixed, lead dropped). Two survived at first (page size off by one, board level) and got tests; one survives by design (see Deviations: the dispatcher).
 
 ## Checks of the item
 
@@ -83,7 +83,7 @@ Mutation checks (a change to the code, the tests must go red): `18` mutations we
 
 - `make rust`: pass (`cargo fmt --check`, clippy `-D warnings`, tests, doctests, `cargo doc` with warnings denied, all `--locked`)
 - `make lint`: pass, `0` findings
-- `make gate`: `PASS at 1b211c2` — the first run once failed `git::tests::output_that_is_not_utf8_is_an_error` (`ExecutableFileBusy`, see below); the next runs passed
+- `make gate`: `PASS` at the head of the code (the first run, on an earlier commit, once failed `git::tests::output_that_is_not_utf8_is_an_error` (`ExecutableFileBusy`, see below; the later runs passed)
 - `make test`: Go packages pass (`agentbus`, `agentlive`, `agent`); the bats suite has **`8`** failing tests of the old investigation flow (`234 248 249 250 251 270 654 672`: an `investigation-team` task stays `running`). I ran `bats -f "single investigator" tests/unit` (`3` of them) on the **base commit** in a separate worktree: the same `3` fail there. The other `5` are the same family; I did not run them on the base.
 - repeated runs for flakiness: the GitHub tests `40/40`, the agentbus tests `25/25`, the lib tests `40/40`
 
