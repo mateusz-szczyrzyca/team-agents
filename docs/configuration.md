@@ -9,7 +9,9 @@ The Rust `agent` (see [`architecture.md`](architecture.md)) reads two files from
 
 This page is the reference for both, and lists the decisions in them that are expensive to change once installations
 exist (the last section). It describes [`agent-core`](../crates/agent-core/src/config.rs), which parses and validates
-the text; reading the files from disk is the runtime's job (item 4.1 of the plan).
+the text; `agent_runtime::settings` reads the files from the home (at most 1 MiB and 64 KiB). `agent daemon` reads both
+once, at its start: a change takes effect when the daemon is restarted. A home without `agents.toml` is refused with the
+file named; one without `secrets.toml` has no secrets.
 
 The old `agents.conf` (a Bash file) is not read, converted or kept compatible. The last section maps its settings.
 

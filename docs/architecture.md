@@ -26,7 +26,7 @@ prompts/worker-agent/rust-developer.md
 prompts/investigator/rust-developer.md
 prompts/investigator/code-review.md
 prompts/harness/<module>/<name>.md     texts the harness composes (run prompts, questions files, notifications)
-config/agents.example.toml, config/systemd/
+config/agents.example.toml, config/systemd/agent-daemon.service
 docs/architecture.md, docs/configuration.md, docs/state.md, docs/task-list.md
 ```
 
@@ -146,6 +146,88 @@ engine relies on:
 
 The daemon feeds these functions what it observed and carries out what they return; none of them touches a file, a process or
 the network. The order of the checks and the rules each follows are in the documentation of its module.
+
+### The run engine and the daemon (`agent-runtime`, `agent`)
+
+`agent daemon` is the process model below, working: one daemon per home, the Unix socket, the run engine, recovery.
+
+| Where | What |
+|---|---|
+| `agent_runtime::run` | `RunEngine::run`: one run of a model CLI, from its files to its classified end. Touches no state |
+| `agent_runtime::run::compose` | the prompt of a run: context, role, rules of the tier, brief, item, checkpoint — or, for a resumed session, what interrupted it |
+| `agent_runtime::{settings, harness_prompts, clock}` | `agents.toml` and `secrets.toml` read from the home; the second prompt catalog (`HarnessPrompt`, `prompts/harness/run/`); `SystemClock` and `SharedClock` |
+| `agent::daemon` | `owner` (the state), `server` (the socket), `notifier`, `settle` (what a run's end does), `recovery` (on start) |
+| `agent::{client, commands}` | the socket client, `agent status`, `agent daemon` |
+
+**Tasks of the daemon** (CON-3, CON-4): the *owner* is the only task that reads or changes the state; the *server* passes
+requests to it through a bounded channel; the *notifier* delivers notifications off its path. Cancelling the shutdown
+token (SIGTERM, SIGINT) stops them in order: the server stops accepting, the owner has its runs stopped and records them,
+the notifier delivers what is queued, the socket is removed. Every spawned task is joined. A state that cannot be saved
+ends the daemon with an error — models must not go on working with a state that is not kept — and `Restart=on-failure`
+of the unit starts it again.
+
+**Start.** `agent daemon` needs `AGENTS_HOME` (no default before the cutover: a trial cannot touch the live home by
+accident), `agents.toml` there and the prompt files (`prompts/` in the home, or `--prompts-dir DIR`); every file of both
+catalogs is checked at start and every problem reported at once. It takes the lock of the home (a second daemon exits with
+"already running"), reads the state, recovers it, makes the socket (in a private directory, mode `0600`, renamed into
+place) and starts serving. A trial:
+
+```sh
+export AGENTS_HOME=$(mktemp -d)
+cp config/agents.example.toml "$AGENTS_HOME/agents.toml"
+agent daemon --prompts-dir "$PWD/prompts" &    # logs on stderr
+agent status                                   # no teams
+agent daemon --prompts-dir "$PWD/prompts"      # agent: the agent daemon is already running: ...
+kill -TERM %1                                  # ends the daemon and its runs
+```
+
+**What the daemon does with a task.** A task whose status is `queued` is started: the owner makes the run ready
+(`start.rs`: the agent's CLI and model from the configuration, the worktree `worktrees/<repo>/<task>` of the home, the
+prompt, the MCP servers — `agentbus serve` for the task, Serena when configured), records the run, sets the task `running`
+and gives the job to the engine. Creating the worktree and queueing tasks is the next item's (`agent run`); until then a
+test or a trial writes them. When the engine returns, the end of the run decides (`settle.rs`):
+
+| The run ended | The task goes to | And |
+|---|---|---|
+| `STATUS: DONE` | `done` for a solo task and a review, `waiting` for a coordinator, member or worker | |
+| `STATUS: QUESTIONS` | `questions` when `tasks/<task>/questions-<round>.md` is there and parses | the round is recorded and the human notified; a missing or unreadable file fails the task and says why |
+| `STATUS: FAILED`, no `STATUS:` line | `failed` | the human is notified |
+| `STATUS: SLEEPING` / `EXCLUDED` | `waiting` / `done` | |
+| quota exhausted, rate limited | `paused` | woken at the time the CLI gave (plus a minute), else after `[limits]` minutes; the human is notified |
+| hung (the watchdog killed it) | `queued` again, resumed from its session | after `[watchdog] hang_strikes` hangs in a row without progress: `failed`, the human notified. A run that did something before it went silent starts the count again |
+| the daemon shut down | `queued` | the run is recorded as ended without a status and no exit code |
+
+**The watchdog** is the engine's: a run whose standard output and error files show no change for `[watchdog] hang_minutes`
+is stopped (its whole process group: `SIGTERM`, then `SIGKILL`), and its end is classified as a hang unless the provider
+refused it (then it is a limit). **Pauses** are kept in no field of the state: the wake-up time is worked out again from
+the last run's end, so a pause survives a restart. The daemon looks at the clock every 5 seconds (not a long sleep: a
+suspended machine does not stretch a pause).
+
+**Recovery on start.** A run that was going (the daemon died, or was killed) is ended as "no status, no exit code" and its
+task queued; it resumes from its session with the text for an interrupted harness. A paused task gets its wake-up again.
+A clock that was set back never ends a run before it began.
+
+**The socket** serves `status`, `show` and `subscribe` of the protocol of [`state.md`](state.md); the other commands answer
+`refused` naming themselves until their items. A line that is not a request is answered with `invalid` and the connection
+goes on; a line over 2 MiB ends its connection. At most 64 connections are served at once, 16 runs go at once, and a
+subscriber that falls 1024 events behind is let go (it subscribes again and starts from the state).
+
+**The home** (`agent_runtime::store::Home`):
+
+| Path | What |
+|---|---|
+| `agents.toml`, `secrets.toml`, `prompts/` | the settings and the prompt files, put there by the human |
+| `state.json`, `daemon.lock`, `agent.sock` | the state, the lock that keeps one daemon per home, the socket |
+| `tasks/<task>/activity.jsonl` | what each run did, one JSON line an event |
+| `tasks/<task>/runs/<run>/` | the output of a run (`out.jsonl`, `err.log`), the files its CLI is configured with, `prompt.md` for a prompt too long for a command line |
+| `tasks/<task>/questions-<round>.md` | the questions of a round |
+| `worktrees/<repo>/<task>/` | the git worktree of a task |
+| `notifications/` | the notification files |
+
+Not done here (items of the plan): `agent run` and the team's life (7.1), questions answered and the controls (7.2), the
+gate (7.3), pull requests and reviews (8.1), the dashboard (9.1). The checkpoint of a resumed agent is read from the
+agentbus, which a team's life creates; until then a resumed run has none. opencode's `session export` for a resumed
+session whose result it did not print is not done: such a run is classified from what it printed.
 
 ## Process model
 

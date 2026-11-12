@@ -8,11 +8,19 @@ mod clock {
 
     #[test]
     fn the_system_clock_is_between_two_readings_of_the_machines_time() {
-        let before = UtcDateTime::now();
+        // The clock drops the fraction of a second, so it may read up to a second before the machine's time.
+        let before = UtcDateTime::now() - time::Duration::seconds(1);
 
         let read = SystemClock.now();
 
         assert!(before <= read && read <= UtcDateTime::now(), "{before} {read}");
+    }
+
+    #[test]
+    fn the_system_clock_counts_whole_seconds() {
+        for _ in 0..50 {
+            assert_eq!(SystemClock.now().nanosecond(), 0);
+        }
     }
 
     #[test]
