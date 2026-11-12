@@ -192,12 +192,12 @@ pub(crate) fn render_started(home: &Home, team: &Team) -> String {
         .map(|(_, member)| member.agent().name().len())
         .max()
         .unwrap_or(0);
-    let mut text = format!(
+    let mut lines = vec![format!(
         "team {} started on {}, merge: {}\n",
         team.id(),
         team.repo(),
         team.merge().as_str()
-    );
+    )];
     for (role, member) in roster {
         let item = team.items().iter().find_map(|progress| match progress.phase() {
             ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }
@@ -212,20 +212,16 @@ pub(crate) fn render_started(home: &Home, team: &Team) -> String {
             | ItemPhase::Approved { .. }
             | ItemPhase::Done { .. } => None,
         });
-        let worktree = home.worktree_dir(team.repo(), member.task());
-        text.push_str(&format!(
-            "  {}  {:<role_width$}  {:<agent_width$}  {}",
+        let with_item = item.map_or_else(String::new, |item| format!("  item {item}"));
+        lines.push(format!(
+            "  {}  {:<role_width$}  {:<agent_width$}  {}{with_item}\n",
             member.task(),
             role.to_string(),
             member.agent().name(),
-            worktree.display(),
+            home.worktree_dir(team.repo(), member.task()).display(),
         ));
-        if let Some(item) = item {
-            text.push_str(&format!("  item {item}"));
-        }
-        text.push('\n');
     }
-    text
+    lines.concat()
 }
 
 /// The request that starts what `input` says in the repository `directory` is in: nothing is asked of the daemon yet.

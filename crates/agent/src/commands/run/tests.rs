@@ -252,18 +252,14 @@ fn input(words: &[&str], file: Option<PathBuf>) -> RunInput {
 }
 
 fn run_request(daemon: &FakeDaemon) -> agent_core::protocol::RunRequest {
-    let Command::Run(request) = daemon
+    daemon
         .requests()
         .into_iter()
         .find_map(|request| match request.command {
-            command @ Command::Run(_) => Some(command),
+            Command::Run(run) => Some(run),
             _ => None,
         })
         .unwrap()
-    else {
-        unreachable!()
-    };
-    request
 }
 
 #[tokio::test]
