@@ -108,6 +108,19 @@ the files to write first, what to keep out of git), the runtime starts it, feeds
 an `OutputParser` and its stderr at the end, and gets the final message, the session ID, how the stream says the run
 ended and the error tail. The adapters of the four CLIs come with feature 5.
 
+### The runtime services (`agent-runtime`)
+
+Each effect sits behind one small typed boundary; none of them knows the daemon, so each is tested on its own, on
+real temporary files, repositories and processes (never the live `~/agents`).
+
+| Module | Types | What it does |
+|---|---|---|
+| `store` | `Home`, `StateStore`, `StoreError` | The layout of `AGENTS_HOME` (`state.json`, `daemon.lock`, `tasks/<task>/activity.jsonl`, `tasks/<task>/runs/<run>/`, `notifications/`). `StateStore::open` creates the home, takes an exclusive `flock` on `daemon.lock` — one daemon per home, a second `open` fails with `StoreError::HomeLocked` — and removes the temporary files a crashed save left. `save` writes a synced temporary file in the home and renames it over `state.json`, so a crash leaves the old state or the new one; `load` reads at most `MAX_STATE_BYTES` and goes through `State::from_json`, which refuses another schema version first. `append_activity` adds one JSON line (time, kind, fields cut at 4 KiB) to a task's append-only log |
+| `prompts` | `PromptLoader`, `PromptLoadError`, `PromptProblem` | Reads every prompt of the catalog from the prompts directory (the language's file, then English; at most 1 MiB each), checks each against the catalog and reports **all** problems at once. A broken file of the language is a problem, never a silent fall back to English. `render` then fails only on the values it is given |
+| `process` | `Supervisor`, `RunningProcess`, `ProcessSpec`, `ExitReport` | Starts a model CLI from an argument vector (never a shell string) in its own process group, its stdout and stderr appended to files, at most N at once. `last_activity` is the later modification time of the two files. `stop(grace)` sends `SIGTERM` to the group, `SIGKILL` after the grace, and always `SIGKILL` for what the leader left in its group once it is reaped; a dropped, running process has its group killed. Inside the crate, `capture` runs a short helper with a time limit and a byte limit |
+| `git` | `Git`, `CommitIdentity`, `Revision`, `MergeOutcome`, `TreeState` | Typed operations over the `git` command: worktree add and remove, branches, `rev-parse`, merge without fast-forward (a conflict is the answer `MergeOutcome::Conflicted`), merge in progress and abort, the paths of a dirty tree, push. The identity and the signing key of a run ride on every command as environment and `-c` options — `commit.gpgsign=false` without a key, so the human's own signing never leaks in; nothing is written to a git configuration |
+| `notify` | `Notifier`, `Notification` | Writes `notification-<time>-<n>.md` (title line, body; mode 0600; whole under its name) and runs the configured command with the file's path last. The `[notification_env]` secrets are in its environment only, and what it says is stripped of them before it is put in an error |
+
 ## Process model
 
 `agent daemon`, a systemd user service, is the only owner of the state and of every model run. Every other command
