@@ -7,30 +7,46 @@
 //! touches no state: what the end means for the task is the daemon's decision.
 
 pub mod compose;
+mod launch;
+mod output;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
-use agent_core::cli::{BuildRunError, McpServerKind, RunMode, SessionId};
+use agent_core::cli::{ActivityEvent, BuildRunError, McpServerKind, OutputError, OutputParser, RunMode, SessionId};
 use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValue, ModelName, Secrets, Watchdog};
-use agent_core::decide::outcome::{Classified, ClassifyError, RunFinish};
+use agent_core::decide::outcome::{
+    Classified, ClassifyError, ExitStatus, LimitContext, RunFinish, StoppedBy, classify_outcome,
+};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::kinds::CliKind;
-use agent_core::state::InvalidTimestamp;
+use agent_core::prompt::VariablesError;
+use agent_core::state::{InvalidTimestamp, Timestamp};
 use time::UtcOffset;
+use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
 use crate::clock::SharedClock;
 use crate::git::GitError;
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
-use crate::process::{ProcessError, Supervisor};
+use crate::process::{ExitReport, ProcessError, Supervisor};
+use crate::run::output::{OutputTail, read_end};
 use crate::store::{StateStore, StoreError};
 
 /// How long a prompt may be to travel as one argument of a command line; longer ones go through a file. Linux refuses
 /// an argument over 128 KiB, and a CLI adds its own flags around it.
 pub const MAX_PROMPT_ARGUMENT_BYTES: usize = 100_000;
+
+/// How often a run's output is looked at, unless the timings say otherwise.
+const DEFAULT_POLL: Duration = Duration::from_secs(1);
+
+/// How long a stopped run has to end by itself, unless the timings say otherwise.
+const DEFAULT_STOP_GRACE: Duration = Duration::from_secs(10);
+
+/// The shortest time between two looks: a zero would make the engine spin.
+const MIN_POLL: Duration = Duration::from_millis(1);
 
 /// How often the engine looks at a run's output, and how long it waits for a stopped one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,9 +64,9 @@ impl RunTimings {
     #[must_use]
     pub fn from_config(watchdog: &Watchdog) -> Self {
         Self {
-            poll: Duration::ZERO,
+            poll: DEFAULT_POLL,
             hang: watchdog.hang_minutes.as_duration(),
-            stop_grace: Duration::ZERO,
+            stop_grace: DEFAULT_STOP_GRACE,
         }
     }
 }
@@ -167,11 +183,25 @@ pub enum RunError {
         /// What went wrong.
         source: ExcludeCause,
     },
+    /// A name of an environment variable of the program is not valid.
+    #[error("{name:?} is not a valid name of an environment variable")]
+    EnvName {
+        /// The name.
+        name: &'static str,
+        /// What is wrong with it.
+        source: InvalidValue,
+    },
     /// The directories of `[binaries] agent_path` cannot be made a `PATH`.
     #[error("cannot make a PATH of the directories of agent_path")]
     AgentPath {
         /// What the standard library refused.
         source: std::env::JoinPathsError,
+    },
+    /// A variable of the text that points to the prompt file is not valid.
+    #[error("a variable of the text that points to the prompt file is not valid")]
+    PromptFileVariable {
+        /// What is wrong with the name.
+        source: VariablesError,
     },
     /// The text that sends the agent to its prompt file cannot be rendered.
     #[error("cannot render the text that points to the prompt file")]
@@ -264,7 +294,224 @@ impl RunEngine {
     /// [`RunError`]: the run could not be built, started, followed or classified. A process that was started is
     /// stopped when the error is returned.
     pub async fn run(&self, job: RunJob, cancel: &CancellationToken) -> Result<RunVerdict, RunError> {
-        let _ = (&self.parts, job, cancel);
-        Ok(RunVerdict::Interrupted { session: None })
+        let launch = launch::prepare(&self.parts, &job).await?;
+        let stdout = launch.process.stdout_file.clone();
+        let stderr = launch.process.stderr_file.clone();
+        let mut process = self
+            .parts
+            .supervisor
+            .spawn(&launch.process)
+            .await
+            .map_err(|source| RunError::Spawn {
+                task: job.task.clone(),
+                cli: job.cli,
+                source,
+            })?;
+        let mut follow = Follow {
+            engine: self,
+            task: &job.task,
+            tail: OutputTail::new(stdout),
+            parser: launch.parser,
+            made_progress: false,
+            unreadable: Unreadable::default(),
+        };
+        let supervise = |source| RunError::Supervise {
+            task: job.task.clone(),
+            source,
+        };
+        let mut tick = tokio::time::interval(self.parts.timings.poll.max(MIN_POLL));
+        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let stopped_by = loop {
+            let event = tokio::select! {
+                exit = process.wait() => Watched::Exited(exit),
+                () = cancel.cancelled() => Watched::Cancelled,
+                _ = tick.tick() => Watched::Tick,
+            };
+            match event {
+                Watched::Exited(exit) => {
+                    let exit = exit.map_err(supervise)?;
+                    break Ended::By(StoppedBy::Nobody, exit);
+                }
+                Watched::Cancelled => {
+                    process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
+                    break Ended::Cancelled;
+                }
+                Watched::Tick => {
+                    follow.read_new().await?;
+                    let last = process.last_activity().await.map_err(supervise)?;
+                    if self.is_silent(last) {
+                        let report = process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
+                        break Ended::By(StoppedBy::Watchdog, report.exit);
+                    }
+                }
+            }
+        };
+        follow.drain().await?;
+        let stderr = read_end(&stderr).await?;
+        follow.unreadable.report(&job);
+        let output = follow.parser.finish(&stderr, self.parts.config.limits().tail_lines);
+        let (stopped_by, exit) = match stopped_by {
+            Ended::Cancelled => {
+                return Ok(RunVerdict::Interrupted {
+                    session: output.session_id,
+                });
+            }
+            Ended::By(stopped_by, exit) => (stopped_by, exit),
+        };
+        let finish = RunFinish {
+            exit: match exit {
+                ExitReport::Exited { code } => ExitStatus::Code(code),
+                ExitReport::Signaled { .. } => ExitStatus::Signal,
+            },
+            stopped_by,
+        };
+        let context = LimitContext {
+            limits: self.parts.config.limits(),
+            now: Timestamp::now(&self.parts.clock)?,
+            local_offset: self.parts.local_offset,
+        };
+        let classified = classify_outcome(&output, finish, &context).map_err(|source| RunError::Classify {
+            task: job.task.clone(),
+            source,
+        })?;
+        Ok(RunVerdict::Finished(Box::new(FinishedRun {
+            classified,
+            finish,
+            session: output.session_id,
+            final_message: output.final_message,
+            made_progress: follow.made_progress,
+        })))
+    }
+
+    /// Whether a process that last showed life at `last` has been silent for the hang limit.
+    fn is_silent(&self, last: SystemTime) -> bool {
+        // A modification time in the future (the clock was set back) is no silence at all.
+        let silent_for = SystemTime::now().duration_since(last).unwrap_or(Duration::ZERO);
+        silent_for > self.parts.timings.hang
+    }
+}
+
+/// What the engine's wait for a run saw.
+enum Watched {
+    /// The process ended.
+    Exited(Result<ExitReport, ProcessError>),
+    /// The engine was told to stop.
+    Cancelled,
+    /// It is time to look at the output.
+    Tick,
+}
+
+/// How the supervised process came to its end.
+enum Ended {
+    /// By itself or by the watchdog.
+    By(StoppedBy, ExitReport),
+    /// Because the engine was cancelled.
+    Cancelled,
+}
+
+/// The lines of output that could not be read, which are logged once at the end of the run.
+#[derive(Debug, Default)]
+struct Unreadable {
+    /// How many.
+    count: u64,
+    /// Why the first could not be.
+    first: Option<String>,
+}
+
+impl Unreadable {
+    /// Counts one more.
+    fn note(&mut self, error: &OutputError) {
+        self.count = self.count.saturating_add(1);
+        if self.first.is_none() {
+            self.first = Some(error_chain(error));
+        }
+    }
+
+    /// Logs what was not readable in the run of `job`, if anything.
+    fn report(&self, job: &RunJob) {
+        if let Some(first) = &self.first {
+            tracing::warn!(
+                task = %job.task,
+                run = %job.run,
+                count = self.count,
+                first = %first,
+                "lines of the output of a run could not be read",
+            );
+        }
+    }
+}
+
+/// The error and its causes on one line, for a log record.
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
+/// What the engine does with the output of one run as it grows.
+struct Follow<'a> {
+    /// The engine, for the store and the clock.
+    engine: &'a RunEngine,
+    /// The task.
+    task: &'a TaskId,
+    /// The standard output file.
+    tail: OutputTail,
+    /// The adapter's parser.
+    parser: Box<dyn OutputParser>,
+    /// Whether an event that is more than the start or an error was seen.
+    made_progress: bool,
+    /// What the parser refused.
+    unreadable: Unreadable,
+}
+
+impl Follow<'_> {
+    /// Feeds the lines written since the last call to the parser and its events to the activity log.
+    async fn read_new(&mut self) -> Result<(), RunError> {
+        let lines = self.tail.read_new().await?;
+        self.feed(&lines).await
+    }
+
+    /// Reads what is left of the output after the process ended, the last line without a newline included.
+    async fn drain(&mut self) -> Result<(), RunError> {
+        self.read_new().await?;
+        if let Some(last) = self.tail.finish() {
+            self.feed(&[last]).await?;
+        }
+        if self.tail.dropped() > 0 {
+            tracing::warn!(task = %self.task, dropped = self.tail.dropped(), "lines of the output were too long or not text");
+        }
+        Ok(())
+    }
+
+    /// Gives `lines` to the parser and logs the events.
+    async fn feed(&mut self, lines: &[String]) -> Result<(), RunError> {
+        for line in lines {
+            let events = match self.parser.push_line(line) {
+                Ok(events) => events,
+                Err(error) => {
+                    self.unreadable.note(&error);
+                    continue;
+                }
+            };
+            for event in events {
+                self.made_progress |= !matches!(event, ActivityEvent::Info(_) | ActivityEvent::Error(_));
+                let at = Timestamp::now(&self.engine.parts.clock)?;
+                self.engine
+                    .parts
+                    .store
+                    .append_activity(self.task, at, &event)
+                    .await
+                    .map_err(|source| RunError::Activity {
+                        task: self.task.clone(),
+                        source,
+                    })?;
+            }
+        }
+        Ok(())
     }
 }

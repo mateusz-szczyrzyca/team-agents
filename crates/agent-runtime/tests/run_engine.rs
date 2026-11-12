@@ -89,7 +89,7 @@ mod run_engine {
     fn timings() -> RunTimings {
         RunTimings {
             poll: Duration::from_millis(20),
-            hang: Duration::from_millis(500),
+            hang: Duration::from_secs(2),
             stop_grace: Duration::from_secs(5),
         }
     }
@@ -265,10 +265,9 @@ mod run_engine {
 
     #[tokio::test]
     async fn the_end_of_a_run_without_a_status_line_is_no_status_with_its_exit_code() {
-        let env = env().await;
-
-        let clean = env.finished("nostatus").await;
-        let crashed = env.finished("crash").await;
+        // One run ID names one directory: each run gets its own home.
+        let clean = env().await.finished("nostatus").await;
+        let crashed = env().await.finished("crash").await;
 
         assert_eq!(clean.classified.end, RunEnd::NoStatus { exit_code: Some(0) });
         assert_eq!(crashed.classified.end, RunEnd::NoStatus { exit_code: Some(3) });
@@ -348,7 +347,9 @@ mod run_engine {
             Some(SessionId::from_str(SESSION).unwrap()),
             "the session is kept for the resume"
         );
-        assert!(is_gone(env.child()), "the child of the run is still alive");
+        // The signal is delivered a moment after it is sent.
+        let child = env.child();
+        eventually("the child of the run to be gone", || is_gone(child)).await;
     }
 
     #[tokio::test]
@@ -371,7 +372,9 @@ mod run_engine {
                 session: Some(SessionId::from_str(SESSION).unwrap())
             }
         );
-        assert!(is_gone(env.child()), "the child of the run is still alive");
+        // The signal is delivered a moment after it is sent.
+        let child = env.child();
+        eventually("the child of the run to be gone", || is_gone(child)).await;
     }
 
     #[tokio::test]
@@ -510,7 +513,7 @@ mod run_engine {
             timings,
             RunTimings {
                 poll: Duration::from_secs(1),
-                hang: Duration::from_secs(7 * 60),
+                hang: Duration::from_mins(7),
                 stop_grace: Duration::from_secs(10),
             }
         );

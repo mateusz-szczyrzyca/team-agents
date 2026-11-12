@@ -12,7 +12,7 @@ pub struct SystemClock;
 
 impl Clock for SystemClock {
     fn now(&self) -> UtcDateTime {
-        UtcDateTime::UNIX_EPOCH
+        UtcDateTime::now()
     }
 }
 
