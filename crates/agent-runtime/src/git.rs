@@ -213,6 +213,9 @@ pub enum GitError {
     /// The message of a merge is empty.
     #[error("the message of a merge must not be empty")]
     EmptyMessage,
+    /// A merge is already under way: it must be finished or aborted first.
+    #[error("a merge is already in progress; resolve its conflicts or abort it first")]
+    MergeInProgress,
 }
 
 /// The branch a new worktree has out.
@@ -1176,6 +1179,27 @@ mod tests {
 
         assert_eq!(git.merge_state().await.unwrap(), MergeState::NotMerging);
         assert_eq!(git.tree_state().await.unwrap(), TreeState::Clean);
+    }
+
+    // Rule: a second merge while one waits is refused — it must not be taken for a new conflict.
+    #[tokio::test]
+    async fn a_merge_while_another_waits_is_refused() {
+        let fixture = Fixture::new();
+        raw(&fixture.repo, &["checkout", "-q", "-b", "left"]);
+        fixture.commit("a.txt", "left\n", "Left");
+        raw(&fixture.repo, &["checkout", "-q", "main"]);
+        fixture.commit("a.txt", "main\n", "Main");
+        topic_branch(&fixture);
+        let git = fixture.git();
+        assert_eq!(
+            git.merge_no_ff(&branch("left"), "Merge left").await.unwrap(),
+            MergeOutcome::Conflicted
+        );
+
+        let result = git.merge_no_ff(&branch("topic"), "Merge topic").await;
+
+        assert!(matches!(&result, Err(GitError::MergeInProgress)), "{result:?}");
+        assert_eq!(git.merge_state().await.unwrap(), MergeState::InProgress);
     }
 
     // Rule: a merge that git refuses for another reason than a conflict is an error with git's words.
