@@ -6,16 +6,18 @@
 //! refused instead of racing the first. The state is saved as a whole, through a temporary file and a rename, so a
 //! crash leaves either the old state or the new one.
 
+use std::borrow::Cow;
 use std::fs::File;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 
 use agent_core::cli::ActivityEvent;
 use agent_core::config::AbsolutePath;
 use agent_core::ids::{RunId, TaskId};
-use agent_core::state::{RenderError, State, StateError, Timestamp};
+use agent_core::state::{MAX_STATE_BYTES, RenderError, State, StateError, Timestamp};
 use tempfile::NamedTempFile;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinError;
 
 /// The state file in the home.
@@ -259,6 +261,193 @@ pub(crate) struct StagedState {
     file: NamedTempFile,
     /// The state file it replaces.
     target: PathBuf,
+    /// The home directory, synced after the rename so that the rename itself survives a crash.
+    dir: PathBuf,
+}
+
+/// The body of an activity line: what happened, by kind. Texts are borrowed or, when cut, owned.
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ActivityBody<'a> {
+    /// A message of the agent.
+    Text {
+        /// What it said.
+        text: Cow<'a, str>,
+    },
+    /// A shell command of the agent.
+    Command {
+        /// Its command line.
+        command: Cow<'a, str>,
+    },
+    /// A file the agent changed.
+    FileEdit {
+        /// The file, as the CLI names it.
+        path: Cow<'a, str>,
+    },
+    /// A call of an agentbus tool.
+    BusCall {
+        /// The tool.
+        tool: Cow<'a, str>,
+        /// Its arguments.
+        arguments: Cow<'a, str>,
+    },
+    /// A call of any other tool.
+    ToolCall {
+        /// The tool.
+        name: Cow<'a, str>,
+        /// What it was asked to do.
+        summary: Cow<'a, str>,
+    },
+    /// An error of the CLI or of a tool call.
+    Error {
+        /// What went wrong.
+        message: Cow<'a, str>,
+    },
+    /// Metadata of the run.
+    Info {
+        /// The metadata.
+        message: Cow<'a, str>,
+    },
+}
+
+/// One line of the activity log.
+#[derive(Debug, serde::Serialize)]
+struct ActivityLine<'a> {
+    /// When the event was appended.
+    at: Timestamp,
+    /// What happened.
+    #[serde(flatten)]
+    body: ActivityBody<'a>,
+}
+
+impl<'a> ActivityLine<'a> {
+    /// The line of `event` at `at`, its texts cut to [`MAX_ACTIVITY_FIELD_BYTES`].
+    fn new(at: Timestamp, event: &'a ActivityEvent) -> Self {
+        let body = match event {
+            ActivityEvent::Text(text) => ActivityBody::Text { text: cut(text) },
+            ActivityEvent::Command(command) => ActivityBody::Command { command: cut(command) },
+            ActivityEvent::FileEdit { path } => ActivityBody::FileEdit { path: cut(path) },
+            ActivityEvent::BusCall { tool, arguments } => ActivityBody::BusCall {
+                tool: cut(tool),
+                arguments: cut(arguments),
+            },
+            ActivityEvent::ToolCall { name, summary } => ActivityBody::ToolCall {
+                name: cut(name),
+                summary: cut(summary),
+            },
+            ActivityEvent::Error(message) => ActivityBody::Error { message: cut(message) },
+            ActivityEvent::Info(message) => ActivityBody::Info { message: cut(message) },
+        };
+        Self { at, body }
+    }
+}
+
+/// `text`, or its first characters that fit in [`MAX_ACTIVITY_FIELD_BYTES`] and [`CUT_MARK`] when it is longer. The cut
+/// falls between characters.
+fn cut(text: &str) -> Cow<'_, str> {
+    if text.len() <= MAX_ACTIVITY_FIELD_BYTES {
+        return Cow::Borrowed(text);
+    }
+    let mut kept: String = text
+        .char_indices()
+        .take_while(|(index, c)| index + c.len_utf8() <= MAX_ACTIVITY_FIELD_BYTES)
+        .map(|(_, c)| c)
+        .collect();
+    kept.push_str(CUT_MARK);
+    Cow::Owned(kept)
+}
+
+/// The number of bytes to read of a state file: one more than the limit, so that a file over it is seen as such.
+fn state_read_limit() -> u64 {
+    // `usize` is never wider than `u64` on a platform Rust supports, so the fallback is not reachable.
+    u64::try_from(MAX_STATE_BYTES).map_or(u64::MAX, |max| max.saturating_add(1))
+}
+
+/// Runs `job` on a thread that may block and returns its result.
+async fn blocking<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, StoreError> + Send + 'static,
+) -> Result<T, StoreError> {
+    tokio::task::spawn_blocking(job)
+        .await
+        .map_err(|source| StoreError::Worker { source })?
+}
+
+/// Creates `path` and its parents.
+fn create_dir(path: &Path) -> Result<(), StoreError> {
+    std::fs::create_dir_all(path).map_err(|source| StoreError::CreateDir {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Takes the lock of the home and removes what an interrupted save left. Returns the open lock file.
+fn open_blocking(home: &Home) -> Result<File, StoreError> {
+    create_dir(home.root())?;
+    create_dir(&home.tasks_dir())?;
+    let path = home.lock_file();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|source| StoreError::OpenLock {
+            path: path.clone(),
+            source,
+        })?;
+    match rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+        Ok(()) => {}
+        Err(errno) if errno == rustix::io::Errno::WOULDBLOCK => return Err(StoreError::HomeLocked { path }),
+        Err(errno) => {
+            return Err(StoreError::Lock {
+                path,
+                source: errno.into(),
+            });
+        }
+    }
+    remove_leftover_temps(home.root())?;
+    Ok(lock)
+}
+
+/// Removes the temporary files of saves that never reached their rename. Only the holder of the lock calls it, so no
+/// save of a live daemon is running.
+fn remove_leftover_temps(dir: &Path) -> Result<(), StoreError> {
+    let list_error = |source| StoreError::ListDir {
+        path: dir.to_path_buf(),
+        source,
+    };
+    for entry in std::fs::read_dir(dir).map_err(list_error)? {
+        let entry = entry.map_err(list_error)?;
+        // The names of our temporary files are ASCII: a name that is not UTF-8 is someone else's file.
+        let ours = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(TEMP_PREFIX) && name.ends_with(TEMP_SUFFIX));
+        if ours {
+            std::fs::remove_file(entry.path()).map_err(|source| StoreError::RemoveTemp {
+                path: entry.path(),
+                source,
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Writes `bytes` to a new temporary file in `dir` and syncs it.
+fn write_temp(dir: &Path, bytes: &[u8]) -> Result<NamedTempFile, StoreError> {
+    let write_error = |source| StoreError::WriteTemp {
+        path: dir.to_path_buf(),
+        source,
+    };
+    let mut file = tempfile::Builder::new()
+        .prefix(TEMP_PREFIX)
+        .suffix(TEMP_SUFFIX)
+        .tempfile_in(dir)
+        .map_err(write_error)?;
+    file.write_all(bytes).map_err(write_error)?;
+    file.flush().map_err(write_error)?;
+    file.as_file().sync_all().map_err(write_error)?;
+    Ok(file)
 }
 
 impl StateStore {
@@ -269,13 +458,9 @@ impl StateStore {
     /// [`StoreError::OpenLock`], [`StoreError::Lock`], [`StoreError::ListDir`] and [`StoreError::RemoveTemp`] when the
     /// file system refuses; [`StoreError::Worker`] when the blocking task fails.
     pub async fn open(home: Home) -> Result<Self, StoreError> {
-        Ok(Self {
-            home,
-            _lock: File::open("/dev/null").map_err(|source| StoreError::OpenLock {
-                path: PathBuf::new(),
-                source,
-            })?,
-        })
+        let layout = home.clone();
+        let lock = blocking(move || open_blocking(&layout)).await?;
+        Ok(Self { home, _lock: lock })
     }
 
     /// The layout of the home.
@@ -290,7 +475,27 @@ impl StateStore {
     /// [`StoreError::Read`], [`StoreError::NotUtf8`] and [`StoreError::Invalid`] (which carries
     /// [`StateError::UnsupportedSchema`] for a state of another schema version).
     pub async fn load(&self) -> Result<State, StoreError> {
-        Ok(State::new())
+        let path = self.home.state_file();
+        let read_error = |source| StoreError::Read {
+            path: path.clone(),
+            source,
+        };
+        let file = match tokio::fs::File::open(&path).await {
+            Ok(file) => file,
+            // No state file is the specified start of a new home.
+            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(State::new()),
+            Err(source) => return Err(read_error(source)),
+        };
+        let mut bytes = Vec::new();
+        file.take(state_read_limit())
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(read_error)?;
+        let text = String::from_utf8(bytes).map_err(|source| StoreError::NotUtf8 {
+            path: path.clone(),
+            source,
+        })?;
+        State::from_json(&text).map_err(|source| StoreError::Invalid { path, source })
     }
 
     /// Saves `state` as a whole: the old state stays whole until the rename, and no temporary file stays behind.
@@ -307,25 +512,42 @@ impl StateStore {
     /// # Errors
     /// [`StoreError::Render`], [`StoreError::WriteTemp`] and [`StoreError::Worker`].
     pub(crate) async fn stage(&self, state: &State) -> Result<StagedState, StoreError> {
-        let _ = state;
-        let file = NamedTempFile::new_in(self.home.root()).map_err(|source| StoreError::WriteTemp {
-            path: self.home.root().to_path_buf(),
-            source,
-        })?;
-        Ok(StagedState {
-            file,
-            target: self.home.state_file(),
-        })
+        let text = state.to_json().map_err(|source| StoreError::Render { source })?;
+        let dir = self.home.root().to_path_buf();
+        let target = self.home.state_file();
+        let write_dir = dir.clone();
+        let file = blocking(move || write_temp(&write_dir, text.as_bytes())).await?;
+        Ok(StagedState { file, target, dir })
     }
 
     /// Appends one line to the activity log of `task`: the time and the event, texts cut to
     /// [`MAX_ACTIVITY_FIELD_BYTES`].
     ///
+    /// The line is written with one `write`, to a file opened for appending; it is not synced, because the log
+    /// explains a run to a human and the state does not depend on it.
+    ///
     /// # Errors
     /// [`StoreError::CreateDir`], [`StoreError::RenderActivity`] and [`StoreError::AppendActivity`].
     pub async fn append_activity(&self, task: &TaskId, at: Timestamp, event: &ActivityEvent) -> Result<(), StoreError> {
-        let _ = (task, at, event);
-        Ok(())
+        let mut line = serde_json::to_vec(&ActivityLine::new(at, event))
+            .map_err(|source| StoreError::RenderActivity { source })?;
+        line.push(b'\n');
+        let dir = self.home.task_dir(task);
+        let create = dir.clone();
+        blocking(move || create_dir(&create)).await?;
+        let path = self.home.activity_log(task);
+        let append_error = |source| StoreError::AppendActivity {
+            path: path.clone(),
+            source,
+        };
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .await
+            .map_err(append_error)?;
+        file.write_all(&line).await.map_err(append_error)?;
+        file.flush().await.map_err(append_error)
     }
 }
 
@@ -333,10 +555,21 @@ impl StagedState {
     /// Renames the temporary file over the state file and syncs the directory.
     ///
     /// # Errors
-    /// [`StoreError::Replace`], [`StoreError::SyncDir`] and [`StoreError::Worker`]; the temporary file is removed.
+    /// [`StoreError::Replace`], [`StoreError::SyncDir`] and [`StoreError::Worker`]; the temporary file is removed when
+    /// the rename fails.
     pub(crate) async fn commit(self) -> Result<(), StoreError> {
-        let _ = (&self.file, &self.target);
-        Ok(())
+        let Self { file, target, dir } = self;
+        blocking(move || {
+            // On failure the error owns the temporary file and removes it when it is dropped.
+            file.persist(&target).map_err(|failed| StoreError::Replace {
+                path: target.clone(),
+                source: failed.error,
+            })?;
+            File::open(&dir)
+                .and_then(|handle| handle.sync_all())
+                .map_err(|source| StoreError::SyncDir { path: dir, source })
+        })
+        .await
     }
 }
 
