@@ -2,7 +2,9 @@
 
 Investigator `inv-claude-sonnet`, branch `agents/inv-claude-sonnet/20261112-154231`, base
 [`ccbae53`](https://github.com/mateusz-szczyrzyca/team-agents/commit/ccbae53f5a4b8efbaa395aac8037ba2937d018bc).
-Status: done; the code is pushed, no pull request opened (the merger integrates).
+Status: done; the code is pushed, no pull request opened (the merger integrates). See "Second pass" at the end: a run
+of task `20261112-162930-inv-claude-sonnet` started from this branch's tip and checked the adapters against the real
+recordings of the live installation.
 
 ## What and why
 
@@ -38,7 +40,7 @@ Files outside the item's list, and why: `src/cli.rs` (the module root; the share
 | MCP | `mcp.json` + `claude-settings.json` in the run dir | `-c` settings, TOML strings (agentbus tool timeout 900 s; Serena start-up 120 s, tool 300 s) | `<worktree>/.agents/mcp_config.json`, excluded from git | `OPENCODE_CONFIG_CONTENT` (+ copy in run dir); OpenRouter / DeepInfra providers; model registered under its provider |
 | Environment | none (settings carry `ENABLE_TOOL_SEARCH=false`, Bash timeout 20 min, background tasks off, no attribution) | none | none | config, `OPENCODE_DISABLE_AUTOUPDATE=1`, `OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS=600000` |
 | Final message | `result.result` | last `agent_message` after `turn.completed` | `result.response` | last `text` part |
-| Succeeded when | `result` without error | `turn.completed` | `result.status == SUCCESS` | `step_finish` with reason `stop` |
+| Succeeded when | `result` without error | `turn.completed` | `result.status == SUCCESS` | `step_finish` with reason `stop`, or the stream ends on the agent's last `text` (second pass) |
 | Session | `session_id` (init, result) | `thread_id` | `conversation_id` | `sessionID` of every event |
 
 The arguments are in the order of the old `bin/agent` (`run_claude`, `run_codex`, `run_gemini`, `run_opencode`), which
@@ -160,3 +162,39 @@ The item's checks:
   `agent_message`; `agy` has `--effort`; `~/agents/tasks/*/out-1.jsonl` and `events-1.jsonl` of the live installation
   are real recordings of all four CLIs and the best source of fixtures (read-only; sanitise paths and names).
 - `AGENTS.md` could say that `make gate` refuses an uncommitted tree and that `agent gate` is the way to run it.
+
+## Second pass: the adapters against real recordings
+
+Task `20261112-162930-inv-claude-sonnet` found the item already implemented on its base (this branch's earlier tip,
+which is the open PR #92 plus a merge of `main`; no review or comment existed). It did not redo the work. It ran every
+parser over every run of the live installation (read-only; `~/agents/tasks/*/out-N.jsonl` and `events-N.jsonl`, first
+three runs of each task, with a throwaway test that is not committed), and read the result against the old harness's
+own verdict in each task's `runner.log`.
+
+Before the fix, on `328` Claude, `366` Codex, `325` Antigravity and `611` opencode run files: `0` lines refused for
+Claude, Codex and Antigravity; `1` for opencode; a session ID in all but the empty files. Two defects, both in opencode:
+
+1. **A finished opencode run was `Incomplete`.** `596` of `611` files had no `step_finish` with `stop`; `486` of the
+   tasks end on the `text` line, `exit 0`, and the old harness reported `123` of the last `150` of them as done (a
+   `STATUS:` line in `final.md`). `classify_outcome` accepts a reported status only from a `Succeeded` stream (or a
+   watchdog kill), so every one would have been `NoStatus` and, with a team, retried or sent to the human. The first
+   pass had kept `tools.jsonl` ("tool calls and a final text but no `stop`") and asserted `Incomplete` for it.
+   - Fix (`src/cli/opencode.rs`): the parser tracks whether the latest event is the agent's text (a tool call, a
+     `step_start` or a `step_finish` clears it); `finish` turns an `Incomplete` stream into `Succeeded` when it ends on
+     the text. A `stop` and an `error` work as before. After the fix `29` files are `Incomplete`: runs cut inside a step.
+2. **An empty `sessionID` hid an error.** A recorded error event has `"sessionID":""`; `note_session` refused it and
+   the whole event was dropped, so the run neither failed on the stream nor had the line in the error tail. An empty ID
+   is now none.
+
+Tests, test first: [RED] `opencode: a run that ends on its answer succeeds: test first` (3 failing), then GREEN. New:
+`a_run_that_ends_on_its_answer_succeeds_without_a_stop` (a table: answer, answer then tool call / finished step / new
+step / error, no answer) and `an_error_event_with_an_empty_session_id_is_still_the_error_of_the_run`. Two tests of
+this change, not of `main`, followed the recordings: `shell_calls_are_commands_…` (`tools.jsonl` is `Succeeded`) and
+`an_output_cut_at_any_byte_…` (a cut run is `Incomplete` while it has no final message, no longer "until the last line
+is whole": a cut after the text is a finished run in the recordings). `agent gate` on the final commit: PASS.
+
+The other `Incomplete` runs of the other CLIs (`19` Claude, `21` Codex, `11` Antigravity) end in the middle of a step
+(a tool result, a heartbeat, a `step_update`) with no result: killed or still running, correctly incomplete.
+
+Not changed, for a later item: the Claude, Codex and Antigravity result lines are fine on all recordings, but the
+classification of an opencode run killed after its text rests on the exit status the run engine (6.1) gives.
