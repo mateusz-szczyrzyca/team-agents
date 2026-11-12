@@ -11,7 +11,8 @@ use std::string::FromUtf8Error;
 
 use agent_core::config::Language;
 use agent_core::prompt::{HarnessPrompt, PromptError, Variables, VariablesError};
-use tokio::io::AsyncReadExt;
+
+use crate::text_file::{TextFileError, read_text_file};
 
 /// The most bytes a text file may have: a bound on input from the disk, far above any text of the catalog.
 pub const MAX_TEXT_BYTES: usize = 1 << 20;
@@ -182,20 +183,12 @@ async fn read_first(dir: &Path, candidates: &[PathBuf]) -> Result<Option<(PathBu
 
 /// The text of the file at `path`, or `None` when there is no such file.
 async fn read_file(path: &Path) -> Result<Option<String>, ProblemCause> {
-    let file = match tokio::fs::File::open(path).await {
-        Ok(file) => file,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(ProblemCause::Read(source)),
-    };
-    // One byte more than the limit tells a file that is too long from one that has exactly the limit.
-    let read_limit = u64::try_from(MAX_TEXT_BYTES).map_or(u64::MAX, |limit| limit.saturating_add(1));
-    let mut bytes = Vec::new();
-    file.take(read_limit)
-        .read_to_end(&mut bytes)
+    let file = read_text_file(path, MAX_TEXT_BYTES)
         .await
-        .map_err(ProblemCause::Read)?;
-    if bytes.len() > MAX_TEXT_BYTES {
-        return Err(ProblemCause::TooLarge);
-    }
-    String::from_utf8(bytes).map(Some).map_err(ProblemCause::NotUtf8)
+        .map_err(|error| match error {
+            TextFileError::Read(source) => ProblemCause::Read(source),
+            TextFileError::TooLarge { .. } => ProblemCause::TooLarge,
+            TextFileError::NotUtf8(source) => ProblemCause::NotUtf8(source),
+        })?;
+    Ok(file.map(|file| file.text))
 }

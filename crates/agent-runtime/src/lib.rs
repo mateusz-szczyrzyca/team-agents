@@ -16,3 +16,4 @@ pub mod prompts;
 pub mod run;
 pub mod settings;
 pub mod store;
+pub mod text_file;

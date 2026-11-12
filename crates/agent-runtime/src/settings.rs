@@ -3,14 +3,12 @@
 //! The core parses and checks the text ([`Config::from_toml_str`], [`Secrets::parse`]); reading the files, with a bound
 //! on their size and the mode of the secrets file, is the runtime's job.
 
-use std::io;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use agent_core::config::{Config, ConfigError, MAX_CONFIG_BYTES, MAX_SECRETS_BYTES, Secrets, SecretsError};
-use tokio::io::AsyncReadExt;
 
 use crate::store::Home;
+use crate::text_file::{TextFile, TextFileError, read_text_file};
 
 /// The configuration and the secrets of one home.
 #[derive(Debug, Clone)]
@@ -102,42 +100,20 @@ impl Settings {
     }
 }
 
-/// The text of a file and its permission bits, as one open file saw them.
-struct TextFile {
-    /// The content.
-    text: String,
-    /// The `st_mode` of the file.
-    mode: u32,
-}
-
 /// Reads the file at `path`, at most `limit` bytes of it; `None` when there is no such file.
-///
-/// The mode comes from the open file, not from its name: no other file can be put in its place between the check and
-/// the read (SEC-5).
 async fn read_text(path: &Path, limit: usize) -> Result<Option<TextFile>, SettingsError> {
-    let read_error = |source| SettingsError::Read {
-        path: path.to_path_buf(),
-        source,
-    };
-    let file = match tokio::fs::File::open(path).await {
-        Ok(file) => file,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(read_error(source)),
-    };
-    let mode = file.metadata().await.map_err(read_error)?.mode();
-    // One byte more than the limit tells a file that is too long from one that has exactly the limit.
-    let bound = u64::try_from(limit).map_or(u64::MAX, |limit| limit.saturating_add(1));
-    let mut bytes = Vec::new();
-    file.take(bound).read_to_end(&mut bytes).await.map_err(read_error)?;
-    if bytes.len() > limit {
-        return Err(SettingsError::TooLarge {
+    read_text_file(path, limit).await.map_err(|error| match error {
+        TextFileError::Read(source) => SettingsError::Read {
+            path: path.to_path_buf(),
+            source,
+        },
+        TextFileError::TooLarge { limit } => SettingsError::TooLarge {
             path: path.to_path_buf(),
             limit,
-        });
-    }
-    let text = String::from_utf8(bytes).map_err(|source| SettingsError::NotUtf8 {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    Ok(Some(TextFile { text, mode }))
+        },
+        TextFileError::NotUtf8(source) => SettingsError::NotUtf8 {
+            path: path.to_path_buf(),
+            source,
+        },
+    })
 }
