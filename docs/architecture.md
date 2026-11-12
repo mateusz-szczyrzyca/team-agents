@@ -25,7 +25,7 @@ prompts/agent/rust-developer.md
 prompts/worker-agent/rust-developer.md
 prompts/investigator/rust-developer.md
 prompts/investigator/code-review.md
-prompts/harness/<module>/<name>.md     texts the harness composes (run prompts, questions files, notifications)
+prompts/harness/<module>/<name>.md     texts the harness composes (run prompts, a team's life, questions files, notifications)
 config/agents.example.toml, config/systemd/agent-daemon.service
 docs/architecture.md, docs/configuration.md, docs/state.md, docs/task-list.md
 ```
@@ -92,7 +92,7 @@ socket and the files are the runtime's. `serde_json` is a dependency of `agent-c
 
 | Module | Types |
 |---|---|
-| `prompt` | `PromptId` (every prompt, with its `PromptSpec`: path under `prompts/`, `Audience`, required variables), `Template` (the strict `{{name}}` renderer), `Variables`, `VariableName` and their errors (`TemplateError`, `RenderError`, `PromptError`) |
+| `prompt` | `PromptId` (every prompt, with its `PromptSpec`: path under `prompts/`, `Audience`, required variables), `HarnessPrompt` (the texts of `harness/run/`) and `TeamPrompt` (the texts of `harness/team/`, a catalog of its own because a test pins `HarnessPrompt` to the files of `harness/run/`), `Template` (the strict `{{name}}` renderer), `Variables`, `VariableName` and their errors (`TemplateError`, `RenderError`, `PromptError`) |
 | `cli` | `CliAdapter` (build a run, make a parser), `OutputParser` (lines to `ActivityEvent`s, then `RunOutput`), `RunRequest`, `RunSpec`, `RunFile`, `ActivityEvent`, `RunOutput`, `SessionId`, `ErrorTail`, `McpServerKind` |
 
 A template renders `{{name}}`; `\{{` is a literal `{{`. A variable without a value, a value without a variable, an
@@ -155,8 +155,8 @@ the network. The order of the checks and the rules each follows are in the docum
 |---|---|
 | `agent_runtime::run` | `RunEngine::run`: one run of a model CLI, from its files to its classified end; touches no state. `run::compose` makes its prompt: context, role, the rules of the tier, brief, item, checkpoint — or, for a resumed session, what interrupted it |
 | `agent_runtime::{settings, harness_prompts, text_file, clock}` | `agents.toml` and `secrets.toml` read from the home; the second prompt catalog (`HarnessPrompt`, `prompts/harness/run/`: the run prompts and the notifications); a bounded text file; the system clock |
-| `agent::daemon` | `owner` (the state), `server` (the socket), `notifier`, `settle` (what a run's end does), `recovery` (on start) |
-| `agent::{client, commands}` | the socket client, `agent status`, `agent daemon` |
+| `agent::daemon` | `owner` (the state), `server` (the socket), `notifier`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions) and `owner/teams` (what carries them out) |
+| `agent::{client, commands}` | the socket client, `agent status`, `agent daemon`, `agent run` |
 
 **Tasks** (CON-3, CON-4): the *owner* alone reads and changes the state; the *server* passes requests to it through a
 bounded channel; the *notifier* delivers notifications off its path. Cancelling the shutdown token (SIGTERM, SIGINT)
@@ -213,9 +213,70 @@ connection; a subscriber that falls 1024 events behind is let go (it subscribes 
 configured with, `prompt.md` for a prompt too long for a command line) and `tasks/<task>/questions-<round>.md`;
 `worktrees/<repo>/<task>/`; `notifications/`.
 
-Not done here, by item: `agent run` and the team's life (7.1); answers and the controls (7.2); the gate (7.3); pull
-requests and reviews (8.1); the dashboard (9.1). A resumed agent's checkpoint is read from the agentbus, which a team's life
-creates: none yet. opencode's `session export` for a resumed session whose result it did not print is not done.
+### Teams (`agent run` and the team's life)
+
+`agent run <agents...> "tasks" | -f file [--coordinator NAME] [--no-merge]` names the repository by the `origin` of the
+checkout it is run in (`[repos.NAME]` of the configuration), reads and parses the task list, and asks the daemon to
+`run` it; then it asks for the team (`show`) and prints each task with its role, agent, worktree and item. Everything the
+command can find wrong by itself (the words, the file, the parse, the repository) is refused before it looks for the daemon.
+`run` is added to the clap command when the command line is parsed, not a variant of `Command`: the tests of the command
+line match that enum exhaustively.
+
+**Starting** (`team::form`, `owner/teams.rs`): the daemon plans the team (`plan_team`: the coordinator, the members, the
+workers in the configured order; a worker as coordinator, only workers and too many investigators are refused before
+anything is made), draws the IDs, gives the first items (one to each member, `next_assignments`), makes one worktree for
+every task from the checkout's base branch — `worktrees/<repo>/<task>`, on the branch of its item
+`agents/<agent>/<task>-<item>` or else `agents/<agent>/<task>` —, creates the team on the agentbus (a solo task has none)
+and saves the state. A worktree or a bus that fails takes back what was made, and the request is refused.
+
+**Every task starts at once**, the coordinator's first. The Go bus posts a message of the team's creation that every member
+has unread, and sets a member to `waking` whenever it goes to sleep with something unread, so a member that has not read
+it could not be kept asleep: the old harness started everybody too. A member with no item reads its messages and sleeps
+(`STATUS: SLEEPING`); a list without items is one piece of work for the coordinator, who splits it by message or on the
+board.
+
+**The daemon looks at a team** after something happened to it (a run ended, a team started: an *event* look) and on its
+clock, every 5 seconds (a *poll* look), because the Go bus wakes a sleeper by marking it `waking` and spawns nothing — the
+`agentbus` wrapper configures no wake command — so only the daemon can tell. A look:
+
+1. does what waits for the bus, oldest first (the *outbox*);
+2. reconciles the bus with the tasks (`team::reconcile`): each member's state on the bus is derived from its task's status
+   (`queued`/`running` → `active`, `waiting` → `sleeping`, `questions`/`paused` → `paused`, `stopped` → `stopped`,
+   `done`/`failed` → `done`, an excluded member `excluded`); a waiting member the bus says is `waking` is queued with the
+   wake text, and so is a member that goes to sleep while something waits for it (`team-set` says `waking`);
+3. after an event, gives the pending items to the members that are free (`team::assignable`): the member's worktree gets
+   a new branch from the base branch (`git switch -c`), the item becomes `in_progress`, a waiting member is queued with the
+   item (the first run of a member has it in its prompt). An item whose branch cannot be started waits, with an error in the
+   log;
+4. serves the requests for workers: the first free worker in the configured order (`first_free_worker`) takes the oldest
+   queued request (`helper-next`) and runs it with the delegation text; when its run ends the request is closed with the
+   worker's report (`helper-set`, without the status line) and the requester gets a `helper_result` message, which wakes it;
+5. closes the team when its work is over (`team::is_finished`: every item done — for a list without items, the lead said
+   `DONE` — and no task going, asking, paused or about to start): waiting tasks become `done`, the bus team is marked done
+   and the human is notified, once.
+
+When a member ends, the coordinator gets a message on the bus (`member_finished` with the item and the branch,
+`member_failed`, `member_no_status`), which wakes it to integrate. A member's item stays `in_progress` until its pull
+request is open (item 8.1): the next item of a feature starts when the previous one is merged, so a member that is done
+waits. A solo task whose item is under way waits as well, instead of ending (`done` is final).
+
+A bus that is down is not an error of the daemon: what could not be sent stays in the outbox and is tried again at the next
+look, a team that cannot be read from the bus is skipped until the next look, and what the bus refuses for good (a request
+that does not exist) is logged and dropped.
+
+**Texts.** What a team's run is told beyond the working context lives in `prompts/harness/team/` (the catalog
+`TeamPrompt`, loaded by `agent_runtime::team_prompts::TeamPrompts` and checked at start): the team and its branch for the
+first run of a member, the new item of a member with a session, the wake-up, the request a worker serves, the messages for
+the coordinator and for a requester, and the notification that a team is finished.
+
+**Known limits.** An agent that never reads its messages is woken again and again (the Bash wake-loop guard is not
+ported). A request that is being served when the daemon stops is not returned. The bus gives the oldest request of every
+team to whichever team's worker asks: a request of another team goes back, and whatever is behind it waits until its own
+team has a free worker. The notices still in the outbox when the daemon stops are lost.
+
+Not done here, by item: answers and the controls (7.2); the gate (7.3); pull requests, reviews and the merge, with the
+next item of a feature (8.1); the dashboard (9.1). A resumed agent's checkpoint is not read from the agentbus yet.
+opencode's `session export` for a resumed session whose result it did not print is not done.
 
 ## Process model
 

@@ -1151,3 +1151,102 @@ async fn a_bus_that_is_down_is_tried_again_and_nothing_is_lost() {
         f.messages()
     );
 }
+
+// ---- what the bus refuses, and what git refuses ------------------------------------------------------------------
+
+mod refusals {
+    use agent_runtime::agentbus::{AgentBusError, BusCommand, FailureClass};
+    use agent_runtime::process::CaptureError;
+
+    use super::super::is_transient;
+
+    fn failed(class: FailureClass, exit_code: i32) -> AgentBusError {
+        AgentBusError::Failed {
+            command: BusCommand::HelperSet,
+            exit_code,
+            class,
+            message: "refused".to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_bus_that_cannot_be_reached_or_has_trouble_with_its_files_is_tried_again() {
+        for error in [
+            failed(FailureClass::Storage, 8),
+            failed(FailureClass::Process, 10),
+            failed(FailureClass::Unclassified, 1),
+            AgentBusError::Run {
+                command: BusCommand::Send,
+                source: CaptureError::Timeout {
+                    limit: std::time::Duration::from_secs(1),
+                },
+            },
+        ] {
+            assert!(is_transient(&error), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn a_request_the_bus_refuses_for_good_is_not_tried_again() {
+        for (class, code) in [
+            (FailureClass::InvalidArgument, 2),
+            (FailureClass::NotFound, 3),
+            (FailureClass::NotInTeam, 4),
+            (FailureClass::Permission, 5),
+            (FailureClass::Conflict, 6),
+            (FailureClass::InvalidState, 7),
+            (FailureClass::UnknownTool, 9),
+        ] {
+            assert!(!is_transient(&failed(class, code)), "{class:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_item_whose_branch_cannot_be_started_waits_and_the_daemon_goes_on() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "done"),
+    ]);
+    f.start().await;
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+    // The branch of the next item exists already, so git cannot start it again.
+    git(
+        &f.repo,
+        &["branch", &format!("agents/claude-1/{}-2.1", tasks[1]), "main"],
+    );
+    let mut state = f.state();
+    {
+        let mut team_mut = state.team_mut(&team).unwrap();
+        let mut item = team_mut.item_mut("1.1".parse().unwrap()).unwrap();
+        item.advance(ItemPhase::InReview {
+            pr: PullRequest {
+                number: PrNumber::new(std::num::NonZeroU32::new(5).unwrap()),
+                branch: format!("agents/claude-1/{}-1.1", tasks[1]).parse().unwrap(),
+                opened_at: Timestamp::now(&agent_runtime::clock::SystemClock).unwrap(),
+            },
+            reviews: Vec::new(),
+        })
+        .unwrap();
+    }
+    std::fs::write(f.home.state_file(), state.to_json().unwrap()).unwrap();
+
+    f.start().await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let state = f.state();
+    f.stop().await.unwrap();
+
+    let phase = state.team(&team).unwrap().items()[1].phase().clone();
+    assert!(matches!(phase, ItemPhase::Pending), "{phase:?}");
+    assert_eq!(task_status(&state, &tasks[1]), TaskStatus::Waiting);
+    assert_eq!(
+        f.runs(&tasks[1]),
+        1,
+        "the member was not woken for an item it was not given"
+    );
+}

@@ -233,7 +233,10 @@ round (every question answered, `ok` only where there is a recommendation).
 
 ### What the daemon serves
 
-Since item 6.1 the daemon serves `status`, `show` and `subscribe`. `status` takes an optional target: a team's summary, the
+Since item 6.1 the daemon serves `status`, `show` and `subscribe`; since item 7.1 also `run`: it forms the team, makes its
+worktrees and its team on the bus and answers `started`, or refuses with `invalid` (an unknown agent or repository, a worker
+as coordinator, only workers, a list with nothing to do, a base branch the checkout does not have), `refused` (too many
+investigators for two outside reviewers) or `internal` (git or the bus failed; what was made is taken back). `status` takes an optional target: a team's summary, the
 summary of the team a task belongs to, or every team; an unknown target is `not_found`. `show` gives a whole team or a task
 with its role. `subscribe` answers with the summaries and then sends the events described below; the events of one team only
 when one was asked for. The other commands answer `refused` with a message that names the command, until the items that

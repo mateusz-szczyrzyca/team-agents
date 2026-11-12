@@ -28,6 +28,12 @@ pub(crate) enum AssignmentError {
     /// A member's name is not an agent name.
     #[error("the name of a member of the team is not an agent name")]
     Name(#[from] InvalidName),
+    /// The decision names a member that was not offered an item: a mistake of the decision.
+    #[error("{member} was given an item but was not offered one")]
+    UnknownMember {
+        /// The member.
+        member: AgentName,
+    },
     /// The branch of an item is not a valid branch name.
     #[error("the branch of item {item} of task {task} is not a valid branch name")]
     Branch {
@@ -74,14 +80,14 @@ pub(in crate::daemon) fn assignable(team: &Team) -> Result<Vec<Assigned>, Assign
     })?;
     decided
         .into_iter()
-        .filter_map(|given| {
+        .map(|given| {
             let task = takers
                 .iter()
                 .find(|(name, _)| *name == given.member)
-                .map(|(_, task)| *task)?;
-            Some((given, task))
-        })
-        .map(|(given, task)| {
+                .map(|(_, task)| *task)
+                .ok_or_else(|| AssignmentError::UnknownMember {
+                    member: given.member.clone(),
+                })?;
             let branch = item_branch(&given.member, task, given.item).map_err(|source| AssignmentError::Branch {
                 item: given.item,
                 task: task.clone(),

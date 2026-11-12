@@ -699,7 +699,7 @@ fn git_failure(what: &str, error: &GitError) -> Failure {
 
 /// Whether an error of the bus may pass: a bus that is not there, is slow or has trouble with its files is tried again;
 /// one that refuses the request itself is not.
-fn is_transient(error: &AgentBusError) -> bool {
+pub(super) fn is_transient(error: &AgentBusError) -> bool {
     matches!(
         error.class(),
         None | Some(FailureClass::Storage | FailureClass::Process | FailureClass::Unclassified)
