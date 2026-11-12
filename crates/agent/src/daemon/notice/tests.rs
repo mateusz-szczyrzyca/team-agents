@@ -100,3 +100,15 @@ async fn a_value_that_looks_like_a_placeholder_is_shown_as_it_is() {
 
     assert!(body.contains("{{task}} {{"), "{body}");
 }
+
+#[tokio::test]
+async fn a_run_that_failed_after_its_start_is_not_told_as_a_start() {
+    let (title, body) = rendered(&Notice::RunFailed {
+        reason: "cannot write the activity".to_owned(),
+    })
+    .await;
+
+    assert!(title.contains("failed while it ran"), "{title}");
+    assert!(!body.contains("could not be started"), "{body}");
+    assert!(body.contains("cannot write the activity"), "{body}");
+}

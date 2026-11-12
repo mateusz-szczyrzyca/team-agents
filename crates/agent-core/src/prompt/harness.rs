@@ -54,6 +54,8 @@ pub enum HarnessPrompt {
     NoticeNoStatus,
     /// The notification that a run could not be started.
     NoticeStartFailed,
+    /// The notification that a run that started could not be carried out to its end.
+    NoticeRunFailed,
 }
 
 impl HarnessPrompt {
@@ -81,6 +83,7 @@ impl HarnessPrompt {
         Self::NoticeFailed,
         Self::NoticeNoStatus,
         Self::NoticeStartFailed,
+        Self::NoticeRunFailed,
     ];
 
     /// Where the text is, who reads it and which variables it uses.
@@ -142,6 +145,11 @@ impl HarnessPrompt {
             ),
             Self::NoticeStartFailed => PromptSpec::new(
                 "harness/run/notice-start-failed.md",
+                Audience::Human,
+                &["agent", "task", "reason"],
+            ),
+            Self::NoticeRunFailed => PromptSpec::new(
+                "harness/run/notice-run-failed.md",
                 Audience::Human,
                 &["agent", "task", "reason"],
             ),

@@ -386,7 +386,7 @@ impl Owner {
         )?;
         self.move_to(task, &located.team, TaskStatus::Failed, &mut events)?;
         self.hangs.remove(task);
-        self.commit(task, &located, now, events, Some(Notice::StartFailed { reason }))
+        self.commit(task, &located, now, events, Some(Notice::RunFailed { reason }))
             .await
     }
 
