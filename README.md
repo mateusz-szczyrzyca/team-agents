@@ -175,9 +175,8 @@ and code following TDD. `agent run --investigation` runs the complete initial pi
 (phases 1–4: independent investigation, merge, PR, prechecks, review, and terminal completion).
 On successful completion, the PR is ready for normal review and merge without waiting for a human decision; failed investigations are reported as failures only for real flow issues (failed merge, review, or prechecks).
 Investigators, mergers, and reviewers can ask clarification questions if the subject matter is unclear or may be interpreted multiple ways (ending with `STATUS: QUESTIONS`); clarification answers are handled by the human through questions files.
-One PR per investigation: a review asking for changes (`needs-fixes`, `incomplete`) sends the owner of the PR's
-branch — the merger, or the one investigator of a team of one, whose branch is the PR (no merge phase runs) — back
-to fix them on that branch; its checks and a review by a new investigator from outside the team follow (when all have
+One PR per investigation: a review asking for changes (`needs-fixes`, `incomplete`) sends the merger — in a team
+of one, its one investigator, whose merge run opens the PR — back to fix them on the PR's branch; its checks and a review by a new investigator from outside the team follow (when all have
 reviewed, the one whose review is the oldest), up to `VERIFY_MAX_FIX_PASSES` passes, then you decide. Once the PR
 exists a failed merger is not replaced, so no second PR is opened.
 A round that changes code but adds no test is sent back, unless the task you gave says why none is needed on a line
@@ -189,7 +188,7 @@ unit tests next to the code. With `--pr`, an investigator who has nothing to cha
 checks and review follow — a way to put an open PR through them again.
 `agent run --investigation --pr N --team … -f fixes.md` continues an open PR #N instead of opening one: the
 investigators start at its head, the PR's earlier task (from its description) is added to the topic for the
-reviewers, and the work — the one investigator's, or the merger's, which opens no PR — is pushed onto PR #N's branch
+reviewers, and the merger's work (in a team of one, its one investigator's), which opens no PR, is pushed onto PR #N's branch
 as a fast-forward; its checks and the review loop follow on PR #N.
 Resuming an investigation team with an open PR (`agent run --resume <team>`) runs Phase 5 advisory reviews
 across all team investigators concurrently proposing improvements without applying changes or auto-merging (`review: N investigators reviewing (#<pr>)`).
