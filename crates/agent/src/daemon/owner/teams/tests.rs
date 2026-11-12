@@ -999,6 +999,86 @@ async fn a_worker_that_fails_returns_the_failure_to_the_requester() {
     assert!(f.messages().contains("\"status\":\"failed\""), "{}", f.messages());
 }
 
+/// A team of two normal agents and a worker, with its ID and tasks; the first agent asks for the worker.
+struct Pair {
+    team: TeamId,
+    tasks: Vec<TaskId>,
+    requester: &'static str,
+    other: &'static str,
+    worker: &'static str,
+}
+
+impl Fixture {
+    /// Starts the team of `requester`, `other` and `worker` on a list without items.
+    async fn start_pair(&self, requester: &'static str, other: &'static str, worker: &'static str) -> Pair {
+        let (team, tasks) = self.start_team(&[requester, other, worker], PLAIN).await;
+        Pair {
+            team,
+            tasks,
+            requester,
+            other,
+            worker,
+        }
+    }
+
+    /// Puts a request of the requester of `pair` for a worker on the bus.
+    async fn delegate(&self, pair: &Pair, request: &str) -> RequestId {
+        let task = &pair.tasks[0];
+        self.bus()
+            .delegate(&Delegation {
+                team: pair.team.clone(),
+                requester: agent(pair.requester),
+                task: task.clone(),
+                repo: "example".parse().unwrap(),
+                branch: format!("agents/{}/{task}", pair.requester).parse().unwrap(),
+                worktree: abs(&self.worktree(task)),
+                dispatcher: Program::from_str("true").unwrap(),
+                request: request.to_owned(),
+                context: "None.".to_owned(),
+            })
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn the_requests_of_two_teams_on_one_bus_are_each_served_by_a_worker_of_their_own_team() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+        worker("glm-1", "sleep,done:Result: one."),
+        normal("claude-3", "sleep"),
+        normal("claude-4", "sleep"),
+        worker("glm-2", "sleep,done:Result: two."),
+    ]);
+    f.start().await;
+    let one = f.start_pair("claude-1", "claude-2", "glm-1").await;
+    let two = f.start_pair("claude-3", "claude-4", "glm-2").await;
+    // The daemon looks at the teams in the order of their IDs: the oldest request on the bus is the later team's, so
+    // the earlier team, which has a free worker, sees it first.
+    let (earlier, later) = if one.team < two.team { (one, two) } else { (two, one) };
+    // A team the daemon looked at after its last run sleeps on the bus; from then on both teams are looked at together.
+    for pair in [&earlier, &later] {
+        for (task, member) in pair.tasks.iter().zip([pair.requester, pair.other, pair.worker]) {
+            f.status_is(task, TaskStatus::Waiting).await;
+            f.bus_state_is(&pair.team, member, MemberState::Sleeping).await;
+        }
+    }
+
+    let of_later = f.delegate(&later, "Count the lines.").await;
+    let of_earlier = f.delegate(&earlier, "List the files.").await;
+    let later_served = f.request_with(of_later, DelegationStatus::Done).await;
+    let earlier_served = f.request_with(of_earlier, DelegationStatus::Done).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(later_served.worker, Some(agent(later.worker)));
+    assert_eq!(later_served.helper_task, Some(later.tasks[2].clone()));
+    assert_eq!(earlier_served.worker, Some(agent(earlier.worker)));
+    assert_eq!(earlier_served.helper_task, Some(earlier.tasks[2].clone()));
+}
+
 #[tokio::test]
 async fn a_team_whose_lead_is_done_and_whose_members_wait_is_closed_and_the_human_is_told_once() {
     let mut f = Fixture::new(&[
