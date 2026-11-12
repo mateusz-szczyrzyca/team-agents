@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 
 use agent_core::questions::{MAX_QUESTIONS_BYTES, ParseError, QuestionsFile};
-use tokio::io::AsyncReadExt;
+use agent_runtime::text_file::{TextFileError, read_text_file};
 
 /// Why a questions file cannot be put to the human.
 #[derive(Debug, thiserror::Error)]
@@ -47,25 +47,18 @@ pub(super) enum QuestionsProblem {
 /// # Errors
 /// [`QuestionsProblem`].
 pub(super) async fn read(path: &Path) -> Result<QuestionsFile, QuestionsProblem> {
-    let read_error = |source| QuestionsProblem::Read {
-        path: path.to_path_buf(),
-        source,
-    };
-    let file = tokio::fs::File::open(path).await.map_err(read_error)?;
-    let limit = u64::try_from(MAX_QUESTIONS_BYTES).map_or(u64::MAX, |limit| limit.saturating_add(1));
-    let mut bytes = Vec::new();
-    file.take(limit).read_to_end(&mut bytes).await.map_err(read_error)?;
-    if bytes.len() > MAX_QUESTIONS_BYTES {
-        return Err(QuestionsProblem::TooLarge {
-            path: path.to_path_buf(),
-        });
-    }
-    let text = String::from_utf8(bytes).map_err(|source| QuestionsProblem::NotUtf8 {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    QuestionsFile::parse(&text).map_err(|source| QuestionsProblem::Format {
-        path: path.to_path_buf(),
-        source,
-    })
+    let owned = || path.to_path_buf();
+    let file = read_text_file(path, MAX_QUESTIONS_BYTES)
+        .await
+        .map_err(|error| match error {
+            TextFileError::Read(source) => QuestionsProblem::Read { path: owned(), source },
+            TextFileError::TooLarge { .. } => QuestionsProblem::TooLarge { path: owned() },
+            TextFileError::NotUtf8(source) => QuestionsProblem::NotUtf8 { path: owned(), source },
+        })?
+        // No file at all is the most likely fault: the agent ended its turn without writing it.
+        .ok_or_else(|| QuestionsProblem::Read {
+            path: owned(),
+            source: io::Error::from(io::ErrorKind::NotFound),
+        })?;
+    QuestionsFile::parse(&file.text).map_err(|source| QuestionsProblem::Format { path: owned(), source })
 }

@@ -117,6 +117,12 @@ pub(crate) enum OwnerError {
     /// A session ID is not valid.
     #[error("a session ID is not valid")]
     Session(#[from] InvalidValue),
+    /// The question rounds of a task are used up.
+    #[error("task {task} has no round of questions left")]
+    Rounds {
+        /// The task.
+        task: TaskId,
+    },
     /// A run ended that the owner did not start.
     #[error("the run task {id} is not one the owner started")]
     UnknownRun {
@@ -485,37 +491,21 @@ impl Owner {
         now: Timestamp,
         events: &mut Vec<EventKind>,
     ) -> Result<Asked, OwnerError> {
-        let round = {
-            let (_, member) = self.member_mut(task)?;
-            next_round(&member)
-        };
-        let Ok(round) = round else {
-            return Ok(Asked::Unusable(Notice::QuestionsMissing {
-                file: self.parts.store.home().task_dir(task),
-                reason: "the task has no round of questions left".to_owned(),
-            }));
-        };
+        let round = next_round(&self.member_mut(task)?.1).ok_or_else(|| OwnerError::Rounds { task: task.clone() })?;
         let path = self.parts.store.home().questions_file(task, round);
+        let unusable = |reason: String| {
+            Asked::Unusable(Notice::QuestionsMissing {
+                file: path.clone(),
+                reason,
+            })
+        };
         if let Err(problem) = questions::read(&path).await {
-            return Ok(Asked::Unusable(Notice::QuestionsMissing {
-                file: path,
-                reason: chain(&problem),
-            }));
+            return Ok(unusable(chain(&problem)));
         }
         let file = match path.to_str().map(AbsolutePath::from_str) {
             Some(Ok(file)) => file,
-            Some(Err(problem)) => {
-                return Ok(Asked::Unusable(Notice::QuestionsMissing {
-                    file: path,
-                    reason: chain(&problem),
-                }));
-            }
-            None => {
-                return Ok(Asked::Unusable(Notice::QuestionsMissing {
-                    file: path,
-                    reason: "the path is not UTF-8 text".to_owned(),
-                }));
-            }
+            Some(Err(problem)) => return Ok(unusable(chain(&problem))),
+            None => return Ok(unusable("the path is not UTF-8 text".to_owned())),
         };
         let (_, mut member) = self.member_mut(task)?;
         member

@@ -149,7 +149,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     let working = ctx.home.worktree_dir(team.repo(), task);
     check_directory(&working).await?;
     let working_dir = absolute(&working)?;
-    let round = next_round(member)?;
+    let round = next_round(member).ok_or(StartProblem::RoundsExhausted)?;
     let questions_file = ctx.home.questions_file(task, round);
     let session = member
         .last_session()
@@ -237,12 +237,11 @@ fn absolute(path: &std::path::Path) -> Result<AbsolutePath, StartProblem> {
 }
 
 /// The number of the round of questions the task would ask next.
-pub(super) fn next_round(member: &Member) -> Result<NonZeroU32, StartProblem> {
+pub(super) fn next_round(member: &Member) -> Option<NonZeroU32> {
     u32::try_from(member.questions().len())
         .ok()
         .and_then(|asked| asked.checked_add(1))
         .and_then(NonZeroU32::new)
-        .ok_or(StartProblem::RoundsExhausted)
 }
 
 /// What the prompt of the next run tells: the whole task, or what interrupted the session it resumes.
