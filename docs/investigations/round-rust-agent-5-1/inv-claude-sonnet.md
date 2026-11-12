@@ -224,3 +224,32 @@ What was checked, independently of the two earlier reports:
 
 Nothing was found that needs a change, so no commit besides this note. The open points stay those above: the flaky
 `scripted_git` tests, the over-long prompt argument and opencode's `session export` fallback (both for 6.1).
+
+## Review pass 2 of 5 (review by inv-astra, five major findings)
+
+Fixed, test first (RED commit, then GREEN commit, in this order on the branch):
+
+- **Finding 1, Claude `errors`.** `claude/errors-only.jsonl` (hand-written after the documented result schema, listed in
+  `tests/fixtures/cli/README.md`) and the test
+  `an_error_result_without_a_result_text_keeps_its_errors_in_the_activity_and_the_error_tail` failed with an empty
+  error tail; `Finish` now reads `errors` and each message is an `ActivityEvent::Error` and a line of the error tail.
+- **Finding 3, Antigravity open responses.** The test
+  `responses_that_are_never_done_are_bounded_in_number_and_the_open_ones_stay_usable` failed (the 65th open response
+  was accepted). A new response step beyond `MAX_OPEN_RESPONSES` (`64`) is refused with the new
+  `OutputCause::TooManyOpenSteps` (a variant added in `agent-core`, since no existing cause says it) and not kept; the
+  parser goes on, and an open response can still finish.
+- **Finding 5, Codex `_ =>`.** `CodexParser::started` lists the items that show no step when they start. A refactor
+  with no behaviour change (`Test-First: not possible — TDD-4`).
+
+Not changed, and why:
+
+- **Finding 2, authoritative MCP servers.** Both halves are a change of an existing test's expectation, which rule 1
+  forbids without the human: `a_run_with_agentbus_is_not_strict` pins the absence of `--strict-mcp-config` for a run
+  that has servers, and the exact-argument tests of Codex pin the arguments, so an `enabled=true` per server or
+  `enabled=false` for the omitted ones would break them. The Bash version did the same as the code does now (`strict`
+  only for a run with no server; for Codex `enabled=false` only for the server it switches off). The human decides
+  whether the new `agent` should be stricter than the old one. Question for the human: *should a run's MCP set be
+  exclusive (`--strict-mcp-config` for every Claude run; Codex `enabled=true` for the given servers and
+  `enabled=false` for the managed servers that are not given), at the price of changing those tests?*
+- **Finding 4, history of tests.** The reviewer says it needs the human's explicit acceptance (or restoring the old
+  tests); an agent cannot give it, and published history is not rewritten.
