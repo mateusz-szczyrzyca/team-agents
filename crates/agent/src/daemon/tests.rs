@@ -1007,3 +1007,47 @@ async fn a_request_over_the_limit_ends_its_connection_and_not_the_daemon() {
         .unwrap();
     f.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_request_of_a_subscriber_that_arrives_in_parts_around_an_event_is_answered() {
+    use agent_core::protocol::{Frame, Outcome};
+    use tokio::io::AsyncWriteExt;
+    let mut f = Fixture::new(&rate_limited_state(), 3, "hang");
+    f.start().await;
+    f.status_is(TaskStatus::Paused).await;
+    let mut connection = RawConnection::open(&f.home).await;
+    connection
+        .send(&request_line(1, Command::Subscribe(SubscribeRequest { team: None })))
+        .await;
+    connection.frame().await.unwrap();
+    let request = request_line(2, Command::Status(StatusRequest { target: None }));
+    let (first, rest) = request.split_at(request.len() / 2);
+
+    // The first part waits in the daemon while the wake-up of the task sends the subscriber its events.
+    connection.writer.write_all(first.as_bytes()).await.unwrap();
+    f.clock.advance(time::Duration::minutes(10));
+    f.status_is(TaskStatus::Running).await;
+    let Some(Frame::Event(_)) = connection.frame().await else {
+        panic!("no event")
+    };
+    connection.send(rest).await;
+    let response = loop {
+        match connection.frame().await {
+            Some(Frame::Response(response)) => break response,
+            Some(Frame::Event(_)) => {}
+            None => panic!("the connection closed"),
+        }
+    };
+    f.stop().await.unwrap();
+
+    assert_eq!(response.id.0, 2, "{response:?}");
+    assert!(
+        matches!(
+            response.result,
+            Outcome::Ok {
+                reply: Reply::Teams { .. }
+            }
+        ),
+        "{response:?}"
+    );
+}

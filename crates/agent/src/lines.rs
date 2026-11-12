@@ -65,6 +65,23 @@ pub(crate) async fn read_line<R: AsyncBufRead + Unpin>(
     String::from_utf8(line).map(Some).map_err(LineError::NotUtf8)
 }
 
+/// Reads one line of at most `max` bytes like [`read_line`], keeping the bytes of a line that is not complete yet in
+/// `line`.
+///
+/// # Errors
+/// [`LineError`].
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the server reads with it in the GREEN commit")
+)]
+pub(crate) async fn read_line_into<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    _line: &mut Vec<u8>,
+    max: usize,
+) -> Result<Option<String>, LineError> {
+    read_line(reader, max).await
+}
+
 /// Writes `line`, which already ends with its newline, and flushes.
 ///
 /// # Errors

@@ -1,4 +1,6 @@
-use tokio::io::BufReader;
+use std::time::Duration;
+
+use tokio::io::{AsyncWriteExt, BufReader};
 
 use super::*;
 
@@ -80,4 +82,25 @@ async fn a_written_line_reaches_the_stream_whole() {
     write_line(&mut out, "{\"a\":1}\n").await.unwrap();
 
     assert_eq!(out, b"{\"a\":1}\n");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_line_read_in_parts_survives_a_read_that_is_dropped_before_its_end() {
+    let (mut client, server) = tokio::io::duplex(64);
+    let mut reader = BufReader::new(server);
+    let mut pending = Vec::new();
+    client.write_all(b"{\"half\":").await.unwrap();
+
+    // The read takes the first part and waits for the rest; the timeout drops it, as a `select!` does.
+    let dropped = tokio::time::timeout(
+        Duration::from_millis(50),
+        read_line_into(&mut reader, &mut pending, 100),
+    )
+    .await;
+    client.write_all(b"1}\n").await.unwrap();
+    let line = read_line_into(&mut reader, &mut pending, 100).await.unwrap();
+
+    assert!(dropped.is_err(), "the first read waits for the end of the line");
+    assert_eq!(line.as_deref(), Some("{\"half\":1}"));
+    assert_eq!(pending, Vec::<u8>::new(), "nothing of the line is left over");
 }
