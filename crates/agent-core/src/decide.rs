@@ -6,6 +6,7 @@
 //! what the daemon is to do, never doing it: no file, process or network is touched here (`docs/architecture.md`).
 
 pub mod assign;
+pub mod round;
 pub mod team;
 
 /// How many reviews every pull request gets, each from a different investigator outside the team.
