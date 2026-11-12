@@ -35,7 +35,7 @@ fn agent(environment: &Environment, args: &[&str]) -> (ExitCode, String, String)
 
 #[test]
 fn status_without_agents_home_fails_and_says_what_to_set() {
-    let (code, out, err) = agent(&Environment::default(), &["status"]);
+    let (code, out, err) = agent(&Environment::new(None), &["status"]);
 
     assert_eq!(code, ExitCode::FAILURE);
     assert_eq!(out, "");
@@ -96,7 +96,7 @@ fn the_target_of_status_is_a_team_or_a_task_and_nothing_else() {
 
     let target = |cli: Cli| match cli.command {
         Some(Command::Status(args)) => args.target,
-        None => panic!("no command"),
+        Some(Command::Daemon(_)) | None => panic!("not the status command"),
     };
     assert_eq!(target(by_team), Some(Target::Team(team.parse().unwrap())));
     assert_eq!(target(by_task), Some(Target::Task(task_id)));
@@ -106,9 +106,34 @@ fn the_target_of_status_is_a_team_or_a_task_and_nothing_else() {
 
 #[test]
 fn a_target_that_is_neither_is_refused_with_status_2_and_a_message_naming_it() {
-    let (code, out, err) = agent(&Environment::default(), &["status", "bogus"]);
+    let (code, out, err) = agent(&Environment::new(None), &["status", "bogus"]);
 
     assert_eq!(code, ExitCode::from(2));
     assert_eq!(out, "");
     assert!(err.contains("bogus"), "{err}");
+}
+
+#[test]
+fn the_daemon_takes_an_optional_prompts_directory() {
+    let plain = Cli::try_parse_from(["agent", "daemon"]).unwrap();
+    let given = Cli::try_parse_from(["agent", "daemon", "--prompts-dir", "/srv/prompts"]).unwrap();
+
+    let dir = |cli: Cli| match cli.command {
+        Some(Command::Daemon(args)) => args.prompts_dir,
+        _ => panic!("not the daemon"),
+    };
+    assert_eq!(dir(plain), None);
+    assert_eq!(dir(given), Some(std::path::PathBuf::from("/srv/prompts")));
+}
+
+#[test]
+fn the_daemon_without_agents_home_fails_and_says_what_to_set() {
+    let (code, out, err) = agent(&Environment::new(None), &["daemon"]);
+
+    assert_eq!(code, ExitCode::FAILURE);
+    assert_eq!(out, "");
+    assert!(
+        err.starts_with("agent: ") && err.contains("AGENTS_HOME is not set"),
+        "{err}"
+    );
 }

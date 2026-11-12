@@ -5,15 +5,21 @@ use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_runtime::store::Home;
+use time::UtcOffset;
+use time::error::IndeterminateOffset;
 
 /// The name of the variable that says where the harness keeps its files.
 pub(crate) const HOME_VARIABLE: &str = "AGENTS_HOME";
 
-/// The environment variables a command uses.
-#[derive(Debug, Clone, Default)]
+/// The environment variables a command uses, and the machine's offset from UTC.
+#[derive(Debug, Clone)]
 pub(crate) struct Environment {
     /// `AGENTS_HOME`, as the process has it.
     home: Option<OsString>,
+    /// The machine's offset from UTC, or UTC when the system cannot say.
+    local_offset: UtcOffset,
+    /// Why the offset is UTC, when it is for that reason.
+    offset_error: Option<IndeterminateOffset>,
 }
 
 /// Why `AGENTS_HOME` cannot be used.
@@ -40,15 +46,39 @@ pub(crate) enum EnvironmentError {
 
 impl Environment {
     /// The environment of this process.
+    ///
+    /// Call it at the start of the process, while it has one thread: the system refuses to name the time zone of a
+    /// process that has more.
     pub(crate) fn from_process() -> Self {
+        let (local_offset, offset_error) = match UtcOffset::current_local_offset() {
+            Ok(offset) => (offset, None),
+            // UTC is the specified fallback; the daemon logs why.
+            Err(error) => (UtcOffset::UTC, Some(error)),
+        };
         Self {
             home: std::env::var_os(HOME_VARIABLE),
+            local_offset,
+            offset_error,
         }
     }
 
-    /// An environment whose `AGENTS_HOME` is `home`.
+    /// An environment whose `AGENTS_HOME` is `home`, in the time zone UTC.
     pub(crate) const fn new(home: Option<OsString>) -> Self {
-        Self { home }
+        Self {
+            home,
+            local_offset: UtcOffset::UTC,
+            offset_error: None,
+        }
+    }
+
+    /// The machine's offset from UTC.
+    pub(crate) const fn local_offset(&self) -> UtcOffset {
+        self.local_offset
+    }
+
+    /// Why the offset is UTC although the machine may not be, if that is why.
+    pub(crate) const fn offset_error(&self) -> Option<&IndeterminateOffset> {
+        self.offset_error.as_ref()
     }
 
     /// The home of the harness.

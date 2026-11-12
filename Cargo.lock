@@ -10,6 +10,7 @@ dependencies = [
  "agent-runtime",
  "clap",
  "rand",
+ "rustix",
  "serde_json",
  "tempfile",
  "thiserror",

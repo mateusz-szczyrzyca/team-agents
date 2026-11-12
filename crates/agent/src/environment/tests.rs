@@ -56,3 +56,11 @@ fn a_path_that_is_not_text_is_refused() {
         "{error:?}"
     );
 }
+
+#[test]
+fn an_environment_made_by_hand_is_in_utc_and_has_no_complaint() {
+    let environment = Environment::new(None);
+
+    assert_eq!(environment.local_offset(), time::UtcOffset::UTC);
+    assert!(environment.offset_error().is_none());
+}

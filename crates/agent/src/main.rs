@@ -5,6 +5,7 @@
 
 use std::ffi::OsString;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use agent_core::ids::InvalidId;
@@ -27,6 +28,7 @@ mod testing;
 use crate::chain::chain;
 use crate::client::{ClientError, Connection};
 use crate::commands::status::{StatusError, status};
+use crate::daemon::DaemonError;
 use crate::environment::{Environment, EnvironmentError};
 
 /// Exit status of a command line that clap refuses: its own convention for usage errors.
@@ -44,8 +46,18 @@ struct Cli {
 /// The commands of `agent`.
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Runs the daemon: the owner of the state and of every model run, which the other commands talk to.
+    Daemon(DaemonArgs),
     /// Shows the teams the daemon knows and what each of their tasks is doing.
     Status(StatusArgs),
+}
+
+/// The arguments of `agent daemon`.
+#[derive(Debug, Args)]
+struct DaemonArgs {
+    /// The directory of the prompt files; `prompts/` in AGENTS_HOME when not given.
+    #[arg(long, value_name = "DIR")]
+    prompts_dir: Option<PathBuf>,
 }
 
 /// The arguments of `agent status`.
@@ -100,6 +112,9 @@ enum CommandError {
     /// `agent status` failed.
     #[error(transparent)]
     Status(#[from] StatusError),
+    /// The daemon stopped with an error.
+    #[error(transparent)]
+    Daemon(#[from] DaemonError),
     /// The tokio runtime cannot be built.
     #[error("cannot start the runtime of the command")]
     Runtime(#[source] io::Error),
@@ -172,6 +187,10 @@ fn execute_blocking(environment: &Environment, command: Command, out: &mut impl 
 /// [`CommandError`].
 async fn execute(environment: &Environment, command: Command, out: &mut impl Write) -> Result<(), CommandError> {
     match command {
+        Command::Daemon(args) => {
+            let _ = (environment, args);
+            Ok(())
+        }
         Command::Status(args) => {
             let home = environment.home()?;
             let mut connection = Connection::connect(&home.socket_file()).await?;
