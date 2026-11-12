@@ -11,4 +11,5 @@ pub mod github;
 pub mod notify;
 pub mod process;
 pub mod prompts;
+pub mod settings;
 pub mod store;

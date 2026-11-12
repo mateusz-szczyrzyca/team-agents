@@ -9,11 +9,12 @@
 use std::borrow::Cow;
 use std::fs::File;
 use std::io::{self, Write};
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 
 use agent_core::cli::ActivityEvent;
-use agent_core::config::AbsolutePath;
+use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::state::{MAX_STATE_BYTES, RenderError, State, StateError, Timestamp};
 use tempfile::NamedTempFile;
@@ -34,6 +35,21 @@ const RUNS_DIR: &str = "runs";
 
 /// The default directory of the notification files in the home.
 const NOTIFICATIONS_DIR: &str = "notifications";
+
+/// The Unix socket the daemon listens on, in the home.
+const SOCKET_FILE: &str = "agent.sock";
+
+/// The configuration file in the home.
+const CONFIG_FILE: &str = "agents.toml";
+
+/// The file of the secrets in the home.
+const SECRETS_FILE: &str = "secrets.toml";
+
+/// The directory of the prompt files in the home, where the installation puts them.
+const PROMPTS_DIR: &str = "prompts";
+
+/// The directory of the git worktrees in the home; one directory per repository, inside it one per task.
+const WORKTREES_DIR: &str = "worktrees";
 
 /// The activity log of a task, in the task's directory: JSON lines, append only.
 const ACTIVITY_FILE: &str = "activity.jsonl";
@@ -115,6 +131,44 @@ impl Home {
     #[must_use]
     pub fn notifications_dir(&self) -> PathBuf {
         self.root.join(NOTIFICATIONS_DIR)
+    }
+
+    /// The Unix socket of the daemon.
+    #[must_use]
+    pub fn socket_file(&self) -> PathBuf {
+        self.root.clone()
+    }
+
+    /// The configuration file, `agents.toml`.
+    #[must_use]
+    pub fn config_file(&self) -> PathBuf {
+        self.root.clone()
+    }
+
+    /// The file of the secrets, `secrets.toml`.
+    #[must_use]
+    pub fn secrets_file(&self) -> PathBuf {
+        self.root.clone()
+    }
+
+    /// The directory the installation keeps the prompt files in.
+    #[must_use]
+    pub fn prompts_dir(&self) -> PathBuf {
+        self.root.clone()
+    }
+
+    /// The git worktree of `task`, a task of a team that works on `repo`.
+    #[must_use]
+    pub fn worktree_dir(&self, repo: &RepoName, task: &TaskId) -> PathBuf {
+        let _ = (repo, task);
+        self.root.clone()
+    }
+
+    /// The questions file of round `round` of `task`.
+    #[must_use]
+    pub fn questions_file(&self, task: &TaskId, round: NonZeroU32) -> PathBuf {
+        let _ = (task, round);
+        self.root.clone()
     }
 }
 
