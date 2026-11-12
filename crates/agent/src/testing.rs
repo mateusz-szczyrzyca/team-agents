@@ -86,3 +86,26 @@ impl Drop for FakeDaemon {
         self.accepting.abort();
     }
 }
+
+/// A clock a test sets: it stands still until it is advanced.
+#[derive(Clone)]
+pub(crate) struct ManualClock(Arc<Mutex<time::UtcDateTime>>);
+
+impl ManualClock {
+    /// A clock that shows `at`.
+    pub(crate) fn new(at: agent_core::state::Timestamp) -> Self {
+        Self(Arc::new(Mutex::new(at.as_utc())))
+    }
+
+    /// Moves the clock forward by `span`.
+    pub(crate) fn advance(&self, span: time::Duration) {
+        let mut now = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        *now += span;
+    }
+}
+
+impl agent_core::ids::Clock for ManualClock {
+    fn now(&self) -> time::UtcDateTime {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}

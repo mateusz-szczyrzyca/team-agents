@@ -9,6 +9,7 @@
 #   crash                 exits with status 3 and prints nothing
 #   garbage               prints a line that is not JSON, then ends like `done`
 #   questions PATH        writes a questions file to PATH, ends with STATUS: QUESTIONS
+#   questions-nofile      ends with STATUS: QUESTIONS without writing the file
 #   hang                  prints its first line and then nothing; leaves a child behind (pid in .fake-child)
 #   hang-first            hangs when started, ends like `done` when resumed (--resume)
 #   quota                 the provider says the usage limit is reached and resets in 3 hours
@@ -63,6 +64,7 @@ case $scenario in
     printf '# Questions — fake\n\n## 1. Which store?\na) memory\nb) disk\n\n**Recommended:** a) — simpler (fake)\n\n**Verdict:**\n' > "$path"
     result false 'I need answers.\nSTATUS: QUESTIONS'
     ;;
+  questions-nofile) init; result false 'I need answers.\nSTATUS: QUESTIONS' ;;
   hang)
     init
     sleep 600 &
