@@ -7,8 +7,8 @@ of [#93](https://github.com/mateusz-szczyrzyca/team-agents/pull/93), which alrea
 checks on the real binary, and fixed, test first, the defects that are small and clearly in the item's scope. The rest are
 listed below with a proposed fix.
 
-**Size first:** with my fixes the branch counts `5,039` lines outside tests against `main` (PR-1 command), over the `5,000`
-of this plan; #93 alone counts `4,990`. My commits add `61` counted lines. See [Size](#size) for the options. This report
+**Size first:** with my fixes the branch counts `5,080` lines outside tests against `main` (PR-1 command), over the `5,000`
+of this plan; #93 alone counts `4,990`. My commits add `102` counted lines. See [Size](#size) for the options. This report
 itself should go into a PR description, not into the diff (as #93 did with its own report).
 
 ## Summary
@@ -24,6 +24,7 @@ itself should go into a PR description, not into the diff (as #93 did with its o
 | 7 | "Progress" resets the strike count: a command that hangs each time after one step is resumed for ever | design risk | open |
 | 8 | A missing or wrong prompts directory is reported as "22 text files cannot be used", naming neither the directory nor a file | minor | open |
 | 9 | Small rule findings: notification text built in `.rs`, `bool` parameters, a user unit ordered after a system target, "1 minutes" | minor | open |
+| 10 | A start refused with `ETXTBSY` (a program still open for writing in a child another thread forked) fails at once: the gate failed at [`4a15a77`](https://github.com/mateusz-szczyrzyca/team-agents/commit/4a15a77) in `git::tests::a_revision_that_prints_no_commit_id_is_an_error` | minor (flaky gate) | fixed |
 
 ## Checks of the item
 
@@ -110,6 +111,22 @@ so its task failed. Rare (more than `16 MiB` written since the last look, which 
 [`crates/agent/src/main.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/53772296b39beee9c90b45e69bc168529821526d/crates/agent/src/main.rs)
 said "this version answers `--version` and `--help`". `Test-First: not possible — documentation only.`
 
+### 10. A program busy for a moment cannot be started — minor (the gate failed on it)
+
+The gate failed at [`4a15a77`](https://github.com/mateusz-szczyrzyca/team-agents/commit/4a15a77) in the existing test
+`git::tests::a_revision_that_prints_no_commit_id_is_an_error` with `Text file busy` (`ETXTBSY`, `os error 26`). The
+cause is in the process code, which I did not change: the test writes a script and runs it. If another test thread
+forks a child while the script's file is open for writing, the child holds a copy of that descriptor until its own
+`exec`, and an `exec` of the script in that window is refused. The daemon is multithreaded and spawns runs, git and the
+notification command at the same time, so a program written just before it is run can meet the same race.
+
+RED [`ee2c3e4`](https://github.com/mateusz-szczyrzyca/team-agents/commit/ee2c3e45f283464d1cc6fa7b82441793fdc45019) holds a script open for writing and closes it after
+`100` ms: `capture` and `Supervisor::spawn` both failed with the gate's error. GREEN
+[`3d46c57`](https://github.com/mateusz-szczyrzyca/team-agents/commit/3d46c5775832f45b74dd4baff01e14d6ef4b7dea): `spawn_when_free` in
+[`crates/agent-runtime/src/process.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/3d46c5775832f45b74dd4baff01e14d6ef4b7dea/crates/agent-runtime/src/process.rs) tries a start
+refused with `ETXTBSY` again every `10` ms for at most `2` s; after that the error is reported as before. With the fix,
+the `agent-runtime` unit tests passed `30` runs in a row. The failing test itself is unchanged (rule 1).
+
 ## Open (not fixed here)
 
 ### 5. A daemon that dies without SIGTERM, outside systemd, leaves its runs going — major outside systemd
@@ -178,14 +195,20 @@ The PR-1 command (`<base>` = `origin/main`
 |---|---|
 | #93 head [`c5396bc`](https://github.com/mateusz-szczyrzyca/team-agents/commit/c5396bc9893e12d15b60fa54b3a0eb7977277ef9) | `4,990` |
 | this branch [`5377229`](https://github.com/mateusz-szczyrzyca/team-agents/commit/53772296b39beee9c90b45e69bc168529821526d) | `5,039` |
+| this branch [`3d46c57`](https://github.com/mateusz-szczyrzyca/team-agents/commit/3d46c5775832f45b74dd4baff01e14d6ef4b7dea) (finding 10: `+41` counted) | `5,080` |
 
-Over the limit by `39`. PR-2 allows a marginal overshoot only when a smaller PR could not build or pass on its own, which is
+Over the limit by `80`. PR-2 allows a marginal overshoot only when a smaller PR could not build or pass on its own, which is
 not the case here. Options for the merger:
 
-- a) Merge #93 as it is and my seven commits as a follow-up PR (they apply on #93's head, each RED/GREEN pair stands alone).
-- b) Take the fixes into #93 and win back the `39` lines elsewhere, e.g. in the `+69` lines of `docs/architecture.md`.
+- a) Merge #93 as it is and my code commits as a follow-up PR (they apply on #93's head, each RED/GREEN pair stands alone).
+  #93 then needs finding 10's pair too, or its gate stays flaky.
+- b) Take the fixes into #93 and win back the `80` lines elsewhere, e.g. in the `+69` lines of `docs/architecture.md` and
+  the text of this report, which belongs in the PR description.
 
 ## Gate
+
+**PASS** at [`3d46c57`](https://github.com/mateusz-szczyrzyca/team-agents/commit/3d46c5775832f45b74dd4baff01e14d6ef4b7dea) after finding 10: `make gate` (the Rust gate), `1,213` tests passed, `0`
+failed. The earlier run:
 
 `make gate` in this worktree runs through the harness's `agent gate`, whose scope for a diff under `crates/` is the Rust gate
 (`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
