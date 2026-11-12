@@ -13,6 +13,7 @@ use std::string::FromUtf8Error;
 
 use agent_core::config::Language;
 use agent_core::prompt::{PromptError, PromptId, Variables, VariablesError};
+use tokio::io::AsyncReadExt;
 
 /// The most bytes a prompt file may have: a bound on input from the disk, far above any prompt of the catalog.
 pub const MAX_PROMPT_BYTES: usize = 1 << 20;
@@ -128,8 +129,21 @@ impl PromptLoader {
     /// [`PromptLoadError`] with every file that is missing, unreadable, too large, not UTF-8 or not valid for its
     /// prompt.
     pub async fn load(dir: &Path, language: &Language) -> Result<Self, PromptLoadError> {
-        let _ = (dir, language, MAX_PROMPT_BYTES);
-        Ok(Self { texts: BTreeMap::new() })
+        let mut texts = BTreeMap::new();
+        let mut problems = Vec::new();
+        for id in PromptId::ALL {
+            match load_one(dir, *id, language).await {
+                Ok(text) => {
+                    texts.insert(*id, text);
+                }
+                Err(problem) => problems.push(problem),
+            }
+        }
+        if problems.is_empty() {
+            Ok(Self { texts })
+        } else {
+            Err(PromptLoadError { problems })
+        }
     }
 
     /// Renders `id` with `values`.
@@ -138,9 +152,27 @@ impl PromptLoader {
     /// [`RenderPromptError::Prompt`] (with [`PromptError::Render`]) when `values` give no value for a variable of
     /// the prompt or one for another; [`RenderPromptError::NotLoaded`] for a loader that holds no text for `id`.
     pub fn render(&self, id: PromptId, values: &Variables) -> Result<String, RenderPromptError> {
-        let _ = (id, values, &self.texts);
-        Ok(String::new())
+        let text = self.texts.get(&id).ok_or(RenderPromptError::NotLoaded { id })?;
+        id.spec()
+            .render(text, values)
+            .map_err(|source| RenderPromptError::Prompt { id, source })
     }
+}
+
+/// Reads the text of `id` and checks it against the catalog.
+async fn load_one(dir: &Path, id: PromptId, language: &Language) -> Result<String, PromptProblem> {
+    let spec = id.spec();
+    let (path, text) = read_first(dir, id, &spec.candidates(language)).await?;
+    // The text has to render with a value for each variable the catalog lists, and with nothing else: the check of
+    // the text against the catalog is the check the later rendering will make, with empty values.
+    let values = spec
+        .variables()
+        .iter()
+        .try_fold(Variables::new(), |values, name| values.with(name, ""))
+        .map_err(|source| PromptProblem::Catalog { id, source })?;
+    spec.render(&text, &values)
+        .map_err(|source| PromptProblem::Invalid { id, path, source })?;
+    Ok(text)
 }
 
 /// Reads the first of `candidates` (paths in `dir`) that exists.
@@ -148,8 +180,52 @@ impl PromptLoader {
 /// A file that exists but cannot be read is a problem, never a reason to try the next one: a broken translation must
 /// not silently turn into English.
 async fn read_first(dir: &Path, id: PromptId, candidates: &[PathBuf]) -> Result<(PathBuf, String), PromptProblem> {
-    let _ = (dir, candidates);
-    Err(PromptProblem::Missing { id, tried: Vec::new() })
+    for candidate in candidates {
+        let path = dir.join(candidate);
+        if let Some(text) = read_file(id, &path).await? {
+            return Ok((path, text));
+        }
+    }
+    Err(PromptProblem::Missing {
+        id,
+        tried: candidates.to_vec(),
+    })
+}
+
+/// The text of the file at `path`, or `None` when there is no such file.
+async fn read_file(id: PromptId, path: &Path) -> Result<Option<String>, PromptProblem> {
+    let read_error = |source| PromptProblem::Read {
+        id,
+        path: path.to_path_buf(),
+        source,
+    };
+    let file = match tokio::fs::File::open(path).await {
+        Ok(file) => file,
+        // A candidate that is not there is the specified way to fall back to the next one.
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(read_error(source)),
+    };
+    // `usize` is never wider than `u64` on a platform Rust supports, so the fallback is not reachable.
+    let read_limit = u64::try_from(MAX_PROMPT_BYTES).map_or(u64::MAX, |limit| limit.saturating_add(1));
+    let mut bytes = Vec::new();
+    file.take(read_limit)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(read_error)?;
+    if bytes.len() > MAX_PROMPT_BYTES {
+        return Err(PromptProblem::TooLarge {
+            id,
+            path: path.to_path_buf(),
+            limit: MAX_PROMPT_BYTES,
+        });
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|source| PromptProblem::NotUtf8 {
+            id,
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 #[cfg(test)]
