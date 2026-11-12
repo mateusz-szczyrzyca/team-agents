@@ -7,11 +7,25 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use clap::{CommandFactory, Parser};
+use agent_core::ids::InvalidId;
+use agent_core::protocol::Target;
+use clap::{Args, CommandFactory, Parser, Subcommand};
 
+mod client;
+#[cfg(test)]
+mod command_tests;
+mod commands;
 mod daemon;
+mod environment;
 #[cfg(test)]
 mod fixtures;
+mod lines;
+#[cfg(test)]
+mod testing;
+
+use crate::client::ClientError;
+use crate::commands::status::StatusError;
+use crate::environment::{Environment, EnvironmentError};
 
 /// Exit status of a command line that clap refuses: its own convention for usage errors.
 const USAGE_ERROR: u8 = 2;
@@ -19,7 +33,50 @@ const USAGE_ERROR: u8 = 2;
 /// The command line of `agent`.
 #[derive(Debug, Parser)]
 #[command(name = "agent", version, about = "Starts and steers AI coding agents on this host")]
-struct Cli {}
+struct Cli {
+    /// What to do; without one the help is shown.
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+/// The commands of `agent`.
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Shows the teams the daemon knows and what each of their tasks is doing.
+    Status(StatusArgs),
+}
+
+/// The arguments of `agent status`.
+#[derive(Debug, Args)]
+struct StatusArgs {
+    /// A team (`team-…`) or a task (`task-…`) to show; every team without one.
+    #[arg(value_parser = parse_target)]
+    target: Option<Target>,
+}
+
+/// Why a text is neither a team nor a task.
+#[derive(Debug, thiserror::Error)]
+#[error("{text:?} is neither a team ID (team-YYYYMMDD-HHMMSS-xxxx) nor a task ID (task-YYYYMMDD-HHMMSS-xxxx)")]
+struct TargetError {
+    /// What was given.
+    text: String,
+    /// What is wrong with it as an ID of the kind its prefix names.
+    #[source]
+    source: InvalidId,
+}
+
+/// Reads a team or a task ID from the command line.
+fn parse_target(text: &str) -> Result<Target, TargetError> {
+    let target = if text.starts_with("team-") {
+        text.parse().map(Target::Team)
+    } else {
+        text.parse().map(Target::Task)
+    };
+    target.map_err(|source| TargetError {
+        text: text.to_owned(),
+        source,
+    })
+}
 
 /// Why `agent` could not finish its output.
 #[derive(Debug, thiserror::Error)]
@@ -27,6 +84,23 @@ enum OutputError {
     /// Standard output or standard error refused the text (a closed pipe, a full disk).
     #[error("cannot write the output of agent")]
     Write(#[source] io::Error),
+}
+
+/// Why a command failed.
+#[derive(Debug, thiserror::Error)]
+enum CommandError {
+    /// `AGENTS_HOME` cannot be used.
+    #[error(transparent)]
+    Environment(#[from] EnvironmentError),
+    /// The daemon cannot be reached or refused the request.
+    #[error(transparent)]
+    Client(#[from] ClientError),
+    /// `agent status` failed.
+    #[error(transparent)]
+    Status(#[from] StatusError),
+    /// The tokio runtime cannot be built.
+    #[error("cannot start the runtime of the command")]
+    Runtime(#[source] io::Error),
 }
 
 /// Runs `agent` with the command line `args` (the program name first), writing to `out` and `err`.
@@ -38,12 +112,36 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    run_in(&Environment::from_process(), args, out, err)
+}
+
+/// Runs `agent` with the command line `args` in `environment`.
+///
+/// # Errors
+/// [`OutputError::Write`] when `out` or `err` refuses the text.
+fn run_in<I, T>(
+    environment: &Environment,
+    args: I,
+    out: &mut impl Write,
+    err: &mut impl Write,
+) -> Result<ExitCode, OutputError>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
     let code = match Cli::try_parse_from(args) {
-        // No command yet: the help says what there is.
-        Ok(Cli {}) => {
+        // No command: the help says what there is.
+        Ok(Cli { command: None }) => {
             write_text(out, &Cli::command().render_help().to_string())?;
             ExitCode::SUCCESS
         }
+        Ok(Cli { command: Some(command) }) => match execute_blocking(environment, command, out) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                write_text(err, &format!("agent: {}\n", chain(&error)))?;
+                ExitCode::FAILURE
+            }
+        },
         // `--version` and `--help` arrive here too, as "errors" meant for stdout.
         Err(answer) if !answer.use_stderr() => {
             write_text(out, &answer.render().to_string())?;
@@ -55,6 +153,36 @@ where
         }
     };
     Ok(code)
+}
+
+/// The error and its causes on one line.
+fn chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
+/// Runs `command` on a runtime of its own.
+fn execute_blocking(environment: &Environment, command: Command, out: &mut impl Write) -> Result<(), CommandError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(CommandError::Runtime)?;
+    runtime.block_on(execute(environment, command, out))
+}
+
+/// Carries out `command`.
+///
+/// # Errors
+/// [`CommandError`].
+async fn execute(environment: &Environment, command: Command, out: &mut impl Write) -> Result<(), CommandError> {
+    let _ = (environment, command, out);
+    Ok(())
 }
 
 /// Writes all of `text` to `to` and flushes it.

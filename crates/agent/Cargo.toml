@@ -25,6 +25,8 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# `test-util` for the paused clock of the timeout tests.
+tokio = { workspace = true, features = ["net", "signal", "test-util"] }
 
 [lints]
 workspace = true
