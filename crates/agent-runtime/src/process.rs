@@ -18,8 +18,8 @@ use std::time::{Duration, SystemTime};
 
 use agent_core::config::{AbsolutePath, EnvName, Program};
 use rustix::process::{Pid, Signal};
-use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::process::{Child, Command};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 use tokio::time::timeout;
 
@@ -577,15 +577,40 @@ async fn read_bounded<R: AsyncRead + Unpin>(mut reader: R, max_bytes: u64) -> io
 /// # Errors
 /// [`CaptureError`]: the program cannot be started, its output cannot be read, it ran over its time or its group
 /// cannot be signalled.
-pub(crate) async fn capture(mut command: Command, limits: CaptureLimits) -> Result<Captured, CaptureError> {
+pub(crate) async fn capture(command: Command, limits: CaptureLimits) -> Result<Captured, CaptureError> {
+    capture_feeding(command, limits, None).await
+}
+
+/// Writes `input` to the standard input of a child and closes it, when there is an input and a pipe.
+async fn write_input(stdin: Option<ChildStdin>, input: Option<&[u8]>) -> io::Result<()> {
+    let (Some(mut pipe), Some(bytes)) = (stdin, input) else {
+        return Ok(());
+    };
+    match pipe.write_all(bytes).await {
+        Ok(()) => {}
+        // The process ended, or closed its input, before it read everything: what it made of what it did read is in
+        // its output and its exit status, which the caller gets.
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
+        Err(error) => return Err(error),
+    }
+    pipe.shutdown().await
+}
+
+/// [`capture`], with `input` written to the standard input when there is one; without, the input is closed.
+async fn capture_feeding(
+    mut command: Command,
+    limits: CaptureLimits,
+    input: Option<&[u8]>,
+) -> Result<Captured, CaptureError> {
     command
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0)
         .kill_on_drop(true);
     let mut child = command.spawn().map_err(|source| CaptureError::Spawn { source })?;
     let (_, group) = leader_of(&child)?;
+    let stdin = child.stdin.take();
     let stdout = child
         .stdout
         .take()
@@ -595,12 +620,14 @@ pub(crate) async fn capture(mut command: Command, limits: CaptureLimits) -> Resu
         .take()
         .ok_or(CaptureError::MissingPipe { pipe: "stderr" })?;
     let run = async {
-        let (stdout, stderr, status) = tokio::join!(
+        let (stdout, stderr, status, written) = tokio::join!(
             read_bounded(stdout, limits.max_bytes),
             read_bounded(stderr, limits.max_bytes),
-            child.wait()
+            child.wait(),
+            write_input(stdin, input)
         );
         let io_error = |source| CaptureError::Io { source };
+        written.map_err(io_error)?;
         Ok::<_, CaptureError>((
             stdout.map_err(io_error)?,
             stderr.map_err(io_error)?,
@@ -639,8 +666,7 @@ pub(crate) async fn capture_with_input(
     limits: CaptureLimits,
     input: &[u8],
 ) -> Result<Captured, CaptureError> {
-    let _ = input;
-    capture(command, limits).await
+    capture_feeding(command, limits, Some(input)).await
 }
 
 #[cfg(test)]

@@ -13,6 +13,7 @@
 //! repository print; an output they do not recognise is [`AgentBusError::Unexpected`], never a guess.
 
 use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
@@ -25,8 +26,9 @@ use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
 use agent_core::kinds::{Keyword, UnknownKeyword};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
+use serde_json::json;
 
-use crate::process::{CaptureError, Captured};
+use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, capture, capture_with_input};
 
 /// How long one command may run before its process group is killed. A command waits for the bus lock, which others
 /// hold for the length of one operation.
@@ -38,12 +40,8 @@ const MAX_OUTPUT_BYTES: u64 = 8 << 20;
 /// How many characters of what a command printed an error keeps.
 const MAX_DIAGNOSTIC_CHARS: usize = 2048;
 
-/// The first exit status `agentbus` uses for a class of failure; the classes follow in the order of
-/// [`FailureClass`] up to [`LAST_CLASS_EXIT_CODE`].
-const FIRST_CLASS_EXIT_CODE: i32 = 2;
-
-/// The last exit status that is a class of failure.
-const LAST_CLASS_EXIT_CODE: i32 = 10;
+/// The longest field name of an event, in bytes.
+const MAX_FIELD_NAME_LEN: usize = 64;
 
 /// Which `agentbus` subcommand was run, for an error. The text is the subcommand's name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
@@ -110,8 +108,18 @@ impl FailureClass {
     /// The class of the exit status `code`.
     #[must_use]
     pub fn from_exit_code(code: i32) -> Self {
-        let _ = (code, FIRST_CLASS_EXIT_CODE, LAST_CLASS_EXIT_CODE);
-        Self::Unclassified
+        match code {
+            2 => Self::InvalidArgument,
+            3 => Self::NotFound,
+            4 => Self::NotInTeam,
+            5 => Self::Permission,
+            6 => Self::Conflict,
+            7 => Self::InvalidState,
+            8 => Self::Storage,
+            9 => Self::UnknownTool,
+            10 => Self::Process,
+            _ => Self::Unclassified,
+        }
     }
 }
 
@@ -184,7 +192,15 @@ impl AgentBusError {
     /// The class of the failure, when the command ended with a failure status.
     #[must_use]
     pub fn class(&self) -> Option<FailureClass> {
-        None
+        match self {
+            Self::Failed { class, .. } => Some(*class),
+            Self::Run { .. }
+            | Self::Killed { .. }
+            | Self::OutputTooLong { .. }
+            | Self::NotUtf8 { .. }
+            | Self::Decode { .. }
+            | Self::Unexpected { .. } => None,
+        }
     }
 }
 
@@ -499,7 +515,19 @@ impl FromStr for BoardItemId {
     type Err = InvalidBoardItemId;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Err(InvalidBoardItemId { value: text.to_owned() })
+        let invalid = || InvalidBoardItemId { value: text.to_owned() };
+        let digits = text.strip_prefix('B').ok_or_else(invalid)?;
+        // `parse` would also take a sign, and a leading zero would give two spellings of one item.
+        if digits.starts_with('0') || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(invalid());
+        }
+        // A number that does not fit, and the empty text, are `None`.
+        let number = digits.bytes().try_fold(0_u32, |number, digit| {
+            number
+                .checked_mul(10)?
+                .checked_add(u32::from(digit.saturating_sub(b'0')))
+        });
+        number.and_then(NonZeroU32::new).map(Self).ok_or_else(invalid)
     }
 }
 
@@ -823,7 +851,11 @@ impl FromStr for FieldName {
     type Err = InvalidFieldName;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Err(InvalidFieldName { value: text.to_owned() })
+        let allowed = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        if text.is_empty() || text.len() > MAX_FIELD_NAME_LEN || !text.chars().all(allowed) {
+            return Err(InvalidFieldName { value: text.to_owned() });
+        }
+        Ok(Self(text.to_owned()))
     }
 }
 
@@ -888,6 +920,38 @@ pub struct AgentBus {
     timeout: Duration,
 }
 
+/// The arguments of a command, flag by flag.
+struct Args(Vec<OsString>);
+
+impl Args {
+    /// No arguments.
+    fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Adds the flag `name` with its value, as two arguments: a value that starts with `-` is still a value.
+    fn flag(mut self, name: &str, value: impl AsRef<OsStr>) -> Self {
+        self.0.push(OsString::from(name));
+        self.0.push(value.as_ref().to_owned());
+        self
+    }
+
+    /// Adds the flag `name` with its value when there is one.
+    fn flag_if(self, name: &str, value: Option<impl AsRef<OsStr>>) -> Self {
+        match value {
+            Some(value) => self.flag(name, value),
+            None => self,
+        }
+    }
+
+    /// Adds the arguments after `--`, which are no flags whatever they start with.
+    fn positional(mut self, text: &str) -> Self {
+        self.0.push(OsString::from("--"));
+        self.0.push(OsString::from(text));
+        self
+    }
+}
+
 impl AgentBus {
     /// The bus of `home`, run with `program`.
     #[must_use]
@@ -917,14 +981,33 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`]; [`FailureClass::InvalidArgument`] for a team without members.
     pub async fn team_create(&self, team: &NewTeam) -> Result<(), AgentBusError> {
-        let _ = (
-            team,
-            &self.program,
-            self.timeout,
-            MAX_OUTPUT_BYTES,
-            MAX_DIAGNOSTIC_CHARS,
-        );
-        Err(wrong(BusCommand::TeamCreate))
+        let members: serde_json::Map<String, serde_json::Value> = team
+            .members
+            .iter()
+            .map(|(name, member)| {
+                let mut json = json!({
+                    "agent": name.as_str(),
+                    "task": member.task.as_str(),
+                    "branch": member.branch.as_str(),
+                    "worktree": member.worktree.as_path(),
+                    "state": member.state.to_string(),
+                    "tier": member.tier.to_string(),
+                });
+                if let (Some(provider), Some(object)) = (&member.provider, json.as_object_mut()) {
+                    object.insert("provider".to_owned(), json!(provider));
+                }
+                (name.to_string(), json)
+            })
+            .collect();
+        let json = json!({
+            "id": team.id.as_str(),
+            "repo": team.repo.as_str(),
+            "lead": team.lead.as_ref().map_or("", AgentName::as_str),
+            "members": members,
+        });
+        self.run(BusCommand::TeamCreate, Args::new(), Some(json.to_string().as_bytes()))
+            .await
+            .map(drop)
     }
 
     /// Reads a team.
@@ -932,8 +1015,11 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`]; [`FailureClass::NotFound`] for a team that does not exist.
     pub async fn team_get(&self, team: &TeamId) -> Result<BusTeam, AgentBusError> {
-        let _ = team;
-        Err(wrong(BusCommand::TeamGet))
+        let command = BusCommand::TeamGet;
+        let output = self
+            .run(command, Args::new().flag("--team", team.as_str()), None)
+            .await?;
+        decode_json(command, &output)
     }
 
     /// Sets the state of a member. A member that goes to sleep while something waits for it is woken at once, and
@@ -947,8 +1033,12 @@ impl AgentBus {
         member: &AgentName,
         state: MemberState,
     ) -> Result<Woken, AgentBusError> {
-        let _ = (team, member, state);
-        Err(wrong(BusCommand::TeamSet))
+        let args = Args::new()
+            .flag("--team", team.as_str())
+            .flag("--agent", member.as_str())
+            .flag("--state", state.to_string());
+        let output = self.run(BusCommand::TeamSet, args, None).await?;
+        parse_woken(&output)
     }
 
     /// Marks a team finished. A team that does not exist or is finished already is left as it is.
@@ -956,8 +1046,9 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`].
     pub async fn team_done(&self, team: &TeamId) -> Result<(), AgentBusError> {
-        let _ = team;
-        Err(wrong(BusCommand::TeamDone))
+        self.run(BusCommand::TeamDone, Args::new().flag("--team", team.as_str()), None)
+            .await
+            .map(drop)
     }
 
     /// Adds an item to a team's board as one of its members.
@@ -971,8 +1062,15 @@ impl AgentBus {
         member: &AgentName,
         item: &NewBoardItem,
     ) -> Result<BoardItemId, AgentBusError> {
-        let _ = (team, member, item);
-        Err(wrong(BusCommand::BoardAdd))
+        let args = Args::new()
+            .flag("--team", team.as_str())
+            .flag("--as", member.as_str())
+            .flag("--title", &item.title)
+            .flag("--details", &item.details)
+            .flag("--level", item.level.to_string())
+            .flag_if("--for", item.designated_for.as_ref().map(AgentName::as_str));
+        let output = self.run(BusCommand::BoardAdd, args, None).await?;
+        parse_added(&output)
     }
 
     /// Reads a team's board.
@@ -980,8 +1078,11 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`]; [`FailureClass::NotFound`] for a team that does not exist.
     pub async fn board_dump(&self, team: &TeamId) -> Result<BoardDump, AgentBusError> {
-        let _ = team;
-        Err(wrong(BusCommand::BoardDump))
+        let command = BusCommand::BoardDump;
+        let output = self
+            .run(command, Args::new().flag("--team", team.as_str()), None)
+            .await?;
+        decode_json(command, &output)
     }
 
     /// Claims an item as a member. What the item asks is in [`AgentBus::board_dump`].
@@ -990,8 +1091,11 @@ impl AgentBus {
     /// [`AgentBusError`]; [`FailureClass::Conflict`] for an item that is taken, [`FailureClass::Permission`] for an
     /// item that is for someone else or not easy for a worker, [`FailureClass::NotFound`] for no such item.
     pub async fn board_claim(&self, team: &TeamId, member: &AgentName, item: BoardItemId) -> Result<(), AgentBusError> {
-        let _ = (team, member, item);
-        Err(wrong(BusCommand::BoardClaim))
+        let args = Args::new()
+            .flag("--team", team.as_str())
+            .flag("--as", member.as_str())
+            .flag("--id", item.to_string());
+        self.run(BusCommand::BoardClaim, args, None).await.map(drop)
     }
 
     /// Puts the items an agent holds, or that are for it, back on the board, and returns their IDs.
@@ -1003,17 +1107,31 @@ impl AgentBus {
         team: &TeamId,
         agent: &AgentName,
     ) -> Result<Vec<BoardItemId>, AgentBusError> {
-        let _ = (team, agent);
-        Err(wrong(BusCommand::BoardReleaseAgent))
+        let args = Args::new()
+            .flag("--team", team.as_str())
+            .flag("--agent", agent.as_str());
+        let output = self.run(BusCommand::BoardReleaseAgent, args, None).await?;
+        parse_released(&output)
     }
 
     /// Queues a request for a worker.
     ///
     /// # Errors
-    /// [`AgentBusError`].
+    /// [`AgentBusError`]; [`FailureClass::InvalidArgument`] for an empty request.
     pub async fn delegate(&self, delegation: &Delegation) -> Result<RequestId, AgentBusError> {
-        let _ = delegation;
-        Err(wrong(BusCommand::Delegate))
+        let args = Args::new()
+            .flag("--team", delegation.team.as_str())
+            .flag("--as", delegation.requester.as_str())
+            .flag("--task", delegation.task.as_str())
+            .flag("--repo", delegation.repo.as_str())
+            .flag("--branch", delegation.branch.as_str())
+            .flag("--worktree", delegation.worktree.as_path())
+            .flag("--agent-cmd", delegation.dispatcher.as_path())
+            .flag("--home", self.home.as_path())
+            .flag("--request", &delegation.request)
+            .flag("--context", &delegation.context);
+        let output = self.run(BusCommand::Delegate, args, None).await?;
+        parse_request(&output)
     }
 
     /// Gives the oldest queued request to `worker`, which marks it `starting`; none when the queue is empty.
@@ -1021,8 +1139,14 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`].
     pub async fn helper_next(&self, worker: &AgentName) -> Result<Option<DelegationRequest>, AgentBusError> {
-        let _ = worker;
-        Err(wrong(BusCommand::HelperNext))
+        let command = BusCommand::HelperNext;
+        let output = self
+            .run(command, Args::new().flag("--worker", worker.as_str()), None)
+            .await?;
+        if output.trim().is_empty() {
+            return Ok(None);
+        }
+        decode_json(command, &output).map(Some)
     }
 
     /// Changes a request for a worker.
@@ -1030,8 +1154,12 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`]; [`FailureClass::NotFound`] for a request that does not exist.
     pub async fn helper_set(&self, request: RequestId, update: &DelegationUpdate) -> Result<(), AgentBusError> {
-        let _ = (request, update);
-        Err(wrong(BusCommand::HelperSet))
+        let args = Args::new()
+            .flag("--id", request.number().to_string())
+            .flag_if("--status", update.status.map(|status| status.to_string()))
+            .flag_if("--task", update.task.as_ref().map(TaskId::as_str))
+            .flag_if("--summary", update.summary.as_ref());
+        self.run(BusCommand::HelperSet, args, None).await.map(drop)
     }
 
     /// Reads a request for a worker.
@@ -1039,8 +1167,11 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`]; [`FailureClass::NotFound`] for a request that does not exist.
     pub async fn helper_get(&self, request: RequestId) -> Result<DelegationRequest, AgentBusError> {
-        let _ = request;
-        Err(wrong(BusCommand::HelperGet))
+        let command = BusCommand::HelperGet;
+        let output = self
+            .run(command, Args::new().flag("--id", request.number().to_string()), None)
+            .await?;
+        decode_json(command, &output)
     }
 
     /// The checkpoint kept under `key`; none when there is none.
@@ -1048,8 +1179,14 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`].
     pub async fn checkpoint_get(&self, key: &CheckpointKey) -> Result<Option<String>, AgentBusError> {
-        let _ = key;
-        Err(wrong(BusCommand::CheckpointGet))
+        let output = self
+            .run(
+                BusCommand::CheckpointGet,
+                Args::new().flag("--key", key.to_string()),
+                None,
+            )
+            .await?;
+        Ok((!output.is_empty()).then_some(output))
     }
 
     /// Puts a message on the bus.
@@ -1062,8 +1199,19 @@ impl AgentBus {
         to: &Recipient,
         message: &Outgoing,
     ) -> Result<SentMessage, AgentBusError> {
-        let _ = (from, to, message);
-        Err(wrong(BusCommand::Send))
+        let mut args = Args::new().flag("--from", from.as_str()).flag("--to", to.to_string());
+        let text = match message {
+            Outgoing::Chat { text } => text,
+            Outgoing::Notice { kind, fields, text } => {
+                args = args.flag("--notice", kind.to_string());
+                for (name, value) in fields {
+                    args = args.flag("--field", format!("{}={value}", name.as_str()));
+                }
+                text
+            }
+        };
+        let output = self.run(BusCommand::Send, args.positional(text), None).await?;
+        parse_sent(&output)
     }
 
     /// The agents that are running and the reservations.
@@ -1071,22 +1219,38 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`].
     pub async fn status(&self) -> Result<BusStatus, AgentBusError> {
-        Err(wrong(BusCommand::Status))
+        let output = self.run(BusCommand::Status, Args::new(), None).await?;
+        parse_status(&output)
     }
-}
 
-/// An error that is no right answer to anything.
-fn wrong(command: BusCommand) -> AgentBusError {
-    AgentBusError::Unexpected {
-        command,
-        output: String::new(),
+    /// Runs `command` with `args` against this bus and returns what it printed. The bus is named on the command line
+    /// and in `AGENTS_HOME`, and `AGENTBUS_DIR`, which would override the first, is removed from the environment:
+    /// nothing but this `AgentBus` decides which bus a command works on.
+    async fn run(&self, command: BusCommand, args: Args, input: Option<&[u8]>) -> Result<String, AgentBusError> {
+        let mut process = tokio::process::Command::new(self.program.as_path());
+        process
+            .arg(command.to_string())
+            .arg("--dir")
+            .arg(self.bus_dir())
+            .args(args.0)
+            .env("AGENTS_HOME", self.home.as_path())
+            .env_remove("AGENTBUS_DIR");
+        let limits = CaptureLimits {
+            timeout: self.timeout,
+            max_bytes: MAX_OUTPUT_BYTES,
+        };
+        let captured = match input {
+            Some(bytes) => capture_with_input(process, limits, bytes).await,
+            None => capture(process, limits).await,
+        }
+        .map_err(|source| AgentBusError::Run { command, source })?;
+        outcome(command, captured)
     }
 }
 
 /// Decodes the JSON a command printed.
 fn decode_json<T: serde::de::DeserializeOwned>(command: BusCommand, output: &str) -> Result<T, AgentBusError> {
-    let _ = output;
-    Err(unexpected(command, output))
+    serde_json::from_str(output).map_err(|source| AgentBusError::Decode { command, source })
 }
 
 /// The error for output that is not in the format of `command`.
@@ -1109,38 +1273,140 @@ fn diagnostic(bytes: &[u8]) -> String {
 
 /// What a finished command says: its standard output when it succeeded, an error when it did not.
 fn outcome(command: BusCommand, captured: Captured) -> Result<String, AgentBusError> {
-    let _ = (command, captured);
-    Ok(String::new())
+    match captured.exit {
+        ExitReport::Signaled { signal } => Err(AgentBusError::Killed { command, signal }),
+        ExitReport::Exited { code: 0 } => {
+            if captured.stdout.dropped > 0 {
+                return Err(AgentBusError::OutputTooLong {
+                    command,
+                    limit: MAX_OUTPUT_BYTES,
+                });
+            }
+            String::from_utf8(captured.stdout.bytes).map_err(|source| AgentBusError::NotUtf8 { command, source })
+        }
+        ExitReport::Exited { code } => {
+            let said = diagnostic(&captured.stderr.bytes);
+            // `agentbus` puts its own name in front of what it says.
+            let message = match said.strip_prefix("agentbus:") {
+                Some(rest) => rest.trim_start().to_owned(),
+                None => said,
+            };
+            Err(AgentBusError::Failed {
+                command,
+                exit_code: code,
+                class: FailureClass::from_exit_code(code),
+                message,
+            })
+        }
+    }
 }
 
 /// The ID of the item `board-add` reports: `Added B12 (normal). ...`.
 fn parse_added(output: &str) -> Result<BoardItemId, AgentBusError> {
-    Err(unexpected(BusCommand::BoardAdd, output))
+    output
+        .trim_start()
+        .strip_prefix("Added ")
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|word| word.parse().ok())
+        .ok_or_else(|| unexpected(BusCommand::BoardAdd, output))
 }
 
 /// Why `team-set` woke a member: nothing, `waking` or `waking (board)`.
 fn parse_woken(output: &str) -> Result<Woken, AgentBusError> {
-    Err(unexpected(BusCommand::TeamSet, output))
+    match output.trim() {
+        "" => Ok(Woken::No),
+        "waking" => Ok(Woken::Message),
+        "waking (board)" => Ok(Woken::Board),
+        _ => Err(unexpected(BusCommand::TeamSet, output)),
+    }
 }
 
 /// The IDs `board-release-agent` prints, one a line.
 fn parse_released(output: &str) -> Result<Vec<BoardItemId>, AgentBusError> {
-    Err(unexpected(BusCommand::BoardReleaseAgent, output))
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            line.parse()
+                .ok()
+                .ok_or_else(|| unexpected(BusCommand::BoardReleaseAgent, output))
+        })
+        .collect()
+}
+
+/// The number at the start of `text`, when it is a number above 0 and is followed by a space or the end.
+fn leading_number(text: &str) -> Option<NonZeroU64> {
+    let end = text.find(|c: char| !c.is_ascii_digit()).unwrap_or(text.len());
+    let (digits, rest) = text.split_at_checked(end)?;
+    if !(rest.is_empty() || rest.starts_with(' ')) {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 /// The number of the request `delegate` accepted: `Request H12 accepted. ...`.
 fn parse_request(output: &str) -> Result<RequestId, AgentBusError> {
-    Err(unexpected(BusCommand::Delegate, output))
+    output
+        .trim_start()
+        .strip_prefix("Request H")
+        .and_then(leading_number)
+        .map(RequestId::new)
+        .ok_or_else(|| unexpected(BusCommand::Delegate, output))
 }
 
 /// The message `send` printed: `[#12 2026-11-12 10:00:00] from → to: text`.
 fn parse_sent(output: &str) -> Result<SentMessage, AgentBusError> {
-    Err(unexpected(BusCommand::Send, output))
+    output
+        .trim_start()
+        .strip_prefix("[#")
+        .and_then(leading_number)
+        .map(|id| SentMessage { id })
+        .ok_or_else(|| unexpected(BusCommand::Send, output))
 }
 
-/// The report of `status`.
+/// One agent of the status: `  name — task (branch) pid 123, status: text`.
+fn parse_agent_line(line: &str) -> Option<ActiveAgent> {
+    let rest = line.strip_prefix("  ")?;
+    let (agent, rest) = rest.split_once(" — ")?;
+    let (task, rest) = rest.split_once(" (")?;
+    let (branch, rest) = rest.split_once(") pid ")?;
+    let (pid, status) = rest.split_once(", status:")?;
+    Some(ActiveAgent {
+        agent: agent.parse().ok()?,
+        task: task.parse().ok()?,
+        branch: branch.parse().ok()?,
+        pid: pid.trim().parse().ok()?,
+        status: status.trim().to_owned(),
+    })
+}
+
+/// The report of `status`: the agents, then `Reservations:`, then `No reservations.` or one `- ...` line each.
 fn parse_status(output: &str) -> Result<BusStatus, AgentBusError> {
-    Err(unexpected(BusCommand::Status, output))
+    let bad = || unexpected(BusCommand::Status, output);
+    let mut lines = output.lines();
+    if lines.next() != Some("Active agents:") {
+        return Err(bad());
+    }
+    let mut agents = Vec::new();
+    loop {
+        match lines.next().ok_or_else(bad)? {
+            "Reservations:" => break,
+            "  (none)" => {}
+            line => agents.push(parse_agent_line(line).ok_or_else(bad)?),
+        }
+    }
+    let mut reservations = Vec::new();
+    for line in lines {
+        if line == "No reservations." {
+            continue;
+        }
+        if !line.starts_with("- ") {
+            return Err(bad());
+        }
+        reservations.push(line.trim_end().to_owned());
+    }
+    Ok(BusStatus { agents, reservations })
 }
 
 #[cfg(test)]

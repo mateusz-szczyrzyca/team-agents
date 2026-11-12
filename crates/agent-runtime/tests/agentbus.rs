@@ -21,6 +21,7 @@ mod agentbus_commands {
     };
     use agent_runtime::process::CaptureError;
     use rustix::fs::{FlockOperation, flock};
+    use tokio::io::AsyncWriteExt;
     use tokio::process::Command;
 
     /// How long a wait for something another process does lasts at most.
@@ -141,6 +142,44 @@ mod agentbus_commands {
 
     // ------------------------------------------------------------ teams
 
+    /// The requests that make an MCP client read its messages: initialise, then call `read_messages`.
+    const READ_MESSAGES: &str = concat!(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_messages","arguments":{}}}"#,
+        "\n",
+    );
+
+    /// Makes `member` read the messages that wait for it, as its model would through the MCP server: what it has
+    /// read no longer wakes it. The bus has no command for that, which is why this talks to `agentbus serve`.
+    async fn read_messages_as(fixture: &Fixture, member: &str, suffix: &str) {
+        let mut serve = Command::new(agentbus_binary())
+            .arg("serve")
+            .args(["--agent", member, "--team", TEAM, "--task"])
+            .arg(task(suffix).as_str())
+            .args(["--repo", "team-agents", "--branch", "agents/x/item-1", "--dir"])
+            .arg(fixture.bus.bus_dir())
+            .env("AGENTS_HOME", fixture.dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut stdin = serve.stdin.take().unwrap();
+        stdin.write_all(READ_MESSAGES.as_bytes()).await.unwrap();
+        // The server ends when its input does.
+        drop(stdin);
+        let output = tokio::time::timeout(PATIENCE, serve.wait_with_output())
+            .await
+            .unwrap()
+            .unwrap();
+        let said = String::from_utf8(output.stdout).unwrap();
+        assert!(output.status.success() && said.contains(r#""isError":false"#), "{said}");
+    }
+
     #[tokio::test]
     async fn team_create_makes_a_team_that_team_get_reads_back() {
         let fixture = fixture();
@@ -206,8 +245,25 @@ mod agentbus_commands {
     }
 
     #[tokio::test]
-    async fn team_set_changes_the_state_of_a_member_and_wakes_nobody_when_nothing_waits() {
+    async fn team_set_changes_the_state_of_a_member() {
         let fixture = with_team().await;
+
+        let woken = fixture
+            .bus
+            .team_set(&team_id(), &agent("codex-1"), MemberState::Paused)
+            .await
+            .unwrap();
+
+        assert_eq!(woken, Woken::No);
+        let team = fixture.bus.team_get(&team_id()).await.unwrap();
+        assert_eq!(team.members.get(&agent("codex-1")).unwrap().state, MemberState::Paused);
+        assert_eq!(team.members.get(&agent("claude-1")).unwrap().state, MemberState::Active);
+    }
+
+    #[tokio::test]
+    async fn team_set_lets_a_member_sleep_when_nothing_waits_for_it() {
+        let fixture = with_team().await;
+        read_messages_as(&fixture, "codex-1", "bbb2").await;
 
         let woken = fixture
             .bus
@@ -221,17 +277,18 @@ mod agentbus_commands {
             team.members.get(&agent("codex-1")).unwrap().state,
             MemberState::Sleeping
         );
-        assert_eq!(team.members.get(&agent("claude-1")).unwrap().state, MemberState::Active);
     }
 
     #[tokio::test]
     async fn team_set_wakes_a_member_that_goes_to_sleep_with_a_message_waiting_for_it() {
         let fixture = with_team().await;
+        read_messages_as(&fixture, "codex-1", "bbb2").await;
         let to = Recipient::Agent(agent("codex-1"));
-        let message = Outgoing::Chat {
-            text: "please review".to_owned(),
-        };
-        fixture.bus.send(&agent("claude-1"), &to, &message).await.unwrap();
+        fixture
+            .bus
+            .send(&agent("claude-1"), &to, &chat("please review"))
+            .await
+            .unwrap();
 
         let woken = fixture
             .bus
@@ -247,6 +304,7 @@ mod agentbus_commands {
     #[tokio::test]
     async fn team_set_wakes_a_member_that_goes_to_sleep_with_work_on_the_board() {
         let fixture = with_team().await;
+        read_messages_as(&fixture, "codex-1", "bbb2").await;
         let work = board_item("Parse the thing", BoardLevel::Normal, Some("codex-1"));
         fixture
             .bus
@@ -261,6 +319,20 @@ mod agentbus_commands {
             .unwrap();
 
         assert_eq!(woken, Woken::Board);
+    }
+
+    #[tokio::test]
+    async fn team_set_does_not_wake_a_member_of_a_finished_team() {
+        let fixture = with_team().await;
+        fixture.bus.team_done(&team_id()).await.unwrap();
+
+        let woken = fixture
+            .bus
+            .team_set(&team_id(), &agent("codex-1"), MemberState::Sleeping)
+            .await
+            .unwrap();
+
+        assert_eq!(woken, Woken::No);
     }
 
     #[tokio::test]
@@ -375,17 +447,22 @@ mod agentbus_commands {
                 "claude-1",
                 FailureClass::NotFound,
             ),
-            (
-                board_item("t", BoardLevel::Normal, None),
-                "opencode-1",
-                FailureClass::NotInTeam,
-            ),
         ];
         for (new, member, class) in cases {
             let result = fixture.bus.board_add(&team_id(), &agent(member), &new).await;
 
             assert_eq!(failure_class(result), Some(class), "{new:?} as {member}");
         }
+    }
+
+    #[tokio::test]
+    async fn board_add_to_a_team_that_does_not_exist_is_not_in_a_team() {
+        let fixture = fixture();
+        let work = board_item("t", BoardLevel::Normal, None);
+
+        let result = fixture.bus.board_add(&team_id(), &agent("claude-1"), &work).await;
+
+        assert_eq!(failure_class(result), Some(FailureClass::NotInTeam));
     }
 
     #[tokio::test]
@@ -447,7 +524,6 @@ mod agentbus_commands {
             ("codex-1", item(2), FailureClass::Permission),
             ("gemini-1", item(2), FailureClass::Permission),
             ("codex-1", item(9), FailureClass::NotFound),
-            ("opencode-1", item(1), FailureClass::NotInTeam),
         ];
         for (member, id, class) in cases {
             let result = fixture.bus.board_claim(&team_id(), &agent(member), id).await;
