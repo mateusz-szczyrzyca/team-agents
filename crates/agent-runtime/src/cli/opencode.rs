@@ -9,8 +9,9 @@
 //! is the `sessionID` that every event of the stream carries.
 //!
 //! The stream is one JSON object a line: `step_start`, `text`, `tool_use`, `step_finish` and `error`. opencode has no
-//! event for the end of a run: a `step_finish` with the reason `stop` is the last step, and the final message is the
-//! last text.
+//! event for the end of a run: a run that finished ends on a `step_finish` with the reason `stop` or, as most recorded
+//! runs do, on its last `text`; a text that a tool call, a finished step or a new step follows is not the end. The
+//! final message is the last text.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
@@ -238,6 +239,7 @@ impl CliAdapter for OpencodeAdapter {
 
     fn parser(&self) -> Box<dyn OutputParser> {
         Box::new(OpencodeParser {
+            ends_on_text: false,
             progress: Progress::new(),
         })
     }
@@ -365,6 +367,9 @@ fn error_message(error: &Value) -> String {
 struct OpencodeParser {
     /// What the stream has shown.
     progress: Progress,
+    /// Whether the latest step of the stream is a text of the agent: no tool call, finished step or new step has
+    /// followed it.
+    ends_on_text: bool,
 }
 
 impl OpencodeParser {
@@ -387,7 +392,8 @@ impl OutputParser for OpencodeParser {
         let Some(Line { session_id, event }) = read_event::<Line>(line)? else {
             return Ok(Vec::new());
         };
-        if let Some(id) = session_id {
+        // An error event of a refused request carries an empty ID: it names no session, and its error is the news.
+        if let Some(id) = session_id.filter(|id| !id.is_empty()) {
             self.progress.note_session(line, &id)?;
         }
         Ok(match event {
@@ -396,11 +402,20 @@ impl OutputParser for OpencodeParser {
                 let event = text_event(&text);
                 if event.is_some() {
                     self.progress.final_message = Some(text);
+                    self.ends_on_text = true;
                 }
                 event.into_iter().collect()
             }
-            Event::ToolUse { part } => Self::tool(part),
+            Event::ToolUse { part } => {
+                self.ends_on_text = false;
+                Self::tool(part)
+            }
+            Event::StepStart => {
+                self.ends_on_text = false;
+                Vec::new()
+            }
             Event::StepFinish { part } => {
+                self.ends_on_text = false;
                 match part.reason {
                     Some(FinishReason::Stop) => self.progress.stream = StreamOutcome::Succeeded,
                     Some(FinishReason::Error) => self.progress.stream = StreamOutcome::Failed,
@@ -415,11 +430,20 @@ impl OutputParser for OpencodeParser {
                 self.progress.stream = StreamOutcome::Failed;
                 vec![ActivityEvent::Error(error_message(&error))]
             }
-            Event::StepStart | Event::Other => Vec::new(),
+            Event::Other => Vec::new(),
         })
     }
 
     fn finish(self: Box<Self>, stderr: &str, tail_lines: NonZeroU32) -> RunOutput {
-        self.progress.finish(stderr, tail_lines)
+        let Self {
+            mut progress,
+            ends_on_text,
+        } = *self;
+        // The recorded runs of a finished agent end on its text: opencode prints a `step_finish` with the reason
+        // `stop` only sometimes.
+        if ends_on_text && progress.stream == StreamOutcome::Incomplete {
+            progress.stream = StreamOutcome::Succeeded;
+        }
+        progress.finish(stderr, tail_lines)
     }
 }
