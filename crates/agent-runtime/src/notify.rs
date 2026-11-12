@@ -29,7 +29,7 @@ pub const MAX_BODY_BYTES: usize = 64 << 10;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How many bytes of the command's output are kept.
-const MAX_COMMAND_OUTPUT_BYTES: usize = 64 << 10;
+const MAX_COMMAND_OUTPUT_BYTES: u64 = 64 << 10;
 
 /// How many characters of the command's error output an error carries.
 const MAX_DIAGNOSTIC_CHARS: usize = 2048;

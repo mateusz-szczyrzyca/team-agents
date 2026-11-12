@@ -456,6 +456,7 @@ impl RunningProcess {
                         let status = status.map_err(|source| ProcessError::Wait { source })?;
                         (ExitReport::from_status(status)?, StopHow::Terminated)
                     }
+                    // The grace is over and the leader is still there: the case `SIGKILL` is for.
                     Err(_grace_over) => {
                         signal_group(self.group, GroupSignal::Kill)?;
                         (self.reap_killed().await?, StopHow::Killed)
@@ -476,6 +477,7 @@ impl RunningProcess {
                 let status = status.map_err(|source| ProcessError::Wait { source })?;
                 Ok(ExitReport::from_status(status)?)
             }
+            // `SIGKILL` cannot be caught: a process that is still not reaped is stuck in the kernel.
             Err(_wait_over) => Err(ProcessError::StopTimeout { limit: KILL_WAIT }),
         }
     }
@@ -498,7 +500,7 @@ pub(crate) struct CaptureLimits {
     /// How long the process may run before its group is killed.
     pub(crate) timeout: Duration,
     /// How many bytes of each stream are kept; the rest is read and dropped.
-    pub(crate) max_bytes: usize,
+    pub(crate) max_bytes: u64,
 }
 
 /// One captured stream.
@@ -561,11 +563,9 @@ pub enum CaptureError {
 
 /// Reads `reader` to its end, keeping the first `max_bytes`: the rest is read and dropped so that the writer is
 /// never blocked on a full pipe.
-async fn read_bounded<R: AsyncRead + Unpin>(mut reader: R, max_bytes: usize) -> io::Result<Stream> {
-    // `usize` is never wider than `u64` on a platform Rust supports, so the fallback is not reachable.
-    let limit = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+async fn read_bounded<R: AsyncRead + Unpin>(mut reader: R, max_bytes: u64) -> io::Result<Stream> {
     let mut bytes = Vec::new();
-    (&mut reader).take(limit).read_to_end(&mut bytes).await?;
+    (&mut reader).take(max_bytes).read_to_end(&mut bytes).await?;
     let dropped = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await?;
     Ok(Stream { bytes, dropped })
 }
@@ -1071,7 +1071,7 @@ mod tests {
         assert_all_gone(&[leader]).await;
     }
 
-    fn limits(timeout: Duration, max_bytes: usize) -> CaptureLimits {
+    fn limits(timeout: Duration, max_bytes: u64) -> CaptureLimits {
         CaptureLimits { timeout, max_bytes }
     }
 
@@ -1168,6 +1168,22 @@ mod tests {
         assert_eq!(
             ExitReport::from_status(ExitStatus::from_raw(0x137f)),
             Err(UnknownExit { raw: 0x137f })
+        );
+    }
+
+    // Rule: an output file that is gone is an activity error that names it.
+    #[tokio::test]
+    async fn last_activity_reports_an_output_file_that_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut process = supervisor().spawn(&script(dir.path(), "true")).await.unwrap();
+        process.wait().await.unwrap();
+        std::fs::remove_file(dir.path().join("out")).unwrap();
+
+        let result = process.last_activity().await;
+
+        assert!(
+            matches!(&result, Err(ProcessError::Activity { path, .. }) if path == &dir.path().join("out")),
+            "{result:?}"
         );
     }
 }

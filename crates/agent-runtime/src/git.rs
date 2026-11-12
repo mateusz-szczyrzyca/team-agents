@@ -31,7 +31,7 @@ const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// How many bytes of the output of a command are kept.
-const MAX_OUTPUT_BYTES: usize = 1 << 20;
+const MAX_OUTPUT_BYTES: u64 = 1 << 20;
 
 /// How many characters of git's message an error carries.
 const MAX_DIAGNOSTIC_CHARS: usize = 2048;
@@ -80,7 +80,7 @@ pub struct GitLimits {
     /// The time of a command that talks to a remote.
     pub network_timeout: Duration,
     /// The bytes kept of the output of a command; an answer longer than that is an error.
-    pub max_output_bytes: usize,
+    pub max_output_bytes: u64,
 }
 
 impl Default for GitLimits {
@@ -184,7 +184,7 @@ pub enum GitError {
         /// What was asked.
         operation: GitOperation,
         /// The bytes kept.
-        limit: usize,
+        limit: u64,
     },
     /// The answer is not UTF-8 text.
     #[error("the output of git {operation} is not UTF-8 text")]
@@ -368,10 +368,7 @@ impl Git {
         printed
             .trim_end()
             .parse()
-            .map_err(|_malformed: InvalidCommitId| GitError::Unexpected {
-                operation,
-                output: diagnostic(printed.as_bytes()),
-            })
+            .map_err(|source| GitError::NotACommit { operation, source })
     }
 
     /// The tip of `branch`, or `None` when there is no such branch.
@@ -1444,6 +1441,91 @@ mod tests {
                 Err(GitError::Run {
                     operation: GitOperation::RevParse,
                     source: CaptureError::Spawn { .. }
+                })
+            ),
+            "{result:?}"
+        );
+    }
+
+    // ---- answers real git does not give -------------------------------------------------------------------------
+
+    /// A git in a temporary directory whose `git` is a script that runs `body`: for the answers a real git never
+    /// gives, which the code must still refuse with a typed error.
+    fn scripted_git(body: &str) -> (tempfile::TempDir, Git) {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let script = bin.join("git");
+        std::fs::write(&script, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let git = Git::new(abs(dir.path()), agent_identity()).with_env(env("PATH"), bin.to_str().unwrap());
+        (dir, git)
+    }
+
+    // Rule: what git prints for a revision must be a commit ID.
+    #[tokio::test]
+    async fn a_revision_that_prints_no_commit_id_is_an_error() {
+        let (_dir, git) = scripted_git("printf 'not-a-commit\\n'");
+
+        let result = git.rev_parse(&Revision::Head).await;
+
+        assert!(
+            matches!(
+                &result,
+                Err(GitError::NotACommit {
+                    operation: GitOperation::RevParse,
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
+    }
+
+    // Rule: output that is not text is refused, not decoded by guessing.
+    #[tokio::test]
+    async fn output_that_is_not_utf8_is_an_error() {
+        let (_dir, git) = scripted_git("printf '\\377\\376\\n'");
+
+        let result = git.rev_parse(&Revision::Head).await;
+
+        assert!(
+            matches!(
+                &result,
+                Err(GitError::NotUtf8 {
+                    operation: GitOperation::RevParse,
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
+    }
+
+    // Rule: a status that is not the porcelain format is refused.
+    #[tokio::test]
+    async fn a_status_in_another_format_is_an_error() {
+        let (_dir, git) = scripted_git("printf 'x\\0'");
+
+        let result = git.tree_state().await;
+
+        assert!(
+            matches!(&result, Err(GitError::Unexpected { operation: GitOperation::Status, output }) if output == "x"),
+            "{result:?}"
+        );
+    }
+
+    // Rule: a rename that lacks the path it came from is refused.
+    #[tokio::test]
+    async fn a_rename_without_its_origin_is_an_error() {
+        let (_dir, git) = scripted_git("printf 'R  new.txt\\0'");
+
+        let result = git.tree_state().await;
+
+        assert!(
+            matches!(
+                &result,
+                Err(GitError::Unexpected {
+                    operation: GitOperation::Status,
+                    ..
                 })
             ),
             "{result:?}"

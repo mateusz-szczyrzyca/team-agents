@@ -1040,4 +1040,52 @@ mod tests {
             "{result:?}"
         );
     }
+
+    // Rule: a lock file that cannot be opened is an error with its path.
+    #[tokio::test]
+    async fn open_reports_a_lock_file_that_cannot_be_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = home_in(&dir);
+        std::fs::create_dir_all(home.lock_file()).unwrap();
+
+        let result = StateStore::open(home.clone()).await;
+
+        assert!(
+            matches!(&result, Err(StoreError::OpenLock { path, .. }) if *path == home.lock_file()),
+            "{result:?}"
+        );
+    }
+
+    // Rule: a leftover temporary file that cannot be removed stops the daemon with its path: it would be kept
+    // for ever otherwise.
+    #[tokio::test]
+    async fn open_reports_a_leftover_it_cannot_remove() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = home_in(&dir);
+        let leftover = home.root().join(".state-stuck.tmp");
+        std::fs::create_dir_all(leftover.join("inside")).unwrap();
+
+        let result = StateStore::open(home).await;
+
+        assert!(
+            matches!(&result, Err(StoreError::RemoveTemp { path, .. }) if *path == leftover),
+            "{result:?}"
+        );
+    }
+
+    // Rule: a save into a home that has vanished fails at the temporary file, and says where.
+    #[tokio::test]
+    async fn save_reports_a_home_that_vanished() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = home_in(&dir);
+        let store = StateStore::open(home.clone()).await.unwrap();
+        std::fs::remove_dir_all(home.root()).unwrap();
+
+        let result = store.save(&State::new()).await;
+
+        assert!(
+            matches!(&result, Err(StoreError::WriteTemp { path, .. }) if path == home.root()),
+            "{result:?}"
+        );
+    }
 }
