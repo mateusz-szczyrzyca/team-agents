@@ -108,18 +108,17 @@ the files to write first, what to keep out of git), the runtime starts it, feeds
 an `OutputParser` and its stderr at the end, and gets the final message, the session ID, how the stream says the run
 ended and the error tail. The adapters of the four CLIs come with feature 5.
 
-### The runtime services (`agent-runtime`)
+### The decisions (`agent-core`)
 
-Each effect sits behind one small typed boundary; none of them knows the daemon, so each is tested on its own, on
-real temporary files, repositories and processes (never the live `~/agents`).
+| Module | What it decides |
+|---|---|
+| `decide::team` | `plan_team`: from the agents named, the configuration, the coordinator asked for (`--coordinator`, then the task list's `Coordinator:` line) and a random source, a `TeamPlan` — solo, or a team with its coordinator, members and workers — or a `TeamPlanError`: unknown agent, a worker as coordinator, a coordinator that was not named, only workers, no member besides the coordinator, and too many (or too few) investigators for two outside reviewers |
+| `decide::assign` | `next_assignments`: which item goes to which member next — one item per member, the items of a feature in order (the next starts when the previous is merged, with `--no-merge` approved), features in parallel once the features they depend on are merged; `first_free_worker` for `delegate` |
+| `decide::round` | `RoundState`, `RoundEvent` and `RoundState::transition`: member work, integration, gate green at the head, pull request published for that head, two reviews, merge or hand-over to the human, item done; "changes requested" starts a fix pass until `[review] fix_passes`, then the human is asked, and the answer grants one more pass. Each transition says what the daemon does next (`RoundAction`) |
+| `decide::outcome` | `classify_outcome`: from the final message, the exit status, the error tail and who ended the run, the `RunEnd` to record — reported status, no status, quota exhausted (with the reset time when the CLI gives one), rate limited, hung, stopped — and the `Pause` it implies; `after_hang` for the watchdog's strikes. The CLIs' outputs are fixtures in `crates/agent-core/tests/fixtures/cli-outputs/` |
 
-| Module | Types | What it does |
-|---|---|---|
-| `store` | `Home`, `StateStore`, `StoreError` | The layout of `AGENTS_HOME` (`state.json`, `daemon.lock`, `tasks/<task>/activity.jsonl`, `tasks/<task>/runs/<run>/`, `notifications/`). `StateStore::open` creates the home, takes an exclusive `flock` on `daemon.lock` — one daemon per home, a second `open` fails with `StoreError::HomeLocked` — and removes the temporary files a crashed save left. `save` writes a synced temporary file in the home and renames it over `state.json`, so a crash leaves the old state or the new one; `load` reads at most `MAX_STATE_BYTES` and goes through `State::from_json`, which refuses another schema version first. `append_activity` adds one JSON line (time, kind, fields cut at 4 KiB) to a task's append-only log |
-| `prompts` | `PromptLoader`, `PromptLoadError`, `PromptProblem` | Reads every prompt of the catalog from the prompts directory (the language's file, then English; at most 1 MiB each), checks each against the catalog and reports **all** problems at once. A broken file of the language is a problem, never a silent fall back to English. `render` then fails only on the values it is given |
-| `process` | `Supervisor`, `RunningProcess`, `ProcessSpec`, `ExitReport` | Starts a model CLI from an argument vector (never a shell string) in its own process group, its stdout and stderr appended to files, at most N at once. `last_activity` is the later modification time of the two files. `stop(grace)` sends `SIGTERM` to the group, `SIGKILL` after the grace, and always `SIGKILL` for what the leader left in its group once it is reaped; a dropped, running process has its group killed. Inside the crate, `capture` runs a short helper with a time limit and a byte limit |
-| `git` | `Git`, `CommitIdentity`, `Revision`, `MergeOutcome`, `TreeState` | Typed operations over the `git` command: worktree add and remove, branches, `rev-parse`, merge without fast-forward (a conflict is the answer `MergeOutcome::Conflicted`), merge in progress and abort, the paths of a dirty tree, push. The identity and the signing key of a run ride on every command as environment and `-c` options — `commit.gpgsign=false` without a key, so the human's own signing never leaks in; nothing is written to a git configuration |
-| `notify` | `Notifier`, `Notification` | Writes `notification-<time>-<n>.md` (title line, body; mode 0600; whole under its name) and runs the configured command with the file's path last. The `[notification_env]` secrets are in its environment only, and what it says is stripped of them before it is put in an error |
+The daemon feeds these functions what it observed and carries out what they return; none of them touches a file, a process or
+the network. The order of the checks and the rules each follows are in the documentation of its module.
 
 ## Process model
 
