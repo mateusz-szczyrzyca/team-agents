@@ -253,3 +253,17 @@ Not changed, and why:
   `enabled=false` for the managed servers that are not given), at the price of changing those tests?*
 - **Finding 4, history of tests.** The reviewer says it needs the human's explicit acceptance (or restoring the old
   tests); an agent cannot give it, and published history is not rewritten.
+
+## Review pass 3 of 5 (review by inv-opus: two major, four minor)
+
+- **Major 1, two unpinned outcome rules.** Tests added: Codex `turn.failed` after an `agent_message` has no final
+  message; an `agy` result with no `status` is `Failed`. Each was seen to fail with the rule broken on a temporary
+  copy. Minor 2 (opencode's empty model name after a provider prefix) likewise, as a new test, not an edit of the
+  existing table test.
+- **Major 2, the MCP promise in `cli.rs`.** Reworded: an adapter configures only the request's servers, a CLI may still
+  load the human's own; only a Claude run with no server is strict. The question whether runs should be isolated stays
+  with the human (see pass 2).
+- **Minor 1, empty session ID.** RED then GREEN for `agy` (`init`, `result`) and Claude (`system init`, `result`): an
+  empty ID is read as none, as opencode does.
+- **Minor 3, commit format.** The RED commit of this pass ends with the failing run, the GREEN with a `GREEN:` line;
+  published history is not rewritten.
