@@ -184,6 +184,9 @@ A round that changes code but adds no test is sent back, unless the task you gav
 `No new tests: <why>` (a refactoring with no behaviour change): only your task text can waive it, and the review
 still checks the rest. A resumed investigation run gets what the script added to its task since its last run (checks
 or review findings to fix).
+Rust tests are counted in every `.rs` file, by their attribute (`#[test]`, `#[tokio::test]`, …), since Rust keeps its
+unit tests next to the code. With `--pr`, an investigator who has nothing to change leaves the PR as it is, and its
+checks and review follow — a way to put an open PR through them again.
 `agent run --investigation --pr N --team … -f fixes.md` continues an open PR #N instead of opening one: the
 investigators start at its head, the PR's earlier task (from its description) is added to the topic for the
 reviewers, and the work — the one investigator's, or the merger's, which opens no PR — is pushed onto PR #N's branch
@@ -844,6 +847,7 @@ Then:
 | `AGENT_CONSULT_MIN` | how long the coordinator waits for the members' recommendations before asking you (default 5 min) |
 | `VERIFY_MAX_FIX_PASSES`, `AGENT_HUMAN_GITHUB` | how many times a `--verify` review wakes the team to fix critical or major problems (default 5: five reviews with fixes, the sixth failed one calls you); who is then mentioned on the PR (default: the repository's GitHub owner) |
 | `AGENT_REVIEW_GATE`, `AGENT_REVIEW_GATE_MIN`, `AGENT_PRECHECK_MAX` | before a `--verify`/`--autopilot` review, the command a round's head must pass (`auto`: `make gate` where the repository has it; `off`: none), its time limit in minutes (30), and how many times a round goes back for its gate or its missing tests before you decide (2) |
+| `AGENT_PRECHECK_TESTS` | `off`: a round that changes code without adding a test is not sent back for it (default `on`); the gate and the other checks stay |
 | `AGENT_GATE_SCOPES` | entries `"patterns => command"`: a change whose every path matches one entry's patterns (as `ROUND_EXCLUDE`'s) runs that entry's command instead of `AGENT_REVIEW_GATE` — in `agent gate`, the precheck and the gate after a merge; the first such entry wins (none: the full gate) |
 | `AGENT_STAGE_POLL_SEC` | how often the gate's progress before a review is written to the coordinator's task, for the dashboard (2 seconds) |
 | `AGENT_PROMPT_ARG_MAX` | a longer prompt (bytes) reaches the agent's CLI through `.agent-prompt.md` in its working directory, kept out of git, which the CLI is asked to read: Linux takes at most 128 KiB per command-line argument, and a task's text grows with every resume (100000) |
