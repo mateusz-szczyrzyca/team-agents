@@ -12,9 +12,11 @@
 //! - Workers take no items: they serve `delegate` requests, the first free one in the configured order
 //!   ([`first_free_worker`]).
 
+use std::collections::HashSet;
+
 use crate::ids::{AgentName, ItemId};
-use crate::state::{ItemProgress, MergeMode};
-use crate::task_list::TaskList;
+use crate::state::{ItemPhase, ItemProgress, MergeMode};
+use crate::task_list::{Feature, TaskList};
 
 /// What [`next_assignments`] decides from.
 #[derive(Debug, Clone, Copy)]
@@ -59,16 +61,96 @@ pub enum AssignError {
 /// # Errors
 /// [`AssignError::MissingProgress`] when an item of the list has no progress.
 pub fn next_assignments(request: &AssignmentRequest<'_>) -> Result<Vec<Assignment>, AssignError> {
-    let _ = request;
-    Ok(Vec::new())
+    let items = ItemSets::of(request.progress);
+    if let Some(item) = request.list.items().find(|item| !items.known.contains(&item.id)) {
+        return Err(AssignError::MissingProgress { item: item.id });
+    }
+    let features = request.list.features();
+    let starting = features
+        .iter()
+        .filter(|feature| dependencies_merged(feature, features, &items))
+        .filter_map(|feature| next_item(feature, &items, request.merge));
+    let mut offered = HashSet::new();
+    let free = request
+        .available
+        .iter()
+        .filter(|member| !items.busy.contains(*member) && offered.insert(*member));
+    Ok(starting
+        .zip(free)
+        .map(|(item, member)| Assignment {
+            item,
+            member: member.clone(),
+        })
+        .collect())
+}
+
+/// What the progress of the items says, by item, for the questions [`next_assignments`] asks.
+struct ItemSets<'a> {
+    /// Every item that has a progress.
+    known: HashSet<ItemId>,
+    /// The items not started.
+    pending: HashSet<ItemId>,
+    /// The items approved by their reviews and not merged.
+    approved: HashSet<ItemId>,
+    /// The items that are done: merged, or listed as done.
+    done: HashSet<ItemId>,
+    /// The members that are the assignee of an item in progress or being fixed.
+    busy: HashSet<&'a AgentName>,
+}
+
+impl<'a> ItemSets<'a> {
+    /// Sorts the items of `progress` by where they are.
+    fn of(progress: &'a [ItemProgress]) -> Self {
+        let mut sets = Self {
+            known: HashSet::new(),
+            pending: HashSet::new(),
+            approved: HashSet::new(),
+            done: HashSet::new(),
+            busy: HashSet::new(),
+        };
+        for item in progress {
+            let id = item.id();
+            sets.known.insert(id);
+            let set = match item.phase() {
+                ItemPhase::Pending => &mut sets.pending,
+                ItemPhase::Approved { .. } => &mut sets.approved,
+                ItemPhase::Done { .. } => &mut sets.done,
+                ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } => {
+                    sets.busy.insert(assignee);
+                    continue;
+                }
+                ItemPhase::InReview { .. } => continue,
+            };
+            set.insert(id);
+        }
+        sets
+    }
+
+    /// Whether the item no longer holds back the next one of its feature: merged, or with `--no-merge` approved.
+    fn is_settled(&self, item: ItemId, merge: MergeMode) -> bool {
+        self.done.contains(&item) || (merge == MergeMode::NoMerge && self.approved.contains(&item))
+    }
+}
+
+/// Whether every feature `feature` depends on is merged: all its items are done.
+fn dependencies_merged(feature: &Feature, features: &[Feature], items: &ItemSets<'_>) -> bool {
+    features
+        .iter()
+        .filter(|other| feature.depends_on.contains(&other.number))
+        .all(|dependency| dependency.items.iter().all(|item| items.done.contains(&item.id)))
+}
+
+/// The item of `feature` that starts next: the first that is not settled, if it is not started yet.
+fn next_item(feature: &Feature, items: &ItemSets<'_>, merge: MergeMode) -> Option<ItemId> {
+    let first = feature.items.iter().find(|item| !items.is_settled(item.id, merge))?;
+    items.pending.contains(&first.id).then_some(first.id)
 }
 
 /// The worker that serves the next `delegate` request: the first of `workers`, in their configured order, that is
 /// not in `busy`.
 #[must_use]
 pub fn first_free_worker<'a>(workers: &'a [AgentName], busy: &[AgentName]) -> Option<&'a AgentName> {
-    let _ = busy;
-    workers.last()
+    workers.iter().find(|worker| !busy.contains(worker))
 }
 
 #[cfg(test)]
