@@ -24,7 +24,9 @@ Files outside the item's list, and why: everything under `crates/agent-runtime/`
 runtime: it is effects, and its tests need no daemon; the catalog entries are in the core), `prompts/harness/run/` beyond "the
 run prompts" (the notifications are texts for the human and live there by the architecture's rule), `crates/agent/src/{lines,
 environment,chain}.rs`, `commands/daemon.rs` (parts of `agent daemon` and of the client), `Cargo.toml`/`Cargo.lock`, the three docs
-(documentation rule).
+(documentation rule). Existing production files changed, additively: `agent-runtime` `store.rs` (the home's new paths), `git.rs`
+(`Git::info_exclude_file`), `notify.rs` (`Notification::title/body`), `lib.rs`; `agent-core` `prompt.rs` (one `mod`/`use`);
+`agent` `main.rs` (production part only). The README describes the Bash harness and is untouched; the Rust agent's docs are in `docs/`.
 
 ## Behaviour
 
