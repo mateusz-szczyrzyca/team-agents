@@ -72,6 +72,11 @@ pub(super) enum Message {
     },
 }
 
+/// The task that carried out a run panicked or was cancelled: the run's end is not known.
+#[derive(Debug, thiserror::Error)]
+#[error("the task of the run failed")]
+struct RunTaskFailed(#[source] JoinError);
+
 /// Why the owner stopped with an error: something it cannot go on without.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OwnerError {
@@ -356,8 +361,8 @@ impl Owner {
             Ok((id, Ok(verdict))) => (id, Outcome::Verdict(Box::new(verdict))),
             Ok((id, Err(error))) => (id, Outcome::Failed(error_chain(&error))),
             Err(error) => {
-                let reason = format!("the task of the run failed: {}", error_chain(&error));
-                (error.id(), Outcome::Failed(reason))
+                let id = error.id();
+                (id, Outcome::Failed(error_chain(&RunTaskFailed(error))))
             }
         };
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;

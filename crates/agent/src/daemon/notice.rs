@@ -125,10 +125,10 @@ impl Notice {
                     .with("evidence", evidence)?,
             ),
             Self::Failed { message } => (HarnessPrompt::NoticeFailed, common.with("message", message)?),
-            Self::NoStatus { exit } => (
-                HarnessPrompt::NoticeNoStatus,
-                common.with("exit", exit.map_or_else(|| SIGNAL.to_owned(), |code| code.to_string()))?,
-            ),
+            Self::NoStatus { exit: Some(code) } => {
+                (HarnessPrompt::NoticeNoStatus, common.with("exit", code.to_string())?)
+            }
+            Self::NoStatus { exit: None } => (HarnessPrompt::NoticeNoStatusSignal, common),
             Self::StartFailed { reason } => (HarnessPrompt::NoticeStartFailed, common.with("reason", reason)?),
             Self::RunFailed { reason } => (HarnessPrompt::NoticeRunFailed, common.with("reason", reason)?),
         };
@@ -138,9 +138,6 @@ impl Notice {
         Ok(Notification::new(title.trim_end(), body.trim())?)
     }
 }
-
-/// What the exit of a process that a signal ended is called in a notification: it has no code.
-const SIGNAL: &str = "signal";
 
 #[cfg(test)]
 mod tests;
