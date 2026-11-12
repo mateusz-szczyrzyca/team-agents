@@ -440,14 +440,14 @@ impl Owner {
                 };
                 (TaskStatus::Paused, Some(notice))
             }
-            Settled::Hung => self.hung(task, run.made_progress),
+            Settled::Hung => self.hung(task, run.made_progress)?,
         };
         self.move_to(task, &located.team, status, &mut events)?;
         self.commit(task, &located, now, events, notice).await
     }
 
     /// What follows a hung run: it is resumed, or after the last strike the task fails and the human is told.
-    fn hung(&mut self, task: &TaskId, made_progress: bool) -> (TaskStatus, Option<Notice>) {
+    fn hung(&mut self, task: &TaskId, made_progress: bool) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
         let watchdog = self.parts.settings.config.watchdog();
         // A run that did something before it went silent starts the count again.
         let count = if made_progress {
@@ -461,8 +461,9 @@ impl Owner {
             .state
             .find_task(task)
             .and_then(|found| found.member.last_session())
-            .and_then(|session| CliSessionId::from_str(session.as_str()).ok());
-        match after_hang(count, session.as_ref(), watchdog) {
+            .map(|session| CliSessionId::from_str(session.as_str()))
+            .transpose()?;
+        let next = match after_hang(count, session.as_ref(), watchdog) {
             AfterHang::Resume => (TaskStatus::Queued, None),
             AfterHang::MarkHung => {
                 self.hangs.remove(task);
@@ -472,7 +473,8 @@ impl Owner {
                 };
                 (TaskStatus::Failed, Some(notice))
             }
-        }
+        };
+        Ok(next)
     }
 
     /// Records the round of questions the agent asked, when its file is usable.

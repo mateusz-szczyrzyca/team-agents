@@ -11,7 +11,11 @@ mod systemd_unit {
         let text = std::fs::read_to_string(path).unwrap();
         let mut section = String::new();
         let mut settings = BTreeMap::new();
-        for line in text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')) {
+        for line in text
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        {
             if let Some(name) = line.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
                 section = name.to_owned();
             } else if let Some((key, value)) = line.split_once('=') {
@@ -30,7 +34,11 @@ mod systemd_unit {
 
     #[test]
     fn the_unit_starts_the_daemon_command_of_the_agent_binary() {
-        assert!(setting("Service", "ExecStart").ends_with("/agent daemon"), "{}", setting("Service", "ExecStart"));
+        assert!(
+            setting("Service", "ExecStart").ends_with("/agent daemon"),
+            "{}",
+            setting("Service", "ExecStart")
+        );
     }
 
     #[test]
