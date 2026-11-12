@@ -90,14 +90,16 @@ is the order known to work. Where the new code differs from the old script, on p
 ## Size
 
 `1,828` changed lines outside tests by the PR-1 command (limit `5,000` for this plan); `4,086` added / `4` deleted in
-`30` files in all, of which about `1,500` lines are tests and the rest fixtures and docs.
+`30` files in all: `1,796` lines of integration tests, `165` of fixtures, `192` of docs and the report, and the unit tests
+at the end of `src/cli.rs` (not counted).
 
 ## Tests
 
 Test-first, in order:
 
 - [`b2f811d`](https://github.com/mateusz-szczyrzyca/team-agents/commit/b2f811d1b9523eaa3d8943a1e3c0104aef434942) RED: 
-  `4+15+11+12+15` failing tests of the adapters and helpers, compiling stubs with wrong bodies.
+  `6 + 15 + 11 + 12 + 15` failing tests (helpers, Claude, Codex, Antigravity, opencode) against compiling stubs with
+  wrong bodies.
 - [`c5e0942`](https://github.com/mateusz-szczyrzyca/team-agents/commit/c5e094240255bf0bf39b0be35be6e5e65c40e85d) GREEN.
 - [`588750c`](https://github.com/mateusz-szczyrzyca/team-agents/commit/588750c8e0c2a959181fb802681d9211b62d4d6b) RED: a
   null `is_error`, found by thinking about Claude's output after the first GREEN.
@@ -131,7 +133,8 @@ The item's checks:
   `Text file busy` (ETXTBSY). `scripted_git` in `src/git.rs` writes a script and `exec`s it while other tests spawn
   processes; a fork between the write and the close keeps the file busy. I measured the same flake on the base:
   `14/300` runs of the `agent-runtime` unit-test binary fail at `ccbae53`, `15/300` at my HEAD. I did not touch the
-  tests (rule 1); the third gate run passed. Suggested fix, for a round that may touch `git.rs`: write the script to a
+  tests (rule 1). The third run passed its tests and failed on two rustdoc links of mine (fixed in `5ef6386`); the
+  fourth passed. Suggested fix, for a round that may touch `git.rs`: write the script to a
   temporary name, `sync` and rename it, or serialise the `scripted_git` tests behind one mutex.
 
 ## Deviations
