@@ -528,11 +528,17 @@ impl Git {
     /// A merge that conflicts is an answer, [`MergeOutcome::Conflicted`]: it stays in the tree.
     ///
     /// # Errors
-    /// [`GitError::EmptyMessage`]; [`GitError::Failed`] when git refuses without a conflict (an unknown branch, a
+    /// [`GitError::EmptyMessage`]; [`GitError::MergeInProgress`] while another merge waits for its conflicts;
+    /// [`GitError::Failed`] when git refuses without a conflict (an unknown branch, a
     /// dirty tree that the merge would overwrite); [`GitError::Run`] and the errors of [`Git::rev_parse`].
     pub async fn merge_no_ff(&self, branch: &BranchName, message: &str) -> Result<MergeOutcome, GitError> {
         if message.trim().is_empty() {
             return Err(GitError::EmptyMessage);
+        }
+        // Git refuses a merge while one waits, and `MERGE_HEAD` is then still there: ask first, or the refusal
+        // below would be taken for a conflict of this merge.
+        if self.merge_state().await? == MergeState::InProgress {
+            return Err(GitError::MergeInProgress);
         }
         let before = self.rev_parse(&Revision::Head).await?;
         let target = Revision::Branch(branch.clone()).to_string();
