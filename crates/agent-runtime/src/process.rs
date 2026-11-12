@@ -26,6 +26,15 @@ use tokio::time::timeout;
 /// How long a process that was sent `SIGKILL` may take to be reaped before the stop gives up.
 const KILL_WAIT: Duration = Duration::from_secs(10);
 
+/// How long a start refused because the program is busy (`ETXTBSY`) is tried again.
+///
+/// A program is busy while a file descriptor writing it is open. In a multithreaded process, a child forked by another
+/// thread while a program was being written holds such a descriptor until its own `exec`: the program is busy for that
+/// moment only. A program that stays open for writing longer is a real error.
+const BUSY_RETRY_FOR: Duration = Duration::from_secs(2);
+/// The pause between two tries of a start refused because the program is busy.
+const BUSY_RETRY_PAUSE: Duration = Duration::from_millis(10);
+
 /// A signal to a whole process group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
 pub(crate) enum GroupSignal {
@@ -309,10 +318,12 @@ impl Supervisor {
             .process_group(0)
             // Last line of defence: the leader does not outlive a handle that was dropped on an error path.
             .kill_on_drop(true);
-        let child = command.spawn().map_err(|source| ProcessError::Spawn {
-            program: spec.program.as_path().to_path_buf(),
-            source,
-        })?;
+        let child = spawn_when_free(&mut command)
+            .await
+            .map_err(|source| ProcessError::Spawn {
+                program: spec.program.as_path().to_path_buf(),
+                source,
+            })?;
         let (id, group) = leader_of(&child)?;
         Ok(RunningProcess {
             child,
@@ -324,6 +335,24 @@ impl Supervisor {
             started: SystemTime::now(),
             _slot: slot,
         })
+    }
+}
+
+/// Starts `command`, trying again for [`BUSY_RETRY_FOR`] while the program is busy (`ETXTBSY`).
+///
+/// # Errors
+/// What the operating system said about the last try.
+async fn spawn_when_free(command: &mut Command) -> io::Result<Child> {
+    let deadline = tokio::time::Instant::now() + BUSY_RETRY_FOR;
+    loop {
+        match command.spawn() {
+            Err(error)
+                if error.kind() == io::ErrorKind::ExecutableFileBusy && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(BUSY_RETRY_PAUSE).await;
+            }
+            started => return started,
+        }
     }
 }
 
@@ -378,8 +407,9 @@ pub(crate) fn signal_group(group: Pid, signal: GroupSignal) -> Result<(), GroupS
     }
 }
 
-/// The error and its causes on one line, for a log record.
-fn error_chain(error: &dyn std::error::Error) -> String {
+/// The error and its causes on one line, for a log record or a message to the human.
+#[must_use]
+pub fn error_chain(error: &dyn std::error::Error) -> String {
     let mut text = error.to_string();
     let mut source = error.source();
     while let Some(cause) = source {
@@ -608,7 +638,9 @@ async fn capture_feeding(
         .stderr(Stdio::piped())
         .process_group(0)
         .kill_on_drop(true);
-    let mut child = command.spawn().map_err(|source| CaptureError::Spawn { source })?;
+    let mut child = spawn_when_free(&mut command)
+        .await
+        .map_err(|source| CaptureError::Spawn { source })?;
     let (_, group) = leader_of(&child)?;
     let stdin = child.stdin.take();
     let stdout = child
@@ -1191,6 +1223,59 @@ mod tests {
         assert!(matches!(&result, Err(CaptureError::Spawn { .. })), "{result:?}");
     }
 
+    /// A script `run` in `dir` and its file still open for writing, as in a child that another thread forked while
+    /// the script was being written: `exec` refuses it (`ETXTBSY`) until the file is closed.
+    fn script_still_open(dir: &Path) -> (PathBuf, std::fs::File) {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let path = dir.join("run");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o755)
+            .open(&path)
+            .unwrap();
+        file.write_all(b"#!/bin/sh\necho ran\n").unwrap();
+        (path, file)
+    }
+
+    /// Closes `file` after a moment, from another task.
+    fn close_soon(file: std::fs::File) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            drop(file);
+        })
+    }
+
+    // Rule: a program that is busy only for a moment, still open for writing elsewhere, is started once it is free.
+    #[tokio::test]
+    async fn capture_starts_a_program_that_was_busy_for_a_moment() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, file) = script_still_open(dir.path());
+        let closer = close_soon(file);
+
+        let result = capture(Command::new(&path), limits(LONG_GRACE, 1024)).await;
+
+        closer.await.unwrap();
+        assert_eq!(result.unwrap().stdout.bytes, b"ran\n");
+    }
+
+    // Rule: a supervised program that is busy only for a moment is started once it is free.
+    #[tokio::test]
+    async fn spawn_starts_a_program_that_was_busy_for_a_moment() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, file) = script_still_open(dir.path());
+        let closer = close_soon(file);
+
+        let result = supervisor().spawn(&spec(dir.path(), path.to_str().unwrap(), &[])).await;
+
+        closer.await.unwrap();
+        let mut process = result.unwrap();
+        process.wait().await.unwrap();
+        assert_eq!(std::fs::read_to_string(dir.path().join("out")).unwrap(), "ran\n");
+    }
+
     // Rule: a status with neither a code nor a signal is refused, a code and a signal are told apart.
     #[test]
     fn a_wait_status_is_a_code_or_a_signal() {
@@ -1262,5 +1347,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(captured.exit, ExitReport::Exited { code: 3 });
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("outer")]
+    struct Outer(#[source] Inner);
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("inner")]
+    struct Inner;
+
+    #[test]
+    fn an_error_is_followed_by_its_causes() {
+        assert_eq!(error_chain(&Outer(Inner)), "outer: inner");
+    }
+
+    #[test]
+    fn an_error_without_a_cause_is_its_own_text() {
+        assert_eq!(error_chain(&Inner), "inner");
     }
 }

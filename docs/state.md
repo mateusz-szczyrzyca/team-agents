@@ -231,6 +231,15 @@ A `target` is `{"team": "team-…"}` or `{"task": "task-…"}`. A `verdict` is a
 recommendation, any other text is the human's own answer. The daemon checks `answers` against the questions file of that
 round (every question answered, `ok` only where there is a recommendation).
 
+### What the daemon serves
+
+Since item 6.1 the daemon serves `status`, `show` and `subscribe`. `status` takes an optional target: a team's summary, the
+summary of the team a task belongs to, or every team; an unknown target is `not_found`. `show` gives a whole team or a task
+with its role. `subscribe` answers with the summaries and then sends the events described below; the events of one team only
+when one was asked for. The other commands answer `refused` with a message that names the command, until the items that
+serve them. A line that is not a valid request is answered with `invalid` under the request ID `0` (its own ID cannot be
+read) and the connection goes on; a request over the limit is answered with `invalid` and the connection is closed.
+
 ### Responses
 
 `result` is `{"status":"ok","reply":{…}}` or `{"status":"error","error":{"kind":"…","message":"…"}}`.

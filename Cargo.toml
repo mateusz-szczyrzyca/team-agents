@@ -13,6 +13,7 @@ publish = false
 # Every dependency is declared once here, with its minimal features (DEP-2); members use `workspace = true`.
 [workspace.dependencies]
 agent-core = { path = "crates/agent-core" }
+agent-runtime = { path = "crates/agent-runtime" }
 clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 rand = { version = "0.10.3", default-features = false }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
@@ -25,7 +26,9 @@ thiserror = "2.0.21"
 time = { version = "0.3.55", default-features = false, features = ["std", "formatting", "parsing"] }
 tokio = { version = "1.54.1", default-features = false, features = ["rt", "process", "time", "io-util", "fs", "sync", "macros"] }
 toml = { version = "1.2.1", default-features = false, features = ["std", "serde", "parse"] }
+tokio-util = { version = "0.7.20", default-features = false }
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "fmt"] }
 
 # The lint baseline of prompts/agent/rust-developer.md (appendix). `warn` here and `-D warnings` in the gate
 # (`make rust`): fatal in CI, not while editing.
