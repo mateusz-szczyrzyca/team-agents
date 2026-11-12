@@ -2,7 +2,11 @@
 
 use agent_core::ids::{AgentName, BranchName, ItemId};
 use agent_core::kinds::Role;
-use agent_core::state::{Member, RunEnd, Team};
+use agent_core::state::{ItemPhase, Member, RunEnd, Team};
+use agent_core::status::RunOutcome;
+
+use super::assign::agent_name;
+use crate::daemon::settle::end_of;
 
 /// A notice for the bus: what happened to a member.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,8 +67,56 @@ pub(in crate::daemon) fn notice_for(
     end: &RunEnd,
     message: Option<&str>,
 ) -> Result<Option<Told>, NoticeError> {
-    let _ = (team, role, member, end, message);
-    Ok(None)
+    if role != Role::Member {
+        return Ok(None);
+    }
+    let Some(coordinator) = team.crew().coordinator() else {
+        return Ok(None);
+    };
+    let to = agent_name(coordinator.agent())?;
+    let who = agent_name(member.agent())?;
+    let worked_on = worked_on(team, member);
+    let item = worked_on.as_ref().map(|(item, _)| *item);
+    let notice = match end {
+        RunEnd::Reported {
+            outcome: RunOutcome::Done,
+        } => BusNotice::MemberFinished {
+            member: who,
+            item,
+            branch: worked_on.map(|(_, branch)| branch),
+        },
+        RunEnd::Reported {
+            outcome: RunOutcome::Failed,
+        } => BusNotice::MemberFailed {
+            member: who,
+            item,
+            message: end_of(message.unwrap_or_default()),
+        },
+        RunEnd::NoStatus { .. } => BusNotice::MemberNoStatus { member: who, item },
+        RunEnd::Reported { .. }
+        | RunEnd::QuotaExhausted { .. }
+        | RunEnd::RateLimited
+        | RunEnd::Hung
+        | RunEnd::Stopped => return Ok(None),
+    };
+    Ok(Some(Told { to, notice }))
+}
+
+/// The item `member` works on and its branch, if it has one.
+fn worked_on(team: &Team, member: &Member) -> Option<(ItemId, BranchName)> {
+    team.items().iter().find_map(|progress| match progress.phase() {
+        ItemPhase::InProgress { assignee, branch } | ItemPhase::Fixing { assignee, branch, .. }
+            if assignee.as_str() == member.agent().name() =>
+        {
+            Some((progress.id(), branch.clone()))
+        }
+        ItemPhase::Pending
+        | ItemPhase::InProgress { .. }
+        | ItemPhase::InReview { .. }
+        | ItemPhase::Fixing { .. }
+        | ItemPhase::Approved { .. }
+        | ItemPhase::Done { .. } => None,
+    })
 }
 
 #[cfg(test)]
