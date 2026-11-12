@@ -89,8 +89,24 @@ impl TeamPrompts {
     /// [`TeamPromptsError`] with every file that is missing, unreadable, too large, not UTF-8 or not valid for its
     /// entry.
     pub async fn load(dir: &Path, language: &Language) -> Result<Self, TeamPromptsError> {
-        let _ = (dir, language);
-        Ok(Self { texts: BTreeMap::new() })
+        let mut texts = BTreeMap::new();
+        let mut problems = Vec::new();
+        for id in TeamPrompt::ALL {
+            match load_one(dir, *id, language).await {
+                Ok(text) => {
+                    texts.insert(*id, text);
+                }
+                Err(problem) => problems.push(problem),
+            }
+        }
+        if problems.is_empty() {
+            Ok(Self { texts })
+        } else {
+            Err(TeamPromptsError {
+                dir: dir.to_path_buf(),
+                problems,
+            })
+        }
     }
 
     /// Renders `id` with `values`.
@@ -99,13 +115,36 @@ impl TeamPrompts {
     /// [`RenderTeamTextError::Render`] when `values` give no value for a variable of the text or one for another;
     /// [`RenderTeamTextError::NotLoaded`] for a loader that holds no text for `id`.
     pub fn render(&self, id: TeamPrompt, values: &Variables) -> Result<String, RenderTeamTextError> {
-        let _ = values;
         let text = self.texts.get(&id).ok_or(RenderTeamTextError::NotLoaded { id })?;
-        Ok(text.clone())
+        id.spec()
+            .render(text, values)
+            .map_err(|source| RenderTeamTextError::Render { id, source })
     }
 }
 
-#[expect(dead_code, reason = "used by the loader once it reads the files")]
-async fn _unused() {
-    let _ = read_first;
+/// Reads the text of `id` and checks it against the catalog.
+async fn load_one(dir: &Path, id: TeamPrompt, language: &Language) -> Result<String, TeamTextProblem> {
+    let spec = id.spec();
+    let candidates = spec.candidates(language);
+    let problem = |path: &Path, cause| TeamTextProblem {
+        id,
+        path: path.to_path_buf(),
+        cause,
+    };
+    let english = Path::new(spec.path());
+    let (path, text) = match read_first(dir, &candidates).await {
+        Ok(Some(found)) => found,
+        Ok(None) => return Err(problem(english, ProblemCause::Missing { tried: candidates })),
+        Err((path, cause)) => return Err(problem(&path, cause)),
+    };
+    // The text has to render with a value for each variable the catalog lists, and with nothing else: the check of
+    // the text against the catalog is the check the later rendering will make, with empty values.
+    let values = spec
+        .variables()
+        .iter()
+        .try_fold(Variables::new(), |values, name| values.with(name, ""))
+        .map_err(|source| problem(&path, ProblemCause::Catalog(source)))?;
+    spec.render(&text, &values)
+        .map_err(|source| problem(&path, ProblemCause::Invalid(source)))?;
+    Ok(text)
 }
