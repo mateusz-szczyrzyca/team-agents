@@ -1051,3 +1051,24 @@ async fn a_request_of_a_subscriber_that_arrives_in_parts_around_an_event_is_answ
         "{response:?}"
     );
 }
+
+#[tokio::test]
+async fn a_client_that_does_not_read_its_answers_does_not_hold_the_shutdown() {
+    use tokio::io::AsyncWriteExt;
+    let mut f = Fixture::new(&rate_limited_state(), 3, "hang");
+    f.start().await;
+    f.status_is(TaskStatus::Paused).await;
+    let mut connection = RawConnection::open(&f.home).await;
+    let request = format!("{}\n", request_line(1, Command::Status(StatusRequest { target: None })));
+
+    // The daemon answers until the socket is full and then waits to write; it stops reading, and so the client's own
+    // writes stop too.
+    while tokio::time::timeout(Duration::from_secs(1), connection.writer.write_all(request.as_bytes()))
+        .await
+        .is_ok()
+    {}
+    let stopped = tokio::time::timeout(Duration::from_secs(10), f.stop()).await;
+    drop(connection);
+
+    assert!(matches!(stopped, Ok(Ok(()))), "the daemon did not stop: {stopped:?}");
+}
