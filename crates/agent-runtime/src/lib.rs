@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod git;
+pub mod github;
 pub mod notify;
 pub mod process;
 pub mod prompts;
