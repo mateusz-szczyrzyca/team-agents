@@ -199,7 +199,10 @@ whole process group, `SIGTERM` then `SIGKILL`) and classified as a hang unless t
 kept in no field of the state: its wake-up is worked out again from the last run's end, so it survives a restart; the
 daemon looks at the clock every 5 seconds, so a suspended machine does not stretch it. **Recovery**: a run that was going
 when the daemon died is ended as "no status, no exit code" and its task queued, to resume from its session; paused tasks get
-their wake-ups again; a clock set back never ends a run before it began.
+their wake-ups again, hung ones their strikes (progress is not saved: every hang in a row counts); a clock set back never
+ends a run before it began. A run is a process group of its own: a daemon killed without `SIGTERM` (`SIGKILL`, the OOM
+killer) leaves it going, and only the unit's `KillMode=mixed` ends it — outside systemd, end such runs before a restart,
+or a second CLI resumes the same session.
 
 **The socket** serves `status`, `show` and `subscribe` of [`state.md`](state.md); the other commands answer `refused`,
 naming themselves, until their items. At most 64 connections and 16 runs go at once; a line over 2 MiB ends its
