@@ -9,15 +9,19 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
-use std::num::{NonZeroU32, NonZeroUsize};
-use std::path::PathBuf;
-use std::process::ExitStatus;
+use std::num::{NonZeroU32, NonZeroUsize, TryFromIntError};
+use std::os::unix::process::ExitStatusExt;
+use std::path::{Path, PathBuf};
+use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use agent_core::config::{AbsolutePath, EnvName, Program};
+use rustix::process::{Pid, Signal};
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, Command};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
+use tokio::time::timeout;
 
 /// How long a process that was sent `SIGKILL` may take to be reaped before the stop gives up.
 const KILL_WAIT: Duration = Duration::from_secs(10);
@@ -34,16 +38,21 @@ pub(crate) enum GroupSignal {
 }
 
 /// Why a process has no usable process ID.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PidError {
     /// The child was already reaped, so it has no ID any more.
     #[error("the process has already been reaped")]
     Reaped,
-    /// The operating system gave an ID that is not a positive `pid_t`.
-    #[error("the process ID {pid} is not a valid process ID")]
+    /// The process has the ID 0, which no process has.
+    #[error("the process has the ID 0")]
+    Zero,
+    /// The operating system gave an ID that does not fit a `pid_t`.
+    #[error("the process ID {pid} does not fit a process ID")]
     OutOfRange {
         /// The ID.
         pid: u32,
+        /// Why it does not fit.
+        source: TryFromIntError,
     },
 }
 
@@ -54,7 +63,7 @@ pub struct GroupSignalError {
     /// The signal.
     pub(crate) signal: GroupSignal,
     /// The group: the process ID of its leader.
-    pub(crate) group: u32,
+    pub(crate) group: i32,
     /// What the operating system said.
     #[source]
     pub(crate) source: io::Error,
@@ -89,14 +98,19 @@ impl ExitReport {
     /// # Errors
     /// [`UnknownExit`] for a status with neither a code nor a signal.
     pub fn from_status(status: ExitStatus) -> Result<Self, UnknownExit> {
-        let _ = status;
-        Ok(Self::Signaled { signal: 0 })
+        if let Some(code) = status.code() {
+            Ok(Self::Exited { code })
+        } else if let Some(signal) = status.signal() {
+            Ok(Self::Signaled { signal })
+        } else {
+            Err(UnknownExit { raw: status.into_raw() })
+        }
     }
 
     /// Whether the process returned the code 0.
     #[must_use]
     pub const fn succeeded(self) -> bool {
-        matches!(self, Self::Signaled { .. })
+        matches!(self, Self::Exited { code: 0 })
     }
 }
 
@@ -120,7 +134,16 @@ pub struct ProcessSpec {
 
 impl fmt::Debug for ProcessSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProcessSpec").finish_non_exhaustive()
+        // The values of the environment may be secrets and the arguments may hold a whole prompt: only their names
+        // and count are shown.
+        f.debug_struct("ProcessSpec")
+            .field("program", &self.program)
+            .field("args", &self.args.len())
+            .field("env", &self.env.keys().collect::<Vec<_>>())
+            .field("working_dir", &self.working_dir)
+            .field("stdout_file", &self.stdout_file)
+            .field("stderr_file", &self.stderr_file)
+            .finish()
     }
 }
 
@@ -219,6 +242,15 @@ pub struct Supervisor {
     limit: NonZeroUsize,
 }
 
+/// Whether the leader of a process has ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lifecycle {
+    /// It may still run; its group is killed when the handle is dropped.
+    Running,
+    /// It ended and was reaped, this way.
+    Exited(ExitReport),
+}
+
 /// A process the supervisor started: the leader of its own process group.
 ///
 /// Dropping it while it runs kills its group. [`RunningProcess::stop`] is the orderly end.
@@ -228,6 +260,10 @@ pub struct RunningProcess {
     child: Child,
     /// Its ID, which is also its group's.
     id: NonZeroU32,
+    /// Its process group.
+    group: Pid,
+    /// Whether the leader is known to have ended.
+    lifecycle: Lifecycle,
     /// The standard output file.
     stdout_file: PathBuf,
     /// The standard error file.
@@ -254,12 +290,104 @@ impl Supervisor {
     /// [`ProcessError::Limit`] when the limit of running processes is reached (the caller decides whether to wait);
     /// [`ProcessError::CreateDir`], [`ProcessError::OpenOutput`], [`ProcessError::Spawn`] and [`ProcessError::Pid`].
     pub async fn spawn(&self, spec: &ProcessSpec) -> Result<RunningProcess, ProcessError> {
-        let _ = spec;
-        Err(ProcessError::Limit {
-            limit: self.limit.get(),
-            source: TryAcquireError::NoPermits,
+        let slot = Arc::clone(&self.slots)
+            .try_acquire_owned()
+            .map_err(|source| ProcessError::Limit {
+                limit: self.limit.get(),
+                source,
+            })?;
+        let stdout = open_output(&spec.stdout_file).await?;
+        let stderr = open_output(&spec.stderr_file).await?;
+        let mut command = Command::new(spec.program.as_path());
+        command
+            .args(&spec.args)
+            .envs(spec.env.iter().map(|(name, value)| (name.as_str(), value)))
+            .current_dir(spec.working_dir.as_path())
+            .stdin(Stdio::null())
+            .stdout(stdout)
+            .stderr(stderr)
+            .process_group(0)
+            // Last line of defence: the leader does not outlive a handle that was dropped on an error path.
+            .kill_on_drop(true);
+        let child = command.spawn().map_err(|source| ProcessError::Spawn {
+            program: spec.program.as_path().to_path_buf(),
+            source,
+        })?;
+        let (id, group) = leader_of(&child)?;
+        Ok(RunningProcess {
+            child,
+            id,
+            group,
+            lifecycle: Lifecycle::Running,
+            stdout_file: spec.stdout_file.clone(),
+            stderr_file: spec.stderr_file.clone(),
+            started: SystemTime::now(),
+            _slot: slot,
         })
     }
+}
+
+/// Opens an output file for appending, creating it and its directories.
+async fn open_output(path: &Path) -> Result<std::fs::File, ProcessError> {
+    if let Some(dir) = path.parent() {
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|source| ProcessError::CreateDir {
+                path: dir.to_path_buf(),
+                source,
+            })?;
+    }
+    let file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .await
+        .map_err(|source| ProcessError::OpenOutput {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    // The child gets the plain file: tokio's wrapper would only add a buffer between them.
+    Ok(file.into_std().await)
+}
+
+/// The ID of the leader `child` and its process group (the same number: the leader made the group).
+fn leader_of(child: &Child) -> Result<(NonZeroU32, Pid), PidError> {
+    let raw = child.id().ok_or(PidError::Reaped)?;
+    let signed = i32::try_from(raw).map_err(|source| PidError::OutOfRange { pid: raw, source })?;
+    let group = Pid::from_raw(signed).ok_or(PidError::Zero)?;
+    let id = NonZeroU32::new(raw).ok_or(PidError::Zero)?;
+    Ok((id, group))
+}
+
+/// Sends `signal` to every process of `group`.
+///
+/// A group that no longer exists is not an error: every process of it has ended, which is what the caller wants.
+pub(crate) fn signal_group(group: Pid, signal: GroupSignal) -> Result<(), GroupSignalError> {
+    let raw = match signal {
+        GroupSignal::Terminate => Signal::TERM,
+        GroupSignal::Kill => Signal::KILL,
+    };
+    match rustix::process::kill_process_group(group, raw) {
+        Ok(()) => Ok(()),
+        Err(errno) if errno == rustix::io::Errno::SRCH => Ok(()),
+        Err(errno) => Err(GroupSignalError {
+            signal,
+            group: group.as_raw_nonzero().get(),
+            source: errno.into(),
+        }),
+    }
+}
+
+/// The error and its causes on one line, for a log record.
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
 }
 
 impl RunningProcess {
@@ -276,7 +404,17 @@ impl RunningProcess {
     /// # Errors
     /// [`ProcessError::Wait`] and [`ProcessError::UnknownExit`].
     pub async fn wait(&mut self) -> Result<ExitReport, ProcessError> {
-        Ok(ExitReport::Exited { code: 0 })
+        if let Lifecycle::Exited(exit) = self.lifecycle {
+            return Ok(exit);
+        }
+        let status = self
+            .child
+            .wait()
+            .await
+            .map_err(|source| ProcessError::Wait { source })?;
+        let exit = ExitReport::from_status(status)?;
+        self.lifecycle = Lifecycle::Exited(exit);
+        Ok(exit)
     }
 
     /// The last time the process showed life: the later modification time of its two output files, or its start.
@@ -284,22 +422,73 @@ impl RunningProcess {
     /// # Errors
     /// [`ProcessError::Activity`] when an output file cannot be inspected.
     pub async fn last_activity(&self) -> Result<SystemTime, ProcessError> {
-        let _ = (&self.stdout_file, &self.stderr_file);
-        Ok(self.started)
+        let mut latest = self.started;
+        for path in [&self.stdout_file, &self.stderr_file] {
+            let modified = tokio::fs::metadata(path)
+                .await
+                .and_then(|metadata| metadata.modified())
+                .map_err(|source| ProcessError::Activity {
+                    path: path.clone(),
+                    source,
+                })?;
+            latest = latest.max(modified);
+        }
+        Ok(latest)
     }
 
     /// Ends the whole process group: `SIGTERM`, then `SIGKILL` after `grace` — and always `SIGKILL` for whatever is
     /// left of the group once the leader is gone.
     ///
+    /// The leader is reaped before the last `SIGKILL`: a process group ID can only be reused once no process is left
+    /// in the group, so the signal reaches the children of this leader or nobody.
+    ///
     /// # Errors
     /// [`ProcessError::Signal`], [`ProcessError::Wait`], [`ProcessError::UnknownExit`] and
-    /// [`ProcessError::StopTimeout`].
-    pub async fn stop(self, grace: Duration) -> Result<StopReport, ProcessError> {
-        let _ = (grace, KILL_WAIT);
-        Ok(StopReport {
-            exit: ExitReport::Exited { code: 0 },
-            how: StopHow::AlreadyExited,
-        })
+    /// [`ProcessError::StopTimeout`]. The group is killed when the handle is dropped after an error.
+    pub async fn stop(mut self, grace: Duration) -> Result<StopReport, ProcessError> {
+        let (exit, how) = match self.lifecycle {
+            Lifecycle::Exited(exit) => (exit, StopHow::AlreadyExited),
+            Lifecycle::Running => {
+                signal_group(self.group, GroupSignal::Terminate)?;
+                let ended = timeout(grace, self.child.wait()).await;
+                match ended {
+                    Ok(status) => {
+                        let status = status.map_err(|source| ProcessError::Wait { source })?;
+                        (ExitReport::from_status(status)?, StopHow::Terminated)
+                    }
+                    Err(_grace_over) => {
+                        signal_group(self.group, GroupSignal::Kill)?;
+                        (self.reap_killed().await?, StopHow::Killed)
+                    }
+                }
+            }
+        };
+        self.lifecycle = Lifecycle::Exited(exit);
+        signal_group(self.group, GroupSignal::Kill)?;
+        Ok(StopReport { exit, how })
+    }
+
+    /// Waits, for a bounded time, for the leader that was sent `SIGKILL`.
+    async fn reap_killed(&mut self) -> Result<ExitReport, ProcessError> {
+        let reaped = timeout(KILL_WAIT, self.child.wait()).await;
+        match reaped {
+            Ok(status) => {
+                let status = status.map_err(|source| ProcessError::Wait { source })?;
+                Ok(ExitReport::from_status(status)?)
+            }
+            Err(_wait_over) => Err(ProcessError::StopTimeout { limit: KILL_WAIT }),
+        }
+    }
+}
+
+impl Drop for RunningProcess {
+    fn drop(&mut self) {
+        // `Drop` cannot return an error, so a failure is logged: the harness is already giving the process up.
+        if self.lifecycle == Lifecycle::Running
+            && let Err(error) = signal_group(self.group, GroupSignal::Kill)
+        {
+            tracing::warn!(error = %error_chain(&error), "cannot kill the group of a dropped process");
+        }
     }
 }
 
@@ -370,12 +559,75 @@ pub(crate) enum CaptureError {
     Signal(#[from] GroupSignalError),
 }
 
+/// Reads `reader` to its end, keeping the first `max_bytes`: the rest is read and dropped so that the writer is
+/// never blocked on a full pipe.
+async fn read_bounded<R: AsyncRead + Unpin>(mut reader: R, max_bytes: usize) -> io::Result<Stream> {
+    // `usize` is never wider than `u64` on a platform Rust supports, so the fallback is not reachable.
+    let limit = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+    let mut bytes = Vec::new();
+    (&mut reader).take(limit).read_to_end(&mut bytes).await?;
+    let dropped = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await?;
+    Ok(Stream { bytes, dropped })
+}
+
 /// Runs `command` to its end with its output captured and bounded, in its own process group.
 ///
 /// Its standard input is closed. When it runs over `limits.timeout`, its whole group is killed.
-pub(crate) async fn capture(command: Command, limits: CaptureLimits) -> Result<Captured, CaptureError> {
-    let _ = (command, limits);
-    Err(CaptureError::Timeout { limit: Duration::ZERO })
+///
+/// # Errors
+/// [`CaptureError`]: the program cannot be started, its output cannot be read, it ran over its time or its group
+/// cannot be signalled.
+pub(crate) async fn capture(mut command: Command, limits: CaptureLimits) -> Result<Captured, CaptureError> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .kill_on_drop(true);
+    let mut child = command.spawn().map_err(|source| CaptureError::Spawn { source })?;
+    let (_, group) = leader_of(&child)?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or(CaptureError::MissingPipe { pipe: "stdout" })?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or(CaptureError::MissingPipe { pipe: "stderr" })?;
+    let run = async {
+        let (stdout, stderr, status) = tokio::join!(
+            read_bounded(stdout, limits.max_bytes),
+            read_bounded(stderr, limits.max_bytes),
+            child.wait()
+        );
+        let io_error = |source| CaptureError::Io { source };
+        Ok::<_, CaptureError>((
+            stdout.map_err(io_error)?,
+            stderr.map_err(io_error)?,
+            status.map_err(io_error)?,
+        ))
+    };
+    let outcome = timeout(limits.timeout, run).await;
+    match outcome {
+        Ok(result) => {
+            let (stdout, stderr, status) = result?;
+            Ok(Captured {
+                exit: ExitReport::from_status(status)?,
+                stdout,
+                stderr,
+            })
+        }
+        Err(_time_over) => {
+            signal_group(group, GroupSignal::Kill)?;
+            // The error being returned is the timeout; the reaping of the killed leader is cleanup, logged if it fails.
+            match timeout(KILL_WAIT, child.wait()).await {
+                Ok(Ok(_status)) => {}
+                Ok(Err(error)) => tracing::warn!(error = %error, "cannot reap a captured process that was killed"),
+                Err(_wait_over) => tracing::warn!("a captured process that was killed did not end"),
+            }
+            Err(CaptureError::Timeout { limit: limits.timeout })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -463,7 +715,7 @@ mod tests {
     }
 
     async fn assert_all_gone(pids: &[i32]) {
-        assert!(!pids.is_empty());
+        assert_ne!(pids, [] as [i32; 0]);
         eventually("the group's processes to end", || pids.iter().all(|pid| is_gone(*pid))).await;
     }
 
@@ -646,7 +898,7 @@ mod tests {
     #[tokio::test]
     async fn the_process_leads_its_own_process_group() {
         let dir = tempfile::tempdir().unwrap();
-        let mut process = supervisor()
+        let process = supervisor()
             .spawn(&script(dir.path(), "echo ready; sleep 300"))
             .await
             .unwrap();
