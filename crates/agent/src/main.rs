@@ -1,6 +1,7 @@
 //! The `agent` command: starts and steers AI coding agents on this host (see `docs/architecture.md`).
 //!
-//! Its commands arrive with the later items of the plan; this version answers `--version` and `--help`.
+//! `agent daemon` runs the daemon; every other command is a client of its socket (`agent status`). The other commands
+//! arrive with the later items of the plan.
 #![forbid(unsafe_code)]
 
 use std::ffi::OsString;
