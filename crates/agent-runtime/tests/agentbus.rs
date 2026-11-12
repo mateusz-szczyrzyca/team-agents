@@ -464,6 +464,24 @@ mod agentbus_commands {
         }
     }
 
+    // The bus does not check that the caller of `board-add` and `board-claim` is a member of the team: an agent
+    // that is none can add to the board and claim an item. The wrapper passes it on, and this test makes a change of
+    // the bus show up here.
+    #[tokio::test]
+    async fn board_add_and_board_claim_do_not_check_that_the_caller_is_a_member() {
+        let fixture = with_team().await;
+        let outsider = agent("opencode-1");
+        let work = board_item("t", BoardLevel::Normal, None);
+
+        fixture.bus.board_add(&team_id(), &outsider, &work).await.unwrap();
+        fixture.bus.board_claim(&team_id(), &outsider, item(1)).await.unwrap();
+
+        let board = fixture.bus.board_dump(&team_id()).await.unwrap().board;
+        let claimed = board.get(&item(1)).unwrap();
+        assert_eq!(claimed.status, BoardStatus::Claimed);
+        assert_eq!(claimed.assignee, Some(outsider));
+    }
+
     #[tokio::test]
     async fn board_add_to_a_team_that_does_not_exist_is_not_in_a_team() {
         let fixture = fixture();
