@@ -14,9 +14,9 @@
 //!    tail shows a provider limit: [`RunEnd::QuotaExhausted`] for an exhausted quota, usage limit or credits,
 //!    [`RunEnd::RateLimited`] for a rate limit (HTTP 429) or an overloaded model (HTTP 503 and 529: a pause as short
 //!    as a rate limit's). A line that is no provider's — the machine ran out of processes, memory or disk, a Unix
-//!    socket failed — is never a limit. The final message is read as an error only when it has no `STATUS:` line: the
-//!    agent's own report is never taken for a provider error, and a clean run is never paused for a stale 429 that
-//!    the CLI retried.
+//!    socket failed — is never a limit. The final message is read as an error — its last `tail_lines` lines, like the
+//!    error tail — only when it has no `STATUS:` line: the agent's own report is never taken for a provider error, and a
+//!    clean run is never paused for a stale 429 that the CLI retried.
 //! 5. A recognised `STATUS:` line of a run that failed without a limit: [`RunEnd::Reported`].
 //! 6. Anything else: [`RunEnd::NoStatus`] with the exit code.
 //!
@@ -26,21 +26,20 @@
 //! `[limits]` `quota_pause_minutes` or `rate_limit_pause_minutes` have passed, plus the margin. It is never longer than
 //! [`MAX_PAUSE`]. Hangs and everything else pause nothing; [`after_hang`] decides whether a hung run is resumed.
 
-use std::time::Duration;
+use time::error::ConversionRange;
+use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcDateTime, UtcOffset};
 
-use time::UtcOffset;
-
-use crate::cli::{RunOutput, SessionId};
+use crate::cli::{ErrorTail, RunOutput, SessionId, StreamOutcome};
 use crate::config::{Limits, Watchdog};
-use crate::state::{RunEnd, Timestamp};
+use crate::state::{InvalidTimestamp, RunEnd, Timestamp};
 use crate::status::RunOutcome;
 
 /// Seconds added to every pause, so that a run does not start a moment before the limit really ends.
-pub const RESET_MARGIN: Duration = Duration::from_mins(1);
+pub const RESET_MARGIN: Duration = Duration::minutes(1);
 
 /// The longest pause a limit causes, whatever reset time the CLI gives: a bound on untrusted text. Eight days cover a
 /// weekly limit.
-pub const MAX_PAUSE: Duration = Duration::from_hours(8 * 24);
+pub const MAX_PAUSE: Duration = Duration::days(8);
 
 /// Longest part of the line that showed a limit that a [`Pause`] keeps, in characters.
 pub const MAX_EVIDENCE_CHARS: usize = 200;
@@ -128,38 +127,632 @@ pub struct Classified {
 }
 
 /// Why a run cannot be classified.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ClassifyError {
-    /// The pause would end after the last time a timestamp can hold, year 9999.
+    /// The pause would end after the last time that can be represented, year 9999.
     #[error("a pause from {now} would end after the year 9999")]
     PauseOverflow {
         /// When the run ended.
         now: Timestamp,
     },
+    /// The time the pause would end at is not one a timestamp can hold.
+    #[error("the pause from {now} would end at a time that cannot be recorded")]
+    PauseOutOfRange {
+        /// When the run ended.
+        now: Timestamp,
+        /// What is wrong with the time.
+        #[source]
+        source: InvalidTimestamp,
+    },
+    /// The configured default pause is longer than a duration can be.
+    #[error("the configured default pause is too long")]
+    DefaultPauseTooLong {
+        /// What the conversion refused.
+        #[source]
+        source: ConversionRange,
+    },
 }
+
+/// The words, in lower case, that show an exhausted quota, usage limit or credits.
+const QUOTA_PHRASES: [&str; 14] = [
+    "quota reached",
+    "quota exceeded",
+    "quota exhausted",
+    "usage limit",
+    "resource exhausted",
+    "resource_exhausted",
+    "resource has been exhausted",
+    "out of credits",
+    "insufficient credits",
+    "insufficient balance",
+    "exhausted your capacity",
+    "exhausted your quota",
+    "spend limit",
+    "spending limit",
+];
+
+/// The words, in lower case, that show a provider limiting the rate of requests.
+const RATE_PHRASES: [&str; 5] = [
+    "rate limit",
+    "rate_limit",
+    "rate-limit",
+    "ratelimit",
+    "too many requests",
+];
+
+/// The words, in lower case, that show a model overloaded at the provider.
+const OVERLOAD_PHRASES: [&str; 3] = ["at capacity", "overloaded", "temporarily unavailable"];
+
+/// The words, in lower case, that show a failure of the machine itself: out of processes, memory, descriptors or disk.
+/// Such a line is never a provider's limit, whatever else it says.
+const LOCAL_ERROR_PHRASES: [&str; 5] = [
+    "resource temporarily unavailable",
+    "fork: ",
+    "cannot allocate memory",
+    "too many open files",
+    "no space left on device",
+];
+
+/// The HTTP status of a payment problem, which providers use for exhausted credits.
+const STATUS_PAYMENT_REQUIRED: &str = "402";
+
+/// The HTTP status of a rate limit.
+const STATUS_TOO_MANY_REQUESTS: &str = "429";
+
+/// The HTTP statuses of an overloaded service: unavailable, and Anthropic's overloaded.
+const STATUSES_OVERLOADED: [&str; 2] = ["503", "529"];
+
+/// The words, in lower case, after which a CLI tells when a limit ends. `retrydelay` is Gemini's JSON field.
+const RESET_TRIGGERS: [&str; 5] = ["retrydelay", "reset", "retry", "try again", "available again"];
+
+/// Words that may stand between a trigger and the time it introduces: `resets at`, `try again in`, `retry after`.
+const FILLER_WORDS: [&str; 6] = ["it", "in", "after", "at", "on", "about"];
+
+/// The length of a Unix time in seconds that follows `limit reached|`: ten digits are the years 2001 to 2286.
+const UNIX_TIME_DIGITS: usize = 10;
+
+/// What `limit reached|` is followed by in the final message of an old Claude Code: the Unix time of the reset.
+const UNIX_RESET_MARKER: &str = "limit reached|";
+
+/// Digits of a year in a date such as `Nov 12th, 2026`.
+const YEAR_DIGITS: usize = 4;
+
+/// Seconds in one day.
+const SECS_PER_DAY: i64 = 86_400;
+
+/// Seconds in one hour.
+const SECS_PER_HOUR: i64 = 3_600;
+
+/// Seconds in one minute.
+const SECS_PER_MINUTE: i64 = 60;
+
+/// Hours of a day, which a time of day with am or pm counts to twelve.
+const HOURS_PER_MERIDIEM: u8 = 12;
+
+/// The months by name, for a date such as `Nov 12th, 2026`: a text of three letters or more that starts a name is it.
+const MONTHS: [(&str, Month); 12] = [
+    ("january", Month::January),
+    ("february", Month::February),
+    ("march", Month::March),
+    ("april", Month::April),
+    ("may", Month::May),
+    ("june", Month::June),
+    ("july", Month::July),
+    ("august", Month::August),
+    ("september", Month::September),
+    ("october", Month::October),
+    ("november", Month::November),
+    ("december", Month::December),
+];
 
 /// The status line of a final message: the first line that starts with `STATUS:` once the markup characters `*` and
 /// `` ` `` are dropped, followed by a word of capital letters and `_`.
 #[must_use]
 pub fn parse_status_line(message: &str) -> StatusLine {
-    let _ = message;
-    StatusLine::Absent
+    message
+        .lines()
+        .find_map(|line| {
+            let plain: String = line.chars().filter(|c| !matches!(c, '*' | '`')).collect();
+            let word: String = plain
+                .trim_start()
+                .strip_prefix("STATUS:")?
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_uppercase() || *c == '_')
+                .collect();
+            (!word.is_empty()).then_some(word)
+        })
+        .map_or(StatusLine::Absent, |word| {
+            word.parse::<RunOutcome>()
+                .map_or_else(|unknown| StatusLine::Unknown(unknown.value), StatusLine::Reported)
+        })
 }
 
 /// Classifies a finished run.
 ///
 /// # Errors
-/// [`ClassifyError::PauseOverflow`] when the pause would end beyond the years a timestamp can hold.
+/// [`ClassifyError`] when the pause would end beyond the years a timestamp can hold, or the configured default pause
+/// cannot be a duration.
 pub fn classify_outcome(
     output: &RunOutput,
     finish: RunFinish,
     context: &LimitContext<'_>,
 ) -> Result<Classified, ClassifyError> {
-    let _ = (output, finish, context);
-    Ok(Classified {
-        end: RunEnd::Hung,
-        pause: None,
+    let done = |end| Ok(Classified { end, pause: None });
+    if finish.stopped_by == StoppedBy::Human {
+        return done(RunEnd::Stopped);
+    }
+    let status = output
+        .final_message
+        .as_deref()
+        .map_or(StatusLine::Absent, parse_status_line);
+    let reported = match &status {
+        StatusLine::Reported(outcome) => Some(*outcome),
+        StatusLine::Absent | StatusLine::Unknown(_) => None,
+    };
+    let succeeded = output.stream == StreamOutcome::Succeeded;
+    if let Some(outcome) = reported
+        && (succeeded || finish.stopped_by == StoppedBy::Watchdog)
+    {
+        return done(RunEnd::Reported { outcome });
+    }
+    if finish.stopped_by == StoppedBy::Watchdog {
+        return done(RunEnd::Hung);
+    }
+    if !succeeded || finish.exit != ExitStatus::Code(0) {
+        let message = match (status, &output.final_message) {
+            (StatusLine::Absent, Some(message)) => ErrorTail::from_text(message, context.limits.tail_lines),
+            (StatusLine::Absent, None) | (StatusLine::Reported(_) | StatusLine::Unknown(_), _) => ErrorTail::default(),
+        };
+        if let Some(limit) = find_limit(output.error_tail.lines().iter().chain(message.lines())) {
+            return limit.classify(context);
+        }
+    }
+    match reported {
+        Some(outcome) => done(RunEnd::Reported { outcome }),
+        None => done(RunEnd::NoStatus {
+            exit_code: match finish.exit {
+                ExitStatus::Code(code) => Some(code),
+                ExitStatus::Signal => None,
+            },
+        }),
+    }
+}
+
+/// A provider limit found in the output of a run.
+struct Limit {
+    /// Which limit it is.
+    reason: PauseReason,
+    /// The first line that showed it, trimmed and cut.
+    evidence: String,
+    /// The lines of that kind, in lower case: where the reset time is looked for.
+    lines: Vec<String>,
+}
+
+/// The provider limit that `lines` — the error tail and the tail of the final message of a failed run — show, if any: an
+/// exhausted quota wins over a rate limit, as in the old harness.
+fn find_limit<'a>(lines: impl Iterator<Item = &'a String>) -> Option<Limit> {
+    let shown: Vec<(&str, String, PauseReason)> = lines
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| {
+            let lower = line.to_lowercase();
+            if is_local_error(&lower) {
+                return None;
+            }
+            line_reason(&lower).map(|reason| (line, lower, reason))
+        })
+        .collect();
+    let reason = if shown.iter().any(|(_, _, reason)| *reason == PauseReason::Quota) {
+        PauseReason::Quota
+    } else {
+        PauseReason::RateLimit
+    };
+    let evidence = shown
+        .iter()
+        .find(|(_, _, shown)| *shown == reason)
+        .map(|(line, _, _)| line.chars().take(MAX_EVIDENCE_CHARS).collect::<String>())?;
+    let lines = shown
+        .into_iter()
+        .filter(|(_, _, shown)| *shown == reason)
+        .map(|(_, lower, _)| lower)
+        .collect();
+    Some(Limit {
+        reason,
+        evidence,
+        lines,
     })
+}
+
+/// What a line, in lower case, says about the provider's limits: a quota first, then a rate limit or an overload.
+fn line_reason(lower: &str) -> Option<PauseReason> {
+    let rate_words = RATE_PHRASES.iter().any(|phrase| lower.contains(phrase));
+    let quota = QUOTA_PHRASES.iter().any(|phrase| lower.contains(phrase))
+        || has_number(lower, STATUS_PAYMENT_REQUIRED)
+        || is_budget_spent(lower)
+        || ((lower.contains("limit reached") || lower.contains("hit your")) && lower.contains("limit"))
+            && !rate_words
+            && !lower.contains("context");
+    if quota {
+        return Some(PauseReason::Quota);
+    }
+    let rate = rate_words
+        || has_number(lower, STATUS_TOO_MANY_REQUESTS)
+        || OVERLOAD_PHRASES.iter().any(|phrase| lower.contains(phrase))
+        || STATUSES_OVERLOADED.iter().any(|status| has_number(lower, status));
+    rate.then_some(PauseReason::RateLimit)
+}
+
+/// Whether `lower` says a budget is used up: `budget exceeded`, `budget of $200.00 is exhausted`, `budget reached`.
+fn is_budget_spent(lower: &str) -> bool {
+    let mut rest = lower;
+    while let Some((_, after)) = rest.split_once("budget") {
+        let mut words = after
+            .split_whitespace()
+            .map(|word| word.trim_matches(|c: char| !c.is_alphanumeric()));
+        let mut word = words.next();
+        if word == Some("of") {
+            words.next();
+            word = words.next();
+        }
+        if word == Some("is") {
+            word = words.next();
+        }
+        if matches!(word, Some("exceeded" | "exhausted" | "reached")) {
+            return true;
+        }
+        rest = after;
+    }
+    false
+}
+
+/// Whether `lower` is a failure of the machine, not of the provider.
+fn is_local_error(lower: &str) -> bool {
+    LOCAL_ERROR_PHRASES.iter().any(|phrase| lower.contains(phrase))
+        || lower
+            .split("unix")
+            .skip(1)
+            .any(|after| after.strip_prefix(':').unwrap_or(after).starts_with([' ', '/', '@']))
+        || lower.split(".sock").skip(1).any(|after| after.starts_with([':', ' ']))
+}
+
+/// Whether `text` has `number` as a whole number: not a part of a longer one.
+fn has_number(text: &str, number: &str) -> bool {
+    text.match_indices(number).any(|(at, _)| {
+        let before = text.get(..at).and_then(|head| head.chars().next_back());
+        let after = text
+            .get(at.saturating_add(number.len())..)
+            .and_then(|tail| tail.chars().next());
+        !before.is_some_and(|c| c.is_ascii_digit()) && !after.is_some_and(|c| c.is_ascii_digit())
+    })
+}
+
+impl Limit {
+    /// The end and the pause of a run that stopped on this limit.
+    fn classify(self, context: &LimitContext<'_>) -> Result<Classified, ClassifyError> {
+        let now = context.now.as_utc();
+        let reset = reset_time(&self.lines, now, context.local_offset);
+        let wait = match reset {
+            Some(reset) => (reset - now).min(MAX_PAUSE),
+            None => self.default_pause(context.limits)?,
+        };
+        let until = now
+            .checked_add(wait)
+            .and_then(|end| end.checked_add(RESET_MARGIN))
+            .ok_or(ClassifyError::PauseOverflow { now: context.now })
+            .and_then(|end| recorded(end, context.now))?;
+        let end = match self.reason {
+            PauseReason::Quota => RunEnd::QuotaExhausted {
+                resets_at: reset.map(|reset| recorded(reset, context.now)).transpose()?,
+            },
+            PauseReason::RateLimit => RunEnd::RateLimited,
+        };
+        Ok(Classified {
+            end,
+            pause: Some(Pause {
+                until,
+                reason: self.reason,
+                evidence: self.evidence,
+            }),
+        })
+    }
+
+    /// How long this limit pauses a task when the CLI does not say when it ends: the configured default.
+    fn default_pause(&self, limits: &Limits) -> Result<Duration, ClassifyError> {
+        let minutes = match self.reason {
+            PauseReason::Quota => limits.quota_pause_minutes,
+            PauseReason::RateLimit => limits.rate_limit_pause_minutes,
+        };
+        Duration::try_from(minutes.as_duration()).map_err(|source| ClassifyError::DefaultPauseTooLong { source })
+    }
+}
+
+/// `time` as a [`Timestamp`], for the run that ended at `now`.
+fn recorded(time: UtcDateTime, now: Timestamp) -> Result<Timestamp, ClassifyError> {
+    Timestamp::from_utc(time).map_err(|source| ClassifyError::PauseOutOfRange { now, source })
+}
+
+/// A reader of one form in which a CLI writes the time its limit ends: the line, in lower case, the time now and the
+/// machine's offset in; the time out, if the line has that form. A text that is no time is not an error: the limit then
+/// has the default pause, which is specified behaviour and has its test.
+type ResetReader = fn(&str, UtcDateTime, UtcOffset) -> Option<UtcDateTime>;
+
+/// The first reset time after `now` that the `lines` give, by the order of the forms: a Unix time, a duration, an ISO
+/// time, a date, a time of day.
+fn reset_time(lines: &[String], now: UtcDateTime, offset: UtcOffset) -> Option<UtcDateTime> {
+    const READERS: [ResetReader; 5] = [
+        read_unix_time,
+        read_duration,
+        read_iso_time,
+        read_date,
+        read_time_of_day,
+    ];
+    READERS.iter().find_map(|read| {
+        lines
+            .iter()
+            .find_map(|line| read(line, now, offset).filter(|reset| *reset > now))
+    })
+}
+
+/// `limit reached|1794478200`.
+fn read_unix_time(line: &str, _now: UtcDateTime, _offset: UtcOffset) -> Option<UtcDateTime> {
+    let (_, after) = line.split_once(UNIX_RESET_MARKER)?;
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    if digits.len() != UNIX_TIME_DIGITS {
+        return None;
+    }
+    UtcDateTime::from_unix_timestamp(digits.parse().ok()?).ok()
+}
+
+/// What follows each of the [`RESET_TRIGGERS`] in `line`, without the words and signs that only join it to the time.
+fn after_triggers(line: &str) -> Vec<&str> {
+    let mut hits: Vec<(usize, usize)> = RESET_TRIGGERS
+        .iter()
+        .flat_map(|trigger| line.match_indices(trigger).map(|(at, found)| (at, found.len())))
+        .collect();
+    hits.sort_by_key(|&(at, len)| (at, std::cmp::Reverse(len)));
+    let mut covered = 0;
+    let mut rests = Vec::new();
+    for (at, len) in hits {
+        if at < covered {
+            continue;
+        }
+        covered = at.saturating_add(len);
+        rests.extend(line.get(covered..).map(skip_joins));
+    }
+    rests
+}
+
+/// `text` without the joining words and signs at its start: `s` of `resets`, ` in `, ` after `, `": "`.
+fn skip_joins(text: &str) -> &str {
+    let mut rest = text
+        .strip_prefix('s')
+        .filter(|after| !after.starts_with(char::is_alphanumeric))
+        .unwrap_or(text);
+    loop {
+        rest = rest.trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ':' | '=' | ','));
+        let word = FILLER_WORDS.iter().find_map(|word| {
+            rest.strip_prefix(word)
+                .filter(|after| after.starts_with(char::is_whitespace))
+        });
+        match word {
+            Some(after) => rest = after,
+            None => return rest,
+        }
+    }
+}
+
+/// `resets in 24m46s`, `try again in 2 hours 13 minutes`, `retry after 90s`, `retryDelay: "36s"`.
+fn read_duration(line: &str, now: UtcDateTime, _offset: UtcOffset) -> Option<UtcDateTime> {
+    after_triggers(line).into_iter().find_map(|rest| {
+        let seconds = duration_seconds(rest)?;
+        now.checked_add(Duration::seconds(seconds))
+    })
+}
+
+/// The seconds of the duration at the start of `text`: numbers each followed by a unit, joined by spaces, commas or
+/// `and`; seconds may have a fraction, which rounds up. `None` for any other start, such as `3pm`.
+fn duration_seconds(text: &str) -> Option<i64> {
+    let mut rest = text;
+    let mut total: i64 = 0;
+    let mut parts = 0_u32;
+    while let Some((seconds, after)) = duration_part(rest) {
+        total = total.saturating_add(seconds);
+        parts = parts.saturating_add(1);
+        let after = after.trim_start_matches(|c: char| c.is_whitespace() || c == ',');
+        rest = after.strip_prefix("and ").unwrap_or(after);
+    }
+    (parts > 0 && total > 0).then_some(total)
+}
+
+/// One number and its unit at the start of `text`, in seconds, and what follows.
+fn duration_part(text: &str) -> Option<(i64, &str)> {
+    let (whole, rest) = take_digits(text)?;
+    let (fraction, rest) = match rest.strip_prefix('.') {
+        Some(after) => take_digits(after).map_or((None, rest), |(digits, after)| (Some(digits), after)),
+        None => (None, rest),
+    };
+    let rest = rest.strip_prefix(' ').unwrap_or(rest);
+    let unit_len = rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len());
+    let (unit, rest) = rest.split_at_checked(unit_len)?;
+    let per_unit = match unit {
+        "d" | "day" | "days" => SECS_PER_DAY,
+        "h" | "hr" | "hrs" | "hour" | "hours" => SECS_PER_HOUR,
+        "m" | "min" | "mins" | "minute" | "minutes" => SECS_PER_MINUTE,
+        "s" | "sec" | "secs" | "second" | "seconds" => 1,
+        _ => return None,
+    };
+    let mut seconds = whole.parse::<i64>().ok()?.saturating_mul(per_unit);
+    if let Some(fraction) = fraction {
+        if per_unit != 1 {
+            return None;
+        }
+        if fraction.bytes().any(|b| b != b'0') {
+            seconds = seconds.saturating_add(1);
+        }
+    }
+    Some((seconds, rest))
+}
+
+/// The ASCII digits at the start of `text` and what follows them; `None` without a digit.
+fn take_digits(text: &str) -> Option<(&str, &str)> {
+    let len = text.find(|c: char| !c.is_ascii_digit()).unwrap_or(text.len());
+    let (digits, rest) = text.split_at_checked(len)?;
+    (!digits.is_empty()).then_some((digits, rest))
+}
+
+/// Exactly `count` ASCII digits at the start of `text` as a number, and what follows them.
+fn take_number(text: &str, count: usize) -> Option<(u32, &str)> {
+    let (digits, rest) = text.split_at_checked(count)?;
+    if digits.len() != count || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some((digits.parse().ok()?, rest))
+}
+
+/// `resets 2026-11-15T00:00:00.000Z`, `resets at 2026-11-15 03:00:00+02:00`: an ISO date and time; without an offset
+/// the machine's.
+fn read_iso_time(line: &str, _now: UtcDateTime, offset: UtcOffset) -> Option<UtcDateTime> {
+    after_triggers(line).into_iter().find_map(|rest| {
+        let (year, rest) = take_number(rest, 4)?;
+        let (month, rest) = take_number(rest.strip_prefix('-')?, 2)?;
+        let (day, rest) = take_number(rest.strip_prefix('-')?, 2)?;
+        let rest = rest.strip_prefix('t').or_else(|| rest.strip_prefix(' '))?;
+        let (hour, rest) = take_number(rest, 2)?;
+        let (minute, rest) = take_number(rest.strip_prefix(':')?, 2)?;
+        let (second, rest) = match rest.strip_prefix(':') {
+            Some(after) => take_number(after, 2)?,
+            None => (0, rest),
+        };
+        let rest = match rest.strip_prefix('.') {
+            Some(after) => after.trim_start_matches(|c: char| c.is_ascii_digit()),
+            None => rest,
+        };
+        let (zone, _) = read_zone(rest, offset)?;
+        let date = Date::from_calendar_date(
+            i32::try_from(year).ok()?,
+            Month::try_from(u8::try_from(month).ok()?).ok()?,
+            u8::try_from(day).ok()?,
+        )
+        .ok()?;
+        let time = Time::from_hms(
+            u8::try_from(hour).ok()?,
+            u8::try_from(minute).ok()?,
+            u8::try_from(second).ok()?,
+        )
+        .ok()?;
+        Some(UtcDateTime::from(
+            PrimitiveDateTime::new(date, time).assume_offset(zone),
+        ))
+    })
+}
+
+/// The zone at the start of `text`: `z`, `+02:00`, `-0100`, ` utc`; without one, the machine's `local` offset.
+fn read_zone(text: &str, local: UtcOffset) -> Option<(UtcOffset, &str)> {
+    if let Some(rest) = text.strip_prefix('z') {
+        return Some((UtcOffset::UTC, rest));
+    }
+    if let Some(rest) = text
+        .trim_start()
+        .strip_prefix("utc")
+        .or_else(|| text.trim_start().strip_prefix("gmt"))
+    {
+        return Some((UtcOffset::UTC, rest));
+    }
+    let (sign, rest) = match (text.strip_prefix('+'), text.strip_prefix('-')) {
+        (Some(rest), _) => (1_i8, rest),
+        (None, Some(rest)) => (-1_i8, rest),
+        (None, None) => return Some((local, text)),
+    };
+    let (hours, rest) = take_number(rest, 2)?;
+    let (minutes, rest) = take_number(rest.strip_prefix(':').unwrap_or(rest), 2)?;
+    let hours = i8::try_from(hours).ok()?.checked_mul(sign)?;
+    let minutes = i8::try_from(minutes).ok()?.checked_mul(sign)?;
+    Some((UtcOffset::from_hms(hours, minutes, 0).ok()?, rest))
+}
+
+/// `try again at Nov 12th, 2026 3:04 PM`: a date with a month name and a time of day, in the machine's local time.
+fn read_date(line: &str, _now: UtcDateTime, offset: UtcOffset) -> Option<UtcDateTime> {
+    after_triggers(line).into_iter().find_map(|rest| {
+        let name_len = rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len());
+        let (name, rest) = rest.split_at_checked(name_len)?;
+        let month = MONTHS
+            .iter()
+            .find(|(full, _)| name.len() >= 3 && full.starts_with(name))
+            .map(|&(_, month)| month)?;
+        let (day, rest) = take_digits(rest.trim_start())?;
+        let rest = ["st", "nd", "rd", "th"]
+            .iter()
+            .find_map(|suffix| rest.strip_prefix(suffix))
+            .unwrap_or(rest);
+        let (year, rest) = take_number(rest.trim_start_matches([',', ' ']), YEAR_DIGITS)?;
+        let (clock, zone) = read_clock(rest.trim_start(), offset)?;
+        let date = Date::from_calendar_date(i32::try_from(year).ok()?, month, day.parse().ok()?).ok()?;
+        Some(UtcDateTime::from(
+            PrimitiveDateTime::new(date, clock).assume_offset(zone),
+        ))
+    })
+}
+
+/// `resets 3pm`, `resets at 15:30`, `resets 3:30 pm (UTC)`: the next time it is that time, in the machine's local time.
+fn read_time_of_day(line: &str, now: UtcDateTime, offset: UtcOffset) -> Option<UtcDateTime> {
+    after_triggers(line).into_iter().find_map(|rest| {
+        let (time, zone) = read_clock(rest, offset)?;
+        let today = OffsetDateTime::from(now).to_offset(zone).date();
+        let first = UtcDateTime::from(PrimitiveDateTime::new(today, time).assume_offset(zone));
+        if first > now {
+            Some(first)
+        } else {
+            first.checked_add(Duration::days(1))
+        }
+    })
+}
+
+/// A time of day at the start of `text` — `3pm`, `3:30 pm`, `15:30` — and its zone: ` utc` or `(utc)`, else the
+/// `local` offset. A bare number is no time of day: it needs minutes or am or pm.
+fn read_clock(text: &str, local: UtcOffset) -> Option<(Time, UtcOffset)> {
+    let (hour, rest) = take_number_up_to(text, 2)?;
+    let (minute, rest) = match rest.strip_prefix(':') {
+        Some(after) => {
+            let (minute, rest) = take_number(after, 2)?;
+            (Some(minute), rest)
+        }
+        None => (None, rest),
+    };
+    let spaced = rest.trim_start();
+    let whole_word = |after: &&str| !after.starts_with(char::is_alphabetic);
+    let (meridiem, rest) = match (
+        spaced.strip_prefix("am").filter(whole_word),
+        spaced.strip_prefix("pm").filter(whole_word),
+    ) {
+        (Some(rest), _) => (Some(false), rest),
+        (None, Some(rest)) => (Some(true), rest),
+        (None, None) => (None, rest),
+    };
+    let hour = match meridiem {
+        Some(afternoon) => {
+            let hour = u8::try_from(hour).ok()?;
+            if hour == 0 || hour > HOURS_PER_MERIDIEM {
+                return None;
+            }
+            hour % HOURS_PER_MERIDIEM + if afternoon { HOURS_PER_MERIDIEM } else { 0 }
+        }
+        None if minute.is_some() => u8::try_from(hour).ok()?,
+        None => return None,
+    };
+    let time = Time::from_hms(hour, u8::try_from(minute.unwrap_or(0)).ok()?, 0).ok()?;
+    let rest = rest.trim_start().strip_prefix('(').unwrap_or(rest);
+    let zone = read_zone(rest, local).map_or(local, |(zone, _)| zone);
+    Some((time, zone))
+}
+
+/// One or two ASCII digits at the start of `text` as a number, and what follows them.
+fn take_number_up_to(text: &str, most: usize) -> Option<(u32, &str)> {
+    let (digits, rest) = take_digits(text)?;
+    if digits.len() > most {
+        return None;
+    }
+    Some((digits.parse().ok()?, rest))
 }
 
 /// What happens to a task whose run hung.
@@ -177,8 +770,11 @@ pub enum AfterHang {
 /// `hangs_in_a_row` counts this hang too; whoever counts resets it when a run made progress.
 #[must_use]
 pub fn after_hang(hangs_in_a_row: u32, session: Option<&SessionId>, watchdog: &Watchdog) -> AfterHang {
-    let _ = (hangs_in_a_row, session, watchdog);
-    AfterHang::Resume
+    if session.is_none() || hangs_in_a_row >= watchdog.hang_strikes.get() {
+        AfterHang::MarkHung
+    } else {
+        AfterHang::Resume
+    }
 }
 
 #[cfg(test)]
@@ -1048,5 +1644,63 @@ mod tests {
         let config = Config::from_toml_str("[watchdog]\nhang_strikes = 1\n").unwrap();
         let session = session();
         assert_eq!(after_hang(1, Some(&session), config.watchdog()), AfterHang::MarkHung);
+    }
+
+    // Rule: am and pm are words of their own: the start of another word is not a time of day.
+    #[test]
+    fn am_and_pm_must_be_whole_words() {
+        for line in [
+            "usage limit reached, resets 5 amazing hours from now",
+            "usage limit reached, resets 5 pmx",
+            "usage limit reached, resets 5pmish",
+        ] {
+            assert_eq!(reset_of(line), (quota(None), at("2026-11-12T10:31:00Z")), "{line}");
+        }
+    }
+
+    // Rule: the year of a date has four digits, so a time written after a day is not a year.
+    #[test]
+    fn a_date_without_a_year_is_no_reset_time() {
+        assert_eq!(
+            reset_of("usage limit reached, try again at Nov 13, 3:04 PM"),
+            (quota(None), at("2026-11-12T10:31:00Z"))
+        );
+    }
+
+    // Rule: of a long final message without a status only its last lines are read, as many as the error tail keeps.
+    #[test]
+    fn only_the_last_lines_of_the_final_message_are_read() {
+        let filler = "working on it\n".repeat(40);
+        let early = format!("usage limit reached\n{filler}done");
+        assert_eq!(
+            failed(Some(&early), ""),
+            Classified {
+                end: RunEnd::NoStatus { exit_code: Some(1) },
+                pause: None
+            }
+        );
+        let late = format!("{filler}usage limit reached");
+        assert_eq!(failed(Some(&late), "").end, quota(None));
+    }
+
+    // Rule: a Unix time has ten digits: a longer number is no reset time, whatever date it would be.
+    #[test]
+    fn a_unix_time_has_ten_digits() {
+        for line in ["usage limit reached|17944782000", "usage limit reached|179447820"] {
+            assert_eq!(reset_of(line), (quota(None), at("2026-11-12T10:31:00Z")), "{line}");
+        }
+    }
+
+    // Rule: a month is named by at least three letters of its name.
+    #[test]
+    fn a_month_needs_three_letters() {
+        assert_eq!(
+            reset_of("usage limit reached, try again at Ma 3rd, 2027 9:00 AM"),
+            (quota(None), at("2026-11-12T10:31:00Z"))
+        );
+        assert_eq!(
+            reset_of("usage limit reached, try again at Mar 3rd, 2027 9:00 AM").0,
+            quota(Some("2027-03-03T08:00:00Z"))
+        );
     }
 }
