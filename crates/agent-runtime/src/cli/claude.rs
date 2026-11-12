@@ -241,6 +241,9 @@ struct Finish {
     is_error: Option<bool>,
     /// The final message; an error result may have none.
     result: Option<String>,
+    /// The messages of an error result (`error_during_execution`, ...), which may come with no `result`.
+    #[serde(default)]
+    errors: Vec<String>,
     /// The session of the run.
     session_id: Option<String>,
     /// How many turns the run took.
@@ -346,9 +349,14 @@ impl OutputParser for ClaudeParser {
                 } else {
                     StreamOutcome::Succeeded
                 };
-                let summary = finish.summary();
+                let mut events: Vec<ActivityEvent> = Vec::new();
+                for message in &finish.errors {
+                    self.progress.note_error_line(message);
+                    events.push(ActivityEvent::Error(message.clone()));
+                }
+                events.push(ActivityEvent::Info(finish.summary()));
                 self.progress.final_message = finish.result.filter(|text| !text.trim().is_empty());
-                Ok(vec![ActivityEvent::Info(summary)])
+                Ok(events)
             }
             Event::System(_) | Event::Other => Ok(Vec::new()),
         }
