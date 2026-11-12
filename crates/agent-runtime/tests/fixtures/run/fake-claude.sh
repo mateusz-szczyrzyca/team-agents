@@ -14,6 +14,7 @@
 #   questions-nofile      ends with STATUS: QUESTIONS without writing the file
 #   hang                  prints its first line and then nothing; leaves a child behind (pid in .fake-child)
 #   hang-first            hangs when started, ends like `done` when resumed (--resume)
+#   hang-then-step        run 1 hangs at once, run 2 says something and hangs, run 3 ends like `done` (count in .fake-runs)
 #   quota                 the provider says the usage limit is reached and resets in 3 hours
 #   ratelimit             the provider answers HTTP 429
 #   env                   ends like `done` after writing PATH and FAKE_SECRET to .fake-env
@@ -87,6 +88,20 @@ case $scenario in
       finish_done
     else
       init
+      sleep 600 &
+      echo $! > .fake-child
+      wait
+    fi
+    ;;
+  hang-then-step)
+    runs=1
+    if [[ -f .fake-runs ]]; then runs=$(( $(< .fake-runs) + 1 )); fi
+    echo "$runs" > .fake-runs
+    if ((runs >= 3)); then
+      finish_done
+    else
+      init
+      if ((runs == 2)); then say "working"; fi
       sleep 600 &
       echo $! > .fake-child
       wait

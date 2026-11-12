@@ -361,6 +361,30 @@ async fn after_the_configured_strikes_the_task_is_hung_and_the_human_is_told() {
 }
 
 #[tokio::test]
+async fn a_run_that_made_progress_before_it_hung_starts_the_strike_count_again() {
+    let mut f = Fixture::new(&solo_state(), 2, "hang-then-step");
+
+    f.start().await;
+    let state = f
+        .state_where("the end of the task", |state| {
+            matches!(member_one(state).status(), TaskStatus::Done | TaskStatus::Failed)
+        })
+        .await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        member_one(&state).status(),
+        TaskStatus::Done,
+        "the second hang is a first strike"
+    );
+    let runs = member_one(&state).runs();
+    assert_eq!(runs.len(), 3, "a silent hang, a hang after a step, then done");
+    assert_eq!(end_of(&runs[0]), &RunEnd::Hung);
+    assert_eq!(end_of(&runs[1]), &RunEnd::Hung);
+    assert_eq!(f.notifications(), Vec::<String>::new());
+}
+
+#[tokio::test]
 async fn a_clock_set_back_during_a_run_does_not_end_the_daemon() {
     let mut f = Fixture::new(&solo_state(), 1, "hang");
     f.start().await;
