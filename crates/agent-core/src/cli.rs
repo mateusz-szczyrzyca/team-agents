@@ -255,6 +255,10 @@ pub enum OutputCause {
     /// The line carries a session ID that breaks the rule of [`SessionId`].
     #[error("invalid session ID")]
     SessionId(#[from] InvalidValue),
+    /// The stream has more unfinished steps open at once than the adapter keeps; the line that would open one more is
+    /// dropped, so that a stream that never closes its steps cannot grow the parser's memory without bound.
+    #[error("too many unfinished steps")]
+    TooManyOpenSteps,
 }
 
 /// A line of the CLI's output the parser could not read. The run goes on: the runtime logs it once and feeds the

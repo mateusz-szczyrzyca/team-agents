@@ -311,6 +311,33 @@ fn a_response_in_endless_pieces_is_bounded_and_cut_after_a_whole_character() -> 
     Ok(())
 }
 
+// Rule: the number of responses that are not done is bounded too, not only the size of each.
+#[test]
+fn responses_that_are_never_done_are_bounded_in_number_and_the_open_ones_stay_usable() -> TestResult {
+    let mut parser = AgyAdapter.parser();
+    let step = |index: u64, state: &str, text: &str| {
+        format!(
+            r#"{{"event":"step_update","step_update":{{"step_index":{index},"state":"{state}","step_type":"agent_response","text_delta":"{text}"}}}}"#
+        )
+    };
+
+    for index in 0..64 {
+        assert_eq!(parser.push_line(&step(index, "ACTIVE", "piece "))?, [], "step {index}");
+    }
+    let refused = parser
+        .push_line(&step(64, "ACTIVE", "one too many"))
+        .err()
+        .ok_or("the 65th open response was accepted")?;
+    assert!(matches!(refused.cause(), OutputCause::TooManyOpenSteps), "{refused:?}");
+    // The parser goes on: an open response can still be finished, and then there is room for another.
+    assert_eq!(
+        parser.push_line(&step(0, "DONE", "done"))?,
+        [ActivityEvent::Text("piece done".to_owned())]
+    );
+    assert_eq!(parser.push_line(&step(65, "ACTIVE", "fits now"))?, []);
+    Ok(())
+}
+
 #[test]
 fn events_with_nothing_to_show_show_nothing() -> TestResult {
     let mut parser = AgyAdapter.parser();
