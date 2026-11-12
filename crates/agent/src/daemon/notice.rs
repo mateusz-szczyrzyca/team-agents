@@ -129,9 +129,8 @@ impl Notice {
                 HarnessPrompt::NoticeNoStatus,
                 common.with("exit", exit.map_or_else(|| SIGNAL.to_owned(), |code| code.to_string()))?,
             ),
-            Self::StartFailed { reason } | Self::RunFailed { reason } => {
-                (HarnessPrompt::NoticeStartFailed, common.with("reason", reason)?)
-            }
+            Self::StartFailed { reason } => (HarnessPrompt::NoticeStartFailed, common.with("reason", reason)?),
+            Self::RunFailed { reason } => (HarnessPrompt::NoticeRunFailed, common.with("reason", reason)?),
         };
         let rendered = texts.render(text, &values)?;
         // The first line is the title, what follows is the body.
