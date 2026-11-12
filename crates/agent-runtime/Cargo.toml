@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 agent-core.workspace = true
+reqwest.workspace = true
 rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -20,3 +21,7 @@ tracing.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# `net` for the local fake servers of the tests, `test-util` for the paused clock of the retry and timeout tests.
+tokio = { workspace = true, features = ["net", "test-util"] }
