@@ -136,39 +136,37 @@ impl Home {
     /// The Unix socket of the daemon.
     #[must_use]
     pub fn socket_file(&self) -> PathBuf {
-        self.root.clone()
+        self.root.join(SOCKET_FILE)
     }
 
     /// The configuration file, `agents.toml`.
     #[must_use]
     pub fn config_file(&self) -> PathBuf {
-        self.root.clone()
+        self.root.join(CONFIG_FILE)
     }
 
     /// The file of the secrets, `secrets.toml`.
     #[must_use]
     pub fn secrets_file(&self) -> PathBuf {
-        self.root.clone()
+        self.root.join(SECRETS_FILE)
     }
 
     /// The directory the installation keeps the prompt files in.
     #[must_use]
     pub fn prompts_dir(&self) -> PathBuf {
-        self.root.clone()
+        self.root.join(PROMPTS_DIR)
     }
 
     /// The git worktree of `task`, a task of a team that works on `repo`.
     #[must_use]
     pub fn worktree_dir(&self, repo: &RepoName, task: &TaskId) -> PathBuf {
-        let _ = (repo, task);
-        self.root.clone()
+        self.root.join(WORKTREES_DIR).join(repo.as_str()).join(task.as_str())
     }
 
-    /// The questions file of round `round` of `task`.
+    /// The questions file of round `round` of `task`, in the task's directory.
     #[must_use]
     pub fn questions_file(&self, task: &TaskId, round: NonZeroU32) -> PathBuf {
-        let _ = (task, round);
-        self.root.clone()
+        self.task_dir(task).join(format!("questions-{round}.md"))
     }
 }
 
