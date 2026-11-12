@@ -1364,7 +1364,8 @@ fn parse_sent(output: &str) -> Result<SentMessage, AgentBusError> {
         .ok_or_else(|| unexpected(BusCommand::Send, output))
 }
 
-/// One agent of the status: `  name — task (branch) pid 123, status: text`.
+/// One agent of the status: `  name — task (branch) pid 123, status: text`. The status is as printed, not trimmed:
+/// its text may go on in the next lines.
 fn parse_agent_line(line: &str) -> Option<ActiveAgent> {
     let rest = line.strip_prefix("  ")?;
     let (agent, rest) = rest.split_once(" — ")?;
@@ -1376,34 +1377,52 @@ fn parse_agent_line(line: &str) -> Option<ActiveAgent> {
         task: task.parse().ok()?,
         branch: branch.parse().ok()?,
         pid: pid.trim().parse().ok()?,
-        status: status.trim().to_owned(),
+        status: status.to_owned(),
     })
 }
 
-/// The report of `status`: the agents, then `Reservations:`, then `No reservations.` or one `- ...` line each.
+/// Adds a line that is no record to the free text of the record before it: the bus prints a status, a resource or a
+/// purpose with its line breaks as they are, so they cannot be told from records. `None` when no record is there.
+fn continue_text(text: Option<&mut String>, line: &str) -> Option<()> {
+    let text = text?;
+    text.push('\n');
+    text.push_str(line);
+    Some(())
+}
+
+/// The report of `status`: the agents, then `Reservations:`, then `No reservations.` or one `- ...` record each.
+/// A line that starts no record goes on the text of the record before it; a text that is itself a line of a record
+/// (`Reservations:` alone, say) cannot be told from one, which no reader of this output can.
 fn parse_status(output: &str) -> Result<BusStatus, AgentBusError> {
     let bad = || unexpected(BusCommand::Status, output);
     let mut lines = output.lines();
     if lines.next() != Some("Active agents:") {
         return Err(bad());
     }
-    let mut agents = Vec::new();
+    let mut agents: Vec<ActiveAgent> = Vec::new();
     loop {
         match lines.next().ok_or_else(bad)? {
             "Reservations:" => break,
-            "  (none)" => {}
-            line => agents.push(parse_agent_line(line).ok_or_else(bad)?),
+            "  (none)" if agents.is_empty() => {}
+            line => match parse_agent_line(line) {
+                Some(agent) => agents.push(agent),
+                None => continue_text(agents.last_mut().map(|last| &mut last.status), line).ok_or_else(bad)?,
+            },
         }
     }
-    let mut reservations = Vec::new();
+    for agent in &mut agents {
+        agent.status = agent.status.trim().to_owned();
+    }
+    let mut reservations: Vec<String> = Vec::new();
     for line in lines {
-        if line == "No reservations." {
-            continue;
+        if line.starts_with("- ") {
+            reservations.push(line.to_owned());
+        } else if !(line == "No reservations." && reservations.is_empty()) {
+            continue_text(reservations.last_mut(), line).ok_or_else(bad)?;
         }
-        if !line.starts_with("- ") {
-            return Err(bad());
-        }
-        reservations.push(line.trim_end().to_owned());
+    }
+    for reservation in &mut reservations {
+        reservation.truncate(reservation.trim_end().len());
     }
     Ok(BusStatus { agents, reservations })
 }
