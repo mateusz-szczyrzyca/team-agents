@@ -690,17 +690,19 @@ async fn a_socket_file_left_by_a_dead_daemon_is_replaced() {
 
     f.daemon = Some(tokio::spawn(run(f.setup(), f.shutdown.clone())));
     let deadline = Instant::now() + PATIENCE;
-    let mut connection = loop {
-        if let Ok(connection) = Connection::connect(&f.home.socket_file()).await {
-            break connection;
+    let reply = loop {
+        // A process another test forked while the dead listener was open keeps it listening until its `exec`: a
+        // connection it took is reset. The daemon's own socket answers the next one.
+        if let Ok(mut connection) = Connection::connect(&f.home.socket_file()).await
+            && let Ok(reply) = connection
+                .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+                .await
+        {
+            break reply;
         }
         assert!(Instant::now() < deadline, "timed out waiting for the new socket");
         tokio::time::sleep(Duration::from_millis(10)).await;
     };
-    let reply = connection
-        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
-        .await
-        .unwrap();
 
     assert!(matches!(reply, Reply::Teams { .. }));
     f.stop().await.unwrap();
