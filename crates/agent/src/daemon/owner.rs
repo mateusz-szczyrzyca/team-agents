@@ -7,6 +7,7 @@
 
 mod questions;
 mod start;
+mod teams;
 
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;

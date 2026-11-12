@@ -1,0 +1,1067 @@
+//! The daemon with teams: a `run` request, the team's life with a stand-in for the `claude` CLI, the real `agentbus`
+//! (built from `agentbus/`) and a real scratch repository, all in a temporary home.
+
+use std::path::{Path, PathBuf};
+use std::process::Command as Process;
+use std::str::FromStr;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+use agent_core::config::{AbsolutePath, Program};
+use agent_core::ids::{AgentName, TaskId, TeamId};
+use agent_core::protocol::{AgentList, Client, Command, FailureKind, Reply, RunRequest};
+use agent_core::state::{ItemPhase, MergeMode, PrNumber, PullRequest, State, TaskListText, Timestamp};
+use agent_core::status::TaskStatus;
+use agent_runtime::agentbus::{AgentBus, Delegation, DelegationStatus, MemberState, Outgoing, Recipient};
+use agent_runtime::clock::SharedClock;
+use agent_runtime::run::RunTimings;
+use agent_runtime::store::Home;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+
+use crate::client::{ClientError, Connection};
+use crate::daemon::{DaemonError, DaemonSetup, Timings, run};
+use crate::testing::ManualClock;
+
+/// The longest any wait of these tests lasts.
+const PATIENCE: Duration = Duration::from_secs(60);
+
+/// A list of two features that do not wait for each other, with one item each.
+const PARALLEL: &str = "\
+Build the things.
+
+1. First
+[ ] 1.1 One
+    Do one.
+
+2. Second
+[ ] 2.1 Two
+    Do two.
+";
+
+/// A list of one feature with two items: the second starts when the first is merged.
+const CHAIN: &str = "\
+Build the thing.
+
+1. First
+[ ] 1.1 One
+    Do one.
+[ ] 1.2 Two
+    Do two.
+";
+
+/// A list whose only item is marked done.
+const ALL_DONE: &str = "\
+Build the thing.
+
+1. First
+[x] 1.1 One
+    Done already.
+";
+
+/// A list without features: one piece of work for the lead.
+const PLAIN: &str = "Fix the typo in the README.\n";
+
+/// The `agentbus` built from `agentbus/`, once for all the tests of this file.
+fn agentbus_binary() -> &'static Path {
+    static BINARY: OnceLock<PathBuf> = OnceLock::new();
+    BINARY.get_or_init(|| {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agentbus");
+        let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
+        std::fs::create_dir_all(&target).unwrap();
+        let binary = target.join("agentbus-under-test-of-agent");
+        let built = Process::new("go")
+            .arg("build")
+            .arg("-o")
+            .arg(&binary)
+            .arg(".")
+            .current_dir(&source)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "go build of {source:?} failed: {}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        binary
+    })
+}
+
+/// A fixture script of the `agent` crate.
+fn fixture_script(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+}
+
+fn abs(path: &Path) -> AbsolutePath {
+    AbsolutePath::from_str(path.to_str().unwrap()).unwrap()
+}
+
+fn agent(name: &str) -> AgentName {
+    name.parse().unwrap()
+}
+
+/// Runs git for the setup and the checks of a test and returns its trimmed output.
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = Process::new("git")
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_NAME", "Fixture Author")
+        .env("GIT_AUTHOR_EMAIL", "fixture@example.com")
+        .env("GIT_COMMITTER_NAME", "Fixture Author")
+        .env("GIT_COMMITTER_EMAIL", "fixture@example.com")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim_end().to_owned()
+}
+
+/// How an agent of the configuration is made.
+enum Kind {
+    Normal,
+    Worker,
+    Investigator,
+}
+
+/// An agent of the configuration and what its stand-in CLI does.
+struct Agent {
+    name: &'static str,
+    kind: Kind,
+    scenario: &'static str,
+}
+
+fn normal(name: &'static str, scenario: &'static str) -> Agent {
+    Agent {
+        name,
+        kind: Kind::Normal,
+        scenario,
+    }
+}
+
+fn worker(name: &'static str, scenario: &'static str) -> Agent {
+    Agent {
+        name,
+        kind: Kind::Worker,
+        scenario,
+    }
+}
+
+fn investigator(name: &'static str, scenario: &'static str) -> Agent {
+    Agent {
+        name,
+        kind: Kind::Investigator,
+        scenario,
+    }
+}
+
+/// The configuration of a home with these agents, one repository `example` and the stand-in CLI for every agent.
+fn config(agents: &[Agent], agentbus: &Path) -> String {
+    let mut text = String::new();
+    let mut normals = Vec::new();
+    let mut workers = Vec::new();
+    for agent in agents {
+        let table = match agent.kind {
+            Kind::Investigator => "investigators",
+            Kind::Normal | Kind::Worker => "agents",
+        };
+        text.push_str(&format!(
+            "[{table}.{}]\ncli = \"claude\"\nargs = [\"--scenario\", \"{}\"]\n",
+            agent.name, agent.scenario
+        ));
+        match agent.kind {
+            Kind::Normal => normals.push(format!("\"{}\"", agent.name)),
+            Kind::Worker => workers.push(format!("\"{}\"", agent.name)),
+            Kind::Investigator => {}
+        }
+    }
+    text.push_str(&format!(
+        "[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
+         [watchdog]\nhang_minutes = 1\nhang_strikes = 3\n\
+         [repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+        normals.join(", "),
+        workers.join(", "),
+        fixture_script("team-cli.sh").display(),
+        agentbus.display(),
+    ));
+    text
+}
+
+fn timings() -> Timings {
+    Timings {
+        tick: Duration::from_millis(25),
+        run: RunTimings {
+            poll: Duration::from_millis(20),
+            hang: Duration::from_secs(20),
+            stop_grace: Duration::from_secs(5),
+        },
+    }
+}
+
+/// A daemon in a temporary home, with a scratch repository `example` that has one commit on `main`.
+struct Fixture {
+    _dir: tempfile::TempDir,
+    home: Home,
+    repo: PathBuf,
+    clock: ManualClock,
+    shutdown: CancellationToken,
+    daemon: Option<JoinHandle<Result<(), DaemonError>>>,
+}
+
+impl Fixture {
+    /// A home with these agents; the daemon is not started.
+    fn new(agents: &[Agent]) -> Self {
+        Self::with_agentbus(agents, agentbus_binary())
+    }
+
+    /// The same, with `agentbus` as the program of the bus.
+    fn with_agentbus(agents: &[Agent], agentbus: &Path) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let home = Home::new(&abs(&root.join("home")));
+        std::fs::create_dir_all(home.root()).unwrap();
+        std::fs::write(home.config_file(), config(agents, agentbus)).unwrap();
+        std::fs::write(home.root().join("real-agentbus"), agentbus_binary().to_str().unwrap()).unwrap();
+        let repo = root.join("example");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("README.md"), "Hello\n").unwrap();
+        git(&repo, &["add", "README.md"]);
+        git(&repo, &["commit", "-q", "-m", "First"]);
+        Self {
+            _dir: dir,
+            home,
+            repo,
+            clock: ManualClock::new(Timestamp::now(&agent_runtime::clock::SystemClock).unwrap()),
+            shutdown: CancellationToken::new(),
+            daemon: None,
+        }
+    }
+
+    fn setup(&self) -> DaemonSetup {
+        DaemonSetup {
+            home: self.home.clone(),
+            prompts_dir: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+            clock: SharedClock::new(self.clock.clone()),
+            local_offset: time::UtcOffset::UTC,
+            timings: Some(timings()),
+        }
+    }
+
+    /// Starts the daemon and waits until its socket is there.
+    async fn start(&mut self) {
+        self.shutdown = CancellationToken::new();
+        let daemon = tokio::spawn(run(self.setup(), self.shutdown.clone()));
+        let socket = self.home.socket_file();
+        let deadline = Instant::now() + PATIENCE;
+        while !socket.exists() {
+            assert!(
+                !daemon.is_finished(),
+                "the daemon ended at its start: {:?}",
+                daemon.await
+            );
+            assert!(Instant::now() < deadline, "timed out waiting for the socket");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        self.daemon = Some(daemon);
+    }
+
+    /// Stops the daemon and returns how it ended.
+    async fn stop(&mut self) -> Result<(), DaemonError> {
+        self.shutdown.cancel();
+        let daemon = self.daemon.take().unwrap();
+        tokio::time::timeout(PATIENCE, daemon).await.unwrap().unwrap()
+    }
+
+    async fn connect(&self) -> Connection {
+        Connection::connect(&self.home.socket_file()).await.unwrap()
+    }
+
+    /// Asks the daemon to run `agents` on `list` in the scratch repository.
+    async fn run(&self, agents: &[&str], list: &str, coordinator: Option<&str>) -> Result<Reply, ClientError> {
+        self.run_request(self.request(agents, list, coordinator)).await
+    }
+
+    fn request(&self, agents: &[&str], list: &str, coordinator: Option<&str>) -> RunRequest {
+        RunRequest {
+            repo: "example".parse().unwrap(),
+            checkout: abs(&self.repo),
+            agents: AgentList::try_from(agents.iter().map(|name| agent(name)).collect::<Vec<_>>()).unwrap(),
+            task_list: TaskListText::new(list.to_owned()).unwrap(),
+            coordinator: coordinator.map(agent),
+            merge: MergeMode::Autopilot,
+        }
+    }
+
+    async fn run_request(&self, request: RunRequest) -> Result<Reply, ClientError> {
+        self.connect().await.request(Client::Cli, Command::Run(request)).await
+    }
+
+    /// Starts a team and returns its ID and tasks.
+    async fn start_team(&self, agents: &[&str], list: &str) -> (TeamId, Vec<TaskId>) {
+        let reply = self.run(agents, list, None).await.unwrap();
+        let Reply::Started { team, tasks } = reply else {
+            panic!("a team was expected to start: {reply:?}")
+        };
+        (team, tasks)
+    }
+
+    fn bus(&self) -> AgentBus {
+        AgentBus::new(
+            Program::from_str(agentbus_binary().to_str().unwrap()).unwrap(),
+            abs(self.home.root()),
+        )
+    }
+
+    /// The state as saved.
+    fn state(&self) -> State {
+        State::from_json(&std::fs::read_to_string(self.home.state_file()).unwrap()).unwrap()
+    }
+
+    /// Waits until the saved state satisfies `ready`.
+    async fn state_where(&self, what: &str, ready: impl Fn(&State) -> bool) -> State {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            if let Ok(text) = std::fs::read_to_string(self.home.state_file())
+                && let Ok(state) = State::from_json(&text)
+                && ready(&state)
+            {
+                return state;
+            }
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// Waits until the task has the status.
+    async fn status_is(&self, task: &TaskId, status: TaskStatus) -> State {
+        self.state_where(&format!("{task} to be {status}"), |state| {
+            state
+                .find_task(task)
+                .is_some_and(|found| found.member.status() == status)
+        })
+        .await
+    }
+
+    fn worktree(&self, task: &TaskId) -> PathBuf {
+        self.home.worktree_dir(&"example".parse().unwrap(), task)
+    }
+
+    /// The prompt the task's `n`-th run was given, once it has been.
+    async fn prompt(&self, task: &TaskId, n: u32) -> String {
+        let file = self.worktree(task).join(format!(".fake-prompt-{n}"));
+        self.wait_for(&format!("{file:?}"), || file.exists()).await;
+        std::fs::read_to_string(file).unwrap()
+    }
+
+    /// How many runs the task has had.
+    fn runs(&self, task: &TaskId) -> u32 {
+        std::fs::read_to_string(self.worktree(task).join(".fake-runs"))
+            .map(|text| text.trim().parse().unwrap())
+            .unwrap_or(0)
+    }
+
+    async fn wait_for(&self, what: &str, ready: impl Fn() -> bool) {
+        let deadline = Instant::now() + PATIENCE;
+        while !ready() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// The notifications written so far.
+    fn notifications(&self) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(self.home.notifications_dir()) else {
+            return Vec::new();
+        };
+        let mut texts: Vec<String> = entries
+            .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect();
+        texts.sort();
+        texts
+    }
+
+    /// What the bus holds as messages, a line each.
+    fn messages(&self) -> String {
+        std::fs::read_to_string(self.home.root().join("bus/messages.jsonl")).unwrap_or_default()
+    }
+
+    /// The branches of the scratch repository.
+    fn branches(&self) -> Vec<String> {
+        git(&self.repo, &["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+fn task_status(state: &State, task: &TaskId) -> TaskStatus {
+    state.find_task(task).unwrap().member.status()
+}
+
+/// The kind of a refusal.
+fn refused(reply: Result<Reply, ClientError>) -> FailureKind {
+    match reply {
+        Err(ClientError::Refused(failure)) => failure.kind,
+        other => panic!("a refusal was expected: {other:?}"),
+    }
+}
+
+// ---- a task alone ------------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_solo_task_is_started_runs_to_done_and_its_team_is_closed_and_told_to_the_human() {
+    let mut f = Fixture::new(&[normal("claude-1", "done")]);
+    f.start().await;
+
+    let (team, tasks) = f.start_team(&["claude-1"], PLAIN).await;
+
+    assert_eq!(tasks.len(), 1);
+    let state = f.status_is(&tasks[0], TaskStatus::Done).await;
+    assert_eq!(state.teams().len(), 1);
+    assert_eq!(state.teams()[0].id(), &team);
+    f.wait_for("the notification that the team is finished", || {
+        f.notifications().iter().any(|text| text.contains("is finished"))
+    })
+    .await;
+    f.stop().await.unwrap();
+    let notice = f
+        .notifications()
+        .into_iter()
+        .find(|text| text.contains("is finished"))
+        .unwrap();
+    assert!(notice.starts_with(&format!("Team {team} is finished\n")), "{notice}");
+}
+
+#[tokio::test]
+async fn a_solo_task_gets_a_worktree_on_a_branch_of_its_own_and_its_prompt_has_the_brief() {
+    let mut f = Fixture::new(&[normal("claude-1", "done")]);
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["claude-1"], PLAIN).await;
+    let prompt = f.prompt(&tasks[0], 1).await;
+    f.status_is(&tasks[0], TaskStatus::Done).await;
+    f.stop().await.unwrap();
+
+    let worktree = f.worktree(&tasks[0]);
+    assert!(worktree.is_dir());
+    let branch = format!("agents/claude-1/{}", tasks[0]);
+    assert!(f.branches().contains(&branch), "{:?}", f.branches());
+    assert_eq!(git(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]), branch);
+    assert!(prompt.contains("You are agent **claude-1**"), "{prompt}");
+    assert!(prompt.contains("Fix the typo in the README."), "{prompt}");
+    assert!(prompt.contains("Your role: solo"), "{prompt}");
+}
+
+#[tokio::test]
+async fn a_solo_task_with_items_starts_the_first_item_on_its_own_branch_and_goes_on_waiting_for_the_next() {
+    let mut f = Fixture::new(&[normal("claude-1", "done")]);
+    f.start().await;
+
+    let (team, tasks) = f.start_team(&["claude-1"], CHAIN).await;
+    let prompt = f.prompt(&tasks[0], 1).await;
+    let state = f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+
+    let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
+    let progress = state.team(&team).unwrap().items()[0].phase().clone();
+    assert!(
+        matches!(&progress, ItemPhase::InProgress { assignee, branch: b } if assignee.as_str() == "claude-1" && b.as_str() == branch),
+        "{progress:?}"
+    );
+    assert_eq!(
+        git(&f.worktree(&tasks[0]), &["rev-parse", "--abbrev-ref", "HEAD"]),
+        branch
+    );
+    assert!(prompt.contains("## Your item: 1.1 — One"), "{prompt}");
+    assert!(
+        f.notifications().iter().all(|text| !text.contains("is finished")),
+        "the team has items left"
+    );
+}
+
+// ---- a team ------------------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_team_starts_with_a_worktree_for_every_task_and_its_team_on_the_bus() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+        worker("glm-1", "sleep"),
+    ]);
+    f.start().await;
+
+    let (team, tasks) = f
+        .start_team(&["inv-opus", "claude-1", "claude-2", "glm-1"], PARALLEL)
+        .await;
+
+    assert_eq!(tasks.len(), 4);
+    for task in &tasks {
+        assert!(f.worktree(task).is_dir(), "{task}");
+    }
+    let bus = f.bus().team_get(&team).await.unwrap();
+    assert_eq!(bus.lead, Some(agent("inv-opus")));
+    let names: Vec<String> = bus.members.keys().map(ToString::to_string).collect();
+    assert_eq!(names, ["claude-1", "claude-2", "glm-1", "inv-opus"]);
+    assert_eq!(bus.members[&agent("claude-1")].task, tasks[1]);
+    assert_eq!(bus.members[&agent("glm-1")].task, tasks[3]);
+    let state = f.state();
+    let crew = state.team(&team).unwrap().crew().roster();
+    let roles: Vec<String> = crew
+        .iter()
+        .map(|(role, m)| format!("{role} {}", m.agent().name()))
+        .collect();
+    assert_eq!(
+        roles,
+        [
+            "coordinator inv-opus",
+            "member claude-1",
+            "member claude-2",
+            "worker glm-1"
+        ]
+    );
+    f.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn the_members_get_the_items_and_the_workers_and_idle_members_wait_until_they_are_needed() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+        normal("codex-1", "sleep"),
+        worker("glm-1", "sleep"),
+    ]);
+    f.start().await;
+
+    let (team, tasks) = f
+        .start_team(&["inv-opus", "claude-1", "claude-2", "codex-1", "glm-1"], PARALLEL)
+        .await;
+    f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    f.status_is(&tasks[2], TaskStatus::Waiting).await;
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+
+    let state = f.state();
+    let items = state.team(&team).unwrap().items().to_vec();
+    assert!(matches!(items[0].phase(), ItemPhase::InProgress { assignee, .. } if assignee.as_str() == "claude-1"));
+    assert!(matches!(items[1].phase(), ItemPhase::InProgress { assignee, .. } if assignee.as_str() == "claude-2"));
+    // The third member has no item and the worker no request: neither has been started, and both sleep on the bus.
+    assert_eq!(f.runs(&tasks[3]), 0);
+    assert_eq!(f.runs(&tasks[4]), 0);
+    assert_eq!(task_status(&state, &tasks[3]), TaskStatus::Queued);
+    let bus = f.bus().team_get(&team).await.unwrap();
+    assert_eq!(bus.members[&agent("codex-1")].state, MemberState::Sleeping);
+    assert_eq!(bus.members[&agent("glm-1")].state, MemberState::Sleeping);
+    assert_eq!(bus.members[&agent("inv-opus")].state, MemberState::Sleeping);
+    f.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn the_first_prompt_of_a_member_has_its_item_and_its_team() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        worker("glm-1", "sleep"),
+    ]);
+    f.start().await;
+
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "glm-1"], PARALLEL).await;
+    let prompt = f.prompt(&tasks[1], 1).await;
+    f.stop().await.unwrap();
+
+    assert!(prompt.contains("Your role: member"), "{prompt}");
+    assert!(prompt.contains("## Your item: 1.1 — One"), "{prompt}");
+    assert!(prompt.contains("## Your team"), "{prompt}");
+    assert!(prompt.contains(team.as_str()), "{prompt}");
+    assert!(prompt.contains("Coordinator: inv-opus"), "{prompt}");
+    let coordinator = f.prompt(&tasks[0], 1).await;
+    assert!(coordinator.contains("Your role: coordinator"), "{coordinator}");
+}
+
+#[tokio::test]
+async fn an_investigator_in_the_team_coordinates_and_an_explicit_coordinator_wins() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+    ]);
+    f.start().await;
+
+    let (first, _) = f.start_team(&["claude-1", "inv-opus"], PARALLEL).await;
+    let explicit = f
+        .run(&["claude-1", "claude-2"], PARALLEL, Some("claude-2"))
+        .await
+        .unwrap();
+    let Reply::Started { team: second, .. } = explicit else {
+        panic!("{explicit:?}")
+    };
+
+    let state = f.state();
+    let coordinator = |team: &TeamId| {
+        state
+            .team(team)
+            .unwrap()
+            .crew()
+            .coordinator()
+            .unwrap()
+            .agent()
+            .name()
+            .to_owned()
+    };
+    assert_eq!(coordinator(&first), "inv-opus");
+    assert_eq!(coordinator(&second), "claude-2");
+    f.stop().await.unwrap();
+}
+
+// ---- refusals ----------------------------------------------------------------------------------------------------
+
+/// Nothing was made: no team, no worktree, no branch but `main`.
+fn assert_nothing_started(f: &Fixture) {
+    assert!(f.state().teams().is_empty(), "a team was made");
+    let worktrees = f.home.root().join("worktrees");
+    let any = std::fs::read_dir(worktrees)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false);
+    assert!(!any, "a worktree was made");
+    assert_eq!(f.branches(), ["main"]);
+}
+
+fn all_agents() -> Vec<Agent> {
+    vec![
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+        worker("glm-1", "sleep"),
+    ]
+}
+
+#[tokio::test]
+async fn a_run_with_too_many_investigators_for_two_outside_reviewers_is_refused_before_anything_starts() {
+    let mut f = Fixture::new(&all_agents());
+    f.start().await;
+
+    let reply = f.run(&["inv-opus", "inv-codex", "claude-1"], PARALLEL, None).await;
+
+    assert_eq!(refused(reply), FailureKind::Refused);
+    assert_nothing_started(&f);
+    f.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_run_with_a_worker_as_coordinator_or_only_workers_is_refused_before_anything_starts() {
+    let mut f = Fixture::new(&all_agents());
+    f.start().await;
+
+    let as_coordinator = f.run(&["claude-1", "glm-1"], PARALLEL, Some("glm-1")).await;
+    let alone = f.run(&["glm-1"], PARALLEL, None).await;
+
+    assert_eq!(refused(as_coordinator), FailureKind::Invalid);
+    assert_eq!(refused(alone), FailureKind::Invalid);
+    assert_nothing_started(&f);
+    f.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_run_that_names_an_unknown_agent_or_repository_or_has_nothing_to_do_is_refused() {
+    let mut f = Fixture::new(&all_agents());
+    f.start().await;
+
+    let unknown_agent = f.run(&["claude-1", "nobody"], PARALLEL, None).await;
+    let mut elsewhere = f.request(&["claude-1"], PARALLEL, None);
+    elsewhere.repo = "elsewhere".parse().unwrap();
+    let unknown_repo = f.run_request(elsewhere).await;
+    let nothing_to_do = f.run(&["claude-1"], ALL_DONE, None).await;
+
+    assert_eq!(refused(unknown_agent), FailureKind::Invalid);
+    assert_eq!(refused(unknown_repo), FailureKind::Invalid);
+    assert_eq!(refused(nothing_to_do), FailureKind::Invalid);
+    assert_nothing_started(&f);
+    f.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_checkout_without_the_base_branch_is_refused_and_nothing_is_left_behind() {
+    let mut f = Fixture::new(&all_agents());
+    f.start().await;
+    git(&f.repo, &["branch", "-m", "main", "trunk"]);
+
+    let reply = f.run(&["claude-1", "inv-opus"], PARALLEL, None).await;
+
+    assert_eq!(refused(reply), FailureKind::Invalid);
+    assert!(f.state().teams().is_empty());
+    assert_eq!(f.branches(), ["trunk"]);
+    f.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_team_the_bus_cannot_create_is_refused_and_its_worktrees_and_branches_are_removed_again() {
+    let mut f = Fixture::with_agentbus(&all_agents(), Path::new("/nonexistent/agentbus"));
+    f.start().await;
+
+    let reply = f.run(&["claude-1", "inv-opus"], PARALLEL, None).await;
+
+    assert_eq!(refused(reply), FailureKind::Internal);
+    assert_nothing_started(&f);
+    f.stop().await.unwrap();
+}
+
+// ---- the team's life ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_member_that_is_done_tells_the_coordinator_which_wakes_to_integrate_its_branch() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "done"),
+        normal("claude-2", "sleep"),
+    ]);
+    f.start().await;
+
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "claude-2"], PARALLEL).await;
+    let woken = f.prompt(&tasks[0], 2).await;
+    let state = f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+
+    assert!(woken.starts_with("# YOU HAVE BEEN WOKEN UP (team "), "{woken}");
+    let messages = f.messages();
+    assert!(messages.contains("member_finished"), "{messages}");
+    assert!(messages.contains("claude-1 reported DONE on item 1.1"), "{messages}");
+    assert!(
+        messages.contains(&format!("agents/claude-1/{}-1.1", tasks[1])),
+        "{messages}"
+    );
+    // The item stays with the member until its pull request is open.
+    let phase = state.team(&team).unwrap().items()[0].phase().clone();
+    assert!(matches!(phase, ItemPhase::InProgress { .. }), "{phase:?}");
+    let log = std::fs::read_to_string(f.worktree(&tasks[0]).join(".fake-log")).unwrap();
+    let sessions: Vec<&str> = log.lines().map(|line| line.split(' ').nth(1).unwrap()).collect();
+    assert_eq!(
+        sessions[0], sessions[1],
+        "the coordinator is resumed, not started again: {log}"
+    );
+}
+
+#[tokio::test]
+async fn a_member_that_failed_tells_the_coordinator_so() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail"),
+    ]);
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    let messages = f.messages();
+    assert!(messages.contains("member_failed"), "{messages}");
+    assert!(messages.contains("claude-1 failed"), "{messages}");
+}
+
+#[tokio::test]
+async fn a_message_to_a_member_that_waits_starts_its_task_with_the_wake_and_a_held_member_with_its_whole_prompt() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1"], PLAIN).await;
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    assert_eq!(f.runs(&tasks[1]), 0, "a member with nothing to do is not started");
+
+    f.bus()
+        .send(
+            &agent("inv-opus"),
+            &Recipient::Agent(agent("claude-1")),
+            &Outgoing::Chat {
+                text: "Please read the README.".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    let prompt = f.prompt(&tasks[1], 1).await;
+    f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+
+    assert!(prompt.contains("Your role: member"), "{prompt}");
+    assert!(prompt.contains("## Your team"), "{prompt}");
+    assert!(prompt.contains("YOU HAVE BEEN WOKEN UP"), "{prompt}");
+    assert!(prompt.contains(team.as_str()), "{prompt}");
+}
+
+#[tokio::test]
+async fn a_request_for_a_worker_goes_to_the_first_free_worker_and_its_result_returns_to_the_requester() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        worker("glm-1", "done:Result: three files."),
+        worker("glm-2", "done:Result: other."),
+    ]);
+    f.start().await;
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "glm-1", "glm-2"], PLAIN).await;
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    assert_eq!(f.runs(&tasks[2]), 0, "a worker is not started before it is asked");
+
+    let id = f
+        .bus()
+        .delegate(&Delegation {
+            team: team.clone(),
+            requester: agent("claude-1"),
+            task: tasks[1].clone(),
+            repo: "example".parse().unwrap(),
+            branch: format!("agents/claude-1/{}", tasks[1]).parse().unwrap(),
+            worktree: abs(&f.worktree(&tasks[1])),
+            dispatcher: Program::from_str("true").unwrap(),
+            request: "List the files under src/.".to_owned(),
+            context: "The module is small.".to_owned(),
+        })
+        .await
+        .unwrap();
+    let prompt = f.prompt(&tasks[2], 1).await;
+    f.status_is(&tasks[2], TaskStatus::Waiting).await;
+    let bus = f.bus();
+    let request = loop {
+        let request = bus.helper_get(id).await.unwrap();
+        if request.status == DelegationStatus::Done {
+            break request;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    f.stop().await.unwrap();
+
+    assert!(prompt.contains("A REQUEST FROM claude-1 (H1)"), "{prompt}");
+    assert!(prompt.contains("List the files under src/."), "{prompt}");
+    assert_eq!(
+        request.worker,
+        Some(agent("glm-1")),
+        "the first free worker in the configured order"
+    );
+    assert_eq!(request.helper_task, Some(tasks[2].clone()));
+    assert!(request.summary.contains("Result: three files."), "{}", request.summary);
+    assert!(
+        !request.summary.contains("STATUS:"),
+        "the status line is not the result: {}",
+        request.summary
+    );
+    assert_eq!(f.runs(&tasks[3]), 0, "the second worker was not needed");
+    let messages = f.messages();
+    assert!(messages.contains("helper_result"), "{messages}");
+}
+
+#[tokio::test]
+async fn a_worker_that_fails_returns_the_failure_to_the_requester() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        worker("glm-1", "fail"),
+    ]);
+    f.start().await;
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "glm-1"], PLAIN).await;
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+
+    let id = f
+        .bus()
+        .delegate(&Delegation {
+            team,
+            requester: agent("claude-1"),
+            task: tasks[1].clone(),
+            repo: "example".parse().unwrap(),
+            branch: format!("agents/claude-1/{}", tasks[1]).parse().unwrap(),
+            worktree: abs(&f.worktree(&tasks[1])),
+            dispatcher: Program::from_str("true").unwrap(),
+            request: "Do it.".to_owned(),
+            context: "None.".to_owned(),
+        })
+        .await
+        .unwrap();
+    f.status_is(&tasks[2], TaskStatus::Failed).await;
+    let bus = f.bus();
+    let request = loop {
+        let request = bus.helper_get(id).await.unwrap();
+        if request.status == DelegationStatus::Failed {
+            break request;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    f.stop().await.unwrap();
+
+    assert!(request.summary.contains("I could not do it."), "{}", request.summary);
+    assert!(f.messages().contains("\"status\":\"failed\""), "{}", f.messages());
+}
+
+#[tokio::test]
+async fn a_team_whose_lead_is_done_and_whose_members_have_nothing_left_is_closed_and_the_human_is_told() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "done"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "done"),
+        worker("glm-1", "done"),
+    ]);
+    f.start().await;
+
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "glm-1"], PLAIN).await;
+    let state = f.status_is(&tasks[0], TaskStatus::Done).await;
+    f.wait_for("the notification", || {
+        f.notifications().iter().any(|text| text.contains("is finished"))
+    })
+    .await;
+    let bus = f.bus().team_get(&team).await.unwrap();
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        task_status(&state, &tasks[1]),
+        TaskStatus::Stopped,
+        "a member that never had work"
+    );
+    assert_eq!(
+        task_status(&state, &tasks[2]),
+        TaskStatus::Stopped,
+        "a worker that was never asked"
+    );
+    assert!(bus.done);
+    let notices: Vec<String> = f
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("is finished"))
+        .collect();
+    assert_eq!(notices.len(), 1, "the human is told once: {notices:?}");
+}
+
+#[tokio::test]
+async fn a_closed_team_is_not_closed_again_when_the_daemon_restarts() {
+    let mut f = Fixture::new(&[normal("claude-1", "done")]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["claude-1"], PLAIN).await;
+    f.status_is(&tasks[0], TaskStatus::Done).await;
+    f.wait_for("the notification", || {
+        f.notifications().iter().any(|text| text.contains("is finished"))
+    })
+    .await;
+    f.stop().await.unwrap();
+
+    f.start().await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    f.stop().await.unwrap();
+
+    let notices = f
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("is finished"))
+        .count();
+    assert_eq!(notices, 1);
+}
+
+#[tokio::test]
+async fn a_free_member_is_given_the_next_item_when_the_daemon_looks_at_the_team_again() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "done"),
+    ]);
+    f.start().await;
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+    // The first item has its pull request open (a later item of the plan does that): the member is free.
+    let mut state = f.state();
+    {
+        let mut team_mut = state.team_mut(&team).unwrap();
+        let mut item = team_mut.item_mut("1.1".parse().unwrap()).unwrap();
+        let branch = format!("agents/claude-1/{}-1.1", tasks[1]).parse().unwrap();
+        item.advance(ItemPhase::InReview {
+            pr: PullRequest {
+                number: PrNumber::new(std::num::NonZeroU32::new(5).unwrap()),
+                branch,
+                opened_at: Timestamp::now(&agent_runtime::clock::SystemClock).unwrap(),
+            },
+            reviews: Vec::new(),
+        })
+        .unwrap();
+    }
+    std::fs::write(f.home.state_file(), state.to_json().unwrap()).unwrap();
+
+    f.start().await;
+    let prompt = f.prompt(&tasks[1], 2).await;
+    let state = f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+
+    assert!(prompt.starts_with("# A NEW ITEM FOR YOU: 2.1"), "{prompt}");
+    assert!(prompt.contains("## Your item: 2.1 — Two"), "{prompt}");
+    let branch = format!("agents/claude-1/{}-2.1", tasks[1]);
+    assert_eq!(
+        git(&f.worktree(&tasks[1]), &["rev-parse", "--abbrev-ref", "HEAD"]),
+        branch
+    );
+    let phase = state.team(&team).unwrap().items()[1].phase().clone();
+    assert!(
+        matches!(&phase, ItemPhase::InProgress { assignee, branch: b } if assignee.as_str() == "claude-1" && b.as_str() == branch),
+        "{phase:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_bus_that_is_down_is_tried_again_and_nothing_is_lost() {
+    let flaky = fixture_script("flaky-agentbus.sh");
+    let mut f = Fixture::with_agentbus(
+        &[
+            investigator("inv-opus", "sleep"),
+            investigator("inv-codex", "sleep"),
+            investigator("inv-gemini", "sleep"),
+            normal("claude-1", "slowdone"),
+        ],
+        &flaky,
+    );
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let down = f.home.root().join("flaky-bus-down");
+    std::fs::write(&down, "").unwrap();
+
+    f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        f.runs(&tasks[0]),
+        1,
+        "the coordinator cannot be told while the bus is down"
+    );
+    std::fs::remove_file(&down).unwrap();
+
+    let woken = f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert!(woken.contains("YOU HAVE BEEN WOKEN UP"), "{woken}");
+    assert!(
+        f.messages().contains("claude-1 reported DONE on item 1.1"),
+        "{}",
+        f.messages()
+    );
+}

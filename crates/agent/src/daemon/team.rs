@@ -18,5 +18,5 @@ mod sync;
 pub(super) use self::assign::{Assigned, AssignmentError, assignable, item_branch, start_item, task_branch};
 pub(super) use self::close::{closing_transitions, is_finished, is_held};
 pub(super) use self::form::{FormError, Formed, Workspace, form};
-pub(super) use self::react::{BusNotice, notice_for};
+pub(super) use self::react::{BusNotice, RequestOutcome, notice_for, request_outcome};
 pub(super) use self::sync::{Reconciliation, desired_bus_state, reconcile};

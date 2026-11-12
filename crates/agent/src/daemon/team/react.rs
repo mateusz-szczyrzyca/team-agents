@@ -3,7 +3,7 @@
 use agent_core::ids::{AgentName, BranchName, ItemId};
 use agent_core::kinds::Role;
 use agent_core::state::{ItemPhase, Member, RunEnd, Team};
-use agent_core::status::RunOutcome;
+use agent_core::status::{RunOutcome, TaskStatus};
 use agent_runtime::agentbus::RequestId;
 
 use super::assign::{agent_name, task_branch};
@@ -49,6 +49,21 @@ pub(in crate::daemon) enum BusNotice {
         /// The worker.
         worker: AgentName,
         /// Why, for the requester.
+        reason: String,
+    },
+}
+
+/// How a request for a worker ended, for the requester.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::daemon) enum RequestOutcome {
+    /// The worker did it.
+    Done {
+        /// The worker's report, without its status line.
+        summary: String,
+    },
+    /// The worker could not.
+    Failed {
+        /// How the worker's run ended, in the words of [`RequestOutcome`]'s notice, with what the worker said.
         reason: String,
     },
 }
@@ -121,6 +136,17 @@ pub(in crate::daemon) fn notice_for(
         | RunEnd::Stopped => return Ok(None),
     };
     Ok(Some(Told { to, notice }))
+}
+
+/// How the request a worker served ended, given the end `end` of the worker's run and the status `status` its task has
+/// after it; `None` while the request is not over: the worker is paused, asks the human or is queued to go on.
+pub(in crate::daemon) fn request_outcome(
+    end: &RunEnd,
+    status: TaskStatus,
+    message: Option<&str>,
+) -> Option<RequestOutcome> {
+    let _ = (end, status, message);
+    None
 }
 
 /// The item `member` works on and its branch, if it has one.

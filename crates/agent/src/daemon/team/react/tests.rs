@@ -120,3 +120,82 @@ fn a_solo_agent_has_nobody_to_tell() {
 
     assert_eq!(told(&team, 1, &reported(RunOutcome::Done), None), None);
 }
+
+// ---- the end of a request for a worker ---------------------------------------------------------------------------
+
+fn outcome(end: &RunEnd, status: TaskStatus, message: Option<&str>) -> Option<RequestOutcome> {
+    request_outcome(end, status, message)
+}
+
+#[test]
+fn a_worker_that_is_done_returns_its_report_without_the_status_line() {
+    let found = outcome(
+        &reported(RunOutcome::Done),
+        TaskStatus::Waiting,
+        Some("Result: three files.\nHow: ls src\nSTATUS: DONE"),
+    );
+
+    assert_eq!(
+        found,
+        Some(RequestOutcome::Done {
+            summary: "Result: three files.\nHow: ls src".to_owned()
+        })
+    );
+}
+
+#[test]
+fn a_report_that_is_only_the_status_line_is_returned_as_it_is_so_that_it_is_not_empty() {
+    let found = outcome(&reported(RunOutcome::Done), TaskStatus::Waiting, Some("STATUS: DONE"));
+
+    assert_eq!(
+        found,
+        Some(RequestOutcome::Done {
+            summary: "STATUS: DONE".to_owned()
+        })
+    );
+}
+
+#[test]
+fn a_worker_that_failed_returns_how_and_what_it_said() {
+    let found = outcome(
+        &reported(RunOutcome::Failed),
+        TaskStatus::Failed,
+        Some("I could not do it.\nSTATUS: FAILED"),
+    );
+
+    let Some(RequestOutcome::Failed { reason }) = found else {
+        panic!("{found:?}")
+    };
+    assert!(reason.contains("STATUS: FAILED"), "{reason}");
+    assert!(reason.contains("I could not do it."), "{reason}");
+}
+
+#[test]
+fn the_ends_that_leave_no_result_fail_the_request() {
+    for (end, status) in [
+        (RunEnd::NoStatus { exit_code: Some(1) }, TaskStatus::Failed),
+        (reported(RunOutcome::Sleeping), TaskStatus::Waiting),
+        (reported(RunOutcome::Excluded), TaskStatus::Done),
+        (RunEnd::Stopped, TaskStatus::Stopped),
+        (RunEnd::Hung, TaskStatus::Failed),
+    ] {
+        let found = outcome(&end, status, None);
+
+        assert!(
+            matches!(found, Some(RequestOutcome::Failed { .. })),
+            "{end:?}: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn a_request_goes_on_while_the_worker_is_paused_asks_or_is_queued_to_continue() {
+    for (end, status) in [
+        (RunEnd::QuotaExhausted { resets_at: None }, TaskStatus::Paused),
+        (RunEnd::RateLimited, TaskStatus::Paused),
+        (RunEnd::Hung, TaskStatus::Queued),
+        (reported(RunOutcome::Questions), TaskStatus::Questions),
+    ] {
+        assert_eq!(outcome(&end, status, None), None, "{end:?}");
+    }
+}
