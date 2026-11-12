@@ -139,3 +139,9 @@ None needed for this item. One for the Rust section: say how a test that needs a
 - Finding 7: the history is published and is not rewritten. The edge tests that arrived with their implementation in `910b884` are named in the PR under Deviations; the work of this pass is red first where a failing test is possible (findings 1, 2, 3) and says `Test-First: not possible — <reason>` where it is not (4, 5, 6, 8).
 - Finding 8: the dispatcher test above.
 - Finding 9: the PR description is rewritten with the sections of PR-17.
+
+## Review pass 2
+
+- Finding 10 (a list ending exactly at the page cap): the `Link` header is read; a full page without `rel="next"` ends the list. Without a `Link` header the list is still refused as too long (a probe of page 21 would have changed the committed request-count test).
+- Finding 11 (secrets in a refused API base): `InvalidApiBase` keeps no refused text; its variants name the scheme, the host or a `ForbiddenPart`.
+- Findings 6 and 7: not changeable in code. 6 needs the human's approval of the two corrected RED expectations; 7 concerns published history, which is not rewritten.
