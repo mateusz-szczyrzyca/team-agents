@@ -5,97 +5,257 @@
 
 use std::fmt;
 
-use crate::kinds::keyword_enum;
+use crate::kinds::{Keyword, UnknownKeyword};
 
-keyword_enum! {
-    /// How the agent says its run ended: the word after `STATUS:` in its final message.
-    ///
-    /// The Bash `agent` also knew `ROUND_DONE` (a round is a task-list item now, ended with `DONE`) and
-    /// `INVESTIGATING` (standalone investigation requests are not part of this harness); both are refused.
-    pub enum RunOutcome: "run outcome" {
-        /// The work asked for is finished.
-        Done => "DONE",
-        /// The agent wrote questions for the human and waits for the answers.
-        Questions => "QUESTIONS",
-        /// The agent could not do the work.
-        Failed => "FAILED",
-        /// A team member has nothing to do until a message wakes it.
-        Sleeping => "SLEEPING",
-        /// A member the coordinator excluded from the team acknowledges it and stops.
-        Excluded => "EXCLUDED",
+/// How the agent says its run ended: the word after `STATUS:` in its final message.
+///
+/// The Bash `agent` also knew `ROUND_DONE` (a round is a task-list item now, ended with `DONE`) and
+/// `INVESTIGATING` (standalone investigation requests are not part of this harness); both are refused.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String", into = "&'static str")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<RunOutcome>)]
+pub enum RunOutcome {
+    /// The work asked for is finished.
+    Done,
+    /// The agent wrote questions for the human and waits for the answers.
+    Questions,
+    /// The agent could not do the work.
+    Failed,
+    /// A team member has nothing to do until a message wakes it.
+    Sleeping,
+    /// A member the coordinator excluded from the team acknowledges it and stops.
+    Excluded,
+}
+
+impl Keyword for RunOutcome {
+    const WHAT: &'static str = "run outcome";
+}
+
+impl TryFrom<String> for RunOutcome {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
     }
 }
 
-keyword_enum! {
-    /// A reviewer's verdict on a pull request: the `VERDICT:` line of the review rules' report.
-    pub enum ReviewVerdict: "review verdict" {
-        /// No blocker: the pull request may be merged.
-        Approve => "APPROVE",
-        /// At least one blocker: the team gets a fix pass.
-        RequestChanges => "REQUEST_CHANGES",
+impl RunOutcome {
+    /// Every variant, in declaration order.
+    pub const ALL: &'static [Self] = <Self as strum::VariantArray>::VARIANTS;
+
+    /// The variant's text: what `Display` prints and `FromStr` and serde accept.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 }
 
-keyword_enum! {
-    /// Where a task is in its life: one agent's work, solo or in a team, made of model runs.
-    ///
-    /// Allowed changes ([`StatusMachine::successors`]):
-    ///
-    /// | from | to |
-    /// |---|---|
-    /// | `queued` | `running`, `paused`, `stopped` |
-    /// | `running` | `queued`, `waiting`, `questions`, `paused`, `stopped`, `failed`, `done` |
-    /// | `waiting` | `queued`, `paused`, `stopped`, `done` |
-    /// | `questions` | `queued`, `stopped` |
-    /// | `paused` | `queued`, `stopped` |
-    /// | `stopped` | `queued` |
-    /// | `failed` | `queued`, `stopped` |
-    /// | `done` | — |
-    pub enum TaskStatus: "task status" {
-        /// Its next run is due and waits to start.
-        Queued => "queued",
-        /// A model run is in progress.
-        Running => "running",
-        /// A team member waits for a message, an assignment or a merge.
-        Waiting => "waiting",
-        /// It waits for the human's answers to its questions.
-        Questions => "questions",
-        /// Paused by the human or by an exhausted quota; it is queued again when unpaused.
-        Paused => "paused",
-        /// Stopped by the human; it is queued again when resumed.
-        Stopped => "stopped",
-        /// Its last run failed; it is queued again when resumed.
-        Failed => "failed",
-        /// Finished. Nothing follows.
-        Done => "done",
+/// A reviewer's verdict on a pull request: the `VERDICT:` line of the review rules' report.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String", into = "&'static str")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<ReviewVerdict>)]
+pub enum ReviewVerdict {
+    /// No blocker: the pull request may be merged.
+    Approve,
+    /// At least one blocker: the team gets a fix pass.
+    RequestChanges,
+}
+
+impl Keyword for ReviewVerdict {
+    const WHAT: &'static str = "review verdict";
+}
+
+impl TryFrom<String> for ReviewVerdict {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
     }
 }
 
-keyword_enum! {
-    /// How far an item of a team's task list is.
-    ///
-    /// Allowed changes ([`StatusMachine::successors`]):
-    ///
-    /// | from | to |
-    /// |---|---|
-    /// | `pending` | `in_progress` |
-    /// | `in_progress` | `pending`, `in_review` |
-    /// | `in_review` | `in_progress`, `approved` |
-    /// | `approved` | `done` |
-    /// | `done` | — |
-    pub enum ItemStatus: "item status" {
-        /// Not started: an earlier item of its feature or a feature it depends on is not finished, or no member is
-        /// free.
-        Pending => "pending",
-        /// A member works on it, or the coordinator integrates it, until its pull request is open; a fix pass
-        /// brings it back here.
-        InProgress => "in_progress",
-        /// Its pull request is open and waits for its two reviews.
-        InReview => "in_review",
-        /// Both reviews approve; it waits for its merge (with `--no-merge`, by the human).
-        Approved => "approved",
-        /// Merged, or marked done (`[x]`) in the task list. Nothing follows.
-        Done => "done",
+impl ReviewVerdict {
+    /// Every variant, in declaration order.
+    pub const ALL: &'static [Self] = <Self as strum::VariantArray>::VARIANTS;
+
+    /// The variant's text: what `Display` prints and `FromStr` and serde accept.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+/// Where a task is in its life: one agent's work, solo or in a team, made of model runs.
+///
+/// Allowed changes ([`StatusMachine::successors`]):
+///
+/// | from | to |
+/// |---|---|
+/// | `queued` | `running`, `paused`, `stopped` |
+/// | `running` | `queued`, `waiting`, `questions`, `paused`, `stopped`, `failed`, `done` |
+/// | `waiting` | `queued`, `paused`, `stopped`, `done` |
+/// | `questions` | `queued`, `stopped` |
+/// | `paused` | `queued`, `stopped` |
+/// | `stopped` | `queued` |
+/// | `failed` | `queued`, `stopped` |
+/// | `done` | — |
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String", into = "&'static str")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<TaskStatus>)]
+pub enum TaskStatus {
+    /// Its next run is due and waits to start.
+    Queued,
+    /// A model run is in progress.
+    Running,
+    /// A team member waits for a message, an assignment or a merge.
+    Waiting,
+    /// It waits for the human's answers to its questions.
+    Questions,
+    /// Paused by the human or by an exhausted quota; it is queued again when unpaused.
+    Paused,
+    /// Stopped by the human; it is queued again when resumed.
+    Stopped,
+    /// Its last run failed; it is queued again when resumed.
+    Failed,
+    /// Finished. Nothing follows.
+    Done,
+}
+
+impl Keyword for TaskStatus {
+    const WHAT: &'static str = "task status";
+}
+
+impl TryFrom<String> for TaskStatus {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl TaskStatus {
+    /// Every variant, in declaration order.
+    pub const ALL: &'static [Self] = <Self as strum::VariantArray>::VARIANTS;
+
+    /// The variant's text: what `Display` prints and `FromStr` and serde accept.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+/// How far an item of a team's task list is.
+///
+/// Allowed changes ([`StatusMachine::successors`]):
+///
+/// | from | to |
+/// |---|---|
+/// | `pending` | `in_progress` |
+/// | `in_progress` | `pending`, `in_review` |
+/// | `in_review` | `in_progress`, `approved` |
+/// | `approved` | `done` |
+/// | `done` | — |
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String", into = "&'static str")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<ItemStatus>)]
+pub enum ItemStatus {
+    /// Not started: an earlier item of its feature or a feature it depends on is not finished, or no member is
+    /// free.
+    Pending,
+    /// A member works on it, or the coordinator integrates it, until its pull request is open; a fix pass
+    /// brings it back here.
+    InProgress,
+    /// Its pull request is open and waits for its two reviews.
+    InReview,
+    /// Both reviews approve; it waits for its merge (with `--no-merge`, by the human).
+    Approved,
+    /// Merged, or marked done (`[x]`) in the task list. Nothing follows.
+    Done,
+}
+
+impl Keyword for ItemStatus {
+    const WHAT: &'static str = "item status";
+}
+
+impl TryFrom<String> for ItemStatus {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl ItemStatus {
+    /// Every variant, in declaration order.
+    pub const ALL: &'static [Self] = <Self as strum::VariantArray>::VARIANTS;
+
+    /// The variant's text: what `Display` prints and `FromStr` and serde accept.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 }
 

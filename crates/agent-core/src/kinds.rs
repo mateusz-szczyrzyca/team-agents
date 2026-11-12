@@ -1,76 +1,18 @@
 //! Kinds: the model CLI an agent runs, the tier of the configuration it is in, and the role it has in a task.
 //!
-//! These and the statuses of [`crate::status`] are keyword enums: each variant has one text, which `Display` prints
-//! and `FromStr` and serde accept; any other text is an [`UnknownKeyword`].
+//! These and the statuses of [`crate::status`] are keyword enums: each variant has one text, declared once in a
+//! `#[strum(...)]` attribute, which `Display` prints and `FromStr`, `TryFrom<String>` and serde accept; any other text
+//! is an [`UnknownKeyword`]. A keyword enum derives
+//! `Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize` and the strum derives
+//! `Display, EnumString, IntoStaticStr, VariantArray, VariantNames` (see [`CliKind`]), and implements [`Keyword`].
 
-/// Declares a keyword enum: a fieldless enum whose variants each have one text, used by `Display`, `FromStr`,
-/// `TryFrom<String>` (which serde deserializes through) and `From<$name> for &str` (which serde serializes through).
-/// `ALL` lists the variants in declaration order.
-macro_rules! keyword_enum {
-    (
-        $(#[$meta:meta])*
-        pub enum $name:ident: $what:literal {
-            $( $(#[$variant_meta:meta])* $variant:ident => $text:literal, )+
-        }
-    ) => {
-        $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
-        #[serde(try_from = "String", into = "&'static str")]
-        pub enum $name {
-            $( $(#[$variant_meta])* $variant, )+
-        }
+use strum::VariantNames;
 
-        impl $name {
-            /// Every variant, in declaration order.
-            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
-
-            /// The variant's text: what `Display` prints and `FromStr` and serde accept.
-            #[must_use]
-            pub const fn as_str(self) -> &'static str {
-                match self {
-                    $(Self::$variant => $text,)+
-                }
-            }
-        }
-
-        impl std::fmt::Display for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str(self.as_str())
-            }
-        }
-
-        impl std::str::FromStr for $name {
-            type Err = $crate::kinds::UnknownKeyword;
-
-            fn from_str(text: &str) -> Result<Self, Self::Err> {
-                match text {
-                    $($text => Ok(Self::$variant),)+
-                    _ => Err($crate::kinds::UnknownKeyword {
-                        what: $what,
-                        value: text.to_owned(),
-                        expected: &[$($text),+],
-                    }),
-                }
-            }
-        }
-
-        impl TryFrom<String> for $name {
-            type Error = $crate::kinds::UnknownKeyword;
-
-            fn try_from(text: String) -> Result<Self, Self::Error> {
-                text.parse()
-            }
-        }
-
-        impl From<$name> for &'static str {
-            fn from(value: $name) -> Self {
-                value.as_str()
-            }
-        }
-    };
+/// A keyword enum: what its texts name, for [`UnknownKeyword`], and its texts in declaration order.
+pub trait Keyword: VariantNames {
+    /// What the enum's texts name, for the message of an [`UnknownKeyword`]: `CLI kind`, `task status`, ...
+    const WHAT: &'static str;
 }
-
-pub(crate) use keyword_enum;
 
 /// Why a text is not one of a keyword enum's texts.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -84,45 +26,178 @@ pub struct UnknownKeyword {
     pub expected: &'static [&'static str],
 }
 
-keyword_enum! {
-    /// The model CLI an agent or investigator runs.
-    pub enum CliKind: "CLI kind" {
-        /// Claude Code, the `claude` command.
-        Claude => "claude",
-        /// Codex CLI, the `codex` command.
-        Codex => "codex",
-        /// Google Antigravity with Gemini models, the `agy` command.
-        Gemini => "gemini",
-        /// opencode, the `opencode` command.
-        Opencode => "opencode",
+impl UnknownKeyword {
+    /// The error for `text`, which is not one of the texts of the keyword enum `K`. It is the `parse_err_fn` of every
+    /// keyword enum's `EnumString`: strum's own parse error carries neither what was parsed nor the accepted texts.
+    #[must_use]
+    pub fn of<K: Keyword>(text: &str) -> Self {
+        Self {
+            what: K::WHAT,
+            value: text.to_owned(),
+            expected: K::VARIANTS,
+        }
     }
 }
 
-keyword_enum! {
-    /// The list of the configuration an agent is in, which decides what it may do.
-    pub enum Tier: "tier" {
-        /// Works on task-list items, solo or as a team member, and may coordinate a team.
-        Normal => "normal",
-        /// Serves `delegate` requests of team members; never takes items and never coordinates.
-        Worker => "worker",
-        /// Reviews the pull requests of teams it is not in; in a team it may coordinate.
-        Investigator => "investigator",
+/// The model CLI an agent or investigator runs.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String", into = "&'static str")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<CliKind>)]
+pub enum CliKind {
+    /// Claude Code, the `claude` command.
+    Claude,
+    /// Codex CLI, the `codex` command.
+    Codex,
+    /// Google Antigravity with Gemini models, the `agy` command.
+    Gemini,
+    /// opencode, the `opencode` command.
+    Opencode,
+}
+
+impl Keyword for CliKind {
+    const WHAT: &'static str = "CLI kind";
+}
+
+impl TryFrom<String> for CliKind {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
     }
 }
 
-keyword_enum! {
-    /// What a task does: alone, in its team, or for another team.
-    pub enum Role: "role" {
-        /// The only agent of a task without a team.
-        Solo => "solo",
-        /// Leads a team: integrates the members' branches, gets the gate green, opens the pull request.
-        Coordinator => "coordinator",
-        /// Works on the items the daemon assigns to it.
-        Member => "member",
-        /// Serves a `delegate` request of a team member.
-        Worker => "worker",
-        /// Reviews a pull request of a team it is not in.
-        Reviewer => "reviewer",
+impl CliKind {
+    /// Every variant, in declaration order.
+    pub const ALL: &'static [Self] = <Self as strum::VariantArray>::VARIANTS;
+
+    /// The variant's text: what `Display` prints and `FromStr` and serde accept.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+/// The list of the configuration an agent is in, which decides what it may do.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String", into = "&'static str")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<Tier>)]
+pub enum Tier {
+    /// Works on task-list items, solo or as a team member, and may coordinate a team.
+    Normal,
+    /// Serves `delegate` requests of team members; never takes items and never coordinates.
+    Worker,
+    /// Reviews the pull requests of teams it is not in; in a team it may coordinate.
+    Investigator,
+}
+
+impl Keyword for Tier {
+    const WHAT: &'static str = "tier";
+}
+
+impl TryFrom<String> for Tier {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl Tier {
+    /// Every variant, in declaration order.
+    pub const ALL: &'static [Self] = <Self as strum::VariantArray>::VARIANTS;
+
+    /// The variant's text: what `Display` prints and `FromStr` and serde accept.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+/// What a task does: alone, in its team, or for another team.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String", into = "&'static str")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<Role>)]
+pub enum Role {
+    /// The only agent of a task without a team.
+    Solo,
+    /// Leads a team: integrates the members' branches, gets the gate green, opens the pull request.
+    Coordinator,
+    /// Works on the items the daemon assigns to it.
+    Member,
+    /// Serves a `delegate` request of a team member.
+    Worker,
+    /// Reviews a pull request of a team it is not in.
+    Reviewer,
+}
+
+impl Keyword for Role {
+    const WHAT: &'static str = "role";
+}
+
+impl TryFrom<String> for Role {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl Role {
+    /// Every variant, in declaration order.
+    pub const ALL: &'static [Self] = <Self as strum::VariantArray>::VARIANTS;
+
+    /// The variant's text: what `Display` prints and `FromStr` and serde accept.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 }
 
