@@ -169,3 +169,12 @@ Rules read with a judgement call, for the reviewer:
   binary without a bounded retry (see the TDD-8 note above).
 
 I had no `agentbus` tools, so nothing was written to the repository notebook; the two notes above are the notebook entries.
+
+## Tests outside the modules
+
+The unit tests of the five modules are inline (`#[cfg(test)] mod tests`), which a check that looks for test files does
+not see. `crates/agent-runtime/tests/public_api.rs` adds `3` integration tests that run the three checks of the item
+through the public API only: a second lock of a home is refused (`StoreError::HomeLocked`), a stopped process leaves
+none of its group behind (checked in `/proc`), and a save leaves only the home's own files. They characterise code that
+already existed (`Test-First: not possible — they re-check behaviour that the inline tests drove`); no existing test was
+changed.
