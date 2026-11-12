@@ -8455,9 +8455,10 @@ cmd_stop() {
   echo "Stopped $id."
 }
 
-# task_role task — the role of a task's runs: reviewer (a review: REVIEW=1, or an investigation's phase 3 or 5) or
-# writer (every other run)
-task_role() {
+# prompt_role task — the role a task's prompt is made for (prompt_for_role): reviewer (a review: REVIEW=1, or an
+# investigation's phase 3 or 5) or writer (every other run). Not task_role, which names a task's role in the token
+# accounting
+prompt_role() {
   local id=$1 phase
   if [[ $(task_field "$id" REVIEW) == 1 ]]; then echo reviewer; return; fi
   phase=$(task_field "$id" INVESTIGATION_PHASE)
@@ -8465,14 +8466,14 @@ task_role() {
   echo writer
 }
 
-# prompt_for_role task file mode — a run's prompt made fit for its role (task_role): every line naming what the role
+# prompt_for_role task file mode — a run's prompt made fit for its role (prompt_role): every line naming what the role
 # must not be pointed at (AGENT_WRITER_HIDE / AGENT_REVIEWER_HIDE, fixed strings) left out, and, in a new session
 # (not a resumed one), the role's introduction (AGENT_WRITER_INTRO / AGENT_REVIEWER_INTRO) first. Nothing configured:
 # the prompt as it was
 prompt_for_role() {
   local id=$1 file=$2 mode=$3 role intro tmp removed=0 h
   local -a hide=() patterns=()
-  role=$(task_role "$id")
+  role=$(prompt_role "$id")
   if [[ $role == reviewer ]]; then
     intro=$AGENT_REVIEWER_INTRO; hide=("${AGENT_REVIEWER_HIDE[@]}")
   else
