@@ -4328,6 +4328,7 @@ build_prompt() { # id mode qfile next_round
     [HELPER_ID]=${HELPER_ID:-}
     [PR_URL]=${PR_URL:-} [PR_NUMBER]=${PR_NUMBER:-}
     [RESUMED_FROM]=${RESUMED_FROM:-} [HANG_MIN]=$AGENT_HANG_MIN
+    [REVIEW_GATE]="$(review_gate_text "$id")"
   )
   if [[ $mode != fresh ]]; then continuation_rules; fi
   if [[ $mode != fresh ]] && is_independent_investigation "$id"; then
@@ -8488,6 +8489,23 @@ prompt_role() {
   phase=$(task_field "$id" INVESTIGATION_PHASE)
   if [[ $(task_field "$id" KIND) == investigation && ($phase == 3 || $phase == 5) ]]; then echo reviewer; return; fi
   echo writer
+}
+
+# review_gate_text task — for a review run, the gate of the PR's change (review_gate_cmd: AGENT_GATE_SCOPES decide by
+# the paths the change touches), told as the one to run: a reviewer that runs the repository's whole gate spends its
+# time on checks the change cannot touch. Nothing for any other run, or when the repository has no gate
+review_gate_text() {
+  local id=$1 parent target gate
+  [[ $(prompt_role "$id") == reviewer && -n ${WORKTREE:-} && -d ${WORKTREE:-} ]] || return 0
+  parent=$(task_field "$id" PARENT_TASK)
+  [[ -z $parent ]] || target=$(investigation_field "$parent" INVESTIGATION_TARGET_BRANCH)
+  if [[ -z ${target:-} ]]; then
+    target=$(git -C "$WORKTREE" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2> /dev/null) || target=origin/main
+    target=${target#origin/}
+  fi
+  gate=$(review_gate_cmd "$WORKTREE" "origin/$target" HEAD)
+  [[ -n $gate ]] || return 0
+  printf "\n   **The gate of this change:** \`%s\` (what the paths it touches need). Run this one, once, to verify the\n   build, the tests and the lint; not the repository's other checks, which do not cover this change." "$gate"
 }
 
 # prompt_for_role task file mode — a run's prompt made fit for its role (prompt_role): every line naming what the role

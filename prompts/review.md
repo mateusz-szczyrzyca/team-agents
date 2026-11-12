@@ -27,7 +27,7 @@ The task behind the PR is below. Check the PR's compliance with the repository i
    bugs and edge cases, security (secrets, permissions), idempotence and repeatability, tests, readability,
    compliance with the repository conventions. Do not invent problems — every remark needs a concrete reason.
 3. Where it is cheap and safe, verify empirically (build, tests, lint). Shared resources (devices, test hosts) —
-   only with `reserve`/`release`; without the agentbus tools, do not use them.
+   only with `reserve`/`release`; without the agentbus tools, do not use them.{{REVIEW_GATE}}
    **Test first:** for every change of behaviour, check that its test came first — a commit with the test (and a
    bare signature) before the code, its message ending with the failing run (`RED: …`) — or that the commit says
    `Test-First: not possible — <reason>` with a believable reason. You may check out that RED commit and run the
