@@ -1,6 +1,6 @@
 //! The pure core of the agent harness: identifiers ([`ids`]), kinds ([`kinds`]), statuses ([`status`]), the
 //! configuration ([`config`]), the task list ([`task_list`]), the questions files ([`questions`]), the
-//! state ([`state`]), the control protocol ([`protocol`]) and, later, the decisions (see `docs/architecture.md`).
+//! state ([`state`]), the control protocol ([`protocol`]) and the decisions ([`decide`]); see `docs/architecture.md`.
 //!
 //! Nothing here does I/O: the clock and the random source are passed in ([`ids::Clock`], [`rand::Rng`]), so every
 //! function is deterministic under test.
@@ -48,6 +48,7 @@ macro_rules! version_type {
 
 pub mod cli;
 pub mod config;
+pub mod decide;
 pub mod ids;
 pub mod kinds;
 pub mod prompt;
