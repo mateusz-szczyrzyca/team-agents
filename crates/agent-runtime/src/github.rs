@@ -270,7 +270,7 @@ fn is_loopback(url: &Url) -> bool {
 pub enum Jitter {
     /// The delay is exactly the growing one; for tests.
     None,
-    /// The delay is between half and all of the growing one, by the sub-second part of the clock: spread, not secret.
+    /// The delay is between half and all of the growing one, by a number from the standard library's randomly keyed hasher (`RandomState`): spread, not secret.
     Spread,
 }
 

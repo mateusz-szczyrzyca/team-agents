@@ -1364,20 +1364,66 @@ fn parse_sent(output: &str) -> Result<SentMessage, AgentBusError> {
         .ok_or_else(|| unexpected(BusCommand::Send, output))
 }
 
-/// One agent of the status: `  name — task (branch) pid 123, status: text`. The status is as printed, not trimmed:
-/// its text may go on in the next lines.
-fn parse_agent_line(line: &str) -> Option<ActiveAgent> {
+/// What a line of the agents' part of the status is.
+enum AgentLine {
+    /// A record of an agent.
+    Record(ActiveAgent),
+    /// Shaped like a record (`  name — task (branch) pid 123, status: text`) but with a name, a task, a branch or a
+    /// pid that is none: the bus listed an agent that cannot be read, which is an error, not a text to go on with.
+    Malformed,
+    /// Not shaped like a record: the next line of a status text.
+    Text,
+}
+
+/// Reads one line of the agents' part: `  name — task (branch) pid 123, status: text`. The status is as printed, not
+/// trimmed: its text may go on in the next lines.
+fn parse_agent_line(line: &str) -> AgentLine {
+    let Some(parts) = split_agent_line(line) else {
+        return AgentLine::Text;
+    };
+    let record = (|| {
+        Some(ActiveAgent {
+            agent: parts.agent.parse().ok()?,
+            task: parts.task.parse().ok()?,
+            branch: parts.branch.parse().ok()?,
+            pid: parts.pid.trim().parse().ok()?,
+            status: parts.status.to_owned(),
+        })
+    })();
+    record.map_or(AgentLine::Malformed, AgentLine::Record)
+}
+
+/// The text fields of an agent's line, before they are read as typed values.
+struct AgentLineParts<'a> {
+    /// The agent's name.
+    agent: &'a str,
+    /// The task.
+    task: &'a str,
+    /// The branch.
+    branch: &'a str,
+    /// The process id.
+    pid: &'a str,
+    /// The status, as printed.
+    status: &'a str,
+}
+
+/// Cuts an agent's line at its separators; `None` when it is not shaped like one.
+fn split_agent_line(line: &str) -> Option<AgentLineParts<'_>> {
     let rest = line.strip_prefix("  ")?;
     let (agent, rest) = rest.split_once(" — ")?;
     let (task, rest) = rest.split_once(" (")?;
     let (branch, rest) = rest.split_once(") pid ")?;
     let (pid, status) = rest.split_once(", status:")?;
-    Some(ActiveAgent {
-        agent: agent.parse().ok()?,
-        task: task.parse().ok()?,
-        branch: branch.parse().ok()?,
-        pid: pid.trim().parse().ok()?,
-        status: status.to_owned(),
+    // The pid is a number in every record the bus prints; a line without one is a text.
+    if pid.trim().is_empty() || !pid.trim().bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(AgentLineParts {
+        agent,
+        task,
+        branch,
+        pid,
+        status,
     })
 }
 
@@ -1405,8 +1451,11 @@ fn parse_status(output: &str) -> Result<BusStatus, AgentBusError> {
             "Reservations:" => break,
             "  (none)" if agents.is_empty() => {}
             line => match parse_agent_line(line) {
-                Some(agent) => agents.push(agent),
-                None => continue_text(agents.last_mut().map(|last| &mut last.status), line).ok_or_else(bad)?,
+                AgentLine::Record(agent) => agents.push(agent),
+                AgentLine::Malformed => return Err(bad()),
+                AgentLine::Text => {
+                    continue_text(agents.last_mut().map(|last| &mut last.status), line).ok_or_else(bad)?;
+                }
             },
         }
     }
