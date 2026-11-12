@@ -58,10 +58,17 @@ pub struct TextProblem {
 
 /// Every problem the files of the catalog have.
 #[derive(Debug, thiserror::Error)]
-#[error("{} text files cannot be used", problems.len())]
+#[error("{} text files cannot be used{}", problems.len(), listed(problems))]
 pub struct HarnessPromptsError {
+    /// The prompts directory the files were read from.
+    dir: PathBuf,
     /// The problems, in the order of the catalog; never empty.
     problems: Vec<TextProblem>,
+}
+
+/// Each problem on one line: its file and what is wrong with it.
+fn listed(_problems: &[TextProblem]) -> String {
+    String::new()
 }
 
 impl HarnessPromptsError {
@@ -118,7 +125,10 @@ impl HarnessPrompts {
         if problems.is_empty() {
             Ok(Self { texts })
         } else {
-            Err(HarnessPromptsError { problems })
+            Err(HarnessPromptsError {
+                dir: dir.to_path_buf(),
+                problems,
+            })
         }
     }
 

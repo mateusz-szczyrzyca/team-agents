@@ -208,4 +208,20 @@ mod harness_prompts {
 
         assert_eq!(error.problems().len(), HarnessPrompt::ALL.len());
     }
+
+    #[tokio::test]
+    async fn the_error_names_the_directory_and_each_file_with_its_problem() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let error = HarnessPrompts::load(dir.path(), &Language::default())
+            .await
+            .unwrap_err();
+
+        let text = error.to_string();
+        assert!(text.contains(dir.path().to_str().unwrap()), "{text}");
+        for id in HarnessPrompt::ALL {
+            let line = format!("{}: none of the candidate files exists", id.spec().path());
+            assert!(text.contains(&line), "{line} in {text}");
+        }
+    }
 }
