@@ -6,8 +6,11 @@ the end lists the other items for context only: do not do their work, and do not
 
 Ground rules
 
-- Read `prompts/agent/rust-developer.md` (the Rust developer rules) before writing code. Every PR is reviewed against
-  `prompts/investigator/code-review.md`. Both are binding; their rule IDs (ERR-2, PR-1, ...) are used below.
+- The rules, each read by its own role only:
+  - Writing or fixing code: read `prompts/agent/rust-developer.md` (the Rust developer rules) first; it is binding.
+    Its rule IDs (ERR-2, PR-1, ...) are the ones this plan and the reviewers cite.
+  - Reviewing a PR: review against `prompts/investigator/code-review.md`, which lists every rule by its ID. Do not
+    read `rust-developer.md` as a whole: open it only for the full wording of a rule a finding cites.
 - Size, relaxed for this plan: the new `agent` is needed fast, so PR-1's limit is 5000 changed lines per PR, tests
   not counted, and PR-2's threshold for planning a split is about 4000. Everything else in PR-1 and PR-2 applies as
   written: how lines are counted, a ceiling not a target, never fewer tests because of it. Task 1.1 records this in
@@ -117,13 +120,13 @@ Plan overview (context only)
    1.1 Create the Cargo workspace, its gate and the core vocabulary   (done)
 2. Core models and contracts
    2.1 Configuration and the task list file   (done)
-   2.2 State, control protocol and questions files
-   2.3 Prompt catalog and the model CLI contract
-   2.4 Replace the `keyword_enum!` macro with strum
+   2.2 State, control protocol and questions files   (done)
+   2.3 Prompt catalog and the model CLI contract   (done)
+   2.4 Replace the `keyword_enum!` macro with strum   (done)
 3. Core decisions
-   3.1 Team formation, assignment, the autopilot round and run outcomes
+   3.1 Team formation, assignment, the autopilot round and run outcomes   (done)
 4. Runtime services
-   4.1 State store, prompts, processes, git and notifications
+   4.1 State store, prompts, processes, git and notifications   (done)
    4.2 GitHub API and agentbus
 5. Model CLI adapters
    5.1 Claude Code, Codex, Antigravity and opencode adapters

@@ -5,8 +5,11 @@ feature is the brief every member reads; each item below is one task, one branch
 
 Ground rules
 
-- Read `prompts/agent/rust-developer.md` (the Rust developer rules) before writing code. Every PR is reviewed against
-  `prompts/investigator/code-review.md`. Both are binding; their rule IDs (ERR-2, PR-1, ...) are used below.
+- The rules, each read by its own role only:
+  - Writing or fixing code: read `prompts/agent/rust-developer.md` (the Rust developer rules) first; it is binding.
+    Its rule IDs (ERR-2, PR-1, ...) are the ones this plan and the reviewers cite.
+  - Reviewing a PR: review against `prompts/investigator/code-review.md`, which lists every rule by its ID. Do not
+    read `rust-developer.md` as a whole: open it only for the full wording of a rule a finding cites.
 - Size, relaxed for this plan: the new `agent` is needed fast, so PR-1's limit is 5000 changed lines per PR, tests
   not counted, and PR-2's threshold for planning a split is about 4000. Everything else in PR-1 and PR-2 applies as
   written: how lines are counted, a ceiling not a target, never fewer tests because of it. Task 1.1 records this in
