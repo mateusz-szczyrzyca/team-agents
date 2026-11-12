@@ -26,6 +26,15 @@ use tokio::time::timeout;
 /// How long a process that was sent `SIGKILL` may take to be reaped before the stop gives up.
 const KILL_WAIT: Duration = Duration::from_secs(10);
 
+/// How long a start refused because the program is busy (`ETXTBSY`) is tried again.
+///
+/// A program is busy while a file descriptor writing it is open. In a multithreaded process, a child forked by another
+/// thread while a program was being written holds such a descriptor until its own `exec`: the program is busy for that
+/// moment only. A program that stays open for writing longer is a real error.
+const BUSY_RETRY_FOR: Duration = Duration::from_secs(2);
+/// The pause between two tries of a start refused because the program is busy.
+const BUSY_RETRY_PAUSE: Duration = Duration::from_millis(10);
+
 /// A signal to a whole process group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
 pub(crate) enum GroupSignal {
@@ -309,10 +318,12 @@ impl Supervisor {
             .process_group(0)
             // Last line of defence: the leader does not outlive a handle that was dropped on an error path.
             .kill_on_drop(true);
-        let child = command.spawn().map_err(|source| ProcessError::Spawn {
-            program: spec.program.as_path().to_path_buf(),
-            source,
-        })?;
+        let child = spawn_when_free(&mut command)
+            .await
+            .map_err(|source| ProcessError::Spawn {
+                program: spec.program.as_path().to_path_buf(),
+                source,
+            })?;
         let (id, group) = leader_of(&child)?;
         Ok(RunningProcess {
             child,
@@ -324,6 +335,24 @@ impl Supervisor {
             started: SystemTime::now(),
             _slot: slot,
         })
+    }
+}
+
+/// Starts `command`, trying again for [`BUSY_RETRY_FOR`] while the program is busy (`ETXTBSY`).
+///
+/// # Errors
+/// What the operating system said about the last try.
+async fn spawn_when_free(command: &mut Command) -> io::Result<Child> {
+    let deadline = tokio::time::Instant::now() + BUSY_RETRY_FOR;
+    loop {
+        match command.spawn() {
+            Err(error)
+                if error.kind() == io::ErrorKind::ExecutableFileBusy && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(BUSY_RETRY_PAUSE).await;
+            }
+            started => return started,
+        }
     }
 }
 
@@ -608,7 +637,9 @@ async fn capture_feeding(
         .stderr(Stdio::piped())
         .process_group(0)
         .kill_on_drop(true);
-    let mut child = command.spawn().map_err(|source| CaptureError::Spawn { source })?;
+    let mut child = spawn_when_free(&mut command)
+        .await
+        .map_err(|source| CaptureError::Spawn { source })?;
     let (_, group) = leader_of(&child)?;
     let stdin = child.stdin.take();
     let stdout = child
