@@ -1,0 +1,188 @@
+{
+  "cli": "gemini",
+  "provenance": "Texts as the Antigravity (Gemini) CLI writes them, reconstructed from the old harness's tests (tests/unit/limits.bats, run_notes.bats, authenticated.bats and the fake CLIs in tests/unit/stubs) and from the CLI's documented error messages. They were not captured by running the CLI in this session: a real run costs the human money and quota (AGENTS.md rule 4). Replace a text with a capture when one is at hand. The clock is 2026-11-12T10:00:00Z and the machine's offset +01:00.",
+  "cases": [
+    {
+      "name": "done",
+      "final_message": "Implemented the change; the checks pass.\n\nSTATUS: DONE\nRole: solo\nDone:\n- the change\nNot done: nothing\nUnclear: None.",
+      "exit": 0,
+      "stream": "succeeded",
+      "expect": {
+        "end": {
+          "kind": "reported",
+          "outcome": "DONE"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "questions",
+      "final_message": "STATUS: QUESTIONS\nRole: solo\nDone:\n- read the code\nNot done: the rest\nUnclear: which store?\n\nQuestions are in questions-1.md.",
+      "exit": 0,
+      "stream": "succeeded",
+      "expect": {
+        "end": {
+          "kind": "reported",
+          "outcome": "QUESTIONS"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "failed",
+      "final_message": "STATUS: FAILED\nRole: solo\nDone:\n- nothing\nNot done: the build is broken and I cannot fix it\nUnclear: None.",
+      "exit": 0,
+      "stream": "succeeded",
+      "expect": {
+        "end": {
+          "kind": "reported",
+          "outcome": "FAILED"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "sleeping",
+      "final_message": "STATUS: SLEEPING\nRole: member\nDone:\n- pushed my branch\nNot done: wait for the coordinator\nUnclear: None.",
+      "exit": 0,
+      "stream": "succeeded",
+      "expect": {
+        "end": {
+          "kind": "reported",
+          "outcome": "SLEEPING"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "hung",
+      "exit": null,
+      "stream": "incomplete",
+      "stopped_by": "watchdog",
+      "expect": {
+        "end": {
+          "kind": "hung"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "stopped_by_the_human",
+      "final_message": "Working on the",
+      "exit": null,
+      "stream": "incomplete",
+      "stopped_by": "human",
+      "expect": {
+        "end": {
+          "kind": "stopped"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "no_status_after_a_question",
+      "final_message": "Should I continue with the second part?",
+      "exit": 0,
+      "stream": "succeeded",
+      "expect": {
+        "end": {
+          "kind": "no_status",
+          "exit_code": 0
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "crash_without_a_limit",
+      "stderr": "Error: invalid argument --frobnicate",
+      "exit": 1,
+      "stream": "failed",
+      "expect": {
+        "end": {
+          "kind": "no_status",
+          "exit_code": 1
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "quota_with_a_duration",
+      "stderr": "Error: You have exhausted your capacity on this model. Your quota will reset after 2h28m14s.",
+      "exit": 1,
+      "stream": "failed",
+      "expect": {
+        "end": {
+          "kind": "quota_exhausted",
+          "resets_at": "2026-11-12T12:28:14Z"
+        },
+        "pause": {
+          "until": "2026-11-12T12:29:14Z",
+          "reason": "quota",
+          "evidence": "Error: You have exhausted your capacity on this model. Your quota will reset after 2h28m14s."
+        }
+      }
+    },
+    {
+      "name": "resource_exhausted",
+      "stderr": "[API Error: {\"error\":{\"code\":429,\"message\":\"Resource has been exhausted (e.g. check quota).\",\"status\":\"RESOURCE_EXHAUSTED\"}}]",
+      "exit": 1,
+      "stream": "failed",
+      "expect": {
+        "end": {
+          "kind": "quota_exhausted"
+        },
+        "pause": {
+          "until": "2026-11-12T10:31:00Z",
+          "reason": "quota",
+          "evidence": "[API Error: {\"error\":{\"code\":429,\"message\":\"Resource has been exhausted (e.g. check quota).\",\"status\":\"RESOURCE_EXHAUSTED\"}}]"
+        }
+      }
+    },
+    {
+      "name": "rate_limited",
+      "stderr": "Error: Request failed with status 429 (rateLimitExceeded)",
+      "exit": 1,
+      "stream": "failed",
+      "expect": {
+        "end": {
+          "kind": "rate_limited"
+        },
+        "pause": {
+          "until": "2026-11-12T10:06:00Z",
+          "reason": "rate_limit",
+          "evidence": "Error: Request failed with status 429 (rateLimitExceeded)"
+        }
+      }
+    },
+    {
+      "name": "overloaded",
+      "stderr": "[API Error: {\"error\":{\"code\":503,\"message\":\"The model is overloaded. Please try again later.\",\"status\":\"UNAVAILABLE\"}}]",
+      "exit": 1,
+      "stream": "failed",
+      "expect": {
+        "end": {
+          "kind": "rate_limited"
+        },
+        "pause": {
+          "until": "2026-11-12T10:06:00Z",
+          "reason": "rate_limit",
+          "evidence": "[API Error: {\"error\":{\"code\":503,\"message\":\"The model is overloaded. Please try again later.\",\"status\":\"UNAVAILABLE\"}}]"
+        }
+      }
+    },
+    {
+      "name": "a_retried_429_in_a_clean_run",
+      "final_message": "Done.\n\nSTATUS: DONE",
+      "stderr": "Attempt 1 failed with status 429. Retrying with backoff...",
+      "exit": 0,
+      "stream": "succeeded",
+      "expect": {
+        "end": {
+          "kind": "reported",
+          "outcome": "DONE"
+        },
+        "pause": null
+      }
+    }
+  ]
+}

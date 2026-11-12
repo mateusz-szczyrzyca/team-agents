@@ -108,6 +108,18 @@ the files to write first, what to keep out of git), the runtime starts it, feeds
 an `OutputParser` and its stderr at the end, and gets the final message, the session ID, how the stream says the run
 ended and the error tail. The adapters of the four CLIs come with feature 5.
 
+### The decisions (`agent-core`)
+
+| Module | What it decides |
+|---|---|
+| `decide::team` | `plan_team`: from the agents named, the configuration, the coordinator asked for (`--coordinator`, then the task list's `Coordinator:` line) and a random source, a `TeamPlan` — solo, or a team with its coordinator, members and workers — or a `TeamPlanError`: unknown agent, a worker as coordinator, a coordinator that was not named, only workers, no member besides the coordinator, and too many (or too few) investigators for two outside reviewers |
+| `decide::assign` | `next_assignments`: which item goes to which member next — one item per member, the items of a feature in order (the next starts when the previous is merged, with `--no-merge` approved), features in parallel once the features they depend on are merged; `first_free_worker` for `delegate` |
+| `decide::round` | `RoundState`, `RoundEvent` and `RoundState::transition`: member work, integration, gate green at the head, pull request published for that head, two reviews, merge or hand-over to the human, item done; "changes requested" starts a fix pass until `[review] fix_passes`, then the human is asked, and the answer grants one more pass. Each transition says what the daemon does next (`RoundAction`) |
+| `decide::outcome` | `classify_outcome`: from the final message, the exit status, the error tail and who ended the run, the `RunEnd` to record — reported status, no status, quota exhausted (with the reset time when the CLI gives one), rate limited, hung, stopped — and the `Pause` it implies; `after_hang` for the watchdog's strikes. The CLIs' outputs are fixtures in `crates/agent-core/tests/fixtures/cli-outputs/` |
+
+The daemon feeds these functions what it observed and carries out what they return; none of them touches a file, a process or
+the network. The order of the checks and the rules each follows are in the documentation of its module.
+
 ## Process model
 
 `agent daemon`, a systemd user service, is the only owner of the state and of every model run. Every other command

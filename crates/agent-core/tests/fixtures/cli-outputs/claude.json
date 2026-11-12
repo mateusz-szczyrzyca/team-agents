@@ -1,0 +1,202 @@
+{
+  "cli": "claude",
+  "provenance": "Texts as the Claude Code CLI writes them, reconstructed from the old harness's tests (tests/unit/limits.bats, run_notes.bats, authenticated.bats and the fake CLIs in tests/unit/stubs) and from the CLI's documented error messages. They were not captured by running the CLI in this session: a real run costs the human money and quota (AGENTS.md rule 4). Replace a text with a capture when one is at hand. The clock is 2026-11-12T10:00:00Z and the machine's offset +01:00.",
+  "cases": [
+    {
+      "name": "done",
+      "final_message": "Implemented the change; the tests pass.\n\nSTATUS: DONE\nRole: solo\nDone:\n- the change\nNot done: nothing\nUnclear: None.",
+      "exit": 0,
+      "stream": "succeeded",
+      "expect": {
+        "end": {
+          "kind": "reported",
+          "outcome": "DONE"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "questions",
+      "final_message": "STATUS: QUESTIONS\nRole: solo\nDone:\n- read the code\nNot done: the rest\nUnclear: which store?\n\nQuestions are in questions-1.md.",
+      "exit": 0,
+      "stream": "succeeded",
+      "expect": {
+        "end": {
+          "kind": "reported",
+          "outcome": "QUESTIONS"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "failed",
+      "final_message": "STATUS: FAILED\nRole: solo\nDone:\n- nothing\nNot done: the build is broken and I cannot fix it\nUnclear: None.",
+      "exit": 0,
+      "stream": "succeeded",
+      "expect": {
+        "end": {
+          "kind": "reported",
+          "outcome": "FAILED"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "sleeping",
+      "final_message": "STATUS: SLEEPING\nRole: member\nDone:\n- pushed my branch\nNot done: wait for the coordinator\nUnclear: None.",
+      "exit": 0,
+      "stream": "succeeded",
+      "expect": {
+        "end": {
+          "kind": "reported",
+          "outcome": "SLEEPING"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "hung",
+      "exit": null,
+      "stream": "incomplete",
+      "stopped_by": "watchdog",
+      "expect": {
+        "end": {
+          "kind": "hung"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "stopped_by_the_human",
+      "final_message": "Working on the",
+      "exit": null,
+      "stream": "incomplete",
+      "stopped_by": "human",
+      "expect": {
+        "end": {
+          "kind": "stopped"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "no_status_after_a_question",
+      "final_message": "Should I continue with the second part?",
+      "exit": 0,
+      "stream": "succeeded",
+      "expect": {
+        "end": {
+          "kind": "no_status",
+          "exit_code": 0
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "crash_without_a_limit",
+      "stderr": "Error: invalid argument --frobnicate",
+      "exit": 1,
+      "stream": "failed",
+      "expect": {
+        "end": {
+          "kind": "no_status",
+          "exit_code": 1
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "quota_with_a_unix_reset_time",
+      "final_message": "Claude AI usage limit reached|1794478200",
+      "exit": 1,
+      "stream": "failed",
+      "expect": {
+        "end": {
+          "kind": "quota_exhausted",
+          "resets_at": "2026-11-12T10:10:00Z"
+        },
+        "pause": {
+          "until": "2026-11-12T10:11:00Z",
+          "reason": "quota",
+          "evidence": "Claude AI usage limit reached|1794478200"
+        }
+      }
+    },
+    {
+      "name": "quota_with_a_time_of_day",
+      "final_message": "You've hit your limit · resets 3pm (Europe/Warsaw)",
+      "exit": 1,
+      "stream": "failed",
+      "expect": {
+        "end": {
+          "kind": "quota_exhausted",
+          "resets_at": "2026-11-12T14:00:00Z"
+        },
+        "pause": {
+          "until": "2026-11-12T14:01:00Z",
+          "reason": "quota",
+          "evidence": "You've hit your limit · resets 3pm (Europe/Warsaw)"
+        }
+      }
+    },
+    {
+      "name": "rate_limited",
+      "stderr": "API Error: 429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed the rate limit for your organization.\"}}",
+      "exit": 1,
+      "stream": "failed",
+      "expect": {
+        "end": {
+          "kind": "rate_limited"
+        },
+        "pause": {
+          "until": "2026-11-12T10:06:00Z",
+          "reason": "rate_limit",
+          "evidence": "API Error: 429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed the rate limit for your organization.\"}}"
+        }
+      }
+    },
+    {
+      "name": "overloaded",
+      "stderr": "API Error: 529 {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}",
+      "exit": 1,
+      "stream": "failed",
+      "expect": {
+        "end": {
+          "kind": "rate_limited"
+        },
+        "pause": {
+          "until": "2026-11-12T10:06:00Z",
+          "reason": "rate_limit",
+          "evidence": "API Error: 529 {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}"
+        }
+      }
+    },
+    {
+      "name": "a_retried_429_in_a_clean_run",
+      "final_message": "Done the work.\n\nSTATUS: DONE",
+      "stderr": "API Error (429 rate_limit_error) · Retrying in 4 seconds… (attempt 2/10)",
+      "exit": 0,
+      "stream": "succeeded",
+      "expect": {
+        "end": {
+          "kind": "reported",
+          "outcome": "DONE"
+        },
+        "pause": null
+      }
+    },
+    {
+      "name": "a_report_about_rate_limits",
+      "final_message": "Added the rate limit handling.\n\nSTATUS: DONE",
+      "exit": 1,
+      "stream": "failed",
+      "expect": {
+        "end": {
+          "kind": "reported",
+          "outcome": "DONE"
+        },
+        "pause": null
+      }
+    }
+  ]
+}
