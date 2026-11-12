@@ -21,6 +21,7 @@ pub use values::{
     AbsolutePath, CliArgs, CommandLine, EnvName, GithubLogin, InvalidValue, Language, LoopbackAddr, Minutes, ModelName,
     NameTemplate, Program, RepoName, TailscaleLogin, ValueRule,
 };
+pub(crate) use values::{check_text, text_value};
 
 /// Largest configuration text accepted, in bytes: a bound on untrusted input, far above any real file.
 pub const MAX_CONFIG_BYTES: usize = 1 << 20;

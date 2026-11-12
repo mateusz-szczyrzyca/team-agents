@@ -20,6 +20,7 @@ crates/agent-runtime/       effects: state store, processes, git, GitHub API, ag
 crates/agent/               the `agent` binary: CLI commands and `agent daemon`
 crates/agent-web/           the `agent-web` binary: dashboard (axum, htmx, server-sent events)
 prompts/clarification.md
+prompts/lang/<language>/...             human-facing texts in another language (English is the fallback)
 prompts/agent/rust-developer.md
 prompts/worker-agent/rust-developer.md
 prompts/investigator/rust-developer.md
@@ -29,7 +30,8 @@ config/agents.example.toml, config/systemd/
 docs/architecture.md, docs/configuration.md, docs/state.md, docs/task-list.md
 ```
 
-The workspace exists with its four crates; the other files of this list arrive with the items that need them.
+The workspace exists with its four crates; the other files of this list arrive with the items that need them
+(`docs/state.md` came with the state, the protocol and the questions files).
 
 - **`agent-core`** decides and does no I/O: no `std::fs`, `std::process`, `std::net`, no `tokio`. What it needs from
   the world comes in as arguments — the clock ([`Clock`](../crates/agent-core/src/ids.rs)) and the random source
@@ -71,8 +73,40 @@ item:  pending -> in_progress -> in_review -> approved -> done (final)
 | `config` | `Config` (read from `agents.toml`) with its `AgentConfig`, `InvestigatorConfig`, `RepoConfig` and sections; `Secrets` (from `secrets.toml`) with `Secret`; the typed values (`Language`, `Program`, `AbsolutePath`, `CommandLine`, `Minutes`, `LoopbackAddr`, ...); `ConfigError`, `SecretsError`, `InvalidValue`. See [`configuration.md`](configuration.md) |
 | `task_list` | `TaskList`, `Feature`, `Item` (title, description, expected result, checks) and `TaskListError`, whose every variant but two carries its line. See [`task-list.md`](task-list.md) |
 
-Both take text, not paths: reading `agents.toml`, `secrets.toml` (and the file mode `Secrets::parse` needs) and a
+Both `Config` and `TaskList` take text, not paths: reading `agents.toml`, `secrets.toml` (and the file mode `Secrets::parse` needs) and a
 `-f` task list is the runtime's job, so the core stays free of I/O.
+
+### State, protocol and questions files (`agent-core`)
+
+| Module | Types |
+|---|---|
+| `state` | `State` (with its schema version), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
+| `protocol` | `Request`, `Command`, `Response`, `Reply`, `Failure`, `Event`, `EventKind`, `Frame`, with the protocol version and `ProtocolError`. JSON lines over the daemon's socket. See [`state.md`](state.md) |
+| `questions` | `QuestionsFile`, `Entry`, `Verdict`: parsing and rendering of the questions file, the `ok` verdict, the `**ANSWERED**` marker. See [`state.md`](state.md) |
+
+They take and give text too (`State::from_json`, `Request::from_line`, `QuestionsFile::parse`): the state store, the
+socket and the files are the runtime's. `serde_json` is a dependency of `agent-core` for that; it does no I/O.
+`strum` (derives only) gives the keyword enums their text, as `McpServerKind` does.
+
+### The prompt catalog and the CLI contract (`agent-core`)
+
+| Module | Types |
+|---|---|
+| `prompt` | `PromptId` (every prompt, with its `PromptSpec`: path under `prompts/`, `Audience`, required variables), `Template` (the strict `{{name}}` renderer), `Variables`, `VariableName` and their errors (`TemplateError`, `RenderError`, `PromptError`) |
+| `cli` | `CliAdapter` (build a run, make a parser), `OutputParser` (lines to `ActivityEvent`s, then `RunOutput`), `RunRequest`, `RunSpec`, `RunFile`, `ActivityEvent`, `RunOutput`, `SessionId`, `ErrorTail`, `McpServerKind` |
+
+A template renders `{{name}}`; `\{{` is a literal `{{`. A variable without a value, a value without a variable, an
+unclosed placeholder and an invalid name are errors, and the catalog adds two: a text that uses a variable the
+catalog does not list, and one that leaves a listed variable out. The text of a prompt is read by the runtime;
+`PromptSpec::candidates` gives the files to try. Only a text for the human (`Audience::Human`) has a version per
+language, `prompts/lang/<language, lowercase>/<path>`, with English as the fallback; what a model reads is English
+only. The integration test `tests/prompt_catalog.rs` checks every catalog entry against the files of `prompts/`, and
+its failures name the file.
+
+An adapter is pure: `CliAdapter::build_run` turns a `RunRequest` into a `RunSpec` (program, arguments, environment,
+the files to write first, what to keep out of git), the runtime starts it, feeds the CLI's stdout line by line into
+an `OutputParser` and its stderr at the end, and gets the final message, the session ID, how the stream says the run
+ended and the error tail. The adapters of the four CLIs come with feature 5.
 
 ## Process model
 
@@ -98,9 +132,9 @@ socket. One owner, no file races (CON-3).
 ## Rules of the plan
 
 These hold for every item of the plan, on top of the Rust developer rules (`prompts/agent/rust-developer.md`) and
-the review rules (`prompts/investigator/code-review.md`), whose rule IDs (ERR-2, PR-1, ...) they cite. Neither rule file is tracked in this round. The investigation used the human-provided developer rules and
-review rules from the main checkout, where the review file is named `rust-review.md`; the requested
-`code-review.md` name is absent. Publishing the prompt catalog belongs to item 2.3.
+the review rules (`prompts/investigator/code-review.md`), whose rule IDs (ERR-2, PR-1, ...) they cite. Both are in the prompt catalog (`PromptId`); the developer rules
+also come in a variant for workers (`prompts/worker-agent/rust-developer.md`: a delegated task instead of a pull
+request).
 
 - **Size, relaxed for this plan:** PR-1's limit is 5000 changed lines per PR, tests not counted, and PR-2's threshold
   for planning a split is about 4000. Everything else in PR-1 and PR-2 applies as written: how lines are counted, a
@@ -123,7 +157,7 @@ review rules from the main checkout, where the review file is named `rust-review
   `agentbus`, the repository's own gate command, the configured notification command and the configured editor.
   Everything the Bash version did with `sed`, `awk`, `jq`, `grep`, `flock`, `gh` or `tailscale` is done natively.
 - **Approved dependencies:** `tokio`, `tokio-util`, `clap`, `serde`, `serde_json`, `toml`, `thiserror`, `tracing`,
-  `tracing-subscriber`, `tempfile`, `rustix`, `reqwest` (rustls), `axum`, `notify`, `rand`, `time`. Any other needs
+  `tracing-subscriber`, `tempfile`, `rustix`, `reqwest` (rustls), `axum`, `notify`, `rand`, `time`, `strum` (`derive`). Any other needs
   a DEP-1 justification. Each is declared once, in `[workspace.dependencies]`, with its minimal features.
 - **A separate `AGENTS_HOME`.** New code is developed and tested against its own `AGENTS_HOME`; nothing touches the
   live `~/agents` of the running Bash harness until feature 10.
