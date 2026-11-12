@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 
 use agent_core::ids::AgentName;
 use agent_core::prompt::{TeamPrompt, Variables, VariablesError};
+use agent_core::state::Team;
 use agent_runtime::agentbus::{DelegationUpdate, FieldName, InvalidFieldName, NoticeKind, Outgoing, RequestId};
+use agent_runtime::notify::{InvalidNotification, Notification};
 use agent_runtime::team_prompts::{RenderTeamTextError, TeamPrompts};
 
 use super::react::BusNotice;
@@ -32,7 +34,7 @@ pub(in crate::daemon) enum BusJob {
 
 /// Why a notice cannot be made into a message.
 #[derive(Debug, thiserror::Error)]
-pub(in crate::daemon) enum NoticeRenderError {
+pub(crate) enum NoticeRenderError {
     /// A text of the team cannot be rendered.
     #[error("cannot render the text of a notice")]
     Render(#[from] RenderTeamTextError),
@@ -145,6 +147,38 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
         .map(|(name, value)| Ok((name.parse::<FieldName>()?, value)))
         .collect::<Result<BTreeMap<_, _>, InvalidFieldName>>()?;
     Ok(Outgoing::Notice { kind, fields, text })
+}
+
+/// Why the notification that a team is finished cannot be made.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum DoneNoticeError {
+    /// The text cannot be rendered.
+    #[error("cannot render the notification that a team is finished")]
+    Render(#[from] RenderTeamTextError),
+    /// A variable name of the program is not valid.
+    #[error("a variable of a text is not valid")]
+    Variable(#[from] VariablesError),
+    /// The rendered text is not a notification.
+    #[error("the text that a team is finished is not a notification")]
+    Invalid(#[from] InvalidNotification),
+}
+
+/// The notification for the human that `team` is finished.
+///
+/// # Errors
+/// [`DoneNoticeError`].
+pub(in crate::daemon) fn team_done_notification(
+    texts: &TeamPrompts,
+    team: &Team,
+) -> Result<Notification, DoneNoticeError> {
+    let values = Variables::new()
+        .with("team", team.id().as_str())?
+        .with("repo", team.repo().as_str())?
+        .with("items", team.items().len().to_string())?;
+    let rendered = texts.render(TeamPrompt::NoticeTeamDone, &values)?;
+    // The first line is the title, what follows is the body.
+    let (title, body) = rendered.split_once('\n').unwrap_or((rendered.as_str(), ""));
+    Ok(Notification::new(title.trim_end(), body.trim())?)
 }
 
 /// The `status` detail of the notice of a request a worker finished, as the bus words it.

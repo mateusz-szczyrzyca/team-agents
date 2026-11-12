@@ -11,8 +11,8 @@ fn agent(name: &str) -> AgentName {
 }
 
 fn desired(team: &Team, n: u32) -> MemberState {
-    let (role, member) = team.find(&task_id(n)).unwrap();
-    desired_bus_state(team, role, member)
+    let (_, member) = team.find(&task_id(n)).unwrap();
+    desired_bus_state(member)
 }
 
 /// The bus team of a crew of the coordinator `inv-opus`, a member `claude-1` and a worker `glm-1`, with the states
@@ -58,13 +58,13 @@ fn a_task_that_runs_or_is_about_to_is_active_on_the_bus() {
 }
 
 #[test]
-fn a_task_that_waits_or_is_held_sleeps_on_the_bus() {
+fn a_task_that_waits_sleeps_on_the_bus() {
     let mut team = crew_of(PLAIN, 2, 1);
     go(&mut team, 2, &[TaskStatus::Running, TaskStatus::Waiting]);
+    go(&mut team, 4, &[TaskStatus::Running, TaskStatus::Waiting]);
 
-    assert_eq!(desired(&team, 2), MemberState::Sleeping, "waiting");
-    assert_eq!(desired(&team, 3), MemberState::Sleeping, "a held member");
-    assert_eq!(desired(&team, 4), MemberState::Sleeping, "a held worker");
+    assert_eq!(desired(&team, 2), MemberState::Sleeping, "a member");
+    assert_eq!(desired(&team, 4), MemberState::Sleeping, "a worker");
 }
 
 #[test]
@@ -104,6 +104,8 @@ fn a_member_that_was_excluded_is_excluded_on_the_bus() {
 fn a_bus_that_agrees_needs_nothing() {
     let mut team = crew_of(PLAIN, 1, 1);
     go(&mut team, 1, &[TaskStatus::Running]);
+    go(&mut team, 2, &[TaskStatus::Running, TaskStatus::Waiting]);
+    go(&mut team, 3, &[TaskStatus::Running, TaskStatus::Waiting]);
 
     let plan = reconcile(&team, &bus("active", "sleeping", "sleeping")).unwrap();
 
@@ -153,16 +155,6 @@ fn a_waiting_member_the_bus_woke_is_woken_and_made_active() {
             wake: vec![task_id(2)],
         }
     );
-}
-
-#[test]
-fn a_held_member_and_a_held_worker_the_bus_woke_are_woken() {
-    let mut team = crew_of(PLAIN, 1, 1);
-    go(&mut team, 1, &[TaskStatus::Running]);
-
-    let plan = reconcile(&team, &bus("active", "waking", "waking")).unwrap();
-
-    assert_eq!(plan.wake, vec![task_id(2), task_id(3)]);
 }
 
 #[test]

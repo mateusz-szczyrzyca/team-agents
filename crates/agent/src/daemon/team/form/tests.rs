@@ -229,7 +229,7 @@ fn a_team_is_created_on_the_bus_with_its_lead_its_members_their_tiers_and_states
         (
             "glm-1".to_owned(),
             BusTier::Worker,
-            MemberState::Sleeping,
+            MemberState::Active,
             Some("opencode".to_owned()),
         ),
     ];
@@ -240,14 +240,11 @@ fn a_team_is_created_on_the_bus_with_its_lead_its_members_their_tiers_and_states
 }
 
 #[test]
-fn a_member_without_an_item_sleeps_on_the_bus_from_the_start() {
-    let formed = formed(&request(&["inv-opus", "claude-1", "claude-2"], CHAIN)).unwrap();
+fn every_member_is_active_on_the_bus_at_the_start_because_every_task_starts_at_once() {
+    let formed = formed(&request(&["inv-opus", "claude-1", "claude-2", "glm-1"], CHAIN)).unwrap();
 
     let bus = formed.bus.unwrap();
-    let state = |name: &str| bus.members[&name.parse::<AgentName>().unwrap()].state;
-    assert_eq!(state("inv-opus"), MemberState::Active);
-    assert_eq!(state("claude-1"), MemberState::Active);
-    assert_eq!(state("claude-2"), MemberState::Sleeping);
+    assert!(bus.members.values().all(|member| member.state == MemberState::Active));
 }
 
 #[test]

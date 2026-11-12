@@ -176,3 +176,20 @@ async fn a_request_a_worker_could_not_do_is_a_helper_result_notice_that_says_fai
     );
     assert!(text.contains("the worker ended without a status"), "{text}");
 }
+
+#[tokio::test]
+async fn the_notification_that_a_team_is_finished_names_the_team_the_repository_and_the_items() {
+    let texts = texts().await;
+    let team = crate::daemon::team::support::crew_of(crate::daemon::team::support::CHAIN, 1, 0);
+
+    let notification = team_done_notification(&texts, &team).unwrap();
+
+    assert_eq!(notification.title(), format!("Team {} is finished", team.id()));
+    assert!(
+        notification
+            .body()
+            .contains("on example has finished its work: 2 items done"),
+        "{}",
+        notification.body()
+    );
+}

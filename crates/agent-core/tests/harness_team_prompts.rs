@@ -93,7 +93,7 @@ mod harness_team_prompts {
         let title = lines.next().unwrap_or_default();
         let body: Vec<_> = lines.filter(|line| !line.trim().is_empty()).collect();
 
-        assert!(!title.trim().is_empty());
-        assert!(!body.is_empty());
+        assert_ne!(title.trim(), "");
+        assert_ne!(body.len(), 0);
     }
 }

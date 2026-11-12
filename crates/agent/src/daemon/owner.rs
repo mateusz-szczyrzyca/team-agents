@@ -9,7 +9,7 @@ mod questions;
 mod start;
 mod teams;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -18,17 +18,20 @@ use std::time::Duration;
 use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::outcome::{AfterHang, after_hang};
-use agent_core::ids::{TaskId, TeamId};
+use agent_core::ids::{InvalidName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::protocol::{Command, Event, EventKind, Failure, FailureKind, Reply, Target, TeamSummary};
+use agent_core::state::InvalidState;
 use agent_core::state::{InvalidTimestamp, Question, QuestionError, RunEnd, RunError, SessionId, State, Timestamp};
 use agent_core::status::{InvalidTransition, TaskStatus};
+use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict};
 use agent_runtime::settings::Settings;
 use agent_runtime::store::{StateStore, StoreError};
+use agent_runtime::team_prompts::TeamPrompts;
 use rand::rngs::StdRng;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::{Id as JoinId, JoinError, JoinSet};
@@ -36,10 +39,12 @@ use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
 use self::start::{Context, Plan, next_round, plan};
+use self::teams::{Look, Outbound, Served};
 use super::notice::Notice;
 use super::notifier::Delivery;
 use super::recovery::{RecoveryError, recover};
 use super::settle::{Settled, settle};
+use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
 use agent_runtime::process::error_chain;
 
 /// How many runs may go at once.
@@ -135,6 +140,53 @@ pub(crate) enum OwnerError {
         /// The task's ID in the runtime.
         id: JoinId,
     },
+    /// A new team cannot be put in the state: a mistake of the daemon.
+    #[error("the team cannot be put in the state")]
+    InsertTeam(#[source] InvalidState),
+    /// A name in the state is not an agent name.
+    #[error("a name in the state is not an agent name")]
+    Name(#[from] InvalidName),
+    /// The assignments of a team cannot be decided or recorded.
+    #[error("the assignments of team {team} cannot be decided")]
+    Assign {
+        /// The team.
+        team: TeamId,
+        /// What went wrong.
+        source: AssignmentError,
+    },
+    /// A team that must be in the state is not.
+    #[error("team {team} is not in the state")]
+    LostTeam {
+        /// The team.
+        team: TeamId,
+    },
+    /// An item that must be in a team is not.
+    #[error("item {item} is not in team {team}")]
+    LostItem {
+        /// The team.
+        team: TeamId,
+        /// The item.
+        item: agent_core::ids::ItemId,
+    },
+    /// An item cannot be given to a member.
+    #[error("item {item} of team {team} cannot be given to a member")]
+    Item {
+        /// The team.
+        team: TeamId,
+        /// The item.
+        item: agent_core::ids::ItemId,
+        /// What the state said.
+        source: agent_core::state::AdvanceError,
+    },
+    /// What a member's run ending tells the others cannot be made.
+    #[error("what a run's end tells the team cannot be made")]
+    Told(#[from] super::team::NoticeError),
+    /// A message for the bus cannot be made from its text.
+    #[error("a message for the bus cannot be made")]
+    Notice(#[from] NoticeRenderError),
+    /// The notification that a team is finished cannot be made.
+    #[error("the notification that a team is finished cannot be made")]
+    TeamDone(#[from] DoneNoticeError),
 }
 
 /// What the owner is made of.
@@ -147,8 +199,12 @@ pub(super) struct OwnerParts {
     pub(super) settings: Arc<Settings>,
     /// The run prompts.
     pub(super) texts: Arc<HarnessPrompts>,
+    /// The texts of the teams.
+    pub(super) team_texts: Arc<TeamPrompts>,
     /// The rules.
     pub(super) rules: Arc<PromptLoader>,
+    /// The bus of the home: the teams' members, their messages and their requests for workers.
+    pub(super) bus: AgentBus,
     /// The engine that carries out runs.
     pub(super) engine: RunEngine,
     /// The clock.
@@ -203,6 +259,16 @@ pub(super) struct Owner {
     wakes: HashMap<TaskId, Timestamp>,
     /// How many hangs in a row each task has had without progress.
     hangs: HashMap<TaskId, u32>,
+    /// Why a queued task of a team starts now; read when its run is made ready.
+    reasons: HashMap<TaskId, Why>,
+    /// What is still to be done on the bus, oldest first: it is tried again at every look until it is done.
+    outbox: VecDeque<Outbound>,
+    /// The requests for workers that are being served, by the task of the worker.
+    serving: HashMap<TaskId, Served>,
+    /// The teams that are finished and closed: the human was told.
+    closed: HashSet<TeamId>,
+    /// The teams to look at next, and why.
+    looks: BTreeMap<TeamId, Look>,
     /// Cancelled when the daemon is to stop: the runs it starts stop with it.
     shutdown: CancellationToken,
 }
@@ -217,6 +283,11 @@ impl Owner {
             in_flight: HashSet::new(),
             wakes: HashMap::new(),
             hangs: HashMap::new(),
+            reasons: HashMap::new(),
+            outbox: VecDeque::new(),
+            serving: HashMap::new(),
+            closed: HashSet::new(),
+            looks: BTreeMap::new(),
             shutdown,
         }
     }
@@ -230,15 +301,19 @@ impl Owner {
         let mut tick = tokio::time::interval(self.parts.tick.max(Duration::from_millis(1)));
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
+            self.team_life().await?;
             self.start_queued().await?;
             tokio::select! {
                 () = self.shutdown.cancelled() => break,
                 message = inbox.recv() => match message {
-                    Some(message) => self.handle(message),
+                    Some(message) => self.handle(message).await?,
                     None => break,
                 },
                 Some(joined) = self.runs.join_next_with_id() => self.settle_joined(joined).await?,
-                _ = tick.tick() => self.wake_due().await?,
+                _ = tick.tick() => {
+                    self.wake_due().await?;
+                    self.look_at_every_team(Look::Poll);
+                }
             }
         }
         self.stop_runs().await
@@ -254,6 +329,8 @@ impl Owner {
             self.wakes.insert(task, at);
         }
         self.hangs.extend(recovery.hangs);
+        self.remember_closed_teams();
+        self.look_at_every_team(Look::Event);
         if !recovery.interrupted.is_empty() {
             tracing::info!(
                 tasks = recovery.interrupted.len(),
@@ -291,14 +368,17 @@ impl Owner {
 
     /// Starts the run of `task`, or fails the task when it cannot be made ready.
     async fn start(&mut self, task: TaskId) -> Result<(), OwnerError> {
+        let why = self.reasons.remove(&task);
         let planned = {
             let context = Context {
                 state: &self.parts.state,
                 settings: &self.parts.settings,
                 texts: &self.parts.texts,
+                team_texts: &self.parts.team_texts,
                 rules: &self.parts.rules,
                 home: self.parts.store.home(),
                 clock: &self.parts.clock,
+                why: why.as_ref(),
             };
             plan(&context, &mut self.parts.rng, &task).await
         };
@@ -394,7 +474,8 @@ impl Owner {
         self.move_to(task, &located.team, TaskStatus::Failed, &mut events)?;
         self.hangs.remove(task);
         self.commit(task, &located, now, events, Some(Notice::RunFailed { reason }))
-            .await
+            .await?;
+        self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)
     }
 
     /// A run the daemon stopped because it shuts down: recorded as interrupted, and its task queued for the next start.
@@ -419,6 +500,7 @@ impl Owner {
         let located = self.locate(task)?;
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
+        tracing::info!(task = %task, end = ?run.classified.end, "run ended");
         self.attach_session(task, run.session.clone())?;
         let settled = settle(
             located.role,
@@ -426,6 +508,7 @@ impl Owner {
             run.classified.pause.as_ref(),
             run.final_message.as_deref(),
         );
+        let settled = self.solo_waits_for_its_items(located.role, &located.team, settled);
         self.end_run(task, &located.team, now, run.classified.end.clone(), &mut events)?;
         let (status, notice) = match settled {
             Settled::Status(status) => {
@@ -456,7 +539,8 @@ impl Owner {
             Settled::Hung => self.hung(task, run.progress)?,
         };
         self.move_to(task, &located.team, status, &mut events)?;
-        self.commit(task, &located, now, events, notice).await
+        self.commit(task, &located, now, events, notice).await?;
+        self.after_run(task, &located, &run.classified.end, run.final_message.as_deref())
     }
 
     /// What follows a hung run: it is resumed, or after the last strike the task fails and the human is told.
@@ -569,10 +653,17 @@ impl Owner {
     // ---- requests -------------------------------------------------------------------------------------------
 
     /// Answers one message of a connection.
-    fn handle(&self, message: Message) {
+    ///
+    /// # Errors
+    /// [`OwnerError`] when a request changes the state and it cannot be saved.
+    async fn handle(&mut self, message: Message) -> Result<(), OwnerError> {
         match message {
             Message::Request { command, reply, .. } => {
-                if reply.send(self.answer(&command)).is_err() {
+                let answer = match command {
+                    Command::Run(request) => self.run_request(request).await?,
+                    other => self.answer(&other),
+                };
+                if reply.send(answer).is_err() {
                     // The connection closed while its request waited: nobody is left to answer.
                     tracing::debug!("the connection of a request closed before the answer");
                 }
@@ -586,6 +677,7 @@ impl Owner {
                 }
             }
         }
+        Ok(())
     }
 
     /// The summaries of the teams, or of the one named.
@@ -604,7 +696,10 @@ impl Owner {
         match command {
             Command::Status(request) => self.status(request.target.as_ref()),
             Command::Show(request) => self.show(&request.target),
-            Command::Run(_) => Err(not_served("run")),
+            Command::Run(_) => Err(Failure {
+                kind: FailureKind::Internal,
+                message: "a run is started by the owner, not answered from the state".to_owned(),
+            }),
             Command::Answer(_) => Err(not_served("answer")),
             Command::Stop(_) => Err(not_served("stop")),
             Command::Pause(_) => Err(not_served("pause")),

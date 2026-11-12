@@ -3,7 +3,7 @@
 use agent_core::ids::{BranchName, ItemId};
 use agent_core::kinds::Role;
 use agent_core::prompt::{PromptError, TeamPrompt, Variables, VariablesError};
-use agent_core::state::{Member, Team};
+use agent_core::state::Team;
 use agent_runtime::agentbus::DelegationRequest;
 use agent_runtime::run::compose::{ComposeError, PromptTexts, item_sections};
 use agent_runtime::team_prompts::{RenderTeamTextError, TeamPrompts};
@@ -26,8 +26,6 @@ pub(in crate::daemon) struct TeamRun<'a> {
     pub(in crate::daemon) team: &'a Team,
     /// The place of the member in the team.
     pub(in crate::daemon) role: Role,
-    /// The member.
-    pub(in crate::daemon) member: &'a Member,
     /// The branch the member works on now.
     pub(in crate::daemon) branch: &'a BranchName,
     /// The branch the team's branches start from.

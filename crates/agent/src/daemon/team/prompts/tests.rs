@@ -51,7 +51,7 @@ fn request() -> DelegationRequest {
 
 /// Shapes the prompt of the task `n` of `team`.
 fn shaped(texts: &Texts, team: &Team, n: u32, why: Option<&Why>, new_session: bool) -> String {
-    let (role, member) = team.find(&task_id(n)).unwrap();
+    let (role, _) = team.find(&task_id(n)).unwrap();
     let work = branch("agents/claude-1/task-20261111-153002-k3x9-1.1");
     let base = branch("main");
     shape(
@@ -63,7 +63,6 @@ fn shaped(texts: &Texts, team: &Team, n: u32, why: Option<&Why>, new_session: bo
         &TeamRun {
             team,
             role,
-            member,
             branch: &work,
             base: &base,
             why,
@@ -188,7 +187,7 @@ async fn a_new_session_given_an_item_keeps_its_prompt_which_has_the_item_and_add
 async fn an_item_that_is_not_in_the_list_is_an_error_not_an_empty_prompt() {
     let texts = texts().await;
     let team = crew_of(CHAIN, 1, 0);
-    let (role, member) = team.find(&task_id(2)).unwrap();
+    let (role, _) = team.find(&task_id(2)).unwrap();
     let work = branch("agents/claude-1/task");
     let base = branch("main");
 
@@ -201,7 +200,6 @@ async fn an_item_that_is_not_in_the_list_is_an_error_not_an_empty_prompt() {
         &TeamRun {
             team: &team,
             role,
-            member,
             branch: &work,
             base: &base,
             why: Some(&Why::Assigned("9.9".parse().unwrap())),

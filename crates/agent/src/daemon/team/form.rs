@@ -14,6 +14,7 @@ use agent_core::protocol::{Failure, FailureKind, RunRequest};
 use agent_core::state::{
     AdvanceError, Crew, CrewError, InvalidTimestamp, Member, Participant, Team, TeamMembers, Timestamp,
 };
+use agent_core::task_list::Item;
 use agent_runtime::agentbus::{BusTier, MemberState, NewMember, NewTeam};
 use agent_runtime::store::Home;
 use rand::Rng;
@@ -165,7 +166,7 @@ pub(in crate::daemon) fn form(
         repo: request.repo.to_string(),
     })?;
     let list = request.task_list.list();
-    if list.items().next().is_some() && list.items().all(|item| item.is_done()) {
+    if list.items().next().is_some() && list.items().all(Item::is_done) {
         return Err(FormError::NothingToDo);
     }
     let plan = plan_team(
@@ -199,7 +200,7 @@ pub(in crate::daemon) fn form(
         })?;
     }
     let workspaces = workspaces(&team, &given, home)?;
-    let bus = bus_team(&team, &workspaces, &given, config)?;
+    let bus = bus_team(&team, &workspaces, config)?;
     Ok(Formed {
         team,
         workspaces,
@@ -281,18 +282,12 @@ fn workspaces(team: &Team, given: &[Assigned], home: &Home) -> Result<Vec<Worksp
 }
 
 /// The team on the bus, for a crew that has a coordinator; none for one agent alone.
-fn bus_team(
-    team: &Team,
-    workspaces: &[Workspace],
-    given: &[Assigned],
-    config: &Config,
-) -> Result<Option<NewTeam>, FormError> {
+fn bus_team(team: &Team, workspaces: &[Workspace], config: &Config) -> Result<Option<NewTeam>, FormError> {
     let Some(coordinator) = team.crew().coordinator() else {
         return Ok(None);
     };
     let mut members = BTreeMap::new();
     for ((role, member), workspace) in team.crew().roster().into_iter().zip(workspaces) {
-        let busy = role == Role::Coordinator || given.iter().any(|assigned| assigned.task == *member.task());
         members.insert(
             workspace.agent.clone(),
             NewMember {
@@ -304,11 +299,9 @@ fn bus_team(
                 } else {
                     BusTier::Normal
                 },
-                state: if busy {
-                    MemberState::Active
-                } else {
-                    MemberState::Sleeping
-                },
+                // Every task starts at once and the bus puts a member to sleep when its run ends: a member made `sleeping`
+                // before it has read the message of the team's creation would be woken by it at once.
+                state: MemberState::Active,
                 provider: Some(cli_of(config, member.agent())?.to_string()),
             },
         );

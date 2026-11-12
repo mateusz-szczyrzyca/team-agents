@@ -1,6 +1,7 @@
 //! The daemon with teams: a `run` request, the team's life with a stand-in for the `claude` CLI, the real `agentbus`
 //! (built from `agentbus/`) and a real scratch repository, all in a temporary home.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command as Process;
 use std::str::FromStr;
@@ -12,7 +13,9 @@ use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::protocol::{AgentList, Client, Command, FailureKind, Reply, RunRequest};
 use agent_core::state::{ItemPhase, MergeMode, PrNumber, PullRequest, State, TaskListText, Timestamp};
 use agent_core::status::TaskStatus;
-use agent_runtime::agentbus::{AgentBus, Delegation, DelegationStatus, MemberState, Outgoing, Recipient};
+use agent_runtime::agentbus::{
+    AgentBus, Delegation, DelegationRequest, DelegationStatus, MemberState, Outgoing, Recipient, RequestId,
+};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::run::RunTimings;
 use agent_runtime::store::Home;
@@ -161,7 +164,7 @@ fn investigator(name: &'static str, scenario: &'static str) -> Agent {
 }
 
 /// The configuration of a home with these agents, one repository `example` and the stand-in CLI for every agent.
-fn config(agents: &[Agent], agentbus: &Path) -> String {
+fn config(agents: &[Agent], agentbus: &Path, home: &Home) -> String {
     let mut text = String::new();
     let mut normals = Vec::new();
     let mut workers = Vec::new();
@@ -170,17 +173,26 @@ fn config(agents: &[Agent], agentbus: &Path) -> String {
             Kind::Investigator => "investigators",
             Kind::Normal | Kind::Worker => "agents",
         };
-        text.push_str(&format!(
-            "[{table}.{}]\ncli = \"claude\"\nargs = [\"--scenario\", \"{}\"]\n",
-            agent.name, agent.scenario
-        ));
+        write!(
+            text,
+            "[{table}.{}]\ncli = \"claude\"\nargs = [\"--scenario\", \"{}\", \"--as\", \"{}\", \"--bus-bin\", \"{}\", \
+             \"--bus-dir\", \"{}/bus\", \"--home\", \"{}\"]\n",
+            agent.name,
+            agent.scenario,
+            agent.name,
+            agentbus_binary().display(),
+            home.root().display(),
+            home.root().display(),
+        )
+        .unwrap();
         match agent.kind {
             Kind::Normal => normals.push(format!("\"{}\"", agent.name)),
             Kind::Worker => workers.push(format!("\"{}\"", agent.name)),
             Kind::Investigator => {}
         }
     }
-    text.push_str(&format!(
+    write!(
+        text,
         "[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
          [watchdog]\nhang_minutes = 1\nhang_strikes = 3\n\
          [repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
@@ -188,7 +200,8 @@ fn config(agents: &[Agent], agentbus: &Path) -> String {
         workers.join(", "),
         fixture_script("team-cli.sh").display(),
         agentbus.display(),
-    ));
+    )
+    .unwrap();
     text
 }
 
@@ -221,11 +234,18 @@ impl Fixture {
 
     /// The same, with `agentbus` as the program of the bus.
     fn with_agentbus(agents: &[Agent], agentbus: &Path) -> Self {
+        // The daemon's log goes to the output of the test, which the harness shows when the test fails.
+        drop(
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_test_writer()
+                .try_init(),
+        );
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let home = Home::new(&abs(&root.join("home")));
         std::fs::create_dir_all(home.root()).unwrap();
-        std::fs::write(home.config_file(), config(agents, agentbus)).unwrap();
+        std::fs::write(home.config_file(), config(agents, agentbus, &home)).unwrap();
         std::fs::write(home.root().join("real-agentbus"), agentbus_binary().to_str().unwrap()).unwrap();
         let repo = root.join("example");
         std::fs::create_dir(&repo).unwrap();
@@ -253,22 +273,31 @@ impl Fixture {
         }
     }
 
-    /// Starts the daemon and waits until its socket is there.
+    /// Starts the daemon and waits until its socket is there. Another test of this binary may be starting a process:
+    /// a child holds the open file description of the lock of a daemon that has just stopped from its fork to its
+    /// exec, so a daemon that finds the home locked is started again for a few milliseconds more.
     async fn start(&mut self) {
         self.shutdown = CancellationToken::new();
-        let daemon = tokio::spawn(run(self.setup(), self.shutdown.clone()));
         let socket = self.home.socket_file();
         let deadline = Instant::now() + PATIENCE;
-        while !socket.exists() {
-            assert!(
-                !daemon.is_finished(),
-                "the daemon ended at its start: {:?}",
-                daemon.await
-            );
-            assert!(Instant::now() < deadline, "timed out waiting for the socket");
-            tokio::time::sleep(Duration::from_millis(10)).await;
+        'attempts: loop {
+            let daemon = tokio::spawn(run(self.setup(), self.shutdown.clone()));
+            while !socket.exists() {
+                if daemon.is_finished() {
+                    match daemon.await.unwrap() {
+                        Err(DaemonError::AlreadyRunning { .. }) if Instant::now() < deadline => {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            continue 'attempts;
+                        }
+                        ended => panic!("the daemon ended at its start: {ended:?}"),
+                    }
+                }
+                assert!(Instant::now() < deadline, "timed out waiting for the socket");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            self.daemon = Some(daemon);
+            return;
         }
-        self.daemon = Some(daemon);
     }
 
     /// Stops the daemon and returns how it ended.
@@ -320,7 +349,12 @@ impl Fixture {
 
     /// The state as saved.
     fn state(&self) -> State {
-        State::from_json(&std::fs::read_to_string(self.home.state_file()).unwrap()).unwrap()
+        // Nothing is saved until a team is made.
+        match std::fs::read_to_string(self.home.state_file()) {
+            Ok(text) => State::from_json(&text).unwrap(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => State::new(),
+            Err(error) => panic!("{error}"),
+        }
     }
 
     /// Waits until the saved state satisfies `ready`.
@@ -348,28 +382,70 @@ impl Fixture {
         .await
     }
 
+    /// Waits until the bus has the member in the state.
+    async fn bus_state_is(&self, team: &TeamId, member: &str, state: MemberState) {
+        let bus = self.bus();
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let found = bus.team_get(team).await.unwrap().members[&agent(member)].state;
+            if found == state {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {member} to be {state} on the bus; it is {found}"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Waits until the request has the status, and returns it.
+    async fn request_with(&self, id: RequestId, status: DelegationStatus) -> DelegationRequest {
+        let bus = self.bus();
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let request = bus.helper_get(id).await.unwrap();
+            if request.status == status {
+                return request;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for the request to be {status}: {request:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
     fn worktree(&self, task: &TaskId) -> PathBuf {
         self.home.worktree_dir(&"example".parse().unwrap(), task)
     }
 
-    /// The prompt the task's `n`-th run was given, once it has been.
+    /// The prompt the task's `n`-th run was given, once it has been. The script logs the run after it has written the
+    /// prompt, so a run that is logged has its whole prompt in its file.
     async fn prompt(&self, task: &TaskId, n: u32) -> String {
-        let file = self.worktree(task).join(format!(".fake-prompt-{n}"));
-        self.wait_for(&format!("{file:?}"), || file.exists()).await;
-        std::fs::read_to_string(file).unwrap()
+        let log = self.worktree(task).join(".fake-log");
+        let wanted = usize::try_from(n).unwrap();
+        self.wait_for(&format!("run {n} of {task} to be logged"), || {
+            std::fs::read_to_string(&log).is_ok_and(|text| text.lines().count() >= wanted)
+        })
+        .await;
+        std::fs::read_to_string(self.worktree(task).join(format!(".fake-prompt-{n}"))).unwrap()
     }
 
     /// How many runs the task has had.
     fn runs(&self, task: &TaskId) -> u32 {
-        std::fs::read_to_string(self.worktree(task).join(".fake-runs"))
-            .map(|text| text.trim().parse().unwrap())
-            .unwrap_or(0)
+        std::fs::read_to_string(self.worktree(task).join(".fake-runs")).map_or(0, |text| text.trim().parse().unwrap())
     }
 
     async fn wait_for(&self, what: &str, ready: impl Fn() -> bool) {
         let deadline = Instant::now() + PATIENCE;
         while !ready() {
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {what}\nmessages: {}\nbus: {}",
+                self.messages(),
+                std::fs::read_to_string(self.home.root().join("bus/state.json")).unwrap_or_default()
+            );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
@@ -379,8 +455,11 @@ impl Fixture {
         let Ok(entries) = std::fs::read_dir(self.home.notifications_dir()) else {
             return Vec::new();
         };
+        // A notification is written to a temporary file and renamed: only the finished ones count.
         let mut texts: Vec<String> = entries
-            .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_none_or(|extension| extension != "tmp"))
+            .filter_map(|path| std::fs::read_to_string(path).ok())
             .collect();
         texts.sort();
         texts
@@ -416,7 +495,11 @@ fn refused(reply: Result<Reply, ClientError>) -> FailureKind {
 
 #[tokio::test]
 async fn a_solo_task_is_started_runs_to_done_and_its_team_is_closed_and_told_to_the_human() {
-    let mut f = Fixture::new(&[normal("claude-1", "done")]);
+    let mut f = Fixture::new(&[
+        normal("claude-1", "done"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+    ]);
     f.start().await;
 
     let (team, tasks) = f.start_team(&["claude-1"], PLAIN).await;
@@ -440,7 +523,11 @@ async fn a_solo_task_is_started_runs_to_done_and_its_team_is_closed_and_told_to_
 
 #[tokio::test]
 async fn a_solo_task_gets_a_worktree_on_a_branch_of_its_own_and_its_prompt_has_the_brief() {
-    let mut f = Fixture::new(&[normal("claude-1", "done")]);
+    let mut f = Fixture::new(&[
+        normal("claude-1", "done"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+    ]);
     f.start().await;
 
     let (_, tasks) = f.start_team(&["claude-1"], PLAIN).await;
@@ -460,7 +547,11 @@ async fn a_solo_task_gets_a_worktree_on_a_branch_of_its_own_and_its_prompt_has_t
 
 #[tokio::test]
 async fn a_solo_task_with_items_starts_the_first_item_on_its_own_branch_and_goes_on_waiting_for_the_next() {
-    let mut f = Fixture::new(&[normal("claude-1", "done")]);
+    let mut f = Fixture::new(&[
+        normal("claude-1", "done"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+    ]);
     f.start().await;
 
     let (team, tasks) = f.start_team(&["claude-1"], CHAIN).await;
@@ -532,7 +623,7 @@ async fn a_team_starts_with_a_worktree_for_every_task_and_its_team_on_the_bus() 
 }
 
 #[tokio::test]
-async fn the_members_get_the_items_and_the_workers_and_idle_members_wait_until_they_are_needed() {
+async fn the_members_get_the_items_in_order_and_a_member_without_one_waits_with_the_workers() {
     let mut f = Fixture::new(&[
         investigator("inv-opus", "sleep"),
         investigator("inv-codex", "sleep"),
@@ -547,22 +638,20 @@ async fn the_members_get_the_items_and_the_workers_and_idle_members_wait_until_t
     let (team, tasks) = f
         .start_team(&["inv-opus", "claude-1", "claude-2", "codex-1", "glm-1"], PARALLEL)
         .await;
-    f.status_is(&tasks[1], TaskStatus::Waiting).await;
-    f.status_is(&tasks[2], TaskStatus::Waiting).await;
-    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    for task in &tasks {
+        f.status_is(task, TaskStatus::Waiting).await;
+    }
 
     let state = f.state();
     let items = state.team(&team).unwrap().items().to_vec();
     assert!(matches!(items[0].phase(), ItemPhase::InProgress { assignee, .. } if assignee.as_str() == "claude-1"));
     assert!(matches!(items[1].phase(), ItemPhase::InProgress { assignee, .. } if assignee.as_str() == "claude-2"));
-    // The third member has no item and the worker no request: neither has been started, and both sleep on the bus.
-    assert_eq!(f.runs(&tasks[3]), 0);
-    assert_eq!(f.runs(&tasks[4]), 0);
-    assert_eq!(task_status(&state, &tasks[3]), TaskStatus::Queued);
-    let bus = f.bus().team_get(&team).await.unwrap();
-    assert_eq!(bus.members[&agent("codex-1")].state, MemberState::Sleeping);
-    assert_eq!(bus.members[&agent("glm-1")].state, MemberState::Sleeping);
-    assert_eq!(bus.members[&agent("inv-opus")].state, MemberState::Sleeping);
+    let idle = f.prompt(&tasks[3], 1).await;
+    assert!(!idle.contains("## Your item"), "the third member has no item: {idle}");
+    assert!(idle.contains("Work only on the item"), "and is told to wait: {idle}");
+    for member in ["inv-opus", "claude-1", "claude-2", "codex-1", "glm-1"] {
+        f.bus_state_is(&team, member, MemberState::Sleeping).await;
+    }
     f.stop().await.unwrap();
 }
 
@@ -579,6 +668,7 @@ async fn the_first_prompt_of_a_member_has_its_item_and_its_team() {
 
     let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "glm-1"], PARALLEL).await;
     let prompt = f.prompt(&tasks[1], 1).await;
+    let coordinator = f.prompt(&tasks[0], 1).await;
     f.stop().await.unwrap();
 
     assert!(prompt.contains("Your role: member"), "{prompt}");
@@ -586,7 +676,6 @@ async fn the_first_prompt_of_a_member_has_its_item_and_its_team() {
     assert!(prompt.contains("## Your team"), "{prompt}");
     assert!(prompt.contains(team.as_str()), "{prompt}");
     assert!(prompt.contains("Coordinator: inv-opus"), "{prompt}");
-    let coordinator = f.prompt(&tasks[0], 1).await;
     assert!(coordinator.contains("Your role: coordinator"), "{coordinator}");
 }
 
@@ -632,11 +721,10 @@ async fn an_investigator_in_the_team_coordinates_and_an_explicit_coordinator_win
 /// Nothing was made: no team, no worktree, no branch but `main`.
 fn assert_nothing_started(f: &Fixture) {
     assert!(f.state().teams().is_empty(), "a team was made");
-    let worktrees = f.home.root().join("worktrees");
-    let any = std::fs::read_dir(worktrees)
-        .map(|mut entries| entries.next().is_some())
-        .unwrap_or(false);
-    assert!(!any, "a worktree was made");
+    let found: Vec<PathBuf> = std::fs::read_dir(f.home.root().join("worktrees/example"))
+        .map(|entries| entries.map(|entry| entry.unwrap().path()).collect())
+        .unwrap_or_default();
+    assert_eq!(found, Vec::<PathBuf>::new(), "a worktree was made");
     assert_eq!(f.branches(), ["main"]);
 }
 
@@ -704,7 +792,7 @@ async fn a_checkout_without_the_base_branch_is_refused_and_nothing_is_left_behin
     let reply = f.run(&["claude-1", "inv-opus"], PARALLEL, None).await;
 
     assert_eq!(refused(reply), FailureKind::Invalid);
-    assert!(f.state().teams().is_empty());
+    assert_eq!(f.state().teams(), []);
     assert_eq!(f.branches(), ["trunk"]);
     f.stop().await.unwrap();
 }
@@ -729,14 +817,20 @@ async fn a_member_that_is_done_tells_the_coordinator_which_wakes_to_integrate_it
         investigator("inv-opus", "sleep"),
         investigator("inv-codex", "sleep"),
         investigator("inv-gemini", "sleep"),
-        normal("claude-1", "done"),
+        normal("claude-1", "slowdone"),
         normal("claude-2", "sleep"),
     ]);
     f.start().await;
 
     let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "claude-2"], PARALLEL).await;
     let woken = f.prompt(&tasks[0], 2).await;
-    let state = f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    // The second run of the coordinator is over, and so is the work of the member.
+    let state = f
+        .state_where("the second run of the coordinator to end", |state| {
+            let coordinator = state.find_task(&tasks[0]).unwrap().member;
+            coordinator.runs().len() == 2 && coordinator.status() == TaskStatus::Waiting
+        })
+        .await;
     f.stop().await.unwrap();
 
     assert!(woken.starts_with("# YOU HAVE BEEN WOKEN UP (team "), "{woken}");
@@ -750,7 +844,9 @@ async fn a_member_that_is_done_tells_the_coordinator_which_wakes_to_integrate_it
     // The item stays with the member until its pull request is open.
     let phase = state.team(&team).unwrap().items()[0].phase().clone();
     assert!(matches!(phase, ItemPhase::InProgress { .. }), "{phase:?}");
-    let log = std::fs::read_to_string(f.worktree(&tasks[0]).join(".fake-log")).unwrap();
+    let log_file = f.worktree(&tasks[0]).join(".fake-log");
+    let log = std::fs::read_to_string(&log_file).unwrap();
+    assert!(!log.contains("git failed"), "{log}");
     let sessions: Vec<&str> = log.lines().map(|line| line.split(' ').nth(1).unwrap()).collect();
     assert_eq!(
         sessions[0], sessions[1],
@@ -764,7 +860,7 @@ async fn a_member_that_failed_tells_the_coordinator_so() {
         investigator("inv-opus", "sleep"),
         investigator("inv-codex", "sleep"),
         investigator("inv-gemini", "sleep"),
-        normal("claude-1", "fail"),
+        normal("claude-1", "slowfail"),
     ]);
     f.start().await;
 
@@ -779,7 +875,7 @@ async fn a_member_that_failed_tells_the_coordinator_so() {
 }
 
 #[tokio::test]
-async fn a_message_to_a_member_that_waits_starts_its_task_with_the_wake_and_a_held_member_with_its_whole_prompt() {
+async fn a_message_to_a_member_that_sleeps_starts_its_task_again_with_the_wake() {
     let mut f = Fixture::new(&[
         investigator("inv-opus", "sleep"),
         investigator("inv-codex", "sleep"),
@@ -789,7 +885,7 @@ async fn a_message_to_a_member_that_waits_starts_its_task_with_the_wake_and_a_he
     f.start().await;
     let (team, tasks) = f.start_team(&["inv-opus", "claude-1"], PLAIN).await;
     f.status_is(&tasks[0], TaskStatus::Waiting).await;
-    assert_eq!(f.runs(&tasks[1]), 0, "a member with nothing to do is not started");
+    assert_eq!(f.runs(&tasks[1]), 1, "its first run slept: {}", f.messages());
 
     f.bus()
         .send(
@@ -801,14 +897,13 @@ async fn a_message_to_a_member_that_waits_starts_its_task_with_the_wake_and_a_he
         )
         .await
         .unwrap();
-    let prompt = f.prompt(&tasks[1], 1).await;
+    let prompt = f.prompt(&tasks[1], 2).await;
     f.status_is(&tasks[1], TaskStatus::Waiting).await;
     f.stop().await.unwrap();
 
-    assert!(prompt.contains("Your role: member"), "{prompt}");
-    assert!(prompt.contains("## Your team"), "{prompt}");
-    assert!(prompt.contains("YOU HAVE BEEN WOKEN UP"), "{prompt}");
+    assert!(prompt.starts_with("# YOU HAVE BEEN WOKEN UP (team "), "{prompt}");
     assert!(prompt.contains(team.as_str()), "{prompt}");
+    assert_eq!(f.runs(&tasks[0]), 1, "the coordinator was not woken: {}", f.messages());
 }
 
 #[tokio::test]
@@ -818,13 +913,15 @@ async fn a_request_for_a_worker_goes_to_the_first_free_worker_and_its_result_ret
         investigator("inv-codex", "sleep"),
         investigator("inv-gemini", "sleep"),
         normal("claude-1", "sleep"),
-        worker("glm-1", "done:Result: three files."),
-        worker("glm-2", "done:Result: other."),
+        worker("glm-1", "sleep,done:Result: three files."),
+        worker("glm-2", "sleep,done:Result: other."),
     ]);
     f.start().await;
     let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "glm-1", "glm-2"], PLAIN).await;
-    f.status_is(&tasks[0], TaskStatus::Waiting).await;
-    assert_eq!(f.runs(&tasks[2]), 0, "a worker is not started before it is asked");
+    for task in &tasks {
+        f.status_is(task, TaskStatus::Waiting).await;
+    }
+    assert_eq!(f.runs(&tasks[2]), 1, "a worker is not started again before it is asked");
 
     let id = f
         .bus()
@@ -841,16 +938,8 @@ async fn a_request_for_a_worker_goes_to_the_first_free_worker_and_its_result_ret
         })
         .await
         .unwrap();
-    let prompt = f.prompt(&tasks[2], 1).await;
-    f.status_is(&tasks[2], TaskStatus::Waiting).await;
-    let bus = f.bus();
-    let request = loop {
-        let request = bus.helper_get(id).await.unwrap();
-        if request.status == DelegationStatus::Done {
-            break request;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
+    let prompt = f.prompt(&tasks[2], 2).await;
+    let request = f.request_with(id, DelegationStatus::Done).await;
     f.stop().await.unwrap();
 
     assert!(prompt.contains("A REQUEST FROM claude-1 (H1)"), "{prompt}");
@@ -867,7 +956,7 @@ async fn a_request_for_a_worker_goes_to_the_first_free_worker_and_its_result_ret
         "the status line is not the result: {}",
         request.summary
     );
-    assert_eq!(f.runs(&tasks[3]), 0, "the second worker was not needed");
+    assert_eq!(f.runs(&tasks[3]), 1, "the second worker was not needed");
     let messages = f.messages();
     assert!(messages.contains("helper_result"), "{messages}");
 }
@@ -879,11 +968,13 @@ async fn a_worker_that_fails_returns_the_failure_to_the_requester() {
         investigator("inv-codex", "sleep"),
         investigator("inv-gemini", "sleep"),
         normal("claude-1", "sleep"),
-        worker("glm-1", "fail"),
+        worker("glm-1", "sleep,fail"),
     ]);
     f.start().await;
     let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "glm-1"], PLAIN).await;
-    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    for task in &tasks {
+        f.status_is(task, TaskStatus::Waiting).await;
+    }
 
     let id = f
         .bus()
@@ -901,14 +992,7 @@ async fn a_worker_that_fails_returns_the_failure_to_the_requester() {
         .await
         .unwrap();
     f.status_is(&tasks[2], TaskStatus::Failed).await;
-    let bus = f.bus();
-    let request = loop {
-        let request = bus.helper_get(id).await.unwrap();
-        if request.status == DelegationStatus::Failed {
-            break request;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
+    let request = f.request_with(id, DelegationStatus::Failed).await;
     f.stop().await.unwrap();
 
     assert!(request.summary.contains("I could not do it."), "{}", request.summary);
@@ -916,13 +1000,13 @@ async fn a_worker_that_fails_returns_the_failure_to_the_requester() {
 }
 
 #[tokio::test]
-async fn a_team_whose_lead_is_done_and_whose_members_have_nothing_left_is_closed_and_the_human_is_told() {
+async fn a_team_whose_lead_is_done_and_whose_members_wait_is_closed_and_the_human_is_told_once() {
     let mut f = Fixture::new(&[
-        investigator("inv-opus", "done"),
+        investigator("inv-opus", "slowdone"),
         investigator("inv-codex", "sleep"),
         investigator("inv-gemini", "sleep"),
-        normal("claude-1", "done"),
-        worker("glm-1", "done"),
+        normal("claude-1", "sleep"),
+        worker("glm-1", "sleep"),
     ]);
     f.start().await;
 
@@ -932,19 +1016,17 @@ async fn a_team_whose_lead_is_done_and_whose_members_have_nothing_left_is_closed
         f.notifications().iter().any(|text| text.contains("is finished"))
     })
     .await;
-    let bus = f.bus().team_get(&team).await.unwrap();
+    let bus = loop {
+        let bus = f.bus().team_get(&team).await.unwrap();
+        if bus.done {
+            break bus;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
     f.stop().await.unwrap();
 
-    assert_eq!(
-        task_status(&state, &tasks[1]),
-        TaskStatus::Stopped,
-        "a member that never had work"
-    );
-    assert_eq!(
-        task_status(&state, &tasks[2]),
-        TaskStatus::Stopped,
-        "a worker that was never asked"
-    );
+    assert_eq!(task_status(&state, &tasks[1]), TaskStatus::Done, "a member that waited");
+    assert_eq!(task_status(&state, &tasks[2]), TaskStatus::Done, "a worker that waited");
     assert!(bus.done);
     let notices: Vec<String> = f
         .notifications()
@@ -956,7 +1038,11 @@ async fn a_team_whose_lead_is_done_and_whose_members_have_nothing_left_is_closed
 
 #[tokio::test]
 async fn a_closed_team_is_not_closed_again_when_the_daemon_restarts() {
-    let mut f = Fixture::new(&[normal("claude-1", "done")]);
+    let mut f = Fixture::new(&[
+        normal("claude-1", "done"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+    ]);
     f.start().await;
     let (_, tasks) = f.start_team(&["claude-1"], PLAIN).await;
     f.status_is(&tasks[0], TaskStatus::Done).await;

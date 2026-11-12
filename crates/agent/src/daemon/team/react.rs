@@ -79,7 +79,7 @@ pub(in crate::daemon) struct Told {
 
 /// Why a notice cannot be made.
 #[derive(Debug, thiserror::Error)]
-pub(in crate::daemon) enum NoticeError {
+pub(crate) enum NoticeError {
     /// A name of the team is not an agent name.
     #[error("the name of a member of the team is not an agent name")]
     Name(#[from] agent_core::ids::InvalidName),
@@ -145,9 +145,73 @@ pub(in crate::daemon) fn request_outcome(
     status: TaskStatus,
     message: Option<&str>,
 ) -> Option<RequestOutcome> {
-    let _ = (end, status, message);
-    None
+    let said = message.unwrap_or_default();
+    let fail = |how: &str| {
+        let reason = if said.trim().is_empty() {
+            how.to_owned()
+        } else {
+            format!("{how}: {}", end_of(said))
+        };
+        Some(RequestOutcome::Failed { reason })
+    };
+    match end {
+        RunEnd::Reported {
+            outcome: RunOutcome::Done,
+        } => Some(RequestOutcome::Done { summary: report(said) }),
+        RunEnd::Reported {
+            outcome: RunOutcome::Failed,
+        } => fail(HOW_FAILED),
+        RunEnd::Reported {
+            outcome: RunOutcome::Sleeping | RunOutcome::Excluded,
+        } => fail(HOW_NO_RESULT),
+        RunEnd::NoStatus { .. } => fail(HOW_NO_STATUS),
+        RunEnd::Stopped => fail(HOW_STOPPED),
+        // The worker goes on, after the human answered or its provider's limit is over; only the end of the
+        // watchdog's last strike ends the request.
+        RunEnd::Reported {
+            outcome: RunOutcome::Questions,
+        }
+        | RunEnd::QuotaExhausted { .. }
+        | RunEnd::RateLimited
+        | RunEnd::Hung => (status == TaskStatus::Failed).then(|| RequestOutcome::Failed {
+            reason: HOW_HUNG.to_owned(),
+        }),
+    }
 }
+
+/// How a worker's run ended, when its status line says it failed.
+const HOW_FAILED: &str = "the worker ended with STATUS: FAILED";
+
+/// How a worker's run ended when it said nothing a requester can use.
+const HOW_NO_RESULT: &str = "the worker ended without a result";
+
+/// How a worker's run ended without a status line.
+const HOW_NO_STATUS: &str = "the worker ended without a STATUS line";
+
+/// How a worker's run ended when the human stopped it.
+const HOW_STOPPED: &str = "the worker was stopped";
+
+/// How a worker's run ended when the watchdog gave up on it.
+const HOW_HUNG: &str = "the worker hung";
+
+/// The worker's report without its closing `STATUS:` line; the whole message when nothing else is in it, so that a
+/// report is never empty.
+fn report(message: &str) -> String {
+    let trimmed = message.trim_end();
+    let without = match trimmed.rsplit_once('\n') {
+        Some((before, last)) if last.trim_start().starts_with(STATUS_PREFIX) => before.trim_end(),
+        None if trimmed.trim_start().starts_with(STATUS_PREFIX) => "",
+        _ => trimmed,
+    };
+    if without.is_empty() {
+        trimmed.to_owned()
+    } else {
+        without.to_owned()
+    }
+}
+
+/// What a status line starts with.
+const STATUS_PREFIX: &str = "STATUS:";
 
 /// The item `member` works on and its branch, if it has one.
 fn worked_on(team: &Team, member: &Member) -> Option<(ItemId, BranchName)> {

@@ -21,7 +21,7 @@ pub(in crate::daemon) struct Assigned {
 
 /// Why the assignments of a team cannot be decided.
 #[derive(Debug, thiserror::Error)]
-pub(in crate::daemon) enum AssignmentError {
+pub(crate) enum AssignmentError {
     /// The progress does not fit the task list.
     #[error("cannot decide which item goes to which member")]
     Decide(#[from] AssignError),

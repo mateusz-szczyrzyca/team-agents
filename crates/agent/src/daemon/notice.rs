@@ -66,6 +66,8 @@ pub(super) enum Notice {
         /// Why, as the chain of its errors.
         reason: String,
     },
+    /// A notification that was made where its text is known, such as the one of a team that is finished.
+    Prepared(Notification),
 }
 
 /// Why a notice cannot be made into a notification.
@@ -95,6 +97,7 @@ impl Notice {
     ) -> Result<Notification, NoticeError> {
         let common = Variables::new().with("agent", agent)?.with("task", task.as_str())?;
         let (text, values) = match self {
+            Self::Prepared(notification) => return Ok(notification.clone()),
             Self::Questions { round, file } => (
                 HarnessPrompt::NoticeQuestions,
                 common
