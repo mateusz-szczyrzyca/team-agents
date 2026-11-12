@@ -11,6 +11,8 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::hash::{BuildHasher, RandomState};
+use std::net::IpAddr;
 use std::num::NonZeroU32;
 use std::str::FromStr;
 use std::time::Duration;
@@ -19,6 +21,11 @@ use agent_core::config::{GithubLogin, Secret};
 use agent_core::ids::BranchName;
 use agent_core::state::{CommitId, PrNumber, Timestamp};
 use agent_core::status::ReviewVerdict;
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, RETRY_AFTER};
+use reqwest::{Method, Url};
+use serde::de::{DeserializeOwned, Error as _};
+use serde::{Deserialize, Deserializer};
+use serde_json::{Value, json};
 
 /// The base URL of the public GitHub API.
 const PUBLIC_API: &str = "https://api.github.com";
@@ -40,6 +47,12 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long connecting may take.
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// What GitHub is told this client is.
+const USER_AGENT: &str = "team-agents";
+
+/// The version of the REST API the client is written for.
+const API_VERSION: &str = "2022-11-28";
 
 /// The most bytes of an answer that are read; GitHub's pages of 100 items are far below it.
 const MAX_RESPONSE_BYTES: usize = 8 << 20;
@@ -105,8 +118,30 @@ impl FromStr for RepoSlug {
     type Err = InvalidRepoSlug;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Err(InvalidRepoSlug::NotOwnerAndName { value: text.to_owned() })
+        let not_owner_and_name = || InvalidRepoSlug::NotOwnerAndName { value: text.to_owned() };
+        let (owner, name) = text.split_once('/').ok_or_else(not_owner_and_name)?;
+        if owner.is_empty() || name.is_empty() || name.contains('/') {
+            return Err(not_owner_and_name());
+        }
+        check_slug_part(owner, "owner")?;
+        check_slug_part(name, "name")?;
+        Ok(Self {
+            owner: owner.to_owned(),
+            name: name.to_owned(),
+        })
     }
+}
+
+/// Checks one part of a repository's `owner/name`.
+fn check_slug_part(part: &str, which: &'static str) -> Result<(), InvalidRepoSlug> {
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.');
+    if part.len() > MAX_SLUG_PART_LEN || matches!(part, "." | "..") || !part.chars().all(allowed) {
+        return Err(InvalidRepoSlug::BadPart {
+            value: part.to_owned(),
+            part: which,
+        });
+    }
+    Ok(())
 }
 
 /// Why a text is not an [`ApiBase`].
@@ -117,6 +152,8 @@ pub enum InvalidApiBase {
     NotAUrl {
         /// The refused text.
         value: String,
+        /// What the URL parser found wrong.
+        source: <Url as FromStr>::Err,
     },
     /// The scheme is neither `https` nor `http`.
     #[error("the API base {value:?} must start with https:// (or http:// for a loopback address)")]
@@ -164,8 +201,37 @@ impl FromStr for ApiBase {
     type Err = InvalidApiBase;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Err(InvalidApiBase::NotAUrl { value: text.to_owned() })
+        let url = Url::parse(text).map_err(|source| InvalidApiBase::NotAUrl {
+            value: text.to_owned(),
+            source,
+        })?;
+        let value = || text.to_owned();
+        match url.scheme() {
+            "https" => {}
+            "http" if is_loopback(&url) => {}
+            "http" => return Err(InvalidApiBase::InsecureHost { value: value() }),
+            _ => return Err(InvalidApiBase::Scheme { value: value() }),
+        }
+        let decorated =
+            !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some();
+        if decorated {
+            return Err(InvalidApiBase::Decorated { value: value() });
+        }
+        Ok(Self(url.as_str().trim_end_matches('/').to_owned()))
     }
+}
+
+/// Whether the host of `url` is this machine: `localhost` or a loopback address.
+fn is_loopback(url: &Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    // An IPv6 host is written in brackets.
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_matches(['[', ']'])
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
 }
 
 /// Whether a delay is spread out, so that clients that failed together do not retry together.
@@ -207,8 +273,33 @@ impl RetryPolicy {
     /// [`RetryPolicy::max_delay`].
     #[must_use]
     pub fn delay_before(&self, next: u32, retry_after: Option<Duration>) -> Option<Duration> {
-        let _ = (next, retry_after);
-        Some(Duration::ZERO)
+        if next > self.max_attempts.get() {
+            return None;
+        }
+        // The first retry (attempt 2) waits `base_delay`; every further one doubles it, up to `max_delay`.
+        let doublings = next.saturating_sub(2).min(u32::BITS - 1);
+        let growing = self.base_delay.saturating_mul(1_u32 << doublings).min(self.max_delay);
+        let backoff = self.jitter.apply(growing);
+        match retry_after {
+            None => Some(backoff),
+            Some(asked) if asked > self.max_delay => None,
+            Some(asked) => Some(asked.max(backoff)),
+        }
+    }
+}
+
+impl Jitter {
+    /// `delay`, or a delay between half and all of it.
+    fn apply(self, delay: Duration) -> Duration {
+        match self {
+            Self::None => delay,
+            Self::Spread => {
+                let [a, b, c, d, ..] = RandomState::new().hash_one(0_u8).to_le_bytes();
+                let permille = u32::from_le_bytes([a, b, c, d]) % 1001;
+                let half = delay / 2;
+                half.saturating_add(half.saturating_mul(permille) / 1000)
+            }
+        }
     }
 }
 
@@ -449,8 +540,6 @@ pub struct RemotePullRequest {
     pub base_branch: BranchName,
     /// Whether its head is in this repository or in a fork.
     pub origin: Origin,
-    /// GitHub's global ID of it, which GraphQL needs.
-    node_id: String,
 }
 
 /// A pull request to open.
@@ -533,7 +622,8 @@ pub struct NewReview {
 }
 
 /// What state a posted review is in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum ReviewState {
     /// Approved.
     Approved,
@@ -589,33 +679,146 @@ pub struct TrustedList<T> {
 /// The GitHub REST API for one repository.
 #[derive(Debug, Clone)]
 pub struct GitHub {
-    /// The HTTP client; the token is in its default headers, marked sensitive.
+    /// The HTTP client, with the headers every call carries.
     http: reqwest::Client,
     /// The settings it was made with.
     settings: GitHubSettings,
     /// The repository every call is about.
     repo: RepoSlug,
+    /// The token of the account the calls are made as; its `Debug` shows nothing.
+    token: Secret,
     /// The accounts whose words are taken as instructions.
     trusted: BTreeSet<GithubLogin>,
+}
+
+/// Whether a call may be made again when its answer is lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Idempotency {
+    /// Making it twice does what making it once does: it is retried.
+    Idempotent,
+    /// It may do something a second time, or answer differently the second time: it is made once.
+    Once,
+}
+
+/// A call to make.
+struct Call {
+    /// What it is for.
+    operation: GitHubOperation,
+    /// The HTTP method.
+    method: Method,
+    /// The path under the base URL, with its query.
+    path: String,
+    /// The JSON body, if it has one.
+    body: Option<String>,
+    /// Whether it is retried.
+    idempotency: Idempotency,
+}
+
+/// Why one attempt of a call failed.
+enum Failure {
+    /// The connection or the answer broke.
+    Transport(reqwest::Error),
+    /// The attempt ran over its time.
+    TimedOut,
+    /// GitHub answered with a status that is not a success.
+    Rejected {
+        /// The status code.
+        status: u16,
+        /// What it means.
+        reason: Rejection,
+        /// How long GitHub asks to wait.
+        retry_after: Option<Duration>,
+        /// GitHub's message, bounded.
+        message: String,
+    },
+    /// The answer is over the limit.
+    TooLarge,
+}
+
+impl Failure {
+    /// Whether a later attempt may do better: the network, the server and a rate limit that names its wait.
+    fn is_transient(&self) -> bool {
+        match self {
+            Self::Transport(error) => !error.is_builder(),
+            Self::TimedOut => true,
+            Self::Rejected {
+                reason, retry_after, ..
+            } => matches!(reason, Rejection::Server) || (*reason == Rejection::RateLimited && retry_after.is_some()),
+            Self::TooLarge => false,
+        }
+    }
+
+    /// How long GitHub asks to wait before the next attempt.
+    fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::Rejected { retry_after, .. } => *retry_after,
+            Self::Transport(_) | Self::TimedOut | Self::TooLarge => None,
+        }
+    }
+
+    /// The error of a call that failed on its `attempts`-th attempt, each of which had `limit`.
+    fn into_error(self, operation: GitHubOperation, attempts: u32, limit: Duration) -> GitHubError {
+        match self {
+            Self::Transport(source) => GitHubError::Transport {
+                operation,
+                attempts,
+                source,
+            },
+            Self::TimedOut => GitHubError::Timeout {
+                operation,
+                attempts,
+                limit,
+            },
+            Self::Rejected {
+                status,
+                reason,
+                retry_after,
+                message,
+            } => GitHubError::Status {
+                operation,
+                status,
+                reason,
+                retry_after,
+                message,
+            },
+            Self::TooLarge => GitHubError::ResponseTooLarge {
+                operation,
+                limit: MAX_RESPONSE_BYTES,
+            },
+        }
+    }
 }
 
 impl GitHub {
     /// A client for `repo` that acts as the owner of `token` and trusts the words of `trusted`.
     ///
     /// # Errors
-    /// [`GitHubError::InvalidToken`] when the token cannot be a header; [`GitHubError::Client`] when the HTTP
-    /// client cannot be built.
+    /// [`GitHubError::Client`] when the HTTP client cannot be built.
     pub fn new(
         settings: GitHubSettings,
         repo: RepoSlug,
         token: &Secret,
         trusted: &[GithubLogin],
     ) -> Result<Self, GitHubError> {
-        let _ = token;
+        let mut headers = HeaderMap::new();
+        headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
+        headers.insert(
+            HeaderName::from_static("x-github-api-version"),
+            HeaderValue::from_static(API_VERSION),
+        );
+        // A redirect is an error, not followed: the token must not be sent where the base URL does not point.
+        let http = reqwest::Client::builder()
+            .default_headers(headers)
+            .user_agent(USER_AGENT)
+            .connect_timeout(settings.connect_timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|source| GitHubError::Client { source })?;
         Ok(Self {
-            http: reqwest::Client::new(),
+            http,
             settings,
             repo,
+            token: token.clone(),
             trusted: trusted.iter().cloned().collect(),
         })
     }
@@ -623,8 +826,10 @@ impl GitHub {
     /// Whether the words of the account `login` are taken as instructions.
     #[must_use]
     pub fn is_trusted(&self, login: &str) -> bool {
-        let _ = login;
-        false
+        // A name that is not a valid login (a bot such as `dependabot[bot]`) is not one of the trusted accounts.
+        login
+            .parse::<GithubLogin>()
+            .is_ok_and(|account| self.trusted.contains(&account))
     }
 
     /// Opens a pull request. Not retried: a lost answer may hide a pull request that was opened.
@@ -634,8 +839,24 @@ impl GitHub {
     /// [`GitHubError::Transport`], [`GitHubError::Timeout`], [`GitHubError::ResponseTooLarge`] and
     /// [`GitHubError::Decode`].
     pub async fn create_pull_request(&self, new: &NewPullRequest) -> Result<RemotePullRequest, GitHubError> {
-        let _ = new;
-        Err(GitHubError::NothingToUpdate)
+        let operation = GitHubOperation::CreatePullRequest;
+        let body = json!({
+            "title": new.title,
+            "body": new.body,
+            "head": new.head.as_str(),
+            "base": new.base.as_str(),
+            "draft": new.readiness == Readiness::Draft,
+        });
+        let answer = self
+            .call(Call {
+                operation,
+                method: Method::POST,
+                path: self.repo_path("pulls"),
+                body: Some(body.to_string()),
+                idempotency: Idempotency::Once,
+            })
+            .await?;
+        self.pull_from(operation, &answer)
     }
 
     /// Changes a pull request. Retried: setting the same values twice is the same as once.
@@ -647,8 +868,37 @@ impl GitHub {
         number: PrNumber,
         update: &PullRequestUpdate,
     ) -> Result<RemotePullRequest, GitHubError> {
-        let _ = (number, update);
-        Err(GitHubError::NothingToUpdate)
+        let operation = GitHubOperation::UpdatePullRequest;
+        let mut changes = serde_json::Map::new();
+        if let Some(title) = &update.title {
+            changes.insert("title".to_owned(), json!(title));
+        }
+        if let Some(body) = &update.body {
+            changes.insert("body".to_owned(), json!(body));
+        }
+        if let Some(base) = &update.base {
+            changes.insert("base".to_owned(), json!(base.as_str()));
+        }
+        if let Some(state) = update.state {
+            let text = match state {
+                StateChange::Reopen => "open",
+                StateChange::Close => "closed",
+            };
+            changes.insert("state".to_owned(), json!(text));
+        }
+        if changes.is_empty() {
+            return Err(GitHubError::NothingToUpdate);
+        }
+        let answer = self
+            .call(Call {
+                operation,
+                method: Method::PATCH,
+                path: self.repo_path(&format!("pulls/{number}")),
+                body: Some(Value::Object(changes).to_string()),
+                idempotency: Idempotency::Idempotent,
+            })
+            .await?;
+        self.pull_from(operation, &answer)
     }
 
     /// Marks a draft pull request ready for review; a pull request that is ready already is left as it is. GitHub's
@@ -657,8 +907,32 @@ impl GitHub {
     /// # Errors
     /// [`GitHubError::GraphQl`] and the errors of a call.
     pub async fn mark_ready(&self, number: PrNumber) -> Result<(), GitHubError> {
-        let _ = number;
-        Err(GitHubError::NothingToUpdate)
+        let operation = GitHubOperation::MarkReady;
+        let pull = self.read_pull(operation, number).await?;
+        if pull.pull.readiness == Readiness::Ready {
+            return Ok(());
+        }
+        let body = json!({
+            "query": MARK_READY_MUTATION,
+            "variables": {"id": pull.node_id},
+        });
+        let answer = self
+            .call(Call {
+                operation,
+                method: Method::POST,
+                path: "graphql".to_owned(),
+                body: Some(body.to_string()),
+                idempotency: Idempotency::Once,
+            })
+            .await?;
+        let reply: GraphQlReply = decode(operation, &answer)?;
+        match reply.errors.into_iter().next() {
+            Some(first) => Err(GitHubError::GraphQl {
+                operation,
+                message: first.message.chars().take(MAX_MESSAGE_CHARS).collect(),
+            }),
+            None => Ok(()),
+        }
     }
 
     /// Merges a pull request at `request.expected_head`. Not retried: a second try after a lost answer would be
@@ -668,8 +942,32 @@ impl GitHub {
     /// [`GitHubError::Status`] with [`Rejection::NotAllowed`] when it cannot be merged and
     /// [`Rejection::Conflict`] when the head has moved; the errors of a call.
     pub async fn merge_pull_request(&self, number: PrNumber, request: &MergeRequest) -> Result<Merged, GitHubError> {
-        let _ = (number, request);
-        Err(GitHubError::NothingToUpdate)
+        let operation = GitHubOperation::MergePullRequest;
+        let method = match request.method {
+            MergeMethod::Merge => "merge",
+            MergeMethod::Squash => "squash",
+            MergeMethod::Rebase => "rebase",
+        };
+        let mut body = serde_json::Map::new();
+        body.insert("merge_method".to_owned(), json!(method));
+        body.insert("sha".to_owned(), json!(request.expected_head.as_str()));
+        if let Some(title) = &request.commit_title {
+            body.insert("commit_title".to_owned(), json!(title));
+        }
+        if let Some(message) = &request.commit_message {
+            body.insert("commit_message".to_owned(), json!(message));
+        }
+        let answer = self
+            .call(Call {
+                operation,
+                method: Method::PUT,
+                path: self.repo_path(&format!("pulls/{number}/merge")),
+                body: Some(Value::Object(body).to_string()),
+                idempotency: Idempotency::Once,
+            })
+            .await?;
+        let merged: RawMerged = decode(operation, &answer)?;
+        Ok(Merged { commit: merged.sha })
     }
 
     /// Reads a pull request. Retried.
@@ -677,8 +975,8 @@ impl GitHub {
     /// # Errors
     /// The errors of a call.
     pub async fn get_pull_request(&self, number: PrNumber) -> Result<RemotePullRequest, GitHubError> {
-        let _ = number;
-        Err(GitHubError::NothingToUpdate)
+        let pull = self.read_pull(GitHubOperation::GetPullRequest, number).await?;
+        Ok(pull.pull)
     }
 
     /// Posts a review. Not retried.
@@ -686,8 +984,24 @@ impl GitHub {
     /// # Errors
     /// The errors of a call; GitHub refuses (422) a verdict by the author of the pull request on their own.
     pub async fn post_review(&self, number: PrNumber, review: &NewReview) -> Result<Review, GitHubError> {
-        let _ = (number, review);
-        Err(GitHubError::NothingToUpdate)
+        let operation = GitHubOperation::PostReview;
+        let body = json!({
+            "event": review.verdict.to_string(),
+            "body": review.body,
+            "commit_id": review.commit.as_str(),
+        });
+        let answer = self
+            .call(Call {
+                operation,
+                method: Method::POST,
+                path: self.repo_path(&format!("pulls/{number}/reviews")),
+                body: Some(body.to_string()),
+                idempotency: Idempotency::Once,
+            })
+            .await?;
+        let raw: RawReview = decode(operation, &answer)?;
+        let author = raw.author_or_decode_error(operation)?;
+        Ok(raw.into_review(author))
     }
 
     /// Posts a comment on a pull request. Not retried.
@@ -695,8 +1009,19 @@ impl GitHub {
     /// # Errors
     /// The errors of a call.
     pub async fn post_comment(&self, number: PrNumber, body: &str) -> Result<Comment, GitHubError> {
-        let _ = (number, body);
-        Err(GitHubError::NothingToUpdate)
+        let operation = GitHubOperation::PostComment;
+        let answer = self
+            .call(Call {
+                operation,
+                method: Method::POST,
+                path: self.repo_path(&format!("issues/{number}/comments")),
+                body: Some(json!({"body": body}).to_string()),
+                idempotency: Idempotency::Once,
+            })
+            .await?;
+        let raw: RawComment = decode(operation, &answer)?;
+        let author = raw.author_or_decode_error(operation)?;
+        Ok(raw.into_comment(author))
     }
 
     /// The comments on a pull request by the trusted accounts, oldest first. Retried, page by page.
@@ -704,8 +1029,11 @@ impl GitHub {
     /// # Errors
     /// [`GitHubError::TooManyPages`] and the errors of a call.
     pub async fn list_comments(&self, number: PrNumber) -> Result<TrustedList<Comment>, GitHubError> {
-        let _ = number;
-        Err(GitHubError::NothingToUpdate)
+        let operation = GitHubOperation::ListComments;
+        let raw: Vec<RawComment> = self
+            .pages(operation, &self.repo_path(&format!("issues/{number}/comments")))
+            .await?;
+        Ok(self.keep_trusted(operation, number, raw, RawComment::into_comment))
     }
 
     /// The reviews of a pull request by the trusted accounts, oldest first. Retried, page by page.
@@ -713,7 +1041,455 @@ impl GitHub {
     /// # Errors
     /// [`GitHubError::TooManyPages`] and the errors of a call.
     pub async fn list_reviews(&self, number: PrNumber) -> Result<TrustedList<Review>, GitHubError> {
-        let _ = number;
-        Err(GitHubError::NothingToUpdate)
+        let operation = GitHubOperation::ListReviews;
+        let raw: Vec<RawReview> = self
+            .pages(operation, &self.repo_path(&format!("pulls/{number}/reviews")))
+            .await?;
+        Ok(self.keep_trusted(operation, number, raw, RawReview::into_review))
+    }
+
+    /// The path of `what` under this repository.
+    fn repo_path(&self, what: &str) -> String {
+        format!("repos/{}/{}/{what}", self.repo.owner(), self.repo.name())
+    }
+
+    /// Reads and decodes a pull request.
+    async fn read_pull(&self, operation: GitHubOperation, number: PrNumber) -> Result<ReadPull, GitHubError> {
+        let answer = self
+            .call(Call {
+                operation,
+                method: Method::GET,
+                path: self.repo_path(&format!("pulls/{number}")),
+                body: None,
+                idempotency: Idempotency::Idempotent,
+            })
+            .await?;
+        let raw: RawPull = decode(operation, &answer)?;
+        Ok(raw.into_read(&self.repo))
+    }
+
+    /// Decodes the answer to a call that returns a pull request.
+    fn pull_from(&self, operation: GitHubOperation, answer: &[u8]) -> Result<RemotePullRequest, GitHubError> {
+        let raw: RawPull = decode(operation, answer)?;
+        Ok(raw.into_read(&self.repo).pull)
+    }
+
+    /// Reads every page of a list, at most [`MAX_PAGES`].
+    async fn pages<R: DeserializeOwned>(&self, operation: GitHubOperation, path: &str) -> Result<Vec<R>, GitHubError> {
+        let mut items = Vec::new();
+        for page in 1..=MAX_PAGES {
+            let answer = self
+                .call(Call {
+                    operation,
+                    method: Method::GET,
+                    path: format!("{path}?per_page={PAGE_SIZE}&page={page}"),
+                    body: None,
+                    idempotency: Idempotency::Idempotent,
+                })
+                .await?;
+            let mut on_page: Vec<R> = decode(operation, &answer)?;
+            let last = on_page.len() < PAGE_SIZE;
+            items.append(&mut on_page);
+            if last {
+                return Ok(items);
+            }
+        }
+        Err(GitHubError::TooManyPages {
+            operation,
+            pages: MAX_PAGES,
+        })
+    }
+
+    /// Keeps the items of the trusted accounts, converted with `convert`, and counts the others.
+    fn keep_trusted<R: Authored, T>(
+        &self,
+        operation: GitHubOperation,
+        number: PrNumber,
+        raw: Vec<R>,
+        convert: fn(R, String) -> T,
+    ) -> TrustedList<T> {
+        let mut trusted = Vec::new();
+        let mut ignored = 0_usize;
+        for item in raw {
+            match item.author().map(str::to_owned) {
+                Some(author) if self.is_trusted(&author) => trusted.push(convert(item, author)),
+                Some(_) | None => ignored = ignored.saturating_add(1),
+            }
+        }
+        if ignored > 0 {
+            tracing::info!(%operation, pull_request = %number, ignored, "left out what accounts that are not trusted wrote");
+        }
+        TrustedList { trusted, ignored }
+    }
+
+    /// Makes a call, again after a transient failure when it is idempotent, and returns the body of the answer.
+    async fn call(&self, call: Call) -> Result<Vec<u8>, GitHubError> {
+        let allowed = match call.idempotency {
+            Idempotency::Idempotent => self.settings.retry.max_attempts.get(),
+            Idempotency::Once => 1,
+        };
+        let mut attempt = 1_u32;
+        loop {
+            let failure = match self.attempt(&call).await {
+                Ok(body) => return Ok(body),
+                Err(failure) => failure,
+            };
+            let next = attempt.saturating_add(1);
+            let delay = if attempt < allowed && failure.is_transient() {
+                self.settings.retry.delay_before(next, failure.retry_after())
+            } else {
+                None
+            };
+            let Some(delay) = delay else {
+                return Err(failure.into_error(call.operation, attempt, self.settings.timeout));
+            };
+            tracing::debug!(operation = %call.operation, attempt, ?delay, "a call failed and is made again");
+            tokio::time::sleep(delay).await;
+            attempt = next;
+        }
+    }
+
+    /// One attempt of a call, within the time of an attempt.
+    async fn attempt(&self, call: &Call) -> Result<Vec<u8>, Failure> {
+        match tokio::time::timeout(self.settings.timeout, self.exchange(call)).await {
+            Ok(result) => result,
+            Err(_elapsed) => Err(Failure::TimedOut),
+        }
+    }
+
+    /// Sends the request and reads the whole answer, bounded.
+    async fn exchange(&self, call: &Call) -> Result<Vec<u8>, Failure> {
+        let url = format!("{}/{}", self.settings.base.as_str(), call.path);
+        let mut request = self
+            .http
+            .request(call.method.clone(), url)
+            .bearer_auth(self.token.expose());
+        if let Some(body) = &call.body {
+            request = request.header(CONTENT_TYPE, "application/json").body(body.clone());
+        }
+        let mut response = request.send().await.map_err(Failure::Transport)?;
+        let status = response.status();
+        let retry_after = retry_after(response.headers());
+        let quota_exhausted = response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .is_some_and(|value| value.as_bytes() == b"0");
+        if response
+            .content_length()
+            .is_some_and(|length| length > u64::try_from(MAX_RESPONSE_BYTES).unwrap_or(u64::MAX))
+        {
+            return Err(Failure::TooLarge);
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(Failure::Transport)? {
+            if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+                return Err(Failure::TooLarge);
+            }
+            body.extend_from_slice(&chunk);
+        }
+        if status.is_success() {
+            return Ok(body);
+        }
+        let code = status.as_u16();
+        Err(Failure::Rejected {
+            status: code,
+            reason: rejection(code, retry_after.is_some() || quota_exhausted),
+            retry_after,
+            message: error_message(&body),
+        })
+    }
+}
+
+/// The GraphQL mutation that marks a pull request ready for review.
+const MARK_READY_MUTATION: &str =
+    "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }";
+
+/// What a status that is not a success means. `limited` is whether GitHub said it is a rate limit: a `Retry-After`
+/// or an exhausted quota, which is how it tells a rate limit from a plain 403.
+fn rejection(status: u16, limited: bool) -> Rejection {
+    match status {
+        401 => Rejection::Unauthorized,
+        403 if limited => Rejection::RateLimited,
+        403 => Rejection::Forbidden,
+        404 => Rejection::NotFound,
+        405 => Rejection::NotAllowed,
+        409 => Rejection::Conflict,
+        422 => Rejection::Invalid,
+        429 => Rejection::RateLimited,
+        500..=599 => Rejection::Server,
+        _ => Rejection::Other,
+    }
+}
+
+/// How long `Retry-After` asks to wait. Only the form of a number of seconds is read, which is what GitHub sends; a
+/// header in another form gives no wait, and the call fails as it is.
+fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let text = headers.get(RETRY_AFTER)?.to_str().ok()?;
+    let Ok(seconds) = text.trim().parse::<u64>() else {
+        return None;
+    };
+    Some(Duration::from_secs(seconds))
+}
+
+/// GitHub's own message in the body of an error, bounded. A body that is not GitHub's JSON error has none: the
+/// status says what happened.
+fn error_message(body: &[u8]) -> String {
+    match serde_json::from_slice::<RawError>(body) {
+        Ok(RawError { message: Some(message) }) => message.chars().take(MAX_MESSAGE_CHARS).collect(),
+        Ok(RawError { message: None }) | Err(_) => String::new(),
+    }
+}
+
+/// Decodes the JSON body of an answer.
+fn decode<T: DeserializeOwned>(operation: GitHubOperation, body: &[u8]) -> Result<T, GitHubError> {
+    serde_json::from_slice(body).map_err(|source| GitHubError::Decode { operation, source })
+}
+
+/// Reads a keyword that GitHub writes in capitals, such as a review's state.
+fn keyword<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: FromStr,
+    T::Err: fmt::Display,
+{
+    String::deserialize(deserializer)?.parse().map_err(D::Error::custom)
+}
+
+/// The body of an error answer.
+#[derive(Deserialize)]
+struct RawError {
+    /// GitHub's message.
+    message: Option<String>,
+}
+
+/// The answer to a GraphQL call.
+#[derive(Deserialize)]
+struct GraphQlReply {
+    /// The errors it reports; none when it worked.
+    #[serde(default)]
+    errors: Vec<GraphQlMessage>,
+}
+
+/// One error of a GraphQL answer.
+#[derive(Deserialize)]
+struct GraphQlMessage {
+    /// What went wrong.
+    message: String,
+}
+
+/// The answer to a merge.
+#[derive(Deserialize)]
+struct RawMerged {
+    /// The merge commit.
+    sha: CommitId,
+}
+
+/// An account in an answer.
+#[derive(Deserialize)]
+struct RawUser {
+    /// Its login.
+    login: String,
+}
+
+/// An item of a list that someone wrote.
+trait Authored {
+    /// The login of its author; none when the account is gone.
+    fn author(&self) -> Option<&str>;
+}
+
+/// A comment as GitHub writes it.
+#[derive(Deserialize)]
+struct RawComment {
+    /// Its ID.
+    id: u64,
+    /// Its author; none for an account that is gone.
+    user: Option<RawUser>,
+    /// What it says.
+    body: Option<String>,
+    /// When it was written.
+    created_at: Timestamp,
+}
+
+impl Authored for RawComment {
+    fn author(&self) -> Option<&str> {
+        self.user.as_ref().map(|user| user.login.as_str())
+    }
+}
+
+impl RawComment {
+    /// The comment, by `author`.
+    fn into_comment(self, author: String) -> Comment {
+        Comment {
+            id: self.id,
+            author,
+            body: self.body.unwrap_or_default(),
+            created_at: self.created_at,
+        }
+    }
+
+    /// The login of the author of a comment this client just posted: it always has one.
+    fn author_or_decode_error(&self, operation: GitHubOperation) -> Result<String, GitHubError> {
+        author_or_decode_error(self, operation)
+    }
+}
+
+/// A review as GitHub writes it.
+#[derive(Deserialize)]
+struct RawReview {
+    /// Its ID.
+    id: u64,
+    /// Its author; none for an account that is gone.
+    user: Option<RawUser>,
+    /// What it says.
+    body: Option<String>,
+    /// Its state.
+    #[serde(deserialize_with = "keyword")]
+    state: ReviewState,
+    /// The head it is about.
+    commit_id: Option<CommitId>,
+    /// When it was submitted.
+    submitted_at: Option<Timestamp>,
+}
+
+impl Authored for RawReview {
+    fn author(&self) -> Option<&str> {
+        self.user.as_ref().map(|user| user.login.as_str())
+    }
+}
+
+impl RawReview {
+    /// The review, by `author`.
+    fn into_review(self, author: String) -> Review {
+        Review {
+            id: self.id,
+            author,
+            body: self.body.unwrap_or_default(),
+            state: self.state,
+            commit: self.commit_id,
+            submitted_at: self.submitted_at,
+        }
+    }
+
+    /// The login of the author of a review this client just posted: it always has one.
+    fn author_or_decode_error(&self, operation: GitHubOperation) -> Result<String, GitHubError> {
+        author_or_decode_error(self, operation)
+    }
+}
+
+/// The author of an item the answer to a post describes; an answer without one is not what GitHub sends.
+fn author_or_decode_error(item: &impl Authored, operation: GitHubOperation) -> Result<String, GitHubError> {
+    item.author().map(str::to_owned).ok_or_else(|| GitHubError::Decode {
+        operation,
+        source: serde_json::Error::custom("the answer has no author"),
+    })
+}
+
+/// The state of a pull request as GitHub writes it.
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RawState {
+    /// Open.
+    Open,
+    /// Closed, merged or not.
+    Closed,
+}
+
+/// A repository in an answer.
+#[derive(Deserialize)]
+struct RawRepo {
+    /// Its `owner/name`.
+    full_name: String,
+}
+
+/// One side of a pull request.
+#[derive(Deserialize)]
+struct RawSide {
+    /// The branch.
+    #[serde(rename = "ref")]
+    branch: BranchName,
+    /// The commit at its tip.
+    sha: CommitId,
+    /// Its repository; none when a fork was deleted.
+    repo: Option<RawRepo>,
+}
+
+/// A pull request as GitHub writes it.
+#[derive(Deserialize)]
+struct RawPull {
+    /// Its number.
+    number: PrNumber,
+    /// Its address in the browser.
+    html_url: String,
+    /// GitHub's global ID of it.
+    node_id: String,
+    /// Its title.
+    title: String,
+    /// Its description.
+    body: Option<String>,
+    /// Open or closed.
+    state: RawState,
+    /// Whether it is a draft.
+    #[serde(default)]
+    draft: bool,
+    /// Whether it was merged.
+    #[serde(default)]
+    merged: bool,
+    /// Whether it can be merged; none while GitHub works it out.
+    #[serde(default)]
+    mergeable: Option<bool>,
+    /// Its author.
+    user: RawUser,
+    /// The branch it merges.
+    head: RawSide,
+    /// The branch it merges into.
+    base: RawSide,
+}
+
+/// A pull request read, with what GraphQL needs of it.
+struct ReadPull {
+    /// The pull request.
+    pull: RemotePullRequest,
+    /// GitHub's global ID of it.
+    node_id: String,
+}
+
+impl RawPull {
+    /// The pull request of `repo`.
+    fn into_read(self, repo: &RepoSlug) -> ReadPull {
+        let state = match (self.state, self.merged) {
+            (RawState::Open, _) => PullState::Open,
+            (RawState::Closed, true) => PullState::Merged,
+            (RawState::Closed, false) => PullState::Closed,
+        };
+        let same_repository = self
+            .head
+            .repo
+            .as_ref()
+            .is_some_and(|head| head.full_name.eq_ignore_ascii_case(&repo.to_string()));
+        ReadPull {
+            node_id: self.node_id,
+            pull: RemotePullRequest {
+                number: self.number,
+                url: self.html_url,
+                title: self.title,
+                body: self.body.unwrap_or_default(),
+                state,
+                readiness: if self.draft { Readiness::Draft } else { Readiness::Ready },
+                mergeable: match self.mergeable {
+                    Some(true) => Mergeable::Yes,
+                    Some(false) => Mergeable::No,
+                    None => Mergeable::Unknown,
+                },
+                author: self.user.login,
+                head_branch: self.head.branch,
+                head: self.head.sha,
+                base_branch: self.base.branch,
+                origin: if same_repository {
+                    Origin::SameRepository
+                } else {
+                    Origin::Fork
+                },
+            },
+        }
     }
 }

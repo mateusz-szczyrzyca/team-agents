@@ -13,20 +13,20 @@ use tokio::task::{JoinHandle, JoinSet};
 
 /// What the server saw of one request.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Recorded {
+pub(crate) struct Recorded {
     /// The method: `GET`, `POST`, ...
-    pub method: String,
+    pub(crate) method: String,
     /// The path and the query, as the request line has them.
-    pub target: String,
+    pub(crate) target: String,
     /// The headers, names in lowercase, in the order they came.
-    pub headers: Vec<(String, String)>,
+    pub(crate) headers: Vec<(String, String)>,
     /// The body, as text.
-    pub body: String,
+    pub(crate) body: String,
 }
 
 impl Recorded {
     /// The value of the header `name` (lowercase), if the request had it.
-    pub fn header(&self, name: &str) -> Option<&str> {
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
             .find(|(key, _)| key == name)
@@ -36,7 +36,7 @@ impl Recorded {
 
 /// What the server answers.
 #[derive(Debug, Clone)]
-pub enum Reply {
+pub(crate) enum Reply {
     /// A status and a JSON body, with these extra headers.
     Json {
         /// The status code.
@@ -54,7 +54,7 @@ pub enum Reply {
 
 impl Reply {
     /// A JSON answer with no extra headers.
-    pub fn json(status: u16, body: &str) -> Self {
+    pub(crate) fn json(status: u16, body: &str) -> Self {
         Self::Json {
             status,
             body: body.to_owned(),
@@ -63,7 +63,7 @@ impl Reply {
     }
 
     /// The same, with one more header.
-    pub fn with_header(self, name: &'static str, value: &str) -> Self {
+    pub(crate) fn with_header(self, name: &'static str, value: &str) -> Self {
         match self {
             Self::Json {
                 status,
@@ -80,7 +80,7 @@ impl Reply {
 
 /// A running fake server; it stops when it is dropped.
 #[derive(Debug)]
-pub struct FakeServer {
+pub(crate) struct FakeServer {
     /// Where it listens.
     addr: SocketAddr,
     /// Every request seen so far, in the order their bodies were complete.
@@ -91,7 +91,7 @@ pub struct FakeServer {
 
 impl FakeServer {
     /// Starts a server that answers the request number `n` (counted from 0) with `handler(n, &request)`.
-    pub async fn start<H>(handler: H) -> io::Result<Self>
+    pub(crate) async fn start<H>(handler: H) -> io::Result<Self>
     where
         H: Fn(usize, &Recorded) -> Reply + Send + Sync + 'static,
     {
@@ -108,12 +108,12 @@ impl FakeServer {
     }
 
     /// Starts a server that answers every request with `reply`.
-    pub async fn always(reply: Reply) -> io::Result<Self> {
+    pub(crate) async fn always(reply: Reply) -> io::Result<Self> {
         Self::start(move |_, _| reply.clone()).await
     }
 
     /// Starts a server that answers the requests in turn with `replies`, and the last one for all that follow.
-    pub async fn sequence(replies: Vec<Reply>) -> io::Result<Self> {
+    pub(crate) async fn sequence(replies: Vec<Reply>) -> io::Result<Self> {
         Self::start(move |n, _| {
             replies
                 .get(n)
@@ -125,12 +125,12 @@ impl FakeServer {
     }
 
     /// The base URL of the server: `http://127.0.0.1:<port>`.
-    pub fn url(&self) -> String {
+    pub(crate) fn url(&self) -> String {
         format!("http://{}", self.addr)
     }
 
     /// The requests seen so far.
-    pub fn requests(&self) -> Vec<Recorded> {
+    pub(crate) fn requests(&self) -> Vec<Recorded> {
         self.seen.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 }
@@ -167,14 +167,15 @@ async fn serve_connection(mut stream: TcpStream, seen: Arc<Mutex<Vec<Recorded>>>
         Reply::Hang => pending::<String>().await,
         Reply::Truncated => "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"half\"".to_owned(),
         Reply::Json { status, body, headers } => {
-            let mut head = format!(
-                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
+            let extra: Vec<String> = headers
+                .iter()
+                .map(|(name, value)| format!("{name}: {value}\r\n"))
+                .collect();
+            let extra = extra.concat();
+            format!(
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n{body}",
                 body.len()
-            );
-            for (name, value) in headers {
-                head.push_str(&format!("{name}: {value}\r\n"));
-            }
-            format!("{head}\r\n{body}")
+            )
         }
     };
     if stream.write_all(wire.as_bytes()).await.is_ok() {
