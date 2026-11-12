@@ -9,7 +9,7 @@ use std::str::FromStr;
 use agent_core::cli::{McpServerKind, RunMode, SessionId};
 use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValue, ModelName};
 use agent_core::ids::{BranchName, GenerateIdError, InvalidBranchName, InvalidName, RunId, TaskId};
-use agent_core::kinds::{CliKind, Tier};
+use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::state::{ItemPhase, Member, Participant, RunEnd, RunState, State, Team};
 use agent_core::task_list::Item;
 use agent_runtime::agentbus::{AgentBus, BusTier};
@@ -199,26 +199,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         rules: ctx.rules,
     };
     let prompt = compose(&texts, &input)?;
-    let base = config
-        .repo(team.repo())
-        .map(|repo| repo.base_branch.clone())
-        .ok_or_else(|| StartProblem::RepoGone {
-            repo: team.repo().to_string(),
-        })?;
-    let branch = work_branch(team, member)?;
-    let prompt = shape(
-        ctx.team_texts,
-        &texts,
-        &TeamRun {
-            team,
-            role,
-            branch: &branch,
-            base: &base,
-            why: ctx.why,
-            new_session: session.is_none(),
-        },
-        prompt,
-    )?;
+    let prompt = team_prompt(ctx, team, role, member, session.is_none(), &texts, prompt)?;
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())
@@ -232,7 +213,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         };
         (RunMode::New { session_id }, recorded)
     };
-    let mcp_servers = mcp_servers(ctx, team, participant, task, &working, &branch)?;
+    let mcp_servers = mcp_servers(ctx, team, participant, task, &working, &work_branch(team, member)?)?;
     Ok(Plan {
         run: run.clone(),
         recorded_session,
@@ -248,6 +229,40 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
             mcp_servers,
         },
     })
+}
+
+/// The prompt of a run that is shaped by the team the task is in; a task without a team keeps `composed`.
+fn team_prompt(
+    ctx: &Context<'_>,
+    team: &Team,
+    role: Role,
+    member: &Member,
+    new_session: bool,
+    texts: &PromptTexts<'_>,
+    composed: String,
+) -> Result<String, StartProblem> {
+    let base = ctx
+        .settings
+        .config
+        .repo(team.repo())
+        .map(|repo| repo.base_branch.clone())
+        .ok_or_else(|| StartProblem::RepoGone {
+            repo: team.repo().to_string(),
+        })?;
+    let branch = work_branch(team, member)?;
+    Ok(shape(
+        ctx.team_texts,
+        texts,
+        &TeamRun {
+            team,
+            role,
+            branch: &branch,
+            base: &base,
+            why: ctx.why,
+            new_session,
+        },
+        composed,
+    )?)
 }
 
 /// Checks that `path` is a directory.

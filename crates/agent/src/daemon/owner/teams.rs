@@ -63,6 +63,14 @@ pub(super) struct Served {
     worker: AgentName,
 }
 
+/// The workers of a team and which of them cannot take a request now.
+struct Workers {
+    /// The workers with their tasks, in the configured order.
+    in_order: Vec<(AgentName, TaskId)>,
+    /// The workers that are at work or cannot work.
+    busy: Vec<AgentName>,
+}
+
 /// What one look at a team changed in the state.
 #[derive(Debug, Default)]
 struct Round {
@@ -111,16 +119,7 @@ impl Owner {
             .into_iter()
             .map(|(_, member)| member.task().clone())
             .collect();
-        let started: Vec<EventKind> = team
-            .items()
-            .iter()
-            .filter(|progress| progress.status() != ItemStatus::Pending && progress.status() != ItemStatus::Done)
-            .map(|progress| EventKind::ItemStatus {
-                team: id.clone(),
-                item: progress.id(),
-                status: progress.status(),
-            })
-            .collect();
+        let started = started_items(&team);
         self.parts.state.insert_team(team).map_err(OwnerError::InsertTeam)?;
         self.save().await?;
         let now = Timestamp::now(&self.parts.clock)?;
@@ -416,22 +415,7 @@ impl Owner {
                 tracing::error!(team = %team_id, item = %assigned.item, member = %assigned.agent, error = %error_chain(&error), "the worktree of a member cannot take the branch of its next item: the item waits");
                 continue;
             }
-            {
-                let mut team_mut = self
-                    .parts
-                    .state
-                    .team_mut(team_id)
-                    .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
-                let mut item = team_mut.item_mut(assigned.item).ok_or_else(|| OwnerError::LostItem {
-                    team: team_id.clone(),
-                    item: assigned.item,
-                })?;
-                start_item(&mut item, &assigned).map_err(|source| OwnerError::Item {
-                    team: team_id.clone(),
-                    item: assigned.item,
-                    source,
-                })?;
-            }
+            self.record_assignment(team_id, &assigned)?;
             round.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: assigned.item,
@@ -442,6 +426,24 @@ impl Owner {
             self.release(&assigned.task, Why::Assigned(assigned.item), round)?;
         }
         Ok(())
+    }
+
+    /// Records that the member of `assigned` works on its item.
+    fn record_assignment(&mut self, team_id: &TeamId, assigned: &Assigned) -> Result<(), OwnerError> {
+        let mut team_mut = self
+            .parts
+            .state
+            .team_mut(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        let mut item = team_mut.item_mut(assigned.item).ok_or_else(|| OwnerError::LostItem {
+            team: team_id.clone(),
+            item: assigned.item,
+        })?;
+        start_item(&mut item, assigned).map_err(|source| OwnerError::Item {
+            team: team_id.clone(),
+            item: assigned.item,
+            source,
+        })
     }
 
     /// Starts the branch of an item in the worktree of the member that is given it.
@@ -470,25 +472,13 @@ impl Owner {
     /// Gives the requests for workers to the free workers, the oldest request to the first worker in the configured
     /// order.
     async fn serve_requests(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
-        let Some(team) = self.parts.state.team(team_id) else {
+        let Some(Workers {
+            in_order: workers,
+            mut busy,
+        }) = self.workers_of(team_id)?
+        else {
             return Ok(());
         };
-        if team.crew().coordinator().is_none() {
-            return Ok(());
-        }
-        let mut workers: Vec<(AgentName, TaskId)> = Vec::new();
-        let mut busy: Vec<AgentName> = Vec::new();
-        for (role, member) in team.crew().roster() {
-            if role != Role::Worker {
-                continue;
-            }
-            let name: AgentName = member.agent().name().parse()?;
-            let free = member.status() == TaskStatus::Waiting && !self.serving.contains_key(member.task());
-            if !free {
-                busy.push(name.clone());
-            }
-            workers.push((name, member.task().clone()));
-        }
         let names: Vec<AgentName> = workers.iter().map(|(name, _)| name.clone()).collect();
         while let Some(worker) = first_free_worker(&names, &busy).cloned() {
             let request = match self.parts.bus.helper_next(&worker).await {
@@ -502,19 +492,10 @@ impl Owner {
             let Some((_, task)) = workers.iter().find(|(name, _)| *name == worker).cloned() else {
                 break;
             };
-            if self.task_of_requester(team_id, &request.from_task).is_none() {
+            if !self.is_member(team_id, &request.from_task) {
                 // The bus gives the oldest request of every team; this one is another team's and goes back for its
                 // workers. Whatever is behind it waits until its team has a free worker.
-                self.outbox.push_back(Outbound {
-                    team: team_id.clone(),
-                    job: BusJob::Answer {
-                        request: request.id,
-                        update: DelegationUpdate {
-                            status: Some(DelegationStatus::Queued),
-                            ..DelegationUpdate::default()
-                        },
-                    },
-                });
+                self.tell_bus(team_id, request_update(request.id, DelegationStatus::Queued, None));
                 break;
             }
             self.release(&task, Why::Delegated(Box::new(request.clone())), round)?;
@@ -526,30 +507,59 @@ impl Owner {
                     worker: worker.clone(),
                 },
             );
-            self.outbox.push_back(Outbound {
-                team: team_id.clone(),
-                job: BusJob::Answer {
-                    request: request.id,
-                    update: DelegationUpdate {
-                        status: Some(DelegationStatus::Running),
-                        task: Some(task),
-                        summary: None,
-                    },
-                },
-            });
+            self.tell_bus(
+                team_id,
+                request_update(request.id, DelegationStatus::Running, Some(task)),
+            );
             tracing::info!(team = %team_id, request = %request.id, %worker, "a request is given to a worker");
             busy.push(worker);
         }
         Ok(())
     }
 
-    /// The member of `team` whose task is `task`.
-    fn task_of_requester(&self, team: &TeamId, task: &TaskId) -> Option<()> {
+    /// The workers of `team` in the configured order with their tasks, and those that cannot take a request now;
+    /// `None` for a team that is not there or has no workers to ask.
+    fn workers_of(&self, team_id: &TeamId) -> Result<Option<Workers>, OwnerError> {
+        let Some(team) = self.parts.state.team(team_id) else {
+            return Ok(None);
+        };
+        if team.crew().coordinator().is_none() {
+            return Ok(None);
+        }
+        let mut workers = Vec::new();
+        let mut busy = Vec::new();
+        for (_, member) in team
+            .crew()
+            .roster()
+            .into_iter()
+            .filter(|(role, _)| *role == Role::Worker)
+        {
+            let name: AgentName = member.agent().name().parse()?;
+            if member.status() != TaskStatus::Waiting || self.serving.contains_key(member.task()) {
+                busy.push(name.clone());
+            }
+            workers.push((name, member.task().clone()));
+        }
+        Ok(Some(Workers {
+            in_order: workers,
+            busy,
+        }))
+    }
+
+    /// Whether `task` is a task of `team`.
+    fn is_member(&self, team: &TeamId, task: &TaskId) -> bool {
         self.parts
             .state
             .team(team)
-            .and_then(|found| found.find(task))
-            .map(|_| ())
+            .is_some_and(|found| found.find(task).is_some())
+    }
+
+    /// Keeps `job` for the bus: it is done at the next turn of the loop, and again until the bus takes it.
+    fn tell_bus(&mut self, team: &TeamId, job: BusJob) {
+        self.outbox.push_back(Outbound {
+            team: team.clone(),
+            job,
+        });
     }
 
     // ---- the end of a run -----------------------------------------------------------------------------------
@@ -704,6 +714,31 @@ pub(super) fn is_transient(error: &AgentBusError) -> bool {
         error.class(),
         None | Some(FailureClass::Storage | FailureClass::Process | FailureClass::Unclassified)
     )
+}
+
+/// The events of the items a new team starts with: those that have a member already.
+fn started_items(team: &agent_core::state::Team) -> Vec<EventKind> {
+    team.items()
+        .iter()
+        .filter(|progress| progress.status() != ItemStatus::Pending && progress.status() != ItemStatus::Done)
+        .map(|progress| EventKind::ItemStatus {
+            team: team.id().clone(),
+            item: progress.id(),
+            status: progress.status(),
+        })
+        .collect()
+}
+
+/// The change of the request `request` to `status`, for the bus, with the task of the worker that serves it.
+fn request_update(request: RequestId, status: DelegationStatus, task: Option<TaskId>) -> BusJob {
+    BusJob::Answer {
+        request,
+        update: DelegationUpdate {
+            status: Some(status),
+            task,
+            summary: None,
+        },
+    }
 }
 
 /// What a finished request is for the bus: the request closed with its result, and the requester told.

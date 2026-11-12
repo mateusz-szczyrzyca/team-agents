@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use agent_core::ids::AgentName;
+use agent_core::ids::{AgentName, BranchName, ItemId};
 use agent_core::prompt::{TeamPrompt, Variables, VariablesError};
 use agent_core::state::Team;
 use agent_runtime::agentbus::{DelegationUpdate, FieldName, InvalidFieldName, NoticeKind, Outgoing, RequestId};
@@ -46,45 +46,16 @@ pub(crate) enum NoticeRenderError {
     Field(#[from] InvalidFieldName),
 }
 
+/// The kind, the details and the text of a message on the bus, before the details are checked.
+type Rendered = (NoticeKind, Vec<(&'static str, String)>, String);
+
 /// The message on the bus that `notice` is: its kind, its details and its text.
 ///
 /// # Errors
 /// [`NoticeRenderError`].
 pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) -> Result<Outgoing, NoticeRenderError> {
     let (kind, details, text) = match notice {
-        BusNotice::MemberFinished {
-            member,
-            item: Some(item),
-            branch,
-        } => (
-            NoticeKind::MemberFinished,
-            vec![
-                ("member", member.to_string()),
-                ("item", item.to_string()),
-                ("branch", branch.to_string()),
-            ],
-            texts.render(
-                TeamPrompt::MemberFinished,
-                &Variables::new()
-                    .with("member", member.as_str())?
-                    .with("item", item.to_string())?
-                    .with("branch", branch.as_str())?,
-            )?,
-        ),
-        BusNotice::MemberFinished {
-            member,
-            item: None,
-            branch,
-        } => (
-            NoticeKind::MemberFinished,
-            vec![("member", member.to_string()), ("branch", branch.to_string())],
-            texts.render(
-                TeamPrompt::MemberFinishedPlain,
-                &Variables::new()
-                    .with("member", member.as_str())?
-                    .with("branch", branch.as_str())?,
-            )?,
-        ),
+        BusNotice::MemberFinished { member, item, branch } => member_finished(texts, member, item.as_ref(), branch)?,
         BusNotice::MemberFailed { member, message } => (
             NoticeKind::MemberFailed,
             vec![("member", member.to_string())],
@@ -107,46 +78,75 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
             request,
             worker,
             summary,
-        } => (
-            NoticeKind::HelperResult,
-            vec![
-                ("request", request.to_string()),
-                ("status", HELPER_DONE.to_owned()),
-                ("worker", worker.to_string()),
-            ],
-            texts.render(
-                TeamPrompt::HelperResult,
-                &Variables::new()
-                    .with("worker", worker.as_str())?
-                    .with("request_id", request.number().to_string())?
-                    .with("summary", summary)?,
-            )?,
-        ),
+        } => helper_result(
+            texts,
+            *request,
+            worker,
+            HELPER_DONE,
+            (TeamPrompt::HelperResult, "summary", summary),
+        )?,
         BusNotice::HelperFailed {
             request,
             worker,
             reason,
-        } => (
-            NoticeKind::HelperResult,
-            vec![
-                ("request", request.to_string()),
-                ("status", HELPER_FAILED.to_owned()),
-                ("worker", worker.to_string()),
-            ],
-            texts.render(
-                TeamPrompt::HelperFailed,
-                &Variables::new()
-                    .with("worker", worker.as_str())?
-                    .with("request_id", request.number().to_string())?
-                    .with("reason", reason)?,
-            )?,
-        ),
+        } => helper_result(
+            texts,
+            *request,
+            worker,
+            HELPER_FAILED,
+            (TeamPrompt::HelperFailed, "reason", reason),
+        )?,
     };
     let fields = details
         .into_iter()
         .map(|(name, value)| Ok((name.parse::<FieldName>()?, value)))
         .collect::<Result<BTreeMap<_, _>, InvalidFieldName>>()?;
     Ok(Outgoing::Notice { kind, fields, text })
+}
+
+/// The notice that `member` is done: with its item when the list has items, else with its branch alone.
+fn member_finished(
+    texts: &TeamPrompts,
+    member: &AgentName,
+    item: Option<&ItemId>,
+    branch: &BranchName,
+) -> Result<Rendered, NoticeRenderError> {
+    let common = Variables::new()
+        .with("member", member.as_str())?
+        .with("branch", branch.as_str())?;
+    let mut details = vec![("member", member.to_string()), ("branch", branch.to_string())];
+    let text = match item {
+        Some(item) => {
+            details.push(("item", item.to_string()));
+            texts.render(TeamPrompt::MemberFinished, &common.with("item", item.to_string())?)?
+        }
+        None => texts.render(TeamPrompt::MemberFinishedPlain, &common)?,
+    };
+    Ok((NoticeKind::MemberFinished, details, text))
+}
+
+/// The notice that the worker finished (or could not do) the request `request`; `text` is the text, the name of its
+/// variable for the outcome, and the outcome.
+fn helper_result(
+    texts: &TeamPrompts,
+    request: RequestId,
+    worker: &AgentName,
+    status: &str,
+    (prompt, variable, outcome): (TeamPrompt, &str, &String),
+) -> Result<Rendered, NoticeRenderError> {
+    let values = Variables::new()
+        .with("worker", worker.as_str())?
+        .with("request_id", request.number().to_string())?
+        .with(variable, outcome)?;
+    Ok((
+        NoticeKind::HelperResult,
+        vec![
+            ("request", request.to_string()),
+            ("status", status.to_owned()),
+            ("worker", worker.to_string()),
+        ],
+        texts.render(prompt, &values)?,
+    ))
 }
 
 /// Why the notification that a team is finished cannot be made.
