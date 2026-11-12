@@ -178,3 +178,25 @@ through the public API only: a second lock of a home is refused (`StoreError::Ho
 none of its group behind (checked in `/proc`), and a save leaves only the home's own files. They characterise code that
 already existed (`Test-First: not possible — they re-check behaviour that the inline tests drove`); no existing test was
 changed.
+
+## Second run (task `20261112-132723-inv-claude-sonnet`)
+
+The branch of the first run (PR #90, merge reported as failed) was the base. I re-checked it against `prompts/investigator/code-review.md`
+and merged the newer `main` (`c7d3263`) into it.
+
+- **Size:** `2,492` changed lines outside tests (PR-1 command, base `origin/main`), limit `5,000`.
+- **Sweep (§3):** every hit in production code was judged: the `Err(_grace_over)` / `Err(_wait_over)` / `Err(_time_over)` arms of
+  `process.rs` (an elapsed deadline carries no information; each arm acts on it) and the `spawn(` calls. No finding.
+- **Gate:** `make rust` passes. `make gate` fails only in `unit-bats`: `8` investigation-team Bash tests (`234`, `248`–`251`, `270`,
+  `654`, `672`) time out in `wait_status`. They fail the same way alone (`bats -f "single investigator is accepted" tests/unit`),
+  and this branch changes no file of `bin/`, `tests/` or `prompts/`: they are outside this item.
+- **One defect found and fixed — a flaky test (TDD-8).** `git::tests::scripted_git` and
+  `a_command_over_its_time_is_an_error` wrote a script and executed it at once. A child that another test thread forks holds the
+  write descriptor until its `exec`, so the execution failed with `ETXTBSY` ("text file busy"): `a_revision_that_prints_no_commit_id_is_an_error`
+  and `a_rename_without_its_origin_is_an_error` failed in about `6` of `90` runs of the test binary with `6` copies in parallel (and once
+  in a plain `cargo test`). The first run's "five runs, no flake" did not show it. The new helper `write_script` runs the script
+  once with a probe variable until the busy error is gone (bounded: `500` × `10 ms`); afterwards `0` failures in `120` runs under the same load.
+  No production code changed; `Test-First: not possible` (a nondeterministic test, no test can fail on demand).
+- **Not changed, for the reviewer:** `Home` creates its directories with the process umask (`0755` by default), while temporary
+  state files and notifications are `0600`. The activity logs under `tasks/` are readable by other local users on a host with
+  the default umask. The item does not ask for a mode; say if the daemon should create the home as `0700`.

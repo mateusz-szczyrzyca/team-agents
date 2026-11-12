@@ -736,6 +736,38 @@ mod tests {
 
     use super::*;
 
+    /// The variable that makes a script written by [`write_script`] exit at once: the probe that waits out `ETXTBSY`.
+    const PROBE_VARIABLE: &str = "SCRIPT_PROBE";
+
+    /// How many times the probe of [`write_script`] tries before the test gives up.
+    const PROBE_ATTEMPTS: u32 = 500;
+
+    /// Writes the shell script `body` at `path`, executable, and returns when it can be executed.
+    ///
+    /// A child that another test thread forks holds the write descriptor of a file that was open at the `fork` until its
+    /// own `exec`, and executing the file meanwhile fails with "text file busy". The probe runs the script until that
+    /// stops; after the first run no process can hold a write descriptor of it any more.
+    fn write_script(path: &Path, body: &str) {
+        std::fs::write(
+            path,
+            format!("#!/bin/sh\nif [ -n \"${PROBE_VARIABLE}\" ]; then exit 0; fi\n{body}\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for _ in 0..PROBE_ATTEMPTS {
+            match Command::new(path).env(PROBE_VARIABLE, "1").status() {
+                Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                result => {
+                    assert!(result.unwrap().success(), "the probe of {path:?} failed");
+                    return;
+                }
+            }
+        }
+        panic!("{path:?} is still busy after {PROBE_ATTEMPTS} attempts");
+    }
+
     /// A git that no configuration of the machine reaches.
     fn isolated(dir: &Path, identity: CommitIdentity) -> Git {
         Git::new(abs(dir), identity)
@@ -1406,8 +1438,7 @@ mod tests {
         let fixture = Fixture::new();
         topic_branch(&fixture);
         let hook = fixture.repo.join(".git/hooks/pre-merge-commit");
-        std::fs::write(&hook, "#!/bin/sh\nsleep 300\n").unwrap();
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_script(&hook, "sleep 300");
         let git = fixture.git().with_limits(GitLimits {
             local_timeout: Duration::from_millis(500),
             ..GitLimits::default()
@@ -1456,8 +1487,7 @@ mod tests {
         let bin = dir.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
         let script = bin.join("git");
-        std::fs::write(&script, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_script(&script, body);
         let git = Git::new(abs(dir.path()), agent_identity()).with_env(env("PATH"), bin.to_str().unwrap());
         (dir, git)
     }
