@@ -2825,7 +2825,13 @@ review_precheck() { # coordinator task id — before a review: the round's head 
     return 0; }
   tc=$(round_test_changes "$root" "$mb" "$head")
   meta_set "$id" ROUND_TESTS "$tc"
-  [[ $tc != "code=1 added=0 "* ]] || why="the round changes code but adds no test — every change of behaviour needs its test, written first"
+  local no_new_tests
+  no_new_tests=$(grep -m 1 -iE '^[[:space:]>*-]*No new tests:[[:space:]]*[^[:space:]]' "$TASKS/$id/task.md" 2> /dev/null) || no_new_tests=""
+  if [[ $tc == "code=1 added=0 "* && -n $no_new_tests ]]; then   # the human's task says why none: a refactoring
+    log_info precheck_no_new_tests "task=$id" "reason=${no_new_tests:0:200}"
+  elif [[ $tc == "code=1 added=0 "* ]]; then
+    why="the round changes code but adds no test — every change of behaviour needs its test, written first (a task that changes no behaviour says so on a line \"No new tests: <why>\")"
+  fi
   local rules rpr rbody="" rbody_read=0 human disc rtext=""   # AGENTS.md's rules on the round's diff, with the others'
   rpr=$(trusted_prs "$root" "$branch" open url | jq -r '.[0].url // empty') || rpr=""
   if [[ -n $rpr ]]; then
@@ -4341,6 +4347,19 @@ build_prompt() { # id mode qfile next_round
       cat "$TASKS/$id/note-$RUN.md"
       said=1
     fi
+    local sent size added=""
+    sent=$(task_field "$id" TASK_SENT_BYTES)
+    size=$(wc -c < "$TASKS/$id/task.md" 2> /dev/null || echo 0)
+    if [[ $sent =~ ^[0-9]+$ ]] && ((size > sent)); then
+      added=$(tail -c +"$((sent + 1))" "$TASKS/$id/task.md")
+    elif [[ -z $sent ]]; then   # a task from before this was recorded: the last section the script added
+      added=$(awk '/^# (Checks to fix|Review findings to fix)/ { buf = ""; on = 1 } on { buf = buf $0 "\n" } END { printf "%s", buf }' \
+        "$TASKS/$id/task.md" 2> /dev/null)
+    fi
+    if [[ -n ${added//[[:space:]]/} ]]; then
+      printf '\n---\n\n## Added to your task since your last run\n\nDo what it asks, following the rules from the first message of this session.\n\n%s\n' "$added"
+      said=1
+    fi
     ((said)) || printf 'Continue task %s following the rules from the first message of this session.\n' "$id"
     return
   fi
@@ -5757,8 +5776,11 @@ investigation_pipeline_tick() {
   meta_set "$parent" INVESTIGATION_PR "$url"
   meta_set "$parent" PR_URL "$url"; meta_set "$parent" PR_NUMBER "$number"
   meta_set "$parent" BRANCH "$branch"
-  if [[ -n $pr_branch ]]; then meta_set "$parent" BASE "$expected_base"   # the whole PR is checked, against its base
-  else meta_set "$parent" BASE "$(task_field "$child" BASE)"; fi
+  if [[ -n $pr_branch ]] || investigation_solo "$parent"; then   # the whole PR is checked, against its base branch
+    meta_set "$parent" BASE "$expected_base"
+  else
+    meta_set "$parent" BASE "$(task_field "$child" BASE)"
+  fi
   check_run=$(investigation_field "$parent" INVESTIGATION_PRECHECK_RUN)
   check_run=$((${check_run:-0} + 1))
   unit="agent-$parent-precheck-$check_run"
@@ -6736,6 +6758,9 @@ cmd__runner() {
   local qfile="$dir/questions-$next_round.md"
   local pf="$dir/prompt-$n.md"
   build_prompt "$id" "$mode" "$qfile" "$next_round" > "$pf"
+  # how much of task.md the session has now: a resumed run gets what the script adds after it (checks or review
+  # findings to fix)
+  meta_set "$id" TASK_SENT_BYTES "$(wc -c < "$dir/task.md" 2> /dev/null || echo 0)"
   meta_set "$id" ANSWERS_PENDING ""
   meta_set "$id" INV_PENDING_DELIVERY ""
   meta_set "$id" WAKE_PENDING ""
