@@ -198,3 +198,29 @@ The other `Incomplete` runs of the other CLIs (`19` Claude, `21` Codex, `11` Ant
 
 Not changed, for a later item: the Claude, Codex and Antigravity result lines are fine on all recordings, but the
 classification of an opencode run killed after its text rests on the exit status the run engine (6.1) gives.
+
+## Third pass: task `20261112-172517-inv-claude-sonnet` (no code change)
+
+This task started from [`6424843`](https://github.com/mateusz-szczyrzyca/team-agents/commit/6424843c48ef2277a6bb6c59a0b16d3994baf381),
+the tip of the open PR #92 (which has no review and one comment: the script could not bring a later investigation onto
+the PR because its branch had moved). The item was already implemented and checked twice, so it was not redone.
+
+What was checked, independently of the two earlier reports:
+
+- **Arguments against the old dispatch.** `run_claude`, `run_codex`, `run_gemini`, `run_opencode` and
+  `opencode_config` of `bin/agent` read line by line against `build_run` of the four adapters: the order of the
+  arguments, the position of the model, extra arguments, the session flag and the prompt, the MCP texts, the Codex
+  timeouts (`900` / `120` / `300` s) and the opencode environment. No difference except the documented ones (no `-o`
+  file for Codex; no server means no entry; `ENABLE_TOOL_SEARCH=false`, turn limit `300`, `agy` timeout `8h` and the
+  Bash timeouts are constants — they equal the defaults of `CLAUDE_TOOL_SEARCH`, `CLAUDE_MAX_TURNS`,
+  `AGY_PRINT_TIMEOUT`, `CLAUDE_BASH_TIMEOUT_MIN` and `OPENCODE_BASH_TIMEOUT_MS` in `bin/agent` and
+  `config/agents.conf`).
+- **Outcome rules of the old runners.** Claude `is_error` with exit `0` is a failure, `agy` with a status other than
+  `SUCCESS` is a failure, opencode with an `error` line and no text is a failure: each is a failed stream in the new
+  parsers, which `classify_outcome` then reads.
+- **Gate.** `make rust` (`cargo fmt --check`, clippy `-D warnings`, tests, `cargo doc`, all `--locked`) at this tip:
+  exit `0` on the second run. The first run failed on `git::tests::output_that_is_not_utf8_is_an_error` with
+  `Text file busy` (ETXTBSY) — the `scripted_git` flake described under "Gate" above, not touched here (rule 1).
+
+Nothing was found that needs a change, so no commit besides this note. The open points stay those above: the flaky
+`scripted_git` tests, the over-long prompt argument and opencode's `session export` fallback (both for 6.1).
