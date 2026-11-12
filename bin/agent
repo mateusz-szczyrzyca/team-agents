@@ -722,6 +722,12 @@ declare -p ROUND_MAX_LINES_REPO >/dev/null 2>&1 || declare -gA ROUND_MAX_LINES_R
 # the whole path, any other the file's name) runs that entry's command instead of the full gate (AGENT_REVIEW_GATE);
 # the first such entry wins. For new code written next to old code whose tests it cannot reach.
 declare -p AGENT_GATE_SCOPES >/dev/null 2>&1 || declare -ga AGENT_GATE_SCOPES=()   # a query: set in agents.conf?
+# Roles: a review run (a reviewer) or any other run (a writer). Each gets its introduction first in a new session's
+# prompt, and no line of its prompt names what it must not be pointed at (fixed strings, e.g. the other role's rules)
+AGENT_WRITER_INTRO="${AGENT_WRITER_INTRO:-}"       # the writer's introduction (empty: none)
+AGENT_REVIEWER_INTRO="${AGENT_REVIEWER_INTRO:-}"   # the reviewer's introduction (empty: none)
+declare -p AGENT_WRITER_HIDE >/dev/null 2>&1 || declare -ga AGENT_WRITER_HIDE=()       # a query: set in agents.conf?
+declare -p AGENT_REVIEWER_HIDE >/dev/null 2>&1 || declare -ga AGENT_REVIEWER_HIDE=()   # a query: set in agents.conf?
 # NODE_REPOS: repositories a node may run jobs for, name → local clone path (empty: no job is accepted).
 declare -p NODE_REPOS >/dev/null 2>&1 || declare -gA NODE_REPOS=()
 # Node daemon (agentnode.service, `agent node`; README "Several instances"): LEAD_URL is the lead's HTTP address
@@ -6778,6 +6784,7 @@ cmd__runner() {
   local qfile="$dir/questions-$next_round.md"
   local pf="$dir/prompt-$n.md"
   build_prompt "$id" "$mode" "$qfile" "$next_round" > "$pf"
+  prompt_for_role "$id" "$pf" "$mode" || log_warn prompt_role_failed "task=$id" "file=$pf"
   # how much of task.md the session has now: a resumed run gets what the script adds after it (checks or review
   # findings to fix)
   meta_set "$id" TASK_SENT_BYTES "$(wc -c < "$dir/task.md" 2> /dev/null || echo 0)"
@@ -8446,6 +8453,49 @@ cmd_stop() {
   fi
   log_info task_stopped "task=$id"
   echo "Stopped $id."
+}
+
+# task_role task — the role of a task's runs: reviewer (a review: REVIEW=1, or an investigation's phase 3 or 5) or
+# writer (every other run)
+task_role() {
+  local id=$1 phase
+  if [[ $(task_field "$id" REVIEW) == 1 ]]; then echo reviewer; return; fi
+  phase=$(task_field "$id" INVESTIGATION_PHASE)
+  if [[ $(task_field "$id" KIND) == investigation && ($phase == 3 || $phase == 5) ]]; then echo reviewer; return; fi
+  echo writer
+}
+
+# prompt_for_role task file mode — a run's prompt made fit for its role (task_role): every line naming what the role
+# must not be pointed at (AGENT_WRITER_HIDE / AGENT_REVIEWER_HIDE, fixed strings) left out, and, in a new session
+# (not a resumed one), the role's introduction (AGENT_WRITER_INTRO / AGENT_REVIEWER_INTRO) first. Nothing configured:
+# the prompt as it was
+prompt_for_role() {
+  local id=$1 file=$2 mode=$3 role intro tmp removed=0 h
+  local -a hide=() patterns=()
+  role=$(task_role "$id")
+  if [[ $role == reviewer ]]; then
+    intro=$AGENT_REVIEWER_INTRO; hide=("${AGENT_REVIEWER_HIDE[@]}")
+  else
+    intro=$AGENT_WRITER_INTRO; hide=("${AGENT_WRITER_HIDE[@]}")
+  fi
+  [[ $mode != resume ]] || intro=""
+  for h in "${hide[@]}"; do [[ -z $h ]] || patterns+=(-e "$h"); done
+  [[ -n $intro || ${#patterns[@]} -gt 0 ]] || return 0
+  tmp=$(mktemp "$file.XXXXXX") || return 1
+  if ! {
+    [[ -z $intro ]] || printf '%s\n\n' "$intro"
+    if ((${#patterns[@]})); then
+      grep -vF "${patterns[@]}" "$file" || (($? == 1))   # 1: every line was left out
+    else
+      cat "$file"
+    fi
+  } > "$tmp"; then
+    rm -f -- "$tmp" || log_warn prompt_role_cleanup_failed "path=$tmp"
+    return 1
+  fi
+  if ((${#patterns[@]})); then removed=$({ grep -cF "${patterns[@]}" "$file" || (($? == 1)); }); fi
+  mv -f -- "$tmp" "$file" || return 1
+  log_info prompt_for_role "task=$id" "role=$role" "intro=$([[ -n $intro ]] && echo yes || echo no)" "lines_left_out=$removed"
 }
 
 # rule_allow_key task — the key the human's allowances for a task's rounds are kept under (agent allow): its team,

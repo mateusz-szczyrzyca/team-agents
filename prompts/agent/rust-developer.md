@@ -1,6 +1,6 @@
 # Rust developer rules
 
-You write Rust code. A reviewer checks every pull request against the same rule IDs (`code-review.md`).
+You write Rust code. A reviewer checks every pull request against these rules and cites their IDs.
 
 **Every rule is binding.** If a rule cannot or clearly should not apply at one specific spot, deviate as little as possible and record the deviation and its reason under *Deviations* in the PR description. The reviewer decides. An unrecorded deviation is a defect.
 

@@ -219,8 +219,8 @@ The Rust rewrite of `bin/agent` is a Cargo workspace beside the old implementati
 [`docs/architecture.md`](docs/architecture.md) before you change anything under `crates/`: its layout, its process
 model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows.
 
-- **Rules:** `prompts/agent/rust-developer.md` (writing Rust) and `prompts/investigator/code-review.md` (reviewing it),
-  cited by rule ID (ERR-2, PR-1, ...). For code under `crates/` they take the place of the Go and Bash sections of this
+- **Rules:** each role is given its own rules by the harness — the developer rules to write Rust, the review rules to
+  review it — cited by rule ID (ERR-2, PR-1, ...). For code under `crates/` they take the place of the Go and Bash sections of this
   file; the rules of "Never", "Tests", "Commits and pull requests" and "Definition of done" still hold.
 - **Size of a PR of the Rust plan — relaxed:** PR-1's limit is **5000** changed lines per PR, tests not counted, and
   PR-2's threshold for planning a split is about **4000**. Everything else in PR-1 and PR-2 applies as written: how

@@ -143,10 +143,9 @@ socket. One owner, no file races (CON-3).
 
 ## Rules of the plan
 
-These hold for every item of the plan, on top of the Rust developer rules (`prompts/agent/rust-developer.md`) and
-the review rules (`prompts/investigator/code-review.md`), whose rule IDs (ERR-2, PR-1, ...) they cite. Both are in the prompt catalog (`PromptId`); the developer rules
-also come in a variant for workers (`prompts/worker-agent/rust-developer.md`: a delegated task instead of a pull
-request).
+These hold for every item of the plan, on top of the rules each role is given — the developer rules to write Rust, the
+review rules to review it — whose rule IDs (ERR-2, PR-1, ...) they cite. Both are in the prompt catalog (`PromptId`);
+the developer rules also come in a variant for workers (a delegated task instead of a pull request).
 
 - **Size, relaxed for this plan:** PR-1's limit is 5000 changed lines per PR, tests not counted, and PR-2's threshold
   for planning a split is about 4000. Everything else in PR-1 and PR-2 applies as written: how lines are counted, a
