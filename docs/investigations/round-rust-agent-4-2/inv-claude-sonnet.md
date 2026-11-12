@@ -91,7 +91,7 @@ Mutation checks (a change to the code, the tests must go red): about twenty muta
 
 - **A file outside the item's list** (`process.rs`): `capture_with_input`, reason above.
 - **`GitHubError::Client` has no test.** `reqwest::ClientBuilder::build` fails only when the TLS backend cannot start; there is nothing to inject (TDD-6). It is one `map_err` in `GitHub::new`.
-- **The dispatcher argument of `delegate` is not observable.** `agentbus delegate --agent-cmd X` starts `X _dispatch-helpers` through `setsid -f`, detached, with its output discarded; a test could see it only through a script on disk, which I avoided (the existing git test that does so flaked once, `ETXTBSY`). A mutation that ignores `Delegation::dispatcher` survives.
+- **The dispatcher argument of `delegate` is observable** (review pass 1, finding 8): `agentbus delegate --agent-cmd X` starts `X _dispatch-helpers` detached, and a recording script in `$AGENTS_HOME/dispatched` shows that it ran, with which arguments and which home. The test `delegate_runs_the_dispatcher_it_is_given_with_dispatch_helpers_in_its_home` fails when the dispatcher or the home is another.
 - **`.ok()` in the readers of printed text** (`parse_added`, `parse_released`, `parse_agent_line`, `leading_number`): a number or a name that does not parse becomes `AgentBusError::Unexpected { output }` through `ok_or_else`; the printed text is in the error and there is no OS cause to keep. Same for `Err(_) => String::new()` of GitHub's error body (specified: "a non-JSON error body gives an empty message", tested) and `unwrap_or_default()` of a `null` body.
 - **Jitter is not from `rand`.** `Jitter::Spread` takes the sub-second part of `RandomState` (the OS-seeded hasher of std): no new feature of `rand`, no RNG in the struct. `Jitter::None` makes the delay exact in tests.
 - **`BusTier` has no `Investigator`.** The Go `Tier` knows `normal` and `worker` only and refuses anything else when it reads a team; the daemon maps an investigator that coordinates to `Normal` when it creates the team.
@@ -109,7 +109,7 @@ Learned by running the real binary; each is stated by a test.
 - Checkpoints are read with `checkpoint-get`, **written only through the MCP tool**; the key is `team-` + the team ID, so with the new IDs it is `team-team-2026…`.
 - Timestamps in the bus are `2006-01-02 15:04:05` in local time, not RFC 3339. `AgentBus` reads none of them (the daemon keeps its own times).
 - A command waits for `bus.lock` without a limit; `AgentBus` bounds it (`60 s` by default, `with_timeout`) and kills the process group.
-- `agentbus status` prints free text (an agent's status, a reservation's resource and purpose); agents are parsed, reservations are returned as lines.
+- `agentbus status` prints free text (an agent's status, a reservation's resource and purpose), and that text may have line breaks. A line that starts no record goes on the text of the record before it (review pass 1, finding 3); agents are parsed, reservations are returned as lines.
 
 ## For the merger (Phase 2)
 
@@ -126,3 +126,16 @@ Learned by running the real binary; each is stated by a test.
 ## Suggestions for `AGENTS.md`
 
 None needed for this item. One for the Rust section: say how a test that needs an executable file should get one (a script on disk races with `fork` in other test threads).
+
+
+## Review pass 1 (PR #91, the review of `b016dad`)
+
+- Finding 1: `GitHub::post_comment_review` and `CommentReview` send the `COMMENT` event, the one the author of a pull request may post. `NewReview.verdict` stays a `ReviewVerdict` (changing its type would have changed the committed tests); a private `ReviewEvent` carries the wire text.
+- Finding 2: `mark_ready` reads the answer of the mutation: no `data` is a `Decode` error, `isDraft: true` is the new `GitHubError::StillDraft`.
+- Finding 3: `parse_status` keeps the line breaks of a status, a resource and a purpose.
+- Finding 4: `MergeMethod`, `StateChange` and `RawState` take their texts from strum.
+- Finding 5: `GitHubError::InvalidToken` and `GitHubError::Encode` are removed.
+- Finding 6: needs the human. The two `NotInTeam` cases of the RED commit were wrong about the unchanged Go bus (above); a new test pins the real behaviour. They were corrected inside this PR, which adds the tests; no test of `main` changed. The human is asked on the PR to confirm.
+- Finding 7: the history is published and is not rewritten. The edge tests that arrived with their implementation in `910b884` are named in the PR under Deviations; the work of this pass is red first where a failing test is possible (findings 1, 2, 3) and says `Test-First: not possible — <reason>` where it is not (4, 5, 6, 8).
+- Finding 8: the dispatcher test above.
+- Finding 9: the PR description is rewritten with the sections of PR-17.
