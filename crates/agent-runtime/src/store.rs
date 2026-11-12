@@ -594,6 +594,21 @@ mod tests {
         Home::new(&root)
     }
 
+    /// Opens the home again after a store was dropped. Other tests of this binary start processes: a child holds the
+    /// open file description of the released lock from its fork to its exec, so a `HomeLocked` that lasts a few
+    /// milliseconds is not the lock still being held by the dropped store.
+    async fn reopen(home: &Home) -> Result<StateStore, StoreError> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            match StateStore::open(home.clone()).await {
+                Err(StoreError::HomeLocked { .. }) if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                other => return other,
+            }
+        }
+    }
+
     fn task() -> TaskId {
         "task-20261111-193001-k3x9".parse().unwrap()
     }
@@ -685,7 +700,7 @@ mod tests {
         let home = home_in(&dir);
         drop(StateStore::open(home.clone()).await.unwrap());
 
-        let again = StateStore::open(home).await;
+        let again = reopen(&home).await;
 
         assert!(again.is_ok(), "{again:?}");
     }
@@ -956,7 +971,7 @@ mod tests {
             .unwrap();
         drop(first);
 
-        let second = StateStore::open(home.clone()).await.unwrap();
+        let second = reopen(&home).await.unwrap();
         second
             .append_activity(&task(), at(), &ActivityEvent::Text("two".to_owned()))
             .await
