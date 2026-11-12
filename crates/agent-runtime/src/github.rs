@@ -764,8 +764,7 @@ impl Failure {
     /// Whether a later attempt may do better: the network, the server and a rate limit that names its wait.
     fn is_transient(&self) -> bool {
         match self {
-            Self::Transport(error) => !error.is_builder(),
-            Self::TimedOut => true,
+            Self::Transport(_) | Self::TimedOut => true,
             Self::Rejected {
                 reason, retry_after, ..
             } => matches!(reason, Rejection::Server) || (*reason == Rejection::RateLimited && retry_after.is_some()),
