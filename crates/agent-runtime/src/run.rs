@@ -330,6 +330,8 @@ impl RunEngine {
             match event {
                 Watched::Exited(exit) => {
                     let exit = exit.map_err(supervise)?;
+                    // What the leader started may outlive it; the run is over, so the rest of its group goes too.
+                    process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
                     break Ended::By(StoppedBy::Nobody, exit);
                 }
                 Watched::Cancelled => {
