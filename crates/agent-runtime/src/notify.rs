@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use agent_core::config::{CommandLine, EnvName, Notifications, Secret, Secrets};
+use agent_core::state::Timestamp;
 use tokio::task::JoinError;
 
 use crate::process::{CaptureError, ExitReport};
@@ -31,6 +32,9 @@ const MAX_COMMAND_OUTPUT_BYTES: usize = 64 << 10;
 
 /// How many characters of the command's error output an error carries.
 const MAX_DIAGNOSTIC_CHARS: usize = 2048;
+
+/// How many files notifications of one second may have: a bound on the names tried, far above what the harness sends.
+pub const MAX_PER_SECOND: u32 = 100;
 
 /// What replaces a secret in the text of an error.
 const REDACTED: &str = "[redacted]";
@@ -105,6 +109,14 @@ pub enum NotifyError {
         /// What the operating system said.
         source: io::Error,
     },
+    /// The directory already holds [`MAX_PER_SECOND`] notifications of this second.
+    #[error("{limit} notifications of one second are already in {path:?}")]
+    TooManyInOneSecond {
+        /// The directory.
+        path: PathBuf,
+        /// The limit.
+        limit: u32,
+    },
     /// The thread that writes the file failed.
     #[error("the task that writes a notification failed")]
     Worker {
@@ -166,17 +178,20 @@ impl Notifier {
         self
     }
 
-    /// Writes `notification` as a file and runs the command on it. Returns the file's path.
+    /// Writes `notification` as a file named after `at` and runs the command on it. Returns the file's path.
     ///
-    /// The file is the owner's alone (mode 0600) and appears whole under its final name.
+    /// The file is `notification-<time>-<n>.md`, the owner's alone (mode 0600), and appears whole under that name.
     ///
     /// # Errors
-    /// [`NotifyError::CreateDir`], [`NotifyError::Write`] and [`NotifyError::Worker`] when no file could be written;
+    /// [`NotifyError::CreateDir`], [`NotifyError::Write`], [`NotifyError::TooManyInOneSecond`] and
+    /// [`NotifyError::Worker`] when no file could be written;
     /// [`NotifyError::Command`] and [`NotifyError::CommandFailed`] when the file is written and the command is not
     /// run, or fails.
-    pub async fn notify(&self, notification: &Notification) -> Result<PathBuf, NotifyError> {
+    pub async fn notify(&self, at: Timestamp, notification: &Notification) -> Result<PathBuf, NotifyError> {
         let _ = (
+            at,
             notification,
+            MAX_PER_SECOND,
             &self.command,
             &self.env,
             MAX_COMMAND_OUTPUT_BYTES,
@@ -202,6 +217,10 @@ mod tests {
 
     fn abs(path: &Path) -> AbsolutePath {
         AbsolutePath::from_str(path.to_str().unwrap()).unwrap()
+    }
+
+    fn at() -> Timestamp {
+        "2026-11-12T10:00:00Z".parse().unwrap()
     }
 
     fn notification(title: &str, body: &str) -> Notification {
@@ -301,7 +320,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         let file = notifier(dir.path(), None)
-            .notify(&notification("Task done", "Item 4.1 is merged.\nNext: 4.2\n"))
+            .notify(at(), &notification("Task done", "Item 4.1 is merged.\nNext: 4.2\n"))
             .await
             .unwrap();
 
@@ -322,30 +341,53 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         let file = notifier(dir.path(), None)
-            .notify(&notification("Paused", ""))
+            .notify(at(), &notification("Paused", ""))
             .await
             .unwrap();
 
         assert_eq!(std::fs::read_to_string(file).unwrap(), "Paused\n");
     }
 
-    // Rule: every notification has its own file, named so that the human sees what it is, and no temporary file stays.
+    // Rule: a file is named after the time of its notification, so that a directory sorts by when things happened; a
+    // second notification of the same second gets the next number; no temporary file stays.
     #[tokio::test]
-    async fn every_notification_has_its_own_file_and_leaves_no_temporary_file() {
+    async fn files_are_named_after_their_time_and_numbered_within_a_second() {
         let dir = tempfile::tempdir().unwrap();
         let notifier = notifier(dir.path(), None);
+        let later: Timestamp = "2026-11-12T10:05:00Z".parse().unwrap();
 
-        let first = notifier.notify(&notification("One", "")).await.unwrap();
-        let second = notifier.notify(&notification("Two", "")).await.unwrap();
+        let first = notifier.notify(at(), &notification("One", "")).await.unwrap();
+        let second = notifier.notify(at(), &notification("Two", "")).await.unwrap();
+        let third = notifier.notify(later, &notification("Three", "")).await.unwrap();
 
-        assert_ne!(first, second);
-        let names = files_in(&dir.path().join("notes"));
-        assert_eq!(names.len(), 2, "{names:?}");
+        let name = |path: &Path| path.file_name().unwrap().to_str().unwrap().to_owned();
+        assert_eq!(name(&first), "notification-2026-11-12T100000Z-1.md");
+        assert_eq!(name(&second), "notification-2026-11-12T100000Z-2.md");
+        assert_eq!(name(&third), "notification-2026-11-12T100500Z-1.md");
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "One\n");
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "Two\n");
+        assert_eq!(files_in(&dir.path().join("notes")).len(), 3);
+    }
+
+    // Rule: the numbers of one second are bounded; the notification that does not fit is an error, and nothing of it
+    // stays in the directory.
+    #[tokio::test]
+    async fn the_notifications_of_one_second_are_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let notifier = notifier(dir.path(), None);
+        for _ in 0..MAX_PER_SECOND {
+            notifier.notify(at(), &notification("Burst", "")).await.unwrap();
+        }
+
+        let result = notifier.notify(at(), &notification("One too many", "")).await;
+
         assert!(
-            names
-                .iter()
-                .all(|name| name.starts_with("notification-") && name.ends_with(".md")),
-            "{names:?}"
+            matches!(&result, Err(NotifyError::TooManyInOneSecond { path, limit: MAX_PER_SECOND }) if *path == dir.path().join("notes")),
+            "{result:?}"
+        );
+        assert_eq!(
+            files_in(&dir.path().join("notes")).len(),
+            usize::try_from(MAX_PER_SECOND).unwrap()
         );
     }
 
@@ -355,7 +397,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         let file = notifier(dir.path(), None)
-            .notify(&notification("Private", ""))
+            .notify(at(), &notification("Private", ""))
             .await
             .unwrap();
 
@@ -368,7 +410,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("notes"), "a file").unwrap();
 
-        let result = notifier(dir.path(), None).notify(&notification("x", "")).await;
+        let result = notifier(dir.path(), None).notify(at(), &notification("x", "")).await;
 
         assert!(
             matches!(&result, Err(NotifyError::CreateDir { path, .. }) if *path == dir.path().join("notes")),
@@ -384,7 +426,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let notifier = Notifier::from_config(&Notifications::default(), &Home::new(&abs(dir.path())), &secrets());
 
-        let file = notifier.notify(&notification("Default", "")).await.unwrap();
+        let file = notifier.notify(at(), &notification("Default", "")).await.unwrap();
 
         assert_eq!(file.parent().unwrap(), dir.path().join("notifications"));
     }
@@ -419,7 +461,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let notifier = notifier(dir.path(), Some(recording_command(dir.path())));
 
-        let file = notifier.notify(&notification("Run", "body")).await.unwrap();
+        let file = notifier.notify(at(), &notification("Run", "body")).await.unwrap();
 
         let record = std::fs::read_to_string(dir.path().join("record")).unwrap();
         let notes = dir.path().join("notes").canonicalize().unwrap();
@@ -435,7 +477,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let notifier = notifier(dir.path(), Some(recording_command(dir.path())));
 
-        let file = notifier.notify(&notification("Run", "body")).await.unwrap();
+        let file = notifier.notify(at(), &notification("Run", "body")).await.unwrap();
 
         assert!(!std::fs::read_to_string(file).unwrap().contains(SECRET));
     }
@@ -447,7 +489,7 @@ mod tests {
         let failing = command(&["sh", "-c", "echo \"login with $NOTIFY_TOKEN failed\" >&2; exit 3"]);
         let notifier = notifier(dir.path(), Some(failing));
 
-        let result = notifier.notify(&notification("Fail", "body")).await;
+        let result = notifier.notify(at(), &notification("Fail", "body")).await;
 
         let Err(NotifyError::CommandFailed { file, exit, stderr }) = result else {
             panic!("expected a failed command: {result:?}")
@@ -463,7 +505,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let notifier = notifier(dir.path(), Some(command(&["/nonexistent/agent-test-notify"])));
 
-        let result = notifier.notify(&notification("Missing", "")).await;
+        let result = notifier.notify(at(), &notification("Missing", "")).await;
 
         let Err(NotifyError::Command {
             file,
@@ -482,7 +524,7 @@ mod tests {
         let notifier = notifier(dir.path(), Some(command(&["sh", "-c", "sleep 300"])))
             .with_command_timeout(Duration::from_millis(300));
 
-        let result = notifier.notify(&notification("Slow", "")).await;
+        let result = notifier.notify(at(), &notification("Slow", "")).await;
 
         assert!(
             matches!(
