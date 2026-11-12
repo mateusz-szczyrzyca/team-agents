@@ -375,6 +375,22 @@ fn a_blank_result_is_no_final_message_and_a_turn_without_content_shows_nothing()
 }
 
 #[test]
+fn an_is_error_that_is_null_means_no_error() -> TestResult {
+    let mut parser = ClaudeAdapter.parser();
+
+    let result = parser.push_line(
+        r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"fine","is_error":null}]}}"#,
+    )?;
+    let end = parser.push_line(r#"{"type":"result","subtype":"success","is_error":null,"result":"STATUS: DONE"}"#)?;
+
+    assert_eq!(result, []);
+    assert_eq!(end, [ActivityEvent::Info("result: success".to_owned())]);
+    let output = parser.finish("", std::num::NonZeroU32::MIN);
+    assert_eq!(output.stream, StreamOutcome::Succeeded);
+    Ok(())
+}
+
+#[test]
 fn tool_calls_become_commands_edits_bus_calls_and_other_tool_calls() -> TestResult {
     let mut parser = ClaudeAdapter.parser();
     let lines = [
