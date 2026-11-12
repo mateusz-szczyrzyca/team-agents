@@ -218,13 +218,23 @@ const fn team_of(kind: &EventKind) -> &TeamId {
     }
 }
 
-/// Serves one connection until it ends, `shutdown` is cancelled or the owner is gone.
+/// Serves one connection until it ends, `shutdown` is cancelled or the owner is gone. The shutdown ends it wherever it
+/// waits, also in a write to a client that does not read.
 async fn connection(
     stream: UnixStream,
     inbox: mpsc::Sender<Message>,
     shutdown: CancellationToken,
     _permit: OwnedSemaphorePermit,
 ) {
+    tokio::select! {
+        () = shutdown.cancelled() => {}
+        () = exchange(stream, &inbox) => {}
+    }
+}
+
+/// Reads requests and answers them, and forwards the events of a subscription, until the connection ends or the owner
+/// is gone.
+async fn exchange(stream: UnixStream, inbox: &mpsc::Sender<Message>) {
     let (read, mut write) = stream.into_split();
     let mut reader = BufReader::new(read);
     let mut subscription: Option<Subscription> = None;
@@ -232,12 +242,11 @@ async fn connection(
     let mut partial = Vec::new();
     loop {
         let step = tokio::select! {
-            () = shutdown.cancelled() => return,
             line = read_line_into(&mut reader, &mut partial, MAX_REQUEST_BYTES) => Step::Line(line),
             event = next_event(&mut subscription) => Step::Event(event),
         };
         let sent = match step {
-            Step::Line(Ok(Some(line))) => answer(&line, &inbox, &mut subscription, &mut write).await,
+            Step::Line(Ok(Some(line))) => answer(&line, inbox, &mut subscription, &mut write).await,
             Step::Line(Ok(None)) => return,
             Step::Line(Err(LineError::TooLong { max })) => {
                 let failure = Failure {
