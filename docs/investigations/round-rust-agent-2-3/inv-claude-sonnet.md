@@ -11,8 +11,8 @@ rust` again after the last commit, exit `0`).
 
 - `git grep -nE '"[^"]{100,}"' -- 'crates/*.rs'` finds `3` hits, all older than this round and none a prompt: a
   lint `reason` in `ids.rs` and two test fixtures in `task_list.rs`. This round adds none.
-- Removing a prompt file makes `a_missing_prompt_file_fails_with_its_name` pass only because the failure line starts
-  with `prompts/worker-agent/rust-developer.md`; an unlisted or broken placeholder fails with the file's name (and
+- A prompt file that cannot be read fails the catalog test with the file's name (`a_missing_prompt_file_fails_with_its_name`
+  asserts the line starts with `prompts/worker-agent/rust-developer.md`); an unlisted or broken placeholder fails with the file's name (and
   the line); a listed variable the text leaves out fails as `PromptError::Unused` (unit test on a synthetic spec).
 - `tests/cli_contract.rs` implements `CliAdapter` and `OutputParser` from strings alone: no `std::process` anywhere.
 
