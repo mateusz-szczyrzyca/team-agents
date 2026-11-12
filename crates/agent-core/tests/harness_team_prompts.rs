@@ -6,17 +6,13 @@ mod harness_team_prompts {
     use std::collections::BTreeSet;
     use std::path::Path;
 
-    use agent_core::prompt::{Audience, HarnessPrompt, PROMPTS_DIR};
+    use agent_core::prompt::{Audience, PROMPTS_DIR, TeamPrompt, Variables};
 
     /// The directory of the texts of a team's life, in the catalog's paths.
     const TEAM_DIR: &str = "harness/team";
 
     fn listed() -> BTreeSet<String> {
-        HarnessPrompt::ALL
-            .iter()
-            .map(|id| id.spec().path().to_owned())
-            .filter(|path| path.starts_with(TEAM_DIR))
-            .collect()
+        TeamPrompt::ALL.iter().map(|id| id.spec().path().to_owned()).collect()
     }
 
     #[test]
@@ -48,8 +44,8 @@ mod harness_team_prompts {
 
     #[test]
     fn what_the_team_tells_a_model_is_for_a_model_and_the_notification_for_the_human() {
-        for id in HarnessPrompt::ALL.iter().filter(|id| id.spec().path().starts_with(TEAM_DIR)) {
-            let expected = if id.spec().path().ends_with("notice-team-done.md") {
+        for id in TeamPrompt::ALL {
+            let expected = if format!("{id:?}").starts_with("Notice") {
                 Audience::Human
             } else {
                 Audience::Model
@@ -57,5 +53,47 @@ mod harness_team_prompts {
 
             assert_eq!(id.spec().audience(), expected, "{id:?}");
         }
+    }
+
+    #[test]
+    fn every_text_exists_and_renders_with_exactly_its_variables() {
+        for id in TeamPrompt::ALL {
+            let spec = id.spec();
+            let text = std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../")
+                    .join(PROMPTS_DIR)
+                    .join(spec.path()),
+            )
+            .unwrap_or_else(|error| panic!("{id:?}: {}: {error}", spec.path()));
+            let values = spec
+                .variables()
+                .iter()
+                .fold(Variables::new(), |values, name| values.with(name, "value").unwrap());
+
+            let rendered = spec
+                .render(&text, &values)
+                .unwrap_or_else(|error| panic!("{id:?}: {}: {error}", spec.path()));
+
+            assert!(!rendered.trim().is_empty(), "{id:?}: {} is empty", spec.path());
+        }
+    }
+
+    #[test]
+    fn the_notification_has_a_title_line_and_a_body() {
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../")
+                .join(PROMPTS_DIR)
+                .join(TeamPrompt::NoticeTeamDone.spec().path()),
+        )
+        .unwrap();
+
+        let mut lines = text.lines();
+        let title = lines.next().unwrap_or_default();
+        let body: Vec<_> = lines.filter(|line| !line.trim().is_empty()).collect();
+
+        assert!(!title.trim().is_empty());
+        assert!(!body.is_empty());
     }
 }
