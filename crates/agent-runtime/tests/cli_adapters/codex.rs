@@ -266,6 +266,27 @@ fn a_failed_turn_fails_and_reports_the_provider_message() -> TestResult {
     Ok(())
 }
 
+// Rule: the classifier of run outcomes reads only the error tail, so a provider's refusal that Codex reports on its
+// stream (an `error` event and a failed turn) must be in it after stderr, once for each of the two lines.
+#[test]
+fn the_provider_message_of_a_failed_turn_is_in_the_error_tail_after_stderr() -> TestResult {
+    let replay = replay(
+        &CodexAdapter,
+        &fixture("codex", "at-capacity.jsonl")?,
+        "warning: retrying",
+    )?;
+
+    assert_eq!(
+        replay.output.error_tail.lines(),
+        [
+            "warning: retrying",
+            "Selected model is at capacity. Please try a different model.",
+            "Selected model is at capacity. Please try a different model.",
+        ]
+    );
+    Ok(())
+}
+
 #[test]
 fn a_failed_command_and_an_error_item_are_errors() -> TestResult {
     let replay = replay(&CodexAdapter, &fixture("codex", "failed.jsonl")?, "")?;
