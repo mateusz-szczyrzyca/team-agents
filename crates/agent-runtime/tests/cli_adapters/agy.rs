@@ -353,6 +353,31 @@ fn a_result_without_a_status_is_a_failed_run_that_keeps_its_response() -> TestRe
     Ok(())
 }
 
+// Rule: an empty conversation ID names no session; it must not cost the result its status and response.
+#[test]
+fn a_result_with_an_empty_conversation_id_keeps_its_outcome() -> TestResult {
+    let replay = replay(
+        &AgyAdapter,
+        r#"{"event":"result","result":{"status":"SUCCESS","response":"STATUS: DONE","conversation_id":""}}"#,
+        "",
+    )?;
+
+    assert!(replay.errors.is_empty(), "{:?}", replay.errors);
+    assert_eq!(replay.output.stream, StreamOutcome::Succeeded);
+    assert_eq!(replay.output.final_message.as_deref(), Some("STATUS: DONE"));
+    assert_eq!(replay.output.session_id, None);
+    Ok(())
+}
+
+#[test]
+fn an_init_with_an_empty_conversation_id_names_no_session() -> TestResult {
+    let replay = replay(&AgyAdapter, r#"{"event":"init","conversation_id":""}"#, "")?;
+
+    assert!(replay.errors.is_empty(), "{:?}", replay.errors);
+    assert_eq!(replay.output.session_id, None);
+    Ok(())
+}
+
 #[test]
 fn events_with_nothing_to_show_show_nothing() -> TestResult {
     let mut parser = AgyAdapter.parser();

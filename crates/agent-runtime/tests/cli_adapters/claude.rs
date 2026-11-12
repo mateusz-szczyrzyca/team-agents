@@ -281,6 +281,35 @@ fn an_error_result_without_a_result_text_keeps_its_errors_in_the_activity_and_th
     Ok(())
 }
 
+// Rule: an empty session ID names no session; it must not cost the result its outcome and final message.
+#[test]
+fn a_result_with_an_empty_session_id_keeps_its_outcome() -> TestResult {
+    let replay = replay(
+        &ClaudeAdapter,
+        r#"{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"STATUS: DONE","session_id":""}"#,
+        "",
+    )?;
+
+    assert!(replay.errors.is_empty(), "{:?}", replay.errors);
+    assert_eq!(replay.output.stream, StreamOutcome::Succeeded);
+    assert_eq!(replay.output.final_message.as_deref(), Some("STATUS: DONE"));
+    assert_eq!(replay.output.session_id, None);
+    Ok(())
+}
+
+#[test]
+fn an_init_with_an_empty_session_id_names_no_session() -> TestResult {
+    let replay = replay(
+        &ClaudeAdapter,
+        r#"{"type":"system","subtype":"init","session_id":"","model":"claude-sonnet-5-5"}"#,
+        "",
+    )?;
+
+    assert!(replay.errors.is_empty(), "{:?}", replay.errors);
+    assert_eq!(replay.output.session_id, None);
+    Ok(())
+}
+
 #[test]
 fn a_killed_run_is_incomplete_but_knows_its_session() -> TestResult {
     let replay = replay(&ClaudeAdapter, &fixture("claude", "cut.jsonl")?, "")?;
