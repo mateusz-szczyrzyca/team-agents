@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"019a0000-0000-7000-8000-000000000001"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"/usr/bin/bash -lc 'cargo test'","aggregated_output":"error: could not compile","exit_code":101,"status":"failed"}}
+{"type":"item.completed","item":{"id":"item_1","type":"error","message":"stream disconnected before completion"}}
+{"type":"turn.failed","error":{"message":"stream disconnected before completion"}}
