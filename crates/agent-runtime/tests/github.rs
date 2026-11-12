@@ -1381,6 +1381,58 @@ mod github_client {
     }
 
     #[tokio::test]
+    async fn a_pull_request_in_a_state_that_is_not_known_is_a_decode_error() {
+        let mut weird = pr_json(7);
+        weird["state"] = json!("weird");
+        let server = FakeServer::always(reply(200, &weird)).await.unwrap();
+
+        let error = github(&server).get_pull_request(number(7)).await.unwrap_err();
+
+        assert!(
+            matches!(
+                error,
+                GitHubError::Decode {
+                    operation: GitHubOperation::GetPullRequest,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn merge_method_has_the_texts_github_takes_and_refuses_others() {
+        for (method, text) in [
+            (MergeMethod::Merge, "merge"),
+            (MergeMethod::Squash, "squash"),
+            (MergeMethod::Rebase, "rebase"),
+        ] {
+            assert_eq!(method.to_string(), text);
+            assert_eq!(text.parse::<MergeMethod>(), Ok(method));
+        }
+        for text in ["", "Merge", "fast-forward"] {
+            let error = text.parse::<MergeMethod>().unwrap_err();
+
+            assert_eq!(error.value, text);
+            assert_eq!(error.expected, ["merge", "squash", "rebase"]);
+        }
+    }
+
+    #[test]
+    fn state_change_has_the_texts_github_takes_and_refuses_others() {
+        for (change, text) in [(StateChange::Reopen, "open"), (StateChange::Close, "closed")] {
+            assert_eq!(change.to_string(), text);
+            assert_eq!(text.parse::<StateChange>(), Ok(change));
+        }
+        for text in ["", "reopen", "close", "Open"] {
+            let error = text.parse::<StateChange>().unwrap_err();
+
+            assert_eq!(error.value, text);
+            assert_eq!(error.expected, ["open", "closed"]);
+        }
+    }
+
+    #[tokio::test]
     async fn list_comments_stops_at_a_page_that_is_one_short_of_full() {
         let page: Vec<Value> = (1..=99).map(|id| comment_json(id, "octo-cat", "x")).collect();
         let server = FakeServer::always(reply(200, &Value::Array(page))).await.unwrap();

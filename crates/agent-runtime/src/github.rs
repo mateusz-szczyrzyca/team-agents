@@ -553,13 +553,22 @@ pub struct NewPullRequest {
     pub readiness: Readiness,
 }
 
-/// What an update does to the state of a pull request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What an update does to the state of a pull request; the texts are the `state` GitHub is sent.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantNames,
+)]
+#[strum(parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<StateChange>)]
 pub enum StateChange {
     /// Open it again.
+    #[strum(serialize = "open")]
     Reopen,
     /// Close it without merging.
+    #[strum(serialize = "closed")]
     Close,
+}
+
+impl Keyword for StateChange {
+    const WHAT: &'static str = "state change";
 }
 
 /// Changes to a pull request; what is `None` stays as it is.
@@ -575,8 +584,11 @@ pub struct PullRequestUpdate {
     pub state: Option<StateChange>,
 }
 
-/// How a pull request is merged.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How a pull request is merged; the texts are the `merge_method` GitHub is sent.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantNames,
+)]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<MergeMethod>)]
 pub enum MergeMethod {
     /// A merge commit.
     Merge,
@@ -584,6 +596,10 @@ pub enum MergeMethod {
     Squash,
     /// Rebased commits.
     Rebase,
+}
+
+impl Keyword for MergeMethod {
+    const WHAT: &'static str = "merge method";
 }
 
 /// A merge to make: of the pull request as it is at `expected_head`, and no other.
@@ -615,6 +631,27 @@ pub struct NewReview {
     pub body: String,
     /// The head the review is about.
     pub commit: CommitId,
+}
+
+/// The `event` of a review GitHub is sent: what the review is.
+#[derive(Debug, Clone, Copy, strum::Display)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
+enum ReviewEvent {
+    /// Approve the pull request.
+    Approve,
+    /// Ask for changes.
+    RequestChanges,
+    /// Only comment: no verdict, and the one event the author of the pull request may use.
+    Comment,
+}
+
+impl From<ReviewVerdict> for ReviewEvent {
+    fn from(verdict: ReviewVerdict) -> Self {
+        match verdict {
+            ReviewVerdict::Approve => Self::Approve,
+            ReviewVerdict::RequestChanges => Self::RequestChanges,
+        }
+    }
 }
 
 /// A review that is only a comment: it carries no verdict. GitHub refuses `APPROVE` and `REQUEST_CHANGES` by the
@@ -910,11 +947,7 @@ impl GitHub {
             changes.insert("base".to_owned(), json!(base.as_str()));
         }
         if let Some(state) = update.state {
-            let text = match state {
-                StateChange::Reopen => "open",
-                StateChange::Close => "closed",
-            };
-            changes.insert("state".to_owned(), json!(text));
+            changes.insert("state".to_owned(), json!(state.to_string()));
         }
         if changes.is_empty() {
             return Err(GitHubError::NothingToUpdate);
@@ -984,13 +1017,8 @@ impl GitHub {
     /// [`Rejection::Conflict`] when the head has moved; the errors of a call.
     pub async fn merge_pull_request(&self, number: PrNumber, request: &MergeRequest) -> Result<Merged, GitHubError> {
         let operation = GitHubOperation::MergePullRequest;
-        let method = match request.method {
-            MergeMethod::Merge => "merge",
-            MergeMethod::Squash => "squash",
-            MergeMethod::Rebase => "rebase",
-        };
         let mut body = serde_json::Map::new();
-        body.insert("merge_method".to_owned(), json!(method));
+        body.insert("merge_method".to_owned(), json!(request.method.to_string()));
         body.insert("sha".to_owned(), json!(request.expected_head.as_str()));
         if let Some(title) = &request.commit_title {
             body.insert("commit_title".to_owned(), json!(title));
@@ -1020,29 +1048,14 @@ impl GitHub {
         Ok(pull.pull)
     }
 
-    /// Posts a review. Not retried.
+    /// Posts a review with a verdict. Not retried.
     ///
     /// # Errors
-    /// The errors of a call; GitHub refuses (422) a verdict by the author of the pull request on their own.
+    /// The errors of a call; GitHub refuses (422) a verdict by the author of the pull request on their own: that
+    /// is what [`GitHub::post_comment_review`] is for.
     pub async fn post_review(&self, number: PrNumber, review: &NewReview) -> Result<Review, GitHubError> {
-        let operation = GitHubOperation::PostReview;
-        let body = json!({
-            "event": review.verdict.to_string(),
-            "body": review.body,
-            "commit_id": review.commit.as_str(),
-        });
-        let answer = self
-            .call(Call {
-                operation,
-                method: Method::POST,
-                path: self.repo_path(&format!("pulls/{number}/reviews")),
-                body: Some(body.to_string()),
-                idempotency: Idempotency::Once,
-            })
-            .await?;
-        let raw: RawReview = decode(operation, &answer)?;
-        let author = raw.author_or_decode_error(operation)?;
-        Ok(raw.into_review(author))
+        self.submit_review(number, review.verdict.into(), &review.body, &review.commit)
+            .await
     }
 
     /// Posts a review that is only a comment, with no verdict: what the author of a pull request can post on it.
@@ -1051,11 +1064,23 @@ impl GitHub {
     /// # Errors
     /// The errors of a call.
     pub async fn post_comment_review(&self, number: PrNumber, review: &CommentReview) -> Result<Review, GitHubError> {
+        self.submit_review(number, ReviewEvent::Comment, &review.body, &review.commit)
+            .await
+    }
+
+    /// Posts a review with `event`, about the head `commit`. Not retried.
+    async fn submit_review(
+        &self,
+        number: PrNumber,
+        event: ReviewEvent,
+        body: &str,
+        commit: &CommitId,
+    ) -> Result<Review, GitHubError> {
         let operation = GitHubOperation::PostReview;
         let body = json!({
-            "event": "APPROVE",
-            "body": review.body,
-            "commit_id": review.commit.as_str(),
+            "event": event.to_string(),
+            "body": body,
+            "commit_id": commit.as_str(),
         });
         let answer = self
             .call(Call {
@@ -1478,13 +1503,26 @@ fn author_or_decode_error(item: &impl Authored, operation: GitHubOperation) -> R
 }
 
 /// The state of a pull request as GitHub writes it.
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Deserialize, strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantNames)]
+#[serde(try_from = "String")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<RawState>)]
 enum RawState {
     /// Open.
     Open,
     /// Closed, merged or not.
     Closed,
+}
+
+impl Keyword for RawState {
+    const WHAT: &'static str = "pull request state";
+}
+
+impl TryFrom<String> for RawState {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
 }
 
 /// A repository in an answer.
