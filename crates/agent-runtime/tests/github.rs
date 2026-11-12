@@ -1265,4 +1265,15 @@ mod github_client {
             "{error:?}"
         );
     }
+
+    #[tokio::test]
+    async fn list_comments_stops_at_a_page_that_is_one_short_of_full() {
+        let page: Vec<Value> = (1..=99).map(|id| comment_json(id, "octo-cat", "x")).collect();
+        let server = FakeServer::always(reply(200, &Value::Array(page))).await.unwrap();
+
+        let list = github(&server).list_comments(number(7)).await.unwrap();
+
+        assert_eq!(list.trusted.len(), 99);
+        assert_eq!(server.requests().len(), 1);
+    }
 }

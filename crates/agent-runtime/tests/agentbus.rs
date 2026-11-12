@@ -403,8 +403,17 @@ mod agentbus_commands {
 
         assert_eq!((a, b), (item(1), item(2)));
         let board = fixture.bus.board_dump(&team_id()).await.unwrap().board;
-        assert_eq!(board.get(&item(1)).unwrap().title, "Zażółć gęślą jaźń");
-        assert_eq!(board.get(&item(2)).unwrap().title, "-rf looks like a flag");
+        let seen: Vec<_> = board
+            .values()
+            .map(|added| (added.title.as_str(), added.level))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("Zażółć gęślą jaźń", BoardLevel::Normal),
+                ("-rf looks like a flag", BoardLevel::Easy)
+            ]
+        );
     }
 
     #[tokio::test]

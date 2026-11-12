@@ -1223,9 +1223,9 @@ impl AgentBus {
         parse_status(&output)
     }
 
-    /// Runs `command` with `args` against this bus and returns what it printed. The bus is named on the command line
-    /// and in `AGENTS_HOME`, and `AGENTBUS_DIR`, which would override the first, is removed from the environment:
-    /// nothing but this `AgentBus` decides which bus a command works on.
+    /// Runs `command` with `args` against this bus and returns what it printed. The bus is named with `--dir`, which
+    /// wins over `AGENTBUS_DIR` of the environment, and in `AGENTS_HOME`, where the command writes its log: nothing
+    /// but this `AgentBus` decides which bus a command works on.
     async fn run(&self, command: BusCommand, args: Args, input: Option<&[u8]>) -> Result<String, AgentBusError> {
         let mut process = tokio::process::Command::new(self.program.as_path());
         process
@@ -1233,8 +1233,7 @@ impl AgentBus {
             .arg("--dir")
             .arg(self.bus_dir())
             .args(args.0)
-            .env("AGENTS_HOME", self.home.as_path())
-            .env_remove("AGENTBUS_DIR");
+            .env("AGENTS_HOME", self.home.as_path());
         let limits = CaptureLimits {
             timeout: self.timeout,
             max_bytes: MAX_OUTPUT_BYTES,

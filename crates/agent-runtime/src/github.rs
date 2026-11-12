@@ -1199,10 +1199,7 @@ impl GitHub {
             .headers()
             .get("x-ratelimit-remaining")
             .is_some_and(|value| value.as_bytes() == b"0");
-        if response
-            .content_length()
-            .is_some_and(|length| length > u64::try_from(MAX_RESPONSE_BYTES).unwrap_or(u64::MAX))
-        {
+        if response.content_length().is_some_and(over_the_limit) {
             return Err(Failure::TooLarge);
         }
         let mut body = Vec::new();
@@ -1229,6 +1226,15 @@ impl GitHub {
 const MARK_READY_MUTATION: &str =
     "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }";
 
+/// Whether an answer of `length` bytes is longer than [`MAX_RESPONSE_BYTES`].
+fn over_the_limit(length: u64) -> bool {
+    match usize::try_from(length) {
+        Ok(length) => length > MAX_RESPONSE_BYTES,
+        // A length that does not fit in a `usize` does not fit in memory either.
+        Err(_too_big) => true,
+    }
+}
+
 /// What a status that is not a success means. `limited` is whether GitHub said it is a rate limit: a `Retry-After`
 /// or an exhausted quota, which is how it tells a rate limit from a plain 403.
 fn rejection(status: u16, limited: bool) -> Rejection {
@@ -1249,7 +1255,10 @@ fn rejection(status: u16, limited: bool) -> Rejection {
 /// How long `Retry-After` asks to wait. Only the form of a number of seconds is read, which is what GitHub sends; a
 /// header in another form gives no wait, and the call fails as it is.
 fn retry_after(headers: &HeaderMap) -> Option<Duration> {
-    let text = headers.get(RETRY_AFTER)?.to_str().ok()?;
+    let value = headers.get(RETRY_AFTER)?;
+    let Ok(text) = value.to_str() else {
+        return None;
+    };
     let Ok(seconds) = text.trim().parse::<u64>() else {
         return None;
     };
@@ -1261,6 +1270,7 @@ fn retry_after(headers: &HeaderMap) -> Option<Duration> {
 fn error_message(body: &[u8]) -> String {
     match serde_json::from_slice::<RawError>(body) {
         Ok(RawError { message: Some(message) }) => message.chars().take(MAX_MESSAGE_CHARS).collect(),
+        // No message, or a body that is not GitHub's JSON: the status alone says what happened.
         Ok(RawError { message: None }) | Err(_) => String::new(),
     }
 }
