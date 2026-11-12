@@ -1726,6 +1726,74 @@ mod tests {
     }
 
     #[test]
+    fn a_status_with_line_breaks_stays_one_status_of_its_agent() {
+        let text = "Active agents:\n\
+            \x20 claude-1 — task-20261112-134008-ab12 (agents/claude-1/item-1) pid 4242, status: Reviewing\n\
+            Waiting for tests: żółć\n\
+            \n\
+            Done soon\n\
+            \x20 codex-1 — task-20261112-134009-cd34 (agents/codex-1/item-2) pid 77, status: idle\n\
+            Reservations:\n\
+            No reservations.\n";
+
+        let report = parse_status(text).unwrap();
+
+        let statuses: Vec<_> = report
+            .agents
+            .iter()
+            .map(|agent| (agent.agent.as_str(), agent.status.as_str()))
+            .collect();
+        assert_eq!(
+            statuses,
+            [
+                ("claude-1", "Reviewing\nWaiting for tests: żółć\n\nDone soon"),
+                ("codex-1", "idle")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_reservation_with_line_breaks_stays_one_reservation() {
+        let text = "Active agents:\n  (none)\nReservations:\n\
+            - serial-port: codex-1 (task task-20261112-134009-cd34) since 2026-11-12 10:00:00, purpose: flashing\n\
+            the second board\n\
+            - lab\n\
+            two: claude-1 (task task-20261112-134008-ab12) since 2026-11-12 10:05:00\n";
+
+        let report = parse_status(text).unwrap();
+
+        assert_eq!(
+            report.reservations,
+            [
+                "- serial-port: codex-1 (task task-20261112-134009-cd34) since 2026-11-12 10:00:00, purpose: flashing\nthe second board",
+                "- lab\ntwo: claude-1 (task task-20261112-134008-ab12) since 2026-11-12 10:05:00",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_line_with_no_record_before_it_is_unexpected() {
+        let cases = [
+            "Active agents:\nstray\nReservations:\nNo reservations.\n",
+            "Active agents:\n  (none)\nReservations:\nstray\n",
+        ];
+        for text in cases {
+            let error = parse_status(text).unwrap_err();
+
+            assert!(
+                matches!(
+                    error,
+                    AgentBusError::Unexpected {
+                        command: BusCommand::Status,
+                        ..
+                    }
+                ),
+                "{text:?}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_status_report_that_is_not_in_the_format_is_unexpected() {
         let cases = [
             "",

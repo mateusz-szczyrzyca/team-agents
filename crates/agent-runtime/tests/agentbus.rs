@@ -898,6 +898,63 @@ mod agentbus_commands {
         assert_eq!(listed.pid, pid);
     }
 
+    /// Starts the `agentbus serve` of `member` on the bus of `fixture`, sends it `requests` (one JSON-RPC message
+    /// per line, after the initialisation) and keeps its input open: an agent that has ended is no longer listed.
+    async fn serve_and_call(fixture: &Fixture, member: &str, suffix: &str, requests: &[&str]) -> tokio::process::Child {
+        let mut serve = Command::new(agentbus_binary())
+            .arg("serve")
+            .args(["--agent", member, "--task"])
+            .arg(task(suffix).as_str())
+            .args(["--repo", "team-agents", "--branch", "agents/x/item-1", "--dir"])
+            .arg(fixture.bus.bus_dir())
+            .env("AGENTS_HOME", fixture.dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let stdin = serve.stdin.as_mut().unwrap();
+        let initialise = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#;
+        for line in [initialise, r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#]
+            .into_iter()
+            .chain(requests.iter().copied())
+        {
+            stdin.write_all(line.as_bytes()).await.unwrap();
+            stdin.write_all(b"\n").await.unwrap();
+        }
+        stdin.flush().await.unwrap();
+        serve
+    }
+
+    #[tokio::test]
+    async fn status_keeps_the_line_breaks_of_an_agents_status_and_of_a_reservation() {
+        let fixture = fixture();
+        let set_status = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"set_status","arguments":{"status":"Reviewing\nWaiting for tests: żółć"}}}"#;
+        let reserve = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"reserve","arguments":{"resource":"lab","note":"flashing\nthe second board"}}}"#;
+        let mut serve = serve_and_call(&fixture, "claude-1", "aaa1", &[set_status, reserve]).await;
+        let deadline = Instant::now() + PATIENCE;
+        let status = loop {
+            let status = fixture.bus.status().await.unwrap();
+            if !status.agents.is_empty() && !status.reservations.is_empty() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "the agent did not show up in the status");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        serve.kill().await.unwrap();
+
+        assert_eq!(status.agents.len(), 1);
+        assert_eq!(
+            status.agents.first().map(|agent| agent.status.as_str()),
+            Some("Reviewing\nWaiting for tests: żółć")
+        );
+        assert_eq!(status.reservations.len(), 1);
+        let reservation = status.reservations.first().unwrap();
+        assert!(reservation.starts_with("- lab: claude-1"), "{reservation}");
+        assert!(reservation.ends_with("purpose: flashing\nthe second board"), "{reservation}");
+    }
+
     // ------------------------------------------------------------ what can go wrong with the process
 
     #[tokio::test]
