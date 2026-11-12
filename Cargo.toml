@@ -15,12 +15,16 @@ publish = false
 agent-core = { path = "crates/agent-core" }
 clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 rand = { version = "0.10.3", default-features = false }
+rustix = { version = "1.1.6", default-features = false, features = ["std", "fs", "process"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 strum = { version = "0.28.0", default-features = false, features = ["derive"] }
+tempfile = "3.27.0"
 thiserror = "2.0.21"
 time = { version = "0.3.55", default-features = false, features = ["std", "formatting", "parsing"] }
+tokio = { version = "1.54.1", default-features = false, features = ["rt", "process", "time", "io-util", "fs", "sync"] }
 toml = { version = "1.2.1", default-features = false, features = ["std", "serde", "parse"] }
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 
 # The lint baseline of prompts/agent/rust-developer.md (appendix). `warn` here and `-D warnings` in the gate
 # (`make rust`): fatal in CI, not while editing.
