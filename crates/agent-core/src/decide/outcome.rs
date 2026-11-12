@@ -9,14 +9,15 @@
 //! 1. The human stopped the run: [`RunEnd::Stopped`].
 //! 2. The final message has a recognised `STATUS:` line ([`parse_status_line`]) and the run succeeded — or the
 //!    watchdog ended it, which only a silent run needs —: [`RunEnd::Reported`].
-//! 3. The watchdog ended the run: [`RunEnd::Hung`].
-//! 4. The run failed — a failed exit status, or a stream that did not end with a successful result — and its error
+//! 3. The run failed — a failed exit status, or a stream that did not end with a successful result — and its error
 //!    tail shows a provider limit: [`RunEnd::QuotaExhausted`] for an exhausted quota, usage limit or credits,
 //!    [`RunEnd::RateLimited`] for a rate limit (HTTP 429) or an overloaded model (HTTP 503 and 529: a pause as short
 //!    as a rate limit's). A line that is no provider's — the machine ran out of processes, memory or disk, a Unix
 //!    socket failed — is never a limit. The final message is read as an error — its last `tail_lines` lines, like the
 //!    error tail — only when it has no `STATUS:` line: the agent's own report is never taken for a provider error, and a
 //!    clean run is never paused for a stale 429 that the CLI retried.
+//! 4. The watchdog ended the run, which showed no limit: [`RunEnd::Hung`]. A run the watchdog killed while the provider
+//!    refused it is a limit, paused until the reset, not a hang.
 //! 5. A recognised `STATUS:` line of a run that failed without a limit: [`RunEnd::Reported`].
 //! 6. Anything else: [`RunEnd::NoStatus`] with the exit code.
 //!
@@ -296,9 +297,6 @@ pub fn classify_outcome(
     {
         return done(RunEnd::Reported { outcome });
     }
-    if finish.stopped_by == StoppedBy::Watchdog {
-        return done(RunEnd::Hung);
-    }
     if !succeeded || finish.exit != ExitStatus::Code(0) {
         let message = match (status, &output.final_message) {
             (StatusLine::Absent, Some(message)) => ErrorTail::from_text(message, context.limits.tail_lines),
@@ -307,6 +305,11 @@ pub fn classify_outcome(
         if let Some(limit) = find_limit(output.error_tail.lines().iter().chain(message.lines())) {
             return limit.classify(context);
         }
+    }
+    // After the limits: a run the watchdog killed while the provider refused it is paused until the reset, not resumed
+    // straight into the limit.
+    if finish.stopped_by == StoppedBy::Watchdog {
+        return done(RunEnd::Hung);
     }
     match reported {
         Some(outcome) => done(RunEnd::Reported { outcome }),
@@ -649,7 +652,10 @@ fn read_iso_time(line: &str, _now: UtcDateTime, offset: UtcOffset) -> Option<Utc
 
 /// The zone at the start of `text`: `z`, `+02:00`, `-0100`, ` utc`; without one, the machine's `local` offset.
 fn read_zone(text: &str, local: UtcOffset) -> Option<(UtcOffset, &str)> {
-    if let Some(rest) = text.strip_prefix('z') {
+    if let Some(rest) = text
+        .strip_prefix('z')
+        .filter(|rest| !rest.starts_with(char::is_alphabetic))
+    {
         return Some((UtcOffset::UTC, rest));
     }
     if let Some(rest) = text
@@ -741,7 +747,8 @@ fn read_clock(text: &str, local: UtcOffset) -> Option<(Time, UtcOffset)> {
         None => return None,
     };
     let time = Time::from_hms(hour, u8::try_from(minute.unwrap_or(0)).ok()?, 0).ok()?;
-    let rest = rest.trim_start().strip_prefix('(').unwrap_or(rest);
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix('(').unwrap_or(rest);
     let zone = read_zone(rest, local).map_or(local, |(zone, _)| zone);
     Some((time, zone))
 }
@@ -993,9 +1000,9 @@ mod tests {
         );
     }
 
-    // Rule: hung wins over a limit line in the tail of a silent run.
+    // Rule: a limit shown by a run the watchdog killed is a limit: paused until the reset, as the old harness did.
     #[test]
-    fn a_hung_run_is_not_a_limit() {
+    fn a_hung_run_that_shows_a_limit_is_paused() {
         let class = classify_with(
             &default_config(),
             None,
@@ -1004,8 +1011,38 @@ mod tests {
             StreamOutcome::Incomplete,
             StoppedBy::Watchdog,
         );
-        assert_eq!(class.end, RunEnd::Hung);
-        assert_eq!(class.pause, None);
+        assert_eq!(class.end, RunEnd::RateLimited);
+        assert_eq!(paused(&class), (at("2026-11-12T10:06:00Z"), PauseReason::RateLimit));
+        let class = classify_with(
+            &default_config(),
+            None,
+            "Claude AI usage limit reached|1794478200",
+            ExitStatus::Signal,
+            StreamOutcome::Incomplete,
+            StoppedBy::Watchdog,
+        );
+        assert_eq!(class.end, quota(Some("2026-11-12T10:10:00Z")));
+        assert_eq!(paused(&class), (at("2026-11-12T10:11:00Z"), PauseReason::Quota));
+    }
+
+    // Rule: a run the watchdog killed that shows no limit — not even a local error — is hung.
+    #[test]
+    fn a_hung_run_that_shows_no_limit_is_hung() {
+        let class = classify_with(
+            &default_config(),
+            None,
+            "dial unix /tmp/x.sock: connection refused",
+            ExitStatus::Signal,
+            StreamOutcome::Incomplete,
+            StoppedBy::Watchdog,
+        );
+        assert_eq!(
+            class,
+            Classified {
+                end: RunEnd::Hung,
+                pause: None
+            }
+        );
     }
 
     // Rule: a run that reported a status before the watchdog ended it did report it.
@@ -1299,6 +1336,40 @@ mod tests {
         );
     }
 
+    // Rule: a stream that succeeded but exited with a failed status is a failed run: its limit line counts.
+    #[test]
+    fn a_successful_stream_with_a_failed_exit_is_a_failed_run() {
+        let run = |exit| {
+            classify_with(
+                &default_config(),
+                None,
+                "429 Too Many Requests",
+                exit,
+                StreamOutcome::Succeeded,
+                StoppedBy::Nobody,
+            )
+        };
+        assert_eq!(run(ExitStatus::Code(1)).end, RunEnd::RateLimited);
+        assert_eq!(run(ExitStatus::Code(0)).end, RunEnd::NoStatus { exit_code: Some(0) });
+    }
+
+    // Rule: a status code is a whole number: 81429 or 4290 is no HTTP 429.
+    #[test]
+    fn a_number_that_contains_a_status_code_is_no_status_code() {
+        for line in ["request 81429 failed", "error code 4290", "id=14291"] {
+            assert_eq!(
+                failed(None, line),
+                Classified {
+                    end: RunEnd::NoStatus { exit_code: Some(1) },
+                    pause: None
+                },
+                "{line}"
+            );
+        }
+        assert_eq!(failed(None, "HTTP 429").end, RunEnd::RateLimited);
+        assert_eq!(failed(None, "status=429.").end, RunEnd::RateLimited);
+    }
+
     // Rule: the agent's own report is never read as a provider error.
     #[test]
     fn the_agents_own_report_is_not_read_for_limits() {
@@ -1490,6 +1561,12 @@ mod tests {
             ("usage limit reached, resets 12am", "2026-11-12T23:00:00Z"),
             ("usage limit reached, resets 11:59 pm", "2026-11-12T22:59:00Z"),
             ("usage limit reached, resets 3pm (UTC)", "2026-11-12T15:00:00Z"),
+            ("usage limit reached, resets 12pm", "2026-11-12T11:00:00Z"),
+            // An offset after the time of day is the zone of the time, not the machine's.
+            ("usage limit reached, resets 3pm +02:00", "2026-11-12T13:00:00Z"),
+            ("usage limit reached, resets 3:30pm (+02:00)", "2026-11-12T13:30:00Z"),
+            ("usage limit reached, resets 15:30 -05:00", "2026-11-12T20:30:00Z"),
+            ("usage limit reached, resets 3pm Z", "2026-11-12T15:00:00Z"),
         ] {
             let (end, _) = reset_of(line);
             assert_eq!(end, quota(Some(resets_at)), "{line}");
@@ -1504,6 +1581,8 @@ mod tests {
             "usage limit reached, resets 3 times a day",
             "usage limit reached, try again later",
             "usage limit reached, resets 25pm",
+            "usage limit reached, resets 13pm",
+            "usage limit reached, resets 0am",
             "usage limit reached, resets 2026-13-45T99:99:99Z",
             "usage limit reached, retry in 5 parsecs",
             "usage limit reached, try again at Smarch 3rd, 2026 3:04 PM",
