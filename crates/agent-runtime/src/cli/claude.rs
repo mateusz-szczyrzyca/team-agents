@@ -330,7 +330,8 @@ impl OutputParser for ClaudeParser {
                 session_id,
                 model,
             }) => {
-                if let Some(id) = session_id {
+                // An empty ID names no session; refusing it would drop the event.
+                if let Some(id) = session_id.filter(|id| !id.is_empty()) {
                     self.progress.note_session(line, &id)?;
                 }
                 let model = model.unwrap_or_default();
@@ -341,7 +342,8 @@ impl OutputParser for ClaudeParser {
                 .filter_map(Self::block)
                 .collect()),
             Event::Result(finish) => {
-                if let Some(id) = &finish.session_id {
+                // An empty ID names no session; refusing it would lose the outcome below.
+                if let Some(id) = finish.session_id.as_deref().filter(|id| !id.is_empty()) {
                     self.progress.note_session(line, id)?;
                 }
                 self.progress.stream = if finish.failed() {

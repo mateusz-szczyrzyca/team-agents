@@ -274,7 +274,8 @@ impl AgyParser {
 
     /// The end of the run.
     fn finished(&mut self, line: &str, result: Finish) -> Result<Vec<ActivityEvent>, OutputError> {
-        if let Some(id) = &result.conversation_id {
+        // An empty ID names no session; refusing it here would lose the outcome below.
+        if let Some(id) = result.conversation_id.as_deref().filter(|id| !id.is_empty()) {
             self.progress.note_session(line, id)?;
         }
         let mut events = Vec::new();
@@ -301,7 +302,7 @@ impl OutputParser for AgyParser {
         };
         match event {
             Event::Init { conversation_id } => {
-                let Some(id) = conversation_id else {
+                let Some(id) = conversation_id.filter(|id| !id.is_empty()) else {
                     return Ok(Vec::new());
                 };
                 self.progress.note_session(line, &id)?;
