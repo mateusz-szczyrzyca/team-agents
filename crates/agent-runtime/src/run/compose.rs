@@ -98,6 +98,108 @@ pub enum ComposeError {
 /// [`ComposeError`] when a text does not take the values this module gives it: a mistake of the installation's
 /// prompt files that [`HarnessPrompts::load`] checks at start, or of the program.
 pub fn compose(texts: &PromptTexts<'_>, input: &PromptInput<'_>) -> Result<String, ComposeError> {
-    let _ = (texts, input);
-    Ok(String::new())
+    let mut sections = match input.kind {
+        PromptKind::First => first_sections(texts, input)?,
+        PromptKind::Resume(reason) => vec![resume_section(texts, reason)?],
+    };
+    if let Some(checkpoint) = input.checkpoint {
+        let values = Variables::new().with("checkpoint", checkpoint)?;
+        sections.push(texts.harness.render(HarnessPrompt::Checkpoint, &values)?);
+    }
+    let mut prompt = sections
+        .iter()
+        .map(|section| section.trim_end())
+        .collect::<Vec<_>>()
+        .join(SECTION_SEPARATOR);
+    prompt.push('\n');
+    Ok(prompt)
+}
+
+/// Between two sections: a blank line.
+const SECTION_SEPARATOR: &str = "\n\n";
+
+/// The sections of a first run, except the checkpoint.
+fn first_sections(texts: &PromptTexts<'_>, input: &PromptInput<'_>) -> Result<Vec<String>, ComposeError> {
+    let context = Variables::new()
+        .with("agent", input.agent)?
+        .with("task", input.task.as_str())?
+        .with("repo", input.repo.as_str())?
+        .with("worktree", input.worktree.display().to_string())?
+        .with("questions_file", input.questions_file.display().to_string())?
+        .with("round", input.round.to_string())?;
+    let mut sections = vec![
+        texts.harness.render(HarnessPrompt::Context, &context)?,
+        texts.harness.render(role_prompt(input.role), &Variables::new())?,
+        texts
+            .rules
+            .render(rules_prompt(input.role, input.tier), &Variables::new())?,
+    ];
+    if !input.brief.trim().is_empty() {
+        let values = Variables::new().with("brief", input.brief)?;
+        sections.push(texts.harness.render(HarnessPrompt::Brief, &values)?);
+    }
+    if let Some(item) = input.item {
+        sections.extend(item_sections(texts, item)?);
+    }
+    Ok(sections)
+}
+
+/// The sections of an item: the item itself, then its expected result and its checks, those it has.
+fn item_sections(texts: &PromptTexts<'_>, item: &Item) -> Result<Vec<String>, ComposeError> {
+    let values = Variables::new()
+        .with("item_id", item.id.to_string())?
+        .with("item_title", &item.title)?
+        .with("item_description", &item.description)?;
+    let mut sections = vec![texts.harness.render(HarnessPrompt::Item, &values)?];
+    if let Some(expected) = &item.expected_result {
+        let values = Variables::new().with("expected", expected)?;
+        sections.push(texts.harness.render(HarnessPrompt::ItemExpected, &values)?);
+    }
+    if let Some(checks) = &item.checks {
+        let values = Variables::new().with("checks", checks)?;
+        sections.push(texts.harness.render(HarnessPrompt::ItemChecks, &values)?);
+    }
+    Ok(sections)
+}
+
+/// What a resumed run is told about its interruption.
+fn resume_section(texts: &PromptTexts<'_>, reason: ResumeReason) -> Result<String, ComposeError> {
+    let section = match reason {
+        ResumeReason::Hang { after } => {
+            let minutes = after.as_duration().as_secs() / SECS_PER_MINUTE;
+            let values = Variables::new().with("minutes", minutes.to_string())?;
+            texts.harness.render(HarnessPrompt::ResumeHang, &values)?
+        }
+        ResumeReason::Restart => texts.harness.render(HarnessPrompt::ResumeRestart, &Variables::new())?,
+        ResumeReason::Limit => texts.harness.render(HarnessPrompt::ResumeLimit, &Variables::new())?,
+    };
+    Ok(section)
+}
+
+/// Seconds in a minute.
+const SECS_PER_MINUTE: u64 = 60;
+
+/// The text that tells an agent its role.
+const fn role_prompt(role: Role) -> HarnessPrompt {
+    match role {
+        Role::Solo => HarnessPrompt::RoleSolo,
+        Role::Coordinator => HarnessPrompt::RoleCoordinator,
+        Role::Member => HarnessPrompt::RoleMember,
+        Role::Worker => HarnessPrompt::RoleWorker,
+        Role::Reviewer => HarnessPrompt::RoleReviewer,
+    }
+}
+
+/// The rules an agent works by: a reviewer the review rules, everyone else the developer rules of its tier.
+const fn rules_prompt(role: Role, tier: Tier) -> PromptId {
+    match (role, tier) {
+        (Role::Reviewer, _) => PromptId::InvestigatorCodeReview,
+        (Role::Solo | Role::Coordinator | Role::Member | Role::Worker, Tier::Normal) => PromptId::AgentRustDeveloper,
+        (Role::Solo | Role::Coordinator | Role::Member | Role::Worker, Tier::Worker) => {
+            PromptId::WorkerAgentRustDeveloper
+        }
+        (Role::Solo | Role::Coordinator | Role::Member | Role::Worker, Tier::Investigator) => {
+            PromptId::InvestigatorRustDeveloper
+        }
+    }
 }

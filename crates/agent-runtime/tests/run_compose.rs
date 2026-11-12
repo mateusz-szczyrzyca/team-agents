@@ -19,7 +19,11 @@ mod run_compose {
     /// The stand-in for a file: its path in brackets, then each of its variables as `name={{name}}`.
     fn stand_in(path: &str, variables: &[&str]) -> String {
         let shown: Vec<String> = variables.iter().map(|name| format!("{name}={{{{{name}}}}}")).collect();
-        format!("[{path}] {}\n", shown.join(" "))
+        if shown.is_empty() {
+            format!("[{path}]\n")
+        } else {
+            format!("[{path}] {}\n", shown.join(" "))
+        }
     }
 
     /// A prompts directory with a stand-in for every text of both catalogs.
@@ -108,7 +112,7 @@ mod run_compose {
 
         assert_eq!(
             prompt,
-            format!("{CONTEXT}\n\n[harness/run/role-solo.md] \n\n[agent/rust-developer.md] \n")
+            format!("{CONTEXT}\n\n[harness/run/role-solo.md]\n\n[agent/rust-developer.md]\n")
         );
     }
 
@@ -149,7 +153,7 @@ mod run_compose {
 
             assert_eq!(
                 prompt,
-                format!("{CONTEXT}\n\n[harness/run/{role_file}.md] \n\n[{rules_file}.md] \n"),
+                format!("{CONTEXT}\n\n[harness/run/{role_file}.md]\n\n[{rules_file}.md]\n"),
                 "{role:?} {tier:?}"
             );
         }
@@ -166,7 +170,7 @@ mod run_compose {
         let blank = f.compose(&input);
 
         assert!(
-            with.ends_with("[agent/rust-developer.md] \n\n[harness/run/brief.md] brief=Build the thing.\n"),
+            with.ends_with("[agent/rust-developer.md]\n\n[harness/run/brief.md] brief=Build the thing.\n"),
             "{with}"
         );
         assert!(!blank.contains("brief.md"), "{blank}");
@@ -247,8 +251,8 @@ mod run_compose {
                 ResumeReason::Hang { after },
                 "[harness/run/resume-hang.md] minutes=30\n",
             ),
-            (ResumeReason::Restart, "[harness/run/resume-restart.md] \n"),
-            (ResumeReason::Limit, "[harness/run/resume-limit.md] \n"),
+            (ResumeReason::Restart, "[harness/run/resume-restart.md]\n"),
+            (ResumeReason::Limit, "[harness/run/resume-limit.md]\n"),
         ];
 
         for (reason, expected) in cases {
@@ -271,7 +275,7 @@ mod run_compose {
 
         assert_eq!(
             prompt,
-            "[harness/run/resume-restart.md] \n\n[harness/run/checkpoint.md] checkpoint=next: tests\n"
+            "[harness/run/resume-restart.md]\n\n[harness/run/checkpoint.md] checkpoint=next: tests\n"
         );
     }
 }
