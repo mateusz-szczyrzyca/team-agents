@@ -233,7 +233,8 @@ impl AgyParser {
                 if !done {
                     return Vec::new();
                 }
-                let finished = self.pieces.remove(&step.index).unwrap_or_default();
+                let finished = std::mem::take(text);
+                self.pieces.remove(&step.index);
                 text_event(&finished).into_iter().collect()
             }
             Some(StepType::Tool) if done => Self::tool(step.tool_name.as_deref(), step.tool_info),

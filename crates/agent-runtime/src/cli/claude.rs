@@ -219,9 +219,9 @@ enum Block {
     },
     /// The answer of a tool.
     ToolResult {
-        /// Whether the call failed.
+        /// Whether the call failed; absent or null for a call that did not.
         #[serde(default)]
-        is_error: bool,
+        is_error: Option<bool>,
         /// What the tool answered: a text or blocks.
         #[serde(default)]
         content: Value,
@@ -236,9 +236,9 @@ enum Block {
 struct Finish {
     /// `success`, or `error_max_turns`, `error_during_execution`, ...
     subtype: Option<String>,
-    /// Whether the result reports an error, whatever its subtype.
+    /// Whether the result reports an error, whatever its subtype; absent or null for one that does not.
     #[serde(default)]
-    is_error: bool,
+    is_error: Option<bool>,
     /// The final message; an error result may have none.
     result: Option<String>,
     /// The session of the run.
@@ -250,7 +250,7 @@ struct Finish {
 impl Finish {
     /// Whether the run ended in failure.
     fn failed(&self) -> bool {
-        self.is_error
+        self.is_error == Some(true)
             || self
                 .subtype
                 .as_deref()
@@ -308,10 +308,10 @@ impl ClaudeParser {
             Block::Text { text } => text_event(&text),
             Block::ToolUse { name, input } => Some(tool_activity(&name, &input)),
             Block::ToolResult {
-                is_error: true,
+                is_error: Some(true),
                 content,
             } => Some(ActivityEvent::Error(answer_text(&content))),
-            Block::ToolResult { is_error: false, .. } | Block::Other => None,
+            Block::ToolResult { .. } | Block::Other => None,
         }
     }
 }

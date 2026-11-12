@@ -1,15 +1,17 @@
 //! The adapters of the four model CLIs — Claude Code, Codex, Antigravity (`agy`) and opencode — and what they share.
 //!
 //! Each adapter implements [`CliAdapter`] of `agent-core`: it is pure, so the runtime starts what
-//! [`CliAdapter::build_run`] returns and feeds the CLI's stdout into the [`OutputParser`] of [`CliAdapter::parser`].
-//! A CLI's quirks stay in its module: its flags, how it takes an MCP server, how it names a session, what its stream
-//! looks like. These rules hold for all four, and the runtime of the run engine relies on them:
+//! [`CliAdapter::build_run`] returns and feeds the CLI's stdout into the
+//! [`OutputParser`](agent_core::cli::OutputParser) of [`CliAdapter::parser`]. A CLI's quirks stay in its module: its
+//! flags, how it takes an MCP server, how it names a session, what its stream looks like. These rules hold for all
+//! four, and the run engine relies on them:
 //!
 //! - **MCP servers.** `RunRequest::mcp_servers` carries the complete command of every server the run is given. The one
 //!   thing an adapter adds is Serena's `--context <client>`, which depends on the CLI. A server that is not given is
-//!   not configured: the run gets none. A server the adapter puts inside the worktree (`.agents/mcp_config.json`) or
-//!   that creates a folder there (Serena's `.serena/`) is listed in [`RunSpec::worktree_excludes`]. The runtime creates
-//!   the directories of a [`RunFile`] before it writes it.
+//!   not configured: the run gets none. What an adapter puts inside the worktree (`.agents/mcp_config.json`) or
+//!   Serena's folder there (`.serena/`) is listed in
+//!   [`RunSpec::worktree_excludes`](agent_core::cli::RunSpec::worktree_excludes). The runtime creates the directories
+//!   of a [`RunFile`] before it writes it.
 //! - **The final message** is what the CLI itself marks as its answer: Claude's and Antigravity's `result`, Codex's last
 //!   `agent_message` of a turn that completed, opencode's last `text` part. A stream cut before that has none.
 //! - **The session ID** is the latest one the stream names.
@@ -235,14 +237,12 @@ pub(crate) fn mcp_file(cli: CliKind, path: AbsolutePath, servers: &[Server]) -> 
 
 /// `text` cut after `max_chars` characters, with `…` after the cut; a shorter text as it is.
 pub(crate) fn clip(text: &str, max_chars: usize) -> String {
-    match text.char_indices().nth(max_chars) {
-        Some((at, _)) => {
-            let mut cut = text.get(..at).unwrap_or(text).to_owned();
-            cut.push('…');
-            cut
-        }
-        None => text.to_owned(),
+    let mut chars = text.chars();
+    let mut kept: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        kept.push('…');
     }
+    kept
 }
 
 /// The first of `keys` that `input` has as a non-empty text.
