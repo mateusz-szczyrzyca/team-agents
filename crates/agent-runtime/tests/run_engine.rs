@@ -503,6 +503,40 @@ mod run_engine {
         assert_eq!(text.lines().filter(|line| *line == ".serena/").count(), 1, "{text}");
     }
 
+    #[tokio::test]
+    async fn a_worktree_that_is_no_repository_cannot_keep_its_files_out_of_git() {
+        let env = env().await;
+        let mut job = env.job("done", Env::new_session());
+        job.mcp_servers.insert(
+            McpServerKind::Serena,
+            CommandLine::try_from(vec!["serena".to_owned(), "start-mcp-server".to_owned()]).unwrap(),
+        );
+
+        let error = env.engine.run(job, &CancellationToken::new()).await.unwrap_err();
+
+        assert!(
+            matches!(&error, RunError::Exclude { worktree, .. } if *worktree == env.worktree.path()),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_directory_that_cannot_be_made_is_an_error_naming_the_file() {
+        let env = env().await;
+        let job = env.job("done", Env::new_session());
+        let task_dir = env.home.task_dir(&job.task);
+        std::fs::create_dir_all(&task_dir).unwrap();
+        // A file where the directory of the runs should be.
+        std::fs::write(task_dir.join("runs"), "").unwrap();
+
+        let error = env.engine.run(job, &CancellationToken::new()).await.unwrap_err();
+
+        assert!(
+            matches!(&error, RunError::LayDown { path, .. } if path.starts_with(&task_dir)),
+            "{error:?}"
+        );
+    }
+
     #[test]
     fn the_timings_of_the_configuration_are_its_hang_limit_a_look_a_second_and_ten_seconds_of_grace() {
         let config = Config::from_toml_str("[watchdog]\nhang_minutes = 7\n").unwrap();
