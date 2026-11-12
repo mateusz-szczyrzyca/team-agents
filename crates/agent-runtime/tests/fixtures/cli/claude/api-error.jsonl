@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","cwd":"/home/example/work","session_id":"0c4e9a52-7a11-4d0b-8f3e-5b2c6d1e9a07","model":"claude-sonnet-5-5","permissionMode":"bypassPermissions"}
+{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"API Error: 429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"Number of request tokens has exceeded your per-minute rate limit\"}}","session_id":"0c4e9a52-7a11-4d0b-8f3e-5b2c6d1e9a07","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0}}

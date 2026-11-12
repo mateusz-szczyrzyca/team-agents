@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod agentbus;
+pub mod cli;
 pub mod git;
 pub mod github;
 pub mod notify;

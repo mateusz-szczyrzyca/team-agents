@@ -182,9 +182,11 @@ These are choices the plan left open, made in `agent-core`. Each is cheap to cha
    A variable one CLI needs is visible to the others' runs; per-agent scoping can be added later.
 6. **Repositories by name, with a required gate and base branch.** How a task's repository is recognised (its `origin`
    remote's name) is decided where tasks start, item 7.1.
-7. **CLI quirk settings are not here yet:** Claude's turn limit, Antigravity's print timeout, opencode's bash timeout
-   (old `CLAUDE_MAX_TURNS`, `AGY_PRINT_TIMEOUT`, `OPENCODE_BASH_TIMEOUT_MS`). Item 5.1 decides whether they are constants
-   of the adapters or keys here; a new optional key is compatible with existing files.
+7. **CLI quirk settings are constants of the adapters** (item 5.1), not keys here: Claude's turn limit (old
+   `CLAUDE_MAX_TURNS`, 300), `agy`'s print timeout (`AGY_PRINT_TIMEOUT`, 8 hours) and opencode's Bash timeout
+   (`OPENCODE_BASH_TIMEOUT_MS`, 10 minutes), with Claude's Bash timeout (`CLAUDE_BASH_TIMEOUT_MIN`, 20 minutes) and
+   tool search (`CLAUDE_TOOL_SEARCH`, off). Nothing in the plan changes them per installation; a new optional key is
+   compatible with existing files if one is ever needed.
 8. **Settings of Bash-era features are dropped**, not carried: the wake-loop guard, board release and stall
    settings, review drawing and rotation, GitHub name colours, rounds and their size limits, the investigation queue,
    nodes and the lead, the dashboard's device allow-list and public URL, `agent live`, `agent authenticated` and
