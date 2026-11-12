@@ -67,6 +67,7 @@ impl std::str::FromStr for SessionId {
     type Err = InvalidValue;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
+        check_session_id(text)?;
         Ok(Self(text.to_owned()))
     }
 }
@@ -75,6 +76,7 @@ impl TryFrom<String> for SessionId {
     type Error = InvalidValue;
 
     fn try_from(text: String) -> Result<Self, Self::Error> {
+        check_session_id(&text)?;
         Ok(Self(text))
     }
 }
@@ -227,7 +229,7 @@ impl OutputError {
     #[must_use]
     pub fn new(line: &str, source: impl Error + Send + Sync + 'static) -> Self {
         Self {
-            line: line.to_owned(),
+            line: line.chars().take(MAX_ERROR_LINE_CHARS).collect(),
             source: Box::new(source),
         }
     }
@@ -247,8 +249,16 @@ impl ErrorTail {
     /// The last `lines` non-blank lines of `text`, trimmed, oldest first.
     #[must_use]
     pub fn from_text(text: &str, lines: NonZeroU32) -> Self {
-        let _ = (text, lines);
-        Self(Vec::new())
+        let mut last: Vec<String> = text
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .rev()
+            .zip(0..lines.get())
+            .map(|(line, _)| line.to_owned())
+            .collect();
+        last.reverse();
+        Self(last)
     }
 
     /// The lines, oldest first.
@@ -376,8 +386,10 @@ mod tests {
 
         assert_eq!(serde_json::to_string(&id).unwrap(), "\"ses_1\"");
         assert_eq!(serde_json::from_str::<SessionId>("\"ses_1\"").unwrap(), id);
-        assert!(serde_json::from_str::<SessionId>("\"a b\"").is_err());
-        assert!(serde_json::from_str::<SessionId>("\"\"").is_err());
+        for json in ["\"a b\"", "\"\""] {
+            let err = serde_json::from_str::<SessionId>(json).unwrap_err();
+            assert_eq!(err.classify(), serde_json::error::Category::Data, "{json}");
+        }
     }
 
     #[test]
