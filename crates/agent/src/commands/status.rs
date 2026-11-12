@@ -43,7 +43,7 @@ pub(crate) async fn status(
 }
 
 /// The name of a kind of reply, for an error message.
-const fn kind_of(reply: &Reply) -> &'static str {
+pub(super) const fn kind_of(reply: &Reply) -> &'static str {
     match reply {
         Reply::Started { .. } => "started",
         Reply::Teams { .. } => "teams",

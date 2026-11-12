@@ -6,16 +6,18 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
-use agent_core::config::{InvalidValue, RepoName};
+use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
 use agent_core::ids::{AgentName, InvalidName};
-use agent_core::protocol::{AgentList, AgentListError};
-use agent_core::state::{MergeMode, Team};
-use agent_core::task_list::TaskListError;
-use agent_runtime::git::GitError;
+use agent_core::protocol::{AgentList, AgentListError, Client, Command, Reply, RunRequest, ShowRequest, Target};
+use agent_core::state::{ItemPhase, MergeMode, TaskListText, Team};
+use agent_core::task_list::{MAX_TASK_LIST_BYTES, TaskListError};
+use agent_runtime::git::{CommitIdentity, Git, GitError};
 use agent_runtime::store::Home;
-use agent_runtime::text_file::TextFileError;
+use agent_runtime::text_file::{TextFileError, read_text_file};
 
+use super::status::kind_of;
 use crate::client::{ClientError, Connection};
 
 /// What the command line of `agent run` says.
@@ -76,6 +78,14 @@ pub(crate) enum RunError {
     /// The task is not a task list.
     #[error("the task is not a valid task list")]
     List(#[from] TaskListError),
+    /// The current directory is not an absolute path of UTF-8 text.
+    #[error("the directory {directory:?} cannot be used")]
+    Directory {
+        /// The directory.
+        directory: PathBuf,
+        /// What is wrong with it, if the text was refused.
+        source: Option<InvalidValue>,
+    },
     /// The directory is in no repository, or git cannot say.
     #[error("cannot find the repository of {directory:?}: run agent in a git checkout")]
     Checkout {
@@ -115,8 +125,31 @@ pub(crate) enum RunError {
 /// # Errors
 /// [`WordsError`].
 pub(crate) fn split_words(words: &[String], file_given: bool) -> Result<(AgentList, Option<String>), WordsError> {
-    let _ = (words, file_given);
-    Err(WordsError::NoAgents)
+    let (agent_words, task) = if file_given {
+        (words, None)
+    } else {
+        match words.split_last() {
+            Some((task, agents)) => (agents, Some(task.clone())),
+            None => return Err(WordsError::NoAgents),
+        }
+    };
+    if agent_words.is_empty() {
+        return Err(if task.is_some() {
+            WordsError::NoTask
+        } else {
+            WordsError::NoAgents
+        });
+    }
+    let agents = agent_words
+        .iter()
+        .map(|word| {
+            word.parse::<AgentName>().map_err(|source| WordsError::Agent {
+                word: word.clone(),
+                source,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((AgentList::try_from(agents)?, task))
 }
 
 /// The name of the repository whose `origin` is at `url`: the last part of its path, without `.git`.
@@ -124,16 +157,75 @@ pub(crate) fn split_words(words: &[String], file_given: bool) -> Result<(AgentLi
 /// # Errors
 /// [`RunError::RepoName`] when the URL names nothing, or what it names is not a repository name.
 pub(crate) fn repo_name_of(url: &str) -> Result<RepoName, RunError> {
-    Err(RunError::RepoName {
+    // The path of the URL: after the authority of `scheme://authority/path`, after the host of `host:path`.
+    let path = if let Some((_, rest)) = url.split_once("://") {
+        rest.split_once('/').map_or("", |(_, path)| path)
+    } else if let Some((_, path)) = url.split_once(':') {
+        path
+    } else {
+        url
+    };
+    let trimmed = path.trim_end_matches('/');
+    let last = trimmed.rsplit_once('/').map_or(trimmed, |(_, last)| last);
+    let name = last.strip_suffix(GIT_SUFFIX).unwrap_or(last);
+    if name.is_empty() {
+        return Err(RunError::RepoName {
+            url: url.to_owned(),
+            source: None,
+        });
+    }
+    name.parse().map_err(|source| RunError::RepoName {
         url: url.to_owned(),
-        source: None,
+        source: Some(source),
     })
 }
 
+/// What the name of a repository's directory on a server ends with.
+const GIT_SUFFIX: &str = ".git";
+
 /// What started, as text: the team, and a line for each of its tasks with where it works.
 pub(crate) fn render_started(home: &Home, team: &Team) -> String {
-    let _ = (home, team);
-    String::new()
+    let roster = team.crew().roster();
+    let role_width = roster.iter().map(|(role, _)| role.to_string().len()).max().unwrap_or(0);
+    let agent_width = roster
+        .iter()
+        .map(|(_, member)| member.agent().name().len())
+        .max()
+        .unwrap_or(0);
+    let mut text = format!(
+        "team {} started on {}, merge: {}\n",
+        team.id(),
+        team.repo(),
+        team.merge().as_str()
+    );
+    for (role, member) in roster {
+        let item = team.items().iter().find_map(|progress| match progress.phase() {
+            ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }
+                if assignee.as_str() == member.agent().name() =>
+            {
+                Some(progress.id())
+            }
+            ItemPhase::Pending
+            | ItemPhase::InProgress { .. }
+            | ItemPhase::InReview { .. }
+            | ItemPhase::Fixing { .. }
+            | ItemPhase::Approved { .. }
+            | ItemPhase::Done { .. } => None,
+        });
+        let worktree = home.worktree_dir(team.repo(), member.task());
+        text.push_str(&format!(
+            "  {}  {:<role_width$}  {:<agent_width$}  {}",
+            member.task(),
+            role.to_string(),
+            member.agent().name(),
+            worktree.display(),
+        ));
+        if let Some(item) = item {
+            text.push_str(&format!("  item {item}"));
+        }
+        text.push('\n');
+    }
+    text
 }
 
 /// Starts what `input` says in the repository `directory` is in, through `connection`, and writes what started to `out`.
@@ -147,9 +239,84 @@ pub(crate) async fn run(
     input: RunInput,
     out: &mut impl Write,
 ) -> Result<(), RunError> {
-    let _ = (connection, home, directory, input, out);
-    Ok(())
+    let (agents, inline) = split_words(&input.words, input.file.is_some())?;
+    let text = match (&input.file, inline) {
+        (Some(path), _) => read_list(path).await?,
+        (None, Some(text)) => text,
+        (None, None) => return Err(WordsError::NoTask.into()),
+    };
+    let task_list = TaskListText::new(text)?;
+    let (checkout, repo) = repository(directory).await?;
+    let request = RunRequest {
+        repo,
+        checkout,
+        agents,
+        task_list,
+        coordinator: input.coordinator,
+        merge: input.merge,
+    };
+    let reply = connection.request(Client::Cli, Command::Run(request)).await?;
+    let Reply::Started { team, .. } = reply else {
+        return Err(RunError::UnexpectedReply { kind: kind_of(&reply) });
+    };
+    let shown = connection
+        .request(
+            Client::Cli,
+            Command::Show(ShowRequest {
+                target: Target::Team(team),
+            }),
+        )
+        .await?;
+    let Reply::Team { team } = shown else {
+        return Err(RunError::UnexpectedReply { kind: kind_of(&shown) });
+    };
+    out.write_all(render_started(home, &team).as_bytes())
+        .map_err(RunError::Output)?;
+    out.flush().map_err(RunError::Output)
 }
+
+/// The text of the task list file at `path`.
+async fn read_list(path: &Path) -> Result<String, RunError> {
+    match read_text_file(path, MAX_TASK_LIST_BYTES).await {
+        Ok(Some(file)) => Ok(file.text),
+        Ok(None) => Err(RunError::NoListFile {
+            path: path.to_path_buf(),
+        }),
+        Err(source) => Err(RunError::ReadList {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+/// The root of the checkout `directory` is in, and the name of its repository.
+async fn repository(directory: &Path) -> Result<(AbsolutePath, RepoName), RunError> {
+    let text = directory.to_str().ok_or_else(|| RunError::Directory {
+        directory: directory.to_path_buf(),
+        source: None,
+    })?;
+    let here = AbsolutePath::from_str(text).map_err(|source| RunError::Directory {
+        directory: directory.to_path_buf(),
+        source: Some(source),
+    })?;
+    // Only questions are asked of git: no commit is made, so the identity is a placeholder.
+    let git = Git::new(
+        here,
+        CommitIdentity::new(IDENTITY_NAME.to_owned(), IDENTITY_EMAIL.to_owned(), None),
+    );
+    let root = git.toplevel().await.map_err(|source| RunError::Checkout {
+        directory: directory.to_path_buf(),
+        source,
+    })?;
+    let url = git.origin_url().await.map_err(RunError::NoOrigin)?;
+    Ok((root, repo_name_of(&url)?))
+}
+
+/// The name of the placeholder identity of the questions this command asks git.
+const IDENTITY_NAME: &str = "agent";
+
+/// The e-mail of the placeholder identity.
+const IDENTITY_EMAIL: &str = "agent@localhost.invalid";
 
 #[cfg(test)]
 mod tests;

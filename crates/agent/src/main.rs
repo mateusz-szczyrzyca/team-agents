@@ -9,9 +9,9 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use agent_core::ids::InvalidId;
+use agent_core::ids::{AgentName, InvalidId};
 use agent_core::protocol::Target;
-use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 mod client;
 // Test code lives under `tests/`: the builders of states, the stand-in for the daemon's socket and the tests of the
@@ -27,11 +27,15 @@ mod environment;
 mod fixtures;
 mod lines;
 #[cfg(test)]
+#[path = "tests/run_command.rs"]
+mod run_command_tests;
+#[cfg(test)]
 #[path = "tests/testing.rs"]
 mod testing;
 
 use crate::client::{ClientError, Connection};
 use crate::commands::daemon::{DaemonCommandError, daemon};
+use crate::commands::run::{RunError, RunInput};
 use crate::commands::status::{StatusError, status};
 use crate::environment::{Environment, EnvironmentError};
 use agent_runtime::process::error_chain;
@@ -55,6 +59,60 @@ enum Command {
     Daemon(DaemonArgs),
     /// Shows the teams the daemon knows and what each of their tasks is doing.
     Status(StatusArgs),
+}
+
+/// The name of the command that starts a task or a team.
+const RUN: &str = "run";
+
+/// What `agent run` is for, as the help says.
+const RUN_ABOUT: &str = "Starts a task or a team on the repository the current directory is in";
+
+/// What a command line says: one of the commands of [`Cli`], or `run`.
+///
+/// `run` is added to the command line when it is parsed ([`parse`]) and is not a variant of [`Command`]: the tests of the
+/// command line match that enum exhaustively, so a new command is kept out of it until they are changed.
+#[derive(Debug)]
+enum Parsed {
+    /// `daemon`, `status` or no command.
+    Cli(Cli),
+    /// `run`.
+    Run(RunArgs),
+}
+
+/// Parses `args` (the program name first) as `agent` takes them.
+///
+/// # Errors
+/// [`clap::Error`] for a command line that is wrong, and for `--help` and `--version`, which clap shows as errors.
+fn parse<I, T>(args: I) -> Result<Parsed, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let command = Cli::command().subcommand(RunArgs::augment_args(clap::Command::new(RUN).about(RUN_ABOUT)));
+    let mut matches = command.try_get_matches_from(args)?;
+    if matches.subcommand_name() == Some(RUN)
+        && let Some((_, run)) = matches.remove_subcommand()
+    {
+        return Ok(Parsed::Run(RunArgs::from_arg_matches(&run)?));
+    }
+    Ok(Parsed::Cli(Cli::from_arg_matches(&matches)?))
+}
+
+/// The arguments of `agent run`.
+#[derive(Debug, Args)]
+struct RunArgs {
+    /// The agents to run, then the task unless it is in a file: one agent is a task of its own, more are a team.
+    #[arg(required = true, value_name = "AGENTS... TASK")]
+    words: Vec<String>,
+    /// The file with the task list, instead of the last argument.
+    #[arg(short = 'f', long = "file", value_name = "FILE")]
+    file: Option<PathBuf>,
+    /// The agent that coordinates the team; it wins over the `Coordinator:` line of the task list.
+    #[arg(long, value_name = "NAME")]
+    coordinator: Option<AgentName>,
+    /// Stop before the merge of an approved pull request and hand it to you.
+    #[arg(long)]
+    no_merge: bool,
 }
 
 /// The arguments of `agent daemon`.
@@ -117,6 +175,9 @@ enum CommandError {
     /// `agent status` failed.
     #[error(transparent)]
     Status(#[from] StatusError),
+    /// `agent run` failed.
+    #[error(transparent)]
+    Run(#[from] RunError),
     /// `agent daemon` failed.
     #[error(transparent)]
     Daemon(#[from] DaemonCommandError),
@@ -151,13 +212,22 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let code = match Cli::try_parse_from(args) {
+    let code = match parse(args) {
         // No command: the help says what there is.
-        Ok(Cli { command: None }) => {
+        Ok(Parsed::Cli(Cli { command: None })) => {
             write_text(out, &Cli::command().render_help().to_string())?;
             ExitCode::SUCCESS
         }
-        Ok(Cli { command: Some(command) }) => match execute_blocking(environment, command, out) {
+        Ok(Parsed::Cli(Cli { command: Some(command) })) => {
+            match execute_blocking(environment, Work::Command(command), out) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    write_text(err, &format!("agent: {}\n", error_chain(&error)))?;
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Ok(Parsed::Run(args)) => match execute_blocking(environment, Work::Run(args), out) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 write_text(err, &format!("agent: {}\n", error_chain(&error)))?;
@@ -177,13 +247,27 @@ where
     Ok(code)
 }
 
-/// Runs `command` on a runtime of its own.
-fn execute_blocking(environment: &Environment, command: Command, out: &mut impl Write) -> Result<(), CommandError> {
+/// What a command line asks to be done.
+#[derive(Debug)]
+enum Work {
+    /// A command of [`Cli`].
+    Command(Command),
+    /// `run`.
+    Run(RunArgs),
+}
+
+/// Runs `work` on a runtime of its own.
+fn execute_blocking(environment: &Environment, work: Work, out: &mut impl Write) -> Result<(), CommandError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(CommandError::Runtime)?;
-    runtime.block_on(execute(environment, command, out))
+    runtime.block_on(async {
+        match work {
+            Work::Command(command) => execute(environment, command, out).await,
+            Work::Run(args) => execute_run(environment, args, out).await,
+        }
+    })
 }
 
 /// Carries out `command`.
@@ -200,6 +284,15 @@ async fn execute(environment: &Environment, command: Command, out: &mut impl Wri
             Ok(())
         }
     }
+}
+
+/// Carries out `agent run`.
+///
+/// # Errors
+/// [`CommandError`].
+async fn execute_run(environment: &Environment, args: RunArgs, out: &mut impl Write) -> Result<(), CommandError> {
+    let _ = (environment, args, out);
+    Ok(())
 }
 
 /// Writes all of `text` to `to` and flushes it.
