@@ -66,13 +66,13 @@ struct Fixture {
 
 impl Fixture {
     /// A home with `state`, the configuration of [`config`] and a worktree for task 1 that runs `scenario`.
-    async fn new(state: &State, hang_strikes: u32, scenario: &str) -> Self {
+    fn new(state: &State, hang_strikes: u32, scenario: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::new(&abs(dir.path()));
         std::fs::write(home.config_file(), config(hang_strikes)).unwrap();
-        let store = StateStore::open(home.clone()).await.unwrap();
-        store.save(state).await.unwrap();
-        drop(store);
+        // Written directly: opening the store would hold its lock, which a process that is forked at that moment
+        // keeps a little longer than the test.
+        std::fs::write(home.state_file(), state.to_json().unwrap()).unwrap();
         let fixture = Self {
             _dir: dir,
             home,
@@ -212,7 +212,7 @@ fn is_gone(pid: i32) -> bool {
 
 #[tokio::test]
 async fn a_queued_solo_task_runs_to_done() {
-    let mut f = Fixture::new(&solo_state(), 3, "done").await;
+    let mut f = Fixture::new(&solo_state(), 3, "done");
 
     f.start().await;
     let state = f.status_is(TaskStatus::Done).await;
@@ -233,7 +233,7 @@ async fn a_queued_solo_task_runs_to_done() {
 
 #[tokio::test]
 async fn the_first_prompt_has_the_context_the_role_and_the_rules() {
-    let mut f = Fixture::new(&solo_state(), 3, "done").await;
+    let mut f = Fixture::new(&solo_state(), 3, "done");
 
     f.start().await;
     f.status_is(TaskStatus::Done).await;
@@ -258,7 +258,7 @@ async fn the_first_prompt_has_the_context_the_role_and_the_rules() {
 
 #[tokio::test]
 async fn the_activity_of_the_run_is_in_the_task_directory() {
-    let mut f = Fixture::new(&solo_state(), 3, "done").await;
+    let mut f = Fixture::new(&solo_state(), 3, "done");
 
     f.start().await;
     f.status_is(TaskStatus::Done).await;
@@ -270,12 +270,7 @@ async fn the_activity_of_the_run_is_in_the_task_directory() {
 
 #[tokio::test]
 async fn a_run_that_asks_questions_records_the_round_and_tells_the_human() {
-    let state = solo_state();
-    let file = Fixture::new(&state, 3, "done")
-        .await
-        .home
-        .questions_file(&task(1), std::num::NonZeroU32::MIN);
-    let mut f = Fixture::new(&state, 3, &format!("questions {}", file.display())).await;
+    let mut f = Fixture::new(&solo_state(), 3, "done");
     let file = f.home.questions_file(&task(1), std::num::NonZeroU32::MIN);
     f.worktree(1, &format!("questions {}", file.display()));
 
@@ -295,13 +290,13 @@ async fn a_run_that_asks_questions_records_the_round_and_tells_the_human() {
 
 #[tokio::test]
 async fn questions_without_a_file_fail_the_task_and_say_why() {
-    let mut f = Fixture::new(&solo_state(), 3, "questions-nofile").await;
+    let mut f = Fixture::new(&solo_state(), 3, "questions-nofile");
 
     f.start().await;
     let state = f.status_is(TaskStatus::Failed).await;
     f.stop().await.unwrap();
 
-    assert!(member_one(&state).questions().is_empty());
+    assert_eq!(member_one(&state).questions().len(), 0);
     let notes = f.notifications();
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("questions that cannot be read"), "{}", notes[0]);
@@ -310,7 +305,7 @@ async fn questions_without_a_file_fail_the_task_and_say_why() {
 #[tokio::test]
 async fn a_reported_failure_and_a_missing_status_fail_the_task_and_tell_the_human() {
     for (scenario, says) in [("fail", "I could not do it."), ("nostatus", "without a status")] {
-        let mut f = Fixture::new(&solo_state(), 3, scenario).await;
+        let mut f = Fixture::new(&solo_state(), 3, scenario);
 
         f.start().await;
         f.status_is(TaskStatus::Failed).await;
@@ -326,7 +321,7 @@ async fn a_reported_failure_and_a_missing_status_fail_the_task_and_tell_the_huma
 
 #[tokio::test]
 async fn a_hung_run_is_resumed_in_its_session() {
-    let mut f = Fixture::new(&solo_state(), 3, "hang-first").await;
+    let mut f = Fixture::new(&solo_state(), 3, "hang-first");
 
     f.start().await;
     let state = f.status_is(TaskStatus::Done).await;
@@ -350,7 +345,7 @@ async fn a_hung_run_is_resumed_in_its_session() {
 
 #[tokio::test]
 async fn after_the_configured_strikes_the_task_is_hung_and_the_human_is_told() {
-    let mut f = Fixture::new(&solo_state(), 2, "hang").await;
+    let mut f = Fixture::new(&solo_state(), 2, "hang");
 
     f.start().await;
     let state = f.status_is(TaskStatus::Failed).await;
@@ -367,7 +362,7 @@ async fn after_the_configured_strikes_the_task_is_hung_and_the_human_is_told() {
 
 #[tokio::test]
 async fn a_clock_set_back_during_a_run_does_not_end_the_daemon() {
-    let mut f = Fixture::new(&solo_state(), 1, "hang").await;
+    let mut f = Fixture::new(&solo_state(), 1, "hang");
     f.start().await;
     let state = f.status_is(TaskStatus::Running).await;
     let started_at = member_one(&state).runs()[0].started_at();
@@ -390,7 +385,7 @@ async fn a_clock_set_back_during_a_run_does_not_end_the_daemon() {
 
 #[tokio::test]
 async fn an_exhausted_quota_pauses_the_task_until_the_reset_and_it_goes_on_by_itself() {
-    let mut f = Fixture::new(&solo_state(), 3, "quota").await;
+    let mut f = Fixture::new(&solo_state(), 3, "quota");
 
     f.start().await;
     let state = f.status_is(TaskStatus::Paused).await;
@@ -419,7 +414,7 @@ async fn an_exhausted_quota_pauses_the_task_until_the_reset_and_it_goes_on_by_it
 
 #[tokio::test]
 async fn a_task_that_is_paused_is_not_started_before_its_time() {
-    let mut f = Fixture::new(&solo_state(), 3, "ratelimit").await;
+    let mut f = Fixture::new(&solo_state(), 3, "ratelimit");
 
     f.start().await;
     f.status_is(TaskStatus::Paused).await;
@@ -448,7 +443,7 @@ fn crashed_state() -> State {
 
 #[tokio::test]
 async fn a_run_that_was_going_when_the_daemon_died_is_marked_and_resumed_from_its_session() {
-    let mut f = Fixture::new(&crashed_state(), 3, "done").await;
+    let mut f = Fixture::new(&crashed_state(), 3, "done");
 
     f.start().await;
     let state = f.status_is(TaskStatus::Done).await;
@@ -480,7 +475,7 @@ async fn a_pause_survives_a_restart_and_ends_on_time() {
         member.end_run(at(10), RunEnd::RateLimited).unwrap();
         member.transition(TaskStatus::Paused).unwrap();
     }
-    let mut f = Fixture::new(&state, 3, "done").await;
+    let mut f = Fixture::new(&state, 3, "done");
     f.start().await;
     f.status_is(TaskStatus::Paused).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -502,7 +497,7 @@ async fn a_pause_survives_a_restart_and_ends_on_time() {
 
 #[tokio::test]
 async fn a_shutdown_stops_the_runs_whole_and_records_them_as_interrupted() {
-    let mut f = Fixture::new(&solo_state(), 3, "hang").await;
+    let mut f = Fixture::new(&solo_state(), 3, "hang");
     f.start().await;
     let marker = f.home.worktree_dir(&repo(), &task(1)).join(".fake-child");
     eventually("the child of the run", || marker.is_file()).await;
@@ -520,7 +515,7 @@ async fn a_shutdown_stops_the_runs_whole_and_records_them_as_interrupted() {
 
 #[tokio::test]
 async fn a_second_daemon_on_the_same_home_is_refused() {
-    let mut f = Fixture::new(&solo_state(), 3, "done").await;
+    let mut f = Fixture::new(&solo_state(), 3, "done");
     f.start().await;
 
     let error = run(f.setup(), CancellationToken::new()).await.unwrap_err();
@@ -531,13 +526,15 @@ async fn a_second_daemon_on_the_same_home_is_refused() {
     );
     assert!(error.to_string().contains("already running"), "{error}");
     f.stop().await.unwrap();
-    assert!(
-        !matches!(
-            StateStore::open(f.home.clone()).await,
-            Err(StoreError::HomeLocked { .. })
-        ),
-        "the lock is released"
-    );
+    // The lock is released: a new store opens (a process forked meanwhile may keep the lock for a moment).
+    let deadline = Instant::now() + PATIENCE;
+    while matches!(
+        StateStore::open(f.home.clone()).await,
+        Err(StoreError::HomeLocked { .. })
+    ) {
+        assert!(Instant::now() < deadline, "the lock of the daemon is still held");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 #[tokio::test]
@@ -582,14 +579,14 @@ async fn a_prompts_directory_that_lacks_files_is_refused_with_every_problem() {
 
 #[tokio::test]
 async fn a_task_without_a_worktree_fails_and_the_human_is_told() {
-    let mut f = Fixture::new(&solo_state(), 3, "done").await;
+    let mut f = Fixture::new(&solo_state(), 3, "done");
     std::fs::remove_dir_all(f.home.worktree_dir(&repo(), &task(1))).unwrap();
 
     f.start().await;
     let state = f.status_is(TaskStatus::Failed).await;
     f.stop().await.unwrap();
 
-    assert!(member_one(&state).runs().is_empty());
+    assert_eq!(member_one(&state).runs().len(), 0);
     let notes = f.notifications();
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("could not be started"), "{}", notes[0]);
@@ -611,7 +608,7 @@ async fn an_agent_the_configuration_no_longer_has_fails_its_task() {
     );
     state = State::new();
     state.insert_team(replaced).unwrap();
-    let mut f = Fixture::new(&state, 3, "done").await;
+    let mut f = Fixture::new(&state, 3, "done");
 
     f.start().await;
     f.status_is(TaskStatus::Failed).await;
@@ -626,7 +623,7 @@ async fn an_agent_the_configuration_no_longer_has_fails_its_task() {
 #[tokio::test]
 async fn the_socket_is_for_its_owner_alone() {
     use std::os::unix::fs::PermissionsExt;
-    let mut f = Fixture::new(&solo_state(), 3, "hang").await;
+    let mut f = Fixture::new(&solo_state(), 3, "hang");
 
     f.start().await;
 
@@ -637,7 +634,7 @@ async fn the_socket_is_for_its_owner_alone() {
 
 #[tokio::test]
 async fn a_socket_file_left_by_a_dead_daemon_is_replaced() {
-    let mut f = Fixture::new(&solo_state(), 3, "hang").await;
+    let mut f = Fixture::new(&solo_state(), 3, "hang");
     drop(tokio::net::UnixListener::bind(f.home.socket_file()).unwrap());
     assert!(f.home.socket_file().exists());
 
@@ -661,7 +658,7 @@ async fn a_socket_file_left_by_a_dead_daemon_is_replaced() {
 
 #[tokio::test]
 async fn status_over_the_socket_lists_the_teams_with_their_tasks() {
-    let mut f = Fixture::new(&solo_state(), 3, "hang").await;
+    let mut f = Fixture::new(&solo_state(), 3, "hang");
     f.start().await;
     f.status_is(TaskStatus::Running).await;
     let mut connection = f.connect().await;
@@ -683,7 +680,7 @@ async fn status_over_the_socket_lists_the_teams_with_their_tasks() {
 
 #[tokio::test]
 async fn status_of_a_team_or_a_task_names_only_its_team_and_an_unknown_one_is_not_found() {
-    let mut f = Fixture::new(&solo_state(), 3, "hang").await;
+    let mut f = Fixture::new(&solo_state(), 3, "hang");
     f.start().await;
     let mut connection = f.connect().await;
     let team = f.state().teams()[0].id().clone();
@@ -727,7 +724,7 @@ async fn status_of_a_team_or_a_task_names_only_its_team_and_an_unknown_one_is_no
 
 #[tokio::test]
 async fn show_gives_the_whole_team_or_the_task_with_its_role() {
-    let mut f = Fixture::new(&solo_state(), 3, "hang").await;
+    let mut f = Fixture::new(&solo_state(), 3, "hang");
     f.start().await;
     let mut connection = f.connect().await;
     let team = f.state().teams()[0].id().clone();
@@ -761,7 +758,7 @@ async fn show_gives_the_whole_team_or_the_task_with_its_role() {
 
 #[tokio::test]
 async fn commands_the_daemon_does_not_serve_yet_are_refused_with_their_name() {
-    let mut f = Fixture::new(&solo_state(), 3, "hang").await;
+    let mut f = Fixture::new(&solo_state(), 3, "hang");
     f.start().await;
     let mut connection = f.connect().await;
 
@@ -835,7 +832,7 @@ fn rate_limited_state() -> State {
 #[tokio::test]
 async fn a_subscriber_gets_the_teams_and_then_the_events_of_what_happens() {
     use agent_core::protocol::{EventKind, Frame};
-    let mut f = Fixture::new(&rate_limited_state(), 3, "done").await;
+    let mut f = Fixture::new(&rate_limited_state(), 3, "done");
     f.start().await;
     f.status_is(TaskStatus::Paused).await;
     let mut connection = RawConnection::open(&f.home).await;
@@ -910,7 +907,7 @@ async fn a_subscriber_gets_the_teams_and_then_the_events_of_what_happens() {
 #[tokio::test]
 async fn a_subscription_to_another_team_gets_no_events_of_this_one() {
     use agent_core::protocol::{EventKind, Frame};
-    let mut f = Fixture::new(&rate_limited_state(), 3, "done").await;
+    let mut f = Fixture::new(&rate_limited_state(), 3, "done");
     f.start().await;
     f.status_is(TaskStatus::Paused).await;
     let mut other = RawConnection::open(&f.home).await;
@@ -954,7 +951,7 @@ async fn a_subscription_to_another_team_gets_no_events_of_this_one() {
 #[tokio::test]
 async fn a_line_that_is_not_a_request_is_answered_with_an_error_and_the_connection_goes_on() {
     use agent_core::protocol::{Frame, Outcome};
-    let mut f = Fixture::new(&solo_state(), 3, "hang").await;
+    let mut f = Fixture::new(&solo_state(), 3, "hang");
     f.start().await;
     let mut connection = RawConnection::open(&f.home).await;
 
@@ -990,7 +987,7 @@ async fn a_line_that_is_not_a_request_is_answered_with_an_error_and_the_connecti
 
 #[tokio::test]
 async fn a_request_over_the_limit_ends_its_connection_and_not_the_daemon() {
-    let mut f = Fixture::new(&solo_state(), 3, "hang").await;
+    let mut f = Fixture::new(&solo_state(), 3, "hang");
     f.start().await;
     let mut connection = RawConnection::open(&f.home).await;
     let long = format!("{}\n", "x".repeat(agent_core::protocol::MAX_REQUEST_BYTES + 1));

@@ -97,8 +97,6 @@ pub(super) struct Context<'a> {
 
 /// A run that is ready to start.
 pub(super) struct Plan {
-    /// The agent's name.
-    pub(super) agent: String,
     /// The ID of the run.
     pub(super) run: RunId,
     /// The session to record when the run begins.
@@ -182,22 +180,20 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         &input,
     )?;
     let run = RunId::generate(ctx.clock, rng)?;
-    let (mode, recorded_session) = match session {
-        Some(session_id) => (RunMode::Resume { session_id }, member.last_session().cloned()),
-        None => {
-            let session_id = new_session_id(rng)?;
-            // Only Claude Code lets the caller name the session; the others report their own when they end.
-            let recorded = if setup.cli == CliKind::Claude {
-                Some(agent_core::state::SessionId::from_str(session_id.as_str())?)
-            } else {
-                None
-            };
-            (RunMode::New { session_id }, recorded)
-        }
+    let (mode, recorded_session) = if let Some(session_id) = session {
+        (RunMode::Resume { session_id }, member.last_session().cloned())
+    } else {
+        let session_id = new_session_id(rng)?;
+        // Only Claude Code lets the caller name the session; the others report their own when they end.
+        let recorded = if setup.cli == CliKind::Claude {
+            Some(agent_core::state::SessionId::from_str(session_id.as_str())?)
+        } else {
+            None
+        };
+        (RunMode::New { session_id }, recorded)
     };
     let mcp_servers = mcp_servers(ctx, team, participant, task, &working)?;
     Ok(Plan {
-        agent: participant.name().to_owned(),
         run: run.clone(),
         recorded_session,
         job: RunJob {

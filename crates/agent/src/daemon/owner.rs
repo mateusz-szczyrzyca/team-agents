@@ -19,7 +19,7 @@ use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::outcome::{AfterHang, after_hang};
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::kinds::Role;
-use agent_core::protocol::{Client, Command, Event, EventKind, Failure, FailureKind, Reply, Target, TeamSummary};
+use agent_core::protocol::{Command, Event, EventKind, Failure, FailureKind, Reply, Target, TeamSummary};
 use agent_core::state::{InvalidTimestamp, Question, QuestionError, RunEnd, RunError, SessionId, State, Timestamp};
 use agent_core::status::{InvalidTransition, TaskStatus};
 use agent_runtime::clock::SharedClock;
@@ -58,8 +58,6 @@ const SECS_PER_MINUTE: u64 = 60;
 pub(super) enum Message {
     /// A request, to answer.
     Request {
-        /// Who asks.
-        client: Client,
         /// What it asks.
         command: Command,
         /// Where the answer goes.

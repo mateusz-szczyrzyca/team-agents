@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use agent_core::ids::TeamId;
 use agent_core::protocol::{
-    Client, Command, Event, EventKind, Failure, FailureKind, Frame, MAX_REQUEST_BYTES, ProtocolError, Reply, Request,
+    Command, Event, EventKind, Failure, FailureKind, Frame, MAX_REQUEST_BYTES, ProtocolError, Reply, Request,
     RequestId, Response, TeamSummary,
 };
 use agent_runtime::store::Home;
@@ -252,7 +252,7 @@ async fn connection(
                 tracing::debug!(%error, "a connection ended with an error");
                 return;
             }
-            Step::Event(Ok(event)) => forward(&subscription, event, &mut write).await,
+            Step::Event(Ok(event)) => forward(subscription.as_ref(), event, &mut write).await,
             Step::Event(Err(error)) => {
                 // A subscriber that cannot keep up is let go: it subscribes again and starts from the state.
                 tracing::warn!(%error, "a subscription ended");
@@ -276,7 +276,7 @@ async fn next_event(subscription: &mut Option<Subscription>) -> Result<Event, br
 
 /// Sends `event` to the subscriber when it is about a team it follows.
 async fn forward(
-    subscription: &Option<Subscription>,
+    subscription: Option<&Subscription>,
     event: Event,
     write: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<(), LineError> {
@@ -312,7 +312,7 @@ async fn answer(
     let id = request.id;
     let result = match request.command {
         Command::Subscribe(subscribe) => subscribe_to(inbox, subscribe.team, subscription).await,
-        command => ask(inbox, request.client, command).await,
+        command => ask(inbox, command).await,
     };
     let response = match result {
         Ok(reply) => Response::ok(id, reply),
@@ -332,10 +332,10 @@ fn refusal_text(error: &ProtocolError) -> String {
 
 /// Puts `command` to the owner and waits for its answer. A channel that is closed or an answer that is dropped means the
 /// owner is gone, which [`gone`] tells the client.
-async fn ask(inbox: &mpsc::Sender<Message>, client: Client, command: Command) -> Result<Reply, Failure> {
+async fn ask(inbox: &mpsc::Sender<Message>, command: Command) -> Result<Reply, Failure> {
     let (reply, answer) = oneshot::channel();
     inbox
-        .send(Message::Request { client, command, reply })
+        .send(Message::Request { command, reply })
         .await
         .map_err(|_closed| gone())?;
     answer.await.map_err(|_dropped| gone())?

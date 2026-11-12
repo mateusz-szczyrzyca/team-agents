@@ -63,6 +63,7 @@ impl Environment {
     }
 
     /// An environment whose `AGENTS_HOME` is `home`, in the time zone UTC.
+    #[cfg(test)]
     pub(crate) const fn new(home: Option<OsString>) -> Self {
         Self {
             home,

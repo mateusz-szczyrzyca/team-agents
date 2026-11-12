@@ -14,7 +14,7 @@ mod daemon_process {
         Crew, Member, MergeMode, Participant, RunEnd, RunState, State, TaskListText, Team, Timestamp,
     };
     use agent_core::status::TaskStatus;
-    use agent_runtime::store::{Home, StateStore};
+    use agent_runtime::store::Home;
     use rustix::process::{Pid, Signal};
 
     /// The longest any wait of these tests lasts.
@@ -56,7 +56,7 @@ mod daemon_process {
     }
 
     /// A state with one queued solo task, and its worktree running `scenario`.
-    async fn seed(home: &Home, scenario: &str) {
+    fn seed(home: &Home, scenario: &str) {
         let task = TaskId::from_str(TASK).unwrap();
         let repo = RepoName::from_str("team-agents").unwrap();
         let member = Member::new(task.clone(), Participant::Normal("claude-1".parse().unwrap()));
@@ -70,9 +70,7 @@ mod daemon_process {
         );
         let mut state = State::new();
         state.insert_team(team).unwrap();
-        let store = StateStore::open(home.clone()).await.unwrap();
-        store.save(&state).await.unwrap();
-        drop(store);
+        std::fs::write(home.state_file(), state.to_json().unwrap()).unwrap();
         let worktree = home.worktree_dir(&repo, &task);
         std::fs::create_dir_all(&worktree).unwrap();
         std::fs::write(worktree.join(".fake-scenario"), scenario).unwrap();
@@ -167,10 +165,10 @@ mod daemon_process {
         assert!(stderr.contains("agents.toml"), "{stderr}");
     }
 
-    #[tokio::test]
-    async fn sigterm_ends_the_daemon_and_its_runs_and_leaves_no_process_of_theirs() {
+    #[test]
+    fn sigterm_ends_the_daemon_and_its_runs_and_leaves_no_process_of_theirs() {
         let (_dir, home) = home();
-        seed(&home, "hang").await;
+        seed(&home, "hang");
         let daemon = start_daemon(&home);
         let marker = home
             .worktree_dir(

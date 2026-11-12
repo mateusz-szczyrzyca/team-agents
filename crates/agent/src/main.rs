@@ -27,8 +27,8 @@ mod testing;
 
 use crate::chain::chain;
 use crate::client::{ClientError, Connection};
+use crate::commands::daemon::{DaemonCommandError, daemon};
 use crate::commands::status::{StatusError, status};
-use crate::daemon::DaemonError;
 use crate::environment::{Environment, EnvironmentError};
 
 /// Exit status of a command line that clap refuses: its own convention for usage errors.
@@ -55,7 +55,7 @@ enum Command {
 /// The arguments of `agent daemon`.
 #[derive(Debug, Args)]
 struct DaemonArgs {
-    /// The directory of the prompt files; `prompts/` in AGENTS_HOME when not given.
+    /// The directory of the prompt files; `prompts/` in `AGENTS_HOME` when not given.
     #[arg(long, value_name = "DIR")]
     prompts_dir: Option<PathBuf>,
 }
@@ -112,9 +112,9 @@ enum CommandError {
     /// `agent status` failed.
     #[error(transparent)]
     Status(#[from] StatusError),
-    /// The daemon stopped with an error.
+    /// `agent daemon` failed.
     #[error(transparent)]
-    Daemon(#[from] DaemonError),
+    Daemon(#[from] DaemonCommandError),
     /// The tokio runtime cannot be built.
     #[error("cannot start the runtime of the command")]
     Runtime(#[source] io::Error),
@@ -187,10 +187,7 @@ fn execute_blocking(environment: &Environment, command: Command, out: &mut impl 
 /// [`CommandError`].
 async fn execute(environment: &Environment, command: Command, out: &mut impl Write) -> Result<(), CommandError> {
     match command {
-        Command::Daemon(args) => {
-            let _ = (environment, args);
-            Ok(())
-        }
+        Command::Daemon(args) => Ok(daemon(environment, args.prompts_dir).await?),
         Command::Status(args) => {
             let home = environment.home()?;
             let mut connection = Connection::connect(&home.socket_file()).await?;
