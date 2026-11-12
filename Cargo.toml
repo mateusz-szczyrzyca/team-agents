@@ -17,6 +17,7 @@ clap = { version = "4.6.7", default-features = false, features = ["std", "derive
 rand = { version = "0.10.3", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+strum = { version = "0.28.0", default-features = false, features = ["derive"] }
 thiserror = "2.0.21"
 time = { version = "0.3.55", default-features = false, features = ["std", "formatting", "parsing"] }
 toml = { version = "1.2.1", default-features = false, features = ["std", "serde", "parse"] }

@@ -627,19 +627,27 @@ mod tests {
             assert_eq!(text.parse::<VariableName>().unwrap().as_str(), text);
             assert_eq!(name(text).to_string(), text);
         }
-        for text in [
-            "",
-            "A",
-            "1a",
-            "_a",
-            "a b",
-            "a-b",
-            "a/b",
-            "é",
-            "a\0",
-            &"a".repeat(MAX_VARIABLE_NAME_LEN + 1),
-        ] {
-            assert!(text.parse::<VariableName>().is_err(), "{text:?}");
+        let long = "a".repeat(MAX_VARIABLE_NAME_LEN + 1);
+        let refused = [
+            ("", NameRule::Empty),
+            ("A", NameRule::FirstNotLowercaseLetter),
+            ("1a", NameRule::FirstNotLowercaseLetter),
+            ("_a", NameRule::FirstNotLowercaseLetter),
+            ("é", NameRule::FirstNotLowercaseLetter),
+            ("a b", NameRule::ForbiddenChar(' ')),
+            ("a-b", NameRule::ForbiddenChar('-')),
+            ("a/b", NameRule::ForbiddenChar('/')),
+            ("a\0", NameRule::ForbiddenChar('\0')),
+            (
+                long.as_str(),
+                NameRule::TooLong {
+                    max: MAX_VARIABLE_NAME_LEN,
+                },
+            ),
+        ];
+        for (text, rule) in refused {
+            let err = text.parse::<VariableName>().unwrap_err();
+            assert_eq!(err.rule, rule, "{text:?}");
         }
     }
 
@@ -776,7 +784,11 @@ mod tests {
         for &id in PromptId::ALL {
             let mut seen = BTreeSet::new();
             for &variable in id.spec().variables() {
-                assert!(variable.parse::<VariableName>().is_ok(), "{id:?}: {variable}");
+                assert_eq!(
+                    variable.parse::<VariableName>().map(|n| n.as_str().to_owned()),
+                    Ok(variable.to_owned()),
+                    "{id:?}: {variable}"
+                );
                 assert!(seen.insert(variable), "{id:?}: {variable} is listed twice");
             }
         }

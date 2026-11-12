@@ -86,6 +86,7 @@ Both `Config` and `TaskList` take text, not paths: reading `agents.toml`, `secre
 
 They take and give text too (`State::from_json`, `Request::from_line`, `QuestionsFile::parse`): the state store, the
 socket and the files are the runtime's. `serde_json` is a dependency of `agent-core` for that; it does no I/O.
+`strum` (derives only) gives the keyword enums their text, as `McpServerKind` does.
 
 ### The prompt catalog and the CLI contract (`agent-core`)
 
@@ -156,7 +157,7 @@ request).
   `agentbus`, the repository's own gate command, the configured notification command and the configured editor.
   Everything the Bash version did with `sed`, `awk`, `jq`, `grep`, `flock`, `gh` or `tailscale` is done natively.
 - **Approved dependencies:** `tokio`, `tokio-util`, `clap`, `serde`, `serde_json`, `toml`, `thiserror`, `tracing`,
-  `tracing-subscriber`, `tempfile`, `rustix`, `reqwest` (rustls), `axum`, `notify`, `rand`, `time`. Any other needs
+  `tracing-subscriber`, `tempfile`, `rustix`, `reqwest` (rustls), `axum`, `notify`, `rand`, `time`, `strum` (`derive`). Any other needs
   a DEP-1 justification. Each is declared once, in `[workspace.dependencies]`, with its minimal features.
 - **A separate `AGENTS_HOME`.** New code is developed and tested against its own `AGENTS_HOME`; nothing touches the
   live `~/agents` of the running Bash harness until feature 10.

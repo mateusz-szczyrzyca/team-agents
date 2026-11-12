@@ -7,16 +7,11 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
 use agent_core::cli::{
-    ActivityEvent, BuildRunError, CliAdapter, ErrorTail, McpServerKind, OutputError, OutputParser, RunFile, RunMode,
-    RunOutput, RunRequest, RunSpec, SessionId, StreamOutcome,
+    ActivityEvent, BuildRunError, CliAdapter, ErrorTail, McpServerKind, OutputCause, OutputError, OutputParser,
+    RunFile, RunMode, RunOutput, RunRequest, RunSpec, SessionId, StreamOutcome,
 };
 use agent_core::config::{AbsolutePath, CliArgs, CommandLine, ModelName, Program};
 use agent_core::kinds::CliKind;
-
-/// A line the test protocol does not know.
-#[derive(Debug, thiserror::Error)]
-#[error("unknown line type")]
-struct UnknownLine;
 
 /// A test adapter standing in for a CLI of kind `kind`.
 struct TestAdapter {
@@ -47,10 +42,9 @@ impl CliAdapter for TestAdapter {
             .collect();
         let path =
             AbsolutePath::try_from(format!("{}/mcp.txt", request.run_dir.as_path().display())).map_err(|source| {
-                BuildRunError::File {
+                BuildRunError::Path {
                     kind: self.kind,
-                    path: request.run_dir.clone(),
-                    source: Box::new(source),
+                    source,
                 }
             })?;
         Ok(RunSpec {
@@ -85,7 +79,7 @@ impl OutputParser for TestParser {
             return Ok(Vec::new());
         }
         let Some((kind, rest)) = line.split_once(": ") else {
-            return Err(OutputError::new(line, UnknownLine));
+            return Err(OutputError::new(line, OutputCause::Unrecognized));
         };
         let rest = rest.to_owned();
         Ok(match kind {
@@ -108,7 +102,7 @@ impl OutputParser for TestParser {
                 });
                 Vec::new()
             }
-            _ => return Err(OutputError::new(line, UnknownLine)),
+            _ => return Err(OutputError::new(line, OutputCause::Unrecognized)),
         })
     }
 
@@ -241,7 +235,10 @@ fn an_unreadable_line_is_an_error_and_the_parser_goes_on() {
 
     let err = parser.push_line("not the protocol").unwrap_err();
     assert_eq!(err.line(), "not the protocol");
+    assert!(matches!(err.cause(), OutputCause::Unrecognized));
     assert_eq!(parser.push_line("nope: x").unwrap_err().line(), "nope: x");
+    let bad_session = parser.push_line("session: a b").unwrap_err();
+    assert!(matches!(bad_session.cause(), OutputCause::SessionId(_)));
 
     assert_eq!(
         parser.push_line("text: still here").unwrap(),

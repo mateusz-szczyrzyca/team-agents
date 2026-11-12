@@ -38,7 +38,11 @@ rust` again after the last commit, exit `0`).
   reference in the two developer files. `prompts/worker-agent/rust-developer.md` is new: sections 3–15 and the
   appendix are verbatim, the rest is rewritten for a delegated task (no PR size ownership, a result instead of a PR
   description). I did not write investigator-specific rules; the human-provided file is used as it is.
-- **`keyword_enum!`** is used for `McpServerKind`; item 2.4 converts it ("any added since"). No dependency was added.
+- **`McpServerKind`** takes its text from `strum` derives (`Display`, `EnumString`, `EnumIter`, `IntoStaticStr`), each
+  text declared once in a `#[strum(serialize = ...)]` attribute. `strum` is on the approved list; it is added to
+  `[workspace.dependencies]` and `agent-core` (`Cargo.lock` updated). Item 2.4 converts the older `keyword_enum!` enums.
+- **Errors** of the CLI contract are concrete: `BuildRunError` (`Json`, `Path`, `UnsupportedMcpServer`) and
+  `OutputError` with `OutputCause` (`Json`, `Unrecognized`, `SessionId`) keep their typed sources; no boxed errors.
 - **Files outside the item's list:** `crates/agent-core/src/lib.rs` (two `pub mod`), `docs/architecture.md`,
   `crates/agent-core/tests/{prompt_catalog,cli_contract}.rs`.
 - The `rustdoc` text of `config::Language` ("names a directory of prompt overrides") matches `prompts/lang/<language>/`.

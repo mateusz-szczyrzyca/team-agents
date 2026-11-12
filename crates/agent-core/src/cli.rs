@@ -7,13 +7,12 @@
 //! stderr at the end. So an adapter is tested with strings alone.
 
 use std::collections::BTreeMap;
-use std::error::Error;
 use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
 
 use crate::config::{AbsolutePath, CliArgs, CommandLine, EnvName, InvalidValue, ModelName, Program, ValueRule};
-use crate::kinds::{CliKind, keyword_enum};
+use crate::kinds::CliKind;
 
 /// Longest session ID, in bytes: the bound of a model name.
 const MAX_SESSION_ID_LEN: usize = 200;
@@ -87,14 +86,29 @@ impl From<SessionId> for String {
     }
 }
 
-keyword_enum! {
-    /// An MCP server a run is given.
-    pub enum McpServerKind: "MCP server" {
-        /// The shared bus of the team, `agentbus serve`.
-        Agentbus => "agentbus",
-        /// Serena, which finds code through language servers.
-        Serena => "serena",
-    }
+/// An MCP server a run is given. Its text, as `Display`, `FromStr` and `IntoStaticStr` give it, is its name in the
+/// CLI's MCP configuration.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    strum::Display,
+    strum::EnumString,
+    strum::EnumIter,
+    strum::IntoStaticStr,
+)]
+pub enum McpServerKind {
+    /// The shared bus of the team, `agentbus serve`.
+    #[strum(serialize = "agentbus")]
+    Agentbus,
+    /// Serena, which finds code through language servers.
+    #[strum(serialize = "serena")]
+    Serena,
 }
 
 /// Starting a conversation or going on with one.
@@ -164,19 +178,36 @@ pub struct RunSpec {
     pub worktree_excludes: Vec<String>,
 }
 
-/// Why an adapter cannot build a run.
+/// Why an adapter cannot build a run. Each variant names its cause; the CLI is the one the adapter is for.
 #[derive(Debug, thiserror::Error)]
 pub enum BuildRunError {
-    /// The content of a file of the run could not be produced.
-    #[error("cannot produce the content of {path:?} for a {kind} run", path = .path.as_path(), kind = .kind)]
-    File {
+    /// The JSON content of a file of the run could not be produced.
+    #[error("cannot produce the JSON of {path:?} for a {kind} run", path = .path.as_path())]
+    Json {
         /// The CLI the run is for.
         kind: CliKind,
-        /// The file that could not be produced.
+        /// The file whose content could not be produced.
         path: AbsolutePath,
-        /// Why not.
+        /// What the serializer refused.
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: serde_json::Error,
+    },
+    /// The path of a file of the run is not a valid absolute path.
+    #[error("a {kind} run has an invalid file path")]
+    Path {
+        /// The CLI the run is for.
+        kind: CliKind,
+        /// Which rule the path breaks.
+        #[source]
+        source: InvalidValue,
+    },
+    /// The CLI has no way to be given this MCP server.
+    #[error("a {kind} run cannot be given the {server} MCP server")]
+    UnsupportedMcpServer {
+        /// The CLI the run is for.
+        kind: CliKind,
+        /// The server it cannot take.
+        server: McpServerKind,
     },
 }
 
@@ -212,6 +243,20 @@ pub enum ActivityEvent {
     Info(String),
 }
 
+/// Why a line of the CLI's output cannot be read.
+#[derive(Debug, thiserror::Error)]
+pub enum OutputCause {
+    /// The line is not JSON, though the CLI writes JSON lines.
+    #[error("not JSON")]
+    Json(#[from] serde_json::Error),
+    /// The line is JSON of a shape the adapter does not know: an unknown event type or a missing field.
+    #[error("not a known event")]
+    Unrecognized,
+    /// The line carries a session ID that breaks the rule of [`SessionId`].
+    #[error("invalid session ID")]
+    SessionId(#[from] InvalidValue),
+}
+
 /// A line of the CLI's output the parser could not read. The run goes on: the runtime logs it once and feeds the
 /// next line.
 #[derive(Debug, thiserror::Error)]
@@ -221,16 +266,16 @@ pub struct OutputError {
     line: String,
     /// What was wrong with it.
     #[source]
-    source: Box<dyn Error + Send + Sync>,
+    cause: OutputCause,
 }
 
 impl OutputError {
     /// An error for `line`, which is kept cut after 200 characters.
     #[must_use]
-    pub fn new(line: &str, source: impl Error + Send + Sync + 'static) -> Self {
+    pub fn new(line: &str, cause: impl Into<OutputCause>) -> Self {
         Self {
             line: line.chars().take(MAX_ERROR_LINE_CHARS).collect(),
-            source: Box::new(source),
+            cause: cause.into(),
         }
     }
 
@@ -238,6 +283,12 @@ impl OutputError {
     #[must_use]
     pub fn line(&self) -> &str {
         &self.line
+    }
+
+    /// What was wrong with the line.
+    #[must_use]
+    pub fn cause(&self) -> &OutputCause {
+        &self.cause
     }
 }
 
@@ -330,7 +381,6 @@ pub trait CliAdapter: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kinds::tests::{assert_keywords, assert_refuses};
 
     fn tail(text: &str, lines: u32) -> Vec<String> {
         ErrorTail::from_text(text, NonZeroU32::new(lines).unwrap())
@@ -394,10 +444,21 @@ mod tests {
 
     #[test]
     fn mcp_server_kinds_have_their_texts() {
-        const TABLE: &[(McpServerKind, &str)] =
-            &[(McpServerKind::Agentbus, "agentbus"), (McpServerKind::Serena, "serena")];
-        assert_keywords(TABLE);
-        assert_refuses("MCP server", TABLE, &["bus"]);
+        use strum::IntoEnumIterator;
+
+        let table = [(McpServerKind::Agentbus, "agentbus"), (McpServerKind::Serena, "serena")];
+
+        assert_eq!(McpServerKind::iter().collect::<Vec<_>>(), table.map(|(kind, _)| kind));
+        for (kind, text) in table {
+            assert_eq!(kind.to_string(), text);
+            assert_eq!(<&'static str>::from(kind), text);
+            assert_eq!(text.parse::<McpServerKind>(), Ok(kind));
+        }
+        assert_eq!("bus".parse::<McpServerKind>(), Err(strum::ParseError::VariantNotFound));
+        assert_eq!(
+            "Agentbus".parse::<McpServerKind>(),
+            Err(strum::ParseError::VariantNotFound)
+        );
     }
 
     // Rule: the tail is the last non-blank lines, trimmed, oldest first.
@@ -429,14 +490,50 @@ mod tests {
     // Rule: a huge line does not become a huge error; the cut never splits a character.
     #[test]
     fn an_output_error_keeps_a_cut_line_and_its_cause() {
-        let cause = std::io::Error::from(std::io::ErrorKind::InvalidData);
         let line = "ż".repeat(MAX_ERROR_LINE_CHARS + 50);
 
-        let err = OutputError::new(&line, cause);
+        let err = OutputError::new(&line, OutputCause::Unrecognized);
 
         assert_eq!(err.line(), "ż".repeat(MAX_ERROR_LINE_CHARS));
-        let source = std::error::Error::source(&err).and_then(|s| s.downcast_ref::<std::io::Error>());
-        assert_eq!(source.map(std::io::Error::kind), Some(std::io::ErrorKind::InvalidData));
-        assert_eq!(OutputError::new("short", std::io::Error::other("x")).line(), "short");
+        assert!(matches!(err.cause(), OutputCause::Unrecognized));
+        assert_eq!(OutputError::new("short", OutputCause::Unrecognized).line(), "short");
+    }
+
+    // Rule: a typed cause converts into the output cause and stays the error's source.
+    #[test]
+    fn an_output_error_keeps_the_typed_source_of_its_cause() {
+        let json = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let invalid = "a b".parse::<SessionId>().unwrap_err();
+
+        let from_json = OutputError::new("{", json);
+        let from_session = OutputError::new("session: a b", invalid);
+
+        assert!(matches!(from_json.cause(), OutputCause::Json(e) if e.classify() == serde_json::error::Category::Eof));
+        assert!(matches!(
+            from_session.cause(),
+            OutputCause::SessionId(e) if e.rule == ValueRule::ForbiddenChar(' ')
+        ));
+        let source = std::error::Error::source(&from_json).and_then(|s| s.downcast_ref::<OutputCause>());
+        assert!(matches!(source, Some(OutputCause::Json(_))));
+    }
+
+    // Rule: a build error names the CLI and the cause, and keeps the typed error under it.
+    #[test]
+    fn a_build_error_names_its_cli_and_keeps_its_source() {
+        let invalid = AbsolutePath::try_from("relative".to_owned()).unwrap_err();
+        let err = BuildRunError::Path {
+            kind: CliKind::Codex,
+            source: invalid,
+        };
+        assert!(err.to_string().contains("codex"), "{err}");
+        let source = std::error::Error::source(&err).and_then(|s| s.downcast_ref::<InvalidValue>());
+        assert_eq!(source.map(|e| e.rule), Some(ValueRule::NotAbsolute));
+
+        let err = BuildRunError::UnsupportedMcpServer {
+            kind: CliKind::Opencode,
+            server: McpServerKind::Serena,
+        };
+        let text = err.to_string();
+        assert!(text.contains("opencode") && text.contains("serena"), "{text}");
     }
 }
