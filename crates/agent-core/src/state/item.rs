@@ -10,36 +10,76 @@ use super::gate::GateResult;
 use super::strict::{checked, strict_enum};
 use super::values::{PrNumber, Timestamp};
 use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, TaskId};
-use crate::kinds::keyword_enum;
+use crate::kinds::{Keyword, UnknownKeyword};
 use crate::status::{ItemStatus, ReviewVerdict};
 use crate::task_list::ItemMark;
 
-keyword_enum! {
-    /// The phases of an item, which are its [`ItemStatus`]es with the fix pass told apart from the first work.
-    ///
-    /// Allowed changes ([`PhaseKind::successors`]); each is also a change its [`ItemStatus`] allows:
-    ///
-    /// | from | to |
-    /// |---|---|
-    /// | `pending` | `in_progress` |
-    /// | `in_progress` | `pending`, `in_review` |
-    /// | `in_review` | `fixing`, `approved` |
-    /// | `fixing` | `in_review` |
-    /// | `approved` | `done` |
-    /// | `done` | — |
-    pub enum PhaseKind: "item phase" {
-        /// Not started.
-        Pending => "pending",
-        /// A member works on it, or the coordinator integrates it, until its pull request is open.
-        InProgress => "in_progress",
-        /// Its pull request is open and waits for its two reviews.
-        InReview => "in_review",
-        /// The reviewers asked for changes: the team fixes them (status `in_progress`).
-        Fixing => "fixing",
-        /// Both reviews approve; it waits for its merge.
-        Approved => "approved",
-        /// Merged, or listed as done.
-        Done => "done",
+/// The phases of an item, which are its [`ItemStatus`]es with the fix pass told apart from the first work.
+///
+/// Allowed changes ([`PhaseKind::successors`]); each is also a change its [`ItemStatus`] allows:
+///
+/// | from | to |
+/// |---|---|
+/// | `pending` | `in_progress` |
+/// | `in_progress` | `pending`, `in_review` |
+/// | `in_review` | `fixing`, `approved` |
+/// | `fixing` | `in_review` |
+/// | `approved` | `done` |
+/// | `done` | — |
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String", into = "&'static str")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<PhaseKind>)]
+pub enum PhaseKind {
+    /// Not started.
+    Pending,
+    /// A member works on it, or the coordinator integrates it, until its pull request is open.
+    InProgress,
+    /// Its pull request is open and waits for its two reviews.
+    InReview,
+    /// The reviewers asked for changes: the team fixes them (status `in_progress`).
+    Fixing,
+    /// Both reviews approve; it waits for its merge.
+    Approved,
+    /// Merged, or listed as done.
+    Done,
+}
+
+impl Keyword for PhaseKind {
+    const WHAT: &'static str = "item phase";
+}
+
+impl TryFrom<String> for PhaseKind {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl PhaseKind {
+    /// Every variant, in declaration order.
+    pub const ALL: &'static [Self] = <Self as strum::VariantArray>::VARIANTS;
+
+    /// The variant's text: what `Display` prints and `FromStr` and serde accept.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 }
 

@@ -11,16 +11,56 @@ use super::strict::checked;
 use super::values::Timestamp;
 use crate::config::RepoName;
 use crate::ids::{ItemId, TaskId, TeamId};
-use crate::kinds::{Role, Tier, keyword_enum};
+use crate::kinds::{Keyword, Role, Tier, UnknownKeyword};
 use crate::task_list::{ItemMark, TaskList, TaskListError};
 
-keyword_enum! {
-    /// What happens to a pull request that both reviewers approve.
-    pub enum MergeMode: "merge mode" {
-        /// The harness merges it and starts the next item (`agent run`'s default).
-        Autopilot => "autopilot",
-        /// The harness stops before the merge and hands the pull request to the human (`--no-merge`).
-        NoMerge => "no_merge",
+/// What happens to a pull request that both reviewers approve.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String", into = "&'static str")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<MergeMode>)]
+pub enum MergeMode {
+    /// The harness merges it and starts the next item (`agent run`'s default).
+    Autopilot,
+    /// The harness stops before the merge and hands the pull request to the human (`--no-merge`).
+    NoMerge,
+}
+
+impl Keyword for MergeMode {
+    const WHAT: &'static str = "merge mode";
+}
+
+impl TryFrom<String> for MergeMode {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl MergeMode {
+    /// Every variant, in declaration order.
+    pub const ALL: &'static [Self] = <Self as strum::VariantArray>::VARIANTS;
+
+    /// The variant's text: what `Display` prints and `FromStr` and serde accept.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 }
 
