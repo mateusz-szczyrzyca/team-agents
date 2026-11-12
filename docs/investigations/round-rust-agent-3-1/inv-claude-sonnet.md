@@ -154,3 +154,11 @@ These are readings of the brief where it was silent; each is a typed, tested rul
 
 - "Checks" of Rust items that grep for a pattern should say that a comment counts, or ask for `--` exclusions; this one found a comment.
 - Integration-test helpers outside `#[cfg(test)]` trip the lint baseline (`unwrap_used`); the existing tests wrap their code in `#[cfg(test)] mod name { }`. One line in "Tests" would save the discovery.
+
+## Gate status of the Bash tests (human's decision)
+
+`make gate` fails in `unit-bats` on a clean `origin/main` too: the tests of a team of one investigator
+(8 tests in 6 files, e.g. `tests/unit/investigation_independent_labels.bats`) pass at `21f208d~1` and fail since
+`3655000`, which removed the merger run of a team of one while the `gh` stub still learns of the PR from the fake
+merger. This PR changes no Bash, Go or bats code. The human decided: non-Rust tests are ignored for this item; the
+Rust gate (`make rust`) is the check that counts here. Repairing those tests is a separate task.
