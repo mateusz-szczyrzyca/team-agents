@@ -5604,19 +5604,43 @@ investigation_pr_merger_note() {
 }
 
 # investigation_pr_sync parent child — an investigation on an open PR (--pr): the child's published commit (its
-# branch, started from the PR's head) goes onto the PR's branch as a fast-forward — refused, and false, when that
-# branch moved meanwhile
+# branch, started from the PR's head) goes onto the PR's branch. When that branch moved meanwhile (often: main merged
+# into it on GitHub), its head is merged into the result in the child's own worktree — its run is over — and the merge
+# goes onto both branches, so the child's published result and the PR's head stay one commit (the review checks
+# that). False on a conflict, or when git refuses: logged with git's words; the human decides
 investigation_pr_sync() {
-  local parent=$1 child=$2 root pr_branch commit
+  local parent=$1 child=$2 root pr_branch commit wt out head merged num
   root=$(task_field "$parent" REPO_ROOT); pr_branch=$(investigation_field "$parent" INVESTIGATION_PR_BRANCH)
+  num=$(investigation_field "$parent" PR_NUMBER); wt=$(task_field "$child" WORKTREE)
   commit=${INVESTIGATION_RESULT_COMMIT:-}
   [[ -n $commit ]] || commit=$(git -C "$root" rev-parse -q --verify "origin/$(task_field "$child" BRANCH)^{commit}") || return 1
-  if git -C "$root" push -q origin "$commit:refs/heads/$pr_branch" 10>&-; then
+  if out=$(git -C "$root" push -q origin "$commit:refs/heads/$pr_branch" 2>&1 10>&-); then
     log_info investigation_pr_synced "task=$parent" "child=$child" "commit=$commit" "branch=$pr_branch"
     return 0
   fi
-  log_warn investigation_pr_sync_failed "task=$parent" "child=$child" "commit=$commit" "branch=$pr_branch"
-  return 1
+  log_info investigation_pr_moved "task=$parent" "branch=$pr_branch" "push=${out:0:300}"
+  if [[ ! -d $wt || -n $(git -C "$wt" status --porcelain 2> /dev/null) ]]; then
+    log_warn investigation_pr_sync_failed "task=$parent" "child=$child" "error=the result's worktree is missing or not clean"
+    return 1
+  fi
+  if ! out=$(git -C "$wt" fetch -q origin "refs/heads/$pr_branch" 2>&1 10>&-) || ! head=$(git -C "$wt" rev-parse FETCH_HEAD); then
+    log_warn investigation_pr_sync_failed "task=$parent" "child=$child" "error=fetch: ${out:0:300}"
+    return 1
+  fi
+  if ! out=$(cd "$wt" && AGENT=$(task_field "$child" AGENT) && git_identity > /dev/null \
+      && git merge -q --no-edit -m "Merge the head of PR #$num ($pr_branch) into the work of $AGENT" "$head" 2>&1 10>&-); then
+    git -C "$wt" merge --abort 2> /dev/null || log_warn investigation_pr_merge_abort_failed "task=$parent" "worktree=$wt"
+    log_warn investigation_pr_sync_failed "task=$parent" "child=$child" "error=merge of $head: ${out:0:300}"
+    return 1
+  fi
+  merged=$(git -C "$wt" rev-parse HEAD) || return 1
+  if ! out=$(git -C "$wt" push -q origin "HEAD:refs/heads/$(task_field "$child" BRANCH)" "HEAD:refs/heads/$pr_branch" 2>&1 10>&-); then
+    log_warn investigation_pr_sync_failed "task=$parent" "child=$child" "error=push of the merge: ${out:0:300}"
+    return 1
+  fi
+  INVESTIGATION_RESULT_COMMIT=$merged
+  meta_set "$parent" PRECHECK_HEAD "$merged"
+  log_info investigation_pr_synced "task=$parent" "child=$child" "commit=$merged" "branch=$pr_branch" "merged=$head"
 }
 
 # investigation_solo_pr parent child base — opens the PR of a team of one investigator, from its branch; the checks and
@@ -5777,7 +5801,7 @@ investigation_pipeline_tick() {
   if [[ -n $pr_branch ]]; then   # an investigation on an open PR (--pr): its work goes onto that PR, no other opens
     if ! investigation_pr_sync "$parent" "$child"; then
       investigation_handoff "$parent" \
-        "waits for you: the work could not be brought onto PR #$(investigation_field "$parent" PR_NUMBER) (its branch $pr_branch moved?)" failed
+        "waits for you: the work could not be brought onto PR #$(investigation_field "$parent" PR_NUMBER) (a conflict with what its branch got meanwhile, or git refused: see the log)" failed
       return
     fi
     url=$(investigation_field "$parent" PR_URL); number=$(investigation_field "$parent" PR_NUMBER); branch=$pr_branch
