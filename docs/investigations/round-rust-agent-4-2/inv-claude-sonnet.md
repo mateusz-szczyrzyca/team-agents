@@ -145,3 +145,9 @@ None needed for this item. One for the Rust section: say how a test that needs a
 - Finding 10 (a list ending exactly at the page cap): the `Link` header is read; a full page without `rel="next"` ends the list. Without a `Link` header the list is still refused as too long (a probe of page 21 would have changed the committed request-count test).
 - Finding 11 (secrets in a refused API base): `InvalidApiBase` keeps no refused text; its variants name the scheme, the host or a `ForbiddenPart`.
 - Findings 6 and 7: not changeable in code. 6 needs the human's approval of the two corrected RED expectations; 7 concerns published history, which is not rewritten.
+
+## Review pass 3
+
+- An agent line that is shaped like a record but has an invalid name, task, branch or pid (`agentbus serve` without `--task`) is now an `Unexpected` error of `status()`; before, it was added to the status of the agent before it.
+- `Retry-After` equal to `max_delay` has a test (it kills the `>` → `>=` mutant); the doc comment of `Jitter::Spread` is corrected.
+- `Review::author` and `Comment::author` stay `String`: the author of a just-posted item may be a bot login that is no `GithubLogin`, and a failed decode after a successful post cannot be retried.
