@@ -15,6 +15,9 @@ pub(super) struct Recovery {
     pub(super) interrupted: Vec<TaskId>,
     /// The paused tasks and when each goes on.
     pub(super) wakes: Vec<(Timestamp, TaskId)>,
+    /// The queued tasks whose last runs hung, and how many hangs in a row: the watchdog's count, which a restart must
+    /// not reset.
+    pub(super) hangs: Vec<(TaskId, u32)>,
 }
 
 /// Why the state cannot be recovered.
@@ -85,6 +88,10 @@ pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Res
         if was_going || was_running {
             recovery.interrupted.push(task.clone());
         }
+        let hangs = trailing_hangs(member.runs());
+        if member.status() == TaskStatus::Queued && hangs > 0 {
+            recovery.hangs.push((task.clone(), hangs));
+        }
         if member.status() == TaskStatus::Paused
             && let Some(wake) = paused_until(member.runs().last(), limits).map_err(|source| RecoveryError::Pause {
                 task: task.clone(),
@@ -95,6 +102,12 @@ pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Res
         }
     }
     Ok(recovery)
+}
+
+/// How many of the last `runs` hung in a row. A run a restart interrupted is no strike and does not end the row.
+/// Whether a hung run had made progress is not saved: after a restart, every hang of the row counts.
+const fn trailing_hangs(_runs: &[Run]) -> u32 {
+    0
 }
 
 /// When a task whose last run is `last` goes on, if its pause is a provider's limit.

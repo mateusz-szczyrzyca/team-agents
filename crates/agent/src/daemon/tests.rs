@@ -487,6 +487,32 @@ async fn a_run_that_was_going_when_the_daemon_died_is_marked_and_resumed_from_it
     assert!(args.contains("THE HARNESS RESTARTED"), "{args}");
 }
 
+/// A state in which run 1 of task 1 (session `ses-1`) hung and the task was queued to be resumed.
+fn hung_once_state() -> State {
+    let mut state = solo_state();
+    let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+    member.transition(TaskStatus::Running).unwrap();
+    member
+        .begin_run(run_id(1), at(5), Some("ses-1".parse().unwrap()))
+        .unwrap();
+    member.end_run(at(10), RunEnd::Hung).unwrap();
+    member.transition(TaskStatus::Queued).unwrap();
+    state
+}
+
+#[tokio::test]
+async fn a_restart_keeps_the_strikes_of_the_watchdog() {
+    let mut f = Fixture::new(&hung_once_state(), 2, "hang");
+
+    f.start().await;
+    let state = f.status_is(TaskStatus::Failed).await;
+    f.stop().await.unwrap();
+
+    let runs = member_one(&state).runs();
+    assert_eq!(runs.len(), 2, "the hang before the restart was the first strike");
+    assert!(runs.iter().all(|run| end_of(run) == &RunEnd::Hung));
+}
+
 #[tokio::test]
 async fn a_pause_survives_a_restart_and_ends_on_time() {
     let mut state = solo_state();

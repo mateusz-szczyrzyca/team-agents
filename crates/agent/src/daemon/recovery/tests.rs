@@ -196,3 +196,49 @@ fn a_clock_set_back_does_not_end_a_run_before_it_started() {
         "the run ends when it started at the earliest"
     );
 }
+
+/// Task 1 ends a run with each of `ends`, one after the other, and is queued after each.
+fn queued_after(ends: &[RunEnd]) -> State {
+    let mut state = team_state();
+    let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+    for (n, end) in (1..).zip(ends) {
+        member.transition(TaskStatus::Running).unwrap();
+        member.begin_run(run(n), at(10), None).unwrap();
+        member.end_run(at(20), end.clone()).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    state
+}
+
+#[test]
+fn the_hangs_in_a_row_of_a_queued_task_are_counted_again() {
+    let mut state = queued_after(&[
+        RunEnd::Reported {
+            outcome: RunOutcome::Done,
+        },
+        RunEnd::Hung,
+        RunEnd::Hung,
+    ]);
+
+    let recovery = recover(&mut state, at(100), &limits()).unwrap();
+
+    assert_eq!(recovery.hangs, [(task(1), 2)]);
+}
+
+#[test]
+fn a_run_a_restart_interrupted_does_not_end_the_row_of_hangs() {
+    let mut state = queued_after(&[RunEnd::Hung, RunEnd::NoStatus { exit_code: None }]);
+
+    let recovery = recover(&mut state, at(100), &limits()).unwrap();
+
+    assert_eq!(recovery.hangs, [(task(1), 1)]);
+}
+
+#[test]
+fn a_task_whose_last_run_did_not_hang_has_no_hangs() {
+    let mut state = queued_after(&[RunEnd::Hung, RunEnd::NoStatus { exit_code: Some(1) }]);
+
+    let recovery = recover(&mut state, at(100), &limits()).unwrap();
+
+    assert_eq!(recovery.hangs, []);
+}

@@ -252,6 +252,7 @@ impl Owner {
         for (at, task) in recovery.wakes {
             self.wakes.insert(task, at);
         }
+        self.hangs.extend(recovery.hangs);
         if !recovery.interrupted.is_empty() {
             tracing::info!(
                 tasks = recovery.interrupted.len(),
