@@ -1191,6 +1191,59 @@ mod tests {
         assert!(matches!(&result, Err(CaptureError::Spawn { .. })), "{result:?}");
     }
 
+    /// A script `run` in `dir` and its file still open for writing, as in a child that another thread forked while
+    /// the script was being written: `exec` refuses it (`ETXTBSY`) until the file is closed.
+    fn script_still_open(dir: &Path) -> (PathBuf, std::fs::File) {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let path = dir.join("run");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o755)
+            .open(&path)
+            .unwrap();
+        file.write_all(b"#!/bin/sh\necho ran\n").unwrap();
+        (path, file)
+    }
+
+    /// Closes `file` after a moment, from another task.
+    fn close_soon(file: std::fs::File) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            drop(file);
+        })
+    }
+
+    // Rule: a program that is busy only for a moment, still open for writing elsewhere, is started once it is free.
+    #[tokio::test]
+    async fn capture_starts_a_program_that_was_busy_for_a_moment() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, file) = script_still_open(dir.path());
+        let closer = close_soon(file);
+
+        let result = capture(Command::new(&path), limits(LONG_GRACE, 1024)).await;
+
+        closer.await.unwrap();
+        assert_eq!(result.unwrap().stdout.bytes, b"ran\n");
+    }
+
+    // Rule: a supervised program that is busy only for a moment is started once it is free.
+    #[tokio::test]
+    async fn spawn_starts_a_program_that_was_busy_for_a_moment() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, file) = script_still_open(dir.path());
+        let closer = close_soon(file);
+
+        let result = supervisor().spawn(&spec(dir.path(), path.to_str().unwrap(), &[])).await;
+
+        closer.await.unwrap();
+        let mut process = result.unwrap();
+        process.wait().await.unwrap();
+        assert_eq!(std::fs::read_to_string(dir.path().join("out")).unwrap(), "ran\n");
+    }
+
     // Rule: a status with neither a code nor a signal is refused, a code and a signal are told apart.
     #[test]
     fn a_wait_status_is_a_code_or_a_signal() {
