@@ -637,6 +637,57 @@ mod agentbus_commands {
         assert_eq!((read.worker, read.helper_task, read.summary.as_str()), (None, None, ""));
     }
 
+    /// A dispatcher that records how it was run: its arguments and `AGENTS_HOME`, one per line, in `dispatched` in
+    /// that home. Written once and closed before any test runs it, so that no `exec` meets a file still open for
+    /// writing (`ETXTBSY`).
+    fn recording_dispatcher() -> &'static Path {
+        static SCRIPT: OnceLock<PathBuf> = OnceLock::new();
+        SCRIPT.get_or_init(|| {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+
+            let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("recording-dispatcher");
+            let script = "#!/bin/sh\n\
+                { printf '%s\\n' \"$AGENTS_HOME\"; printf '%s\\n' \"$@\"; } > \"$AGENTS_HOME/dispatched.part\"\n\
+                mv \"$AGENTS_HOME/dispatched.part\" \"$AGENTS_HOME/dispatched\"\n";
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o755)
+                .open(&path)
+                .unwrap();
+            file.write_all(script.as_bytes()).unwrap();
+            file.sync_all().unwrap();
+            drop(file);
+            path
+        })
+    }
+
+    #[tokio::test]
+    async fn delegate_runs_the_dispatcher_it_is_given_with_dispatch_helpers_in_its_home() {
+        let fixture = with_team().await;
+        let delegation = Delegation {
+            dispatcher: Program::from_str(recording_dispatcher().to_str().unwrap()).unwrap(),
+            ..delegation("Run the linter")
+        };
+
+        fixture.bus.delegate(&delegation).await.unwrap();
+
+        // The bus starts it detached and does not wait for it: wait for what it wrote.
+        let record = fixture.dir.path().join("dispatched");
+        let deadline = Instant::now() + PATIENCE;
+        let written = loop {
+            if let Ok(written) = read_to_string(&record) {
+                break written;
+            }
+            assert!(Instant::now() < deadline, "the dispatcher was not run");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        let home = fixture.dir.path().to_str().unwrap();
+        assert_eq!(written, format!("{home}\n_dispatch-helpers\n"));
+    }
+
     #[tokio::test]
     async fn delegate_with_an_empty_request_is_invalid() {
         let fixture = with_team().await;
