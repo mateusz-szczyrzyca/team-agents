@@ -39,7 +39,7 @@ use super::notice::Notice;
 use super::notifier::Delivery;
 use super::recovery::{RecoveryError, recover};
 use super::settle::{Settled, settle};
-use crate::chain::chain;
+use agent_runtime::process::error_chain;
 
 /// How many runs may go at once.
 pub(super) const MAX_RUNS: NonZeroUsize = NonZeroUsize::new(16).unwrap();
@@ -297,7 +297,7 @@ impl Owner {
         };
         let plan = match planned {
             Ok(plan) => plan,
-            Err(problem) => return self.fail_to_start(&task, chain(&problem)).await,
+            Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
         };
         self.begin(&task, plan).await
     }
@@ -354,9 +354,9 @@ impl Owner {
     ) -> Result<(), OwnerError> {
         let (id, outcome) = match joined {
             Ok((id, Ok(verdict))) => (id, Outcome::Verdict(Box::new(verdict))),
-            Ok((id, Err(error))) => (id, Outcome::Failed(chain(&error))),
+            Ok((id, Err(error))) => (id, Outcome::Failed(error_chain(&error))),
             Err(error) => {
-                let reason = format!("the task of the run failed: {}", chain(&error));
+                let reason = format!("the task of the run failed: {}", error_chain(&error));
                 (error.id(), Outcome::Failed(reason))
             }
         };
@@ -499,11 +499,11 @@ impl Owner {
             })
         };
         if let Err(problem) = questions::read(&path).await {
-            return Ok(unusable(chain(&problem)));
+            return Ok(unusable(error_chain(&problem)));
         }
         let file = match path.to_str().map(AbsolutePath::from_str) {
             Some(Ok(file)) => file,
-            Some(Err(problem)) => return Ok(unusable(chain(&problem))),
+            Some(Err(problem)) => return Ok(unusable(error_chain(&problem))),
             None => return Ok(unusable("the path is not UTF-8 text".to_owned())),
         };
         let (_, mut member) = self.member_mut(task)?;

@@ -31,7 +31,7 @@ use tokio_util::sync::CancellationToken;
 use crate::clock::SharedClock;
 use crate::git::GitError;
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
-use crate::process::{ExitReport, ProcessError, Supervisor};
+use crate::process::{ExitReport, ProcessError, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
 use crate::store::{StateStore, StoreError};
 
@@ -450,18 +450,6 @@ impl Unreadable {
             );
         }
     }
-}
-
-/// The error and its causes on one line, for a log record.
-fn error_chain(error: &dyn std::error::Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 /// What the engine does with the output of one run as it grows.

@@ -407,8 +407,9 @@ pub(crate) fn signal_group(group: Pid, signal: GroupSignal) -> Result<(), GroupS
     }
 }
 
-/// The error and its causes on one line, for a log record.
-fn error_chain(error: &dyn std::error::Error) -> String {
+/// The error and its causes on one line, for a log record or a message to the human.
+#[must_use]
+pub fn error_chain(error: &dyn std::error::Error) -> String {
     let mut text = error.to_string();
     let mut source = error.source();
     while let Some(cause) = source {
@@ -1346,5 +1347,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(captured.exit, ExitReport::Exited { code: 3 });
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("outer")]
+    struct Outer(#[source] Inner);
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("inner")]
+    struct Inner;
+
+    #[test]
+    fn an_error_is_followed_by_its_causes() {
+        assert_eq!(error_chain(&Outer(Inner)), "outer: inner");
+    }
+
+    #[test]
+    fn an_error_without_a_cause_is_its_own_text() {
+        assert_eq!(error_chain(&Inner), "inner");
     }
 }

@@ -13,7 +13,6 @@ use agent_core::ids::InvalidId;
 use agent_core::protocol::Target;
 use clap::{Args, CommandFactory, Parser, Subcommand};
 
-mod chain;
 mod client;
 // Test code lives under `tests/`: the builders of states, the stand-in for the daemon's socket and the tests of the
 // command line. The modules keep their names, so `crate::fixtures` is still `crate::fixtures`.
@@ -31,11 +30,11 @@ mod lines;
 #[path = "tests/testing.rs"]
 mod testing;
 
-use crate::chain::chain;
 use crate::client::{ClientError, Connection};
 use crate::commands::daemon::{DaemonCommandError, daemon};
 use crate::commands::status::{StatusError, status};
 use crate::environment::{Environment, EnvironmentError};
+use agent_runtime::process::error_chain;
 
 /// Exit status of a command line that clap refuses: its own convention for usage errors.
 const USAGE_ERROR: u8 = 2;
@@ -161,7 +160,7 @@ where
         Ok(Cli { command: Some(command) }) => match execute_blocking(environment, command, out) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
-                write_text(err, &format!("agent: {}\n", chain(&error)))?;
+                write_text(err, &format!("agent: {}\n", error_chain(&error)))?;
                 ExitCode::FAILURE
             }
         },

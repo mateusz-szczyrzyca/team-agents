@@ -9,7 +9,7 @@ use agent_runtime::notify::Notifier;
 use tokio::sync::mpsc;
 
 use super::notice::Notice;
-use crate::chain::chain;
+use agent_runtime::process::error_chain;
 
 /// How many notifications may wait for delivery; more are dropped and logged.
 pub(super) const QUEUE: usize = 256;
@@ -36,14 +36,14 @@ pub(super) async fn run(mut queue: mpsc::Receiver<Delivery>, texts: Arc<HarnessP
         let notification = match delivery.notice.render(&texts, &delivery.agent, &delivery.task) {
             Ok(notification) => notification,
             Err(error) => {
-                tracing::error!(task = %delivery.task, error = %chain(&error), "cannot render a notification");
+                tracing::error!(task = %delivery.task, error = %error_chain(&error), "cannot render a notification");
                 continue;
             }
         };
         match notifier.notify(delivery.at, &notification).await {
             Ok(file) => tracing::info!(task = %delivery.task, file = %file.display(), "notification written"),
             Err(error) => {
-                tracing::error!(task = %delivery.task, error = %chain(&error), "cannot deliver a notification");
+                tracing::error!(task = %delivery.task, error = %error_chain(&error), "cannot deliver a notification");
             }
         }
     }
