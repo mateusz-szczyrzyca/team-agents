@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
 use agent_core::cli::{
-    ActivityEvent, BuildRunError, CliAdapter, OutputError, OutputParser, RunMode, RunOutput, RunRequest, RunSpec,
-    StreamOutcome,
+    ActivityEvent, BuildRunError, CliAdapter, OutputCause, OutputError, OutputParser, RunMode, RunOutput, RunRequest,
+    RunSpec, StreamOutcome,
 };
 use agent_core::kinds::CliKind;
 use serde::Deserialize;
@@ -40,6 +40,10 @@ const MCP_TOOL: &str = "call_mcp_tool";
 /// The most bytes of one response that are put together from its pieces: a bound on a stream that never says a step is
 /// done.
 const MAX_RESPONSE_BYTES: usize = 1 << 20;
+
+/// The most responses that may be unfinished at once: with [`MAX_RESPONSE_BYTES`] it bounds what the parser holds. A
+/// real run has one or two open.
+const MAX_OPEN_RESPONSES: usize = 64;
 
 /// The adapter of Antigravity.
 #[derive(Debug, Clone, Copy)]
@@ -221,17 +225,21 @@ struct AgyParser {
 }
 
 impl AgyParser {
-    /// The steps a change of `step` shows.
-    fn step(&mut self, step: Step) -> Vec<ActivityEvent> {
+    /// The steps a change of `step` shows; `line` is the line it came from. A response that would be one open
+    /// response too many is refused with [`OutputCause::TooManyOpenSteps`] and not kept.
+    fn step(&mut self, line: &str, step: Step) -> Result<Vec<ActivityEvent>, OutputError> {
         let done = step.state == Some(StepState::Done);
-        match step.kind {
+        Ok(match step.kind {
             Some(StepType::AgentResponse) => {
+                if self.pieces.len() >= MAX_OPEN_RESPONSES && !self.pieces.contains_key(&step.index) {
+                    return Err(OutputError::new(line, OutputCause::TooManyOpenSteps));
+                }
                 let text = self.pieces.entry(step.index).or_default();
                 if let Some(delta) = &step.text_delta {
                     text.push_str(head(delta, MAX_RESPONSE_BYTES.saturating_sub(text.len())));
                 }
                 if !done {
-                    return Vec::new();
+                    return Ok(Vec::new());
                 }
                 let finished = std::mem::take(text);
                 self.pieces.remove(&step.index);
@@ -239,7 +247,7 @@ impl AgyParser {
             }
             Some(StepType::Tool) if done => Self::tool(step.tool_name.as_deref(), step.tool_info),
             Some(StepType::Tool | StepType::Other) | None => Vec::new(),
-        }
+        })
     }
 
     /// The steps a finished tool step shows: the call and, if it failed, the error.
@@ -299,7 +307,7 @@ impl OutputParser for AgyParser {
                 self.progress.note_session(line, &id)?;
                 Ok(vec![ActivityEvent::Info(format!("session started {id}"))])
             }
-            Event::StepUpdate { step_update } => Ok(self.step(step_update)),
+            Event::StepUpdate { step_update } => self.step(line, step_update),
             Event::Finished { result } => self.finished(line, result),
             Event::Other => Ok(Vec::new()),
         }

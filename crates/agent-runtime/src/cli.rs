@@ -20,8 +20,9 @@
 //!   opencode reports the provider's refusal on stdout.
 //! - **A line that cannot be read** is an [`OutputError`] and the parser goes on: `Json` for text that is not JSON (a
 //!   cut line, a banner), `Unrecognized` for JSON without the fields the adapter needs, `SessionId` for an ID the
-//!   harness refuses. An event of a type the adapter does not know is not an error: the CLIs add events and this
-//!   code reads only the few it needs.
+//!   harness refuses, `TooManyOpenSteps` for a stream that opens more unfinished responses than the parser
+//!   keeps. An event of a type the adapter does not know is not an error: the CLIs add events and this code reads only
+//!   the few it needs.
 //! - **The activity** of a step is the one the old `agentbus normalize` showed. Token usage is not read: accounting is
 //!   not part of this rewrite.
 
