@@ -42,6 +42,8 @@ pub enum HarnessPrompt {
     PromptFile,
     /// The notification that an agent has questions.
     NoticeQuestions,
+    /// The notification that a run ended with questions that cannot be read.
+    NoticeQuestionsMissing,
     /// The notification that a task was marked failed after the watchdog's last strike.
     NoticeHung,
     /// The notification that a task is paused for a provider's limit.
@@ -73,6 +75,7 @@ impl HarnessPrompt {
         Self::ResumeLimit,
         Self::PromptFile,
         Self::NoticeQuestions,
+        Self::NoticeQuestionsMissing,
         Self::NoticeHung,
         Self::NoticePaused,
         Self::NoticeFailed,
@@ -111,6 +114,11 @@ impl HarnessPrompt {
                 "harness/run/notice-questions.md",
                 Audience::Human,
                 &["agent", "task", "round", "file"],
+            ),
+            Self::NoticeQuestionsMissing => PromptSpec::new(
+                "harness/run/notice-questions-missing.md",
+                Audience::Human,
+                &["agent", "task", "file", "reason"],
             ),
             Self::NoticeHung => PromptSpec::new(
                 "harness/run/notice-hung.md",

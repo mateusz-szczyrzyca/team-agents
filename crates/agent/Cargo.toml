@@ -8,8 +8,23 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+agent-core.workspace = true
+agent-runtime.workspace = true
 clap.workspace = true
+# The daemon draws its IDs from the operating system's entropy: `sys_rng` and `std_rng` give `StdRng::try_from_rng`.
+rand = { workspace = true, features = ["std", "std_rng", "sys_rng"] }
+serde_json.workspace = true
 thiserror.workspace = true
+# `local-offset`: a reset time without a zone in a provider's message is read in the machine's time zone.
+time = { workspace = true, features = ["local-offset"] }
+# `net` for the daemon's Unix socket and its client, `signal` for SIGTERM and SIGINT, `rt` and `time` come from the workspace.
+tokio = { workspace = true, features = ["net", "signal"] }
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

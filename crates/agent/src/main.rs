@@ -9,6 +9,10 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser};
 
+mod daemon;
+#[cfg(test)]
+mod fixtures;
+
 /// Exit status of a command line that clap refuses: its own convention for usage errors.
 const USAGE_ERROR: u8 = 2;
 

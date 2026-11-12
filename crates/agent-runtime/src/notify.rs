@@ -112,6 +112,18 @@ impl Notification {
             body: body.to_owned(),
         })
     }
+
+    /// The title: the first line of the notification file.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// The body: what follows the title in the notification file.
+    #[must_use]
+    pub fn body(&self) -> &str {
+        &self.body
+    }
 }
 
 /// Why a notification could not be delivered.
