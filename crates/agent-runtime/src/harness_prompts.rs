@@ -5,6 +5,7 @@
 //! finds; after that [`HarnessPrompts::render`] can only fail on the values it is given.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
@@ -58,7 +59,7 @@ pub struct TextProblem {
 
 /// Every problem the files of the catalog have.
 #[derive(Debug, thiserror::Error)]
-#[error("{} text files cannot be used{}", problems.len(), listed(problems))]
+#[error("{} text files in {} cannot be used:{}", problems.len(), dir.display(), Listed(problems))]
 pub struct HarnessPromptsError {
     /// The prompts directory the files were read from.
     dir: PathBuf,
@@ -66,9 +67,16 @@ pub struct HarnessPromptsError {
     problems: Vec<TextProblem>,
 }
 
-/// Each problem on one line: its file and what is wrong with it.
-fn listed(_problems: &[TextProblem]) -> String {
-    String::new()
+/// The problems, each on its own line: its file and what is wrong with it.
+struct Listed<'a>(&'a [TextProblem]);
+
+impl fmt::Display for Listed<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for problem in self.0 {
+            write!(f, "\n  {}: {}", problem.path.display(), problem.cause)?;
+        }
+        Ok(())
+    }
 }
 
 impl HarnessPromptsError {
