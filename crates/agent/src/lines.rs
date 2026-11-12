@@ -31,7 +31,7 @@ pub(crate) enum LineError {
 /// Reads one line of at most `max` bytes, without its newline; `None` when the stream ended before any byte.
 ///
 /// A line over the limit ends the use of the stream: what follows it is not read, so the stream cannot be told where
-/// the next line begins.
+/// the next line begins. Not cancel safe: a call that is dropped loses what it read of a line; [`read_line_into`] is.
 ///
 /// # Errors
 /// [`LineError`].
@@ -39,8 +39,24 @@ pub(crate) async fn read_line<R: AsyncBufRead + Unpin>(
     reader: &mut R,
     max: usize,
 ) -> Result<Option<String>, LineError> {
-    let mut line: Vec<u8> = Vec::new();
+    read_line_into(reader, &mut Vec::new(), max).await
+}
+
+/// Reads one line of at most `max` bytes like [`read_line`], keeping the bytes of a line that is not complete yet in
+/// `line`.
+///
+/// Cancel safe: a call that is dropped before the end of the line (in a `select!`) leaves what it read in `line`, and
+/// the next call with the same `line` goes on from there. `line` is empty again when a line is returned.
+///
+/// # Errors
+/// [`LineError`].
+pub(crate) async fn read_line_into<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+    max: usize,
+) -> Result<Option<String>, LineError> {
     loop {
+        // The only await: everything after it, up to the next one, changes `line` and the reader together.
         let available = reader.fill_buf().await.map_err(LineError::Read)?;
         if available.is_empty() {
             return if line.is_empty() {
@@ -62,24 +78,9 @@ pub(crate) async fn read_line<R: AsyncBufRead + Unpin>(
             break;
         }
     }
-    String::from_utf8(line).map(Some).map_err(LineError::NotUtf8)
-}
-
-/// Reads one line of at most `max` bytes like [`read_line`], keeping the bytes of a line that is not complete yet in
-/// `line`.
-///
-/// # Errors
-/// [`LineError`].
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the server reads with it in the GREEN commit")
-)]
-pub(crate) async fn read_line_into<R: AsyncBufRead + Unpin>(
-    reader: &mut R,
-    _line: &mut Vec<u8>,
-    max: usize,
-) -> Result<Option<String>, LineError> {
-    read_line(reader, max).await
+    String::from_utf8(std::mem::take(line))
+        .map(Some)
+        .map_err(LineError::NotUtf8)
 }
 
 /// Writes `line`, which already ends with its newline, and flushes.

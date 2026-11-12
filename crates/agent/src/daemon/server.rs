@@ -23,7 +23,7 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use super::owner::Message;
-use crate::lines::{LineError, read_line, write_line};
+use crate::lines::{LineError, read_line_into, write_line};
 
 /// How many connections are served at once; a client over the limit waits in the kernel's backlog.
 pub(super) const MAX_CONNECTIONS: usize = 64;
@@ -228,10 +228,12 @@ async fn connection(
     let (read, mut write) = stream.into_split();
     let mut reader = BufReader::new(read);
     let mut subscription: Option<Subscription> = None;
+    // The part of a request that has come so far: an event that wins the `select!` must not drop it.
+    let mut partial = Vec::new();
     loop {
         let step = tokio::select! {
             () = shutdown.cancelled() => return,
-            line = read_line(&mut reader, MAX_REQUEST_BYTES) => Step::Line(line),
+            line = read_line_into(&mut reader, &mut partial, MAX_REQUEST_BYTES) => Step::Line(line),
             event = next_event(&mut subscription) => Step::Event(event),
         };
         let sent = match step {
