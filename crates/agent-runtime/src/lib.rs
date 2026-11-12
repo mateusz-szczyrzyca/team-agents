@@ -6,6 +6,7 @@
 
 pub mod agentbus;
 pub mod cli;
+pub mod clock;
 pub mod git;
 pub mod github;
 pub mod harness_prompts;

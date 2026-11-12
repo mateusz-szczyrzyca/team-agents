@@ -149,6 +149,9 @@ pub enum GitOperation {
     /// `git push`.
     #[strum(serialize = "push")]
     Push,
+    /// `git rev-parse --git-path`, to find a file inside the repository's directory.
+    #[strum(serialize = "git path")]
+    GitPath,
 }
 
 /// Why a git operation failed.
@@ -591,6 +594,15 @@ impl Git {
         )
         .await
         .map(drop)
+    }
+
+    /// The file `info/exclude` that keeps paths out of git for every worktree of the repository.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when the directory is no repository; [`GitError::Run`], [`GitError::OutputTooLong`] and
+    /// [`GitError::NotUtf8`].
+    pub async fn info_exclude_file(&self) -> Result<PathBuf, GitError> {
+        Ok(self.dir.as_path().to_path_buf())
     }
 
     /// The command `git` with this handle's identity, signing and environment, and `args`.
