@@ -236,7 +236,13 @@ impl CodexParser {
     fn started(item: Item) -> Vec<ActivityEvent> {
         match item {
             Item::CommandExecution { command, .. } => vec![ActivityEvent::Command(command)],
-            _ => Vec::new(),
+            // The other items show their step when they complete.
+            Item::AgentMessage { .. }
+            | Item::FileChange { .. }
+            | Item::McpToolCall { .. }
+            | Item::WebSearch { .. }
+            | Item::Error { .. }
+            | Item::Other => Vec::new(),
         }
     }
 
