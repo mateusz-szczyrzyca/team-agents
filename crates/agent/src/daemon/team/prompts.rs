@@ -5,7 +5,7 @@ use agent_core::kinds::Role;
 use agent_core::prompt::{PromptError, TeamPrompt, Variables, VariablesError};
 use agent_core::state::{Member, Team};
 use agent_runtime::agentbus::DelegationRequest;
-use agent_runtime::run::compose::{ComposeError, PromptTexts};
+use agent_runtime::run::compose::{ComposeError, PromptTexts, item_sections};
 use agent_runtime::team_prompts::{RenderTeamTextError, TeamPrompts};
 
 /// Why a team's task starts a run now.
@@ -61,7 +61,16 @@ pub(in crate::daemon) enum TeamPromptError {
     },
 }
 
+/// Between two sections: a blank line, as in the prompt of a task.
+const SECTION_SEPARATOR: &str = "\n\n";
+
+/// What the names of nobody are written as.
+const NOBODY: &str = "none";
+
 /// The prompt of `run`, made from `composed`, the prompt of the task as it is without a team.
+///
+/// A session that starts is told the team after its prompt; a session that goes on already knows it. What starts the run
+/// follows: a wake-up, an item, a request. A resumed session gets only that, because the rest is in it.
 ///
 /// # Errors
 /// [`TeamPromptError`].
@@ -71,8 +80,98 @@ pub(in crate::daemon) fn shape(
     run: &TeamRun<'_>,
     composed: String,
 ) -> Result<String, TeamPromptError> {
-    let _ = (texts, harness, run);
-    Ok(composed)
+    if !matches!(run.role, Role::Coordinator | Role::Member | Role::Worker) {
+        return Ok(composed);
+    }
+    let reason = match run.why {
+        None => Vec::new(),
+        Some(Why::Woken) => vec![wake(texts, run)?],
+        // The prompt of a session that starts names the item its member has; only a resumed one is told of a new item.
+        Some(Why::Assigned(_)) if run.new_session => Vec::new(),
+        Some(Why::Assigned(item)) => assignment(texts, harness, run, *item)?,
+        Some(Why::Delegated(request)) => vec![delegation(texts, request)?],
+    };
+    let mut sections = Vec::new();
+    if run.new_session {
+        sections.push(composed);
+        sections.push(context(texts, run)?);
+    } else if reason.is_empty() {
+        return Ok(composed);
+    }
+    sections.extend(reason);
+    let mut prompt = sections
+        .iter()
+        .map(|section| section.trim_end())
+        .collect::<Vec<_>>()
+        .join(SECTION_SEPARATOR);
+    prompt.push('\n');
+    Ok(prompt)
+}
+
+/// The team the member is in: who, and on which branch it works.
+fn context(texts: &TeamPrompts, run: &TeamRun<'_>) -> Result<String, TeamPromptError> {
+    let crew = run.team.crew();
+    let names = |role: Role| -> String {
+        let named: Vec<&str> = crew
+            .roster()
+            .into_iter()
+            .filter(|(of, _)| *of == role)
+            .map(|(_, member)| member.agent().name())
+            .collect();
+        if named.is_empty() {
+            NOBODY.to_owned()
+        } else {
+            named.join(", ")
+        }
+    };
+    let values = Variables::new()
+        .with("team", run.team.id().as_str())?
+        .with("coordinator", names(Role::Coordinator))?
+        .with("members", names(Role::Member))?
+        .with("workers", names(Role::Worker))?
+        .with("branch", run.branch.as_str())?
+        .with("base", run.base.as_str())?;
+    Ok(texts.render(TeamPrompt::Context, &values)?)
+}
+
+/// What a member whose sleep a message ended is told.
+fn wake(texts: &TeamPrompts, run: &TeamRun<'_>) -> Result<String, TeamPromptError> {
+    let values = Variables::new().with("team", run.team.id().as_str())?;
+    Ok(texts.render(TeamPrompt::Wake, &values)?)
+}
+
+/// What a resumed member is told when it is given `item`: the new branch, then the item.
+fn assignment(
+    texts: &TeamPrompts,
+    harness: &PromptTexts<'_>,
+    run: &TeamRun<'_>,
+    item: ItemId,
+) -> Result<Vec<String>, TeamPromptError> {
+    let listed = run
+        .team
+        .task_list()
+        .list()
+        .item(item)
+        .ok_or(TeamPromptError::NoSuchItem { item })?;
+    let values = Variables::new()
+        .with("item_id", item.to_string())?
+        .with("branch", run.branch.as_str())?
+        .with("base", run.base.as_str())?;
+    let mut sections = vec![texts.render(TeamPrompt::Assignment, &values)?];
+    sections.extend(item_sections(harness, listed)?);
+    Ok(sections)
+}
+
+/// What a worker is told when it is asked to serve `request`.
+fn delegation(texts: &TeamPrompts, request: &DelegationRequest) -> Result<String, TeamPromptError> {
+    let values = Variables::new()
+        .with("requester", request.from.as_str())?
+        .with("request_id", request.id.number().to_string())?
+        .with("requester_worktree", request.worktree.display().to_string())?
+        .with("requester_branch", request.branch.as_str())?
+        .with("request", &request.request)?
+        .with("context", &request.context)?;
+    Ok(texts.render(TeamPrompt::Delegation, &values)?)
 }
 
 #[cfg(test)]
