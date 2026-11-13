@@ -3,6 +3,7 @@
 //!
 //! The functions here are pure but for [`read`]: the owner reads and writes the files, these decide what is in them.
 
+use std::cell::RefCell;
 use std::io;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
@@ -94,19 +95,60 @@ pub(super) enum Refusal {
 /// [`Refusal::UnknownQuestions`] when an answer names a question the file does not have;
 /// [`Refusal::Incomplete`] when a question would be left without a verdict, or with `ok` and no recommendation.
 pub(super) fn apply(file: &QuestionsFile, answers: &AnswerList) -> Result<QuestionsFile, Refusal> {
-    let _ = (file, answers);
-    Ok(file.clone())
+    let unknown: Vec<NonZeroU32> = answers
+        .as_slice()
+        .iter()
+        .map(|answer| answer.question)
+        .filter(|question| file.entry(*question).is_none())
+        .collect();
+    if !unknown.is_empty() {
+        return Err(Refusal::UnknownQuestions { numbers: unknown });
+    }
+    let mut answered = file.clone();
+    for answer in answers.as_slice() {
+        // Every question was checked to be in the file above, so the file takes each verdict.
+        answered
+            .set_verdict(answer.question, Some(answer.verdict.clone()))
+            .map_err(|missing| Refusal::UnknownQuestions {
+                numbers: vec![missing.number],
+            })?;
+    }
+    if let Err(incomplete) = answered.answers() {
+        return Err(Refusal::Incomplete {
+            problems: incomplete.problems,
+        });
+    }
+    answered.mark_answered();
+    Ok(answered)
 }
 
 impl Refusal {
     /// The refusal of the request, telling the human what to fix; `file` is the file the answers were for.
     pub(super) fn failure(&self, file: &QuestionsFile) -> Failure {
-        let _ = file;
+        let message = match self {
+            Self::UnknownQuestions { numbers } => {
+                let named: Vec<String> = numbers.iter().map(ToString::to_string).collect();
+                format!("the questions file has no question {}", named.join(", "))
+            }
+            Self::Incomplete { problems } => format!("the answers are not complete:\n{}", describe(file, problems)),
+        };
         Failure {
             kind: FailureKind::Invalid,
-            message: String::new(),
+            message,
         }
     }
+}
+
+/// The questions of `problems`, one on each line: its number, its title and what is wrong.
+pub(super) fn describe(file: &QuestionsFile, problems: &[(NonZeroU32, AnswerProblem)]) -> String {
+    let lines: Vec<String> = problems
+        .iter()
+        .map(|(number, problem)| {
+            let title = file.entry(*number).map_or("", |entry| entry.title());
+            format!("- question {number} ({title}): {problem}")
+        })
+        .collect();
+    lines.join("\n")
 }
 
 /// Why a text of the questions cannot be made.
@@ -132,8 +174,10 @@ pub(super) fn with_instructions(
     texts: &QuestionsPrompts,
     task: &TaskId,
 ) -> Result<QuestionsFile, TextError> {
-    let _ = (texts, task);
-    Ok(file.clone())
+    let values = Variables::new().with("task_id", task.as_str())?;
+    let mut prepared = file.clone();
+    prepared.set_instructions(&texts.render(QuestionsPrompt::Instructions, &values)?);
+    Ok(prepared)
 }
 
 /// What a task is told when its questions of `round` were answered: the answered `file`, without the instructions and
@@ -146,8 +190,29 @@ pub(super) fn answers_prompt(
     round: NonZeroU32,
     texts: &QuestionsPrompts,
 ) -> Result<String, TextError> {
-    let _ = (file, round, texts);
-    Ok(String::new())
+    // `expand` takes words that cannot fail; a rendering that does is kept and reported after it.
+    let failed = RefCell::new(None);
+    let expanded = file.expand(|recommendation| {
+        let rendered = Variables::new()
+            .with("recommendation", recommendation)
+            .map_err(TextError::from)
+            .and_then(|values| {
+                texts
+                    .render(QuestionsPrompt::Accepted, &values)
+                    .map_err(TextError::from)
+            });
+        rendered.unwrap_or_else(|error| {
+            failed.borrow_mut().get_or_insert(error);
+            String::new()
+        })
+    })?;
+    if let Some(error) = failed.into_inner() {
+        return Err(error);
+    }
+    let values = Variables::new()
+        .with("round", round.to_string())?
+        .with("answers", expanded.trim_end())?;
+    Ok(texts.render(QuestionsPrompt::Answered, &values)?)
 }
 
 #[cfg(test)]
