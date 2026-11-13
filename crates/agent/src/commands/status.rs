@@ -79,8 +79,8 @@ pub(crate) fn render(teams: &[TeamSummary]) -> String {
             items.done,
         ));
         for member in &team.members {
-            let waiting = member.open_question.map_or_else(String::new, |round| {
-                format!(", round {round} of questions waits for answers")
+            let waiting = member.open_question.map_or_else(String::new, |number| {
+                format!(", questions number {number} wait for answers")
             });
             lines.push(format!(
                 "  {}  {:<role_width$}  {:<agent_width$}  {}{waiting}",

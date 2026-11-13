@@ -16,7 +16,7 @@ use agent_runtime::run::compose::{ComposeError, PromptTexts, item_sections};
 use agent_runtime::store::{StoreError, load_checks_record};
 use agent_runtime::text_file::{TextFileError, read_text_file};
 
-use super::super::start::{Context, next_round};
+use super::super::start::{Context, next_number};
 use crate::daemon::checks::{ChecksTextError, answered, relay};
 use crate::daemon::merge::{Decision, decision, exhausted};
 use crate::daemon::team::Why;
@@ -136,11 +136,11 @@ async fn checks_notice(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<Option<
     match member
         .questions()
         .iter()
-        .find(|question| question.round() == asked.round)
+        .find(|question| question.number() == asked.number)
     {
         None if !ran_since(asked.at) => {
-            let file = ctx.home.questions_file(task, asked.round);
-            Ok(Some(relay(texts, task, asked.round, &file)?))
+            let file = ctx.home.questions_file(task, asked.number);
+            Ok(Some(relay(texts, task, asked.number, &file)?))
         }
         Some(question) => match question.state() {
             QuestionState::Answered { at, .. } if !ran_since(*at) => Ok(Some(answered(texts)?)),
@@ -205,7 +205,7 @@ pub(super) async fn ask_human(
     else {
         return Ok(None);
     };
-    let Some(round) = next_round(found.member) else {
+    let Some(number) = next_number(found.member) else {
         return Ok(None);
     };
     let mut findings = Vec::new();
@@ -219,13 +219,13 @@ pub(super) async fn ask_human(
         let kept = count(progress.fix_passes().len());
         findings.extend(reports_of(ctx, texts, reviews, waits.pr.number, kept).await?);
     }
-    let file = ctx.home.questions_file(found.member.task(), round);
+    let file = ctx.home.questions_file(found.member.task(), number);
     let values = Variables::new()
         .with("pr", waits.pr.number.to_string())?
         .with("passes", waits.passes.to_string())?
         .with("findings", findings.join("\n\n"))?
         .with("questions_file", file.display().to_string())?
-        .with("round", round.to_string())?
+        .with("number", number.to_string())?
         .with("task", found.member.task().as_str())?;
     Ok(Some(
         texts
@@ -321,7 +321,7 @@ pub(super) async fn review_request(
         .with("branch", pr.branch.as_str())?
         .with("base", base.as_str())?
         .with("head", head.as_str())?
-        .with("round", first.fix_passes().len().saturating_add(1).to_string())?;
+        .with("pass", first.fix_passes().len().saturating_add(1).to_string())?;
     let mut sections = vec![texts.render(AutopilotPrompt::ReviewRequest, &values)?];
     let harness = PromptTexts {
         harness: ctx.texts,

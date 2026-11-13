@@ -41,10 +41,10 @@ mod home_layout {
 
     #[test]
     fn a_questions_file_is_numbered_by_its_round_in_the_directory_of_its_task() {
-        let round = NonZeroU32::new(3).unwrap();
+        let number = NonZeroU32::new(3).unwrap();
 
         assert_eq!(
-            home().questions_file(&task(), round),
+            home().questions_file(&task(), number),
             PathBuf::from("/srv/agents-home/tasks/task-20261111-153601-k3x9/questions-3.md")
         );
     }

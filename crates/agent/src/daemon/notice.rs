@@ -18,14 +18,14 @@ use agent_runtime::notify::{InvalidNotification, Notification};
 pub(super) enum Notice {
     /// The agent wrote questions for the human.
     Questions {
-        /// The round.
-        round: NonZeroU32,
+        /// The number of the questions.
+        number: NonZeroU32,
         /// The questions file.
         file: PathBuf,
     },
     /// The agent ended with questions, but their file cannot be used.
     QuestionsMissing {
-        /// The questions file the round should have.
+        /// The questions file the questions should have.
         file: PathBuf,
         /// What is wrong with it.
         reason: String,
@@ -98,10 +98,10 @@ impl Notice {
         let common = Variables::new().with("agent", agent)?.with("task", task.as_str())?;
         let (text, values) = match self {
             Self::Prepared(notification) => return Ok(notification.clone()),
-            Self::Questions { round, file } => (
+            Self::Questions { number, file } => (
                 HarnessPrompt::NoticeQuestions,
                 common
-                    .with("round", round.to_string())?
+                    .with("number", number.to_string())?
                     .with("file", file.display().to_string())?,
             ),
             Self::QuestionsMissing { file, reason } => (

@@ -27,10 +27,10 @@ async fn next(events: &mut Saves) -> Saved {
     }
 }
 
-fn saved(n: u32, round: u32) -> Saved {
+fn saved(n: u32, number: u32) -> Saved {
     Saved {
         task: task(n),
-        round: NonZeroU32::new(round).unwrap(),
+        number: NonZeroU32::new(number).unwrap(),
     }
 }
 
@@ -60,8 +60,8 @@ async fn other_files_of_the_directory_are_not_reported() {
     let (_home, dir, _watcher, mut events) = watching();
 
     std::fs::write(dir.join("activity.jsonl"), "{}").unwrap();
-    std::fs::write(dir.join("questions-x.md"), "no round").unwrap();
-    std::fs::write(dir.join("questions-0.md"), "round 0").unwrap();
+    std::fs::write(dir.join("questions-x.md"), "no number").unwrap();
+    std::fs::write(dir.join("questions-0.md"), "number 0").unwrap();
     std::fs::write(dir.join("questions-3.md"), "text").unwrap();
 
     // Events come in the order the files were written: the first one reported is the only file that is a questions file.
@@ -176,11 +176,11 @@ async fn a_file_saved_again_after_the_owner_took_it_is_queued_again() {
 
 // ---- the queue is bounded, and what it cannot hold is read again -------------------------------------------------
 
-/// What the system says when `round` of the questions file of task `n` was written.
-fn written(n: u32, round: u32) -> notify::Event {
+/// What the system says when the questions file number `number` of task `n` was written.
+fn written(n: u32, number: u32) -> notify::Event {
     let path = PathBuf::from("/home")
         .join(task(n).as_str())
-        .join(format!("questions-{round}.md"));
+        .join(format!("questions-{number}.md"));
     notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::File)).add_path(path)
 }
 
@@ -201,8 +201,8 @@ async fn nothing_more(saves: &mut Saves) {
 async fn a_flood_of_saves_of_different_files_does_not_fill_the_queue_without_end() {
     let (reporter, mut saves) = channel();
     let flood = 1_000;
-    for round in 1..=flood {
-        reporter.event(Ok(written(1, round)));
+    for number in 1..=flood {
+        reporter.event(Ok(written(1, number)));
     }
     drop(reporter);
 
@@ -226,8 +226,8 @@ async fn a_flood_of_saves_of_different_files_does_not_fill_the_queue_without_end
 #[tokio::test(start_paused = true)]
 async fn what_the_queue_could_not_hold_is_told_as_a_rescan_after_the_saves() {
     let (reporter, mut saves) = channel();
-    for round in 1..=1_000 {
-        reporter.event(Ok(written(1, round)));
+    for number in 1..=1_000 {
+        reporter.event(Ok(written(1, number)));
     }
 
     let mut last = None;

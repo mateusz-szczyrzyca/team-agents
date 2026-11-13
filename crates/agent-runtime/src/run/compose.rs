@@ -57,10 +57,10 @@ pub struct PromptInput<'a> {
     pub repo: &'a RepoName,
     /// The git worktree the agent works in.
     pub worktree: &'a Path,
-    /// The file the agent writes its next round of questions to.
+    /// The file the agent writes its next questions to.
     pub questions_file: &'a Path,
-    /// The number of that round.
-    pub round: NonZeroU32,
+    /// The number of those questions.
+    pub number: NonZeroU32,
     /// The brief of the task list; may be empty.
     pub brief: &'a str,
     /// The item the agent works on, if it has one.
@@ -126,7 +126,7 @@ fn first_sections(texts: &PromptTexts<'_>, input: &PromptInput<'_>) -> Result<Ve
         .with("repo", input.repo.as_str())?
         .with("worktree", input.worktree.display().to_string())?
         .with("questions_file", input.questions_file.display().to_string())?
-        .with("round", input.round.to_string())?;
+        .with("number", input.number.to_string())?;
     let mut sections = vec![
         texts.harness.render(HarnessPrompt::Context, &context)?,
         texts.harness.render(role_prompt(input.role), &Variables::new())?,

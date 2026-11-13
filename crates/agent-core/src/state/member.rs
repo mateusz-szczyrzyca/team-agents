@@ -137,7 +137,7 @@ impl CheckedMut<'_, Member> {
     /// See [`Member::ask_question`].
     ///
     /// # Errors
-    /// [`QuestionError`]: the last round is open, the round is not the next one, or the rounds are exhausted.
+    /// [`QuestionError`]: the last questions are open, their number is not the next one, or the numbers are used up.
     pub fn ask_question(&mut self, question: Question) -> Result<(), QuestionError> {
         self.value.ask_question(question)
     }
@@ -145,47 +145,52 @@ impl CheckedMut<'_, Member> {
     /// See [`Member::answer_question`].
     ///
     /// # Errors
-    /// [`QuestionError::NoSuchRound`], [`QuestionError::AlreadyAnswered`], or
+    /// [`QuestionError::NoSuchQuestions`], [`QuestionError::AlreadyAnswered`], or
     /// [`QuestionError::AnswerBeforeQuestion`].
-    pub fn answer_question(&mut self, round: NonZeroU32, at: Timestamp, via: AnsweredVia) -> Result<(), QuestionError> {
-        self.value.answer_question(round, at, via)
+    pub fn answer_question(
+        &mut self,
+        number: NonZeroU32,
+        at: Timestamp,
+        via: AnsweredVia,
+    ) -> Result<(), QuestionError> {
+        self.value.answer_question(number, at, via)
     }
 }
 
-/// Why a round of questions could not be added or answered.
+/// Why questions could not be added or answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum QuestionError {
-    /// The last round is still open: answer it first.
-    #[error("round {round} of the questions is still open")]
+    /// The last questions are still open: answer them first.
+    #[error("questions number {number} are still open")]
     StillOpen {
-        /// The open round.
-        round: NonZeroU32,
+        /// The number of the open questions.
+        number: NonZeroU32,
     },
-    /// Rounds count 1, 2, 3, …: this is not the next one.
-    #[error("the next round of questions is {expected}, not {got}")]
-    WrongRound {
-        /// The next round.
+    /// Questions are numbered 1, 2, 3, …: this is not the next number.
+    #[error("the next questions number is {expected}, not {got}")]
+    WrongNumber {
+        /// The next number.
         expected: NonZeroU32,
-        /// The refused round.
+        /// The refused number.
         got: NonZeroU32,
     },
-    /// The last possible round was asked and answered: there is no round after it to count.
-    #[error("round {last} of the questions was the last possible round; the task cannot ask another")]
-    RoundsExhausted {
-        /// The last round, the largest number a round can have.
+    /// The last possible number was asked and answered: there is no number after it.
+    #[error("questions number {last} was the last possible number; the task cannot ask more")]
+    NumbersExhausted {
+        /// The last number, the largest a questions file can have.
         last: NonZeroU32,
     },
-    /// The task has no such round.
-    #[error("the task has no round {round} of questions")]
-    NoSuchRound {
-        /// The round asked for.
-        round: NonZeroU32,
+    /// The task has no such questions.
+    #[error("the task has no questions number {number}")]
+    NoSuchQuestions {
+        /// The number asked for.
+        number: NonZeroU32,
     },
-    /// The round was answered already.
-    #[error("round {round} of the questions is already answered")]
+    /// The questions were answered already.
+    #[error("questions number {number} are already answered")]
     AlreadyAnswered {
-        /// The round.
-        round: NonZeroU32,
+        /// The number of the questions.
+        number: NonZeroU32,
     },
     /// The answer is earlier than the question.
     #[error(transparent)]
@@ -242,12 +247,12 @@ impl Member {
 
     getter!("The runs, oldest first.", pub fn runs(&self) -> &[Run] = &self.runs);
 
-    getter!("The rounds of questions, oldest first.", pub fn questions(&self) -> &[Question] = &self.questions);
+    getter!("The questions asked, oldest first.", pub fn questions(&self) -> &[Question] = &self.questions);
 
     getter!("The run that is going, if one is.", pub fn current_run(&self) -> Option<&Run> = self.runs.last().filter(|run| run.is_running()));
 
     getter!(
-        "The round of questions that waits for the human, if there is one.",
+        "The questions that wait for the human, if there are any.",
         pub fn open_question(&self) -> Option<&Question> = self.questions.last().filter(|question| question.is_open())
     );
 
@@ -307,52 +312,58 @@ impl Member {
             .ok_or(RunError::NotRunning)
     }
 
-    /// Records that a round of questions was put to the human.
+    /// Records that questions were put to the human.
     ///
     /// # Errors
-    /// [`QuestionError::StillOpen`] when the last round is open; [`QuestionError::WrongRound`] when the round is not
-    /// the next one; [`QuestionError::RoundsExhausted`] when the last round is the largest a round can be.
+    /// [`QuestionError::StillOpen`] when the last questions are open; [`QuestionError::WrongNumber`] when the number is
+    /// not the next one; [`QuestionError::NumbersExhausted`] when the last number is the largest there is.
     pub fn ask_question(&mut self, question: Question) -> Result<(), QuestionError> {
         check_next_question(self.questions.last(), &question)?;
         self.questions.push(question);
         Ok(())
     }
 
-    /// Records the human's answer to a round of questions.
+    /// Records the human's answer to questions.
     ///
     /// # Errors
-    /// [`QuestionError::NoSuchRound`], [`QuestionError::AlreadyAnswered`], or
+    /// [`QuestionError::NoSuchQuestions`], [`QuestionError::AlreadyAnswered`], or
     /// [`QuestionError::AnswerBeforeQuestion`].
-    pub fn answer_question(&mut self, round: NonZeroU32, at: Timestamp, via: AnsweredVia) -> Result<(), QuestionError> {
+    pub fn answer_question(
+        &mut self,
+        number: NonZeroU32,
+        at: Timestamp,
+        via: AnsweredVia,
+    ) -> Result<(), QuestionError> {
         let question = self
             .questions
             .iter_mut()
-            .find(|question| question.round() == round)
-            .ok_or(QuestionError::NoSuchRound { round })?;
+            .find(|question| question.number() == number)
+            .ok_or(QuestionError::NoSuchQuestions { number })?;
         if !question.is_open() {
-            return Err(QuestionError::AlreadyAnswered { round });
+            return Err(QuestionError::AlreadyAnswered { number });
         }
         question.answer(at, via)?;
         Ok(())
     }
 }
 
-/// Checks that `question` may follow `last`, the latest round so far: it is answered and `question` is the next round.
+/// Checks that `question` may follow `last`, the latest questions so far: they are answered and `question` has the next
+/// number.
 fn check_next_question(last: Option<&Question>, question: &Question) -> Result<(), QuestionError> {
     if let Some(open) = last.filter(|last| last.is_open()) {
-        return Err(QuestionError::StillOpen { round: open.round() });
+        return Err(QuestionError::StillOpen { number: open.number() });
     }
     let expected = match last {
         None => NonZeroU32::MIN,
         Some(last) => last
-            .round()
+            .number()
             .checked_add(1)
-            .ok_or(QuestionError::RoundsExhausted { last: last.round() })?,
+            .ok_or(QuestionError::NumbersExhausted { last: last.number() })?,
     };
-    if question.round() != expected {
-        return Err(QuestionError::WrongRound {
+    if question.number() != expected {
+        return Err(QuestionError::WrongNumber {
             expected,
-            got: question.round(),
+            got: question.number(),
         });
     }
     Ok(())
@@ -378,7 +389,7 @@ fn check_runs(task: &TaskId, runs: &[Run]) -> Result<(), MemberError> {
     Ok(())
 }
 
-/// Checks the rounds of questions of task `task`: they count 1, 2, 3, … and only the last may be open.
+/// Checks the questions of task `task`: they are numbered 1, 2, 3, … and only the last may be open.
 fn check_questions(task: &TaskId, questions: &[Question]) -> Result<(), MemberError> {
     let mut previous: Option<&Question> = None;
     for question in questions {
@@ -446,11 +457,11 @@ mod tests {
         member(1, normal("codex-1"))
     }
 
-    /// Questions of round `round` asked at `seconds`.
-    fn asked(round: u32, seconds: u32) -> Question {
+    /// Questions number `number` asked at `seconds`.
+    fn asked(number: u32, seconds: u32) -> Question {
         Question::new(
-            nz(round),
-            path(&format!("/home/u/tasks/task-1/questions-{round}.md")),
+            nz(number),
+            path(&format!("/home/u/tasks/task-1/questions-{number}.md")),
             at(seconds),
         )
     }
@@ -670,13 +681,13 @@ mod tests {
         let mut member = codex();
 
         member.ask_question(asked(1, 5)).unwrap();
-        assert_eq!(member.open_question().map(Question::round), Some(nz(1)));
+        assert_eq!(member.open_question().map(Question::number), Some(nz(1)));
         member.answer_question(nz(1), at(9), AnsweredVia::Command).unwrap();
         assert!(member.open_question().is_none());
         member.ask_question(asked(2, 20)).unwrap();
 
         assert_eq!(member.questions().len(), 2);
-        assert_eq!(member.open_question().map(Question::round), Some(nz(2)));
+        assert_eq!(member.open_question().map(Question::number), Some(nz(2)));
     }
 
     #[test]
@@ -686,7 +697,7 @@ mod tests {
 
         let err = member.ask_question(asked(2, 6)).unwrap_err();
 
-        assert_eq!(err, QuestionError::StillOpen { round: nz(1) });
+        assert_eq!(err, QuestionError::StillOpen { number: nz(1) });
         assert_eq!(member.questions().len(), 1);
     }
 
@@ -695,7 +706,7 @@ mod tests {
         let mut member = codex();
         assert_eq!(
             member.ask_question(asked(2, 5)),
-            Err(QuestionError::WrongRound {
+            Err(QuestionError::WrongNumber {
                 expected: nz(1),
                 got: nz(2)
             })
@@ -706,7 +717,7 @@ mod tests {
         for wrong in [1, 3] {
             assert_eq!(
                 member.ask_question(asked(wrong, 7)),
-                Err(QuestionError::WrongRound {
+                Err(QuestionError::WrongNumber {
                     expected: nz(2),
                     got: nz(wrong)
                 })
@@ -720,7 +731,7 @@ mod tests {
         let mut member = codex();
         assert_eq!(
             member.answer_question(nz(1), at(6), AnsweredVia::Command),
-            Err(QuestionError::NoSuchRound { round: nz(1) })
+            Err(QuestionError::NoSuchQuestions { number: nz(1) })
         );
         member.ask_question(asked(1, 5)).unwrap();
 
@@ -729,7 +740,7 @@ mod tests {
         assert_eq!(
             early,
             QuestionError::AnswerBeforeQuestion(AnswerBeforeQuestion {
-                round: nz(1),
+                number: nz(1),
                 asked_at: at(5),
                 answered_at: at(4)
             })
@@ -738,11 +749,11 @@ mod tests {
         member.answer_question(nz(1), at(6), AnsweredVia::Command).unwrap();
         assert_eq!(
             member.answer_question(nz(1), at(7), AnsweredVia::SavedFile),
-            Err(QuestionError::AlreadyAnswered { round: nz(1) })
+            Err(QuestionError::AlreadyAnswered { number: nz(1) })
         );
         assert_eq!(
             member.answer_question(nz(2), at(7), AnsweredVia::SavedFile),
-            Err(QuestionError::NoSuchRound { round: nz(2) })
+            Err(QuestionError::NoSuchQuestions { number: nz(2) })
         );
         let kept = member.questions().first().map(|q| q.state().clone());
         assert_eq!(
@@ -852,7 +863,7 @@ mod tests {
             Member::try_from(skipping),
             Err(MemberError::Questions {
                 task: task(1),
-                source: QuestionError::WrongRound {
+                source: QuestionError::WrongNumber {
                     expected: nz(2),
                     got: nz(3)
                 }
@@ -862,7 +873,7 @@ mod tests {
             Member::try_from(open_first),
             Err(MemberError::Questions {
                 task: task(1),
-                source: QuestionError::StillOpen { round: nz(1) }
+                source: QuestionError::StillOpen { number: nz(1) }
             })
         );
     }
@@ -878,7 +889,7 @@ mod tests {
         assert_refused::<Member>(&status);
     }
 
-    // ---- the last possible round --------------------------------------------------------------------------------
+    // ---- the last possible number -------------------------------------------------------------------------------
 
     #[test]
     fn after_the_last_possible_round_has_been_answered_no_further_round_is_accepted() {
@@ -887,7 +898,7 @@ mod tests {
 
         let err = check_next_question(Some(&last), &asked(u32::MAX, 30)).unwrap_err();
 
-        assert_eq!(err, QuestionError::RoundsExhausted { last: nz(u32::MAX) });
+        assert_eq!(err, QuestionError::NumbersExhausted { last: nz(u32::MAX) });
     }
 
     #[test]
@@ -898,7 +909,7 @@ mod tests {
         assert_eq!(check_next_question(Some(&before), &asked(u32::MAX, 30)), Ok(()));
         assert_eq!(
             check_next_question(Some(&before), &asked(u32::MAX - 1, 30)),
-            Err(QuestionError::WrongRound {
+            Err(QuestionError::WrongNumber {
                 expected: nz(u32::MAX),
                 got: nz(u32::MAX - 1)
             })

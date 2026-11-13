@@ -26,7 +26,7 @@ go on, go on.
 
 ## Questions for the human
 
-When you cannot go on without an answer, write the questions to `{{questions_file}}` (round {{round}}) in exactly
+When you cannot go on without an answer, write the questions to `{{questions_file}}` (questions number {{number}}) in exactly
 this format, then end your turn with `STATUS: QUESTIONS` and do nothing else:
 
 ```

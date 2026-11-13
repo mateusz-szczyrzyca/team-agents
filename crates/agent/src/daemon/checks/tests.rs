@@ -471,7 +471,7 @@ async fn the_lead_is_told_which_file_holds_the_questions_and_to_end_with_questio
     let text = relay(&texts, &task(), number(3), Path::new("/home/tasks/questions-3.md")).unwrap();
 
     assert!(text.contains("`/home/tasks/questions-3.md`"), "{text}");
-    assert!(text.contains("round 3"), "{text}");
+    assert!(text.contains("questions number 3"), "{text}");
     assert!(text.contains(task().as_str()), "{text}");
     assert!(text.contains("STATUS: QUESTIONS"), "{text}");
 }

@@ -39,7 +39,7 @@ fn a_task_with_questions_says_which_round_waits() {
 
     assert!(
         text.contains(
-            "  task-20261111-153002-k3x9  member       claude-1   queued, round 2 of questions waits for answers\n"
+            "  task-20261111-153002-k3x9  member       claude-1   queued, questions number 2 wait for answers\n"
         ),
         "{text}"
     );

@@ -97,11 +97,11 @@ pub(super) fn answers(given: &[(u32, &str)]) -> AnswerList {
     .unwrap()
 }
 
-/// The request that answers round `round` of task `task_number`.
-pub(super) fn answer(task_number: u32, round: u32, given: &[(u32, &str)]) -> Command {
+/// The request that answers questions number `number` of task `task_number`.
+pub(super) fn answer(task_number: u32, number: u32, given: &[(u32, &str)]) -> Command {
     Command::Answer(AnswerRequest {
         task: task(task_number),
-        round: n(round),
+        number: n(number),
         answers: answers(given),
     })
 }
@@ -448,9 +448,9 @@ impl Daemon {
             .collect()
     }
 
-    /// The questions file of round `round` of task `n`.
-    pub(super) fn questions_file(&self, n: u32, round: u32) -> PathBuf {
-        self.home.questions_file(&task(n), self::n(round))
+    /// The questions file number `number` of task `n`.
+    pub(super) fn questions_file(&self, n: u32, number: u32) -> PathBuf {
+        self.home.questions_file(&task(n), self::n(number))
     }
 
     /// Subscribes to the events of every team.

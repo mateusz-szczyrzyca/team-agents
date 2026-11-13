@@ -2,7 +2,7 @@
 //!
 //! One watch per task directory that holds an open question, not recursive, so the activity of the runs of other tasks
 //! never wakes it. An editor saves by writing in place or by renaming a new file over the old one; both are seen. What
-//! is told is only *that* `questions-<round>.md` of a task was written: the owner reads the file and decides. The queue
+//! is told is only *that* `questions-<number>.md` of a task was written: the owner reads the file and decides. The queue
 //! of saves is bounded; when it is full, or the system reports an error, the owner is told to read every open file.
 
 use std::collections::VecDeque;
@@ -18,8 +18,8 @@ use tokio::sync::mpsc;
 pub(in crate::daemon) struct Saved {
     /// The task whose file it is.
     pub(in crate::daemon) task: TaskId,
-    /// The round of the file.
-    pub(in crate::daemon) round: NonZeroU32,
+    /// The number of the questions file.
+    pub(in crate::daemon) number: NonZeroU32,
 }
 
 /// Why a directory cannot be watched.
@@ -46,7 +46,7 @@ pub(in crate::daemon) enum WatchError {
     },
 }
 
-/// The prefix and the suffix of the name of a questions file: `questions-<round>.md`.
+/// The prefix and the suffix of the name of a questions file: `questions-<number>.md`.
 const FILE_PREFIX: &str = "questions-";
 
 /// See [`FILE_PREFIX`].
@@ -261,18 +261,18 @@ const fn writes(kind: notify::EventKind) -> bool {
     }
 }
 
-/// The task and the round of the file at `path`, when it is `<task>/questions-<round>.md`.
+/// The task and the number of the file at `path`, when it is `<task>/questions-<number>.md`.
 fn saved_file(path: &Path) -> Option<Saved> {
     let name = path.file_name()?.to_str()?;
     // A name or a directory that is not a questions file of a task is not an error: the directory has other files, and
     // the watch tells only about these.
-    let round = name
+    let number = name
         .strip_prefix(FILE_PREFIX)?
         .strip_suffix(FILE_SUFFIX)?
         .parse::<NonZeroU32>()
         .ok()?;
     let task = path.parent()?.file_name()?.to_str()?.parse::<TaskId>().ok()?;
-    Some(Saved { task, round })
+    Some(Saved { task, number })
 }
 
 #[cfg(test)]

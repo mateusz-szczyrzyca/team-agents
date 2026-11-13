@@ -1,6 +1,6 @@
 //! `agent answer`: answers the questions of a task, in an editor or from a file.
 //!
-//! The daemon keeps the questions file of the open round; this command finds out which it is (`show`), takes your
+//! The daemon keeps the questions file that waits for answers; this command finds out which it is (`show`), takes your
 //! answers from the file you give (`--file`) or from that file after your editor is done, and sends the verdicts it
 //! finds. The daemon checks them against the questions, puts them into the file and queues the task. A file saved with
 //! the `**ANSWERED**` marker is taken by the daemon by itself, so the answers may be taken already when the editor ends.
@@ -123,11 +123,11 @@ pub(crate) enum AnswerError {
     Output(#[source] io::Error),
 }
 
-/// The round of questions a task waits for answers to.
-struct OpenRound {
-    /// The round.
-    round: NonZeroU32,
-    /// The questions file of the round.
+/// The questions a task waits for answers to.
+struct WaitingQuestions {
+    /// The number of the questions.
+    number: NonZeroU32,
+    /// The questions file.
     file: PathBuf,
 }
 
@@ -136,16 +136,16 @@ struct OpenRound {
 enum Origin {
     /// A file the human named: nothing else can have taken the answers.
     File,
-    /// The questions file of the round, edited now: the daemon may have taken it when the human saved it.
+    /// The questions file, edited now: the daemon may have taken it when the human saved it.
     Editor,
 }
 
-/// The answers of one round on their way to the daemon.
+/// The answers to one questions file on their way to the daemon.
 struct Delivery<'a> {
     /// The task.
     task: TaskId,
-    /// The round the answers are for.
-    open: &'a OpenRound,
+    /// The questions the answers are for.
+    open: &'a WaitingQuestions,
     /// Where they come from.
     origin: Origin,
 }
@@ -160,7 +160,7 @@ pub(crate) async fn answer(
     source: Source,
     out: &mut impl Write,
 ) -> Result<(), AnswerError> {
-    let open = open_round(connection, &task)
+    let open = waiting_questions(connection, &task)
         .await?
         .map_err(|status| AnswerError::NotWaiting {
             task: task.clone(),
@@ -171,9 +171,9 @@ pub(crate) async fn answer(
         Source::Editor(editor) => {
             run_editor(&editor, &open.file).await?;
             // The daemon takes a file saved with the marker by itself: the answers may be taken already.
-            let still_open = open_round(connection, &task)
+            let still_open = waiting_questions(connection, &task)
                 .await?
-                .is_ok_and(|now| now.round == open.round);
+                .is_ok_and(|now| now.number == open.number);
             if !still_open {
                 return taken(&task, out);
             }
@@ -201,15 +201,15 @@ async fn send(
     let task = task.clone();
     let request = Command::Answer(AnswerRequest {
         task: task.clone(),
-        round: open.round,
+        number: open.number,
         answers: list,
     });
     match connection.request(Client::Cli, request).await {
         Ok(Reply::Applied { .. }) => say(
             out,
             &format!(
-                "Answered round {} of {task}: it goes on with your answers.\n",
-                open.round
+                "Answered questions number {} of {task}: it goes on with your answers.\n",
+                open.number
             ),
         ),
         Ok(other) => Err(AnswerError::UnexpectedReply {
@@ -222,9 +222,9 @@ async fn send(
         }),
         // The save that took the answers can land between the look after the editor and the answer.
         Err(ClientError::Refused(failure)) if *origin == Origin::Editor && failure.kind == FailureKind::Conflict => {
-            let still_open = open_round(connection, &task)
+            let still_open = waiting_questions(connection, &task)
                 .await?
-                .is_ok_and(|now| now.round == open.round);
+                .is_ok_and(|now| now.number == open.number);
             if still_open {
                 return Err(ClientError::Refused(failure).into());
             }
@@ -248,8 +248,11 @@ fn say(out: &mut impl Write, text: &str) -> Result<(), AnswerError> {
     out.flush().map_err(AnswerError::Output)
 }
 
-/// The round `task` waits for answers to, or the status it has instead.
-async fn open_round(connection: &mut Connection, task: &TaskId) -> Result<Result<OpenRound, TaskStatus>, AnswerError> {
+/// The questions `task` waits for answers to, or the status it has instead.
+async fn waiting_questions(
+    connection: &mut Connection,
+    task: &TaskId,
+) -> Result<Result<WaitingQuestions, TaskStatus>, AnswerError> {
     let reply = connection
         .request(
             Client::Cli,
@@ -267,11 +270,11 @@ async fn open_round(connection: &mut Connection, task: &TaskId) -> Result<Result
     Ok(asked(&member))
 }
 
-/// The open round of `member`, or its status when it asks nothing.
-fn asked(member: &Member) -> Result<OpenRound, TaskStatus> {
+/// The open questions of `member`, or its status when it asks nothing.
+fn asked(member: &Member) -> Result<WaitingQuestions, TaskStatus> {
     match member.open_question() {
-        Some(question) if member.status() == TaskStatus::Questions => Ok(OpenRound {
-            round: question.round(),
+        Some(question) if member.status() == TaskStatus::Questions => Ok(WaitingQuestions {
+            number: question.number(),
             file: question.file().as_path().to_path_buf(),
         }),
         Some(_) | None => Err(member.status()),

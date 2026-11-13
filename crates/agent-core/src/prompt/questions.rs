@@ -36,7 +36,7 @@ impl QuestionsPrompt {
         match self {
             Self::Instructions => PromptSpec::new("harness/questions/instructions.md", Audience::Human, &["task_id"]),
             Self::Accepted => PromptSpec::new("harness/questions/accepted.md", Audience::Model, &["recommendation"]),
-            Self::Answered => PromptSpec::new("harness/questions/answered.md", Audience::Model, &["round", "answers"]),
+            Self::Answered => PromptSpec::new("harness/questions/answered.md", Audience::Model, &["number", "answers"]),
             Self::NoticeIncomplete => PromptSpec::new(
                 "harness/questions/notice-incomplete.md",
                 Audience::Human,

@@ -102,17 +102,19 @@ pub enum EventKind {
         team: TeamId,
         /// The task.
         task: TaskId,
-        /// The round.
-        round: NonZeroU32,
+        /// The number of the questions. Written as `round` in protocol version 1.
+        #[serde(rename = "round")]
+        number: NonZeroU32,
     },
-    /// The human answered a round of questions.
+    /// The human answered questions.
     QuestionAnswered {
         /// The team.
         team: TeamId,
         /// The task.
         task: TaskId,
-        /// The round.
-        round: NonZeroU32,
+        /// The number of the questions. Written as `round` in protocol version 1.
+        #[serde(rename = "round")]
+        number: NonZeroU32,
         /// Through which channel the answers came.
         via: AnsweredVia,
     },
@@ -269,7 +271,7 @@ mod tests {
                 EventKind::QuestionAsked {
                     team: team_id(1),
                     task: task(2),
-                    round: NonZeroU32::MIN,
+                    number: NonZeroU32::MIN,
                 },
                 json!({"kind": "question_asked", "team": TEAM, "task": TASK, "round": 1}),
             ),
@@ -277,7 +279,7 @@ mod tests {
                 EventKind::QuestionAnswered {
                     team: team_id(1),
                     task: task(2),
-                    round: NonZeroU32::MIN,
+                    number: NonZeroU32::MIN,
                     via: AnsweredVia::Dashboard,
                 },
                 json!({"kind": "question_answered", "team": TEAM, "task": TASK, "round": 1, "via": "dashboard"}),

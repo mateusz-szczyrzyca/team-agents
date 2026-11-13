@@ -155,7 +155,7 @@ mod state_file {
             }
         );
         let asking = state.find_task(&task(11)).unwrap().member;
-        assert_eq!(asking.open_question().map(|q| q.round().get()), Some(1));
+        assert_eq!(asking.open_question().map(|q| q.number().get()), Some(1));
     }
 
     #[test]

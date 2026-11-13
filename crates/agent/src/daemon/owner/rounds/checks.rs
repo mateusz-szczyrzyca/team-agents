@@ -19,7 +19,7 @@ use agent_runtime::git::Revision;
 use agent_runtime::notify::Notification;
 use agent_runtime::text_file::replace_text_file;
 
-use super::super::start::next_round;
+use super::super::start::next_number;
 use super::super::{Notice, Owner, OwnerError};
 use super::publish::{Ready, Site};
 use super::{Announcement, Lead, PublishError, Pulls};
@@ -154,18 +154,18 @@ impl Owner {
                 Ok(Some(Held::WakeLead))
             }
             ChecksStep::AskHuman { reason } => {
-                let round = self
+                let number = self
                     .parts
                     .state
                     .find_task(&lead.task)
-                    .and_then(|found| next_round(found.member))
-                    .ok_or(PublishError::Rounds)?;
+                    .and_then(|found| next_number(found.member))
+                    .ok_or(PublishError::QuestionNumbers)?;
                 let asked = questions(pulls.checks(), team, &lead.task, &issues, reason, checking.passes())?;
-                let file = self.parts.store.home().questions_file(&lead.task, round);
+                let file = self.parts.store.home().questions_file(&lead.task, number);
                 replace_text_file(&file, &asked.file.render(), QUESTIONS_FILE_MODE).await?;
                 record.sent = None;
                 record.asked = Some(Asked {
-                    round,
+                    number,
                     at: now,
                     items: reviewing.items.to_vec(),
                     subjects: asked.subjects,
@@ -222,7 +222,7 @@ impl Owner {
                 .member
                 .questions()
                 .iter()
-                .find(|question| question.round() == asked.round)
+                .find(|question| question.number() == asked.number)
             {
                 Some(question) if question.is_open() => Asking::Open,
                 Some(question) => Asking::Answered(question.file().as_path().to_path_buf()),

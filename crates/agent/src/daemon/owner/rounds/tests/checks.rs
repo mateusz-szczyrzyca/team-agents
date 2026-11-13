@@ -126,7 +126,7 @@ async fn answer(rig: &Rig, task: &TaskId, round: u32, text: &str) {
             Client::Cli,
             Command::Answer(AnswerRequest {
                 task: task.clone(),
-                round: NonZeroU32::new(round).unwrap(),
+                number: NonZeroU32::new(round).unwrap(),
                 answers,
             }),
         )
@@ -606,7 +606,7 @@ async fn each_question_is_answered_for_its_own_file_and_only_what_was_refused_go
             Client::Cli,
             Command::Answer(AnswerRequest {
                 task: tasks[0].clone(),
-                round: NonZeroU32::MIN,
+                number: NonZeroU32::MIN,
                 answers,
             }),
         )

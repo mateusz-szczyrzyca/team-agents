@@ -99,7 +99,7 @@ mod checks_record {
         record.set_passes(&[item("1.1")], 1);
         record.allow(&[item("1.1")], &[file("tests/a.rs"), Subject::NoTests]);
         record.asked = Some(Asked {
-            round: NonZeroU32::new(2).unwrap(),
+            number: NonZeroU32::new(2).unwrap(),
             at: at("2026-11-13T10:00:00Z"),
             items: vec![item("1.1")],
             subjects: vec![file("tests/a.rs")],

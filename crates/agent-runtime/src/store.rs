@@ -213,10 +213,10 @@ impl Home {
         self.task_dir(task).join(format!("review-pr{pr}-pass{pass}.md"))
     }
 
-    /// The questions file of round `round` of `task`, in the task's directory.
+    /// The questions file number `number` of `task`, in the task's directory.
     #[must_use]
-    pub fn questions_file(&self, task: &TaskId, round: NonZeroU32) -> PathBuf {
-        self.task_dir(task).join(format!("questions-{round}.md"))
+    pub fn questions_file(&self, task: &TaskId, number: NonZeroU32) -> PathBuf {
+        self.task_dir(task).join(format!("questions-{number}.md"))
     }
 }
 

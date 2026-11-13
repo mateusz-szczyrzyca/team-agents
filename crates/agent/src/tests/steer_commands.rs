@@ -87,7 +87,7 @@ fn nz(number: u32) -> NonZeroU32 {
     NonZeroU32::new(number).unwrap()
 }
 
-/// A state in which task 1 asked round 1, whose file is `file`.
+/// A state in which task 1 asked questions number 1, whose file is `file`.
 fn asking(file: &Path) -> State {
     let mut state = solo_state();
     let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
@@ -322,11 +322,14 @@ async fn answer_with_a_file_sends_the_verdicts_the_file_has_for_the_round_that_i
 
     result.unwrap();
     assert_eq!(sent_answers(&daemon), [[(1, "ok".to_owned())]]);
-    assert!(out.contains("round 1") && out.contains(task(1).as_str()), "{out}");
+    assert!(
+        out.contains("questions number 1") && out.contains(task(1).as_str()),
+        "{out}"
+    );
     let Request::Answer(sent) = daemon.requests().pop().unwrap().command else {
         panic!("the answer was sent last");
     };
-    assert_eq!((sent.task, sent.round), (task(1), nz(1)));
+    assert_eq!((sent.task, sent.number), (task(1), nz(1)));
 }
 
 #[tokio::test]
@@ -494,7 +497,7 @@ async fn answer_in_the_editor_starts_it_on_the_questions_file_and_sends_what_was
 
     result.unwrap();
     assert_eq!(sent_answers(&daemon), [[(1, "ok".to_owned())]]);
-    assert!(out.contains("round 1"), "{out}");
+    assert!(out.contains("questions number 1"), "{out}");
 }
 
 #[tokio::test]

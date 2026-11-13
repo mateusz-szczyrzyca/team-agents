@@ -113,11 +113,11 @@ mod questions_prompts {
         let dir = catalog_dir();
         let own = dir.path().join("lang/polish/harness/questions/answered.md");
         std::fs::create_dir_all(own.parent().unwrap()).unwrap();
-        std::fs::write(&own, "po polsku {{round}} {{answers}}\n").unwrap();
+        std::fs::write(&own, "po polsku {{number}} {{answers}}\n").unwrap();
         let loader = QuestionsPrompts::load(dir.path(), &language("Polish")).await.unwrap();
 
         let text = loader
-            .render(QuestionsPrompt::Answered, &values(&[("round", "1"), ("answers", "x")]))
+            .render(QuestionsPrompt::Answered, &values(&[("number", "1"), ("answers", "x")]))
             .unwrap();
 
         assert_eq!(text, "Text of harness/questions/answered.md. 1 x\n");

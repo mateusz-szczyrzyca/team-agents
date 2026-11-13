@@ -1,4 +1,4 @@
-# THE HUMAN ANSWERED YOUR QUESTIONS (round {{round}})
+# THE HUMAN ANSWERED YOUR QUESTIONS (questions number {{number}})
 
 The human answered the questions you asked when you ended a run with `STATUS: QUESTIONS`. If you were started again
 after that without these answers reaching you, they are given again now. Everything of this session still holds, the

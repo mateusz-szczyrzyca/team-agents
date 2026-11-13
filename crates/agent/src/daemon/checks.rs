@@ -311,19 +311,19 @@ pub(super) fn authored(description: &str, harness: &str) -> String {
     kept.join("\n")
 }
 
-/// What the lead is told to put the questions of `round` in `file` to the human.
+/// What the lead is told to put the questions number `number` in `file` to the human.
 ///
 /// # Errors
 /// [`ChecksTextError`].
 pub(super) fn relay(
     texts: &ChecksPrompts,
     task: &TaskId,
-    round: NonZeroU32,
+    number: NonZeroU32,
     file: &Path,
 ) -> Result<String, ChecksTextError> {
     let values = Variables::new()
         .with("questions_file", file.display().to_string())?
-        .with("round", round.to_string())?
+        .with("number", number.to_string())?
         .with("task", task.as_str())?;
     Ok(texts.render(ChecksPrompt::AskRelay, &values)?.trim_end().to_owned())
 }

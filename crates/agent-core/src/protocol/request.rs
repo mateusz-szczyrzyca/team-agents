@@ -154,14 +154,15 @@ pub struct ShowRequest {
     pub target: Target,
 }
 
-/// `answer`: the human's answers to one round of a task's questions.
+/// `answer`: the human's answers to one questions file of a task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnswerRequest {
     /// The task that asked.
     pub task: TaskId,
-    /// The round of questions that is answered.
-    pub round: NonZeroU32,
+    /// The number of the questions that are answered. Written as `round` in protocol version 1.
+    #[serde(rename = "round")]
+    pub number: NonZeroU32,
     /// A verdict for each question, which the daemon checks against the questions file.
     pub answers: AnswerList,
 }
@@ -282,7 +283,7 @@ checked_list!(
     |name: &AgentName| (*name).clone()
 );
 
-/// The verdict the human gave one question of a round.
+/// The verdict the human gave one question of a questions file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnswerInput {
@@ -607,7 +608,7 @@ mod tests {
             (
                 Command::Answer(AnswerRequest {
                     task: task(2),
-                    round: nz(1),
+                    number: nz(1),
                     answers: AnswerList::try_from(vec![answer(1, "ok"), answer(2, "mine")]).unwrap(),
                 }),
                 json!({"command": "answer", "task": TASK, "round": 1,

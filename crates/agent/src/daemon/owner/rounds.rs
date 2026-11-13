@@ -245,8 +245,8 @@ enum PublishError {
     #[error("cannot write the questions of the checks")]
     Write(#[from] ReplaceError),
     /// The lead cannot ask any more questions.
-    #[error("the lead cannot ask another round of questions")]
-    Rounds,
+    #[error("the lead cannot ask more questions: the numbers are used up")]
+    QuestionNumbers,
     /// A reviewer cannot be added to the team.
     #[error("a reviewer cannot be added to the team")]
     Reviewer(#[from] agent_core::state::AddReviewerError),

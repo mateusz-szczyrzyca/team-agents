@@ -11,15 +11,17 @@ use super::strict::{checked, strict_enum};
 use super::values::Timestamp;
 use crate::config::AbsolutePath;
 
-/// One round of questions of a task: `questions-<round>.md`, asked at a time, still open or answered.
+/// One questions file of a task: `questions-<number>.md`, asked at a time, still open or answered.
 ///
 /// Made by [`Question::new`] and answered by [`Question::answer`] (through
 /// [`Member::answer_question`](super::Member::answer_question)), so an answer is never earlier than the question;
 /// reading a state checks that too.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Question {
-    /// The round, counted from 1 for each task: the number in the file's name.
-    round: NonZeroU32,
+    /// The number of the questions, counted from 1 for each task: the number in the file's name. Written as `round` in a
+    /// state of version 1.
+    #[serde(rename = "round")]
+    number: NonZeroU32,
     /// The questions file.
     file: AbsolutePath,
     /// When the questions were put to the human.
@@ -33,7 +35,8 @@ pub struct Question {
 #[serde(remote = "Question", deny_unknown_fields)]
 struct QuestionWire {
     /// See [`Question`].
-    round: NonZeroU32,
+    #[serde(rename = "round")]
+    number: NonZeroU32,
     /// See [`Question`].
     file: AbsolutePath,
     /// See [`Question`].
@@ -43,7 +46,7 @@ struct QuestionWire {
 }
 
 checked!(Question, QuestionWire, |question: &Question| match &question.state {
-    QuestionState::Answered { at, .. } => check_answer(question.round, question.asked_at, *at),
+    QuestionState::Answered { at, .. } => check_answer(question.number, question.asked_at, *at),
     QuestionState::Open => Ok(()),
 });
 
@@ -100,10 +103,10 @@ pub enum AnsweredVia {
 
 /// An answer that is earlier than its question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("the answer at {answered_at} is earlier than the question of round {round}, asked at {asked_at}")]
+#[error("the answer at {answered_at} is earlier than questions number {number}, asked at {asked_at}")]
 pub struct AnswerBeforeQuestion {
-    /// The round.
-    pub round: NonZeroU32,
+    /// The number of the questions.
+    pub number: NonZeroU32,
     /// When the questions were asked.
     pub asked_at: Timestamp,
     /// The refused time of the answer.
@@ -113,16 +116,16 @@ pub struct AnswerBeforeQuestion {
 impl Question {
     /// Questions that have just been asked.
     #[must_use]
-    pub const fn new(round: NonZeroU32, file: AbsolutePath, asked_at: Timestamp) -> Self {
+    pub const fn new(number: NonZeroU32, file: AbsolutePath, asked_at: Timestamp) -> Self {
         Self {
-            round,
+            number,
             file,
             asked_at,
             state: QuestionState::Open,
         }
     }
 
-    getter!("The round, counted from 1 for each task.", pub const fn round(&self) -> NonZeroU32 = self.round);
+    getter!("The number of the questions, counted from 1 for each task.", pub const fn number(&self) -> NonZeroU32 = self.number);
 
     getter!("The questions file.", pub const fn file(&self) -> &AbsolutePath = &self.file);
 
@@ -137,17 +140,17 @@ impl Question {
     /// # Errors
     /// [`AnswerBeforeQuestion`] when `at` is earlier than the time the questions were asked.
     pub fn answer(&mut self, at: Timestamp, via: AnsweredVia) -> Result<(), AnswerBeforeQuestion> {
-        check_answer(self.round, self.asked_at, at)?;
+        check_answer(self.number, self.asked_at, at)?;
         self.state = QuestionState::Answered { at, via };
         Ok(())
     }
 }
 
-/// Checks that questions of `round`, asked at `asked_at`, may be answered at `answered_at`.
-fn check_answer(round: NonZeroU32, asked_at: Timestamp, answered_at: Timestamp) -> Result<(), AnswerBeforeQuestion> {
+/// Checks that questions of `number`, asked at `asked_at`, may be answered at `answered_at`.
+fn check_answer(number: NonZeroU32, asked_at: Timestamp, answered_at: Timestamp) -> Result<(), AnswerBeforeQuestion> {
     if answered_at < asked_at {
         return Err(AnswerBeforeQuestion {
-            round,
+            number,
             asked_at,
             answered_at,
         });
@@ -162,7 +165,7 @@ mod tests {
     use super::*;
     use crate::state::fixtures::{assert_refused, at, nz, path};
 
-    /// Questions of round 1 asked at 5 seconds.
+    /// Questions number 1 asked at 5 seconds.
     fn asked() -> Question {
         Question::new(nz(1), path("/home/u/agents/tasks/task-1/questions-1.md"), at(5))
     }
@@ -171,7 +174,7 @@ mod tests {
     fn new_questions_are_open_and_have_what_they_were_given() {
         let question = asked();
 
-        assert_eq!(question.round(), nz(1));
+        assert_eq!(question.number(), nz(1));
         assert_eq!(
             question.file().as_path().to_str(),
             Some("/home/u/agents/tasks/task-1/questions-1.md")
@@ -215,7 +218,7 @@ mod tests {
         assert_eq!(
             err,
             AnswerBeforeQuestion {
-                round: nz(1),
+                number: nz(1),
                 asked_at: at(5),
                 answered_at: at(4)
             }

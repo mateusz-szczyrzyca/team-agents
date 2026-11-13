@@ -44,7 +44,7 @@ use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) use self::rounds::{Pulls, PullsError};
-use self::start::{Context, Plan, next_round, plan};
+use self::start::{Context, Plan, next_number, plan};
 use self::teams::{Outbound, Served};
 use super::control::{Halt, Steer, after_halt, halted_status};
 use super::gate::GateQueue;
@@ -129,7 +129,7 @@ pub(crate) enum OwnerError {
         /// What the state said.
         source: RunError,
     },
-    /// A round of questions cannot be recorded.
+    /// Questions cannot be recorded.
     #[error("the questions of task {task} cannot be recorded")]
     Question {
         /// The task.
@@ -141,8 +141,8 @@ pub(crate) enum OwnerError {
     #[error("a session ID is not valid")]
     Session(#[from] InvalidValue),
     /// The question rounds of a task are used up.
-    #[error("task {task} has no round of questions left")]
-    Rounds {
+    #[error("task {task} has no number of questions left")]
+    QuestionNumbers {
         /// The task.
         task: TaskId,
     },
@@ -282,9 +282,9 @@ struct Ended<'a> {
     progress: Progress,
 }
 
-/// How a round of questions went.
+/// How a questions file went.
 enum Asked {
-    /// The round is recorded and the human is told.
+    /// The questions are recorded and the human is told.
     Recorded(Notice),
     /// The file cannot be used: the task fails.
     Unusable(Notice),
@@ -761,7 +761,7 @@ impl Owner {
         Ok(next)
     }
 
-    /// Records the round of questions the agent asked, when its file is usable.
+    /// Records the questions the agent asked, when their file is usable.
     async fn ask(
         &mut self,
         task: &TaskId,
@@ -769,8 +769,9 @@ impl Owner {
         now: Timestamp,
         events: &mut Vec<EventKind>,
     ) -> Result<Asked, OwnerError> {
-        let round = next_round(&self.member_mut(task)?.1).ok_or_else(|| OwnerError::Rounds { task: task.clone() })?;
-        let path = self.parts.store.home().questions_file(task, round);
+        let number =
+            next_number(&self.member_mut(task)?.1).ok_or_else(|| OwnerError::QuestionNumbers { task: task.clone() })?;
+        let path = self.parts.store.home().questions_file(task, number);
         let unusable = |reason: String| {
             Asked::Unusable(Notice::QuestionsMissing {
                 file: path.clone(),
@@ -788,7 +789,7 @@ impl Owner {
         };
         let (_, mut member) = self.member_mut(task)?;
         member
-            .ask_question(Question::new(round, file, now))
+            .ask_question(Question::new(number, file, now))
             .map_err(|source| OwnerError::Question {
                 task: task.clone(),
                 source,
@@ -796,10 +797,10 @@ impl Owner {
         events.push(EventKind::QuestionAsked {
             team: located.team.clone(),
             task: task.clone(),
-            round,
+            number,
         });
         self.prepare_questions(task, &path, &loaded).await;
-        Ok(Asked::Recorded(Notice::Questions { round, file: path }))
+        Ok(Asked::Recorded(Notice::Questions { number, file: path }))
     }
 
     // ---- paused tasks and shutdown --------------------------------------------------------------------------

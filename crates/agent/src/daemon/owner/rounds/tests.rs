@@ -559,7 +559,7 @@ async fn accept(rig: &Rig, task: &agent_core::ids::TaskId, round: u32) {
             Client::Cli,
             Command::Answer(AnswerRequest {
                 task: task.clone(),
-                round: std::num::NonZeroU32::new(round).unwrap(),
+                number: std::num::NonZeroU32::new(round).unwrap(),
                 answers,
             }),
         )

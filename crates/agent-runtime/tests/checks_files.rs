@@ -21,7 +21,7 @@ mod checks_files {
         record.set_passes(&["1.1".parse().unwrap()], passes);
         record.allow(&["1.1".parse().unwrap()], &[Subject::NoTests]);
         record.asked = Some(Asked {
-            round: NonZeroU32::new(1).unwrap(),
+            number: NonZeroU32::new(1).unwrap(),
             at: "2026-11-13T09:30:00Z".parse().unwrap(),
             items: vec!["1.1".parse().unwrap()],
             subjects: vec![Subject::Path("tests/a.rs".parse().unwrap())],

@@ -183,7 +183,7 @@ pub struct MemberSummary {
     pub role: Role,
     /// Where the task is in its life.
     pub status: TaskStatus,
-    /// The round of questions that waits for the human, if there is one.
+    /// The number of the questions that wait for the human, if there are any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_question: Option<NonZeroU32>,
 }
@@ -210,7 +210,7 @@ impl MemberSummary {
             agent: member.agent().clone(),
             role,
             status: member.status(),
-            open_question: member.open_question().map(Question::round),
+            open_question: member.open_question().map(Question::number),
         }
     }
 }
@@ -271,7 +271,7 @@ mod tests {
     const TASK: &str = "task-20261111-153002-k3x9";
     const TEAM: &str = "team-20261111-153001-t5m8";
 
-    /// A state with the sample team (item 1.2 in progress, `codex-1` asking round 1) and the reviewer `inv-codex`.
+    /// A state with the sample team (item 1.2 in progress, `codex-1` asking questions number 1) and the reviewer `inv-codex`.
     fn state() -> State {
         let mut state = State::new();
         let mut team = team(1);

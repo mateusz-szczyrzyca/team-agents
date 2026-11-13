@@ -27,8 +27,10 @@ pub struct ItemChecks {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Asked {
-    /// The round of the lead's questions the question is: the number in the name of its file.
-    pub round: NonZeroU32,
+    /// The number of the lead's questions the question is: the number in the name of its file. Written as `round` until
+    /// the key was renamed.
+    #[serde(rename = "round")]
+    pub number: NonZeroU32,
     /// When it was written.
     pub at: Timestamp,
     /// The items of the round, which share the pull request.

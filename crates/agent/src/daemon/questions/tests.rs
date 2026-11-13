@@ -188,7 +188,7 @@ async fn what_the_task_is_told_has_the_round_the_answers_and_the_words_of_an_acc
 
     let prompt = answers_prompt(&answered, n(3), &texts().await).unwrap();
 
-    assert!(prompt.contains("round 3"), "{prompt}");
+    assert!(prompt.contains("questions number 3"), "{prompt}");
     assert!(prompt.contains("Bile, please"), "{prompt}");
     assert!(
         prompt.contains("the human accepts the recommendation: a) — simpler (fake)"),
