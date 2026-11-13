@@ -106,6 +106,9 @@ pub struct CommitFacts {
     pub body: String,
     /// The files it changed against its first parent; none for a merge. A rename is a deletion and an addition here.
     pub files: Vec<FileChange>,
+    /// For a merge, the files it changed against each of its parents, in the order of `parents`: what reached that
+    /// parent's side through the merge, and what its resolution changed. Empty for a commit with one parent or none.
+    pub merge_files: Vec<Vec<FileChange>>,
 }
 
 /// One line a round added to a file, for the markers.

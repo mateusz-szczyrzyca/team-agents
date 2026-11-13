@@ -60,6 +60,7 @@ fn commit(digit: char, parents: &str, subject: &str, files: Vec<FileChange>) -> 
         subject: subject.to_owned(),
         body: String::new(),
         files,
+        merge_files: Vec::new(),
     }
 }
 
@@ -406,6 +407,57 @@ fn a_commit_after_a_merge_of_the_red_commit_is_later_than_it() {
             edit: id('4')
         }]
     );
+}
+
+/// `commit` as a merge that changed `against_each` against each of its parents, in their order.
+fn merging(mut commit: CommitFacts, against_each: Vec<Vec<FileChange>>) -> CommitFacts {
+    commit.merge_files = against_each;
+    commit
+}
+
+// Rule: a merge takes lines out of a test of a `RED:` commit when, against a parent that has the `RED:` commit, its file
+// lost lines — a resolution that drops what the `RED:` commit added, on either side of the merge.
+#[test]
+fn a_merge_that_takes_lines_out_of_a_red_test_against_a_parent_that_has_it_is_an_issue() {
+    for (red_side, parents) in [("the first parent", "12"), ("the second parent", "21")] {
+        let against_red = vec![modified("tests/a.rs", 0, 1)];
+        let against_other = vec![added("tests/a.rs", 9), added("src/b.rs", 5)];
+        let against_each = if parents == "12" {
+            vec![against_red, against_other]
+        } else {
+            vec![against_other, against_red]
+        };
+        let facts = history(vec![
+            commit('1', "", "RED: test a", vec![added("tests/a.rs", 10)]),
+            commit('2', "", "Member work", vec![added("src/b.rs", 5)]),
+            merging(commit('3', parents, "Merge", vec![]), against_each),
+        ]);
+
+        assert_eq!(
+            found(&facts),
+            [Issue::RedTestEdited {
+                path: path("tests/a.rs"),
+                red: id('1'),
+                edit: id('3')
+            }],
+            "the RED commit on {red_side}"
+        );
+    }
+}
+
+// Rule: against a parent that does not have the `RED:` commit, a merge's lines are those of the other side: no issue.
+#[test]
+fn a_merge_that_takes_lines_out_only_against_a_parent_without_the_red_commit_is_no_issue() {
+    let facts = history(vec![
+        commit('1', "", "RED: test a", vec![modified("tests/a.rs", 4, 0)]),
+        commit('2', "", "Member work", vec![added("src/b.rs", 5)]),
+        merging(
+            commit('3', "12", "Merge", vec![]),
+            vec![vec![], vec![modified("tests/a.rs", 4, 2)]],
+        ),
+    ]);
+
+    assert_eq!(found(&facts), []);
 }
 
 #[test]

@@ -375,6 +375,7 @@ fn parse_log(operation: GitOperation, bytes: &[u8]) -> Result<Vec<CommitFacts>, 
             subject: String::from_utf8_lossy(subject).trim().to_owned(),
             body: String::from_utf8_lossy(body).trim_end().to_owned(),
             files: Vec::new(),
+            merge_files: Vec::new(),
         });
     }
     Ok(commits)

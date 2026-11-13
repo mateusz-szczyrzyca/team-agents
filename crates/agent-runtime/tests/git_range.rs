@@ -360,6 +360,47 @@ mod git_range {
         assert_eq!(handle(&repo).range_commits(&head, &head).await.unwrap(), []);
     }
 
+    // Rule: a merge lists no files of its own, and the files it changed against each of its parents, in their order: a
+    // resolution that drops a line shows against the parent that had it.
+    #[tokio::test]
+    async fn a_merge_has_the_files_it_changed_against_each_of_its_parents() {
+        let (_tmp, repo) = repository();
+        write(&repo, "a.txt", b"zero\n");
+        let base = commit_all(&repo, "before the range");
+        raw(&repo, &["switch", "-q", "-c", "side"]);
+        write(&repo, "z.txt", b"z\n");
+        let side = commit_all(&repo, "side");
+        raw(&repo, &["switch", "-q", "main"]);
+        write(&repo, "tests/x.txt", b"a\nb\n");
+        let red = commit_all(&repo, "RED: x");
+        raw(&repo, &["merge", "-q", "--no-ff", "--no-commit", "side"]);
+        write(&repo, "tests/x.txt", b"a\n");
+        let merge = commit_all(&repo, "Merge side");
+
+        let commits = handle(&repo).range_commits(&base, &merge).await.unwrap();
+
+        let merge_facts = commits.iter().find(|commit| commit.id == merge).unwrap();
+        assert_eq!(merge_facts.parents, [red, side]);
+        assert_eq!(merge_facts.files, []);
+        assert_eq!(
+            merge_facts.merge_files,
+            [
+                vec![
+                    change("tests/x.txt", Change::Modified, Lines::Text { added: 0, removed: 1 }),
+                    change("z.txt", Change::Added, Lines::Text { added: 1, removed: 0 }),
+                ],
+                vec![change(
+                    "tests/x.txt",
+                    Change::Added,
+                    Lines::Text { added: 1, removed: 0 }
+                )],
+            ]
+        );
+        for commit in commits.iter().filter(|commit| commit.id != merge) {
+            assert_eq!(commit.merge_files, Vec::<Vec<FileChange>>::new(), "{}", commit.subject);
+        }
+    }
+
     #[tokio::test]
     async fn a_commit_that_renames_a_file_is_a_deletion_and_an_addition() {
         let (_tmp, repo) = repository();
