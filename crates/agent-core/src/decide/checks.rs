@@ -510,20 +510,25 @@ fn is_path_char(c: char) -> bool {
 /// The added lines that have a marker, one issue for each file and kind, in a file the description does not name.
 fn markers_added(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
     let mut found: BTreeMap<(&RepoPath, markers::Marker), (u32, u32)> = BTreeMap::new();
-    for line in &facts.added {
-        let Some(extension) = line.path.extension() else {
+    // The lines of a file follow each other in the facts; a wrapped attribute is read over the lines of one file.
+    for lines in facts.added.chunk_by(|one, next| one.path == next.path) {
+        let Some(path) = lines.first().map(|line| &line.path) else {
             continue;
         };
-        if names_path(&facts.description, &line.path) {
+        let Some(extension) = path.extension() else {
+            continue;
+        };
+        if names_path(&facts.description, path) {
             continue;
         }
-        for marker in markers::markers_of(extension, &line.text) {
+        let numbered: Vec<(u32, &str)> = lines.iter().map(|line| (line.number, line.text.as_str())).collect();
+        for (number, marker) in markers::markers_in(extension, &numbered) {
             // A test may ask whether it runs under test; production code may not.
-            if marker == markers::Marker::ChecksUnderTest && !is_production(rules, &line.path) {
+            if marker == markers::Marker::ChecksUnderTest && !is_production(rules, path) {
                 continue;
             }
-            let (first, count) = found.entry((&line.path, marker)).or_insert((line.number, 0));
-            *first = (*first).min(line.number);
+            let (first, count) = found.entry((path, marker)).or_insert((number, 0));
+            *first = (*first).min(number);
             *count = count.saturating_add(1);
         }
     }
