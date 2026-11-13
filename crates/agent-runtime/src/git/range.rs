@@ -178,6 +178,7 @@ impl Git {
             commits,
             added,
             description: description.to_owned(),
+            mode_changed: Vec::new(),
         })
     }
 

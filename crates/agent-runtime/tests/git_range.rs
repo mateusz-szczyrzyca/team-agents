@@ -687,4 +687,37 @@ mod git_range {
         assert_eq!(facts.added, []);
         assert_eq!(facts.description, "text");
     }
+
+    /// Sets the permission bits of `name` in `repo` to `mode`.
+    fn chmod(repo: &Path, name: &str, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(repo.join(name), std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    // Rule: the facts of a round name the files whose mode it changed, with lines added or not, by their path at the head;
+    // a file that only gained lines, a new file and a moved one that kept its mode are not among them.
+    #[tokio::test]
+    async fn the_facts_of_a_round_name_the_files_whose_mode_changed() {
+        let (_tmp, repo) = repository();
+        write(&repo, "tests/run.sh", b"#!/bin/sh\n");
+        chmod(&repo, "tests/run.sh", 0o755);
+        write(&repo, "tests/plain.sh", b"#!/bin/sh\n");
+        write(&repo, "tests/bare.sh", b"#!/bin/sh\n");
+        write(&repo, "tests/old.sh", b"#!/bin/sh\necho one\necho two\n");
+        let base = commit_all(&repo, "base");
+        write(&repo, "tests/run.sh", b"#!/bin/sh\n# still a test\n");
+        chmod(&repo, "tests/run.sh", 0o644);
+        write(&repo, "tests/plain.sh", b"#!/bin/sh\necho more\n");
+        chmod(&repo, "tests/bare.sh", 0o755);
+        std::fs::rename(repo.join("tests/old.sh"), repo.join("tests/new.sh")).unwrap();
+        write(&repo, "tests/added.sh", b"#!/bin/sh\n");
+        chmod(&repo, "tests/added.sh", 0o755);
+        let head = commit_all(&repo, "change modes");
+
+        let facts = handle(&repo).round_facts(&base, &head, "").await.unwrap();
+
+        let mut changed = facts.mode_changed.clone();
+        changed.sort();
+        assert_eq!(changed, [path("tests/bare.sh"), path("tests/run.sh")]);
+    }
 }

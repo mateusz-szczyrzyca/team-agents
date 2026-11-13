@@ -133,6 +133,8 @@ pub struct RoundFacts {
     pub added: Vec<AddedLine>,
     /// The description of the pull request; empty when there is none yet.
     pub description: String,
+    /// The files whose mode (an executable bit) differs between the merge base and the head, by their path at the head.
+    pub mode_changed: Vec<RepoPath>,
 }
 
 /// What the checks found wrong with a round.

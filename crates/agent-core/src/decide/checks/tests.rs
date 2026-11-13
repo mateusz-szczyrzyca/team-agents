@@ -278,6 +278,28 @@ fn a_test_file_git_lists_as_modified_with_no_line_changed_is_an_issue_only_the_h
     assert_eq!(found(&round(vec![modified("README.md", 0, 0)])), []);
 }
 
+// Rule: a change of the mode of an existing test file is for the human to allow even when the file only gains lines: a
+// test that is no longer executable may no longer run. The mode of a file that is not a test may change.
+#[test]
+fn a_test_file_whose_mode_changed_is_an_issue_even_when_it_only_gains_lines() {
+    let facts = RoundFacts {
+        files: vec![modified("tests/unit/a.bats", 1, 0), modified("README.md", 1, 0)],
+        mode_changed: vec![path("tests/unit/a.bats"), path("README.md")],
+        ..RoundFacts::default()
+    };
+
+    let issues = found(&facts);
+
+    assert_eq!(
+        issues,
+        [Issue::TestChanged {
+            path: path("tests/unit/a.bats"),
+            how: TestChange::ModeChanged,
+        }]
+    );
+    assert_eq!(issues[0].judge(), Judge::Human);
+}
+
 #[test]
 fn a_file_that_is_not_a_test_may_lose_lines() {
     assert_eq!(found(&round(vec![modified("docs/notes.md", 0, 8)])), []);
@@ -919,6 +941,7 @@ fn the_issues_come_in_the_order_of_the_rules() {
         ],
         added: vec![line("src/lib.rs", 2, "#[allow(dead_code)]")],
         description: String::new(),
+        mode_changed: Vec::new(),
     };
 
     let kinds: Vec<&str> = found(&facts)
