@@ -193,3 +193,65 @@ async fn the_notification_that_a_team_is_finished_names_the_team_the_repository_
         notification.body()
     );
 }
+
+/// The text of `name` in `prompts/harness/team/`, without its last line break.
+fn team_text(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../prompts/harness/team/{name}.md"));
+    std::fs::read_to_string(path).unwrap().trim_end().to_owned()
+}
+
+/// Every way a worker can fail a request, with the file of its sentence.
+const WORKER_ENDS: [(WorkerEnd, &str); 5] = [
+    (WorkerEnd::Failed, "worker-failed"),
+    (WorkerEnd::NoResult, "worker-no-result"),
+    (WorkerEnd::NoStatus, "worker-no-status"),
+    (WorkerEnd::Stopped, "worker-stopped"),
+    (WorkerEnd::Hung, "worker-hung"),
+];
+
+#[tokio::test]
+async fn the_reason_of_a_failed_request_is_the_sentence_of_how_the_worker_ended() {
+    let texts = texts().await;
+
+    for (how, name) in WORKER_ENDS {
+        assert_eq!(failure_reason(&texts, how, None).unwrap(), team_text(name), "{how:?}");
+    }
+}
+
+#[tokio::test]
+async fn what_the_worker_said_follows_the_sentence_in_a_paragraph_of_its_own() {
+    let texts = texts().await;
+
+    for (how, name) in WORKER_ENDS {
+        let reason = failure_reason(&texts, how, Some("Ich konnte es nicht: 失敗。")).unwrap();
+
+        assert_eq!(
+            reason,
+            format!("{}\n\nIch konnte es nicht: 失敗。", team_text(name)),
+            "{how:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_requester_reads_the_reason_between_the_request_and_what_to_do_now() {
+    let texts = texts().await;
+    let reason = failure_reason(&texts, WorkerEnd::Hung, None).unwrap();
+
+    let (_, _, text) = notice(
+        render_notice(
+            &texts,
+            &BusNotice::HelperFailed {
+                request: request(4),
+                worker: agent("glm-1"),
+                reason: reason.clone(),
+            },
+        )
+        .unwrap(),
+    );
+
+    assert!(
+        text.contains(&format!("H4 to the worker glm-1 failed.\n\n{reason}\n\n")),
+        "{text}"
+    );
+}

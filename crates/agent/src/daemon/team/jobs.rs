@@ -9,7 +9,7 @@ use agent_runtime::agentbus::{DelegationUpdate, FieldName, InvalidFieldName, Not
 use agent_runtime::notify::{InvalidNotification, Notification};
 use agent_runtime::team_prompts::{RenderTeamTextError, TeamPrompts};
 
-use super::react::BusNotice;
+use super::react::{BusNotice, WorkerEnd};
 
 /// One thing the daemon has to do on the bus for a team.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +147,19 @@ fn helper_result(
         ],
         texts.render(prompt, &values)?,
     ))
+}
+
+/// Why a worker could not do a request, for its requester: how the worker's run ended (`how`), then the end of what it
+/// said (`said`), if it said anything.
+///
+/// # Errors
+/// [`NoticeRenderError`].
+pub(in crate::daemon) fn failure_reason(
+    _texts: &TeamPrompts,
+    _how: WorkerEnd,
+    said: Option<&str>,
+) -> Result<String, NoticeRenderError> {
+    Ok(said.unwrap_or_default().to_owned())
 }
 
 /// Why the notification that a team is finished cannot be made.

@@ -23,12 +23,13 @@ use agent_runtime::agentbus::{
 };
 use agent_runtime::git::{CommitIdentity, DeleteMode, Git, GitError, RemoveMode, Revision, WorktreeBranch};
 use agent_runtime::process::error_chain;
+use agent_runtime::team_prompts::TeamPrompts;
 
 use super::{Located, Notice, Owner, OwnerError};
 use crate::daemon::team::{
-    Assigned, BusJob, BusNotice, FormError, Formed, RequestOutcome, Why, Workspace, assignable, closing_transitions,
-    form, is_finished, item_in_flight, notice_for, reconcile, render_notice, request_outcome, start_item,
-    team_done_notification,
+    Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace, assignable,
+    closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for, reconcile, render_notice,
+    request_outcome, start_item, team_done_notification,
 };
 
 /// The name the harness puts on the messages it writes to the bus, as the bus itself does.
@@ -630,7 +631,7 @@ impl Owner {
                 && let Some(outcome) = request_outcome(end, found.member.status(), message)
             {
                 self.serving.remove(task);
-                for job in answer_jobs(&served, outcome) {
+                for job in answer_jobs(&self.parts.team_texts, &served, outcome)? {
                     self.outbox.push_back(Outbound {
                         team: located.team.clone(),
                         job,
@@ -761,8 +762,13 @@ fn request_update(request: RequestId, status: DelegationStatus, task: Option<Tas
     }
 }
 
-/// What a finished request is for the bus: the request closed with its result, and the requester told.
-fn answer_jobs(served: &Served, outcome: RequestOutcome) -> Vec<BusJob> {
+/// What a finished request is for the bus: the request closed with its result, and the requester told; `texts` word
+/// a failure.
+fn answer_jobs(
+    texts: &TeamPrompts,
+    served: &Served,
+    outcome: RequestOutcome,
+) -> Result<Vec<BusJob>, NoticeRenderError> {
     let (status, summary, notice) = match outcome {
         RequestOutcome::Done { summary } => (
             DelegationStatus::Done,
@@ -773,17 +779,20 @@ fn answer_jobs(served: &Served, outcome: RequestOutcome) -> Vec<BusJob> {
                 summary,
             },
         ),
-        RequestOutcome::Failed { reason } => (
-            DelegationStatus::Failed,
-            reason.clone(),
-            BusNotice::HelperFailed {
-                request: served.request,
-                worker: served.worker.clone(),
-                reason,
-            },
-        ),
+        RequestOutcome::Failed { how, said } => {
+            let reason = failure_reason(texts, how, said.as_deref())?;
+            (
+                DelegationStatus::Failed,
+                reason.clone(),
+                BusNotice::HelperFailed {
+                    request: served.request,
+                    worker: served.worker.clone(),
+                    reason,
+                },
+            )
+        }
     };
-    vec![
+    Ok(vec![
         BusJob::Answer {
             request: served.request,
             update: DelegationUpdate {
@@ -796,7 +805,7 @@ fn answer_jobs(served: &Served, outcome: RequestOutcome) -> Vec<BusJob> {
             to: served.requester.clone(),
             notice,
         },
-    ]
+    ])
 }
 
 #[cfg(test)]

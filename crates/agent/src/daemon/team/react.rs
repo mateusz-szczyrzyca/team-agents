@@ -63,9 +63,27 @@ pub(in crate::daemon) enum RequestOutcome {
     },
     /// The worker could not.
     Failed {
-        /// How the worker's run ended, in the words of [`RequestOutcome`]'s notice, with what the worker said.
-        reason: String,
+        /// How the worker's run ended.
+        how: WorkerEnd,
+        /// The end of what the worker said; `None` when it said nothing.
+        said: Option<String>,
     },
+}
+
+/// How the run of a worker that could not do a request ended; each has its sentence for the requester in
+/// `prompts/harness/team/`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::daemon) enum WorkerEnd {
+    /// Its status line says it failed.
+    Failed,
+    /// It said nothing a requester can use: it went to sleep or excluded itself.
+    NoResult,
+    /// It ended without a status line, or its run could not be started or carried out.
+    NoStatus,
+    /// The human stopped it.
+    Stopped,
+    /// The watchdog gave up on it.
+    Hung,
 }
 
 /// A notice and the member of the team it is for.
@@ -146,13 +164,9 @@ pub(in crate::daemon) fn request_outcome(
     message: Option<&str>,
 ) -> Option<RequestOutcome> {
     let said = message.unwrap_or_default();
-    let fail = |how: &str| {
-        let reason = if said.trim().is_empty() {
-            how.to_owned()
-        } else {
-            format!("{how}: {}", end_of(said))
-        };
-        Some(RequestOutcome::Failed { reason })
+    let fail = |how: WorkerEnd| {
+        let said = (!said.trim().is_empty()).then(|| end_of(said));
+        Some(RequestOutcome::Failed { how, said })
     };
     match end {
         RunEnd::Reported {
@@ -160,12 +174,12 @@ pub(in crate::daemon) fn request_outcome(
         } => Some(RequestOutcome::Done { summary: report(said) }),
         RunEnd::Reported {
             outcome: RunOutcome::Failed,
-        } => fail(HOW_FAILED),
+        } => fail(WorkerEnd::Failed),
         RunEnd::Reported {
             outcome: RunOutcome::Sleeping | RunOutcome::Excluded,
-        } => fail(HOW_NO_RESULT),
-        RunEnd::NoStatus { .. } => fail(HOW_NO_STATUS),
-        RunEnd::Stopped => fail(HOW_STOPPED),
+        } => fail(WorkerEnd::NoResult),
+        RunEnd::NoStatus { .. } => fail(WorkerEnd::NoStatus),
+        RunEnd::Stopped => fail(WorkerEnd::Stopped),
         // The worker goes on, after the human answered or its provider's limit is over; only the end of the
         // watchdog's last strike ends the request.
         RunEnd::Reported {
@@ -173,26 +187,12 @@ pub(in crate::daemon) fn request_outcome(
         }
         | RunEnd::QuotaExhausted { .. }
         | RunEnd::RateLimited
-        | RunEnd::Hung => (status == TaskStatus::Failed).then(|| RequestOutcome::Failed {
-            reason: HOW_HUNG.to_owned(),
+        | RunEnd::Hung => (status == TaskStatus::Failed).then_some(RequestOutcome::Failed {
+            how: WorkerEnd::Hung,
+            said: None,
         }),
     }
 }
-
-/// How a worker's run ended, when its status line says it failed.
-const HOW_FAILED: &str = "the worker ended with STATUS: FAILED";
-
-/// How a worker's run ended when it said nothing a requester can use.
-const HOW_NO_RESULT: &str = "the worker ended without a result";
-
-/// How a worker's run ended without a status line.
-const HOW_NO_STATUS: &str = "the worker ended without a STATUS line";
-
-/// How a worker's run ended when the human stopped it.
-const HOW_STOPPED: &str = "the worker was stopped";
-
-/// How a worker's run ended when the watchdog gave up on it.
-const HOW_HUNG: &str = "the worker hung";
 
 /// The worker's report without its closing `STATUS:` line; the whole message when nothing else is in it, so that a
 /// report is never empty.

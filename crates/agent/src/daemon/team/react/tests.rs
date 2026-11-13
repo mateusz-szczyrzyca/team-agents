@@ -163,11 +163,33 @@ fn a_worker_that_failed_returns_how_and_what_it_said() {
         Some("I could not do it.\nSTATUS: FAILED"),
     );
 
-    let Some(RequestOutcome::Failed { reason }) = found else {
-        panic!("{found:?}")
-    };
-    assert!(reason.contains("STATUS: FAILED"), "{reason}");
-    assert!(reason.contains("I could not do it."), "{reason}");
+    assert_eq!(
+        found,
+        Some(RequestOutcome::Failed {
+            how: WorkerEnd::Failed,
+            said: Some("I could not do it.\nSTATUS: FAILED".to_owned()),
+        })
+    );
+}
+
+#[test]
+fn each_end_that_fails_a_request_says_how_the_worker_ended_and_nothing_it_did_not_say() {
+    for (end, status, how) in [
+        (reported(RunOutcome::Failed), TaskStatus::Failed, WorkerEnd::Failed),
+        (reported(RunOutcome::Sleeping), TaskStatus::Waiting, WorkerEnd::NoResult),
+        (reported(RunOutcome::Excluded), TaskStatus::Done, WorkerEnd::NoResult),
+        (
+            RunEnd::NoStatus { exit_code: None },
+            TaskStatus::Failed,
+            WorkerEnd::NoStatus,
+        ),
+        (RunEnd::Stopped, TaskStatus::Stopped, WorkerEnd::Stopped),
+        (RunEnd::Hung, TaskStatus::Failed, WorkerEnd::Hung),
+    ] {
+        let found = outcome(&end, status, Some("  \n"));
+
+        assert_eq!(found, Some(RequestOutcome::Failed { how, said: None }), "{end:?}");
+    }
 }
 
 #[test]

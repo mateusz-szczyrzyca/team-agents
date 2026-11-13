@@ -31,6 +31,16 @@ pub enum TeamPrompt {
     HelperResult,
     /// The message to a member that the worker failed its request.
     HelperFailed,
+    /// How a worker's run that failed a request ended: with `STATUS: FAILED`.
+    WorkerFailed,
+    /// How a worker's run that failed a request ended: with nothing a requester can use.
+    WorkerNoResult,
+    /// How a worker's run that failed a request ended: without a status line, or it could not run.
+    WorkerNoStatus,
+    /// How a worker's run that failed a request ended: the human stopped it.
+    WorkerStopped,
+    /// How a worker's run that failed a request ended: the watchdog gave up on it.
+    WorkerHung,
     /// The notification that a team finished its work.
     NoticeTeamDone,
 }
@@ -48,6 +58,11 @@ impl TeamPrompt {
         Self::MemberNoStatus,
         Self::HelperResult,
         Self::HelperFailed,
+        Self::WorkerFailed,
+        Self::WorkerNoResult,
+        Self::WorkerNoStatus,
+        Self::WorkerStopped,
+        Self::WorkerHung,
         Self::NoticeTeamDone,
     ];
 
@@ -106,6 +121,11 @@ impl TeamPrompt {
                 Audience::Model,
                 &["worker", "request_id", "reason"],
             ),
+            Self::WorkerFailed => PromptSpec::new("harness/team/worker-failed.md", Audience::Model, &[]),
+            Self::WorkerNoResult => PromptSpec::new("harness/team/worker-no-result.md", Audience::Model, &[]),
+            Self::WorkerNoStatus => PromptSpec::new("harness/team/worker-no-status.md", Audience::Model, &[]),
+            Self::WorkerStopped => PromptSpec::new("harness/team/worker-stopped.md", Audience::Model, &[]),
+            Self::WorkerHung => PromptSpec::new("harness/team/worker-hung.md", Audience::Model, &[]),
             Self::NoticeTeamDone => PromptSpec::new(
                 "harness/team/notice-team-done.md",
                 Audience::Human,
