@@ -367,6 +367,9 @@ impl RunEngine {
                 Watched::Tick => {
                     follow.read_new().await?;
                     let last = process.last_activity().await.map_err(supervise)?;
+                    // A run that waits for something the daemon does for it is not silent: its limit counts from
+                    // the later of its last output and the last time it was held.
+                    let last = hold.last_held().map_or(last, |held| last.max(held));
                     if self.is_silent(last) {
                         let report = process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
                         break Ended::By(StoppedBy::Watchdog, report.exit);

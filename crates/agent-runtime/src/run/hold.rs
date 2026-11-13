@@ -45,6 +45,8 @@ impl WatchdogHold {
 
     /// Holds the watchdog off until the returned guard is dropped.
     pub fn hold(&self) -> HoldGuard {
+        self.holds
+            .send_modify(|holds| holds.alive = holds.alive.saturating_add(1));
         HoldGuard {
             holds: Arc::clone(&self.holds),
         }
@@ -54,12 +56,24 @@ impl WatchdogHold {
     /// when it never was. The run counts its silence from then.
     #[must_use]
     pub fn last_held(&self) -> Option<SystemTime> {
-        None
+        let holds = self.holds.borrow();
+        if holds.alive > 0 {
+            Some(SystemTime::now())
+        } else {
+            holds.released
+        }
     }
 }
 
 impl Drop for HoldGuard {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        self.holds.send_modify(|holds| {
+            holds.alive = holds.alive.saturating_sub(1);
+            if holds.alive == 0 {
+                holds.released = Some(SystemTime::now());
+            }
+        });
+    }
 }
 
 #[cfg(test)]

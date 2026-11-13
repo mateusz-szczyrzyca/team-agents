@@ -154,8 +154,8 @@ mod run_hold {
         let job = env.job("hang");
 
         let engine = env.engine.clone();
-        let held = hold.clone();
-        let running = tokio::spawn(async move { engine.run_held(job, &CancellationToken::new(), &held).await });
+        let engine_hold = hold.clone();
+        let running = tokio::spawn(async move { engine.run_held(job, &CancellationToken::new(), &engine_hold).await });
         eventually("the run to start", || marker.is_file()).await;
         tokio::time::sleep(SEVERAL_HANGS).await;
         let released = Instant::now();

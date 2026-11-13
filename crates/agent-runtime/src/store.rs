@@ -68,6 +68,10 @@ pub const MAX_ACTIVITY_FIELD_BYTES: usize = 4096;
 /// What a cut field ends with, so that a reader sees that it was cut.
 const CUT_MARK: &str = "…";
 
+/// The name of the environment variable that says where the harness keeps its files: the commands find the daemon's
+/// socket through it, and the daemon gives it to the runs it starts so that the commands an agent runs find it too.
+pub const HOME_VARIABLE: &str = "AGENTS_HOME";
+
 /// The layout of `AGENTS_HOME`: where each file and directory of the harness lives.
 ///
 /// Paths are derived from the root and the validated IDs, so no input can name a place outside the home.
