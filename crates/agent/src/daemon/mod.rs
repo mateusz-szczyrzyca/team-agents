@@ -45,6 +45,7 @@ mod notice;
 mod notifier;
 mod opener;
 mod owner;
+mod pr;
 mod questions;
 mod recovery;
 mod review;
