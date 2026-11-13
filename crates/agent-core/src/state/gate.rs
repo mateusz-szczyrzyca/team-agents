@@ -80,6 +80,13 @@ impl GateRecord {
     pub fn counts_as_pass(&self) -> bool {
         self.tree == GateTree::Clean && self.result.outcome == GateOutcome::Passed
     }
+
+    /// What the gate said, in a few words for a person: how it ended, on which commit, and, when it matters, that the
+    /// tree was not clean. For example `passed at 26b65de` or `failed (exit 2) at 26b65de, tree not clean`.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        String::new()
+    }
 }
 
 /// How the gate ended.
@@ -177,6 +184,29 @@ mod tests {
 
         for (tree, outcome, expected) in cases {
             assert_eq!(record(tree, outcome).counts_as_pass(), expected, "{tree} {outcome:?}");
+        }
+    }
+
+    #[test]
+    fn a_summary_says_how_the_gate_ended_at_which_commit_and_that_the_tree_was_not_clean() {
+        let cases = [
+            (GateTree::Clean, GateOutcome::Passed, "passed at 26b65de"),
+            (
+                GateTree::NotClean,
+                GateOutcome::Passed,
+                "passed at 26b65de, tree not clean",
+            ),
+            (GateTree::Clean, failed(2), "failed (exit 2) at 26b65de"),
+            (
+                GateTree::NotClean,
+                failed(-9),
+                "failed (exit -9) at 26b65de, tree not clean",
+            ),
+            (GateTree::Clean, GateOutcome::TimedOut, "timed out at 26b65de"),
+        ];
+
+        for (tree, outcome, expected) in cases {
+            assert_eq!(record(tree, outcome).summary(), expected);
         }
     }
 
