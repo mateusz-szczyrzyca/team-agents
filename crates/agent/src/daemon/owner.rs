@@ -43,6 +43,7 @@ use tokio_util::sync::CancellationToken;
 
 use self::start::{Context, Plan, next_round, plan};
 use self::teams::{Outbound, Served};
+use super::control::{Halt, Steer, after_halt};
 use super::notice::Notice;
 use super::notifier::Delivery;
 use super::questions;
@@ -261,6 +262,10 @@ pub(super) struct Owner {
     running: HashMap<JoinId, TaskId>,
     /// The tasks that have a run going.
     in_flight: HashSet<TaskId>,
+    /// What stops the run of each task that has one going, by task.
+    cancels: HashMap<TaskId, CancellationToken>,
+    /// The tasks whose run the human has stopped, and how: the end of the run decides their status.
+    halts: HashMap<TaskId, Halt>,
     /// When each paused task is queued again.
     wakes: HashMap<TaskId, Timestamp>,
     /// How many hangs in a row each task has had without progress.
@@ -309,6 +314,8 @@ impl Owner {
             runs: JoinSet::new(),
             running: HashMap::new(),
             in_flight: HashSet::new(),
+            cancels: HashMap::new(),
+            halts: HashMap::new(),
             wakes: HashMap::new(),
             hangs: HashMap::new(),
             reasons: HashMap::new(),
@@ -448,6 +455,7 @@ impl Owner {
         tracing::info!(task = %task, run = %plan.run, agent = %located.agent, "run started");
         let engine = self.parts.engine.clone();
         let cancel = self.shutdown.child_token();
+        self.cancels.insert(task.clone(), cancel.clone());
         let job = plan.job;
         let handle = self.runs.spawn(async move { engine.run(job, &cancel).await });
         self.running.insert(handle.id(), task.clone());
@@ -486,6 +494,7 @@ impl Owner {
         };
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
         self.in_flight.remove(&task);
+        self.cancels.remove(&task);
         match outcome {
             Outcome::Verdict(verdict) => match *verdict {
                 RunVerdict::Finished(run) => self.finished(&task, *run).await,
@@ -498,6 +507,8 @@ impl Owner {
     /// A run that could not be carried out: its task fails.
     async fn failed(&mut self, task: &TaskId, reason: String) -> Result<(), OwnerError> {
         tracing::error!(task = %task, %reason, "a run failed");
+        // The run is over without the human's word being carried out: the task failed, and is the human's to resume.
+        self.halts.remove(task);
         let located = self.locate(task)?;
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
@@ -515,21 +526,33 @@ impl Owner {
         self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)
     }
 
-    /// A run the daemon stopped because it shuts down: recorded as interrupted, and its task queued for the next start.
+    /// A run that was stopped: by the human, whose word sets the status of the task, or because the daemon shuts down, when
+    /// the run is recorded as interrupted and its task is queued for the next start.
     async fn interrupted(&mut self, task: &TaskId, session: Option<CliSessionId>) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
         self.attach_session(task, session)?;
-        self.end_run(
-            task,
-            &located.team,
-            now,
-            RunEnd::NoStatus { exit_code: None },
-            &mut events,
-        )?;
-        self.move_to(task, &located.team, TaskStatus::Queued, &mut events)?;
-        self.commit(task, &located, now, events, None).await
+        let Some(halt) = self.halts.remove(task) else {
+            self.end_run(
+                task,
+                &located.team,
+                now,
+                RunEnd::NoStatus { exit_code: None },
+                &mut events,
+            )?;
+            self.move_to(task, &located.team, TaskStatus::Queued, &mut events)?;
+            return self.commit(task, &located, now, events, None).await;
+        };
+        self.end_run(task, &located.team, now, RunEnd::Stopped, &mut events)?;
+        let status = match halt {
+            Halt::Stop => TaskStatus::Stopped,
+            Halt::Pause => TaskStatus::Paused,
+        };
+        self.move_to(task, &located.team, status, &mut events)?;
+        self.hangs.remove(task);
+        self.commit(task, &located, now, events, None).await?;
+        self.after_run(task, &located, &RunEnd::Stopped, None)
     }
 
     /// A run that went to its end: its task goes where the end says.
@@ -574,6 +597,11 @@ impl Owner {
                 (TaskStatus::Paused, Some(notice))
             }
             Settled::Hung => self.hung(task, run.progress)?,
+        };
+        // The human asked for a stop or a pause while the run was ending by itself: their word wins where it can.
+        let status = match self.halts.remove(task) {
+            Some(halt) => after_halt(halt, status),
+            None => status,
         };
         self.move_to(task, &located.team, status, &mut events)?;
         self.commit(task, &located, now, events, notice).await?;
@@ -701,6 +729,11 @@ impl Owner {
                 let answer = match command {
                     Command::Run(request) => self.run_request(request).await?,
                     Command::Answer(request) => self.answer_request(&client, request).await?,
+                    Command::Stop(request) => self.control_request(&client, Steer::Stop, &request.target).await?,
+                    Command::Pause(request) => self.control_request(&client, Steer::Pause, &request.target).await?,
+                    Command::Unpause(request) => self.control_request(&client, Steer::Unpause, &request.target).await?,
+                    Command::Resume(request) => self.control_request(&client, Steer::Resume, &request.target).await?,
+                    Command::Say(request) => self.say_request(&client, request).await?,
                     other => self.answer(&other),
                 };
                 if reply.send(answer).is_err() {
@@ -744,11 +777,12 @@ impl Owner {
                 kind: FailureKind::Internal,
                 message: "answers are taken by the owner, not answered from the state".to_owned(),
             }),
-            Command::Stop(_) => Err(not_served("stop")),
-            Command::Pause(_) => Err(not_served("pause")),
-            Command::Unpause(_) => Err(not_served("unpause")),
-            Command::Resume(_) => Err(not_served("resume")),
-            Command::Say(_) => Err(not_served("say")),
+            Command::Stop(_) | Command::Pause(_) | Command::Unpause(_) | Command::Resume(_) | Command::Say(_) => {
+                Err(Failure {
+                    kind: FailureKind::Internal,
+                    message: "the controls are carried out by the owner, not answered from the state".to_owned(),
+                })
+            }
             Command::Gate(_) => Err(not_served("gate")),
             Command::Subscribe(_) => Err(Failure {
                 kind: FailureKind::Internal,

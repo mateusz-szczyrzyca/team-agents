@@ -70,6 +70,22 @@ pub(super) enum Skipped {
     Inactive,
 }
 
+impl Skipped {
+    /// Why `steer` does nothing to the task, in words for the human.
+    pub(super) const fn because(self, steer: Steer) -> &'static str {
+        match (self, steer) {
+            (Self::Over, _) => "it is done: nothing is left to do for it",
+            (Self::Already, Steer::Stop) => "it is already stopped",
+            (Self::Already, _) => "it is already paused",
+            (Self::Questions, _) => "it waits for your answers: answer them with `agent answer`",
+            (Self::NotPaused, _) => "it is not paused: there is nothing to unpause",
+            (Self::Paused, _) => "it is paused: `agent unpause` lets it go on",
+            (Self::Going, _) => "it is already going",
+            (Self::Inactive, _) => "it is stopped or failed: nothing is going that could be paused",
+        }
+    }
+}
+
 /// What `steer` does to a task whose status is `status`.
 pub(super) const fn decide(steer: Steer, status: TaskStatus) -> Step {
     use TaskStatus::{Done, Failed, Paused, Questions, Queued, Running, Stopped, Waiting};

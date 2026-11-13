@@ -388,7 +388,11 @@ async fn a_word_to_a_team_is_one_message_to_the_team() {
         }
     );
     let held = messages(&daemon);
-    assert_eq!(held.matches("Stop at the tests.").count(), 1, "{held}");
+    assert_eq!(
+        held.lines().filter(|line| line.contains("Stop at the tests.")).count(),
+        1,
+        "{held}"
+    );
     assert!(held.contains(&format!("team:{}", team_id(0))), "{held}");
     daemon.stop().await.unwrap();
 }

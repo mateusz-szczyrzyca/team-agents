@@ -279,7 +279,7 @@ impl Owner {
     }
 
     /// Tells the subscribers the team's summary as it is.
-    fn publish_summary(&self, at: Timestamp, team: &TeamId) {
+    pub(super) fn publish_summary(&self, at: Timestamp, team: &TeamId) {
         if let Some(found) = self.parts.state.team(team) {
             self.publish(
                 at,

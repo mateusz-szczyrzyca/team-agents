@@ -130,3 +130,16 @@ fn a_run_that_ended_by_itself_while_a_pause_was_asked_leaves_the_task_paused_whe
         [Paused, Running, Paused, Questions, Paused, Stopped, Failed, Done]
     );
 }
+
+#[test]
+fn every_reason_to_skip_says_why_in_words_for_each_control() {
+    let reasons = [Over, Already, Asking, NotPaused, IsPaused, Going, Inactive];
+
+    for steer in [Steer::Stop, Steer::Pause, Steer::Unpause, Steer::Resume] {
+        for reason in reasons {
+            assert!(reason.because(steer).starts_with("it "), "{steer:?}, {reason:?}");
+        }
+    }
+    assert_eq!(Already.because(Steer::Stop), "it is already stopped");
+    assert_eq!(Already.because(Steer::Pause), "it is already paused");
+}
