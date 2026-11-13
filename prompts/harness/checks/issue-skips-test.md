@@ -1,0 +1,1 @@
+`{{path}}` has {{count}} added line(s) that skip a test, the first at line {{line}}. A skipped test is an exception with a reason outside the code: remove the skip, or name `{{path}}` in the description of the pull request with that reason.

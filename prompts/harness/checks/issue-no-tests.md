@@ -1,0 +1,1 @@
+The round changes production code and adds no line to a test file. Every change of behaviour comes with its test, written first and committed before the code. A change that cannot have its test first (layout, prompt wording, a line of configuration) says so in a commit message: `Test-First: not possible — <reason>`.

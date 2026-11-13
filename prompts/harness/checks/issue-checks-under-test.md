@@ -1,0 +1,1 @@
+`{{path}}` has {{count}} added line(s) that ask whether the code runs under test, the first at line {{line}}. Production code does not know about its tests: remove them, or name `{{path}}` in the description of the pull request with the reason they have to stay.
