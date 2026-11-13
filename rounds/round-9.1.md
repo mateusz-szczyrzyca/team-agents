@@ -35,11 +35,30 @@ Ground rules
   Everything the Bash version did with `sed`, `awk`, `jq`, `grep`, `flock`, `gh` or `tailscale` is done natively.
 - Approved dependencies (others need a DEP-1 justification): `tokio`, `tokio-util`, `clap`, `serde`, `serde_json`,
   `toml`, `thiserror`, `tracing`, `tracing-subscriber`, `tempfile`, `rustix`, `reqwest` (rustls), `axum`,
-  `notify`, `rand`, `time`, `strum` (`derive`).
+  `notify`, `rand`, `time`, `strum` (`derive`), `rusqlite` (`bundled`; the history, from item 8.4).
 - An enum with a text form (a keyword enum: a CLI kind, a status, a verdict) takes it from `strum` derives: each text
   declared once, in a `#[strum(...)]` attribute. No hand-written text tables, no macro of our own for it.
 - New code is developed and tested against a separate `AGENTS_HOME`; nothing here may touch the live `~/agents` of
   the running Bash harness until feature 10.
+- The items of rounds and of the history (8.3 to 8.7, 11.1) are tested harder than the developer rules ask: a log
+  that is wrong is worse than no log.
+  - End to end: every record and every query is proved by a run of the daemon with fake CLIs and a fake GitHub
+    server, read back through the reading API or `agent log`. Rows a test inserts by hand prove a query, never the
+    recording.
+  - Both sides of every rule: the case that satisfies it and the nearest one that does not. An invariant is refused
+    by the API and again when read.
+  - Every failure the item names is provoked — a killed daemon, a file that cannot be written, a full queue, a newer
+    schema, a restart in the middle — and the test shows the work going on and the failure reported.
+  - What holds for every input (a round trip, a sum, an order) is tested with generated inputs from a seeded source;
+    the failure message gives the seed.
+  - What a human reads is pinned in golden files, IDs and times normalised.
+  - No secret reaches the history or the log: a test runs a round with marker values for the secrets and searches
+    the bytes of the database for them.
+  - Time comes from the injected clock, never from sleeping (TDD-8).
+  - The PR description maps every sentence of the item that states a behaviour to the test that proves it (`## Tests`,
+    a table: behaviour, test). A behaviour without a test is a finding.
+  - The reviewers break three behaviours of the PR, not one (the review rules, step 6), at least one of them in what
+    is recorded.
 
 Target layout
 
@@ -52,11 +71,12 @@ Target layout
     prompts/agent/, prompts/worker-agent/, prompts/investigator/   each role's rules (in the prompt catalog)
     prompts/harness/<module>/<name>.md     texts the harness composes (run prompts, questions files, notifications)
     config/agents.example.toml, config/systemd/
-    docs/architecture.md, docs/configuration.md, docs/state.md, docs/task-list.md
+    docs/architecture.md, docs/configuration.md, docs/state.md, docs/task-list.md, docs/history.md, docs/log.md
 
 Process model: `agent daemon` (a systemd user service) is the only owner of the state and of every model run. Every
 other command — `agent run`, `answer`, `status`, `stop`, `gate`, ... — and the dashboard are clients of its Unix
-socket. One owner, no file races (CON-3).
+socket. One owner, no file races (CON-3). The history database has one writer too, the daemon; `agent log` reads it
+directly, so it works when the daemon does not.
 
 Behaviour in short
 
@@ -74,6 +94,10 @@ Behaviour in short
 - Every PR gets two reviews from investigators outside the team. A team that leaves fewer than two configured
   investigators outside it is refused at start: "too many investigators in the team". "Changes requested" goes back
   to the team at most 5 times; after that the human is asked.
+- A team and a round are things with an ID (`team-…`, `round-…`): a round is one item of a team's list from its
+  start to its merge. What happens — who was chosen and how, every prompt, every step and change of every run, the
+  pull request and its reviews, the daemon's own log — is recorded under those two IDs in the history, an SQLite
+  database, and read with `agent log`. The state file stays the one place for what is; the history is what happened.
 
 Checkpoints for the human, between features (the agents do not run these):
 
@@ -81,39 +105,46 @@ Checkpoints for the human, between features (the agents do not run these):
   are expensive to change later.
 - After feature 7: a trial on a scratch repository with fake CLIs and a separate `AGENTS_HOME`: a solo task and a
   team from a two-item list, one question answered, one stop and resume.
+- After item 8.3: read `docs/state.md` again: version 2 of the state and of the protocol, and the round.
+- After item 8.4: read `docs/history.md` and ask the database of one round with `sqlite3`. The schema of the history
+  is expensive to change later.
 - After feature 8, before feature 10: a real run with cheap models on a toy repository and a separate
-  `AGENTS_HOME`, in the default `--autopilot`: from a two-item list to two merged PRs. The cutover starts only after
-  it passes.
+  `AGENTS_HOME`, in the default `--autopilot`: from a two-item list to two merged PRs. Then `agent log --round` of
+  each: the story is whole — the task, who was chosen and how, every prompt, every step, every change, both
+  reviews — and `agent log --level warn` shows nothing unexplained. The cutover starts only after it passes.
 - After feature 9: the dashboard opened through `tailscale serve` from another device: the teams listed, a question
   answered, a team paused and resumed.
 
 Out of scope for this plan: remote nodes and the lead, investigation teams with phases and standalone investigation
-requests, `agent live`, archiving, token usage and cost accounting, automatic PR size limits (reviewers check
-PR-1), a proof by the harness that a RED commit fails (a reviewer runs one, TDD-1), an `agentbus` socket API (it
-is called as a process).
+requests, `agent live`, archiving, the cost of tokens in money, moving the state file into the database, automatic
+PR size limits (reviewers check PR-1), a proof by the harness that a RED commit fails (a reviewer runs one, TDD-1),
+an `agentbus` socket API (it is called as a process).
 
 This round's item
 
 9. Dashboard
-Depends on: 6 (merged before this round)
+Depends on: 8 (merged before this round)
 [ ] 9.1 The dashboard
     `agent-web` (axum): listens on loopback only; requests from `tailscale serve` are accepted only for the
     configured logins, checked through the Tailscale LocalAPI (no `tailscale` process); a client of the daemon
     socket. Server-rendered HTML with htmx, refreshed live by server-sent events relayed from the daemon's
-    subscription: teams and tasks with their status and task-list progress; a task's view with its recent activity,
-    its result and its PR; the answer form for a pending questions file; stop, pause, unpause and resume. systemd
-    user unit.
+    subscription: teams with their rounds, tasks with their status and task-list progress; a round's view with its
+    story as `agent log --round` prints it (the history, read directly and read-only); a task's view with its recent
+    steps (from the history), its result and its PR; the answer form for a pending questions file; stop, pause,
+    unpause and resume. systemd user unit.
     Expected result:
     - Files: `crates/agent-web/src/`, its templates and static files (htmx vendored with its version and licence),
       `config/systemd/agent-web.service`.
     - Adds: the dashboard's routes, the login check, the server-sent events relay, the answer form and the controls.
     - Tests: pages rendered against a fake daemon socket; a login allowed and one refused through a fake LocalAPI;
-      events relayed; an answer and each control sent to the daemon.
+      events relayed; an answer and each control sent to the daemon; a round's page against a history written by a
+      daemon run with fake CLIs, equal to the story of that round.
     - Why: the human's view of the teams, and a second way to answer and steer.
     Checks:
     - With a fake daemon socket: the start page lists the teams; a login not allowed gets 403; a request not from
       loopback is refused.
     - An answer posted from the form reaches the daemon; a change of state shows on the page without a reload.
+    - A round's page shows that round's story: its item, its agents by role, its runs, its pull request.
 
 Plan overview (context only)
 
@@ -137,11 +168,18 @@ Plan overview (context only)
    7.1 Starting work and the team's life
    7.2 Questions, answers and controls
    7.3 Gate service
-8. Autopilot
+8. Autopilot, rounds and the history
    8.1 Pull requests, reviews and the merge loop
    8.2 Round checks before review
+   8.3 Rounds as an entity
+   8.4 The history: a database of what happened, and what every run did
+   8.5 The history of a pull request, and the story of a round
+   8.6 The daemon's own log
+   8.7 `agent log`: questions to the history, search, following and what is kept
 9. Dashboard
    9.1 The dashboard   <- this round
 10. Cutover
    10.1 Install and documentation
    10.2 Remove the old implementation
+11. Usage
+   11.1 The tokens of every run

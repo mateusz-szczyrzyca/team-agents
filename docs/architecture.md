@@ -600,9 +600,9 @@ the developer rules also come in a variant for workers (a delegated task instead
 - English everywhere: code, comments, docs, commit messages, PR descriptions.
 
 Out of scope for the plan: remote nodes and the lead, investigation teams with phases and standalone investigation
-requests, `agent live`, archiving, token usage and cost accounting, automatic PR size limits (reviewers check
-PR-1), a proof by the harness that a RED commit fails (a reviewer runs one, TDD-1), an `agentbus` socket API (it
-is called as a process).
+requests, `agent live`, archiving, the cost of tokens in money, moving the state file into the database, automatic
+PR size limits (reviewers check PR-1), a proof by the harness that a RED commit fails (a reviewer runs one, TDD-1),
+an `agentbus` socket API (it is called as a process).
 
 ## The gate
 
