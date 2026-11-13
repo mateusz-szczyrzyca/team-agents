@@ -310,8 +310,8 @@ pub(super) struct Owner {
     incomplete: HashMap<TaskId, String>,
     /// The holds on the watchdog of each task that has a run going: a gate that waits for its turn takes one.
     holds: HashMap<TaskId, WatchdogHold>,
-    /// What stops the gates of each task that asked for one with no run going; the human's stop or pause of the task
-    /// cancels and removes it.
+    /// What stops the gates of each task that asked for one, whether its run is going or not; the human's stop or pause
+    /// of the task cancels and removes it.
     gate_stops: HashMap<TaskId, CancellationToken>,
     /// The queue of the gate service; `None` for an owner that runs without one, which refuses every gate.
     gate: Option<GateQueue>,

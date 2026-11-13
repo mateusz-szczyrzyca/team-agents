@@ -2,7 +2,8 @@
 //! put on the queue of the gate service, which answers the client when it has run.
 //!
 //! The owner never waits for a gate: the reply of the client goes with the job. While the gate waits and runs, the
-//! task's run is held off the watchdog, and stopping the task stops its gate.
+//! task's run is held off the watchdog, and stopping or pausing the task stops its gate, even when the run that asked
+//! for it has ended.
 
 use std::str::FromStr;
 use std::time::Duration;
@@ -113,19 +114,17 @@ impl Owner {
         })
     }
 
-    /// What stops the gate of `task`: the stop of its run; a task with no run has a token of its own, which the human's
-    /// stop or pause cancels (`stop_gates`), and the shutdown of the daemon cancels both.
+    /// What stops the gate of `task`: a token the task owns, whether or not it has a run going — a gate outlives the run
+    /// that asked for it, and the run's own token goes with the run. The human's stop or pause of the task cancels it
+    /// (`stop_gates`), and the shutdown of the daemon cancels all of them.
     fn gate_cancel(&mut self, task: &TaskId) -> CancellationToken {
-        if let Some(cancel) = self.cancels.get(task) {
-            return cancel.clone();
-        }
         self.gate_stops
             .entry(task.clone())
             .or_insert_with(|| self.shutdown.child_token())
             .clone()
     }
 
-    /// Stops the gates of `task` that were asked for while it had no run going.
+    /// Stops the gates of `task`, whatever run asked for them.
     pub(super) fn stop_gates(&mut self, task: &TaskId) {
         if let Some(cancel) = self.gate_stops.remove(task) {
             cancel.cancel();

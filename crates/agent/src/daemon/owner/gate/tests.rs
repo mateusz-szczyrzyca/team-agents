@@ -101,9 +101,8 @@ async fn a_task_with_a_run_going_has_its_watchdog_held_and_its_gate_stopped_with
     let daemon = Daemon::new(&solo_state(), None);
     let (mut owner, mut waiting) = queued_owner(&daemon).await;
     let hold = WatchdogHold::new();
-    let stop = CancellationToken::new();
     owner.holds.insert(task(1), hold.clone());
-    owner.cancels.insert(task(1), stop.clone());
+    owner.cancels.insert(task(1), CancellationToken::new());
 
     ask(&mut owner, 1).await;
 
@@ -114,7 +113,13 @@ async fn a_task_with_a_run_going_has_its_watchdog_held_and_its_gate_stopped_with
     );
     assert!(hold.last_held().is_some());
     assert!(!job.cancel.is_cancelled());
-    stop.cancel();
+    control(
+        &mut owner,
+        Command::Stop(agent_core::protocol::ControlRequest {
+            target: Target::Task(task(1)),
+        }),
+    )
+    .await;
     assert!(job.cancel.is_cancelled(), "stopping the task stops its gate");
     drop(job);
     let released = hold.last_held();
