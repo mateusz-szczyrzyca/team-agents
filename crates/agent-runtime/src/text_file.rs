@@ -1,8 +1,8 @@
 //! Reading a text file from the home with a bound: the files of the home (settings, prompts, questions) are put there
 //! by a human or a model, so how much of them is read is the reader's decision.
 
-use std::io;
-use std::os::unix::fs::MetadataExt;
+use std::io::{self, Write};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 
@@ -97,6 +97,28 @@ pub enum ReplaceError {
 /// # Errors
 /// [`ReplaceError`].
 pub async fn replace_text_file(path: &Path, text: &str, mode: u32) -> Result<(), ReplaceError> {
-    let _ = (path, text, mode);
-    Ok(())
+    let target = path.to_path_buf();
+    let text = text.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let directory = target
+            .parent()
+            .ok_or_else(|| ReplaceError::NoDirectory { path: target.clone() })?;
+        let write_error = |source| ReplaceError::Write {
+            path: target.clone(),
+            source,
+        };
+        let mut file = tempfile::NamedTempFile::new_in(directory).map_err(write_error)?;
+        file.write_all(text.as_bytes()).map_err(write_error)?;
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(mode))
+            .map_err(write_error)?;
+        file.as_file().sync_all().map_err(write_error)?;
+        file.persist(&target).map_err(|failed| write_error(failed.error))?;
+        Ok(())
+    })
+    .await
+    .map_err(|source| ReplaceError::Worker {
+        path: path.to_path_buf(),
+        source,
+    })?
 }
