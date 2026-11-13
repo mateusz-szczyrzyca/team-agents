@@ -722,3 +722,43 @@ async fn a_round_that_edits_one_line_of_a_wrapped_attribute_to_a_suppression_goe
     );
     assert_eq!(rig.github.calls("POST", "/graphql"), []);
 }
+
+#[tokio::test]
+async fn a_round_that_edits_a_line_far_below_the_opener_of_its_attribute_goes_back_to_the_team() {
+    let mut rig = checking_rig("script:edit-attribute,done", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    let attribute = |applied: &str| {
+        let fillers = (0..14)
+            .map(|n| format!("    cfg_attr_filler_{n}(true),"))
+            .collect::<Vec<_>>()
+            .join("\\n");
+        format!("#[cfg_attr(\\n    not(test),\\n{fillers}\\n    {applied},\\n)]\\nstruct Wired;\\n")
+    };
+    std::fs::write(
+        rig.repo.join("src/wired.rs"),
+        attribute("derive(Debug)").replace("\\n", "\n"),
+    )
+    .unwrap();
+    git(&rig.repo, &["add", "-A"]);
+    git(&rig.repo, &["commit", "-q", "-m", "Add a long wrapped attribute"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    script(
+        &rig,
+        "edit-attribute",
+        &format!(
+            "printf '{}' > src/wired.rs\necho case > tests/new.txt\ngit add src/wired.rs tests/new.txt\ncommit -m 'Edit the attribute and add its test'\n",
+            attribute("allow(dead_code)")
+        ),
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let back = rig.prompt(&tasks[0], 2).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        back.contains("`src/wired.rs`") && back.contains("suppress a lint"),
+        "{back}"
+    );
+    assert_eq!(rig.github.calls("POST", "/graphql"), []);
+}

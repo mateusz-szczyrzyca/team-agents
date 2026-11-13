@@ -196,6 +196,13 @@ pub fn scans(extension: &str) -> bool {
     RULES.iter().any(|rule| rule.extensions.contains(&extension))
 }
 
+/// Whether the attributes of files with this extension wrap over lines, so that an added line is read with the unchanged
+/// ones around it.
+#[must_use]
+pub fn wraps_attributes(_extension: &str) -> bool {
+    false
+}
+
 /// The kinds of markers that `line` of a file with this `extension` has, in the order of [`Marker`].
 #[must_use]
 pub fn markers_of(extension: &str, line: &str) -> Vec<Marker> {

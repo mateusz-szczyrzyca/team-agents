@@ -299,3 +299,12 @@ fn an_added_line_is_read_on_its_own_and_an_unchanged_one_is_not() {
 
     assert_eq!(markers_touching("rs", &both), [(11, Marker::SuppressesLint)]);
 }
+
+// Rule: only a language with attributes that wrap over lines needs the lines around an added one.
+#[test]
+fn only_rust_files_have_attributes_that_wrap_over_lines() {
+    assert!(wraps_attributes("rs"));
+    for extension in ["go", "sh", "bats", "py", "ts", "js", "md", "toml", ""] {
+        assert!(!wraps_attributes(extension), "{extension}");
+    }
+}

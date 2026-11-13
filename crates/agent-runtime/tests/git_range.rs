@@ -833,4 +833,59 @@ mod git_range {
             ]
         );
     }
+
+    // Rule: an attribute that opens further above an edited line than any window reaches is read whole: the checks see the
+    // suppression that an edit of one of its lines makes.
+    #[tokio::test]
+    async fn an_edited_line_far_below_the_opener_of_its_attribute_is_a_suppression() {
+        use agent_core::config::Checks;
+        use agent_core::decide::checks::{Issue, assess_near, markers::Marker};
+
+        let (_tmp, repo) = repository();
+        let attribute = |applied: &str| {
+            let mut lines = vec!["#[cfg_attr(".to_owned(), "    not(test),".to_owned()];
+            lines.extend((0..12).map(|n| format!("    cfg_attr_filler_{n}(true),")));
+            lines.extend([format!("    {applied},"), ")]".to_owned(), "struct Wired;".to_owned()]);
+            format!("{}\n", lines.join("\n"))
+        };
+        write(&repo, "src/a.rs", attribute("derive(Debug)").as_bytes());
+        let base = commit_all(&repo, "base");
+        write(&repo, "src/a.rs", attribute("allow(dead_code)").as_bytes());
+        let head = commit_all(&repo, "head");
+        let git = handle(&repo);
+
+        let facts = git.round_facts(&base, &head, "").await.unwrap();
+        let unchanged = git
+            .range_unchanged_lines(&base, &head, &[path("src/a.rs")])
+            .await
+            .unwrap();
+        let issues = assess_near(&Checks::default(), &facts, &unchanged, &[]);
+
+        assert_eq!(
+            issues,
+            [Issue::Marker {
+                path: path("src/a.rs"),
+                marker: Marker::SuppressesLint,
+                line: 1,
+                count: 1
+            }]
+        );
+    }
+
+    // Rule: a file too long to be read whole cannot be checked, and says so; its lines are not cleared by a window.
+    #[tokio::test]
+    async fn a_file_longer_than_the_limit_of_a_patch_cannot_be_read_whole() {
+        let (_tmp, repo) = repository();
+        let long = |first: &str| format!("{first}\n{}", "0123456789abcdef0123456789abcdef\n".repeat(300_000));
+        write(&repo, "src/long.rs", long("one").as_bytes());
+        let base = commit_all(&repo, "base");
+        write(&repo, "src/long.rs", long("two").as_bytes());
+        let head = commit_all(&repo, "head");
+
+        let failure = handle(&repo)
+            .range_unchanged_lines(&base, &head, &[path("src/long.rs")])
+            .await;
+
+        assert!(matches!(failure, Err(GitError::OutputTooLong { .. })), "{failure:?}");
+    }
 }
