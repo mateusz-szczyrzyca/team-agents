@@ -585,3 +585,26 @@ async fn a_task_that_is_paused_before_it_starts_keeps_the_reason_it_was_queued_w
 
     assert_eq!(owner.reasons.get(&task(1)), Some(&crate::daemon::team::Why::Woken));
 }
+
+// ---- a halt whose run is gone ----------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_stop_of_a_task_that_has_no_run_is_not_left_to_stop_its_next_run() {
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    // The status says a run is going; no run of the owner is: what a run that ended before the control came leaves.
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+
+    owner
+        .control_request(&Client::Cli, Steer::Stop, &of_task(1))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(owner.halts.is_empty(), "{:?}", owner.halts);
+}
