@@ -1,7 +1,7 @@
 //! The questions of a task through the daemon: the file a run's questions leave, the notification, and the three ways
 //! the answers arrive — the protocol, a saved file and the dashboard — each resuming the task with them.
 
-use agent_core::protocol::{Client, FailureKind, Reply};
+use agent_core::protocol::{Client, Command, ControlRequest, FailureKind, Reply, Target};
 use agent_core::questions::QuestionsFile;
 use agent_core::state::{AnsweredVia, QuestionState, State};
 use agent_core::status::TaskStatus;
@@ -268,6 +268,48 @@ async fn a_task_that_asks_again_gets_its_next_round_in_the_next_file() {
     );
     let reply = daemon.ask(answer(1, 2, &[(1, "ok")])).await.unwrap();
     assert_eq!(reply, Reply::Applied { tasks: vec![task(1)] });
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn answers_that_a_run_crashed_before_reading_are_given_again_when_the_task_is_resumed() {
+    let mut daemon = waiting_for_answers().await;
+    daemon.scenario(1, "crash");
+    daemon.ask(answer(1, 1, &[(1, "Use the disk")])).await.unwrap();
+    daemon.status_is(1, TaskStatus::Failed).await;
+    daemon.scenario(1, "done");
+
+    daemon
+        .ask(Command::Resume(ControlRequest {
+            target: Target::Task(task(1)),
+        }))
+        .await
+        .unwrap();
+
+    daemon.status_is(1, TaskStatus::Done).await;
+    let prompt = daemon.recorded(1, ".fake-args");
+    assert!(prompt.contains("Use the disk"), "{prompt}");
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn answers_that_a_run_read_are_not_given_again_to_the_next_run() {
+    let mut daemon = waiting_for_answers().await;
+    daemon.scenario(1, "nostatus");
+    daemon.ask(answer(1, 1, &[(1, "Use the disk")])).await.unwrap();
+    daemon.status_is(1, TaskStatus::Failed).await;
+    daemon.scenario(1, "done");
+
+    daemon
+        .ask(Command::Resume(ControlRequest {
+            target: Target::Task(task(1)),
+        }))
+        .await
+        .unwrap();
+
+    daemon.status_is(1, TaskStatus::Done).await;
+    let prompt = daemon.recorded(1, ".fake-args");
+    assert!(!prompt.contains("Use the disk"), "{prompt}");
     daemon.stop().await.unwrap();
 }
 
