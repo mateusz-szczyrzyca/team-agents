@@ -484,7 +484,7 @@ impl RawConfig {
             git,
             github,
             notifications,
-            questions: _,
+            questions,
             web,
             repos,
         } = self;
@@ -504,7 +504,7 @@ impl RawConfig {
             git,
             github,
             notifications,
-            questions: Questions::default(),
+            questions,
             web,
             repos,
         })

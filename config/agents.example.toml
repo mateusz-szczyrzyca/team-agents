@@ -108,6 +108,18 @@ trusted_accounts = ["your-github-login", "your-agents-github-login"]
 # command = ["/home/you/bin/notify-ntfy"]
 # directory = "/home/you/agents/notifications"
 
+# --- Questions -----------------------------------------------------------------------------------------------------
+# An agent that needs you writes a questions file and you are notified. `open = "vscode"` also opens the file in the
+# VS Code window connected to this host (Remote-SSH), if there is one; `vscode_server_dirs` are the server directories
+# searched for its remote command (default: .vscode-server, .vscode-server-insiders and .cursor-server in the home
+# directory of the user the daemon runs as). `editor` is what `agent answer` starts: a program and its arguments, the
+# file is its last argument (default: $VISUAL, then $EDITOR).
+
+[questions]
+open = "off"
+# vscode_server_dirs = ["/home/you/.vscode-server"]
+# editor = ["nano"]
+
 # --- Dashboard -----------------------------------------------------------------------------------------------------
 # It listens on a loopback address only; remote access goes through `tailscale serve`, and only the Tailscale
 # logins listed here get in.
