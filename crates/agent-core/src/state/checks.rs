@@ -71,22 +71,46 @@ pub struct ChecksRecord {
 impl ChecksRecord {
     /// How many times the checks sent back the round of `items`, which move together: the most any of them has.
     #[must_use]
-    pub fn passes_of(&self, _items: &[ItemId]) -> u32 {
-        0
+    pub fn passes_of(&self, items: &[ItemId]) -> u32 {
+        items
+            .iter()
+            .filter_map(|item| self.items.get(item))
+            .map(|held| held.passes)
+            .max()
+            .unwrap_or(0)
     }
 
     /// What the human allowed for any of `items`, without repeats.
     #[must_use]
-    pub fn allowed_of(&self, _items: &[ItemId]) -> Vec<Subject> {
-        Vec::new()
+    pub fn allowed_of(&self, items: &[ItemId]) -> Vec<Subject> {
+        let allowed: BTreeSet<&Subject> = items
+            .iter()
+            .filter_map(|item| self.items.get(item))
+            .flat_map(|held| held.allowed.iter())
+            .collect();
+        allowed.into_iter().cloned().collect()
     }
 
     /// Records that the checks sent back the round of `items` for the `passes`-th time.
-    pub fn set_passes(&mut self, _items: &[ItemId], _passes: u32) {}
+    pub fn set_passes(&mut self, items: &[ItemId], passes: u32) {
+        for item in items {
+            self.items.entry(*item).or_default().passes = passes;
+        }
+    }
 
     /// Records that the human allowed `subjects` for every one of `items`.
-    pub fn allow(&mut self, _items: &[ItemId], _subjects: &[Subject]) {}
+    pub fn allow(&mut self, items: &[ItemId], subjects: &[Subject]) {
+        for item in items {
+            self.items
+                .entry(*item)
+                .or_default()
+                .allowed
+                .extend(subjects.iter().cloned());
+        }
+    }
 
     /// Starts the count of passes again for `items`: the human decided.
-    pub fn restart_passes(&mut self, _items: &[ItemId]) {}
+    pub fn restart_passes(&mut self, items: &[ItemId]) {
+        self.set_passes(items, 0);
+    }
 }
