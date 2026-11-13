@@ -76,9 +76,10 @@ pub(in crate::daemon) enum RequestOutcome {
 pub(in crate::daemon) enum WorkerEnd {
     /// Its status line says it failed.
     Failed,
-    /// It said nothing a requester can use: it went to sleep or excluded itself.
+    /// It said nothing a requester can use: it went to sleep, excluded itself, or asked questions that cannot be used.
     NoResult,
-    /// It ended without a status line, or its run could not be started or carried out.
+    /// It ended without a status line, hit a provider's limit it cannot wait for, or its run could not be started or
+    /// carried out.
     NoStatus,
     /// The human stopped it.
     Stopped,
@@ -164,6 +165,9 @@ pub(in crate::daemon) fn request_outcome(
     message: Option<&str>,
 ) -> Option<RequestOutcome> {
     let said = message.unwrap_or_default();
+    if goes_on(end) && status != TaskStatus::Failed {
+        return None;
+    }
     let fail = |how: WorkerEnd| {
         let said = (!said.trim().is_empty()).then(|| end_of(said));
         Some(RequestOutcome::Failed { how, said })
@@ -175,23 +179,31 @@ pub(in crate::daemon) fn request_outcome(
         RunEnd::Reported {
             outcome: RunOutcome::Failed,
         } => fail(WorkerEnd::Failed),
+        // Questions that cannot be used fail the task: the worker gave nothing to the requester either.
         RunEnd::Reported {
-            outcome: RunOutcome::Sleeping | RunOutcome::Excluded,
+            outcome: RunOutcome::Sleeping | RunOutcome::Excluded | RunOutcome::Questions,
         } => fail(WorkerEnd::NoResult),
-        RunEnd::NoStatus { .. } => fail(WorkerEnd::NoStatus),
+        // A provider's limit that cannot be waited for is settled as a run without a status.
+        RunEnd::NoStatus { .. } | RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited => fail(WorkerEnd::NoStatus),
         RunEnd::Stopped => fail(WorkerEnd::Stopped),
-        // The worker goes on, after the human answered or its provider's limit is over; only the end of the
-        // watchdog's last strike ends the request.
-        RunEnd::Reported {
-            outcome: RunOutcome::Questions,
-        }
-        | RunEnd::QuotaExhausted { .. }
-        | RunEnd::RateLimited
-        | RunEnd::Hung => (status == TaskStatus::Failed).then_some(RequestOutcome::Failed {
+        RunEnd::Hung => Some(RequestOutcome::Failed {
             how: WorkerEnd::Hung,
             said: None,
         }),
     }
+}
+
+/// Whether the worker goes on after a run that ended with `end`, unless its task failed after all: the human answers
+/// its questions, its provider's limit ends, the watchdog lets it continue.
+const fn goes_on(end: &RunEnd) -> bool {
+    matches!(
+        end,
+        RunEnd::Reported {
+            outcome: RunOutcome::Questions,
+        } | RunEnd::QuotaExhausted { .. }
+            | RunEnd::RateLimited
+            | RunEnd::Hung
+    )
 }
 
 /// The worker's report without its closing `STATUS:` line; the whole message when nothing else is in it, so that a

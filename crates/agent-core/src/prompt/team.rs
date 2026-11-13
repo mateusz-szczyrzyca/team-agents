@@ -33,9 +33,11 @@ pub enum TeamPrompt {
     HelperFailed,
     /// How a worker's run that failed a request ended: with `STATUS: FAILED`.
     WorkerFailed,
-    /// How a worker's run that failed a request ended: with nothing a requester can use.
+    /// How a worker's run that failed a request ended: with nothing a requester can use, or questions that cannot be
+    /// used.
     WorkerNoResult,
-    /// How a worker's run that failed a request ended: without a status line, or it could not run.
+    /// How a worker's run that failed a request ended: without a status line, at a provider's limit it cannot wait for,
+    /// or it could not run.
     WorkerNoStatus,
     /// How a worker's run that failed a request ended: the human stopped it.
     WorkerStopped,
