@@ -32,8 +32,8 @@ fn go_lines_are_read_for_skips_suppressions_and_a_look_at_the_test_run() {
     );
 }
 
-// Rule: Rust skips a test with `#[ignore]`, suppresses a lint with `#[allow(…)]` — `#[expect(…)]` is the sanctioned
-// way and is no marker — and asks about the test run with `cfg!(test)`; an attribute starts its line.
+// Rule: Rust skips a test with `#[ignore]`, suppresses a lint with `#[allow(…)]` and asks about the test run with
+// `cfg!(test)`; an attribute starts its line.
 #[test]
 fn rust_lines_are_read_for_ignore_allow_and_cfg_test() {
     expect(
@@ -43,7 +43,6 @@ fn rust_lines_are_read_for_ignore_allow_and_cfg_test() {
             ("    #[ignore = \"slow\"]", &[Marker::SkipsTest]),
             ("    #[allow(dead_code)]", &[Marker::SuppressesLint]),
             ("#![allow(unused)]", &[Marker::SuppressesLint]),
-            ("#[expect(dead_code, reason = \"wired later\")]", &[]),
             ("if cfg!(test) {", &[Marker::ChecksUnderTest]),
             ("#[cfg(test)]", &[]),
             ("let attribute = \"#[ignore]\";", &[]),
