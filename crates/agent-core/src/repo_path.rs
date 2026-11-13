@@ -83,10 +83,30 @@ pub struct RepoPath(String);
 
 /// Checks the rules of a [`RepoPath`].
 fn check_repo_path(text: &str) -> Result<(), InvalidRepoPath> {
-    Err(InvalidRepoPath {
+    let refuse = |rule| InvalidRepoPath {
         value: text.to_owned(),
-        rule: PathRule::TooLong { max: MAX_REPO_PATH_LEN },
-    })
+        rule,
+    };
+    if text.is_empty() {
+        return Err(refuse(PathRule::Empty));
+    }
+    if text.len() > MAX_REPO_PATH_LEN {
+        return Err(refuse(PathRule::TooLong { max: MAX_REPO_PATH_LEN }));
+    }
+    if text.starts_with('/') {
+        return Err(refuse(PathRule::Absolute));
+    }
+    if let Some(control) = text.chars().find(|c| c.is_control()) {
+        return Err(refuse(PathRule::Control(control)));
+    }
+    for segment in text.split('/') {
+        match segment {
+            "" => return Err(refuse(PathRule::EmptySegment)),
+            "." | ".." => return Err(refuse(PathRule::DotSegment)),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 text_value!(RepoPath, check_repo_path, keep, InvalidRepoPath);
@@ -100,13 +120,14 @@ impl RepoPath {
     /// The extension of the file's name, without the dot; `None` for a name with no dot or only a leading one.
     #[must_use]
     pub fn extension(&self) -> Option<&str> {
-        None
+        let (stem, extension) = self.file_name().rsplit_once('.')?;
+        (!stem.is_empty() && !extension.is_empty()).then_some(extension)
     }
 
     /// The last segment: the file's name.
     #[must_use]
     pub fn file_name(&self) -> &str {
-        &self.0
+        self.0.rsplit_once('/').map_or(self.0.as_str(), |(_, name)| name)
     }
 }
 
@@ -173,15 +194,44 @@ pub struct PathPattern(String);
 
 /// Checks the rules of a [`PathPattern`].
 fn check_pattern(text: &str) -> Result<(), InvalidPathPattern> {
-    let rule = if text.len() > MAX_PATTERN_LEN {
-        PatternRule::TooLong { max: MAX_PATTERN_LEN }
-    } else {
-        PatternRule::TooManyDoubleStars { max: MAX_DOUBLE_STARS }
-    };
-    Err(InvalidPathPattern {
+    let refuse = |rule| InvalidPathPattern {
         value: text.to_owned(),
         rule,
-    })
+    };
+    if text.is_empty() {
+        return Err(refuse(PatternRule::Empty));
+    }
+    if text.len() > MAX_PATTERN_LEN {
+        return Err(refuse(PatternRule::TooLong { max: MAX_PATTERN_LEN }));
+    }
+    if text.starts_with('/') {
+        return Err(refuse(PatternRule::Absolute));
+    }
+    // `[`, `]`, `{` and `}` are reserved for classes and alternatives, which a later version may add.
+    if let Some(bad) = text
+        .chars()
+        .find(|c| c.is_control() || matches!(c, '\\' | '[' | ']' | '{' | '}'))
+    {
+        return Err(refuse(PatternRule::ForbiddenChar(bad)));
+    }
+    let segments: Vec<&str> = text.split('/').collect();
+    // A directory pattern ends in `/`: only its last segment is empty.
+    let last = segments.len().saturating_sub(1);
+    let mut double_stars = 0_usize;
+    for (position, segment) in segments.iter().enumerate() {
+        match *segment {
+            "" if position == last => {}
+            "" => return Err(refuse(PatternRule::EmptySegment)),
+            ".." => return Err(refuse(PatternRule::ParentSegment)),
+            "**" => double_stars = double_stars.saturating_add(1),
+            other if other.contains("**") => return Err(refuse(PatternRule::MixedDoubleStar)),
+            _ => {}
+        }
+    }
+    if double_stars > MAX_DOUBLE_STARS {
+        return Err(refuse(PatternRule::TooManyDoubleStars { max: MAX_DOUBLE_STARS }));
+    }
+    Ok(())
 }
 
 text_value!(PathPattern, check_pattern, keep, InvalidPathPattern);
@@ -189,9 +239,72 @@ text_value!(PathPattern, check_pattern, keep, InvalidPathPattern);
 impl PathPattern {
     /// Whether the pattern matches `path`.
     #[must_use]
-    pub fn matches(&self, _path: &RepoPath) -> bool {
-        false
+    pub fn matches(&self, path: &RepoPath) -> bool {
+        if !self.0.contains('/') {
+            return glob_segment(&self.0, path.file_name());
+        }
+        let mut pattern: Vec<&str> = self.0.split('/').collect();
+        // A directory matches everything below it.
+        if let Some(last) = pattern.last_mut()
+            && last.is_empty()
+        {
+            *last = "**";
+        }
+        let segments: Vec<&str> = path.as_str().split('/').collect();
+        match_segments(&pattern, &segments)
     }
+}
+
+/// Whether the segments of a pattern match the segments of a path; `**` takes any number of segments, and at the end of
+/// the pattern at least one.
+fn match_segments(pattern: &[&str], path: &[&str]) -> bool {
+    match pattern.split_first() {
+        None => path.is_empty(),
+        Some((&"**", [])) => !path.is_empty(),
+        Some((&"**", rest)) => {
+            (0..=path.len()).any(|skipped| path.get(skipped..).is_some_and(|tail| match_segments(rest, tail)))
+        }
+        Some((segment, rest)) => path
+            .split_first()
+            .is_some_and(|(name, tail)| glob_segment(segment, name) && match_segments(rest, tail)),
+    }
+}
+
+/// Whether `text`, one segment, matches the glob `pattern`: `*` for any characters and `?` for one.
+fn glob_segment(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let text: Vec<char> = text.chars().collect();
+    let (mut at_pattern, mut at_text) = (0_usize, 0_usize);
+    // Where the last `*` was and how much of the text it has taken: the place to go back to when a match fails.
+    let mut star: Option<(usize, usize)> = None;
+    while at_text < text.len() {
+        match (pattern.get(at_pattern), text.get(at_text)) {
+            (Some('*'), _) => {
+                star = Some((at_pattern, at_text));
+                at_pattern = at_pattern.saturating_add(1);
+            }
+            (Some('?'), _) => {
+                at_pattern = at_pattern.saturating_add(1);
+                at_text = at_text.saturating_add(1);
+            }
+            (Some(wanted), Some(found)) if wanted == found => {
+                at_pattern = at_pattern.saturating_add(1);
+                at_text = at_text.saturating_add(1);
+            }
+            _ => {
+                let Some((star_at, taken)) = star else {
+                    return false;
+                };
+                let taken = taken.saturating_add(1);
+                star = Some((star_at, taken));
+                at_pattern = star_at.saturating_add(1);
+                at_text = taken;
+            }
+        }
+    }
+    pattern
+        .get(at_pattern..)
+        .is_some_and(|rest| rest.iter().all(|c| *c == '*'))
 }
 
 /// Whether any of `patterns` matches `path`.
