@@ -856,6 +856,15 @@ impl Owner {
                 item: id,
                 source,
             })?;
+            // An item that was being fixed has its pull request already; the others have it opened for them now.
+            let opened = !matches!(&publication.publish, Publish::Update { fixing, .. } if fixing.contains(&id));
+            if opened {
+                round.events.push(EventKind::PullRequestOpened {
+                    team: team_id.clone(),
+                    item: id,
+                    pr: published.pr.number,
+                });
+            }
             round.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: id,
@@ -1439,9 +1448,9 @@ impl Owner {
             .await?;
         let lead = self.lead_of(team_id)?;
         let next = self.decide(team_id, asked, verdict);
-        self.record_verdict(team_id, task, asked, verdict, now)?;
-        self.post_review(pulls, &lead, task, asked, &report).await;
         let mut round = Round::default();
+        self.record_verdict(team_id, task, asked, verdict, now, &mut round)?;
+        self.post_review(pulls, &lead, task, asked, &report).await;
         if let Some(next) = next {
             self.apply_next(team_id, &lead, asked, next, &mut round)?;
         }
@@ -1476,6 +1485,7 @@ impl Owner {
         asked: &Asked,
         verdict: ReviewVerdict,
         now: Timestamp,
+        round: &mut Round,
     ) -> Result<(), OwnerError> {
         for id in &asked.items {
             let mut team_mut = self
@@ -1493,6 +1503,12 @@ impl Owner {
                     item: *id,
                     source,
                 })?;
+            round.events.push(EventKind::ReviewSubmitted {
+                team: team_id.clone(),
+                item: *id,
+                reviewer: asked.reviewer.clone(),
+                verdict,
+            });
         }
         Ok(())
     }
