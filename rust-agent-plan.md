@@ -5,11 +5,8 @@ feature is the brief every member reads; each item below is one task, one branch
 
 Ground rules
 
-- The rules, each read by its own role only:
-  - Writing or fixing code: read `prompts/agent/rust-developer.md` (the Rust developer rules) first; it is binding.
-    Its rule IDs (ERR-2, PR-1, ...) are the ones this plan and the reviewers cite.
-  - Reviewing a PR: review against `prompts/investigator/code-review.md`, which lists every rule by its ID. Do not
-    read `rust-developer.md` as a whole: open it only for the full wording of a rule a finding cites.
+- Each role is given its own rules (the developer rules to write code, the review rules to review it); they are
+  binding, and their rule IDs (ERR-2, PR-1, ...) are the ones this plan cites.
 - Size, relaxed for this plan: the new `agent` is needed fast, so PR-1's limit is 5000 changed lines per PR, tests
   not counted, and PR-2's threshold for planning a split is about 4000. Everything else in PR-1 and PR-2 applies as
   written: how lines are counted, a ceiling not a target, never fewer tests because of it. Task 1.1 records this in
@@ -51,10 +48,7 @@ Target layout
     crates/agent/               the `agent` binary: CLI commands and `agent daemon`
     crates/agent-web/           the `agent-web` binary: dashboard (axum, htmx, server-sent events)
     prompts/clarification.md
-    prompts/agent/rust-developer.md
-    prompts/worker-agent/rust-developer.md
-    prompts/investigator/rust-developer.md
-    prompts/investigator/code-review.md
+    prompts/agent/, prompts/worker-agent/, prompts/investigator/   each role's rules (in the prompt catalog)
     prompts/harness/<module>/<name>.md     texts the harness composes (run prompts, questions files, notifications)
     config/agents.example.toml, config/systemd/
     docs/architecture.md, docs/configuration.md, docs/state.md, docs/task-list.md
@@ -408,9 +402,9 @@ Depends on: 7
 [ ] 8.1 Pull requests, reviews and the merge loop
     When an item's integration has a green gate at its head: push, open the PR with a body from a template, mark it
     ready; later pushes update it. Two free investigators from outside the team (the PR waits until two are free) review
-    it with `prompts/investigator/code-review.md` and the item's full text, its expected result included; the verdict is
-    parsed from the review rules' report format and posted on the PR. Both ready → merge through the API, then the next
-    item; with `--no-merge` the human is notified instead. Changes requested → a fix pass for the team with the
+    it with the review rules of the prompt catalog and the item's full text, its expected result included; the verdict
+    is parsed from the review rules' report format and posted on the PR. Both ready → merge through the API, then the
+    next item; with `--no-merge` the human is notified instead. Changes requested → a fix pass for the team with the
     findings, at most the configured number; then a question to the human. All items done → the team ends and the human
     is notified.
     Expected result:
