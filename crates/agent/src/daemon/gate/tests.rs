@@ -85,6 +85,10 @@ struct Rig {
     sender: broadcast::Sender<Event>,
     shutdown: CancellationToken,
     service: Option<JoinHandle<()>>,
+    /// The clock of the service: a test moves it.
+    clock: ManualClock,
+    /// The directories of the gate command's `PATH`.
+    agent_path: Vec<AbsolutePath>,
 }
 
 impl Rig {
@@ -104,18 +108,25 @@ impl Rig {
             sender,
             shutdown: CancellationToken::new(),
             service: None,
+            clock: ManualClock::new(crate::fixtures::at(0)),
+            agent_path: vec![abs(Path::new("/usr/bin")), abs(Path::new("/bin"))],
+        }
+    }
+
+    /// What the service is made of.
+    fn parts(&self) -> GateParts {
+        GateParts {
+            store: Arc::clone(&self.store),
+            clock: SharedClock::new(self.clock.clone()),
+            events: self.sender.clone(),
+            agent_path: self.agent_path.clone(),
+            stop_grace: Duration::from_secs(5),
         }
     }
 
     /// Starts the service.
     fn start(&mut self) {
-        let parts = GateParts {
-            store: Arc::clone(&self.store),
-            clock: SharedClock::new(ManualClock::new(crate::fixtures::at(0))),
-            events: self.sender.clone(),
-            agent_path: vec![abs(Path::new("/usr/bin")), abs(Path::new("/bin"))],
-            stop_grace: Duration::from_secs(5),
-        };
+        let parts = self.parts();
         let waiting = self.waiting.take().unwrap();
         self.service = Some(tokio::spawn(run(waiting, parts, self.shutdown.clone())));
     }
@@ -528,4 +539,109 @@ fn a_signal_is_an_exit_code_above_128_and_a_zero_exit_is_a_pass() {
             exit_code: std::num::NonZeroI32::new(137).unwrap()
         }
     );
+    // A sum of zero cannot come from a real signal; it is still a failure, never a pass.
+    assert_eq!(
+        outcome_of(ExitReport::Signaled { signal: -128 }),
+        GateOutcome::Failed {
+            exit_code: std::num::NonZeroI32::MIN
+        }
+    );
+}
+
+// ---- the failures that are not the gate's own ------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_record_that_cannot_be_saved_fails_the_gate_with_an_internal_failure() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    // A directory where the record goes: the rename over it is refused.
+    std::fs::create_dir_all(rig.record_file(1)).unwrap();
+    rig.start();
+
+    let failure = refused(rig.ask(1, "true", LONG)).await;
+
+    assert_eq!(failure.kind, FailureKind::Internal);
+    assert!(failure.message.contains("record"), "{}", failure.message);
+}
+
+#[tokio::test]
+async fn a_task_directory_that_cannot_be_made_fails_the_gate_before_it_runs() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    std::fs::write(
+        rig.home.task_dir(&task(1)),
+        "a file where the directory of the task goes",
+    )
+    .unwrap();
+    let marker = rig.home.root().join("ran");
+    rig.start();
+
+    let failure = refused(rig.ask(1, &format!("touch {marker:?}"), LONG)).await;
+
+    assert_eq!(failure.kind, FailureKind::Internal);
+    assert!(!marker.exists());
+}
+
+#[tokio::test]
+async fn directories_that_cannot_make_a_path_fail_the_gate_before_it_runs() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    // A `:` separates the directories of a `PATH`: a directory with one in its name cannot be one of them.
+    rig.agent_path = vec![abs(Path::new("/usr/bin:/bin"))];
+    let marker = rig.home.root().join("ran");
+    rig.start();
+
+    let failure = refused(rig.ask(1, &format!("touch {marker:?}"), LONG)).await;
+
+    assert_eq!(failure.kind, FailureKind::Internal);
+    assert!(failure.message.contains("agent_path"), "{}", failure.message);
+    assert!(!marker.exists());
+}
+
+#[tokio::test]
+async fn a_clock_with_no_recordable_time_fails_the_gate_after_it_ran() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.clock.advance(time::Duration::days(-365 * 3000));
+    rig.start();
+
+    let failure = refused(rig.ask(1, "true", LONG)).await;
+
+    assert_eq!(failure.kind, FailureKind::Internal);
+    assert!(!rig.record_file(1).exists());
+}
+
+#[tokio::test]
+async fn a_task_whose_last_log_number_is_taken_has_no_log_number_left() {
+    let rig = Rig::new().await;
+    std::fs::create_dir_all(rig.home.task_dir(&task(1))).unwrap();
+    std::fs::write(rig.home.gate_log(&task(1), std::num::NonZeroU32::MAX), "taken").unwrap();
+    let mut service = Service::new(rig.parts());
+    service.next_log.insert(task(1), std::num::NonZeroU32::MAX);
+
+    let error = service.open_log(&task(1)).await.unwrap_err();
+
+    assert!(
+        matches!(error, GateError::LogNumbers { task: ref named } if *named == task(1)),
+        "{error:?}"
+    );
+    assert_eq!(error.failure().kind, FailureKind::Internal);
+}
+
+#[tokio::test]
+async fn a_log_number_that_an_earlier_daemon_used_is_skipped() {
+    let rig = Rig::new().await;
+    std::fs::create_dir_all(rig.home.task_dir(&task(1))).unwrap();
+    for number in 1..=2 {
+        std::fs::write(
+            rig.home.gate_log(&task(1), std::num::NonZeroU32::new(number).unwrap()),
+            "old",
+        )
+        .unwrap();
+    }
+    let mut service = Service::new(rig.parts());
+
+    let (path, _) = service.open_log(&task(1)).await.unwrap();
+
+    assert_eq!(path, rig.home.gate_log(&task(1), std::num::NonZeroU32::new(3).unwrap()));
 }

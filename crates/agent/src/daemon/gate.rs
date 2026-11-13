@@ -213,15 +213,14 @@ impl GateError {
 /// How a gate command's end is recorded: a zero exit is a pass, any other code a failure with that code, and a signal
 /// a failure with the code a shell shows for it.
 fn outcome_of(exit: ExitReport) -> GateOutcome {
-    // The failure that stands in for an exit code of zero that a signal would make: a signal number is positive, so the
-    // sum is never zero; if it were, the gate failed all the same.
-    let failed = |code: i32| GateOutcome::Failed {
-        exit_code: NonZeroI32::new(code).unwrap_or(NonZeroI32::MIN),
-    };
     match exit {
-        ExitReport::Exited { code: 0 } => GateOutcome::Passed,
-        ExitReport::Exited { code } => failed(code),
-        ExitReport::Signaled { signal } => failed(SIGNAL_EXIT_BASE.saturating_add(signal)),
+        ExitReport::Exited { code } => {
+            NonZeroI32::new(code).map_or(GateOutcome::Passed, |exit_code| GateOutcome::Failed { exit_code })
+        }
+        ExitReport::Signaled { signal } => GateOutcome::Failed {
+            // A signal number is positive, so the sum is never zero; a sum that were zero would still be a failure.
+            exit_code: NonZeroI32::new(SIGNAL_EXIT_BASE.saturating_add(signal)).unwrap_or(NonZeroI32::MIN),
+        },
     }
 }
 
@@ -320,7 +319,8 @@ impl Service {
                 .open(&path)
                 .await;
             match made {
-                Ok(_file) => {
+                // The file is made only to claim its number: the gate command writes it.
+                Ok(_claimed) => {
                     let next = number
                         .checked_add(1)
                         .ok_or_else(|| GateError::LogNumbers { task: task.clone() })?;
