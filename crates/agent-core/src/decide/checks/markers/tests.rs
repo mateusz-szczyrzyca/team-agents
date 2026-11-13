@@ -71,6 +71,39 @@ fn rust_expect_attributes_suppress_a_lint() {
     );
 }
 
+// Rule: an attribute that `cfg_attr` applies is read as if it stood alone: `#[cfg_attr(not(test), expect(…))]`, the
+// form PR-5 gives a suppression that only some builds need, suppresses a lint, and `#[cfg_attr(miri, ignore)]` skips a
+// test. A `cfg_attr` that applies anything else is no marker.
+#[test]
+fn rust_attributes_that_cfg_attr_applies_are_read_like_attributes() {
+    expect(
+        "rs",
+        &[
+            (
+                "#[cfg_attr(not(test), expect(dead_code, reason = \"wired in part 3/4\"))]",
+                &[Marker::SuppressesLint],
+            ),
+            (
+                "    #[cfg_attr(feature = \"x\", allow(unused))]",
+                &[Marker::SuppressesLint],
+            ),
+            ("#![cfg_attr(not(test), expect(dead_code))]", &[Marker::SuppressesLint]),
+            (
+                "#[cfg_attr(not(test), expect(dead_code, reason = \"für später\"))]",
+                &[Marker::SuppressesLint],
+            ),
+            ("#[cfg_attr(miri, ignore)]", &[Marker::SkipsTest]),
+            ("#[cfg_attr(windows, ignore = \"no fork\")]", &[Marker::SkipsTest]),
+            ("#[cfg_attr(feature = \"serde\", derive(Serialize))]", &[]),
+            ("#[cfg_attr(test, derive(Debug))]", &[]),
+            ("#[cfg_attr(docsrs, doc(cfg(feature = \"ignored\")))]", &[]),
+            ("#[cfg_attr(test, my_allow(x))]", &[]),
+            ("// #[cfg_attr(miri, ignore)]", &[]),
+            ("let text = \"#[cfg_attr(miri, ignore)]\";", &[]),
+        ],
+    );
+}
+
 // Rule: a bats test is skipped by `skip` as a word at the start of a line; shell code suppresses a lint with a
 // `shellcheck disable=` comment and asks about the test run through a `BATS_` variable.
 #[test]

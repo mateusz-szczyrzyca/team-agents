@@ -886,6 +886,83 @@ fn an_added_expect_attribute_is_an_issue_unless_the_description_names_its_file()
     );
 }
 
+/// The added lines of `src/a.rs` from line 10 on: an attribute that rustfmt wrapped, applying `applied`, and the item it
+/// is on.
+fn wrapped_cfg_attr(applied: &str) -> Vec<AddedLine> {
+    [
+        "    #[cfg_attr(",
+        "        not(test),",
+        applied,
+        "    )]",
+        "    fn wired_later() {}",
+    ]
+    .into_iter()
+    .zip(10..)
+    .map(|(text, number)| line("src/a.rs", number, text))
+    .collect()
+}
+
+// Rule: an attribute that rustfmt wraps over several lines — `#[cfg_attr(` alone on its line, what it applies on the
+// lines after it — is read as one line, at the number of its first.
+#[test]
+fn a_wrapped_cfg_attr_that_suppresses_a_lint_is_an_issue_at_its_first_line() {
+    let lines =
+        wrapped_cfg_attr("        expect(dead_code, reason = \"wired in part 3/4, when the daemon reads the answer\")");
+
+    assert_eq!(
+        found(&marked(&["src/a.rs"], lines, "")),
+        [Issue::Marker {
+            path: path("src/a.rs"),
+            marker: Marker::SuppressesLint,
+            line: 10,
+            count: 1
+        }]
+    );
+}
+
+#[test]
+fn a_wrapped_cfg_attr_that_skips_a_test_is_an_issue_at_its_first_line() {
+    let lines =
+        wrapped_cfg_attr("        ignore = \"needs a terminal that the machines of the continuous integration lack\"");
+
+    assert_eq!(
+        found(&marked(&["src/a.rs"], lines, "")),
+        [Issue::Marker {
+            path: path("src/a.rs"),
+            marker: Marker::SkipsTest,
+            line: 10,
+            count: 1
+        }]
+    );
+}
+
+#[test]
+fn a_wrapped_cfg_attr_that_applies_no_marker_or_is_in_a_named_file_is_no_issue() {
+    let derive = wrapped_cfg_attr("        derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)");
+    let expect = wrapped_cfg_attr("        expect(dead_code, reason = \"wired later\")");
+
+    assert_eq!(found(&marked(&["src/a.rs"], derive, "")), []);
+    assert_eq!(
+        found(&marked(&["src/a.rs"], expect, "Suppressions: `src/a.rs`, wired later.")),
+        []
+    );
+}
+
+// Rule: a wrapped attribute ends with its `)]` line, or where the added lines stop following each other: a later line is
+// read on its own.
+#[test]
+fn a_line_after_the_end_or_a_gap_is_not_part_of_a_wrapped_attribute() {
+    let mut after_end = wrapped_cfg_attr("        derive(Debug)");
+    after_end.push(line("src/a.rs", 15, "    let level = allow(Level::Warn);"));
+    let after_gap = vec![
+        line("src/a.rs", 10, "#[cfg_attr("),
+        line("src/a.rs", 30, "    let level = allow(Level::Warn);"),
+    ];
+
+    assert_eq!(found(&marked(&["src/a.rs"], after_end, "")), []);
+    assert_eq!(found(&marked(&["src/a.rs"], after_gap, "")), []);
+}
+
 #[test]
 fn a_file_with_an_allowed_subject_may_have_markers() {
     let facts = marked(&["src/lib.rs"], vec![line("src/lib.rs", 3, "#[allow(dead_code)]")], "");
