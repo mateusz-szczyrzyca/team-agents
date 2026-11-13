@@ -25,7 +25,7 @@ use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextErro
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision, WorktreeBranch};
 use agent_runtime::github::{
     ApiBase, CommentReview, GitHub, GitHubError, GitHubSettings, InvalidApiBase, InvalidRepoSlug, MergeMethod,
-    MergeRequest, NewPullRequest, PullRequestUpdate, PullState, Readiness, RepoSlug,
+    MergeRequest, NewPullRequest, PullRequestUpdate, PullState, Readiness, Rejection, RepoSlug,
 };
 use agent_runtime::notify::{InvalidNotification, Notification};
 use agent_runtime::process::error_chain;
@@ -406,6 +406,8 @@ pub(super) struct PullWatch {
     bounces: HashMap<TaskId, u32>,
     /// When each approved pull request was last looked at, so that one that waits is not asked about at every look.
     polled: HashMap<(TeamId, PrNumber), Timestamp>,
+    /// The pull requests whose merge GitHub refused: they are not merged again, only looked at for the human's merge.
+    refused: HashSet<(TeamId, PrNumber)>,
 }
 
 /// How many times a report without a verdict is sent back before the human is told.
@@ -418,6 +420,27 @@ const POLL_EVERY: time::Duration = time::Duration::seconds(30);
 /// Something the human is told once.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Announcement {
+    /// The pull request is approved and the team does not merge by itself.
+    Approved {
+        /// The team.
+        team: TeamId,
+        /// The pull request.
+        pr: PrNumber,
+    },
+    /// GitHub refused to merge the pull request.
+    MergeFailed {
+        /// The team.
+        team: TeamId,
+        /// The pull request.
+        pr: PrNumber,
+    },
+    /// The pull request was closed without being merged.
+    Closed {
+        /// The team.
+        team: TeamId,
+        /// The pull request.
+        pr: PrNumber,
+    },
     /// The reviewers still ask for changes, the fix passes are used up and the lead put no question.
     Decision {
         /// The team.
@@ -1593,7 +1616,7 @@ impl Owner {
             if !self.due(team_id, &pr, now)? {
                 continue;
             }
-            match self.try_merge(pulls, team_id, &lead, &pr).await {
+            match self.try_merge(pulls, team_id, &lead, &pr, now).await {
                 Ok(Merge::Merged) => {
                     self.watch.polled.remove(&(team_id.clone(), pr.number));
                     self.complete(team_id, &lead, &pr, &items, now, round).await?;
@@ -1640,20 +1663,48 @@ impl Owner {
         Ok(true)
     }
 
-    /// Merges `pr` when it is open and the team merges by itself.
+    /// Merges `pr` when it is open and the team merges by itself; tells the human what the team does not do by itself:
+    /// a pull request that is approved and left to them, one that GitHub refuses to merge, one that was closed.
     async fn try_merge(
         &mut self,
         pulls: &Pulls,
         team_id: &TeamId,
         lead: &Lead,
         pr: &PullRequest,
+        now: Timestamp,
     ) -> Result<Merge, PublishError> {
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let github = self.github_for(pulls, &lead.repo, &git).await?;
         let remote = github.get_pull_request(pr.number).await?;
+        let about = |extra: Extra<'_>| -> Result<Variables, VariablesError> {
+            let values = Variables::new()
+                .with("team", team_id.as_str())?
+                .with("pr", pr.number.to_string())?
+                .with("url", &remote.url)?;
+            match extra {
+                Extra::Nothing => Ok(values),
+                Extra::Repo => values.with("repo", lead.repo.as_str()),
+                Extra::Reason(reason) => values.with("reason", reason),
+            }
+        };
+        let key = (team_id.clone(), pr.number);
         match remote.state {
             PullState::Merged => Ok(Merge::Merged),
-            PullState::Closed => Ok(Merge::Waits),
+            PullState::Closed => {
+                let announcement = Announcement::Closed {
+                    team: team_id.clone(),
+                    pr: pr.number,
+                };
+                self.announce(
+                    pulls,
+                    lead,
+                    announcement,
+                    AutopilotPrompt::NoticeClosed,
+                    about(Extra::Nothing),
+                    now,
+                );
+                Ok(Merge::Waits)
+            }
             PullState::Open => {
                 let autopilot = self
                     .parts
@@ -1661,21 +1712,66 @@ impl Owner {
                     .team(team_id)
                     .is_some_and(|team| team.merge() == agent_core::state::MergeMode::Autopilot);
                 if !autopilot {
+                    let announcement = Announcement::Approved {
+                        team: team_id.clone(),
+                        pr: pr.number,
+                    };
+                    self.announce(
+                        pulls,
+                        lead,
+                        announcement,
+                        AutopilotPrompt::NoticeApproved,
+                        about(Extra::Repo),
+                        now,
+                    );
                     return Ok(Merge::Waits);
                 }
-                github
-                    .merge_pull_request(
-                        pr.number,
-                        &MergeRequest {
-                            method: MergeMethod::Merge,
-                            expected_head: remote.head,
-                            commit_title: None,
-                            commit_message: None,
-                        },
-                    )
-                    .await?;
-                Ok(Merge::Merged)
+                if self.watch.refused.contains(&key) {
+                    return Ok(Merge::Waits);
+                }
+                let request = MergeRequest {
+                    method: MergeMethod::Merge,
+                    expected_head: remote.head.clone(),
+                    commit_title: None,
+                    commit_message: None,
+                };
+                match github.merge_pull_request(pr.number, &request).await {
+                    Ok(_) => Ok(Merge::Merged),
+                    Err(error) if refuses(&error) => {
+                        self.watch.refused.insert(key);
+                        let announcement = Announcement::MergeFailed {
+                            team: team_id.clone(),
+                            pr: pr.number,
+                        };
+                        let values = about(Extra::Reason(&error_chain(&error)));
+                        self.announce(
+                            pulls,
+                            lead,
+                            announcement,
+                            AutopilotPrompt::NoticeMergeFailed,
+                            values,
+                            now,
+                        );
+                        Ok(Merge::Waits)
+                    }
+                    Err(error) => Err(error.into()),
+                }
             }
+        }
+    }
+
+    /// Tells the human `prompt` rendered with `values`, unless `announcement` was told before.
+    fn announce(
+        &mut self,
+        pulls: &Pulls,
+        lead: &Lead,
+        announcement: Announcement,
+        prompt: AutopilotPrompt,
+        values: Result<Variables, VariablesError>,
+        now: Timestamp,
+    ) {
+        if self.watch.announced.insert(announcement) {
+            self.tell_human(pulls, prompt, values, lead, now);
         }
     }
 
@@ -1773,6 +1869,16 @@ struct Late {
     reviewer: agent_core::ids::InvestigatorName,
 }
 
+/// What a notification about a pull request has besides the team, the number and the address.
+enum Extra<'a> {
+    /// Nothing.
+    Nothing,
+    /// The repository.
+    Repo,
+    /// Why GitHub refused.
+    Reason(&'a str),
+}
+
 /// What was found of an approved pull request.
 enum Merge {
     /// It is merged, by the harness or by someone else.
@@ -1793,6 +1899,23 @@ struct Asked {
     passes: usize,
     /// The investigator that reviews.
     reviewer: agent_core::ids::InvestigatorName,
+}
+
+/// Whether GitHub refused the merge for a reason that waiting does not change: the pull request cannot be merged as it is,
+/// its head moved, the values are refused, or the token may not do it. A busy or failing GitHub is not a refusal.
+fn refuses(error: &GitHubError) -> bool {
+    matches!(
+        error,
+        GitHubError::Status {
+            reason: Rejection::NotAllowed
+                | Rejection::Conflict
+                | Rejection::Invalid
+                | Rejection::Forbidden
+                | Rejection::Unauthorized
+                | Rejection::NotFound,
+            ..
+        }
+    )
 }
 
 /// A review of the task `task` that waits for its outcome, asked at `now`.

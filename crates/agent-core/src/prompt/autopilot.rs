@@ -30,6 +30,8 @@ pub enum AutopilotPrompt {
     NoticePublishFailed,
     /// The notification that an approved pull request could not be merged.
     NoticeMergeFailed,
+    /// The notification that a pull request was closed without being merged.
+    NoticeClosed,
     /// What a reviewer is told about the pull request it reviews.
     ReviewRequest,
     /// The review the harness posts on the pull request for a reviewer's report.
@@ -60,6 +62,7 @@ impl AutopilotPrompt {
         Self::NoticeApproved,
         Self::NoticePublishFailed,
         Self::NoticeMergeFailed,
+        Self::NoticeClosed,
         Self::ReviewRequest,
         Self::ReviewComment,
         Self::ReviewFixPass,
@@ -103,6 +106,9 @@ impl AutopilotPrompt {
                 Audience::Human,
                 &["team", "pr", "url", "reason"],
             ),
+            Self::NoticeClosed => {
+                PromptSpec::new("harness/pr/notice-closed.md", Audience::Human, &["team", "pr", "url"])
+            }
             Self::ReviewRequest => PromptSpec::new(
                 "harness/review/request.md",
                 Audience::Model,
