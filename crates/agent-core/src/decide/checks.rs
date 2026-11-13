@@ -193,7 +193,8 @@ pub enum TestChange {
 }
 
 /// What was done to a protected file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
+#[strum(serialize_all = "snake_case")]
 pub enum Touch {
     /// It was added.
     Added,
