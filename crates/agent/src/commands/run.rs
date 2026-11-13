@@ -100,7 +100,7 @@ pub(crate) enum RunError {
     /// The URL of `origin` names no repository.
     #[error("the URL of origin, {url:?}, names no repository")]
     RepoName {
-        /// The URL.
+        /// The URL, without the credentials it may hold.
         url: String,
         /// What is wrong with the last part of it.
         source: Option<InvalidValue>,
@@ -170,14 +170,19 @@ pub(crate) fn repo_name_of(url: &str) -> Result<RepoName, RunError> {
     let name = last.strip_suffix(GIT_SUFFIX).unwrap_or(last);
     if name.is_empty() {
         return Err(RunError::RepoName {
-            url: url.to_owned(),
+            url: without_credentials(url),
             source: None,
         });
     }
     name.parse().map_err(|source| RunError::RepoName {
-        url: url.to_owned(),
+        url: without_credentials(url),
         source: Some(source),
     })
+}
+
+/// `url` as it can be shown: without the user and password of `scheme://user:password@host/path`, which can be a token.
+fn without_credentials(url: &str) -> String {
+    url.to_owned()
 }
 
 /// What the name of a repository's directory on a server ends with.

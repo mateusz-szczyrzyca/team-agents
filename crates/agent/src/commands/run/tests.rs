@@ -109,6 +109,26 @@ fn a_url_that_names_no_repository_is_refused_with_the_url() {
     }
 }
 
+#[test]
+fn a_url_that_names_no_repository_is_shown_without_its_credentials() {
+    for (url, shown) in [
+        ("https://x-access-token:s3cr3t@example.com/", "https://example.com/"),
+        (
+            "https://s3cr3t@example.com/org/we ird.git",
+            "https://example.com/org/we ird.git",
+        ),
+        ("ssh://git@example.com:2222/", "ssh://example.com:2222/"),
+        ("https://jürgen:pässwört@example.com", "https://example.com"),
+    ] {
+        let error = repo_name_of(url).unwrap_err();
+
+        let RunError::RepoName { url: found, .. } = &error else {
+            panic!("{url}: {error:?}")
+        };
+        assert_eq!(found, shown, "{url}");
+    }
+}
+
 // ---- what is printed ---------------------------------------------------------------------------------------------
 
 fn home() -> Home {
