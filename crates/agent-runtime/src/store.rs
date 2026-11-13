@@ -73,40 +73,44 @@ const CUT_MARK: &str = "…";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Home {
     /// The home directory.
-    root: PathBuf,
+    root: AbsolutePath,
 }
 
 impl Home {
     /// The home at `root`.
     #[must_use]
     pub fn new(root: &AbsolutePath) -> Self {
-        Self {
-            root: root.as_path().to_path_buf(),
-        }
+        Self { root: root.clone() }
     }
 
     /// The home directory.
     #[must_use]
     pub fn root(&self) -> &Path {
+        self.root.as_path()
+    }
+
+    /// The home directory, as the absolute path of UTF-8 text the home was made from.
+    #[must_use]
+    pub fn absolute_root(&self) -> &AbsolutePath {
         &self.root
     }
 
     /// The state file.
     #[must_use]
     pub fn state_file(&self) -> PathBuf {
-        self.root.join(STATE_FILE)
+        self.root().join(STATE_FILE)
     }
 
     /// The lock file of the daemon.
     #[must_use]
     pub fn lock_file(&self) -> PathBuf {
-        self.root.join(LOCK_FILE)
+        self.root().join(LOCK_FILE)
     }
 
     /// The directory that holds the directories of all tasks.
     #[must_use]
     pub fn tasks_dir(&self) -> PathBuf {
-        self.root.join(TASKS_DIR)
+        self.root().join(TASKS_DIR)
     }
 
     /// The directory of `task`: its questions files, its activity log and its runs.
@@ -130,37 +134,37 @@ impl Home {
     /// The default directory of the notification files.
     #[must_use]
     pub fn notifications_dir(&self) -> PathBuf {
-        self.root.join(NOTIFICATIONS_DIR)
+        self.root().join(NOTIFICATIONS_DIR)
     }
 
     /// The Unix socket of the daemon.
     #[must_use]
     pub fn socket_file(&self) -> PathBuf {
-        self.root.join(SOCKET_FILE)
+        self.root().join(SOCKET_FILE)
     }
 
     /// The configuration file, `agents.toml`.
     #[must_use]
     pub fn config_file(&self) -> PathBuf {
-        self.root.join(CONFIG_FILE)
+        self.root().join(CONFIG_FILE)
     }
 
     /// The file of the secrets, `secrets.toml`.
     #[must_use]
     pub fn secrets_file(&self) -> PathBuf {
-        self.root.join(SECRETS_FILE)
+        self.root().join(SECRETS_FILE)
     }
 
     /// The directory the installation keeps the prompt files in.
     #[must_use]
     pub fn prompts_dir(&self) -> PathBuf {
-        self.root.join(PROMPTS_DIR)
+        self.root().join(PROMPTS_DIR)
     }
 
     /// The git worktree of `task`, a task of a team that works on `repo`.
     #[must_use]
     pub fn worktree_dir(&self, repo: &RepoName, task: &TaskId) -> PathBuf {
-        self.root.join(WORKTREES_DIR).join(repo.as_str()).join(task.as_str())
+        self.root().join(WORKTREES_DIR).join(repo.as_str()).join(task.as_str())
     }
 
     /// The questions file of round `round` of `task`, in the task's directory.
@@ -644,6 +648,16 @@ mod tests {
     fn home_in(dir: &tempfile::TempDir) -> Home {
         let root = AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap();
         Home::new(&root)
+    }
+
+    #[test]
+    fn a_home_gives_back_the_absolute_path_it_was_made_from() {
+        let root = AbsolutePath::from_str("/srv/agents-ü").unwrap();
+
+        let home = Home::new(&root);
+
+        assert_eq!(home.absolute_root(), &root);
+        assert_eq!(home.root(), Path::new("/srv/agents-ü"));
     }
 
     /// Opens the home again after a store was dropped. Other tests of this binary start processes: a child holds the

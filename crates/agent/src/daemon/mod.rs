@@ -12,11 +12,9 @@
 //! them as interrupted, the notifier delivers what is queued, and the socket is removed.
 
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
@@ -99,14 +97,6 @@ pub(crate) enum DaemonError {
     /// The rules cannot be loaded.
     #[error("cannot load the rules")]
     Prompts(#[from] PromptLoadError),
-    /// The home is not a path the bus can be given.
-    #[error("the home {path:?} is not an absolute path of UTF-8 text")]
-    HomePath {
-        /// The home.
-        path: PathBuf,
-        /// What is wrong with it, if the text was refused.
-        source: Option<InvalidValue>,
-    },
     /// The operating system gives no entropy for the IDs.
     #[error("cannot seed the generator of IDs from the operating system")]
     Entropy(#[source] SysError),
@@ -139,7 +129,7 @@ pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Resu
     let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);
     let team_texts = Arc::new(TeamPrompts::load(&setup.prompts_dir, &language).await?);
     let rules = Arc::new(PromptLoader::load(&setup.prompts_dir, &language).await?);
-    let bus = make_bus(&setup.home, &settings)?;
+    let bus = make_bus(&setup.home, &settings);
     let state = store.load().await?;
     let timings = setup.timings.unwrap_or_else(|| Timings {
         tick: TICK,
@@ -206,15 +196,10 @@ pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Resu
 const BUS_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The bus of the home, run with the program the configuration names.
-fn make_bus(home: &Home, settings: &Settings) -> Result<AgentBus, DaemonError> {
-    let path = home.root();
-    let text = path.to_str().ok_or_else(|| DaemonError::HomePath {
-        path: path.to_path_buf(),
-        source: None,
-    })?;
-    let root = AbsolutePath::from_str(text).map_err(|source| DaemonError::HomePath {
-        path: path.to_path_buf(),
-        source: Some(source),
-    })?;
-    Ok(AgentBus::new(settings.config.binaries().agentbus.clone(), root).with_timeout(BUS_TIMEOUT))
+fn make_bus(home: &Home, settings: &Settings) -> AgentBus {
+    AgentBus::new(
+        settings.config.binaries().agentbus.clone(),
+        home.absolute_root().clone(),
+    )
+    .with_timeout(BUS_TIMEOUT)
 }
