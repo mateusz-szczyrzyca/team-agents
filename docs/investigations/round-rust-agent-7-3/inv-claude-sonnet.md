@@ -163,6 +163,26 @@ test of another not-yet-served command, or delete it.
     and cannot be told apart through the public interface.
   Raised in the PR as a comment for the reviewer to accept or ask for the rewrite.
 
+## Review pass 3 (`inv-opus`, [review](https://github.com/mateusz-szczyrzyca/team-agents/pull/96#pullrequestreview-5892554239))
+
+- **PR-9 (major) — PR description: rewritten** (what and why, size, files, tests, gate, deviations as of the head).
+- **DOC-3 — a cancelled waiting gate keeps its place: comments and documents say so; code not changed.** The queue is a
+  bounded channel; dropping a job from its middle would need a different structure (a shared list under a lock, and a
+  waker) for a gain that is small: the client of a stopped task is stopped with it, and the job is answered `conflict`
+  without running when its turn comes. The comments on `GateJob::cancel` and `run`, `docs/architecture.md` and
+  `docs/state.md` now say it.
+- **DOC-4 — shutdown answer: `docs/state.md` and `docs/architecture.md` fixed.** A gate that waits when the daemon shuts
+  down gets `internal` ("the daemon is shutting down", the dropped reply); one that runs gets `conflict`.
+- **ERR-6 — git failure after the command ran.** RED [`d10488f`](https://github.com/mateusz-szczyrzyca/team-agents/commit/d10488f2b8f6fd7c5c5dab93dbe5404b3cfb4883),
+  GREEN [`261fe47`](https://github.com/mateusz-szczyrzyca/team-agents/commit/261fe473c138f10ee73c85fbcc5e44cbf4004cac): `GateError::GitAfter` names the worktree and the log and is `internal`, not a refusal that says the
+  gate cannot run. Test: `a_worktree_git_cannot_read_after_the_gate_ran_is_not_a_refusal_and_names_the_log`.
+- **GEN-1 — `HOME_VARIABLE` defined twice: fixed.** `agent/src/environment.rs` imports the constant of `agent-runtime`.
+- **COR — where the record is kept: fixed.** `agent gate` prints first the file of the record (the line that survives a
+  model CLI cutting the command short); test `gate_says_first_where_its_result_is_kept_for_a_command_that_is_cut_short`.
+  README and `docs/architecture.md` say it.
+- **Needs human (not mine to do):** `commands_the_daemon_does_not_serve_yet_are_refused_with_their_name` passes by
+  accident; renaming or retargeting an existing test is for the human.
+
 ## Commits
 
 - [`b5480ac`](https://github.com/mateusz-szczyrzyca/team-agents/commit/b5480ac2fcf6ddfdff578b838f4a328f3d640e3c) RED: a gate record says whether the tree was clean
@@ -184,3 +204,5 @@ test of another not-yet-served command, or delete it.
 - [`4079057`](https://github.com/mateusz-szczyrzyca/team-agents/commit/40790574ceb4fb2de61a8624d9ade8290a9dfcd2) Fix a clippy finding in the test of agent gate as a process
 - [`f0e30cd`](https://github.com/mateusz-szczyrzyca/team-agents/commit/f0e30cd686b3a6ed4c17916dc47da8a8f179f058) Test the failures of the gate that are not its own
 - [`6a9b2f1`](https://github.com/mateusz-szczyrzyca/team-agents/commit/6a9b2f13a9b04560b00ac4b77a623d75f96a8b53) Name gate in the doc comments of the command line
+- [`a3cff3c`](https://github.com/mateusz-szczyrzyca/team-agents/commit/a3cff3cff2967ef56684aec35b57e30266163feb) RED: test that stop and pause end the gate of a task whose run ended
+- [`5798d56`](https://github.com/mateusz-szczyrzyca/team-agents/commit/5798d564292587dfc2241cb0006c7366a33cec42) GREEN: a gate has a token of its task, which outlives the run that asked
