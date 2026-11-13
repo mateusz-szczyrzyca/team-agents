@@ -420,7 +420,8 @@ impl Owner {
         Ok(())
     }
 
-    /// Fails `task`, which could not be started, and tells the human why.
+    /// Fails `task`, which could not be started, and tells the human why; its team learns it as of a run that ended
+    /// without a status: the coordinator about a member, the requester about the request of a worker.
     async fn fail_to_start(&mut self, task: &TaskId, reason: String) -> Result<(), OwnerError> {
         tracing::error!(task = %task, %reason, "a run cannot be started");
         let located = self.locate(task)?;
@@ -429,7 +430,8 @@ impl Owner {
         self.move_to(task, &located.team, TaskStatus::Running, &mut events)?;
         self.move_to(task, &located.team, TaskStatus::Failed, &mut events)?;
         self.commit(task, &located, now, events, Some(Notice::StartFailed { reason }))
-            .await
+            .await?;
+        self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)
     }
 
     // ---- the end of a run -----------------------------------------------------------------------------------
