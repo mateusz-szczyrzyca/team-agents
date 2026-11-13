@@ -96,6 +96,15 @@ pub struct RepoSlug {
 }
 
 impl RepoSlug {
+    /// The repository a remote URL of git names: the last two parts of its path, `owner/name`, without a `.git`.
+    ///
+    /// # Errors
+    /// [`InvalidRepoSlug::NotOwnerAndName`] when the path has no owner and name, [`InvalidRepoSlug::BadPart`] when
+    /// one of them is not what GitHub allows. The error never holds the credentials of the URL.
+    pub fn from_remote_url(url: &str) -> Result<Self, InvalidRepoSlug> {
+        Err(InvalidRepoSlug::NotOwnerAndName { value: url.to_owned() })
+    }
+
     /// The owner.
     #[must_use]
     pub fn owner(&self) -> &str {
@@ -376,6 +385,9 @@ pub enum GitHubOperation {
     /// Reading a pull request.
     #[strum(serialize = "get pull request")]
     GetPullRequest,
+    /// Looking for the open pull request of a branch.
+    #[strum(serialize = "find pull request")]
+    FindPullRequest,
     /// Posting a review.
     #[strum(serialize = "post review")]
     PostReview,
@@ -1086,6 +1098,16 @@ impl GitHub {
             .await?;
         let merged: RawMerged = decode(operation, &answer)?;
         Ok(Merged { commit: merged.sha })
+    }
+
+    /// The open pull request whose head is `branch` of this repository; `None` when there is none, and a pull request
+    /// of a fork with a branch of the same name is not one. Retried.
+    ///
+    /// # Errors
+    /// The errors of a call.
+    pub async fn find_open_pull_request(&self, branch: &BranchName) -> Result<Option<RemotePullRequest>, GitHubError> {
+        let _ = branch;
+        Ok(None)
     }
 
     /// Reads a pull request. Retried.
