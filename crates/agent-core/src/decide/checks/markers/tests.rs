@@ -206,3 +206,17 @@ fn only_the_extensions_of_the_table_are_scanned() {
         assert_eq!(markers_of(extension, "#[ignore] //nolint skip"), [], "{extension:?}");
     }
 }
+
+// Rule: a negated `cfg!(not(test))` asks whether the code runs under test as `cfg!(test)` does.
+#[test]
+fn rust_cfg_not_test_asks_whether_the_code_runs_under_test() {
+    expect(
+        "rs",
+        &[
+            ("if cfg!(not(test)) {", &[Marker::ChecksUnderTest]),
+            ("let real = cfg!(not(test));", &[Marker::ChecksUnderTest]),
+            ("#[cfg(not(test))]", &[]),
+            ("let text = cfg!(not(feature = \"x\"));", &[]),
+        ],
+    );
+}
