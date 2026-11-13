@@ -13,6 +13,7 @@ use agent_core::ids::TaskId;
 use agent_core::prompt::{QuestionsPrompt, Variables, VariablesError};
 use agent_core::protocol::{AnswerList, Failure, FailureKind};
 use agent_core::questions::{AnswerProblem, ExpandError, MAX_QUESTIONS_BYTES, ParseError, QuestionsFile};
+use agent_runtime::notify::{InvalidNotification, Notification};
 use agent_runtime::questions_prompts::{QuestionsPrompts, RenderQuestionsTextError};
 use agent_runtime::text_file::{TextFileError, read_text_file};
 
@@ -139,6 +140,42 @@ impl Refusal {
     }
 }
 
+/// What a questions file the human saved says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Judgement {
+    /// The file is not marked answered: the human is still at it.
+    NotYet,
+    /// The file is marked answered and every question can be answered from its verdict.
+    Answered,
+    /// The file is marked answered, but some questions cannot be answered from their verdicts.
+    Incomplete {
+        /// The questions and what is wrong with each, in file order.
+        problems: Vec<(NonZeroU32, AnswerProblem)>,
+    },
+}
+
+/// What the file `file`, as the human saved it, says.
+pub(super) fn judge(file: &QuestionsFile) -> Judgement {
+    let _ = file;
+    Judgement::NotYet
+}
+
+/// The notification that the file at `path`, which the human marked answered for the task `task` of the agent `agent`, is
+/// not complete; `problems` is [`describe`]'s list.
+///
+/// # Errors
+/// [`TextError`] when the text cannot be rendered or is not a notification.
+pub(super) fn incomplete_notification(
+    texts: &QuestionsPrompts,
+    agent: &str,
+    task: &TaskId,
+    path: &Path,
+    problems: &str,
+) -> Result<Notification, TextError> {
+    let _ = (texts, agent, task, path, problems);
+    Notification::new("x", "").map_err(TextError::from)
+}
+
 /// The questions of `problems`, one on each line: its number, its title and what is wrong.
 pub(super) fn describe(file: &QuestionsFile, problems: &[(NonZeroU32, AnswerProblem)]) -> String {
     let lines: Vec<String> = problems
@@ -160,6 +197,9 @@ pub(super) enum TextError {
     /// A variable name of the program is not valid.
     #[error("a variable of a text is not valid")]
     Variable(#[from] VariablesError),
+    /// The rendered text is not a notification.
+    #[error("the notification text is not valid")]
+    Notification(#[from] InvalidNotification),
     /// The file is not answered properly, or the words for an accepted recommendation are not a verdict.
     #[error("the questions file cannot be handed to the task")]
     Expand(#[from] ExpandError),

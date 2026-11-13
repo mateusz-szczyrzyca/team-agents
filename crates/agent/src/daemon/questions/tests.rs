@@ -203,3 +203,78 @@ async fn a_file_that_is_not_answered_is_not_handed_to_the_task() {
 
     assert!(matches!(error, TextError::Expand(_)), "{error:?}");
 }
+
+fn marked(text: &str) -> QuestionsFile {
+    let mut file = QuestionsFile::parse(text).unwrap();
+    file.mark_answered();
+    file
+}
+
+#[test]
+fn a_file_without_the_marker_is_not_answered_yet_whatever_it_says() {
+    let written = ASKED.replacen("**Verdict:**\n", "**Verdict:** ok\n", 1);
+
+    assert_eq!(judge(&QuestionsFile::parse(&written).unwrap()), Judgement::NotYet);
+}
+
+#[test]
+fn a_marked_file_with_a_verdict_for_every_question_is_answered() {
+    let written =
+        ASKED
+            .replacen("**Verdict:**\n", "**Verdict:** ok\n", 1)
+            .replacen("**Verdict:**\n", "**Verdict:** disk\n", 1);
+
+    assert_eq!(judge(&marked(&written)), Judgement::Answered);
+}
+
+#[test]
+fn a_marked_file_with_a_question_unanswered_lists_it() {
+    assert_eq!(
+        judge(&marked(ASKED)),
+        Judgement::Incomplete {
+            problems: vec![
+                (n(1), AnswerProblem::MissingVerdict),
+                (n(2), AnswerProblem::MissingVerdict)
+            ]
+        }
+    );
+}
+
+#[test]
+fn a_marked_file_that_accepts_a_recommendation_there_is_none_for_lists_it() {
+    let written = ASKED.replacen("**Verdict:**\n", "**Verdict:** ok\n", 2);
+
+    assert_eq!(
+        judge(&marked(&written)),
+        Judgement::Incomplete {
+            problems: vec![(n(2), AnswerProblem::AcceptWithoutRecommendation)]
+        }
+    );
+}
+
+#[tokio::test]
+async fn the_notification_of_incomplete_answers_names_the_agent_the_task_the_file_and_each_problem() {
+    let file = marked(ASKED);
+    let problems = [(n(2), AnswerProblem::MissingVerdict)];
+
+    let note = incomplete_notification(
+        &texts().await,
+        "claude-1",
+        &task(1),
+        Path::new("/h/tasks/t/questions-1.md"),
+        &describe(&file, &problems),
+    )
+    .unwrap();
+
+    assert!(
+        note.title().contains("claude-1") && note.title().contains(task(1).as_str()),
+        "{}",
+        note.title()
+    );
+    assert!(note.body().contains("/h/tasks/t/questions-1.md"), "{}", note.body());
+    assert!(
+        note.body().contains("question 2 (Which name?): no verdict"),
+        "{}",
+        note.body()
+    );
+}
