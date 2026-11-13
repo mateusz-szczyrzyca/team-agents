@@ -102,7 +102,15 @@ impl RepoSlug {
     /// [`InvalidRepoSlug::NotOwnerAndName`] when the path has no owner and name, [`InvalidRepoSlug::BadPart`] when
     /// one of them is not what GitHub allows. The error never holds the credentials of the URL.
     pub fn from_remote_url(url: &str) -> Result<Self, InvalidRepoSlug> {
-        Err(InvalidRepoSlug::NotOwnerAndName { value: url.to_owned() })
+        let path = remote_path(url);
+        let mut parts = path.trim_end_matches('/').rsplit('/');
+        let name = parts.next().map(|last| last.strip_suffix(GIT_SUFFIX).unwrap_or(last));
+        match (parts.next(), name) {
+            (Some(owner), Some(name)) if !owner.is_empty() && !name.is_empty() => format!("{owner}/{name}").parse(),
+            _ => Err(InvalidRepoSlug::NotOwnerAndName {
+                value: without_credentials(url),
+            }),
+        }
     }
 
     /// The owner.
@@ -139,6 +147,49 @@ impl FromStr for RepoSlug {
             owner: owner.to_owned(),
             name: name.to_owned(),
         })
+    }
+}
+
+/// What the name of a repository's directory on a server ends with.
+const GIT_SUFFIX: &str = ".git";
+
+/// `text` as the value of a query parameter: all but letters, digits and `-._~/` is percent-encoded.
+fn query_value(text: &str) -> String {
+    let mut encoded = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.extend(format!("%{byte:02X}").chars());
+        }
+    }
+    encoded
+}
+
+/// The path of a remote URL of git: after the authority of `scheme://authority/path`, after the host of `host:path`,
+/// or the text itself for a path of this machine.
+fn remote_path(url: &str) -> &str {
+    if let Some((_, rest)) = url.split_once("://") {
+        return rest.split_once('/').map_or("", |(_, path)| path);
+    }
+    match url.split_once(':') {
+        Some((host, path)) if !host.contains('/') => path,
+        Some(_) | None => url,
+    }
+}
+
+/// `url` without the user name and password of `scheme://user:password@host/path`, which can be a token.
+fn without_credentials(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_owned();
+    };
+    let (authority, path) = rest
+        .split_once('/')
+        .map_or((rest, None), |(authority, path)| (authority, Some(path)));
+    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    match path {
+        Some(path) => format!("{scheme}://{host}/{path}"),
+        None => format!("{scheme}://{host}"),
     }
 }
 
@@ -1106,8 +1157,27 @@ impl GitHub {
     /// # Errors
     /// The errors of a call.
     pub async fn find_open_pull_request(&self, branch: &BranchName) -> Result<Option<RemotePullRequest>, GitHubError> {
-        let _ = branch;
-        Ok(None)
+        let operation = GitHubOperation::FindPullRequest;
+        let path = format!(
+            "{}?state=open&head={}:{}",
+            self.repo_path("pulls"),
+            self.repo.owner(),
+            query_value(branch.as_str())
+        );
+        let answer = self
+            .call(Call {
+                operation,
+                method: Method::GET,
+                path,
+                body: None,
+                idempotency: Idempotency::Idempotent,
+            })
+            .await?;
+        let listed: Vec<RawPull> = decode(operation, &answer)?;
+        Ok(listed
+            .into_iter()
+            .map(|raw| raw.into_read(&self.repo).pull)
+            .find(|pull| pull.head_branch == *branch && pull.origin == Origin::SameRepository))
     }
 
     /// Reads a pull request. Retried.
