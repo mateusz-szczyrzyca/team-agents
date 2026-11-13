@@ -4,12 +4,17 @@
 //! `waiting`, so that the same investigator can review the next pull request and the same one again after a fix pass.
 //! Everything here decides from the state and the text of a report; the owner carries it out (`owner/rounds.rs`).
 
+use std::collections::HashSet;
+
 use agent_core::config::Config;
+use agent_core::decide::REVIEWS_REQUIRED;
 use agent_core::ids::{InvestigatorName, TaskId, TeamId};
 use agent_core::kinds::UnknownKeyword;
-use agent_core::state::State;
-use agent_core::status::ReviewVerdict;
-use rand::Rng;
+use agent_core::state::{ItemPhase, Member, Participant, ReviewOutcome, State, Team};
+use agent_core::status::{ReviewVerdict, TaskStatus};
+use rand::{Rng, RngExt};
+
+use super::team::is_finished;
 
 /// The longest report the harness keeps, posts and hands on, in characters: far above any real report, and under the
 /// limit of a comment on GitHub.
@@ -97,15 +102,121 @@ pub(super) struct Reviewer {
 /// The investigators that may review a pull request of `team` now, by name: configured, outside its crew, with no task
 /// that is going or about to, no review to give and no team to lead or serve that is not finished.
 pub(super) fn free_reviewers(state: &State, config: &Config, team: &TeamId) -> Vec<Reviewer> {
-    let _ = (state, config, team);
-    Vec::new()
+    let Some(reviewed) = state.team(team) else {
+        return Vec::new();
+    };
+    let busy = busy_investigators(state);
+    config
+        .investigators()
+        .keys()
+        .filter(|name| !busy.contains(*name) && !in_crew(reviewed, name))
+        .filter_map(|name| {
+            slot_in(reviewed, name).map(|slot| Reviewer {
+                name: name.clone(),
+                slot,
+            })
+        })
+        .collect()
 }
 
-/// [`REVIEWS_REQUIRED`](agent_core::decide::REVIEWS_REQUIRED) of the `free` reviewers, drawn at random; `None` while
-/// fewer are free: the pull request waits.
-pub(super) fn choose_reviewers(free: Vec<Reviewer>, rng: &mut impl Rng) -> Option<Vec<Reviewer>> {
-    let _ = (free, rng);
-    None
+/// Whether the investigator `name` is in the crew of `team`.
+fn in_crew(team: &Team, name: &InvestigatorName) -> bool {
+    team.crew()
+        .roster()
+        .into_iter()
+        .any(|(_, member)| investigator_of(member).is_some_and(|crewing| crewing == name))
+}
+
+/// The investigator that works in the task of `member`, if it is one.
+fn investigator_of(member: &Member) -> Option<&InvestigatorName> {
+    match member.agent() {
+        Participant::Investigator(name) => Some(name),
+        Participant::Normal(_) | Participant::Worker(_) => None,
+    }
+}
+
+/// Where the investigator `name` reviews for `team`: its review task of the team when it waits, a new one when it has
+/// none, nowhere when its task of the team is over (the team has one task for an investigator, and it does not end its
+/// review to be used again).
+fn slot_in(team: &Team, name: &InvestigatorName) -> Option<Slot> {
+    let own = team
+        .reviewers()
+        .iter()
+        .find(|member| investigator_of(member).is_some_and(|reviewing| reviewing == name));
+    match own {
+        None => Some(Slot::New),
+        Some(member) => match member.status() {
+            TaskStatus::Waiting => Some(Slot::Task(member.task().clone())),
+            TaskStatus::Queued
+            | TaskStatus::Running
+            | TaskStatus::Questions
+            | TaskStatus::Paused
+            | TaskStatus::Stopped
+            | TaskStatus::Failed
+            | TaskStatus::Done => None,
+        },
+    }
+}
+
+/// The investigators that have something to do in any team: a task that is going, about to start, asking or paused; a
+/// review to give; or a place in the crew of a team that is not finished.
+fn busy_investigators(state: &State) -> HashSet<InvestigatorName> {
+    let mut busy = HashSet::new();
+    for team in state.teams() {
+        let finished = is_finished(team);
+        for (_, member) in team.crew().roster() {
+            if let Some(name) = investigator_of(member)
+                && engaged(member.status(), !finished)
+            {
+                busy.insert(name.clone());
+            }
+        }
+        for member in team.reviewers() {
+            if let Some(name) = investigator_of(member)
+                && engaged(member.status(), has_pending_review(team, member))
+            {
+                busy.insert(name.clone());
+            }
+        }
+    }
+    busy
+}
+
+/// Whether a task with `status` keeps its investigator from another task; `waiting_matters` says whether a task that
+/// waits still has something to wait for.
+const fn engaged(status: TaskStatus, waiting_matters: bool) -> bool {
+    match status {
+        TaskStatus::Queued | TaskStatus::Running | TaskStatus::Questions | TaskStatus::Paused => true,
+        TaskStatus::Waiting => waiting_matters,
+        TaskStatus::Stopped | TaskStatus::Failed | TaskStatus::Done => false,
+    }
+}
+
+/// Whether the reviewer `member` has a review to give for an item of `team` that is in review.
+fn has_pending_review(team: &Team, member: &Member) -> bool {
+    team.items().iter().any(|item| match item.phase() {
+        ItemPhase::InReview { reviews, .. } => reviews
+            .iter()
+            .any(|review| review.task == *member.task() && matches!(review.outcome, ReviewOutcome::Pending)),
+        ItemPhase::Pending
+        | ItemPhase::InProgress { .. }
+        | ItemPhase::Fixing { .. }
+        | ItemPhase::Approved { .. }
+        | ItemPhase::Done { .. } => false,
+    })
+}
+
+/// [`REVIEWS_REQUIRED`] of the `free` reviewers, drawn at random; `None` while fewer are free: the pull request waits.
+pub(super) fn choose_reviewers(mut free: Vec<Reviewer>, rng: &mut impl Rng) -> Option<Vec<Reviewer>> {
+    if free.len() < REVIEWS_REQUIRED {
+        return None;
+    }
+    let mut chosen = Vec::with_capacity(REVIEWS_REQUIRED);
+    for _ in 0..REVIEWS_REQUIRED {
+        let index = rng.random_range(0..free.len());
+        chosen.push(free.swap_remove(index));
+    }
+    Some(chosen)
 }
 
 #[cfg(test)]
