@@ -1042,6 +1042,22 @@ A run that ends with questions leaves `questions-<round>.md` in the task's direc
 down is found when it starts). A task that waits for answers is not stopped, paused or resumed: answer it first. Every
 control is written to the activity log of each task it reached, with who did it, and `agent status` shows the new status.
 
+A gate is run with `agent gate`, by an agent in its worktree (the human can run it too):
+
+| Command | What it does |
+|---|---|
+| `agent gate [task]` | runs the repository's gate command (`[repos.NAME] gate`) in the task's worktree and says what it said; the task is the one named, or the task of the worktree the command runs in (also from a subdirectory) — outside a worktree, with no task named, it fails at once |
+
+The gates of all the tasks wait in one queue in the daemon and run one at a time on the machine, in the order they were
+asked; the command waits for its turn and then for the gate (at most 16 wait; the next is refused). The command is stopped,
+with everything it started, after `gate_timeout_minutes` (default 30, counted from the start of the gate, not from the
+wait) and is recorded as failed; stopping or pausing the task stops its gate too. The result is recorded with the commit
+(`HEAD`) and whether the tree was clean, in `tasks/<task>/gate.json` and the task's activity log, and the full output is
+in `tasks/<task>/gate-<n>.log`. A tree is not clean when a file is changed or untracked, when a merge waits to be committed
+or when the gate itself changed the tree or `HEAD`: such a gate may run, but its pass is not a pass of the commit. A run
+that waits for its own gate is never cut by the watchdog. The command succeeds for a pass and fails (status 1) for a
+failure, a timeout and a refusal. Details: [`docs/architecture.md`](docs/architecture.md), "The gate".
+
 ## The live panel
 
 `agent live` shows all active and unacknowledged tasks (status, duration, repository, stage, last activity), a
