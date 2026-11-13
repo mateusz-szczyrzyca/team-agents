@@ -204,7 +204,7 @@ impl Home {
     /// directory.
     #[must_use]
     pub fn checks_file(&self, task: &TaskId) -> PathBuf {
-        self.task_dir(task).join(format!("{CHECKS_RECORD_FILE}.bak"))
+        self.task_dir(task).join(CHECKS_RECORD_FILE)
     }
 
     /// The report of the review of pull request `pr` that `task` gave after `pass` fix passes, in the task's directory.
@@ -529,7 +529,7 @@ async fn read_task_file(path: &Path) -> Result<Option<String>, StoreError> {
 /// # Errors
 /// [`StoreError::ReadTaskFile`] and [`StoreError::ParseChecksRecord`], as for [`StateStore::load_checks_record`].
 pub async fn load_checks_record(home: &Home, task: &TaskId) -> Result<Option<ChecksRecord>, StoreError> {
-    let path = home.gate_record_file(task);
+    let path = home.checks_file(task);
     let Some(file) = read_task_file(&path).await? else {
         return Ok(None);
     };
@@ -739,7 +739,7 @@ impl StateStore {
     pub async fn save_checks_record(&self, task: &TaskId, record: &ChecksRecord) -> Result<(), StoreError> {
         let text = serde_json::to_vec_pretty(record).map_err(|source| StoreError::RenderChecksRecord { source })?;
         let dir = self.home.task_dir(task);
-        let target = self.home.gate_record_file(task);
+        let target = self.home.checks_file(task);
         let write_dir = dir.clone();
         let file = blocking(move || {
             create_dir(&write_dir)?;
