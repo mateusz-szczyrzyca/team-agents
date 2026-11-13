@@ -40,6 +40,7 @@ use tokio_util::sync::CancellationToken;
 use self::owner::{EVENT_BACKLOG, INBOX, MAX_RUNS, Owner, OwnerError, OwnerParts, Pulls, PullsError};
 use self::server::ServerError;
 
+mod checks;
 mod control;
 mod gate;
 mod merge;
