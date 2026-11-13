@@ -324,7 +324,7 @@ refusal (`conflict`) says why for each task.
 
 | Control | queued | running | waiting | questions | paused | stopped | failed | done |
 |---|---|---|---|---|---|---|---|---|
-| `stop` | stopped | run stopped, then stopped | stopped | stopped | stopped | — | stopped | — |
+| `stop` | stopped | run stopped, then stopped | stopped | — | stopped | — | stopped | — |
 | `pause` | paused | run stopped, then paused | paused | — | — | — | — | — |
 | `unpause` | — | — | — | — | queued | — | — | — |
 | `resume` | — | — | queued | — | — | queued | queued | — |
@@ -332,7 +332,7 @@ refusal (`conflict`) says why for each task.
 A task with a run going has the run's process group stopped (the engine's `SIGTERM`, then `SIGKILL`), the run is recorded
 as ended `stopped`, and the owner answers only when that is done, so a client that has its answer sees the status it
 asked for. A run that ends by itself while the stop is being asked leaves the task stopped (or paused) where the status
-table allows; a task that asks, failed or is done keeps what the run made of it. A pause of the human has no wake-up time:
+table allows; a task that asks, failed or is done keeps what the run made of it. A task that waits for answers is not stopped, paused or resumed: it runs nothing, and its open round has to be answered before it can ask another. A pause of the human has no wake-up time:
 it lasts until `unpause`, and survives a restart. `resume` and `unpause` start the task again in its session; the prompt is
 the one the end of its last run gives (a stop gets the whole task again, as before). A team's control also reaches its
 reviewers. Each control is published (`controlled`, with the task, or none for a team, and the client) and written to the

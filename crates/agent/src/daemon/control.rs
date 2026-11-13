@@ -77,7 +77,7 @@ impl Skipped {
             (Self::Over, _) => "it is done: nothing is left to do for it",
             (Self::Already, Steer::Stop) => "it is already stopped",
             (Self::Already, _) => "it is already paused",
-            (Self::Questions, _) => "it waits for your answers: answer them with `agent answer`",
+            (Self::Questions, _) => "it waits for your answers and runs nothing: answer them with `agent answer`",
             (Self::NotPaused, _) => "it is not paused: there is nothing to unpause",
             (Self::Paused, _) => "it is paused: `agent unpause` lets it go on",
             (Self::Going, _) => "it is already going",
@@ -91,7 +91,7 @@ pub(super) const fn decide(steer: Steer, status: TaskStatus) -> Step {
     use TaskStatus::{Done, Failed, Paused, Questions, Queued, Running, Stopped, Waiting};
     match (steer, status) {
         (Steer::Stop | Steer::Pause | Steer::Unpause | Steer::Resume, Done) => Step::Skip(Skipped::Over),
-        (Steer::Stop, Queued | Waiting | Questions | Paused | Failed) => Step::Move(Stopped),
+        (Steer::Stop, Queued | Waiting | Paused | Failed) => Step::Move(Stopped),
         (Steer::Stop, Running) => Step::Halt(Halt::Stop),
         (Steer::Stop, Stopped) | (Steer::Pause, Paused) => Step::Skip(Skipped::Already),
         (Steer::Pause, Queued | Waiting) => Step::Move(Paused),
@@ -101,7 +101,9 @@ pub(super) const fn decide(steer: Steer, status: TaskStatus) -> Step {
         (Steer::Unpause, Paused) | (Steer::Resume, Waiting | Stopped | Failed) => Step::Move(Queued),
         (Steer::Resume, Queued | Running) => Step::Skip(Skipped::Going),
         (Steer::Resume, Paused) => Step::Skip(Skipped::Paused),
-        (Steer::Pause | Steer::Resume, Questions) => Step::Skip(Skipped::Questions),
+        // A task that asks runs nothing, and its open round must be answered before it asks another: a stop would leave
+        // the round open under a task that could run and ask again.
+        (Steer::Stop | Steer::Pause | Steer::Resume, Questions) => Step::Skip(Skipped::Questions),
     }
 }
 
