@@ -31,11 +31,13 @@ use std::str::FromStr;
 use crate::config::Language;
 
 mod autopilot;
+mod checks;
 mod harness;
 mod questions;
 mod team;
 
 pub use autopilot::AutopilotPrompt;
+pub use checks::ChecksPrompt;
 pub use harness::HarnessPrompt;
 pub use questions::QuestionsPrompt;
 pub use team::TeamPrompt;
