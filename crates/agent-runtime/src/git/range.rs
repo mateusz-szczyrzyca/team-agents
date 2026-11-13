@@ -8,7 +8,9 @@
 
 use std::collections::HashMap;
 
-use agent_core::decide::checks::{AddedLine, Change, CommitFacts, FileChange, Lines, RoundFacts, markers};
+use agent_core::decide::checks::{
+    AddedLine, Change, CommitFacts, FileChange, Lines, RoundFacts, UnchangedLine, markers,
+};
 use agent_core::repo_path::RepoPath;
 use agent_core::state::CommitId;
 
@@ -147,6 +149,29 @@ impl Git {
             added.extend(self.added_in(base, head, path, None).await?);
         }
         Ok(added)
+    }
+
+    /// The lines of each of `paths` near the ones added between `base` and `head` that were not changed, with their
+    /// numbers in the file at `head`: ten lines before and after each change. A file that is binary, deleted or
+    /// unchanged has none.
+    ///
+    /// # Errors
+    /// The errors of [`Git::range_changes`].
+    pub async fn range_unchanged_lines(
+        &self,
+        base: &CommitId,
+        head: &CommitId,
+        paths: &[RepoPath],
+    ) -> Result<Vec<UnchangedLine>, GitError> {
+        let added = self.range_added_lines(base, head, paths).await?;
+        Ok(added
+            .into_iter()
+            .map(|line| UnchangedLine {
+                path: line.path,
+                number: line.number,
+                text: line.text,
+            })
+            .collect())
     }
 
     /// The facts the checks before a review decide from: the files, the commits, the added lines of the files whose

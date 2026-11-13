@@ -8,6 +8,7 @@ mod git_range {
     use std::str::FromStr;
 
     use agent_core::config::AbsolutePath;
+    use agent_core::decide::checks::UnchangedLine;
     use agent_core::decide::checks::{AddedLine, Change, CommitFacts, FileChange, Lines};
     use agent_core::repo_path::RepoPath;
     use agent_core::state::CommitId;
@@ -719,5 +720,92 @@ mod git_range {
         let mut changed = facts.mode_changed.clone();
         changed.sort();
         assert_eq!(changed, [path("tests/bare.sh"), path("tests/run.sh")]);
+    }
+
+    // ---- range_unchanged_lines ----------------------------------------------------------------------------------------
+
+    fn unchanged_line(path_text: &str, number: u32, text: &str) -> UnchangedLine {
+        UnchangedLine {
+            path: path(path_text),
+            number,
+            text: text.to_owned(),
+        }
+    }
+
+    /// The lines `l1` to `l<count>` of a file, one on each line.
+    fn numbered(count: u32) -> String {
+        let lines: Vec<String> = (1..=count).map(|n| format!("l{n}")).collect();
+        format!("{}\n", lines.join("\n"))
+    }
+
+    // Rule: the unchanged lines of a file are the ten lines before and after each changed place, numbered as in the file at
+    // the head; the lines that were added are not among them.
+    #[tokio::test]
+    async fn the_unchanged_lines_are_ten_before_and_ten_after_a_change() {
+        let (_tmp, repo) = repository();
+        write(&repo, "src/a.rs", numbered(40).as_bytes());
+        let base = commit_all(&repo, "base");
+        write(&repo, "src/a.rs", numbered(40).replace("l20\n", "NEW\n").as_bytes());
+        let head = commit_all(&repo, "head");
+
+        let lines = handle(&repo)
+            .range_unchanged_lines(&base, &head, &[path("src/a.rs")])
+            .await
+            .unwrap();
+
+        let expected: Vec<UnchangedLine> = (10..=19)
+            .chain(21..=30)
+            .map(|n| unchanged_line("src/a.rs", n, &format!("l{n}")))
+            .collect();
+        assert_eq!(lines, expected);
+    }
+
+    // Rule: the numbers are those at the head, after lines were added before; the lines between two changes are unchanged.
+    #[tokio::test]
+    async fn the_unchanged_lines_are_numbered_at_the_head_and_include_those_between_changes() {
+        let (_tmp, repo) = repository();
+        write(&repo, "a.rs", b"one\ntwo\nthree\n");
+        write(&repo, "b.rs", b"one\n");
+        let base = commit_all(&repo, "base");
+        write(&repo, "a.rs", b"NEW\none\ntwo\nNEWER\nthree\n");
+        write(&repo, "b.rs", b"one\ntwo\n");
+        let head = commit_all(&repo, "head");
+
+        let lines = handle(&repo)
+            .range_unchanged_lines(&base, &head, &[path("a.rs"), path("b.rs")])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            lines,
+            [
+                unchanged_line("a.rs", 2, "one"),
+                unchanged_line("a.rs", 3, "two"),
+                unchanged_line("a.rs", 5, "three"),
+                unchanged_line("b.rs", 1, "one"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_binary_a_deleted_a_missing_and_an_unchanged_file_have_no_unchanged_lines() {
+        let (_tmp, repo) = repository();
+        write(&repo, "gone.rs", b"x\n");
+        write(&repo, "kept.rs", b"y\n");
+        let base = commit_all(&repo, "base");
+        std::fs::remove_file(repo.join("gone.rs")).unwrap();
+        write(&repo, "image.rs", &[0, 1, 2, 3]);
+        let head = commit_all(&repo, "head");
+
+        let lines = handle(&repo)
+            .range_unchanged_lines(
+                &base,
+                &head,
+                &[path("gone.rs"), path("kept.rs"), path("image.rs"), path("nowhere.rs")],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(lines, []);
     }
 }

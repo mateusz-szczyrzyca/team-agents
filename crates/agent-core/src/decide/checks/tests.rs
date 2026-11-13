@@ -1079,3 +1079,70 @@ fn a_path_that_goes_on_with_punctuation_of_file_names_does_not_name_the_file() {
         );
     }
 }
+
+/// The lines of `src/a.rs` that a round left as they were around the one it added: an attribute that rustfmt wrapped, and
+/// the item it is on, from line 10 on; `new_line` is the line the round put at 12.
+fn around_added(new_line: &str) -> (RoundFacts, Vec<UnchangedLine>) {
+    let kept = |number: u32, text: &str| UnchangedLine {
+        path: path("src/a.rs"),
+        number,
+        text: text.to_owned(),
+    };
+    let facts = RoundFacts {
+        files: vec![modified("src/a.rs", 1, 1), added("tests/new.rs", 1)],
+        added: vec![line("src/a.rs", 12, new_line)],
+        ..RoundFacts::default()
+    };
+    let unchanged = vec![
+        kept(10, "    #[cfg_attr("),
+        kept(11, "        not(test),"),
+        kept(13, "    )]"),
+        kept(14, "    fn wired_later() {}"),
+    ];
+    (facts, unchanged)
+}
+
+/// The issues the checks find in `facts` with the `unchanged` lines around the added ones.
+fn found_near(facts: &RoundFacts, unchanged: &[UnchangedLine]) -> Vec<Issue> {
+    assess_near(&rules(), facts, unchanged, &[])
+}
+
+// Rule: a line the round added to an attribute that was there already is read with the attribute, as one line, at the
+// number of its first.
+#[test]
+fn an_added_line_in_an_existing_wrapped_cfg_attr_is_read_with_its_attribute() {
+    let (facts, unchanged) = around_added("        expect(dead_code, reason = \"wired later\"),");
+
+    assert_eq!(
+        found_near(&facts, &unchanged),
+        [Issue::Marker {
+            path: path("src/a.rs"),
+            marker: Marker::SuppressesLint,
+            line: 10,
+            count: 1
+        }]
+    );
+}
+
+#[test]
+fn an_added_line_in_a_wrapped_cfg_attr_that_applies_no_marker_or_in_a_named_file_is_no_issue() {
+    let (derive, derive_around) = around_added("        derive(Debug, Clone),");
+    let (mut named, named_around) = around_added("        expect(dead_code, reason = \"wired later\"),");
+    named.description = "Suppressions: `src/a.rs`, wired later.".to_owned();
+
+    assert_eq!(found_near(&derive, &derive_around), []);
+    assert_eq!(found_near(&named, &named_around), []);
+}
+
+#[test]
+fn an_unchanged_marker_near_an_added_line_that_is_no_part_of_its_attribute_is_no_issue() {
+    let (facts, mut unchanged) = around_added("    let level = Level::Warn;");
+    unchanged.push(UnchangedLine {
+        path: path("src/a.rs"),
+        number: 9,
+        text: "    #[allow(dead_code)]".to_owned(),
+    });
+    unchanged.sort_by_key(|kept| kept.number);
+
+    assert_eq!(found_near(&facts, &unchanged), []);
+}

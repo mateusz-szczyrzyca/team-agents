@@ -246,3 +246,56 @@ fn rust_raw_strings_of_a_cfg_attr_are_read_as_strings() {
         ],
     );
 }
+
+/// The lines of a file from `first` on, each with whether the round added it.
+fn lines<'a>(first: u32, texts: &[(&'a str, bool)]) -> Vec<Line<'a>> {
+    texts
+        .iter()
+        .zip(first..)
+        .map(|(&(text, added), number)| Line { number, text, added })
+        .collect()
+}
+
+// Rule: a line the round did not add is read only as a part of an attribute that wraps over lines and has an added line:
+// the attribute is reported at its first line, whichever of its lines is new.
+#[test]
+fn an_attribute_with_one_added_line_is_read_with_the_lines_around_it() {
+    let wrapped = lines(
+        10,
+        &[
+            ("    #[cfg_attr(", false),
+            ("        not(test),", false),
+            ("        expect(dead_code, reason = \"wired later\"),", true),
+            ("    )]", false),
+            ("    fn wired_later() {}", false),
+        ],
+    );
+
+    assert_eq!(markers_touching("rs", &wrapped), [(10, Marker::SuppressesLint)]);
+}
+
+#[test]
+fn an_attribute_with_no_added_line_and_a_line_apart_from_it_are_not_read() {
+    let untouched = lines(
+        10,
+        &[
+            ("    #[cfg_attr(", false),
+            ("        expect(dead_code, reason = \"wired later\"),", false),
+            ("    )]", false),
+            ("    #[allow(unused)]", false),
+            ("    fn wired_later() {}", true),
+        ],
+    );
+
+    assert_eq!(markers_touching("rs", &untouched), []);
+}
+
+#[test]
+fn an_added_line_is_read_on_its_own_and_an_unchanged_one_is_not() {
+    let both = lines(
+        10,
+        &[("    #[allow(dead_code)]", false), ("    #[allow(unused)]", true)],
+    );
+
+    assert_eq!(markers_touching("rs", &both), [(11, Marker::SuppressesLint)]);
+}

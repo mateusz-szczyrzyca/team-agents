@@ -272,6 +272,25 @@ pub fn markers_in(extension: &str, lines: &[(u32, &str)]) -> Vec<(u32, Marker)> 
     found
 }
 
+/// One line of a file, as far as the markers are read: its number, its text, and whether the round added it.
+#[derive(Debug, Clone, Copy)]
+pub struct Line<'a> {
+    /// The line's number in the file at the head, counted from 1.
+    pub number: u32,
+    /// The line's text.
+    pub text: &'a str,
+    /// Whether the round added the line; a line it did not touch is read only as part of an attribute.
+    pub added: bool,
+}
+
+/// The markers of the lines of one file with this `extension`, in the order of their numbers, each with the number of
+/// the line that has it: a line is read on its own only when it was added, and an attribute that rustfmt wrapped over
+/// lines is read as a whole when at least one of its lines was.
+#[must_use]
+pub fn markers_touching(_extension: &str, _lines: &[Line<'_>]) -> Vec<(u32, Marker)> {
+    Vec::new()
+}
+
 /// Whether `c` may be part of a name in Rust, or joins a name to a call as `.` does.
 fn is_name_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '.' | ':')

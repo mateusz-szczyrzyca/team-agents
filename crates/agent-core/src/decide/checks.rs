@@ -122,6 +122,18 @@ pub struct AddedLine {
     pub text: String,
 }
 
+/// One line of a file at the head that the round did not change, near a line it added: the rest of an attribute that
+/// rustfmt wrapped over lines, when only one of them is new.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnchangedLine {
+    /// The file.
+    pub path: RepoPath,
+    /// The line's number in the file at the head, counted from 1.
+    pub number: u32,
+    /// The line's text, without its line break.
+    pub text: String,
+}
+
 /// What the checks look at: the round's diff and its commits.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RoundFacts {
@@ -273,12 +285,25 @@ impl Issue {
     }
 }
 
-/// The issues the checks find in `facts`, under the lists of `rules`, without those about a [`Subject`] in `allowed`.
+/// The issues the checks find in `facts`, under the lists of `rules`, without those about a [`Subject`] in `allowed`:
+/// [`assess_near`] with no line of the files besides the added ones.
 ///
 /// The order is fixed: protected files, changed tests, edited `RED:` tests, missing tests, markers; within a rule, the
 /// order of the facts, and for the markers the file, then the kind.
 #[must_use]
 pub fn assess(rules: &Checks, facts: &RoundFacts, allowed: &[Subject]) -> Vec<Issue> {
+    assess_near(rules, facts, &[], allowed)
+}
+
+/// The issues the checks find in `facts` and `unchanged`, the lines near the added ones that the round left as they
+/// were, in the same files and in the order of their numbers; the rest as in [`assess`].
+#[must_use]
+pub fn assess_near(
+    rules: &Checks,
+    facts: &RoundFacts,
+    _unchanged: &[UnchangedLine],
+    allowed: &[Subject],
+) -> Vec<Issue> {
     let mut issues = protected_changes(rules, facts);
     issues.extend(changed_tests(rules, facts));
     issues.extend(edited_red_tests(rules, facts));
