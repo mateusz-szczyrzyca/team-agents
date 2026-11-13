@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use agent_core::config::{AbsolutePath, Program};
 use agent_core::ids::{AgentName, TaskId, TeamId};
-use agent_core::protocol::{AgentList, Client, Command, FailureKind, Reply, RunRequest};
+use agent_core::protocol::{AgentList, Client, Command, FailureKind, Reply, RunRequest, StatusRequest};
 use agent_core::state::{ItemPhase, MergeMode, PrNumber, PullRequest, State, TaskListText, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{
@@ -305,6 +305,18 @@ impl Fixture {
         self.shutdown.cancel();
         let daemon = self.daemon.take().unwrap();
         tokio::time::timeout(PATIENCE, daemon).await.unwrap().unwrap()
+    }
+
+    /// Asks the daemon for its status and waits for the answer. The owner answers between two turns of its loop, and its
+    /// first turn looks at every team: when the answer is there, the daemon has looked at the teams since its start.
+    async fn answered(&self) {
+        let reply = self
+            .connect()
+            .await
+            .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+            .await
+            .unwrap();
+        assert!(matches!(reply, Reply::Teams { .. }), "{reply:?}");
     }
 
     async fn connect(&self) -> Connection {
@@ -1228,7 +1240,7 @@ async fn a_closed_team_is_not_closed_again_when_the_daemon_restarts() {
     f.stop().await.unwrap();
 
     f.start().await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    f.answered().await;
     f.stop().await.unwrap();
 
     let notices = f
@@ -1341,7 +1353,11 @@ async fn a_bus_that_is_down_is_tried_again_and_nothing_is_lost() {
     std::fs::write(&down, "").unwrap();
 
     f.status_is(&tasks[1], TaskStatus::Waiting).await;
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    let refused = f.home.root().join("flaky-bus-refused");
+    f.wait_for("the notice for the coordinator to be refused", || {
+        std::fs::read_to_string(&refused).is_ok_and(|calls| calls.lines().any(|call| call == "send"))
+    })
+    .await;
     assert_eq!(
         f.runs(&tasks[0]),
         1,
@@ -1445,7 +1461,7 @@ async fn an_item_whose_branch_cannot_be_started_waits_and_the_daemon_goes_on() {
     std::fs::write(f.home.state_file(), state.to_json().unwrap()).unwrap();
 
     f.start().await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    f.answered().await;
     let state = f.state();
     f.stop().await.unwrap();
 
