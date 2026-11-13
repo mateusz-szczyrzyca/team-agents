@@ -160,7 +160,7 @@ names a repository or its layout: these three lists are all it has.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `test_paths` | `[]` | the test files. A round may add lines to one; changing one that exists other than by added lines, removing it or renaming it is for the human to allow |
+| `test_paths` | `[]` | the test files. A round may add lines to one; changing one that exists other than by added lines (its mode too), removing it or renaming it is for the human to allow |
 | `code_paths` | `[]` | the production code. A round that changes it has to add a line to a test file (or say in a commit `Test-First: not possible — <reason>`) |
 | `protected_paths` | `[]` | the files that judge a round: the gate's scripts, lint and CI configuration, the repository's rules. Changing one is for the human to allow |
 

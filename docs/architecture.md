@@ -364,9 +364,9 @@ files, the commits and the added lines from the merge base with the fetched base
 
 | Rule | Who may allow it |
 |---|---|
-| an existing test file is changed other than by added lines, removed or renamed | only the human |
+| an existing test file is changed other than by added lines, removed or renamed — a change of its mode alone (git lists it as modified with no line changed) is a change too | only the human |
 | a protected file is changed in any way | only the human |
-| a test file a `RED:` commit of the round touched has lines removed or replaced by a later commit (a descendant of it in the history), unless that commit touches test files only, its subject starts with `TEST-FIX:` and the description names it, by its ID or at least seven digits, under `## Tests changed after RED` (TDD-14) | the team, or the human |
+| a test file a `RED:` commit of the round touched has lines removed or replaced by a later commit (a descendant of it in the history), unless that commit touches test files only, its subject starts with `TEST-FIX:` and the description names it, by its ID or at least seven digits, under `## Tests changed after RED` (TDD-14). A later merge counts with what it changed against each parent that has the `RED:` commit, so a resolution that drops a line of the test is an edit; against a parent without it, the merge's lines are those of the other side, whose own commits answer for them | the team, or the human |
 | the round changes production code and adds no line to a test file, and none of its commits has a line `Test-First: not possible — <reason>` (TDD-1) | the team, or the human |
 | an added line skips a test, suppresses a lint or asks whether the code runs under test, in a file the description does not name (TDD-11, LINT-3, TDD-12) | the team, or the human |
 
