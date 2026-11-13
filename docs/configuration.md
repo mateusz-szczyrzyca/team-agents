@@ -182,8 +182,9 @@ These are choices the plan left open, made in `agent-core`. Each is cheap to cha
    is `AgentInNoList`: a forgotten line is an error with the name, not a silent normal agent.
 2. **Absolute paths only.** No `~` and no `$HOME`: the example has `/home/you/...` to edit. An expansion would need
    the home directory as an input of every load; it can be added later without breaking files.
-3. **Investigators are a table, ordered by name.** The old rotation by "last investigator" is not in the plan; item 8.1
-   picks the two reviewers. If their order should be configured, an `order` list can be added later.
+3. **Investigators are a table, ordered by name.** The old rotation by "last investigator" is not in the plan: the two reviewers
+   of a pull request are drawn at random among the free investigators outside the team (item 8.1). If their order should be
+   configured, an `order` list can be added later.
 4. **One language.** The old `AGENT_LANGUAGE` / `REPO_LANGUAGE` split is gone: everything in the repository is English.
 5. **Secrets in three scopes**: the GitHub token, the model CLIs' environment, the notification command's environment.
    A variable one CLI needs is visible to the others' runs; per-agent scoping can be added later.
