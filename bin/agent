@@ -5414,7 +5414,6 @@ investigation_team_tick() {
   fi
   if ((successful)) && [[ $(investigation_field "$parent" INVESTIGATION_PIPELINE) == 1 ]]; then
     meta_set "$parent" INVESTIGATION_PHASE 2
-    if investigation_solo "$parent"; then investigation_solo_owner "$parent"; return; fi
     investigation_phase_choose "$parent" 2
     return
   fi
@@ -5580,19 +5579,6 @@ investigation_solo() {
   local team
   team=$(investigation_field "$1" INVESTIGATION_TEAM); team=${team// /}
   [[ -n $team && $team != *,* ]]
-}
-
-# investigation_solo_owner parent — a team of one: no merger runs. Its investigator owns the PR (its phase-one task
-# stands for the merger's): the PR is opened from its branch, and it fixes what the checks and the reviews find
-investigation_solo_owner() {
-  local parent=$1 agent task
-  agent=$(jq_soft investigation_phase_parse -r '[.members[] | select(.status == "done")][0].agent // empty' "$TASKS/$parent/phase1.json")
-  task=$(jq_soft investigation_phase_parse -r '[.members[] | select(.status == "done")][0].task // empty' "$TASKS/$parent/phase1.json")
-  if [[ -z $agent || -z $task ]]; then investigation_handoff "$parent" 'waits for you: no result to open a PR from' failed; return; fi
-  meta_set "$parent" INVESTIGATION_MERGER "$agent"
-  meta_set "$parent" INVESTIGATION_MERGER_TASK "$task"
-  log_info investigation_solo_owner "task=$parent" "agent=$agent" "child=$task"
-  auto_stage "$parent" "opening the PR of $agent's branch (one investigator: nothing to merge)"
 }
 
 # investigation_pr_merger_note parent merger-task — the merger of an investigation on an open PR (--pr) opens none:

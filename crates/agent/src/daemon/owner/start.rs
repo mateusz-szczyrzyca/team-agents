@@ -8,8 +8,8 @@ use std::str::FromStr;
 
 use agent_core::cli::{McpServerKind, RunMode, SessionId};
 use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValue, ModelName};
-use agent_core::ids::{GenerateIdError, RunId, TaskId};
-use agent_core::kinds::{CliKind, Tier};
+use agent_core::ids::{BranchName, GenerateIdError, InvalidBranchName, InvalidName, RunId, TaskId};
+use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::state::{ItemPhase, Member, Participant, RunEnd, RunState, State, Team};
 use agent_core::task_list::Item;
 use agent_runtime::agentbus::{AgentBus, BusTier};
@@ -20,7 +20,10 @@ use agent_runtime::run::RunJob;
 use agent_runtime::run::compose::{ComposeError, PromptInput, PromptKind, PromptTexts, ResumeReason, compose};
 use agent_runtime::settings::Settings;
 use agent_runtime::store::Home;
+use agent_runtime::team_prompts::TeamPrompts;
 use rand::{Rng, RngExt};
+
+use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape, task_branch};
 
 /// The value of the `--role` of `agentbus serve` for a run of an investigator.
 const BUS_ROLE_INVESTIGATOR: &str = "investigator";
@@ -74,6 +77,21 @@ pub(super) enum StartProblem {
     /// An ID cannot be made.
     #[error("cannot make the ID of the run")]
     Id(#[from] GenerateIdError),
+    /// The repository of the task is not in the configuration any more.
+    #[error("the repository {repo} is not in the configuration (agents.toml): add it back, or stop the task")]
+    RepoGone {
+        /// The repository.
+        repo: String,
+    },
+    /// What the team tells the run cannot be made.
+    #[error("cannot make what the team tells the run")]
+    Team(#[from] TeamPromptError),
+    /// The name of an agent is not an agent name.
+    #[error("the name of an agent is not an agent name")]
+    Name(#[from] InvalidName),
+    /// The branch of the task is not a branch name.
+    #[error("the branch of the task is not a branch name")]
+    Branch(#[from] InvalidBranchName),
     /// A session ID is not valid.
     #[error("a session ID is not valid")]
     Session(#[from] InvalidValue),
@@ -87,12 +105,16 @@ pub(super) struct Context<'a> {
     pub(super) settings: &'a Settings,
     /// The run prompts.
     pub(super) texts: &'a HarnessPrompts,
+    /// The texts of the teams.
+    pub(super) team_texts: &'a TeamPrompts,
     /// The rules.
     pub(super) rules: &'a PromptLoader,
     /// The home.
     pub(super) home: &'a Home,
     /// The clock the IDs are made from.
     pub(super) clock: &'a SharedClock,
+    /// Why the task of a team starts a run now, if it is more than the plain continuation of the task.
+    pub(super) why: Option<&'a Why>,
 }
 
 /// A run that is ready to start.
@@ -172,13 +194,12 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         // Checkpoints live on the agentbus, which a team's life (the next item) creates: none yet.
         checkpoint: None,
     };
-    let prompt = compose(
-        &PromptTexts {
-            harness: ctx.texts,
-            rules: ctx.rules,
-        },
-        &input,
-    )?;
+    let texts = PromptTexts {
+        harness: ctx.texts,
+        rules: ctx.rules,
+    };
+    let prompt = compose(&texts, &input)?;
+    let prompt = team_prompt(ctx, team, role, member, session.is_none(), &texts, prompt)?;
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())
@@ -192,7 +213,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         };
         (RunMode::New { session_id }, recorded)
     };
-    let mcp_servers = mcp_servers(ctx, team, participant, task, &working)?;
+    let mcp_servers = mcp_servers(ctx, team, participant, task, &working, &work_branch(team, member)?)?;
     Ok(Plan {
         run: run.clone(),
         recorded_session,
@@ -208,6 +229,40 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
             mcp_servers,
         },
     })
+}
+
+/// The prompt of a run that is shaped by the team the task is in; a task without a team keeps `composed`.
+fn team_prompt(
+    ctx: &Context<'_>,
+    team: &Team,
+    role: Role,
+    member: &Member,
+    new_session: bool,
+    texts: &PromptTexts<'_>,
+    composed: String,
+) -> Result<String, StartProblem> {
+    let base = ctx
+        .settings
+        .config
+        .repo(team.repo())
+        .map(|repo| repo.base_branch.clone())
+        .ok_or_else(|| StartProblem::RepoGone {
+            repo: team.repo().to_string(),
+        })?;
+    let branch = work_branch(team, member)?;
+    Ok(shape(
+        ctx.team_texts,
+        texts,
+        &TeamRun {
+            team,
+            role,
+            branch: &branch,
+            base: &base,
+            why: ctx.why,
+            new_session,
+        },
+        composed,
+    )?)
 }
 
 /// Checks that `path` is a directory.
@@ -283,6 +338,27 @@ fn assigned_item<'a>(team: &'a Team, participant: &Participant) -> Option<&'a It
     })
 }
 
+/// The branch `member` works on: the branch of its item, or the branch its task started on.
+fn work_branch(team: &Team, member: &Member) -> Result<BranchName, StartProblem> {
+    let item_branch = team.items().iter().find_map(|progress| match progress.phase() {
+        ItemPhase::InProgress { assignee, branch } | ItemPhase::Fixing { assignee, branch, .. }
+            if assignee.as_str() == member.agent().name() =>
+        {
+            Some(branch.clone())
+        }
+        ItemPhase::Pending
+        | ItemPhase::InProgress { .. }
+        | ItemPhase::InReview { .. }
+        | ItemPhase::Fixing { .. }
+        | ItemPhase::Approved { .. }
+        | ItemPhase::Done { .. } => None,
+    });
+    match item_branch {
+        Some(branch) => Ok(branch),
+        None => Ok(task_branch(&agent_name(member.agent())?, member.task())?),
+    }
+}
+
 /// A session ID in the form of a version 4 UUID, which Claude Code accepts for `--session-id`.
 fn new_session_id(rng: &mut impl Rng) -> Result<SessionId, InvalidValue> {
     let mut bytes: [u8; 16] = rng.random();
@@ -313,6 +389,7 @@ fn mcp_servers(
     participant: &Participant,
     task: &TaskId,
     working: &std::path::Path,
+    branch: &BranchName,
 ) -> Result<BTreeMap<McpServerKind, CommandLine>, StartProblem> {
     let binaries = ctx.settings.config.binaries();
     let home = absolute(ctx.home.root())?;
@@ -341,6 +418,8 @@ fn mcp_servers(
         team.repo().to_string(),
         "--worktree".to_owned(),
         text(working)?,
+        "--branch".to_owned(),
+        branch.to_string(),
         "--team".to_owned(),
         team.id().to_string(),
         "--tier".to_owned(),

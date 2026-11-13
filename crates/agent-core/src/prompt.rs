@@ -31,8 +31,10 @@ use std::str::FromStr;
 use crate::config::Language;
 
 mod harness;
+mod team;
 
 pub use harness::HarnessPrompt;
+pub use team::TeamPrompt;
 
 /// The directory of the prompts, in the repository and in an installation; every path of the catalog is relative
 /// to it.

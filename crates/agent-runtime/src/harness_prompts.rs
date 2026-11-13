@@ -186,7 +186,10 @@ async fn load_one(dir: &Path, id: HarnessPrompt, language: &Language) -> Result<
 ///
 /// A file that exists but cannot be read is a problem, never a reason to try the next one: a broken translation must
 /// not silently turn into English.
-async fn read_first(dir: &Path, candidates: &[PathBuf]) -> Result<Option<(PathBuf, String)>, (PathBuf, ProblemCause)> {
+pub(crate) async fn read_first(
+    dir: &Path,
+    candidates: &[PathBuf],
+) -> Result<Option<(PathBuf, String)>, (PathBuf, ProblemCause)> {
     for candidate in candidates {
         let path = dir.join(candidate);
         match read_file(&path).await {

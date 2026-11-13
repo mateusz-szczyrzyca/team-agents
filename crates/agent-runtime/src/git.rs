@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::string::FromUtf8Error;
 use std::time::Duration;
 
-use agent_core::config::{AbsolutePath, EnvName, GitIdentity};
+use agent_core::config::{AbsolutePath, EnvName, GitIdentity, InvalidValue};
 use agent_core::ids::{AgentName, BranchName};
 use agent_core::state::{CommitId, InvalidCommitId};
 use tokio::process::Command;
@@ -152,6 +152,15 @@ pub enum GitOperation {
     /// `git rev-parse --git-path`, to find a file inside the repository's directory.
     #[strum(serialize = "git path")]
     GitPath,
+    /// `git rev-parse --show-toplevel`, to find the root of a checkout.
+    #[strum(serialize = "top level")]
+    TopLevel,
+    /// `git remote get-url origin`.
+    #[strum(serialize = "origin url")]
+    OriginUrl,
+    /// `git switch -c`, to start a new branch in a worktree.
+    #[strum(serialize = "switch")]
+    Switch,
 }
 
 /// Why a git operation failed.
@@ -212,6 +221,14 @@ pub enum GitError {
         operation: GitOperation,
         /// Why the text is not a commit ID.
         source: InvalidCommitId,
+    },
+    /// What git printed for a directory is not an absolute path.
+    #[error("git {operation} did not print an absolute path")]
+    NotAPath {
+        /// What was asked.
+        operation: GitOperation,
+        /// Why the text is not an absolute path.
+        source: InvalidValue,
     },
     /// The message of a merge is empty.
     #[error("the message of a merge must not be empty")]
@@ -613,6 +630,55 @@ impl Git {
         let printed = text(operation, &captured.stdout)?;
         // In the main checkout git prints the path relative to the directory it ran in; `join` keeps an absolute one.
         Ok(self.dir.as_path().join(printed.trim_end()))
+    }
+
+    /// The root directory of the checkout this handle runs in, from whatever directory of it.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when the directory is in no repository; [`GitError::Run`], [`GitError::OutputTooLong`],
+    /// [`GitError::NotUtf8`] and [`GitError::Unexpected`].
+    pub async fn toplevel(&self) -> Result<AbsolutePath, GitError> {
+        let operation = GitOperation::TopLevel;
+        let captured = self
+            .run_ok(operation, Reach::Local, &[arg("rev-parse"), arg("--show-toplevel")])
+            .await?;
+        whole(operation, &captured.stdout, self.limits)?;
+        let printed = text(operation, &captured.stdout)?;
+        printed
+            .trim_end()
+            .parse()
+            .map_err(|source| GitError::NotAPath { operation, source })
+    }
+
+    /// The URL of the remote `origin`.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when the repository has no `origin`; [`GitError::Run`], [`GitError::OutputTooLong`] and
+    /// [`GitError::NotUtf8`].
+    pub async fn origin_url(&self) -> Result<String, GitError> {
+        let operation = GitOperation::OriginUrl;
+        let captured = self
+            .run_ok(operation, Reach::Local, &[arg("remote"), arg("get-url"), arg(REMOTE)])
+            .await?;
+        whole(operation, &captured.stdout, self.limits)?;
+        let printed = text(operation, &captured.stdout)?;
+        Ok(printed.trim_end().to_owned())
+    }
+
+    /// Makes `branch` from `start` and checks it out in this handle's worktree.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when the branch exists, `start` is unknown, or changes in the tree would be lost;
+    /// [`GitError::Run`].
+    pub async fn switch_new_branch(&self, branch: &BranchName, start: &Revision) -> Result<(), GitError> {
+        let start = start.to_string();
+        self.run_ok(
+            GitOperation::Switch,
+            Reach::Local,
+            &[arg("switch"), arg("-c"), arg(branch.as_str()), arg(&start)],
+        )
+        .await
+        .map(drop)
     }
 
     /// The command `git` with this handle's identity, signing and environment, and `args`.

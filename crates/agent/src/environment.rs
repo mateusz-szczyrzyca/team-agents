@@ -1,7 +1,10 @@
 //! What a command reads from the process's environment, once, at its start.
 
 use std::ffi::OsString;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_runtime::store::Home;
@@ -16,6 +19,8 @@ pub(crate) const HOME_VARIABLE: &str = "AGENTS_HOME";
 pub(crate) struct Environment {
     /// `AGENTS_HOME`, as the process has it.
     home: Option<OsString>,
+    /// The directory the process runs in, or why it could not be told.
+    directory: Result<PathBuf, Arc<io::Error>>,
     /// The machine's offset from UTC, or UTC when the system cannot say.
     local_offset: UtcOffset,
     /// Why the offset is UTC, when it is for that reason.
@@ -42,6 +47,9 @@ pub(crate) enum EnvironmentError {
         /// What is wrong with it.
         source: InvalidValue,
     },
+    /// The directory the command runs in cannot be found.
+    #[error("cannot find the directory the command runs in")]
+    NoDirectory(#[source] Arc<io::Error>),
 }
 
 impl Environment {
@@ -57,19 +65,38 @@ impl Environment {
         };
         Self {
             home: std::env::var_os(HOME_VARIABLE),
+            directory: std::env::current_dir().map_err(Arc::new),
             local_offset,
             offset_error,
         }
     }
 
-    /// An environment whose `AGENTS_HOME` is `home`, in the time zone UTC.
+    /// An environment whose `AGENTS_HOME` is `home`, in the time zone UTC, with no directory.
     #[cfg(test)]
-    pub(crate) const fn new(home: Option<OsString>) -> Self {
+    pub(crate) fn new(home: Option<OsString>) -> Self {
         Self {
             home,
+            directory: Err(Arc::new(io::Error::from(io::ErrorKind::NotFound))),
             local_offset: UtcOffset::UTC,
             offset_error: None,
         }
+    }
+
+    /// The same, running in `directory`.
+    #[cfg(test)]
+    pub(crate) fn in_directory(mut self, directory: PathBuf) -> Self {
+        self.directory = Ok(directory);
+        self
+    }
+
+    /// The directory the command runs in.
+    ///
+    /// # Errors
+    /// [`EnvironmentError::NoDirectory`] when the process cannot tell it.
+    pub(crate) fn directory(&self) -> Result<&Path, EnvironmentError> {
+        self.directory
+            .as_deref()
+            .map_err(|error| EnvironmentError::NoDirectory(Arc::clone(error)))
     }
 
     /// The machine's offset from UTC.

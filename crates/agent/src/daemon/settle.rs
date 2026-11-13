@@ -64,7 +64,7 @@ const fn after_done(role: Role) -> TaskStatus {
 }
 
 /// The last [`MAX_MESSAGE_CHARS`] characters of `message`.
-fn end_of(message: &str) -> String {
+pub(super) fn end_of(message: &str) -> String {
     let skip = message.chars().count().saturating_sub(MAX_MESSAGE_CHARS);
     message.chars().skip(skip).collect()
 }
