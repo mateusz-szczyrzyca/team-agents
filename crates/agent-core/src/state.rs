@@ -6,6 +6,7 @@
 //! exists is a valid one, and a text that is not valid is refused when it is read.
 
 mod checked;
+mod checks;
 #[cfg(test)]
 pub(crate) mod fixtures;
 mod gate;
@@ -18,6 +19,7 @@ mod team;
 mod values;
 
 pub use checked::CheckedMut;
+pub use checks::{Asked, ChecksRecord, ItemChecks, Sent};
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
 pub use item::{
     AdvanceError, AskReviewsError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut,

@@ -16,6 +16,7 @@
 use std::num::NonZeroU32;
 
 use super::REVIEWS_REQUIRED;
+use super::checks::{Issue, Judge, Subject};
 use crate::config::Review as ReviewConfig;
 use crate::ids::InvestigatorName;
 use crate::state::{CommitId, MergeMode, PhaseKind, PrNumber};
@@ -469,6 +470,106 @@ fn start_fix_pass(pr: PrNumber, passes: u32) -> Step {
         },
         RoundAction::StartFixPass { pass },
     )
+}
+
+/// What the checks before a review need to know besides the issues: how often they may send the round back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChecksPolicy {
+    /// How many times the checks send a round back to the team before the human is asked; `0` asks at once.
+    pub check_passes: u32,
+}
+
+impl ChecksPolicy {
+    /// The policy of the configuration's `[review]` table.
+    #[must_use]
+    pub const fn new(review: &ReviewConfig) -> Self {
+        Self {
+            check_passes: review.check_passes,
+        }
+    }
+}
+
+/// Why the human is asked about the issues of a round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskReason {
+    /// Every issue is one that only the human may allow.
+    OnlyTheHumanMayAllow,
+    /// The team fixed nothing in the passes the checks allow: the human decides what the issues are worth.
+    PassesUsed,
+}
+
+/// What the checking phase of a round comes to, and what the daemon does about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChecksStep {
+    /// Nothing is left to hold the round back: the reviews start.
+    StartReviews,
+    /// The round goes back to the team with the reasons: this is the pass that starts.
+    BackToTeam {
+        /// Which pass of the checks this is, counted from 1.
+        pass: NonZeroU32,
+    },
+    /// The round waits on a question to the human that names each issue; their answer starts the reviews or sends the
+    /// round back.
+    AskHuman {
+        /// Why the human is asked.
+        reason: AskReason,
+    },
+}
+
+/// The checking phase of a round: after the gate is green at the head and before the reviews are asked, the first time
+/// and after every fix pass.
+///
+/// It is not a state of [`RoundState`]: a round enters it from [`RoundState::Publishing`] and leaves it into
+/// [`RoundState::InReview`] when [`Checking::conclude`] says [`ChecksStep::StartReviews`]; what it holds is how often
+/// the checks have sent the round back. The daemon keeps that count with the item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Checking {
+    /// How many times the checks have sent the round back to the team.
+    passes: u32,
+}
+
+impl Checking {
+    /// The checking phase of a round that the checks have sent back `passes` times.
+    #[must_use]
+    pub const fn after(passes: u32) -> Self {
+        Self { passes }
+    }
+
+    /// How many times the checks have sent the round back to the team.
+    #[must_use]
+    pub const fn passes(&self) -> u32 {
+        self.passes
+    }
+
+    /// What the `issues` of the round come to; `refused` are the subjects the human refused to allow since the last
+    /// look, which go back to the team whatever the passes are.
+    ///
+    /// - No issue: the reviews start.
+    /// - An issue the human refused: back to the team.
+    /// - An issue the team can fix: back to the team while the policy has passes left, then the human is asked.
+    /// - Only issues that the human alone may allow: the human is asked.
+    #[must_use]
+    pub fn conclude(&self, issues: &[Issue], refused: &[Subject], policy: ChecksPolicy) -> ChecksStep {
+        if issues.is_empty() {
+            return ChecksStep::StartReviews;
+        }
+        let back = ChecksStep::BackToTeam {
+            pass: NonZeroU32::MIN.saturating_add(self.passes),
+        };
+        if issues.iter().any(|issue| refused.contains(&issue.subject())) {
+            return back;
+        }
+        let team_can_fix = issues.iter().any(|issue| issue.judge() == Judge::Team);
+        match (team_can_fix, self.passes < policy.check_passes) {
+            (true, true) => back,
+            (true, false) => ChecksStep::AskHuman {
+                reason: AskReason::PassesUsed,
+            },
+            (false, _) => ChecksStep::AskHuman {
+                reason: AskReason::OnlyTheHumanMayAllow,
+            },
+        }
+    }
 }
 
 #[cfg(test)]

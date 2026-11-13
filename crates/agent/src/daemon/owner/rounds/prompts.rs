@@ -8,14 +8,16 @@ use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
 use agent_core::ids::InvalidName;
 use agent_core::kinds::Role;
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
-use agent_core::state::{CommitId, ItemPhase, PrNumber, Review, ReviewOutcome, TaskRef};
+use agent_core::state::{CommitId, ItemPhase, PrNumber, QuestionState, Review, ReviewOutcome, TaskRef, Timestamp};
 use agent_core::status::ReviewVerdict;
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision};
 use agent_runtime::run::compose::{ComposeError, PromptTexts, item_sections};
+use agent_runtime::store::{StoreError, load_checks_record};
 use agent_runtime::text_file::{TextFileError, read_text_file};
 
 use super::super::start::{Context, next_round};
+use crate::daemon::checks::{ChecksTextError, answered, relay};
 use crate::daemon::merge::{Decision, decision, exhausted};
 use crate::daemon::team::Why;
 
@@ -53,6 +55,12 @@ pub(in crate::daemon::owner) enum SectionError {
         /// The repository.
         repo: RepoName,
     },
+    /// A text of the checks before a review cannot be made.
+    #[error("cannot make a text of the checks before a review")]
+    Checks(#[from] ChecksTextError),
+    /// The record of the checks cannot be read back.
+    #[error("cannot read the record of the checks")]
+    Record(#[from] StoreError),
     /// The report of a review cannot be read back.
     #[error("cannot read the report {path:?}")]
     Report {
@@ -92,13 +100,53 @@ pub(in crate::daemon::owner) async fn sections_for(
         }
         (Role::Reviewer, _) => Ok(review_request(ctx, texts, found, working).await?.map(Addition::Append)),
         (Role::Solo | Role::Coordinator, _) => {
-            let text = match fix_pass(ctx, texts, found).await? {
+            // What the checks before a review tell the lead comes first: it is the last thing that happened to its round.
+            let text = match checks_notice(ctx, found).await? {
                 Some(text) => Some(text),
-                None => ask_human(ctx, texts, found).await?,
+                None => match fix_pass(ctx, texts, found).await? {
+                    Some(text) => Some(text),
+                    None => ask_human(ctx, texts, found).await?,
+                },
             };
             Ok(text.map(Addition::Append))
         }
         (Role::Member | Role::Worker, _) => Ok(None),
+    }
+}
+
+/// What the checks before a review tell the lead `found` that it has not been told yet: the reasons the round goes back to
+/// it with, the questions it is to put to the human, or what to do now that the human answered them.
+async fn checks_notice(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<Option<String>, SectionError> {
+    let Some(texts) = ctx.checks else {
+        return Ok(None);
+    };
+    let (task, member) = (found.member.task(), found.member);
+    let Some(record) = load_checks_record(ctx.home, task).await? else {
+        return Ok(None);
+    };
+    // What was written for the lead is told in the run that starts after it was written; a run that has started since
+    // has been told.
+    let ran_since = |time: Timestamp| member.runs().last().is_some_and(|run| run.started_at() >= time);
+    if let Some(sent) = record.sent.as_ref().filter(|sent| !ran_since(sent.at)) {
+        return Ok(Some(sent.text.clone()));
+    }
+    let Some(asked) = &record.asked else {
+        return Ok(None);
+    };
+    match member
+        .questions()
+        .iter()
+        .find(|question| question.round() == asked.round)
+    {
+        None if !ran_since(asked.at) => {
+            let file = ctx.home.questions_file(task, asked.round);
+            Ok(Some(relay(texts, task, asked.round, &file)?))
+        }
+        Some(question) => match question.state() {
+            QuestionState::Answered { at, .. } if !ran_since(*at) => Ok(Some(answered(texts)?)),
+            QuestionState::Answered { .. } | QuestionState::Open => Ok(None),
+        },
+        None => Ok(None),
     }
 }
 

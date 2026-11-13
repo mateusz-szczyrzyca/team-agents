@@ -1048,6 +1048,14 @@ start the next item. `agent run --no-merge` stops before the merge and tells you
 requested" a question reaches you like any other. How it works, and its limits, are in
 [`docs/architecture.md`](docs/architecture.md) ("Pull requests, reviews and the merge").
 
+Before the review the daemon checks the round's own diff and commits through git, with no model, if the repository has a
+`[repos.NAME.checks]` table in `agents.toml` ([`docs/configuration.md`](docs/configuration.md)): the lists of path patterns that
+say what is a test, what is production code and what judges a round. A round that changes an existing test other than by added
+lines, or a protected file, waits on a question to you that names each file (answer `allow` to start the review, anything else
+sends it back); one that changes code without adding tests, edits the test of its own `RED:` commit, or adds a skipped test, a lint
+suppression or code that asks whether it runs under test goes back to the team with the reasons, `[review] check_passes` times
+(2), and then you are asked. It is "Round checks before the review" in [`docs/architecture.md`](docs/architecture.md).
+
 A gate is run with `agent gate`, by an agent in its worktree (the human can run it too):
 
 | Command | What it does |

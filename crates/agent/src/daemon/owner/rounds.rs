@@ -6,6 +6,7 @@
 //! items, so a daemon that restarts finds the same things to do at its first look. Without the token of a GitHub account
 //! in `secrets.toml` the autopilot is off: pull requests are not opened and the items stay where they are.
 
+mod checks;
 mod human;
 mod merges;
 mod prompts;
@@ -22,17 +23,21 @@ use agent_core::ids::{AgentName, BranchName, GenerateIdError, InvalidBranchName,
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
 use agent_core::state::{PrNumber, Timestamp};
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
+use agent_runtime::checks_prompts::ChecksPrompts;
 use agent_runtime::git::{CommitIdentity, Git, GitError};
 use agent_runtime::github::{ApiBase, GitHub, GitHubError, GitHubSettings, InvalidApiBase, InvalidRepoSlug, RepoSlug};
 use agent_runtime::notify::{InvalidNotification, Notification};
 use agent_runtime::process::error_chain;
 use agent_runtime::settings::Settings;
 use agent_runtime::store::StoreError;
+use agent_runtime::text_file::ReplaceError;
 
 use super::{Notice, Owner, OwnerError};
 
 use super::teams::Round;
+use crate::daemon::checks::ChecksTextError;
 use crate::daemon::pr::PullTextError;
+use crate::daemon::questions::QuestionsProblem;
 use crate::daemon::team::agent_name;
 
 /// Why the autopilot cannot be set up from the settings.
@@ -48,6 +53,8 @@ pub(crate) enum PullsError {
 pub(crate) struct Pulls {
     /// The texts of the pull requests and the reviews.
     texts: Arc<AutopilotPrompts>,
+    /// The texts of the checks before a review.
+    checks: Arc<ChecksPrompts>,
     /// Where GitHub is and how a call is made.
     settings: GitHubSettings,
     /// The token of the account the harness acts as.
@@ -61,7 +68,11 @@ impl Pulls {
     ///
     /// # Errors
     /// [`PullsError`] when the address of the API is not one that is safe for the token.
-    pub(crate) fn new(texts: Arc<AutopilotPrompts>, settings: &Settings) -> Result<Option<Self>, PullsError> {
+    pub(crate) fn new(
+        texts: Arc<AutopilotPrompts>,
+        checks: Arc<ChecksPrompts>,
+        settings: &Settings,
+    ) -> Result<Option<Self>, PullsError> {
         let Some(token) = settings.secrets.github_token() else {
             return Ok(None);
         };
@@ -72,6 +83,7 @@ impl Pulls {
         };
         Ok(Some(Self {
             texts,
+            checks,
             settings: GitHubSettings {
                 base,
                 ..GitHubSettings::default()
@@ -84,6 +96,11 @@ impl Pulls {
     /// The texts of the pull requests and the reviews.
     pub(super) fn texts(&self) -> &AutopilotPrompts {
         &self.texts
+    }
+
+    /// The texts of the checks before a review.
+    pub(super) fn checks(&self) -> &ChecksPrompts {
+        &self.checks
     }
 
     /// A client of the repository `slug`.
@@ -149,6 +166,13 @@ pub(super) enum Announcement {
         /// The reviewer's task.
         task: TaskId,
     },
+    /// The checks before a review need a question put to the human, and the lead did not put it.
+    NotAsked {
+        /// The team.
+        team: TeamId,
+        /// The lead's task.
+        task: TaskId,
+    },
     /// A branch could not be published.
     PublishFailed {
         /// The team.
@@ -211,6 +235,18 @@ enum PublishError {
     /// The notification cannot be made.
     #[error("the notification is not valid")]
     Notification(#[from] InvalidNotification),
+    /// A text of the checks before a review cannot be made.
+    #[error("cannot make a text of the checks before a review")]
+    Checks(#[from] ChecksTextError),
+    /// The questions of the checks cannot be read back.
+    #[error("cannot read the questions of the checks")]
+    Questions(#[from] QuestionsProblem),
+    /// The questions of the checks cannot be written.
+    #[error("cannot write the questions of the checks")]
+    Write(#[from] ReplaceError),
+    /// The lead cannot ask any more questions.
+    #[error("the lead cannot ask another round of questions")]
+    Rounds,
     /// A reviewer cannot be added to the team.
     #[error("a reviewer cannot be added to the team")]
     Reviewer(#[from] agent_core::state::AddReviewerError),
@@ -367,6 +403,9 @@ impl Owner {
 
 pub(super) use self::prompts::{Addition, SectionError, sections_for};
 
+#[cfg(test)]
+#[path = "rounds/tests/checks.rs"]
+mod checks_tests;
 #[cfg(test)]
 #[path = "rounds/tests/fake_github.rs"]
 mod fake_github;

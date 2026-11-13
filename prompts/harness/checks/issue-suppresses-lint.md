@@ -1,0 +1,1 @@
+`{{path}}` has {{count}} added line(s) that suppress a lint, the first at line {{line}}. Fix the cause, or name `{{path}}` in the description of the pull request with the reason the lint does not apply.

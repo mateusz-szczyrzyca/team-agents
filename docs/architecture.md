@@ -72,6 +72,7 @@ item:  pending -> in_progress -> in_review -> approved -> done (final)
 |---|---|
 | `config` | `Config` (read from `agents.toml`) with its `AgentConfig`, `InvestigatorConfig`, `RepoConfig` and sections; `Secrets` (from `secrets.toml`) with `Secret`; the typed values (`Language`, `Program`, `AbsolutePath`, `CommandLine`, `Minutes`, `LoopbackAddr`, ...); `ConfigError`, `SecretsError`, `InvalidValue`. See [`configuration.md`](configuration.md) |
 | `task_list` | `TaskList`, `Feature`, `Item` (title, description, expected result, checks) and `TaskListError`, whose every variant but two carries its line. See [`task-list.md`](task-list.md) |
+| `repo_path` | `RepoPath` (a path inside a repository as git prints it), `PathPattern` (a glob over such paths: `*`, `?`, `**`, `dir/`, a bare name at any depth) and `PathPatterns` (at most 256 of them): what the `[repos.NAME.checks]` table lists. See [`configuration.md`](configuration.md) |
 
 Both `Config` and `TaskList` take text, not paths: reading `agents.toml`, `secrets.toml` (and the file mode `Secrets::parse` needs) and a
 `-f` task list is the runtime's job, so the core stays free of I/O.
@@ -80,7 +81,7 @@ Both `Config` and `TaskList` take text, not paths: reading `agents.toml`, `secre
 
 | Module | Types |
 |---|---|
-| `state` | `State` (with its schema version), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
+| `state` | `State` (with its schema version), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `ChecksRecord` (the checks' record of a lead, a file of its task directory), `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
 | `protocol` | `Request`, `Command`, `Response`, `Reply`, `Failure`, `Event`, `EventKind`, `Frame`, with the protocol version and `ProtocolError`. JSON lines over the daemon's socket. See [`state.md`](state.md) |
 | `questions` | `QuestionsFile`, `Entry`, `Verdict`: parsing and rendering of the questions file, the `ok` verdict, the `**ANSWERED**` marker. See [`state.md`](state.md) |
 
@@ -92,7 +93,7 @@ socket and the files are the runtime's. `serde_json` is a dependency of `agent-c
 
 | Module | Types |
 |---|---|
-| `prompt` | `PromptId` (every prompt, with its `PromptSpec`: path under `prompts/`, `Audience`, required variables), `HarnessPrompt` (the texts of `harness/run/`) and `TeamPrompt` (the texts of `harness/team/`, a catalog of its own because a test pins `HarnessPrompt` to the files of `harness/run/`), `AutopilotPrompt` (the texts of `harness/pr/` and `harness/review/`: a pull request's title, description and notices, the reviews and the fix pass; what goes on GitHub is English only), `Template` (the strict `{{name}}` renderer), `Variables`, `VariableName` and their errors (`TemplateError`, `RenderError`, `PromptError`) |
+| `prompt` | `PromptId` (every prompt, with its `PromptSpec`: path under `prompts/`, `Audience`, required variables), `HarnessPrompt` (the texts of `harness/run/`) and `TeamPrompt` (the texts of `harness/team/`, a catalog of its own because a test pins `HarnessPrompt` to the files of `harness/run/`), `ChecksPrompt` (the texts of `harness/checks/`: the reasons of the checks before a review, the message that sends a round back, the questions for the human), `AutopilotPrompt` (the texts of `harness/pr/` and `harness/review/`: a pull request's title, description and notices, the reviews and the fix pass; what goes on GitHub is English only), `Template` (the strict `{{name}}` renderer), `Variables`, `VariableName` and their errors (`TemplateError`, `RenderError`, `PromptError`) |
 | `cli` | `CliAdapter` (build a run, make a parser), `OutputParser` (lines to `ActivityEvent`s, then `RunOutput`), `RunRequest`, `RunSpec`, `RunFile`, `ActivityEvent`, `RunOutput`, `SessionId`, `ErrorTail`, `McpServerKind` |
 
 A template renders `{{name}}`; `\{{` is a literal `{{`. A variable without a value, a value without a variable, an
@@ -141,7 +142,8 @@ engine relies on:
 |---|---|
 | `decide::team` | `plan_team`: from the agents named, the configuration, the coordinator asked for (`--coordinator`, then the task list's `Coordinator:` line) and a random source, a `TeamPlan` — solo, or a team with its coordinator, members and workers — or a `TeamPlanError`: unknown agent, a worker as coordinator, a coordinator that was not named, only workers, no member besides the coordinator, and too many (or too few) investigators for two outside reviewers |
 | `decide::assign` | `next_assignments`: which item goes to which member next — one item per member, the items of a feature in order (the next starts when the previous is merged, with `--no-merge` approved), features in parallel once the features they depend on are merged; `first_free_worker` for `delegate` |
-| `decide::round` | `RoundState`, `RoundEvent` and `RoundState::transition`: member work, integration, gate green at the head, pull request published for that head, two reviews, merge or hand-over to the human, item done; "changes requested" starts a fix pass until `[review] fix_passes`, then the human is asked, and the answer grants one more pass. Each transition says what the daemon does next (`RoundAction`) |
+| `decide::checks` | `assess`: from the facts of a round's diff (its files, the files whose mode changed, its commits with their parents, the lines it added, the description of its pull request) and the repository's `checks` lists, the `Issue`s — an existing test file that loses lines or is removed or renamed and a protected file that changes (only the human may allow them); a test of a `RED:` commit edited by a later commit unless a named `TEST-FIX:`; production code with no added test line and no `Test-First: not possible — <reason>`; an added line that skips a test, suppresses a lint or asks whether the code runs under test, in a file the description does not name (the built-in `markers` table per extension). See "Round checks before the review" |
+| `decide::round` | `RoundState`, `RoundEvent` and `RoundState::transition`: member work, integration, gate green at the head, pull request published for that head, two reviews, merge or hand-over to the human, item done; "changes requested" starts a fix pass until `[review] fix_passes`, then the human is asked, and the answer grants one more pass. Each transition says what the daemon does next (`RoundAction`); `Checking` is the phase before the reviews are asked: what the issues of the checks come to — the reviews start, the round goes back to the team (at most `[review] check_passes` times) or the human is asked |
 | `decide::outcome` | `classify_outcome`: from the final message, the exit status, the error tail and who ended the run, the `RunEnd` to record — reported status, no status, quota exhausted (with the reset time when the CLI gives one), rate limited, hung, stopped — and the `Pause` it implies; `after_hang` for the watchdog's strikes. The CLIs' outputs are fixtures in `crates/agent-core/tests/fixtures/cli-outputs/` |
 
 The daemon feeds these functions what it observed and carries out what they return; none of them touches a file, a process or
@@ -154,8 +156,8 @@ the network. The order of the checks and the rules each follows are in the docum
 | Where | What |
 |---|---|
 | `agent_runtime::run` | `RunEngine::run`: one run of a model CLI, from its files to its classified end; touches no state (`run_held`: the same with a `WatchdogHold`, see "The gate"). The run's environment has `AGENTS_HOME`. `run::compose` makes its prompt: context, role, the rules of the tier, brief, item, checkpoint — or, for a resumed session, what interrupted it |
-| `agent_runtime::{settings, harness_prompts, autopilot_prompts, text_file, clock}` | `agents.toml` and `secrets.toml` read from the home; the second prompt catalog (`HarnessPrompt`, `prompts/harness/run/`: the run prompts and the notifications) and the fourth (`AutopilotPrompts`); a bounded text file; the system clock |
-| `agent::daemon` | `owner` (the state), `server` (the socket), `notifier`, `opener`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions), `owner/teams` (what carries them out), `questions` (the questions file) and `control` (what a control does to a task), with `owner/answers` and `owner/controls`, and the autopilot: `pr`, `review` and `merge` (its decisions) with `owner/rounds` (what carries them out) |
+| `agent_runtime::{settings, harness_prompts, autopilot_prompts, checks_prompts, text_file, clock}` | `agents.toml` and `secrets.toml` read from the home; the second prompt catalog (`HarnessPrompt`, `prompts/harness/run/`: the run prompts and the notifications) and the fourth and fifth (`AutopilotPrompts`, `ChecksPrompts`); a bounded text file; the system clock |
+| `agent::daemon` | `owner` (the state), `server` (the socket), `notifier`, `opener`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions), `owner/teams` (what carries them out), `questions` (the questions file) and `control` (what a control does to a task), with `owner/answers` and `owner/controls`, and the autopilot: `pr`, `review`, `merge` and `checks` (its decisions) with `owner/rounds` (what carries them out) |
 | `agent::{client, commands}` | the socket client, `agent status`, `agent daemon`, `agent run`, `agent answer`, `stop`, `pause`, `unpause`, `resume`, `say` |
 
 **Tasks** (CON-3, CON-4): the *owner* alone reads and changes the state; the *server* passes requests to it through a
@@ -344,6 +346,73 @@ minutes): a call that hangs leaves the socket unanswered that long. The merge is
 else pushed after the reviews is merged as well. A review that cannot be posted counts and is only logged. A reviewer whose run
 fails or is stopped is not replaced: the human resumes it. A solo agent that takes the next item while its first is in review
 switches to its fix pass's branch by what the prompt says, not by the daemon. The reports are cut at 20,000 characters.
+
+### Round checks before the review
+
+Before the head of a round goes to the reviewers — the first time and after every fix pass — the daemon checks the round's own
+diff and its commits through git, with no model, as the repository's `checks` table says ([`configuration.md`](configuration.md)).
+A repository without the table goes straight to review. Nothing in the code names a repository or its layout: what is a test,
+what is production code and what judges a round are the three lists of path patterns.
+
+**When.** In the autopilot's publishing (`owner/rounds/publish.rs`), once the lead waits and its gate passed at the tip: for a
+first round after the pull request is opened as a draft and before it is marked ready; for a fix pass before the branch is
+pushed, so that a head the checks hold back is not pushed and the reviewers keep the head they reviewed. The facts are the
+files, the commits and the added lines from the merge base with the fetched base branch to the tip (`agent_runtime::git`:
+`round_facts`) and the description of the pull request as GitHub has it now.
+
+**The rules** (`agent_core::decide::checks`, each with the case that raises it and the nearest that does not):
+
+| Rule | Who may allow it |
+|---|---|
+| an existing test file is changed other than by added lines, removed or renamed — a change of its mode (an executable bit) is a change too, with lines added or none (the facts read it with `git diff --raw`) | only the human |
+| a protected file is changed in any way | only the human |
+| a test file a `RED:` commit of the round touched has lines removed or replaced by a later commit (a descendant of it in the history), unless that commit touches test files only, its subject starts with `TEST-FIX:` and the description names it, by its ID or at least seven digits, under `## Tests changed after RED` (TDD-14). A later merge counts with what it changed against each parent that has the `RED:` commit, so a resolution that drops a line of the test is an edit; against a parent without it, the merge's lines are those of the other side, whose own commits answer for them | the team, or the human |
+| the round changes production code and adds no line to a test file, and none of its commits has a line `Test-First: not possible — <reason>` (TDD-1) | the team, or the human |
+| an added line skips a test, suppresses a lint or asks whether the code runs under test, in a file the description does not name (TDD-11, LINT-3, TDD-12). A suppression in Rust is `#[allow(…)]` and `#[expect(…)]` alike: the allowed spelling has to be named too. An attribute that `#[cfg_attr(…)]` applies counts as if it stood alone (`#[cfg_attr(not(test), expect(…))]`, `#[cfg_attr(miri, ignore)]`), also when rustfmt wraps it over several lines, and also when the round changes only one line of an attribute that was wrapped already: the daemon reads all the unchanged lines of a Rust file that has added ones, and an attribute with an added line is read as a whole, whatever its length. A file whose diff is too long to be read whole (over `8` MiB) cannot be checked: the round is not published and the human is told, as for any other failure to read the facts. `cfg!(test)` and `cfg!(not(test))` both ask whether the code runs under test. The description names a file with its whole path — `crates/other/src/a.rs` does not name `src/a.rs`, nor does `src/a.rs~` or `src/a.rs@backup`: a path is named as a whole token between delimiters (white space, quotes, brackets, `,;:#=*|`), and the dots and marks of a sentence may follow it | the team, or the human |
+
+A file that matches `test_paths` is a test even when `code_paths` matches it too; a protected file is reported as protected
+only. A test module inside a source file is not a test file: it stays with the reviewers.
+
+**What the issues come to** (`decide::round::Checking`, the phase before the reviews are asked; a type of its own because the
+tests of `RoundState` list its phases and events):
+
+- no issue — or every issue allowed — the reviews start;
+- an issue the team can fix — the round goes back to the lead with the reasons, at most `[review] check_passes` times; then
+  the human is asked;
+- only issues that the human alone may allow — the human is asked at once;
+- both kinds — the team goes first.
+
+**The message to the team.** The lead is woken (`Why::Checks`) and told the reasons — one for each issue, from
+`prompts/harness/checks/` — with the pull request, the pass and what to do: settle every finding, get the gate green, end with
+`STATUS: DONE`. It is made when the round is held and kept in the record, so a run that starts after a restart of the daemon is told
+the same.
+
+**The question to the human.** The daemon cannot put a question for a task that waits (the status table has no `waiting →
+questions`), so — as for the reviewers' used-up passes — the lead is the messenger: the daemon writes the questions file of
+the lead's next round itself, one question for each subject (a file, or "production code without a test"), each with the
+reasons, why the human is asked, and the recommendation to refuse; it wakes the lead with the path and has it end its turn
+with `STATUS: QUESTIONS` and change nothing. The human answers like any other question (`agent answer`): **only the word
+`allow`, in any case, allows**; `ok` (the recommendation), any other text, no verdict and a question the lead removed refuse. Each subject's answer is the verdict of the question with its number, wherever it stands in the file: a removed
+question passes its permission to no other subject.
+
+- *Allowed* — the subjects are recorded for the items, which start the review (it is not asked again for the same file), and
+  the count of passes starts again. The lead, resumed with the answers, is told to change nothing and end with `STATUS: DONE`.
+- *Refused* — back to the team, with what the human refused named, as the next pass; the lead's resumed run is told to undo
+  what was refused.
+- A lead that ends without putting the question is woken again, twice; then the human is told directly (`notice-not-asked`).
+
+**The record** is `tasks/<lead>/checks.json` ([`state.md`](state.md)): the passes and what was allowed for each item, the
+question the round waits on, what the lead is to be told. Nothing of the checks lives in memory only; the count of reviews and
+fix passes of the state is not touched.
+
+**Known limits.** The description is read from GitHub when the check runs, without the lines the harness itself wrote for the
+items (their text names files in passing): the harness writes the description of the pull request it opens, so a section such as
+`## Tests changed after RED` or the name of a file with a suppression comes from the team or the human editing it afterwards —
+the first check of such a round sends it back and the next reads the edit. A lead has one question at a time: while one waits, no
+other round of the same lead is checked. A path with a
+control character, or a range of more than 500 commits, cannot be checked and the branch is not published (the human is told once,
+as for any publication that fails). Lines that are not UTF-8 text have their bad bytes replaced for the markers. Two items that share
+a pull request move together: their passes are the larger of the two and what was allowed for either applies to both.
 
 ### The gate (`agent gate`)
 

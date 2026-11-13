@@ -17,7 +17,9 @@ use agent_core::cli::ActivityEvent;
 use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::protocol::{Client, ControlAction};
-use agent_core::state::{GateRecord, MAX_STATE_BYTES, PrNumber, RenderError, State, StateError, Timestamp};
+use agent_core::state::{
+    ChecksRecord, GateRecord, MAX_STATE_BYTES, PrNumber, RenderError, State, StateError, Timestamp,
+};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinError;
@@ -59,6 +61,9 @@ const ACTIVITY_FILE: &str = "activity.jsonl";
 
 /// The file in a task's directory that holds the last gate record of the task.
 const GATE_RECORD_FILE: &str = "gate.json";
+
+/// The name of the file with the record of the checks before a review, in the directory of the lead's task.
+const CHECKS_RECORD_FILE: &str = "checks.json";
 
 /// Prefix of the temporary file a save writes in the home before it renames it over the state file.
 const TEMP_PREFIX: &str = ".state-";
@@ -193,6 +198,13 @@ impl Home {
     #[must_use]
     pub fn gate_record_file(&self, task: &TaskId) -> PathBuf {
         self.task_dir(task).join(GATE_RECORD_FILE)
+    }
+
+    /// The file with the record of the checks before a review that `task`, the lead of a team, keeps, in the task's
+    /// directory.
+    #[must_use]
+    pub fn checks_file(&self, task: &TaskId) -> PathBuf {
+        self.task_dir(task).join(CHECKS_RECORD_FILE)
     }
 
     /// The report of the review of pull request `pr` that `task` gave after `pass` fix passes, in the task's directory.
@@ -338,6 +350,20 @@ pub enum StoreError {
         path: PathBuf,
         /// What is wrong with it.
         source: TextFileError,
+    },
+    /// The record of the checks of a task cannot be written as JSON.
+    #[error("a record of the checks cannot be rendered")]
+    RenderChecksRecord {
+        /// What the serializer said.
+        source: serde_json::Error,
+    },
+    /// The record of the checks of a task is not one.
+    #[error("the record of the checks {path:?} cannot be used")]
+    ParseChecksRecord {
+        /// The file.
+        path: PathBuf,
+        /// What the parser said.
+        source: serde_json::Error,
     },
     /// The gate record of a task is not a gate record.
     #[error("the gate record {path:?} cannot be used")]
@@ -496,6 +522,20 @@ async fn read_task_file(path: &Path) -> Result<Option<String>, StoreError> {
             path: path.to_path_buf(),
             source,
         })
+}
+
+/// The record of the checks of `task` in `home`; `None` when there is none.
+///
+/// # Errors
+/// [`StoreError::ReadTaskFile`] and [`StoreError::ParseChecksRecord`], as for [`StateStore::load_checks_record`].
+pub async fn load_checks_record(home: &Home, task: &TaskId) -> Result<Option<ChecksRecord>, StoreError> {
+    let path = home.checks_file(task);
+    let Some(file) = read_task_file(&path).await? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&file)
+        .map(Some)
+        .map_err(|source| StoreError::ParseChecksRecord { path, source })
 }
 
 /// Runs `job` on a thread that may block and returns its result.
@@ -687,6 +727,35 @@ impl StateStore {
         serde_json::from_str(&file)
             .map(Some)
             .map_err(|source| StoreError::ParseGateRecord { path, source })
+    }
+
+    /// Saves `record`, the record of the checks before a review of `task`, in the task's directory, replacing the one
+    /// before: written to a temporary file and renamed over [`Home::checks_file`], so that a reader sees a whole record
+    /// or none.
+    ///
+    /// # Errors
+    /// [`StoreError::RenderChecksRecord`], [`StoreError::CreateDir`], [`StoreError::WriteTemp`],
+    /// [`StoreError::Replace`], [`StoreError::SyncDir`] and [`StoreError::Worker`].
+    pub async fn save_checks_record(&self, task: &TaskId, record: &ChecksRecord) -> Result<(), StoreError> {
+        let text = serde_json::to_vec_pretty(record).map_err(|source| StoreError::RenderChecksRecord { source })?;
+        let dir = self.home.task_dir(task);
+        let target = self.home.checks_file(task);
+        let write_dir = dir.clone();
+        let file = blocking(move || {
+            create_dir(&write_dir)?;
+            write_temp(&write_dir, &text)
+        })
+        .await?;
+        StagedState { file, target, dir }.commit().await
+    }
+
+    /// The record of the checks of `task`; `None` when there is none.
+    ///
+    /// # Errors
+    /// [`StoreError::ReadTaskFile`] when the file cannot be read, is too large or is not UTF-8 text;
+    /// [`StoreError::ParseChecksRecord`] when it is not a record of the checks.
+    pub async fn load_checks_record(&self, task: &TaskId) -> Result<Option<ChecksRecord>, StoreError> {
+        load_checks_record(&self.home, task).await
     }
 
     /// Saves `report`, the report of a review of pull request `pr` after `pass` fix passes, in the directory of

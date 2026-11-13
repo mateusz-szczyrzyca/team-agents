@@ -6,6 +6,7 @@
 
 pub mod agentbus;
 pub mod autopilot_prompts;
+pub mod checks_prompts;
 pub mod cli;
 pub mod clock;
 pub mod editor;

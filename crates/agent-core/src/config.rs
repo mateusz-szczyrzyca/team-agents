@@ -15,6 +15,7 @@ use serde::Deserialize;
 
 use crate::ids::{AgentName, BranchName, InvestigatorName};
 use crate::kinds::{CliKind, Keyword, Tier, UnknownKeyword};
+use crate::repo_path::PathPatterns;
 
 pub use secrets::{InvalidSecret, MAX_SECRETS_BYTES, Position, Secret, Secrets, SecretsError};
 pub use values::{
@@ -43,6 +44,9 @@ const DEFAULT_TAIL_LINES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 
 /// Fix passes after "changes requested", by default, before the human is asked.
 const DEFAULT_FIX_PASSES: u32 = 5;
+
+/// Times the checks before a review send a round back to the team, by default, before the human is asked.
+const DEFAULT_CHECK_PASSES: u32 = 2;
 
 /// Minutes a repository's gate may run, by default.
 const DEFAULT_GATE_TIMEOUT_MINUTES: NonZeroU32 = NonZeroU32::new(30).unwrap();
@@ -135,6 +139,23 @@ pub struct RepoConfig {
     /// How long the gate may run before it is stopped and counts as failed.
     #[serde(default = "default_gate_timeout")]
     pub gate_timeout_minutes: Minutes,
+    /// What the round checks before its review look at; without the table a round goes straight to review.
+    #[serde(default)]
+    pub checks: Option<Checks>,
+}
+
+/// `[repos.NAME.checks]`: which paths of a repository are tests, which are production code and which judge a round.
+/// The harness knows no repository and no layout: these lists are all it has to tell them apart.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Checks {
+    /// The test files: a round may add lines to them; it changes, removes or renames one only with the human's allowance.
+    pub test_paths: PathPatterns,
+    /// The production code: a round that changes it has to add lines to a test file.
+    pub code_paths: PathPatterns,
+    /// The files that judge a round — the gate's scripts, lint and CI configuration, the repository's rules: a round
+    /// changes one only with the human's allowance.
+    pub protected_paths: PathPatterns,
 }
 
 /// The default of [`RepoConfig::gate_timeout_minutes`].
@@ -233,18 +254,22 @@ impl Default for Limits {
     }
 }
 
-/// `[review]`: what happens to a pull request that the reviewers send back.
+/// `[review]`: what happens to a round that the checks or the reviewers send back.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Review {
     /// How many times "changes requested" goes back to the team before the human is asked; 0 asks at once.
     pub fix_passes: u32,
+    /// How many times the checks before a review send the round back to the team before the human is asked; 0 asks
+    /// at once.
+    pub check_passes: u32,
 }
 
 impl Default for Review {
     fn default() -> Self {
         Self {
             fix_passes: DEFAULT_FIX_PASSES,
+            check_passes: DEFAULT_CHECK_PASSES,
         }
     }
 }

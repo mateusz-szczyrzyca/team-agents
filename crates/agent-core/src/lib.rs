@@ -54,6 +54,7 @@ pub mod kinds;
 pub mod prompt;
 pub mod protocol;
 pub mod questions;
+pub mod repo_path;
 pub mod state;
 pub mod status;
 pub mod task_list;
