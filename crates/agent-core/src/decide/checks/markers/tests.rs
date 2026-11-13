@@ -51,8 +51,6 @@ fn rust_lines_are_read_for_ignore_allow_and_cfg_test() {
     );
 }
 
-// Rule: a bats test is skipped by `skip` as a word at the start of a line; shell code suppresses a lint with a
-// `shellcheck disable=` comment and asks about the test run through a `BATS_` variable.
 // Rule: `#[expect(…)]` suppresses a lint as `#[allow(…)]` does — it is the spelling the rules allow, and still has to be
 // named — at the start of its line, for an item or a whole module.
 #[test]
@@ -73,6 +71,8 @@ fn rust_expect_attributes_suppress_a_lint() {
     );
 }
 
+// Rule: a bats test is skipped by `skip` as a word at the start of a line; shell code suppresses a lint with a
+// `shellcheck disable=` comment and asks about the test run through a `BATS_` variable.
 #[test]
 fn shell_and_bats_lines_are_read_for_skip_shellcheck_and_bats_variables() {
     for extension in ["bats", "sh", "bash"] {
