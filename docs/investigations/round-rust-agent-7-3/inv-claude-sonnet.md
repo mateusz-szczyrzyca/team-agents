@@ -32,8 +32,8 @@ waiting on it is not cut by the watchdog.
 
 ## Size
 
-`1,323` changed lines outside tests by the PR-1 command (limit `5,000` for this plan, `1,500` in PR-1; the report excluded); `29` files,
-`+3,647` / `−42` in all with tests (after review pass 1). One purpose; no split needed.
+`1,379` changed lines outside tests by the PR-1 command (limit `5,000` for this plan, `1,500` in PR-1; the report excluded); `32` files,
+`+4,017` / `−46` in all with tests (after review pass 4). One purpose; no split needed.
 
 ## Checks run by me
 
