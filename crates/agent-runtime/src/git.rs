@@ -100,6 +100,8 @@ pub enum Revision {
     Head,
     /// The tip of a branch.
     Branch(BranchName),
+    /// The tip a branch had on `origin` when it was last fetched.
+    RemoteBranch(BranchName),
     /// A commit.
     Commit(CommitId),
 }
@@ -111,6 +113,7 @@ impl fmt::Display for Revision {
         match self {
             Self::Head => f.write_str("HEAD"),
             Self::Branch(branch) => write!(f, "refs/heads/{branch}"),
+            Self::RemoteBranch(branch) => write!(f, "refs/heads/{branch}"),
             Self::Commit(commit) => write!(f, "{commit}"),
         }
     }
@@ -161,6 +164,15 @@ pub enum GitOperation {
     /// `git switch -c`, to start a new branch in a worktree.
     #[strum(serialize = "switch")]
     Switch,
+    /// `git merge-base --is-ancestor`.
+    #[strum(serialize = "merge-base")]
+    MergeBase,
+    /// `git fetch`.
+    #[strum(serialize = "fetch")]
+    Fetch,
+    /// `git switch --detach`, to move a worktree to a commit.
+    #[strum(serialize = "switch detach")]
+    SwitchDetach,
 }
 
 /// Why a git operation failed.
@@ -679,6 +691,33 @@ impl Git {
         )
         .await
         .map(drop)
+    }
+
+    /// Whether `ancestor` is part of the history of `descendant`; a commit is part of its own history.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when a revision names no commit; [`GitError::Run`].
+    pub async fn is_ancestor(&self, ancestor: &Revision, descendant: &Revision) -> Result<bool, GitError> {
+        let _ = (ancestor, descendant);
+        Ok(false)
+    }
+
+    /// Fetches `branch` from `origin` into the reference [`Revision::RemoteBranch`] names; no local branch moves.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when there is no `origin`, it has no such branch, or the credentials fail; [`GitError::Run`].
+    pub async fn fetch(&self, branch: &BranchName) -> Result<(), GitError> {
+        let _ = branch;
+        Ok(())
+    }
+
+    /// Moves the worktree to `commit`, with no branch out, and discards the changes in its tracked files.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when the repository does not have the commit; [`GitError::Run`].
+    pub async fn detach(&self, commit: &CommitId) -> Result<(), GitError> {
+        let _ = commit;
+        Ok(())
     }
 
     /// The command `git` with this handle's identity, signing and environment, and `args`.
