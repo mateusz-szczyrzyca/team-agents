@@ -1080,6 +1080,75 @@ async fn the_requests_of_two_teams_on_one_bus_are_each_served_by_a_worker_of_the
 }
 
 #[tokio::test]
+async fn a_worker_whose_run_cannot_start_fails_the_request_and_the_requester_is_told() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+        worker("glm-1", "sleep,done:Result: never."),
+    ]);
+    f.start().await;
+    let pair = f.start_pair("claude-1", "claude-2", "glm-1").await;
+    for task in &pair.tasks {
+        f.status_is(task, TaskStatus::Waiting).await;
+    }
+    std::fs::remove_dir_all(f.worktree(&pair.tasks[2])).unwrap();
+
+    let id = f.delegate(&pair, "Do it.").await;
+    let request = f.request_with(id, DelegationStatus::Failed).await;
+    let state = f.status_is(&pair.tasks[2], TaskStatus::Failed).await;
+    f.wait_for("the requester to be told", || {
+        f.messages().contains("\"status\":\"failed\"")
+    })
+    .await;
+    f.stop().await.unwrap();
+
+    assert_eq!(request.worker, Some(agent("glm-1")));
+    assert_eq!(
+        state.find_task(&pair.tasks[2]).unwrap().member.runs().len(),
+        1,
+        "the worker had no second run"
+    );
+}
+
+#[tokio::test]
+async fn a_member_whose_run_cannot_start_tells_the_coordinator() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PLAIN).await;
+    for task in &tasks {
+        f.status_is(task, TaskStatus::Waiting).await;
+    }
+    std::fs::remove_dir_all(f.worktree(&tasks[1])).unwrap();
+
+    f.bus()
+        .send(
+            &agent("inv-opus"),
+            &Recipient::Agent(agent("claude-1")),
+            &Outgoing::Chat {
+                text: "Please read the README.".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.wait_for("the coordinator to be told", || {
+        f.messages().contains("member_no_status")
+    })
+    .await;
+    f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert!(f.messages().contains("claude-1 ended its turn"), "{}", f.messages());
+}
+
+#[tokio::test]
 async fn a_team_whose_lead_is_done_and_whose_members_wait_is_closed_and_the_human_is_told_once() {
     let mut f = Fixture::new(&[
         investigator("inv-opus", "slowdone"),
