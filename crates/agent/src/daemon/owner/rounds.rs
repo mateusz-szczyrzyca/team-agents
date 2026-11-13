@@ -39,7 +39,7 @@ use super::teams::Round;
 use super::{Located, Notice, Owner, OwnerError};
 use crate::daemon::merge::{
     Asking, Decision, Exhausted, Next, VerdictError, after_answer, after_verdict, asking, decision, exhausted,
-    fix_delivery, review_deliveries,
+    fix_delivery, items_of, review_deliveries,
 };
 use crate::daemon::pr::{Joining, Publication, Publish, PullTextError, plan_publications, pull_text};
 use crate::daemon::review::{Slot, VerdictProblem, choose_reviewers, free_reviewers, parse_verdict, report_text};
@@ -822,7 +822,7 @@ impl Owner {
                 }
                 _ => Stage::First,
             };
-            let state = RoundState::Publishing {
+            let publishing = RoundState::Publishing {
                 stage,
                 head: published.gated.clone(),
             };
@@ -830,7 +830,7 @@ impl Owner {
                 pr: published.pr.number,
                 head: published.carried.clone(),
             };
-            match state.transition(&event, policy) {
+            match publishing.transition(&event, policy) {
                 Ok(_) => moving.push(*id),
                 Err(error) => {
                     tracing::warn!(team = %team_id, item = %id, error = %error_chain(&error), "a pull request does not carry what the gate passed: it is looked at again");
@@ -889,7 +889,7 @@ impl Owner {
     ) -> Result<(), OwnerError> {
         let reason = error_chain(error);
         tracing::warn!(team = %team_id, branch = %publication.head_branch, %reason, "a branch cannot be published: it is tried again in a minute");
-        let retry = Timestamp::from_utc(now.as_utc() + PUBLISH_BACKOFF)?;
+        let retry = Timestamp::from_utc(now.as_utc().saturating_add(PUBLISH_BACKOFF))?;
         self.watch
             .retry_at
             .insert((team_id.clone(), publication.head_branch.clone()), retry);
@@ -940,7 +940,7 @@ impl Owner {
         match self.locate(&lead.task) {
             Ok(located) => self.notify(now, &located, &lead.task, Notice::Prepared(notification)),
             Err(error) => {
-                tracing::error!(task = %lead.task, %error, "a notification of the autopilot has no task to be about")
+                tracing::error!(task = %lead.task, %error, "a notification of the autopilot has no task to be about");
             }
         }
     }
@@ -1311,8 +1311,10 @@ impl Owner {
                 });
             }
             let pr = match progress.phase() {
-                ItemPhase::InReview { pr, .. } | ItemPhase::Fixing { pr, .. } | ItemPhase::Approved { pr, .. } => pr,
-                ItemPhase::Done {
+                ItemPhase::InReview { pr, .. }
+                | ItemPhase::Fixing { pr, .. }
+                | ItemPhase::Approved { pr, .. }
+                | ItemPhase::Done {
                     completion: Completion::Merged { pr, .. },
                 } => pr,
                 ItemPhase::Done {
@@ -1352,7 +1354,6 @@ impl Owner {
                     .filter(|found| found.pr.number == first.pr.number)
                     .map(|found| found.item)
                     .collect(),
-                requested_at: latest,
                 passes: first.round,
                 reviewer: first.reviewer.clone(),
             }));
@@ -1387,7 +1388,6 @@ impl Owner {
         let asked = Asked {
             pr: late.pr.clone(),
             items: Vec::new(),
-            requested_at: Timestamp::now(&self.parts.clock)?,
             passes: late.round,
             reviewer: late.reviewer.clone(),
         };
@@ -1629,7 +1629,7 @@ impl Owner {
         let lead = self.lead_of(team_id)?;
         for (pr, items) in approved {
             let now = Timestamp::now(&self.parts.clock)?;
-            if !self.due(team_id, &pr, now)? {
+            if !self.due(team_id, &pr, now) {
                 continue;
             }
             match self.try_merge(pulls, team_id, &lead, &pr, now).await {
@@ -1656,27 +1656,27 @@ impl Owner {
             let ItemPhase::Approved { pr, .. } = progress.phase() else {
                 continue;
             };
-            match found.iter_mut().find(|(known, _)| known.number == pr.number) {
-                Some((_, items)) => items.push(progress.id()),
-                None => found.push((pr.clone(), vec![progress.id()])),
+            if found.iter().all(|(known, _)| known.number != pr.number) {
+                // The items of a pull request move together: all of them are approved.
+                found.push((pr.clone(), items_of(team, pr.number)));
             }
         }
         found
     }
 
     /// Whether the approved pull request `pr` is looked at now: the first time at once, then once in [`POLL_EVERY`].
-    fn due(&mut self, team: &TeamId, pr: &PullRequest, now: Timestamp) -> Result<bool, OwnerError> {
+    fn due(&mut self, team: &TeamId, pr: &PullRequest, now: Timestamp) -> bool {
         let key = (team.clone(), pr.number);
-        if self
+        let waiting = self
             .watch
             .polled
             .get(&key)
-            .is_some_and(|last| Timestamp::from_utc(last.as_utc() + POLL_EVERY).is_ok_and(|next| next > now))
-        {
-            return Ok(false);
+            .is_some_and(|last| last.as_utc().saturating_add(POLL_EVERY) > now.as_utc());
+        if waiting {
+            return false;
         }
         self.watch.polled.insert(key, now);
-        Ok(true)
+        true
     }
 
     /// Merges `pr` when it is open and the team merges by itself; tells the human what the team does not do by itself:
@@ -1909,8 +1909,6 @@ struct Asked {
     pr: PullRequest,
     /// The items of the pull request that have the review pending, in the order of the list.
     items: Vec<ItemId>,
-    /// When the review was asked.
-    requested_at: Timestamp,
     /// The fix passes the pull request has had.
     passes: usize,
     /// The investigator that reviews.

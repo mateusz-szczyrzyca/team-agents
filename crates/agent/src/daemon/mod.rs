@@ -253,12 +253,11 @@ pub(crate) async fn run_in(
         shutdown.clone(),
     )
     .with_gate(gates);
-    let owner = match pulls {
-        Some(pulls) => owner.with_pulls(pulls),
-        None => {
-            tracing::info!("the home has no GitHub token (github_token in secrets.toml): no pull request is opened");
-            owner
-        }
+    let owner = if let Some(pulls) = pulls {
+        owner.with_pulls(pulls)
+    } else {
+        tracing::info!("the home has no GitHub token (github_token in secrets.toml): no pull request is opened");
+        owner
     };
     let owned_end = owner.run(requests).await;
     // Whatever ended the owner, the rest of the daemon ends with it.

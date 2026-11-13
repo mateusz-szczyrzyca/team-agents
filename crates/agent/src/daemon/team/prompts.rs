@@ -91,14 +91,13 @@ pub(in crate::daemon) fn shape(
         return Ok(composed);
     }
     let reason = match run.why {
-        None => Vec::new(),
+        // What the autopilot tells a run is added to its prompt from the state, not from the reason (`owner/rounds.rs`).
+        None | Some(Why::Review | Why::FixPass | Why::AskHuman | Why::VerdictMissing) => Vec::new(),
         Some(Why::Woken) => vec![wake(texts, run)?],
         // The prompt of a session that starts names the item its member has; only a resumed one is told of a new item.
         Some(Why::Assigned(_)) if run.new_session => Vec::new(),
         Some(Why::Assigned(item)) => assignment(texts, harness, run, *item)?,
         Some(Why::Delegated(request)) => vec![delegation(texts, request)?],
-        // What the autopilot tells a run is added to its prompt from the state, not from the reason (`owner/rounds.rs`).
-        Some(Why::Review | Why::FixPass | Why::AskHuman | Why::VerdictMissing) => Vec::new(),
     };
     let mut sections = Vec::new();
     if run.new_session {
