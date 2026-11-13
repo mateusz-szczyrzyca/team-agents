@@ -237,7 +237,8 @@ mod gate_process {
         for ((status, out, err), tree) in outputs.iter().zip([&first_tree, &second_tree]) {
             let head = git(tree, &["rev-parse", "HEAD"]);
             assert!(status.success(), "{err}");
-            assert!(out.contains(&format!("gate: passed at {}", &head[..7])), "{out}");
+            let short: String = head.chars().take(7).collect();
+            assert!(out.contains(&format!("gate: passed at {short}")), "{out}");
         }
         let order = std::fs::read_to_string(&world.order).unwrap();
         let lines: Vec<&str> = order.lines().collect();
