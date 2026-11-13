@@ -122,7 +122,7 @@ pub(super) struct Daemon {
     pub(super) home: Home,
     pub(super) clock: ManualClock,
     shutdown: CancellationToken,
-    daemon: Option<JoinHandle<Result<(), DaemonError>>>,
+    running: Option<JoinHandle<Result<(), DaemonError>>>,
     /// Where the daemon looks for VS Code: directories of the temporary home, never the machine's.
     pub(super) surroundings: Surroundings,
     /// The sockets of the windows made, kept open so that they stay sockets.
@@ -162,7 +162,7 @@ impl Daemon {
             home,
             clock: ManualClock::new(at(0)),
             shutdown: CancellationToken::new(),
-            daemon: None,
+            running: None,
             surroundings,
             windows: Vec::new(),
         }
@@ -220,7 +220,7 @@ impl Daemon {
         loop {
             match self.try_start(deadline).await {
                 Ok(daemon) => {
-                    self.daemon = Some(daemon);
+                    self.running = Some(daemon);
                     return;
                 }
                 Err(DaemonError::AlreadyRunning { .. }) if Instant::now() < deadline => {
@@ -269,7 +269,7 @@ impl Daemon {
     /// Stops the daemon and returns how it ended.
     pub(super) async fn stop(&mut self) -> Result<(), DaemonError> {
         self.shutdown.cancel();
-        let daemon = self.daemon.take().unwrap();
+        let daemon = self.running.take().unwrap();
         tokio::time::timeout(PATIENCE, daemon).await.unwrap().unwrap()
     }
 

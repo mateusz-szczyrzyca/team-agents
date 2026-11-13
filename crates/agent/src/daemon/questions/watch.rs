@@ -104,7 +104,7 @@ impl Watcher {
 
 /// Tells `saved` about each questions file `event` says was written.
 fn report(saved: &mpsc::Sender<Saved>, event: &notify::Event) {
-    if !writes(&event.kind) {
+    if !writes(event.kind) {
         return;
     }
     for path in &event.paths {
@@ -120,14 +120,14 @@ fn report(saved: &mpsc::Sender<Saved>, event: &notify::Event) {
             }
             // The owner is gone: the daemon is shutting down.
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                tracing::debug!("a save of a questions file came after the owner ended")
+                tracing::debug!("a save of a questions file came after the owner ended");
             }
         }
     }
 }
 
 /// Whether an event of this kind put text in a file: a file made, written, or renamed into place.
-const fn writes(kind: &notify::EventKind) -> bool {
+const fn writes(kind: notify::EventKind) -> bool {
     use notify::EventKind::{Access, Any, Create, Modify, Other, Remove};
     use notify::event::ModifyKind;
     match kind {

@@ -74,7 +74,8 @@ impl Environment {
             directory: std::env::current_dir().map_err(Arc::new),
             editor: EDITOR_VARIABLES
                 .iter()
-                .filter_map(|name| std::env::var_os(name))
+                .copied()
+                .filter_map(std::env::var_os)
                 .find(|value| !value.to_string_lossy().trim().is_empty()),
             local_offset,
             offset_error,

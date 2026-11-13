@@ -21,13 +21,13 @@ pub(super) async fn run(mut queue: mpsc::Receiver<PathBuf>, opener: VscodeOpener
                 tracing::info!(file = %file.display(), socket = %socket.display(), "a questions file is opened in VS Code");
             }
             Ok(Opened::NoServer) => {
-                tracing::info!(file = %file.display(), "no VS Code server on this host: the file is not opened")
+                tracing::info!(file = %file.display(), "no VS Code server on this host: the file is not opened");
             }
             Ok(Opened::NoWindow) => {
-                tracing::info!(file = %file.display(), "no window of VS Code is connected: the file is not opened")
+                tracing::info!(file = %file.display(), "no window of VS Code is connected: the file is not opened");
             }
             Err(error) => {
-                tracing::warn!(file = %file.display(), error = %error_chain(&error), "a questions file cannot be opened in VS Code")
+                tracing::warn!(file = %file.display(), error = %error_chain(&error), "a questions file cannot be opened in VS Code");
             }
         }
     }

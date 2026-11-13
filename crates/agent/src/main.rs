@@ -99,14 +99,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    parsed(command().try_get_matches_from(args)?)
-}
-
-/// What the matches of the command line of `agent` say, for the commands of [`Parsed`].
-///
-/// # Errors
-/// [`clap::Error`] when the matches are not a command of [`Parsed`].
-fn parsed(mut matches: clap::ArgMatches) -> Result<Parsed, clap::Error> {
+    let mut matches = command().try_get_matches_from(args)?;
     if matches.subcommand_name() == Some(RUN)
         && let Some((_, run)) = matches.remove_subcommand()
     {
@@ -143,11 +136,12 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let matches = command().try_get_matches_from(args)?;
+    let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
+    let matches = command().try_get_matches_from(&args)?;
     if matches.subcommand_name().is_some_and(Steer::has_subcommand) {
         return Ok(Invocation::Steer(Steer::from_arg_matches(&matches)?));
     }
-    parsed(matches).map(Invocation::Parsed)
+    parse(args).map(Invocation::Parsed)
 }
 
 /// The arguments of `agent run`.

@@ -302,8 +302,8 @@ const SAVED_BACKLOG: usize = 64;
 impl Owner {
     /// An owner made of `parts`.
     pub(super) fn new(parts: OwnerParts, shutdown: CancellationToken) -> Self {
-        let (saves, saved) = mpsc::channel(SAVED_BACKLOG);
-        let watcher = match Watcher::new(saves) {
+        let (reporting, saved) = mpsc::channel(SAVED_BACKLOG);
+        let watcher = match Watcher::new(reporting) {
             Ok(watcher) => Some(watcher),
             Err(error) => {
                 // The daemon is useful without it: the answers still come through `agent answer` and the dashboard.

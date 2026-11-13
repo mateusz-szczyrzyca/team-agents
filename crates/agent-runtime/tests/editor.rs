@@ -242,13 +242,13 @@ mod editor {
     #[tokio::test]
     async fn a_directory_of_servers_that_is_not_there_is_no_server() {
         let host = Host::new();
-        let opener = VscodeOpener::new(
+        let looking = VscodeOpener::new(
             vec![host.servers.join("nothing")],
             host.runtime.clone(),
             host.fallback.clone(),
         );
 
-        let opened = opener.open(Path::new("/f.md")).await.unwrap();
+        let opened = looking.open(Path::new("/f.md")).await.unwrap();
 
         assert_eq!(opened, Opened::NoServer);
     }

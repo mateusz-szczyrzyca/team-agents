@@ -275,6 +275,6 @@ fn windows(dir: &Path, uid: u32) -> Result<Vec<PathBuf>, OpenError> {
             found.push((changed(&path, &metadata)?, path));
         }
     }
-    found.sort_by(|left, right| right.0.cmp(&left.0));
+    found.sort_by_key(|(time, _)| std::cmp::Reverse(*time));
     Ok(found.into_iter().map(|(_, path)| path).collect())
 }
