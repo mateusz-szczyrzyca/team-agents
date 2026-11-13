@@ -19,10 +19,13 @@ use std::time::Duration;
 
 use agent_core::config::{AbsolutePath, EnvName, GitIdentity, InvalidValue};
 use agent_core::ids::{AgentName, BranchName};
+use agent_core::repo_path::InvalidRepoPath;
 use agent_core::state::{CommitId, InvalidCommitId};
 use tokio::process::Command;
 
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture};
+
+mod range;
 
 /// How long a local git command may run before its group is killed.
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -81,6 +84,8 @@ pub struct GitLimits {
     pub network_timeout: Duration,
     /// The bytes kept of the output of a command; an answer longer than that is an error.
     pub max_output_bytes: u64,
+    /// The most commits of a range that are read; a range with more is an error.
+    pub max_commits: usize,
 }
 
 impl Default for GitLimits {
@@ -89,9 +94,13 @@ impl Default for GitLimits {
             local_timeout: LOCAL_TIMEOUT,
             network_timeout: NETWORK_TIMEOUT,
             max_output_bytes: MAX_OUTPUT_BYTES,
+            max_commits: MAX_RANGE_COMMITS,
         }
     }
 }
+
+/// Most commits a range may have for its commits to be read: a round that has more is not checked.
+const MAX_RANGE_COMMITS: usize = 500;
 
 /// A point in the history that an operation starts from or asks about.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +182,15 @@ pub enum GitOperation {
     /// `git switch --detach`, to move a worktree to a commit.
     #[strum(serialize = "switch detach")]
     SwitchDetach,
+    /// `git diff`, to list the files a range changed and the lines it added.
+    #[strum(serialize = "diff")]
+    Diff,
+    /// `git log`, to list the commits of a range.
+    #[strum(serialize = "log")]
+    Log,
+    /// `git diff-tree`, to list the files one commit changed.
+    #[strum(serialize = "diff-tree")]
+    DiffTree,
 }
 
 /// Why a git operation failed.
@@ -241,6 +259,28 @@ pub enum GitError {
         operation: GitOperation,
         /// Why the text is not an absolute path.
         source: InvalidValue,
+    },
+    /// The two revisions have no commit in common.
+    #[error("the revisions {first:?} and {second:?} have no merge base")]
+    NoMergeBase {
+        /// The first revision as git was asked.
+        first: String,
+        /// The second revision as git was asked.
+        second: String,
+    },
+    /// The range has more commits than are read.
+    #[error("the range has more than {limit} commits")]
+    TooManyCommits {
+        /// The most commits that are read.
+        limit: usize,
+    },
+    /// A path git printed is not a path of a repository's file.
+    #[error("git {operation} printed a path that cannot be used")]
+    NotARepoPath {
+        /// What was asked.
+        operation: GitOperation,
+        /// Why the text is not a path.
+        source: InvalidRepoPath,
     },
     /// The message of a merge is empty.
     #[error("the message of a merge must not be empty")]
