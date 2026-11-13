@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use agent_core::decide::checks::{Subject, assess_near};
+use agent_core::decide::checks::{Subject, assess_near, markers};
 use agent_core::decide::round::{Checking, ChecksPolicy, ChecksStep};
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::prompt::Variables;
@@ -196,8 +196,14 @@ impl Owner {
             .merge_base(&Revision::RemoteBranch(base), &Revision::Commit(tip.clone()))
             .await?;
         let facts = git.round_facts(&merge_base, tip, description).await?;
-        // The files with added lines, once each: their unchanged lines complete an attribute that the round edits.
-        let mut edited: Vec<RepoPath> = facts.added.iter().map(|line| line.path.clone()).collect();
+        // The files with added lines, once each, whose attributes wrap over lines: their unchanged lines complete an
+        // attribute that the round edits.
+        let mut edited: Vec<RepoPath> = facts
+            .added
+            .iter()
+            .filter(|line| line.path.extension().is_some_and(markers::wraps_attributes))
+            .map(|line| line.path.clone())
+            .collect();
         edited.dedup();
         let unchanged = git.range_unchanged_lines(&merge_base, tip, &edited).await?;
         Ok(assess_near(

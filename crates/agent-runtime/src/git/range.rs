@@ -20,9 +20,9 @@ use crate::process::ExitReport;
 /// The most bytes of the diff of one file that are read: a generated file of added lines may be long.
 const MAX_PATCH_BYTES: u64 = 8 << 20;
 
-/// How many lines of a file git shows before and after each change for [`Git::range_unchanged_lines`]: enough for the
-/// attribute that rustfmt wrapped over lines around an added one.
-const CONTEXT_LINES: u32 = 10;
+/// How many lines of context git shows around each change to read a file whole: more than any file has lines that fit in
+/// [`MAX_PATCH_BYTES`].
+const WHOLE_FILE: u32 = 1 << 30;
 
 /// What a commit message line's NUL-terminated record in `git log` has: the ID, the parents, the subject and the body.
 const LOG_FIELDS: usize = 4;
@@ -155,12 +155,13 @@ impl Git {
         Ok(added)
     }
 
-    /// The lines of each of `paths` near the ones added between `base` and `head` that were not changed, with their
-    /// numbers in the file at `head`: ten lines before and after each change. A file that is binary, deleted or
+    /// The lines of each of `paths` that were not changed between `base` and `head`, with their numbers in the file at
+    /// `head`: all of them, so that an attribute is read whole whatever its length. A file that is binary, deleted or
     /// unchanged has none.
     ///
     /// # Errors
-    /// The errors of [`Git::range_changes`].
+    /// The errors of [`Git::range_changes`], and [`GitError::OutputTooLong`] for a file whose diff is too long to be read
+    /// whole: it cannot be checked, and is not cleared.
     pub async fn range_unchanged_lines(
         &self,
         base: &CommitId,
@@ -177,7 +178,7 @@ impl Git {
                     Change::Renamed { from } => Some(from),
                     Change::Added | Change::Modified | Change::Deleted => None,
                 });
-            unchanged.extend(self.patch_in(base, head, path, from, CONTEXT_LINES).await?.unchanged);
+            unchanged.extend(self.patch_in(base, head, path, from, WHOLE_FILE).await?.unchanged);
         }
         Ok(unchanged)
     }
