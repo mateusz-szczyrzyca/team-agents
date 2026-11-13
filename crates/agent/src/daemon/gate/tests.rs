@@ -645,3 +645,72 @@ async fn a_log_number_that_an_earlier_daemon_used_is_skipped() {
 
     assert_eq!(path, rig.home.gate_log(&task(1), std::num::NonZeroU32::new(3).unwrap()));
 }
+
+#[tokio::test]
+async fn a_gate_that_changes_a_tracked_file_is_recorded_as_not_clean() {
+    let mut rig = Rig::new().await;
+    let tree = rig.worktree(1);
+    rig.start();
+
+    let record = recorded(rig.ask(1, "echo more >> README.md", LONG)).await;
+
+    assert_eq!(record.result.outcome, GateOutcome::Passed);
+    assert_eq!(record.tree, GateTree::NotClean);
+    assert!(
+        !record.counts_as_pass(),
+        "the commit does not hold what the gate passed"
+    );
+    assert_eq!(record.result.head.as_str(), git(&tree, &["rev-parse", "HEAD"]));
+}
+
+#[tokio::test]
+async fn a_gate_that_leaves_an_untracked_file_is_recorded_as_not_clean() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+
+    let record = recorded(rig.ask(1, "echo made > made.txt", LONG)).await;
+
+    assert_eq!(record.tree, GateTree::NotClean);
+    assert!(!record.counts_as_pass());
+}
+
+#[tokio::test]
+async fn a_gate_that_commits_is_recorded_as_not_clean_at_the_commit_it_started_from() {
+    let mut rig = Rig::new().await;
+    let tree = rig.worktree(1);
+    let before = git(&tree, &["rev-parse", "HEAD"]);
+    rig.start();
+
+    let script = "echo more >> README.md; git add README.md; \
+                  git -c user.name=Gate -c user.email=gate@example.com -c commit.gpgsign=false commit -q -m Gate";
+    let record = recorded(rig.ask(1, script, LONG)).await;
+
+    assert_eq!(record.result.outcome, GateOutcome::Passed);
+    assert_eq!(record.result.head.as_str(), before);
+    assert_eq!(record.tree, GateTree::NotClean);
+    assert_ne!(git(&tree, &["rev-parse", "HEAD"]), before, "the gate did commit");
+}
+
+#[tokio::test]
+async fn a_gate_that_puts_the_tree_back_as_it_found_it_is_recorded_as_clean() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+
+    let record = recorded(rig.ask(1, "echo scratch > scratch.txt; rm scratch.txt", LONG)).await;
+
+    assert_eq!(record.tree, GateTree::Clean);
+    assert!(record.counts_as_pass());
+}
+
+#[tokio::test]
+async fn a_gate_that_fails_after_changing_a_file_is_recorded_as_not_clean() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+
+    let record = recorded(rig.ask(1, "echo more >> README.md; exit 2", LONG)).await;
+
+    assert_eq!(record.tree, GateTree::NotClean);
+}
