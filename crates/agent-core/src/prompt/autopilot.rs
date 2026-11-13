@@ -36,6 +36,8 @@ pub enum AutopilotPrompt {
     ReviewComment,
     /// What the lead of a team is told when the reviewers asked for changes.
     ReviewFixPass,
+    /// One reviewer's report among the findings the lead is given.
+    ReviewFinding,
     /// What the lead is told when the fix passes are used up: to ask the human.
     ReviewAskHuman,
     /// What a reviewer is told when its report has no verdict.
@@ -61,6 +63,7 @@ impl AutopilotPrompt {
         Self::ReviewRequest,
         Self::ReviewComment,
         Self::ReviewFixPass,
+        Self::ReviewFinding,
         Self::ReviewAskHuman,
         Self::ReviewVerdictMissing,
         Self::NoticeNoVerdict,
@@ -113,8 +116,11 @@ impl AutopilotPrompt {
             Self::ReviewFixPass => PromptSpec::new(
                 "harness/review/fix-pass.md",
                 Audience::Model,
-                &["pr", "pass", "passes", "findings"],
+                &["pr", "pass", "passes", "branch", "findings"],
             ),
+            Self::ReviewFinding => {
+                PromptSpec::new("harness/review/finding.md", Audience::Model, &["reviewer", "report"])
+            }
             Self::ReviewAskHuman => PromptSpec::new(
                 "harness/review/ask-human.md",
                 Audience::Model,

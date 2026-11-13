@@ -32,11 +32,12 @@ use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::{ComposeError, PromptTexts, item_sections};
 use agent_runtime::settings::Settings;
 use agent_runtime::store::StoreError;
+use agent_runtime::text_file::{TextFileError, read_text_file};
 
 use super::start::Context;
 use super::teams::Round;
 use super::{Located, Notice, Owner, OwnerError};
-use crate::daemon::merge::{Next, VerdictError, after_verdict, review_deliveries};
+use crate::daemon::merge::{Next, VerdictError, after_verdict, fix_delivery, review_deliveries};
 use crate::daemon::pr::{Joining, Publication, Publish, PullTextError, plan_publications, pull_text};
 use crate::daemon::review::{Slot, VerdictProblem, choose_reviewers, free_reviewers, parse_verdict, report_text};
 use crate::daemon::team::Why;
@@ -134,6 +135,14 @@ pub(super) enum SectionError {
         /// The repository.
         repo: RepoName,
     },
+    /// The report of a review cannot be read back.
+    #[error("cannot read the report {path:?}")]
+    Report {
+        /// The file.
+        path: std::path::PathBuf,
+        /// What is wrong with it.
+        source: TextFileError,
+    },
 }
 
 /// What the autopilot does to the prompt of a run.
@@ -164,9 +173,80 @@ pub(super) async fn sections_for(
             Ok(Some(Addition::Replace(text.trim_end().to_owned())))
         }
         (Role::Reviewer, _) => Ok(review_request(ctx, texts, found, working).await?.map(Addition::Append)),
-        (Role::Solo | Role::Coordinator | Role::Member | Role::Worker, _) => Ok(None),
+        (Role::Solo | Role::Coordinator, _) => Ok(fix_pass(ctx, texts, found).await?.map(Addition::Append)),
+        (Role::Member | Role::Worker, _) => Ok(None),
     }
 }
+
+/// The fix pass of the lead `found`, if an item is being fixed by it: the reports of the reviewers that asked for changes.
+async fn fix_pass(
+    ctx: &Context<'_>,
+    texts: &AutopilotPrompts,
+    found: &TaskRef<'_>,
+) -> Result<Option<String>, SectionError> {
+    let team = found.team;
+    let name = found.member.agent().name();
+    let fixing = team.items().iter().find_map(|progress| match progress.phase() {
+        ItemPhase::Fixing { assignee, branch, pr } if assignee.as_str() == name => Some((progress, branch, pr)),
+        ItemPhase::Fixing { .. }
+        | ItemPhase::Pending
+        | ItemPhase::InProgress { .. }
+        | ItemPhase::InReview { .. }
+        | ItemPhase::Approved { .. }
+        | ItemPhase::Done { .. } => None,
+    });
+    let Some((progress, branch, pr)) = fixing else {
+        return Ok(None);
+    };
+    let Some(asked) = progress.fix_passes().last() else {
+        return Ok(None);
+    };
+    let passes = progress.fix_passes().len();
+    // The reports of the round that asked for this pass were kept under the number of the passes before it.
+    let kept = u32::try_from(passes.saturating_sub(1)).unwrap_or(u32::MAX);
+    let mut findings = Vec::new();
+    for review in &asked.requested_by {
+        if !matches!(
+            review.outcome,
+            ReviewOutcome::Submitted {
+                verdict: ReviewVerdict::RequestChanges,
+                ..
+            }
+        ) {
+            continue;
+        }
+        let path = ctx.home.review_report_file(&review.task, pr.number, kept);
+        if let Some(file) = read_text_file(&path, MAX_REPORT_BYTES)
+            .await
+            .map_err(|source| SectionError::Report { path, source })?
+        {
+            let values = Variables::new()
+                .with("reviewer", review.reviewer.as_str())?
+                .with("report", file.text.trim())?;
+            findings.push(
+                texts
+                    .render(AutopilotPrompt::ReviewFinding, &values)?
+                    .trim_end()
+                    .to_owned(),
+            );
+        }
+    }
+    let values = Variables::new()
+        .with("pr", pr.number.to_string())?
+        .with("pass", passes.to_string())?
+        .with("passes", ctx.settings.config.review().fix_passes.to_string())?
+        .with("branch", branch.as_str())?
+        .with("findings", findings.join("\n\n"))?;
+    Ok(Some(
+        texts
+            .render(AutopilotPrompt::ReviewFixPass, &values)?
+            .trim_end()
+            .to_owned(),
+    ))
+}
+
+/// The most bytes of a report that are read back: far above [`MAX_REPORT_CHARS`](crate::daemon::review::MAX_REPORT_CHARS).
+const MAX_REPORT_BYTES: usize = 1 << 20;
 
 /// The request for a review that the reviewer `found` has pending, with the items of the pull request.
 async fn review_request(
@@ -386,6 +466,7 @@ impl Owner {
         self.publish_branches(&pulls, team, round).await?;
         self.ask_for_reviews(team, round).await?;
         self.deliver_reviews(team, round)?;
+        self.deliver_fix_passes(team, round)?;
         Ok(())
     }
 
@@ -927,6 +1008,17 @@ impl Owner {
         Ok(())
     }
 
+    /// Gives the lead the fix pass that waits for it: its task is queued, and its prompt has the findings.
+    fn deliver_fix_passes(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+        let Some(team) = self.parts.state.team(team_id) else {
+            return Ok(());
+        };
+        if let Some(lead) = fix_delivery(team) {
+            self.release(&lead, Why::FixPass, round)?;
+        }
+        Ok(())
+    }
+
     /// Takes the final message of the reviewer `task`, whose run ended with `STATUS: DONE`: its verdict is recorded, posted
     /// on the pull request and acted on.
     ///
@@ -944,19 +1036,22 @@ impl Owner {
         let Some(message) = message else {
             return Ok(());
         };
-        let Some(asked) = self.pending_review_of(&located.team, task) else {
-            tracing::debug!(task = %task, "a reviewer ended with nothing to review: its report is not taken");
-            return Ok(());
-        };
         let started = self
             .parts
             .state
             .find_task(task)
             .and_then(|found| found.member.runs().last().map(agent_core::state::Run::started_at));
-        if started.is_some_and(|started| started < asked.requested_at) {
-            tracing::info!(task = %task, pr = %asked.pr.number, "a reviewer ended a review that was asked before the pull request was updated: its report is not taken");
+        let Some(started) = started else {
             return Ok(());
-        }
+        };
+        let asked = match self.answered_by(&located.team, task, started) {
+            Some(Answer::Current(asked)) => asked,
+            Some(Answer::Late(late)) => return self.keep_late_review(&pulls, task, located, &late, message).await,
+            None => {
+                tracing::debug!(task = %task, "a reviewer ended with nothing that it was asked to review: its report is not taken");
+                return Ok(());
+            }
+        };
         match parse_verdict(message) {
             Ok(verdict) => {
                 self.watch.bounces.remove(task);
@@ -966,35 +1061,113 @@ impl Owner {
         }
     }
 
-    /// The pull request the reviewer `task` has a review to give for, with the items it has pending in.
-    fn pending_review_of(&self, team: &TeamId, task: &TaskId) -> Option<Asked> {
+    /// The review that a run of the reviewer `task` that started at `started` answers: the latest review asked of it at or
+    /// before that time that is still pending, in the round that is going or in one the pull request has left behind.
+    fn answered_by(&self, team: &TeamId, task: &TaskId, started: Timestamp) -> Option<Answer> {
         let team = self.parts.state.team(team)?;
-        let mut asked: Option<Asked> = None;
+        let mut offered: Vec<Offered> = Vec::new();
         for progress in team.items() {
-            let ItemPhase::InReview { pr, reviews } = progress.phase() else {
-                continue;
+            let pending = |reviews: &[Review]| {
+                reviews
+                    .iter()
+                    .find(|review| review.task == *task && matches!(review.outcome, ReviewOutcome::Pending))
+                    .map(|review| (review.requested_at, review.reviewer.clone()))
             };
-            let Some(review) = reviews
-                .iter()
-                .find(|review| review.task == *task && matches!(review.outcome, ReviewOutcome::Pending))
-            else {
-                continue;
+            if let ItemPhase::InReview { pr, reviews } = progress.phase()
+                && let Some((requested_at, reviewer)) = pending(reviews)
+            {
+                offered.push(Offered {
+                    requested_at,
+                    item: progress.id(),
+                    pr: pr.clone(),
+                    reviewer,
+                    round: progress.fix_passes().len(),
+                    current: true,
+                });
+            }
+            let pr = match progress.phase() {
+                ItemPhase::InReview { pr, .. } | ItemPhase::Fixing { pr, .. } | ItemPhase::Approved { pr, .. } => pr,
+                ItemPhase::Done {
+                    completion: Completion::Merged { pr, .. },
+                } => pr,
+                ItemPhase::Done {
+                    completion: Completion::Listed,
+                }
+                | ItemPhase::Pending
+                | ItemPhase::InProgress { .. } => continue,
             };
-            match &mut asked {
-                Some(known) if known.pr.number == pr.number => known.items.push(progress.id()),
-                Some(_) => {}
-                None => {
-                    asked = Some(Asked {
+            for (round, pass) in progress.fix_passes().iter().enumerate() {
+                if let Some((requested_at, reviewer)) = pending(&pass.requested_by) {
+                    offered.push(Offered {
+                        requested_at,
+                        item: progress.id(),
                         pr: pr.clone(),
-                        items: vec![progress.id()],
-                        requested_at: review.requested_at,
-                        passes: progress.fix_passes().len(),
-                        reviewer: review.reviewer.clone(),
+                        reviewer,
+                        round,
+                        current: false,
                     });
                 }
             }
         }
-        asked
+        let latest = offered
+            .iter()
+            .map(|found| found.requested_at)
+            .filter(|requested| *requested <= started)
+            .max()?;
+        let answered: Vec<Offered> = offered
+            .into_iter()
+            .filter(|found| found.requested_at == latest)
+            .collect();
+        let current: Vec<&Offered> = answered.iter().filter(|found| found.current).collect();
+        if let Some(first) = current.first() {
+            return Some(Answer::Current(Asked {
+                pr: first.pr.clone(),
+                items: current
+                    .iter()
+                    .filter(|found| found.pr.number == first.pr.number)
+                    .map(|found| found.item)
+                    .collect(),
+                requested_at: latest,
+                passes: first.round,
+                reviewer: first.reviewer.clone(),
+            }));
+        }
+        answered.into_iter().next().map(|found| {
+            Answer::Late(Late {
+                pr: found.pr,
+                round: found.round,
+                reviewer: found.reviewer,
+            })
+        })
+    }
+
+    /// A report that answers a review of a round the pull request has left behind, because the reviewer was slow and the
+    /// other reviewer had asked for changes: the round is decided, and the report is kept and posted all the same.
+    async fn keep_late_review(
+        &mut self,
+        pulls: &Pulls,
+        task: &TaskId,
+        located: &Located,
+        late: &Late,
+        message: &str,
+    ) -> Result<(), OwnerError> {
+        tracing::info!(task = %task, pr = %late.pr.number, "a reviewer ended a review of a round that is decided: its report is kept and posted");
+        let report = report_text(message);
+        let round = u32::try_from(late.round).unwrap_or(u32::MAX);
+        self.parts
+            .store
+            .save_review_report(task, late.pr.number, round, &report)
+            .await?;
+        let lead = self.lead_of(&located.team)?;
+        let asked = Asked {
+            pr: late.pr.clone(),
+            items: Vec::new(),
+            requested_at: Timestamp::now(&self.parts.clock)?,
+            passes: late.round,
+            reviewer: late.reviewer.clone(),
+        };
+        self.post_review(pulls, &lead, task, &asked, &report).await;
+        Ok(())
     }
 
     /// A report without a verdict: the reviewer is asked for it again, and after [`MAX_VERDICT_BOUNCES`] times the human is
@@ -1371,6 +1544,40 @@ impl Owner {
             tracing::warn!(repo = %lead.repo, error = %error_chain(&error), "the base branch cannot be fetched after a merge: the next item starts from the checkout's");
         }
     }
+}
+
+/// A review that was asked of a reviewer, as the state keeps it, and where it was found.
+struct Offered {
+    /// When the review was asked.
+    requested_at: Timestamp,
+    /// The item it was found in.
+    item: ItemId,
+    /// The pull request.
+    pr: PullRequest,
+    /// The investigator that reviews.
+    reviewer: agent_core::ids::InvestigatorName,
+    /// The fix passes the pull request had had when the review was asked.
+    round: usize,
+    /// Whether it is the round that is going.
+    current: bool,
+}
+
+/// What a reviewer's report answers.
+enum Answer {
+    /// A review of the round that is going.
+    Current(Asked),
+    /// A review of a round the pull request has left behind.
+    Late(Late),
+}
+
+/// A review of a round that is decided.
+struct Late {
+    /// The pull request.
+    pr: PullRequest,
+    /// The fix passes the pull request had had when the review was asked.
+    round: usize,
+    /// The investigator that reviews.
+    reviewer: agent_core::ids::InvestigatorName,
 }
 
 /// What was found of an approved pull request.

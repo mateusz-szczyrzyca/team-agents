@@ -4,7 +4,8 @@ The reviewers of your pull request asked for changes. Their reports:
 
 {{findings}}
 
-Fix every blocker, on your branch: do it yourself or give it to a member, as you see fit. A finding you think is wrong
+Fix every blocker, on your branch `{{branch}}` (switch to it first when your worktree has another one out): do it
+yourself or give it to a member, as you see fit. A finding you think is wrong
 gets a reason in your commit message, not silence. Then get the repository's gate green with `agent gate` and end your
 turn with `STATUS: DONE`.
 
