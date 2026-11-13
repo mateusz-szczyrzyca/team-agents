@@ -186,7 +186,8 @@ Each is derived or lives elsewhere, so that there is one place for it:
 - **Review reports, gate output** — in files; the state keeps their verdicts and paths. A gate run is in
   `tasks/<task>/gate-<n>.log` (its output) and `tasks/<task>/gate.json`, the task's last **gate record**
   `{"tree":"clean"|"not_clean","result":{head, finished_at, outcome, log}}`: the daemon's own record of the run, which says
-  whether the tree was clean (a changed or untracked file, or a merge waiting to be committed, is not). Only a `passed` on
+  whether the tree was clean at the start and at the end of the command (a changed or untracked file, a moved `HEAD`, or a
+  merge waiting to be committed, is not). Only a `passed` on
   a `clean` tree is a pass of `head`.
 - **Worktree and branch paths, the unit names** — derived from the IDs and the layout of `AGENTS_HOME`.
 - **A team's overall status** — derived from its members and items (`TeamSummary`).

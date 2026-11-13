@@ -278,11 +278,15 @@ impl Service {
         if job.cancel.is_cancelled() {
             return Err(GateError::Cancelled);
         }
-        let (head, tree) = inspect(&job.worktree).await?;
+        let before = inspect(&job.worktree).await?;
         let (log, log_text) = self.open_log(&job.task).await?;
         let outcome = self.run_command(job, &log).await?;
+        // The command has ended with its whole group: what it left in the worktree is final. A gate that changed the
+        // tree or moved `HEAD` did not gate what the commit holds.
+        let after = inspect(&job.worktree).await?;
+        let head = before.head.clone();
         let record = GateRecord {
-            tree,
+            tree: before.merged_with(&after),
             result: GateResult {
                 head,
                 finished_at: Timestamp::now(&self.parts.clock)?,
@@ -433,11 +437,31 @@ impl Service {
     }
 }
 
+/// What git says about the worktree at one moment: the commit it has out, and whether the tree is clean.
+struct Inspected {
+    /// The commit the worktree has out.
+    head: CommitId,
+    /// Whether the tree holds exactly that commit.
+    tree: GateTree,
+}
+
+impl Inspected {
+    /// Whether a gate that began at `self` and ended at `after` gated its commit: the tree was clean at both ends and
+    /// `HEAD` did not move.
+    fn merged_with(&self, after: &Self) -> GateTree {
+        if self.tree == GateTree::Clean && after.tree == GateTree::Clean && self.head == after.head {
+            GateTree::Clean
+        } else {
+            GateTree::NotClean
+        }
+    }
+}
+
 /// What git says about the worktree: the commit it has out, and whether the tree is clean.
 ///
 /// A merge that waits to be committed makes the tree not clean even when it changed nothing: what the gate sees is not
 /// what the commit holds.
-async fn inspect(worktree: &AbsolutePath) -> Result<(CommitId, GateTree), GateError> {
+async fn inspect(worktree: &AbsolutePath) -> Result<Inspected, GateError> {
     let git = Git::new(
         worktree.clone(),
         CommitIdentity::new(LOOKUP_NAME.to_owned(), LOOKUP_EMAIL.to_owned(), None),
@@ -453,7 +477,7 @@ async fn inspect(worktree: &AbsolutePath) -> Result<(CommitId, GateTree), GateEr
         (TreeState::Clean, MergeState::NotMerging) => GateTree::Clean,
         (TreeState::Clean, MergeState::InProgress) | (TreeState::Dirty(_), _) => GateTree::NotClean,
     };
-    Ok((head, tree))
+    Ok(Inspected { head, tree })
 }
 
 /// Runs the jobs of `jobs`, one at a time in the order they arrive, until `shutdown` is cancelled or the queue is closed.

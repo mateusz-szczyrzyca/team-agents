@@ -306,8 +306,11 @@ in the worktree in a process group of its own, with the `PATH` of `[binaries] ag
 error) in `tasks/<task>/gate-<n>.log` (`n` counts from 1; no log is overwritten), and no input. It is stopped, with
 everything it started (`SIGTERM`, then `SIGKILL`), when it runs past `gate_timeout_minutes` — recorded `timed_out`, a failure —
 and when its task is stopped or paused or the daemon shuts down — then nothing is recorded and the client is answered
-`conflict`. An exit code of 0 is `passed`; any other code `failed` with that code, and a signal `failed` with 128 plus its
-number.
+`conflict`. That holds for a task with no run too: the owner keeps a token for the gates of such a task and cancels it
+when the human stops or pauses the task. An exit code of 0 is `passed`; any other code `failed` with that code, and a signal `failed` with 128 plus its
+number. The worktree is read again when the command and its group have ended: a gate that changed a tracked file, left
+an untracked one or moved `HEAD` (a commit, a reset) is recorded **not clean** too, at the commit it started from — the
+commit does not hold what the gate passed. The files a gate leaves must therefore be ignored by git (`target/`, `build/`).
 
 **The record.** `GateRecord` is `{tree, result}`: whether the tree was `clean` or `not_clean`, and the `GateResult`
 (`head`, `finished_at`, `outcome`, `log`). The last record of a task is saved in `tasks/<task>/gate.json` (a temporary file
@@ -326,7 +329,7 @@ until the gate is over, which may be the wait in the queue and the gate's timeou
 (`agent_runtime::run`) for every run that is going and gives the engine a clone (`RunEngine::run_held`); a job takes a
 `HoldGuard` of it when it is queued and drops it when it is answered, whatever way it ended. While a guard is alive the run
 is never silent, and once the last is dropped its silence is counted from that moment, not from its last output. The same
-token that stops the run stops its gate.
+token that stops the run stops its gate (a task with no run has a token of its own for it).
 
 **Known limits.** A gate whose client went away (the agent was killed) is not noticed while it waits or runs: it is stopped
 only with its task or the daemon, or by its timeout. A gate on a tree that is not clean is not refused (the old script
