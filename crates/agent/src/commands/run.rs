@@ -182,7 +182,17 @@ pub(crate) fn repo_name_of(url: &str) -> Result<RepoName, RunError> {
 
 /// `url` as it can be shown: without the user and password of `scheme://user:password@host/path`, which can be a token.
 fn without_credentials(url: &str) -> String {
-    url.to_owned()
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_owned();
+    };
+    let (authority, path) = rest
+        .split_once('/')
+        .map_or((rest, None), |(authority, path)| (authority, Some(path)));
+    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    match path {
+        Some(path) => format!("{scheme}://{host}/{path}"),
+        None => format!("{scheme}://{host}"),
+    }
 }
 
 /// What the name of a repository's directory on a server ends with.
