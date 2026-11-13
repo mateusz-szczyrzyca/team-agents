@@ -24,6 +24,8 @@
 //! The issues of the first two rules are [`Judge::Human`]'s: the team cannot allow them. The others are the team's to
 //! fix, and the human's to allow when the team cannot.
 
+use std::collections::{BTreeMap, HashSet};
+
 use serde::{Deserialize, Serialize};
 
 use crate::config::Checks;
@@ -31,6 +33,24 @@ use crate::repo_path::RepoPath;
 use crate::state::CommitId;
 
 pub mod markers;
+
+/// What a subject starts with when its commit is the first half of a test-first cycle.
+const RED_PREFIX: &str = "RED:";
+
+/// What a subject starts with when its commit corrects a test that a `RED:` commit committed (TDD-14).
+const TEST_FIX_PREFIX: &str = "TEST-FIX:";
+
+/// The heading of the section of a pull request's description that names the `TEST-FIX:` commits, in lowercase.
+const TEST_FIX_HEADING: &str = "## tests changed after red";
+
+/// What a line of a commit message says when the change cannot have its test first; the reason follows after a dash.
+const TEST_FIRST_NOT_POSSIBLE: &str = "Test-First: not possible";
+
+/// The dashes that may stand between [`TEST_FIRST_NOT_POSSIBLE`] and its reason.
+const REASON_DASHES: [char; 3] = ['\u{2014}', '\u{2013}', '-'];
+
+/// The fewest digits of a commit ID that name the commit in a description: git's own shortest abbreviation.
+const MIN_ABBREVIATION: usize = 7;
 
 /// How a file differs between two commits.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,27 +224,258 @@ pub enum Subject {
     NoTests,
 }
 
+impl FileChange {
+    /// Whether the change takes lines out of the file: removes or replaces some, deletes it or replaces a binary file.
+    #[must_use]
+    pub const fn takes_lines_out(&self) -> bool {
+        match (&self.change, self.lines) {
+            (Change::Deleted, _) | (_, Lines::Text { removed: 1.., .. }) => true,
+            (Change::Added, Lines::Binary) | (_, Lines::Text { removed: 0, .. }) => false,
+            (_, Lines::Binary) => true,
+        }
+    }
+
+    /// Whether the change puts at least one line into the file.
+    #[must_use]
+    pub const fn puts_lines_in(&self) -> bool {
+        matches!(self.lines, Lines::Text { added: 1.., .. })
+    }
+}
+
 impl Issue {
     /// Who can allow the issue.
     #[must_use]
     pub const fn judge(&self) -> Judge {
-        Judge::Team
+        match self {
+            Self::TestChanged { .. } | Self::ProtectedChanged { .. } => Judge::Human,
+            Self::RedTestEdited { .. } | Self::NoTests | Self::Marker { .. } => Judge::Team,
+        }
     }
 
     /// What the issue is about.
     #[must_use]
-    pub const fn subject(&self) -> Subject {
-        Subject::NoTests
+    pub fn subject(&self) -> Subject {
+        match self {
+            Self::TestChanged { path, .. }
+            | Self::ProtectedChanged { path, .. }
+            | Self::RedTestEdited { path, .. }
+            | Self::Marker { path, .. } => Subject::Path(path.clone()),
+            Self::NoTests => Subject::NoTests,
+        }
     }
 }
 
-/// The issues the checks find in `facts`, under the lists of `rules`, without those about a `Subject` in `allowed`.
+/// The issues the checks find in `facts`, under the lists of `rules`, without those about a [`Subject`] in `allowed`.
 ///
 /// The order is fixed: protected files, changed tests, edited `RED:` tests, missing tests, markers; within a rule, the
-/// order of the facts.
+/// order of the facts, and for the markers the file, then the kind.
 #[must_use]
-pub fn assess(_rules: &Checks, _facts: &RoundFacts, _allowed: &[Subject]) -> Vec<Issue> {
-    Vec::new()
+pub fn assess(rules: &Checks, facts: &RoundFacts, allowed: &[Subject]) -> Vec<Issue> {
+    let mut issues = protected_changes(rules, facts);
+    issues.extend(changed_tests(rules, facts));
+    issues.extend(edited_red_tests(rules, facts));
+    issues.extend(missing_tests(rules, facts));
+    issues.extend(markers_added(rules, facts));
+    issues.retain(|issue| !allowed.contains(&issue.subject()));
+    issues
+}
+
+/// The protected path `file` touches: where it was when it moved out of one, otherwise where it is.
+fn protected_path<'a>(rules: &Checks, file: &'a FileChange) -> Option<&'a RepoPath> {
+    match &file.change {
+        Change::Renamed { from } if rules.protected_paths.matches(from) => Some(from),
+        Change::Added | Change::Modified | Change::Deleted | Change::Renamed { .. } => {
+            rules.protected_paths.matches(&file.path).then_some(&file.path)
+        }
+    }
+}
+
+/// The protected files the round changed.
+fn protected_changes(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
+    facts
+        .files
+        .iter()
+        .filter_map(|file| {
+            let path = protected_path(rules, file)?;
+            let change = match file.change {
+                Change::Added => Touch::Added,
+                Change::Modified => Touch::Modified,
+                Change::Deleted => Touch::Deleted,
+                Change::Renamed { .. } => Touch::Renamed,
+            };
+            Some(Issue::ProtectedChanged {
+                path: path.clone(),
+                change,
+            })
+        })
+        .collect()
+}
+
+/// The existing test files the round changed other than by added lines; a protected file is the first rule's.
+fn changed_tests(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
+    facts
+        .files
+        .iter()
+        .filter(|file| protected_path(rules, file).is_none())
+        .filter_map(|file| {
+            let (existing, how) = match (&file.change, file.lines) {
+                (Change::Added, _) | (Change::Modified, Lines::Text { removed: 0, .. }) => return None,
+                (Change::Deleted, _) => (&file.path, TestChange::Deleted),
+                (Change::Renamed { from }, _) => (from, TestChange::Renamed { to: file.path.clone() }),
+                (Change::Modified, Lines::Binary) => (&file.path, TestChange::EditedBinary),
+                (Change::Modified, Lines::Text { removed, .. }) => (&file.path, TestChange::Edited { removed }),
+            };
+            rules.test_paths.matches(existing).then(|| Issue::TestChanged {
+                path: existing.clone(),
+                how,
+            })
+        })
+        .collect()
+}
+
+/// The test files a `RED:` commit touched that a later commit took lines out of, unless that commit is a `TEST-FIX:`
+/// of test files that the description names.
+fn edited_red_tests(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
+    let mut issues = Vec::new();
+    let mut reported: HashSet<(&RepoPath, &CommitId)> = HashSet::new();
+    for (position, red) in facts
+        .commits
+        .iter()
+        .enumerate()
+        .filter(|(_, commit)| commit.subject.starts_with(RED_PREFIX))
+    {
+        let tests: Vec<&RepoPath> = red
+            .files
+            .iter()
+            .map(|file| &file.path)
+            .filter(|path| rules.test_paths.matches(path))
+            .collect();
+        if tests.is_empty() {
+            continue;
+        }
+        for edit in later_commits(&facts.commits, position) {
+            if is_named_test_fix(rules, facts, edit) {
+                continue;
+            }
+            for file in edit.files.iter().filter(|file| file.takes_lines_out()) {
+                if tests.contains(&&file.path) && reported.insert((&file.path, &edit.id)) {
+                    issues.push(Issue::RedTestEdited {
+                        path: file.path.clone(),
+                        red: red.id.clone(),
+                        edit: edit.id.clone(),
+                    });
+                }
+            }
+        }
+    }
+    issues
+}
+
+/// The commits that come after the one at `position` in its history, in the order of `commits`: those that have it or
+/// another of them as a parent.
+fn later_commits(commits: &[CommitFacts], position: usize) -> Vec<&CommitFacts> {
+    let Some((first, after)) = commits.get(position..).and_then(<[CommitFacts]>::split_first) else {
+        return Vec::new();
+    };
+    let mut ancestors: HashSet<&CommitId> = HashSet::from([&first.id]);
+    let mut later = Vec::new();
+    for commit in after {
+        if commit.parents.iter().any(|parent| ancestors.contains(parent)) {
+            ancestors.insert(&commit.id);
+            later.push(commit);
+        }
+    }
+    later
+}
+
+/// Whether `commit` is a `TEST-FIX:` that touches test files only and that the description names.
+fn is_named_test_fix(rules: &Checks, facts: &RoundFacts, commit: &CommitFacts) -> bool {
+    commit.subject.starts_with(TEST_FIX_PREFIX)
+        && !commit.files.is_empty()
+        && commit.files.iter().all(|file| rules.test_paths.matches(&file.path))
+        && names_commit(&facts.description, &commit.id)
+}
+
+/// Whether the section of `description` that is headed `## Tests changed after RED` names `commit`, by its ID or by
+/// an abbreviation of at least seven digits.
+fn names_commit(description: &str, commit: &CommitId) -> bool {
+    let mut inside = false;
+    for line in description.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            inside = line.trim_end_matches(':').eq_ignore_ascii_case(TEST_FIX_HEADING);
+        } else if inside
+            && line
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|word| word.len() >= MIN_ABBREVIATION && commit.as_str().starts_with(&word.to_ascii_lowercase()))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether `path` is production code: a path of the code list that is not a test.
+fn is_production(rules: &Checks, path: &RepoPath) -> bool {
+    rules.code_paths.matches(path) && !rules.test_paths.matches(path)
+}
+
+/// `NoTests` when the round changes production code, adds no line to a test file and has no commit that says why.
+fn missing_tests(rules: &Checks, facts: &RoundFacts) -> Option<Issue> {
+    let changes_code = facts.files.iter().any(|file| {
+        is_production(rules, &file.path)
+            || matches!(&file.change, Change::Renamed { from } if is_production(rules, from))
+    });
+    let adds_tests = facts
+        .files
+        .iter()
+        .any(|file| rules.test_paths.matches(&file.path) && file.puts_lines_in());
+    let excused = facts
+        .commits
+        .iter()
+        .any(|commit| says_no_test_first(&commit.subject) || says_no_test_first(&commit.body));
+    (changes_code && !adds_tests && !excused).then_some(Issue::NoTests)
+}
+
+/// Whether a line of `message` is `Test-First: not possible`, a dash and a reason.
+fn says_no_test_first(message: &str) -> bool {
+    message.lines().any(|line| {
+        line.trim()
+            .strip_prefix(TEST_FIRST_NOT_POSSIBLE)
+            .and_then(|rest| rest.trim_start().strip_prefix(REASON_DASHES))
+            .is_some_and(|reason| !reason.trim().is_empty())
+    })
+}
+
+/// The added lines that have a marker, one issue for each file and kind, in a file the description does not name.
+fn markers_added(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
+    let mut found: BTreeMap<(&RepoPath, markers::Marker), (u32, u32)> = BTreeMap::new();
+    for line in &facts.added {
+        let Some(extension) = line.path.extension() else {
+            continue;
+        };
+        if facts.description.contains(line.path.as_str()) {
+            continue;
+        }
+        for marker in markers::markers_of(extension, &line.text) {
+            // A test may ask whether it runs under test; production code may not.
+            if marker == markers::Marker::ChecksUnderTest && !is_production(rules, &line.path) {
+                continue;
+            }
+            let (first, count) = found.entry((&line.path, marker)).or_insert((line.number, 0));
+            *first = (*first).min(line.number);
+            *count = count.saturating_add(1);
+        }
+    }
+    found
+        .into_iter()
+        .map(|((path, marker), (line, count))| Issue::Marker {
+            path: path.clone(),
+            marker,
+            line,
+            count,
+        })
+        .collect()
 }
 
 #[cfg(test)]
