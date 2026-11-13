@@ -183,6 +183,19 @@ test of another not-yet-served command, or delete it.
 - **Needs human (not mine to do):** `commands_the_daemon_does_not_serve_yet_are_refused_with_their_name` passes by
   accident; renaming or retargeting an existing test is for the human.
 
+## Review pass 4 (`inv-kimi-openrouter`, [review](https://github.com/mateusz-szczyrzyca/team-agents/pull/96#pullrequestreview-5892891881))
+
+- **PR-9 / GEN-7 — stale size in the PR description: fixed.** The `## Size` values of the description are replaced by
+  the ones the PR-1 command gives at the head of this pass (the report counts: every pass adds to it).
+- **TDD-2 — test-first history of the error paths: history still not rewritten, the same evidence stands.** The
+  finding repeats pass 2; pass 3 (`inv-opus`) read the same history and accepted it after reproducing one of the
+  mutants below. The reasons not to reorder: the tests of `f0e30cd` exist and each fails when the code it specifies is
+  broken (the seven mutants of review pass 2, six fail, one is redundant by construction); the code they specify is
+  inside `ace24dd`, a 392-line commit that also holds the queue and the recording, so a reordering means writing a
+  version of it without the error paths and replaying about twenty later commits over it; and it needs a force-push,
+  which breaks every commit link in the four reviews and in the PR description. The commit message of `f0e30cd` says
+  that the tests were written after the code. If the human wants the rewrite, it is theirs to ask for.
+
 ## Commits
 
 - [`b5480ac`](https://github.com/mateusz-szczyrzyca/team-agents/commit/b5480ac2fcf6ddfdff578b838f4a328f3d640e3c) RED: a gate record says whether the tree was clean
