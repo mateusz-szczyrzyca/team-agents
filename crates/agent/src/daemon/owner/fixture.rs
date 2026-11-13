@@ -23,7 +23,7 @@ use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::{EngineParts, RunEngine, RunTimings};
 use agent_runtime::settings::Settings;
-use agent_runtime::store::{Home, StateStore};
+use agent_runtime::store::{Home, StateStore, StoreError};
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -198,9 +198,10 @@ impl Daemon {
     }
 
     /// An owner of the home that is not running: its methods are called one at a time, for what only its own state shows.
-    /// The home must not be locked by a daemon that is.
+    /// The home must not be locked by a daemon that is running; one that has just ended may still hold the lock for a
+    /// moment (see [`Daemon::open_store`]).
     pub(super) async fn bare_owner(&self) -> (Owner, Sinks) {
-        let store = Arc::new(StateStore::open(self.home.clone()).await.unwrap());
+        let store = Arc::new(self.open_store().await);
         let settings = Arc::new(Settings::load(&self.home).await.unwrap());
         let prompts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
         let language = settings.config.language().clone();
@@ -249,6 +250,20 @@ impl Daemon {
                 _events: kept,
             },
         )
+    }
+
+    /// Opens the store of the home, again after a moment while the home is locked: a process that another test forks at
+    /// the very time the previous daemon ended keeps the lock a little longer than that daemon, as in [`Daemon::start`].
+    async fn open_store(&self) -> StateStore {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            match StateStore::open(self.home.clone()).await {
+                Err(StoreError::HomeLocked { .. }) if Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                other => return other.unwrap(),
+            }
+        }
     }
 
     /// Adds `text` to the configuration of the home.
