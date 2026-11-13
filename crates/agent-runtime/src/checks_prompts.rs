@@ -123,16 +123,28 @@ impl ChecksPrompts {
 }
 
 /// Reads the text of `id` and checks it against the catalog.
-async fn load_one(dir: &Path, id: ChecksPrompt, _language: &Language) -> Result<String, ChecksTextProblem> {
+async fn load_one(dir: &Path, id: ChecksPrompt, language: &Language) -> Result<String, ChecksTextProblem> {
     let spec = id.spec();
-    let english = vec![PathBuf::from(spec.path())];
-    match read_first(dir, &english).await {
-        Ok(Some((_, text))) => Ok(text),
-        Ok(None) => Err(ChecksTextProblem {
-            id,
-            path: PathBuf::from(spec.path()),
-            cause: ProblemCause::Missing { tried: english },
-        }),
-        Err((path, cause)) => Err(ChecksTextProblem { id, path, cause }),
-    }
+    let candidates = spec.candidates(language);
+    let problem = |path: &Path, cause| ChecksTextProblem {
+        id,
+        path: path.to_path_buf(),
+        cause,
+    };
+    let english = Path::new(spec.path());
+    let (path, text) = match read_first(dir, &candidates).await {
+        Ok(Some(found)) => found,
+        Ok(None) => return Err(problem(english, ProblemCause::Missing { tried: candidates })),
+        Err((path, cause)) => return Err(problem(&path, cause)),
+    };
+    // The text has to render with a value for each variable the catalog lists, and with nothing else: the check of
+    // the text against the catalog is the check the later rendering will make, with empty values.
+    let values = spec
+        .variables()
+        .iter()
+        .try_fold(Variables::new(), |values, name| values.with(name, ""))
+        .map_err(|source| problem(&path, ProblemCause::Catalog(source)))?;
+    spec.render(&text, &values)
+        .map_err(|source| problem(&path, ProblemCause::Invalid(source)))?;
+    Ok(text)
 }
