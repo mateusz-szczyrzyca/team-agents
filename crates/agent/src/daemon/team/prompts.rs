@@ -107,6 +107,32 @@ pub(in crate::daemon) fn shape(
     Ok(prompt)
 }
 
+/// The prompt of `run` as [`shape`] makes it, told what the human `answers` to the questions the last run asked.
+///
+/// A session that starts gets the answers at the end of everything it is told. A resumed session gets them instead of
+/// the whole task, followed by what the team wakes it for, which is shaped from an empty prompt: the reason of the run,
+/// or nothing.
+///
+/// # Errors
+/// [`TeamPromptError`].
+pub(in crate::daemon) fn shape_with_answers(
+    texts: &TeamPrompts,
+    harness: &PromptTexts<'_>,
+    run: &TeamRun<'_>,
+    composed: String,
+    answers: Option<&str>,
+) -> Result<String, TeamPromptError> {
+    let Some(answers) = answers else {
+        return shape(texts, harness, run, composed);
+    };
+    let told = if run.new_session {
+        format!("{}\n\n{}", composed.trim_end(), answers)
+    } else {
+        answers.to_owned()
+    };
+    shape(texts, harness, run, told)
+}
+
 /// The team the member is in: who, and on which branch it works.
 fn context(texts: &TeamPrompts, run: &TeamRun<'_>) -> Result<String, TeamPromptError> {
     let crew = run.team.crew();

@@ -9,8 +9,8 @@ use std::str::FromStr;
 use agent_core::cli::{McpServerKind, RunMode, SessionId};
 use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValue, ModelName};
 use agent_core::ids::{BranchName, GenerateIdError, InvalidBranchName, InvalidName, RunId, TaskId};
-use agent_core::kinds::{CliKind, Role, Tier};
-use agent_core::state::{ItemPhase, Member, Participant, Question, RunEnd, RunState, State, Team};
+use agent_core::kinds::{CliKind, Tier};
+use agent_core::state::{ItemPhase, Member, Participant, Question, RunEnd, RunState, State, TaskRef, Team};
 use agent_core::status::RunOutcome;
 use agent_core::task_list::Item;
 use agent_runtime::agentbus::{AgentBus, BusTier};
@@ -26,7 +26,7 @@ use agent_runtime::team_prompts::TeamPrompts;
 use rand::{Rng, RngExt};
 
 use crate::daemon::questions::{self, QuestionsProblem, TextError};
-use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape, task_branch};
+use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape_with_answers, task_branch};
 
 /// The value of the `--role` of `agentbus serve` for a run of an investigator.
 const BUS_ROLE_INVESTIGATOR: &str = "investigator";
@@ -210,8 +210,8 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         rules: ctx.rules,
     };
     let prompt = compose(&texts, &input)?;
-    let prompt = with_answers(ctx, member, session.is_some(), prompt).await?;
-    let prompt = team_prompt(ctx, team, role, member, session.is_none(), &texts, prompt)?;
+    let answers = answers_text(ctx, member).await?;
+    let prompt = team_prompt(ctx, &texts, &found, prompt, answers.as_deref())?;
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())
@@ -258,35 +258,27 @@ fn answered_round(member: &Member) -> Option<&Question> {
     }
 }
 
-/// What the run tells the task about the answers of the human: a run that resumes a session gets the answers instead
-/// of the whole task, a run that starts one gets them after it. `composed` is the prompt of the run without them.
-async fn with_answers(
-    ctx: &Context<'_>,
-    member: &Member,
-    resumes: bool,
-    composed: String,
-) -> Result<String, StartProblem> {
+/// What the human answered to the round the last run asked, the way the run is told; `None` when there is no such
+/// round.
+async fn answers_text(ctx: &Context<'_>, member: &Member) -> Result<Option<String>, StartProblem> {
     let Some(question) = answered_round(member) else {
-        return Ok(composed);
+        return Ok(None);
     };
     let loaded = questions::read(question.file().as_path()).await?;
     let answers = questions::answers_prompt(&loaded.file, question.round(), ctx.question_texts)?;
-    if resumes {
-        return Ok(answers);
-    }
-    Ok(format!("{}\n\n{}", composed.trim_end(), answers))
+    Ok(Some(answers))
 }
 
-/// The prompt of a run that is shaped by the team the task is in; a task without a team keeps `composed`.
+/// The prompt of a run that is shaped by the team the task is in, and told the `answers` of the human; a task without a
+/// team keeps `composed`, with the answers.
 fn team_prompt(
     ctx: &Context<'_>,
-    team: &Team,
-    role: Role,
-    member: &Member,
-    new_session: bool,
     texts: &PromptTexts<'_>,
+    found: &TaskRef<'_>,
     composed: String,
+    answers: Option<&str>,
 ) -> Result<String, StartProblem> {
+    let (team, member) = (found.team, found.member);
     let base = ctx
         .settings
         .config
@@ -296,18 +288,19 @@ fn team_prompt(
             repo: team.repo().to_string(),
         })?;
     let branch = work_branch(team, member)?;
-    Ok(shape(
+    Ok(shape_with_answers(
         ctx.team_texts,
         texts,
         &TeamRun {
             team,
-            role,
+            role: found.role,
             branch: &branch,
             base: &base,
             why: ctx.why,
-            new_session,
+            new_session: member.last_session().is_none(),
         },
         composed,
+        answers,
     )?)
 }
 
