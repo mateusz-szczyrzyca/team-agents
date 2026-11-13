@@ -276,3 +276,68 @@ Gate at [`5110cde`](https://github.com/mateusz-szczyrzyca/team-agents/commit/511
   timer. A step that starts nothing and returns waits for the timer in production, and forever in the Bats suite.
 - Item 7.1 and the state model: a member is free again only when its item is `in_review` (a PR exists), so "the next
   assignment after a member's DONE" depends on 8.1.
+
+## Review pass 1: the findings of inv-claude-sonnet, fixed
+
+The [review](https://github.com/mateusz-szczyrzyca/team-agents/pull/94#pullrequestreview-5883884204) asked for
+changes: `3` major and `7` minor findings. What was done with each:
+
+### Major
+
+1. **Requests of other teams taken by `helper-next`.** Fixed: a look at a team holds another team's request, reads
+   the queue on for its own, and puts the held ones back on the bus before the next team is looked at. A put-back the
+   bus refuses goes to the outbox, as before. I did not take the review's way (`helper-list`, then
+   `helper-set --status running`): `helper-list` prints text for people, not JSON, and `helper-set` cannot set the
+   worker, which the MCP tools show to agents; `agentbus` stays as it is.
+   $\color{red}{\textbf{RED}}$ [`af74bea`](https://github.com/mateusz-szczyrzyca/team-agents/commit/af74bea70db536c772c5c4129c46831ccc3eb59e) (two teams on one bus; the
+   later team's request first: timed out after `60` s) → $\color{green}{\textbf{GREEN}}$
+   [`bb2b8fd`](https://github.com/mateusz-szczyrzyca/team-agents/commit/bb2b8fd8e67ed1ca54cfc54d9c654b7e4048e4a2).
+2. **A run that cannot start leaves the team stuck.** Fixed: `fail_to_start` ends with `after_run`, as `failed` does.
+   $\color{red}{\textbf{RED}}$ [`785bc03`](https://github.com/mateusz-szczyrzyca/team-agents/commit/785bc03aad47073345d49a59727329cb629b841c) (a worker and a member whose
+   worktree is gone: both timed out) → $\color{green}{\textbf{GREEN}}$
+   [`9de6e00`](https://github.com/mateusz-szczyrzyca/team-agents/commit/9de6e00f29c3996c52e5f856ffd26690d291f83b).
+3. **`HOW_*` sentences in `react.rs`.** Fixed: `RequestOutcome::Failed` carries a `WorkerEnd` and what the worker
+   said; each `WorkerEnd` has its sentence in `prompts/harness/team/worker-*.md` (five new `TeamPrompt` entries), and
+   `failure_reason` renders it. `a_worker_that_failed_returns_how_and_what_it_said`, a test of this PR (not on `main`),
+   now compares the whole outcome.
+   $\color{red}{\textbf{RED}}$ [`07ccd85`](https://github.com/mateusz-szczyrzyca/team-agents/commit/07ccd85691823b82588ccc7cd5cfa70c7d36aec1) →
+   $\color{green}{\textbf{GREEN}}$ [`ffa5274`](https://github.com/mateusz-szczyrzyca/team-agents/commit/ffa52740faea3110c576aa8497a02f8cce798fec).
+
+### Minor
+
+1. **PR description.** Rewritten below the task block: deviations, the `bin/agent` commit, check 3, files outside the
+   item's list.
+2. **`run` outside `enum Command`.** Not changed: it needs the human's permission to change one line of
+   `crates/agent/src/tests/commands.rs` (rule 1). Listed in the PR as a question for the human.
+3. **The rule of `context.md` without a test.** Pinned:
+   [`6ca9f35`](https://github.com/mateusz-szczyrzyca/team-agents/commit/6ca9f357c71c6e31b17350f9ed26ecc4f4d50298). Without the line the test fails.
+4. **Untested error variants.**
+   - `FormError::IdCollision`: tested with a generator that always gives the same number,
+     [`9f8100a`](https://github.com/mateusz-szczyrzyca/team-agents/commit/9f8100af5e4da1cf5e20a64902ac3f0521d467f5). With the check turned off the test fails.
+   - `StartProblem::RepoGone`: tested by a restart without the repository in `agents.toml`,
+     [`0b2fb17`](https://github.com/mateusz-szczyrzyca/team-agents/commit/0b2fb174084252d1a72cd6014361e5531e58c1ed). The daemon's log shows that variant.
+   - `DaemonError::HomePath`: removed, because nothing can reach it. `Home` keeps the `AbsolutePath` it is made from
+     and hands it to the bus, [`e8e5114`](https://github.com/mateusz-szczyrzyca/team-agents/commit/e8e51148b001ccbe9f03075f9ab779c8ec5eac74).
+   - `AssignmentError::UnknownMember`, `FormError::NoSuchItem`, `FormError::Advance`: not tested. They come up only
+     if agent-core's `next_assignments` names a member or an item it was not given. No input reaches them through the
+     public API, and testing them would need a seam only for tests (TDD-12).
+5. **The `origin` URL in an error.** Fixed: the user and password of `scheme://user:password@host/` are left out.
+   $\color{red}{\textbf{RED}}$ [`3d27d8f`](https://github.com/mateusz-szczyrzyca/team-agents/commit/3d27d8fca38729e53be724f5d992e44d27ff7862) →
+   $\color{green}{\textbf{GREEN}}$ [`e852ceb`](https://github.com/mateusz-szczyrzyca/team-agents/commit/e852ceb351187f356edb938525d1bab02e252485).
+6. **The owner's loop waits for `agentbus` and `git`.** Not changed in this round; written down as a known limit in
+   `docs/architecture.md`, [`c4634b7`](https://github.com/mateusz-szczyrzyca/team-agents/commit/c4634b7430591e091f1d0a9a82039eecddbb3798).
+7. **State kept only in memory.** Not changed; the known limits now also say that why a queued run starts is lost at a
+   stop (same commit). Rebuilding the `member_finished` notice at start is left for a later item.
+
+### Checks run in this pass
+
+```bash
+GATE_WAIT=1 make gate     # at c4634b7: PASS, all 9 steps
+cargo test -p agent --bin agent -- the_requests_of_two_teams      # RED: FAILED twice (60 s time-out); GREEN: ok 5 times out of 5
+cargo test -p agent --bin agent -- whose_run_cannot_start         # RED: 2 failed; GREEN: ok
+cargo test -p agent --bin agent -- repository_left_the_configuration   # ok 3 times out of 3
+cargo clippy --workspace --all-targets --locked -- -D warnings    # 0 findings
+```
+
+Every test run went through `tools/test-lock.sh`. Size by the PR-1 command (tests and `docs/investigations` left out):
+`3,585` changed lines against `main`, `293` of them from this pass (limit `5,000`).
