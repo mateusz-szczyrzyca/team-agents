@@ -183,7 +183,12 @@ Each is derived or lives elsewhere, so that there is one place for it:
   name that the configuration no longer has is the daemon's problem to report, not a reason to refuse the state.
 - **The text of questions and answers** — in `questions-<round>.md`.
 - **Activity** — what a run did, in its activity log, and what the human did to the task (`{"kind":"control","action":"pause","by":{"kind":"cli"}}`, and an `info` line for an answer); the state keeps only how a run began and ended.
-- **Review reports, gate output** — in files; the state keeps their verdicts and paths.
+- **Review reports, gate output** — in files; the state keeps their verdicts and paths. A gate run is in
+  `tasks/<task>/gate-<n>.log` (its output) and `tasks/<task>/gate.json`, the task's last **gate record**
+  `{"tree":"clean"|"not_clean","result":{head, finished_at, outcome, log}}`: the daemon's own record of the run, which says
+  whether the tree was clean at the start and at the end of the command (a changed or untracked file, a moved `HEAD`, or a
+  merge waiting to be committed, is not). Only a `passed` on
+  a `clean` tree is a pass of `head`.
 - **Worktree and branch paths, the unit names** — derived from the IDs and the layout of `AGENTS_HOME`.
 - **A team's overall status** — derived from its members and items (`TeamSummary`).
 - **Tokens and cost** — out of scope of the plan.
@@ -224,7 +229,7 @@ read raises the version.
 | `answer` | `task`, `round`, `answers` (1–256 × `{question, verdict}`, none for a question twice) | `applied` |
 | `stop`, `pause`, `unpause`, `resume` | `target` | `applied` |
 | `say` | `target`, `text` (not blank, at most 64 KiB, no NUL) | `applied` |
-| `gate` | `task` | `gate` |
+| `gate` | `task` | `gate_recorded` |
 | `subscribe` | `team?` | `subscribed`, then events |
 
 A `target` is `{"team": "team-…"}` or `{"task": "task-…"}`. A `verdict` is a string: `ok` (any case) accepts the
@@ -254,9 +259,18 @@ reached:
 - `say` puts the text on the agentbus from `human`, for the task's agent or for the team; `conflict` for a target that is done,
   `internal` when the bus does not take it.
 
+Since item 7.3 also `gate`: the daemon queues the gate of the task (one gate at a time on the machine, in the order asked)
+and answers `gate_recorded` **when the gate is over**, so a client waits as long as the queue and the gate take
+([`architecture.md`](architecture.md), "The gate"); `not_found` for an unknown task, `refused` for a repository the
+configuration lost, a worktree git cannot read, a gate command that cannot be started and a full queue (16 waiting),
+`conflict` when the task was stopped or paused, or the daemon shut down while the gate ran, before the gate was over (nothing
+is recorded; a gate that waits for its turn when its task is stopped keeps its place in the queue and gets this answer when
+its turn comes, without running), and `internal` otherwise: a gate still waiting when the daemon shuts down gets `internal`
+("the daemon is shutting down"), and so does a worktree git cannot read after the command ran (nothing is recorded; the
+message names the log).
+
 A line that is not a valid request is answered with `invalid` under the request ID `0` (its own ID cannot be
-read) and the connection goes on; a request over the limit is answered with `invalid` and the connection is closed. `gate`
-answers `refused`, naming itself, until the item that serves it.
+read) and the connection goes on; a request over the limit is answered with `invalid` and the connection is closed.
 
 ### Responses
 
@@ -269,7 +283,8 @@ answers `refused`, naming itself, until the item that serves it.
 | `team` | `team`: the whole team record, as in the state |
 | `task` | `team`, `role`, `member` |
 | `applied` | `tasks`: the tasks the command reached |
-| `gate` | `result`: a gate result |
+| `gate_recorded` | `record`: a gate record — `tree` (`clean` \| `not_clean`) and `result`, a gate result |
+| `gate` | `result`: a gate result; read, but the daemon sends `gate_recorded` instead |
 | `subscribed` | `teams`: the summaries of the teams subscribed to (all, or the one asked for), as they are when the events start |
 
 `error.kind` is one of `invalid` (well-formed but asks for something that makes no sense: an unknown agent, a worker as

@@ -12,6 +12,7 @@ use super::{EngineParts, MAX_PROMPT_ARGUMENT_BYTES, RunError, RunJob};
 use crate::cli::adapter_for;
 use crate::git::{CommitIdentity, Git};
 use crate::process::ProcessSpec;
+use crate::store::HOME_VARIABLE;
 use tokio::io::AsyncWriteExt;
 
 /// The file of a run's standard output, in its directory.
@@ -100,6 +101,8 @@ pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch,
         env.insert(name.clone(), secret.expose().to_owned());
     }
     env.insert(env_name(PATH_VARIABLE)?, agent_path(parts)?);
+    // The `agent` commands the run starts (`agent gate`) find the daemon of this home.
+    env.insert(env_name(HOME_VARIABLE)?, utf8(parts.store.home().root())?.to_owned());
     // What the adapter sets is what its CLI needs to work: it wins over a secret of the same name.
     env.extend(spec.env);
     Ok(Launch {

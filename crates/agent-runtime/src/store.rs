@@ -17,7 +17,7 @@ use agent_core::cli::ActivityEvent;
 use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::protocol::{Client, ControlAction};
-use agent_core::state::{MAX_STATE_BYTES, RenderError, State, StateError, Timestamp};
+use agent_core::state::{GateRecord, MAX_STATE_BYTES, RenderError, State, StateError, Timestamp};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinError;
@@ -55,6 +55,9 @@ const WORKTREES_DIR: &str = "worktrees";
 /// The activity log of a task, in the task's directory: JSON lines, append only.
 const ACTIVITY_FILE: &str = "activity.jsonl";
 
+/// The file in a task's directory that holds the last gate record of the task.
+const GATE_RECORD_FILE: &str = "gate.json";
+
 /// Prefix of the temporary file a save writes in the home before it renames it over the state file.
 const TEMP_PREFIX: &str = ".state-";
 
@@ -67,6 +70,10 @@ pub const MAX_ACTIVITY_FIELD_BYTES: usize = 4096;
 
 /// What a cut field ends with, so that a reader sees that it was cut.
 const CUT_MARK: &str = "…";
+
+/// The name of the environment variable that says where the harness keeps its files: the commands find the daemon's
+/// socket through it, and the daemon gives it to the runs it starts so that the commands an agent runs find it too.
+pub const HOME_VARIABLE: &str = "AGENTS_HOME";
 
 /// The layout of `AGENTS_HOME`: where each file and directory of the harness lives.
 ///
@@ -162,10 +169,28 @@ impl Home {
         self.root().join(PROMPTS_DIR)
     }
 
+    /// The directory that holds the worktrees of every repository: `<repo>/<task>` inside it is a task's worktree.
+    #[must_use]
+    pub fn worktrees_dir(&self) -> PathBuf {
+        self.root().join(WORKTREES_DIR)
+    }
+
     /// The git worktree of `task`, a task of a team that works on `repo`.
     #[must_use]
     pub fn worktree_dir(&self, repo: &RepoName, task: &TaskId) -> PathBuf {
-        self.root().join(WORKTREES_DIR).join(repo.as_str()).join(task.as_str())
+        self.worktrees_dir().join(repo.as_str()).join(task.as_str())
+    }
+
+    /// The file with the output of the `run`-th gate run of `task`, in the task's directory.
+    #[must_use]
+    pub fn gate_log(&self, task: &TaskId, run: NonZeroU32) -> PathBuf {
+        self.task_dir(task).join(format!("gate-{run}.log"))
+    }
+
+    /// The file with the last gate record of `task`, in the task's directory.
+    #[must_use]
+    pub fn gate_record_file(&self, task: &TaskId) -> PathBuf {
+        self.task_dir(task).join(GATE_RECORD_FILE)
     }
 
     /// The questions file of round `round` of `task`, in the task's directory.
@@ -281,6 +306,12 @@ pub enum StoreError {
     /// An activity line cannot be written as JSON.
     #[error("an activity line cannot be rendered")]
     RenderActivity {
+        /// What the serializer said.
+        source: serde_json::Error,
+    },
+    /// A gate record cannot be written as JSON.
+    #[error("a gate record cannot be rendered")]
+    RenderGateRecord {
         /// What the serializer said.
         source: serde_json::Error,
     },
@@ -583,6 +614,25 @@ impl StateStore {
         let write_dir = dir.clone();
         let file = blocking(move || write_temp(&write_dir, text.as_bytes())).await?;
         Ok(StagedState { file, target, dir })
+    }
+
+    /// Saves `record` as the last gate record of `task`, replacing the one before: written to a temporary file in the
+    /// task's directory and renamed over [`Home::gate_record_file`], so that a reader sees a whole record or none.
+    ///
+    /// # Errors
+    /// [`StoreError::RenderGateRecord`], [`StoreError::CreateDir`], [`StoreError::WriteTemp`], [`StoreError::Replace`],
+    /// [`StoreError::SyncDir`] and [`StoreError::Worker`].
+    pub async fn save_gate_record(&self, task: &TaskId, record: &GateRecord) -> Result<(), StoreError> {
+        let text = serde_json::to_vec_pretty(record).map_err(|source| StoreError::RenderGateRecord { source })?;
+        let dir = self.home.task_dir(task);
+        let target = self.home.gate_record_file(task);
+        let write_dir = dir.clone();
+        let file = blocking(move || {
+            create_dir(&write_dir)?;
+            write_temp(&write_dir, &text)
+        })
+        .await?;
+        StagedState { file, target, dir }.commit().await
     }
 
     /// Appends one line to the activity log of `task`: the time and the event, texts cut to

@@ -9,7 +9,7 @@ use super::request::RequestId;
 use crate::config::RepoName;
 use crate::ids::{TaskId, TeamId};
 use crate::kinds::Role;
-use crate::state::{GateResult, Member, MergeMode, Participant, Question, Team, Timestamp};
+use crate::state::{GateRecord, GateResult, Member, MergeMode, Participant, Question, Team, Timestamp};
 use crate::status::{ItemStatus, TaskStatus};
 
 /// The answer to one [`Request`](super::Request): the same [`RequestId`] and a result.
@@ -75,10 +75,16 @@ pub enum Reply {
         /// The tasks that changed or received it.
         tasks: Vec<TaskId>,
     },
-    /// `gate`: what the gate said.
+    /// `gate`: what the gate said, without the state of the tree. The daemon answers with [`Reply::GateRecorded`]
+    /// instead; this reply stays so that a client that knows it is still read.
     Gate {
         /// The result.
         result: GateResult,
+    },
+    /// `gate`: what the daemon recorded about the run, with the state of the tree it ran on.
+    GateRecorded {
+        /// The record.
+        record: GateRecord,
     },
     /// `subscribe`: the teams subscribed to as they are now, in short; the events follow on this connection and
     /// change them from this state on, so a dashboard starts without a gap or a race. A client keeps the summaries
@@ -456,6 +462,29 @@ mod tests {
             assert_eq!(value, expected);
             assert_eq!(serde_json::from_value::<Reply>(value).unwrap(), reply);
         }
+    }
+
+    #[test]
+    fn a_recorded_gate_reply_carries_the_tree_and_the_result_and_reads_back_equal() {
+        let record = GateRecord {
+            tree: crate::state::GateTree::NotClean,
+            result: GateResult {
+                head: "26b65de7e4076596768ca96b48a7f94799c93874".parse().unwrap(),
+                finished_at: at(60),
+                outcome: crate::state::GateOutcome::Passed,
+                log: path("/home/u/tasks/gate-1.log"),
+            },
+        };
+        let reply = Reply::GateRecorded { record: record.clone() };
+
+        let value = serde_json::to_value(&reply).unwrap();
+
+        assert_eq!(
+            value,
+            json!({"kind": "gate_recorded", "record": serde_json::to_value(&record).unwrap()})
+        );
+        assert_eq!(value["record"]["tree"], json!("not_clean"));
+        assert_eq!(serde_json::from_value::<Reply>(value).unwrap(), reply);
     }
 
     #[test]

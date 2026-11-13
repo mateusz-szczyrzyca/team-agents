@@ -18,7 +18,7 @@ mod team;
 mod values;
 
 pub use checked::CheckedMut;
-pub use gate::{GateOutcome, GateResult};
+pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
 pub use item::{
     AdvanceError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut, ItemPhase,
     ItemProgress, NotWorkedOn, PhaseKind, PullRequest, Review, ReviewOutcome, SubmitReviewError,

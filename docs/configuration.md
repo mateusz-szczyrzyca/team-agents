@@ -143,8 +143,8 @@ The name is the repository's name as GitHub names it (`team-agents`; letters, di
 | Key | Default | Meaning |
 |---|---|---|
 | `base_branch` | required | the branch pull requests are made against |
-| `gate` | required | an array — a program and its arguments, never a shell line — that must pass before a pull request is opened; run in the worktree |
-| `gate_timeout_minutes` | `30` | the gate is stopped and counts as failed after this long |
+| `gate` | required | an array — a program and its arguments, never a shell line — that must pass before a pull request is opened; run by `agent gate` in the task's worktree, with the `PATH` of `[binaries] agent_path`, one gate at a time on the machine |
+| `gate_timeout_minutes` | `30` | the gate is stopped, with everything it started, and counts as failed after this long; the time it waits for the gates asked before it does not count |
 
 A repository the file does not list has no entry (`Config::repo` returns `None`); the commands that need one refuse,
 naming it.

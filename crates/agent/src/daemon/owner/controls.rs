@@ -150,6 +150,10 @@ impl Owner {
         events: &mut Vec<EventKind>,
     ) -> Result<(), OwnerError> {
         self.move_to(task, team, next, events)?;
+        // A gate that waits or runs for the task is the work the human stopped or paused.
+        if matches!(steer, Steer::Stop | Steer::Pause) {
+            self.stop_gates(task);
+        }
         // What waited for a time or for a hang count that no longer applies: the human decided.
         self.wakes.remove(task);
         self.hangs.remove(task);
@@ -178,6 +182,7 @@ impl Owner {
     /// Has the run of `task` stopped; the end of the run sets the status of the task.
     fn halt(&mut self, task: &TaskId, halt: Halt) {
         self.halts.insert(task.clone(), halt);
+        self.stop_gates(task);
         if let Some(cancel) = self.cancels.get(task) {
             cancel.cancel();
         }

@@ -1,7 +1,8 @@
 //! The client of the daemon's socket: what every command but `agent daemon` talks through.
 //!
 //! One [`Connection`] sends requests, one at a time, and reads their answers: the control protocol of
-//! `docs/state.md`, one JSON line each way. Every wait is bounded.
+//! `docs/state.md`, one JSON line each way. Every wait is bounded, except the wait for a command whose answer comes when
+//! work is over ([`Connection::request_until_answered`]): the daemon bounds that one.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -143,6 +144,32 @@ impl Connection {
     /// # Errors
     /// [`ClientError`]: the conversation failed, or the daemon answered with an error.
     pub(crate) async fn request(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
+        self.converse(client, command, Some(REQUEST_TIMEOUT)).await
+    }
+
+    /// Sends `command` like [`Connection::request`] and waits for the answer for as long as the daemon takes.
+    ///
+    /// For a command whose answer comes when work is over: a gate waits for the gates asked before it, and then runs.
+    /// The wait is bounded by the daemon (its queue and the timeout of the gate), and a daemon that ends closes the
+    /// connection, which [`ClientError::Closed`] reports.
+    ///
+    /// # Errors
+    /// [`ClientError`]: the conversation failed, or the daemon answered with an error.
+    pub(crate) async fn request_until_answered(
+        &mut self,
+        client: Client,
+        command: Command,
+    ) -> Result<Reply, ClientError> {
+        self.converse(client, command, None).await
+    }
+
+    /// Sends `command` and reads its answer, giving up after `limit` when there is one.
+    async fn converse(
+        &mut self,
+        client: Client,
+        command: Command,
+        limit: Option<Duration>,
+    ) -> Result<Reply, ClientError> {
         let id = RequestId(self.next_id);
         self.next_id = self.next_id.saturating_add(1);
         let line = Request::new(id, client, command).to_line()?;
@@ -150,14 +177,13 @@ impl Connection {
             write_line(&mut self.writer, &line).await?;
             self.read_response(id).await
         };
-        let response = match timeout(REQUEST_TIMEOUT, conversation).await {
-            Ok(response) => response?,
-            // The elapsed time carries nothing but the fact; the error names how long it was waited.
-            Err(_elapsed) => {
-                return Err(ClientError::Timeout {
-                    waited: REQUEST_TIMEOUT,
-                });
-            }
+        let response = match limit {
+            Some(limit) => match timeout(limit, conversation).await {
+                Ok(response) => response?,
+                // The elapsed time carries nothing but the fact; the error names how long it was waited.
+                Err(_elapsed) => return Err(ClientError::Timeout { waited: limit }),
+            },
+            None => conversation.await?,
         };
         match response.result {
             Outcome::Ok { reply } => Ok(reply),
