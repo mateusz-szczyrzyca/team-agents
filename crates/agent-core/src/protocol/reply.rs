@@ -10,7 +10,7 @@ use crate::config::{AbsolutePath, RepoName};
 use crate::ids::{BranchName, ItemId, TaskId, TeamId};
 use crate::kinds::Role;
 use crate::state::{
-    GateRecord, GateResult, Member, MergeMode, Participant, PullRequest, Question, Review,
+    GateRecord, GateResult, ItemPhase, ItemProgress, Member, MergeMode, Participant, PullRequest, Question, Review,
     Round, Run, Team, Timestamp,
 };
 use crate::status::{ItemStatus, TaskStatus};
@@ -293,6 +293,37 @@ impl RoundDetail {
     #[must_use]
     pub fn new(team: &Team, round: &Round, tasks: Vec<RoundTask>) -> Self {
         let progress = round.item().and_then(|item| team.item(item));
+        let pr = progress.and_then(|progress| match progress.phase() {
+            ItemPhase::InReview { pr, .. }
+            | ItemPhase::Fixing { pr, .. }
+            | ItemPhase::Approved { pr, .. }
+            | ItemPhase::Done {
+                completion: crate::state::Completion::Merged { pr, .. },
+            } => Some(pr.clone()),
+            ItemPhase::Pending
+            | ItemPhase::InProgress { .. }
+            | ItemPhase::Done {
+                completion: crate::state::Completion::Listed,
+            } => None,
+        });
+        let mut review_passes: Vec<ReviewPass> = progress
+            .map(|progress| {
+                progress
+                    .fix_passes()
+                    .iter()
+                    .map(|pass| ReviewPass {
+                        reviews: pass.requested_by.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(ItemPhase::InReview { reviews, .. } | ItemPhase::Approved { reviews, .. }) =
+            progress.map(ItemProgress::phase)
+        {
+            review_passes.push(ReviewPass {
+                reviews: reviews.clone(),
+            });
+        }
         let item = progress.and_then(|progress| {
             team.task_list().list().item(progress.id()).map(|listed| RoundItem {
                 id: progress.id(),
@@ -300,14 +331,13 @@ impl RoundDetail {
                 status: progress.status(),
             })
         });
-        let _ = tasks;
         Self {
             team: team.id().clone(),
             round: round.clone(),
             item,
-            tasks: Vec::new(),
-            pr: None,
-            review_passes: Vec::new(),
+            tasks,
+            pr,
+            review_passes,
         }
     }
 }

@@ -81,7 +81,23 @@ impl Team {
             crew,
             reviewers,
         } = old;
-        let _ = used;
+        let mut rounds = Vec::new();
+        for (position, progress) in items.iter().enumerate() {
+            let ending = migrated_ending(progress.phase(), merge, created_at);
+            if matches!(ending, Ending::NoRound) {
+                continue;
+            }
+            let round_id = free_id(&id, position, items.len(), used).ok_or_else(|| LegacyError::NoFreeId {
+                team: id.clone(),
+                item: progress.id(),
+            })?;
+            used.insert(round_id.clone());
+            let mut round = Round::opened(round_id, Some(progress.id()), created_at);
+            if let Ending::Closed(at, how) = ending {
+                round.close(at, how)?;
+            }
+            rounds.push(round);
+        }
         let team = Self {
             id,
             repo,
@@ -89,7 +105,7 @@ impl Team {
             merge,
             task_list,
             items,
-            rounds: Vec::new(),
+            rounds,
             crew,
             reviewers,
         };

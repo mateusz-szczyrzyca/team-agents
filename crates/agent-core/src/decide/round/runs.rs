@@ -49,8 +49,14 @@ pub struct TaskRounds<'a> {
 /// - a fix pass, answers and a resume stay in the rounds the task works for.
 #[must_use]
 pub fn rounds_of_run(role: Role, start: RunStart<'_>, task: &TaskRounds<'_>) -> Vec<RoundId> {
-    let _ = (role, start, task);
-    Vec::new()
+    match (role, start) {
+        (_, RunStart::Continuation { previous }) => previous.to_vec(),
+        (Role::Worker, RunStart::Request { asked_by }) => asked_by.to_vec(),
+        (Role::Reviewer, RunStart::Review { round }) => round.into_iter().cloned().collect(),
+        (Role::Solo | Role::Member, _) => task.item.into_iter().cloned().collect(),
+        (Role::Coordinator, _) => task.open.to_vec(),
+        (Role::Worker | Role::Reviewer, _) => Vec::new(),
+    }
 }
 
 #[cfg(test)]

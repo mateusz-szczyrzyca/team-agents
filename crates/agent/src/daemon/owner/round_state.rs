@@ -140,7 +140,21 @@ impl Owner {
         now: Timestamp,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
-        let _ = (team, item, now, look);
+        let round = self.fresh_round_id()?;
+        self.parts
+            .state
+            .open_round(team, round.clone(), item, now)
+            .map_err(|source| OwnerError::OpenRound {
+                team: team.clone(),
+                source,
+            })?;
+        look.events.push(EventKind::RoundOpened {
+            team: team.clone(),
+            round: round.clone(),
+            item,
+        });
+        look.changed = true;
+        tracing::info!(team = %team, round = %round, ?item, "a round is opened");
         Ok(())
     }
 
@@ -196,7 +210,21 @@ impl Owner {
         now: Timestamp,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
-        let _ = (team, round, item, how, now, look);
+        self.parts
+            .state
+            .close_round(round, now, how)
+            .map_err(|source| OwnerError::CloseRound {
+                round: round.clone(),
+                source,
+            })?;
+        look.events.push(EventKind::RoundClosed {
+            team: team.clone(),
+            round: round.clone(),
+            item,
+            how,
+        });
+        look.changed = true;
+        tracing::info!(team = %team, round = %round, ?how, "a round is closed");
         Ok(())
     }
 

@@ -273,7 +273,31 @@ impl Team {
     /// [`OpenRoundError`]: the team has a round with this ID, the item is not the team's, has a round already or is
     /// done; a round without an item in a team whose list has items, or a second one in a team whose list has none.
     pub fn open_round(&mut self, id: RoundId, item: Option<ItemId>, at: Timestamp) -> Result<(), OpenRoundError> {
-        let _ = (id, item, at);
+        if self.rounds.iter().any(|round| round.id() == &id) {
+            return Err(OpenRoundError::DuplicateId { round: id });
+        }
+        if let Some(item) = item {
+            let progress = self.item(item).ok_or(OpenRoundError::UnknownItem { item })?;
+            if let Some(existing) = self.round_of(item) {
+                return Err(OpenRoundError::ItemHasRound {
+                    item,
+                    round: existing.id().clone(),
+                });
+            }
+            if matches!(progress.phase(), ItemPhase::Done { .. }) {
+                return Err(OpenRoundError::ItemDone { item });
+            }
+        } else {
+            if !self.items.is_empty() {
+                return Err(OpenRoundError::NoItemInTeamWithItems);
+            }
+            if let Some(existing) = self.rounds.first() {
+                return Err(OpenRoundError::WholeWorkTwice {
+                    round: existing.id().clone(),
+                });
+            }
+        }
+        self.rounds.push(Round::opened(id, item, at));
         Ok(())
     }
 
@@ -283,7 +307,25 @@ impl Team {
     /// [`CloseRoundError`]: the team has no such round, it is closed already, `at` is before it was opened, or its item
     /// is not where `how` needs it (`merged` needs it done as merged, `approved` approved or done as merged).
     pub fn close_round(&mut self, id: &RoundId, at: Timestamp, how: RoundEnd) -> Result<(), CloseRoundError> {
-        let _ = (id, at, how);
+        let round = self
+            .round(id)
+            .ok_or_else(|| CloseRoundError::NoSuchRound { round: id.clone() })?;
+        if !round.is_open() {
+            return Err(CloseRoundError::AlreadyClosed { round: id.clone() });
+        }
+        let phase = round.item().and_then(|item| self.item(item)).map(ItemProgress::phase);
+        if !end_fits(how, phase) {
+            return Err(CloseRoundError::EndDoesNotFit {
+                round: id.clone(),
+                how,
+                item: phase.map(ItemPhase::kind),
+            });
+        }
+        self.rounds
+            .iter_mut()
+            .find(|round| round.id() == id)
+            .ok_or_else(|| CloseRoundError::NoSuchRound { round: id.clone() })?
+            .close(at, how)?;
         Ok(())
     }
 
@@ -294,6 +336,11 @@ impl Team {
     /// [`AdvanceItemError`]: the team has no such item, it has no round and is leaving `pending`, or its phase may not
     /// change to `next`.
     pub fn advance_item(&mut self, id: ItemId, next: ItemPhase) -> Result<(), AdvanceItemError> {
+        let progress = self.item(id).ok_or(AdvanceItemError::NoSuchItem { item: id })?;
+        let leaving = matches!(progress.phase(), ItemPhase::Pending) && !matches!(next, ItemPhase::Pending);
+        if leaving && self.round_of(id).is_none() {
+            return Err(AdvanceItemError::NoRound { item: id });
+        }
         let mut item = self.item_mut(id).ok_or(AdvanceItemError::NoSuchItem { item: id })?;
         item.advance(next)?;
         Ok(())
@@ -305,7 +352,19 @@ impl Team {
     /// [`BeginRunError`]: the team has no such task, a round of the run is not the team's, or the run cannot be recorded
     /// ([`RunError`]: one is going, the ID is used, a round is named twice).
     pub fn begin_run(&mut self, task: &TaskId, run: NewRun) -> Result<(), BeginRunError> {
-        let _ = (task, run);
+        let NewRun {
+            id,
+            at,
+            session,
+            rounds,
+        } = run;
+        if let Some(unknown) = rounds.iter().find(|named| self.round(named).is_none()) {
+            return Err(BeginRunError::UnknownRound { round: unknown.clone() });
+        }
+        let (_, member) = self
+            .find_mut(task)
+            .ok_or_else(|| BeginRunError::UnknownTask { task: task.clone() })?;
+        member.value.begin_run_for(id, at, session, rounds)?;
         Ok(())
     }
 }
@@ -327,8 +386,10 @@ fn end_fits(how: RoundEnd, phase: Option<&ItemPhase>) -> bool {
 
 /// Checks the rounds of `team` against its items and its runs.
 pub(super) fn check_rounds(team: &Team) -> Result<(), TeamError> {
-    let _ = team;
-    Ok(())
+    check_round_list(team).map_err(|source| TeamError::Rounds {
+        team: team.id.clone(),
+        source,
+    })
 }
 
 /// Checks the rounds of `team`, then its items for rounds, then its runs.
