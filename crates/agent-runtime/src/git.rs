@@ -113,7 +113,7 @@ impl fmt::Display for Revision {
         match self {
             Self::Head => f.write_str("HEAD"),
             Self::Branch(branch) => write!(f, "refs/heads/{branch}"),
-            Self::RemoteBranch(branch) => write!(f, "refs/heads/{branch}"),
+            Self::RemoteBranch(branch) => write!(f, "refs/remotes/{REMOTE}/{branch}"),
             Self::Commit(commit) => write!(f, "{commit}"),
         }
     }
@@ -698,8 +698,26 @@ impl Git {
     /// # Errors
     /// [`GitError::Failed`] when a revision names no commit; [`GitError::Run`].
     pub async fn is_ancestor(&self, ancestor: &Revision, descendant: &Revision) -> Result<bool, GitError> {
-        let _ = (ancestor, descendant);
-        Ok(false)
+        let operation = GitOperation::MergeBase;
+        let (ancestor, descendant) = (ancestor.to_string(), descendant.to_string());
+        let captured = self
+            .run(
+                operation,
+                Reach::Local,
+                &[
+                    arg("merge-base"),
+                    arg("--is-ancestor"),
+                    arg(&ancestor),
+                    arg(&descendant),
+                ],
+            )
+            .await?;
+        match captured.exit {
+            ExitReport::Exited { code: 0 } => Ok(true),
+            // With `--is-ancestor`, 1 is git's answer for a commit that is not part of the history.
+            ExitReport::Exited { code: 1 } => Ok(false),
+            ExitReport::Exited { .. } | ExitReport::Signaled { .. } => Err(failed(operation, &captured)),
+        }
     }
 
     /// Fetches `branch` from `origin` into the reference [`Revision::RemoteBranch`] names; no local branch moves.
@@ -707,8 +725,14 @@ impl Git {
     /// # Errors
     /// [`GitError::Failed`] when there is no `origin`, it has no such branch, or the credentials fail; [`GitError::Run`].
     pub async fn fetch(&self, branch: &BranchName) -> Result<(), GitError> {
-        let _ = branch;
-        Ok(())
+        let refspec = format!("+refs/heads/{branch}:refs/remotes/{REMOTE}/{branch}");
+        self.run_ok(
+            GitOperation::Fetch,
+            Reach::Network,
+            &[arg("fetch"), arg("--no-tags"), arg(REMOTE), arg(&refspec)],
+        )
+        .await
+        .map(drop)
     }
 
     /// Moves the worktree to `commit`, with no branch out, and discards the changes in its tracked files.
@@ -716,8 +740,14 @@ impl Git {
     /// # Errors
     /// [`GitError::Failed`] when the repository does not have the commit; [`GitError::Run`].
     pub async fn detach(&self, commit: &CommitId) -> Result<(), GitError> {
-        let _ = commit;
-        Ok(())
+        let target = commit.to_string();
+        self.run_ok(
+            GitOperation::SwitchDetach,
+            Reach::Local,
+            &[arg("switch"), arg("--detach"), arg("--discard-changes"), arg(&target)],
+        )
+        .await
+        .map(drop)
     }
 
     /// The command `git` with this handle's identity, signing and environment, and `args`.
