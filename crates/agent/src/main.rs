@@ -501,6 +501,15 @@ async fn execute_gate(environment: &Environment, args: GateArgs, out: &mut impl 
         })?
     };
     let mut connection = Connection::connect(&home.socket_file()).await?;
+    // A model CLI cuts a shell command that runs long (the Bash tool of Claude Code has a limit in minutes) while the gate goes
+    // on in the daemon: said first, where the result of the gate is kept is the one line of this command that survives.
+    let record = home.gate_record_file(&task);
+    writeln!(
+        out,
+        "The result of the gate is recorded in {}; if this command is cut short, read it there when the gate is over.",
+        record.display()
+    )
+    .map_err(GateError::Output)?;
     gate(&mut connection, task, out).await?;
     Ok(())
 }

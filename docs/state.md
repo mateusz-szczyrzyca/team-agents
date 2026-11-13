@@ -263,8 +263,11 @@ Since item 7.3 also `gate`: the daemon queues the gate of the task (one gate at 
 and answers `gate_recorded` **when the gate is over**, so a client waits as long as the queue and the gate take
 ([`architecture.md`](architecture.md), "The gate"); `not_found` for an unknown task, `refused` for a repository the
 configuration lost, a worktree git cannot read, a gate command that cannot be started and a full queue (16 waiting),
-`conflict` when the task was stopped or paused, or the daemon shut down, before the gate was over (nothing is recorded), and
-`internal` otherwise.
+`conflict` when the task was stopped or paused, or the daemon shut down while the gate ran, before the gate was over (nothing
+is recorded; a gate that waits for its turn when its task is stopped keeps its place in the queue and gets this answer when
+its turn comes, without running), and `internal` otherwise: a gate still waiting when the daemon shuts down gets `internal`
+("the daemon is shutting down"), and so does a worktree git cannot read after the command ran (nothing is recorded; the
+message names the log).
 
 A line that is not a valid request is answered with `invalid` under the request ID `0` (its own ID cannot be
 read) and the connection goes on; a request over the limit is answered with `invalid` and the connection is closed.

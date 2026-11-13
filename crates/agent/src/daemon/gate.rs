@@ -56,8 +56,9 @@ pub(super) struct GateJob {
     pub(super) command: CommandLine,
     /// How long the command may run before it is stopped and the gate counts as failed.
     pub(super) timeout: Duration,
-    /// Cancelled when the task is stopped or the daemon shuts down: a gate that waits is dropped, one that runs is
-    /// stopped, and neither is recorded.
+    /// Cancelled when the task is stopped or paused or the daemon shuts down: a gate that runs is stopped, and one that
+    /// waits is answered without running when its turn comes (it keeps its place in the queue until then); neither is
+    /// recorded.
     pub(super) cancel: CancellationToken,
     /// Holds the watchdog off the task's run while the gate waits and runs; `None` when the task has no run going.
     pub(super) hold: Option<HoldGuard>,
@@ -291,12 +292,19 @@ impl Service {
         if job.cancel.is_cancelled() {
             return Err(GateError::Cancelled);
         }
-        let before = inspect(&job.worktree).await?;
+        let before = inspect(&job.worktree).await.map_err(|source| GateError::Git {
+            worktree: job.worktree.as_path().to_path_buf(),
+            source,
+        })?;
         let (log, log_text) = self.open_log(&job.task).await?;
         let outcome = self.run_command(job, &log).await?;
         // The command has ended with its whole group: what it left in the worktree is final. A gate that changed the
         // tree or moved `HEAD` did not gate what the commit holds.
-        let after = inspect(&job.worktree).await?;
+        let after = inspect(&job.worktree).await.map_err(|source| GateError::GitAfter {
+            worktree: job.worktree.as_path().to_path_buf(),
+            log: log.clone(),
+            source,
+        })?;
         let head = before.head.clone();
         let record = GateRecord {
             tree: before.merged_with(&after),
@@ -474,18 +482,14 @@ impl Inspected {
 ///
 /// A merge that waits to be committed makes the tree not clean even when it changed nothing: what the gate sees is not
 /// what the commit holds.
-async fn inspect(worktree: &AbsolutePath) -> Result<Inspected, GateError> {
+async fn inspect(worktree: &AbsolutePath) -> Result<Inspected, GitError> {
     let git = Git::new(
         worktree.clone(),
         CommitIdentity::new(LOOKUP_NAME.to_owned(), LOOKUP_EMAIL.to_owned(), None),
     );
-    let failed = |source| GateError::Git {
-        worktree: worktree.as_path().to_path_buf(),
-        source,
-    };
-    let head = git.rev_parse(&Revision::Head).await.map_err(failed)?;
-    let changes = git.tree_state().await.map_err(failed)?;
-    let merge = git.merge_state().await.map_err(failed)?;
+    let head = git.rev_parse(&Revision::Head).await?;
+    let changes = git.tree_state().await?;
+    let merge = git.merge_state().await?;
     let tree = match (changes, merge) {
         (TreeState::Clean, MergeState::NotMerging) => GateTree::Clean,
         (TreeState::Clean, MergeState::InProgress) | (TreeState::Dirty(_), _) => GateTree::NotClean,
@@ -495,7 +499,8 @@ async fn inspect(worktree: &AbsolutePath) -> Result<Inspected, GateError> {
 
 /// Runs the jobs of `jobs`, one at a time in the order they arrive, until `shutdown` is cancelled or the queue is closed.
 ///
-/// A job waits as long as the ones before it run; its `cancel` token drops it from the queue when its task is stopped.
+/// A job waits as long as the ones before it run; when its task is stopped it keeps its place, and is answered
+/// `conflict` without running when its turn comes.
 pub(super) async fn run(mut jobs: mpsc::Receiver<GateJob>, parts: GateParts, shutdown: CancellationToken) {
     let mut service = Service::new(parts);
     loop {

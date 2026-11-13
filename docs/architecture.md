@@ -305,8 +305,11 @@ clean. A worktree git cannot read is refused (`refused`: "the gate cannot run in
 in the worktree in a process group of its own, with the `PATH` of `[binaries] agent_path`, its output (standard output and
 error) in `tasks/<task>/gate-<n>.log` (`n` counts from 1; no log is overwritten), and no input. It is stopped, with
 everything it started (`SIGTERM`, then `SIGKILL`), when it runs past `gate_timeout_minutes` — recorded `timed_out`, a failure —
-and when its task is stopped or paused or the daemon shuts down — then nothing is recorded and the client is answered
-`conflict`. The owner keeps one token per task for its gates, whether the run that asked for the gate is still going or
+and when its task is stopped or paused or the daemon shuts down while it runs — then nothing is recorded and the client is
+answered `conflict`. A gate that waits when its task is stopped keeps its place in the queue and is answered `conflict`,
+without running, when its turn comes; one that waits when the daemon shuts down is answered `internal` ("the daemon is
+shutting down"). If git cannot read the worktree after the command ran, nothing is recorded and the client is answered
+`internal` with the log's name. The owner keeps one token per task for its gates, whether the run that asked for the gate is still going or
 not (a gate outlives its run: the agent may finish while the gate waits), and cancels it when the human stops or pauses the
 task. An exit code of 0 is `passed`; any other code `failed` with that code, and a signal `failed` with 128 plus its
 number. The worktree is read again when the command and its group have ended: a gate that changed a tracked file, left
@@ -320,7 +323,9 @@ activity log. **Only a pass on a clean tree is a pass of the commit** (`GateReco
 tree that is not clean says nothing about `head`. The record is the result the autopilot (8.1) reads; an agent's word for
 it counts for nothing.
 
-**The command.** It prints what it waits for, the last 60 lines of the output (at most the last 64 KiB of the log are
+**The command.** It prints first where the result is recorded (`tasks/<task>/gate.json`: a model CLI cuts a shell command
+that runs past its limit (the Bash tool of Claude Code has one, in minutes, and a gate may take 30) while the gate goes on in the daemon, so an agent reads the
+record there), then what it waits for, the last 60 lines of the output (at most the last 64 KiB of the log are
 read), the verdict (`gate: passed at 26b65de; recorded. Full output: <log>`) and, for a pass on a tree that is not clean, that
 it is not a pass of the commit. It succeeds for `passed` and fails (status 1) for a failure, a timeout and every refusal of
 the daemon.

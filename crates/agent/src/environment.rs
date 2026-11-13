@@ -8,12 +8,9 @@ use std::sync::Arc;
 
 use agent_core::config::{AbsolutePath, CommandLine, InvalidValue};
 use agent_runtime::settings::{Settings, SettingsError};
-use agent_runtime::store::Home;
+use agent_runtime::store::{HOME_VARIABLE, Home};
 use time::UtcOffset;
 use time::error::IndeterminateOffset;
-
-/// The name of the variable that says where the harness keeps its files.
-pub(crate) const HOME_VARIABLE: &str = "AGENTS_HOME";
 
 /// The names of the variables that name an editor, in the order they are tried.
 const EDITOR_VARIABLES: [&str; 2] = ["VISUAL", "EDITOR"];

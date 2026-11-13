@@ -1056,7 +1056,7 @@ wait) and is recorded as failed; stopping or pausing the task stops its gate too
 in `tasks/<task>/gate-<n>.log`. A tree is not clean when a file is changed or untracked, when a merge waits to be committed
 or when the gate itself changed the tree or `HEAD`: such a gate may run, but its pass is not a pass of the commit. A run
 that waits for its own gate is never cut by the watchdog. The command succeeds for a pass and fails (status 1) for a
-failure, a timeout and a refusal. Details: [`docs/architecture.md`](docs/architecture.md), "The gate".
+failure, a timeout and a refusal. The command says first where the result is recorded: a model CLI cuts a shell command that runs long (the Bash tool of Claude Code has a time limit, in minutes, and a gate may take 30) while the gate goes on, and the agent then reads `tasks/<task>/gate.json`. Details: [`docs/architecture.md`](docs/architecture.md), "The gate".
 
 ## The live panel
 
