@@ -947,3 +947,97 @@ async fn a_branch_that_cannot_be_pushed_is_told_once_and_published_when_the_remo
     assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
     assert!(rig.state().team(&team).is_some());
 }
+
+// ---- what the subscribers see ----------------------------------------------------------------------------------
+
+use agent_core::protocol::{EventKind, Frame, Request, RequestId, SubscribeRequest};
+
+/// The events of a subscription to every team, read until the ones a test waits for are in.
+struct Subscription {
+    reader: tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
+    _writer: tokio::net::unix::OwnedWriteHalf,
+}
+
+impl Subscription {
+    async fn to(rig: &Rig) -> Self {
+        let (read, mut writer) = tokio::net::UnixStream::connect(rig.home.socket_file())
+            .await
+            .unwrap()
+            .into_split();
+        let mut reader = tokio::io::BufReader::new(read);
+        let line = Request::new(
+            RequestId(1),
+            Client::Cli,
+            Command::Subscribe(SubscribeRequest { team: None }),
+        )
+        .to_line()
+        .unwrap();
+        crate::lines::write_line(&mut writer, &line).await.unwrap();
+        let first = crate::lines::read_line(&mut reader, 1 << 24).await.unwrap().unwrap();
+        assert!(
+            matches!(Frame::from_line(&first).unwrap(), Frame::Response(_)),
+            "{first}"
+        );
+        Self {
+            reader,
+            _writer: writer,
+        }
+    }
+
+    /// Reads events until `wanted` of them satisfy `pick`, and returns what it picked.
+    async fn collect<T>(&mut self, wanted: usize, pick: impl Fn(&EventKind) -> Option<T>) -> Vec<T> {
+        let mut found = Vec::new();
+        while found.len() < wanted {
+            let line = tokio::time::timeout(super::rig::PATIENCE, crate::lines::read_line(&mut self.reader, 1 << 24))
+                .await
+                .expect("timed out waiting for events")
+                .unwrap()
+                .expect("the connection ended while waiting for events");
+            if let Frame::Event(event) = Frame::from_line(&line).unwrap()
+                && let Some(picked) = pick(&event.event)
+            {
+                found.push(picked);
+            }
+        }
+        found
+    }
+}
+
+#[tokio::test]
+async fn the_subscribers_see_the_pull_request_opened_the_reviews_come_in_and_the_item_merged() {
+    let mut rig = approving_rig().await;
+    rig.start().await;
+    let mut events = Subscription::to(&rig).await;
+
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let opened = events
+        .collect(1, |kind| match kind {
+            EventKind::PullRequestOpened { item, pr, .. } => Some((item.to_string(), pr.get().get())),
+            _ => None,
+        })
+        .await;
+    let verdicts = events
+        .collect(2, |kind| match kind {
+            EventKind::ReviewSubmitted { reviewer, verdict, .. } => Some((reviewer.as_str().to_owned(), *verdict)),
+            _ => None,
+        })
+        .await;
+    let statuses = events
+        .collect(1, |kind| match kind {
+            EventKind::ItemStatus { status, .. } if *status == agent_core::status::ItemStatus::Done => Some(*status),
+            _ => None,
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(opened, [("1.1".to_owned(), 1)]);
+    let mut names: Vec<_> = verdicts.iter().map(|(name, _)| name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["inv-r1", "inv-r2"]);
+    assert!(
+        verdicts
+            .iter()
+            .all(|(_, verdict)| *verdict == agent_core::status::ReviewVerdict::Approve)
+    );
+    assert_eq!(statuses.len(), 1);
+}
