@@ -270,3 +270,91 @@ async fn a_task_that_asks_again_gets_its_next_round_in_the_next_file() {
     assert_eq!(reply, Reply::Applied { tasks: vec![task(1)] });
     daemon.stop().await.unwrap();
 }
+
+// ---- the editor -------------------------------------------------------------------------------------------------
+
+/// The files the stand-in opened in the window whose record is `opened`.
+fn opened_in(opened: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(opened)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_new_questions_file_is_opened_in_the_window_of_vscode_when_that_is_configured() {
+    let mut daemon = Daemon::new(&solo_state(), None);
+    let servers = daemon.surroundings.runtime_dir.join("servers");
+    Daemon::vscode_server(&servers);
+    let opened = daemon.vscode_window();
+    daemon.configure(&format!(
+        "[questions]\nopen = \"vscode\"\nvscode_server_dirs = [\"{}\"]",
+        servers.display()
+    ));
+    let file = daemon.questions_file(1, 1);
+    daemon.scenario(1, &format!("questions {}", file.display()));
+
+    daemon.start().await;
+    daemon.status_is(1, TaskStatus::Questions).await;
+    // Stopping ends the task that opens files after it has done what was queued.
+    daemon.stop().await.unwrap();
+
+    assert_eq!(opened_in(&opened), [file.display().to_string()]);
+}
+
+#[tokio::test]
+async fn the_servers_are_looked_for_in_the_home_of_the_user_when_the_configuration_names_none() {
+    let mut daemon = Daemon::new(&solo_state(), None);
+    let home = daemon.surroundings.user_home.clone().unwrap();
+    Daemon::vscode_server(&home.join(".vscode-server"));
+    let opened = daemon.vscode_window();
+    daemon.configure("[questions]\nopen = \"vscode\"");
+    let file = daemon.questions_file(1, 1);
+    daemon.scenario(1, &format!("questions {}", file.display()));
+
+    daemon.start().await;
+    daemon.status_is(1, TaskStatus::Questions).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(opened_in(&opened), [file.display().to_string()]);
+}
+
+#[tokio::test]
+async fn a_new_questions_file_is_not_opened_unless_the_configuration_asks_for_it() {
+    let mut daemon = Daemon::new(&solo_state(), None);
+    let servers = daemon.surroundings.runtime_dir.join("servers");
+    Daemon::vscode_server(&servers);
+    let opened = daemon.vscode_window();
+    daemon.configure(&format!(
+        "[questions]\nvscode_server_dirs = [\"{}\"]",
+        servers.display()
+    ));
+    let file = daemon.questions_file(1, 1);
+    daemon.scenario(1, &format!("questions {}", file.display()));
+
+    daemon.start().await;
+    daemon.status_is(1, TaskStatus::Questions).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(opened_in(&opened), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_window_that_cannot_be_reached_does_not_keep_the_human_from_being_told() {
+    let mut daemon = Daemon::new(&solo_state(), None);
+    let servers = daemon.surroundings.runtime_dir.join("servers");
+    Daemon::vscode_server(&servers);
+    daemon.configure(&format!(
+        "[questions]\nopen = \"vscode\"\nvscode_server_dirs = [\"{}\"]",
+        servers.display()
+    ));
+    let file = daemon.questions_file(1, 1);
+    daemon.scenario(1, &format!("questions {}", file.display()));
+
+    daemon.start().await;
+
+    // No window is connected: the notification is the way the human hears of it.
+    daemon.notification_with("questions-1.md").await;
+    daemon.stop().await.unwrap();
+}

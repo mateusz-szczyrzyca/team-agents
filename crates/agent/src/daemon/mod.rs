@@ -120,11 +120,50 @@ pub(crate) enum DaemonError {
     Join(#[source] JoinError),
 }
 
-/// Runs the daemon until `shutdown` is cancelled.
+/// Where the daemon looks for what belongs to the user it runs as, read from the environment once at its start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Surroundings {
+    /// The home directory of the user, where the VS Code servers keep their directories; `None` when it is not known.
+    pub(crate) user_home: Option<PathBuf>,
+    /// The runtime directory of the user's session, where VS Code puts the sockets of its windows.
+    pub(crate) runtime_dir: PathBuf,
+    /// Another directory that may hold sockets of windows.
+    pub(crate) fallback_dir: PathBuf,
+}
+
+impl Surroundings {
+    /// The surroundings of this process: `HOME`, and `XDG_RUNTIME_DIR` or else `/run/user/<uid>`, then `/tmp`.
+    pub(crate) fn from_process() -> Self {
+        let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map_or_else(
+            || PathBuf::from(format!("/run/user/{}", rustix::process::getuid().as_raw())),
+            PathBuf::from,
+        );
+        Self {
+            user_home: std::env::var_os("HOME").map(PathBuf::from),
+            runtime_dir,
+            fallback_dir: PathBuf::from("/tmp"),
+        }
+    }
+}
+
+/// Runs the daemon until `shutdown` is cancelled, in the surroundings of this process.
 ///
 /// # Errors
 /// [`DaemonError`].
 pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Result<(), DaemonError> {
+    run_in(setup, Surroundings::from_process(), shutdown).await
+}
+
+/// Runs the daemon until `shutdown` is cancelled, in `surroundings`.
+///
+/// # Errors
+/// [`DaemonError`].
+pub(crate) async fn run_in(
+    setup: DaemonSetup,
+    surroundings: Surroundings,
+    shutdown: CancellationToken,
+) -> Result<(), DaemonError> {
+    let _ = surroundings;
     let store = match StateStore::open(setup.home.clone()).await {
         Ok(store) => Arc::new(store),
         Err(StoreError::HomeLocked { path }) => return Err(DaemonError::AlreadyRunning { path }),

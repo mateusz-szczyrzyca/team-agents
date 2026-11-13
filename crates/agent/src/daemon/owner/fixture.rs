@@ -22,7 +22,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::client::{ClientError, Connection};
-use crate::daemon::{DaemonError, DaemonSetup, Timings, run};
+use crate::daemon::{DaemonError, DaemonSetup, Surroundings, Timings, run_in};
 use crate::fixtures::{at, member, normal, repo, task, team_id};
 use crate::testing::ManualClock;
 
@@ -123,6 +123,10 @@ pub(super) struct Daemon {
     pub(super) clock: ManualClock,
     shutdown: CancellationToken,
     daemon: Option<JoinHandle<Result<(), DaemonError>>>,
+    /// Where the daemon looks for VS Code: directories of the temporary home, never the machine's.
+    pub(super) surroundings: Surroundings,
+    /// The sockets of the windows made, kept open so that they stay sockets.
+    windows: Vec<std::os::unix::net::UnixListener>,
 }
 
 impl Daemon {
@@ -141,13 +145,57 @@ impl Daemon {
         std::fs::write(home.config_file(), config).unwrap();
         // Written directly: opening the store would hold its lock.
         std::fs::write(home.state_file(), state.to_json().unwrap()).unwrap();
+        let surroundings = Surroundings {
+            user_home: Some(dir.path().join("user")),
+            runtime_dir: dir.path().join("runtime"),
+            fallback_dir: dir.path().join("fallback"),
+        };
+        for made in [
+            surroundings.runtime_dir.clone(),
+            surroundings.fallback_dir.clone(),
+            dir.path().join("user"),
+        ] {
+            std::fs::create_dir(made).unwrap();
+        }
         Self {
             _dir: dir,
             home,
             clock: ManualClock::new(at(0)),
             shutdown: CancellationToken::new(),
             daemon: None,
+            surroundings,
+            windows: Vec::new(),
         }
+    }
+
+    /// Adds `text` to the configuration of the home.
+    pub(super) fn configure(&self, text: &str) {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(self.home.config_file())
+            .unwrap();
+        writeln!(file, "{text}").unwrap();
+    }
+
+    /// A VS Code server in `dir`, with the stand-in for its remote command.
+    pub(super) fn vscode_server(dir: &Path) {
+        let commands = dir.join("cli/servers/Stable-1/server/bin/remote-cli");
+        std::fs::create_dir_all(&commands).unwrap();
+        let stand_in =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../agent-runtime/tests/fixtures/editor/fake-vscode-cli.sh");
+        std::os::unix::fs::symlink(stand_in, commands.join("code")).unwrap();
+    }
+
+    /// A window of VS Code in the runtime directory of the session; the files the stand-in opens in it are listed in the
+    /// file the socket's path with `.opened` added names.
+    pub(super) fn vscode_window(&mut self) -> PathBuf {
+        let socket = self.surroundings.runtime_dir.join("vscode-ipc-window.sock");
+        self.windows
+            .push(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+        let mut opened = socket.clone().into_os_string();
+        opened.push(".opened");
+        PathBuf::from(opened)
     }
 
     /// The worktree of task `n`, which makes the fake CLI do `scenario`.
@@ -200,7 +248,7 @@ impl Daemon {
                 },
             }),
         };
-        let daemon = tokio::spawn(run(setup, self.shutdown.clone()));
+        let daemon = tokio::spawn(run_in(setup, self.surroundings.clone(), self.shutdown.clone()));
         let socket = self.home.socket_file();
         while !socket.exists() {
             if daemon.is_finished() {
