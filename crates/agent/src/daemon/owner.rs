@@ -43,7 +43,7 @@ use tokio_util::sync::CancellationToken;
 
 use self::start::{Context, Plan, next_round, plan};
 use self::teams::{Outbound, Served};
-use super::control::{Halt, Steer};
+use super::control::{Halt, Steer, after_halt, halted_status};
 use super::notice::Notice;
 use super::notifier::Delivery;
 use super::questions;
@@ -244,6 +244,20 @@ struct Located {
     role: Role,
     /// The agent's name.
     agent: String,
+}
+
+/// A run that went to its end, as its task is told of it.
+struct Ended<'a> {
+    /// The task.
+    task: &'a TaskId,
+    /// The facts about the task.
+    located: &'a Located,
+    /// When the run ended.
+    now: Timestamp,
+    /// What the end does to the task.
+    settled: Settled,
+    /// Whether the run did anything before it ended.
+    progress: Progress,
 }
 
 /// How a round of questions went.
@@ -547,11 +561,7 @@ impl Owner {
             return self.commit(task, &located, now, events, None).await;
         };
         self.end_run(task, &located.team, now, RunEnd::Stopped, &mut events)?;
-        let status = match halt {
-            Halt::Stop => TaskStatus::Stopped,
-            Halt::Pause => TaskStatus::Paused,
-        };
-        self.move_to(task, &located.team, status, &mut events)?;
+        self.move_to(task, &located.team, halted_status(halt), &mut events)?;
         self.hangs.remove(task);
         self.commit(task, &located, now, events, None).await?;
         self.after_run(task, &located, &RunEnd::Stopped, None)
@@ -571,8 +581,51 @@ impl Owner {
             run.final_message.as_deref(),
         );
         let settled = self.solo_waits_for_its_items(located.role, &located.team, settled);
-        self.end_run(task, &located.team, now, run.classified.end.clone(), &mut events)?;
-        let (status, notice) = match settled {
+        // The human asked for a stop or a pause while the run was ending by itself: their word wins where it can. Over a
+        // limit's pause or a hang it wins entirely: the run ended by the human's word, with no wake-up, no strike and no
+        // notice of a pause that nobody waits for.
+        let halt = self.halts.remove(task);
+        let overruled = halt.filter(|_| matches!(settled, Settled::Paused(_) | Settled::Hung));
+        let end = if overruled.is_some() {
+            RunEnd::Stopped
+        } else {
+            run.classified.end.clone()
+        };
+        self.end_run(task, &located.team, now, end.clone(), &mut events)?;
+        let (status, notice) = if let Some(halt) = overruled {
+            self.hangs.remove(task);
+            self.wakes.remove(task);
+            (halted_status(halt), None)
+        } else {
+            let ended = Ended {
+                task,
+                located: &located,
+                now,
+                settled,
+                progress: run.progress,
+            };
+            self.settled_status(ended, &mut events).await?
+        };
+        let status = halt.map_or(status, |halt| after_halt(halt, status));
+        self.move_to(task, &located.team, status, &mut events)?;
+        self.commit(task, &located, now, events, notice).await?;
+        self.after_run(task, &located, &end, run.final_message.as_deref())
+    }
+
+    /// The status a run's end sends its task to, and what the human is told of it.
+    async fn settled_status(
+        &mut self,
+        ended: Ended<'_>,
+        events: &mut Vec<EventKind>,
+    ) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+        let Ended {
+            task,
+            located,
+            now,
+            settled,
+            progress,
+        } = ended;
+        let next = match settled {
             Settled::Status(status) => {
                 self.hangs.remove(task);
                 (status, None)
@@ -583,7 +636,7 @@ impl Owner {
             }
             Settled::Questions => {
                 self.hangs.remove(task);
-                match self.ask(task, &located, now, &mut events).await? {
+                match self.ask(task, located, now, events).await? {
                     Asked::Recorded(notice) => (TaskStatus::Questions, Some(notice)),
                     Asked::Unusable(notice) => (TaskStatus::Failed, Some(notice)),
                 }
@@ -598,13 +651,9 @@ impl Owner {
                 };
                 (TaskStatus::Paused, Some(notice))
             }
-            Settled::Hung => self.hung(task, run.progress)?,
+            Settled::Hung => self.hung(task, progress)?,
         };
-        // The human asked for a stop or a pause while the run was ending by itself: their word wins where it can.
-        let status = self.after_halt(task, status);
-        self.move_to(task, &located.team, status, &mut events)?;
-        self.commit(task, &located, now, events, notice).await?;
-        self.after_run(task, &located, &run.classified.end, run.final_message.as_deref())
+        Ok(next)
     }
 
     /// What follows a hung run: it is resumed, or after the last strike the task fails and the human is told.

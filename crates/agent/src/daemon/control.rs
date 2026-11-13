@@ -107,6 +107,14 @@ pub(super) const fn decide(steer: Steer, status: TaskStatus) -> Step {
     }
 }
 
+/// The status of a task whose run `halt` ended.
+pub(super) const fn halted_status(halt: Halt) -> TaskStatus {
+    match halt {
+        Halt::Stop => TaskStatus::Stopped,
+        Halt::Pause => TaskStatus::Paused,
+    }
+}
+
 /// The status of a task whose run ended by itself while `halt` was asked of it, and which `settled` would send to:
 /// the human's word wins where it can.
 pub(super) const fn after_halt(halt: Halt, settled: TaskStatus) -> TaskStatus {
