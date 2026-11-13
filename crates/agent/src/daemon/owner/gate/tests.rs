@@ -358,3 +358,75 @@ async fn stopping_a_task_stops_its_gate_which_answers_the_client_and_records_not
     assert!(!daemon.home.gate_record_file(&task(1)).exists());
     daemon.stop().await.unwrap();
 }
+
+/// The owner's answer to a control of the human for the task 1.
+async fn control(owner: &mut Owner, command: Command) {
+    let (reply, mut answer) = oneshot::channel();
+    owner
+        .handle(Message::Request {
+            client: Client::Cli,
+            command,
+            reply,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(answer.try_recv(), Ok(Ok(Reply::Applied { .. }))));
+}
+
+#[tokio::test]
+async fn stopping_a_task_with_no_run_stops_its_gate() {
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, mut waiting) = queued_owner(&daemon).await;
+    ask(&mut owner, 1).await;
+    let job = waiting.try_recv().unwrap();
+    assert!(!job.cancel.is_cancelled());
+
+    control(
+        &mut owner,
+        Command::Stop(agent_core::protocol::ControlRequest {
+            target: Target::Task(task(1)),
+        }),
+    )
+    .await;
+
+    assert!(job.cancel.is_cancelled(), "the gate of a stopped task runs on");
+}
+
+#[tokio::test]
+async fn pausing_a_task_with_no_run_stops_its_gate() {
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, mut waiting) = queued_owner(&daemon).await;
+    ask(&mut owner, 1).await;
+    let job = waiting.try_recv().unwrap();
+
+    control(
+        &mut owner,
+        Command::Pause(agent_core::protocol::ControlRequest {
+            target: Target::Task(task(1)),
+        }),
+    )
+    .await;
+
+    assert!(job.cancel.is_cancelled(), "the gate of a paused task runs on");
+}
+
+#[tokio::test]
+async fn stopping_one_task_leaves_the_gate_of_another_task_with_no_run_going() {
+    let daemon = Daemon::new(&pair_state(), None);
+    let (mut owner, mut waiting) = queued_owner(&daemon).await;
+    ask(&mut owner, 1).await;
+    ask(&mut owner, 2).await;
+    let first = waiting.try_recv().unwrap();
+    let second = waiting.try_recv().unwrap();
+
+    control(
+        &mut owner,
+        Command::Stop(agent_core::protocol::ControlRequest {
+            target: Target::Task(task(2)),
+        }),
+    )
+    .await;
+
+    assert!(!first.cancel.is_cancelled());
+    assert!(second.cancel.is_cancelled());
+}
