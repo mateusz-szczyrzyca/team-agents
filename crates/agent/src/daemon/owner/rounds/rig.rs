@@ -422,7 +422,8 @@ fn config(agents: &[Agent], github: &str, fix_passes: u32, home: &Home, bus: boo
         let table = if agent.investigator { "investigators" } else { "agents" };
         let mut args = format!(
             "\"--scenario\", \"{}\", \"--as\", \"{}\", \"--home\", \"{}\"",
-            agent.scenario,
+            // A backslash of a scenario is the script's (`\n` in the text of an action), not an escape of the TOML file.
+            agent.scenario.replace('\\', "\\\\"),
             agent.name,
             home.root().display()
         );
