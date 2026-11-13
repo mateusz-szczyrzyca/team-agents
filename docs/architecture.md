@@ -271,8 +271,8 @@ the coordinator and for a requester, and the notification that a team is finishe
 
 **Known limits.** An agent that never reads its messages is woken again and again (the Bash wake-loop guard is not
 ported). A request that is being served when the daemon stops is not returned. The bus gives the oldest request of every
-team to whichever team's worker asks: a request of another team goes back, and whatever is behind it waits until its own
-team has a free worker. The notices still in the outbox when the daemon stops are lost.
+team to whichever team's worker asks: a look at a team holds the requests of other teams while it reads the queue on, and
+puts them back before the next team is looked at. The notices still in the outbox when the daemon stops are lost.
 
 Not done here, by item: answers and the controls (7.2); the gate (7.3); pull requests, reviews and the merge, with the
 next item of a feature (8.1); the dashboard (9.1). A resumed agent's checkpoint is not read from the agentbus yet.

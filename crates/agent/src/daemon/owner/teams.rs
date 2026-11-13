@@ -471,6 +471,10 @@ impl Owner {
 
     /// Gives the requests for workers to the free workers, the oldest request to the first worker in the configured
     /// order.
+    ///
+    /// The bus hands out the oldest queued request of every team. A request of another team is held while the queue is
+    /// read on, and put back before the next team is looked at: each team's workers serve its own requests, and a team
+    /// with a free worker does not keep another team's request from it.
     async fn serve_requests(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
         let Some(Workers {
             in_order: workers,
@@ -480,6 +484,7 @@ impl Owner {
             return Ok(());
         };
         let names: Vec<AgentName> = workers.iter().map(|(name, _)| name.clone()).collect();
+        let mut held = Vec::new();
         while let Some(worker) = first_free_worker(&names, &busy).cloned() {
             let request = match self.parts.bus.helper_next(&worker).await {
                 Ok(Some(request)) => request,
@@ -493,10 +498,8 @@ impl Owner {
                 break;
             };
             if !self.is_member(team_id, &request.from_task) {
-                // The bus gives the oldest request of every team; this one is another team's and goes back for its
-                // workers. Whatever is behind it waits until its team has a free worker.
-                self.tell_bus(team_id, request_update(request.id, DelegationStatus::Queued, None));
-                break;
+                held.push(request.id);
+                continue;
             }
             self.release(&task, Why::Delegated(Box::new(request.clone())), round)?;
             self.serving.insert(
@@ -514,7 +517,24 @@ impl Owner {
             tracing::info!(team = %team_id, request = %request.id, %worker, "a request is given to a worker");
             busy.push(worker);
         }
+        self.put_back(team_id, held).await;
         Ok(())
+    }
+
+    /// Puts the requests of other teams that the look at `team_id` took from the bus back in the queue at once, so that
+    /// the next team looked at finds them; one the bus does not take now is tried again at the next turn of the loop.
+    async fn put_back(&mut self, team_id: &TeamId, held: Vec<RequestId>) {
+        for request in held {
+            let update = DelegationUpdate {
+                status: Some(DelegationStatus::Queued),
+                task: None,
+                summary: None,
+            };
+            if let Err(error) = self.parts.bus.helper_set(request, &update).await {
+                tracing::warn!(team = %team_id, %request, error = %error_chain(&error), "a request of another team cannot be put back now: it is tried again at the next turn");
+                self.tell_bus(team_id, BusJob::Answer { request, update });
+            }
+        }
     }
 
     /// The workers of `team` in the configured order with their tasks, and those that cannot take a request now;
