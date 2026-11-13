@@ -96,8 +96,8 @@ impl Owner {
         }
     }
 
-    /// Watches the tasks that wait for answers after a start, and looks at their files: the human may have saved the
-    /// answers while the daemon was down.
+    /// Watches the tasks that wait for answers, and looks at their files: after a start, the human may have saved the
+    /// answers while the daemon was down; after a rescan, saves may have been missed.
     ///
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved.
@@ -208,14 +208,14 @@ impl Owner {
         })
     }
 
-    /// Acts on what the watch on the questions files reported.
+    /// Acts on what the watch on the questions files reported: a save is read, and a rescan reads every open file.
     ///
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved.
     pub(super) async fn reported(&mut self, report: Report) -> Result<(), OwnerError> {
         match report {
             Report::Saved(saved) => self.file_saved(saved).await,
-            Report::Rescan => Ok(()),
+            Report::Rescan => self.adopt_open_questions().await,
         }
     }
 

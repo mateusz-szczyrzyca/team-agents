@@ -2,7 +2,8 @@
 //!
 //! One watch per task directory that holds an open question, not recursive, so the activity of the runs of other tasks
 //! never wakes it. An editor saves by writing in place or by renaming a new file over the old one; both are seen. What
-//! is told is only *that* `questions-<round>.md` of a task was written: the owner reads the file and decides.
+//! is told is only *that* `questions-<round>.md` of a task was written: the owner reads the file and decides. The queue
+//! of saves is bounded; when it is full, or the system reports an error, the owner is told to read every open file.
 
 use std::collections::VecDeque;
 use std::num::NonZeroU32;
@@ -51,6 +52,10 @@ const FILE_PREFIX: &str = "questions-";
 /// See [`FILE_PREFIX`].
 const FILE_SUFFIX: &str = ".md";
 
+/// The most saves that wait for the owner. A save that finds the queue full is not lost: it sets the wish for a rescan,
+/// and the owner reads every open questions file, so the queue never grows with the number of files.
+const MAX_QUEUED: usize = 256;
+
 /// What the watch tells the owner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::daemon) enum Report {
@@ -70,11 +75,21 @@ struct Queue {
 }
 
 impl Queue {
-    /// Notes a save of `file`, unless a save of it waits already.
+    /// Notes a save of `file`, unless a save of it waits already; when the queue is full, asks for a rescan instead.
     fn push(&mut self, file: Saved) {
-        if !self.saves.contains(&file) {
-            self.saves.push_back(file);
+        if self.saves.contains(&file) {
+            return;
         }
+        if self.saves.len() >= MAX_QUEUED {
+            self.rescan = true;
+            return;
+        }
+        self.saves.push_back(file);
+    }
+
+    /// Asks for a rescan: a save may have been missed.
+    fn lost(&mut self) {
+        self.rescan = true;
     }
 
     /// The next thing to tell: the saves first, in order, then the rescan.
@@ -103,11 +118,16 @@ struct Reporter {
 }
 
 impl Reporter {
-    /// Takes what the system said: queues each questions file written.
+    /// Takes what the system said: queues each questions file written; an error of the system asks for a rescan.
     fn event(&self, result: notify::Result<notify::Event>) {
         match result {
             Ok(event) => self.written(&event),
-            Err(error) => tracing::warn!(%error, "the watch on the questions files reported an error"),
+            Err(error) => {
+                // The system lost track of something: a save may have been missed, and the owner looks at every open file.
+                tracing::warn!(%error, "the watch on the questions files reported an error; the open files are read again");
+                self.shared.queue.lock().unwrap_or_else(PoisonError::into_inner).lost();
+                self.wake();
+            }
         }
     }
 
