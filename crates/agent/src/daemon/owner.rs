@@ -163,6 +163,14 @@ pub(crate) enum OwnerError {
         /// What went wrong.
         source: AssignmentError,
     },
+    /// The pull requests of a team cannot be decided.
+    #[error("the pull requests of team {team} cannot be decided")]
+    Publications {
+        /// The team.
+        team: TeamId,
+        /// What went wrong.
+        source: crate::daemon::pr::PlanError,
+    },
     /// A team that must be in the state is not.
     #[error("team {team} is not in the state")]
     LostTeam {
@@ -319,6 +327,10 @@ pub(super) struct Owner {
     gate: Option<GateQueue>,
     /// The autopilot; `None` for an owner that runs without one: no pull request is opened.
     pulls: Option<Pulls>,
+    /// The clients of GitHub, by repository.
+    github: HashMap<agent_core::config::RepoName, agent_runtime::github::GitHub>,
+    /// What the autopilot remembers between two looks.
+    watch: rounds::PullWatch,
     /// Cancelled when the daemon is to stop: the runs it starts stop with it.
     shutdown: CancellationToken,
 }
@@ -364,6 +376,8 @@ impl Owner {
             gate_stops: HashMap::new(),
             gate: None,
             pulls: None,
+            github: HashMap::new(),
+            watch: rounds::PullWatch::default(),
             shutdown,
         }
     }
@@ -470,6 +484,7 @@ impl Owner {
                 home: self.parts.store.home(),
                 clock: &self.parts.clock,
                 why: why.as_ref(),
+                autopilot: self.pulls.as_ref().map(Pulls::texts),
             };
             plan(&context, &mut self.parts.rng, &task).await
         };

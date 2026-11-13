@@ -59,7 +59,7 @@ pub(super) struct Publication {
 
 /// Why the publications of a team cannot be decided.
 #[derive(Debug, thiserror::Error)]
-pub(super) enum PlanError {
+pub(crate) enum PlanError {
     /// The name of the lead is not an agent name.
     #[error("the name of the lead of the team is not an agent name")]
     Name(#[from] InvalidName),

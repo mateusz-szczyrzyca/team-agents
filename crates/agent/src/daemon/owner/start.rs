@@ -14,6 +14,7 @@ use agent_core::state::{ItemPhase, Member, Participant, Question, RunEnd, RunSta
 use agent_core::status::RunOutcome;
 use agent_core::task_list::Item;
 use agent_runtime::agentbus::{AgentBus, BusTier};
+use agent_runtime::autopilot_prompts::AutopilotPrompts;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::prompts::PromptLoader;
@@ -25,6 +26,7 @@ use agent_runtime::store::Home;
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::{Rng, RngExt};
 
+use super::rounds::{SectionError, sections_for};
 use crate::daemon::questions::{self, QuestionsProblem, TextError};
 use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape_with_answers, task_branch};
 
@@ -104,6 +106,9 @@ pub(super) enum StartProblem {
     /// A session ID is not valid.
     #[error("a session ID is not valid")]
     Session(#[from] InvalidValue),
+    /// What the autopilot adds to the prompt cannot be made.
+    #[error("cannot make what the autopilot tells the run")]
+    Autopilot(#[from] SectionError),
 }
 
 /// What a run is made ready from.
@@ -126,6 +131,8 @@ pub(super) struct Context<'a> {
     pub(super) clock: &'a SharedClock,
     /// Why the task of a team starts a run now, if it is more than the plain continuation of the task.
     pub(super) why: Option<&'a Why>,
+    /// The texts of the autopilot; `None` when the home has no autopilot.
+    pub(super) autopilot: Option<&'a AutopilotPrompts>,
 }
 
 /// A run that is ready to start.
@@ -212,6 +219,13 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     let prompt = compose(&texts, &input)?;
     let answers = answers_text(ctx, member).await?;
     let prompt = team_prompt(ctx, &texts, &found, prompt, answers.as_deref())?;
+    let prompt = match ctx.autopilot {
+        Some(autopilot) => match sections_for(ctx, autopilot, &found, &working).await? {
+            Some(sections) => format!("{}\n\n{sections}", prompt.trim_end()),
+            None => prompt,
+        },
+        None => prompt,
+    };
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())
