@@ -177,11 +177,11 @@ async fn a_file_saved_again_after_the_owner_took_it_is_queued_again() {
 // ---- the queue is bounded, and what it cannot hold is read again -------------------------------------------------
 
 /// What the system says when `round` of the questions file of task `n` was written.
-fn written(n: u32, round: u32) -> notify::Result<notify::Event> {
+fn written(n: u32, round: u32) -> notify::Event {
     let path = PathBuf::from("/home")
         .join(task(n).as_str())
         .join(format!("questions-{round}.md"));
-    Ok(notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::File)).add_path(path))
+    notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::File)).add_path(path)
 }
 
 /// The next report of `saves`, which has to be there: a report that never comes is a failure, not a hang.
@@ -202,7 +202,7 @@ async fn a_flood_of_saves_of_different_files_does_not_fill_the_queue_without_end
     let (reporter, mut saves) = channel();
     let flood = 1_000;
     for round in 1..=flood {
-        reporter.event(written(1, round));
+        reporter.event(Ok(written(1, round)));
     }
     drop(reporter);
 
@@ -227,7 +227,7 @@ async fn a_flood_of_saves_of_different_files_does_not_fill_the_queue_without_end
 async fn what_the_queue_could_not_hold_is_told_as_a_rescan_after_the_saves() {
     let (reporter, mut saves) = channel();
     for round in 1..=1_000 {
-        reporter.event(written(1, round));
+        reporter.event(Ok(written(1, round)));
     }
 
     let mut last = None;
@@ -241,7 +241,7 @@ async fn what_the_queue_could_not_hold_is_told_as_a_rescan_after_the_saves() {
 #[tokio::test(start_paused = true)]
 async fn an_error_of_the_watch_asks_for_a_rescan_once_however_often_it_comes() {
     let (reporter, mut saves) = channel();
-    reporter.event(written(1, 1));
+    reporter.event(Ok(written(1, 1)));
     reporter.event(Err(notify::Error::generic("the system lost track")));
     reporter.event(Err(notify::Error::generic("again")));
 
@@ -253,7 +253,7 @@ async fn an_error_of_the_watch_asks_for_a_rescan_once_however_often_it_comes() {
 #[tokio::test(start_paused = true)]
 async fn a_report_that_waits_when_the_watch_ends_is_still_given() {
     let (reporter, mut saves) = channel();
-    reporter.event(written(1, 1));
+    reporter.event(Ok(written(1, 1)));
     drop(reporter);
 
     assert_eq!(report(&mut saves).await, Some(Report::Saved(saved(1, 1))));
