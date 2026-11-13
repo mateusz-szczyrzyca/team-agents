@@ -116,8 +116,9 @@ description of `agent` in its help is kept when the commands are added).
 
 ## Tests
 
-Test-first: every behaviour has a RED commit (the failing output in its message) and a GREEN commit; the table is in
-"Commits". `126` new tests:
+Test-first: every behaviour has a RED commit and a GREEN commit, and most RED commits carry the failing output in their
+message; four do not (named under "Commits"), and the tests of pass 5 are characterization tests of behaviour that already
+held (`Test-First: not possible`, checked by mutation). The table is in "Commits". `126` new tests:
 
 | Where | New tests |
 |---|---|
@@ -162,12 +163,12 @@ listens). I did not touch them.
 
 ## Size
 
-The PR-1 command, as the rules print it, gives `4,314` changed lines at the head of pass 3 (`cbbf511`; the report itself is
+The PR-1 command, as the rules print it, gives `4,328` changed lines at the head of pass 5 (the test commit `d446796` and this report; the report itself is
 counted, so edits of it move the number by a few lines): over the split threshold of about `4,000`, under the ceiling of
 `5,000`. `491` of them are `daemon/owner/fixture.rs`, which is compiled only for tests (`#[cfg(test)] mod fixture;`) and
-that the command does not exclude: without it the count is `3,823`. An earlier version of this report said `3,525` and the PR description `3,604`;
-both were wrong, they came from a different exclusion list. No split was done: the item is one feature, and the ceiling
-is not passed.
+that the command does not exclude: without it the count is `3,837`. Earlier versions of this report said `3,525`, `4,314` and
+`3,823`; the first came from a different exclusion list, the other two were the count of an earlier head. No split was
+done: the item is one feature, and the ceiling is not passed.
 
 ## Compatibility
 
@@ -308,3 +309,17 @@ All six findings were right; the gate passes.
 - **4, the test-first account:** corrected in "Tests" above. `f728dae0` said no test could be written; that was wrong. The history is not rewritten (the branch is pushed and reviewed); the report and the PR description now say so.
 - **5, the size:** corrected in "Size" above, with the exclusion the command lacks (the test-only `fixture.rs`) named.
 - **6, the answer replay:** `prompts/harness/questions/answered.md` and `docs/architecture.md` say that the answers are given again to every run until one has said something to the end; the known limit (an unusable questions file) is in the architecture text.
+
+## Review of PR #95, pass 4 — what was done
+
+- **Major 1:** a test that answers a run read and that ended with `STATUS: FAILED` are not given again to the next run.
+- **Major 2:** the word of a control comes from `strum::IntoStaticStr` on `ControlAction`; `action_word` is gone.
+- **Minor, the cause of a window that failed:** `OpenError::Refused` keeps the cause chain (`error_chain`).
+- **Minor, RED commits without a failing run:** four earlier RED commits carry none; the history is not rewritten (see "Commits").
+
+## Review of PR #95, pass 5 — what was done
+
+Both findings were right; the gate passes.
+
+- **Major 1, the replay after a run that did not finish:** `answers_that_a_run_did_not_finish_reading_are_given_again_to_the_run_that_goes_on` (a table: a stopped run, an exhausted quota, a rate limit) and `answers_that_a_run_hung_on_are_given_again_to_the_run_the_watchdog_starts` in `daemon/owner/answers/tests.rs`. They are characterization tests of code that already behaved so (`Test-First: not possible`). Checked by mutation: moving `Stopped`, `QuotaExhausted`, `RateLimited` or `Hung` into the arm of `answered_round` that takes the answers for read turns the test red.
+- **Major 2, the validation account:** the counts in "Size" are those of the head of this pass, and the sentence on RED commits in "Tests" now says that four carry no failing run.
