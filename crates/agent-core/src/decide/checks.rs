@@ -195,7 +195,7 @@ pub enum TestChange {
     },
     /// A binary file was replaced.
     EditedBinary,
-    /// Its lines are the same, but git lists it as modified: its mode (an executable bit) changed.
+    /// Its mode (an executable bit) changed, and its lines are the same or only gained some.
     ModeChanged,
 }
 
@@ -326,13 +326,16 @@ fn changed_tests(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
         .iter()
         .filter(|file| protected_path(rules, file).is_none())
         .filter_map(|file| {
+            let mode_changed = facts.mode_changed.contains(&file.path);
             let (existing, how) = match (&file.change, file.lines) {
-                (Change::Added, _) | (Change::Modified, Lines::Text { added: 1.., removed: 0 }) => return None,
+                (Change::Added, _) => return None,
+                (Change::Modified, Lines::Text { added: 1.., removed: 0 }) if !mode_changed => return None,
                 (Change::Deleted, _) => (&file.path, TestChange::Deleted),
                 (Change::Renamed { from }, _) => (from, TestChange::Renamed { to: file.path.clone() }),
                 (Change::Modified, Lines::Binary) => (&file.path, TestChange::EditedBinary),
-                // Git lists a file as modified with no line changed when only its mode changed.
-                (Change::Modified, Lines::Text { added: 0, removed: 0 }) => (&file.path, TestChange::ModeChanged),
+                // Lines only added, or none: what else changed is the mode. Git lists a file as modified with no line
+                // changed when only its mode changed.
+                (Change::Modified, Lines::Text { removed: 0, .. }) => (&file.path, TestChange::ModeChanged),
                 (Change::Modified, Lines::Text { removed, .. }) => (&file.path, TestChange::Edited { removed }),
             };
             rules.test_paths.matches(existing).then(|| Issue::TestChanged {

@@ -150,7 +150,7 @@ impl Git {
     }
 
     /// The facts the checks before a review decide from: the files, the commits, the added lines of the files whose
-    /// extension has markers, and `description`, the pull request's.
+    /// extension has markers, the files whose mode changed, and `description`, the pull request's.
     ///
     /// # Errors
     /// The errors of [`Git::range_commits`] and [`Git::range_added_lines`].
@@ -178,8 +178,28 @@ impl Git {
             commits,
             added,
             description: description.to_owned(),
-            mode_changed: Vec::new(),
+            mode_changed: self.range_mode_changes(base, head).await?,
         })
+    }
+
+    /// The files whose mode differs between `base` and `head`, by their path at `head`: `--name-status` and `--numstat`
+    /// do not show a mode, so a change of an executable bit with lines added would look like added lines only.
+    async fn range_mode_changes(&self, base: &CommitId, head: &CommitId) -> Result<Vec<RepoPath>, GitError> {
+        let operation = GitOperation::Diff;
+        let (base, head) = (base.to_string(), head.to_string());
+        let args = [
+            arg("diff"),
+            arg("--raw"),
+            arg("-z"),
+            arg("-M"),
+            arg("--no-ext-diff"),
+            arg("--no-textconv"),
+            arg(&base),
+            arg(&head),
+            arg("--"),
+        ];
+        let captured = self.run_ok(operation, Reach::Local, &args).await?;
+        parse_raw_modes(operation, whole(operation, &captured.stdout, self.limits)?)
     }
 
     /// The files `commit` changed against `parent`, or without one against its first parent (none for a merge, all of
@@ -413,6 +433,35 @@ fn parse_tree_diff(operation: GitOperation, bytes: &[u8]) -> Result<Vec<FileChan
         .flat_map(|token| token.iter().copied().chain(std::iter::once(0)))
         .collect();
     join_changes(operation, named, parse_numstat(operation, &rest)?)
+}
+
+/// The mode git writes for the side of a change where the file is not: before an addition, after a deletion.
+const NO_FILE_MODE: &[u8] = b"000000";
+
+/// Reads the output of `git diff --raw -z -M` for the files whose mode changed: each entry is `:old new ids status`,
+/// then its path, or for a rename or a copy the old path and the new. A file that was added or deleted has a mode on one
+/// side only, and its mode did not change.
+fn parse_raw_modes(operation: GitOperation, bytes: &[u8]) -> Result<Vec<RepoPath>, GitError> {
+    let mut tokens = bytes.split(|byte| *byte == 0).filter(|token| !token.is_empty());
+    let mut changed = Vec::new();
+    while let Some(raw) = tokens.next() {
+        let fields: Vec<&[u8]> = raw.split(|byte| *byte == b' ').collect();
+        let &[old, new, _, _, status] = fields.as_slice() else {
+            return Err(unexpected(operation, raw));
+        };
+        let old = old.strip_prefix(b":").ok_or_else(|| unexpected(operation, raw))?;
+        let mut path = tokens.next().ok_or_else(|| unexpected(operation, raw))?;
+        match status.first() {
+            // A rename or a copy names the old path first: the file is now at the second.
+            Some(b'R' | b'C') => path = tokens.next().ok_or_else(|| unexpected(operation, raw))?,
+            Some(_) => {}
+            None => return Err(unexpected(operation, raw)),
+        }
+        if old != new && old != NO_FILE_MODE && new != NO_FILE_MODE {
+            changed.push(repo_path(operation, path)?);
+        }
+    }
+    Ok(changed)
 }
 
 /// Reads a diff made with no lines of context: the lines that each hunk adds, from the number its header gives.
