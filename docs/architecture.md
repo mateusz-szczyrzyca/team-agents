@@ -80,7 +80,7 @@ Both `Config` and `TaskList` take text, not paths: reading `agents.toml`, `secre
 
 | Module | Types |
 |---|---|
-| `state` | `State` (with its schema version), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
+| `state` | `State` (with its schema version), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
 | `protocol` | `Request`, `Command`, `Response`, `Reply`, `Failure`, `Event`, `EventKind`, `Frame`, with the protocol version and `ProtocolError`. JSON lines over the daemon's socket. See [`state.md`](state.md) |
 | `questions` | `QuestionsFile`, `Entry`, `Verdict`: parsing and rendering of the questions file, the `ok` verdict, the `**ANSWERED**` marker. See [`state.md`](state.md) |
 
@@ -153,7 +153,7 @@ the network. The order of the checks and the rules each follows are in the docum
 
 | Where | What |
 |---|---|
-| `agent_runtime::run` | `RunEngine::run`: one run of a model CLI, from its files to its classified end; touches no state. `run::compose` makes its prompt: context, role, the rules of the tier, brief, item, checkpoint — or, for a resumed session, what interrupted it |
+| `agent_runtime::run` | `RunEngine::run`: one run of a model CLI, from its files to its classified end; touches no state (`run_held`: the same with a `WatchdogHold`, see "The gate"). The run's environment has `AGENTS_HOME`. `run::compose` makes its prompt: context, role, the rules of the tier, brief, item, checkpoint — or, for a resumed session, what interrupted it |
 | `agent_runtime::{settings, harness_prompts, text_file, clock}` | `agents.toml` and `secrets.toml` read from the home; the second prompt catalog (`HarnessPrompt`, `prompts/harness/run/`: the run prompts and the notifications); a bounded text file; the system clock |
 | `agent::daemon` | `owner` (the state), `server` (the socket), `notifier`, `opener`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions), `owner/teams` (what carries them out), `questions` (the questions file) and `control` (what a control does to a task), with `owner/answers` and `owner/controls` |
 | `agent::{client, commands}` | the socket client, `agent status`, `agent daemon`, `agent run`, `agent answer`, `stop`, `pause`, `unpause`, `resume`, `say` |
@@ -205,13 +205,13 @@ killer) leaves it going, and only the unit's `KillMode=mixed` ends it — outsid
 or a second CLI resumes the same session.
 
 **The socket** serves `status`, `show`, `subscribe`, `run`, `answer`, `stop`, `pause`, `unpause`, `resume` and `say` of
-[`state.md`](state.md); `gate` answers `refused`, naming itself, until its item. At most 64 connections and 16 runs go at once; a line over 2 MiB ends its
+[`state.md`](state.md), and `gate` (below). At most 64 connections and 16 runs go at once; a line over 2 MiB ends its
 connection; a subscriber that falls 1024 events behind is let go (it subscribes again and starts from the state).
 
 **The home**: `agents.toml`, `secrets.toml` and `prompts/` (put there by the human); `state.json`, `daemon.lock`,
 `agent.sock`; `tasks/<task>/activity.jsonl`, `tasks/<task>/runs/<run>/` (the output of a run and the files its CLI is
 configured with, `prompt.md` for a prompt too long for a command line) and `tasks/<task>/questions-<round>.md`;
-`worktrees/<repo>/<task>/`; `notifications/`.
+`tasks/<task>/gate-<n>.log` and `tasks/<task>/gate.json` (below); `worktrees/<repo>/<task>/`; `notifications/`.
 
 ### Teams (`agent run` and the team's life)
 
@@ -279,9 +279,60 @@ a request): it then starts as the plain continuation of its task. The owner's lo
 call of a look at a team (an `agentbus` call for at most `15` s): a bus that hangs leaves the socket unanswered that
 long.
 
-Not done here, by item: the gate (7.3); pull requests, reviews and the merge, with the next item of a feature (8.1); the
+Not done here, by item: pull requests, reviews and the merge, with the next item of a feature (8.1); the
 dashboard (9.1). A resumed agent's checkpoint is not read from the agentbus yet. opencode's `session export` for a
 resumed session whose result it did not print is not done.
+
+### The gate (`agent gate`)
+
+`agent gate [TASK]`, run by an agent in its worktree, runs the repository's gate (`[repos.NAME] gate` of the
+configuration) for the task and says what it said. The task is the one named, or the task of the worktree the command runs
+in (`<home>/worktrees/<repository>/<task>`, also in a subdirectory, and also when `AGENTS_HOME` names the home through a
+link); outside a worktree, and with no task named, the command fails before it asks anything. Every run the daemon starts
+has `AGENTS_HOME` in its environment, so that the commands an agent runs find the daemon.
+
+**One gate at a time on the machine.** The owner looks up the task, the repository's command and timeout and the worktree,
+and puts a job on the queue of the *gate service* (`daemon/gate.rs`), a task of the daemon that takes the jobs one by one, in
+the order they were put there. The owner never waits for a gate: the client's reply goes with the job and the service
+answers it. At most 16 gates wait; the next is refused (`refused`, "the gate queue is full"). The client waits for its answer
+as long as the daemon takes (`Connection::request_until_answered`: the one request without a time limit; the daemon bounds
+it by the queue and the timeout, and a daemon that ends closes the connection).
+
+**A gate.** When its turn comes the service reads the worktree with git: the commit `HEAD` names and whether the tree is
+clean — a changed or untracked file, or a merge that waits to be committed, makes it **not clean**; a gate on such a tree is
+run all the same, because a coordinator checks the tree it merged before it commits the merge, and it is recorded as not
+clean. A worktree git cannot read is refused (`refused`: "the gate cannot run in ...") and nothing is run. The command runs
+in the worktree in a process group of its own, with the `PATH` of `[binaries] agent_path`, its output (standard output and
+error) in `tasks/<task>/gate-<n>.log` (`n` counts from 1; no log is overwritten), and no input. It is stopped, with
+everything it started (`SIGTERM`, then `SIGKILL`), when it runs past `gate_timeout_minutes` — recorded `timed_out`, a failure —
+and when its task is stopped or paused or the daemon shuts down — then nothing is recorded and the client is answered
+`conflict`. An exit code of 0 is `passed`; any other code `failed` with that code, and a signal `failed` with 128 plus its
+number.
+
+**The record.** `GateRecord` is `{tree, result}`: whether the tree was `clean` or `not_clean`, and the `GateResult`
+(`head`, `finished_at`, `outcome`, `log`). The last record of a task is saved in `tasks/<task>/gate.json` (a temporary file
+and a rename: a reader sees a whole record or none), told to the subscribers (`gate_finished`) and written to the task's
+activity log. **Only a pass on a clean tree is a pass of the commit** (`GateRecord::counts_as_pass`): the gate on a
+tree that is not clean says nothing about `head`. The record is the result the autopilot (8.1) reads; an agent's word for
+it counts for nothing.
+
+**The command.** It prints what it waits for, the last 60 lines of the output (at most the last 64 KiB of the log are
+read), the verdict (`gate: passed at 26b65de; recorded. Full output: <log>`) and, for a pass on a tree that is not clean, that
+it is not a pass of the commit. It succeeds for `passed` and fails (status 1) for a failure, a timeout and every refusal of
+the daemon.
+
+**A run that waits on its gate is not cut by the watchdog.** The model CLI of an agent that runs `agent gate` prints nothing
+until the gate is over, which may be the wait in the queue and the gate's timeout. The owner keeps a `WatchdogHold`
+(`agent_runtime::run`) for every run that is going and gives the engine a clone (`RunEngine::run_held`); a job takes a
+`HoldGuard` of it when it is queued and drops it when it is answered, whatever way it ended. While a guard is alive the run
+is never silent, and once the last is dropped its silence is counted from that moment, not from its last output. The same
+token that stops the run stops its gate.
+
+**Known limits.** A gate whose client went away (the agent was killed) is not noticed while it waits or runs: it is stopped
+only with its task or the daemon, or by its timeout. A gate on a tree that is not clean is not refused (the old script
+refused it for the agent's own task); it is recorded as not clean. `agent gate --wait` (always waits here) and `agent
+gate-status` of the old script do not exist. The queue and the records of the gates that were waiting when the daemon
+stopped are lost; the last record of each task is kept.
 
 ### Questions, answers and controls (`agent answer`, `stop`, `pause`, `unpause`, `resume`, `say`)
 
