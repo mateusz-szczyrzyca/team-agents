@@ -5,6 +5,7 @@
 //! owner carries it out (`owner/rounds/checks.rs`). Nothing here reads a file or runs a process, but the texts, which come
 //! from `prompts/harness/checks/`.
 
+use std::collections::HashSet;
 use std::num::{NonZeroU32, TryFromIntError};
 use std::path::Path;
 
@@ -285,11 +286,20 @@ pub(super) fn decisions(subjects: &[Subject], file: &QuestionsFile) -> Decisions
 }
 
 /// What the team and the human wrote in the `description` of a pull request: its lines without those the harness wrote
-/// itself in `harness`, the description it makes for the same items. The text of an item names files in passing; only what
-/// somebody added to the description discloses a file to the checks.
+/// itself in `harness`, the description it makes for the same items, and with the blank lines it left behind made one. The
+/// text of an item names files in passing; only what somebody added to the description discloses a file to the checks.
 #[must_use]
-pub(super) fn authored(_description: &str, _harness: &str) -> String {
-    String::new()
+pub(super) fn authored(description: &str, harness: &str) -> String {
+    let written: HashSet<&str> = harness.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    let mut kept: Vec<&str> = Vec::new();
+    for line in description.lines().filter(|line| !written.contains(line.trim())) {
+        // The text that was taken out leaves its blank lines behind: a run of them is one.
+        if line.trim().is_empty() && kept.last().is_some_and(|last| last.trim().is_empty()) {
+            continue;
+        }
+        kept.push(line);
+    }
+    kept.join("\n")
 }
 
 /// What the lead is told to put the questions of `round` in `file` to the human.
