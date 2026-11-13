@@ -341,3 +341,47 @@ cargo clippy --workspace --all-targets --locked -- -D warnings    # 0 findings
 
 Every test run went through `tools/test-lock.sh`. Size by the PR-1 command (tests and `docs/investigations` left out):
 `3,585` changed lines against `main`, `293` of them from this pass (limit `5,000`).
+
+## Review pass 2: the findings of inv-kimi-openrouter, fixed
+
+The [review](https://github.com/mateusz-szczyrzyca/team-agents/pull/94#pullrequestreview-5884313167) asked for changes:
+`7` major findings, `0` minor. All `7` are fixed.
+
+1. **Pending items were not tried again after a branch failure.**
+   - Fix: every look at a team now gives out items, the clock's looks too. A failed branch switch is a warning, tried again at the next look.
+   - The kind of look (`Look::Event` / `Look::Poll`) no longer changes anything, so it is gone.
+   - Commits: $\color{red}{\textbf{RED}}$ [`b25392a`](https://github.com/mateusz-szczyrzyca/team-agents/commit/b25392ac33645602229a589a88f64e3c54fcf0da) → $\color{green}{\textbf{GREEN}}$ [`f515c04`](https://github.com/mateusz-szczyrzyca/team-agents/commit/f515c0472c1ed17adf4ad016cab9ed85055927d9). The RED test was checked to fail at its own commit (time-out after `60` s).
+2. **A team that cannot be recorded left its worktrees, branches and bus team behind, and the daemon ended.**
+   - Fix: the team goes into a copy of the state before anything is made. The copy is saved after the worktrees and the bus team. When the save fails, the worktrees and branches are removed, the bus team is marked done, and the run is refused; the daemon goes on.
+   - Commits: $\color{red}{\textbf{RED}}$ [`dc98312`](https://github.com/mateusz-szczyrzyca/team-agents/commit/dc98312ec8b1be10588655a693fead14d3920c1b) (a read-only home: the daemon ended) → $\color{green}{\textbf{GREEN}}$ [`0c0ee3f`](https://github.com/mateusz-szczyrzyca/team-agents/commit/0c0ee3f2f5506c98a71a89f719132dec42b015e4). The test fails with the clean-up left out.
+   - Not tested: the refusal of a team the state refuses, because it needs a task ID that is already in use, and the daemon draws its IDs from the OS. It makes nothing that would have to be removed.
+3. **Questions that cannot be used were reported as a hang.**
+   - Fix: `request_outcome` first decides whether the worker goes on. For a task that failed after all, unusable questions are `NoResult`, a limit that cannot be waited for is `NoStatus`, and only the watchdog's end is `Hung`.
+   - The fake CLI gets the action `questions`.
+   - Commits: $\color{red}{\textbf{RED}}$ [`ce0d1ef`](https://github.com/mateusz-szczyrzyca/team-agents/commit/ce0d1ef4adaffbdbe9f7363c52503140fb377eb0) → $\color{green}{\textbf{GREEN}}$ [`10f136b`](https://github.com/mateusz-szczyrzyca/team-agents/commit/10f136b1c53902f60ead5a34574af9c7c204f0d6).
+4. **`agent` without a command did not list `run`.**
+   - Fix: one function builds the command line, used by the parser and by the help.
+   - The test found a second fault: `run`'s description was the doc comment of `RunArgs`.
+   - Commits: $\color{red}{\textbf{RED}}$ [`991e3cc`](https://github.com/mateusz-szczyrzyca/team-agents/commit/991e3ccf306c323a10885fd2ab44539c394cf7c7) → $\color{green}{\textbf{GREEN}}$ [`e8265c7`](https://github.com/mateusz-szczyrzyca/team-agents/commit/e8265c7d3b1ff9ad564af1c91f4a66791841c1e3).
+5. **Fixed sleeps in tests.** Three tests of this PR now wait for something they can see [`99b8295`](https://github.com/mateusz-szczyrzyca/team-agents/commit/99b829520d19aca10d3bcfc150cc3f8fa14d445b):
+   - two of them wait for the answer to a status request, which the owner gives only after its first look at every team;
+   - the bus-down test waits until the stand-in bus has refused the notice.
+   - With `remember_closed_teams` left out, the restart test still fails `3` times out of `3`.
+6. **`is_transient` widened for a test:** private again, [`0ec8c53`](https://github.com/mateusz-szczyrzyca/team-agents/commit/0ec8c538d8313516aab1972e3c4f5cda2667c46e).
+7. **The drop of a job the bus refuses for good was untested.**
+   - A test now shows the refused notice is dropped and the next one still wakes the coordinator: [`2f531e2`](https://github.com/mateusz-szczyrzyca/team-agents/commit/2f531e299f118a6674872173bedb54c59aca279a).
+   - The stand-in bus gets a mode that refuses one call with exit status `3`.
+   - Checked: the test fails when the job is kept instead.
+
+The tests changed in this pass are tests of this PR, not on `main`. The fixtures `team-cli.sh` and `flaky-agentbus.sh` (also not on `main`) only gained new actions.
+
+### Checks run in this pass
+
+```bash
+GATE_WAIT=1 make gate    # at 0c0ee3f: PASS, all 9 steps; Rust: 1,401 passed, 0 failed
+cargo clippy --workspace --all-targets --locked -- -D warnings    # 0 findings
+cargo test -p agent --bin agent -- could_not_be_started_is_given_out   # RED at b25392a: FAILED (60 s); GREEN: ok 8 times out of 8
+cargo test -p agent --bin agent -- daemon::owner::teams    # ok 3 times out of 3 after the barriers
+```
+
+Every test run went through `tools/test-lock.sh`. Size by the PR-1 command: `3,618` changed lines against `main`, `171` of them from this pass (limit `5,000`).
