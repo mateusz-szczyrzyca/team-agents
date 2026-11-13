@@ -156,7 +156,7 @@ impl Git {
     }
 
     /// The lines of each of `paths` near the ones added between `base` and `head` that were not changed, with their
-    /// numbers in the file at `head`: [`CONTEXT_LINES`] before and after each change. A file that is binary, deleted or
+    /// numbers in the file at `head`: ten lines before and after each change. A file that is binary, deleted or
     /// unchanged has none.
     ///
     /// # Errors
