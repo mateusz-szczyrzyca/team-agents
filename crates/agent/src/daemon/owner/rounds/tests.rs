@@ -157,3 +157,237 @@ async fn nothing_is_published_while_the_gate_has_not_passed_at_the_tip_of_the_br
     assert_eq!(rig.github.requests(), []);
     assert_eq!(rig.state().teams()[0].reviewers().len(), 0);
 }
+
+// ---- reviews and the merge -----------------------------------------------------------------------------------
+
+use agent_core::state::Completion;
+
+use super::rig::CHAIN;
+
+/// The reviewers that approve whatever they are asked to review.
+const APPROVING: &str = "done:VERDICT: APPROVE\\nSUMMARY: fine";
+
+/// A rig with a solo agent that does two items one after the other and two reviewers that approve both.
+async fn approving_rig() -> Rig {
+    Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await
+}
+
+/// The phase of item `id` of the only team.
+fn phase_of(state: &agent_core::state::State, id: &str) -> ItemPhase {
+    state.teams()[0].item(id.parse().unwrap()).unwrap().phase().clone()
+}
+
+#[tokio::test]
+async fn two_approving_reviews_merge_the_pull_request_through_the_api_at_the_head_they_reviewed() {
+    let mut rig = approving_rig().await;
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let ItemPhase::Done { completion } = phase_of(&state, "1.1") else {
+        panic!("item 1.1 is not done");
+    };
+    let Completion::Merged { pr, .. } = completion else {
+        panic!("item 1.1 was not merged");
+    };
+    assert_eq!(pr.number.get().get(), 1);
+    let merges = rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge"));
+    assert_eq!(merges.len(), 1);
+    let sent = merges[0].json();
+    assert_eq!(sent["merge_method"], "merge");
+    let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
+    assert_eq!(sent["sha"], git(&rig.origin, &["rev-parse", &branch]));
+    let reviewers: Vec<_> = state
+        .team(&team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .map(|member| member.task().clone())
+        .collect();
+    assert_eq!(reviewers.len(), 2);
+    assert_eq!(rig.github.reviews(1).len(), 2);
+}
+
+#[tokio::test]
+async fn the_review_of_a_reviewer_is_posted_on_the_pull_request_as_a_comment_with_its_report_and_kept() {
+    let mut rig = approving_rig().await;
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
+    let head = rig.remote_tip("main");
+    assert_ne!(head, "");
+    let posted = rig.github.reviews(1);
+    assert_eq!(posted.len(), 2);
+    for review in &posted {
+        assert_eq!(review["event"], "COMMENT");
+        assert_eq!(review["commit_id"], git(&rig.origin, &["rev-parse", &branch]));
+        let body = review["body"].as_str().unwrap();
+        assert!(body.contains("VERDICT: APPROVE"), "{body}");
+        assert!(body.contains("SUMMARY: fine"), "{body}");
+        assert!(!body.contains("STATUS: DONE"), "{body}");
+        assert!(body.contains("inv-r"), "{body}");
+    }
+    for member in state.team(&team).unwrap().reviewers() {
+        let kept = std::fs::read_to_string(rig.home.review_report_file(
+            member.task(),
+            agent_core::state::PrNumber::new(std::num::NonZeroU32::MIN),
+            0,
+        ))
+        .unwrap();
+        assert!(kept.starts_with("VERDICT: APPROVE"), "{kept}");
+    }
+}
+
+#[tokio::test]
+async fn the_next_item_starts_from_what_was_merged_and_is_published_in_its_turn() {
+    let mut rig = approving_rig().await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    let state = rig
+        .item_where("1.2", "in review", |phase| matches!(phase, ItemPhase::InReview { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let ItemPhase::InReview { pr, .. } = phase_of(&state, "1.2") else {
+        panic!("item 1.2 is not in review");
+    };
+    let second = format!("agents/claude-1/{}-1.2", tasks[0]);
+    assert_eq!((pr.number.get().get(), pr.branch.as_str()), (2, second.as_str()));
+    // The first pull request was merged into the remote's main; the second item was started from it.
+    let merged = rig.remote_tip("main");
+    let started_from_it = std::process::Command::new("git")
+        .args(["merge-base", "--is-ancestor", &merged, &second])
+        .current_dir(&rig.repo)
+        .status()
+        .unwrap();
+    assert!(started_from_it.success(), "{merged} is not part of {second}");
+}
+
+#[tokio::test]
+async fn a_reviewer_that_gave_its_review_waits_and_reviews_the_next_pull_request_in_the_same_task() {
+    let mut rig = approving_rig().await;
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    let state = rig
+        .item_where(
+            "1.2",
+            "asked for reviews",
+            |phase| matches!(phase, ItemPhase::InReview { reviews, .. } if reviews.len() == 2),
+        )
+        .await;
+    rig.stop().await.unwrap();
+
+    let found = state.team(&team).unwrap();
+    assert_eq!(found.reviewers().len(), 2);
+    let ItemPhase::InReview { reviews, .. } = phase_of(&state, "1.2") else {
+        panic!("item 1.2 is not in review");
+    };
+    let mut asked: Vec<_> = reviews.iter().map(|review| review.task.clone()).collect();
+    let mut known: Vec<_> = found.reviewers().iter().map(|member| member.task().clone()).collect();
+    asked.sort();
+    known.sort();
+    assert_eq!(asked, known);
+}
+
+#[tokio::test]
+async fn when_every_item_is_merged_the_team_ends_its_reviewers_are_closed_and_the_human_is_told() {
+    let mut rig = approving_rig().await;
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    let notice = rig.notification_with("is finished").await;
+    let state = rig
+        .state_where("every task to be done", |state| {
+            state.team(&team).is_some_and(|found| {
+                found
+                    .reviewers()
+                    .iter()
+                    .all(|member| member.status() == TaskStatus::Done)
+                    && found
+                        .crew()
+                        .roster()
+                        .iter()
+                        .all(|(_, member)| member.status() == TaskStatus::Done)
+            })
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(notice.starts_with(&format!("Team {team} is finished\n")), "{notice}");
+    let found = state.team(&team).unwrap();
+    for id in ["1.1", "1.2"] {
+        assert!(
+            matches!(
+                found.item(id.parse().unwrap()).unwrap().phase(),
+                ItemPhase::Done {
+                    completion: Completion::Merged { .. }
+                }
+            ),
+            "item {id}"
+        );
+    }
+    assert_eq!(
+        rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/2/merge")).len(),
+        1
+    );
+    // Both items are in the remote's main.
+    let second = format!("agents/claude-1/{}-1.2", tasks[0]);
+    assert_eq!(rig.remote_tip("main"), git(&rig.repo, &["rev-parse", &second]));
+}
+
+#[tokio::test]
+async fn a_report_without_a_verdict_is_asked_for_again_and_then_counts() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator(
+                "inv-r1",
+                "done:I read it and it looks fine.,done:VERDICT: APPROVE\\nSUMMARY: fine",
+            ),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let silent = state
+        .team(&team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .find(|member| member.agent().name() == "inv-r1")
+        .map(|member| member.task().clone())
+        .unwrap();
+    assert_eq!(rig.runs(&silent), 2);
+    let second = rig.prompt(&silent, 2).await;
+    assert!(second.contains("Your report has no verdict"), "{second}");
+}
