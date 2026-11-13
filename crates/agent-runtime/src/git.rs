@@ -274,6 +274,16 @@ pub enum GitError {
         /// The most commits that are read.
         limit: usize,
     },
+    /// What git printed where a number was expected is not one.
+    #[error("git {operation} printed {text:?} where a number was expected")]
+    NotANumber {
+        /// What was asked.
+        operation: GitOperation,
+        /// What it printed.
+        text: String,
+        /// Why the text is not a number.
+        source: std::num::ParseIntError,
+    },
     /// A path git printed is not a path of a repository's file.
     #[error("git {operation} printed a path that cannot be used")]
     NotARepoPath {
