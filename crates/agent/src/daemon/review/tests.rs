@@ -333,7 +333,9 @@ gate = ["true"]
         state.insert_team(led_by("inv-b", 1)).unwrap();
         go(&mut state, 11, &[TaskStatus::Running, TaskStatus::Done]);
         add_reviewer(&mut state, 1, "inv-c", 13);
+        add_reviewer(&mut state, 1, "inv-d", 14);
         go(&mut state, 13, &[TaskStatus::Running, TaskStatus::Waiting]);
+        go(&mut state, 14, &[TaskStatus::Running, TaskStatus::Waiting]);
         in_review(&mut state, 1, &[("inv-c", 13), ("inv-d", 14)]);
 
         let free = free_reviewers(&state, &config(), &team_id(0));
