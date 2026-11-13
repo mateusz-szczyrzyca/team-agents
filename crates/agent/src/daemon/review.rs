@@ -4,8 +4,12 @@
 //! `waiting`, so that the same investigator can review the next pull request and the same one again after a fix pass.
 //! Everything here decides from the state and the text of a report; the owner carries it out (`owner/rounds.rs`).
 
+use agent_core::config::Config;
+use agent_core::ids::{InvestigatorName, TaskId, TeamId};
 use agent_core::kinds::UnknownKeyword;
+use agent_core::state::State;
 use agent_core::status::ReviewVerdict;
+use rand::Rng;
 
 /// The longest report the harness keeps, posts and hands on, in characters: far above any real report, and under the
 /// limit of a comment on GitHub.
@@ -70,6 +74,38 @@ pub(super) fn report_text(message: &str) -> String {
         lines.pop();
     }
     lines.join("\n").trim().chars().take(MAX_REPORT_CHARS).collect()
+}
+
+/// Where the review of an investigator is carried out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Slot {
+    /// The investigator has a review task in the team that waits: the same task reviews again.
+    Task(TaskId),
+    /// The investigator has no task in the team yet: a new one is made.
+    New,
+}
+
+/// An investigator that is free to review a pull request of a team.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Reviewer {
+    /// The investigator.
+    pub(super) name: InvestigatorName,
+    /// Where it reviews.
+    pub(super) slot: Slot,
+}
+
+/// The investigators that may review a pull request of `team` now, by name: configured, outside its crew, with no task
+/// that is going or about to, no review to give and no team to lead or serve that is not finished.
+pub(super) fn free_reviewers(state: &State, config: &Config, team: &TeamId) -> Vec<Reviewer> {
+    let _ = (state, config, team);
+    Vec::new()
+}
+
+/// [`REVIEWS_REQUIRED`](agent_core::decide::REVIEWS_REQUIRED) of the `free` reviewers, drawn at random; `None` while
+/// fewer are free: the pull request waits.
+pub(super) fn choose_reviewers(free: Vec<Reviewer>, rng: &mut impl Rng) -> Option<Vec<Reviewer>> {
+    let _ = (free, rng);
+    None
 }
 
 #[cfg(test)]
