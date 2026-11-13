@@ -89,14 +89,19 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let command = Cli::command().subcommand(RunArgs::augment_args(clap::Command::new(RUN).about(RUN_ABOUT)));
-    let mut matches = command.try_get_matches_from(args)?;
+    let mut matches = command().try_get_matches_from(args)?;
     if matches.subcommand_name() == Some(RUN)
         && let Some((_, run)) = matches.remove_subcommand()
     {
         return Ok(Parsed::Run(RunArgs::from_arg_matches(&run)?));
     }
     Ok(Parsed::Cli(Cli::from_arg_matches(&matches)?))
+}
+
+/// The command line of `agent`: the commands of [`Cli`] and `run`; the parser and the help are made from it.
+fn command() -> clap::Command {
+    // The description is set after the arguments: `augment_args` gives the command the doc comment of `RunArgs`.
+    Cli::command().subcommand(RunArgs::augment_args(clap::Command::new(RUN)).about(RUN_ABOUT))
 }
 
 /// The arguments of `agent run`.
@@ -216,7 +221,7 @@ where
     let code = match parse(args) {
         // No command: the help says what there is.
         Ok(Parsed::Cli(Cli { command: None })) => {
-            write_text(out, &Cli::command().render_help().to_string())?;
+            write_text(out, &command().render_help().to_string())?;
             ExitCode::SUCCESS
         }
         Ok(Parsed::Cli(Cli { command: Some(command) })) => {
