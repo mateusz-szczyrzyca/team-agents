@@ -313,5 +313,44 @@ pub fn matches_any(patterns: &[PathPattern], path: &RepoPath) -> bool {
     patterns.iter().any(|pattern| pattern.matches(path))
 }
 
+/// Most patterns a list of a configuration may have.
+pub const MAX_PATTERNS: usize = 256;
+
+/// A list of [`PathPattern`]s, at most [`MAX_PATTERNS`] of them: what one of the lists of a repository's `checks`
+/// table is.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "Vec<PathPattern>")]
+pub struct PathPatterns(Vec<PathPattern>);
+
+/// A list with more patterns than [`MAX_PATTERNS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("a list of {len} path patterns is longer than the {MAX_PATTERNS} allowed")]
+pub struct TooManyPatterns {
+    /// How many patterns the list had.
+    pub len: usize,
+}
+
+impl TryFrom<Vec<PathPattern>> for PathPatterns {
+    type Error = TooManyPatterns;
+
+    fn try_from(patterns: Vec<PathPattern>) -> Result<Self, Self::Error> {
+        Ok(Self(patterns))
+    }
+}
+
+impl PathPatterns {
+    /// The patterns, in the order written.
+    #[must_use]
+    pub fn as_slice(&self) -> &[PathPattern] {
+        &self.0
+    }
+
+    /// Whether any pattern of the list matches `path`.
+    #[must_use]
+    pub fn matches(&self, path: &RepoPath) -> bool {
+        matches_any(&self.0, path)
+    }
+}
+
 #[cfg(test)]
 mod tests;
