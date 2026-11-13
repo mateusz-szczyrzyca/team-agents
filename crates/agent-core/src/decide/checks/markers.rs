@@ -277,6 +277,23 @@ fn is_name_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '.' | ':')
 }
 
+/// Whether `before`, the start of a line of Rust, ends inside a string that one of its quotes opened.
+fn ends_in_string(before: &str) -> bool {
+    let mut inside = false;
+    let mut chars = before.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            // An escape in a string takes the character after it with it, a quote too.
+            '\\' if inside => {
+                chars.next();
+            }
+            '"' => inside = !inside,
+            _ => {}
+        }
+    }
+    inside
+}
+
 impl Place {
     /// Whether `line`, with its runs of white space made one space, has `text` where this place says.
     fn has(self, line: &str, text: &str) -> bool {
@@ -292,7 +309,9 @@ impl Place {
             Self::Applied => {
                 CFG_ATTR.iter().any(|start| line.starts_with(start))
                     && line.match_indices(text).any(|(at, _)| {
-                        let starts_word = line.get(..at).is_some_and(|before| !before.ends_with(is_name_char));
+                        let starts_word = line
+                            .get(..at)
+                            .is_some_and(|before| !before.ends_with(is_name_char) && !ends_in_string(before));
                         // A text that ends with its `(` ends a word; another one where no name character follows it.
                         let ends_word = text.ends_with('(')
                             || line
