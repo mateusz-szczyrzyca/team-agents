@@ -106,3 +106,35 @@ async fn letting_go_a_directory_that_was_never_watched_is_an_error_that_names_it
         "{error:?}"
     );
 }
+
+/// Everything `events` reports until it has been quiet for a moment.
+async fn quiet(events: &mut mpsc::Receiver<Saved>) -> Vec<Saved> {
+    let mut all = Vec::new();
+    while let Ok(Some(saved)) = tokio::time::timeout(Duration::from_secs(1), events.recv()).await {
+        all.push(saved);
+    }
+    all
+}
+
+#[tokio::test]
+async fn the_save_of_another_task_is_reported_though_the_queue_is_full_of_saves_of_one() {
+    let home = tempfile::tempdir().unwrap();
+    let make = |n: u32| {
+        let dir = home.path().join(task(n).as_str());
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    };
+    let (first, second) = (make(1), make(2));
+    let (queue, mut events) = mpsc::channel(4);
+    let mut watcher = Watcher::new(queue).unwrap();
+    watcher.watch(&first).unwrap();
+    watcher.watch(&second).unwrap();
+
+    for n in 0..100 {
+        std::fs::write(first.join("questions-1.md"), format!("save {n}")).unwrap();
+    }
+    std::fs::write(second.join("questions-1.md"), "the only save").unwrap();
+
+    let reported = quiet(&mut events).await;
+    assert!(reported.contains(&saved(2, 1)), "{reported:?}");
+}
