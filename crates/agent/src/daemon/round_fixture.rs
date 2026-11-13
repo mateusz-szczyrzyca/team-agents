@@ -46,18 +46,6 @@ pub(super) fn pr(number: u32, head: &str) -> PullRequest {
     }
 }
 
-/// A solo team (`claude-1`, task 1) on `list`, with the merge mode `merge`.
-pub(super) fn solo(list: &str, merge: MergeMode) -> Team {
-    Team::new(
-        team_id(0),
-        repo(),
-        at(0),
-        merge,
-        TaskListText::new(list.to_owned()).unwrap(),
-        Crew::solo(member(1, normal("claude-1"))).unwrap(),
-    )
-}
-
 /// A team on `list` led by the coordinator `inv-opus` (task 1) with the members `claude-1` (task 2) and `claude-2`
 /// (task 3), in autopilot.
 pub(super) fn led(list: &str) -> Team {

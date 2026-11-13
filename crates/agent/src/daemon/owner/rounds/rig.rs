@@ -400,14 +400,6 @@ impl Rig {
             .unwrap()
     }
 
-    /// The branches of the scratch repository.
-    pub(super) fn branches(&self) -> Vec<String> {
-        git(&self.repo, &["for-each-ref", "--format=%(refname:short)", "refs/heads"])
-            .lines()
-            .map(str::to_owned)
-            .collect()
-    }
-
     /// The tip of `branch` in the remote.
     pub(super) fn remote_tip(&self, branch: &str) -> String {
         git(&self.origin, &["rev-parse", &format!("refs/heads/{branch}")])
