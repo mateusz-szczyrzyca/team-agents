@@ -273,7 +273,10 @@ the coordinator and for a requester (with the sentence of how a worker that coul
 **Known limits.** An agent that never reads its messages is woken again and again (the Bash wake-loop guard is not
 ported). A request that is being served when the daemon stops is not returned. The bus gives the oldest request of every
 team to whichever team's worker asks: a look at a team holds the requests of other teams while it reads the queue on, and
-puts them back before the next team is looked at. The notices still in the outbox when the daemon stops are lost.
+puts them back before the next team is looked at. The notices still in the outbox when the daemon stops are lost, and so is why a queued run starts (a wake-up, an item,
+a request): it then starts as the plain continuation of its task. The owner's loop waits for each `agentbus` and `git`
+call of a look at a team (an `agentbus` call for at most `15` s): a bus that hangs leaves the socket unanswered that
+long.
 
 Not done here, by item: answers and the controls (7.2); the gate (7.3); pull requests, reviews and the merge, with the
 next item of a feature (8.1); the dashboard (9.1). A resumed agent's checkpoint is not read from the agentbus yet.
