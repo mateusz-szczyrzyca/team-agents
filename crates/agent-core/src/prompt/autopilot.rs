@@ -70,7 +70,67 @@ impl AutopilotPrompt {
     /// Where the text is, who reads it and which variables it uses.
     #[must_use]
     pub const fn spec(self) -> PromptSpec {
-        let _ = self;
-        PromptSpec::new("harness/pr/missing.md", Audience::Model, &[])
+        match self {
+            Self::PrTitle => PromptSpec::new("harness/pr/title.md", Audience::Model, &["item_ids", "item_titles"]),
+            Self::PrBody => PromptSpec::new(
+                "harness/pr/body.md",
+                Audience::Model,
+                &["team", "repo", "gate", "items"],
+            ),
+            Self::PrBodyItem => PromptSpec::new(
+                "harness/pr/body-item.md",
+                Audience::Model,
+                &["item_id", "item_title", "item_description"],
+            ),
+            Self::PrBodyExpected => PromptSpec::new("harness/pr/body-expected.md", Audience::Model, &["expected"]),
+            Self::PrBodyChecks => PromptSpec::new("harness/pr/body-checks.md", Audience::Model, &["checks"]),
+            Self::PrUpdate => PromptSpec::new("harness/pr/update.md", Audience::Model, &["head", "pass", "gate"]),
+            Self::NoticeApproved => PromptSpec::new(
+                "harness/pr/notice-approved.md",
+                Audience::Human,
+                &["team", "repo", "pr", "url"],
+            ),
+            Self::NoticePublishFailed => PromptSpec::new(
+                "harness/pr/notice-publish-failed.md",
+                Audience::Human,
+                &["team", "items", "reason"],
+            ),
+            Self::NoticeMergeFailed => PromptSpec::new(
+                "harness/pr/notice-merge-failed.md",
+                Audience::Human,
+                &["team", "pr", "url", "reason"],
+            ),
+            Self::ReviewRequest => PromptSpec::new(
+                "harness/review/request.md",
+                Audience::Model,
+                &["team", "pr", "branch", "base", "head", "round"],
+            ),
+            Self::ReviewComment => PromptSpec::new(
+                "harness/review/comment.md",
+                Audience::Model,
+                &["reviewer", "head", "report"],
+            ),
+            Self::ReviewFixPass => PromptSpec::new(
+                "harness/review/fix-pass.md",
+                Audience::Model,
+                &["pr", "pass", "passes", "findings"],
+            ),
+            Self::ReviewAskHuman => PromptSpec::new(
+                "harness/review/ask-human.md",
+                Audience::Model,
+                &["pr", "passes", "findings", "questions_file", "round", "task"],
+            ),
+            Self::ReviewVerdictMissing => PromptSpec::new("harness/review/verdict-missing.md", Audience::Model, &[]),
+            Self::NoticeNoVerdict => PromptSpec::new(
+                "harness/review/notice-no-verdict.md",
+                Audience::Human,
+                &["reviewer", "pr", "task"],
+            ),
+            Self::NoticeDecision => PromptSpec::new(
+                "harness/review/notice-decision.md",
+                Audience::Human,
+                &["team", "pr", "passes"],
+            ),
+        }
     }
 }
