@@ -23,15 +23,25 @@ pub enum QuestionsPrompt {
 
 impl QuestionsPrompt {
     /// Every text of the catalog.
-    pub const ALL: &'static [Self] = &[];
+    pub const ALL: &'static [Self] = &[
+        Self::Instructions,
+        Self::Accepted,
+        Self::Answered,
+        Self::NoticeIncomplete,
+    ];
 
     /// Where the text is, who reads it and which variables it uses.
     #[must_use]
     pub const fn spec(self) -> PromptSpec {
         match self {
-            Self::Instructions | Self::Accepted | Self::Answered | Self::NoticeIncomplete => {
-                PromptSpec::new("harness/questions/instructions.md", Audience::Human, &[])
-            }
+            Self::Instructions => PromptSpec::new("harness/questions/instructions.md", Audience::Human, &["task_id"]),
+            Self::Accepted => PromptSpec::new("harness/questions/accepted.md", Audience::Model, &["recommendation"]),
+            Self::Answered => PromptSpec::new("harness/questions/answered.md", Audience::Model, &["round", "answers"]),
+            Self::NoticeIncomplete => PromptSpec::new(
+                "harness/questions/notice-incomplete.md",
+                Audience::Human,
+                &["agent", "task", "file", "problems"],
+            ),
         }
     }
 }
