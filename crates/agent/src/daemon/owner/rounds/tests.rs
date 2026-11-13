@@ -1041,3 +1041,55 @@ async fn the_subscribers_see_the_pull_request_opened_the_reviews_come_in_and_the
     );
     assert_eq!(statuses.len(), 1);
 }
+
+// ---- the reviewers are few ---------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_pull_request_waits_for_two_free_investigators_while_other_reviews_keep_them_busy() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            normal("claude-2", "work"),
+            investigator("inv-r1", SILENT),
+            investigator("inv-r2", SILENT),
+            investigator("inv-r3", SILENT),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (first, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.state_where("the first pull request to have its reviews asked", |state| {
+        state
+            .team(&first)
+            .and_then(|found| found.item("1.1".parse().unwrap()))
+            .is_some_and(
+                |progress| matches!(progress.phase(), ItemPhase::InReview { reviews, .. } if reviews.len() == 2),
+            )
+    })
+    .await;
+    let (second, _) = rig.run(&["claude-2"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .state_where("the second pull request to be open", |state| {
+            state
+                .team(&second)
+                .and_then(|found| found.item("1.1".parse().unwrap()))
+                .is_some_and(|progress| matches!(progress.phase(), ItemPhase::InReview { .. }))
+        })
+        .await;
+    looked_again(&rig).await;
+    let state_later = rig.state();
+    rig.stop().await.unwrap();
+
+    for state in [&state, &state_later] {
+        let found = state.team(&second).unwrap();
+        let ItemPhase::InReview { reviews, .. } = found.item("1.1".parse().unwrap()).unwrap().phase().clone() else {
+            panic!("the item of the second team is not in review");
+        };
+        assert_eq!(reviews, []);
+        assert_eq!(found.reviewers().len(), 0);
+    }
+    assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 2);
+}
