@@ -129,7 +129,7 @@ Rule 1 forbids it unless the task changes the behaviour. All of these are forced
    Needs the human's decision if a resumed item should get a second round.
 2. **Item-less list**: its round closes `abandoned` when the team ends (it has no item to merge).
 3. **Invariant dropped**: "an open round has an item that is not done" is not checked on read. The state can be saved
-   between the item's merge and the close of its round by a crash; the daemon closes it on the next look. The checks
+   between the item's merge and the close of its round by a crash, and such a state must still load. I did not add a repair of it on the next look. The checks
    on read are the four in the task.
 4. **`approved` for the human merge.** With `--no-merge` a round closes `approved` and stays so when the human merges
    later; a `merged` round needs an item done as merged.
