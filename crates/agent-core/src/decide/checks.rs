@@ -357,20 +357,27 @@ fn edited_red_tests(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
         .enumerate()
         .filter(|(_, commit)| commit.subject.starts_with(RED_PREFIX))
     {
-        let tests: Vec<&RepoPath> = red
-            .files
-            .iter()
+        let tests: Vec<&RepoPath> = commit_files(red)
             .map(|file| &file.path)
             .filter(|path| rules.test_paths.matches(path))
             .collect();
         if tests.is_empty() {
             continue;
         }
-        for edit in later_commits(&facts.commits, position) {
+        let later = later_commits(&facts.commits, position);
+        let ancestry: HashSet<&CommitId> = std::iter::once(&red.id)
+            .chain(later.iter().map(|edit| &edit.id))
+            .collect();
+        for edit in later {
             if is_named_test_fix(rules, facts, edit) {
                 continue;
             }
-            for file in edit.files.iter().filter(|file| file.takes_lines_out()) {
+            let inherited = edit
+                .merge_parents
+                .iter()
+                .filter(|parent| ancestry.contains(&parent.parent));
+            let files = edit.files.iter().chain(inherited.flat_map(|parent| &parent.files));
+            for file in files.filter(|file| file.takes_lines_out()) {
                 if tests.contains(&&file.path) && reported.insert((&file.path, &edit.id)) {
                     issues.push(Issue::RedTestEdited {
                         path: file.path.clone(),
@@ -401,11 +408,19 @@ fn later_commits(commits: &[CommitFacts], position: usize) -> Vec<&CommitFacts> 
     later
 }
 
+/// All files a commit touches, including each parent comparison for a merge.
+fn commit_files(commit: &CommitFacts) -> impl Iterator<Item = &FileChange> {
+    commit
+        .files
+        .iter()
+        .chain(commit.merge_parents.iter().flat_map(|parent| &parent.files))
+}
+
 /// Whether `commit` is a `TEST-FIX:` that touches test files only and that the description names.
 fn is_named_test_fix(rules: &Checks, facts: &RoundFacts, commit: &CommitFacts) -> bool {
     commit.subject.starts_with(TEST_FIX_PREFIX)
-        && !commit.files.is_empty()
-        && commit.files.iter().all(|file| rules.test_paths.matches(&file.path))
+        && commit_files(commit).next().is_some()
+        && commit_files(commit).all(|file| rules.test_paths.matches(&file.path))
         && names_commit(&facts.description, &commit.id)
 }
 

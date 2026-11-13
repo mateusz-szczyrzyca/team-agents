@@ -373,6 +373,11 @@ files, the commits and the added lines from the merge base with the fetched base
 A file that matches `test_paths` is a test even when `code_paths` matches it too; a protected file is reported as protected
 only. A test module inside a source file is not a test file: it stays with the reviewers.
 
+A merge has a separate diff against each parent. Frozen RED tests are compared only against parents whose history contains
+that RED commit, including indirect ancestors. This catches assertions removed during a merge without treating the import
+of RED work from an unrelated branch as a later edit. A named `TEST-FIX:` merge must touch only test files against every
+parent; a merge whose own subject starts with `RED:` freezes the test paths it touches for later descendants too.
+
 **What the issues come to** (`decide::round::Checking`, the phase before the reviews are asked; a type of its own because the
 tests of `RoundState` list its phases and events):
 

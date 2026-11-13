@@ -8,7 +8,9 @@
 
 use std::collections::HashMap;
 
-use agent_core::decide::checks::{AddedLine, Change, CommitFacts, FileChange, Lines, RoundFacts, markers};
+use agent_core::decide::checks::{
+    AddedLine, Change, CommitFacts, FileChange, Lines, ParentChanges, RoundFacts, markers,
+};
 use agent_core::repo_path::RepoPath;
 use agent_core::state::CommitId;
 
@@ -85,8 +87,8 @@ impl Git {
     }
 
     /// The commits after `base` up to `head`, oldest first (a commit after its parents), each with its parents, its
-    /// message and the files it changed against its first parent; a rename is a deletion and an addition, and a merge
-    /// has no files.
+    /// message and the files it changed against its first parent. Merges retain separate diffs against every parent
+    /// in `merge_parents`; their `files` list stays empty. A rename is a deletion and an addition.
     ///
     /// # Errors
     /// [`GitError::TooManyCommits`] when the range has more than [`GitLimits::max_commits`](super::GitLimits); the
@@ -118,7 +120,16 @@ impl Git {
             });
         }
         for commit in &mut commits {
-            commit.files = self.commit_files(&commit.id).await?;
+            if commit.parents.len() > 1 {
+                for parent in &commit.parents {
+                    commit.merge_parents.push(ParentChanges {
+                        parent: parent.clone(),
+                        files: self.commit_files(&commit.id, Some(parent)).await?,
+                    });
+                }
+            } else {
+                commit.files = self.commit_files(&commit.id, None).await?;
+            }
         }
         Ok(commits)
     }
@@ -173,30 +184,25 @@ impl Git {
         })
     }
 
-    /// The files `commit` changed against its first parent: none for a merge.
-    async fn commit_files(&self, commit: &CommitId) -> Result<Vec<FileChange>, GitError> {
+    /// The files `commit` changed against `parent`, or its sole parent when none is supplied. A root compares with
+    /// the empty tree. Explicit merge parents preserve changes hidden by git's default merge-diff behavior.
+    async fn commit_files(&self, commit: &CommitId, parent: Option<&CommitId>) -> Result<Vec<FileChange>, GitError> {
         let operation = GitOperation::DiffTree;
-        let id = commit.to_string();
-        let captured = self
-            .run_ok(
-                operation,
-                Reach::Local,
-                &[
-                    arg("diff-tree"),
-                    arg("-r"),
-                    arg("-z"),
-                    arg("--no-renames"),
-                    arg("--root"),
-                    arg("--no-commit-id"),
-                    arg("--no-ext-diff"),
-                    arg("--no-textconv"),
-                    arg("--raw"),
-                    arg("--numstat"),
-                    arg(&id),
-                    arg("--"),
-                ],
-            )
-            .await?;
+        let mut args = vec![
+            arg("diff-tree"),
+            arg("-r"),
+            arg("-z"),
+            arg("--no-renames"),
+            arg("--root"),
+            arg("--no-commit-id"),
+            arg("--no-ext-diff"),
+            arg("--no-textconv"),
+            arg("--raw"),
+            arg("--numstat"),
+        ];
+        args.extend(parent.map(|id| arg(id.as_str())));
+        args.extend([arg(commit.as_str()), arg("--")]);
+        let captured = self.run_ok(operation, Reach::Local, &args).await?;
         parse_tree_diff(operation, whole(operation, &captured.stdout, self.limits)?)
     }
 
