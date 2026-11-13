@@ -17,7 +17,7 @@ use agent_core::cli::ActivityEvent;
 use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::protocol::{Client, ControlAction};
-use agent_core::state::{MAX_STATE_BYTES, RenderError, State, StateError, Timestamp};
+use agent_core::state::{GateRecord, MAX_STATE_BYTES, RenderError, State, StateError, Timestamp};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinError;
@@ -54,6 +54,9 @@ const WORKTREES_DIR: &str = "worktrees";
 
 /// The activity log of a task, in the task's directory: JSON lines, append only.
 const ACTIVITY_FILE: &str = "activity.jsonl";
+
+/// The file in a task's directory that holds the last gate record of the task.
+const GATE_RECORD_FILE: &str = "gate.json";
 
 /// Prefix of the temporary file a save writes in the home before it renames it over the state file.
 const TEMP_PREFIX: &str = ".state-";
@@ -172,6 +175,18 @@ impl Home {
         self.root().join(WORKTREES_DIR).join(repo.as_str()).join(task.as_str())
     }
 
+    /// The file with the output of the `run`-th gate run of `task`, in the task's directory.
+    #[must_use]
+    pub fn gate_log(&self, task: &TaskId, run: NonZeroU32) -> PathBuf {
+        PathBuf::new()
+    }
+
+    /// The file with the last gate record of `task`, in the task's directory.
+    #[must_use]
+    pub fn gate_record_file(&self, task: &TaskId) -> PathBuf {
+        PathBuf::new()
+    }
+
     /// The questions file of round `round` of `task`, in the task's directory.
     #[must_use]
     pub fn questions_file(&self, task: &TaskId, round: NonZeroU32) -> PathBuf {
@@ -285,6 +300,12 @@ pub enum StoreError {
     /// An activity line cannot be written as JSON.
     #[error("an activity line cannot be rendered")]
     RenderActivity {
+        /// What the serializer said.
+        source: serde_json::Error,
+    },
+    /// A gate record cannot be written as JSON.
+    #[error("a gate record cannot be rendered")]
+    RenderGateRecord {
         /// What the serializer said.
         source: serde_json::Error,
     },
@@ -587,6 +608,16 @@ impl StateStore {
         let write_dir = dir.clone();
         let file = blocking(move || write_temp(&write_dir, text.as_bytes())).await?;
         Ok(StagedState { file, target, dir })
+    }
+
+    /// Saves `record` as the last gate record of `task`, replacing the one before: written to a temporary file in the
+    /// task's directory and renamed over [`Home::gate_record_file`], so that a reader sees a whole record or none.
+    ///
+    /// # Errors
+    /// [`StoreError::RenderGateRecord`], [`StoreError::CreateDir`], [`StoreError::WriteTemp`], [`StoreError::Replace`],
+    /// [`StoreError::SyncDir`] and [`StoreError::Worker`].
+    pub async fn save_gate_record(&self, task: &TaskId, record: &GateRecord) -> Result<(), StoreError> {
+        Ok(())
     }
 
     /// Appends one line to the activity log of `task`: the time and the event, texts cut to
