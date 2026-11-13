@@ -20,6 +20,10 @@ use crate::process::ExitReport;
 /// The most bytes of the diff of one file that are read: a generated file of added lines may be long.
 const MAX_PATCH_BYTES: u64 = 8 << 20;
 
+/// How many lines of a file git shows before and after each change for [`Git::range_unchanged_lines`]: enough for the
+/// attribute that rustfmt wrapped over lines around an added one.
+const CONTEXT_LINES: u32 = 10;
+
 /// What a commit message line's NUL-terminated record in `git log` has: the ID, the parents, the subject and the body.
 const LOG_FIELDS: usize = 4;
 
@@ -152,7 +156,7 @@ impl Git {
     }
 
     /// The lines of each of `paths` near the ones added between `base` and `head` that were not changed, with their
-    /// numbers in the file at `head`: ten lines before and after each change. A file that is binary, deleted or
+    /// numbers in the file at `head`: [`CONTEXT_LINES`] before and after each change. A file that is binary, deleted or
     /// unchanged has none.
     ///
     /// # Errors
@@ -163,15 +167,19 @@ impl Git {
         head: &CommitId,
         paths: &[RepoPath],
     ) -> Result<Vec<UnchangedLine>, GitError> {
-        let added = self.range_added_lines(base, head, paths).await?;
-        Ok(added
-            .into_iter()
-            .map(|line| UnchangedLine {
-                path: line.path,
-                number: line.number,
-                text: line.text,
-            })
-            .collect())
+        let changes = self.range_changes(base, head).await?;
+        let mut unchanged = Vec::new();
+        for path in paths {
+            let from = changes
+                .iter()
+                .find(|file| file.path == *path)
+                .and_then(|file| match &file.change {
+                    Change::Renamed { from } => Some(from),
+                    Change::Added | Change::Modified | Change::Deleted => None,
+                });
+            unchanged.extend(self.patch_in(base, head, path, from, CONTEXT_LINES).await?.unchanged);
+        }
+        Ok(unchanged)
     }
 
     /// The facts the checks before a review decide from: the files, the commits, the added lines of the files whose
@@ -259,13 +267,27 @@ impl Git {
         path: &RepoPath,
         from: Option<&RepoPath>,
     ) -> Result<Vec<AddedLine>, GitError> {
+        Ok(self.patch_in(base, head, path, from, 0).await?.added)
+    }
+
+    /// The lines added to the file `path` between `base` and `head` and the unchanged ones around them, `context` lines
+    /// before and after each change; `from` is where the file was when it was renamed.
+    async fn patch_in(
+        &self,
+        base: &CommitId,
+        head: &CommitId,
+        path: &RepoPath,
+        from: Option<&RepoPath>,
+        context: u32,
+    ) -> Result<Patch, GitError> {
         let operation = GitOperation::Diff;
         let (base, head) = (base.to_string(), head.to_string());
         let mut specs = vec![literal(path)];
         specs.extend(from.map(literal));
+        let unified = format!("-U{context}");
         let mut args = vec![
             arg("diff"),
-            arg("-U0"),
+            arg(&unified),
             arg("-M"),
             arg("--no-color"),
             arg("--no-ext-diff"),
@@ -489,40 +511,63 @@ fn parse_raw_modes(operation: GitOperation, bytes: &[u8]) -> Result<Vec<RepoPath
     Ok(changed)
 }
 
-/// Reads a diff made with no lines of context: the lines that each hunk adds, from the number its header gives.
-fn parse_patch(operation: GitOperation, path: &RepoPath, bytes: &[u8]) -> Result<Vec<AddedLine>, GitError> {
-    let mut added = Vec::new();
-    // Lines of the hunk that are still to be read, and the number of the next added line.
-    let (mut removing, mut adding, mut number) = (0_u32, 0_u32, 0_u32);
+/// The lines of a file that a diff shows: those it adds and those it shows around them unchanged.
+#[derive(Debug, Default)]
+struct Patch {
+    /// The lines added, in the order of their numbers.
+    added: Vec<AddedLine>,
+    /// The lines shown unchanged, in the order of their numbers.
+    unchanged: Vec<UnchangedLine>,
+}
+
+/// Reads a diff: the lines that each hunk adds and the unchanged ones it shows, from the number its header gives.
+fn parse_patch(operation: GitOperation, path: &RepoPath, bytes: &[u8]) -> Result<Patch, GitError> {
+    let mut patch = Patch::default();
+    // Lines of the hunk that are still to be read on the old side and on the new, and the number of the next new line.
+    let (mut old_left, mut new_left, mut number) = (0_u32, 0_u32, 0_u32);
     for line in bytes.split(|byte| *byte == b'\n') {
-        if removing == 0 && adding == 0 {
+        if old_left == 0 && new_left == 0 {
             if let Some(header) = line.strip_prefix(b"@@ -") {
-                (removing, number, adding) = parse_hunk_header(operation, header)?;
+                (old_left, number, new_left) = parse_hunk_header(operation, header)?;
             }
             continue;
         }
         match line.split_first() {
-            Some((b'-', _)) if removing > 0 => removing = removing.saturating_sub(1),
-            Some((b'+', text)) if adding > 0 => {
-                let text = text.strip_suffix(b"\r").unwrap_or(text);
-                added.push(AddedLine {
+            Some((b'-', _)) if old_left > 0 => old_left = old_left.saturating_sub(1),
+            Some((b'+', text)) if new_left > 0 => {
+                patch.added.push(AddedLine {
                     path: path.clone(),
                     number,
-                    text: String::from_utf8_lossy(text).into_owned(),
+                    text: line_text(text),
                 });
                 number = number.saturating_add(1);
-                adding = adding.saturating_sub(1);
+                new_left = new_left.saturating_sub(1);
+            }
+            Some((b' ', text)) if old_left > 0 && new_left > 0 => {
+                patch.unchanged.push(UnchangedLine {
+                    path: path.clone(),
+                    number,
+                    text: line_text(text),
+                });
+                number = number.saturating_add(1);
+                old_left = old_left.saturating_sub(1);
+                new_left = new_left.saturating_sub(1);
             }
             // The note that the last line of a file has no line break belongs to the line before it.
             Some((b'\\', _)) => {}
             _ => return Err(unexpected(operation, line)),
         }
     }
-    Ok(added)
+    Ok(patch)
 }
 
-/// Reads what follows `@@ -` in a hunk header: `old[,count] +new[,count] @@`, as the lines the hunk removes, the number of
-/// its first new line and the lines it adds.
+/// The text of a line of a diff, without its carriage return.
+fn line_text(text: &[u8]) -> String {
+    String::from_utf8_lossy(text.strip_suffix(b"\r").unwrap_or(text)).into_owned()
+}
+
+/// Reads what follows `@@ -` in a hunk header: `old[,count] +new[,count] @@`, as the lines the hunk has on the old side, the
+/// number of its first new line and the lines it has on the new side — unchanged ones included.
 fn parse_hunk_header(operation: GitOperation, header: &[u8]) -> Result<(u32, u32, u32), GitError> {
     let text = utf8(operation, header)?;
     let wrong = || unexpected(operation, header);

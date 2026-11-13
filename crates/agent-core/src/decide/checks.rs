@@ -298,12 +298,7 @@ pub fn assess(rules: &Checks, facts: &RoundFacts, allowed: &[Subject]) -> Vec<Is
 /// The issues the checks find in `facts` and `unchanged`, the lines near the added ones that the round left as they
 /// were, in the same files and in the order of their numbers; the rest as in [`assess`].
 #[must_use]
-pub fn assess_near(
-    rules: &Checks,
-    facts: &RoundFacts,
-    unchanged: &[UnchangedLine],
-    allowed: &[Subject],
-) -> Vec<Issue> {
+pub fn assess_near(rules: &Checks, facts: &RoundFacts, unchanged: &[UnchangedLine], allowed: &[Subject]) -> Vec<Issue> {
     let mut issues = protected_changes(rules, facts);
     issues.extend(changed_tests(rules, facts));
     issues.extend(edited_red_tests(rules, facts));
