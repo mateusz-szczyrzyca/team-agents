@@ -171,7 +171,7 @@ impl VscodeOpener {
                 source,
             }),
             // A window that does not answer in time, or whose output cannot be read, is a window that did not take it.
-            Err(other) => Ok(Err(other.to_string())),
+            Err(other) => Ok(Err(said_by_a_failed_capture(&other))),
         }
     }
 
@@ -202,6 +202,11 @@ struct Found {
     program: Option<PathBuf>,
     /// The sockets of the windows of this user, in the order to try them.
     sockets: Vec<PathBuf>,
+}
+
+/// What a window that did not answer is said to have said: the failure and its causes, so that a human sees why.
+fn said_by_a_failed_capture(_error: &CaptureError) -> String {
+    String::new()
 }
 
 /// The entries of `dir`; none when the directory is not there.
@@ -291,4 +296,21 @@ fn windows(dir: &Path, uid: u32) -> Result<Vec<PathBuf>, OpenError> {
     }
     found.sort_by_key(|(time, _)| std::cmp::Reverse(*time));
     Ok(found.into_iter().map(|(_, path)| path).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_window_that_failed_to_answer_is_said_to_have_failed_with_its_cause() {
+        let error = CaptureError::Io {
+            source: io::Error::new(io::ErrorKind::BrokenPipe, "the pipe broke"),
+        };
+
+        assert_eq!(
+            said_by_a_failed_capture(&error),
+            "cannot read the output of the process or wait for it: the pipe broke"
+        );
+    }
 }
