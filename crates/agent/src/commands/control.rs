@@ -35,8 +35,14 @@ pub(super) async fn applied(
     verb: &str,
     out: &mut impl Write,
 ) -> Result<(), ControlError> {
-    let _ = (connection, command, verb, out);
-    Ok(())
+    let reply = connection.request(CLIENT, command).await?;
+    let Reply::Applied { tasks } = reply else {
+        return Err(unexpected(&reply));
+    };
+    for task in tasks {
+        writeln!(out, "{verb} {task}").map_err(ControlError::Output)?;
+    }
+    out.flush().map_err(ControlError::Output)
 }
 
 /// The kind of the reply, for [`ControlError::UnexpectedReply`].
