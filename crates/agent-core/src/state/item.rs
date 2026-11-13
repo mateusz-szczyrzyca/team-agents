@@ -852,7 +852,30 @@ impl ItemProgress {
     /// round has reviews; [`AskReviewsError::NoReviews`] for an empty request; [`AskReviewsError::NotPending`] for a
     /// review that has its outcome; [`AskReviewsError::Reviews`] when a reviewer or a task is named twice.
     pub fn ask_reviews(&mut self, reviews: Vec<Review>) -> Result<(), AskReviewsError> {
-        drop(reviews);
+        let item = self.id;
+        let ItemPhase::InReview { reviews: round, .. } = &mut self.phase else {
+            return Err(AskReviewsError::NotInReview {
+                item,
+                phase: self.phase.kind(),
+            });
+        };
+        if !round.is_empty() {
+            return Err(AskReviewsError::AlreadyAsked { item });
+        }
+        if reviews.is_empty() {
+            return Err(AskReviewsError::NoReviews { item });
+        }
+        if let Some(answered) = reviews
+            .iter()
+            .find(|review| !matches!(review.outcome, ReviewOutcome::Pending))
+        {
+            return Err(AskReviewsError::NotPending {
+                item,
+                reviewer: answered.reviewer.clone(),
+            });
+        }
+        check_round(&reviews).map_err(|source| AskReviewsError::Reviews { item, source })?;
+        *round = reviews;
         Ok(())
     }
 
