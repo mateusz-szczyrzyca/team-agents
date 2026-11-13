@@ -72,15 +72,42 @@ pub(super) enum Skipped {
 
 /// What `steer` does to a task whose status is `status`.
 pub(super) const fn decide(steer: Steer, status: TaskStatus) -> Step {
-    let _ = (steer, status);
-    Step::Skip(Skipped::Over)
+    use TaskStatus::{Done, Failed, Paused, Questions, Queued, Running, Stopped, Waiting};
+    match (steer, status) {
+        (Steer::Stop | Steer::Pause | Steer::Unpause | Steer::Resume, Done) => Step::Skip(Skipped::Over),
+        (Steer::Stop, Queued | Waiting | Questions | Paused | Failed) => Step::Move(Stopped),
+        (Steer::Stop, Running) => Step::Halt(Halt::Stop),
+        (Steer::Stop, Stopped) | (Steer::Pause, Paused) => Step::Skip(Skipped::Already),
+        (Steer::Pause, Queued | Waiting) => Step::Move(Paused),
+        (Steer::Pause, Running) => Step::Halt(Halt::Pause),
+        (Steer::Pause, Stopped | Failed) => Step::Skip(Skipped::Inactive),
+        (Steer::Unpause, Paused) => Step::Move(Queued),
+        (Steer::Unpause, Queued | Running | Waiting | Questions | Stopped | Failed) => Step::Skip(Skipped::NotPaused),
+        (Steer::Resume, Waiting | Stopped | Failed) => Step::Move(Queued),
+        (Steer::Resume, Queued | Running) => Step::Skip(Skipped::Going),
+        (Steer::Resume, Paused) => Step::Skip(Skipped::Paused),
+        (Steer::Pause | Steer::Resume, Questions) => Step::Skip(Skipped::Questions),
+    }
 }
 
 /// The status of a task whose run ended by itself while `halt` was asked of it, and which `settled` would send to:
 /// the human's word wins where it can.
 pub(super) const fn after_halt(halt: Halt, settled: TaskStatus) -> TaskStatus {
-    let _ = halt;
-    settled
+    match (halt, settled) {
+        (Halt::Stop, TaskStatus::Queued | TaskStatus::Waiting | TaskStatus::Paused) => TaskStatus::Stopped,
+        (Halt::Pause, TaskStatus::Queued | TaskStatus::Waiting) => TaskStatus::Paused,
+        // A task that asks the human, is over or failed keeps what its run made of it: the human still has to answer,
+        // and a finished task is not undone.
+        (
+            Halt::Stop | Halt::Pause,
+            TaskStatus::Running
+            | TaskStatus::Questions
+            | TaskStatus::Paused
+            | TaskStatus::Stopped
+            | TaskStatus::Failed
+            | TaskStatus::Done,
+        ) => settled,
+    }
 }
 
 #[cfg(test)]
