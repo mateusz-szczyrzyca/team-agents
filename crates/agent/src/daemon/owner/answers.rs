@@ -49,6 +49,18 @@ impl Owner {
             }
         }
         self.watch_task(task);
+        self.open_in_editor(task, path);
+    }
+
+    /// Asks for the questions file to be opened in the editor of the human, when the configuration asks for it.
+    fn open_in_editor(&self, task: &TaskId, path: &Path) {
+        let Some(opens) = &self.parts.opens else {
+            return;
+        };
+        if let Err(error) = opens.try_send(path.to_path_buf()) {
+            // The human is told by the notification: a file that is not opened is where it was.
+            tracing::warn!(task = %task, %error, "the questions file cannot be queued to be opened in the editor");
+        }
     }
 
     /// Starts watching the directory of `task` for a save of its questions file.

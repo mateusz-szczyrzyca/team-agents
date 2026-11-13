@@ -212,6 +212,8 @@ pub(super) struct OwnerParts {
     pub(super) rules: Arc<PromptLoader>,
     /// The bus of the home: the teams' members, their messages and their requests for workers.
     pub(super) bus: AgentBus,
+    /// Where the questions files to open in VS Code go; `None` when the configuration does not ask for it.
+    pub(super) opens: Option<mpsc::Sender<std::path::PathBuf>>,
     /// The engine that carries out runs.
     pub(super) engine: RunEngine,
     /// The clock.

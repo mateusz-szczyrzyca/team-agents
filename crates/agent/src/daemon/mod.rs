@@ -15,8 +15,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use agent_core::config::OpenQuestions;
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
+use agent_runtime::editor::VscodeOpener;
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
 use agent_runtime::notify::Notifier;
 use agent_runtime::process::Supervisor;
@@ -39,6 +41,7 @@ use self::server::ServerError;
 mod control;
 mod notice;
 mod notifier;
+mod opener;
 mod owner;
 mod questions;
 mod recovery;
@@ -163,7 +166,6 @@ pub(crate) async fn run_in(
     surroundings: Surroundings,
     shutdown: CancellationToken,
 ) -> Result<(), DaemonError> {
-    let _ = surroundings;
     let store = match StateStore::open(setup.home.clone()).await {
         Ok(store) => Arc::new(store),
         Err(StoreError::HomeLocked { path }) => return Err(DaemonError::AlreadyRunning { path }),
@@ -203,6 +205,14 @@ pub(crate) async fn run_in(
     sides.spawn(server::serve(listener, inbox, serving));
     let delivering = Arc::clone(&texts);
     sides.spawn(notifier::run(deliveries, delivering, notifier));
+    let opens = match settings.config.questions().open {
+        OpenQuestions::Off => None,
+        OpenQuestions::Vscode => {
+            let (opens, files) = mpsc::channel(opener::QUEUE);
+            sides.spawn(opener::run(files, vscode_opener(&settings, &surroundings)));
+            Some(opens)
+        }
+    };
 
     let owner = Owner::new(
         OwnerParts {
@@ -214,6 +224,7 @@ pub(crate) async fn run_in(
             question_texts,
             rules,
             bus,
+            opens,
             engine,
             clock: setup.clock.clone(),
             rng,
@@ -249,4 +260,26 @@ fn make_bus(home: &Home, settings: &Settings) -> AgentBus {
         home.absolute_root().clone(),
     )
     .with_timeout(BUS_TIMEOUT)
+}
+
+/// The directories of the VS Code servers a home user has, under the home directory: the usual three.
+const VSCODE_SERVER_DIRS: [&str; 3] = [".vscode-server", ".vscode-server-insiders", ".cursor-server"];
+
+/// The opener of questions files: the servers the configuration names, else the usual ones in the home of the user.
+fn vscode_opener(settings: &Settings, surroundings: &Surroundings) -> VscodeOpener {
+    let configured = &settings.config.questions().vscode_server_dirs;
+    let server_dirs: Vec<PathBuf> = if configured.is_empty() {
+        surroundings
+            .user_home
+            .iter()
+            .flat_map(|home| VSCODE_SERVER_DIRS.iter().map(move |dir| home.join(dir)))
+            .collect()
+    } else {
+        configured.iter().map(|dir| dir.as_path().to_path_buf()).collect()
+    };
+    VscodeOpener::new(
+        server_dirs,
+        surroundings.runtime_dir.clone(),
+        surroundings.fallback_dir.clone(),
+    )
 }
