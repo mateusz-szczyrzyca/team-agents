@@ -5,7 +5,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::process::Command as Process;
 use std::str::FromStr;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use agent_core::config::AbsolutePath;
@@ -15,13 +15,25 @@ use agent_core::protocol::{
 use agent_core::questions::Verdict;
 use agent_core::state::{Crew, Member, MergeMode, State, TaskListText, Team, TeamMembers};
 use agent_core::status::TaskStatus;
+use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
-use agent_runtime::run::RunTimings;
-use agent_runtime::store::Home;
+use agent_runtime::harness_prompts::HarnessPrompts;
+use agent_runtime::process::Supervisor;
+use agent_runtime::prompts::PromptLoader;
+use agent_runtime::questions_prompts::QuestionsPrompts;
+use agent_runtime::run::{EngineParts, RunEngine, RunTimings};
+use agent_runtime::settings::Settings;
+use agent_runtime::store::{Home, StateStore};
+use agent_runtime::team_prompts::TeamPrompts;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::{MAX_RUNS, Owner, OwnerParts};
 use crate::client::{ClientError, Connection};
+use crate::daemon::notifier::{self, Delivery};
 use crate::daemon::{DaemonError, DaemonSetup, Surroundings, Timings, run_in};
 use crate::fixtures::{at, member, normal, repo, task, team_id};
 use crate::testing::ManualClock;
@@ -125,6 +137,14 @@ pub(super) fn reviewed_pair_state() -> State {
     state
 }
 
+/// What an owner that is not running sends to, kept so that what it sends does not fail.
+pub(super) struct Sinks {
+    /// The notifications.
+    _deliveries: mpsc::Receiver<Delivery>,
+    /// The events.
+    _events: broadcast::Receiver<Event>,
+}
+
 /// A daemon in a temporary home.
 pub(super) struct Daemon {
     _dir: tempfile::TempDir,
@@ -175,6 +195,60 @@ impl Daemon {
             surroundings,
             windows: Vec::new(),
         }
+    }
+
+    /// An owner of the home that is not running: its methods are called one at a time, for what only its own state shows.
+    /// The home must not be locked by a daemon that is.
+    pub(super) async fn bare_owner(&self) -> (Owner, Sinks) {
+        let store = Arc::new(StateStore::open(self.home.clone()).await.unwrap());
+        let settings = Arc::new(Settings::load(&self.home).await.unwrap());
+        let prompts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+        let language = settings.config.language().clone();
+        let texts = Arc::new(HarnessPrompts::load(&prompts, &language).await.unwrap());
+        let engine = RunEngine::new(EngineParts {
+            store: Arc::clone(&store),
+            texts: Arc::clone(&texts),
+            config: Arc::new(settings.config.clone()),
+            secrets: Arc::new(settings.secrets.clone()),
+            supervisor: Supervisor::new(MAX_RUNS),
+            clock: SharedClock::new(self.clock.clone()),
+            local_offset: time::UtcOffset::UTC,
+            timings: RunTimings {
+                poll: Duration::from_millis(20),
+                hang: Duration::from_secs(1),
+                stop_grace: Duration::from_secs(5),
+            },
+        });
+        let (notices, deliveries) = mpsc::channel(notifier::QUEUE);
+        let (events, kept) = broadcast::channel(16);
+        let parts = OwnerParts {
+            state: store.load().await.unwrap(),
+            team_texts: Arc::new(TeamPrompts::load(&prompts, &language).await.unwrap()),
+            question_texts: Arc::new(QuestionsPrompts::load(&prompts, &language).await.unwrap()),
+            rules: Arc::new(PromptLoader::load(&prompts, &language).await.unwrap()),
+            bus: AgentBus::new(
+                settings.config.binaries().agentbus.clone(),
+                self.home.absolute_root().clone(),
+            ),
+            opens: None,
+            engine,
+            clock: SharedClock::new(self.clock.clone()),
+            rng: StdRng::seed_from_u64(1),
+            notices,
+            events,
+            tick: Duration::from_millis(20),
+            store,
+            settings,
+            texts,
+        };
+        let owner = Owner::new(parts, CancellationToken::new());
+        (
+            owner,
+            Sinks {
+                _deliveries: deliveries,
+                _events: kept,
+            },
+        )
     }
 
     /// Adds `text` to the configuration of the home.

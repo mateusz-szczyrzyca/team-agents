@@ -10,6 +10,7 @@ use serde_json::json;
 
 use super::super::fixture::{Daemon, agentbus_binary, pair_state, reviewed_pair_state};
 use crate::client::ClientError;
+use crate::daemon::control::Steer;
 use crate::fixtures::{solo_state, task, team_id};
 
 /// A daemon whose task 1 is running a CLI that never ends by itself.
@@ -547,4 +548,40 @@ async fn a_pause_that_arrives_as_a_hung_run_ends_holds_the_task_and_is_recorded_
     assert_eq!(status(&state, 1), TaskStatus::Paused);
     assert_eq!(last_end(&state, 1), RunEnd::Stopped);
     daemon.stop().await.unwrap();
+}
+
+// ---- what a task that is queued has been told ------------------------------------------------------------------
+
+/// A queued task 1 that its team gave a reason to start with, in an owner that has not started it.
+async fn queued_with_a_reason() -> (Daemon, super::super::Owner, super::super::fixture::Sinks) {
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, sinks) = daemon.bare_owner().await;
+    owner.reasons.insert(task(1), crate::daemon::team::Why::Woken);
+    (daemon, owner, sinks)
+}
+
+#[tokio::test]
+async fn a_task_that_is_stopped_before_it_starts_forgets_the_reason_it_was_queued_with() {
+    let (_daemon, mut owner, _sinks) = queued_with_a_reason().await;
+
+    owner
+        .control_request(&Client::Cli, Steer::Stop, &of_task(1))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(owner.reasons.is_empty(), "{:?}", owner.reasons);
+}
+
+#[tokio::test]
+async fn a_task_that_is_paused_before_it_starts_keeps_the_reason_it_was_queued_with() {
+    let (_daemon, mut owner, _sinks) = queued_with_a_reason().await;
+
+    owner
+        .control_request(&Client::Cli, Steer::Pause, &of_task(1))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(owner.reasons.get(&task(1)), Some(&crate::daemon::team::Why::Woken));
 }
