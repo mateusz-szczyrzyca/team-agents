@@ -165,6 +165,22 @@ impl Connection {
         }
     }
 
+    /// Sends `command` like [`Connection::request`] and waits for the answer for as long as the daemon takes.
+    ///
+    /// For a command whose answer comes when work is over: a gate waits for the gates asked before it, and then runs.
+    /// The wait is bounded by the daemon (its queue and the timeout of the gate), and a daemon that ends closes the
+    /// connection, which [`ClientError::Closed`] reports.
+    ///
+    /// # Errors
+    /// [`ClientError`]: the conversation failed, or the daemon answered with an error.
+    pub(crate) async fn request_until_answered(
+        &mut self,
+        client: Client,
+        command: Command,
+    ) -> Result<Reply, ClientError> {
+        self.request(client, command).await
+    }
+
     /// Reads frames until the answer to request `id`; events a subscription would send are skipped.
     async fn read_response(&mut self, id: RequestId) -> Result<Response, ClientError> {
         loop {

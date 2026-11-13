@@ -26,6 +26,9 @@ mod environment;
 #[cfg(test)]
 #[path = "tests/fixtures.rs"]
 mod fixtures;
+#[cfg(test)]
+#[path = "tests/gate_command.rs"]
+mod gate_command_tests;
 mod lines;
 #[cfg(test)]
 #[path = "tests/run_command.rs"]
@@ -41,6 +44,7 @@ use crate::client::{ClientError, Connection};
 use crate::commands::answer::{AnswerError, Source, answer};
 use crate::commands::control::ControlError;
 use crate::commands::daemon::{DaemonCommandError, daemon};
+use crate::commands::gate::{GateError, gate, task_in};
 use crate::commands::pause::pause;
 use crate::commands::resume::resume;
 use crate::commands::run::{RunError, RunInput, prepare, start};
@@ -74,6 +78,13 @@ enum Command {
 
 /// The name of the command that starts a task or a team.
 const RUN: &str = "run";
+
+/// The name of the command that runs the repository's gate.
+const GATE: &str = "gate";
+
+/// What `agent gate` is for, as the help says.
+const GATE_ABOUT: &str =
+    "Runs the repository's gate for a task, one gate at a time on the machine, and says what it said";
 
 /// What `agent run` is for, as the help says.
 const RUN_ABOUT: &str = "Starts a task or a team on the repository the current directory is in";
@@ -111,7 +122,9 @@ where
 /// The command line of `agent`: the commands of [`Cli`] and `run`; the parser and the help are made from it.
 fn command() -> clap::Command {
     // The description is set after the arguments: `augment_args` gives the command the doc comment of `RunArgs`.
-    let with_run = Cli::command().subcommand(RunArgs::augment_args(clap::Command::new(RUN)).about(RUN_ABOUT));
+    let with_run = Cli::command()
+        .subcommand(RunArgs::augment_args(clap::Command::new(RUN)).about(RUN_ABOUT))
+        .subcommand(GateArgs::augment_args(clap::Command::new(GATE)).about(GATE_ABOUT));
     // `augment_subcommands` gives the command the doc comment of `Steer` as its description: the description is kept.
     let about = with_run.get_about().cloned();
     let steering = Steer::augment_subcommands(with_run);
@@ -131,6 +144,8 @@ enum Invocation {
     Parsed(Parsed),
     /// `answer`, `stop`, `pause`, `unpause`, `resume` or `say`.
     Steer(Steer),
+    /// `gate`.
+    Gate(GateArgs),
 }
 
 /// Parses `args` (the program name first) as `agent` takes them, the commands that steer included.
@@ -146,6 +161,10 @@ where
     let matches = command().try_get_matches_from(&args)?;
     if matches.subcommand_name().is_some_and(Steer::has_subcommand) {
         return Ok(Invocation::Steer(Steer::from_arg_matches(&matches)?));
+    }
+    // `gate` is added to the command line like `run`, so the matches are read here, where it is taken out of them.
+    if let Some((GATE, gate)) = matches.subcommand() {
+        return Ok(Invocation::Gate(GateArgs::from_arg_matches(gate)?));
     }
     parse(args).map(Invocation::Parsed)
 }
@@ -165,6 +184,14 @@ struct RunArgs {
     /// Stop before the merge of an approved pull request and hand it to you.
     #[arg(long)]
     no_merge: bool,
+}
+
+/// The arguments of `agent gate`.
+#[derive(Debug, Args)]
+struct GateArgs {
+    /// The task whose worktree the gate runs in (`task-…`); the task of the worktree the command runs in without one.
+    #[arg(value_parser = parse_task)]
+    task: Option<TaskId>,
 }
 
 /// The commands that steer a task or a team, and answer the questions of a task.
@@ -308,6 +335,9 @@ enum CommandError {
     /// `agent answer` failed.
     #[error(transparent)]
     Answer(#[from] AnswerError),
+    /// `agent gate` failed.
+    #[error(transparent)]
+    Gate(#[from] GateError),
     /// The editor for `agent answer` cannot be found.
     #[error(transparent)]
     Editor(#[from] EditorError),
@@ -353,6 +383,7 @@ where
         }
         Ok(Invocation::Parsed(Parsed::Run(args))) => finish(execute_blocking(environment, Work::Run(args), out), err)?,
         Ok(Invocation::Steer(steer)) => finish(execute_blocking(environment, Work::Steer(steer), out), err)?,
+        Ok(Invocation::Gate(args)) => finish(execute_blocking(environment, Work::Gate(args), out), err)?,
         // `--version` and `--help` arrive here too, as "errors" meant for stdout.
         Err(answer) if !answer.use_stderr() => {
             write_text(out, &answer.render().to_string())?;
@@ -389,6 +420,8 @@ enum Work {
     Run(RunArgs),
     /// A command that steers.
     Steer(Steer),
+    /// `gate`.
+    Gate(GateArgs),
 }
 
 /// Runs `work` on a runtime of its own.
@@ -402,6 +435,7 @@ fn execute_blocking(environment: &Environment, work: Work, out: &mut impl Write)
             Work::Command(command) => execute(environment, command, out).await,
             Work::Run(args) => execute_run(environment, args, out).await,
             Work::Steer(steer) => execute_steer(environment, steer, out).await,
+            Work::Gate(args) => execute_gate(environment, args, out).await,
         }
     })
 }
@@ -448,6 +482,27 @@ async fn execute_steer(environment: &Environment, steer: Steer, out: &mut impl W
             say(&mut Connection::connect(&socket).await?, args.target, text, out).await?;
         }
     }
+    Ok(())
+}
+
+/// Carries out `agent gate`.
+///
+/// # Errors
+/// [`CommandError`].
+async fn execute_gate(environment: &Environment, args: GateArgs, out: &mut impl Write) -> Result<(), CommandError> {
+    let home = environment.home()?;
+    // The task is found before the daemon is looked for: with none there is nothing to ask.
+    let task = match args.task {
+        Some(task) => task,
+        None => {
+            let directory = environment.directory()?;
+            task_in(&home, directory).await.ok_or_else(|| GateError::NoTask {
+                directory: directory.to_path_buf(),
+            })?
+        }
+    };
+    let mut connection = Connection::connect(&home.socket_file()).await?;
+    gate(&mut connection, task, out).await?;
     Ok(())
 }
 

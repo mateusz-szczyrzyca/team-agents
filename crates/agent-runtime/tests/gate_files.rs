@@ -43,6 +43,15 @@ mod gate_files {
         );
     }
 
+    #[test]
+    fn the_worktrees_of_every_repository_are_in_one_directory_of_the_home() {
+        let home = Home::new(&AbsolutePath::from_str("/srv/agents-home").unwrap());
+        let repo = agent_core::config::RepoName::from_str("team-agents").unwrap();
+
+        assert_eq!(home.worktrees_dir(), PathBuf::from("/srv/agents-home/worktrees"));
+        assert!(home.worktree_dir(&repo, &task()).starts_with(home.worktrees_dir()));
+    }
+
     #[tokio::test]
     async fn a_saved_record_is_in_its_file_and_a_later_one_replaces_it_leaving_nothing_behind() {
         let dir = tempfile::tempdir().unwrap();

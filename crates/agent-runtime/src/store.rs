@@ -169,6 +169,12 @@ impl Home {
         self.root().join(PROMPTS_DIR)
     }
 
+    /// The directory that holds the worktrees of every repository: `<repo>/<task>` inside it is a task's worktree.
+    #[must_use]
+    pub fn worktrees_dir(&self) -> PathBuf {
+        PathBuf::new()
+    }
+
     /// The git worktree of `task`, a task of a team that works on `repo`.
     #[must_use]
     pub fn worktree_dir(&self, repo: &RepoName, task: &TaskId) -> PathBuf {
