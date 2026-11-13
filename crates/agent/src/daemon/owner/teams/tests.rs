@@ -1427,6 +1427,38 @@ mod refusals {
 }
 
 #[tokio::test]
+async fn what_the_bus_refuses_for_good_is_dropped_and_what_follows_is_done() {
+    let flaky = fixture_script("flaky-agentbus.sh");
+    let mut f = Fixture::with_agentbus(
+        &[
+            investigator("inv-opus", "sleep"),
+            investigator("inv-codex", "sleep"),
+            investigator("inv-gemini", "sleep"),
+            normal("claude-1", "slowdone"),
+            normal("claude-2", "done"),
+        ],
+        &flaky,
+    );
+    f.start().await;
+    let refuse = f.home.root().join("flaky-bus-refuse-once");
+    std::fs::write(&refuse, "send").unwrap();
+
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1", "claude-2"], PARALLEL).await;
+    f.wait_for("the notice about claude-2 to be refused", || !refuse.exists())
+        .await;
+    let woken = f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert!(woken.contains("YOU HAVE BEEN WOKEN UP"), "{woken}");
+    let messages = f.messages();
+    assert!(messages.contains("claude-1 reported DONE on item 1.1"), "{messages}");
+    assert!(
+        !messages.contains("claude-2 reported DONE"),
+        "the refused notice is not sent again: {messages}"
+    );
+}
+
+#[tokio::test]
 async fn an_item_whose_branch_cannot_be_started_waits_and_the_daemon_goes_on() {
     let mut f = Fixture::new(&[
         investigator("inv-opus", "sleep"),
