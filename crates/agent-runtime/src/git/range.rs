@@ -522,7 +522,7 @@ struct Patch {
 
 /// Reads a diff: the lines that each hunk adds and the unchanged ones it shows, from the number its header gives.
 fn parse_patch(operation: GitOperation, path: &RepoPath, bytes: &[u8]) -> Result<Patch, GitError> {
-    let mut patch = Patch::default();
+    let mut parsed = Patch::default();
     // Lines of the hunk that are still to be read on the old side and on the new, and the number of the next new line.
     let (mut old_left, mut new_left, mut number) = (0_u32, 0_u32, 0_u32);
     for line in bytes.split(|byte| *byte == b'\n') {
@@ -535,7 +535,7 @@ fn parse_patch(operation: GitOperation, path: &RepoPath, bytes: &[u8]) -> Result
         match line.split_first() {
             Some((b'-', _)) if old_left > 0 => old_left = old_left.saturating_sub(1),
             Some((b'+', text)) if new_left > 0 => {
-                patch.added.push(AddedLine {
+                parsed.added.push(AddedLine {
                     path: path.clone(),
                     number,
                     text: line_text(text),
@@ -544,7 +544,7 @@ fn parse_patch(operation: GitOperation, path: &RepoPath, bytes: &[u8]) -> Result
                 new_left = new_left.saturating_sub(1);
             }
             Some((b' ', text)) if old_left > 0 && new_left > 0 => {
-                patch.unchanged.push(UnchangedLine {
+                parsed.unchanged.push(UnchangedLine {
                     path: path.clone(),
                     number,
                     text: line_text(text),
@@ -558,7 +558,7 @@ fn parse_patch(operation: GitOperation, path: &RepoPath, bytes: &[u8]) -> Result
             _ => return Err(unexpected(operation, line)),
         }
     }
-    Ok(patch)
+    Ok(parsed)
 }
 
 /// The text of a line of a diff, without its carriage return.
