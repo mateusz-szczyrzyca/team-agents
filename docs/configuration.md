@@ -178,6 +178,9 @@ only as a whole segment. A file that matches `test_paths` is a test even when `c
 inside a source file is not a test file (the reviewers look at those). How the rules use the lists is in
 [`architecture.md`](architecture.md#round-checks-before-the-review).
 
+The built-in Rust lint markers include both `#[allow(...)]` and `#[expect(...)]`, including their crate attributes.
+Even a lint expectation with a reason must name its file in the PR description before review starts.
+
 ## `secrets.toml`
 
 ```toml

@@ -103,7 +103,7 @@ const RULES: &[Rule] = &[
         extensions: RUST,
         marker: Marker::SuppressesLint,
         place: Place::Start,
-        texts: &["#[allow(", "#![allow("],
+        texts: &["#[allow(", "#![allow(", "#[expect(", "#![expect("],
     },
     Rule {
         extensions: SHELL,
