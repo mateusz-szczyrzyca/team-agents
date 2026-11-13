@@ -808,4 +808,29 @@ mod git_range {
 
         assert_eq!(lines, []);
     }
+
+    // Rule: the unchanged lines of a file that was renamed and edited are read against its old path.
+    #[tokio::test]
+    async fn the_unchanged_lines_of_a_renamed_and_edited_file_are_those_around_its_edit() {
+        let (_tmp, repo) = repository();
+        write(&repo, "old.rs", b"one\ntwo\nthree\nfour\n");
+        let base = commit_all(&repo, "base");
+        std::fs::remove_file(repo.join("old.rs")).unwrap();
+        write(&repo, "new.rs", b"one\ntwo\nTHREE\nfour\n");
+        let head = commit_all(&repo, "head");
+
+        let lines = handle(&repo)
+            .range_unchanged_lines(&base, &head, &[path("new.rs")])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            lines,
+            [
+                unchanged_line("new.rs", 1, "one"),
+                unchanged_line("new.rs", 2, "two"),
+                unchanged_line("new.rs", 4, "four"),
+            ]
+        );
+    }
 }
