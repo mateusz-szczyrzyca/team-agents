@@ -472,6 +472,36 @@ fn says_no_test_first(message: &str) -> bool {
     })
 }
 
+/// Whether `description` names the file `path` with its whole path: where it occurs, no path character comes right
+/// before it and none goes on after it — a `.` only when a path character follows, as in `a.rs.orig`, so that a
+/// sentence may end with the path. Naming `crates/other/src/a.rs` does not name `src/a.rs`.
+fn names_path(description: &str, path: &RepoPath) -> bool {
+    let path = path.as_str();
+    // `get` finds no text only off a character boundary, which `match_indices` never gives: such a place names nothing.
+    description.match_indices(path).any(|(start, _)| {
+        let starts = description
+            .get(..start)
+            .is_some_and(|before| !before.chars().next_back().is_some_and(is_path_char));
+        let ends = description
+            .get(start..)
+            .and_then(|from| from.strip_prefix(path))
+            .is_some_and(|after| {
+                let mut next = after.chars();
+                match next.next() {
+                    Some('.') => !next.next().is_some_and(is_path_char),
+                    Some(c) => !is_path_char(c),
+                    None => true,
+                }
+            });
+        starts && ends
+    })
+}
+
+/// Whether `c` may be part of a path as a description writes it: a letter, a digit, `/`, `.`, `_` or `-`.
+fn is_path_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '/' | '.' | '_' | '-')
+}
+
 /// The added lines that have a marker, one issue for each file and kind, in a file the description does not name.
 fn markers_added(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
     let mut found: BTreeMap<(&RepoPath, markers::Marker), (u32, u32)> = BTreeMap::new();
@@ -479,7 +509,7 @@ fn markers_added(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
         let Some(extension) = line.path.extension() else {
             continue;
         };
-        if facts.description.contains(line.path.as_str()) {
+        if names_path(&facts.description, &line.path) {
             continue;
         }
         for marker in markers::markers_of(extension, &line.text) {
