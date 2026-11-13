@@ -4,14 +4,16 @@
 //! never wakes it. An editor saves by writing in place or by renaming a new file over the old one; both are seen. What
 //! is told is only *that* `questions-<round>.md` of a task was written: the owner reads the file and decides.
 
+use std::collections::HashSet;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use agent_core::ids::TaskId;
 use tokio::sync::mpsc;
 
 /// A questions file the human saved.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::daemon) struct Saved {
     /// The task whose file it is.
     pub(in crate::daemon) task: TaskId,
@@ -49,6 +51,32 @@ const FILE_PREFIX: &str = "questions-";
 /// See [`FILE_PREFIX`].
 const FILE_SUFFIX: &str = ".md";
 
+/// The saves not yet taken by the owner: a save of a file that is waiting is not queued again, so that a flood of saves of
+/// one file neither grows the queue nor crowds out the save of another.
+type Pending = Arc<Mutex<HashSet<Saved>>>;
+
+/// The saves the watch reports, one for each file until the owner takes it.
+#[derive(Debug)]
+pub(in crate::daemon) struct Saves {
+    /// The queue; it holds at most one entry for each questions file that was saved and not yet taken.
+    queue: mpsc::UnboundedReceiver<Saved>,
+    /// The entries of the queue, shared with the watch that fills it.
+    pending: Pending,
+}
+
+impl Saves {
+    /// The next save, `None` when the watch is gone. A save that comes after this returns is queued again, so the file
+    /// is read as it is at least once after its last save.
+    pub(in crate::daemon) async fn recv(&mut self) -> Option<Saved> {
+        let saved = self.queue.recv().await?;
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&saved);
+        Some(saved)
+    }
+}
+
 /// The watch.
 pub(in crate::daemon) struct Watcher {
     /// The system's watcher; it reports on a thread of its own, to the handler it was made with.
@@ -62,19 +90,22 @@ impl std::fmt::Debug for Watcher {
 }
 
 impl Watcher {
-    /// A watch that tells `saved` about the files that are saved in the directories it is given.
+    /// A watch on the directories it is given, and the saves it reports.
     ///
     /// # Errors
     /// [`WatchError::Start`].
-    pub(in crate::daemon) fn new(saved: mpsc::Sender<Saved>) -> Result<Self, WatchError> {
+    pub(in crate::daemon) fn new() -> Result<(Self, Saves), WatchError> {
+        let (sender, queue) = mpsc::unbounded_channel();
+        let pending = Pending::default();
+        let shared = Arc::clone(&pending);
         let inner = notify::recommended_watcher(move |result: notify::Result<notify::Event>| match result {
-            Ok(event) => report(&saved, &event),
+            Ok(event) => report(&sender, &shared, &event),
             // The system lost track of something: a save may have been missed. The owner looks at the open questions
             // again when the daemon starts, and the human can always run `agent answer`.
             Err(error) => tracing::warn!(%error, "the watch on the questions files reported an error"),
         })
         .map_err(WatchError::Start)?;
-        Ok(Self { inner })
+        Ok((Self { inner }, Saves { queue, pending }))
     }
 
     /// Starts watching the directory `dir` of a task.
@@ -102,8 +133,8 @@ impl Watcher {
     }
 }
 
-/// Tells `saved` about each questions file `event` says was written.
-fn report(saved: &mpsc::Sender<Saved>, event: &notify::Event) {
+/// Queues each questions file `event` says was written, unless a save of it is queued already.
+fn report(queue: &mpsc::UnboundedSender<Saved>, pending: &Pending, event: &notify::Event) {
     if !writes(event.kind) {
         return;
     }
@@ -111,17 +142,17 @@ fn report(saved: &mpsc::Sender<Saved>, event: &notify::Event) {
         let Some(file) = saved_file(path) else {
             continue;
         };
-        match saved.try_send(file) {
-            Ok(()) => {}
-            // The queue holds a save of each open question many times over: one that does not fit is a repeat of one
-            // that is there, and the file is read as it is when the first is handled.
-            Err(mpsc::error::TrySendError::Full(file)) => {
-                tracing::debug!(task = %file.task, round = file.round, "a save of a questions file was already queued");
-            }
-            // The owner is gone: the daemon is shutting down.
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                tracing::debug!("a save of a questions file came after the owner ended");
-            }
+        let new = pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(file.clone());
+        // The file is read as it is when the queued save is handled, so a repeat adds nothing.
+        if !new {
+            continue;
+        }
+        // The owner is gone when the daemon shuts down.
+        if queue.send(file).is_err() {
+            tracing::debug!("a save of a questions file came after the owner ended");
         }
     }
 }

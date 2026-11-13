@@ -7,17 +7,16 @@ use crate::fixtures::task;
 const PATIENCE: Duration = Duration::from_secs(30);
 
 /// A watch on the directory of task 1 in a temporary home.
-fn watching() -> (tempfile::TempDir, PathBuf, Watcher, mpsc::Receiver<Saved>) {
+fn watching() -> (tempfile::TempDir, PathBuf, Watcher, Saves) {
     let home = tempfile::tempdir().unwrap();
     let dir = home.path().join(task(1).as_str());
     std::fs::create_dir_all(&dir).unwrap();
-    let (saved, events) = mpsc::channel(16);
-    let mut watcher = Watcher::new(saved).unwrap();
+    let (mut watcher, events) = Watcher::new().unwrap();
     watcher.watch(&dir).unwrap();
     (home, dir, watcher, events)
 }
 
-async fn next(events: &mut mpsc::Receiver<Saved>) -> Saved {
+async fn next(events: &mut Saves) -> Saved {
     tokio::time::timeout(PATIENCE, events.recv())
         .await
         .expect("no questions file was reported")
@@ -108,7 +107,7 @@ async fn letting_go_a_directory_that_was_never_watched_is_an_error_that_names_it
 }
 
 /// Everything `events` reports until it has been quiet for a moment.
-async fn quiet(events: &mut mpsc::Receiver<Saved>) -> Vec<Saved> {
+async fn quiet(events: &mut Saves) -> Vec<Saved> {
     let mut all = Vec::new();
     while let Ok(Some(saved)) = tokio::time::timeout(Duration::from_secs(1), events.recv()).await {
         all.push(saved);
@@ -117,7 +116,7 @@ async fn quiet(events: &mut mpsc::Receiver<Saved>) -> Vec<Saved> {
 }
 
 #[tokio::test]
-async fn the_save_of_another_task_is_reported_though_the_queue_is_full_of_saves_of_one() {
+async fn the_save_of_another_task_is_reported_though_the_owner_is_busy_with_saves_of_one() {
     let home = tempfile::tempdir().unwrap();
     let make = |n: u32| {
         let dir = home.path().join(task(n).as_str());
@@ -125,8 +124,7 @@ async fn the_save_of_another_task_is_reported_though_the_queue_is_full_of_saves_
         dir
     };
     let (first, second) = (make(1), make(2));
-    let (queue, mut events) = mpsc::channel(4);
-    let mut watcher = Watcher::new(queue).unwrap();
+    let (mut watcher, mut events) = Watcher::new().unwrap();
     watcher.watch(&first).unwrap();
     watcher.watch(&second).unwrap();
 
@@ -137,4 +135,40 @@ async fn the_save_of_another_task_is_reported_though_the_queue_is_full_of_saves_
 
     let reported = quiet(&mut events).await;
     assert!(reported.contains(&saved(2, 1)), "{reported:?}");
+}
+
+#[tokio::test]
+async fn many_saves_of_one_file_wait_as_one_until_the_owner_takes_it() {
+    let (home, first, mut watcher, mut events) = watching();
+    let second = home.path().join(task(2).as_str());
+    std::fs::create_dir_all(&second).unwrap();
+    watcher.watch(&second).unwrap();
+
+    for n in 0..50 {
+        std::fs::write(first.join("questions-1.md"), format!("save {n}")).unwrap();
+    }
+    std::fs::write(second.join("questions-1.md"), "text").unwrap();
+    // The events come in the order of the writes: when the last file is queued, every repeat before it was seen.
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while !events.pending.lock().unwrap().contains(&saved(2, 1)) {
+        assert!(std::time::Instant::now() < deadline, "the last save was never queued");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let mut queued = Vec::new();
+    while let Ok(entry) = events.queue.try_recv() {
+        queued.push(entry);
+    }
+    assert_eq!(queued, [saved(1, 1), saved(2, 1)]);
+}
+
+#[tokio::test]
+async fn a_file_saved_again_after_the_owner_took_it_is_queued_again() {
+    let (_home, dir, _watcher, mut events) = watching();
+    std::fs::write(dir.join("questions-1.md"), "one").unwrap();
+    assert_eq!(next(&mut events).await, saved(1, 1));
+
+    std::fs::write(dir.join("questions-1.md"), "two").unwrap();
+
+    assert_eq!(next(&mut events).await, saved(1, 1));
 }

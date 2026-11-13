@@ -47,7 +47,7 @@ use super::control::{Halt, Steer, after_halt, halted_status};
 use super::notice::Notice;
 use super::notifier::Delivery;
 use super::questions;
-use super::questions::watch::{Saved, Watcher};
+use super::questions::watch::{Saved, Saves, Watcher};
 use super::recovery::{RecoveryError, recover};
 use super::settle::{Settled, settle};
 use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
@@ -300,7 +300,7 @@ pub(super) struct Owner {
     /// through `agent answer` and the dashboard.
     watcher: Option<Watcher>,
     /// The questions files the human saved, as the watch reports them.
-    saved: mpsc::Receiver<Saved>,
+    saved: Option<Saves>,
     /// The tasks whose directory is watched.
     watched: HashSet<TaskId>,
     /// For each task that waits for answers, the problems of the last save the human was told about, so that the same
@@ -310,19 +310,23 @@ pub(super) struct Owner {
     shutdown: CancellationToken,
 }
 
-/// How many saves of questions files may wait for the owner.
-const SAVED_BACKLOG: usize = 64;
+/// The next questions file the human saved; never, when the files are not watched.
+async fn next_saved(saves: &mut Option<Saves>) -> Option<Saved> {
+    match saves {
+        Some(saves) => saves.recv().await,
+        None => std::future::pending().await,
+    }
+}
 
 impl Owner {
     /// An owner made of `parts`.
     pub(super) fn new(parts: OwnerParts, shutdown: CancellationToken) -> Self {
-        let (reporting, saved) = mpsc::channel(SAVED_BACKLOG);
-        let watcher = match Watcher::new(reporting) {
-            Ok(watcher) => Some(watcher),
+        let (watcher, saved) = match Watcher::new() {
+            Ok((watcher, saves)) => (Some(watcher), Some(saves)),
             Err(error) => {
                 // The daemon is useful without it: the answers still come through `agent answer` and the dashboard.
                 tracing::warn!(error = %error_chain(&error), "the questions files are not watched: a saved answer is not noticed");
-                None
+                (None, None)
             }
         };
         Self {
@@ -366,7 +370,7 @@ impl Owner {
                     None => break,
                 },
                 Some(joined) = self.runs.join_next_with_id() => self.settle_joined(joined).await?,
-                Some(saved) = self.saved.recv() => self.file_saved(saved).await?,
+                Some(saved) = next_saved(&mut self.saved) => self.file_saved(saved).await?,
                 _ = tick.tick() => {
                     self.wake_due().await?;
                     self.look_at_every_team();
