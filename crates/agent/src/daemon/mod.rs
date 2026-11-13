@@ -39,6 +39,7 @@ use self::owner::{EVENT_BACKLOG, INBOX, MAX_RUNS, Owner, OwnerError, OwnerParts}
 use self::server::ServerError;
 
 mod control;
+mod gate;
 mod notice;
 mod notifier;
 mod opener;
