@@ -6,6 +6,7 @@
 //! events. A state it cannot save ends the daemon: models must not go on working with a state that is not kept.
 
 mod answers;
+mod controls;
 #[cfg(test)]
 mod fixture;
 mod start;
