@@ -1,5 +1,5 @@
 //! Asking for the reviews of a pull request that is open, through the checked handle of an item, as a caller outside
-//! the crate sees it: the round of an item in review starts empty and is filled once, by reviews that are all still
+//! the crate sees it: the review pass of an item in review starts empty and is filled once, by reviews that are all still
 //! pending, and the state saved after it loads again.
 
 #[cfg(test)]
@@ -95,7 +95,7 @@ mod review_requests {
         assert_eq!(State::from_json(&saved).unwrap(), state);
     }
 
-    fn round(item: &ItemMut<'_>) -> Vec<Review> {
+    fn review_pass(item: &ItemMut<'_>) -> Vec<Review> {
         let ItemPhase::InReview { reviews, .. } = item.phase() else {
             panic!("the item is not in review");
         };
@@ -109,7 +109,7 @@ mod review_requests {
 
             item.ask_reviews(asked.clone()).unwrap();
 
-            assert_eq!(round(item), asked);
+            assert_eq!(review_pass(item), asked);
             assert_eq!(item.phase().kind(), PhaseKind::InReview);
         });
     }
@@ -123,7 +123,7 @@ mod review_requests {
             item.submit_review(&asked[0].task, ReviewVerdict::Approve, at("2026-11-11T20:00:00Z"))
                 .unwrap();
 
-            let reviews = round(item);
+            let reviews = review_pass(item);
             assert_eq!(reviews[1], asked[1]);
             assert!(matches!(reviews[0].outcome, ReviewOutcome::Submitted { .. }));
         });
@@ -138,7 +138,7 @@ mod review_requests {
             let refused = item.ask_reviews(vec![pending("inv-opus", 12)]).unwrap_err();
 
             assert_eq!(refused, AskReviewsError::AlreadyAsked { item: item.id() });
-            assert_eq!(round(item).len(), 2);
+            assert_eq!(review_pass(item).len(), 2);
         });
     }
 
@@ -148,7 +148,7 @@ mod review_requests {
             let refused = item.ask_reviews(Vec::new()).unwrap_err();
 
             assert_eq!(refused, AskReviewsError::NoReviews { item: item.id() });
-            assert_eq!(round(item), []);
+            assert_eq!(review_pass(item), []);
         });
     }
 
@@ -173,7 +173,7 @@ mod review_requests {
                     reviewer: "inv-gemini".parse().unwrap(),
                 }
             );
-            assert_eq!(round(item), []);
+            assert_eq!(review_pass(item), []);
         });
     }
 
@@ -193,7 +193,7 @@ mod review_requests {
                     },
                 }
             );
-            assert_eq!(round(item), []);
+            assert_eq!(review_pass(item), []);
         });
     }
 

@@ -34,7 +34,7 @@ use agent_runtime::text_file::ReplaceError;
 
 use super::{Notice, Owner, OwnerError};
 
-use super::teams::Round;
+use super::teams::Look;
 use crate::daemon::checks::ChecksTextError;
 use crate::daemon::pr::PullTextError;
 use crate::daemon::questions::QuestionsProblem;
@@ -284,16 +284,16 @@ impl Owner {
     ///
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
-    pub(super) async fn pull_requests(&mut self, team: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+    pub(super) async fn pull_requests(&mut self, team: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(pulls) = self.pulls.clone() else {
             return Ok(());
         };
-        self.merge_approved(&pulls, team, round).await?;
-        self.publish_branches(&pulls, team, round).await?;
-        self.ask_for_reviews(team, round).await?;
-        self.deliver_reviews(team, round)?;
-        self.deliver_fix_passes(team, round)?;
-        self.ask_the_human(&pulls, team, round)?;
+        self.merge_approved(&pulls, team, look).await?;
+        self.publish_branches(&pulls, team, look).await?;
+        self.ask_for_reviews(team, look).await?;
+        self.deliver_reviews(team, look)?;
+        self.deliver_fix_passes(team, look)?;
+        self.ask_the_human(&pulls, team, look)?;
         Ok(())
     }
 
@@ -371,12 +371,12 @@ impl Owner {
         }
     }
 
-    /// Saves the state after what `round` changed, and tells the subscribers; the team is looked at again.
-    async fn finish_round(&mut self, team: &TeamId, round: Round) -> Result<(), OwnerError> {
-        if round.changed {
+    /// Saves the state after what `look` changed, and tells the subscribers; the team is looked at again.
+    async fn finish_look(&mut self, team: &TeamId, look: Look) -> Result<(), OwnerError> {
+        if look.changed {
             self.save().await?;
             let now = Timestamp::now(&self.parts.clock)?;
-            for event in round.events {
+            for event in look.events {
                 self.publish(now, event);
             }
             self.publish_summary(now, team);

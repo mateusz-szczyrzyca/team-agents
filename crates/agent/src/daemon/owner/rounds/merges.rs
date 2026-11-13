@@ -8,7 +8,7 @@ use agent_core::state::{CommitId, Completion, ItemPhase, PullRequest, Timestamp}
 use agent_runtime::github::{GitHub, GitHubError, MergeMethod, MergeRequest, PullState, Rejection};
 use agent_runtime::process::error_chain;
 
-use super::super::teams::Round;
+use super::super::teams::Look;
 use crate::daemon::merge::items_of;
 
 use super::super::{Owner, OwnerError};
@@ -75,7 +75,7 @@ impl Owner {
         &mut self,
         pulls: &Pulls,
         team_id: &TeamId,
-        round: &mut Round,
+        look: &mut Look,
     ) -> Result<(), OwnerError> {
         let approved = self.approved_pull_requests(team_id);
         if approved.is_empty() {
@@ -95,7 +95,7 @@ impl Owner {
             match self.try_merge(site, &pr, now).await {
                 Ok(Merge::Merged) => {
                     self.watch.polled.remove(&(team_id.clone(), pr.number));
-                    self.complete(team_id, &lead, &pr, &items, now, round).await?;
+                    self.complete(team_id, &lead, &pr, &items, now, look).await?;
                 }
                 Ok(Merge::Waits) => {}
                 Err(error) => {
@@ -237,7 +237,7 @@ impl Owner {
         pr: &PullRequest,
         items: &[ItemId],
         now: Timestamp,
-        round: &mut Round,
+        look: &mut Look,
     ) -> Result<(), OwnerError> {
         for id in items {
             let mut team_mut = self
@@ -260,12 +260,12 @@ impl Owner {
                 item: *id,
                 source,
             })?;
-            round.events.push(EventKind::ItemStatus {
+            look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: *id,
                 status: agent_core::status::ItemStatus::Done,
             });
-            round.changed = true;
+            look.changed = true;
             tracing::info!(team = %team_id, item = %id, pr = %pr.number, "an item is merged");
         }
         self.fetch_base(lead).await;

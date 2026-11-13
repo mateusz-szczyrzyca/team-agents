@@ -11,7 +11,7 @@ use agent_runtime::git::Revision;
 use agent_runtime::github::CommentReview;
 use agent_runtime::process::error_chain;
 
-use super::super::teams::Round;
+use super::super::teams::Look;
 use crate::daemon::merge::{Next, VerdictError, after_verdict, count};
 use crate::daemon::review::{VerdictProblem, parse_verdict, report_text};
 use crate::daemon::team::Why;
@@ -33,25 +33,25 @@ pub(super) struct Offered {
     /// The investigator that reviews.
     pub(super) reviewer: agent_core::ids::InvestigatorName,
     /// The fix passes the pull request had had when the review was asked.
-    pub(super) round: usize,
-    /// Whether it is the round that is going.
+    pub(super) pass: usize,
+    /// Whether it is the review pass that is going.
     pub(super) current: bool,
 }
 
 /// What a reviewer's report answers.
 pub(super) enum Answer {
-    /// A review of the round that is going.
+    /// A review of the review pass that is going.
     Current(Asked),
-    /// A review of a round the pull request has left behind.
+    /// A review of a review pass the pull request has left behind.
     Late(Late),
 }
 
-/// A review of a round that is decided.
+/// A review of a review pass that is decided.
 pub(super) struct Late {
     /// The pull request.
     pub(super) pr: PullRequest,
     /// The fix passes the pull request had had when the review was asked.
-    pub(super) round: usize,
+    pub(super) pass: usize,
     /// The investigator that reviews.
     pub(super) reviewer: agent_core::ids::InvestigatorName,
 }
@@ -112,14 +112,14 @@ impl Owner {
     }
 
     /// The review that a run of the reviewer `task` that started at `started` answers: the latest review asked of it at or
-    /// before that time that is still pending, in the round that is going or in one the pull request has left behind.
+    /// before that time that is still pending, in the review pass that is going or in one the pull request has left behind.
     pub(super) fn answered_by(&self, team: &TeamId, task: &TaskId, started: Timestamp) -> Option<Answer> {
         let team = self.parts.state.team(team)?;
         answer_among(offered_reviews(team, task), started)
     }
 
-    /// A report that answers a review of a round the pull request has left behind, because the reviewer was slow and the
-    /// other reviewer had asked for changes: the round is decided, and the report is kept and posted all the same.
+    /// A report that answers a review of a review pass the pull request has left behind, because the reviewer was slow and
+    /// the other reviewer had asked for changes: the review pass is decided, and the report is kept and posted all the same.
     pub(super) async fn keep_late_review(
         &mut self,
         pulls: &Pulls,
@@ -128,18 +128,18 @@ impl Owner {
         late: &Late,
         message: &str,
     ) -> Result<(), OwnerError> {
-        tracing::info!(task = %task, pr = %late.pr.number, "a reviewer ended a review of a round that is decided: its report is kept and posted");
+        tracing::info!(task = %task, pr = %late.pr.number, "a reviewer ended a review of a review pass that is decided: its report is kept and posted");
         let report = report_text(message);
-        let round = count(late.round);
+        let pass = count(late.pass);
         self.parts
             .store
-            .save_review_report(task, late.pr.number, round, &report)
+            .save_review_report(task, late.pr.number, pass, &report)
             .await?;
         let lead = self.lead_of(&located.team)?;
         let asked = Asked {
             pr: late.pr.clone(),
             items: Vec::new(),
-            passes: late.round,
+            passes: late.pass,
             reviewer: late.reviewer.clone(),
         };
         self.post_review(pulls, &lead, task, &asked, &report).await;
@@ -161,9 +161,9 @@ impl Owner {
         let count = *count;
         tracing::warn!(task = %task, pr = %asked.pr.number, ?problem, count, "a reviewer's report has no verdict");
         if count <= MAX_VERDICT_BOUNCES {
-            let mut round = Round::default();
-            self.release(task, Why::VerdictMissing, &mut round)?;
-            return self.finish_round(&located.team, round).await;
+            let mut look = Look::default();
+            self.release(task, Why::VerdictMissing, &mut look)?;
+            return self.finish_look(&located.team, look).await;
         }
         let announcement = Announcement::NoVerdict { task: task.clone() };
         if !self.watch.announced.insert(announcement) {
@@ -199,14 +199,14 @@ impl Owner {
             .await?;
         let lead = self.lead_of(team_id)?;
         let next = self.decide(team_id, asked, verdict);
-        let mut round = Round::default();
-        self.record_verdict(team_id, task, asked, verdict, now, &mut round)?;
+        let mut look = Look::default();
+        self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
         self.post_review(pulls, &lead, task, asked, &report).await;
         if let Some(next) = next {
-            self.apply_next(team_id, &lead, asked, next, &mut round)?;
+            self.apply_next(team_id, &lead, asked, next, &mut look)?;
         }
-        round.changed = true;
-        self.finish_round(team_id, round).await
+        look.changed = true;
+        self.finish_look(team_id, look).await
     }
 
     /// What the verdict leads to, by the round machine; `None` when the round does not take it, which is told: the
@@ -218,7 +218,7 @@ impl Owner {
         match after_verdict(progress, &asked.reviewer, verdict, policy) {
             Ok(next) => Some(next),
             Err(VerdictError::Round(RoundError::NotExpected { .. })) => {
-                tracing::info!(team = %team_id, pr = %asked.pr.number, "a verdict came after the round was decided: it is recorded and changes nothing");
+                tracing::info!(team = %team_id, pr = %asked.pr.number, "a verdict came after the review pass was decided: it is recorded and changes nothing");
                 None
             }
             Err(error) => {
@@ -236,7 +236,7 @@ impl Owner {
         asked: &Asked,
         verdict: ReviewVerdict,
         now: Timestamp,
-        round: &mut Round,
+        look: &mut Look,
     ) -> Result<(), OwnerError> {
         for id in &asked.items {
             let mut team_mut = self
@@ -254,7 +254,7 @@ impl Owner {
                     item: *id,
                     source,
                 })?;
-            round.events.push(EventKind::ReviewSubmitted {
+            look.events.push(EventKind::ReviewSubmitted {
                 team: team_id.clone(),
                 item: *id,
                 reviewer: asked.reviewer.clone(),
@@ -315,7 +315,7 @@ impl Owner {
         lead: &Lead,
         asked: &Asked,
         next: Next,
-        round: &mut Round,
+        look: &mut Look,
     ) -> Result<(), OwnerError> {
         for id in &asked.items {
             let mut team_mut = self
@@ -345,7 +345,7 @@ impl Owner {
                 item: *id,
                 source,
             })?;
-            round.events.push(EventKind::ItemStatus {
+            look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: *id,
                 status,
@@ -355,7 +355,7 @@ impl Owner {
     }
 }
 
-/// The reviews of the reviewer `task` that are pending in `team`, in the round that is going and in those the pull requests
+/// The reviews of the reviewer `task` that are pending in `team`, in the review pass that is going and in those the pull requests
 /// have left behind.
 fn offered_reviews(team: &Team, task: &TaskId) -> Vec<Offered> {
     let pending = |reviews: &[Review]| {
@@ -374,7 +374,7 @@ fn offered_reviews(team: &Team, task: &TaskId) -> Vec<Offered> {
                 item: progress.id(),
                 pr: pr.clone(),
                 reviewer,
-                round: progress.fix_passes().len(),
+                pass: progress.fix_passes().len(),
                 current: true,
             });
         }
@@ -391,14 +391,14 @@ fn offered_reviews(team: &Team, task: &TaskId) -> Vec<Offered> {
             | ItemPhase::Pending
             | ItemPhase::InProgress { .. } => continue,
         };
-        for (round, pass) in progress.fix_passes().iter().enumerate() {
+        for (index, pass) in progress.fix_passes().iter().enumerate() {
             if let Some((requested_at, reviewer)) = pending(&pass.requested_by) {
                 offered.push(Offered {
                     requested_at,
                     item: progress.id(),
                     pr: pr.clone(),
                     reviewer,
-                    round,
+                    pass: index,
                     current: false,
                 });
             }
@@ -408,7 +408,7 @@ fn offered_reviews(team: &Team, task: &TaskId) -> Vec<Offered> {
 }
 
 /// What a run that started at `started` answers among the `offered` reviews: those asked at the latest time that is not
-/// after it; of the round that is going when one of them is, else of a round that is decided.
+/// after it; of the review pass that is going when one of them is, else of a review pass that is decided.
 fn answer_among(offered: Vec<Offered>, started: Timestamp) -> Option<Answer> {
     let latest = offered
         .iter()
@@ -428,14 +428,14 @@ fn answer_among(offered: Vec<Offered>, started: Timestamp) -> Option<Answer> {
                 .filter(|found| found.pr.number == first.pr.number)
                 .map(|found| found.item)
                 .collect(),
-            passes: first.round,
+            passes: first.pass,
             reviewer: first.reviewer.clone(),
         }));
     }
     answered.into_iter().next().map(|found| {
         Answer::Late(Late {
             pr: found.pr,
-            round: found.round,
+            pass: found.pass,
             reviewer: found.reviewer,
         })
     })

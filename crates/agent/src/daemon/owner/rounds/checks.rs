@@ -27,7 +27,7 @@ use crate::daemon::checks::{MAX_RELAYS, authored, decisions, questions, team_mes
 use crate::daemon::questions;
 use crate::daemon::team::Why;
 
-use super::super::teams::Round;
+use super::super::teams::Look;
 
 /// The permission bits of a questions file the harness writes: the owner writes it, everybody may read it.
 const QUESTIONS_FILE_MODE: u32 = 0o644;
@@ -244,11 +244,11 @@ impl Owner {
         team_id: &TeamId,
         lead: &Lead,
         held: Held,
-        round: &mut Round,
+        look: &mut Look,
     ) -> Result<(), OwnerError> {
         match held {
             Held::Waiting => Ok(()),
-            Held::WakeLead => self.release(&lead.task, Why::Checks, round),
+            Held::WakeLead => self.release(&lead.task, Why::Checks, look),
             Held::Notify => {
                 let announcement = Announcement::NotAsked {
                     team: team_id.clone(),

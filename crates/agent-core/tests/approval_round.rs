@@ -1,5 +1,5 @@
 //! The approval of an item through the checked handle of a loaded state, as a caller outside the crate sees it: the
-//! item is approved with the round it has — its pull request and its reviews as recorded — and with nothing else.
+//! item is approved with the review pass it has — its pull request and its reviews as recorded — and with nothing else.
 
 #[cfg(test)]
 mod approval_round {
@@ -40,28 +40,28 @@ mod approval_round {
         check(&mut state.team_mut(&team()).unwrap().item_mut(item()).unwrap());
     }
 
-    /// The pull request and the reviews of the round item 1.2 is in.
-    fn round(item: &ItemMut<'_>) -> (agent_core::state::PullRequest, Vec<Review>) {
+    /// The pull request and the reviews of the review pass item 1.2 is in.
+    fn review_pass(item: &ItemMut<'_>) -> (agent_core::state::PullRequest, Vec<Review>) {
         let ItemPhase::InReview { pr, reviews } = item.phase().clone() else {
             panic!("item 1.2 is not in review");
         };
         (pr, reviews)
     }
 
-    /// Tries to approve item 1.2, after both reviews approved, with the round that `tamper` makes of the real one;
-    /// asserts that the item is refused with [`AdvanceError::RoundNotKept`] and is left as it was.
+    /// Tries to approve item 1.2, after both reviews approved, with the review pass that `tamper` makes of the real one;
+    /// asserts that the item is refused with [`AdvanceError::ReviewPassNotKept`] and is left as it was.
     fn assert_refused_with(tamper: impl FnOnce(&mut agent_core::state::PullRequest, &mut Vec<Review>)) {
         with_item(|handle| {
             handle
                 .submit_review(&pending_task(), ReviewVerdict::Approve, later())
                 .unwrap();
-            let (mut pr, mut reviews) = round(handle);
+            let (mut pr, mut reviews) = review_pass(handle);
             let before = handle.phase().clone();
             tamper(&mut pr, &mut reviews);
 
             let refused = handle.advance(ItemPhase::Approved { pr, reviews });
 
-            assert_eq!(refused, Err(AdvanceError::RoundNotKept { item: item() }));
+            assert_eq!(refused, Err(AdvanceError::ReviewPassNotKept { item: item() }));
             assert_eq!(handle.phase(), &before);
             assert_eq!(handle.phase().kind(), PhaseKind::InReview);
         });
@@ -92,7 +92,7 @@ mod approval_round {
     #[test]
     fn an_approval_that_claims_the_outcome_of_a_pending_review_is_refused() {
         with_item(|handle| {
-            let (pr, mut reviews) = round(handle);
+            let (pr, mut reviews) = review_pass(handle);
             let before = handle.phase().clone();
             for review in &mut reviews {
                 review.outcome = ReviewOutcome::Submitted {
@@ -103,7 +103,7 @@ mod approval_round {
 
             let refused = handle.advance(ItemPhase::Approved { pr, reviews });
 
-            assert_eq!(refused, Err(AdvanceError::RoundNotKept { item: item() }));
+            assert_eq!(refused, Err(AdvanceError::ReviewPassNotKept { item: item() }));
             assert_eq!(handle.phase(), &before);
         });
     }
@@ -114,7 +114,7 @@ mod approval_round {
             handle
                 .submit_review(&pending_task(), ReviewVerdict::Approve, later())
                 .unwrap();
-            let (pr, reviews) = round(handle);
+            let (pr, reviews) = review_pass(handle);
 
             handle
                 .advance(ItemPhase::Approved {

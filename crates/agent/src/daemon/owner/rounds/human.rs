@@ -8,7 +8,7 @@ use agent_core::protocol::EventKind;
 use agent_core::state::{ItemPhase, Timestamp};
 use agent_runtime::process::error_chain;
 
-use super::super::teams::Round;
+use super::super::teams::Look;
 use crate::daemon::merge::{
     Asking, Decision, Exhausted, Next, after_answer, asking, decision, exhausted, fix_delivery,
 };
@@ -19,24 +19,19 @@ use super::{Announcement, Lead, Pulls};
 
 impl Owner {
     /// Gives the lead the fix pass that waits for it: its task is queued, and its prompt has the findings.
-    pub(super) fn deliver_fix_passes(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+    pub(super) fn deliver_fix_passes(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
         if let Some(lead) = fix_delivery(team) {
-            self.release(&lead, Why::FixPass, round)?;
+            self.release(&lead, Why::FixPass, look)?;
         }
         Ok(())
     }
 
     /// What the pull requests that wait for the human need: the lead is woken to put the question; a lead that ran and put
     /// none leaves the human told directly; an answer gives one more fix pass.
-    pub(super) fn ask_the_human(
-        &mut self,
-        pulls: &Pulls,
-        team_id: &TeamId,
-        round: &mut Round,
-    ) -> Result<(), OwnerError> {
+    pub(super) fn ask_the_human(&mut self, pulls: &Pulls, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
@@ -58,12 +53,12 @@ impl Owner {
         let lead = self.lead_of(team_id)?;
         for ask in asks {
             match ask {
-                Asking::Wake { lead, .. } => self.release(&lead, Why::AskHuman, round)?,
+                Asking::Wake { lead, .. } => self.release(&lead, Why::AskHuman, look)?,
                 Asking::Notify { exhausted } => self.tell_decision(pulls, team_id, &lead, &exhausted)?,
             }
         }
         for waits in &answered {
-            self.start_pass_after_answer(team_id, &lead, waits, round)?;
+            self.start_pass_after_answer(team_id, &lead, waits, look)?;
         }
         Ok(())
     }
@@ -99,7 +94,7 @@ impl Owner {
         team_id: &TeamId,
         lead: &Lead,
         waits: &Exhausted,
-        round: &mut Round,
+        look: &mut Look,
     ) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
@@ -142,13 +137,13 @@ impl Owner {
                 item: id,
                 source,
             })?;
-            round.events.push(EventKind::ItemStatus {
+            look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: id,
                 status,
             });
-            round.changed = true;
+            look.changed = true;
         }
-        self.release(&lead.task, Why::FixPass, round)
+        self.release(&lead.task, Why::FixPass, look)
     }
 }

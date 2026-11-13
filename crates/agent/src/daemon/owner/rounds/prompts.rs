@@ -174,7 +174,7 @@ pub(super) async fn fix_pass(
         return Ok(None);
     };
     let passes = progress.fix_passes().len();
-    // The reports of the round that asked for this pass were kept under the number of the passes before it.
+    // The reports of the review pass that asked for this pass were kept under the number of the passes before it.
     let kept = count(passes.saturating_sub(1));
     let findings = reports_of(ctx, texts, &asked.requested_by, pr.number, kept).await?;
     let values = Variables::new()

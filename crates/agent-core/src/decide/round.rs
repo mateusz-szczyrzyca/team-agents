@@ -888,7 +888,7 @@ mod tests {
     }
 
     // Rule: one reviewer asking for changes decides, even after the other approved; the approval is dropped with
-    // the round and the next review round starts from none.
+    // the round and the next review pass starts from none.
     #[test]
     fn changes_requested_after_an_approval_start_a_fix_pass() {
         assert_eq!(

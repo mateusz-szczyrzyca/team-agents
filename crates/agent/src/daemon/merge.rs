@@ -106,7 +106,7 @@ pub(super) fn round_state(progress: &ItemProgress) -> Option<RoundState> {
 }
 
 /// A number of fix passes as the round machine counts them; a count that does not fit saturates, which no item reaches:
-/// every pass is a round of reviews.
+/// every fix pass is a review pass.
 pub(super) fn count(passes: usize) -> u32 {
     u32::try_from(passes).unwrap_or(u32::MAX)
 }

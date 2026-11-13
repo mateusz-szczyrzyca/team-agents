@@ -65,7 +65,7 @@ struct Workers {
 
 /// What one look at a team changed in the state.
 #[derive(Debug, Default)]
-pub(super) struct Round {
+pub(super) struct Look {
     /// What happened, for the subscribers.
     pub(super) events: Vec<EventKind>,
     /// Whether the state changed and is to be saved.
@@ -262,16 +262,16 @@ impl Owner {
         if self.closed.contains(team) || self.parts.state.team(team).is_none() {
             return Ok(());
         }
-        let mut round = Round::default();
-        self.reconcile_bus(team, &mut round).await?;
-        self.pull_requests(team, &mut round).await?;
-        self.assign_items(team, &mut round).await?;
-        self.serve_requests(team, &mut round).await?;
-        self.close_if_finished(team, &mut round)?;
-        if round.changed {
+        let mut look = Look::default();
+        self.reconcile_bus(team, &mut look).await?;
+        self.pull_requests(team, &mut look).await?;
+        self.assign_items(team, &mut look).await?;
+        self.serve_requests(team, &mut look).await?;
+        self.close_if_finished(team, &mut look)?;
+        if look.changed {
             self.save().await?;
             let now = Timestamp::now(&self.parts.clock)?;
-            for event in round.events {
+            for event in look.events {
                 self.publish(now, event);
             }
             self.publish_summary(now, team);
@@ -329,7 +329,7 @@ impl Owner {
     }
 
     /// Makes the members' states on the bus those their tasks have, and starts the tasks of the members the bus woke.
-    async fn reconcile_bus(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+    async fn reconcile_bus(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
@@ -345,14 +345,14 @@ impl Owner {
         };
         let plan = reconcile(team, &on_bus)?;
         for task in plan.wake {
-            self.release(&task, Why::Woken, round)?;
+            self.release(&task, Why::Woken, look)?;
         }
         for (member, state) in plan.set {
             match self.parts.bus.team_set(team_id, &member, state).await {
                 // A member that went to sleep while something waits for it is woken at once.
                 Ok(Woken::Message | Woken::Board) if state == MemberState::Sleeping => {
                     if let Some(task) = self.task_of(team_id, &member) {
-                        self.release(&task, Why::Woken, round)?;
+                        self.release(&task, Why::Woken, look)?;
                     }
                 }
                 Ok(Woken::Message | Woken::Board | Woken::No) => {}
@@ -379,7 +379,7 @@ impl Owner {
 
     /// Queues the task `task` to start with `why`: a waiting task is queued, a task that is about to start
     /// starts with it; a task that is at work is left alone.
-    pub(super) fn release(&mut self, task: &TaskId, why: Why, round: &mut Round) -> Result<(), OwnerError> {
+    pub(super) fn release(&mut self, task: &TaskId, why: Why, look: &mut Look) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         let status = self
             .parts
@@ -389,8 +389,8 @@ impl Owner {
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
         match status {
             TaskStatus::Waiting => {
-                self.move_to(task, &located.team, TaskStatus::Queued, &mut round.events)?;
-                round.changed = true;
+                self.move_to(task, &located.team, TaskStatus::Queued, &mut look.events)?;
+                look.changed = true;
             }
             // About to start: it starts with its reason.
             TaskStatus::Queued => {}
@@ -408,7 +408,7 @@ impl Owner {
     // ---- items and requests ---------------------------------------------------------------------------------
 
     /// Gives the pending items to the members that are free.
-    async fn assign_items(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+    async fn assign_items(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
@@ -433,14 +433,14 @@ impl Owner {
                 continue;
             }
             self.record_assignment(team_id, &assigned)?;
-            round.events.push(EventKind::ItemStatus {
+            look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: assigned.item,
                 status: ItemStatus::InProgress,
             });
-            round.changed = true;
+            look.changed = true;
             tracing::info!(team = %team_id, item = %assigned.item, member = %assigned.agent, "an item is given to a member");
-            self.release(&assigned.task, Why::Assigned(assigned.item), round)?;
+            self.release(&assigned.task, Why::Assigned(assigned.item), look)?;
         }
         Ok(())
     }
@@ -493,7 +493,7 @@ impl Owner {
     /// The bus hands out the oldest queued request of every team. A request of another team is held while the queue is
     /// read on, and put back before the next team is looked at: each team's workers serve its own requests, and a team
     /// with a free worker does not keep another team's request from it.
-    async fn serve_requests(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+    async fn serve_requests(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(Workers {
             in_order: workers,
             mut busy,
@@ -519,7 +519,7 @@ impl Owner {
                 held.push(request.id);
                 continue;
             }
-            self.release(&task, Why::Delegated(Box::new(request.clone())), round)?;
+            self.release(&task, Why::Delegated(Box::new(request.clone())), look)?;
             self.serving.insert(
                 task.clone(),
                 Served {
@@ -676,7 +676,7 @@ impl Owner {
     // ---- the end of a team ----------------------------------------------------------------------------------
 
     /// Closes `team` when its work is over: its waiting tasks end, the bus is told, and so is the human, once.
-    fn close_if_finished(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+    fn close_if_finished(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
@@ -693,8 +693,8 @@ impl Owner {
             .map(|(_, member)| member.task().clone())
             .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
         for (task, status) in transitions {
-            self.move_to(&task, team_id, status, &mut round.events)?;
-            round.changed = true;
+            self.move_to(&task, team_id, status, &mut look.events)?;
+            look.changed = true;
         }
         let waiting_reviewers: Vec<TaskId> = self
             .parts
@@ -710,8 +710,8 @@ impl Owner {
             })
             .unwrap_or_default();
         for task in waiting_reviewers {
-            self.move_to(&task, team_id, TaskStatus::Done, &mut round.events)?;
-            round.changed = true;
+            self.move_to(&task, team_id, TaskStatus::Done, &mut look.events)?;
+            look.changed = true;
         }
         if has_bus {
             self.outbox.push_back(Outbound {
