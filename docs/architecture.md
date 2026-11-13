@@ -235,21 +235,22 @@ it could not be kept asleep: the old harness started everybody too. A member wit
 (`STATUS: SLEEPING`); a list without items is one piece of work for the coordinator, who splits it by message or on the
 board.
 
-**The daemon looks at a team** after something happened to it (a run ended, a team started: an *event* look) and on its
-clock, every 5 seconds (a *poll* look), because the Go bus wakes a sleeper by marking it `waking` and spawns nothing — the
-`agentbus` wrapper configures no wake command — so only the daemon can tell. A look:
+**The daemon looks at a team** after something happened to it (a run ended, a team started) and on its clock, every 5
+seconds, because the Go bus wakes a sleeper by marking it `waking` and spawns nothing — the
+`agentbus` wrapper configures no wake command — so only the daemon can tell, and because an item whose branch could not be started is tried again. Every look:
 
 1. does what waits for the bus, oldest first (the *outbox*);
 2. reconciles the bus with the tasks (`team::reconcile`): each member's state on the bus is derived from its task's status
    (`queued`/`running` → `active`, `waiting` → `sleeping`, `questions`/`paused` → `paused`, `stopped` → `stopped`,
    `done`/`failed` → `done`, an excluded member `excluded`); a waiting member the bus says is `waking` is queued with the
    wake text, and so is a member that goes to sleep while something waits for it (`team-set` says `waking`);
-3. after an event, gives the pending items to the members that are free (`team::assignable`): the member's worktree gets
+3. gives the pending items to the members that are free (`team::assignable`): the member's worktree gets
    a new branch from the base branch (`git switch -c`), the item becomes `in_progress`, a waiting member is queued with the
-   item (the first run of a member has it in its prompt). An item whose branch cannot be started waits, with an error in the
-   log;
+   item (the first run of a member has it in its prompt). An item whose branch cannot be started waits, with a warning in the
+   log, and is tried again at the next look;
 4. serves the requests for workers: the first free worker in the configured order (`first_free_worker`) takes the oldest
-   queued request (`helper-next`) and runs it with the delegation text; when its run ends the request is closed with the
+   queued request of its team (`helper-next`; a request of another team is held and put back before the next team is looked
+   at) and runs it with the delegation text; when its run ends the request is closed with the
    worker's report (`helper-set`, without the status line) and the requester gets a `helper_result` message, which wakes it;
 5. closes the team when its work is over (`team::is_finished`: every item done — for a list without items, the lead said
    `DONE` — and no task going, asking, paused or about to start): waiting tasks become `done`, the bus team is marked done
