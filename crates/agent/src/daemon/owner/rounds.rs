@@ -38,7 +38,7 @@ use super::start::{Context, next_round};
 use super::teams::Round;
 use super::{Located, Notice, Owner, OwnerError};
 use crate::daemon::merge::{
-    Asking, Decision, Exhausted, Next, VerdictError, after_answer, after_verdict, asking, decision, exhausted,
+    Asking, Decision, Exhausted, Next, VerdictError, after_answer, after_verdict, asking, count, decision, exhausted,
     fix_delivery, items_of, review_deliveries,
 };
 use crate::daemon::pr::{Joining, Publication, Publish, PullTextError, plan_publications, pull_text};
@@ -212,7 +212,7 @@ async fn fix_pass(
     };
     let passes = progress.fix_passes().len();
     // The reports of the round that asked for this pass were kept under the number of the passes before it.
-    let kept = u32::try_from(passes.saturating_sub(1)).unwrap_or(u32::MAX);
+    let kept = count(passes.saturating_sub(1));
     let findings = reports_of(ctx, texts, &asked.requested_by, pr.number, kept).await?;
     let values = Variables::new()
         .with("pr", pr.number.to_string())?
@@ -253,7 +253,7 @@ async fn ask_human(
         let ItemPhase::InReview { reviews, .. } = progress.phase() else {
             continue;
         };
-        let kept = u32::try_from(progress.fix_passes().len()).unwrap_or(u32::MAX);
+        let kept = count(progress.fix_passes().len());
         findings.extend(reports_of(ctx, texts, reviews, waits.pr.number, kept).await?);
     }
     let file = ctx.home.questions_file(found.member.task(), round);
@@ -814,7 +814,7 @@ impl Owner {
         for id in &published.items {
             let stage = match (&publication.publish, team.item(*id)) {
                 (Publish::Update { fixing, .. }, Some(progress)) if fixing.contains(id) => {
-                    let passes = u32::try_from(progress.fix_passes().len()).unwrap_or(u32::MAX);
+                    let passes = count(progress.fix_passes().len());
                     Stage::Fixing {
                         pr: published.pr.number,
                         pass: std::num::NonZeroU32::MIN.saturating_add(passes.saturating_sub(1)),
@@ -1379,7 +1379,7 @@ impl Owner {
     ) -> Result<(), OwnerError> {
         tracing::info!(task = %task, pr = %late.pr.number, "a reviewer ended a review of a round that is decided: its report is kept and posted");
         let report = report_text(message);
-        let round = u32::try_from(late.round).unwrap_or(u32::MAX);
+        let round = count(late.round);
         self.parts
             .store
             .save_review_report(task, late.pr.number, round, &report)
@@ -1441,7 +1441,7 @@ impl Owner {
         let team_id = &located.team;
         let now = Timestamp::now(&self.parts.clock)?;
         let report = report_text(message);
-        let passes = u32::try_from(asked.passes).unwrap_or(u32::MAX);
+        let passes = count(asked.passes);
         self.parts
             .store
             .save_review_report(task, asked.pr.number, passes, &report)
