@@ -76,7 +76,11 @@ pub(super) fn reason(texts: &ChecksPrompts, issue: &Issue) -> Result<String, Che
                     .with("path", path.as_str())?
                     .with("removed", removed.to_string())?,
             ),
-            TestChange::EditedBinary | TestChange::ModeChanged => (
+            TestChange::ModeChanged => (
+                ChecksPrompt::IssueTestMode,
+                Variables::new().with("path", path.as_str())?,
+            ),
+            TestChange::EditedBinary => (
                 ChecksPrompt::IssueTestBinary,
                 Variables::new().with("path", path.as_str())?,
             ),

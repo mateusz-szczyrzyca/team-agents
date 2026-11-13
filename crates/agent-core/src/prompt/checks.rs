@@ -21,6 +21,8 @@ pub enum ChecksPrompt {
     IssueTestEdited,
     /// The reason: an existing binary test file was replaced.
     IssueTestBinary,
+    /// The reason: the mode of an existing test file changed.
+    IssueTestMode,
     /// The reason: a protected file was changed.
     IssueProtected,
     /// The reason: a test of a `RED:` commit was edited by a later commit.
@@ -66,6 +68,7 @@ impl ChecksPrompt {
         Self::IssueTestRenamed,
         Self::IssueTestEdited,
         Self::IssueTestBinary,
+        Self::IssueTestMode,
         Self::IssueProtected,
         Self::IssueRedEdited,
         Self::IssueNoTests,
@@ -102,6 +105,7 @@ impl ChecksPrompt {
                 &["path", "removed"],
             ),
             Self::IssueTestBinary => PromptSpec::new("harness/checks/issue-test-binary.md", Audience::Model, &["path"]),
+            Self::IssueTestMode => PromptSpec::new("harness/checks/issue-test-mode.md", Audience::Model, &["path"]),
             Self::IssueProtected => PromptSpec::new(
                 "harness/checks/issue-protected.md",
                 Audience::Model,

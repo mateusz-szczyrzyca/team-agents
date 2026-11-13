@@ -322,10 +322,12 @@ fn changed_tests(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
         .filter(|file| protected_path(rules, file).is_none())
         .filter_map(|file| {
             let (existing, how) = match (&file.change, file.lines) {
-                (Change::Added, _) | (Change::Modified, Lines::Text { removed: 0, .. }) => return None,
+                (Change::Added, _) | (Change::Modified, Lines::Text { added: 1.., removed: 0 }) => return None,
                 (Change::Deleted, _) => (&file.path, TestChange::Deleted),
                 (Change::Renamed { from }, _) => (from, TestChange::Renamed { to: file.path.clone() }),
                 (Change::Modified, Lines::Binary) => (&file.path, TestChange::EditedBinary),
+                // Git lists a file as modified with no line changed when only its mode changed.
+                (Change::Modified, Lines::Text { added: 0, removed: 0 }) => (&file.path, TestChange::ModeChanged),
                 (Change::Modified, Lines::Text { removed, .. }) => (&file.path, TestChange::Edited { removed }),
             };
             rules.test_paths.matches(existing).then(|| Issue::TestChanged {
