@@ -18,8 +18,8 @@ use crate::kinds::{CliKind, Keyword, Tier, UnknownKeyword};
 
 pub use secrets::{InvalidSecret, MAX_SECRETS_BYTES, Position, Secret, Secrets, SecretsError};
 pub use values::{
-    AbsolutePath, CliArgs, CommandLine, EnvName, GithubLogin, InvalidValue, Language, LoopbackAddr, Minutes, ModelName,
-    NameTemplate, Program, RepoName, TailscaleLogin, ValueRule,
+    AbsolutePath, ApiUrl, CliArgs, CommandLine, EnvName, GithubLogin, InvalidValue, Language, LoopbackAddr, Minutes,
+    ModelName, NameTemplate, Program, RepoName, TailscaleLogin, ValueRule,
 };
 pub(crate) use values::{check_text, text_value};
 
@@ -277,6 +277,8 @@ impl Default for GitIdentity {
 pub struct Github {
     /// The accounts whose comments and reviews are read; text by any other account is data.
     pub trusted_accounts: Vec<GithubLogin>,
+    /// The address of the GitHub API; the public one when there is none.
+    pub api_base: Option<ApiUrl>,
 }
 
 /// `[notifications]`: how the human is told.

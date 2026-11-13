@@ -38,6 +38,9 @@ const MAX_TAILSCALE_LOGIN_LEN: usize = 254;
 /// Longest name template, in bytes.
 const MAX_TEMPLATE_LEN: usize = 200;
 
+/// Longest URL of the GitHub API, in bytes.
+const MAX_API_URL_LEN: usize = 2048;
+
 /// Longest path or program, in bytes: Linux's `PATH_MAX`.
 const MAX_PATH_LEN: usize = 4096;
 
@@ -120,6 +123,9 @@ pub enum ValueRule {
     /// The port is 0.
     #[error("the port must not be 0")]
     ZeroPort,
+    /// The text is not an `http://` or `https://` URL.
+    #[error("it must be a URL that starts with https:// (or http://)")]
+    NotHttpUrl,
 }
 
 /// An [`InvalidValue`] for `text`.
@@ -360,6 +366,21 @@ fn check_tailscale_login(text: &str) -> Result<(), InvalidValue> {
 }
 
 text_value!(TailscaleLogin, check_tailscale_login, lowercase);
+
+/// The URL of the GitHub API, such as `https://github.example.com/api/v3`, when it is not the public one.
+///
+/// Up to 2048 bytes that start with `https://` or `http://`, without whitespace, control characters or `@`, which would
+/// make a user name or a password of the URL. Whether it is a valid URL, and whether `http` goes to this machine only,
+/// is for the runtime's GitHub client to decide: this checks the text.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(try_from = "String")]
+pub struct ApiUrl(String);
+
+fn check_api_url(_text: &str) -> Result<(), InvalidValue> {
+    Ok(())
+}
+
+text_value!(ApiUrl, check_api_url, keep);
 
 /// A text with the placeholder `{agent}` for an agent's name, such as `{agent} (team-agents)`: the name and the
 /// e-mail of the commits an agent makes.
