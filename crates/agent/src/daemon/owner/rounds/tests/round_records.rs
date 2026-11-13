@@ -355,8 +355,13 @@ async fn a_coordinator_a_member_and_a_worker_on_a_two_item_list_open_and_close_t
     assert_eq!(rounds_of_run(&state, &tasks[2], 0), []);
     let served = rounds_of_run(&state, &tasks[2], 1);
     let member = state.find_task(&tasks[1]).unwrap().member;
-    assert!(!served.is_empty());
-    assert!(member.runs().iter().any(|run| run.rounds() == served), "{served:?}");
+    assert!(
+        member
+            .runs()
+            .iter()
+            .any(|run| !run.rounds().is_empty() && run.rounds() == served),
+        "{served:?}"
+    );
     assert!(state.team(&team).unwrap().rounds()[0].opened_at() <= state.team(&team).unwrap().rounds()[1].opened_at());
 }
 
