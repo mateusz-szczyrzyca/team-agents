@@ -21,7 +21,6 @@ use agent_core::decide::outcome::{AfterHang, after_hang};
 use agent_core::ids::{InvalidName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::protocol::{Command, Event, EventKind, Failure, FailureKind, Reply, Target, TeamSummary};
-use agent_core::state::InvalidState;
 use agent_core::state::{InvalidTimestamp, Question, QuestionError, RunEnd, RunError, SessionId, State, Timestamp};
 use agent_core::status::{InvalidTransition, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
@@ -140,9 +139,6 @@ pub(crate) enum OwnerError {
         /// The task's ID in the runtime.
         id: JoinId,
     },
-    /// A new team cannot be put in the state: a mistake of the daemon.
-    #[error("the team cannot be put in the state")]
-    InsertTeam(#[source] InvalidState),
     /// A name in the state is not an agent name.
     #[error("a name in the state is not an agent name")]
     Name(#[from] InvalidName),

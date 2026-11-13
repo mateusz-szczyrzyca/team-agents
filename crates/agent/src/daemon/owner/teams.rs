@@ -90,6 +90,16 @@ impl Owner {
             Ok(formed) => formed,
             Err(refusal) => return Ok(Err(refusal_of(&refusal))),
         };
+        // The team goes into a copy of the state first: a team the state refuses leaves nothing behind, and the state the
+        // owner holds changes only once the copy is saved.
+        let mut next = self.parts.state.clone();
+        if let Err(error) = next.insert_team(formed.team.clone()) {
+            tracing::error!(team = %formed.team.id(), error = %error_chain(&error), "the state refuses the new team");
+            return Ok(Err(internal(&format!(
+                "the new team does not fit the state: {}",
+                error_chain(&error)
+            ))));
+        }
         if let Err(failure) = self.make_workspaces(&request, &formed).await {
             return Ok(Err(failure));
         }
@@ -103,7 +113,7 @@ impl Owner {
                 message: format!("cannot create the team on the agentbus: {}", error_chain(&error)),
             }));
         }
-        let team = formed.team;
+        let team = &formed.team;
         let id = team.id().clone();
         let tasks: Vec<TaskId> = team
             .crew()
@@ -111,9 +121,16 @@ impl Owner {
             .into_iter()
             .map(|(_, member)| member.task().clone())
             .collect();
-        let started = started_items(&team);
-        self.parts.state.insert_team(team).map_err(OwnerError::InsertTeam)?;
-        self.save().await?;
+        let started = started_items(team);
+        if let Err(error) = self.parts.store.save(&next).await {
+            tracing::error!(team = %id, error = %error_chain(&error), "the state with the new team cannot be saved: the team is not started");
+            self.undo_start(&request, &formed).await;
+            return Ok(Err(internal(&format!(
+                "cannot save the state with the new team: {}",
+                error_chain(&error)
+            ))));
+        }
+        self.parts.state = next;
         let now = Timestamp::now(&self.parts.clock)?;
         self.publish(now, EventKind::TeamStarted { team: id.clone() });
         for event in started {
@@ -162,6 +179,18 @@ impl Owner {
             made.push(workspace.clone());
         }
         Ok(())
+    }
+
+    /// Removes what was made for the team of `formed`, which cannot be started: its worktrees and branches, and its team
+    /// on the bus, which is marked done because the bus keeps its teams.
+    async fn undo_start(&self, request: &RunRequest, formed: &Formed) {
+        self.remove_workspaces(request, &formed.workspaces).await;
+        if formed.bus.is_some()
+            && let Err(error) = self.parts.bus.team_done(formed.team.id()).await
+        {
+            // A refusal that is being returned already: a bus team that cannot be closed is told, and left for the human.
+            tracing::warn!(team = %formed.team.id(), error = %error_chain(&error), "the bus team of a refused team cannot be closed");
+        }
     }
 
     /// Removes worktrees and their branches that a request made and cannot use.
