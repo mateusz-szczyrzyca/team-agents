@@ -271,15 +271,20 @@ fn allows(verdict: &Verdict) -> bool {
     }
 }
 
-/// What the human wrote in `file` about `subjects`, which the questions were made for: the question at the position of
-/// each subject, whatever its number. Only the word
-/// [`ALLOW_WORD`] allows: `ok` accepts the recommendation, which is to refuse, and a question that has no verdict, or is
-/// not in the file, is refused. A question of the file that names no subject is not looked at.
+/// What the human wrote in `file` about `subjects`, which the questions were made for in their order: the subject at
+/// position `n` is question `n + 1`, wherever the question stands in the file. Only the word [`ALLOW_WORD`] allows: `ok`
+/// accepts the recommendation, which is to refuse, and a question that has no verdict, or is not in the file, is
+/// refused. A question of the file that names no subject is not looked at.
 #[must_use]
 pub(super) fn decisions(subjects: &[Subject], file: &QuestionsFile) -> Decisions {
     let mut decided = Decisions::default();
-    for (position, subject) in subjects.iter().enumerate() {
-        let verdict = file.entries().get(position).and_then(Entry::verdict);
+    // A subject past the last number a question can have has no question, and is refused.
+    let mut numbers = std::iter::successors(Some(NonZeroU32::MIN), |number| number.checked_add(1));
+    for subject in subjects {
+        let verdict = numbers
+            .next()
+            .and_then(|number| file.entry(number))
+            .and_then(Entry::verdict);
         if verdict.is_some_and(allows) {
             decided.allowed.push(subject.clone());
         } else {
