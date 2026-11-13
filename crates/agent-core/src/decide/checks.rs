@@ -497,36 +497,41 @@ fn says_no_test_first(message: &str) -> bool {
     })
 }
 
-/// Whether `description` names the file `path` with its whole path: where it occurs, no path character comes right
-/// before it and none goes on after it — a `.` only when a path character follows, as in `a.rs.orig`, so that a
-/// sentence may end with the path. Naming `crates/other/src/a.rs` does not name `src/a.rs`.
+/// Whether `description` names the file `path` with its whole path: where it occurs, a delimiter or the edge of the text
+/// comes right before it, and after it come a delimiter or the edge of the text, with dots, question marks and bangs of
+/// a sentence between. Naming `crates/other/src/a.rs`, `src/a.rs.orig` or `src/a.rs@backup` does not name `src/a.rs`.
 fn names_path(description: &str, path: &RepoPath) -> bool {
     let path = path.as_str();
     // `get` finds no text only off a character boundary, which `match_indices` never gives: such a place names nothing.
     description.match_indices(path).any(|(start, _)| {
         let starts = description
             .get(..start)
-            .is_some_and(|before| !before.chars().next_back().is_some_and(is_path_char));
+            .is_some_and(|before| before.chars().next_back().is_none_or(is_delimiter));
         let ends = description
             .get(start..)
             .and_then(|from| from.strip_prefix(path))
             .is_some_and(|after| {
-                let mut next = after.chars();
-                match next.next() {
-                    Some('.') => !next.next().is_some_and(is_path_char),
-                    Some(c) => !is_path_char(c),
-                    None => true,
-                }
+                after
+                    .trim_start_matches(SENTENCE_MARKS)
+                    .chars()
+                    .next()
+                    .is_none_or(is_delimiter)
             });
         starts && ends
     })
 }
 
-/// Whether `c` may be part of a path as a description writes it: a letter, a digit, `/`, `.`, `_`, `-`, or one of `~`,
-/// `+` and `%`, which end the names of backup and versioned files (`a.rs~`). A `#` is not one: it opens the anchor
-/// of a link.
-fn is_path_char(c: char) -> bool {
-    c.is_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '~' | '+' | '%')
+/// The characters that end a sentence and may follow a path in it.
+const SENTENCE_MARKS: [char; 3] = ['.', '?', '!'];
+
+/// The ASCII punctuation that ends a path in a description: markdown's quotes, brackets, emphasis, anchors and cells, and
+/// prose's commas, semicolons and colons.
+const DELIMITERS: &str = "`\"'()[]{}<>,;:#=*|";
+
+/// Whether `c` ends the text of a path in a description: white space, punctuation outside ASCII (`«…»`) or one of
+/// [`DELIMITERS`]. Every other character may be part of a file name, so that a longer name is no mention of a shorter.
+fn is_delimiter(c: char) -> bool {
+    c.is_whitespace() || (!c.is_alphanumeric() && !c.is_ascii_punctuation()) || DELIMITERS.contains(c)
 }
 
 /// The added lines that have a marker — and the attributes wrapped over lines that have one and an added line, as far as
