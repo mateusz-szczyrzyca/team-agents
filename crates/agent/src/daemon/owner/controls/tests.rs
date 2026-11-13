@@ -501,3 +501,50 @@ async fn a_word_to_a_task_that_is_done_is_refused() {
     assert!(message.contains("done"), "{message}");
     daemon.stop().await.unwrap();
 }
+
+/// A daemon whose task 1 hangs: the watchdog has told the run to stop and the run is taking its time, so that the run
+/// ends by itself, as a hung one, while the human's word arrives.
+async fn hung_and_ending() -> Daemon {
+    let mut daemon = Daemon::new(&solo_state(), None);
+    let dir = daemon.scenario(1, "hang-slow-stop");
+    daemon.start().await;
+    let told = dir.join(".fake-term");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !told.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the watchdog never stopped the run"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    daemon
+}
+
+#[tokio::test]
+async fn a_stop_that_arrives_as_a_hung_run_ends_is_recorded_as_the_end_of_the_run() {
+    let mut daemon = hung_and_ending().await;
+
+    let reply = daemon.ask(control(ControlAction::Stop, of_task(1))).await.unwrap();
+
+    assert_eq!(reply, Reply::Applied { tasks: vec![task(1)] });
+    let state = daemon.state();
+    assert_eq!(status(&state, 1), TaskStatus::Stopped);
+    assert_eq!(
+        last_end(&state, 1),
+        RunEnd::Stopped,
+        "the human stopped it, the watchdog did not"
+    );
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_pause_that_arrives_as_a_hung_run_ends_holds_the_task_and_is_recorded_as_the_end_of_the_run() {
+    let mut daemon = hung_and_ending().await;
+
+    daemon.ask(control(ControlAction::Pause, of_task(1))).await.unwrap();
+
+    let state = daemon.state();
+    assert_eq!(status(&state, 1), TaskStatus::Paused);
+    assert_eq!(last_end(&state, 1), RunEnd::Stopped);
+    daemon.stop().await.unwrap();
+}
