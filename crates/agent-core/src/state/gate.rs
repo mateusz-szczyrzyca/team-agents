@@ -9,6 +9,9 @@ use super::values::{CommitId, Timestamp};
 use crate::config::AbsolutePath;
 use crate::kinds::{Keyword, UnknownKeyword};
 
+/// How many digits of a commit ID a summary shows.
+const SHORT_COMMIT_LEN: usize = 7;
+
 /// The result of running the repository's gate on a commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -85,7 +88,17 @@ impl GateRecord {
     /// tree was not clean. For example `passed at 26b65de` or `failed (exit 2) at 26b65de, tree not clean`.
     #[must_use]
     pub fn summary(&self) -> String {
-        String::new()
+        let head: String = self.result.head.as_str().chars().take(SHORT_COMMIT_LEN).collect();
+        let how = match self.result.outcome {
+            GateOutcome::Passed => "passed".to_owned(),
+            GateOutcome::Failed { exit_code } => format!("failed (exit {exit_code})"),
+            GateOutcome::TimedOut => "timed out".to_owned(),
+        };
+        let tree = match self.tree {
+            GateTree::Clean => "",
+            GateTree::NotClean => ", tree not clean",
+        };
+        format!("{how} at {head}{tree}")
     }
 }
 
