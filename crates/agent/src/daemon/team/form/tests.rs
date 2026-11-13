@@ -337,3 +337,36 @@ fn a_refusal_names_what_is_wrong() {
         error.failure().message
     );
 }
+
+/// A generator that gives the same number every time: every ID it makes in one second is the same.
+struct Constant;
+
+impl rand::TryRng for Constant {
+    type Error = std::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(7)
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(7)
+    }
+
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+        dst.fill(7);
+        Ok(())
+    }
+}
+
+#[test]
+fn a_team_whose_tasks_cannot_get_ids_of_their_own_is_not_formed() {
+    let found = form(
+        &request(&["inv-opus", "claude-1"], PLAIN),
+        &config(),
+        &home(),
+        &clock(),
+        &mut Constant,
+    );
+
+    assert!(matches!(found, Err(FormError::IdCollision)), "{found:?}");
+}
