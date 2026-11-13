@@ -277,10 +277,13 @@ fn is_name_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '.' | ':')
 }
 
-/// Whether `before`, the start of a line of Rust, ends inside a string that one of its quotes opened.
+/// Whether `before`, the start of a line of Rust, ends inside a string that one of its quotes opened: a string with
+/// escapes, or a raw one (`r"…"`, `r#"…"#`, `br#"…"#`) that only a quote and as many `#` as it opened with ends.
 fn ends_in_string(before: &str) -> bool {
     let mut inside = false;
     let mut chars = before.chars();
+    // The two characters read last, the nearer first: a raw string starts with an `r` that no name goes before.
+    let mut last = (None, None);
     while let Some(c) = chars.next() {
         match c {
             // An escape in a string takes the character after it with it, a quote too.
@@ -288,10 +291,36 @@ fn ends_in_string(before: &str) -> bool {
                 chars.next();
             }
             '"' => inside = !inside,
+            'r' if !inside && starts_raw_string(last) => {
+                let rest = chars.as_str();
+                let hashes = rest.chars().take_while(|&h| h == '#').count();
+                if let Some(body) = rest.trim_start_matches('#').strip_prefix('"') {
+                    let end = format!("\"{}", "#".repeat(hashes));
+                    match body.split_once(end.as_str()) {
+                        Some((_, after)) => {
+                            chars = after.chars();
+                            last = (None, None);
+                            continue;
+                        }
+                        None => return true,
+                    }
+                }
+            }
             _ => {}
         }
+        last = (Some(c), last.0);
     }
     inside
+}
+
+/// Whether an `r` after the characters `last` (the nearer first) can start a raw string: it begins a word, or follows
+/// the `b` or `c` of a byte or C string that does.
+fn starts_raw_string(last: (Option<char>, Option<char>)) -> bool {
+    match last {
+        (None, _) => true,
+        (Some('b' | 'c'), before) => !before.is_some_and(is_name_char),
+        (Some(near), _) => !is_name_char(near),
+    }
 }
 
 impl Place {
