@@ -35,6 +35,7 @@ use tokio_util::sync::CancellationToken;
 use self::owner::{EVENT_BACKLOG, INBOX, MAX_RUNS, Owner, OwnerError, OwnerParts};
 use self::server::ServerError;
 
+mod control;
 mod notice;
 mod notifier;
 mod owner;
