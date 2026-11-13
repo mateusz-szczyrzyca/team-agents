@@ -131,6 +131,25 @@ struct OpenRound {
     file: PathBuf,
 }
 
+/// Where the answers that are sent come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    /// A file the human named: nothing else can have taken the answers.
+    File,
+    /// The questions file of the round, edited now: the daemon may have taken it when the human saved it.
+    Editor,
+}
+
+/// The answers of one round on their way to the daemon.
+struct Delivery<'a> {
+    /// The task.
+    task: TaskId,
+    /// The round the answers are for.
+    open: &'a OpenRound,
+    /// Where they come from.
+    origin: Origin,
+}
+
 /// Answers the questions of `task` from `source` and says what happened.
 ///
 /// # Errors
@@ -147,8 +166,8 @@ pub(crate) async fn answer(
             task: task.clone(),
             status,
         })?;
-    let (path, editing) = match source {
-        Source::File(path) => (path, false),
+    let (path, origin) = match source {
+        Source::File(path) => (path, Origin::File),
         Source::Editor(editor) => {
             run_editor(&editor, &open.file).await?;
             // The daemon takes a file saved with the marker by itself: the answers may be taken already.
@@ -158,23 +177,28 @@ pub(crate) async fn answer(
             if !still_open {
                 return taken(&task, out);
             }
-            (open.file.clone(), true)
+            (open.file.clone(), Origin::Editor)
         }
     };
     let list = answers_in(&path, &task).await?;
-    send(connection, task, &open, list, editing, out).await
+    let delivery = Delivery {
+        task,
+        open: &open,
+        origin,
+    };
+    send(connection, &delivery, list, out).await
 }
 
-/// Sends the answers `list` for the round `open` of `task`. When the daemon refuses them because the question is no longer
-/// open and the file was edited, the daemon took them from the saved file first, which is no error.
+/// Sends the answers `list` of `delivery`. When the daemon refuses them because the question is no longer open and the
+/// file was edited, the daemon took them from the saved file first, which is no error.
 async fn send(
     connection: &mut Connection,
-    task: TaskId,
-    open: &OpenRound,
+    delivery: &Delivery<'_>,
     list: AnswerList,
-    editing: bool,
     out: &mut impl Write,
 ) -> Result<(), AnswerError> {
+    let Delivery { task, open, origin } = delivery;
+    let task = task.clone();
     let request = Command::Answer(AnswerRequest {
         task: task.clone(),
         round: open.round,
@@ -197,7 +221,7 @@ async fn send(
             task,
         }),
         // The save that took the answers can land between the look after the editor and the answer.
-        Err(ClientError::Refused(failure)) if editing && failure.kind == FailureKind::Conflict => {
+        Err(ClientError::Refused(failure)) if *origin == Origin::Editor && failure.kind == FailureKind::Conflict => {
             let still_open = open_round(connection, &task)
                 .await?
                 .is_ok_and(|now| now.round == open.round);
