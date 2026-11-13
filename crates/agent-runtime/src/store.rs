@@ -178,13 +178,13 @@ impl Home {
     /// The file with the output of the `run`-th gate run of `task`, in the task's directory.
     #[must_use]
     pub fn gate_log(&self, task: &TaskId, run: NonZeroU32) -> PathBuf {
-        PathBuf::new()
+        self.task_dir(task).join(format!("gate-{run}.log"))
     }
 
     /// The file with the last gate record of `task`, in the task's directory.
     #[must_use]
     pub fn gate_record_file(&self, task: &TaskId) -> PathBuf {
-        PathBuf::new()
+        self.task_dir(task).join(GATE_RECORD_FILE)
     }
 
     /// The questions file of round `round` of `task`, in the task's directory.
@@ -617,7 +617,16 @@ impl StateStore {
     /// [`StoreError::RenderGateRecord`], [`StoreError::CreateDir`], [`StoreError::WriteTemp`], [`StoreError::Replace`],
     /// [`StoreError::SyncDir`] and [`StoreError::Worker`].
     pub async fn save_gate_record(&self, task: &TaskId, record: &GateRecord) -> Result<(), StoreError> {
-        Ok(())
+        let text = serde_json::to_vec_pretty(record).map_err(|source| StoreError::RenderGateRecord { source })?;
+        let dir = self.home.task_dir(task);
+        let target = self.home.gate_record_file(task);
+        let write_dir = dir.clone();
+        let file = blocking(move || {
+            create_dir(&write_dir)?;
+            write_temp(&write_dir, &text)
+        })
+        .await?;
+        StagedState { file, target, dir }.commit().await
     }
 
     /// Appends one line to the activity log of `task`: the time and the event, texts cut to
