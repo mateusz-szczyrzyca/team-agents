@@ -125,12 +125,23 @@ pub(in crate::daemon) fn shape_with_answers(
     let Some(answers) = answers else {
         return shape(texts, harness, run, composed);
     };
-    let told = if run.new_session {
-        format!("{}\n\n{}", composed.trim_end(), answers)
-    } else {
-        answers.to_owned()
-    };
-    shape(texts, harness, run, told)
+    if run.new_session {
+        let shaped = shape(texts, harness, run, composed)?;
+        return Ok(join_sections(&shaped, answers));
+    }
+    let reason = shape(texts, harness, run, String::new())?;
+    Ok(join_sections(answers, &reason))
+}
+
+/// `first` and `second` as two sections of a prompt; an empty one leaves the other as it is.
+fn join_sections(first: &str, second: &str) -> String {
+    if second.trim().is_empty() {
+        return first.to_owned();
+    }
+    if first.trim().is_empty() {
+        return second.to_owned();
+    }
+    format!("{}{SECTION_SEPARATOR}{second}", first.trim_end())
 }
 
 /// The team the member is in: who, and on which branch it works.
