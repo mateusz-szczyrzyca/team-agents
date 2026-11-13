@@ -5,8 +5,30 @@
 //! that window. The sockets of windows that were closed stay behind and refuse the connection, so the sockets of this
 //! user are tried newest first — those in the runtime directory of the session before the others — until one works.
 
+use std::fs;
+use std::io;
+use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
+
+use tokio::process::Command;
+
+use crate::process::{CaptureError, CaptureLimits, capture};
+
+/// The prefix of the name of a window's socket.
+const SOCKET_PREFIX: &str = "vscode-ipc-";
+
+/// The suffix of the name of a window's socket.
+const SOCKET_SUFFIX: &str = ".sock";
+
+/// The variable that tells the remote command which window to talk to.
+const SOCKET_VARIABLE: &str = "VSCODE_IPC_HOOK_CLI";
+
+/// How many bytes of what the remote command prints are kept.
+const MAX_OUTPUT_BYTES: u64 = 64 << 10;
+
+/// How many characters of what a window said an error carries.
+const MAX_SAID_CHARS: usize = 2048;
 
 /// Why a file could not be opened in any window.
 #[derive(Debug, thiserror::Error)]
@@ -22,6 +44,14 @@ pub enum OpenError {
     /// The task that looks for the windows failed.
     #[error("the task that looks for the windows of VS Code failed")]
     Worker(#[source] tokio::task::JoinError),
+    /// The remote command cannot be started.
+    #[error("cannot run the remote command {program:?} of VS Code")]
+    Start {
+        /// The command.
+        program: PathBuf,
+        /// Why it did not start.
+        source: CaptureError,
+    },
     /// Every window that was tried refused or did not answer.
     #[error("no window of VS Code opened {file:?}; the last one, {socket:?}, said: {said}")]
     Refused {
@@ -83,15 +113,168 @@ impl VscodeOpener {
     /// Opens `file` in a window of VS Code.
     ///
     /// # Errors
-    /// [`OpenError`].
+    /// [`OpenError`]: a directory that cannot be listed, a remote command that cannot be started, or every window that
+    /// was tried refusing.
     pub async fn open(&self, file: &Path) -> Result<Opened, OpenError> {
-        let _ = (
-            &self.server_dirs,
-            &self.runtime_dir,
-            &self.fallback_dir,
-            self.timeout,
-            file,
-        );
-        Ok(Opened::NoServer)
+        let this = self.clone();
+        let found = tokio::task::spawn_blocking(move || this.discover())
+            .await
+            .map_err(OpenError::Worker)??;
+        let Some(program) = found.program else {
+            return Ok(Opened::NoServer);
+        };
+        let mut refused = None;
+        for socket in found.sockets {
+            match self.try_window(&program, &socket, file).await? {
+                Ok(()) => return Ok(Opened::Window { socket }),
+                Err(said) => refused = Some((socket, said)),
+            }
+        }
+        match refused {
+            Some((socket, said)) => Err(OpenError::Refused {
+                file: file.to_path_buf(),
+                socket,
+                said,
+            }),
+            None => Ok(Opened::NoWindow),
+        }
     }
+
+    /// Runs the remote command `program` for the window of `socket`. The outer error is a command that cannot be started,
+    /// the inner one a window that did not take the file, with what it said.
+    async fn try_window(&self, program: &Path, socket: &Path, file: &Path) -> Result<Result<(), String>, OpenError> {
+        let mut command = Command::new(program);
+        command.arg(file).env(SOCKET_VARIABLE, socket);
+        let limits = CaptureLimits {
+            timeout: self.timeout,
+            max_bytes: MAX_OUTPUT_BYTES,
+        };
+        match capture(command, limits).await {
+            Ok(captured) if captured.exit.succeeded() => Ok(Ok(())),
+            // What the window said is for a human to read: invalid UTF-8 in it is replaced.
+            Ok(captured) => Ok(Err(String::from_utf8_lossy(&captured.stderr.bytes)
+                .trim()
+                .chars()
+                .take(MAX_SAID_CHARS)
+                .collect())),
+            Err(source @ CaptureError::Spawn { .. }) => Err(OpenError::Start {
+                program: program.to_path_buf(),
+                source,
+            }),
+            // A window that does not answer in time, or whose output cannot be read, is a window that did not take it.
+            Err(other) => Ok(Err(other.to_string())),
+        }
+    }
+
+    /// Finds the remote command of the newest server and the sockets of the windows, in the order to try them.
+    fn discover(&self) -> Result<Found, OpenError> {
+        let mut clis = Vec::new();
+        for server in &self.server_dirs {
+            for build in children(&server.join("cli/servers"))? {
+                clis.extend(children(&build.join("server/bin/remote-cli"))?);
+            }
+            for build in children(&server.join("bin"))? {
+                clis.extend(children(&build.join("bin/remote-cli"))?);
+            }
+        }
+        let program = newest(clis)?;
+        let uid = rustix::process::getuid().as_raw();
+        let mut sockets = windows(&self.runtime_dir, uid)?;
+        if self.fallback_dir != self.runtime_dir {
+            sockets.extend(windows(&self.fallback_dir, uid)?);
+        }
+        Ok(Found { program, sockets })
+    }
+}
+
+/// What a look at the host found.
+struct Found {
+    /// The remote command of the newest server, if there is a server.
+    program: Option<PathBuf>,
+    /// The sockets of the windows of this user, in the order to try them.
+    sockets: Vec<PathBuf>,
+}
+
+/// The entries of `dir`; none when the directory is not there.
+fn children(dir: &Path) -> Result<Vec<PathBuf>, OpenError> {
+    let list = |source| OpenError::List {
+        path: dir.to_path_buf(),
+        source,
+    };
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        // A host without that server layout is the specified case of nothing to open the file in.
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => return Err(list(source)),
+    };
+    entries
+        .map(|entry| entry.map(|found| found.path()).map_err(list))
+        .collect()
+}
+
+/// What a file of the host is, as far as the opener cares.
+fn look(path: &Path, follow: bool) -> Result<Option<fs::Metadata>, OpenError> {
+    let looked = if follow {
+        fs::metadata(path)
+    } else {
+        fs::symlink_metadata(path)
+    };
+    match looked {
+        Ok(metadata) => Ok(Some(metadata)),
+        // A file that was there a moment ago and is gone — a window that closed — is not there.
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(OpenError::List {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+/// When the file the metadata is of was last changed.
+fn changed(path: &Path, metadata: &fs::Metadata) -> Result<SystemTime, OpenError> {
+    metadata.modified().map_err(|source| OpenError::List {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// The executable file of `paths` that was changed last (a link is followed).
+fn newest(paths: Vec<PathBuf>) -> Result<Option<PathBuf>, OpenError> {
+    let mut best: Option<(SystemTime, PathBuf)> = None;
+    for path in paths {
+        let Some(metadata) = look(&path, true)? else {
+            continue;
+        };
+        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+            continue;
+        }
+        let time = changed(&path, &metadata)?;
+        if best.as_ref().is_none_or(|(latest, _)| time > *latest) {
+            best = Some((time, path));
+        }
+    }
+    Ok(best.map(|(_, path)| path))
+}
+
+/// The sockets of the windows in `dir` that `uid` owns, newest first.
+fn windows(dir: &Path, uid: u32) -> Result<Vec<PathBuf>, OpenError> {
+    let mut found: Vec<(SystemTime, PathBuf)> = Vec::new();
+    for path in children(dir)? {
+        let named = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(SOCKET_PREFIX) && name.ends_with(SOCKET_SUFFIX));
+        if !named {
+            continue;
+        }
+        let Some(metadata) = look(&path, false)? else {
+            continue;
+        };
+        // A socket of another user is not ours to talk to.
+        if metadata.file_type().is_socket() && metadata.uid() == uid {
+            found.push((changed(&path, &metadata)?, path));
+        }
+    }
+    found.sort_by(|left, right| right.0.cmp(&left.0));
+    Ok(found.into_iter().map(|(_, path)| path).collect())
 }
