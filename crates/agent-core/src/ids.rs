@@ -27,6 +27,14 @@ const SUFFIX_LEN: usize = 4;
 /// Number of distinct characters in a generated ID's suffix: the digits `0-9`, then the letters `a-z`.
 const SUFFIX_RADIX: u8 = 36;
 
+/// Number of different suffixes of a generated ID: [`SUFFIX_RADIX`] to the power [`SUFFIX_LEN`].
+const SUFFIX_COUNT: u32 = 36_u32.pow(4);
+
+const _: () = assert!(
+    SUFFIX_LEN == 4 && SUFFIX_RADIX == 36,
+    "SUFFIX_COUNT is 36 to the power 4"
+);
+
 /// Latest year a generated ID can carry: its timestamp has four digits for the year.
 const MAX_YEAR: i32 = 9999;
 
@@ -284,9 +292,16 @@ generated_id!(RoundId, IdKind::Round);
 impl RoundId {
     /// The ID of the round at `position` (counted from 0) of the team `team`, for a state that was written before
     /// rounds had IDs: the same team and position always give the same ID.
+    ///
+    /// The ID has the time of the team's ID, and a suffix that is the team's suffix, counted up by the position plus
+    /// one in the digits `0-9a-z` and wrapped around after `zzzz`. The rounds of one team differ while the team has
+    /// fewer than 36⁴ − 1 of them, which a task list of at most 1 MiB cannot; rounds of two teams made in one second
+    /// may meet, and whoever derives a whole state checks for that.
     #[must_use]
-    pub fn derive(_team: &TeamId, _position: u32) -> Self {
-        Self(String::new())
+    pub fn derive(team: &TeamId, position: u32) -> Self {
+        let (stamp, suffix) = split_team_id(team);
+        let next = (suffix + position % SUFFIX_COUNT + 1) % SUFFIX_COUNT;
+        Self(format!("{}-{stamp}-{}", IdKind::Round.prefix(), suffix_text(next)))
     }
 }
 
@@ -335,7 +350,7 @@ impl IdKind {
             Self::Team => "team",
             Self::Task => "task",
             Self::Run => "run",
-            Self::Round => "",
+            Self::Round => "round",
         }
     }
 }
@@ -488,6 +503,37 @@ fn generate_id(kind: IdKind, clock: &impl Clock, rng: &mut impl Rng) -> Result<S
         now.minute(),
         now.second(),
     ))
+}
+
+/// The stamp `YYYYMMDD-HHMMSS` of `team` and the value of its suffix read as a number in base [`SUFFIX_RADIX`].
+#[expect(
+    clippy::expect_used,
+    reason = "a TeamId is `team-`, a stamp and four characters of 0-9 and a-z: it was checked when it was made"
+)]
+fn split_team_id(team: &TeamId) -> (&str, u32) {
+    let rest = team
+        .as_str()
+        .strip_prefix(IdKind::Team.prefix())
+        .and_then(|rest| rest.strip_prefix('-'))
+        .expect("a TeamId starts with its prefix");
+    let (stamp, suffix) = rest.rsplit_once('-').expect("a TeamId ends with a dash and its suffix");
+    let value = u32::from_str_radix(suffix, u32::from(SUFFIX_RADIX)).expect("the suffix of a TeamId is 0-9 and a-z");
+    (stamp, value)
+}
+
+/// The [`SUFFIX_LEN`] characters of the suffix with the value `value`, which is below [`SUFFIX_COUNT`].
+#[expect(
+    clippy::expect_used,
+    reason = "a remainder of the radix is a digit of the radix; the derived-ID tests go through every digit"
+)]
+fn suffix_text(mut value: u32) -> String {
+    let radix = u32::from(SUFFIX_RADIX);
+    let mut digits = Vec::with_capacity(SUFFIX_LEN);
+    for _ in 0..SUFFIX_LEN {
+        digits.push(char::from_digit(value % radix, radix).expect("a remainder of the radix is a digit"));
+        value /= radix;
+    }
+    digits.iter().rev().collect()
 }
 
 /// The suffix character for `n`, which is below [`SUFFIX_RADIX`]: `0-9`, then `a-z`.
