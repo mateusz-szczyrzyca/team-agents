@@ -335,6 +335,86 @@ async fn answers_that_a_run_read_and_that_reported_failure_are_not_given_again_t
     daemon.stop().await.unwrap();
 }
 
+/// How the run that was given the answers of the human ends without having read them to the end, and what gets the task
+/// going again.
+#[derive(Debug, Clone, Copy)]
+enum Unfinished {
+    /// The human stops the run and resumes the task.
+    Stopped,
+    /// The provider says the usage limit is reached; the task goes on by itself when the limit is over.
+    QuotaExhausted,
+    /// The provider answers HTTP 429; the task goes on by itself after the pause.
+    RateLimited,
+}
+
+#[tokio::test]
+async fn answers_that_a_run_did_not_finish_reading_are_given_again_to_the_run_that_goes_on() {
+    for case in [Unfinished::Stopped, Unfinished::QuotaExhausted, Unfinished::RateLimited] {
+        let mut daemon = waiting_for_answers().await;
+        daemon.scenario(
+            1,
+            match case {
+                Unfinished::Stopped => "busy",
+                Unfinished::QuotaExhausted => "quota",
+                Unfinished::RateLimited => "ratelimit",
+            },
+        );
+        daemon.ask(answer(1, 1, &[(1, "Use the disk")])).await.unwrap();
+        match case {
+            Unfinished::Stopped => {
+                daemon.status_is(1, TaskStatus::Running).await;
+                daemon
+                    .ask(Command::Stop(ControlRequest {
+                        target: Target::Task(task(1)),
+                    }))
+                    .await
+                    .unwrap();
+                daemon.status_is(1, TaskStatus::Stopped).await;
+                daemon.scenario(1, "done");
+                daemon
+                    .ask(Command::Resume(ControlRequest {
+                        target: Target::Task(task(1)),
+                    }))
+                    .await
+                    .unwrap();
+            }
+            Unfinished::QuotaExhausted | Unfinished::RateLimited => {
+                daemon.status_is(1, TaskStatus::Paused).await;
+                daemon.scenario(1, "done");
+                daemon.clock.advance(time::Duration::hours(4));
+            }
+        }
+
+        daemon.status_is(1, TaskStatus::Done).await;
+        let prompt = daemon.recorded(1, ".fake-args");
+        assert!(prompt.contains("Use the disk"), "{case:?}: {prompt}");
+        daemon.stop().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn answers_that_a_run_hung_on_are_given_again_to_the_run_the_watchdog_starts() {
+    let mut daemon = waiting_for_answers().await;
+    let dir = daemon.scenario(1, "hang-slow-stop");
+    daemon.ask(answer(1, 1, &[(1, "Use the disk")])).await.unwrap();
+    let told = dir.join(".fake-term");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !told.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the watchdog never stopped the run"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    // The run takes its time to end: the one the watchdog starts next is told to finish.
+    daemon.scenario(1, "done");
+
+    daemon.status_is(1, TaskStatus::Done).await;
+    let prompt = daemon.recorded(1, ".fake-args");
+    assert!(prompt.contains("Use the disk"), "{prompt}");
+    daemon.stop().await.unwrap();
+}
+
 // ---- the editor -------------------------------------------------------------------------------------------------
 
 /// The files the stand-in opened in the window whose record is `opened`.
