@@ -24,7 +24,9 @@ meta() { sed -n "s/^$2=//p" "$AGENTS_HOME/tasks/$1/meta.env"; }
 }
 
 @test "the review prompt reads the PR file by file, not its whole diff at once" {
-  # the template itself: rendering a review needs a PR
-  grep -q -- "--name-only" "$REPO_ROOT/prompts/review.md"
+  # the template itself: rendering a review needs a PR. The changed files come from the PR's JSON (the agents' gh
+  # refuses `gh pr diff --name-only`), then the diff of one file at a time
+  grep -qE -- '--json [a-zA-Z,]*files' "$REPO_ROOT/prompts/review.md"
+  grep -qF -- 'git diff origin/<base>...HEAD -- <file>' "$REPO_ROOT/prompts/review.md"
   run ! grep -qE '`gh pr diff \{\{PR_NUMBER\}\}`' "$REPO_ROOT/prompts/review.md"
 }
