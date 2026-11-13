@@ -714,3 +714,20 @@ async fn a_gate_that_fails_after_changing_a_file_is_recorded_as_not_clean() {
 
     assert_eq!(record.tree, GateTree::NotClean);
 }
+
+#[tokio::test]
+async fn a_worktree_git_cannot_read_after_the_gate_ran_is_not_a_refusal_and_names_the_log() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    let (job, _answer) = rig.job(1, "rm -rf .git", LONG);
+    let mut service = Service::new(rig.parts());
+
+    let error = service.execute(&job).await.unwrap_err();
+
+    let expected = rig.home.gate_log(&task(1), std::num::NonZeroU32::MIN);
+    assert!(
+        matches!(&error, GateError::GitAfter { log, .. } if *log == expected),
+        "{error:?}"
+    );
+    assert_eq!(error.failure().kind, FailureKind::Internal);
+}

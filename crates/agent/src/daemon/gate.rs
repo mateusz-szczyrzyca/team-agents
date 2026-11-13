@@ -126,6 +126,18 @@ enum GateError {
         /// What git said.
         source: GitError,
     },
+    /// The gate ran, and git cannot say what its worktree has out afterwards.
+    #[error(
+        "the gate ran, but git cannot read the worktree {worktree:?} after it, so nothing is recorded; its output is in {log:?}"
+    )]
+    GitAfter {
+        /// The worktree.
+        worktree: PathBuf,
+        /// The file with the output of the gate that ran.
+        log: PathBuf,
+        /// What git said.
+        source: GitError,
+    },
     /// The file for the gate's output cannot be made.
     #[error("the gate cannot run: cannot make its log {path:?}")]
     Log {
@@ -199,6 +211,7 @@ impl GateError {
             | Self::Path { .. }
             | Self::AgentPath { .. }
             | Self::EnvName { .. }
+            | Self::GitAfter { .. }
             | Self::Supervise { .. }
             | Self::Clock(_)
             | Self::Record { .. } => FailureKind::Internal,

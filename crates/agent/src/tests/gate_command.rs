@@ -138,3 +138,35 @@ fn agent(environment: &Environment, args: &[&str]) -> (ExitCode, String, String)
     .unwrap();
     (code, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
 }
+
+#[tokio::test]
+async fn gate_says_first_where_its_result_is_kept_for_a_command_that_is_cut_short() {
+    let dir = tempfile::tempdir().unwrap();
+    let (environment, _) = in_worktree(&dir);
+    let root = dir.path().canonicalize().unwrap();
+    let _daemon = FakeDaemon::serve(&root.join("agent.sock"), |request| {
+        Answer::Lines(vec![
+            Frame::Response(agent_core::protocol::Response::error(
+                request.id,
+                agent_core::protocol::Failure {
+                    kind: agent_core::protocol::FailureKind::Refused,
+                    message: "no gate here".to_owned(),
+                },
+            ))
+            .to_line()
+            .unwrap(),
+        ])
+    });
+
+    let mut out = Vec::new();
+    let result = execute_gate(&environment, GateArgs { task: None }, &mut out).await;
+
+    result.unwrap_err();
+    let out = String::from_utf8(out).unwrap();
+    let record = root.join("tasks").join(task(1).as_str()).join("gate.json");
+    let first = out.lines().next().unwrap();
+    assert!(
+        first.contains(record.to_str().unwrap()),
+        "the first line names the file of the record: {out}"
+    );
+}
