@@ -1214,6 +1214,39 @@ async fn a_closed_team_is_not_closed_again_when_the_daemon_restarts() {
 }
 
 #[tokio::test]
+async fn a_member_whose_repository_left_the_configuration_fails_at_its_next_start_and_the_coordinator_is_told() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "slowdone"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    f.status_is(&tasks[1], TaskStatus::Running).await;
+    f.stop().await.unwrap();
+    assert_eq!(
+        task_status(&f.state(), &tasks[1]),
+        TaskStatus::Queued,
+        "the run was interrupted"
+    );
+    let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    let without = config.replace("[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n", "");
+    assert_ne!(without, config, "the repository is in the configuration");
+    std::fs::write(f.home.config_file(), without).unwrap();
+
+    f.start().await;
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.wait_for("the coordinator to be told", || {
+        f.messages().contains("member_no_status")
+    })
+    .await;
+    f.stop().await.unwrap();
+
+    assert!(f.messages().contains("claude-1 ended its turn"), "{}", f.messages());
+}
+
+#[tokio::test]
 async fn a_free_member_is_given_the_next_item_when_the_daemon_looks_at_the_team_again() {
     let mut f = Fixture::new(&[
         investigator("inv-opus", "sleep"),
