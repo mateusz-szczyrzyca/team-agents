@@ -198,8 +198,7 @@ impl Home {
     /// The report of the review of pull request `pr` that `task` gave after `pass` fix passes, in the task's directory.
     #[must_use]
     pub fn review_report_file(&self, task: &TaskId, pr: PrNumber, pass: u32) -> PathBuf {
-        let _ = (pr, pass);
-        self.task_dir(task).join("report.md")
+        self.task_dir(task).join(format!("review-pr{pr}-pass{pass}.md"))
     }
 
     /// The questions file of round `round` of `task`, in the task's directory.
@@ -484,6 +483,21 @@ fn state_read_limit() -> u64 {
     u64::try_from(MAX_STATE_BYTES).map_or(u64::MAX, |max| max.saturating_add(1))
 }
 
+/// The most bytes of a file of a task's directory that are read: the gate record and the reports of the reviews are
+/// small, and a model or a person can write into the directory.
+const MAX_TASK_FILE_BYTES: usize = 1 << 20;
+
+/// The text of the file at `path` in a task's directory; `None` when there is no such file.
+async fn read_task_file(path: &Path) -> Result<Option<String>, StoreError> {
+    read_text_file(path, MAX_TASK_FILE_BYTES)
+        .await
+        .map(|found| found.map(|file| file.text))
+        .map_err(|source| StoreError::ReadTaskFile {
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
 /// Runs `job` on a thread that may block and returns its result.
 async fn blocking<T: Send + 'static>(
     job: impl FnOnce() -> Result<T, StoreError> + Send + 'static,
@@ -666,8 +680,13 @@ impl StateStore {
     /// [`StoreError::ReadTaskFile`] when the file cannot be read, is too large or is not UTF-8 text;
     /// [`StoreError::ParseGateRecord`] when it is not a gate record.
     pub async fn load_gate_record(&self, task: &TaskId) -> Result<Option<GateRecord>, StoreError> {
-        let _ = task;
-        Ok(None)
+        let path = self.home.gate_record_file(task);
+        let Some(file) = read_task_file(&path).await? else {
+            return Ok(None);
+        };
+        serde_json::from_str(&file)
+            .map(Some)
+            .map_err(|source| StoreError::ParseGateRecord { path, source })
     }
 
     /// Saves `report`, the report of a review of pull request `pr` after `pass` fix passes, in the directory of
@@ -684,8 +703,16 @@ impl StateStore {
         pass: u32,
         report: &str,
     ) -> Result<(), StoreError> {
-        let _ = (task, pr, pass, report);
-        Ok(())
+        let dir = self.home.task_dir(task);
+        let target = self.home.review_report_file(task, pr, pass);
+        let write_dir = dir.clone();
+        let bytes = report.as_bytes().to_vec();
+        let file = blocking(move || {
+            create_dir(&write_dir)?;
+            write_temp(&write_dir, &bytes)
+        })
+        .await?;
+        StagedState { file, target, dir }.commit().await
     }
 
     /// The report saved for the review of pull request `pr` after `pass` fix passes; `None` when there is none.
@@ -698,8 +725,7 @@ impl StateStore {
         pr: PrNumber,
         pass: u32,
     ) -> Result<Option<String>, StoreError> {
-        let _ = (task, pr, pass);
-        Ok(None)
+        read_task_file(&self.home.review_report_file(task, pr, pass)).await
     }
 
     /// Appends one line to the activity log of `task`: the time and the event, texts cut to
