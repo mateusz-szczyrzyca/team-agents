@@ -1146,3 +1146,62 @@ fn an_unchanged_marker_near_an_added_line_that_is_no_part_of_its_attribute_is_no
 
     assert_eq!(found_near(&facts, &unchanged), []);
 }
+
+// Rule: a description names a file by the whole token that holds its path: what goes on with any punctuation that a file
+// name may have — `@`, `$`, `^`, `&`, `!` inside the token — makes it another file's path.
+#[test]
+fn a_path_that_goes_on_with_any_punctuation_of_file_names_does_not_name_the_file() {
+    for description in [
+        "Suppressions: `src/a.rs@backup` keeps an allow.",
+        "Suppressions: `src/a.rs@2` keeps an allow.",
+        "Suppressions: `src/a.rs$old` keeps an allow.",
+        "Suppressions: `src/a.rs^` keeps an allow.",
+        "Suppressions: `src/a.rs&b` keeps an allow.",
+        "Suppressions: src/a.rs!x keeps an allow.",
+        "Suppressions: `@src/a.rs` keeps an allow.",
+        "Suppressions: `$src/a.rs` keeps an allow.",
+    ] {
+        let facts = marked(
+            &["src/a.rs"],
+            vec![line("src/a.rs", 3, "#[allow(dead_code)]")],
+            description,
+        );
+
+        assert_eq!(
+            found(&facts),
+            [Issue::Marker {
+                path: path("src/a.rs"),
+                marker: Marker::SuppressesLint,
+                line: 3,
+                count: 1
+            }],
+            "{description}"
+        );
+    }
+}
+
+// Rule: the delimiters of prose and of markdown end a path token, and so do the dots, marks and bangs of a sentence.
+#[test]
+fn a_path_between_delimiters_of_prose_and_markdown_names_the_file() {
+    for description in [
+        "Suppressions: src/a.rs, src/b.rs.",
+        "Suppressions: `src/a.rs`:42 keeps an allow.",
+        "See src/a.rs#L5 for the allow.",
+        "Suppressions: **src/a.rs** keeps an allow.",
+        "| src/a.rs | allow |",
+        "|src/a.rs| allow |",
+        "Is the allow in src/a.rs? Yes!",
+        "The allow stays in src/a.rs!",
+        "path=src/a.rs;",
+        "Suppressions: \"src/a.rs\" and 'src/a.rs'.",
+        "Suppressions: <src/a.rs> {src/a.rs} [src/a.rs]",
+    ] {
+        let facts = marked(
+            &["src/a.rs"],
+            vec![line("src/a.rs", 3, "#[allow(dead_code)]")],
+            description,
+        );
+
+        assert_eq!(found(&facts), [], "{description}");
+    }
+}
