@@ -38,6 +38,7 @@ use self::server::ServerError;
 mod notice;
 mod notifier;
 mod owner;
+mod questions;
 mod recovery;
 mod server;
 mod settle;

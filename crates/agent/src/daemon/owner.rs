@@ -5,7 +5,6 @@
 //! applies the end of each run to its task, wakes paused tasks when their time comes and publishes what happens as
 //! events. A state it cannot save ends the daemon: models must not go on working with a state that is not kept.
 
-mod questions;
 mod start;
 mod teams;
 
@@ -41,6 +40,7 @@ use self::start::{Context, Plan, next_round, plan};
 use self::teams::{Outbound, Served};
 use super::notice::Notice;
 use super::notifier::Delivery;
+use super::questions;
 use super::recovery::{RecoveryError, recover};
 use super::settle::{Settled, settle};
 use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
