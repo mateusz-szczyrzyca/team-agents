@@ -106,6 +106,18 @@ pub struct CommitFacts {
     pub body: String,
     /// The files it changed against its first parent; none for a merge. A rename is a deletion and an addition here.
     pub files: Vec<FileChange>,
+    /// For a merge, the changes against each parent separately; empty for ordinary commits. A RED test is frozen
+    /// relative to a parent that contains the RED commit, not relative to an unrelated branch being imported.
+    pub merge_parents: Vec<ParentChanges>,
+}
+
+/// A merge's changes relative to one parent, retaining the ancestry needed to check frozen tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParentChanges {
+    /// The parent whose tree is compared with the merge's tree.
+    pub parent: CommitId,
+    /// Changed files, with renames represented as deletion and addition.
+    pub files: Vec<FileChange>,
 }
 
 /// One line a round added to a file, for the markers.

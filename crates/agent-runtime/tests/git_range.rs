@@ -646,4 +646,55 @@ mod git_range {
         assert_eq!(facts.added, []);
         assert_eq!(facts.description, "text");
     }
+
+    #[tokio::test]
+    async fn merge_facts_keep_red_test_edits_against_either_parent() {
+        use agent_core::config::Checks;
+        use agent_core::decide::checks::{Issue, assess};
+        use agent_core::repo_path::{PathPattern, PathPatterns};
+
+        for red_branch in ["main", "side"] {
+            let (_tmp, repo) = repository();
+            write(&repo, "base.txt", b"base\n");
+            let base = commit_all(&repo, "Base");
+            raw(&repo, &["branch", "side"]);
+            raw(&repo, &["switch", "-q", red_branch]);
+            write(&repo, "tests/new.txt", b"first assertion\nsecond assertion\n");
+            let red = commit_all(&repo, "RED: freeze both assertions");
+            let other_branch = if red_branch == "main" { "side" } else { "main" };
+            raw(&repo, &["switch", "-q", other_branch]);
+            write(&repo, "note.txt", b"other work\n");
+            commit_all(&repo, "Other branch");
+            raw(&repo, &["switch", "-q", "main"]);
+            raw(&repo, &["merge", "--no-ff", "--no-commit", "side"]);
+            write(&repo, "tests/new.txt", b"first assertion\n");
+            let merge = commit_all(&repo, "Merge and drop an assertion");
+
+            let facts = handle(&repo).round_facts(&base, &merge, "").await.unwrap();
+            let recorded = facts.commits.iter().find(|commit| commit.id == merge).unwrap();
+            assert_eq!(recorded.merge_parents.len(), 2);
+            let against_red = recorded
+                .merge_parents
+                .iter()
+                .find(|parent| parent.parent == red)
+                .unwrap();
+            assert!(against_red.files.contains(&change(
+                "tests/new.txt",
+                Change::Modified,
+                Lines::Text { added: 0, removed: 1 }
+            )));
+            let rules = Checks {
+                test_paths: PathPatterns::try_from(vec!["tests/".parse::<PathPattern>().unwrap()]).unwrap(),
+                ..Checks::default()
+            };
+            assert_eq!(
+                assess(&rules, &facts, &[]),
+                [Issue::RedTestEdited {
+                    path: path("tests/new.txt"),
+                    red,
+                    edit: merge,
+                }]
+            );
+        }
+    }
 }

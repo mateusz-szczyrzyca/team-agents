@@ -60,6 +60,7 @@ fn commit(digit: char, parents: &str, subject: &str, files: Vec<FileChange>) -> 
         subject: subject.to_owned(),
         body: String::new(),
         files,
+        merge_parents: Vec::new(),
     }
 }
 
@@ -806,4 +807,130 @@ fn a_subject_is_written_as_json_and_read_back() {
 
     assert_eq!(json, r#"[{"path":"tests/a.rs"},"no_tests"]"#);
     assert_eq!(serde_json::from_str::<Vec<Subject>>(&json).unwrap(), subjects);
+}
+
+/// A merge with the edits against both parents kept separately.
+fn merging(subject: &str, first: Vec<FileChange>, second: Vec<FileChange>) -> CommitFacts {
+    let mut merge = commit('3', "12", subject, vec![]);
+    merge.merge_parents = vec![
+        ParentChanges {
+            parent: id('1'),
+            files: first,
+        },
+        ParentChanges {
+            parent: id('2'),
+            files: second,
+        },
+    ];
+    merge
+}
+
+#[test]
+fn a_merge_cannot_remove_a_red_test_from_either_parent() {
+    for red_parent in ['1', '2'] {
+        let red = commit(red_parent, "0", "RED: freeze", vec![added("tests/a.rs", 2)]);
+        let other_parent = if red_parent == '1' { '2' } else { '1' };
+        let other = commit(other_parent, "0", "Other branch", vec![]);
+        let mut merge = merging("Merge", vec![], vec![]);
+        for parent in &mut merge.merge_parents {
+            parent.files = if parent.parent == red.id {
+                vec![modified("tests/a.rs", 0, 1)]
+            } else {
+                vec![added("tests/a.rs", 1)]
+            };
+        }
+        let facts = history(vec![red.clone(), other, merge]);
+        assert_eq!(
+            found(&facts),
+            [Issue::RedTestEdited {
+                path: path("tests/a.rs"),
+                red: red.id,
+                edit: id('3'),
+            }]
+        );
+    }
+}
+
+#[test]
+fn importing_red_work_does_not_compare_it_to_an_unrelated_parent() {
+    let facts = history(vec![
+        commit(
+            '1',
+            "0",
+            "RED: replace before freezing",
+            vec![modified("tests/a.rs", 1, 2)],
+        ),
+        commit('2', "0", "Other branch", vec![]),
+        merging("Merge", vec![], vec![modified("tests/a.rs", 1, 2)]),
+    ]);
+    assert_eq!(found(&facts), []);
+}
+
+#[test]
+fn a_named_test_fix_merge_must_touch_only_test_files_against_every_parent() {
+    for production in [false, true] {
+        let mut second = vec![added("tests/a.rs", 1)];
+        if production {
+            second.push(added("src/lib.rs", 1));
+        }
+        let mut facts = history(vec![
+            commit('1', "0", "RED: freeze", vec![added("tests/a.rs", 2)]),
+            commit('2', "0", "Other branch", vec![]),
+            merging(
+                "TEST-FIX: correct assertion",
+                vec![modified("tests/a.rs", 0, 1)],
+                second,
+            ),
+        ]);
+        facts.description = describing(id('3').as_str());
+        let expected = if production {
+            vec![Issue::RedTestEdited {
+                path: path("tests/a.rs"),
+                red: id('1'),
+                edit: id('3'),
+            }]
+        } else {
+            vec![]
+        };
+        assert_eq!(found(&facts), expected);
+    }
+}
+
+#[test]
+fn a_merge_checks_the_parent_that_inherits_red_through_other_commits() {
+    let mut merge = merging("Merge", vec![modified("tests/a.rs", 0, 1)], vec![]);
+    merge.parents = vec![id('4'), id('2')];
+    merge.merge_parents[0].parent = id('4');
+    let facts = history(vec![
+        commit('1', "0", "RED: freeze", vec![added("tests/a.rs", 2)]),
+        commit('2', "0", "Other branch", vec![]),
+        commit('4', "1", "GREEN: implementation", vec![added("src/lib.rs", 1)]),
+        merge,
+    ]);
+    assert_eq!(
+        found(&facts),
+        [Issue::RedTestEdited {
+            path: path("tests/a.rs"),
+            red: id('1'),
+            edit: id('3'),
+        }]
+    );
+}
+
+#[test]
+fn a_red_merge_freezes_tests_for_later_commits() {
+    let facts = history(vec![
+        commit('1', "0", "First parent", vec![]),
+        commit('2', "0", "Second parent", vec![]),
+        merging("RED: freeze at merge", vec![added("tests/a.rs", 2)], vec![]),
+        commit('4', "3", "GREEN: remove assertion", vec![modified("tests/a.rs", 0, 1)]),
+    ]);
+    assert_eq!(
+        found(&facts),
+        [Issue::RedTestEdited {
+            path: path("tests/a.rs"),
+            red: id('3'),
+            edit: id('4'),
+        }]
+    );
 }
