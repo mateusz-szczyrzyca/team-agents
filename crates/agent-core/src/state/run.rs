@@ -4,14 +4,15 @@ use serde::{Deserialize, Serialize};
 
 use super::strict::{checked, strict_enum};
 use super::values::{SessionId, Timestamp};
-use crate::ids::RunId;
+use crate::ids::{RoundId, RunId};
 use crate::status::RunOutcome;
 
-/// One run of a model CLI for a task: when it started, the session the CLI gave it, and how it ended.
+/// One run of a model CLI for a task: when it started, the session the CLI gave it, the rounds it works for, and how
+/// it ended.
 ///
-/// Made by [`Member::begin_run`](super::Member::begin_run) and ended by
+/// Made by [`Member::begin_run`](super::Member::begin_run) or [`Team::begin_run`](super::Team::begin_run) and ended by
 /// [`Member::end_run`](super::Member::end_run), so a run never ends before it started; reading a state checks that
-/// too.
+/// too, and that it names no round twice. That the rounds are the team's own is checked where the team is known.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Run {
     /// The run's ID.
@@ -21,6 +22,9 @@ pub struct Run {
     /// The CLI's session ID, once it has reported one; a later run resumes it.
     #[serde(skip_serializing_if = "Option::is_none")]
     session: Option<SessionId>,
+    /// The rounds the run works for, oldest first; none for a run that works for no item.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    rounds: Vec<RoundId>,
     /// Whether it is still going, or how it ended.
     state: RunState,
 }
@@ -35,13 +39,19 @@ struct RunWire {
     started_at: Timestamp,
     /// See [`Run`]; absent when the CLI has not reported a session.
     session: Option<SessionId>,
+    /// See [`Run`]; a run written without rounds names none.
+    #[serde(default)]
+    rounds: Vec<RoundId>,
     /// See [`Run`].
     state: RunState,
 }
 
-checked!(Run, RunWire, |run: &Run| match &run.state {
-    RunState::Ended { at, .. } => check_end(&run.id, run.started_at, *at),
-    RunState::Running => Ok(()),
+checked!(Run, RunWire, |run: &Run| {
+    check_rounds(&run.id, &run.rounds)?;
+    match &run.state {
+        RunState::Ended { at, .. } => check_end(&run.id, run.started_at, *at),
+        RunState::Running => Ok(()),
+    }
 });
 
 /// Whether a run is going or over.
@@ -157,6 +167,14 @@ pub enum RunError {
     /// No run is going.
     #[error("no run is going")]
     NotRunning,
+    /// The run names a round twice.
+    #[error("run {run} names the round {round} twice")]
+    RoundTwice {
+        /// The run.
+        run: RunId,
+        /// The round named twice.
+        round: RoundId,
+    },
     /// The end is before the start.
     #[error("run {run} cannot end at {at}, before it started at {started_at}")]
     EndsBeforeStart {
@@ -170,14 +188,29 @@ pub enum RunError {
 }
 
 impl Run {
-    /// A run that has just started.
+    /// A run that has just started, working for no round.
     pub(super) const fn started(id: RunId, started_at: Timestamp, session: Option<SessionId>) -> Self {
         Self {
             id,
             started_at,
             session,
+            rounds: Vec::new(),
             state: RunState::Running,
         }
+    }
+
+    /// A run that has just started, working for `rounds`.
+    pub(super) fn started_for(
+        id: RunId,
+        started_at: Timestamp,
+        session: Option<SessionId>,
+        rounds: Vec<RoundId>,
+    ) -> Result<Self, RunError> {
+        check_rounds(&id, &rounds)?;
+        Ok(Self {
+            rounds,
+            ..Self::started(id, started_at, session)
+        })
     }
 
     getter!("The run's ID.", pub const fn id(&self) -> &RunId = &self.id);
@@ -188,6 +221,8 @@ impl Run {
         "The CLI's session ID, if it has reported one.",
         pub const fn session(&self) -> Option<&SessionId> = self.session.as_ref()
     );
+
+    getter!("The rounds the run works for, oldest first.", pub fn rounds(&self) -> &[RoundId] = &self.rounds);
 
     getter!("Whether the run is going or how it ended.", pub const fn state(&self) -> &RunState = &self.state);
 
@@ -211,6 +246,19 @@ impl Run {
         self.state = RunState::Ended { at, end };
         Ok(())
     }
+}
+
+/// Checks that the run `id` names no round twice.
+fn check_rounds(id: &RunId, rounds: &[RoundId]) -> Result<(), RunError> {
+    for (index, round) in rounds.iter().enumerate() {
+        if rounds.iter().take(index).any(|earlier| earlier == round) {
+            return Err(RunError::RoundTwice {
+                run: id.clone(),
+                round: round.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Checks that a run that started at `started_at` may end at `at`.

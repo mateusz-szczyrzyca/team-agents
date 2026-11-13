@@ -10,6 +10,7 @@ mod controls;
 #[cfg(test)]
 mod fixture;
 mod gate;
+mod round_state;
 mod rounds;
 mod start;
 mod teams;
@@ -23,10 +24,15 @@ use std::time::Duration;
 use agent_core::cli::{ActivityEvent, SessionId as CliSessionId};
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::outcome::{AfterHang, after_hang};
-use agent_core::ids::{InvalidName, TaskId, TeamId};
+use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
-use agent_core::protocol::{Client, Command, Event, EventKind, Failure, FailureKind, Reply, Target, TeamSummary};
-use agent_core::state::{InvalidTimestamp, Question, QuestionError, RunEnd, RunError, SessionId, State, Timestamp};
+use agent_core::protocol::{
+    Client, Command, Event, EventKind, Failure, FailureKind, Reply, RoundDetail, RoundTask, Target, TeamSummary,
+};
+use agent_core::state::{
+    BeginRunError, CloseRoundError, InvalidTimestamp, NewRun, Question, QuestionError, RunEnd, RunError, SessionId,
+    State, StateOpenRoundError, Team, Timestamp,
+};
 use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
@@ -137,6 +143,44 @@ pub(crate) enum OwnerError {
         /// What the state said.
         source: QuestionError,
     },
+    /// A run cannot be recorded in the state with its rounds.
+    #[error("the run of task {task} cannot be recorded with its rounds")]
+    BeginRun {
+        /// The task.
+        task: TaskId,
+        /// What the state said.
+        source: BeginRunError,
+    },
+    /// A round cannot be opened.
+    #[error("a round of team {team} cannot be opened")]
+    OpenRound {
+        /// The team.
+        team: TeamId,
+        /// What the state said.
+        source: StateOpenRoundError,
+    },
+    /// A round cannot be closed.
+    #[error("the round {round} cannot be closed")]
+    CloseRound {
+        /// The round.
+        round: RoundId,
+        /// What the state said.
+        source: CloseRoundError,
+    },
+    /// An item that has started has no round.
+    #[error("item {item} of team {team} has no round")]
+    LostRound {
+        /// The team.
+        team: TeamId,
+        /// The item.
+        item: agent_core::ids::ItemId,
+    },
+    /// The ID of a round cannot be made.
+    #[error("the ID of a round cannot be made")]
+    RoundId(#[from] GenerateIdError),
+    /// Every ID drawn for a round was used already.
+    #[error("no round ID could be drawn that the state does not have")]
+    NoFreeRoundId,
     /// A session ID is not valid.
     #[error("a session ID is not valid")]
     Session(#[from] InvalidValue),
@@ -503,27 +547,35 @@ impl Owner {
             Ok(plan) => plan,
             Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
         };
-        self.begin(&task, plan).await
+        let rounds = round_state::rounds_for(&self.parts.state, &task, why.as_ref())?;
+        self.begin(&task, plan, rounds).await
     }
 
-    /// Records the start of the run of `plan` and hands it to the engine.
-    async fn begin(&mut self, task: &TaskId, plan: Plan) -> Result<(), OwnerError> {
+    /// Records the start of the run of `plan`, which works for `rounds`, and hands it to the engine.
+    async fn begin(&mut self, task: &TaskId, plan: Plan, rounds: Vec<RoundId>) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
-        {
-            let (_, mut member) = self.member_mut(task)?;
-            member
-                .begin_run(plan.run.clone(), now, plan.recorded_session)
-                .map_err(|source| OwnerError::Run {
-                    task: task.clone(),
-                    source,
-                })?;
-        }
+        self.parts
+            .state
+            .begin_run(
+                task,
+                NewRun {
+                    id: plan.run.clone(),
+                    at: now,
+                    session: plan.recorded_session,
+                    rounds: rounds.clone(),
+                },
+            )
+            .map_err(|source| OwnerError::BeginRun {
+                task: task.clone(),
+                source,
+            })?;
         events.push(EventKind::RunStarted {
             team: located.team.clone(),
             task: task.clone(),
             run: plan.run.clone(),
+            rounds,
         });
         self.move_to(task, &located.team, TaskStatus::Running, &mut events)?;
         self.commit(task, &located, now, events, None).await?;
@@ -946,11 +998,20 @@ impl Owner {
                     .ok_or_else(|| not_found(format!("there is no task {task}")))?;
                 vec![found]
             }
+            Some(Target::Round(round)) => {
+                let found = self
+                    .parts
+                    .state
+                    .find_round(round)
+                    .map(|(team, _)| TeamSummary::from(team))
+                    .ok_or_else(|| not_found(format!("there is no round {round}")))?;
+                vec![found]
+            }
         };
         Ok(Reply::Teams { teams })
     }
 
-    /// A whole team, or one task with its role.
+    /// A whole team, or one task with its role, or one round with the tasks that worked for it.
     fn show(&self, target: &Target) -> Result<Reply, Failure> {
         match target {
             Target::Team(team) => self
@@ -971,7 +1032,56 @@ impl Owner {
                     member: Box::new(found.member.clone()),
                 })
                 .ok_or_else(|| not_found(format!("there is no task {task}"))),
+            Target::Round(round) => {
+                let (team, found) = self
+                    .parts
+                    .state
+                    .find_round(round)
+                    .ok_or_else(|| not_found(format!("there is no round {round}")))?;
+                let tasks = self.round_tasks(team, round)?;
+                Ok(Reply::Round {
+                    round: Box::new(RoundDetail::new(team, found, tasks)),
+                })
+            }
         }
+    }
+
+    /// The tasks of `team` that worked for `round`, each with its worktree, its branch and the runs that named the round.
+    fn round_tasks(&self, team: &Team, round: &RoundId) -> Result<Vec<RoundTask>, Failure> {
+        let internal = |message: String| Failure {
+            kind: FailureKind::Internal,
+            message,
+        };
+        team.members_in(round)
+            .into_iter()
+            .map(|(role, member)| {
+                let path = self.parts.store.home().worktree_dir(team.repo(), member.task());
+                let worktree = path
+                    .to_str()
+                    .ok_or_else(|| internal(format!("the worktree {} is not UTF-8 text", path.display())))
+                    .and_then(|text| {
+                        AbsolutePath::from_str(text).map_err(|error| {
+                            internal(format!("the worktree {} cannot be used: {error}", path.display()))
+                        })
+                    })?;
+                let branch = start::work_branch(team, member).map_err(|error| {
+                    internal(format!("the branch of task {}: {}", member.task(), error_chain(&error)))
+                })?;
+                Ok(RoundTask {
+                    task: member.task().clone(),
+                    role,
+                    agent: member.agent().clone(),
+                    worktree,
+                    branch,
+                    runs: member
+                        .runs()
+                        .iter()
+                        .filter(|run| run.rounds().contains(round))
+                        .cloned()
+                        .collect(),
+                })
+            })
+            .collect()
     }
 
     // ---- the state ------------------------------------------------------------------------------------------
@@ -1029,9 +1139,9 @@ impl Owner {
         events: &mut Vec<EventKind>,
     ) -> Result<(), OwnerError> {
         let (_, mut member) = self.member_mut(task)?;
-        let (run, started_at) = member
+        let (run, started_at, rounds) = member
             .current_run()
-            .map(|run| (run.id().clone(), run.started_at()))
+            .map(|run| (run.id().clone(), run.started_at(), run.rounds().to_vec()))
             .ok_or_else(|| OwnerError::Run {
                 task: task.clone(),
                 source: RunError::NotRunning,
@@ -1047,6 +1157,7 @@ impl Owner {
             team: team.clone(),
             task: task.clone(),
             run,
+            rounds,
             end,
         });
         Ok(())

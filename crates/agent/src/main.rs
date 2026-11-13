@@ -252,8 +252,8 @@ struct DaemonArgs {
 /// The arguments of `agent status`.
 #[derive(Debug, Args)]
 struct StatusArgs {
-    /// A team (`team-…`) or a task (`task-…`) to show; every team without one.
-    #[arg(value_parser = parse_target)]
+    /// A team (`team-…`), a task (`task-…`) or a round (`round-…`) to show; every team without one.
+    #[arg(value_parser = parse_view_target)]
     target: Option<Target>,
 }
 
@@ -276,6 +276,34 @@ fn parse_target(text: &str) -> Result<Target, TargetError> {
         text.parse().map(Target::Task)
     };
     target.map_err(|source| TargetError {
+        text: text.to_owned(),
+        source,
+    })
+}
+
+/// Why a text is neither a team nor a task nor a round.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "{text:?} is neither a team ID (team-YYYYMMDD-HHMMSS-xxxx), a task ID (task-YYYYMMDD-HHMMSS-xxxx) nor a round ID (round-YYYYMMDD-HHMMSS-xxxx)"
+)]
+struct ViewTargetError {
+    /// What was given.
+    text: String,
+    /// What is wrong with it as an ID of the kind its prefix names.
+    #[source]
+    source: InvalidId,
+}
+
+/// Reads a team, a task or a round ID from the command line, for the commands that only look.
+fn parse_view_target(text: &str) -> Result<Target, ViewTargetError> {
+    let target = if text.starts_with("team-") {
+        text.parse().map(Target::Team)
+    } else if text.starts_with("round-") {
+        text.parse().map(Target::Round)
+    } else {
+        text.parse().map(Target::Task)
+    };
+    target.map_err(|source| ViewTargetError {
         text: text.to_owned(),
         source,
     })

@@ -7,12 +7,12 @@ use std::str::FromStr;
 use agent_core::config::{AbsolutePath, Config, InvalidValue};
 use agent_core::decide::team::{TeamPlan, TeamPlanError, TeamRequest, plan_team};
 use agent_core::ids::{
-    AgentName, BranchName, Clock, GenerateIdError, InvalidBranchName, InvalidName, ItemId, TaskId, TeamId,
+    AgentName, BranchName, Clock, GenerateIdError, InvalidBranchName, InvalidName, ItemId, RoundId, TaskId, TeamId,
 };
 use agent_core::kinds::{CliKind, Role};
 use agent_core::protocol::{Failure, FailureKind, RunRequest};
 use agent_core::state::{
-    AdvanceError, Crew, CrewError, InvalidTimestamp, Member, Participant, Team, TeamMembers, Timestamp,
+    AdvanceError, Crew, CrewError, InvalidTimestamp, Member, OpenRoundError, Participant, Team, TeamMembers, Timestamp,
 };
 use agent_core::task_list::Item;
 use agent_runtime::agentbus::{BusTier, MemberState, NewMember, NewTeam};
@@ -87,6 +87,9 @@ pub(in crate::daemon) enum FormError {
         /// The item.
         item: ItemId,
     },
+    /// A round of the new team cannot be opened.
+    #[error("cannot open a round of the new team")]
+    Round(#[from] OpenRoundError),
     /// An item cannot start.
     #[error("item {item} cannot start")]
     Advance {
@@ -133,6 +136,7 @@ impl FormError {
             | Self::Crew(_)
             | Self::Assign(_)
             | Self::NoSuchItem { .. }
+            | Self::Round(_)
             | Self::Advance { .. }
             | Self::Name(_)
             | Self::Branch(_)
@@ -190,7 +194,12 @@ pub(in crate::daemon) fn form(
         crew,
     );
     let given = assignable(&team)?;
+    let mut rounds: Vec<RoundId> = Vec::new();
     for assigned in &given {
+        // The item is given out together with its round: an item has one as soon as it leaves `pending`.
+        let round = fresh_round(clock, rng, &rounds)?;
+        rounds.push(round.clone());
+        team.open_round(round, Some(assigned.item), created_at)?;
         let mut item = team
             .item_mut(assigned.item)
             .ok_or(FormError::NoSuchItem { item: assigned.item })?;
@@ -198,6 +207,10 @@ pub(in crate::daemon) fn form(
             item: assigned.item,
             source,
         })?;
+    }
+    if team.items().is_empty() {
+        // A list without items is one piece of work, and one round, from the start of the team.
+        team.open_round(fresh_round(clock, rng, &rounds)?, None, created_at)?;
     }
     let workspaces = workspaces(&team, &given, home)?;
     let bus = bus_team(&team, &workspaces, config)?;
@@ -246,6 +259,17 @@ fn fresh_task(clock: &impl Clock, rng: &mut impl Rng, used: &[TaskId]) -> Result
         let task = TaskId::generate(clock, rng)?;
         if !used.contains(&task) {
             return Ok(task);
+        }
+    }
+    Err(FormError::IdCollision)
+}
+
+/// A round ID that is not in `used`.
+fn fresh_round(clock: &impl Clock, rng: &mut impl Rng, used: &[RoundId]) -> Result<RoundId, FormError> {
+    for _ in 0..ID_ATTEMPTS {
+        let round = RoundId::generate(clock, rng)?;
+        if !used.contains(&round) {
+            return Ok(round);
         }
     }
     Err(FormError::IdCollision)

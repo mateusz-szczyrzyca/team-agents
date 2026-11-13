@@ -29,7 +29,7 @@ mod state_file {
     fn the_state_of_schema_version_1_loads_and_writes_back_to_the_same_text() {
         let state = State::from_json(FIXTURE).unwrap();
 
-        assert_eq!(state.to_json().unwrap(), FIXTURE);
+        assert_eq!(state.to_json().unwrap(), include_str!("fixtures/state-v1-as-v2.json"));
     }
 
     #[test]
@@ -160,14 +160,14 @@ mod state_file {
 
     #[test]
     fn the_same_state_of_another_schema_version_is_refused_with_that_version() {
-        let text = FIXTURE.replacen("\"schema_version\": 1", "\"schema_version\": 2", 1);
+        let text = FIXTURE.replacen("\"schema_version\": 1", "\"schema_version\": 3", 1);
         assert_ne!(text, FIXTURE);
 
         let err = State::from_json(&text).unwrap_err();
 
         assert!(matches!(
             err,
-            StateError::UnsupportedSchema(UnsupportedSchema { found: 2 })
+            StateError::UnsupportedSchema(UnsupportedSchema { found: 3 })
         ));
     }
 }

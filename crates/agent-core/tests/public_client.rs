@@ -15,7 +15,7 @@ mod public_client {
 
     /// A request line whose client is `client`.
     fn request_of(client: &Value) -> String {
-        json!({"protocol": 1, "id": 1, "client": client, "request": {"command": "status"}}).to_string()
+        json!({"protocol": 2, "id": 1, "client": client, "request": {"command": "status"}}).to_string()
     }
 
     #[test]

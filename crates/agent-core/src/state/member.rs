@@ -11,7 +11,7 @@ use super::question::{AnswerBeforeQuestion, AnsweredVia, Question};
 use super::run::{Run, RunEnd, RunError};
 use super::strict::checked;
 use super::values::{SessionId, Timestamp};
-use crate::ids::{AgentName, InvestigatorName, RunId, TaskId};
+use crate::ids::{AgentName, InvestigatorName, RoundId, RunId, TaskId};
 use crate::kinds::Tier;
 use crate::status::{InvalidTransition, StatusMachine, TaskStatus};
 
@@ -276,13 +276,28 @@ impl Member {
     /// [`RunError::AlreadyRunning`] when a run is going; [`RunError::DuplicateRun`] when the task has a run with
     /// this ID.
     pub fn begin_run(&mut self, id: RunId, at: Timestamp, session: Option<SessionId>) -> Result<(), RunError> {
+        self.begin_run_for(id, at, session, Vec::new())
+    }
+
+    /// Records that a run has started that works for `rounds`; whether they are rounds of the team is for the caller to
+    /// have checked.
+    ///
+    /// # Errors
+    /// As [`Member::begin_run`]; [`RunError::RoundTwice`] when `rounds` names a round twice.
+    pub(super) fn begin_run_for(
+        &mut self,
+        id: RunId,
+        at: Timestamp,
+        session: Option<SessionId>,
+        rounds: Vec<RoundId>,
+    ) -> Result<(), RunError> {
         if let Some(run) = self.current_run() {
             return Err(RunError::AlreadyRunning { run: run.id().clone() });
         }
         if self.runs.iter().any(|run| run.id() == &id) {
             return Err(RunError::DuplicateRun { run: id });
         }
-        self.runs.push(Run::started(id, at, session));
+        self.runs.push(Run::started_for(id, at, session, rounds)?);
         Ok(())
     }
 
@@ -852,7 +867,7 @@ mod tests {
     #[test]
     fn rounds_that_are_out_of_order_or_open_before_the_last_are_refused_when_read() {
         let mut skipping = busy_json();
-        skipping["questions"][1]["round"] = json!(3);
+        skipping["questions"][1]["number"] = json!(3);
         let mut open_first = busy_json();
         open_first["questions"][0]["state"] = json!({"status": "open"});
 

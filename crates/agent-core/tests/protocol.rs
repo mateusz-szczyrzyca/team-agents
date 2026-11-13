@@ -1,5 +1,5 @@
-//! The lines of the control protocol, version 1: `tests/fixtures/protocol-v1-requests.jsonl` (what a client sends)
-//! and `protocol-v1-frames.jsonl` (what the daemon sends). They must keep reading — a daemon and a client of one
+//! The lines of the control protocol, version 2: `tests/fixtures/protocol-v2-requests.jsonl` (what a client sends)
+//! and `protocol-v2-frames.jsonl` (what the daemon sends). They must keep reading — a daemon and a client of one
 //! version understand each other — and writing them back must give the same text.
 
 #[cfg(test)]
@@ -12,10 +12,10 @@ mod protocol_lines {
     use agent_core::questions::Verdict;
 
     /// The requests, one per line.
-    const REQUESTS: &str = include_str!("fixtures/protocol-v1-requests.jsonl");
+    const REQUESTS: &str = include_str!("fixtures/protocol-v2-requests.jsonl");
 
     /// The daemon's lines, one per line.
-    const FRAMES: &str = include_str!("fixtures/protocol-v1-frames.jsonl");
+    const FRAMES: &str = include_str!("fixtures/protocol-v2-frames.jsonl");
 
     #[test]
     fn the_requests_of_version_1_read_and_write_back_to_the_same_lines() {
@@ -135,22 +135,22 @@ mod protocol_lines {
     #[test]
     fn a_request_with_an_unknown_protocol_version_is_refused_with_a_typed_error() {
         let first = REQUESTS.lines().next().unwrap();
-        let other = first.replacen("\"protocol\":1", "\"protocol\":2", 1);
+        let other = first.replacen("\"protocol\":2", "\"protocol\":3", 1);
         assert_ne!(other, first);
 
         let err = Request::from_line(&other).unwrap_err();
 
         assert!(
-            matches!(err, ProtocolError::UnsupportedVersion(UnsupportedVersion { found: 2 })),
+            matches!(err, ProtocolError::UnsupportedVersion(UnsupportedVersion { found: 3 })),
             "{err:?}"
         );
-        assert_eq!(PROTOCOL_VERSION, 1);
+        assert_eq!(PROTOCOL_VERSION, 2);
     }
 
     #[test]
     fn a_frame_with_an_unknown_protocol_version_is_refused_with_a_typed_error() {
         let first = FRAMES.lines().next().unwrap();
-        let other = first.replacen("\"protocol\":1", "\"protocol\":7", 1);
+        let other = first.replacen("\"protocol\":2", "\"protocol\":7", 1);
         assert_ne!(other, first);
 
         let err = Frame::from_line(&other).unwrap_err();
