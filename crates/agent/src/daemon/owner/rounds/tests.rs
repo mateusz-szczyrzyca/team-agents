@@ -391,3 +391,49 @@ async fn a_report_without_a_verdict_is_asked_for_again_and_then_counts() {
     let second = rig.prompt(&silent, 2).await;
     assert!(second.contains("Your report has no verdict"), "{second}");
 }
+
+/// A reviewer that always asks for changes.
+const CHANGES: &str = "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] src/lib.rs:7 — the case is untested";
+
+#[tokio::test]
+async fn a_request_for_changes_sends_the_item_back_to_its_lead_for_a_fix_pass_that_records_the_reviews() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", CHANGES),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .state_where("a fix pass", |state| {
+            state
+                .team(&team)
+                .and_then(|found| found.item("1.1".parse().unwrap()))
+                .is_some_and(|progress| !progress.fix_passes().is_empty())
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let progress = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap();
+    let pass = &progress.fix_passes()[0];
+    assert!(
+        pass.requested_by.iter().any(|review| matches!(
+            review.outcome,
+            ReviewOutcome::Submitted {
+                verdict: agent_core::status::ReviewVerdict::RequestChanges,
+                ..
+            }
+        )),
+        "{pass:?}"
+    );
+    let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
+    // Nothing is merged while a reviewer asks for changes.
+    assert_eq!(rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")), []);
+    assert_ne!(rig.remote_tip("main"), rig.remote_tip(&branch));
+}
