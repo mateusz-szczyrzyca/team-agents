@@ -78,6 +78,15 @@ pub enum Opened {
     NoWindow,
 }
 
+/// The two directories that have the sockets of windows; named apart so that they cannot be swapped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SocketDirs {
+    /// The runtime directory of the session, where the servers put the sockets of this session's windows; tried first.
+    pub runtime: PathBuf,
+    /// Another directory that has sockets of windows, tried after the runtime directory.
+    pub fallback: PathBuf,
+}
+
 /// The opener of questions files.
 #[derive(Debug, Clone)]
 pub struct VscodeOpener {
@@ -92,13 +101,13 @@ pub struct VscodeOpener {
 }
 
 impl VscodeOpener {
-    /// An opener that looks for servers in `server_dirs` and for sockets in `runtime_dir`, then in `fallback_dir`.
+    /// An opener that looks for servers in `server_dirs` and for sockets in the directories of `sockets`.
     #[must_use]
-    pub fn new(server_dirs: Vec<PathBuf>, runtime_dir: PathBuf, fallback_dir: PathBuf) -> Self {
+    pub fn new(server_dirs: Vec<PathBuf>, sockets: SocketDirs) -> Self {
         Self {
             server_dirs,
-            runtime_dir,
-            fallback_dir,
+            runtime_dir: sockets.runtime,
+            fallback_dir: sockets.fallback,
             timeout: Duration::from_secs(10),
         }
     }

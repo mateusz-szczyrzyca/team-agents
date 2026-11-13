@@ -8,7 +8,7 @@ mod editor {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime};
 
-    use agent_runtime::editor::{OpenError, Opened, VscodeOpener};
+    use agent_runtime::editor::{OpenError, Opened, SocketDirs, VscodeOpener};
     use rustix::fs::{AtFlags, CWD, Timespec, Timestamps, utimensat};
 
     /// The stand-in for the remote command of a server.
@@ -44,7 +44,14 @@ mod editor {
         }
 
         fn opener(&self) -> VscodeOpener {
-            VscodeOpener::new(vec![self.servers.clone()], self.runtime.clone(), self.fallback.clone())
+            VscodeOpener::new(vec![self.servers.clone()], self.sockets())
+        }
+
+        fn sockets(&self) -> SocketDirs {
+            SocketDirs {
+                runtime: self.runtime.clone(),
+                fallback: self.fallback.clone(),
+            }
         }
 
         /// Puts the remote command where a server of the `cli/servers` layout has it, as `name` under `build`.
@@ -242,11 +249,7 @@ mod editor {
     #[tokio::test]
     async fn a_directory_of_servers_that_is_not_there_is_no_server() {
         let host = Host::new();
-        let looking = VscodeOpener::new(
-            vec![host.servers.join("nothing")],
-            host.runtime.clone(),
-            host.fallback.clone(),
-        );
+        let looking = VscodeOpener::new(vec![host.servers.join("nothing")], host.sockets());
 
         let opened = looking.open(Path::new("/f.md")).await.unwrap();
 

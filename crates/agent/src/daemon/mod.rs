@@ -18,7 +18,7 @@ use std::time::Duration;
 use agent_core::config::OpenQuestions;
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
-use agent_runtime::editor::VscodeOpener;
+use agent_runtime::editor::{SocketDirs, VscodeOpener};
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
 use agent_runtime::notify::Notifier;
 use agent_runtime::process::Supervisor;
@@ -288,7 +288,9 @@ fn vscode_opener(settings: &Settings, surroundings: &Surroundings) -> VscodeOpen
     };
     VscodeOpener::new(
         server_dirs,
-        surroundings.runtime_dir.clone(),
-        surroundings.fallback_dir.clone(),
+        SocketDirs {
+            runtime: surroundings.runtime_dir.clone(),
+            fallback: surroundings.fallback_dir.clone(),
+        },
     )
 }
