@@ -136,6 +136,33 @@ test of another not-yet-served command, or delete it.
   applies to a PR of this plan, and the PR-1 command gives `1,323` outside tests (the report excluded). The description now has
   the what and why, the checks, the deviations and the reason of every file outside the two of the item; this report has the detail.
 
+## Review pass 2 (`inv-astra`, [review](https://github.com/mateusz-szczyrzyca/team-agents/pull/96#pullrequestreview-5892262614))
+
+- **COR — gate cancellation after the run ended: fixed.** Every gate now takes the task's own gate token (`gate_stops`),
+  not the run's token that `settle_joined` drops. RED: `stopping_a_task_whose_run_ended_while_its_gate_waited_stops_the_gate`,
+  `pausing_a_task_whose_run_ended_while_its_gate_waited_stops_the_gate`. The test
+  `a_task_with_a_run_going_has_its_watchdog_held_and_its_gate_stopped_with_its_run` (added by this PR, not in the base)
+  stopped the gate by cancelling the run's token directly, which encoded the defect; it now stops the task with the
+  `stop` control.
+- **DOC-4 — README: fixed.** The "Rust rewrite (trial)" section of `README.md` documents `agent gate [task]`, how the
+  task is inferred, the queue, the timeout, the recorded clean-tree result and the watchdog protection;
+  `docs/architecture.md` names the task-owned token.
+- **TDD-2 — test-first history of the error paths: history not rewritten; the check TDD-2 asks for was run.** The
+  six tests of `f0e30cd` were written after the code (the commit says so). Rewriting about ten commits, one of them
+  a 392-line implementation commit, to move the error paths behind their tests would invalidate every commit link in
+  the two reviews and the PR description, for a process gain only. Instead each test was checked against a mutant of
+  the code it specifies (the code broken, the test run, the code restored):
+  - record that cannot be saved (`.ok()` instead of the error): test fails
+  - directories that cannot make a `PATH` (`unwrap_or_default()`): test fails
+  - clock with no time (`expect` instead of the error): test fails
+  - log number taken (`saturating_add` instead of `checked_add`): test hangs, killed by `timeout` (fails)
+  - log number of an earlier daemon (the `AlreadyExists` arm off): test fails
+  - signal sum of zero (another fallback value): test fails
+  - task directory that cannot be made (the `create_dir_all` error ignored): the test **still passes**, because the
+    `create_new` open that follows fails with the same `GateError::Log`; that error arm is redundant with the open's
+    and cannot be told apart through the public interface.
+  Raised in the PR as a comment for the reviewer to accept or ask for the rewrite.
+
 ## Commits
 
 - [`b5480ac`](https://github.com/mateusz-szczyrzyca/team-agents/commit/b5480ac2fcf6ddfdff578b838f4a328f3d640e3c) RED: a gate record says whether the tree was clean
