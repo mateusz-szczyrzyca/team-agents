@@ -368,6 +368,9 @@ impl Owner {
 pub(super) use self::prompts::{Addition, SectionError, sections_for};
 
 #[cfg(test)]
+#[path = "rounds/tests/checks.rs"]
+mod checks_tests;
+#[cfg(test)]
 #[path = "rounds/tests/fake_github.rs"]
 mod fake_github;
 #[cfg(test)]

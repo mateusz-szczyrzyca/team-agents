@@ -17,6 +17,9 @@
 #                   is of an older commit
 #   ask             writes a questions file to the path the prompt names (the first `.../questions-N.md` in it) and ends
 #                   with STATUS: QUESTIONS
+#   script:NAME     runs the bash script `fake-scripts/NAME.sh` of the home the configuration names, in the worktree, then
+#                   records the gate as `work` does and ends with STATUS: DONE: a test writes the script, which commits
+#                   whatever the run is to have done
 #   integrate       merges every other local branch of the form agents/*/task-*-N.N into the worktree's branch, records
 #                   the gate as `work` does and ends with STATUS: DONE
 #
@@ -121,6 +124,11 @@ case $action in
   commit)
     commit_work
     result 'Changed something.\nSTATUS: DONE'
+    ;;
+  script:*)
+    bash "$home/fake-scripts/${action#script:}.sh"
+    record_gate
+    result 'Did the scripted work.\nSTATUS: DONE'
     ;;
   ask)
     file=$(grep -o '/[^`[:space:]]*questions-[0-9]*\.md' <<< "$prompt" | head -n 1)
