@@ -840,6 +840,30 @@ fn the_whole_path_names_the_file_wherever_it_stands_in_a_line() {
     }
 }
 
+// Rule: an added `#[expect(…)]` is a suppression the description has to name, as an `#[allow(…)]` is.
+#[test]
+fn an_added_expect_attribute_is_an_issue_unless_the_description_names_its_file() {
+    let lines = || vec![line("src/a.rs", 4, "#[expect(dead_code, reason = \"wired later\")]")];
+
+    assert_eq!(
+        found(&marked(&["src/a.rs"], lines(), "No suppression.")),
+        [Issue::Marker {
+            path: path("src/a.rs"),
+            marker: Marker::SuppressesLint,
+            line: 4,
+            count: 1
+        }]
+    );
+    assert_eq!(
+        found(&marked(
+            &["src/a.rs"],
+            lines(),
+            "Suppressions: `src/a.rs` until the next item."
+        )),
+        []
+    );
+}
+
 #[test]
 fn a_file_with_an_allowed_subject_may_have_markers() {
     let facts = marked(&["src/lib.rs"], vec![line("src/lib.rs", 3, "#[allow(dead_code)]")], "");
