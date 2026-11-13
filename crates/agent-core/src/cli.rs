@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{AbsolutePath, CliArgs, CommandLine, EnvName, InvalidValue, ModelName, Program, ValueRule};
 use crate::kinds::CliKind;
+use crate::protocol::{Client, ControlAction};
 
 /// Longest session ID, in bytes: the bound of a model name.
 const MAX_SESSION_ID_LEN: usize = 200;
@@ -241,6 +242,13 @@ pub enum ActivityEvent {
     Error(String),
     /// Metadata of the run: the model, the session.
     Info(String),
+    /// The human used a control on the task: what was done and by which client.
+    Control {
+        /// Which control.
+        action: ControlAction,
+        /// Who used it.
+        by: Client,
+    },
 }
 
 /// Why a line of the CLI's output cannot be read.

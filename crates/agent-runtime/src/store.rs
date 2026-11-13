@@ -393,6 +393,9 @@ impl<'a> ActivityLine<'a> {
             },
             ActivityEvent::Error(message) => ActivityBody::Error { message: cut(message) },
             ActivityEvent::Info(message) => ActivityBody::Info { message: cut(message) },
+            ActivityEvent::Control { .. } => ActivityBody::Info {
+                message: Cow::Borrowed(""),
+            },
         };
         Self { at, body }
     }
