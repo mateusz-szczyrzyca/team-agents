@@ -153,6 +153,10 @@ impl Owner {
         // What waited for a time or for a hang count that no longer applies: the human decided.
         self.wakes.remove(task);
         self.hangs.remove(task);
+        // A stopped task starts again with the whole task, not with a reason it was given before it was stopped.
+        if steer == Steer::Stop {
+            self.reasons.remove(task);
+        }
         // A team that was finished and is resumed has work again, and is looked at again.
         if steer == Steer::Resume {
             self.closed.remove(team);
@@ -176,15 +180,6 @@ impl Owner {
         self.halts.insert(task.clone(), halt);
         if let Some(cancel) = self.cancels.get(task) {
             cancel.cancel();
-        }
-    }
-
-    /// The status of `task` whose run ended by itself, which `settled` would send to, once the human's word asked for it to
-    /// stop or pause is taken into account.
-    pub(super) fn after_halt(&mut self, task: &TaskId, settled: TaskStatus) -> TaskStatus {
-        match self.halts.remove(task) {
-            Some(halt) => crate::daemon::control::after_halt(halt, settled),
-            None => settled,
         }
     }
 
