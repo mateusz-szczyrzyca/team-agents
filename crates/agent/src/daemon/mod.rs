@@ -41,6 +41,7 @@ use self::server::ServerError;
 
 mod control;
 mod gate;
+mod merge;
 mod notice;
 mod notifier;
 mod opener;
@@ -49,6 +50,8 @@ mod pr;
 mod questions;
 mod recovery;
 mod review;
+#[cfg(test)]
+mod round_fixture;
 mod server;
 mod settle;
 mod team;
