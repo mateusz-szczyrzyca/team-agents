@@ -340,7 +340,7 @@ fn nothing_done(steer: Steer, target: &Target, skipped: &[(TaskId, TaskStatus, S
                 .collect();
             format!(
                 "{} does nothing to {}:\n{}",
-                action_word(steer),
+                <&'static str>::from(ControlAction::from(steer)),
                 describe(target),
                 lines.join("\n")
             )
@@ -349,16 +349,6 @@ fn nothing_done(steer: Steer, target: &Target, skipped: &[(TaskId, TaskStatus, S
     Failure {
         kind: FailureKind::Conflict,
         message,
-    }
-}
-
-/// The command of `steer`, as the human types it.
-const fn action_word(steer: Steer) -> &'static str {
-    match steer {
-        Steer::Stop => "stop",
-        Steer::Pause => "pause",
-        Steer::Unpause => "unpause",
-        Steer::Resume => "resume",
     }
 }
 

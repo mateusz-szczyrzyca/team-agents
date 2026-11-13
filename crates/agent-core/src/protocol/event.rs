@@ -24,8 +24,9 @@ pub struct Event {
 }
 
 /// A control the human used on a task or a team.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ControlAction {
     /// `stop`.
     Stop,
@@ -37,12 +38,6 @@ pub enum ControlAction {
     Resume,
     /// `say`.
     Say,
-}
-
-impl From<ControlAction> for &'static str {
-    fn from(_: ControlAction) -> Self {
-        ""
-    }
 }
 
 /// What happened.
