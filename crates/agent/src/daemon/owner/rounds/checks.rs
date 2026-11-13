@@ -9,10 +9,11 @@
 
 use std::path::PathBuf;
 
-use agent_core::decide::checks::{Subject, assess};
+use agent_core::decide::checks::{Subject, assess_near};
 use agent_core::decide::round::{Checking, ChecksPolicy, ChecksStep};
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::prompt::Variables;
+use agent_core::repo_path::RepoPath;
 use agent_core::state::{Asked, ChecksRecord, PrNumber, Sent, Timestamp};
 use agent_runtime::git::Revision;
 use agent_runtime::notify::Notification;
@@ -195,7 +196,16 @@ impl Owner {
             .merge_base(&Revision::RemoteBranch(base), &Revision::Commit(tip.clone()))
             .await?;
         let facts = git.round_facts(&merge_base, tip, description).await?;
-        Ok(assess(rules, &facts, &record.allowed_of(reviewing.items)))
+        // The files with added lines, once each: their unchanged lines complete an attribute that the round edits.
+        let mut edited: Vec<RepoPath> = facts.added.iter().map(|line| line.path.clone()).collect();
+        edited.dedup();
+        let unchanged = git.range_unchanged_lines(&merge_base, tip, &edited).await?;
+        Ok(assess_near(
+            rules,
+            &facts,
+            &unchanged,
+            &record.allowed_of(reviewing.items),
+        ))
     }
 
     /// Where the question `asked` of the lead `task` is.
