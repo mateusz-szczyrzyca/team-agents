@@ -284,6 +284,14 @@ pub(super) fn decisions(subjects: &[Subject], file: &QuestionsFile) -> Decisions
     decided
 }
 
+/// What the team and the human wrote in the `description` of a pull request: its lines without those the harness wrote
+/// itself in `harness`, the description it makes for the same items. The text of an item names files in passing; only what
+/// somebody added to the description discloses a file to the checks.
+#[must_use]
+pub(super) fn authored(_description: &str, _harness: &str) -> String {
+    String::new()
+}
+
 /// What the lead is told to put the questions of `round` in `file` to the human.
 ///
 /// # Errors

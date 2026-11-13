@@ -426,3 +426,38 @@ async fn the_lead_is_told_after_the_answers_to_end_with_done() {
 
     assert!(text.contains("STATUS: DONE"), "{text}");
 }
+
+// ---- what the team wrote in the description -------------------------------------------------------------------------
+
+// Rule: the lines the harness wrote are not the team's: what is left is what somebody added.
+#[test]
+fn what_the_harness_wrote_in_a_description_is_not_what_the_team_wrote() {
+    let harness = "Work of the team.\n\n## 1.1 — The item\n\nChange src/lib.rs.\n\n## Reviews\n";
+    let description = "Work of the team.\n\n## 1.1 — The item\n\nChange src/lib.rs.\n\n## Reviews\n\n## Tests changed after RED\n- abc1234\n";
+
+    assert_eq!(
+        authored(description, harness),
+        "\n## Tests changed after RED\n- abc1234"
+    );
+}
+
+#[test]
+fn a_description_that_is_the_harnesss_own_has_nothing_the_team_wrote() {
+    let harness = "Work of the team.\n\nChange src/lib.rs.\n";
+
+    assert_eq!(authored(harness, harness).trim(), "");
+    assert_eq!(authored("", harness), "");
+}
+
+#[test]
+fn lines_are_compared_without_their_indentation_and_a_changed_line_is_the_teams() {
+    let harness = "Change src/lib.rs.\nExpected result\n";
+    let description = "  Change src/lib.rs.  \nChange src/lib.rs and src/other.rs.\n";
+
+    assert_eq!(authored(description, harness), "Change src/lib.rs and src/other.rs.");
+}
+
+#[test]
+fn a_description_without_the_harnesss_text_is_all_the_teams() {
+    assert_eq!(authored("Only mine.\nTwo lines.", ""), "Only mine.\nTwo lines.");
+}
