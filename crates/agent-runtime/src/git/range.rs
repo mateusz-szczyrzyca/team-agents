@@ -364,6 +364,8 @@ fn parse_log(operation: GitOperation, bytes: &[u8]) -> Result<Vec<CommitFacts>, 
         let &[id, parents, subject, body] = record else {
             return Err(unexpected(operation, &record.concat()));
         };
+        // A message that is not UTF-8 is read with its bad bytes replaced, as the added lines are: the checks look in
+        // it only for ASCII prefixes and lines, which the replacement leaves as they are.
         commits.push(CommitFacts {
             id: commit_id(operation, &utf8(operation, id)?)?,
             parents: utf8(operation, parents)?
