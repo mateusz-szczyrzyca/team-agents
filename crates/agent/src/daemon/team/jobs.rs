@@ -9,6 +9,7 @@ use agent_runtime::agentbus::{DelegationUpdate, FieldName, InvalidFieldName, Not
 use agent_runtime::notify::{InvalidNotification, Notification};
 use agent_runtime::team_prompts::{RenderTeamTextError, TeamPrompts};
 
+use super::prompts::SECTION_SEPARATOR;
 use super::react::{BusNotice, WorkerEnd};
 
 /// One thing the daemon has to do on the bus for a team.
@@ -155,11 +156,23 @@ fn helper_result(
 /// # Errors
 /// [`NoticeRenderError`].
 pub(in crate::daemon) fn failure_reason(
-    _texts: &TeamPrompts,
-    _how: WorkerEnd,
+    texts: &TeamPrompts,
+    how: WorkerEnd,
     said: Option<&str>,
 ) -> Result<String, NoticeRenderError> {
-    Ok(said.unwrap_or_default().to_owned())
+    let prompt = match how {
+        WorkerEnd::Failed => TeamPrompt::WorkerFailed,
+        WorkerEnd::NoResult => TeamPrompt::WorkerNoResult,
+        WorkerEnd::NoStatus => TeamPrompt::WorkerNoStatus,
+        WorkerEnd::Stopped => TeamPrompt::WorkerStopped,
+        WorkerEnd::Hung => TeamPrompt::WorkerHung,
+    };
+    let sentence = texts.render(prompt, &Variables::new())?;
+    let sentence = sentence.trim_end();
+    Ok(match said {
+        Some(said) => format!("{sentence}{SECTION_SEPARATOR}{said}"),
+        None => sentence.to_owned(),
+    })
 }
 
 /// Why the notification that a team is finished cannot be made.

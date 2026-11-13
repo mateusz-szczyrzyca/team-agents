@@ -59,8 +59,9 @@ pub(in crate::daemon) enum TeamPromptError {
     },
 }
 
-/// Between two sections: a blank line, as in the prompt of a task.
-const SECTION_SEPARATOR: &str = "\n\n";
+/// Between two sections: a blank line, as in the prompt of a task; also between the reason of a failed request and what
+/// the worker said.
+pub(super) const SECTION_SEPARATOR: &str = "\n\n";
 
 /// What the names of nobody are written as.
 const NOBODY: &str = "none";

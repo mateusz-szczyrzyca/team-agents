@@ -267,7 +267,8 @@ that does not exist) is logged and dropped.
 **Texts.** What a team's run is told beyond the working context lives in `prompts/harness/team/` (the catalog
 `TeamPrompt`, loaded by `agent_runtime::team_prompts::TeamPrompts` and checked at start): the team and its branch for the
 first run of a member, the new item of a member with a session, the wake-up, the request a worker serves, the messages for
-the coordinator and for a requester, and the notification that a team is finished.
+the coordinator and for a requester (with the sentence of how a worker that could not do a request ended,
+`worker-*.md`), and the notification that a team is finished.
 
 **Known limits.** An agent that never reads its messages is woken again and again (the Bash wake-loop guard is not
 ported). A request that is being served when the daemon stops is not returned. The bus gives the oldest request of every
