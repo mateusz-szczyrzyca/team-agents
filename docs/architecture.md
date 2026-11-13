@@ -92,7 +92,7 @@ socket and the files are the runtime's. `serde_json` is a dependency of `agent-c
 
 | Module | Types |
 |---|---|
-| `prompt` | `PromptId` (every prompt, with its `PromptSpec`: path under `prompts/`, `Audience`, required variables), `HarnessPrompt` (the texts of `harness/run/`) and `TeamPrompt` (the texts of `harness/team/`, a catalog of its own because a test pins `HarnessPrompt` to the files of `harness/run/`), `Template` (the strict `{{name}}` renderer), `Variables`, `VariableName` and their errors (`TemplateError`, `RenderError`, `PromptError`) |
+| `prompt` | `PromptId` (every prompt, with its `PromptSpec`: path under `prompts/`, `Audience`, required variables), `HarnessPrompt` (the texts of `harness/run/`) and `TeamPrompt` (the texts of `harness/team/`, a catalog of its own because a test pins `HarnessPrompt` to the files of `harness/run/`), `AutopilotPrompt` (the texts of `harness/pr/` and `harness/review/`: a pull request's title, description and notices, the reviews and the fix pass; what goes on GitHub is English only), `Template` (the strict `{{name}}` renderer), `Variables`, `VariableName` and their errors (`TemplateError`, `RenderError`, `PromptError`) |
 | `cli` | `CliAdapter` (build a run, make a parser), `OutputParser` (lines to `ActivityEvent`s, then `RunOutput`), `RunRequest`, `RunSpec`, `RunFile`, `ActivityEvent`, `RunOutput`, `SessionId`, `ErrorTail`, `McpServerKind` |
 
 A template renders `{{name}}`; `\{{` is a literal `{{`. A variable without a value, a value without a variable, an
@@ -154,8 +154,8 @@ the network. The order of the checks and the rules each follows are in the docum
 | Where | What |
 |---|---|
 | `agent_runtime::run` | `RunEngine::run`: one run of a model CLI, from its files to its classified end; touches no state (`run_held`: the same with a `WatchdogHold`, see "The gate"). The run's environment has `AGENTS_HOME`. `run::compose` makes its prompt: context, role, the rules of the tier, brief, item, checkpoint — or, for a resumed session, what interrupted it |
-| `agent_runtime::{settings, harness_prompts, text_file, clock}` | `agents.toml` and `secrets.toml` read from the home; the second prompt catalog (`HarnessPrompt`, `prompts/harness/run/`: the run prompts and the notifications); a bounded text file; the system clock |
-| `agent::daemon` | `owner` (the state), `server` (the socket), `notifier`, `opener`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions), `owner/teams` (what carries them out), `questions` (the questions file) and `control` (what a control does to a task), with `owner/answers` and `owner/controls` |
+| `agent_runtime::{settings, harness_prompts, autopilot_prompts, text_file, clock}` | `agents.toml` and `secrets.toml` read from the home; the second prompt catalog (`HarnessPrompt`, `prompts/harness/run/`: the run prompts and the notifications) and the fourth (`AutopilotPrompts`); a bounded text file; the system clock |
+| `agent::daemon` | `owner` (the state), `server` (the socket), `notifier`, `opener`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions), `owner/teams` (what carries them out), `questions` (the questions file) and `control` (what a control does to a task), with `owner/answers` and `owner/controls`, and the autopilot: `pr`, `review` and `merge` (its decisions) with `owner/rounds` (what carries them out) |
 | `agent::{client, commands}` | the socket client, `agent status`, `agent daemon`, `agent run`, `agent answer`, `stop`, `pause`, `unpause`, `resume`, `say` |
 
 **Tasks** (CON-3, CON-4): the *owner* alone reads and changes the state; the *server* passes requests to it through a
@@ -211,7 +211,7 @@ connection; a subscriber that falls 1024 events behind is let go (it subscribes 
 **The home**: `agents.toml`, `secrets.toml` and `prompts/` (put there by the human); `state.json`, `daemon.lock`,
 `agent.sock`; `tasks/<task>/activity.jsonl`, `tasks/<task>/runs/<run>/` (the output of a run and the files its CLI is
 configured with, `prompt.md` for a prompt too long for a command line) and `tasks/<task>/questions-<round>.md`;
-`tasks/<task>/gate-<n>.log` and `tasks/<task>/gate.json` (below); `worktrees/<repo>/<task>/`; `notifications/`.
+`tasks/<task>/gate-<n>.log` and `tasks/<task>/gate.json` (below); `tasks/<reviewer task>/review-pr<N>-pass<K>.md` (the reports of the reviews, below); `worktrees/<repo>/<task>/`; `notifications/`.
 
 ### Teams (`agent run` and the team's life)
 
@@ -258,8 +258,9 @@ seconds, because the Go bus wakes a sleeper by marking it `waking` and spawns no
 
 When a member ends, the coordinator gets a message on the bus (`member_finished` with the item and the branch,
 `member_failed`, `member_no_status`), which wakes it to integrate. A member's item stays `in_progress` until its pull
-request is open (item 8.1): the next item of a feature starts when the previous one is merged, so a member that is done
-waits. A solo task whose item is under way waits as well, instead of ending (`done` is final).
+request is open ("Pull requests, reviews and the merge", below): the next item of a feature starts when the previous one is
+merged, so a member that is done waits. A solo task whose item is under way waits as well, instead of ending (`done` is
+final).
 
 A bus that is down is not an error of the daemon: what could not be sent stays in the outbox and is tried again at the next
 look, a team that cannot be read from the bus is skipped until the next look, and what the bus refuses for good (a request
@@ -279,9 +280,70 @@ a request): it then starts as the plain continuation of its task. The owner's lo
 call of a look at a team (an `agentbus` call for at most `15` s): a bus that hangs leaves the socket unanswered that
 long.
 
-Not done here, by item: pull requests, reviews and the merge, with the next item of a feature (8.1); the
-dashboard (9.1). A resumed agent's checkpoint is not read from the agentbus yet. opencode's `session export` for a
+Not done here, by item: the dashboard (9.1). A resumed agent's checkpoint is not read from the agentbus yet. opencode's `session export` for a
 resumed session whose result it did not print is not done.
+
+### Pull requests, reviews and the merge (the autopilot)
+
+The default `--autopilot` loop, in the owner (`owner/rounds.rs`), is: the lead's branch is pushed and opened as a pull
+request, two investigators from outside the team review it, and their verdicts lead to the merge and the next item, to a
+fix pass, or to a question for the human. Without `github_token` in `secrets.toml` the autopilot is off (the daemon says so
+at its start) and the items stay where they are; `[github] api_base` points it at another API ([`configuration.md`](configuration.md)).
+
+**Nothing of a round lives in memory only.** Where a round is, is worked out at every look at a team from the items' phases
+and reviews, the runs and questions of the tasks and two files of the task directories (`daemon/merge.rs`), so a daemon that
+restarts goes on. What is in memory is only when to try again, what the human was told once, how often a report was sent back
+and when an approved pull request was last read.
+
+**Publishing** (`daemon/pr.rs`, `plan_publications`). A pull request is made of the branch of the lead: the coordinator's, which
+integrates the members' branches and gets the gate green on it, or a solo agent's item branch. A branch is published when the lead
+waits, its last gate record (`tasks/<lead>/gate.json`) passed on a clean tree at the tip of the branch, and the tip has the branch
+of the finished item in its history (`git merge-base --is-ancestor`). The branch is pushed (git's own credentials, not the
+token), the open pull request of the branch is found or opened as a draft with a title and a description from the item (its text,
+expected result and checks) and the gate's summary, and marked ready; the round machine checks that GitHub says the pull request
+carries the commit the gate passed on, and the items are `in_review` (`pull_request_opened`). A branch has one pull request at a
+time: items integrated into the same head share it and move together; a finished item waits while another is in review on the
+same branch (a solo agent's items each have a branch). A branch that cannot be published is tried again after a minute, and the
+human is told once.
+
+**Reviewers** (`daemon/review.rs`). The round of an item in review starts empty and is filled once (`ItemMut::ask_reviews`) with
+two investigators drawn at random among the free ones: configured, not in the crew, with no task that is going, asking or paused,
+no review to give and no team to lead that is not finished; the pull request waits for them. A reviewer is a task of the team
+with a worktree at the head (a new branch of its own), one per investigator: it ends `waiting`, not `done`, is given the next
+pull request, and the same one again after a fix pass, in the same session, and is closed with the team. Its prompt is the
+working context, the review rules, the brief, the request (pull request, branch, base, the commit under review) and each item of
+the pull request with its expected result and checks. Its final message is the report: the first `VERDICT:` line says
+`APPROVE` or `REQUEST_CHANGES` (markup and case aside), or the report is asked for again, twice, and then the human is told. The
+report is kept in `tasks/<reviewer>/review-pr<N>-pass<K>.md` (`K` fix passes the pull request had), posted on the pull request
+as a **comment review** with the verdict in its body (the harness opens the pull request and posts with one account, which
+GitHub does not let approve it) and recorded in every item of the pull request (`review_submitted`). A report is matched with
+the review it answers by the time its run started, so one that comes after the round was decided is kept and posted, not taken
+for the next round.
+
+**What a verdict leads to** (`daemon/merge.rs`, the round machine). The first approval waits for the second; two approvals mean
+`approved`; a request for changes starts the next fix pass, until `[review] fix_passes`, and then asks the human.
+
+- **Merge.** In autopilot the pull request is read from GitHub and merged with a merge commit at the head it carries (a merge
+  made elsewhere or by the human completes the items as well); the items are `done`, the base branch is fetched, and the next
+  item starts from the remote's base when it is ahead of the checkout's, so that it builds on what was merged. A merge GitHub
+  refuses for a reason waiting does not change is told once with GitHub's reason and not tried again; a pull request closed
+  without a merge is told once. An approved pull request that waits is read again every 30 seconds.
+- **`--no-merge`.** Nothing is merged: the human is told once that the pull request is approved. The next item of the feature
+  starts at the approval; what depends on the pull request waits until it is merged, which the daemon finds when it reads it.
+- **Fix pass.** It goes to the lead, which has the integrated branch: it is woken with the reports of the reviewers that asked
+  for changes, the pass out of the configured ones and the branch (a solo agent switches to it first). When the gate has passed at
+  the new tip the same pull request is updated (a comment, and its description when a finished item joins) and the same reviewers
+  review it again.
+- **The question.** When a reviewer still asks for changes after the configured passes, the lead is woken with the reports and the
+  questions file to write; its question reaches the human like any other (`agent answer`). The answer is one more fix pass. A lead
+  that ran and put no question leaves the human told directly, once.
+- When every item is merged the team ends: its tasks, the reviewers among them, are `done` and the human is notified.
+
+**Known limits.** The owner waits for GitHub and git calls (GitHub's own timeouts, at most 30 s an attempt; a push at most 10
+minutes): a call that hangs leaves the socket unanswered that long. The merge is at the head GitHub carries, so a commit someone
+else pushed after the reviews is merged as well. A review that cannot be posted counts and is only logged. A reviewer whose run
+fails or is stopped is not replaced: the human resumes it. A solo agent that takes the next item while its first is in review
+switches to its fix pass's branch by what the prompt says, not by the daemon. The reports are cut at 20,000 characters.
 
 ### The gate (`agent gate`)
 
@@ -320,7 +382,7 @@ commit does not hold what the gate passed. The files a gate leaves must therefor
 (`head`, `finished_at`, `outcome`, `log`). The last record of a task is saved in `tasks/<task>/gate.json` (a temporary file
 and a rename: a reader sees a whole record or none), told to the subscribers (`gate_finished`) and written to the task's
 activity log. **Only a pass on a clean tree is a pass of the commit** (`GateRecord::counts_as_pass`): the gate on a
-tree that is not clean says nothing about `head`. The record is the result the autopilot (8.1) reads; an agent's word for
+tree that is not clean says nothing about `head`. The record is the result the autopilot reads ("Pull requests, reviews and the merge"); an agent's word for
 it counts for nothing.
 
 **The command.** It prints first where the result is recorded (`tasks/<task>/gate.json`: a model CLI cuts a shell command

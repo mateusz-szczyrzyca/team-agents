@@ -1507,3 +1507,250 @@ mod github_client {
         assert_eq!(server.requests().len(), 1);
     }
 }
+
+#[cfg(test)]
+mod github_discovery {
+    use std::time::Duration;
+
+    use super::support::{FakeServer, Reply};
+    use agent_core::config::{GithubLogin, Secret};
+    use agent_core::ids::BranchName;
+    use agent_runtime::github::{
+        GitHub, GitHubError, GitHubOperation, GitHubSettings, InvalidRepoSlug, Jitter, Origin, PullState, Readiness,
+        Rejection, RepoSlug, RetryPolicy,
+    };
+    use serde_json::{Value, json};
+
+    const HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
+    const BASE: &str = "fedcba9876543210fedcba9876543210fedcba98";
+
+    fn branch(text: &str) -> BranchName {
+        text.parse().unwrap()
+    }
+
+    fn github(server: &FakeServer) -> GitHub {
+        let settings = GitHubSettings {
+            base: server.url().parse().unwrap(),
+            timeout: Duration::from_secs(5),
+            connect_timeout: Duration::from_secs(5),
+            retry: RetryPolicy {
+                max_attempts: std::num::NonZeroU32::new(3).unwrap(),
+                base_delay: Duration::from_millis(1),
+                max_delay: Duration::from_millis(5),
+                jitter: Jitter::None,
+            },
+        };
+        let token = Secret::try_from("ghp_example_token_0123".to_owned()).unwrap();
+        let trusted: Vec<GithubLogin> = vec!["octo-cat".parse().unwrap()];
+        GitHub::new(settings, "octo/widgets".parse().unwrap(), &token, &trusted).unwrap()
+    }
+
+    /// A pull request as the list of GitHub writes it: no `merged`, no `mergeable`.
+    fn listed(number: u32, head_ref: &str, head_repo: &str) -> Value {
+        json!({
+            "number": number,
+            "html_url": format!("https://github.example.com/octo/widgets/pull/{number}"),
+            "node_id": "PR_kwDOexample",
+            "title": "Add the thing",
+            "body": null,
+            "state": "open",
+            "draft": true,
+            "user": {"login": "ms-ai-agents"},
+            "head": {"ref": head_ref, "sha": HEAD, "repo": {"full_name": head_repo}},
+            "base": {"ref": "main", "sha": BASE, "repo": {"full_name": "octo/widgets"}}
+        })
+    }
+
+    fn list(items: &[Value]) -> Reply {
+        Reply::json(200, &Value::Array(items.to_vec()).to_string())
+    }
+
+    #[tokio::test]
+    async fn the_open_pull_request_of_a_branch_is_found_among_the_listed_ones() {
+        let server = FakeServer::always(list(&[
+            listed(3, "agents/other/item", "octo/widgets"),
+            listed(7, "agents/team/item-1", "octo/widgets"),
+        ]))
+        .await
+        .unwrap();
+
+        let found = github(&server)
+            .find_open_pull_request(&branch("agents/team/item-1"))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(found.number.get().get(), 7);
+        assert_eq!(found.head_branch, branch("agents/team/item-1"));
+        assert_eq!(found.state, PullState::Open);
+        assert_eq!(found.readiness, Readiness::Draft);
+        assert_eq!(found.origin, Origin::SameRepository);
+    }
+
+    #[tokio::test]
+    async fn the_listing_asks_for_the_open_pull_requests_of_the_head_in_this_repository_with_the_token() {
+        let server = FakeServer::always(list(&[])).await.unwrap();
+
+        github(&server)
+            .find_open_pull_request(&branch("agents/team/item-1"))
+            .await
+            .unwrap();
+
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "GET");
+        assert_eq!(
+            requests[0].target,
+            "/repos/octo/widgets/pulls?state=open&head=octo:agents/team/item-1"
+        );
+        assert_eq!(
+            requests[0].header("authorization"),
+            Some("Bearer ghp_example_token_0123")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_branch_with_characters_that_end_a_query_value_is_encoded() {
+        let server = FakeServer::always(list(&[])).await.unwrap();
+
+        github(&server)
+            .find_open_pull_request(&branch("agents/a&b#c+d"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            server.requests()[0].target,
+            "/repos/octo/widgets/pulls?state=open&head=octo:agents/a%26b%23c%2Bd"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_branch_without_an_open_pull_request_finds_none() {
+        let server = FakeServer::always(list(&[])).await.unwrap();
+
+        let found = github(&server)
+            .find_open_pull_request(&branch("agents/team/item-1"))
+            .await
+            .unwrap();
+
+        assert_eq!(found, None);
+    }
+
+    #[tokio::test]
+    async fn a_pull_request_from_a_fork_with_the_same_branch_name_is_not_the_one_of_the_branch() {
+        let server = FakeServer::always(list(&[listed(9, "agents/team/item-1", "stranger/widgets")]))
+            .await
+            .unwrap();
+
+        let found = github(&server)
+            .find_open_pull_request(&branch("agents/team/item-1"))
+            .await
+            .unwrap();
+
+        assert_eq!(found, None);
+    }
+
+    #[tokio::test]
+    async fn a_listing_that_is_retried_after_a_server_failure_finds_the_pull_request() {
+        let server = FakeServer::sequence(vec![
+            Reply::json(502, "{\"message\":\"Bad gateway\"}"),
+            list(&[listed(7, "agents/team/item-1", "octo/widgets")]),
+        ])
+        .await
+        .unwrap();
+
+        let found = github(&server)
+            .find_open_pull_request(&branch("agents/team/item-1"))
+            .await
+            .unwrap();
+
+        assert_eq!(found.map(|pull| pull.number.get().get()), Some(7));
+        assert_eq!(server.requests().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_repository_the_token_cannot_see_is_an_error_that_names_the_operation() {
+        let server = FakeServer::always(Reply::json(404, "{\"message\":\"Not Found\"}"))
+            .await
+            .unwrap();
+
+        let error = github(&server)
+            .find_open_pull_request(&branch("agents/team/item-1"))
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                GitHubError::Status {
+                    operation: GitHubOperation::FindPullRequest,
+                    status: 404,
+                    reason: Rejection::NotFound,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn the_repository_is_read_from_the_remote_urls_of_git() {
+        for (url, slug) in [
+            ("git@github.com:octo/widgets.git", "octo/widgets"),
+            ("git@github.com:octo/widgets", "octo/widgets"),
+            ("https://github.com/octo/widgets", "octo/widgets"),
+            ("https://github.com/octo/widgets.git", "octo/widgets"),
+            ("https://github.com/octo/widgets.git/", "octo/widgets"),
+            ("ssh://git@github.com/octo/widgets.git", "octo/widgets"),
+            ("ssh://git@github.com:22/octo/widgets.git", "octo/widgets"),
+            (
+                "https://x-access-token:secret@github.example.com/octo/widgets.git",
+                "octo/widgets",
+            ),
+            ("https://github.example.com/git/octo/widgets.git", "octo/widgets"),
+            ("file:///srv/git/octo/widgets.git", "octo/widgets"),
+            ("/srv/git/octo/widgets.git", "octo/widgets"),
+        ] {
+            let found = RepoSlug::from_remote_url(url).unwrap();
+
+            assert_eq!(found.to_string(), slug, "{url}");
+        }
+    }
+
+    #[test]
+    fn a_remote_url_without_an_owner_and_a_name_names_no_repository() {
+        for url in [
+            "",
+            "https://github.com",
+            "https://github.com/",
+            "https://github.com/widgets",
+            "git@github.com:widgets.git",
+            "widgets",
+        ] {
+            let error = RepoSlug::from_remote_url(url).unwrap_err();
+
+            assert!(
+                matches!(error, InvalidRepoSlug::NotOwnerAndName { .. }),
+                "{url}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_remote_url_with_a_part_github_does_not_allow_names_the_part() {
+        let error = RepoSlug::from_remote_url("https://github.com/octo/wid gets.git").unwrap_err();
+
+        assert!(
+            matches!(error, InvalidRepoSlug::BadPart { part: "name", .. }),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_refused_remote_url_does_not_repeat_the_credentials_it_held() {
+        let error = RepoSlug::from_remote_url("https://octo:ghp_secret_token@github.com/widgets").unwrap_err();
+
+        assert!(!format!("{error:?}").contains("ghp_secret_token"), "{error:?}");
+        assert!(!error.to_string().contains("ghp_secret_token"), "{error}");
+    }
+}

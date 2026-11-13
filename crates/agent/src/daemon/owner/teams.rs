@@ -13,7 +13,7 @@ use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, Config};
 use agent_core::decide::assign::first_free_worker;
-use agent_core::ids::{AgentName, TaskId, TeamId};
+use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::protocol::{EventKind, Failure, FailureKind, Reply, RunRequest, TeamSummary};
 use agent_core::state::{RunEnd, Timestamp};
@@ -65,11 +65,11 @@ struct Workers {
 
 /// What one look at a team changed in the state.
 #[derive(Debug, Default)]
-struct Round {
+pub(super) struct Round {
     /// What happened, for the subscribers.
-    events: Vec<EventKind>,
+    pub(super) events: Vec<EventKind>,
     /// Whether the state changed and is to be saved.
-    changed: bool,
+    pub(super) changed: bool,
 }
 
 impl Owner {
@@ -264,6 +264,7 @@ impl Owner {
         }
         let mut round = Round::default();
         self.reconcile_bus(team, &mut round).await?;
+        self.pull_requests(team, &mut round).await?;
         self.assign_items(team, &mut round).await?;
         self.serve_requests(team, &mut round).await?;
         self.close_if_finished(team, &mut round)?;
@@ -378,7 +379,7 @@ impl Owner {
 
     /// Queues the task `task` to start with `why`: a waiting task is queued, a task that is about to start
     /// starts with it; a task that is at work is left alone.
-    fn release(&mut self, task: &TaskId, why: Why, round: &mut Round) -> Result<(), OwnerError> {
+    pub(super) fn release(&mut self, task: &TaskId, why: Why, round: &mut Round) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         let status = self
             .parts
@@ -479,8 +480,9 @@ impl Owner {
             source: Some(source),
         })?;
         let identity = CommitIdentity::for_agent(self.parts.settings.config.git(), &assigned.agent);
-        Git::new(worktree, identity)
-            .switch_new_branch(&assigned.branch, &Revision::Branch(base))
+        let git = Git::new(worktree, identity);
+        let start = item_start(&git, base).await.map_err(SwitchError::Git)?;
+        git.switch_new_branch(&assigned.branch, &start)
             .await
             .map_err(SwitchError::Git)
     }
@@ -617,6 +619,19 @@ impl Owner {
         }
     }
 
+    /// A reviewer whose review is given waits for the next one while its team goes on, instead of ending: the team has one
+    /// task for an investigator, which reviews every pull request of the team and the same one again after a fix pass.
+    pub(super) fn reviewer_waits(&self, role: Role, team: &TeamId, settled: super::Settled) -> super::Settled {
+        match settled {
+            super::Settled::Status(TaskStatus::Done)
+                if role == Role::Reviewer && self.parts.state.team(team).is_some_and(|found| !is_finished(found)) =>
+            {
+                super::Settled::Status(TaskStatus::Waiting)
+            }
+            other => other,
+        }
+    }
+
     /// What the end of a run of a team's task means for the others: the coordinator is told about a member, a requester
     /// about its request; and the team is looked at.
     ///
@@ -681,6 +696,23 @@ impl Owner {
             self.move_to(&task, team_id, status, &mut round.events)?;
             round.changed = true;
         }
+        let waiting_reviewers: Vec<TaskId> = self
+            .parts
+            .state
+            .team(team_id)
+            .map(|found| {
+                found
+                    .reviewers()
+                    .iter()
+                    .filter(|member| member.status() == TaskStatus::Waiting)
+                    .map(|member| member.task().clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for task in waiting_reviewers {
+            self.move_to(&task, team_id, TaskStatus::Done, &mut round.events)?;
+            round.changed = true;
+        }
         if has_bus {
             self.outbox.push_back(Outbound {
                 team: team_id.clone(),
@@ -710,6 +742,26 @@ enum SwitchError {
     /// Git refused.
     #[error("git cannot start the branch")]
     Git(#[source] GitError),
+}
+
+/// Where the branch of a new item starts: the base branch, or the commit the remote's base branch was at when it was last
+/// fetched, when that commit has the local base branch in its history. A pull request that was merged on GitHub moved the
+/// remote's branch and not the checkout's, and the next item builds on what was merged. A remote branch that is not
+/// there, or is not ahead, leaves the local one.
+async fn item_start(git: &Git, base: BranchName) -> Result<Revision, GitError> {
+    let local = Revision::Branch(base.clone());
+    let remote = match git.rev_parse(&Revision::RemoteBranch(base)).await {
+        Ok(tip) => tip,
+        // No fetch has brought the remote's branch: the local one is all there is.
+        Err(GitError::UnknownRevision { .. }) => return Ok(local),
+        Err(error) => return Err(error),
+    };
+    let remote = Revision::Commit(remote);
+    if git.is_ancestor(&local, &remote).await? {
+        Ok(remote)
+    } else {
+        Ok(local)
+    }
 }
 
 /// The git of the checkout of a request, as `agent` commits.

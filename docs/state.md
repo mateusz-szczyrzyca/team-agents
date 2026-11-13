@@ -158,6 +158,10 @@ a round that every reviewer approved, and contains a submitted `REQUEST_CHANGES`
 the new phase and of the round it leaves, and reading checks the same (the phase, and every fix pass), so a state
 that `advance` could not have made is not read. Other reviews in a fix-pass round may still be pending.
 
+The round of an item that has just entered `in_review` is empty; it is filled once with the reviews asked of the reviewers
+(`ItemMut::ask_reviews`: all `pending`, none twice, and not again for the same round), so a pull request can be open while it waits
+for two free investigators.
+
 A review that waits (`pending`) receives its outcome through `submit_review` (`ItemMut::submit_review`): by the
 reviewer's task, only while the item is `in_review`, and once — a second outcome for the same review is an error, and
 so is a task that was not asked for a review. The round is then `advance`d: to `fixing` once a `REQUEST_CHANGES` is in,

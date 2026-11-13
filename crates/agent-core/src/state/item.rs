@@ -483,6 +483,14 @@ impl CheckedMut<'_, ItemProgress> {
         self.value.submit_review(task, verdict, at)
     }
 
+    /// See [`ItemProgress::ask_reviews`].
+    ///
+    /// # Errors
+    /// [`AskReviewsError`], as for [`ItemProgress::ask_reviews`].
+    pub fn ask_reviews(&mut self, reviews: Vec<Review>) -> Result<(), AskReviewsError> {
+        self.value.ask_reviews(reviews)
+    }
+
     /// Records the last gate result for the item, replacing the one before.
     pub fn set_gate(&mut self, result: GateResult) {
         self.value.gate = Some(result);
@@ -626,6 +634,48 @@ pub enum SubmitReviewError {
         item: ItemId,
         /// The reviewer's task.
         task: TaskId,
+    },
+}
+
+/// Why the reviews of a pull request could not be asked for.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AskReviewsError {
+    /// Only an item in review has a round of reviews to fill.
+    #[error("item {item} is {phase}: only an item in review is asked for reviews")]
+    NotInReview {
+        /// The item.
+        item: ItemId,
+        /// Its phase.
+        phase: PhaseKind,
+    },
+    /// The round has its reviews already.
+    #[error("item {item}: the reviews of this round are asked for already")]
+    AlreadyAsked {
+        /// The item.
+        item: ItemId,
+    },
+    /// No review was given: a request asks for at least one.
+    #[error("item {item}: a request for reviews names no reviewer")]
+    NoReviews {
+        /// The item.
+        item: ItemId,
+    },
+    /// A review given has its outcome already: only reviews that wait for theirs are asked for.
+    #[error("item {item}: the review by {reviewer} has its outcome already, so it cannot be asked for")]
+    NotPending {
+        /// The item.
+        item: ItemId,
+        /// The reviewer whose review is not pending.
+        reviewer: InvestigatorName,
+    },
+    /// The reviews do not fit one round.
+    #[error("item {item}: {source}")]
+    Reviews {
+        /// The item.
+        item: ItemId,
+        /// What is wrong with them.
+        #[source]
+        source: InvalidReviews,
     },
 }
 
@@ -792,6 +842,41 @@ impl ItemProgress {
                 task: task.clone(),
             }),
         }
+    }
+
+    /// Fills the round of an item in review with the reviews asked of its reviewers. The round starts empty when the
+    /// pull request is opened and is filled once, when reviewers are free to take it.
+    ///
+    /// # Errors
+    /// [`AskReviewsError::NotInReview`] when the item is in another phase; [`AskReviewsError::AlreadyAsked`] when its
+    /// round has reviews; [`AskReviewsError::NoReviews`] for an empty request; [`AskReviewsError::NotPending`] for a
+    /// review that has its outcome; [`AskReviewsError::Reviews`] when a reviewer or a task is named twice.
+    pub fn ask_reviews(&mut self, reviews: Vec<Review>) -> Result<(), AskReviewsError> {
+        let item = self.id;
+        let ItemPhase::InReview { reviews: round, .. } = &mut self.phase else {
+            return Err(AskReviewsError::NotInReview {
+                item,
+                phase: self.phase.kind(),
+            });
+        };
+        if !round.is_empty() {
+            return Err(AskReviewsError::AlreadyAsked { item });
+        }
+        if reviews.is_empty() {
+            return Err(AskReviewsError::NoReviews { item });
+        }
+        if let Some(answered) = reviews
+            .iter()
+            .find(|review| !matches!(review.outcome, ReviewOutcome::Pending))
+        {
+            return Err(AskReviewsError::NotPending {
+                item,
+                reviewer: answered.reviewer.clone(),
+            });
+        }
+        check_round(&reviews).map_err(|source| AskReviewsError::Reviews { item, source })?;
+        *round = reviews;
+        Ok(())
     }
 
     /// Gives an item that is in progress or fixing to another member.

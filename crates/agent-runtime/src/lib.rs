@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod agentbus;
+pub mod autopilot_prompts;
 pub mod cli;
 pub mod clock;
 pub mod editor;

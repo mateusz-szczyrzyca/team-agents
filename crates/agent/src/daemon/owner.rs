@@ -10,6 +10,7 @@ mod controls;
 #[cfg(test)]
 mod fixture;
 mod gate;
+mod rounds;
 mod start;
 mod teams;
 
@@ -26,7 +27,7 @@ use agent_core::ids::{InvalidName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::protocol::{Client, Command, Event, EventKind, Failure, FailureKind, Reply, Target, TeamSummary};
 use agent_core::state::{InvalidTimestamp, Question, QuestionError, RunEnd, RunError, SessionId, State, Timestamp};
-use agent_core::status::{InvalidTransition, TaskStatus};
+use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
@@ -42,6 +43,7 @@ use tokio::task::{Id as JoinId, JoinError, JoinSet};
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
+pub(crate) use self::rounds::{Pulls, PullsError};
 use self::start::{Context, Plan, next_round, plan};
 use self::teams::{Outbound, Served};
 use super::control::{Halt, Steer, after_halt, halted_status};
@@ -160,6 +162,24 @@ pub(crate) enum OwnerError {
         team: TeamId,
         /// What went wrong.
         source: AssignmentError,
+    },
+    /// The outcome of a review cannot be recorded.
+    #[error("the outcome of a review of item {item} of team {team} cannot be recorded")]
+    Review {
+        /// The team.
+        team: TeamId,
+        /// The item.
+        item: agent_core::ids::ItemId,
+        /// What the state said.
+        source: agent_core::state::SubmitReviewError,
+    },
+    /// The pull requests of a team cannot be decided.
+    #[error("the pull requests of team {team} cannot be decided")]
+    Publications {
+        /// The team.
+        team: TeamId,
+        /// What went wrong.
+        source: crate::daemon::pr::PlanError,
     },
     /// A team that must be in the state is not.
     #[error("team {team} is not in the state")]
@@ -315,6 +335,12 @@ pub(super) struct Owner {
     gate_stops: HashMap<TaskId, CancellationToken>,
     /// The queue of the gate service; `None` for an owner that runs without one, which refuses every gate.
     gate: Option<GateQueue>,
+    /// The autopilot; `None` for an owner that runs without one: no pull request is opened.
+    pulls: Option<Pulls>,
+    /// The clients of GitHub, by repository.
+    github: HashMap<agent_core::config::RepoName, agent_runtime::github::GitHub>,
+    /// What the autopilot remembers between two looks.
+    watch: rounds::PullWatch,
     /// Cancelled when the daemon is to stop: the runs it starts stop with it.
     shutdown: CancellationToken,
 }
@@ -359,6 +385,9 @@ impl Owner {
             holds: HashMap::new(),
             gate_stops: HashMap::new(),
             gate: None,
+            pulls: None,
+            github: HashMap::new(),
+            watch: rounds::PullWatch::default(),
             shutdown,
         }
     }
@@ -366,6 +395,12 @@ impl Owner {
     /// The same, with the gates it is asked for going to `queue`.
     pub(super) fn with_gate(mut self, queue: GateQueue) -> Self {
         self.gate = Some(queue);
+        self
+    }
+
+    /// The same, with the pull requests it is asked for opened and reviewed as `pulls` says.
+    pub(super) fn with_pulls(mut self, pulls: Pulls) -> Self {
+        self.pulls = Some(pulls);
         self
     }
 
@@ -459,6 +494,7 @@ impl Owner {
                 home: self.parts.store.home(),
                 clock: &self.parts.clock,
                 why: why.as_ref(),
+                autopilot: self.pulls.as_ref().map(Pulls::texts),
             };
             plan(&context, &mut self.parts.rng, &task).await
         };
@@ -608,6 +644,7 @@ impl Owner {
             run.final_message.as_deref(),
         );
         let settled = self.solo_waits_for_its_items(located.role, &located.team, settled);
+        let settled = self.reviewer_waits(located.role, &located.team, settled);
         // The human asked for a stop or a pause while the run was ending by itself: their word wins where it can. Over a
         // limit's pause or a hang it wins entirely: the run ended by the human's word, with no wake-up, no strike and no
         // notice of a pause that nobody waits for.
@@ -636,6 +673,16 @@ impl Owner {
         let status = halt.map_or(status, |halt| after_halt(halt, status));
         self.move_to(task, &located.team, status, &mut events)?;
         self.commit(task, &located, now, events, notice).await?;
+        if located.role == Role::Reviewer
+            && matches!(
+                end,
+                RunEnd::Reported {
+                    outcome: RunOutcome::Done
+                }
+            )
+        {
+            self.review_ended(task, &located, run.final_message.as_deref()).await?;
+        }
         self.after_run(task, &located, &end, run.final_message.as_deref())
     }
 

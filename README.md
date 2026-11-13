@@ -1042,6 +1042,12 @@ A run that ends with questions leaves `questions-<round>.md` in the task's direc
 down is found when it starts). A task that waits for answers is not stopped, paused or resumed: answer it first. Every
 control is written to the activity log of each task it reached, with who did it, and `agent status` shows the new status.
 
+With a `github_token` in `secrets.toml` the daemon runs the autopilot: when an item's branch has a green gate it opens the pull
+request, two investigators from outside the team review it (their reports are posted on it), and two approvals merge it and
+start the next item. `agent run --no-merge` stops before the merge and tells you; after `[review] fix_passes` rounds of "changes
+requested" a question reaches you like any other. How it works, and its limits, are in
+[`docs/architecture.md`](docs/architecture.md) ("Pull requests, reviews and the merge").
+
 A gate is run with `agent gate`, by an agent in its worktree (the human can run it too):
 
 | Command | What it does |

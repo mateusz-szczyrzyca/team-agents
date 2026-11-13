@@ -17,10 +17,12 @@ use agent_core::cli::ActivityEvent;
 use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::protocol::{Client, ControlAction};
-use agent_core::state::{GateRecord, MAX_STATE_BYTES, RenderError, State, StateError, Timestamp};
+use agent_core::state::{GateRecord, MAX_STATE_BYTES, PrNumber, RenderError, State, StateError, Timestamp};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinError;
+
+use crate::text_file::{TextFileError, read_text_file};
 
 /// The state file in the home.
 const STATE_FILE: &str = "state.json";
@@ -193,6 +195,12 @@ impl Home {
         self.task_dir(task).join(GATE_RECORD_FILE)
     }
 
+    /// The report of the review of pull request `pr` that `task` gave after `pass` fix passes, in the task's directory.
+    #[must_use]
+    pub fn review_report_file(&self, task: &TaskId, pr: PrNumber, pass: u32) -> PathBuf {
+        self.task_dir(task).join(format!("review-pr{pr}-pass{pass}.md"))
+    }
+
     /// The questions file of round `round` of `task`, in the task's directory.
     #[must_use]
     pub fn questions_file(&self, task: &TaskId, round: NonZeroU32) -> PathBuf {
@@ -322,6 +330,22 @@ pub enum StoreError {
         path: PathBuf,
         /// What the operating system said.
         source: io::Error,
+    },
+    /// A file of a task's directory cannot be read: the gate record or the report of a review.
+    #[error("cannot read the file {path:?} of a task")]
+    ReadTaskFile {
+        /// The file.
+        path: PathBuf,
+        /// What is wrong with it.
+        source: TextFileError,
+    },
+    /// The gate record of a task is not a gate record.
+    #[error("the gate record {path:?} cannot be used")]
+    ParseGateRecord {
+        /// The file.
+        path: PathBuf,
+        /// What the parser said.
+        source: serde_json::Error,
     },
     /// The thread that does the blocking file work failed.
     #[error("a file task of the state store failed")]
@@ -457,6 +481,21 @@ fn cut(text: &str) -> Cow<'_, str> {
 fn state_read_limit() -> u64 {
     // `usize` is never wider than `u64` on a platform Rust supports, so the fallback is not reachable.
     u64::try_from(MAX_STATE_BYTES).map_or(u64::MAX, |max| max.saturating_add(1))
+}
+
+/// The most bytes of a file of a task's directory that are read: the gate record and the reports of the reviews are
+/// small, and a model or a person can write into the directory.
+const MAX_TASK_FILE_BYTES: usize = 1 << 20;
+
+/// The text of the file at `path` in a task's directory; `None` when there is no such file.
+async fn read_task_file(path: &Path) -> Result<Option<String>, StoreError> {
+    read_text_file(path, MAX_TASK_FILE_BYTES)
+        .await
+        .map(|found| found.map(|file| file.text))
+        .map_err(|source| StoreError::ReadTaskFile {
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 /// Runs `job` on a thread that may block and returns its result.
@@ -633,6 +672,60 @@ impl StateStore {
         })
         .await?;
         StagedState { file, target, dir }.commit().await
+    }
+
+    /// The last gate record of `task`; `None` when the task has never been gated.
+    ///
+    /// # Errors
+    /// [`StoreError::ReadTaskFile`] when the file cannot be read, is too large or is not UTF-8 text;
+    /// [`StoreError::ParseGateRecord`] when it is not a gate record.
+    pub async fn load_gate_record(&self, task: &TaskId) -> Result<Option<GateRecord>, StoreError> {
+        let path = self.home.gate_record_file(task);
+        let Some(file) = read_task_file(&path).await? else {
+            return Ok(None);
+        };
+        serde_json::from_str(&file)
+            .map(Some)
+            .map_err(|source| StoreError::ParseGateRecord { path, source })
+    }
+
+    /// Saves `report`, the report of a review of pull request `pr` after `pass` fix passes, in the directory of
+    /// `task`, replacing the one before: written to a temporary file and renamed, so that a reader sees a whole report
+    /// or none.
+    ///
+    /// # Errors
+    /// [`StoreError::CreateDir`], [`StoreError::WriteTemp`], [`StoreError::Replace`], [`StoreError::SyncDir`] and
+    /// [`StoreError::Worker`].
+    pub async fn save_review_report(
+        &self,
+        task: &TaskId,
+        pr: PrNumber,
+        pass: u32,
+        report: &str,
+    ) -> Result<(), StoreError> {
+        let dir = self.home.task_dir(task);
+        let target = self.home.review_report_file(task, pr, pass);
+        let write_dir = dir.clone();
+        let bytes = report.as_bytes().to_vec();
+        let file = blocking(move || {
+            create_dir(&write_dir)?;
+            write_temp(&write_dir, &bytes)
+        })
+        .await?;
+        StagedState { file, target, dir }.commit().await
+    }
+
+    /// The report saved for the review of pull request `pr` after `pass` fix passes; `None` when there is none.
+    ///
+    /// # Errors
+    /// [`StoreError::ReadTaskFile`] when the file cannot be read, is too large or is not UTF-8 text.
+    pub async fn load_review_report(
+        &self,
+        task: &TaskId,
+        pr: PrNumber,
+        pass: u32,
+    ) -> Result<Option<String>, StoreError> {
+        read_task_file(&self.home.review_report_file(task, pr, pass)).await
     }
 
     /// Appends one line to the activity log of `task`: the time and the event, texts cut to

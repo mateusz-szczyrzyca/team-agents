@@ -11,6 +11,14 @@
 #   questions       ends with STATUS: QUESTIONS and writes no questions file
 #   slowdone        waits a second, then ends with STATUS: DONE
 #   slowfail        waits a second, then ends with STATUS: FAILED
+#   work            commits a file in the worktree, records that the repository's gate passed at the new head (the file
+#                   `gate.json` in the task's directory in the home the configuration names) and ends with STATUS: DONE
+#   commit          commits a file in the worktree, records no gate and ends with STATUS: DONE: the gate that was recorded
+#                   is of an older commit
+#   ask             writes a questions file to the path the prompt names (the first `.../questions-N.md` in it) and ends
+#                   with STATUS: QUESTIONS
+#   integrate       merges every other local branch of the form agents/*/task-*-N.N into the worktree's branch, records
+#                   the gate as `work` does and ends with STATUS: DONE
 #
 # Like an agent that does what its prompt says, every run of a team's task first reads its messages through the
 # agentbus MCP server (`read_messages` moves the agent's cursor past them; without it the bus would wake the agent again
@@ -72,6 +80,28 @@ read_messages() {
     "$bus_bin" serve --agent "$name" --task "$task" --team "$team" --dir "$bus_dir" --home "$home" > /dev/null
 }
 
+# Arguments that give git an identity and no signing: the harness sets neither in the environment of a run.
+GIT_FIXTURE=(-c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false)
+
+# Commits a new file in the worktree: what a run of an agent that did its item leaves.
+commit_work() {
+  echo "run $n of $name" > "work-$n.txt"
+  git add "work-$n.txt"
+  git "${GIT_FIXTURE[@]}" commit -q -m "Work of run $n of $name"
+}
+
+# Records that the repository's gate passed on a clean tree at the head, where the daemon looks for it: the task is the
+# name of the worktree's directory.
+record_gate() {
+  local task head dir
+  task=$(basename "$PWD")
+  head=$(git rev-parse HEAD)
+  dir="$home/tasks/$task"
+  mkdir -p "$dir"
+  printf '{"tree":"clean","result":{"head":"%s","finished_at":"2026-11-13T10:00:00Z","outcome":{"kind":"passed"},"log":"%s/gate-1.log"}}\n' \
+    "$head" "$dir" > "$dir/gate.json"
+}
+
 init
 read_messages
 case $action in
@@ -83,5 +113,28 @@ case $action in
   questions) result 'I have to ask.\nSTATUS: QUESTIONS' ;;
   slowdone) sleep 1; result 'Finished the work.\nSTATUS: DONE' ;;
   slowfail) sleep 1; result 'I could not do it.\nSTATUS: FAILED' ;;
+  work)
+    commit_work
+    record_gate
+    result 'Finished the item.\nSTATUS: DONE'
+    ;;
+  commit)
+    commit_work
+    result 'Changed something.\nSTATUS: DONE'
+    ;;
+  ask)
+    file=$(grep -o '/[^`[:space:]]*questions-[0-9]*\.md' <<< "$prompt" | head -n 1)
+    mkdir -p "$(dirname "$file")"
+    printf '# Questions — fake\n\n## 1. What should the team do about the pull request?\na) one more fix pass — the reviewers are asked again\nb) leave it to me — I merge or close it\n\n**Recommended:** a) — a finding was not fixed (fake)\n\n**Verdict:**\n' > "$file"
+    result 'I have to ask.\nSTATUS: QUESTIONS'
+    ;;
+  integrate)
+    current=$(git rev-parse --abbrev-ref HEAD)
+    for other in $(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-*.*'); do
+      [[ $other == "$current" ]] || git "${GIT_FIXTURE[@]}" merge --no-edit "$other" > /dev/null
+    done
+    record_gate
+    result 'Integrated.\nSTATUS: DONE'
+    ;;
   *) echo "unknown action: $action" >&2; exit 64 ;;
 esac

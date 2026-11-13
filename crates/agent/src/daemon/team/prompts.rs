@@ -17,6 +17,14 @@ pub(in crate::daemon) enum Why {
     Assigned(ItemId),
     /// A worker is asked to serve this request.
     Delegated(Box<DelegationRequest>),
+    /// A reviewer is asked for the review of a pull request; the request is what its prompt says.
+    Review,
+    /// The reviewers asked for changes: the lead is given the fix pass; the findings are what its prompt says.
+    FixPass,
+    /// The fix passes are used up: the lead is to ask the human; the question is what its prompt says.
+    AskHuman,
+    /// A reviewer's report had no verdict: it is asked for again.
+    VerdictMissing,
 }
 
 /// What a run is shaped from.
@@ -83,7 +91,8 @@ pub(in crate::daemon) fn shape(
         return Ok(composed);
     }
     let reason = match run.why {
-        None => Vec::new(),
+        // What the autopilot tells a run is added to its prompt from the state, not from the reason (`owner/rounds.rs`).
+        None | Some(Why::Review | Why::FixPass | Why::AskHuman | Why::VerdictMissing) => Vec::new(),
         Some(Why::Woken) => vec![wake(texts, run)?],
         // The prompt of a session that starts names the item its member has; only a resumed one is told of a new item.
         Some(Why::Assigned(_)) if run.new_session => Vec::new(),

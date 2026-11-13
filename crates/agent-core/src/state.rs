@@ -20,8 +20,8 @@ mod values;
 pub use checked::CheckedMut;
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
 pub use item::{
-    AdvanceError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut, ItemPhase,
-    ItemProgress, NotWorkedOn, PhaseKind, PullRequest, Review, ReviewOutcome, SubmitReviewError,
+    AdvanceError, AskReviewsError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut,
+    ItemPhase, ItemProgress, NotWorkedOn, PhaseKind, PullRequest, Review, ReviewOutcome, SubmitReviewError,
 };
 pub use member::{Member, MemberError, MemberMut, Participant, QuestionError};
 pub use question::{AnswerBeforeQuestion, AnsweredVia, Question, QuestionState};
