@@ -823,6 +823,53 @@ async fn a_team_the_bus_cannot_create_is_refused_and_its_worktrees_and_branches_
 
 // ---- the team's life ---------------------------------------------------------------------------------------------
 
+/// The teams on the bus, with whether each is done.
+fn bus_teams_done(f: &Fixture) -> Vec<bool> {
+    let text = std::fs::read_to_string(f.home.root().join("bus/state.json")).unwrap();
+    let state: serde_json::Value = serde_json::from_str(&text).unwrap();
+    state["teams"]
+        .as_object()
+        .map(|teams| {
+            teams
+                .values()
+                .map(|team| team["done"] == serde_json::Value::Bool(true))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_team_whose_state_cannot_be_saved_is_refused_and_what_was_made_for_it_is_removed() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    // The worktrees and the bus have their directories; the state, saved through a file beside it, has none it can write.
+    std::fs::create_dir_all(f.home.root().join("worktrees/example")).unwrap();
+    std::fs::create_dir_all(f.home.root().join("bus")).unwrap();
+    let root = f.home.root().to_path_buf();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    let reply = f.run(&["inv-opus", "claude-1"], PARALLEL, None).await;
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    f.answered().await;
+    f.stop().await.unwrap();
+
+    assert_eq!(refused(reply), FailureKind::Internal);
+    assert_nothing_started(&f);
+    let teams = bus_teams_done(&f);
+    assert!(!teams.is_empty(), "the team was made on the bus");
+    assert!(
+        teams.iter().all(|done| *done),
+        "the team on the bus is not closed: {teams:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_member_that_is_done_tells_the_coordinator_which_wakes_to_integrate_its_branch() {
     let mut f = Fixture::new(&[
