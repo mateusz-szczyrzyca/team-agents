@@ -738,10 +738,10 @@ mod git_range {
         format!("{}\n", lines.join("\n"))
     }
 
-    // Rule: the unchanged lines of a file are the ten lines before and after each changed place, numbered as in the file at
-    // the head; the lines that were added are not among them.
+    // Rule: the unchanged lines of a file are all of its lines but the changed ones, numbered as in the file at the head;
+    // the lines that were added are not among them. (An attribute is read whole, whatever its length.)
     #[tokio::test]
-    async fn the_unchanged_lines_are_ten_before_and_ten_after_a_change() {
+    async fn the_unchanged_lines_are_all_but_the_changed_ones() {
         let (_tmp, repo) = repository();
         write(&repo, "src/a.rs", numbered(40).as_bytes());
         let base = commit_all(&repo, "base");
@@ -753,8 +753,8 @@ mod git_range {
             .await
             .unwrap();
 
-        let expected: Vec<UnchangedLine> = (10..=19)
-            .chain(21..=30)
+        let expected: Vec<UnchangedLine> = (1..=19)
+            .chain(21..=40)
             .map(|n| unchanged_line("src/a.rs", n, &format!("l{n}")))
             .collect();
         assert_eq!(lines, expected);
