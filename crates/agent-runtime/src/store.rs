@@ -172,13 +172,13 @@ impl Home {
     /// The directory that holds the worktrees of every repository: `<repo>/<task>` inside it is a task's worktree.
     #[must_use]
     pub fn worktrees_dir(&self) -> PathBuf {
-        PathBuf::new()
+        self.root().join(WORKTREES_DIR)
     }
 
     /// The git worktree of `task`, a task of a team that works on `repo`.
     #[must_use]
     pub fn worktree_dir(&self, repo: &RepoName, task: &TaskId) -> PathBuf {
-        self.root().join(WORKTREES_DIR).join(repo.as_str()).join(task.as_str())
+        self.worktrees_dir().join(repo.as_str()).join(task.as_str())
     }
 
     /// The file with the output of the `run`-th gate run of `task`, in the task's directory.

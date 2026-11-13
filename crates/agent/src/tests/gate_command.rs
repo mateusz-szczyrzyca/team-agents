@@ -86,9 +86,11 @@ async fn gate_in_a_worktree_asks_the_daemon_for_the_gate_of_its_task() {
         ])
     });
 
-    let (code, out, err) = agent(&environment, &["gate"]);
+    let mut out = Vec::new();
+    let result = execute_gate(&environment, GateArgs { task: None }, &mut out).await;
 
-    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    result.unwrap();
+    let out = String::from_utf8(out).unwrap();
     assert!(
         out.contains("all passed") && out.contains("gate: passed at 26b65de"),
         "{out}"

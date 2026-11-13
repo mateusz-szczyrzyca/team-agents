@@ -492,14 +492,13 @@ async fn execute_steer(environment: &Environment, steer: Steer, out: &mut impl W
 async fn execute_gate(environment: &Environment, args: GateArgs, out: &mut impl Write) -> Result<(), CommandError> {
     let home = environment.home()?;
     // The task is found before the daemon is looked for: with none there is nothing to ask.
-    let task = match args.task {
-        Some(task) => task,
-        None => {
-            let directory = environment.directory()?;
-            task_in(&home, directory).await.ok_or_else(|| GateError::NoTask {
-                directory: directory.to_path_buf(),
-            })?
-        }
+    let task = if let Some(task) = args.task {
+        task
+    } else {
+        let directory = environment.directory()?;
+        task_in(&home, directory).await.ok_or_else(|| GateError::NoTask {
+            directory: directory.to_path_buf(),
+        })?
     };
     let mut connection = Connection::connect(&home.socket_file()).await?;
     gate(&mut connection, task, out).await?;

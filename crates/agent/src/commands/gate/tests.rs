@@ -51,7 +51,7 @@ fn recorded(record: GateRecord) -> impl Fn(&agent_core::protocol::Request) -> An
 /// A log of `lines` lines, `line 1` to `line N`, in a temporary directory.
 fn log_of(dir: &tempfile::TempDir, lines: usize) -> PathBuf {
     let path = dir.path().join("gate-1.log");
-    let text: String = (1..=lines).map(|n| format!("line {n}\n")).collect();
+    let text = (1..=lines).map(|n| format!("line {n}")).collect::<Vec<_>>().join("\n") + "\n";
     std::fs::write(&path, text).unwrap();
     path
 }
@@ -291,7 +291,7 @@ async fn a_closed_output_is_an_error_not_a_lost_verdict() {
 // ---- the wait ---------------------------------------------------------------------------------------------------
 
 /// A daemon that answers a request only after `delay`, with `reply`.
-async fn slow_daemon(dir: &tempfile::TempDir, delay: Duration, reply: Reply) -> tokio::task::JoinHandle<()> {
+fn slow_daemon(dir: &tempfile::TempDir, delay: Duration, reply: Reply) -> tokio::task::JoinHandle<()> {
     let listener = tokio::net::UnixListener::bind(socket(dir)).unwrap();
     tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
@@ -312,7 +312,7 @@ async fn a_gate_that_waits_for_its_turn_is_waited_for_beyond_the_time_a_request_
     let told = Reply::GateRecorded {
         record: record(GateTree::Clean, GateOutcome::Passed, &log),
     };
-    let serving = slow_daemon(&dir, REQUEST_TIMEOUT * 10, told).await;
+    let serving = slow_daemon(&dir, REQUEST_TIMEOUT * 10, told);
     let mut connection = Connection::connect(&socket(&dir)).await.unwrap();
 
     let result = gate(&mut connection, task(1), &mut Vec::new()).await;
