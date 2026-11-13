@@ -76,9 +76,9 @@ pub(super) struct GateQueue {
 #[derive(Debug)]
 pub(super) enum NotQueued {
     /// [`QUEUE`] gates are waiting already.
-    Full(GateJob),
+    Full(Box<GateJob>),
     /// The service has ended: the daemon is shutting down.
-    Stopped(GateJob),
+    Stopped(Box<GateJob>),
 }
 
 impl GateQueue {
@@ -94,8 +94,8 @@ impl GateQueue {
     /// [`NotQueued`], with the job.
     pub(super) fn enqueue(&self, job: GateJob) -> Result<(), NotQueued> {
         self.jobs.try_send(job).map_err(|refused| match refused {
-            mpsc::error::TrySendError::Full(job) => NotQueued::Full(job),
-            mpsc::error::TrySendError::Closed(job) => NotQueued::Stopped(job),
+            mpsc::error::TrySendError::Full(job) => NotQueued::Full(Box::new(job)),
+            mpsc::error::TrySendError::Closed(job) => NotQueued::Stopped(Box::new(job)),
         })
     }
 }

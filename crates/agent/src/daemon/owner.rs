@@ -490,8 +490,12 @@ impl Owner {
         let engine = self.parts.engine.clone();
         let cancel = self.shutdown.child_token();
         self.cancels.insert(task.clone(), cancel.clone());
+        let hold = WatchdogHold::new();
+        self.holds.insert(task.clone(), hold.clone());
         let job = plan.job;
-        let handle = self.runs.spawn(async move { engine.run(job, &cancel).await });
+        let handle = self
+            .runs
+            .spawn(async move { engine.run_held(job, &cancel, &hold).await });
         self.running.insert(handle.id(), task.clone());
         self.in_flight.insert(task.clone());
         Ok(())
@@ -529,6 +533,7 @@ impl Owner {
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
         self.in_flight.remove(&task);
         self.cancels.remove(&task);
+        self.holds.remove(&task);
         match outcome {
             Outcome::Verdict(verdict) => match *verdict {
                 RunVerdict::Finished(run) => self.finished(&task, *run).await,

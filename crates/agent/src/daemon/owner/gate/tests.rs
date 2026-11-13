@@ -143,7 +143,10 @@ async fn a_gate_of_an_unknown_task_is_not_found_and_nothing_is_queued() {
     let (kind, message) = refusal(&mut answer);
     assert_eq!(kind, FailureKind::NotFound);
     assert!(message.contains(&task(9).to_string()), "{message}");
-    assert!(waiting.try_recv().is_err());
+    assert!(
+        matches!(waiting.try_recv(), Err(tokio::sync::mpsc::error::TryRecvError::Empty)),
+        "a job was queued"
+    );
 }
 
 #[tokio::test]
@@ -160,7 +163,10 @@ async fn a_gate_of_a_repository_the_configuration_no_longer_has_is_refused() {
     let (kind, message) = refusal(&mut answer);
     assert_eq!(kind, FailureKind::Refused);
     assert!(message.contains("gate") && message.contains("team-agents"), "{message}");
-    assert!(waiting.try_recv().is_err());
+    assert!(
+        matches!(waiting.try_recv(), Err(tokio::sync::mpsc::error::TryRecvError::Empty)),
+        "a job was queued"
+    );
 }
 
 #[tokio::test]
@@ -252,7 +258,8 @@ async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
 async fn a_gate_asked_through_the_socket_runs_in_the_worktree_and_answers_with_the_record() {
     let mut daemon = gated("done", "echo gate ran in $PWD");
     daemon.start().await;
-    daemon.status_is(1, TaskStatus::Done).await;
+    // The item of the solo task is still in flight, so the task waits when its run ends.
+    daemon.status_is(1, TaskStatus::Waiting).await;
     let mut events = daemon.subscribe().await;
 
     let reply = daemon.ask(Command::Gate(GateRequest { task: task(1) })).await.unwrap();

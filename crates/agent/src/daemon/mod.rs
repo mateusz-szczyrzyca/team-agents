@@ -6,7 +6,8 @@
 //! - the **owner** holds the state and is the only one that changes it: it answers requests, starts a run for every
 //!   queued task, applies the end of each run, wakes paused tasks and publishes events;
 //! - the **server** accepts connections on the socket and passes their requests to the owner;
-//! - the **notifier** delivers the notifications the owner asks for.
+//! - the **notifier** delivers the notifications the owner asks for;
+//! - the **gate service** runs the repository's gate for the tasks that ask, one at a time on the machine.
 //!
 //! Cancelling the shutdown token stops them in order: the server stops accepting, the owner stops its runs and records
 //! them as interrupted, the notifier delivers what is queued, and the socket is removed.
@@ -201,12 +202,21 @@ pub(crate) async fn run_in(
     let (inbox, requests) = mpsc::channel(INBOX);
     let (notices, deliveries) = mpsc::channel(notifier::QUEUE);
     let (events, _unused) = broadcast::channel(EVENT_BACKLOG);
+    let (gates, gate_jobs) = gate::GateQueue::new();
     let mut sides: JoinSet<()> = JoinSet::new();
     let serving = shutdown.clone();
     sides.spawn(server::serve(listener, inbox, serving));
     let delivering = Arc::clone(&texts);
     sides.spawn(notifier::run(deliveries, delivering, notifier));
     let opens = start_opener(&mut sides, &settings, &surroundings);
+    let gate_parts = gate::GateParts {
+        store: Arc::clone(&store),
+        clock: setup.clock.clone(),
+        events: events.clone(),
+        agent_path: settings.config.binaries().agent_path.clone(),
+        stop_grace: timings.run.stop_grace,
+    };
+    sides.spawn(gate::run(gate_jobs, gate_parts, shutdown.clone()));
 
     let owner = Owner::new(
         OwnerParts {
@@ -227,7 +237,8 @@ pub(crate) async fn run_in(
             tick: timings.tick,
         },
         shutdown.clone(),
-    );
+    )
+    .with_gate(gates);
     let owned_end = owner.run(requests).await;
     // Whatever ended the owner, the rest of the daemon ends with it.
     shutdown.cancel();
