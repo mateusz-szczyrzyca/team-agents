@@ -158,7 +158,7 @@ const RULES: &[Rule] = &[
         extensions: RUST,
         marker: Marker::ChecksUnderTest,
         place: Place::Anywhere,
-        texts: &["cfg!(test)"],
+        texts: &["cfg!(test)", "cfg!(not(test))"],
     },
     Rule {
         extensions: SHELL,
