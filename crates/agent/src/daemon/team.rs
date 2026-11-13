@@ -21,6 +21,6 @@ pub(super) use self::form::{FormError, Formed, Workspace, form};
 pub(super) use self::jobs::{
     BusJob, DoneNoticeError, NoticeRenderError, failure_reason, render_notice, team_done_notification,
 };
-pub(super) use self::prompts::{TeamPromptError, TeamRun, Why, shape};
+pub(super) use self::prompts::{TeamPromptError, TeamRun, Why, shape_with_answers};
 pub(super) use self::react::{BusNotice, NoticeError, RequestOutcome, notice_for, request_outcome};
 pub(super) use self::sync::reconcile;

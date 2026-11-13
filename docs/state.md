@@ -182,7 +182,7 @@ Each is derived or lives elsewhere, so that there is one place for it:
 - **The configuration** — read from `agents.toml`; the state refers to it by name (`repo`, the names of agents). A
   name that the configuration no longer has is the daemon's problem to report, not a reason to refuse the state.
 - **The text of questions and answers** — in `questions-<round>.md`.
-- **Activity** — what a run did, in its activity log; the state keeps only how a run began and ended.
+- **Activity** — what a run did, in its activity log, and what the human did to the task (`{"kind":"control","action":"pause","by":{"kind":"cli"}}`, and an `info` line for an answer); the state keeps only how a run began and ended.
 - **Review reports, gate output** — in files; the state keeps their verdicts and paths.
 - **Worktree and branch paths, the unit names** — derived from the IDs and the layout of `AGENTS_HOME`.
 - **A team's overall status** — derived from its members and items (`TeamSummary`).
@@ -239,9 +239,24 @@ as coordinator, only workers, a list with nothing to do, a base branch the check
 investigators for two outside reviewers) or `internal` (git or the bus failed; what was made is taken back). `status` takes an optional target: a team's summary, the
 summary of the team a task belongs to, or every team; an unknown target is `not_found`. `show` gives a whole team or a task
 with its role. `subscribe` answers with the summaries and then sends the events described below; the events of one team only
-when one was asked for. The other commands answer `refused` with a message that names the command, until the items that
-serve them. A line that is not a valid request is answered with `invalid` under the request ID `0` (its own ID cannot be
-read) and the connection goes on; a request over the limit is answered with `invalid` and the connection is closed.
+when one was asked for.
+
+Since item 7.2 also `answer`, `stop`, `pause`, `unpause`, `resume` and `say`, each answering `applied` with the tasks it
+reached:
+
+- `answer` takes the verdicts for the round that is open; `not_found` for an unknown task, `conflict` for a task that does
+  not wait for answers or a round that is not the open one, `invalid` (every problem listed) for a question the file does not
+  have, a question left without a verdict, or `ok` where there is no recommendation. The channel recorded is `command` for the
+  client `cli` and `dashboard` for the client `dashboard`; `saved_file` is for a file the daemon read itself.
+- `stop`, `pause`, `unpause`, `resume` decide each task of the target by its status (the table in
+  [`architecture.md`](architecture.md)); `conflict` when the control reaches none, with the reason for each task, and
+  `not_found` for an unknown target. A control of a team reaches its reviewers too.
+- `say` puts the text on the agentbus from `human`, for the task's agent or for the team; `conflict` for a target that is done,
+  `internal` when the bus does not take it.
+
+A line that is not a valid request is answered with `invalid` under the request ID `0` (its own ID cannot be
+read) and the connection goes on; a request over the limit is answered with `invalid` and the connection is closed. `gate`
+answers `refused`, naming itself, until the item that serves it.
 
 ### Responses
 

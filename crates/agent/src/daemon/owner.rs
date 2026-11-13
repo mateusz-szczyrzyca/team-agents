@@ -5,7 +5,10 @@
 //! applies the end of each run to its task, wakes paused tasks when their time comes and publishes what happens as
 //! events. A state it cannot save ends the daemon: models must not go on working with a state that is not kept.
 
-mod questions;
+mod answers;
+mod controls;
+#[cfg(test)]
+mod fixture;
 mod start;
 mod teams;
 
@@ -15,18 +18,19 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::cli::SessionId as CliSessionId;
+use agent_core::cli::{ActivityEvent, SessionId as CliSessionId};
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::outcome::{AfterHang, after_hang};
 use agent_core::ids::{InvalidName, TaskId, TeamId};
 use agent_core::kinds::Role;
-use agent_core::protocol::{Command, Event, EventKind, Failure, FailureKind, Reply, Target, TeamSummary};
+use agent_core::protocol::{Client, Command, Event, EventKind, Failure, FailureKind, Reply, Target, TeamSummary};
 use agent_core::state::{InvalidTimestamp, Question, QuestionError, RunEnd, RunError, SessionId, State, Timestamp};
 use agent_core::status::{InvalidTransition, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::prompts::PromptLoader;
+use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict};
 use agent_runtime::settings::Settings;
 use agent_runtime::store::{StateStore, StoreError};
@@ -39,8 +43,11 @@ use tokio_util::sync::CancellationToken;
 
 use self::start::{Context, Plan, next_round, plan};
 use self::teams::{Outbound, Served};
+use super::control::{Halt, Steer, after_halt, halted_status};
 use super::notice::Notice;
 use super::notifier::Delivery;
+use super::questions;
+use super::questions::watch::{Report, Saves, Watcher};
 use super::recovery::{RecoveryError, recover};
 use super::settle::{Settled, settle};
 use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
@@ -63,6 +70,8 @@ const SECS_PER_MINUTE: u64 = 60;
 pub(super) enum Message {
     /// A request, to answer.
     Request {
+        /// Who asks.
+        client: Client,
         /// What it asks.
         command: Command,
         /// Where the answer goes.
@@ -197,10 +206,14 @@ pub(super) struct OwnerParts {
     pub(super) texts: Arc<HarnessPrompts>,
     /// The texts of the teams.
     pub(super) team_texts: Arc<TeamPrompts>,
+    /// The texts of the questions and their answers.
+    pub(super) question_texts: Arc<QuestionsPrompts>,
     /// The rules.
     pub(super) rules: Arc<PromptLoader>,
     /// The bus of the home: the teams' members, their messages and their requests for workers.
     pub(super) bus: AgentBus,
+    /// Where the questions files to open in VS Code go; `None` when the configuration does not ask for it.
+    pub(super) opens: Option<mpsc::Sender<std::path::PathBuf>>,
     /// The engine that carries out runs.
     pub(super) engine: RunEngine,
     /// The clock.
@@ -233,6 +246,20 @@ struct Located {
     agent: String,
 }
 
+/// A run that went to its end, as its task is told of it.
+struct Ended<'a> {
+    /// The task.
+    task: &'a TaskId,
+    /// The facts about the task.
+    located: &'a Located,
+    /// When the run ended.
+    now: Timestamp,
+    /// What the end does to the task.
+    settled: Settled,
+    /// Whether the run did anything before it ended.
+    progress: Progress,
+}
+
 /// How a round of questions went.
 enum Asked {
     /// The round is recorded and the human is told.
@@ -251,6 +278,10 @@ pub(super) struct Owner {
     running: HashMap<JoinId, TaskId>,
     /// The tasks that have a run going.
     in_flight: HashSet<TaskId>,
+    /// What stops the run of each task that has one going, by task.
+    cancels: HashMap<TaskId, CancellationToken>,
+    /// The tasks whose run the human has stopped, and how: the end of the run decides their status.
+    halts: HashMap<TaskId, Halt>,
     /// When each paused task is queued again.
     wakes: HashMap<TaskId, Timestamp>,
     /// How many hangs in a row each task has had without progress.
@@ -265,18 +296,46 @@ pub(super) struct Owner {
     closed: HashSet<TeamId>,
     /// The teams to look at at the next turn of the loop, in the order of their IDs.
     looks: BTreeSet<TeamId>,
+    /// The watch on the questions files; `None` when the system would not make one: the answers then arrive only
+    /// through `agent answer` and the dashboard.
+    watcher: Option<Watcher>,
+    /// The questions files the human saved, as the watch reports them.
+    saved: Option<Saves>,
+    /// The tasks whose directory is watched.
+    watched: HashSet<TaskId>,
+    /// For each task that waits for answers, the problems of the last save the human was told about, so that the same
+    /// save is not told twice.
+    incomplete: HashMap<TaskId, String>,
     /// Cancelled when the daemon is to stop: the runs it starts stop with it.
     shutdown: CancellationToken,
+}
+
+/// The next report of the watch on the questions files; never, when the files are not watched.
+async fn next_report(saves: &mut Option<Saves>) -> Option<Report> {
+    match saves {
+        Some(saves) => saves.recv().await,
+        None => std::future::pending().await,
+    }
 }
 
 impl Owner {
     /// An owner made of `parts`.
     pub(super) fn new(parts: OwnerParts, shutdown: CancellationToken) -> Self {
+        let (watcher, saved) = match Watcher::new() {
+            Ok((watcher, saves)) => (Some(watcher), Some(saves)),
+            Err(error) => {
+                // The daemon is useful without it: the answers still come through `agent answer` and the dashboard.
+                tracing::warn!(error = %error_chain(&error), "the questions files are not watched: a saved answer is not noticed");
+                (None, None)
+            }
+        };
         Self {
             parts,
             runs: JoinSet::new(),
             running: HashMap::new(),
             in_flight: HashSet::new(),
+            cancels: HashMap::new(),
+            halts: HashMap::new(),
             wakes: HashMap::new(),
             hangs: HashMap::new(),
             reasons: HashMap::new(),
@@ -284,6 +343,10 @@ impl Owner {
             serving: HashMap::new(),
             closed: HashSet::new(),
             looks: BTreeSet::new(),
+            watcher,
+            saved,
+            watched: HashSet::new(),
+            incomplete: HashMap::new(),
             shutdown,
         }
     }
@@ -294,6 +357,7 @@ impl Owner {
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
     pub(super) async fn run(mut self, mut inbox: mpsc::Receiver<Message>) -> Result<(), OwnerError> {
         self.recover().await?;
+        self.adopt_open_questions().await?;
         let mut tick = tokio::time::interval(self.parts.tick.max(Duration::from_millis(1)));
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
@@ -306,6 +370,7 @@ impl Owner {
                     None => break,
                 },
                 Some(joined) = self.runs.join_next_with_id() => self.settle_joined(joined).await?,
+                Some(report) = next_report(&mut self.saved) => self.reported(report).await?,
                 _ = tick.tick() => {
                     self.wake_due().await?;
                     self.look_at_every_team();
@@ -371,6 +436,7 @@ impl Owner {
                 settings: &self.parts.settings,
                 texts: &self.parts.texts,
                 team_texts: &self.parts.team_texts,
+                question_texts: &self.parts.question_texts,
                 rules: &self.parts.rules,
                 home: self.parts.store.home(),
                 clock: &self.parts.clock,
@@ -409,6 +475,7 @@ impl Owner {
         tracing::info!(task = %task, run = %plan.run, agent = %located.agent, "run started");
         let engine = self.parts.engine.clone();
         let cancel = self.shutdown.child_token();
+        self.cancels.insert(task.clone(), cancel.clone());
         let job = plan.job;
         let handle = self.runs.spawn(async move { engine.run(job, &cancel).await });
         self.running.insert(handle.id(), task.clone());
@@ -447,6 +514,7 @@ impl Owner {
         };
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
         self.in_flight.remove(&task);
+        self.cancels.remove(&task);
         match outcome {
             Outcome::Verdict(verdict) => match *verdict {
                 RunVerdict::Finished(run) => self.finished(&task, *run).await,
@@ -459,6 +527,8 @@ impl Owner {
     /// A run that could not be carried out: its task fails.
     async fn failed(&mut self, task: &TaskId, reason: String) -> Result<(), OwnerError> {
         tracing::error!(task = %task, %reason, "a run failed");
+        // The run is over without the human's word being carried out: the task failed, and is the human's to resume.
+        self.halts.remove(task);
         let located = self.locate(task)?;
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
@@ -476,21 +546,29 @@ impl Owner {
         self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)
     }
 
-    /// A run the daemon stopped because it shuts down: recorded as interrupted, and its task queued for the next start.
+    /// A run that was stopped: by the human, whose word sets the status of the task, or because the daemon shuts down, when
+    /// the run is recorded as interrupted and its task is queued for the next start.
     async fn interrupted(&mut self, task: &TaskId, session: Option<CliSessionId>) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
         self.attach_session(task, session)?;
-        self.end_run(
-            task,
-            &located.team,
-            now,
-            RunEnd::NoStatus { exit_code: None },
-            &mut events,
-        )?;
-        self.move_to(task, &located.team, TaskStatus::Queued, &mut events)?;
-        self.commit(task, &located, now, events, None).await
+        let Some(halt) = self.halts.remove(task) else {
+            self.end_run(
+                task,
+                &located.team,
+                now,
+                RunEnd::NoStatus { exit_code: None },
+                &mut events,
+            )?;
+            self.move_to(task, &located.team, TaskStatus::Queued, &mut events)?;
+            return self.commit(task, &located, now, events, None).await;
+        };
+        self.end_run(task, &located.team, now, RunEnd::Stopped, &mut events)?;
+        self.move_to(task, &located.team, halted_status(halt), &mut events)?;
+        self.hangs.remove(task);
+        self.commit(task, &located, now, events, None).await?;
+        self.after_run(task, &located, &RunEnd::Stopped, None)
     }
 
     /// A run that went to its end: its task goes where the end says.
@@ -507,8 +585,51 @@ impl Owner {
             run.final_message.as_deref(),
         );
         let settled = self.solo_waits_for_its_items(located.role, &located.team, settled);
-        self.end_run(task, &located.team, now, run.classified.end.clone(), &mut events)?;
-        let (status, notice) = match settled {
+        // The human asked for a stop or a pause while the run was ending by itself: their word wins where it can. Over a
+        // limit's pause or a hang it wins entirely: the run ended by the human's word, with no wake-up, no strike and no
+        // notice of a pause that nobody waits for.
+        let halt = self.halts.remove(task);
+        let overruled = halt.filter(|_| matches!(settled, Settled::Paused(_) | Settled::Hung));
+        let end = if overruled.is_some() {
+            RunEnd::Stopped
+        } else {
+            run.classified.end.clone()
+        };
+        self.end_run(task, &located.team, now, end.clone(), &mut events)?;
+        let (status, notice) = if let Some(halt) = overruled {
+            self.hangs.remove(task);
+            self.wakes.remove(task);
+            (halted_status(halt), None)
+        } else {
+            let ended = Ended {
+                task,
+                located: &located,
+                now,
+                settled,
+                progress: run.progress,
+            };
+            self.settled_status(ended, &mut events).await?
+        };
+        let status = halt.map_or(status, |halt| after_halt(halt, status));
+        self.move_to(task, &located.team, status, &mut events)?;
+        self.commit(task, &located, now, events, notice).await?;
+        self.after_run(task, &located, &end, run.final_message.as_deref())
+    }
+
+    /// The status a run's end sends its task to, and what the human is told of it.
+    async fn settled_status(
+        &mut self,
+        ended: Ended<'_>,
+        events: &mut Vec<EventKind>,
+    ) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+        let Ended {
+            task,
+            located,
+            now,
+            settled,
+            progress,
+        } = ended;
+        let next = match settled {
             Settled::Status(status) => {
                 self.hangs.remove(task);
                 (status, None)
@@ -519,7 +640,7 @@ impl Owner {
             }
             Settled::Questions => {
                 self.hangs.remove(task);
-                match self.ask(task, &located, now, &mut events).await? {
+                match self.ask(task, located, now, events).await? {
                     Asked::Recorded(notice) => (TaskStatus::Questions, Some(notice)),
                     Asked::Unusable(notice) => (TaskStatus::Failed, Some(notice)),
                 }
@@ -534,11 +655,9 @@ impl Owner {
                 };
                 (TaskStatus::Paused, Some(notice))
             }
-            Settled::Hung => self.hung(task, run.progress)?,
+            Settled::Hung => self.hung(task, progress)?,
         };
-        self.move_to(task, &located.team, status, &mut events)?;
-        self.commit(task, &located, now, events, notice).await?;
-        self.after_run(task, &located, &run.classified.end, run.final_message.as_deref())
+        Ok(next)
     }
 
     /// What follows a hung run: it is resumed, or after the last strike the task fails and the human is told.
@@ -587,9 +706,10 @@ impl Owner {
                 reason,
             })
         };
-        if let Err(problem) = questions::read(&path).await {
-            return Ok(unusable(error_chain(&problem)));
-        }
+        let loaded = match questions::read(&path).await {
+            Ok(loaded) => loaded,
+            Err(problem) => return Ok(unusable(error_chain(&problem))),
+        };
         let file = match path.to_str().map(AbsolutePath::from_str) {
             Some(Ok(file)) => file,
             Some(Err(problem)) => return Ok(unusable(error_chain(&problem))),
@@ -607,6 +727,7 @@ impl Owner {
             task: task.clone(),
             round,
         });
+        self.prepare_questions(task, &path, &loaded).await;
         Ok(Asked::Recorded(Notice::Questions { round, file: path }))
     }
 
@@ -656,9 +777,15 @@ impl Owner {
     /// [`OwnerError`] when a request changes the state and it cannot be saved.
     async fn handle(&mut self, message: Message) -> Result<(), OwnerError> {
         match message {
-            Message::Request { command, reply, .. } => {
+            Message::Request { client, command, reply } => {
                 let answer = match command {
                     Command::Run(request) => self.run_request(request).await?,
+                    Command::Answer(request) => self.answer_request(&client, request).await?,
+                    Command::Stop(request) => self.control_request(&client, Steer::Stop, &request.target).await?,
+                    Command::Pause(request) => self.control_request(&client, Steer::Pause, &request.target).await?,
+                    Command::Unpause(request) => self.control_request(&client, Steer::Unpause, &request.target).await?,
+                    Command::Resume(request) => self.control_request(&client, Steer::Resume, &request.target).await?,
+                    Command::Say(request) => self.say_request(&client, request).await?,
                     other => self.answer(&other),
                 };
                 if reply.send(answer).is_err() {
@@ -698,12 +825,16 @@ impl Owner {
                 kind: FailureKind::Internal,
                 message: "a run is started by the owner, not answered from the state".to_owned(),
             }),
-            Command::Answer(_) => Err(not_served("answer")),
-            Command::Stop(_) => Err(not_served("stop")),
-            Command::Pause(_) => Err(not_served("pause")),
-            Command::Unpause(_) => Err(not_served("unpause")),
-            Command::Resume(_) => Err(not_served("resume")),
-            Command::Say(_) => Err(not_served("say")),
+            Command::Answer(_) => Err(Failure {
+                kind: FailureKind::Internal,
+                message: "answers are taken by the owner, not answered from the state".to_owned(),
+            }),
+            Command::Stop(_) | Command::Pause(_) | Command::Unpause(_) | Command::Resume(_) | Command::Say(_) => {
+                Err(Failure {
+                    kind: FailureKind::Internal,
+                    message: "the controls are carried out by the owner, not answered from the state".to_owned(),
+                })
+            }
             Command::Gate(_) => Err(not_served("gate")),
             Command::Subscribe(_) => Err(Failure {
                 kind: FailureKind::Internal,
@@ -879,6 +1010,15 @@ impl Owner {
             self.notify(at, located, task, notice);
         }
         Ok(())
+    }
+
+    /// Appends `event` to the activity log of `task`.
+    async fn log_activity(&self, task: &TaskId, at: Timestamp, event: ActivityEvent) {
+        if let Err(error) = self.parts.store.append_activity(task, at, &event).await {
+            // The log explains to a person what happened; the state does not depend on it. A log that cannot be written
+            // is told, and the work goes on.
+            tracing::warn!(task = %task, error = %error_chain(&error), "the activity log cannot be written");
+        }
     }
 
     /// Saves the state.

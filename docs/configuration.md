@@ -47,6 +47,7 @@ Top-level key and tables:
 | `[git]` | table | see below | the identity of the agents' commits |
 | `[github]` | table | none trusted | whose words on GitHub are instructions |
 | `[notifications]` | table | files only | how the human is told |
+| `[questions]` | table | nothing opened, `$VISUAL`/`$EDITOR` | how the questions of the agents reach you |
 | `[web]` | table | loopback, nobody let in | the dashboard |
 | `[repos.NAME]` | table | none | per repository: base branch and gate |
 
@@ -122,13 +123,16 @@ and an investigator.
 
 Neither text may contain `<`, `>` or control characters.
 
-### `[github]`, `[notifications]`, `[web]`
+### `[github]`, `[notifications]`, `[questions]`, `[web]`
 
 | Key | Default | Meaning |
 |---|---|---|
 | `github.trusted_accounts` | `[]` | GitHub logins (kept in lowercase); text on GitHub by anyone else is data, never instructions |
 | `notifications.command` | none | an array: a program and its arguments; run with the path of the notification file as its last argument (first line the title, the rest the body). Its secrets are `[notification_env]` in `secrets.toml` |
 | `notifications.directory` | `notifications/` in `AGENTS_HOME` | where the notification files are written (absolute) |
+| `questions.open` | `off` | `off` or `vscode`: whether a new questions file is also opened in the VS Code window connected to the host (Remote-SSH), if there is one |
+| `questions.vscode_server_dirs` | `.vscode-server`, `.vscode-server-insiders`, `.cursor-server` in the home directory of the user the daemon runs as | an array of absolute paths searched for the remote command of a VS Code server |
+| `questions.editor` | `$VISUAL`, then `$EDITOR` | an array: the editor `agent answer` starts, a program and its arguments; the questions file is its last argument |
 | `web.listen` | `127.0.0.1:8787` | a **loopback** `address:port`, port not `0`: `0.0.0.0`, `::` and LAN or Tailscale addresses are refused. Remote access goes through `tailscale serve` |
 | `web.allowed_logins` | `[]` | Tailscale logins (`you@example.com`, kept in lowercase) let in through `tailscale serve`; with none, nobody is |
 
@@ -209,6 +213,7 @@ These are choices the plan left open, made in `agent-core`. Each is cheap to cha
 | `GIT_NAME_FORMAT` (`%a`), `GIT_EMAIL`, `GIT_SIGNING_KEY` | `[git]` `name`, `email` (`{agent}`), `signing_key` |
 | `CLAUDE_BIN`, `CODEX_BIN`, `AGY_BIN`, `OPENCODE_BIN`, `AGENTBUS_BIN`, `AGENT_SERENA`, `RUN_PATH` | `[binaries]` |
 | `NOTIFY_CMD`, `NOTIFY_DIR` | `[notifications]` `command` (an array), `directory` |
+| `QUESTIONS_EDITOR` (`vscode` \| `off`), `VSCODE_SERVER_DIRS` | `[questions]` `open` (default `off`, not `vscode`: a trial in a temporary home must not reach a real editor), `vscode_server_dirs` (an array) |
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS` | `[web]` `listen`, `allowed_logins` |
 | `secrets.env` | `secrets.toml` |
 | per-repository gate (in each repository's own files) | `[repos.NAME]` `gate`, `base_branch` |

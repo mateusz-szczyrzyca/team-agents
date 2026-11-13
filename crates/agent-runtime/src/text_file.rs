@@ -1,9 +1,9 @@
 //! Reading a text file from the home with a bound: the files of the home (settings, prompts, questions) are put there
 //! by a human or a model, so how much of them is read is the reader's decision.
 
-use std::io;
-use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::io::{self, Write};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 
 use tokio::io::AsyncReadExt;
@@ -60,4 +60,65 @@ pub async fn read_text_file(path: &Path, limit: usize) -> Result<Option<TextFile
     }
     let text = String::from_utf8(bytes).map_err(TextFileError::NotUtf8)?;
     Ok(Some(TextFile { text, mode }))
+}
+
+/// Why a text file could not be replaced.
+#[derive(Debug, thiserror::Error)]
+pub enum ReplaceError {
+    /// The file has no directory the new text can be written in beside it.
+    #[error("the file {path:?} has no directory")]
+    NoDirectory {
+        /// The file.
+        path: PathBuf,
+    },
+    /// The new text cannot be written or put in place of the file.
+    #[error("cannot replace the file {path:?}")]
+    Write {
+        /// The file.
+        path: PathBuf,
+        /// What the operating system said.
+        source: io::Error,
+    },
+    /// The task that writes the file failed.
+    #[error("the task that replaces the file {path:?} failed")]
+    Worker {
+        /// The file.
+        path: PathBuf,
+        /// How the task ended.
+        source: tokio::task::JoinError,
+    },
+}
+
+/// Replaces the file at `path` with `text`, with the permission bits `mode`.
+///
+/// The text is written to a temporary file in the same directory and renamed over `path`, so a reader — a person with
+/// the file open in an editor, a watcher — sees the old file or the whole new one, never half of it (SEC-5).
+///
+/// # Errors
+/// [`ReplaceError`].
+pub async fn replace_text_file(path: &Path, text: &str, mode: u32) -> Result<(), ReplaceError> {
+    let target = path.to_path_buf();
+    let text = text.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let directory = target
+            .parent()
+            .ok_or_else(|| ReplaceError::NoDirectory { path: target.clone() })?;
+        let write_error = |source| ReplaceError::Write {
+            path: target.clone(),
+            source,
+        };
+        let mut file = tempfile::NamedTempFile::new_in(directory).map_err(write_error)?;
+        file.write_all(text.as_bytes()).map_err(write_error)?;
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(mode))
+            .map_err(write_error)?;
+        file.as_file().sync_all().map_err(write_error)?;
+        file.persist(&target).map_err(|failed| write_error(failed.error))?;
+        Ok(())
+    })
+    .await
+    .map_err(|source| ReplaceError::Worker {
+        path: path.to_path_buf(),
+        source,
+    })?
 }

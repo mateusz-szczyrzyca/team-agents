@@ -16,6 +16,7 @@ use std::string::FromUtf8Error;
 use agent_core::cli::ActivityEvent;
 use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{RunId, TaskId};
+use agent_core::protocol::{Client, ControlAction};
 use agent_core::state::{MAX_STATE_BYTES, RenderError, State, StateError, Timestamp};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -364,6 +365,13 @@ enum ActivityBody<'a> {
         /// The metadata.
         message: Cow<'a, str>,
     },
+    /// A control of the human.
+    Control {
+        /// Which control.
+        action: ControlAction,
+        /// The client it came from.
+        by: &'a Client,
+    },
 }
 
 /// One line of the activity log.
@@ -393,6 +401,7 @@ impl<'a> ActivityLine<'a> {
             },
             ActivityEvent::Error(message) => ActivityBody::Error { message: cut(message) },
             ActivityEvent::Info(message) => ActivityBody::Info { message: cut(message) },
+            ActivityEvent::Control { action, by } => ActivityBody::Control { action: *action, by },
         };
         Self { at, body }
     }

@@ -155,8 +155,8 @@ the network. The order of the checks and the rules each follows are in the docum
 |---|---|
 | `agent_runtime::run` | `RunEngine::run`: one run of a model CLI, from its files to its classified end; touches no state. `run::compose` makes its prompt: context, role, the rules of the tier, brief, item, checkpoint — or, for a resumed session, what interrupted it |
 | `agent_runtime::{settings, harness_prompts, text_file, clock}` | `agents.toml` and `secrets.toml` read from the home; the second prompt catalog (`HarnessPrompt`, `prompts/harness/run/`: the run prompts and the notifications); a bounded text file; the system clock |
-| `agent::daemon` | `owner` (the state), `server` (the socket), `notifier`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions) and `owner/teams` (what carries them out) |
-| `agent::{client, commands}` | the socket client, `agent status`, `agent daemon`, `agent run` |
+| `agent::daemon` | `owner` (the state), `server` (the socket), `notifier`, `opener`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions), `owner/teams` (what carries them out), `questions` (the questions file) and `control` (what a control does to a task), with `owner/answers` and `owner/controls` |
+| `agent::{client, commands}` | the socket client, `agent status`, `agent daemon`, `agent run`, `agent answer`, `stop`, `pause`, `unpause`, `resume`, `say` |
 
 **Tasks** (CON-3, CON-4): the *owner* alone reads and changes the state; the *server* passes requests to it through a
 bounded channel; the *notifier* delivers notifications off its path. Cancelling the shutdown token (SIGTERM, SIGINT)
@@ -204,8 +204,8 @@ ends a run before it began. A run is a process group of its own: a daemon killed
 killer) leaves it going, and only the unit's `KillMode=mixed` ends it — outside systemd, end such runs before a restart,
 or a second CLI resumes the same session.
 
-**The socket** serves `status`, `show` and `subscribe` of [`state.md`](state.md); the other commands answer `refused`,
-naming themselves, until their items. At most 64 connections and 16 runs go at once; a line over 2 MiB ends its
+**The socket** serves `status`, `show`, `subscribe`, `run`, `answer`, `stop`, `pause`, `unpause`, `resume` and `say` of
+[`state.md`](state.md); `gate` answers `refused`, naming itself, until its item. At most 64 connections and 16 runs go at once; a line over 2 MiB ends its
 connection; a subscriber that falls 1024 events behind is let go (it subscribes again and starts from the state).
 
 **The home**: `agents.toml`, `secrets.toml` and `prompts/` (put there by the human); `state.json`, `daemon.lock`,
@@ -279,9 +279,80 @@ a request): it then starts as the plain continuation of its task. The owner's lo
 call of a look at a team (an `agentbus` call for at most `15` s): a bus that hangs leaves the socket unanswered that
 long.
 
-Not done here, by item: answers and the controls (7.2); the gate (7.3); pull requests, reviews and the merge, with the
-next item of a feature (8.1); the dashboard (9.1). A resumed agent's checkpoint is not read from the agentbus yet.
-opencode's `session export` for a resumed session whose result it did not print is not done.
+Not done here, by item: the gate (7.3); pull requests, reviews and the merge, with the next item of a feature (8.1); the
+dashboard (9.1). A resumed agent's checkpoint is not read from the agentbus yet. opencode's `session export` for a
+resumed session whose result it did not print is not done.
+
+### Questions, answers and controls (`agent answer`, `stop`, `pause`, `unpause`, `resume`, `say`)
+
+The human's two ways into a running team: answering and steering. Both go through the daemon's socket; the daemon
+alone changes the state.
+
+**A round of questions.** A run that ends with `STATUS: QUESTIONS` and has written `questions-<round>.md` (the owner
+reads it first: a missing or unreadable file fails the task, as in the table above) gets:
+
+1. the instructions of `prompts/harness/questions/instructions.md` under the title of its file (rewritten in place,
+   through a temporary file and a rename, with the file's mode), so the human reads what to do where the questions are;
+2. a watch (`notify`, inotify, one non-recursive watch on the task's directory while a round is open) on the file;
+3. the notification of `harness/run/notice-questions.md` (a file in `notifications/` and the configured command);
+4. when `[questions] open = "vscode"`, the file opened in the VS Code window connected to the host: the remote command of
+   the newest VS Code server with the socket of the newest window of the session (`agent_runtime::editor`); a window
+   that was closed or does not answer is skipped, and nothing found is logged and not an error. A task of its own
+   (`daemon/opener.rs`) does this, so a slow command never holds up the state.
+
+**Three ways to answer**, all ending in the same code (`owner/answers.rs`): the answers are checked against the file
+(`questions::apply`: a question the file does not have, a question left without a verdict, `ok` where there is no
+recommendation — every problem listed at once, `invalid`), put into the file, the round is recorded as answered with its
+channel (`command`, `saved_file`, `dashboard`), the task goes `questions` → `queued` and a `question_answered` event
+is published.
+
+| Channel | How the answers arrive |
+|---|---|
+| `agent answer <task> [--file FILE]` | the command asks `show` which round is open and where its file is, takes the verdicts of `FILE` — or of the questions file after the editor (`[questions] editor`, else `$VISUAL`, else `$EDITOR`) ends — and sends `answer`. A file saved with the marker while the editor was open is taken by the daemon first: the command says so and sends nothing |
+| the file saved with `**ANSWERED**` | the watch tells the owner the file was written; it reads it. Not marked: nothing. Marked and complete: answered. Marked and not complete: the human gets the notification `harness/questions/notice-incomplete.md` listing the problems, once for the same problems. A file saved while the daemon was down is looked at on the start |
+| the dashboard | `answer` with the client `dashboard`: the same as the command |
+
+**What the task is told.** The prompt of the next run is made when the run is made ready, from the state and the file, so
+it survives a restart: when the last round is answered and no run since the one that asked has said anything to the end
+(a reported `STATUS:`, or an exit with status `0`), the run gets the answered file (`harness/questions/answered.md`:
+without the instructions and the marker, an `ok` replaced by the words of `accepted.md` and the recommendation) — instead
+of the whole task for a session that resumes, after it for one that starts. The answers are given again to every run
+until one has had them: a run that crashed, was stopped, hung or hit a limit did not read them. A run that ended with an
+unusable questions file leaves a state this cannot tell from that, so a later resume repeats the old answers; that is
+harmless.
+
+**Controls** (`owner/controls.rs`, the table in `control.rs`) reach each task of the target by itself, so a team with one
+task that cannot be controlled is still controlled, and the answer lists the tasks it reached; when it reached none, the
+refusal (`conflict`) says why for each task.
+
+| Control | queued | running | waiting | questions | paused | stopped | failed | done |
+|---|---|---|---|---|---|---|---|---|
+| `stop` | stopped | run stopped, then stopped | stopped | — | stopped | — | stopped | — |
+| `pause` | paused | run stopped, then paused | paused | — | — | — | — | — |
+| `unpause` | — | — | — | — | queued | — | — | — |
+| `resume` | — | — | queued | — | — | queued | queued | — |
+
+A task with a run going has the run's process group stopped (the engine's `SIGTERM`, then `SIGKILL`), the run is recorded
+as ended `stopped`, and the owner answers only when that is done, so a client that has its answer sees the status it
+asked for. A run that ends by itself while the stop is being asked leaves the task stopped (or paused) where the status
+table allows; a task that asks, failed or is done keeps what the run made of it. A task that waits for answers is not stopped, paused or resumed: it runs nothing, and its open round has to be answered before it can ask another. A pause of the human has no wake-up time:
+it lasts until `unpause`, and survives a restart. `resume` and `unpause` start the task again in its session; the prompt is
+the one the end of its last run gives (a stop gets the whole task again, as before). A team's control also reaches its
+reviewers. Each control is published (`controlled`, with the task, or none for a team, and the client) and written to the
+activity log of each task it reached: `{"at":…,"kind":"control","action":"stop","by":{"kind":"cli"}}`.
+
+`say <target> words…` puts the words on the bus, from `human`: for a task to its agent, for a team to the team (a team
+on the bus) or to each of its agents (a solo task has no team on the bus), and wakes a member that sleeps through the
+look at its team. A task that is done hears nothing; the bus being down refuses the command, with the reason.
+
+**The watch is bounded.** The saves that wait for the owner are at most 256, each file once; a save that finds the queue
+full, and an error of the system's watch, make the owner read every open questions file (the look it takes on a start),
+so no save is lost for good.
+
+**Known limits.** A save of a questions file that the system's watch limit would not let the daemon watch is not noticed
+(`agent answer` and the dashboard still work); the daemon says so in its log. A save in the middle of a write can be read
+half-way: the next event of the save has the whole file. The words of a `say` to a solo task that is `waiting` are read
+when it next runs; nothing wakes it. A human's stop of a worker that serves a request answers the request as failed.
 
 ## Process model
 

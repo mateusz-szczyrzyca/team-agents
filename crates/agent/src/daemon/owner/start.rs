@@ -9,13 +9,15 @@ use std::str::FromStr;
 use agent_core::cli::{McpServerKind, RunMode, SessionId};
 use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValue, ModelName};
 use agent_core::ids::{BranchName, GenerateIdError, InvalidBranchName, InvalidName, RunId, TaskId};
-use agent_core::kinds::{CliKind, Role, Tier};
-use agent_core::state::{ItemPhase, Member, Participant, RunEnd, RunState, State, Team};
+use agent_core::kinds::{CliKind, Tier};
+use agent_core::state::{ItemPhase, Member, Participant, Question, RunEnd, RunState, State, TaskRef, Team};
+use agent_core::status::RunOutcome;
 use agent_core::task_list::Item;
 use agent_runtime::agentbus::{AgentBus, BusTier};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::prompts::PromptLoader;
+use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::RunJob;
 use agent_runtime::run::compose::{ComposeError, PromptInput, PromptKind, PromptTexts, ResumeReason, compose};
 use agent_runtime::settings::Settings;
@@ -23,7 +25,8 @@ use agent_runtime::store::Home;
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::{Rng, RngExt};
 
-use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape, task_branch};
+use crate::daemon::questions::{self, QuestionsProblem, TextError};
+use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape_with_answers, task_branch};
 
 /// The value of the `--role` of `agentbus serve` for a run of an investigator.
 const BUS_ROLE_INVESTIGATOR: &str = "investigator";
@@ -83,6 +86,12 @@ pub(super) enum StartProblem {
         /// The repository.
         repo: String,
     },
+    /// The questions file the human answered cannot be read.
+    #[error("cannot read the answers of the human")]
+    Answers(#[from] QuestionsProblem),
+    /// What the task is told about its answers cannot be made.
+    #[error("cannot make what the task is told about its answers")]
+    AnswersText(#[from] TextError),
     /// What the team tells the run cannot be made.
     #[error("cannot make what the team tells the run")]
     Team(#[from] TeamPromptError),
@@ -107,6 +116,8 @@ pub(super) struct Context<'a> {
     pub(super) texts: &'a HarnessPrompts,
     /// The texts of the teams.
     pub(super) team_texts: &'a TeamPrompts,
+    /// The texts of the questions and their answers.
+    pub(super) question_texts: &'a QuestionsPrompts,
     /// The rules.
     pub(super) rules: &'a PromptLoader,
     /// The home.
@@ -199,7 +210,8 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         rules: ctx.rules,
     };
     let prompt = compose(&texts, &input)?;
-    let prompt = team_prompt(ctx, team, role, member, session.is_none(), &texts, prompt)?;
+    let answers = answers_text(ctx, member).await?;
+    let prompt = team_prompt(ctx, &texts, &found, prompt, answers.as_deref())?;
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())
@@ -231,16 +243,62 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     })
 }
 
-/// The prompt of a run that is shaped by the team the task is in; a task without a team keeps `composed`.
+/// The round of questions the human answered and no run has read since: the last round is answered, and the latest run
+/// that read its prompt ended asking. A run that did not read it (it crashed, was stopped, hung, hit a limit) leaves the
+/// answers to the next one. It is worked out from the state, so that it holds after a restart.
+fn answered_round(member: &Member) -> Option<&Question> {
+    let question = member.questions().last().filter(|question| !question.is_open())?;
+    for run in member.runs().iter().rev() {
+        match run.state() {
+            RunState::Ended {
+                end: RunEnd::Reported {
+                    outcome: RunOutcome::Questions,
+                },
+                ..
+            } => return Some(question),
+            // The agent said something to the end: it had the answers, if it was given them.
+            RunState::Ended {
+                end: RunEnd::Reported { .. } | RunEnd::NoStatus { exit_code: Some(0) },
+                ..
+            } => return None,
+            RunState::Ended {
+                end:
+                    RunEnd::NoStatus {
+                        exit_code: None | Some(_),
+                    }
+                    | RunEnd::QuotaExhausted { .. }
+                    | RunEnd::RateLimited
+                    | RunEnd::Hung
+                    | RunEnd::Stopped,
+                ..
+            }
+            | RunState::Running => {}
+        }
+    }
+    None
+}
+
+/// What the human answered to the round the last run asked, the way the run is told; `None` when there is no such
+/// round.
+async fn answers_text(ctx: &Context<'_>, member: &Member) -> Result<Option<String>, StartProblem> {
+    let Some(question) = answered_round(member) else {
+        return Ok(None);
+    };
+    let loaded = questions::read(question.file().as_path()).await?;
+    let answers = questions::answers_prompt(&loaded.file, question.round(), ctx.question_texts)?;
+    Ok(Some(answers))
+}
+
+/// The prompt of a run that is shaped by the team the task is in, and told the `answers` of the human; a task without a
+/// team keeps `composed`, with the answers.
 fn team_prompt(
     ctx: &Context<'_>,
-    team: &Team,
-    role: Role,
-    member: &Member,
-    new_session: bool,
     texts: &PromptTexts<'_>,
+    found: &TaskRef<'_>,
     composed: String,
+    answers: Option<&str>,
 ) -> Result<String, StartProblem> {
+    let (team, member) = (found.team, found.member);
     let base = ctx
         .settings
         .config
@@ -250,18 +308,19 @@ fn team_prompt(
             repo: team.repo().to_string(),
         })?;
     let branch = work_branch(team, member)?;
-    Ok(shape(
+    Ok(shape_with_answers(
         ctx.team_texts,
         texts,
         &TeamRun {
             team,
-            role,
+            role: found.role,
             branch: &branch,
             base: &base,
             why: ctx.why,
-            new_session,
+            new_session: member.last_session().is_none(),
         },
         composed,
+        answers,
     )?)
 }
 

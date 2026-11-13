@@ -257,3 +257,95 @@ async fn a_worker_that_starts_a_session_for_a_request_gets_its_prompt_the_team_a
     assert!(prompt.starts_with("THE COMPOSED PROMPT\n"), "{prompt}");
     assert!(team_at < request_at, "{prompt}");
 }
+
+/// Shapes the prompt of the task `n` of `team` for a run told the `answers` of the human.
+fn shaped_with_answers(texts: &Texts, team: &Team, n: u32, why: Option<&Why>, new_session: bool) -> String {
+    let (role, _) = team.find(&task_id(n)).unwrap();
+    let work = branch("agents/claude-1/task-20261111-153002-k3x9-1.1");
+    let base = branch("main");
+    shape_with_answers(
+        &texts.team,
+        &PromptTexts {
+            harness: &texts.harness,
+            rules: &texts.rules,
+        },
+        &TeamRun {
+            team,
+            role,
+            branch: &work,
+            base: &base,
+            why,
+            new_session,
+        },
+        "THE COMPOSED PROMPT\n".to_owned(),
+        Some("THE HUMAN ANSWERED\n"),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_session_that_starts_is_told_the_answers_after_the_team_and_the_wake() {
+    let texts = texts().await;
+    let team = crew_of(CHAIN, 1, 0);
+
+    let prompt = shaped_with_answers(&texts, &team, 2, Some(&Why::Woken), true);
+
+    assert!(prompt.starts_with("THE COMPOSED PROMPT\n"), "{prompt}");
+    let wake_at = prompt.find("YOU HAVE BEEN WOKEN UP").expect("the wake");
+    let answers_at = prompt.find("THE HUMAN ANSWERED").expect("the answers");
+    assert!(wake_at < answers_at, "{prompt}");
+    assert!(prompt.find("## Your team").expect("the team") < answers_at, "{prompt}");
+}
+
+#[tokio::test]
+async fn a_resumed_member_that_is_woken_gets_the_answers_and_the_wake() {
+    let texts = texts().await;
+    let team = crew_of(CHAIN, 1, 0);
+
+    let prompt = shaped_with_answers(&texts, &team, 2, Some(&Why::Woken), false);
+
+    assert!(prompt.starts_with("THE HUMAN ANSWERED\n"), "{prompt}");
+    assert!(prompt.contains("YOU HAVE BEEN WOKEN UP"), "{prompt}");
+    assert!(!prompt.contains("THE COMPOSED PROMPT"), "{prompt}");
+}
+
+#[tokio::test]
+async fn a_resumed_member_that_is_given_an_item_gets_the_answers_and_the_item() {
+    let texts = texts().await;
+    let team = crew_of(CHAIN, 1, 0);
+
+    let prompt = shaped_with_answers(&texts, &team, 2, Some(&Why::Assigned("1.2".parse().unwrap())), false);
+
+    assert!(prompt.starts_with("THE HUMAN ANSWERED\n"), "{prompt}");
+    assert!(prompt.contains("1.2"), "{prompt}");
+}
+
+#[tokio::test]
+async fn a_resumed_member_that_is_not_woken_gets_only_the_answers() {
+    let texts = texts().await;
+    let team = crew_of(CHAIN, 1, 0);
+
+    let prompt = shaped_with_answers(&texts, &team, 2, None, false);
+
+    assert_eq!(prompt, "THE HUMAN ANSWERED\n");
+}
+
+#[tokio::test]
+async fn a_task_without_a_team_gets_its_answers_as_they_are() {
+    let texts = texts().await;
+    let team = solo(CHAIN);
+
+    let prompt = shaped_with_answers(&texts, &team, 1, Some(&Why::Woken), false);
+
+    assert_eq!(prompt, "THE HUMAN ANSWERED\n");
+}
+
+#[tokio::test]
+async fn a_session_that_starts_without_a_team_gets_the_answers_after_its_prompt() {
+    let texts = texts().await;
+    let team = solo(CHAIN);
+
+    let prompt = shaped_with_answers(&texts, &team, 1, None, true);
+
+    assert_eq!(prompt, "THE COMPOSED PROMPT\n\nTHE HUMAN ANSWERED\n");
+}

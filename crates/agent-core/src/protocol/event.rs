@@ -24,8 +24,9 @@ pub struct Event {
 }
 
 /// A control the human used on a task or a team.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ControlAction {
     /// `stop`.
     Stop,
@@ -362,6 +363,19 @@ mod tests {
             assert_eq!(serde_json::from_value::<ControlAction>(json!(text)).unwrap(), action);
         }
         assert_refused::<ControlAction>(&json!("kill"));
+    }
+
+    #[test]
+    fn a_control_names_itself_as_the_human_types_it() {
+        for (action, text) in [
+            (ControlAction::Stop, "stop"),
+            (ControlAction::Pause, "pause"),
+            (ControlAction::Unpause, "unpause"),
+            (ControlAction::Resume, "resume"),
+            (ControlAction::Say, "say"),
+        ] {
+            assert_eq!(<&'static str>::from(action), text);
+        }
     }
 
     #[test]

@@ -7,12 +7,14 @@
 pub mod agentbus;
 pub mod cli;
 pub mod clock;
+pub mod editor;
 pub mod git;
 pub mod github;
 pub mod harness_prompts;
 pub mod notify;
 pub mod process;
 pub mod prompts;
+pub mod questions_prompts;
 pub mod run;
 pub mod settings;
 pub mod store;

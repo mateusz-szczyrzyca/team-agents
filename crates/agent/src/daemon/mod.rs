@@ -15,12 +15,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use agent_core::config::OpenQuestions;
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
+use agent_runtime::editor::{SocketDirs, VscodeOpener};
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
 use agent_runtime::notify::Notifier;
 use agent_runtime::process::Supervisor;
 use agent_runtime::prompts::{PromptLoadError, PromptLoader};
+use agent_runtime::questions_prompts::{QuestionsPrompts, QuestionsPromptsError};
 use agent_runtime::run::{EngineParts, RunEngine, RunTimings};
 use agent_runtime::settings::{Settings, SettingsError};
 use agent_runtime::store::{Home, StateStore, StoreError};
@@ -35,9 +38,12 @@ use tokio_util::sync::CancellationToken;
 use self::owner::{EVENT_BACKLOG, INBOX, MAX_RUNS, Owner, OwnerError, OwnerParts};
 use self::server::ServerError;
 
+mod control;
 mod notice;
 mod notifier;
+mod opener;
 mod owner;
+mod questions;
 mod recovery;
 mod server;
 mod settle;
@@ -94,6 +100,9 @@ pub(crate) enum DaemonError {
     /// The texts of the teams cannot be loaded.
     #[error("cannot load the texts of the teams")]
     TeamPrompts(#[from] TeamPromptsError),
+    /// The texts of the questions cannot be loaded.
+    #[error("cannot load the texts of the questions")]
+    QuestionsPrompts(#[from] QuestionsPromptsError),
     /// The rules cannot be loaded.
     #[error("cannot load the rules")]
     Prompts(#[from] PromptLoadError),
@@ -114,11 +123,49 @@ pub(crate) enum DaemonError {
     Join(#[source] JoinError),
 }
 
-/// Runs the daemon until `shutdown` is cancelled.
+/// Where the daemon looks for what belongs to the user it runs as, read from the environment once at its start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Surroundings {
+    /// The home directory of the user, where the VS Code servers keep their directories; `None` when it is not known.
+    pub(crate) user_home: Option<PathBuf>,
+    /// The runtime directory of the user's session, where VS Code puts the sockets of its windows.
+    pub(crate) runtime_dir: PathBuf,
+    /// Another directory that may hold sockets of windows.
+    pub(crate) fallback_dir: PathBuf,
+}
+
+impl Surroundings {
+    /// The surroundings of this process: `HOME`, and `XDG_RUNTIME_DIR` or else `/run/user/<uid>`, then `/tmp`.
+    pub(crate) fn from_process() -> Self {
+        let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map_or_else(
+            || PathBuf::from(format!("/run/user/{}", rustix::process::getuid().as_raw())),
+            PathBuf::from,
+        );
+        Self {
+            user_home: std::env::var_os("HOME").map(PathBuf::from),
+            runtime_dir,
+            fallback_dir: PathBuf::from("/tmp"),
+        }
+    }
+}
+
+/// Runs the daemon until `shutdown` is cancelled, in the surroundings of this process.
 ///
 /// # Errors
 /// [`DaemonError`].
 pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Result<(), DaemonError> {
+    run_in(setup, Surroundings::from_process(), shutdown).await
+}
+
+/// Runs the daemon until `shutdown` is cancelled, in `surroundings`.
+///
+/// # Errors
+/// [`DaemonError`].
+pub(crate) async fn run_in(
+    setup: DaemonSetup,
+    surroundings: Surroundings,
+    shutdown: CancellationToken,
+) -> Result<(), DaemonError> {
     let store = match StateStore::open(setup.home.clone()).await {
         Ok(store) => Arc::new(store),
         Err(StoreError::HomeLocked { path }) => return Err(DaemonError::AlreadyRunning { path }),
@@ -128,6 +175,7 @@ pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Resu
     let language = settings.config.language().clone();
     let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);
     let team_texts = Arc::new(TeamPrompts::load(&setup.prompts_dir, &language).await?);
+    let question_texts = Arc::new(QuestionsPrompts::load(&setup.prompts_dir, &language).await?);
     let rules = Arc::new(PromptLoader::load(&setup.prompts_dir, &language).await?);
     let bus = make_bus(&setup.home, &settings);
     let state = store.load().await?;
@@ -157,6 +205,7 @@ pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Resu
     sides.spawn(server::serve(listener, inbox, serving));
     let delivering = Arc::clone(&texts);
     sides.spawn(notifier::run(deliveries, delivering, notifier));
+    let opens = start_opener(&mut sides, &settings, &surroundings);
 
     let owner = Owner::new(
         OwnerParts {
@@ -165,8 +214,10 @@ pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Resu
             settings,
             texts,
             team_texts,
+            question_texts,
             rules,
             bus,
+            opens,
             engine,
             clock: setup.clock.clone(),
             rng,
@@ -202,4 +253,44 @@ fn make_bus(home: &Home, settings: &Settings) -> AgentBus {
         home.absolute_root().clone(),
     )
     .with_timeout(BUS_TIMEOUT)
+}
+
+/// Starts the opener of questions files among `sides` when the configuration asks for it; the channel to it is returned.
+fn start_opener(
+    sides: &mut JoinSet<()>,
+    settings: &Settings,
+    surroundings: &Surroundings,
+) -> Option<mpsc::Sender<PathBuf>> {
+    match settings.config.questions().open {
+        OpenQuestions::Off => None,
+        OpenQuestions::Vscode => {
+            let (opens, files) = mpsc::channel(opener::QUEUE);
+            sides.spawn(opener::run(files, vscode_opener(settings, surroundings)));
+            Some(opens)
+        }
+    }
+}
+
+/// The directories of the VS Code servers a home user has, under the home directory: the usual three.
+const VSCODE_SERVER_DIRS: [&str; 3] = [".vscode-server", ".vscode-server-insiders", ".cursor-server"];
+
+/// The opener of questions files: the servers the configuration names, else the usual ones in the home of the user.
+fn vscode_opener(settings: &Settings, surroundings: &Surroundings) -> VscodeOpener {
+    let configured = &settings.config.questions().vscode_server_dirs;
+    let server_dirs: Vec<PathBuf> = if configured.is_empty() {
+        surroundings
+            .user_home
+            .iter()
+            .flat_map(|home| VSCODE_SERVER_DIRS.iter().map(move |dir| home.join(dir)))
+            .collect()
+    } else {
+        configured.iter().map(|dir| dir.as_path().to_path_buf()).collect()
+    };
+    VscodeOpener::new(
+        server_dirs,
+        SocketDirs {
+            runtime: surroundings.runtime_dir.clone(),
+            fallback: surroundings.fallback_dir.clone(),
+        },
+    )
 }

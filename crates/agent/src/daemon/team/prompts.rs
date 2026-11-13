@@ -107,6 +107,43 @@ pub(in crate::daemon) fn shape(
     Ok(prompt)
 }
 
+/// The prompt of `run` as [`shape`] makes it, told what the human `answers` to the questions the last run asked.
+///
+/// A session that starts gets the answers at the end of everything it is told. A resumed session gets them instead of
+/// the whole task, followed by what the team wakes it for, which is shaped from an empty prompt: the reason of the run,
+/// or nothing.
+///
+/// # Errors
+/// [`TeamPromptError`].
+pub(in crate::daemon) fn shape_with_answers(
+    texts: &TeamPrompts,
+    harness: &PromptTexts<'_>,
+    run: &TeamRun<'_>,
+    composed: String,
+    answers: Option<&str>,
+) -> Result<String, TeamPromptError> {
+    let Some(answers) = answers else {
+        return shape(texts, harness, run, composed);
+    };
+    if run.new_session {
+        let shaped = shape(texts, harness, run, composed)?;
+        return Ok(join_sections(&shaped, answers));
+    }
+    let reason = shape(texts, harness, run, String::new())?;
+    Ok(join_sections(answers, &reason))
+}
+
+/// `first` and `second` as two sections of a prompt; an empty one leaves the other as it is.
+fn join_sections(first: &str, second: &str) -> String {
+    if second.trim().is_empty() {
+        return first.to_owned();
+    }
+    if first.trim().is_empty() {
+        return second.to_owned();
+    }
+    format!("{}{SECTION_SEPARATOR}{second}", first.trim_end())
+}
+
 /// The team the member is in: who, and on which branch it works.
 fn context(texts: &TeamPrompts, run: &TeamRun<'_>) -> Result<String, TeamPromptError> {
     let crew = run.team.crew();

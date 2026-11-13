@@ -45,6 +45,7 @@ it is specific to that: it works for any repository on any Linux host with `syst
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
+- [The Rust rewrite (trial)](#the-rust-rewrite-trial)
 - [The live panel](#the-live-panel)
 - [Web interface](#web-interface)
 - [MCP tools available to agents](#mcp-tools-available-to-agents)
@@ -1014,6 +1015,32 @@ team ID (`<timestamp>-team`) or any member's task ID.
 
 - `agent status` / `agent ls`: list tasks; `agent show <id>`: details; `agent ack <id|all>`: acknowledge
 - `agent agents`: configured agents/investigators; `agent bus [N]`: status/log; `inv`, `helpers`, `notes`
+
+## The Rust rewrite (trial)
+
+`bin/agent` is being rewritten in Rust (the Cargo workspace in `crates/`; the plan and the layout are in
+[`docs/architecture.md`](docs/architecture.md)). The new `agent` is **not installed** by `install.sh` and is not what
+`agent` means in the rest of this README: it runs only against a separate `AGENTS_HOME` and never touches the home of the
+running installation, until the cutover. Build it with `cargo build` and run `target/debug/agent` with
+`AGENTS_HOME=/tmp/trial-home`. Its files and settings are different from the Bash version's
+([`docs/configuration.md`](docs/configuration.md), [`docs/state.md`](docs/state.md)).
+
+How the human answers the agents and steers a task or a team, through the daemon (`agent daemon`) that owns the state:
+
+| Command | What it does |
+|---|---|
+| `agent answer <task>` | opens the questions file of the task in your editor (`[questions] editor`, else `$VISUAL`, `$EDITOR`); when you close it, the answers are sent and the task goes on with them |
+| `agent answer <task> --file answers.md` | sends the answers written after `**Verdict:**` in a questions file instead of opening the editor |
+| `agent stop <task\|team>` | ends the run; nothing of it starts until it is resumed |
+| `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
+| `agent resume <task\|team>` | starts a stopped, failed or waiting task again |
+| `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus |
+
+A run that ends with questions leaves `questions-<round>.md` in the task's directory and a notification file; with
+`[questions] open = "vscode"` the file is also opened in the VS Code window connected to the host. Saving that file with the
+`**ANSWERED**` marker on its last line sends the answers as well (the daemon watches the file; a file saved while it was
+down is found when it starts). A task that waits for answers is not stopped, paused or resumed: answer it first. Every
+control is written to the activity log of each task it reached, with who did it, and `agent status` shows the new status.
 
 ## The live panel
 
