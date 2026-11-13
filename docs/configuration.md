@@ -43,13 +43,13 @@ Top-level key and tables:
 | `[binaries]` | table | see below | programs and the agents' `PATH` |
 | `[watchdog]` | table | see below | when a silent run is hung |
 | `[limits]` | table | see below | pauses for quotas and rate limits |
-| `[review]` | table | `fix_passes = 5` | the review loop |
+| `[review]` | table | `fix_passes = 5`, `check_passes = 2` | the review loop and the checks before it |
 | `[git]` | table | see below | the identity of the agents' commits |
 | `[github]` | table | none trusted, public API | whose words on GitHub are instructions, and where the API is |
 | `[notifications]` | table | files only | how the human is told |
 | `[questions]` | table | nothing opened, `$VISUAL`/`$EDITOR` | how the questions of the agents reach you |
 | `[web]` | table | loopback, nobody let in | the dashboard |
-| `[repos.NAME]` | table | none | per repository: base branch and gate |
+| `[repos.NAME]` | table | none | per repository: base branch, gate and the checks before a review |
 
 ### `[agents.NAME]` and `[investigators.NAME]`
 
@@ -112,6 +112,7 @@ and an investigator.
 | Key | Default | Meaning |
 |---|---|---|
 | `fix_passes` | `5` | "changes requested" goes back to the team at most this many times; then the human is asked. `0` asks at once |
+| `check_passes` | `2` | the checks before a review ([`[repos.NAME.checks]`](#reposnamechecks)) send a round back to the team at most this many times; then the human is asked. `0` asks at once |
 
 ### `[git]`
 
@@ -149,6 +150,33 @@ The name is the repository's name as GitHub names it (`team-agents`; letters, di
 
 A repository the file does not list has no entry (`Config::repo` returns `None`); the commands that need one refuse,
 naming it.
+
+### `[repos.NAME.checks]`
+
+What the checks before a review need to know about a repository. Without the table a round goes straight to review; with
+it, the daemon checks the round's own diff — from the merge base with `base_branch` to the head — and its commits through
+git, with no model, before the head goes to the reviewers: the first time and after every fix pass. Nothing in the harness
+names a repository or its layout: these three lists are all it has.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `test_paths` | `[]` | the test files. A round may add lines to one; changing one that exists other than by added lines, removing it or renaming it is for the human to allow |
+| `code_paths` | `[]` | the production code. A round that changes it has to add a line to a test file (or say in a commit `Test-First: not possible — <reason>`) |
+| `protected_paths` | `[]` | the files that judge a round: the gate's scripts, lint and CI configuration, the repository's rules. Changing one is for the human to allow |
+
+Each list is an array of at most 256 path patterns. A **path pattern** is a glob over paths relative to the root of the
+repository, written with `/`:
+
+- `*` matches any characters of one name and `?` one character of it; neither crosses a `/`;
+- a segment `**` matches any number of directories (at the end of a pattern, at least one); at most four to a pattern;
+- a pattern that ends in `/` is a directory and matches everything below it: `tests/` is `tests/**`;
+- a pattern without a `/` is a file name and matches it at any depth: `AGENTS.md`, `*_test.go`;
+- any other pattern is anchored at the root: `crates/*/src/**`.
+
+A pattern is not empty, not absolute, has no `..` segment, no control character and none of `\ [ ] { }`, and uses `**`
+only as a whole segment. A file that matches `test_paths` is a test even when `code_paths` matches it too; a test module
+inside a source file is not a test file (the reviewers look at those). How the rules use the lists is in
+[`architecture.md`](architecture.md#round-checks-before-the-review).
 
 ## `secrets.toml`
 
@@ -211,6 +239,8 @@ These are choices the plan left open, made in `agent-core`. Each is cheap to cha
 | `AGENT_HANG_MIN`, `AGENT_HANG_STRIKES` | `[watchdog]` `hang_minutes`, `hang_strikes` |
 | `AGENT_QUOTA_PAUSE_MIN`, `AGENT_RATE_LIMIT_PAUSE_MIN`, `AGENT_LIMIT_TAIL_LINES` | `[limits]` `quota_pause_minutes`, `rate_limit_pause_minutes`, `tail_lines` |
 | `VERIFY_MAX_FIX_PASSES` | `[review]` `fix_passes` |
+| `AGENT_PRECHECK_MAX` | `[review]` `check_passes` |
+| the precheck's test, code and judging paths (in the script) | `[repos.NAME.checks]` `test_paths`, `code_paths`, `protected_paths` |
 | `AGENT_LANGUAGE` | `language` |
 | `GIT_NAME_FORMAT` (`%a`), `GIT_EMAIL`, `GIT_SIGNING_KEY` | `[git]` `name`, `email` (`{agent}`), `signing_key` |
 | `CLAUDE_BIN`, `CODEX_BIN`, `AGY_BIN`, `OPENCODE_BIN`, `AGENTBUS_BIN`, `AGENT_SERENA`, `RUN_PATH` | `[binaries]` |

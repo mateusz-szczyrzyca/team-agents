@@ -80,10 +80,12 @@ quota_pause_minutes = 30
 rate_limit_pause_minutes = 5
 tail_lines = 30
 
-# Reviews: "changes requested" goes back to the team at most `fix_passes` times; then you are asked.
+# Reviews: "changes requested" goes back to the team at most `fix_passes` times; then you are asked. The checks
+# before a review (see the repository's `checks` below) send a round back at most `check_passes` times.
 
 [review]
 fix_passes = 5
+check_passes = 2
 
 # --- Git and GitHub ----------------------------------------------------------------------------------------------
 # The identity of every commit an agent makes; {agent} is the agent's name. `signing_key` is an SSH private key that
@@ -138,3 +140,17 @@ allowed_logins = ["you@example.com"]
 base_branch = "main"
 gate = ["make", "gate"]
 gate_timeout_minutes = 30
+
+# The checks before a review look at the round's own diff, with no model. They know no repository: these lists are all
+# they have. A pattern is a glob over paths relative to the repository's root: `*` and `?` within a name, `**` for
+# any number of directories, `dir/` for everything below a directory, and a pattern without a `/` for a file name at
+# any depth. A repository without this table goes straight to review.
+#   test_paths       the test files: a round may add lines to them; changing, removing or renaming one needs your word
+#   code_paths       the production code: a round that changes it has to add lines to a test file
+#   protected_paths  what judges a round (the gate's scripts, lint and CI configuration, the rules): changing one needs
+#                    your word
+
+[repos.team-agents.checks]
+test_paths = ["**/tests/", "**/tests.rs", "*_test.go", "*.bats"]
+code_paths = ["bin/", "agentbus/", "live/", "crates/", "tools/"]
+protected_paths = [".github/", "AGENTS.md", "CLAUDE.md", "GEMINI.md", "Makefile", "tools/gate.sh", "tools/test-lock.sh", "Cargo.toml", "clippy.toml", "rustfmt.toml", "rust-toolchain.toml"]

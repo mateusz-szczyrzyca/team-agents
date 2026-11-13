@@ -334,6 +334,9 @@ impl TryFrom<Vec<PathPattern>> for PathPatterns {
     type Error = TooManyPatterns;
 
     fn try_from(patterns: Vec<PathPattern>) -> Result<Self, Self::Error> {
+        if patterns.len() > MAX_PATTERNS {
+            return Err(TooManyPatterns { len: patterns.len() });
+        }
         Ok(Self(patterns))
     }
 }

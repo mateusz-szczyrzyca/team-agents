@@ -45,6 +45,9 @@ const DEFAULT_TAIL_LINES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 /// Fix passes after "changes requested", by default, before the human is asked.
 const DEFAULT_FIX_PASSES: u32 = 5;
 
+/// Times the checks before a review send a round back to the team, by default, before the human is asked.
+const DEFAULT_CHECK_PASSES: u32 = 2;
+
 /// Minutes a repository's gate may run, by default.
 const DEFAULT_GATE_TIMEOUT_MINUTES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 
@@ -137,7 +140,7 @@ pub struct RepoConfig {
     #[serde(default = "default_gate_timeout")]
     pub gate_timeout_minutes: Minutes,
     /// What the round checks before its review look at; without the table a round goes straight to review.
-    #[serde(default, deserialize_with = "ignored_table")]
+    #[serde(default)]
     pub checks: Option<Checks>,
 }
 
@@ -153,18 +156,6 @@ pub struct Checks {
     /// The files that judge a round — the gate's scripts, lint and CI configuration, the repository's rules: a round
     /// changes one only with the human's allowance.
     pub protected_paths: PathPatterns,
-}
-
-/// Reads the table and keeps none of it.
-fn ignored_table<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Checks>, D::Error> {
-    serde::de::IgnoredAny::deserialize(deserializer)?;
-    Ok(None)
-}
-
-/// Reads the number and keeps none of it.
-fn ignored_number<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
-    serde::de::IgnoredAny::deserialize(deserializer)?;
-    Ok(u32::MAX)
 }
 
 /// The default of [`RepoConfig::gate_timeout_minutes`].
@@ -271,7 +262,6 @@ pub struct Review {
     pub fix_passes: u32,
     /// How many times the checks before a review send the round back to the team before the human is asked; 0 asks
     /// at once.
-    #[serde(deserialize_with = "ignored_number")]
     pub check_passes: u32,
 }
 
@@ -279,7 +269,7 @@ impl Default for Review {
     fn default() -> Self {
         Self {
             fix_passes: DEFAULT_FIX_PASSES,
-            check_passes: 0,
+            check_passes: DEFAULT_CHECK_PASSES,
         }
     }
 }
