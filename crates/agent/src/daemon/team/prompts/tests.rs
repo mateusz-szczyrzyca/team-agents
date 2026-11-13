@@ -104,6 +104,20 @@ async fn the_first_run_of_a_member_gets_the_team_after_its_prompt() {
 }
 
 #[tokio::test]
+async fn the_first_run_of_a_member_is_told_to_start_by_reading_its_messages() {
+    let texts = texts().await;
+    let team = crew_of(CHAIN, 1, 1);
+
+    let prompt = shaped(&texts, &team, 2, None, true);
+
+    // A member that has not read the team's creation on the bus is woken again for it.
+    assert!(
+        prompt.contains("Start by reading your messages (`read_messages`)"),
+        "{prompt}"
+    );
+}
+
+#[tokio::test]
 async fn a_team_without_workers_says_so() {
     let texts = texts().await;
     let team = crew_of(CHAIN, 1, 0);
