@@ -313,10 +313,13 @@ is published.
 | the dashboard | `answer` with the client `dashboard`: the same as the command |
 
 **What the task is told.** The prompt of the next run is made when the run is made ready, from the state and the file, so
-it survives a restart: when the last round is answered and the last run ended asking, the run gets the answered file
-(`harness/questions/answered.md`: without the instructions and the marker, an `ok` replaced by the words of
-`accepted.md` and the recommendation) — instead of the whole task for a session that resumes, after it for one that
-starts.
+it survives a restart: when the last round is answered and no run since the one that asked has said anything to the end
+(a reported `STATUS:`, or an exit with status `0`), the run gets the answered file (`harness/questions/answered.md`:
+without the instructions and the marker, an `ok` replaced by the words of `accepted.md` and the recommendation) — instead
+of the whole task for a session that resumes, after it for one that starts. The answers are given again to every run
+until one has had them: a run that crashed, was stopped, hung or hit a limit did not read them. A run that ended with an
+unusable questions file leaves a state this cannot tell from that, so a later resume repeats the old answers; that is
+harmless.
 
 **Controls** (`owner/controls.rs`, the table in `control.rs`) reach each task of the target by itself, so a team with one
 task that cannot be controlled is still controlled, and the answer lists the tasks it reached; when it reached none, the
@@ -341,6 +344,10 @@ activity log of each task it reached: `{"at":…,"kind":"control","action":"stop
 `say <target> words…` puts the words on the bus, from `human`: for a task to its agent, for a team to the team (a team
 on the bus) or to each of its agents (a solo task has no team on the bus), and wakes a member that sleeps through the
 look at its team. A task that is done hears nothing; the bus being down refuses the command, with the reason.
+
+**The watch is bounded.** The saves that wait for the owner are at most 256, each file once; a save that finds the queue
+full, and an error of the system's watch, make the owner read every open questions file (the look it takes on a start),
+so no save is lost for good.
 
 **Known limits.** A save of a questions file that the system's watch limit would not let the daemon watch is not noticed
 (`agent answer` and the dashboard still work); the daemon says so in its log. A save in the middle of a write can be read

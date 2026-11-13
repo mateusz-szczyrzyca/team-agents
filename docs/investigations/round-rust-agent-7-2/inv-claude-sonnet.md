@@ -83,7 +83,7 @@ description of `agent` in its help is kept when the commands are added).
 ### Decisions the reviewer should look at first
 
 1. **The answers reach the next prompt through the state and the file, not through memory.** `start.rs::answered_round`:
-   the last round is answered and the last run ended with `STATUS: QUESTIONS`. So it holds after a restart, after a
+   the last round is answered and no run since the one that asked has said anything to the end. So it holds after a restart, after a
    `pause`/`unpause` in between, and for all three channels. A session that resumes gets the answers *instead of* the
    whole task (`harness/questions/answered.md`); a session that starts gets them after it.
 2. **A control that stops a run waits for the run to end before it answers.** The owner cancels the run's token, then
@@ -133,8 +133,12 @@ Test-first: every behaviour has a RED commit (the failing output in its message)
 something every 0.2 s until it is stopped) and two committed scripts (`fake-editor.sh`, `fake-vscode-cli.sh`) are new
 files; nothing existing in them changed.
 
-Two commits say `Test-First: not possible`: the acceptance test of the two checks (written after the units it runs
-through) and the documentation/lint commits.
+Not every change was test-first. Commits that say `Test-First: not possible` are: the acceptance test of the two checks
+(written after the units it runs through), the documentation/lint commits, and two that fixed or covered code that
+already existed — `f728dae0` (a stopped task forgets its queued reason), which claimed that no test could be written and
+was wrong (the regression test came after, in `343b138f`, with an owner that is not running), and `18a15d22` (a test for
+the halt that `settle_halted` drops, written after the code and checked by removing it). The commits that add behaviour
+have a $\color{red}{\textbf{RED}}$ and a $\color{green}{\textbf{GREEN}}$ commit; the three listed do not.
 
 ## Gate
 
@@ -158,8 +162,12 @@ listens). I did not touch them.
 
 ## Size
 
-`3,525` changed lines outside tests by the PR-1 command (limit `5,000`, split threshold `4,000`); `408` of them are
-`daemon/owner/fixture.rs`, which is test support. No split was needed.
+The PR-1 command, as the rules print it, gives `4,288` changed lines at `18a15d22`+`GREEN` (the report not yet extended
+for pass 3): over the split threshold of about `4,000`, under the ceiling of `5,000`. `491` of them are
+`daemon/owner/fixture.rs`, which is compiled only for tests (`#[cfg(test)] mod fixture;`) and that the command does not
+exclude: without it the count is `3,797`. An earlier version of this report said `3,525` and the PR description `3,604`;
+both were wrong, they came from a different exclusion list. No split was done: the item is one feature, and the ceiling
+is not passed.
 
 ## Compatibility
 
@@ -285,8 +293,18 @@ All six findings were right and are fixed; the gate (`make gate`) passes.
 
 All five findings were right; the gate passes.
 
-- **M1, a save lost when the queue is full:** the queue of saves is now unbounded and holds one entry for each file saved and not yet taken (`Saves` in `crates/agent/src/daemon/questions/watch.rs`), so repeats are dropped as repeats and the save of another file never is. Bounded by the number of questions files. RED/GREEN; `3` new tests.
+- **M1, a save lost when the queue is full:** the queue of saves was made unbounded (pass 3 bounds it again, see below) and held one entry for each file saved and not yet taken (`Saves` in `crates/agent/src/daemon/questions/watch.rs`), so repeats are dropped as repeats and the save of another file never is. Bounded by the number of questions files. RED/GREEN; `3` new tests.
 - **M2, answers lost after a run that did not read them:** `answered_round` looks back over the runs: the answers stay for the next run until a run that said something to the end (a reported status or a clean exit) has had them. A crash, a stop, a hang or a limit leaves them. RED/GREEN; `2` new tests (a crash gives them again, a clean exit without a status does not). Known limit: if the run that asked ended with an unusable questions file, the task failed with the old round still answered, and the next resume repeats the old answers; harmless.
 - **M3, the stale reason of a stopped task:** tested with an owner that is not running (`Daemon::bare_owner` in `fixture.rs`): a stop clears the reason, a pause keeps it. The stop test fails without the cleanup (checked). My earlier claim that this could not be tested was wrong.
 - **M4, README:** the section "The Rust rewrite (trial)" lists the six commands, the questions file, the notification and the marker, apart from the installed Bash CLI.
 - **M5, the PR description:** rewritten with the summary, checks, compatibility and the files outside the expected list.
+
+## Review of PR #95, pass 3 — what was done
+
+All six findings were right; the gate passes.
+
+- **1 and 2, the queue of saves and the errors of the watch** (`crates/agent/src/daemon/questions/watch.rs`): pass 2's queue was bounded by the number of files, not by a number. It is now a `Queue` of at most `256` saves (each file once); a save that finds it full, and an error of the system's watch, set a flag the owner is told as `Report::Rescan` after the saves. The owner answers a rescan with `adopt_open_questions`, the look it takes on a start (watches the open tasks, reads each open file). Nothing is lost for good: what the queue cannot hold is read from the files. RED/GREEN; `4` new tests for the watch (the bound, the rescan after the saves, one rescan for many errors, a report that waits when the watch ends) and `1` for the owner (a rescan answers a file whose save was not reported). The `Rescan` of an error is tested with a synthetic event: the system's watch cannot be made to fail on demand.
+- **3, the halt whose run is gone** (`settle_halted`): a test with an owner that is not running, a task whose status is `running` and that has no run; the stop leaves no halt behind. It fails when the cleanup is removed (checked). No RED commit: the code existed.
+- **4, the test-first account:** corrected in "Tests" above. `f728dae0` said no test could be written; that was wrong. The history is not rewritten (the branch is pushed and reviewed); the report and the PR description now say so.
+- **5, the size:** corrected in "Size" above, with the exclusion the command lacks (the test-only `fixture.rs`) named.
+- **6, the answer replay:** `prompts/harness/questions/answered.md` and `docs/architecture.md` say that the answers are given again to every run until one has said something to the end; the known limit (an unusable questions file) is in the architecture text.
