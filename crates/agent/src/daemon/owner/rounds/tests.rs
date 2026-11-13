@@ -895,3 +895,55 @@ async fn a_fix_pass_of_a_team_goes_to_its_coordinator_which_has_the_integrated_b
     let progress = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
     assert_eq!(progress.fix_passes().len(), 1);
 }
+
+// ---- what goes wrong -------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_review_that_cannot_be_posted_still_counts_and_its_report_is_kept() {
+    let mut rig = approving_rig().await;
+    rig.github.refuse_reviews(422);
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(rig.github.reviews(1), Vec::<serde_json::Value>::new());
+    assert_eq!(
+        rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")).len(),
+        1
+    );
+    for member in state.team(&team).unwrap().reviewers() {
+        let number = agent_core::state::PrNumber::new(std::num::NonZeroU32::MIN);
+        assert!(rig.home.review_report_file(member.task(), number, 0).exists());
+    }
+}
+
+#[tokio::test]
+async fn a_branch_that_cannot_be_pushed_is_told_once_and_published_when_the_remote_is_back_after_a_restart() {
+    let mut rig = approving_rig().await;
+    let hidden = rig.origin.with_file_name("hidden.git");
+    std::fs::rename(&rig.origin, &hidden).unwrap();
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let notice = rig.notification_with("could not be published").await;
+    rig.stop().await.unwrap();
+    std::fs::rename(&hidden, &rig.origin).unwrap();
+    rig.start().await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(notice.contains("item 1.1"), "{notice}");
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("could not be published"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
+    assert!(rig.state().team(&team).is_some());
+}

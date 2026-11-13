@@ -83,6 +83,8 @@ struct World {
     seen: Vec<Seen>,
     /// How a merge is answered.
     merge: MergeAnswer,
+    /// The status the posting of a review is refused with, if it is.
+    review_refusal: Option<u16>,
 }
 
 /// A running fake GitHub; it stops when it is dropped.
@@ -108,6 +110,7 @@ impl FakeGitHub {
             comments: Vec::new(),
             seen: Vec::new(),
             merge: MergeAnswer::Allow,
+            review_refusal: None,
         }));
         let accept_loop = tokio::spawn(accept_loop(listener, Arc::clone(&world)));
         Ok(Self {
@@ -162,6 +165,11 @@ impl FakeGitHub {
             .filter(|(on, _)| *on == number)
             .map(|(_, text)| text.clone())
             .collect()
+    }
+
+    /// Makes the posting of a review be refused with `status` from now on.
+    pub(super) fn refuse_reviews(&self, status: u16) {
+        self.world().review_refusal = Some(status);
     }
 
     /// Makes a merge be answered as `answer` from now on.
@@ -378,6 +386,10 @@ fn pull_route(world: &mut World, method: &str, number: u32, tail: &str, body: &V
             let updated = world.pulls.iter().find(|found| found.number == number).cloned();
             ok(updated.map_or(Value::Null, |updated| pull_json(world, &updated)))
         }
+        ("POST", "reviews") if world.review_refusal.is_some() => Answer {
+            status: world.review_refusal.unwrap_or(500),
+            body: json!({"message": "Validation Failed"}),
+        },
         ("POST", "reviews") => {
             let id = u64::try_from(world.reviews.len().saturating_add(1)).unwrap_or(u64::MAX);
             let review = json!({
