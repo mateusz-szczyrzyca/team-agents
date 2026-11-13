@@ -472,3 +472,163 @@ async fn a_repository_without_the_checks_table_goes_straight_to_review_whatever_
     assert!(!rig.home.checks_file(&tasks[0]).exists());
     assert_eq!(rig.runs(&tasks[0]), 1);
 }
+
+// ---- the question and its messenger ---------------------------------------------------------------------------------
+
+/// Waits until the daemon has looked at its teams since now: its answer to a request comes between two turns of its loop,
+/// and each turn starts with a look at the teams that something happened to.
+async fn looked_again(rig: &Rig) {
+    for _ in 0..3 {
+        let reply = crate::client::Connection::connect(&rig.home.socket_file())
+            .await
+            .unwrap()
+            .request(
+                Client::Cli,
+                Command::Status(agent_core::protocol::StatusRequest { target: None }),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(reply, Reply::Teams { .. }), "{reply:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_lead_that_does_not_put_the_question_is_woken_twice_and_then_the_human_is_told_once() {
+    // The lead edits a test and then ends its turn with `done` whenever it is asked to put the question.
+    let mut rig = checking_rig("script:edit-test,done", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let notice = rig.notification_with("no question was put to you").await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(notice.contains(tasks[0].as_str()), "{notice}");
+    assert!(notice.contains(team.as_str()), "{notice}");
+    // The run that edited the test, and the two that were asked to put the question and did not, and the one after them.
+    assert_eq!(rig.runs(&tasks[0]), 4);
+    assert_eq!(
+        rig.notifications()
+            .iter()
+            .filter(|text| text.contains("no question was put to you"))
+            .count(),
+        1
+    );
+    assert_eq!(record(&rig, &tasks[0]).await.asked.map(|asked| asked.relays), Some(2));
+    assert_eq!(phase(&rig).kind(), PhaseKind::InProgress);
+    assert_eq!(
+        rig.state().team(&team).unwrap().find(&tasks[0]).unwrap().1.questions(),
+        []
+    );
+}
+
+#[tokio::test]
+async fn while_the_human_has_not_answered_nothing_is_asked_again_and_the_lead_is_not_woken() {
+    let mut rig = checking_rig("script:edit-test,questions,done", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    looked_again(&rig).await;
+    let questions = std::fs::read_to_string(rig.home.questions_file(&tasks[0], NonZeroU32::MIN)).unwrap();
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(rig.runs(&tasks[0]), 2);
+    assert_eq!(
+        std::fs::read_to_string(rig.home.questions_file(&tasks[0], NonZeroU32::MIN)).unwrap(),
+        questions
+    );
+    assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
+}
+
+#[tokio::test]
+async fn the_answer_of_the_human_is_kept_across_a_restart_of_the_daemon() {
+    let mut rig = checking_rig("script:edit-test,questions,done", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(!rig.github.pulls()[0].draft);
+    assert_eq!(
+        record(&rig, &tasks[0]).await.allowed_of(&["1.1".parse().unwrap()]),
+        [Subject::Path("tests/existing.txt".parse().unwrap())]
+    );
+}
+
+#[tokio::test]
+async fn each_question_is_answered_for_its_own_file_and_only_what_was_refused_goes_back_to_the_team() {
+    let mut rig = checking_rig("script:edit-two,questions,done,script:restore-other", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    script(
+        &rig,
+        "edit-two",
+        "sed -i 2d tests/existing.txt\nsed -i 2d tests/other.txt\ngit add tests/existing.txt tests/other.txt\ncommit -m 'Change two tests'\n",
+    );
+    script(
+        &rig,
+        "restore-other",
+        "git checkout main -- tests/other.txt\ngit add tests/other.txt\ncommit -m 'Restore the other test'\n",
+    );
+    std::fs::write(rig.repo.join("tests/other.txt"), "x\ny\nz\n").unwrap();
+    git(&rig.repo, &["add", "tests/other.txt"]);
+    git(&rig.repo, &["commit", "-q", "-m", "Seed another test"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let file = questions_of(&rig, &tasks[0], 1);
+    let answers = AnswerList::try_from(vec![
+        AnswerInput {
+            question: NonZeroU32::MIN,
+            verdict: Verdict::from_text("allow").unwrap().unwrap(),
+        },
+        AnswerInput {
+            question: NonZeroU32::new(2).unwrap(),
+            verdict: Verdict::from_text("refuse").unwrap().unwrap(),
+        },
+    ])
+    .unwrap();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                round: NonZeroU32::MIN,
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+    reviews_asked(&rig).await;
+    let back = rig.prompt(&tasks[0], 4).await;
+    rig.stop().await.unwrap();
+
+    let titles: Vec<&str> = file.entries().iter().map(agent_core::questions::Entry::title).collect();
+    assert!(
+        titles[0].contains("`tests/existing.txt`") && titles[1].contains("`tests/other.txt`"),
+        "{titles:?}"
+    );
+    assert!(
+        back.contains("refused to allow") && back.contains("- `tests/other.txt`"),
+        "{back}"
+    );
+    assert!(!back.contains("tests/existing.txt"), "{back}");
+    assert_eq!(
+        record(&rig, &tasks[0]).await.allowed_of(&["1.1".parse().unwrap()]),
+        [Subject::Path("tests/existing.txt".parse().unwrap())]
+    );
+}
