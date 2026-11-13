@@ -1149,6 +1149,32 @@ async fn a_member_whose_run_cannot_start_tells_the_coordinator() {
 }
 
 #[tokio::test]
+async fn a_worker_whose_questions_cannot_be_used_fails_the_request_as_one_without_a_result() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+        worker("glm-1", "sleep,questions"),
+    ]);
+    f.start().await;
+    let pair = f.start_pair("claude-1", "claude-2", "glm-1").await;
+    for task in &pair.tasks {
+        f.status_is(task, TaskStatus::Waiting).await;
+    }
+
+    let id = f.delegate(&pair, "Do it.").await;
+    let request = f.request_with(id, DelegationStatus::Failed).await;
+    f.stop().await.unwrap();
+
+    let sentence = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts/harness/team/worker-no-result.md"),
+    )
+    .unwrap();
+    assert!(request.summary.starts_with(sentence.trim_end()), "{}", request.summary);
+}
+
+#[tokio::test]
 async fn a_team_whose_lead_is_done_and_whose_members_wait_is_closed_and_the_human_is_told_once() {
     let mut f = Fixture::new(&[
         investigator("inv-opus", "slowdone"),

@@ -8,6 +8,7 @@
 #   sleep           ends with STATUS: SLEEPING
 #   fail            ends with STATUS: FAILED
 #   nostatus        ends without a STATUS line
+#   questions       ends with STATUS: QUESTIONS and writes no questions file
 #   slowdone        waits a second, then ends with STATUS: DONE
 #   slowfail        waits a second, then ends with STATUS: FAILED
 #
@@ -79,6 +80,7 @@ case $action in
   sleep) result 'Nothing to do now.\nSTATUS: SLEEPING' ;;
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
   nostatus) result 'I think that is all.' ;;
+  questions) result 'I have to ask.\nSTATUS: QUESTIONS' ;;
   slowdone) sleep 1; result 'Finished the work.\nSTATUS: DONE' ;;
   slowfail) sleep 1; result 'I could not do it.\nSTATUS: FAILED' ;;
   *) echo "unknown action: $action" >&2; exit 64 ;;

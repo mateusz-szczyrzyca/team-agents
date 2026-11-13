@@ -211,6 +211,32 @@ fn the_ends_that_leave_no_result_fail_the_request() {
 }
 
 #[test]
+fn a_worker_that_failed_after_its_run_says_how_by_the_end_of_that_run() {
+    for (end, how, said) in [
+        (
+            reported(RunOutcome::Questions),
+            WorkerEnd::NoResult,
+            Some("I have to ask.\nSTATUS: QUESTIONS".to_owned()),
+        ),
+        (
+            RunEnd::QuotaExhausted { resets_at: None },
+            WorkerEnd::NoStatus,
+            Some("I have to ask.\nSTATUS: QUESTIONS".to_owned()),
+        ),
+        (
+            RunEnd::RateLimited,
+            WorkerEnd::NoStatus,
+            Some("I have to ask.\nSTATUS: QUESTIONS".to_owned()),
+        ),
+        (RunEnd::Hung, WorkerEnd::Hung, None),
+    ] {
+        let found = outcome(&end, TaskStatus::Failed, Some("I have to ask.\nSTATUS: QUESTIONS"));
+
+        assert_eq!(found, Some(RequestOutcome::Failed { how, said }), "{end:?}");
+    }
+}
+
+#[test]
 fn a_request_goes_on_while_the_worker_is_paused_asks_or_is_queued_to_continue() {
     for (end, status) in [
         (RunEnd::QuotaExhausted { resets_at: None }, TaskStatus::Paused),
