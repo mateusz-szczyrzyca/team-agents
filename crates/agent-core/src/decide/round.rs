@@ -16,7 +16,7 @@
 use std::num::NonZeroU32;
 
 use super::REVIEWS_REQUIRED;
-use super::checks::{Issue, Subject};
+use super::checks::{Issue, Judge, Subject};
 use crate::config::Review as ReviewConfig;
 use crate::ids::InvestigatorName;
 use crate::state::{CommitId, MergeMode, PhaseKind, PrNumber};
@@ -484,7 +484,7 @@ impl ChecksPolicy {
     #[must_use]
     pub const fn new(review: &ReviewConfig) -> Self {
         Self {
-            check_passes: review.fix_passes,
+            check_passes: review.check_passes,
         }
     }
 }
@@ -538,7 +538,7 @@ impl Checking {
     /// How many times the checks have sent the round back to the team.
     #[must_use]
     pub const fn passes(&self) -> u32 {
-        self.passes.saturating_add(1)
+        self.passes
     }
 
     /// What the `issues` of the round come to; `refused` are the subjects the human refused to allow since the last
@@ -549,8 +549,26 @@ impl Checking {
     /// - An issue the team can fix: back to the team while the policy has passes left, then the human is asked.
     /// - Only issues that the human alone may allow: the human is asked.
     #[must_use]
-    pub fn conclude(&self, _issues: &[Issue], _refused: &[Subject], _policy: ChecksPolicy) -> ChecksStep {
-        ChecksStep::StartReviews
+    pub fn conclude(&self, issues: &[Issue], refused: &[Subject], policy: ChecksPolicy) -> ChecksStep {
+        if issues.is_empty() {
+            return ChecksStep::StartReviews;
+        }
+        let back = ChecksStep::BackToTeam {
+            pass: NonZeroU32::MIN.saturating_add(self.passes),
+        };
+        if issues.iter().any(|issue| refused.contains(&issue.subject())) {
+            return back;
+        }
+        let team_can_fix = issues.iter().any(|issue| issue.judge() == Judge::Team);
+        match (team_can_fix, self.passes < policy.check_passes) {
+            (true, true) => back,
+            (true, false) => ChecksStep::AskHuman {
+                reason: AskReason::PassesUsed,
+            },
+            (false, _) => ChecksStep::AskHuman {
+                reason: AskReason::OnlyTheHumanMayAllow,
+            },
+        }
     }
 }
 
