@@ -45,7 +45,7 @@ Top-level key and tables:
 | `[limits]` | table | see below | pauses for quotas and rate limits |
 | `[review]` | table | `fix_passes = 5` | the review loop |
 | `[git]` | table | see below | the identity of the agents' commits |
-| `[github]` | table | none trusted | whose words on GitHub are instructions |
+| `[github]` | table | none trusted, public API | whose words on GitHub are instructions, and where the API is |
 | `[notifications]` | table | files only | how the human is told |
 | `[questions]` | table | nothing opened, `$VISUAL`/`$EDITOR` | how the questions of the agents reach you |
 | `[web]` | table | loopback, nobody let in | the dashboard |
@@ -128,6 +128,7 @@ Neither text may contain `<`, `>` or control characters.
 | Key | Default | Meaning |
 |---|---|---|
 | `github.trusted_accounts` | `[]` | GitHub logins (kept in lowercase); text on GitHub by anyone else is data, never instructions |
+| `github.api_base` | the public API, `https://api.github.com` | the URL of the GitHub API when it is not the public one (GitHub Enterprise: `https://github.example.com/api/v3`; a trial: `http://127.0.0.1:PORT` of a fake server). `https://`, or `http://` to a loopback address only, so that the token never travels in the clear; no user name, password, query or fragment |
 | `notifications.command` | none | an array: a program and its arguments; run with the path of the notification file as its last argument (first line the title, the rest the body). Its secrets are `[notification_env]` in `secrets.toml` |
 | `notifications.directory` | `notifications/` in `AGENTS_HOME` | where the notification files are written (absolute) |
 | `questions.open` | `off` | `off` or `vscode`: whether a new questions file is also opened in the VS Code window connected to the host (Remote-SSH), if there is one |

@@ -99,6 +99,8 @@ email = "{agent}@team-agents.invalid"
 
 [github]
 trusted_accounts = ["your-github-login", "your-agents-github-login"]
+# The GitHub API is the public one. A GitHub Enterprise installation has its own address:
+# api_base = "https://github.example.com/api/v3"
 
 # --- Notifications -------------------------------------------------------------------------------------------------
 # `command` is run with the path of a notification file as its last argument: the first line is the title, the rest

@@ -376,7 +376,19 @@ text_value!(TailscaleLogin, check_tailscale_login, lowercase);
 #[serde(try_from = "String")]
 pub struct ApiUrl(String);
 
-fn check_api_url(_text: &str) -> Result<(), InvalidValue> {
+/// What stands for the text of a URL that holds a user name or a password, which must not be repeated.
+const REDACTED: &str = "(the text is not shown: it may hold credentials)";
+
+fn check_api_url(text: &str) -> Result<(), InvalidValue> {
+    if text.contains('@') {
+        return Err(refuse("GitHub API URL", REDACTED, ValueRule::ForbiddenChar('@')));
+    }
+    check_text("GitHub API URL", text, MAX_API_URL_LEN, |c| {
+        !c.is_control() && !c.is_whitespace()
+    })?;
+    if !(text.starts_with("https://") || text.starts_with("http://")) {
+        return Err(refuse("GitHub API URL", text, ValueRule::NotHttpUrl));
+    }
     Ok(())
 }
 
