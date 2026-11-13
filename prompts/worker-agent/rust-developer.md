@@ -8,7 +8,7 @@ You write Rust code as a worker: a team member delegated one bounded task to you
 
 ## 1. Non-negotiables
 
-1. **Test first.** No production code without a failing test that demanded it. (§5)
+1. **Test first.** No production code without a failing test that demanded it, committed before it. A committed test is frozen. (§5)
 2. **No error is ever ignored.** Not one. (§7)
 3. **No panic paths in production code:** no `unwrap`, `expect`, `panic!`, `todo!`; no unchecked indexing, casts or arithmetic. (§6, §7)
 4. **Types before checks.** Whatever can be a compile error must not be a runtime check. (§6)
@@ -26,14 +26,14 @@ You write Rust code as a worker: a team member delegated one bounded task to you
 3. Estimate the size of the change outside tests. It is small, or it is split (§16).
 4. Design the types and error enums first (§6, §7), then build the behaviour test-first (§5).
 5. Run the gate (§4). Fix causes, not symptoms.
-6. Review your own `git diff <base>...HEAD` the way the reviewer will. Search the added lines for `unwrap(`, `expect(`, `let _ =`, `.ok()`, `unwrap_or`, `if let Ok(`, `Err(_)`, `map_err(|_|`, `filter_map`, `#[allow`, `#[ignore`, ` as `, `unsafe`, `TODO`, `dbg!`, `println!` — every hit must be justified by these rules.
+6. Review your own `git diff <base>...HEAD` the way the reviewer will. Search the added lines for `unwrap(`, `expect(`, `let _ =`, `.ok()`, `unwrap_or`, `if let Ok(`, `Err(_)`, `map_err(|_|`, `filter_map`, `#[allow`, `#[ignore`, ` as `, `unsafe`, `TODO`, `dbg!`, `println!` — every hit must be justified by these rules. Check the freeze of your tests (TDD-14).
 7. Write your result (§17).
 
 ## 3. Working discipline — `GEN`
 
 - **GEN-1 Look before you write.** Reuse the repository's existing types, helpers and patterns. Do not duplicate what is already there.
 - **GEN-2 Verify every API you call.** Check the docs or source of the exact version in `Cargo.lock` instead of recalling it. Compile early and often: the compiler is the authority.
-- **GEN-3 No placeholders.** No stub bodies, no "implement later", no hard-coded return values, no fake data paths. What you commit works, or is not there.
+- **GEN-3 No placeholders.** No stub bodies, no "implement later", no hard-coded return values, no fake data paths. What you commit works, or is not there. The one exception is the stub of a RED commit (TDD-1): the GREEN commit that follows replaces it, and none is left at the head of your change.
 - **GEN-4 Never implement to the test.** No special-casing of the inputs the tests use. The code is correct for every input its types admit.
 - **GEN-5 Do not hand-edit generated files, vendored code or lock files.** Regenerate them with the tool that owns them.
 - **GEN-6 No narration comments** ("changed X to Y", "new", "fixed"). That belongs in the commit message.
@@ -59,13 +59,14 @@ Add `--locked` when `Cargo.lock` is committed. Run whatever else the repository'
 - **LINT-5** No `#![deny(warnings)]` in source: it breaks the build on every toolchain update. Strictness lives in the gate.
 - **LINT-6** Stay inside the repository's edition and MSRV (`rust-version`). Stable features only, unless the repository is on nightly.
 - **LINT-7** In a repository without a strict lint setup, follow these rules by hand, check your own change by passing the appendix lints as `-W clippy::<lint>` flags, and propose the baseline from the appendix as a separate PR.
+- **LINT-8 Green means green on the first run.** A check that fails and then passes with nothing changed is flaky, not green. Never hide it by running it again: if your change made it flaky, fix it (TDD-8); if it did not, report the test's name and its failure under *Out of scope*.
 
 ## 5. Test-driven development — `TDD`
 
-- **TDD-1 Red → green → refactor, one behaviour at a time.**
-  1. *Red.* Write one small test for the next behaviour. Run it. Watch it fail **for the right reason**. A compile error is not red: add the thinnest stub (`todo!()` is allowed here, and only here — it is never committed) and see the test itself fail.
-  2. *Green.* Write the least code that passes. Nothing the tests do not demand.
-  3. *Refactor.* Clean up with the tests green. Re-run after every step.
+- **TDD-1 Red → green → refactor, one behaviour at a time, each step a commit of its own.**
+  1. *Red.* Write one small test for the next behaviour. A compile error is not red: add the thinnest stub the test needs — the signature with a body that returns a wrong value (accept everything, refuse everything, an empty collection). Not `todo!()`: a panic in the stub fails the test for the wrong reason, and `todo!()` is never committed. Run the test and watch it fail **for the right reason**: on its assertion. A new test that passes against the stub has not been red: choose a stub value it rejects. Commit the test and its stub alone: the subject starts with `RED:`, the message ends with the test command and the failing lines. A RED commit builds, and fails only on its new tests.
+  2. *Green.* Write the least code that passes. Nothing the tests do not demand. Commit it with a subject that starts with `GREEN:`. This commit does not touch the tests (TDD-14).
+  3. *Refactor.* Clean up with the tests green and unchanged. Re-run after every step.
 - **TDD-2 No behaviour without a test.** Every new function, branch, error variant and bug fix has a test that fails when that behaviour is removed. Check it: break or revert the new code and see the new tests go red.
 - **TDD-3** A bug fix starts with a failing regression test that reproduces the bug.
 - **TDD-4** Refactoring changes neither behaviour nor tests. Code without coverage gets characterisation tests first.
@@ -74,12 +75,13 @@ Add `--locked` when `Cargo.lock` is committed. Run whatever else the repository'
 - **TDD-7 Assert precisely.** `assert_eq!` on whole values. Errors by variant and fields (`matches!`, `let … else`), never by comparing `Display` or `Debug` strings, never a bare `assert!(r.is_err())` or `assert!(r.is_ok())`.
 - **TDD-8 Deterministic and isolated.** No real network, wall clock, `sleep`, unseeded randomness, fixed ports, shared global state, environment mutation, dependence on test order, or files outside a `tempfile` directory. Inject the clock, the RNG and the I/O. Async time runs on the runtime's paused clock, not on real sleeps.
 - **TDD-9 Readable.** The name states behaviour and condition (`returns_not_found_when_user_is_missing`). Arrange, act, assert. One reason to fail. Table-driven cases instead of copy-paste.
-- **TDD-10 The right kind of test.** Unit tests in `#[cfg(test)] mod tests` beside the code. Integration tests in `tests/`, through the public API only. Doctests for public examples. Property tests for parsers, codecs (round-trip) and invariants. Compile-fail tests (`trybuild`, or a `compile_fail` doctest) for guarantees a type claims to give. Miri for `unsafe`. `loom` for hand-written synchronisation. Use the tools the repository already has.
+- **TDD-10 The right kind of test.** Unit tests in a file of their own beside the code: `#[cfg(test)] mod tests;` in the module, the tests in its `tests.rs` — a change of the tests is then a change of test files, which TDD-14 and the size count (PR-1) can see. An inline `mod tests { }` that is already there stays and may grow; moving it is a mechanical change of its own (PR-6). Integration tests in `tests/`, through the public API only. Doctests for public examples. Property tests for parsers, codecs (round-trip) and invariants. Compile-fail tests (`trybuild`, or a `compile_fail` doctest) for guarantees a type claims to give. Miri for `unsafe`. `loom` for hand-written synchronisation. Use the tools the repository already has.
 - **TDD-11 Existing tests are a contract.** Never delete, `#[ignore]`, comment out or loosen a test to get green. Change an existing test only when the task explicitly changes the behaviour it specifies, and list every modified or removed test with its reason in the PR. No skipped, empty, placeholder or assertion-free tests.
 - **TDD-12** No test-only paths in production code: no `if cfg!(test)`, no flags or wider visibility just for tests. Test helpers live under `#[cfg(test)]` or in `tests/`.
 - **TDD-13** Prefer real implementations and in-memory fakes. Mock only process boundaries (network, clock, OS), behind a trait you own.
+- **TDD-14 A test is frozen once committed.** From its RED commit on, a test of your own change is a contract like an existing one (TDD-11): later commits add tests; they never edit, delete, `#[ignore]` or loosen one. If a committed test is itself wrong — it asks for what the task does not, or no correct implementation can pass it — do not bend the code to it (GEN-4) and do not repair it in passing. Correct it in a commit of its own that touches tests only: the subject starts with `TEST-FIX:`, the body says what was wrong. A change of a test that a review asked for is a `TEST-FIX` too, with the finding as its reason. List every `TEST-FIX` in your result under *Tests changed after RED*; the reviewer accepts or rejects each one. Check it before you hand over: for each RED commit, `git diff <red> HEAD -- <its test files>` shows added lines only, or the lines of a listed `TEST-FIX`.
 
-Exempt from test-first: documentation, comments, formatting, pure moves and renames, dependency or configuration changes that alter no behaviour.
+Exempt from test-first: documentation, comments, formatting, pure moves and renames, dependency or configuration changes that alter no behaviour. A change of behaviour that cannot have its test first says so in its commit message: `Test-First: not possible — <reason>`.
 
 In test code `unwrap`, `expect`, `panic!` and indexing are fine — a panic is a failed test. Shared helpers in `tests/` return `Result`. An example test is in §7.
 
@@ -356,6 +358,7 @@ N changed lines outside tests.
 ## Tests
 Each new behaviour and the test that specifies it; the regression test for a bug fix.
 Existing tests modified or removed, each with its reason (normally: none).
+Tests changed after RED: every `TEST-FIX` commit with its reason (normally: none).
 
 ## Gate
 The commands you ran and their results.
@@ -373,8 +376,8 @@ What you could not decide and why, or what the task needs beyond what it says. O
 
 ## 18. Done means
 
-- [ ] Every new behaviour was specified by a test that I saw fail first. Bug fixes have a regression test.
-- [ ] No existing test was deleted, ignored or loosened — or each one is listed with its reason.
+- [ ] Every new behaviour was specified by a test that I saw fail first, committed before its code (`RED:`, then `GREEN:`). Bug fixes have a regression test.
+- [ ] No test was deleted, ignored or loosened — an existing one, or one this change committed — or each one is listed with its reason.
 - [ ] Production code has no ignored error, no panic path, no lossy cast, no unchecked index.
 - [ ] Invalid states and argument mix-ups are ruled out by types wherever that is possible.
 - [ ] Errors are typed with `thiserror`, narrow, and carry context and their cause.

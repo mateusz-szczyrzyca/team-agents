@@ -231,8 +231,10 @@ model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows
   denied, all `--locked`. It is a step of `make gate`, `make test` and `make lint`; the existing CI workflow runs
   `make lint`, including the Rust gate. The lint baseline is `[workspace.lints]` in `Cargo.toml`; a lint is suppressed only with `#[expect(..., reason = "...")]` on the smallest
   item, listed in the PR.
-- **Tests first** as in [`docs/tdd.md`](docs/tdd.md): the RED commit's bodies are compiling stubs that return a wrong
-  value, never `todo!()`.
+- **Tests first** as in [`docs/tdd.md`](docs/tdd.md) and the developer rules (TDD-1, TDD-14): the RED commit's bodies
+  are compiling stubs that return a wrong value, never `todo!()`. A test is frozen once its RED commit exists: later
+  commits add tests, and a wrong test is corrected only by a `TEST-FIX:` commit of its own, listed in the PR under
+  `## Tests changed after RED`. The unit tests of a new module go into its `tests.rs` (TDD-10).
 - **Never the live installation:** new code runs and is tested against its own `AGENTS_HOME`, never `~/agents`.
 
 ## Prompts (`prompts/*.md`)

@@ -87,8 +87,9 @@ Checkpoints for the human, between features (the agents do not run these):
   answered, a team paused and resumed.
 
 Out of scope for this plan: remote nodes and the lead, investigation teams with phases and standalone investigation
-requests, `agent live`, archiving, token usage and cost accounting, the precheck rules (B1–B4), automatic PR size
-limits (reviewers check PR-1), an `agentbus` socket API (it is called as a process).
+requests, `agent live`, archiving, token usage and cost accounting, automatic PR size limits (reviewers check
+PR-1), a proof by the harness that a RED commit fails (a reviewer runs one, TDD-1), an `agentbus` socket API (it
+is called as a process).
 
 1. Workspace and core vocabulary
 Depends on: none
@@ -420,6 +421,49 @@ Depends on: 7
       a fix pass; after the configured passes the human gets a question.
     - With `--no-merge` nothing is merged and the human is notified.
     - The reviewer's prompt, as the fake CLI recorded it, holds the item's title, description and expected result.
+[ ] 8.2 Round checks before review
+    Before a PR's head goes to the reviewers — the first time and after every fix pass — the daemon checks the
+    round's own diff (from the merge base with the base branch to the head) and its commits, natively through git,
+    with no model. What is a test and what judges a round comes from the repository's `checks` table in
+    `agents.toml`, as path patterns: `test_paths` (the test files), `code_paths` (the production code),
+    `protected_paths` (the files that judge a round: the gate's scripts, lint and CI configuration, the
+    repository's rules). Nothing in the code names a repository or its layout; a repository without the table goes
+    straight to review.
+    Only the human may allow — the round waits on a question that names each file; allowed: the review starts and
+    the paths are recorded for the item; refused: back to the team:
+    - an existing test file changed other than by added lines, removed or renamed;
+    - a protected file changed.
+    Back to the team with the reasons, at most `check_passes` times (`[review]`), then the human is asked:
+    - a test file that a `RED:` commit of the round touched has lines removed or replaced by a later commit, unless
+      that commit touches test files only, its subject starts with `TEST-FIX:` and the PR description names it
+      under `## Tests changed after RED` (TDD-14);
+    - the round changes production code and adds no line to a test file, and none of its commits says
+      `Test-First: not possible — <reason>` (TDD-1);
+    - an added line that skips a test, suppresses a lint or asks whether the code runs under test, in a file the PR
+      description does not name (TDD-11, LINT-3, TDD-12); the markers are a built-in table per file extension.
+    A test module inside a source file is not a test file: it stays with the reviewers (the review rules, step 4).
+    Expected result:
+    - Files: `crates/agent-core/src/decide/checks.rs`, the `checks` table in `crates/agent-core/src/config.rs`, the
+      round's checking phase in `crates/agent-core/src/decide/round.rs`, the commits and changed lines of a range in
+      `crates/agent-runtime/src/git.rs`, `crates/agent/src/daemon/checks.rs`, the texts under
+      `prompts/harness/checks/`, `config/agents.example.toml`, `docs/configuration.md`.
+    - Adds: the `checks` table and `check_passes`; the checks as a pure decision (the facts of a diff in, the issues
+      out); the round's checking phase with its two outcomes; the question to the human and the message to the team.
+    - Tests: each rule as a decision — the case that raises it and the nearest one that does not (added lines only,
+      a named `TEST-FIX:` commit, a `Test-First: not possible` line, a named file); the facts of a range read from a
+      real repository in a temporary directory; with a fake GitHub server and fake CLIs — an issue for the team
+      starts no review and wakes the team with the reasons; after `check_passes` times the human is asked; an issue
+      only the human may allow asks the human, and the answer starts the review or sends the round back; the checks
+      run again on the head of a fix pass; a repository without the table goes straight to review.
+    - Why: the Bash harness held such rounds without a model (its precheck); without these checks the default
+      `--autopilot` merges on the word of two models.
+    Checks:
+    - Against the fake GitHub server: a round that edits an existing test file gets no review; the human's question
+      names the file; after the human allows it, the two reviews start.
+    - A round whose `GREEN:` commit edits a test file its `RED:` commit added goes back to the team with the commit
+      and the file; the same change as a `TEST-FIX:` commit named in the PR description goes to review.
+    - A round that changes a protected file waits for the human; a round that changes code and adds its tests goes
+      straight to review.
 
 9. Dashboard
 Depends on: 6

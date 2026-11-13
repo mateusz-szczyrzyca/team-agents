@@ -60,6 +60,20 @@ The RED commit is the one commit allowed to fail — only on its new tests; ever
 - **A bug you notice becomes a test first** — then the fix.
 - **Concurrency:** run `go test -race`.
 
+## In Rust (`crates/`)
+
+The developer rules each role is given say it in full (TDD-1 to TDD-14). What differs from Go:
+
+- **The stub returns a wrong value** — accept everything, refuse everything, an empty collection — never `todo!()`:
+  a panic in the stub fails the test for the wrong reason. A new test that passes against the stub has not been red.
+- **The commit subjects start with `RED:` and `GREEN:`.** A GREEN commit does not touch the tests.
+- **A test is frozen once its RED commit exists** (TDD-14). Later commits add tests; they do not edit, remove,
+  `#[ignore]` or loosen one. A test that was itself wrong is corrected by a commit of its own that touches tests
+  only — `TEST-FIX: <what was wrong>` — listed in the PR under `## Tests changed after RED`. Check it:
+  `git diff <red> HEAD -- <its test files>` shows added lines only, or the lines of a listed `TEST-FIX`.
+- **The unit tests of a new module live in its `tests.rs`** (`#[cfg(test)] mod tests;`), so a change of the tests is
+  a change of test files. An inline `mod tests { }` that is already there stays and may grow.
+
 ## In bats (`bin/agent`)
 
 The same cycle: the tests in `tests/unit/*.bats` first (stub CLIs in `tests/unit/stubs/`, the fake agent driven

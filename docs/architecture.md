@@ -469,8 +469,9 @@ the developer rules also come in a variant for workers (a delegated task instead
 - English everywhere: code, comments, docs, commit messages, PR descriptions.
 
 Out of scope for the plan: remote nodes and the lead, investigation teams with phases and standalone investigation
-requests, `agent live`, archiving, token usage and cost accounting, the precheck rules (B1–B4), automatic PR size
-limits (reviewers check PR-1), an `agentbus` socket API (it is called as a process).
+requests, `agent live`, archiving, token usage and cost accounting, automatic PR size limits (reviewers check
+PR-1), a proof by the harness that a RED commit fails (a reviewer runs one, TDD-1), an `agentbus` socket API (it
+is called as a process).
 
 ## The gate
 
@@ -505,3 +506,11 @@ everything, refuse everything, an empty table) — never `todo!()`, which aborts
 never committed (TDD-1). A guarantee a type claims — a private constructor, two types that do not mix — gets a
 `compile_fail` doctest; stable rustdoc does not check the error code named in it, so the snippet is checked by hand
 to fail for that reason.
+
+The commits say which step they are: the subject of a RED commit starts with `RED:`, of the code that passes it with
+`GREEN:`, and a GREEN commit does not touch the tests. A test is frozen once its RED commit exists (TDD-14): later
+commits add tests; a test that was itself wrong is corrected by a commit of its own that touches tests only, its
+subject starting with `TEST-FIX:`, listed in the PR under `## Tests changed after RED`. The reviewers compare each
+RED commit with the head and run one of them (the review rules, steps 4 and 6). The unit tests of a new module live
+in its `tests.rs` (`#[cfg(test)] mod tests;`), so a change of the tests is a change of test files (TDD-10); an inline
+`mod tests { }` that is already there stays.

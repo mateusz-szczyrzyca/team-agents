@@ -45,16 +45,27 @@ You review Rust pull requests against the rules below. Every rule has its ID, an
    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
    ```
 
-   Any failure → BLOCKER with the command and the first error, and the review ends here: a red PR is not reviewed. If the failure is environmental (missing tool, no network), say so and continue. If you cannot run commands at all, report `GATE: not run` and use the CI result.
-4. **Test integrity — TDD-11.**
+   Any failure → BLOCKER with the command and the first error, and the review ends here: a red PR is not reviewed. If the failure is environmental (missing tool, no network), say so and continue. A step that fails and then passes with nothing changed is flaky, not green (LINT-8): name the test. In a test the PR adds or changes → BLOCKER; in one that was already there → OUT OF SCOPE, and the review goes on. If you cannot run commands at all, report `GATE: not run` and use the CI result.
+4. **Test integrity — TDD-11, TDD-14.** Existing tests first:
 
    ```sh
    git diff <base>...HEAD -- '*.rs' | grep -nE '^-.*(#\[(tokio::)?test|assert|should_panic)|^\+.*#\[ignore'
    ```
 
    An existing test that was removed, ignored or loosened is a BLOCKER unless the task explicitly changed the behaviour it specified. Either way it goes under NEEDS HUMAN.
+
+   Then the PR's own tests. The diff against `<base>` shows a test of this PR only as it is at the head: one that a RED commit added and a later commit loosened looks like any new test. So list the commits (`git log --reverse --format='%h %s' <base>..HEAD`) and compare each RED commit with the head:
+
+   ```sh
+   for red in $(git log --reverse --format=%h --grep='^RED:' <base>..HEAD); do
+       git diff "$red" HEAD -- '*.rs' |
+           grep -nE '^-.*(#\[(tokio::)?test|assert|should_panic)|^\+.*#\[ignore' | sed "s/^/$red: /"
+   done
+   ```
+
+   A hit is a lead: read that test at the RED commit and at the head. A test edited, removed, ignored or loosened after its RED commit is a BLOCKER (TDD-14), unless a `TEST-FIX:` commit made the change and the PR lists it under *Tests changed after RED*. Judge each listed one: accept a test that was wrong, reject one that was only in the way. A change of behaviour with no RED commit before its code and no `Test-First: not possible — <reason>` in its commit message is a BLOCKER (TDD-1).
 5. **Sweep** the added lines (§3).
-6. **Tests first.** Read the tests as the specification: do they pin down every behaviour the task asks for, every error variant, the boundaries? Then prove they can fail: pick the riskiest new condition, break it for a moment (invert it, return early) and run the PR's tests — they must go red (TDD-2). With `cargo-mutants` installed: `git diff <base>...HEAD > /tmp/pr.diff && cargo mutants --in-diff /tmp/pr.diff`; a surviving mutant in new behaviour is a BLOCKER.
+6. **Tests first.** Read the tests as the specification: do they pin down every behaviour the task asks for, every error variant, the boundaries? Then prove they can fail: pick the riskiest new condition, break it for a moment (invert it, return early) and run the PR's tests — they must go red (TDD-2). Then prove one RED commit: take the riskiest, `git checkout --detach <red>`, run the test its message names and see it fail on the assertion the message quotes; go back with `git checkout -`. A RED commit that does not build, or whose test passes, is a BLOCKER (TDD-1). With `cargo-mutants` installed: `git diff <base>...HEAD > /tmp/pr.diff && cargo mutants --in-diff /tmp/pr.diff`; a surviving mutant in new behaviour is a BLOCKER.
 7. **Implementation.** Read every changed file in full, and the callers of changed functions. Walk the checklist (§4).
 8. **Claims.** Judge every entry under *Deviations*: each `#[expect]`, new dependency, `unsafe` block and assumption. Accept or reject each one explicitly.
 9. **Report** in the format of §7.
@@ -116,9 +127,11 @@ cargo clippy --workspace --all-targets --all-features -- -W clippy::unwrap_used 
 - `B` **LINT-4** Lint, format, toolchain or CI configuration changed in a feature PR. → NEEDS HUMAN
 - `B` **LINT-5** `#![deny(warnings)]` in source.
 - `B` **LINT-6** A language or std feature newer than the MSRV, or nightly-only.
+- `B` **LINT-8** (step 3) A test the PR adds or changes fails and then passes with nothing changed; a flaky test the developer met and did not report.
 
-**Tests — `TDD`** (TDD-1 cannot be seen in a diff; TDD-2 is its evidence.)
+**Tests — `TDD`** (TDD-1 shows in the commits, not in the diff: steps 4 and 6.)
 
+- `B` **TDD-1** (steps 4, 6) A change of behaviour with no RED commit before its code and no `Test-First: not possible` reason; a RED commit that does not build, or whose test passes; a stub left at the head.
 - `B` **TDD-2** A new behaviour, branch, error variant or bug fix without a test that fails when it is removed. Tests that cannot fail: no assertion, a tautology, asserting on a mock, repeating the implementation's logic.
 - `B` **TDD-3** A bug fix without a regression test.
 - `B` **TDD-4** A "refactoring" that changes behaviour or tests.
@@ -127,10 +140,11 @@ cargo clippy --workspace --all-targets --all-features -- -W clippy::unwrap_used 
 - `B` **TDD-7** Errors asserted by message text, or only with `is_err()` / `is_ok()`; assertions too weak to pin the result.
 - `B` **TDD-8** Tests that are not deterministic or not isolated: real network, clock or sleep, unseeded randomness, fixed ports, shared global state, environment mutation, order dependence, files outside a temp directory.
 - `m` **TDD-9** Test names that do not say behaviour and condition; several unrelated checks in one test; copy-paste where a table would do.
-- `m` **TDD-10** The wrong kind of test: an integration test reaching into internals; a type-level guarantee without a compile-fail test; a parser or codec with example tests only, where a round-trip property is the obvious check.
+- `m` **TDD-10** A new inline `mod tests { }` where the module's tests belong in its `tests.rs`. The wrong kind of test: an integration test reaching into internals; a type-level guarantee without a compile-fail test; a parser or codec with example tests only, where a round-trip property is the obvious check.
 - `B` **TDD-11** (step 4) An existing test deleted, ignored, commented out or loosened. Skipped, empty or placeholder tests. → NEEDS HUMAN
 - `B` **TDD-12** Test-only paths in production code: `cfg!(test)` branches, test flags, visibility widened for tests.
 - `m` **TDD-13** A mock where the real implementation or an in-memory fake would do.
+- `B` **TDD-14** (step 4) A test of this PR edited, removed, ignored or loosened after its RED commit, without a listed `TEST-FIX` commit whose reason holds; a GREEN commit that changes tests.
 
 **Types — `TYP`** Ask of every new type and signature: *can I write a value or a call that compiles but is meaningless?* If a cheap type rules it out, it is a BLOCKER.
 
@@ -258,6 +272,7 @@ Do not report:
 - Missing tests for pure refactoring, moves, docs or configuration; missing property tests or fuzzing where nothing calls for them.
 - In a stack of PRs: functionality not wired yet, an `#[expect(dead_code)]` that names a later part, work the plan assigns to a later part.
 - The size of the tests. Tests do not count toward the limit.
+- Tests added after a RED commit. An inline `mod tests { }` that was already there, also when the PR adds tests to it.
 - Anything in code the PR did not touch.
 - Formatting, naming case, import order — the gate decides those.
 - A missing optimisation without evidence that it matters.
@@ -271,7 +286,7 @@ The tags are defaults. Raise an `m` to BLOCKER only when it causes a concrete de
 
 **Verdict:** no BLOCKER → `APPROVE`; otherwise `REQUEST_CHANGES`. MINOR findings never change the verdict. If your harness or task prescribes verdict keywords or a report layout, use those and keep the content.
 
-**NEEDS HUMAN** is independent of the verdict. List: new `unsafe`; existing tests changed or removed; lint, CI or toolchain configuration changes; new dependencies; changes to authentication, cryptography or secret handling; breaking public API changes; any deviation you were unsure about.
+**NEEDS HUMAN** is independent of the verdict. List: new `unsafe`; existing tests changed or removed; a `TEST-FIX` you could not judge; lint, CI or toolchain configuration changes; new dependencies; changes to authentication, cryptography or secret handling; breaking public API changes; any deviation you were unsure about.
 
 ## 7. Report format
 
@@ -290,6 +305,7 @@ MINOR
 
 ACCEPTED DEVIATIONS
 - [ERR-3] src/re.rs:9 — `expect` on a literal regex, scoped `#[expect]`, covered by a test.
+- [TDD-14] src/retry/tests.rs:40 — `TEST-FIX` 3f2a91c: the test expected the cap one step too early; the task says "at most 5".
 
 NEEDS HUMAN
 - new dependency `foo` (DEP-1)
@@ -309,3 +325,4 @@ OUT OF SCOPE
 3. New findings on unchanged code only if they are BLOCKERs; mark them `(missed earlier)`.
 4. Do not reopen points you accepted. Do not turn an earlier MINOR into a BLOCKER without a new fact.
 5. Fixes stay in scope: a fix that brings unrelated changes is PR-7.
+6. A fix that changes a test of the PR is a `TEST-FIX` commit, listed in the PR (TDD-14) — also when your own finding asked for it. Step 4 again, against every RED commit.

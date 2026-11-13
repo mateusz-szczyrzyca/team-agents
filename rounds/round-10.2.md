@@ -88,8 +88,9 @@ Checkpoints for the human, between features (the agents do not run these):
   answered, a team paused and resumed.
 
 Out of scope for this plan: remote nodes and the lead, investigation teams with phases and standalone investigation
-requests, `agent live`, archiving, token usage and cost accounting, the precheck rules (B1–B4), automatic PR size
-limits (reviewers check PR-1), an `agentbus` socket API (it is called as a process).
+requests, `agent live`, archiving, token usage and cost accounting, automatic PR size limits (reviewers check
+PR-1), a proof by the harness that a RED commit fails (a reviewer runs one, TDD-1), an `agentbus` socket API (it
+is called as a process).
 
 This round's item
 
@@ -130,6 +131,7 @@ Plan overview (context only)
    7.3 Gate service
 8. Autopilot
    8.1 Pull requests, reviews and the merge loop
+   8.2 Round checks before review
 9. Dashboard
    9.1 The dashboard
 10. Cutover
