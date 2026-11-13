@@ -1124,3 +1124,39 @@ async fn a_branch_that_moved_after_the_gate_passed_is_not_published_with_that_ga
     assert!(matches!(phase_of(&rig.state(), "1.1"), ItemPhase::Fixing { .. }));
     assert_ne!(git(&rig.repo, &["rev-parse", &branch]), rig.remote_tip(&branch));
 }
+
+// ---- the settings --------------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn without_a_github_token_no_pull_request_is_opened_and_the_item_stays_where_it_is() {
+    let mut rig = solo_rig().await;
+    rig.remove_token();
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(rig.github.requests(), []);
+    assert!(matches!(phase_of(&rig.state(), "1.1"), ItemPhase::InProgress { .. }));
+    assert_eq!(rig.state().teams()[0].reviewers().len(), 0);
+}
+
+#[tokio::test]
+async fn an_api_address_that_would_send_the_token_in_the_clear_is_refused_when_the_daemon_starts() {
+    let mut rig = solo_rig().await;
+    rig.set_api_base("http://github.example.com/api/v3");
+
+    let refused = rig.start_refused().await;
+
+    assert!(
+        matches!(
+            &refused,
+            crate::daemon::DaemonError::Pulls(super::super::PullsError::ApiBase(
+                agent_runtime::github::InvalidApiBase::InsecureHost { .. }
+            ))
+        ),
+        "{refused:?}"
+    );
+}

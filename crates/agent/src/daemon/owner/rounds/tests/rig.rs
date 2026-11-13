@@ -251,6 +251,35 @@ impl Rig {
         }
     }
 
+    /// Removes the token of the GitHub account from the secrets of the home.
+    pub(super) fn remove_token(&self) {
+        std::fs::remove_file(self.home.root().join("secrets.toml")).unwrap();
+    }
+
+    /// Replaces the address of the GitHub API in the configuration with `url`.
+    pub(super) fn set_api_base(&self, url: &str) {
+        let text = std::fs::read_to_string(self.home.config_file()).unwrap();
+        let line = text
+            .lines()
+            .find(|line| line.starts_with("api_base"))
+            .unwrap()
+            .to_owned();
+        std::fs::write(
+            self.home.config_file(),
+            text.replace(&line, &format!("api_base = \"{url}\"")),
+        )
+        .unwrap();
+    }
+
+    /// Starts the daemon, which is expected to refuse; returns what it said.
+    pub(super) async fn start_refused(&mut self) -> DaemonError {
+        self.shutdown = CancellationToken::new();
+        tokio::time::timeout(PATIENCE, run(self.setup(), self.shutdown.clone()))
+            .await
+            .unwrap()
+            .expect_err("the daemon was expected to refuse to start")
+    }
+
     /// Stops the daemon and returns how it ended.
     pub(super) async fn stop(&mut self) -> Result<(), DaemonError> {
         self.shutdown.cancel();
