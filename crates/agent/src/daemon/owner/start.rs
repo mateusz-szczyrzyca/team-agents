@@ -26,7 +26,7 @@ use agent_runtime::store::Home;
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::{Rng, RngExt};
 
-use super::rounds::{SectionError, sections_for};
+use super::rounds::{Addition, SectionError, sections_for};
 use crate::daemon::questions::{self, QuestionsProblem, TextError};
 use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape_with_answers, task_branch};
 
@@ -220,8 +220,9 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     let answers = answers_text(ctx, member).await?;
     let prompt = team_prompt(ctx, &texts, &found, prompt, answers.as_deref())?;
     let prompt = match ctx.autopilot {
-        Some(autopilot) => match sections_for(ctx, autopilot, &found, &working).await? {
-            Some(sections) => format!("{}\n\n{sections}", prompt.trim_end()),
+        Some(autopilot) => match sections_for(ctx, autopilot, &found, &working, ctx.why).await? {
+            Some(Addition::Append(sections)) => format!("{}\n\n{sections}", prompt.trim_end()),
+            Some(Addition::Replace(text)) => format!("{text}\n"),
             None => prompt,
         },
         None => prompt,

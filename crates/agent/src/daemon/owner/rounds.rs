@@ -11,19 +11,21 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use agent_core::config::{AbsolutePath, GithubLogin, InvalidValue, RepoName, Secret};
-use agent_core::decide::round::{RoundEvent, RoundPolicy, RoundState, Stage};
+use agent_core::decide::round::{RoundError, RoundEvent, RoundPolicy, RoundState, Stage};
 use agent_core::ids::{AgentName, BranchName, GenerateIdError, InvalidBranchName, InvalidName, ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
 use agent_core::protocol::EventKind;
 use agent_core::state::{
-    CommitId, GateRecord, ItemPhase, Member, Participant, PullRequest, Review, ReviewOutcome, TaskRef, Timestamp,
+    CommitId, Completion, GateRecord, ItemPhase, Member, Participant, PrNumber, PullRequest, Review, ReviewOutcome,
+    TaskRef, Timestamp,
 };
+use agent_core::status::ReviewVerdict;
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision, WorktreeBranch};
 use agent_runtime::github::{
-    ApiBase, GitHub, GitHubError, GitHubSettings, InvalidApiBase, InvalidRepoSlug, NewPullRequest, PullRequestUpdate,
-    Readiness, RepoSlug,
+    ApiBase, CommentReview, GitHub, GitHubError, GitHubSettings, InvalidApiBase, InvalidRepoSlug, MergeMethod,
+    MergeRequest, NewPullRequest, PullRequestUpdate, PullState, Readiness, RepoSlug,
 };
 use agent_runtime::notify::{InvalidNotification, Notification};
 use agent_runtime::process::error_chain;
@@ -33,9 +35,11 @@ use agent_runtime::store::StoreError;
 
 use super::start::Context;
 use super::teams::Round;
-use super::{Notice, Owner, OwnerError};
+use super::{Located, Notice, Owner, OwnerError};
+use crate::daemon::merge::{Next, VerdictError, after_verdict, review_deliveries};
 use crate::daemon::pr::{Joining, Publication, Publish, PullTextError, plan_publications, pull_text};
-use crate::daemon::review::{Slot, choose_reviewers, free_reviewers};
+use crate::daemon::review::{Slot, VerdictProblem, choose_reviewers, free_reviewers, parse_verdict, report_text};
+use crate::daemon::team::Why;
 use crate::daemon::team::{agent_name, task_branch};
 
 /// Why the autopilot cannot be set up from the settings.
@@ -132,9 +136,18 @@ pub(super) enum SectionError {
     },
 }
 
-/// What the autopilot adds to the prompt of the run of the task `found` that works in `working`: for a reviewer, the pull
-/// request it is asked for a review of and the items it is for; `None` when the task has nothing of the autopilot to be
-/// told.
+/// What the autopilot does to the prompt of a run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Addition {
+    /// This follows the prompt.
+    Append(String),
+    /// This is the prompt: the session that is resumed holds the rest.
+    Replace(String),
+}
+
+/// What the autopilot adds to the prompt of the run of the task `found` that works in `working`, started for `why`: for a
+/// reviewer, the pull request it is asked for a review of and the items it is for, or the demand for a verdict when its
+/// report had none; `None` when the task has nothing of the autopilot to be told.
 ///
 /// # Errors
 /// [`SectionError`].
@@ -143,10 +156,15 @@ pub(super) async fn sections_for(
     texts: &AutopilotPrompts,
     found: &TaskRef<'_>,
     working: &std::path::Path,
-) -> Result<Option<String>, SectionError> {
-    match found.role {
-        Role::Reviewer => review_request(ctx, texts, found, working).await,
-        Role::Solo | Role::Coordinator | Role::Member | Role::Worker => Ok(None),
+    why: Option<&Why>,
+) -> Result<Option<Addition>, SectionError> {
+    match (found.role, why) {
+        (Role::Reviewer, Some(Why::VerdictMissing)) => {
+            let text = texts.render(AutopilotPrompt::ReviewVerdictMissing, &Variables::new())?;
+            Ok(Some(Addition::Replace(text.trim_end().to_owned())))
+        }
+        (Role::Reviewer, _) => Ok(review_request(ctx, texts, found, working).await?.map(Addition::Append)),
+        (Role::Solo | Role::Coordinator | Role::Member | Role::Worker, _) => Ok(None),
     }
 }
 
@@ -239,11 +257,27 @@ pub(super) struct PullWatch {
     retry_at: HashMap<(TeamId, BranchName), Timestamp>,
     /// What the human was told once and is not told again.
     announced: HashSet<Announcement>,
+    /// How many times each reviewer's report was sent back for lacking a verdict.
+    bounces: HashMap<TaskId, u32>,
+    /// When each approved pull request was last looked at, so that one that waits is not asked about at every look.
+    polled: HashMap<(TeamId, PrNumber), Timestamp>,
 }
+
+/// How many times a report without a verdict is sent back before the human is told.
+const MAX_VERDICT_BOUNCES: u32 = 2;
+
+/// How long an approved pull request that waits (for the human, or for a merge that failed) is left alone between two
+/// looks at it.
+const POLL_EVERY: time::Duration = time::Duration::seconds(30);
 
 /// Something the human is told once.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Announcement {
+    /// A reviewer ended its review again and again without a verdict.
+    NoVerdict {
+        /// The reviewer's task.
+        task: TaskId,
+    },
     /// A branch could not be published.
     PublishFailed {
         /// The team.
@@ -348,8 +382,10 @@ impl Owner {
         let Some(pulls) = self.pulls.clone() else {
             return Ok(());
         };
+        self.merge_approved(&pulls, team, round).await?;
         self.publish_branches(&pulls, team, round).await?;
         self.ask_for_reviews(team, round).await?;
+        self.deliver_reviews(team, round)?;
         Ok(())
     }
 
@@ -874,6 +910,489 @@ impl Owner {
             }
         }
     }
+}
+
+impl Owner {
+    // ---- the verdicts ---------------------------------------------------------------------------------------
+
+    /// Hands the reviews that were asked of reviewers that wait to the reviewers: the task is queued, and its prompt tells
+    /// what it is to review.
+    fn deliver_reviews(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+        let Some(team) = self.parts.state.team(team_id) else {
+            return Ok(());
+        };
+        for task in review_deliveries(team) {
+            self.release(&task, Why::Review, round)?;
+        }
+        Ok(())
+    }
+
+    /// Takes the final message of the reviewer `task`, whose run ended with `STATUS: DONE`: its verdict is recorded, posted
+    /// on the pull request and acted on.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the state or a file of the home cannot be written.
+    pub(super) async fn review_ended(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        message: Option<&str>,
+    ) -> Result<(), OwnerError> {
+        let Some(pulls) = self.pulls.clone() else {
+            return Ok(());
+        };
+        let Some(message) = message else {
+            return Ok(());
+        };
+        let Some(asked) = self.pending_review_of(&located.team, task) else {
+            tracing::debug!(task = %task, "a reviewer ended with nothing to review: its report is not taken");
+            return Ok(());
+        };
+        let started = self
+            .parts
+            .state
+            .find_task(task)
+            .and_then(|found| found.member.runs().last().map(agent_core::state::Run::started_at));
+        if started.is_some_and(|started| started < asked.requested_at) {
+            tracing::info!(task = %task, pr = %asked.pr.number, "a reviewer ended a review that was asked before the pull request was updated: its report is not taken");
+            return Ok(());
+        }
+        match parse_verdict(message) {
+            Ok(verdict) => {
+                self.watch.bounces.remove(task);
+                self.take_verdict(&pulls, task, located, &asked, verdict, message).await
+            }
+            Err(problem) => self.send_back(&pulls, task, located, &asked, &problem).await,
+        }
+    }
+
+    /// The pull request the reviewer `task` has a review to give for, with the items it has pending in.
+    fn pending_review_of(&self, team: &TeamId, task: &TaskId) -> Option<Asked> {
+        let team = self.parts.state.team(team)?;
+        let mut asked: Option<Asked> = None;
+        for progress in team.items() {
+            let ItemPhase::InReview { pr, reviews } = progress.phase() else {
+                continue;
+            };
+            let Some(review) = reviews
+                .iter()
+                .find(|review| review.task == *task && matches!(review.outcome, ReviewOutcome::Pending))
+            else {
+                continue;
+            };
+            match &mut asked {
+                Some(known) if known.pr.number == pr.number => known.items.push(progress.id()),
+                Some(_) => {}
+                None => {
+                    asked = Some(Asked {
+                        pr: pr.clone(),
+                        items: vec![progress.id()],
+                        requested_at: review.requested_at,
+                        passes: progress.fix_passes().len(),
+                        reviewer: review.reviewer.clone(),
+                    });
+                }
+            }
+        }
+        asked
+    }
+
+    /// A report without a verdict: the reviewer is asked for it again, and after [`MAX_VERDICT_BOUNCES`] times the human is
+    /// told.
+    async fn send_back(
+        &mut self,
+        pulls: &Pulls,
+        task: &TaskId,
+        located: &Located,
+        asked: &Asked,
+        problem: &VerdictProblem,
+    ) -> Result<(), OwnerError> {
+        let count = self.watch.bounces.entry(task.clone()).or_insert(0);
+        *count = count.saturating_add(1);
+        let count = *count;
+        tracing::warn!(task = %task, pr = %asked.pr.number, ?problem, count, "a reviewer's report has no verdict");
+        if count <= MAX_VERDICT_BOUNCES {
+            let mut round = Round::default();
+            self.release(task, Why::VerdictMissing, &mut round)?;
+            return self.finish_round(&located.team, round).await;
+        }
+        let announcement = Announcement::NoVerdict { task: task.clone() };
+        if !self.watch.announced.insert(announcement) {
+            return Ok(());
+        }
+        let now = Timestamp::now(&self.parts.clock)?;
+        let lead = self.lead_of(&located.team)?;
+        let values = Variables::new()
+            .with("reviewer", asked.reviewer.as_str())
+            .and_then(|values| values.with("pr", asked.pr.number.to_string()))
+            .and_then(|values| values.with("task", task.as_str()));
+        self.tell_human(pulls, AutopilotPrompt::NoticeNoVerdict, values, &lead, now);
+        Ok(())
+    }
+
+    /// Records the verdict `verdict` of the reviewer `task`, keeps and posts its report, and does what the round does next.
+    async fn take_verdict(
+        &mut self,
+        pulls: &Pulls,
+        task: &TaskId,
+        located: &Located,
+        asked: &Asked,
+        verdict: ReviewVerdict,
+        message: &str,
+    ) -> Result<(), OwnerError> {
+        let team_id = &located.team;
+        let now = Timestamp::now(&self.parts.clock)?;
+        let report = report_text(message);
+        let passes = u32::try_from(asked.passes).unwrap_or(u32::MAX);
+        self.parts
+            .store
+            .save_review_report(task, asked.pr.number, passes, &report)
+            .await?;
+        let lead = self.lead_of(team_id)?;
+        let next = self.decide(team_id, asked, verdict);
+        self.record_verdict(team_id, task, asked, verdict, now)?;
+        self.post_review(pulls, &lead, task, asked, &report).await;
+        let mut round = Round::default();
+        if let Some(next) = next {
+            self.apply_next(team_id, &lead, asked, next, &mut round)?;
+        }
+        round.changed = true;
+        self.finish_round(team_id, round).await
+    }
+
+    /// What the verdict leads to, by the round machine; `None` when the round does not take it, which is told: the
+    /// verdict is recorded all the same.
+    fn decide(&self, team_id: &TeamId, asked: &Asked, verdict: ReviewVerdict) -> Option<Next> {
+        let team = self.parts.state.team(team_id)?;
+        let progress = asked.items.first().and_then(|id| team.item(*id))?;
+        let policy = RoundPolicy::new(team.merge(), self.parts.settings.config.review());
+        match after_verdict(progress, &asked.reviewer, verdict, policy) {
+            Ok(next) => Some(next),
+            Err(VerdictError::Round(RoundError::NotExpected { .. })) => {
+                tracing::info!(team = %team_id, pr = %asked.pr.number, "a verdict came after the round was decided: it is recorded and changes nothing");
+                None
+            }
+            Err(error) => {
+                tracing::warn!(team = %team_id, pr = %asked.pr.number, error = %error_chain(&error), "the round does not take a verdict: it is recorded and changes nothing");
+                None
+            }
+        }
+    }
+
+    /// Records the outcome of the review of `task` in every item of the pull request.
+    fn record_verdict(
+        &mut self,
+        team_id: &TeamId,
+        task: &TaskId,
+        asked: &Asked,
+        verdict: ReviewVerdict,
+        now: Timestamp,
+    ) -> Result<(), OwnerError> {
+        for id in &asked.items {
+            let mut team_mut = self
+                .parts
+                .state
+                .team_mut(team_id)
+                .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+            let mut item = team_mut.item_mut(*id).ok_or_else(|| OwnerError::LostItem {
+                team: team_id.clone(),
+                item: *id,
+            })?;
+            item.submit_review(task, verdict, now)
+                .map_err(|source| OwnerError::Review {
+                    team: team_id.clone(),
+                    item: *id,
+                    source,
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Posts the report of the reviewer `task` on the pull request as a comment review that names the commit it reviewed.
+    /// The harness opens the pull request and posts the reviews with one account, which GitHub does not let approve its
+    /// own pull request: the verdict is in the report.
+    ///
+    /// A review that cannot be posted is logged and does not hold the round: the verdict counts, and the report is in the
+    /// task's directory.
+    async fn post_review(&mut self, pulls: &Pulls, lead: &Lead, task: &TaskId, asked: &Asked, report: &str) {
+        if let Err(error) = self.try_post_review(pulls, lead, task, asked, report).await {
+            tracing::warn!(task = %task, pr = %asked.pr.number, error = %error_chain(&error), "a review cannot be posted on the pull request: its verdict counts and its report is kept");
+        }
+    }
+
+    /// See [`Owner::post_review`].
+    async fn try_post_review(
+        &mut self,
+        pulls: &Pulls,
+        lead: &Lead,
+        task: &TaskId,
+        asked: &Asked,
+        report: &str,
+    ) -> Result<(), PublishError> {
+        let agent: AgentName = asked.reviewer.as_str().parse()?;
+        let git = self.worktree_git(&lead.repo, task, &agent)?;
+        let head = git.rev_parse(&Revision::Head).await?;
+        let github = self.github_for(pulls, &lead.repo, &git).await?;
+        let body = pulls.texts.render(
+            AutopilotPrompt::ReviewComment,
+            &Variables::new()
+                .with("reviewer", asked.reviewer.as_str())?
+                .with("head", head.as_str())?
+                .with("report", report)?,
+        )?;
+        github
+            .post_comment_review(
+                asked.pr.number,
+                &CommentReview {
+                    body: body.trim_end().to_owned(),
+                    commit: head,
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Does what the verdict led to, in every item of the pull request.
+    fn apply_next(
+        &mut self,
+        team_id: &TeamId,
+        lead: &Lead,
+        asked: &Asked,
+        next: Next,
+        round: &mut Round,
+    ) -> Result<(), OwnerError> {
+        for id in &asked.items {
+            let mut team_mut = self
+                .parts
+                .state
+                .team_mut(team_id)
+                .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+            let mut item = team_mut.item_mut(*id).ok_or_else(|| OwnerError::LostItem {
+                team: team_id.clone(),
+                item: *id,
+            })?;
+            let ItemPhase::InReview { pr, reviews } = item.phase().clone() else {
+                continue;
+            };
+            let after = match next {
+                Next::Wait | Next::AskHuman => continue,
+                Next::Merge | Next::HandToHuman => ItemPhase::Approved { pr, reviews },
+                Next::FixPass { .. } => ItemPhase::Fixing {
+                    assignee: lead.agent.clone(),
+                    branch: pr.branch.clone(),
+                    pr,
+                },
+            };
+            let status = after.kind().status();
+            item.advance(after).map_err(|source| OwnerError::Item {
+                team: team_id.clone(),
+                item: *id,
+                source,
+            })?;
+            round.events.push(EventKind::ItemStatus {
+                team: team_id.clone(),
+                item: *id,
+                status,
+            });
+        }
+        Ok(())
+    }
+
+    /// Saves the state after what `round` changed, and tells the subscribers; the team is looked at again.
+    async fn finish_round(&mut self, team: &TeamId, round: Round) -> Result<(), OwnerError> {
+        if round.changed {
+            self.save().await?;
+            let now = Timestamp::now(&self.parts.clock)?;
+            for event in round.events {
+                self.publish(now, event);
+            }
+            self.publish_summary(now, team);
+        }
+        self.look_at(team);
+        Ok(())
+    }
+
+    // ---- the merge ------------------------------------------------------------------------------------------
+
+    /// Merges the pull requests of `team_id` that both reviewers approved, and completes the items of those that are
+    /// merged.
+    async fn merge_approved(&mut self, pulls: &Pulls, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+        let approved = self.approved_pull_requests(team_id);
+        if approved.is_empty() {
+            return Ok(());
+        }
+        let lead = self.lead_of(team_id)?;
+        for (pr, items) in approved {
+            let now = Timestamp::now(&self.parts.clock)?;
+            if !self.due(team_id, &pr, now)? {
+                continue;
+            }
+            match self.try_merge(pulls, team_id, &lead, &pr).await {
+                Ok(Merge::Merged) => {
+                    self.watch.polled.remove(&(team_id.clone(), pr.number));
+                    self.complete(team_id, &lead, &pr, &items, now, round).await?;
+                }
+                Ok(Merge::Waits) => {}
+                Err(error) => {
+                    tracing::warn!(team = %team_id, pr = %pr.number, error = %error_chain(&error), "an approved pull request cannot be merged: it is looked at again in a while");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The approved pull requests of `team`, with their items.
+    fn approved_pull_requests(&self, team: &TeamId) -> Vec<(PullRequest, Vec<ItemId>)> {
+        let mut found: Vec<(PullRequest, Vec<ItemId>)> = Vec::new();
+        let Some(team) = self.parts.state.team(team) else {
+            return found;
+        };
+        for progress in team.items() {
+            let ItemPhase::Approved { pr, .. } = progress.phase() else {
+                continue;
+            };
+            match found.iter_mut().find(|(known, _)| known.number == pr.number) {
+                Some((_, items)) => items.push(progress.id()),
+                None => found.push((pr.clone(), vec![progress.id()])),
+            }
+        }
+        found
+    }
+
+    /// Whether the approved pull request `pr` is looked at now: the first time at once, then once in [`POLL_EVERY`].
+    fn due(&mut self, team: &TeamId, pr: &PullRequest, now: Timestamp) -> Result<bool, OwnerError> {
+        let key = (team.clone(), pr.number);
+        if self
+            .watch
+            .polled
+            .get(&key)
+            .is_some_and(|last| Timestamp::from_utc(last.as_utc() + POLL_EVERY).is_ok_and(|next| next > now))
+        {
+            return Ok(false);
+        }
+        self.watch.polled.insert(key, now);
+        Ok(true)
+    }
+
+    /// Merges `pr` when it is open and the team merges by itself.
+    async fn try_merge(
+        &mut self,
+        pulls: &Pulls,
+        team_id: &TeamId,
+        lead: &Lead,
+        pr: &PullRequest,
+    ) -> Result<Merge, PublishError> {
+        let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
+        let github = self.github_for(pulls, &lead.repo, &git).await?;
+        let remote = github.get_pull_request(pr.number).await?;
+        match remote.state {
+            PullState::Merged => Ok(Merge::Merged),
+            PullState::Closed => Ok(Merge::Waits),
+            PullState::Open => {
+                let autopilot = self
+                    .parts
+                    .state
+                    .team(team_id)
+                    .is_some_and(|team| team.merge() == agent_core::state::MergeMode::Autopilot);
+                if !autopilot {
+                    return Ok(Merge::Waits);
+                }
+                github
+                    .merge_pull_request(
+                        pr.number,
+                        &MergeRequest {
+                            method: MergeMethod::Merge,
+                            expected_head: remote.head,
+                            commit_title: None,
+                            commit_message: None,
+                        },
+                    )
+                    .await?;
+                Ok(Merge::Merged)
+            }
+        }
+    }
+
+    /// Completes the items of the merged pull request `pr`; the checkout learns what the merge made of the base branch, so
+    /// that the next item builds on it.
+    async fn complete(
+        &mut self,
+        team_id: &TeamId,
+        lead: &Lead,
+        pr: &PullRequest,
+        items: &[ItemId],
+        now: Timestamp,
+        round: &mut Round,
+    ) -> Result<(), OwnerError> {
+        for id in items {
+            let mut team_mut = self
+                .parts
+                .state
+                .team_mut(team_id)
+                .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+            let mut item = team_mut.item_mut(*id).ok_or_else(|| OwnerError::LostItem {
+                team: team_id.clone(),
+                item: *id,
+            })?;
+            item.advance(ItemPhase::Done {
+                completion: Completion::Merged {
+                    pr: pr.clone(),
+                    at: now,
+                },
+            })
+            .map_err(|source| OwnerError::Item {
+                team: team_id.clone(),
+                item: *id,
+                source,
+            })?;
+            round.events.push(EventKind::ItemStatus {
+                team: team_id.clone(),
+                item: *id,
+                status: agent_core::status::ItemStatus::Done,
+            });
+            round.changed = true;
+            tracing::info!(team = %team_id, item = %id, pr = %pr.number, "an item is merged");
+        }
+        self.fetch_base(lead).await;
+        Ok(())
+    }
+
+    /// Fetches the base branch of the repository of `lead` into the checkout. A fetch that fails leaves the next item to
+    /// start from the base the checkout had; that is logged.
+    async fn fetch_base(&self, lead: &Lead) {
+        let result = async {
+            let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
+            let base = self.base_branch(&lead.repo)?;
+            git.fetch(&base).await?;
+            Ok::<(), PublishError>(())
+        }
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(repo = %lead.repo, error = %error_chain(&error), "the base branch cannot be fetched after a merge: the next item starts from the checkout's");
+        }
+    }
+}
+
+/// What was found of an approved pull request.
+enum Merge {
+    /// It is merged, by the harness or by someone else.
+    Merged,
+    /// It is not merged and is left as it is for now.
+    Waits,
+}
+
+/// The review a reviewer's final message answers: the pull request, its items and when it was asked.
+struct Asked {
+    /// The pull request.
+    pr: PullRequest,
+    /// The items of the pull request that have the review pending, in the order of the list.
+    items: Vec<ItemId>,
+    /// When the review was asked.
+    requested_at: Timestamp,
+    /// The fix passes the pull request has had.
+    passes: usize,
+    /// The investigator that reviews.
+    reviewer: agent_core::ids::InvestigatorName,
 }
 
 /// A review of the task `task` that waits for its outcome, asked at `now`.
