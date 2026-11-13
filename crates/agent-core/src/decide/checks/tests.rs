@@ -1050,3 +1050,32 @@ fn a_subject_is_written_as_json_and_read_back() {
     assert_eq!(json, r#"[{"path":"tests/a.rs"},"no_tests"]"#);
     assert_eq!(serde_json::from_str::<Vec<Subject>>(&json).unwrap(), subjects);
 }
+
+// Rule: a path that ends in `~`, `+` or `%` is another file than the one it begins like: naming a backup file does not
+// name the original.
+#[test]
+fn a_path_that_goes_on_with_punctuation_of_file_names_does_not_name_the_file() {
+    for description in [
+        "Suppressions: `src/a.rs~` keeps an allow.",
+        "Suppressions: `src/a.rs+` keeps an allow.",
+        "Suppressions: `src/a.rs%` keeps an allow.",
+        "Suppressions: `~src/a.rs` keeps an allow.",
+    ] {
+        let facts = marked(
+            &["src/a.rs"],
+            vec![line("src/a.rs", 3, "#[allow(dead_code)]")],
+            description,
+        );
+
+        assert_eq!(
+            found(&facts),
+            [Issue::Marker {
+                path: path("src/a.rs"),
+                marker: Marker::SuppressesLint,
+                line: 3,
+                count: 1
+            }],
+            "{description}"
+        );
+    }
+}
