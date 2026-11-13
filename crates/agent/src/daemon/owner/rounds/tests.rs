@@ -539,3 +539,133 @@ async fn a_fix_pass_whose_gate_has_not_passed_does_not_update_the_pull_request()
     assert_eq!(rig.github.reviews(1).len(), 2);
     assert!(matches!(phase_of(&rig.state(), "1.1"), ItemPhase::Fixing { .. }));
 }
+
+// ---- the human ------------------------------------------------------------------------------------------------
+
+use agent_core::protocol::{AnswerInput, AnswerList, AnswerRequest};
+use agent_core::questions::Verdict;
+
+/// Answers round `round` of `task` with `ok`, as the human does.
+async fn accept(rig: &Rig, task: &agent_core::ids::TaskId, round: u32) {
+    let answers = AnswerList::try_from(vec![AnswerInput {
+        question: std::num::NonZeroU32::MIN,
+        verdict: Verdict::from_text("ok").unwrap().unwrap(),
+    }])
+    .unwrap();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                round: std::num::NonZeroU32::new(round).unwrap(),
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+}
+
+/// A rig in which the only reviewer that matters always asks for changes and one pass is allowed, with a solo agent that
+/// works on the item, fixes it once, and then does what `third` says.
+async fn exhausting_rig(solo: &'static str) -> Rig {
+    Rig::new(
+        &[
+            normal("claude-1", solo),
+            investigator("inv-r1", CHANGES),
+            investigator("inv-r2", APPROVING),
+        ],
+        1,
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn when_the_fix_passes_are_used_up_the_lead_is_asked_to_put_the_question_to_the_human() {
+    let mut rig = exhausting_rig("work,work,ask").await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let prompt = rig.prompt(&tasks[0], 3).await;
+    let notice = rig.notification_with("has questions").await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        prompt.contains("THE REVIEWERS STILL ASK FOR CHANGES (pull request #1)"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("The team used its 1 fix passes"), "{prompt}");
+    assert!(
+        prompt.contains("1. [TDD-2] src/lib.rs:7 — the case is untested"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("questions-1.md"), "{prompt}");
+    let found = &state.teams()[0];
+    assert!(matches!(
+        found.item("1.1".parse().unwrap()).unwrap().phase(),
+        ItemPhase::InReview { .. }
+    ));
+    assert_eq!(found.item("1.1".parse().unwrap()).unwrap().fix_passes().len(), 1);
+    assert!(found.crew().roster()[0].1.open_question().is_some());
+    assert!(notice.contains("questions-1.md"), "{notice}");
+    assert_eq!(rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")), []);
+}
+
+#[tokio::test]
+async fn the_humans_answer_starts_one_more_fix_pass_with_the_findings_and_the_answer() {
+    let mut rig = exhausting_rig("work,work,ask,work").await;
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    accept(&rig, &tasks[0], 1).await;
+    let prompt = rig.prompt(&tasks[0], 4).await;
+    let state = rig
+        .state_where("a second fix pass", |state| {
+            state
+                .team(&team)
+                .and_then(|found| found.item("1.1".parse().unwrap()))
+                .is_some_and(|progress| progress.fix_passes().len() >= 2)
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(prompt.contains("THE REVIEWERS ASKED FOR CHANGES"), "{prompt}");
+    assert!(prompt.contains("fix pass 2 of 1"), "{prompt}");
+    assert!(
+        prompt.contains("1. [TDD-2] src/lib.rs:7 — the case is untested"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("What should the team do about the pull request?"),
+        "{prompt}"
+    );
+    let progress = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(progress.fix_passes().len(), 2);
+}
+
+#[tokio::test]
+async fn a_lead_that_ends_without_the_question_leaves_the_human_told_directly_once() {
+    let mut rig = exhausting_rig("work,work,done").await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.prompt(&tasks[0], 3).await;
+    let notice = rig.notification_with("needs your decision").await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(notice.contains("pull request #1"), "{notice}");
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("needs your decision"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(rig.runs(&tasks[0]), 3);
+}

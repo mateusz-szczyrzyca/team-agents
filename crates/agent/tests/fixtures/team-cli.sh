@@ -13,6 +13,8 @@
 #   slowfail        waits a second, then ends with STATUS: FAILED
 #   work            commits a file in the worktree, records that the repository's gate passed at the new head (the file
 #                   `gate.json` in the task's directory in the home the configuration names) and ends with STATUS: DONE
+#   ask             writes a questions file to the path the prompt names (the first `.../questions-N.md` in it) and ends
+#                   with STATUS: QUESTIONS
 #   integrate       merges every other local branch of the form agents/*/task-*-N.N into the worktree's branch, records
 #                   the gate as `work` does and ends with STATUS: DONE
 #
@@ -113,6 +115,12 @@ case $action in
     commit_work
     record_gate
     result 'Finished the item.\nSTATUS: DONE'
+    ;;
+  ask)
+    file=$(grep -o '/[^`[:space:]]*questions-[0-9]*\.md' <<< "$prompt" | head -n 1)
+    mkdir -p "$(dirname "$file")"
+    printf '# Questions — fake\n\n## 1. What should the team do about the pull request?\na) one more fix pass — the reviewers are asked again\nb) leave it to me — I merge or close it\n\n**Recommended:** a) — a finding was not fixed (fake)\n\n**Verdict:**\n' > "$file"
+    result 'I have to ask.\nSTATUS: QUESTIONS'
     ;;
   integrate)
     current=$(git rev-parse --abbrev-ref HEAD)
