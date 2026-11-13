@@ -169,6 +169,13 @@ impl FakeGitHub {
         self.world().merge = answer;
     }
 
+    /// The human closes pull request `number` on GitHub without merging it.
+    pub(super) fn closed_by_a_human(&self, number: u32) {
+        if let Some(pull) = self.world().pulls.iter_mut().find(|pull| pull.number == number) {
+            pull.closed = true;
+        }
+    }
+
     /// The human merges pull request `number` on GitHub.
     pub(super) fn merged_by_a_human(&self, number: u32) {
         let mut world = self.world();

@@ -669,3 +669,141 @@ async fn a_lead_that_ends_without_the_question_leaves_the_human_told_directly_on
     assert_eq!(told.len(), 1, "{told:?}");
     assert_eq!(rig.runs(&tasks[0]), 3);
 }
+
+// ---- --no-merge and a merge that does not happen --------------------------------------------------------------
+
+use super::fake_github::MergeAnswer;
+
+#[tokio::test]
+async fn with_no_merge_nothing_is_merged_and_the_human_is_told_that_the_pull_request_is_approved() {
+    let mut rig = approving_rig().await;
+    rig.start().await;
+
+    rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let notice = rig.notification_with("is approved").await;
+    let state = rig
+        .item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
+        .await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(notice.starts_with("Pull request 1 of "), "{notice}");
+    assert!(notice.contains("pull/1"), "{notice}");
+    assert!(notice.contains("--no-merge"), "{notice}");
+    assert_eq!(rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")), []);
+    assert!(matches!(phase_of(&state, "1.1"), ItemPhase::Approved { .. }));
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("is approved"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+}
+
+#[tokio::test]
+async fn with_no_merge_the_next_item_starts_when_the_first_is_approved() {
+    let mut rig = approving_rig().await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::NoMerge, None).await;
+    let state = rig
+        .item_where("1.2", "in review", |phase| matches!(phase, ItemPhase::InReview { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(matches!(phase_of(&state, "1.1"), ItemPhase::Approved { .. }));
+    let ItemPhase::InReview { pr, .. } = phase_of(&state, "1.2") else {
+        panic!("item 1.2 is not in review");
+    };
+    assert_eq!(pr.branch.as_str(), format!("agents/claude-1/{}-1.2", tasks[0]));
+    assert_eq!(rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")), []);
+}
+
+#[tokio::test]
+async fn the_item_is_done_and_the_team_ends_when_the_human_merges_the_approved_pull_request() {
+    let mut rig = approving_rig().await;
+    rig.start().await;
+
+    rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    rig.notification_with("is approved").await;
+    rig.github.merged_by_a_human(1);
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let finished = rig.notification_with("is finished").await;
+    rig.stop().await.unwrap();
+
+    let ItemPhase::Done { completion } = phase_of(&state, "1.1") else {
+        panic!("item 1.1 is not done");
+    };
+    assert!(matches!(completion, Completion::Merged { .. }));
+    assert!(finished.contains("is finished"), "{finished}");
+}
+
+#[tokio::test]
+async fn a_merge_that_github_refuses_is_told_to_the_human_once_and_is_not_tried_again() {
+    let mut rig = approving_rig().await;
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let notice = rig.notification_with("could not be merged").await;
+    let state = rig
+        .item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
+        .await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(notice.starts_with("Pull request 1 of "), "{notice}");
+    assert!(notice.contains("Pull Request is not mergeable"), "{notice}");
+    assert!(matches!(phase_of(&state, "1.1"), ItemPhase::Approved { .. }));
+    assert_eq!(
+        rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")).len(),
+        1
+    );
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("could not be merged"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+}
+
+#[tokio::test]
+async fn an_approved_pull_request_that_the_human_merged_after_a_refusal_completes_the_item() {
+    let mut rig = approving_rig().await;
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.notification_with("could not be merged").await;
+    rig.github.merged_by_a_human(1);
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(
+        rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")).len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_pull_request_the_human_closed_without_merging_is_told_once_and_the_item_waits() {
+    let mut rig = approving_rig().await;
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.notification_with("could not be merged").await;
+    rig.github.closed_by_a_human(1);
+    let notice = rig.notification_with("was closed").await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        notice.contains("pull request #1") || notice.contains("Pull request 1"),
+        "{notice}"
+    );
+    assert!(matches!(phase_of(&rig.state(), "1.1"), ItemPhase::Approved { .. }));
+}
