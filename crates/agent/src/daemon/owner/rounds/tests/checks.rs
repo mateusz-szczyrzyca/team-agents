@@ -690,3 +690,35 @@ async fn a_file_that_somebody_names_in_the_description_after_the_check_is_disclo
     assert!(!rig.github.pulls()[0].draft);
     assert_eq!(record(&rig, &tasks[0]).await.passes_of(&["1.1".parse().unwrap()]), 1);
 }
+
+// ---- an attribute the round only edits -----------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_round_that_edits_one_line_of_a_wrapped_attribute_to_a_suppression_goes_back_to_the_team() {
+    let mut rig = checking_rig("script:edit-attribute,done", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    std::fs::write(
+        rig.repo.join("src/wired.rs"),
+        "#[cfg_attr(\n    not(test),\n    derive(Debug),\n)]\nstruct Wired;\n",
+    )
+    .unwrap();
+    git(&rig.repo, &["add", "-A"]);
+    git(&rig.repo, &["commit", "-q", "-m", "Add a wrapped attribute"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    script(
+        &rig,
+        "edit-attribute",
+        "printf '#[cfg_attr(\\n    not(test),\\n    expect(dead_code, reason = \"later\"),\\n)]\\nstruct Wired;\\n' > src/wired.rs\necho case > tests/new.txt\ngit add src/wired.rs tests/new.txt\ncommit -m 'Edit the attribute and add its test'\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let back = rig.prompt(&tasks[0], 2).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        back.contains("`src/wired.rs`") && back.contains("suppress a lint"),
+        "{back}"
+    );
+    assert_eq!(rig.github.calls("POST", "/graphql"), []);
+}
