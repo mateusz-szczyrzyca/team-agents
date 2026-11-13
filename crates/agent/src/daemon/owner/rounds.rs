@@ -34,10 +34,13 @@ use agent_runtime::settings::Settings;
 use agent_runtime::store::StoreError;
 use agent_runtime::text_file::{TextFileError, read_text_file};
 
-use super::start::Context;
+use super::start::{Context, next_round};
 use super::teams::Round;
 use super::{Located, Notice, Owner, OwnerError};
-use crate::daemon::merge::{Next, VerdictError, after_verdict, fix_delivery, review_deliveries};
+use crate::daemon::merge::{
+    Asking, Decision, Exhausted, Next, VerdictError, after_answer, after_verdict, asking, decision, exhausted,
+    fix_delivery, review_deliveries,
+};
 use crate::daemon::pr::{Joining, Publication, Publish, PullTextError, plan_publications, pull_text};
 use crate::daemon::review::{Slot, VerdictProblem, choose_reviewers, free_reviewers, parse_verdict, report_text};
 use crate::daemon::team::Why;
@@ -173,7 +176,13 @@ pub(super) async fn sections_for(
             Ok(Some(Addition::Replace(text.trim_end().to_owned())))
         }
         (Role::Reviewer, _) => Ok(review_request(ctx, texts, found, working).await?.map(Addition::Append)),
-        (Role::Solo | Role::Coordinator, _) => Ok(fix_pass(ctx, texts, found).await?.map(Addition::Append)),
+        (Role::Solo | Role::Coordinator, _) => {
+            let text = match fix_pass(ctx, texts, found).await? {
+                Some(text) => Some(text),
+                None => ask_human(ctx, texts, found).await?,
+            };
+            Ok(text.map(Addition::Append))
+        }
         (Role::Member | Role::Worker, _) => Ok(None),
     }
 }
@@ -204,8 +213,75 @@ async fn fix_pass(
     let passes = progress.fix_passes().len();
     // The reports of the round that asked for this pass were kept under the number of the passes before it.
     let kept = u32::try_from(passes.saturating_sub(1)).unwrap_or(u32::MAX);
+    let findings = reports_of(ctx, texts, &asked.requested_by, pr.number, kept).await?;
+    let values = Variables::new()
+        .with("pr", pr.number.to_string())?
+        .with("pass", passes.to_string())?
+        .with("passes", ctx.settings.config.review().fix_passes.to_string())?
+        .with("branch", branch.as_str())?
+        .with("findings", findings.join("\n\n"))?;
+    Ok(Some(
+        texts
+            .render(AutopilotPrompt::ReviewFixPass, &values)?
+            .trim_end()
+            .to_owned(),
+    ))
+}
+
+/// The request to the lead `found` to put the question to the human, when a pull request of the team waits for it: the
+/// reports of the reviewers that asked for changes, and the questions file to write.
+async fn ask_human(
+    ctx: &Context<'_>,
+    texts: &AutopilotPrompts,
+    found: &TaskRef<'_>,
+) -> Result<Option<String>, SectionError> {
+    let team = found.team;
+    let Some(waits) = exhausted(team)
+        .into_iter()
+        .find(|waits| decision(found.member, waits.requested_at) == Decision::Ask)
+    else {
+        return Ok(None);
+    };
+    let Some(round) = next_round(found.member) else {
+        return Ok(None);
+    };
     let mut findings = Vec::new();
-    for review in &asked.requested_by {
+    for id in waits.items.iter().take(1) {
+        let Some(progress) = team.item(*id) else {
+            continue;
+        };
+        let ItemPhase::InReview { reviews, .. } = progress.phase() else {
+            continue;
+        };
+        let kept = u32::try_from(progress.fix_passes().len()).unwrap_or(u32::MAX);
+        findings.extend(reports_of(ctx, texts, reviews, waits.pr.number, kept).await?);
+    }
+    let file = ctx.home.questions_file(found.member.task(), round);
+    let values = Variables::new()
+        .with("pr", waits.pr.number.to_string())?
+        .with("passes", waits.passes.to_string())?
+        .with("findings", findings.join("\n\n"))?
+        .with("questions_file", file.display().to_string())?
+        .with("round", round.to_string())?
+        .with("task", found.member.task().as_str())?;
+    Ok(Some(
+        texts
+            .render(AutopilotPrompt::ReviewAskHuman, &values)?
+            .trim_end()
+            .to_owned(),
+    ))
+}
+
+/// The kept reports of the reviews in `reviews` that asked for changes, each as a finding.
+async fn reports_of(
+    ctx: &Context<'_>,
+    texts: &AutopilotPrompts,
+    reviews: &[Review],
+    pr: PrNumber,
+    kept: u32,
+) -> Result<Vec<String>, SectionError> {
+    let mut findings = Vec::new();
+    for review in reviews {
         if !matches!(
             review.outcome,
             ReviewOutcome::Submitted {
@@ -215,7 +291,7 @@ async fn fix_pass(
         ) {
             continue;
         }
-        let path = ctx.home.review_report_file(&review.task, pr.number, kept);
+        let path = ctx.home.review_report_file(&review.task, pr, kept);
         if let Some(file) = read_text_file(&path, MAX_REPORT_BYTES)
             .await
             .map_err(|source| SectionError::Report { path, source })?
@@ -231,18 +307,7 @@ async fn fix_pass(
             );
         }
     }
-    let values = Variables::new()
-        .with("pr", pr.number.to_string())?
-        .with("pass", passes.to_string())?
-        .with("passes", ctx.settings.config.review().fix_passes.to_string())?
-        .with("branch", branch.as_str())?
-        .with("findings", findings.join("\n\n"))?;
-    Ok(Some(
-        texts
-            .render(AutopilotPrompt::ReviewFixPass, &values)?
-            .trim_end()
-            .to_owned(),
-    ))
+    Ok(findings)
 }
 
 /// The most bytes of a report that are read back: far above [`MAX_REPORT_CHARS`](crate::daemon::review::MAX_REPORT_CHARS).
@@ -353,6 +418,15 @@ const POLL_EVERY: time::Duration = time::Duration::seconds(30);
 /// Something the human is told once.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Announcement {
+    /// The reviewers still ask for changes, the fix passes are used up and the lead put no question.
+    Decision {
+        /// The team.
+        team: TeamId,
+        /// The pull request.
+        pr: PrNumber,
+        /// When the last request for changes came.
+        requested_at: Timestamp,
+    },
     /// A reviewer ended its review again and again without a verdict.
     NoVerdict {
         /// The reviewer's task.
@@ -467,6 +541,7 @@ impl Owner {
         self.ask_for_reviews(team, round).await?;
         self.deliver_reviews(team, round)?;
         self.deliver_fix_passes(team, round)?;
+        self.ask_the_human(&pulls, team, round)?;
         Ok(())
     }
 
@@ -1017,6 +1092,124 @@ impl Owner {
             self.release(&lead, Why::FixPass, round)?;
         }
         Ok(())
+    }
+
+    /// What the pull requests that wait for the human need: the lead is woken to put the question; a lead that ran and put
+    /// none leaves the human told directly; an answer gives one more fix pass.
+    fn ask_the_human(&mut self, pulls: &Pulls, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+        let Some(team) = self.parts.state.team(team_id) else {
+            return Ok(());
+        };
+        let waiting = exhausted(team);
+        if waiting.is_empty() {
+            return Ok(());
+        }
+        let asks = asking(team);
+        let answered: Vec<Exhausted> = {
+            let roster = team.crew().roster();
+            roster.first().map_or_else(Vec::new, |(_, lead)| {
+                waiting
+                    .iter()
+                    .filter(|waits| decision(lead, waits.requested_at) == Decision::Answered)
+                    .cloned()
+                    .collect()
+            })
+        };
+        let lead = self.lead_of(team_id)?;
+        for ask in asks {
+            match ask {
+                Asking::Wake { lead, .. } => self.release(&lead, Why::AskHuman, round)?,
+                Asking::Notify { exhausted } => self.tell_decision(pulls, team_id, &lead, &exhausted)?,
+            }
+        }
+        for waits in &answered {
+            self.start_pass_after_answer(team_id, &lead, waits, round)?;
+        }
+        Ok(())
+    }
+
+    /// Tells the human, once, that the reviewers still ask for changes and nobody put the question to them.
+    fn tell_decision(
+        &mut self,
+        pulls: &Pulls,
+        team_id: &TeamId,
+        lead: &Lead,
+        waits: &Exhausted,
+    ) -> Result<(), OwnerError> {
+        let announcement = Announcement::Decision {
+            team: team_id.clone(),
+            pr: waits.pr.number,
+            requested_at: waits.requested_at,
+        };
+        if !self.watch.announced.insert(announcement) {
+            return Ok(());
+        }
+        let now = Timestamp::now(&self.parts.clock)?;
+        let values = Variables::new()
+            .with("team", team_id.as_str())
+            .and_then(|values| values.with("pr", waits.pr.number.to_string()))
+            .and_then(|values| values.with("passes", waits.passes.to_string()));
+        self.tell_human(pulls, AutopilotPrompt::NoticeDecision, values, lead, now);
+        Ok(())
+    }
+
+    /// The human answered the question about `waits`: the round machine gives the lead one more fix pass.
+    fn start_pass_after_answer(
+        &mut self,
+        team_id: &TeamId,
+        lead: &Lead,
+        waits: &Exhausted,
+        round: &mut Round,
+    ) -> Result<(), OwnerError> {
+        let Some(team) = self.parts.state.team(team_id) else {
+            return Ok(());
+        };
+        let policy = RoundPolicy::new(team.merge(), self.parts.settings.config.review());
+        let mut moving = Vec::new();
+        for id in &waits.items {
+            let Some(progress) = team.item(*id) else {
+                continue;
+            };
+            let next = after_answer(progress, policy);
+            match next {
+                Ok(Next::FixPass { .. }) => moving.push(*id),
+                Ok(other) => {
+                    tracing::warn!(team = %team_id, item = %id, ?other, "the round does not take the answer of the human as a fix pass");
+                }
+                Err(error) => {
+                    tracing::warn!(team = %team_id, item = %id, error = %error_chain(&error), "the round does not take the answer of the human");
+                }
+            }
+        }
+        for id in moving {
+            let mut team_mut = self
+                .parts
+                .state
+                .team_mut(team_id)
+                .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+            let mut item = team_mut.item_mut(id).ok_or_else(|| OwnerError::LostItem {
+                team: team_id.clone(),
+                item: id,
+            })?;
+            let after = ItemPhase::Fixing {
+                assignee: lead.agent.clone(),
+                branch: waits.pr.branch.clone(),
+                pr: waits.pr.clone(),
+            };
+            let status = after.kind().status();
+            item.advance(after).map_err(|source| OwnerError::Item {
+                team: team_id.clone(),
+                item: id,
+                source,
+            })?;
+            round.events.push(EventKind::ItemStatus {
+                team: team_id.clone(),
+                item: id,
+                status,
+            });
+            round.changed = true;
+        }
+        self.release(&lead.task, Why::FixPass, round)
     }
 
     /// Takes the final message of the reviewer `task`, whose run ended with `STATUS: DONE`: its verdict is recorded, posted
