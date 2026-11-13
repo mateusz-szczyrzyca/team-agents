@@ -383,9 +383,9 @@ async fn a_gate_that_ends_is_told_to_the_subscribers_and_logged_in_the_activity_
     );
     let activity = std::fs::read_to_string(rig.home.activity_log(&task(1))).unwrap();
     let line: serde_json::Value = serde_json::from_str(activity.lines().last().unwrap()).unwrap();
-    assert_eq!(line["event"]["kind"], serde_json::json!("info"), "{line}");
+    assert_eq!(line["kind"], serde_json::json!("info"), "{line}");
     assert!(
-        line["event"]["text"].as_str().unwrap().contains("gate failed (exit 2)"),
+        line["message"].as_str().unwrap().contains("gate failed (exit 2)"),
         "{line}"
     );
 }
