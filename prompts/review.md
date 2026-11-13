@@ -20,7 +20,7 @@ The task behind the PR is below. Check the PR's compliance with the repository i
 ## How to review
 
 1. Fetch the PR: `gh pr view {{PR_NUMBER}} --json title,body,files,headRefOid,baseRefName,url`, its changed files
-   (`gh pr diff {{PR_NUMBER}} --name-only`), then the diff of one file at a time in your worktree
+   (the `files` of that JSON), then the diff of one file at a time in your worktree
    (`git diff origin/<base>...HEAD -- <file>`) — not the whole diff at once: what you print is read again at every
    later step. A large file is read in parts too: `grep -n` for the place, then some 150 lines around it.
 2. Read the changes in the context of the whole code base (worktree). Assess: correctness against the task,
