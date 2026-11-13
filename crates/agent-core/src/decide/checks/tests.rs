@@ -789,6 +789,57 @@ fn a_file_the_description_names_may_have_markers_and_another_file_still_may_not(
     );
 }
 
+// Rule: the description names a file with its whole path; a longer path that ends with it, or one that goes on after
+// it, names another file.
+#[test]
+fn a_longer_path_that_contains_the_file_does_not_name_it() {
+    for description in [
+        "Suppressions: `crates/other/src/a.rs` keeps an allow.",
+        "Suppressions: crates/other/src/a.rs keeps an allow.",
+        "Suppressions: `src/a.rs.orig` keeps an allow.",
+        "Suppressions: `src/a.rsx` keeps an allow.",
+        "Suppressions: `my-src/a.rs` keeps an allow.",
+    ] {
+        let facts = marked(
+            &["src/a.rs"],
+            vec![line("src/a.rs", 3, "#[allow(dead_code)]")],
+            description,
+        );
+
+        assert_eq!(
+            found(&facts),
+            [Issue::Marker {
+                path: path("src/a.rs"),
+                marker: Marker::SuppressesLint,
+                line: 3,
+                count: 1
+            }],
+            "{description}"
+        );
+    }
+}
+
+#[test]
+fn the_whole_path_names_the_file_wherever_it_stands_in_a_line() {
+    for description in [
+        "Suppressions: `src/a.rs` keeps an allow.",
+        "Suppressions: src/a.rs keeps an allow.",
+        "Suppressions: in src/a.rs.",
+        "- [`src/a.rs`](https://github.example.com/o/r/blob/abc/src/a.rs) keeps an allow",
+        "src/a.rs",
+        "(src/a.rs)",
+        "Ünïcode: «src/a.rs», kept.",
+    ] {
+        let facts = marked(
+            &["src/a.rs"],
+            vec![line("src/a.rs", 3, "#[allow(dead_code)]")],
+            description,
+        );
+
+        assert_eq!(found(&facts), [], "{description}");
+    }
+}
+
 #[test]
 fn a_file_with_an_allowed_subject_may_have_markers() {
     let facts = marked(&["src/lib.rs"], vec![line("src/lib.rs", 3, "#[allow(dead_code)]")], "");
