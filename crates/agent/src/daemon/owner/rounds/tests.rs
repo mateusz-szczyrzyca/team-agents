@@ -437,3 +437,105 @@ async fn a_request_for_changes_sends_the_item_back_to_its_lead_for_a_fix_pass_th
     assert_eq!(rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")), []);
     assert_ne!(rig.remote_tip("main"), rig.remote_tip(&branch));
 }
+
+// ---- fix passes ----------------------------------------------------------------------------------------------
+
+/// A reviewer that asks for changes the first time and approves afterwards.
+const CHANGES_ONCE: &str = "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] src/lib.rs:7 — the case is untested,done:VERDICT: APPROVE\\nSUMMARY: fixed";
+
+/// A rig with a solo agent that works twice on its item (the second time is the fix pass), a reviewer that asks for
+/// changes once and one that approves.
+async fn fixing_rig(fix_passes: u32) -> Rig {
+    Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", APPROVING),
+        ],
+        fix_passes,
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn the_lead_is_given_the_fix_pass_with_the_findings_of_the_reviewers() {
+    let mut rig = fixing_rig(5).await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let prompt = rig.prompt(&tasks[0], 2).await;
+    rig.stop().await.unwrap();
+
+    assert!(prompt.contains("THE REVIEWERS ASKED FOR CHANGES"), "{prompt}");
+    assert!(prompt.contains("pull request #1, fix pass 1 of 5"), "{prompt}");
+    assert!(
+        prompt.contains("1. [TDD-2] src/lib.rs:7 — the case is untested"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("inv-r1"), "{prompt}");
+    assert!(
+        prompt.contains(&format!("agents/claude-1/{}-1.1", tasks[0])),
+        "{prompt}"
+    );
+    assert!(prompt.contains("agent gate"), "{prompt}");
+}
+
+#[tokio::test]
+async fn a_fixed_branch_updates_the_pull_request_and_is_reviewed_again_until_it_is_merged() {
+    let mut rig = fixing_rig(5).await;
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    // One pull request, updated: the second push of the branch is a comment on it.
+    assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
+    let comments = rig.github.comments(1);
+    assert_eq!(comments.len(), 1, "{comments:?}");
+    assert!(comments[0].contains("The branch was updated to"), "{}", comments[0]);
+    let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
+    assert!(comments[0].contains(&rig.remote_tip(&branch)), "{}", comments[0]);
+    // Four reviews were posted: two on the first head, two on the fixed one.
+    assert_eq!(rig.github.reviews(1).len(), 4);
+    let merges = rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge"));
+    assert_eq!(merges.len(), 1);
+    assert_eq!(merges[0].json()["sha"], rig.remote_tip(&branch));
+    let progress = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(progress.fix_passes().len(), 1);
+    // The reports of the second round are kept apart from those of the first.
+    for member in state.team(&team).unwrap().reviewers() {
+        let number = agent_core::state::PrNumber::new(std::num::NonZeroU32::MIN);
+        assert!(rig.home.review_report_file(member.task(), number, 0).exists());
+        assert!(rig.home.review_report_file(member.task(), number, 1).exists());
+    }
+}
+
+#[tokio::test]
+async fn a_fix_pass_whose_gate_has_not_passed_does_not_update_the_pull_request() {
+    let mut rig = Rig::new(
+        &[
+            // The second run, the fix pass, commits nothing and records no gate.
+            normal("claude-1", "work,done"),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.prompt(&tasks[0], 2).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(rig.github.comments(1), Vec::<String>::new());
+    assert_eq!(rig.github.reviews(1).len(), 2);
+    assert!(matches!(phase_of(&rig.state(), "1.1"), ItemPhase::Fixing { .. }));
+}
