@@ -89,6 +89,7 @@ impl Owner {
         else {
             return Ok(None);
         };
+        // A lead the checks have not seen has no record: the empty one is what it holds.
         let mut record = self
             .parts
             .store

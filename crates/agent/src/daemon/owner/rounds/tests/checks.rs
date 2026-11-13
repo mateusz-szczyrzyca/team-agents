@@ -617,7 +617,7 @@ async fn each_question_is_answered_for_its_own_file_and_only_what_was_refused_go
     let back = rig.prompt(&tasks[0], 4).await;
     rig.stop().await.unwrap();
 
-    let titles: Vec<&str> = file.entries().iter().map(|entry| entry.title()).collect();
+    let titles: Vec<&str> = file.entries().iter().map(agent_core::questions::Entry::title).collect();
     assert!(
         titles[0].contains("`tests/existing.txt`") && titles[1].contains("`tests/other.txt`"),
         "{titles:?}"
