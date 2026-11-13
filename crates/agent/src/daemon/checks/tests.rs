@@ -416,6 +416,44 @@ fn a_question_of_the_file_that_names_no_subject_is_ignored() {
     assert_eq!(decisions(&subjects, &file).allowed, [file_subject("a.rs")]);
 }
 
+/// A questions file with the questions `numbers`, in that order, each answered with its verdict.
+fn file_numbered(answers: &[(u32, &str)]) -> QuestionsFile {
+    let entries = answers
+        .iter()
+        .map(|(n, _)| agent_core::questions::Entry::new(number(*n), &format!("question {n}")).unwrap())
+        .collect();
+    let mut file = QuestionsFile::new("Questions", entries).unwrap();
+    for (n, verdict) in answers {
+        file.set_verdict(number(*n), Some(Verdict::from_text(verdict).unwrap().unwrap()))
+            .unwrap();
+    }
+    file
+}
+
+// Rule: the answer to a subject is the verdict of the question with its number, wherever the question is in the file: a
+// question the lead or the human removed passes its permission to no other subject.
+#[test]
+fn a_removed_question_is_refused_and_passes_its_permission_to_no_other_subject() {
+    let subjects = [file("a.rs"), file("b.rs")];
+    let file = file_numbered(&[(2, "allow")]);
+
+    let decided = decisions(&subjects, &file);
+
+    assert_eq!(decided.allowed, [file_subject("b.rs")]);
+    assert_eq!(decided.refused, [file_subject("a.rs")]);
+}
+
+#[test]
+fn questions_in_another_order_are_matched_by_their_numbers() {
+    let subjects = [file("a.rs"), file("b.rs")];
+    let file = file_numbered(&[(2, "allow"), (1, "refuse")]);
+
+    let decided = decisions(&subjects, &file);
+
+    assert_eq!(decided.allowed, [file_subject("b.rs")]);
+    assert_eq!(decided.refused, [file_subject("a.rs")]);
+}
+
 #[test]
 fn the_lack_of_tests_is_allowed_like_a_file() {
     let subjects = [Subject::NoTests];
