@@ -116,6 +116,15 @@ pub(super) fn pair_state() -> State {
     state
 }
 
+/// [`pair_state`] with a reviewer, an investigator outside the crew, as task 3.
+pub(super) fn reviewed_pair_state() -> State {
+    let mut state = pair_state();
+    state
+        .add_reviewer(&team_id(0), member(3, crate::fixtures::investigator("inv-1")))
+        .unwrap();
+    state
+}
+
 /// A daemon in a temporary home.
 pub(super) struct Daemon {
     _dir: tempfile::TempDir,
@@ -137,7 +146,7 @@ impl Daemon {
         let bus_line = bus.map_or_else(String::new, |bus| format!("agentbus = \"{}\"\n", bus.display()));
         let config = format!(
             "[agents.claude-1]\ncli = \"claude\"\n[agents.claude-2]\ncli = \"claude\"\n\
-             [tiers]\nnormal = [\"claude-1\", \"claude-2\"]\n[binaries]\nclaude = \"{}\"\n{bus_line}\
+             [investigators.inv-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\", \"claude-2\"]\n[binaries]\nclaude = \"{}\"\n{bus_line}\
              [watchdog]\nhang_minutes = 1\nhang_strikes = 3\n\
              [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
             fake_cli()

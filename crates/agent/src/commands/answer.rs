@@ -162,6 +162,19 @@ pub(crate) async fn answer(
         }
     };
     let list = answers_in(&path, &task).await?;
+    send(connection, task, &open, list, editing, out).await
+}
+
+/// Sends the answers `list` for the round `open` of `task`. When the daemon refuses them because the question is no longer
+/// open and the file was edited, the daemon took them from the saved file first, which is no error.
+async fn send(
+    connection: &mut Connection,
+    task: TaskId,
+    open: &OpenRound,
+    list: AnswerList,
+    editing: bool,
+    out: &mut impl Write,
+) -> Result<(), AnswerError> {
     let request = Command::Answer(AnswerRequest {
         task: task.clone(),
         round: open.round,

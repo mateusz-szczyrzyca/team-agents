@@ -19,6 +19,15 @@ use crate::daemon::control::{Halt, Skipped, Steer, Step, decide};
 /// The name the human's messages carry on the bus.
 const HUMAN: &str = "human";
 
+/// Whose tasks a team target reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    /// The crew of the team and the reviewers of its pull requests.
+    CrewAndReviewers,
+    /// The crew of the team.
+    Crew,
+}
+
 /// A task of a target, with its team.
 struct Aimed {
     /// The task.
@@ -40,7 +49,7 @@ impl Owner {
         steer: Steer,
         target: &Target,
     ) -> Result<Result<Reply, Failure>, OwnerError> {
-        let aimed = match self.aim(target, true) {
+        let aimed = match self.aim(target, Reach::CrewAndReviewers) {
             Ok(aimed) => aimed,
             Err(failure) => return Ok(Err(failure)),
         };
@@ -85,8 +94,8 @@ impl Owner {
         Ok(Ok(Reply::Applied { tasks: reached }))
     }
 
-    /// The tasks of `target`: a task, or the tasks of a team — its crew and, when `reviewers` is set, its reviewers.
-    fn aim(&self, target: &Target, reviewers: bool) -> Result<Vec<Aimed>, Failure> {
+    /// The tasks of `target`: a task, or the tasks `reach` says of a team.
+    fn aim(&self, target: &Target, reach: Reach) -> Result<Vec<Aimed>, Failure> {
         match target {
             Target::Task(task) => {
                 let found = self.parts.state.find_task(task).ok_or_else(|| Failure {
@@ -104,12 +113,12 @@ impl Owner {
                     message: format!("there is no team {team}"),
                 })?;
                 let crew = found.crew().roster().into_iter().map(|(_, member)| member);
-                let tasks: Vec<TaskId> = if reviewers {
-                    crew.chain(found.reviewers().iter())
+                let tasks: Vec<TaskId> = match reach {
+                    Reach::CrewAndReviewers => crew
+                        .chain(found.reviewers().iter())
                         .map(|member| member.task().clone())
-                        .collect()
-                } else {
-                    crew.map(|member| member.task().clone()).collect()
+                        .collect(),
+                    Reach::Crew => crew.map(|member| member.task().clone()).collect(),
                 };
                 Ok(tasks
                     .into_iter()
@@ -170,6 +179,15 @@ impl Owner {
         }
     }
 
+    /// The status of `task` whose run ended by itself, which `settled` would send to, once the human's word asked for it to
+    /// stop or pause is taken into account.
+    pub(super) fn after_halt(&mut self, task: &TaskId, settled: TaskStatus) -> TaskStatus {
+        match self.halts.remove(task) {
+            Some(halt) => crate::daemon::control::after_halt(halt, settled),
+            None => settled,
+        }
+    }
+
     /// Waits until the runs of `halted` have ended and their tasks are recorded.
     ///
     /// The runs of other tasks that end meanwhile are recorded as they come.
@@ -179,6 +197,10 @@ impl Owner {
                 break;
             };
             self.settle_joined(joined).await?;
+        }
+        // A halt whose run was gone already is not left for the next run of the task.
+        for task in halted {
+            self.halts.remove(task);
         }
         Ok(())
     }
@@ -233,7 +255,7 @@ impl Owner {
         request: SayRequest,
     ) -> Result<Result<Reply, Failure>, OwnerError> {
         let SayRequest { target, text } = request;
-        let aimed = match self.aim(&target, false) {
+        let aimed = match self.aim(&target, Reach::Crew) {
             Ok(aimed) => aimed,
             Err(failure) => return Ok(Err(failure)),
         };

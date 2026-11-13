@@ -143,6 +143,8 @@ const fn writes(kind: notify::EventKind) -> bool {
 /// The task and the round of the file at `path`, when it is `<task>/questions-<round>.md`.
 fn saved_file(path: &Path) -> Option<Saved> {
     let name = path.file_name()?.to_str()?;
+    // A name or a directory that is not a questions file of a task is not an error: the directory has other files, and
+    // the watch tells only about these.
     let round = name
         .strip_prefix(FILE_PREFIX)?
         .strip_suffix(FILE_SUFFIX)?

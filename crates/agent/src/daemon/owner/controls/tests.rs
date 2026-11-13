@@ -8,7 +8,7 @@ use agent_core::state::{RunEnd, RunState, State};
 use agent_core::status::TaskStatus;
 use serde_json::json;
 
-use super::super::fixture::{Daemon, agentbus_binary, pair_state};
+use super::super::fixture::{Daemon, agentbus_binary, pair_state, reviewed_pair_state};
 use crate::client::ClientError;
 use crate::fixtures::{solo_state, task, team_id};
 
@@ -230,6 +230,40 @@ async fn stopping_a_team_stops_every_task_of_it_and_the_event_is_for_the_team() 
             "task {n}"
         );
     }
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn stopping_a_team_stops_its_reviewers_too_and_a_word_to_it_is_not_for_them() {
+    let mut daemon = Daemon::new(&reviewed_pair_state(), Some(agentbus_binary()));
+    for n in [1, 2, 3] {
+        daemon.scenario(n, "busy");
+    }
+    daemon.start().await;
+    for n in [1, 2, 3] {
+        daemon.status_is(n, TaskStatus::Running).await;
+    }
+
+    let said = daemon.ask(say(Target::Team(team_id(0)), "Hello.")).await.unwrap();
+    let stopped = daemon
+        .ask(control(ControlAction::Stop, Target::Team(team_id(0))))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        said,
+        Reply::Applied {
+            tasks: vec![task(1), task(2)]
+        }
+    );
+    assert_eq!(
+        stopped,
+        Reply::Applied {
+            tasks: vec![task(1), task(2), task(3)]
+        }
+    );
+    let state = daemon.state();
+    assert_eq!(status(&state, 3), TaskStatus::Stopped);
     daemon.stop().await.unwrap();
 }
 

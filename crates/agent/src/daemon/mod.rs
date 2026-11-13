@@ -205,14 +205,7 @@ pub(crate) async fn run_in(
     sides.spawn(server::serve(listener, inbox, serving));
     let delivering = Arc::clone(&texts);
     sides.spawn(notifier::run(deliveries, delivering, notifier));
-    let opens = match settings.config.questions().open {
-        OpenQuestions::Off => None,
-        OpenQuestions::Vscode => {
-            let (opens, files) = mpsc::channel(opener::QUEUE);
-            sides.spawn(opener::run(files, vscode_opener(&settings, &surroundings)));
-            Some(opens)
-        }
-    };
+    let opens = start_opener(&mut sides, &settings, &surroundings);
 
     let owner = Owner::new(
         OwnerParts {
@@ -260,6 +253,22 @@ fn make_bus(home: &Home, settings: &Settings) -> AgentBus {
         home.absolute_root().clone(),
     )
     .with_timeout(BUS_TIMEOUT)
+}
+
+/// Starts the opener of questions files among `sides` when the configuration asks for it; the channel to it is returned.
+fn start_opener(
+    sides: &mut JoinSet<()>,
+    settings: &Settings,
+    surroundings: &Surroundings,
+) -> Option<mpsc::Sender<PathBuf>> {
+    match settings.config.questions().open {
+        OpenQuestions::Off => None,
+        OpenQuestions::Vscode => {
+            let (opens, files) = mpsc::channel(opener::QUEUE);
+            sides.spawn(opener::run(files, vscode_opener(settings, surroundings)));
+            Some(opens)
+        }
+    }
 }
 
 /// The directories of the VS Code servers a home user has, under the home directory: the usual three.

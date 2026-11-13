@@ -212,13 +212,18 @@ fn children(dir: &Path) -> Result<Vec<PathBuf>, OpenError> {
         .collect()
 }
 
-/// What a file of the host is, as far as the opener cares.
-fn look(path: &Path, follow: bool) -> Result<Option<fs::Metadata>, OpenError> {
-    let looked = if follow {
-        fs::metadata(path)
-    } else {
-        fs::symlink_metadata(path)
-    };
+/// The metadata of `path`, following a link; `None` for a file that is not there.
+fn look_through(path: &Path) -> Result<Option<fs::Metadata>, OpenError> {
+    seen(path, fs::metadata(path))
+}
+
+/// The metadata of `path` itself, not of what a link points to; `None` for a file that is not there.
+fn look_at(path: &Path) -> Result<Option<fs::Metadata>, OpenError> {
+    seen(path, fs::symlink_metadata(path))
+}
+
+/// `looked`, the result of looking at `path`, with a file that is not there as `None`.
+fn seen(path: &Path, looked: io::Result<fs::Metadata>) -> Result<Option<fs::Metadata>, OpenError> {
     match looked {
         Ok(metadata) => Ok(Some(metadata)),
         // A file that was there a moment ago and is gone — a window that closed — is not there.
@@ -242,7 +247,7 @@ fn changed(path: &Path, metadata: &fs::Metadata) -> Result<SystemTime, OpenError
 fn newest(paths: Vec<PathBuf>) -> Result<Option<PathBuf>, OpenError> {
     let mut best: Option<(SystemTime, PathBuf)> = None;
     for path in paths {
-        let Some(metadata) = look(&path, true)? else {
+        let Some(metadata) = look_through(&path)? else {
             continue;
         };
         if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
@@ -267,7 +272,7 @@ fn windows(dir: &Path, uid: u32) -> Result<Vec<PathBuf>, OpenError> {
         if !named {
             continue;
         }
-        let Some(metadata) = look(&path, false)? else {
+        let Some(metadata) = look_at(&path)? else {
             continue;
         };
         // A socket of another user is not ours to talk to.

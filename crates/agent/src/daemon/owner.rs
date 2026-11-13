@@ -43,7 +43,7 @@ use tokio_util::sync::CancellationToken;
 
 use self::start::{Context, Plan, next_round, plan};
 use self::teams::{Outbound, Served};
-use super::control::{Halt, Steer, after_halt};
+use super::control::{Halt, Steer};
 use super::notice::Notice;
 use super::notifier::Delivery;
 use super::questions;
@@ -601,10 +601,7 @@ impl Owner {
             Settled::Hung => self.hung(task, run.progress)?,
         };
         // The human asked for a stop or a pause while the run was ending by itself: their word wins where it can.
-        let status = match self.halts.remove(task) {
-            Some(halt) => after_halt(halt, status),
-            None => status,
-        };
+        let status = self.after_halt(task, status);
         self.move_to(task, &located.team, status, &mut events)?;
         self.commit(task, &located, now, events, notice).await?;
         self.after_run(task, &located, &run.classified.end, run.final_message.as_deref())
