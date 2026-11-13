@@ -220,3 +220,29 @@ fn rust_cfg_not_test_asks_whether_the_code_runs_under_test() {
         ],
     );
 }
+
+// Rule: a raw string of a `cfg_attr` is read as a string whatever quotes it holds inside; what follows it still is an
+// attribute that is applied, and a word inside it is not.
+#[test]
+fn rust_raw_strings_of_a_cfg_attr_are_read_as_strings() {
+    expect(
+        "rs",
+        &[
+            (
+                "#[cfg_attr(docsrs, doc = r#\"odd \" quote\"#, allow(unused))]",
+                &[Marker::SuppressesLint],
+            ),
+            (
+                "#[cfg_attr(docsrs, doc = r##\"a \"# quote\"##, ignore)]",
+                &[Marker::SkipsTest],
+            ),
+            (
+                "#[cfg_attr(docsrs, doc = br#\"a \" b\"#, allow(unused))]",
+                &[Marker::SuppressesLint],
+            ),
+            ("#[cfg_attr(docsrs, doc = r#\"ignore \" allow(x)\"#)]", &[]),
+            ("#[cfg_attr(docsrs, doc = r\"ignore\")]", &[]),
+            ("#[cfg_attr(docsrs, doc = r#\"never closed, allow(x)\")]", &[]),
+        ],
+    );
+}
