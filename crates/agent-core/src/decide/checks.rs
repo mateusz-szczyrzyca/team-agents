@@ -502,9 +502,11 @@ fn names_path(description: &str, path: &RepoPath) -> bool {
     })
 }
 
-/// Whether `c` may be part of a path as a description writes it: a letter, a digit, `/`, `.`, `_` or `-`.
+/// Whether `c` may be part of a path as a description writes it: a letter, a digit, `/`, `.`, `_`, `-`, or one of `~`,
+/// `+` and `%`, which end the names of backup and versioned files (`a.rs~`). A `#` is not one: it opens the anchor
+/// of a link.
 fn is_path_char(c: char) -> bool {
-    c.is_alphanumeric() || matches!(c, '/' | '.' | '_' | '-')
+    c.is_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '~' | '+' | '%')
 }
 
 /// The added lines that have a marker, one issue for each file and kind, in a file the description does not name.
