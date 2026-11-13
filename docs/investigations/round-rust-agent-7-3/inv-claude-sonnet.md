@@ -32,8 +32,8 @@ waiting on it is not cut by the watchdog.
 
 ## Size
 
-`1,275` changed lines outside tests by the PR-1 command (limit `5,000` for this plan, `1,500` in PR-1); `28` files, `+3,458` /
-`−42` in all (tests included, report excluded). One purpose; no split needed.
+`1,323` changed lines outside tests by the PR-1 command (limit `5,000` for this plan, `1,500` in PR-1; the report excluded); `29` files,
+`+3,647` / `−42` in all with tests (after review pass 1). One purpose; no split needed.
 
 ## Checks run by me
 
@@ -116,6 +116,25 @@ test of another not-yet-served command, or delete it.
   (a constructor in the RED commit of the item that adds the type): this cost a parallel `GateRecord` here.
 - The "RED commit" bodies of an item that wires something new into `OwnerParts`-like structs should come with builders in the earlier
   item, for the same reason.
+
+## Review pass 1 (`inv-kimi-deepinfra`, [review](https://github.com/mateusz-szczyrzyca/team-agents/pull/96#pullrequestreview-5892004126))
+
+- **Major 1 — only the state before the command was recorded.** Right: a gate that appended to a tracked file was recorded as a
+  clean pass. `daemon::gate` now reads the worktree again after the command and its process group have ended; the tree is
+  recorded `clean` only when it was clean at both ends and `HEAD` did not move. A gate that changed the tree or committed is
+  `not_clean`, at the commit it started from, so `counts_as_pass()` is false. Tests (RED first): `a_gate_that_changes_a_tracked_file_...`,
+  `a_gate_that_leaves_an_untracked_file_...`, `a_gate_that_commits_...`, `a_gate_that_fails_after_changing_a_file_...`, and the guard
+  `a_gate_that_puts_the_tree_back_as_it_found_it_is_recorded_as_clean`. Consequence: the files a gate leaves in the worktree must
+  be ignored by git (`target/`, `build/`), otherwise its pass is not a pass of the commit; documented in `docs/architecture.md`.
+- **Major 2 — a stop did not stop the gate of a task with no run.** Right: such a gate had only the daemon's shutdown token. The
+  owner now keeps a token per task for gates asked while no run is going (`Owner::gate_stops`) and cancels it when the human stops or
+  pauses the task (`move_task`, `halt`). Tests (RED first): `stopping_a_task_with_no_run_stops_its_gate`,
+  `pausing_a_task_with_no_run_stops_its_gate`, `stopping_one_task_leaves_the_gate_of_another_task_with_no_run_going`. A token of a
+  task that is never stopped stays in the map until the daemon ends: one entry per task that asked for a gate.
+- **Major 3 — the PR description.** The block "Round size" is written by the script and counts tests: `agent round-size` says `3,829`
+  lines in `30` files, over the `3,000` of the general round limit; the plan's PR-1 limit (tests not counted, `5,000` here) is what
+  applies to a PR of this plan, and the PR-1 command gives `1,323` outside tests (the report excluded). The description now has
+  the what and why, the checks, the deviations and the reason of every file outside the two of the item; this report has the detail.
 
 ## Commits
 
