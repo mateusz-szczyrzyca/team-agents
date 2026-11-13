@@ -39,6 +39,12 @@ pub enum ControlAction {
     Say,
 }
 
+impl From<ControlAction> for &'static str {
+    fn from(_: ControlAction) -> Self {
+        ""
+    }
+}
+
 /// What happened.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -362,6 +368,19 @@ mod tests {
             assert_eq!(serde_json::from_value::<ControlAction>(json!(text)).unwrap(), action);
         }
         assert_refused::<ControlAction>(&json!("kill"));
+    }
+
+    #[test]
+    fn a_control_names_itself_as_the_human_types_it() {
+        for (action, text) in [
+            (ControlAction::Stop, "stop"),
+            (ControlAction::Pause, "pause"),
+            (ControlAction::Unpause, "unpause"),
+            (ControlAction::Resume, "resume"),
+            (ControlAction::Say, "say"),
+        ] {
+            assert_eq!(<&'static str>::from(action), text);
+        }
     }
 
     #[test]
