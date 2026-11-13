@@ -66,4 +66,16 @@ mod text_file_replace {
             "{error:?}"
         );
     }
+
+    #[tokio::test]
+    async fn a_path_without_a_directory_is_refused_and_names_it() {
+        let root = std::path::Path::new("/");
+
+        let error = replace_text_file(root, "text", 0o644).await.unwrap_err();
+
+        assert!(
+            matches!(&error, ReplaceError::NoDirectory { path } if path == root),
+            "{error:?}"
+        );
+    }
 }

@@ -71,24 +71,45 @@ mod editor {
         fn window(&mut self, dir: &Path, name: &str, age: u64) -> PathBuf {
             let socket = dir.join(format!("vscode-ipc-{name}.sock"));
             self.listeners.push(UnixListener::bind(&socket).unwrap());
-            let then = SystemTime::now() - Duration::from_secs(age);
-            let since = then.duration_since(SystemTime::UNIX_EPOCH).unwrap();
-            let stamp = Timespec {
-                tv_sec: i64::try_from(since.as_secs()).unwrap(),
-                tv_nsec: 0,
-            };
-            utimensat(
-                CWD,
-                &socket,
-                &Timestamps {
-                    last_access: stamp,
-                    last_modification: stamp,
-                },
-                AtFlags::empty(),
-            )
-            .unwrap();
+            grow_old(&socket, age);
             socket
         }
+    }
+
+    /// Sets the time `path` was last changed to `age` seconds ago.
+    fn grow_old(path: &Path, age: u64) {
+        let then = SystemTime::now() - Duration::from_secs(age);
+        let since = then.duration_since(SystemTime::UNIX_EPOCH).unwrap();
+        let stamp = Timespec {
+            tv_sec: i64::try_from(since.as_secs()).unwrap(),
+            tv_nsec: 0,
+        };
+        utimensat(
+            CWD,
+            path,
+            &Timestamps {
+                last_access: stamp,
+                last_modification: stamp,
+            },
+            AtFlags::empty(),
+        )
+        .unwrap();
+    }
+
+    /// A remote command at `dir/code` that records its own path where the stand-in would record the file, with the
+    /// permission bits `mode`, last changed `age` seconds ago.
+    fn command_that_names_itself(dir: &Path, mode: u32, age: u64) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join("code");
+        std::fs::write(
+            &path,
+            "#!/bin/sh\nprintf '%s\\n' \"$0\" >> \"$VSCODE_IPC_HOOK_CLI.opened\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        grow_old(&path, age);
+        path
     }
 
     /// The files the stand-in command opened through `socket`.
@@ -254,5 +275,89 @@ mod editor {
         let opened = looking.open(Path::new("/f.md")).await.unwrap();
 
         assert_eq!(opened, Opened::NoServer);
+    }
+
+    #[tokio::test]
+    async fn of_two_servers_the_command_changed_last_is_the_one_that_runs() {
+        let mut host = Host::new();
+        let older = host.servers.join("cli/servers/Stable-1/server/bin/remote-cli");
+        let newer = host.servers.join("cli/servers/Stable-2/server/bin/remote-cli");
+        command_that_names_itself(&older, 0o755, 1000);
+        let expected = command_that_names_itself(&newer, 0o755, 10);
+        let socket = host.window(&host.runtime.clone(), "a", 10);
+
+        host.opener().open(Path::new("/f.md")).await.unwrap();
+
+        assert_eq!(opened_through(&socket), [expected.display().to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_command_that_is_not_executable_is_not_run_however_new_it_is() {
+        let mut host = Host::new();
+        let older = host.servers.join("cli/servers/Stable-1/server/bin/remote-cli");
+        let newer = host.servers.join("cli/servers/Stable-2/server/bin/remote-cli");
+        let expected = command_that_names_itself(&older, 0o755, 1000);
+        command_that_names_itself(&newer, 0o644, 10);
+        let socket = host.window(&host.runtime.clone(), "a", 10);
+
+        host.opener().open(Path::new("/f.md")).await.unwrap();
+
+        assert_eq!(opened_through(&socket), [expected.display().to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_server_whose_only_command_is_not_executable_is_no_server() {
+        let mut host = Host::new();
+        command_that_names_itself(
+            &host.servers.join("cli/servers/Stable-1/server/bin/remote-cli"),
+            0o644,
+            10,
+        );
+        host.window(&host.runtime.clone(), "a", 10);
+
+        let opened = host.opener().open(Path::new("/f.md")).await.unwrap();
+
+        assert_eq!(opened, Opened::NoServer);
+    }
+
+    #[tokio::test]
+    async fn a_directory_of_sockets_that_cannot_be_listed_is_a_list_error_that_names_it() {
+        let host = Host::new();
+        host.server("Stable-1", "code");
+        let not_a_directory = host.runtime.join("file");
+        std::fs::write(&not_a_directory, "x").unwrap();
+        let looking = VscodeOpener::new(
+            vec![host.servers.clone()],
+            SocketDirs {
+                runtime: not_a_directory.clone(),
+                fallback: host.fallback.clone(),
+            },
+        );
+
+        let error = looking.open(Path::new("/f.md")).await.unwrap_err();
+
+        assert!(
+            matches!(&error, OpenError::List { path, .. } if *path == not_a_directory),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_command_that_cannot_be_started_is_a_start_error_that_names_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut host = Host::new();
+        let dir = host.servers.join("cli/servers/Stable-1/server/bin/remote-cli");
+        std::fs::create_dir_all(&dir).unwrap();
+        let program = dir.join("code");
+        std::fs::write(&program, "#!/nonexistent/interpreter\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        host.window(&host.runtime.clone(), "a", 10);
+
+        let error = host.opener().open(Path::new("/f.md")).await.unwrap_err();
+
+        assert!(
+            matches!(&error, OpenError::Start { program: named, .. } if *named == program),
+            "{error:?}"
+        );
     }
 }
