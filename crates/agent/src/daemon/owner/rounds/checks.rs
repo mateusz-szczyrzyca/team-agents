@@ -22,7 +22,7 @@ use super::super::start::next_round;
 use super::super::{Notice, Owner, OwnerError};
 use super::publish::{Ready, Site};
 use super::{Announcement, Lead, PublishError, Pulls};
-use crate::daemon::checks::{MAX_RELAYS, decisions, questions, team_message};
+use crate::daemon::checks::{MAX_RELAYS, authored, decisions, questions, team_message};
 use crate::daemon::questions;
 use crate::daemon::team::Why;
 
@@ -123,7 +123,10 @@ impl Owner {
                 }
             }
         }
-        let issues = self.round_issues(lead, reviewing, &rules, &record).await?;
+        // The description the harness would write for these items names files in passing: what counts is what somebody added.
+        let harness = self.pull_text_of(pulls, team, &lead.repo, reviewing.items, &reviewing.ready.record)?;
+        let written = authored(reviewing.description, &harness.body);
+        let issues = self.round_issues(lead, reviewing, &written, &rules, &record).await?;
         let policy = ChecksPolicy::new(self.parts.settings.config.review());
         let checking = Checking::after(record.passes_of(reviewing.items));
         match checking.conclude(&issues, &refused, policy) {
@@ -174,11 +177,13 @@ impl Owner {
         }
     }
 
-    /// What the checks find in the round of `reviewing`, without what the human allowed for its items.
+    /// What the checks find in the round of `reviewing`, whose pull request somebody described as `description`, without what
+    /// the human allowed for its items.
     async fn round_issues(
         &self,
         lead: &Lead,
         reviewing: &Reviewing<'_>,
+        description: &str,
         rules: &agent_core::config::Checks,
         record: &ChecksRecord,
     ) -> Result<Vec<agent_core::decide::checks::Issue>, PublishError> {
@@ -189,7 +194,7 @@ impl Owner {
         let merge_base = git
             .merge_base(&Revision::RemoteBranch(base), &Revision::Commit(tip.clone()))
             .await?;
-        let facts = git.round_facts(&merge_base, tip, reviewing.description).await?;
+        let facts = git.round_facts(&merge_base, tip, description).await?;
         Ok(assess(rules, &facts, &record.allowed_of(reviewing.items)))
     }
 

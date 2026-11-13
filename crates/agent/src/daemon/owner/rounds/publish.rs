@@ -42,7 +42,7 @@ pub(super) struct Ready {
     /// The tip of the branch.
     pub(super) tip: CommitId,
     /// What the gate recorded.
-    record: GateRecord,
+    pub(super) record: GateRecord,
 }
 
 /// What an attempt to publish a branch came to.
