@@ -14,14 +14,14 @@ fn table(steer: Steer) -> Vec<(TaskStatus, Step)> {
 }
 
 #[test]
-fn stop_ends_every_task_that_is_not_over_and_stops_the_run_that_is_going() {
+fn stop_ends_every_task_that_is_not_over_and_stops_the_run_that_is_going_but_leaves_a_task_that_asks() {
     assert_eq!(
         table(Steer::Stop),
         [
             (Queued, Move(Stopped)),
             (Running, Halt(HaltStop)),
             (Waiting, Move(Stopped)),
-            (Questions, Move(Stopped)),
+            (Questions, Skip(Asking)),
             (Paused, Move(Stopped)),
             (Stopped, Skip(Already)),
             (Failed, Move(Stopped)),

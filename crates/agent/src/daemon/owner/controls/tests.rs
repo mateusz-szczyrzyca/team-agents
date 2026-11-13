@@ -268,6 +268,34 @@ async fn stopping_a_team_stops_its_reviewers_too_and_a_word_to_it_is_not_for_the
 }
 
 #[tokio::test]
+async fn a_task_that_waits_for_answers_is_not_stopped_so_that_its_round_stays_the_one_to_answer() {
+    let mut daemon = Daemon::new(&pair_state(), None);
+    daemon.scenario(1, "busy");
+    let file = daemon.questions_file(2, 1);
+    daemon.scenario(2, &format!("questions {}", file.display()));
+    daemon.start().await;
+    daemon.status_is(1, TaskStatus::Running).await;
+    daemon.status_is(2, TaskStatus::Questions).await;
+
+    let (kind, message) = refusal(daemon.ask(control(ControlAction::Stop, of_task(2))).await);
+    let reply = daemon
+        .ask(control(ControlAction::Stop, Target::Team(team_id(0))))
+        .await
+        .unwrap();
+
+    assert_eq!(kind, FailureKind::Conflict);
+    assert!(message.contains("waits for your answers"), "{message}");
+    assert_eq!(reply, Reply::Applied { tasks: vec![task(1)] });
+    let state = daemon.state();
+    assert_eq!(
+        (status(&state, 1), status(&state, 2)),
+        (TaskStatus::Stopped, TaskStatus::Questions)
+    );
+    assert!(state.find_task(&task(2)).unwrap().member.open_question().is_some());
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn pausing_and_unpausing_a_team_reaches_every_task_of_it() {
     let mut daemon = running_pair().await;
 
