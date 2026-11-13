@@ -32,8 +32,8 @@ waiting on it is not cut by the watchdog.
 
 ## Size
 
-`1,271` changed lines outside tests by the PR-1 command (limit `5,000` for this plan, `1,500` in PR-1); `28` files, `+3,340` /
-`−40` in all (`agent round-size` counts the tests too: `3,380`). One purpose; no split needed.
+`1,275` changed lines outside tests by the PR-1 command (limit `5,000` for this plan, `1,500` in PR-1); `28` files, `+3,458` /
+`−42` in all (tests included, report excluded). One purpose; no split needed.
 
 ## Checks run by me
 
