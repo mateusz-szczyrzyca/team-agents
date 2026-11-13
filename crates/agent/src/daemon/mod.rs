@@ -19,6 +19,7 @@ use std::time::Duration;
 use agent_core::config::OpenQuestions;
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, AutopilotPromptsError};
+use agent_runtime::checks_prompts::{ChecksPrompts, ChecksPromptsError};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::editor::{SocketDirs, VscodeOpener};
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
@@ -116,6 +117,9 @@ pub(crate) enum DaemonError {
     /// The texts of the pull requests and the reviews cannot be loaded.
     #[error("cannot load the texts of the pull requests and the reviews")]
     AutopilotPrompts(#[from] AutopilotPromptsError),
+    /// A text of the checks before a review cannot be used.
+    #[error("the texts of the checks before a review cannot be used")]
+    ChecksPrompts(#[from] ChecksPromptsError),
     /// The autopilot cannot be set up from the settings.
     #[error("cannot set up the pull requests of the autopilot")]
     Pulls(#[from] PullsError),
@@ -193,7 +197,8 @@ pub(crate) async fn run_in(
     let team_texts = Arc::new(TeamPrompts::load(&setup.prompts_dir, &language).await?);
     let question_texts = Arc::new(QuestionsPrompts::load(&setup.prompts_dir, &language).await?);
     let autopilot_texts = Arc::new(AutopilotPrompts::load(&setup.prompts_dir, &language).await?);
-    let pulls = Pulls::new(autopilot_texts, &settings)?;
+    let checks_texts = Arc::new(ChecksPrompts::load(&setup.prompts_dir, &language).await?);
+    let pulls = Pulls::new(autopilot_texts, checks_texts, &settings)?;
     let rules = Arc::new(PromptLoader::load(&setup.prompts_dir, &language).await?);
     let bus = make_bus(&setup.home, &settings);
     let state = store.load().await?;
