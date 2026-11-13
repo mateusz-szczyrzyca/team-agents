@@ -78,7 +78,7 @@ impl GateRecord {
     /// Whether the gate passed on a clean tree: a pass of the commit itself.
     #[must_use]
     pub fn counts_as_pass(&self) -> bool {
-        false
+        self.tree == GateTree::Clean && self.result.outcome == GateOutcome::Passed
     }
 }
 
