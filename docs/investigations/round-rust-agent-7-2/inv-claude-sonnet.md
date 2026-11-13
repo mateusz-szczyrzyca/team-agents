@@ -162,10 +162,10 @@ listens). I did not touch them.
 
 ## Size
 
-The PR-1 command, as the rules print it, gives `4,288` changed lines at `18a15d22`+`GREEN` (the report not yet extended
-for pass 3): over the split threshold of about `4,000`, under the ceiling of `5,000`. `491` of them are
-`daemon/owner/fixture.rs`, which is compiled only for tests (`#[cfg(test)] mod fixture;`) and that the command does not
-exclude: without it the count is `3,797`. An earlier version of this report said `3,525` and the PR description `3,604`;
+The PR-1 command, as the rules print it, gives `4,314` changed lines at the head of pass 3 (`cbbf511`; the report itself is
+counted, so edits of it move the number by a few lines): over the split threshold of about `4,000`, under the ceiling of
+`5,000`. `491` of them are `daemon/owner/fixture.rs`, which is compiled only for tests (`#[cfg(test)] mod fixture;`) and
+that the command does not exclude: without it the count is `3,823`. An earlier version of this report said `3,525` and the PR description `3,604`;
 both were wrong, they came from a different exclusion list. No split was done: the item is one feature, and the ceiling
 is not passed.
 
