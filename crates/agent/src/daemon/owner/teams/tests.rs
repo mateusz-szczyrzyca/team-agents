@@ -1506,3 +1506,58 @@ async fn an_item_whose_branch_cannot_be_started_waits_and_the_daemon_goes_on() {
         "the member was not woken for an item it was not given"
     );
 }
+
+#[tokio::test]
+async fn an_item_whose_branch_could_not_be_started_is_given_out_when_the_branch_can_be_made() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "done"),
+    ]);
+    f.start().await;
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    // The coordinator is woken for the member's DONE; when that run is over, nothing is left for the team to do.
+    f.prompt(&tasks[0], 2).await;
+    f.state_where("the second run of the coordinator to end", |state| {
+        let coordinator = state.find_task(&tasks[0]).unwrap().member;
+        coordinator.runs().len() == 2 && coordinator.status() == TaskStatus::Waiting
+    })
+    .await;
+    f.stop().await.unwrap();
+    // The branch of the next item exists already, so git cannot start it until it is removed.
+    let next_branch = format!("agents/claude-1/{}-2.1", tasks[1]);
+    git(&f.repo, &["branch", &next_branch, "main"]);
+    let mut state = f.state();
+    {
+        let mut team_mut = state.team_mut(&team).unwrap();
+        let mut item = team_mut.item_mut("1.1".parse().unwrap()).unwrap();
+        item.advance(ItemPhase::InReview {
+            pr: PullRequest {
+                number: PrNumber::new(std::num::NonZeroU32::new(5).unwrap()),
+                branch: format!("agents/claude-1/{}-1.1", tasks[1]).parse().unwrap(),
+                opened_at: Timestamp::now(&agent_runtime::clock::SystemClock).unwrap(),
+            },
+            reviews: Vec::new(),
+        })
+        .unwrap();
+    }
+    std::fs::write(f.home.state_file(), state.to_json().unwrap()).unwrap();
+    f.start().await;
+    // The daemon's first look after the start could not give the item out, and no run is left to end: only the
+    // daemon's clock can give the item out from now on.
+    f.answered().await;
+    assert_eq!(f.runs(&tasks[1]), 1, "the item cannot start yet");
+    assert_eq!(f.runs(&tasks[0]), 2, "the coordinator has nothing to do");
+
+    git(&f.repo, &["branch", "-D", &next_branch]);
+    let prompt = f.prompt(&tasks[1], 2).await;
+    f.stop().await.unwrap();
+
+    assert!(prompt.starts_with("# A NEW ITEM FOR YOU: 2.1"), "{prompt}");
+    assert_eq!(
+        git(&f.worktree(&tasks[1]), &["rev-parse", "--abbrev-ref", "HEAD"]),
+        next_branch
+    );
+}
