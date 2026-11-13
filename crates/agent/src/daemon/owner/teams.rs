@@ -3,9 +3,9 @@
 //! The decisions are in `daemon/team`; this carries them out: git for the workspaces, the bus for the members' states,
 //! the messages and the requests for workers, the state for the assignments, and the notification that a team is done.
 //!
-//! The owner looks at a team after something happened to it (a run ended, a team started: [`Look::Event`]) and on its
-//! clock ([`Look::Poll`]), because the bus wakes a sleeping member only by marking it `waking` and nothing else tells
-//! the daemon. A look reconciles the members' states on the bus with the tasks, gives out items, serves the requests
+//! The owner looks at a team after something happened to it (a run ended, a team started) and on its clock, because
+//! the bus wakes a sleeping member only by marking it `waking` and nothing else tells the daemon, and because an item
+//! whose branch could not be started is tried again. A look reconciles the members' states on the bus with the tasks, gives out items, serves the requests
 //! for workers and closes the team when its work is over. What cannot be done because the bus is down is kept and tried
 //! again at the next look; a failure of the bus never ends the daemon.
 
@@ -34,15 +34,6 @@ use crate::daemon::team::{
 
 /// The name the harness puts on the messages it writes to the bus, as the bus itself does.
 const BUS_SENDER: &str = "agentbus";
-
-/// How a team is looked at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Look {
-    /// On the clock: the bus, the requests for workers, the end of the team.
-    Poll,
-    /// After something happened to the team: also the items that are given out.
-    Event,
-}
 
 /// Something that is to be done on the bus, with the team it is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,7 +121,7 @@ impl Owner {
         }
         self.publish_summary(now, &id);
         tracing::info!(team = %id, tasks = tasks.len(), "a team is started");
-        self.look_at(&id, Look::Event);
+        self.look_at(&id);
         Ok(Ok(Reply::Started { team: id, tasks }))
     }
 
@@ -192,16 +183,13 @@ impl Owner {
 
     // ---- looking at teams -----------------------------------------------------------------------------------
 
-    /// Wants to look at `team` at the next turn of the loop: an event outranks the clock.
-    pub(super) fn look_at(&mut self, team: &TeamId, look: Look) {
-        let wanted = self.looks.entry(team.clone()).or_insert(look);
-        if look == Look::Event {
-            *wanted = Look::Event;
-        }
+    /// Wants to look at `team` at the next turn of the loop.
+    pub(super) fn look_at(&mut self, team: &TeamId) {
+        self.looks.insert(team.clone());
     }
 
     /// Wants to look at every team that is not closed.
-    pub(super) fn look_at_every_team(&mut self, look: Look) {
+    pub(super) fn look_at_every_team(&mut self) {
         let open: Vec<TeamId> = self
             .parts
             .state
@@ -211,7 +199,7 @@ impl Owner {
             .filter(|team| !self.closed.contains(team))
             .collect();
         for team in open {
-            self.look_at(&team, look);
+            self.look_at(&team);
         }
     }
 
@@ -234,22 +222,20 @@ impl Owner {
     pub(super) async fn team_life(&mut self) -> Result<(), OwnerError> {
         self.flush_outbox().await?;
         let looks = std::mem::take(&mut self.looks);
-        for (team, look) in looks {
-            self.look_after(&team, look).await?;
+        for team in looks {
+            self.look_after(&team).await?;
         }
         Ok(())
     }
 
     /// One look at `team`.
-    async fn look_after(&mut self, team: &TeamId, look: Look) -> Result<(), OwnerError> {
+    async fn look_after(&mut self, team: &TeamId) -> Result<(), OwnerError> {
         if self.closed.contains(team) || self.parts.state.team(team).is_none() {
             return Ok(());
         }
         let mut round = Round::default();
         self.reconcile_bus(team, &mut round).await?;
-        if look == Look::Event {
-            self.assign_items(team, &mut round).await?;
-        }
+        self.assign_items(team, &mut round).await?;
         self.serve_requests(team, &mut round).await?;
         self.close_if_finished(team, &mut round)?;
         if round.changed {
@@ -413,7 +399,7 @@ impl Owner {
                 return Ok(());
             };
             if let Err(error) = self.switch_branch(&repo, &assigned, base).await {
-                tracing::error!(team = %team_id, item = %assigned.item, member = %assigned.agent, error = %error_chain(&error), "the worktree of a member cannot take the branch of its next item: the item waits");
+                tracing::warn!(team = %team_id, item = %assigned.item, member = %assigned.agent, error = %error_chain(&error), "the worktree of a member cannot take the branch of its next item: the item waits and is tried again at the next look");
                 continue;
             }
             self.record_assignment(team_id, &assigned)?;
@@ -639,7 +625,7 @@ impl Owner {
                 }
             }
         }
-        self.look_at(&located.team, Look::Event);
+        self.look_at(&located.team);
         Ok(())
     }
 

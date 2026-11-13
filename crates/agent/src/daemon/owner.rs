@@ -9,7 +9,7 @@ mod questions;
 mod start;
 mod teams;
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
 use self::start::{Context, Plan, next_round, plan};
-use self::teams::{Look, Outbound, Served};
+use self::teams::{Outbound, Served};
 use super::notice::Notice;
 use super::notifier::Delivery;
 use super::recovery::{RecoveryError, recover};
@@ -267,8 +267,8 @@ pub(super) struct Owner {
     serving: HashMap<TaskId, Served>,
     /// The teams that are finished and closed: the human was told.
     closed: HashSet<TeamId>,
-    /// The teams to look at next, and why.
-    looks: BTreeMap<TeamId, Look>,
+    /// The teams to look at at the next turn of the loop, in the order of their IDs.
+    looks: BTreeSet<TeamId>,
     /// Cancelled when the daemon is to stop: the runs it starts stop with it.
     shutdown: CancellationToken,
 }
@@ -287,7 +287,7 @@ impl Owner {
             outbox: VecDeque::new(),
             serving: HashMap::new(),
             closed: HashSet::new(),
-            looks: BTreeMap::new(),
+            looks: BTreeSet::new(),
             shutdown,
         }
     }
@@ -312,7 +312,7 @@ impl Owner {
                 Some(joined) = self.runs.join_next_with_id() => self.settle_joined(joined).await?,
                 _ = tick.tick() => {
                     self.wake_due().await?;
-                    self.look_at_every_team(Look::Poll);
+                    self.look_at_every_team();
                 }
             }
         }
@@ -330,7 +330,7 @@ impl Owner {
         }
         self.hangs.extend(recovery.hangs);
         self.remember_closed_teams();
-        self.look_at_every_team(Look::Event);
+        self.look_at_every_team();
         if !recovery.interrupted.is_empty() {
             tracing::info!(
                 tasks = recovery.interrupted.len(),
