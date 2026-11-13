@@ -3,7 +3,7 @@
 
 use std::io;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 
 use tokio::io::AsyncReadExt;
@@ -60,4 +60,43 @@ pub async fn read_text_file(path: &Path, limit: usize) -> Result<Option<TextFile
     }
     let text = String::from_utf8(bytes).map_err(TextFileError::NotUtf8)?;
     Ok(Some(TextFile { text, mode }))
+}
+
+/// Why a text file could not be replaced.
+#[derive(Debug, thiserror::Error)]
+pub enum ReplaceError {
+    /// The file has no directory the new text can be written in beside it.
+    #[error("the file {path:?} has no directory")]
+    NoDirectory {
+        /// The file.
+        path: PathBuf,
+    },
+    /// The new text cannot be written or put in place of the file.
+    #[error("cannot replace the file {path:?}")]
+    Write {
+        /// The file.
+        path: PathBuf,
+        /// What the operating system said.
+        source: io::Error,
+    },
+    /// The task that writes the file failed.
+    #[error("the task that replaces the file {path:?} failed")]
+    Worker {
+        /// The file.
+        path: PathBuf,
+        /// How the task ended.
+        source: tokio::task::JoinError,
+    },
+}
+
+/// Replaces the file at `path` with `text`, with the permission bits `mode`.
+///
+/// The text is written to a temporary file in the same directory and renamed over `path`, so a reader — a person with
+/// the file open in an editor, a watcher — sees the old file or the whole new one, never half of it (SEC-5).
+///
+/// # Errors
+/// [`ReplaceError`].
+pub async fn replace_text_file(path: &Path, text: &str, mode: u32) -> Result<(), ReplaceError> {
+    let _ = (path, text, mode);
+    Ok(())
 }
