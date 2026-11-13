@@ -43,9 +43,23 @@ pub(in crate::daemon) enum WatchError {
     },
 }
 
+/// The prefix and the suffix of the name of a questions file: `questions-<round>.md`.
+const FILE_PREFIX: &str = "questions-";
+
+/// See [`FILE_PREFIX`].
+const FILE_SUFFIX: &str = ".md";
+
 /// The watch.
-#[derive(Debug)]
-pub(in crate::daemon) struct Watcher;
+pub(in crate::daemon) struct Watcher {
+    /// The system's watcher; it reports on a thread of its own, to the handler it was made with.
+    inner: notify::RecommendedWatcher,
+}
+
+impl std::fmt::Debug for Watcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Watcher").finish_non_exhaustive()
+    }
+}
 
 impl Watcher {
     /// A watch that tells `saved` about the files that are saved in the directories it is given.
@@ -53,8 +67,14 @@ impl Watcher {
     /// # Errors
     /// [`WatchError::Start`].
     pub(in crate::daemon) fn new(saved: mpsc::Sender<Saved>) -> Result<Self, WatchError> {
-        let _ = saved;
-        Ok(Self)
+        let inner = notify::recommended_watcher(move |result: notify::Result<notify::Event>| match result {
+            Ok(event) => report(&saved, &event),
+            // The system lost track of something: a save may have been missed. The owner looks at the open questions
+            // again when the daemon starts, and the human can always run `agent answer`.
+            Err(error) => tracing::warn!(%error, "the watch on the questions files reported an error"),
+        })
+        .map_err(WatchError::Start)?;
+        Ok(Self { inner })
     }
 
     /// Starts watching the directory `dir` of a task.
@@ -62,8 +82,12 @@ impl Watcher {
     /// # Errors
     /// [`WatchError::Watch`].
     pub(in crate::daemon) fn watch(&mut self, dir: &Path) -> Result<(), WatchError> {
-        let _ = dir;
-        Ok(())
+        notify::Watcher::watch(&mut self.inner, dir, notify::RecursiveMode::NonRecursive).map_err(|source| {
+            WatchError::Watch {
+                path: dir.to_path_buf(),
+                source,
+            }
+        })
     }
 
     /// Stops watching `dir`.
@@ -71,9 +95,61 @@ impl Watcher {
     /// # Errors
     /// [`WatchError::Unwatch`].
     pub(in crate::daemon) fn unwatch(&mut self, dir: &Path) -> Result<(), WatchError> {
-        let _ = dir;
-        Ok(())
+        notify::Watcher::unwatch(&mut self.inner, dir).map_err(|source| WatchError::Unwatch {
+            path: dir.to_path_buf(),
+            source,
+        })
     }
+}
+
+/// Tells `saved` about each questions file `event` says was written.
+fn report(saved: &mpsc::Sender<Saved>, event: &notify::Event) {
+    if !writes(&event.kind) {
+        return;
+    }
+    for path in &event.paths {
+        let Some(file) = saved_file(path) else {
+            continue;
+        };
+        match saved.try_send(file) {
+            Ok(()) => {}
+            // The queue holds a save of each open question many times over: one that does not fit is a repeat of one
+            // that is there, and the file is read as it is when the first is handled.
+            Err(mpsc::error::TrySendError::Full(file)) => {
+                tracing::debug!(task = %file.task, round = file.round, "a save of a questions file was already queued");
+            }
+            // The owner is gone: the daemon is shutting down.
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::debug!("a save of a questions file came after the owner ended")
+            }
+        }
+    }
+}
+
+/// Whether an event of this kind put text in a file: a file made, written, or renamed into place.
+const fn writes(kind: &notify::EventKind) -> bool {
+    use notify::EventKind::{Access, Any, Create, Modify, Other, Remove};
+    use notify::event::ModifyKind;
+    match kind {
+        Create(_) | Any => true,
+        Modify(modification) => matches!(
+            modification,
+            ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Name(_) | ModifyKind::Other
+        ),
+        Access(_) | Remove(_) | Other => false,
+    }
+}
+
+/// The task and the round of the file at `path`, when it is `<task>/questions-<round>.md`.
+fn saved_file(path: &Path) -> Option<Saved> {
+    let name = path.file_name()?.to_str()?;
+    let round = name
+        .strip_prefix(FILE_PREFIX)?
+        .strip_suffix(FILE_SUFFIX)?
+        .parse::<NonZeroU32>()
+        .ok()?;
+    let task = path.parent()?.file_name()?.to_str()?.parse::<TaskId>().ok()?;
+    Some(Saved { task, round })
 }
 
 #[cfg(test)]
