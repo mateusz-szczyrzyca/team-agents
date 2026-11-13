@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 
 use tokio::process::Command;
 
-use crate::process::{CaptureError, CaptureLimits, capture};
+use crate::process::{CaptureError, CaptureLimits, capture, error_chain};
 
 /// The prefix of the name of a window's socket.
 const SOCKET_PREFIX: &str = "vscode-ipc-";
@@ -205,8 +205,8 @@ struct Found {
 }
 
 /// What a window that did not answer is said to have said: the failure and its causes, so that a human sees why.
-fn said_by_a_failed_capture(_error: &CaptureError) -> String {
-    String::new()
+fn said_by_a_failed_capture(error: &CaptureError) -> String {
+    error_chain(error)
 }
 
 /// The entries of `dir`; none when the directory is not there.
