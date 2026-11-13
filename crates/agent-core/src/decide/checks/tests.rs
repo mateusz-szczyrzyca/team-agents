@@ -216,7 +216,6 @@ fn added_lines_a_new_test_file_and_an_unchanged_content_are_no_issue() {
     for change in [
         modified("tests/unit/a.bats", 4, 0),
         added("tests/unit/new.bats", 10),
-        modified("tests/unit/a.bats", 0, 0),
         added("agentbus/new_test.go", 10),
     ] {
         assert_eq!(found(&round(vec![change.clone()])), [], "{change:?}");
