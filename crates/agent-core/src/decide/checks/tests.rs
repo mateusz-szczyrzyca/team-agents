@@ -503,7 +503,7 @@ fn a_round_that_adds_its_tests_is_no_issue() {
     for tests in [
         added("tests/new.rs", 3),
         modified("agentbus/a_test.go", 2, 0),
-        modified("tests/a.rs", 1, 1),
+        modified("tests/a.rs", 2, 0),
     ] {
         assert_eq!(
             found(&round(vec![modified("src/lib.rs", 5, 1), tests.clone()])),
