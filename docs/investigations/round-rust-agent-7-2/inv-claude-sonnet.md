@@ -278,5 +278,15 @@ All six findings were right and are fixed; the gate (`make gate`) passes.
 - **Major 3, `bool` parameters:** `with_answers` is gone (the answers are a value, `answers_text`); `commands::answer::send` takes a `Delivery` with an `Origin` enum. Refactor, no new test.
 - **Major 4, adjacent `PathBuf`s:** `VscodeOpener::new` takes `SocketDirs { runtime, fallback }`. Refactor.
 - **Major 5, untested branches:** `7` new tests for the newest command, a command that is not executable, `OpenError::List`, `OpenError::Start` and `ReplaceError::NoDirectory`; each fails when the code is broken (checked by mutation). They pass at once: the code existed.
-- **Minor 6, stale reason of a stopped task:** `Owner::move_task` drops it on `stop`. **No test:** the task has to be queued with a reason while the control arrives, which needs `MAX_RUNS` (16) runs going at once; there is no way to set that up through the daemon.
+- **Minor 6, stale reason of a stopped task:** `Owner::move_task` drops it on `stop`. Tested in pass 2 (see below).
 - **Not done by me:** nothing of the review was left; `Owner::after_halt` was removed as unused.
+
+## Review of PR #95, pass 2 — what was done
+
+All five findings were right; the gate passes.
+
+- **M1, a save lost when the queue is full:** the queue of saves is now unbounded and holds one entry for each file saved and not yet taken (`Saves` in `crates/agent/src/daemon/questions/watch.rs`), so repeats are dropped as repeats and the save of another file never is. Bounded by the number of questions files. RED/GREEN; `3` new tests.
+- **M2, answers lost after a run that did not read them:** `answered_round` looks back over the runs: the answers stay for the next run until a run that said something to the end (a reported status or a clean exit) has had them. A crash, a stop, a hang or a limit leaves them. RED/GREEN; `2` new tests (a crash gives them again, a clean exit without a status does not). Known limit: if the run that asked ended with an unusable questions file, the task failed with the old round still answered, and the next resume repeats the old answers; harmless.
+- **M3, the stale reason of a stopped task:** tested with an owner that is not running (`Daemon::bare_owner` in `fixture.rs`): a stop clears the reason, a pause keeps it. The stop test fails without the cleanup (checked). My earlier claim that this could not be tested was wrong.
+- **M4, README:** the section "The Rust rewrite (trial)" lists the six commands, the questions file, the notification and the marker, apart from the installed Bash CLI.
+- **M5, the PR description:** rewritten with the summary, checks, compatibility and the files outside the expected list.
