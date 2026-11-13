@@ -14,7 +14,7 @@ use std::num::NonZeroU32;
 use serde::Deserialize;
 
 use crate::ids::{AgentName, BranchName, InvestigatorName};
-use crate::kinds::{CliKind, Tier};
+use crate::kinds::{CliKind, Keyword, Tier, UnknownKeyword};
 
 pub use secrets::{InvalidSecret, MAX_SECRETS_BYTES, Position, Secret, Secrets, SecretsError};
 pub use values::{
@@ -289,6 +289,61 @@ pub struct Notifications {
     pub directory: Option<AbsolutePath>,
 }
 
+/// How a new questions file is opened for the human.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String", into = "&'static str")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<OpenQuestions>)]
+pub enum OpenQuestions {
+    /// The file is not opened; the notification names it.
+    #[default]
+    Off,
+    /// The file is opened in the VS Code window connected to the host (Remote-SSH), if there is one.
+    Vscode,
+}
+
+impl Keyword for OpenQuestions {
+    const WHAT: &'static str = "way to open questions";
+}
+
+impl TryFrom<String> for OpenQuestions {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+/// `[questions]`: how the questions of the agents reach the human.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Questions {
+    /// How a new questions file is opened.
+    pub open: OpenQuestions,
+    /// The directories of the VS Code servers searched for their remote command; without any, the usual ones in the
+    /// home directory of the user the daemon runs as.
+    pub vscode_server_dirs: Vec<AbsolutePath>,
+    /// The editor `agent answer` starts, a program and its arguments: the questions file is its last argument.
+    /// Without it `$VISUAL`, then `$EDITOR`.
+    pub editor: Option<CommandLine>,
+}
+
 /// `[web]`: the dashboard's listening address and who may open it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -345,6 +400,8 @@ pub struct Config {
     github: Github,
     /// The notifications.
     notifications: Notifications,
+    /// The questions.
+    questions: Questions,
     /// The dashboard.
     web: Web,
     /// The repositories, by name.
@@ -399,6 +456,9 @@ struct RawConfig {
     /// See [`Config::notifications`].
     #[serde(default)]
     notifications: Notifications,
+    /// See [`Config::questions`].
+    #[serde(default)]
+    questions: Questions,
     /// See [`Config::web`].
     #[serde(default)]
     web: Web,
@@ -424,6 +484,7 @@ impl RawConfig {
             git,
             github,
             notifications,
+            questions: _,
             web,
             repos,
         } = self;
@@ -443,6 +504,7 @@ impl RawConfig {
             git,
             github,
             notifications,
+            questions: Questions::default(),
             web,
             repos,
         })
@@ -609,6 +671,12 @@ impl Config {
     #[must_use]
     pub fn notifications(&self) -> &Notifications {
         &self.notifications
+    }
+
+    /// How the questions reach the human: how a file is opened and the editor of `agent answer`.
+    #[must_use]
+    pub fn questions(&self) -> &Questions {
+        &self.questions
     }
 
     /// The dashboard's address and logins.
