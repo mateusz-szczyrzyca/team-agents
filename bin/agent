@@ -6226,7 +6226,8 @@ cmd__investigation_team() {
     git -C "$root" cat-file -e "$base^{commit}" || die "PR #$pin_pr's head $base is not here after a fetch"
     # the task the PR was opened for stays the reviewers' too: the new task comes first, that one after it
     if earlier=$(cd "$root" && gh pr view "$pin_pr" --json body --jq .body 2> /dev/null); then
-      earlier=$(pr_body_task_text "$earlier" | grep -v '^Round:')
+      # a PR a human opened has no task block: grep then prints nothing and fails, which is not an error here
+      earlier=$(pr_body_task_text "$earlier" | grep -v '^Round:' || :)
     else
       earlier=""
     fi
