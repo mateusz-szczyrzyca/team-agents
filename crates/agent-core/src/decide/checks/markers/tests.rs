@@ -104,6 +104,22 @@ fn rust_attributes_that_cfg_attr_applies_are_read_like_attributes() {
     );
 }
 
+// Rule: what a string of a `cfg_attr` says is no attribute it applies; what follows a string still is.
+#[test]
+fn rust_words_inside_a_string_of_a_cfg_attr_are_no_markers() {
+    expect(
+        "rs",
+        &[
+            (
+                "#[cfg_attr(docsrs, doc = \"ignore this, allow(x) and expect(y)\")]",
+                &[],
+            ),
+            ("#[cfg_attr(feature = \"x\", allow(unused))]", &[Marker::SuppressesLint]),
+            ("#[cfg_attr(feature = \"\\\"q\", ignore)]", &[Marker::SkipsTest]),
+        ],
+    );
+}
+
 // Rule: a bats test is skipped by `skip` as a word at the start of a line; shell code suppresses a lint with a
 // `shellcheck disable=` comment and asks about the test run through a `BATS_` variable.
 #[test]
