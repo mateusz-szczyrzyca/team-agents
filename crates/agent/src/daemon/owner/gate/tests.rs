@@ -430,3 +430,46 @@ async fn stopping_one_task_leaves_the_gate_of_another_task_with_no_run_going() {
     assert!(!first.cancel.is_cancelled());
     assert!(second.cancel.is_cancelled());
 }
+
+#[tokio::test]
+async fn stopping_a_task_whose_run_ended_while_its_gate_waited_stops_the_gate() {
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, mut waiting) = queued_owner(&daemon).await;
+    owner.holds.insert(task(1), WatchdogHold::new());
+    owner.cancels.insert(task(1), CancellationToken::new());
+    ask(&mut owner, 1).await;
+    let job = waiting.try_recv().unwrap();
+
+    // The end of a run drops what it had: the token that stopped it, and its hold.
+    owner.cancels.remove(&task(1));
+    owner.holds.remove(&task(1));
+    control(
+        &mut owner,
+        Command::Stop(agent_core::protocol::ControlRequest {
+            target: Target::Task(task(1)),
+        }),
+    )
+    .await;
+
+    assert!(job.cancel.is_cancelled(), "the gate outlived the run that asked for it");
+}
+
+#[tokio::test]
+async fn pausing_a_task_whose_run_ended_while_its_gate_waited_stops_the_gate() {
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, mut waiting) = queued_owner(&daemon).await;
+    owner.cancels.insert(task(1), CancellationToken::new());
+    ask(&mut owner, 1).await;
+    let job = waiting.try_recv().unwrap();
+
+    owner.cancels.remove(&task(1));
+    control(
+        &mut owner,
+        Command::Pause(agent_core::protocol::ControlRequest {
+            target: Target::Task(task(1)),
+        }),
+    )
+    .await;
+
+    assert!(job.cancel.is_cancelled(), "the gate outlived the run that asked for it");
+}
