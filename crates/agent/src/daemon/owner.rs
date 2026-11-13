@@ -9,6 +9,7 @@ mod answers;
 mod controls;
 #[cfg(test)]
 mod fixture;
+mod gate;
 mod start;
 mod teams;
 
@@ -31,7 +32,7 @@ use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
-use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict};
+use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict, WatchdogHold};
 use agent_runtime::settings::Settings;
 use agent_runtime::store::{StateStore, StoreError};
 use agent_runtime::team_prompts::TeamPrompts;
@@ -44,6 +45,7 @@ use tokio_util::sync::CancellationToken;
 use self::start::{Context, Plan, next_round, plan};
 use self::teams::{Outbound, Served};
 use super::control::{Halt, Steer, after_halt, halted_status};
+use super::gate::GateQueue;
 use super::notice::Notice;
 use super::notifier::Delivery;
 use super::questions;
@@ -306,6 +308,10 @@ pub(super) struct Owner {
     /// For each task that waits for answers, the problems of the last save the human was told about, so that the same
     /// save is not told twice.
     incomplete: HashMap<TaskId, String>,
+    /// The holds on the watchdog of each task that has a run going: a gate that waits for its turn takes one.
+    holds: HashMap<TaskId, WatchdogHold>,
+    /// The queue of the gate service; `None` for an owner that runs without one, which refuses every gate.
+    gate: Option<GateQueue>,
     /// Cancelled when the daemon is to stop: the runs it starts stop with it.
     shutdown: CancellationToken,
 }
@@ -347,8 +353,16 @@ impl Owner {
             saved,
             watched: HashSet::new(),
             incomplete: HashMap::new(),
+            holds: HashMap::new(),
+            gate: None,
             shutdown,
         }
+    }
+
+    /// The same, with the gates it is asked for going to `queue`.
+    pub(super) fn with_gate(mut self, queue: GateQueue) -> Self {
+        self.gate = Some(queue);
+        self
     }
 
     /// Serves `inbox` and runs the tasks until the shutdown is cancelled; then stops the runs and records them.
@@ -778,6 +792,14 @@ impl Owner {
     async fn handle(&mut self, message: Message) -> Result<(), OwnerError> {
         match message {
             Message::Request { client, command, reply } => {
+                // A gate is answered when it has run, by the service: the reply goes with the job.
+                let command = match command {
+                    Command::Gate(request) => {
+                        self.gate_request(request, reply);
+                        return Ok(());
+                    }
+                    other => other,
+                };
                 let answer = match command {
                     Command::Run(request) => self.run_request(request).await?,
                     Command::Answer(request) => self.answer_request(&client, request).await?,
@@ -835,7 +857,10 @@ impl Owner {
                     message: "the controls are carried out by the owner, not answered from the state".to_owned(),
                 })
             }
-            Command::Gate(_) => Err(not_served("gate")),
+            Command::Gate(_) => Err(Failure {
+                kind: FailureKind::Internal,
+                message: "a gate is queued by the owner, not answered from the state".to_owned(),
+            }),
             Command::Subscribe(_) => Err(Failure {
                 kind: FailureKind::Internal,
                 message: "a subscription is made by the connection, not asked of the owner".to_owned(),
@@ -1051,14 +1076,6 @@ impl Owner {
             // queued is logged, and the task goes on.
             tracing::error!(task = %task, %error, "a notification could not be queued");
         }
-    }
-}
-
-/// The refusal of a command the daemon does not serve yet.
-fn not_served(name: &str) -> Failure {
-    Failure {
-        kind: FailureKind::Refused,
-        message: format!("this daemon does not serve `{name}` yet"),
     }
 }
 
