@@ -85,8 +85,8 @@ impl Git {
     }
 
     /// The commits after `base` up to `head`, oldest first (a commit after its parents), each with its parents, its
-    /// message and the files it changed against its first parent; a rename is a deletion and an addition, and a merge
-    /// has no files.
+    /// message and the files it changed against its first parent; a rename is a deletion and an addition. A merge has
+    /// no files of its own but those it changed against each of its parents.
     ///
     /// # Errors
     /// [`GitError::TooManyCommits`] when the range has more than [`GitLimits::max_commits`](super::GitLimits); the
@@ -118,7 +118,15 @@ impl Git {
             });
         }
         for commit in &mut commits {
-            commit.files = self.commit_files(&commit.id).await?;
+            if commit.parents.len() > 1 {
+                let mut against_each = Vec::with_capacity(commit.parents.len());
+                for parent in &commit.parents {
+                    against_each.push(self.commit_files(&commit.id, Some(parent)).await?);
+                }
+                commit.merge_files = against_each;
+            } else {
+                commit.files = self.commit_files(&commit.id, None).await?;
+            }
         }
         Ok(commits)
     }
@@ -173,30 +181,27 @@ impl Git {
         })
     }
 
-    /// The files `commit` changed against its first parent: none for a merge.
-    async fn commit_files(&self, commit: &CommitId) -> Result<Vec<FileChange>, GitError> {
+    /// The files `commit` changed against `parent`, or without one against its first parent (none for a merge, all of
+    /// its files for a commit with no parent).
+    async fn commit_files(&self, commit: &CommitId, parent: Option<&CommitId>) -> Result<Vec<FileChange>, GitError> {
         let operation = GitOperation::DiffTree;
         let id = commit.to_string();
-        let captured = self
-            .run_ok(
-                operation,
-                Reach::Local,
-                &[
-                    arg("diff-tree"),
-                    arg("-r"),
-                    arg("-z"),
-                    arg("--no-renames"),
-                    arg("--root"),
-                    arg("--no-commit-id"),
-                    arg("--no-ext-diff"),
-                    arg("--no-textconv"),
-                    arg("--raw"),
-                    arg("--numstat"),
-                    arg(&id),
-                    arg("--"),
-                ],
-            )
-            .await?;
+        let parent = parent.map(ToString::to_string);
+        let mut args = vec![
+            arg("diff-tree"),
+            arg("-r"),
+            arg("-z"),
+            arg("--no-renames"),
+            arg("--root"),
+            arg("--no-commit-id"),
+            arg("--no-ext-diff"),
+            arg("--no-textconv"),
+            arg("--raw"),
+            arg("--numstat"),
+        ];
+        args.extend(parent.as_deref().map(arg));
+        args.extend([arg(&id), arg("--")]);
+        let captured = self.run_ok(operation, Reach::Local, &args).await?;
         parse_tree_diff(operation, whole(operation, &captured.stdout, self.limits)?)
     }
 

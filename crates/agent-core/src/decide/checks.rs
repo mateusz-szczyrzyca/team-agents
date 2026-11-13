@@ -361,11 +361,15 @@ fn edited_red_tests(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
         if tests.is_empty() {
             continue;
         }
-        for edit in later_commits(&facts.commits, position) {
+        let later = later_commits(&facts.commits, position);
+        let having_red: HashSet<&CommitId> = std::iter::once(&red.id)
+            .chain(later.iter().map(|commit| &commit.id))
+            .collect();
+        for edit in later {
             if is_named_test_fix(rules, facts, edit) {
                 continue;
             }
-            for file in edit.files.iter().filter(|file| file.takes_lines_out()) {
+            for file in changes_after(edit, &having_red).filter(|file| file.takes_lines_out()) {
                 if tests.contains(&&file.path) && reported.insert((&file.path, &edit.id)) {
                     issues.push(Issue::RedTestEdited {
                         path: file.path.clone(),
@@ -377,6 +381,19 @@ fn edited_red_tests(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
         }
     }
     issues
+}
+
+/// The files `commit` changed against the parents that have a commit of `having`: its own files, and those of a merge
+/// against each such parent — against a parent without it, a merge's lines are those of the other side.
+fn changes_after<'a>(commit: &'a CommitFacts, having: &HashSet<&CommitId>) -> impl Iterator<Item = &'a FileChange> {
+    let through: Vec<&'a Vec<FileChange>> = commit
+        .parents
+        .iter()
+        .zip(&commit.merge_files)
+        .filter(|(parent, _)| having.contains(parent))
+        .map(|(_, files)| files)
+        .collect();
+    commit.files.iter().chain(through.into_iter().flatten())
 }
 
 /// The commits that come after the one at `position` in its history, in the order of `commits`: those that have it or
