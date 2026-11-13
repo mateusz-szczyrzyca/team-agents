@@ -15,6 +15,7 @@ use agent_core::status::RunOutcome;
 use agent_core::task_list::Item;
 use agent_runtime::agentbus::{AgentBus, BusTier};
 use agent_runtime::autopilot_prompts::AutopilotPrompts;
+use agent_runtime::checks_prompts::ChecksPrompts;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::prompts::PromptLoader;
@@ -133,6 +134,8 @@ pub(super) struct Context<'a> {
     pub(super) why: Option<&'a Why>,
     /// The texts of the autopilot; `None` when the home has no autopilot.
     pub(super) autopilot: Option<&'a AutopilotPrompts>,
+    /// The texts of the checks before a review; `None` when the home has no autopilot.
+    pub(super) checks: Option<&'a ChecksPrompts>,
 }
 
 /// A run that is ready to start.

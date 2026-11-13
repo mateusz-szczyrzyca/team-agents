@@ -18,6 +18,7 @@ use crate::daemon::pr::{Joining, Publication, Publish, plan_publications, pull_t
 use super::super::{Owner, OwnerError};
 use crate::daemon::merge::count;
 
+use super::checks::{Held, Reviewing};
 use super::{Announcement, Lead, PublishError, Pulls};
 
 /// How long a branch that could not be published is left alone before the next attempt.
@@ -35,13 +36,23 @@ pub(super) struct Site<'a> {
 }
 
 /// A branch whose gate passed at its tip.
-struct Ready {
+pub(super) struct Ready {
     /// Git in the lead's worktree.
-    git: Git,
+    pub(super) git: Git,
     /// The tip of the branch.
-    tip: CommitId,
+    pub(super) tip: CommitId,
     /// What the gate recorded.
     record: GateRecord,
+}
+
+/// What an attempt to publish a branch came to.
+pub(super) enum Attempt {
+    /// There is nothing to publish yet.
+    Nothing,
+    /// The pull request was opened or updated.
+    Published(Published),
+    /// The checks before the review hold the round back; the owner does what they ask.
+    Held(Held),
 }
 
 /// A pull request that was opened or updated.
@@ -105,10 +116,14 @@ impl Owner {
                 lead: &lead,
             };
             match self.try_publish(site, &publication, now).await {
-                Ok(None) => {}
-                Ok(Some(published)) => {
+                Ok(Attempt::Nothing) => {}
+                Ok(Attempt::Published(published)) => {
                     self.watch.retry_at.remove(&key);
                     self.record_publication(team_id, &publication, &published, round)?;
+                }
+                Ok(Attempt::Held(held)) => {
+                    self.watch.retry_at.remove(&key);
+                    self.hold_round(pulls, team_id, &lead, held, round)?;
                 }
                 Err(error) => self.publish_failed(pulls, team_id, &lead, &publication, &error, now)?,
             }
@@ -116,24 +131,24 @@ impl Owner {
         Ok(())
     }
 
-    /// Pushes the branch of `publication` and opens or updates its pull request when the lead's gate passed at its tip;
-    /// `None` when there is nothing to publish yet.
+    /// Pushes the branch of `publication` and opens or updates its pull request when the lead's gate passed at its tip and
+    /// the checks before the review let the round go to it.
     pub(super) async fn try_publish(
         &mut self,
         site: Site<'_>,
         publication: &Publication,
         now: Timestamp,
-    ) -> Result<Option<Published>, PublishError> {
+    ) -> Result<Attempt, PublishError> {
         let lead = site.lead;
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let Some(tip) = git.branch_tip(&publication.head_branch).await? else {
-            return Ok(None);
+            return Ok(Attempt::Nothing);
         };
         let Some(record) = self.parts.store.load_gate_record(&lead.task).await? else {
-            return Ok(None);
+            return Ok(Attempt::Nothing);
         };
         if !record.counts_as_pass() || record.result.head != tip {
-            return Ok(None);
+            return Ok(Attempt::Nothing);
         }
         let ready = Ready { git, tip, record };
         match &publication.publish {
@@ -142,7 +157,7 @@ impl Owner {
                     .await
             }
             Publish::Update { pr, fixing, joining } => {
-                self.update_pull_request(site, (pr, fixing), joining, &ready).await
+                self.update_pull_request(site, (pr, fixing), joining, &ready, now).await
             }
         }
     }
@@ -156,11 +171,11 @@ impl Owner {
         items: &[Joining],
         ready: &Ready,
         now: Timestamp,
-    ) -> Result<Option<Published>, PublishError> {
+    ) -> Result<Attempt, PublishError> {
         let Site { pulls, team, lead } = site;
         let ids = contained(&ready.git, items, &ready.tip).await?;
         if ids.is_empty() {
-            return Ok(None);
+            return Ok(Attempt::Nothing);
         }
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         ready.git.push(head_branch).await?;
@@ -180,8 +195,18 @@ impl Owner {
                     .await?
             }
         };
+        // The round goes to the reviewers only when the checks let it: until then the pull request stays a draft.
+        let reviewing = Reviewing {
+            items: &ids,
+            ready,
+            pr: remote.number,
+            description: &remote.body,
+        };
+        if let Some(held) = self.check_before_review(site, &reviewing, now).await? {
+            return Ok(Attempt::Held(held));
+        }
         github.mark_ready(remote.number).await?;
-        Ok(Some(Published {
+        Ok(Attempt::Published(Published {
             pr: PullRequest {
                 number: remote.number,
                 branch: head_branch.clone(),
@@ -201,18 +226,29 @@ impl Owner {
         (pr, fixing): (&PullRequest, &[ItemId]),
         joining: &[Joining],
         ready: &Ready,
-    ) -> Result<Option<Published>, PublishError> {
+        now: Timestamp,
+    ) -> Result<Attempt, PublishError> {
         let Site { pulls, team, lead } = site;
         let joined = contained(&ready.git, joining, &ready.tip).await?;
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         let before = github.get_pull_request(pr.number).await?;
         if before.head == ready.tip && joined.is_empty() {
-            return Ok(None);
+            return Ok(Attempt::Nothing);
         }
-        ready.git.push(&pr.branch).await?;
         let mut ids = fixing.to_vec();
         ids.extend(joined.iter().copied());
         let ids = self.in_list_order(team, &ids);
+        // A head the checks hold back is not pushed: the reviewers keep the head they reviewed.
+        let reviewing = Reviewing {
+            items: &ids,
+            ready,
+            pr: pr.number,
+            description: &before.body,
+        };
+        if let Some(held) = self.check_before_review(site, &reviewing, now).await? {
+            return Ok(Attempt::Held(held));
+        }
+        ready.git.push(&pr.branch).await?;
         if !joined.is_empty() {
             let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record)?;
             let update = PullRequestUpdate {
@@ -231,7 +267,7 @@ impl Owner {
         )?;
         github.post_comment(pr.number, comment.trim_end()).await?;
         let after = github.get_pull_request(pr.number).await?;
-        Ok(Some(Published {
+        Ok(Attempt::Published(Published {
             pr: pr.clone(),
             gated: ready.tip.clone(),
             carried: after.head,

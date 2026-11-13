@@ -495,6 +495,7 @@ impl Owner {
                 clock: &self.parts.clock,
                 why: why.as_ref(),
                 autopilot: self.pulls.as_ref().map(Pulls::texts),
+                checks: self.pulls.as_ref().map(Pulls::checks),
             };
             plan(&context, &mut self.parts.rng, &task).await
         };
