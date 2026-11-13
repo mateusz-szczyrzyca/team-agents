@@ -632,3 +632,61 @@ async fn each_question_is_answered_for_its_own_file_and_only_what_was_refused_go
         [Subject::Path("tests/existing.txt".parse().unwrap())]
     );
 }
+
+// ---- what the description names ---------------------------------------------------------------------------------------
+
+/// A list whose item names the file the scripts put a lint suppression in.
+const NAMES_A_FILE: &str = "\
+Build the thing.
+
+1. First
+[ ] 1.1 The first item
+    Add a function to src/lib.rs.
+    Expected result:
+    - the function works
+";
+
+#[tokio::test]
+async fn a_file_that_only_the_text_of_the_item_names_is_not_disclosed_to_the_checks() {
+    let mut rig = checking_rig("script:allow-lint,done", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    script(
+        &rig,
+        "allow-lint",
+        "printf '#[allow(dead_code)]\\nfn a() {}\\n' > src/lib.rs\necho case > tests/new.txt\ngit add src/lib.rs tests/new.txt\ncommit -m 'Add a function and its test'\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], NAMES_A_FILE, MergeMode::Autopilot, None).await;
+    let back = rig.prompt(&tasks[0], 2).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        back.contains("`src/lib.rs`") && back.contains("suppress a lint"),
+        "{back}"
+    );
+    assert_eq!(rig.github.calls("POST", "/graphql"), []);
+}
+
+#[tokio::test]
+async fn a_file_that_somebody_names_in_the_description_after_the_check_is_disclosed() {
+    let mut rig = checking_rig("script:allow-lint,slowdone", 5, SILENT, SILENT).await;
+    scripts(&rig);
+    script(
+        &rig,
+        "allow-lint",
+        "printf '#[allow(dead_code)]\\nfn a() {}\\n' > src/lib.rs\necho case > tests/new.txt\ngit add src/lib.rs tests/new.txt\ncommit -m 'Add a function and its test'\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], NAMES_A_FILE, MergeMode::Autopilot, None).await;
+    rig.wait_for("the pull request", || !rig.github.pulls().is_empty())
+        .await;
+    let described = rig.github.pulls()[0].body.clone();
+    edit_description(&rig, 1, &format!("{described}\n\n## Suppressions\n\n- `src/lib.rs`: the allow stays until the next item wires the function.\n")).await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(!rig.github.pulls()[0].draft);
+    assert_eq!(record(&rig, &tasks[0]).await.passes_of(&["1.1".parse().unwrap()]), 1);
+}
