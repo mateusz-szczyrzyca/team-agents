@@ -807,3 +807,91 @@ async fn a_pull_request_the_human_closed_without_merging_is_told_once_and_the_it
     );
     assert!(matches!(phase_of(&rig.state(), "1.1"), ItemPhase::Approved { .. }));
 }
+
+// ---- a team with a coordinator ---------------------------------------------------------------------------------
+
+/// A rig with a coordinator that sleeps until its member is done and then integrates (and, when it is asked for a fix
+/// pass, works on its own branch), a member that does its item, and two reviewers.
+async fn team_rig(reviewer: &'static str) -> Rig {
+    Rig::new(
+        &[
+            investigator("inv-lead", "sleep,integrate,work"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", reviewer),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn the_branch_of_the_coordinator_that_integrated_the_members_work_is_published_reviewed_and_merged() {
+    let mut rig = team_rig(APPROVING).await;
+    rig.start().await;
+
+    let (team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.notification_with("is finished").await;
+    rig.stop().await.unwrap();
+
+    let ItemPhase::Done {
+        completion: Completion::Merged { pr, .. },
+    } = phase_of(&state, "1.1")
+    else {
+        panic!("item 1.1 was not merged");
+    };
+    let coordinator_branch = format!("agents/inv-lead/{}", tasks[0]);
+    assert_eq!(pr.branch.as_str(), coordinator_branch);
+    let created = rig.github.calls("POST", &format!("/repos/{SLUG}/pulls"));
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].json()["head"], coordinator_branch);
+    // What the member did is in the main branch of the remote, through the coordinator's merge.
+    let member_branch = format!("agents/claude-1/{}-1.1", tasks[1]);
+    let part = std::process::Command::new("git")
+        .args(["merge-base", "--is-ancestor", &member_branch, &rig.remote_tip("main")])
+        .current_dir(&rig.repo)
+        .status()
+        .unwrap();
+    assert!(part.success());
+    let reviewers: Vec<_> = state
+        .team(&team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .map(|member| member.agent().name().to_owned())
+        .collect();
+    assert_eq!(reviewers.len(), 2);
+    assert!(reviewers.iter().all(|name| name.starts_with("inv-r")), "{reviewers:?}");
+}
+
+#[tokio::test]
+async fn a_fix_pass_of_a_team_goes_to_its_coordinator_which_has_the_integrated_branch() {
+    let mut rig = team_rig(CHANGES_ONCE).await;
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let prompt = rig.prompt(&tasks[0], 3).await;
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(prompt.contains("THE REVIEWERS ASKED FOR CHANGES"), "{prompt}");
+    assert!(prompt.contains(&format!("agents/inv-lead/{}", tasks[0])), "{prompt}");
+    assert!(
+        prompt.contains("1. [TDD-2] src/lib.rs:7 — the case is untested"),
+        "{prompt}"
+    );
+    assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
+    assert_eq!(rig.github.comments(1).len(), 1);
+    let progress = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(progress.fix_passes().len(), 1);
+}
