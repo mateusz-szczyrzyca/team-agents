@@ -156,8 +156,15 @@ pub(super) enum Judgement {
 
 /// What the file `file`, as the human saved it, says.
 pub(super) fn judge(file: &QuestionsFile) -> Judgement {
-    let _ = file;
-    Judgement::NotYet
+    if !file.is_answered() {
+        return Judgement::NotYet;
+    }
+    match file.answers() {
+        Ok(_) => Judgement::Answered,
+        Err(incomplete) => Judgement::Incomplete {
+            problems: incomplete.problems,
+        },
+    }
 }
 
 /// The notification that the file at `path`, which the human marked answered for the task `task` of the agent `agent`, is
@@ -172,8 +179,15 @@ pub(super) fn incomplete_notification(
     path: &Path,
     problems: &str,
 ) -> Result<Notification, TextError> {
-    let _ = (texts, agent, task, path, problems);
-    Notification::new("x", "").map_err(TextError::from)
+    let values = Variables::new()
+        .with("agent", agent)?
+        .with("task", task.as_str())?
+        .with("file", path.display().to_string())?
+        .with("problems", problems)?;
+    let rendered = texts.render(QuestionsPrompt::NoticeIncomplete, &values)?;
+    // The first line is the title, what follows is the body.
+    let (title, body) = rendered.split_once('\n').unwrap_or((rendered.as_str(), ""));
+    Ok(Notification::new(title.trim_end(), body.trim())?)
 }
 
 /// The questions of `problems`, one on each line: its number, its title and what is wrong.
