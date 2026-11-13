@@ -314,6 +314,27 @@ async fn answers_that_a_run_read_are_not_given_again_to_the_next_run() {
     daemon.stop().await.unwrap();
 }
 
+#[tokio::test]
+async fn answers_that_a_run_read_and_that_reported_failure_are_not_given_again_to_the_next_run() {
+    let mut daemon = waiting_for_answers().await;
+    daemon.scenario(1, "fail");
+    daemon.ask(answer(1, 1, &[(1, "Use the disk")])).await.unwrap();
+    daemon.status_is(1, TaskStatus::Failed).await;
+    daemon.scenario(1, "done");
+
+    daemon
+        .ask(Command::Resume(ControlRequest {
+            target: Target::Task(task(1)),
+        }))
+        .await
+        .unwrap();
+
+    daemon.status_is(1, TaskStatus::Done).await;
+    let prompt = daemon.recorded(1, ".fake-args");
+    assert!(!prompt.contains("Use the disk"), "{prompt}");
+    daemon.stop().await.unwrap();
+}
+
 // ---- the editor -------------------------------------------------------------------------------------------------
 
 /// The files the stand-in opened in the window whose record is `opened`.
