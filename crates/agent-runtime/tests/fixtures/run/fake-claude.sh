@@ -20,6 +20,7 @@
 #   quota                 the provider says the usage limit is reached and resets in 3 hours
 #   ratelimit             the provider answers HTTP 429
 #   env                   ends like `done` after writing PATH and FAKE_SECRET to .fake-env
+#   env-home              ends like `done` after writing AGENTS_HOME to .fake-home
 #
 # Every run records its arguments, one a line, in `.fake-args`.
 set -eu
@@ -135,6 +136,10 @@ case $scenario in
     ;;
   env)
     printf 'PATH=%s\nFAKE_SECRET=%s\n' "$PATH" "${FAKE_SECRET:-}" > .fake-env
+    finish_done
+    ;;
+  env-home)
+    printf '%s\n' "${AGENTS_HOME:-unset}" > .fake-home
     finish_done
     ;;
   *) echo "unknown scenario: $scenario" >&2; exit 64 ;;

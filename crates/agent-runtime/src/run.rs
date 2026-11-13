@@ -7,6 +7,7 @@
 //! touches no state: what the end means for the task is the daemon's decision.
 
 pub mod compose;
+mod hold;
 mod launch;
 mod output;
 
@@ -33,7 +34,9 @@ use crate::git::GitError;
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
 use crate::process::{ExitReport, ProcessError, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
+
 use crate::store::{StateStore, StoreError};
+pub use hold::{HoldGuard, WatchdogHold};
 
 /// How long a prompt may be to travel as one argument of a command line; longer ones go through a file. Linux refuses
 /// an argument over 128 KiB, and a CLI adds its own flags around it.
@@ -303,6 +306,20 @@ impl RunEngine {
     /// [`RunError`]: the run could not be built, started, followed or classified. A process that was started is
     /// stopped when the error is returned.
     pub async fn run(&self, job: RunJob, cancel: &CancellationToken) -> Result<RunVerdict, RunError> {
+        self.run_held(job, cancel, &WatchdogHold::new()).await
+    }
+
+    /// Carries out `job` like [`RunEngine::run`], with the watchdog held off while `hold` is held: the run is never
+    /// taken for hung then, and its silence is counted from the moment the hold ended.
+    ///
+    /// # Errors
+    /// [`RunError`], as for [`RunEngine::run`].
+    pub async fn run_held(
+        &self,
+        job: RunJob,
+        cancel: &CancellationToken,
+        hold: &WatchdogHold,
+    ) -> Result<RunVerdict, RunError> {
         let launch = launch::prepare(&self.parts, &job).await?;
         let stdout = launch.process.stdout_file.clone();
         let stderr = launch.process.stderr_file.clone();
