@@ -217,59 +217,24 @@ struct Wrapped {
     first: u32,
     /// The number of the last line read into it.
     last: u32,
+    /// Whether the round added at least one of its lines: an attribute it did not touch is not its concern.
+    touched: bool,
     /// Its lines so far, each trimmed, joined by a space.
     text: String,
 }
 
 impl Wrapped {
-    /// The markers of the whole attribute, in a file with this `extension`, at the number of its first line.
+    /// The markers of the whole attribute, in a file with this `extension`, at the number of its first line; none when
+    /// the round added no line of it.
     fn markers(&self, extension: &str) -> impl Iterator<Item = (u32, Marker)> {
         let first = self.first;
-        markers_of(extension, &self.text)
-            .into_iter()
-            .map(move |marker| (first, marker))
+        let found = if self.touched {
+            markers_of(extension, &self.text)
+        } else {
+            Vec::new()
+        };
+        found.into_iter().map(move |marker| (first, marker))
     }
-}
-
-/// The markers of the added lines of one file with this `extension`, each with the number of the line that has it:
-/// `lines` are the numbers and texts of the file's added lines, in the order of their numbers.
-///
-/// Each line is read on its own, and an attribute that rustfmt wrapped — its opening `#[cfg_attr(` alone on a line, what
-/// it applies on the lines after it, up to its closing `)]` — is read once more as one line, at the number of its first.
-/// A line that does not follow the one before it ends the attribute: what lies between was not added and is not known.
-#[must_use]
-pub fn markers_in(extension: &str, lines: &[(u32, &str)]) -> Vec<(u32, Marker)> {
-    let mut found: Vec<(u32, Marker)> = Vec::new();
-    let mut open: Option<Wrapped> = None;
-    for &(number, text) in lines {
-        found.extend(markers_of(extension, text).into_iter().map(|marker| (number, marker)));
-        let trimmed = text.trim();
-        if let Some(mut wrapped) = open.take() {
-            if wrapped.last.checked_add(1) == Some(number) {
-                wrapped.text.push(' ');
-                wrapped.text.push_str(trimmed);
-                wrapped.last = number;
-                if trimmed.starts_with(")]") {
-                    found.extend(wrapped.markers(extension));
-                } else {
-                    open = Some(wrapped);
-                }
-                continue;
-            }
-            found.extend(wrapped.markers(extension));
-        }
-        if CFG_ATTR.contains(&trimmed) {
-            open = Some(Wrapped {
-                first: number,
-                last: number,
-                text: trimmed.to_owned(),
-            });
-        }
-    }
-    if let Some(wrapped) = open {
-        found.extend(wrapped.markers(extension));
-    }
-    found
 }
 
 /// One line of a file, as far as the markers are read: its number, its text, and whether the round added it.
@@ -285,10 +250,67 @@ pub struct Line<'a> {
 
 /// The markers of the lines of one file with this `extension`, in the order of their numbers, each with the number of
 /// the line that has it: a line is read on its own only when it was added, and an attribute that rustfmt wrapped over
-/// lines is read as a whole when at least one of its lines was.
+/// lines — its opening `#[cfg_attr(` alone on a line, what it applies on the lines after it, up to its closing `)]` —
+/// is read once more as one line, at the number of its first, when at least one of its lines was added.
+///
+/// A line that does not follow the one before it ends the attribute: what lies between is not known.
 #[must_use]
-pub fn markers_touching(_extension: &str, _lines: &[Line<'_>]) -> Vec<(u32, Marker)> {
-    Vec::new()
+pub fn markers_touching(extension: &str, lines: &[Line<'_>]) -> Vec<(u32, Marker)> {
+    let mut found: Vec<(u32, Marker)> = Vec::new();
+    let mut open: Option<Wrapped> = None;
+    for line in lines {
+        if line.added {
+            found.extend(
+                markers_of(extension, line.text)
+                    .into_iter()
+                    .map(|marker| (line.number, marker)),
+            );
+        }
+        let trimmed = line.text.trim();
+        if let Some(mut wrapped) = open.take() {
+            if wrapped.last.checked_add(1) == Some(line.number) {
+                wrapped.text.push(' ');
+                wrapped.text.push_str(trimmed);
+                wrapped.last = line.number;
+                wrapped.touched |= line.added;
+                if trimmed.starts_with(")]") {
+                    found.extend(wrapped.markers(extension));
+                } else {
+                    open = Some(wrapped);
+                }
+                continue;
+            }
+            found.extend(wrapped.markers(extension));
+        }
+        if CFG_ATTR.contains(&trimmed) {
+            open = Some(Wrapped {
+                first: line.number,
+                last: line.number,
+                touched: line.added,
+                text: trimmed.to_owned(),
+            });
+        }
+    }
+    if let Some(wrapped) = open {
+        found.extend(wrapped.markers(extension));
+    }
+    found
+}
+
+/// The markers of the added lines of one file with this `extension`, each with the number of the line that has it:
+/// `lines` are the numbers and texts of the file's added lines, in the order of their numbers; see
+/// [`markers_touching`].
+#[must_use]
+pub fn markers_in(extension: &str, lines: &[(u32, &str)]) -> Vec<(u32, Marker)> {
+    let all: Vec<Line<'_>> = lines
+        .iter()
+        .map(|&(number, text)| Line {
+            number,
+            text,
+            added: true,
+        })
+        .collect();
+    markers_touching(extension, &all)
 }
 
 /// Whether `c` may be part of a name in Rust, or joins a name to a call as `.` does.

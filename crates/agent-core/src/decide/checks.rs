@@ -301,14 +301,14 @@ pub fn assess(rules: &Checks, facts: &RoundFacts, allowed: &[Subject]) -> Vec<Is
 pub fn assess_near(
     rules: &Checks,
     facts: &RoundFacts,
-    _unchanged: &[UnchangedLine],
+    unchanged: &[UnchangedLine],
     allowed: &[Subject],
 ) -> Vec<Issue> {
     let mut issues = protected_changes(rules, facts);
     issues.extend(changed_tests(rules, facts));
     issues.extend(edited_red_tests(rules, facts));
     issues.extend(missing_tests(rules, facts));
-    issues.extend(markers_added(rules, facts));
+    issues.extend(markers_added(rules, facts, unchanged));
     issues.retain(|issue| !allowed.contains(&issue.subject()));
     issues
 }
@@ -534,8 +534,9 @@ fn is_path_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '~' | '+' | '%')
 }
 
-/// The added lines that have a marker, one issue for each file and kind, in a file the description does not name.
-fn markers_added(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
+/// The added lines that have a marker — and the attributes wrapped over lines that have one and an added line, as far as
+/// `unchanged` shows them —, one issue for each file and kind, in a file the description does not name.
+fn markers_added(rules: &Checks, facts: &RoundFacts, unchanged: &[UnchangedLine]) -> Vec<Issue> {
     let mut found: BTreeMap<(&RepoPath, markers::Marker), (u32, u32)> = BTreeMap::new();
     // The lines of a file follow each other in the facts; a wrapped attribute is read over the lines of one file.
     for lines in facts.added.chunk_by(|one, next| one.path == next.path) {
@@ -548,8 +549,26 @@ fn markers_added(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
         if names_path(&facts.description, path) {
             continue;
         }
-        let numbered: Vec<(u32, &str)> = lines.iter().map(|line| (line.number, line.text.as_str())).collect();
-        for (number, marker) in markers::markers_in(extension, &numbered) {
+        let mut numbered: Vec<markers::Line<'_>> = lines
+            .iter()
+            .map(|line| markers::Line {
+                number: line.number,
+                text: line.text.as_str(),
+                added: true,
+            })
+            .chain(
+                unchanged
+                    .iter()
+                    .filter(|line| line.path == *path)
+                    .map(|line| markers::Line {
+                        number: line.number,
+                        text: line.text.as_str(),
+                        added: false,
+                    }),
+            )
+            .collect();
+        numbered.sort_by_key(|line| line.number);
+        for (number, marker) in markers::markers_touching(extension, &numbered) {
             // A test may ask whether it runs under test; production code may not.
             if marker == markers::Marker::ChecksUnderTest && !is_production(rules, path) {
                 continue;
