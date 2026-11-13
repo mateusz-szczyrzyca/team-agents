@@ -112,7 +112,13 @@ where
 fn command() -> clap::Command {
     // The description is set after the arguments: `augment_args` gives the command the doc comment of `RunArgs`.
     let with_run = Cli::command().subcommand(RunArgs::augment_args(clap::Command::new(RUN)).about(RUN_ABOUT));
-    Steer::augment_subcommands(with_run)
+    // `augment_subcommands` gives the command the doc comment of `Steer` as its description: the description is kept.
+    let about = with_run.get_about().cloned();
+    let steering = Steer::augment_subcommands(with_run);
+    match about {
+        Some(about) => steering.about(about),
+        None => steering,
+    }
 }
 
 /// What a command line says, with the commands that steer: [`Parsed`] and [`Steer`].
