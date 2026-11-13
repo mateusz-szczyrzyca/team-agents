@@ -817,15 +817,13 @@ async fn commands_the_daemon_does_not_serve_yet_are_refused_with_their_name() {
     let error = connection
         .request(
             Client::Cli,
-            Command::Stop(agent_core::protocol::ControlRequest {
-                target: Target::Task(task(1)),
-            }),
+            Command::Gate(agent_core::protocol::GateRequest { task: task(1) }),
         )
         .await
         .unwrap_err();
 
     assert!(
-        matches!(&error, ClientError::Refused(failure) if failure.kind == FailureKind::Refused && failure.message.contains("stop")),
+        matches!(&error, ClientError::Refused(failure) if failure.kind == FailureKind::Refused && failure.message.contains("gate")),
         "{error:?}"
     );
     f.stop().await.unwrap();

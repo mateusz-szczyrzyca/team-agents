@@ -9,6 +9,9 @@ request was opened.
 Item 7.2 is implemented, test-first (RED and GREEN commits), documented and pushed. The Rust gate is green **except for
 one existing test that the item itself makes wrong** — see "Needs the human" first.
 
+**Update:** the human answered (questions-1, `a`) and allowed the change. It is committed: the test now uses `gate`
+(served by item 7.3) as its example. The whole gate is green (`362` tests in `agent`, `0` failures, clippy `0` findings).
+
 ## Needs the human
 
 **One existing test fails because the item makes it wrong, and I did not change it (AGENTS.md rule 1).**
