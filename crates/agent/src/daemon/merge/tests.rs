@@ -2,11 +2,14 @@
 
 use std::num::NonZeroU32;
 
-use agent_core::decide::round::{RoundAction, RoundError, RoundPolicy, RoundState, Stage, Step};
+use agent_core::decide::round::{
+    RoundAction, RoundError, RoundEventKind, RoundPhase, RoundPolicy, RoundState, Stage, Step,
+};
 use agent_core::ids::InvestigatorName;
 use agent_core::state::{AnsweredVia, ItemPhase, MergeMode, PhaseKind, Question, Team};
 use agent_core::status::{ReviewVerdict, TaskStatus};
 
+use super::after_answer;
 use super::{Asking, Decision, Exhausted, Next, Unexpected, VerdictError};
 use super::{
     after_verdict, asking, decision, exhausted, fix_delivery, items_of, next_of, review_deliveries, round_state,
@@ -617,4 +620,47 @@ fn nothing_is_done_while_the_question_is_open_or_answered_or_the_lead_is_at_work
 
     assert_eq!(asking(&open), []);
     assert_eq!(asking(&at_work), []);
+}
+
+// ---- the human answered ---------------------------------------------------------------------------------------
+
+#[test]
+fn the_answer_of_the_human_gives_one_more_fix_pass_after_the_configured_ones() {
+    let mut team = after_passes(in_review(), 2);
+    submit(&mut team, "1.1", 21, ReviewVerdict::RequestChanges, 400);
+
+    let next = after_answer(team.item(item("1.1")).unwrap(), AUTOPILOT);
+
+    assert_eq!(next, Ok(Next::FixPass { pass: pass(3) }));
+}
+
+#[test]
+fn an_answer_about_an_item_that_waits_for_no_answer_is_refused() {
+    let team = in_review();
+
+    let next = after_answer(team.item(item("1.1")).unwrap(), AUTOPILOT);
+
+    assert_eq!(
+        next,
+        Err(VerdictError::Round(RoundError::NotExpected {
+            phase: RoundPhase::InReview,
+            event: RoundEventKind::HumanAnswered,
+        }))
+    );
+}
+
+#[test]
+fn an_answer_about_an_item_that_is_not_in_review_is_refused_with_its_phase() {
+    let mut team = led(LIST);
+    start(&mut team, "1.1", "claude-1", "agents/claude-1/work-1");
+
+    let next = after_answer(team.item(item("1.1")).unwrap(), AUTOPILOT);
+
+    assert_eq!(
+        next,
+        Err(VerdictError::NotInReview {
+            item: item("1.1"),
+            phase: PhaseKind::InProgress
+        })
+    );
 }

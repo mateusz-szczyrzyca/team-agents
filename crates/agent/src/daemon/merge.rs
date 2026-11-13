@@ -185,6 +185,16 @@ pub(super) fn after_verdict(
     Ok(next_of(&state.transition(&event, policy)?)?)
 }
 
+/// What follows the human's answer about the item `progress`, which waits for it after a request for changes that the
+/// fix passes could not take: one more fix pass.
+///
+/// # Errors
+/// [`VerdictError`].
+pub(super) fn after_answer(progress: &ItemProgress, policy: RoundPolicy) -> Result<Next, VerdictError> {
+    let _ = (progress, policy);
+    Ok(Next::Wait)
+}
+
 /// A pull request whose reviewers still ask for changes when the fix passes are used up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Exhausted {
