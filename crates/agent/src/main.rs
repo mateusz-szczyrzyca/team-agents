@@ -91,7 +91,7 @@ const RUN_ABOUT: &str = "Starts a task or a team on the repository the current d
 
 /// What a command line says: one of the commands of [`Cli`], or `run`.
 ///
-/// `run` is added to the command line when it is parsed ([`parse`]) and is not a variant of [`Command`]: the tests of the
+/// `run` (and `gate`, in [`Invocation`]) is added to the command line when it is parsed ([`parse`]) and is not a variant of [`Command`]: the tests of the
 /// command line match that enum exhaustively, so a new command is kept out of it until they are changed.
 #[derive(Debug)]
 enum Parsed {
@@ -119,7 +119,7 @@ where
     Ok(Parsed::Cli(Cli::from_arg_matches(&matches)?))
 }
 
-/// The command line of `agent`: the commands of [`Cli`] and `run`; the parser and the help are made from it.
+/// The command line of `agent`: the commands of [`Cli`], `run` and `gate`; the parser and the help are made from it.
 fn command() -> clap::Command {
     // The description is set after the arguments: `augment_args` gives the command the doc comment of `RunArgs`.
     let with_run = Cli::command()
