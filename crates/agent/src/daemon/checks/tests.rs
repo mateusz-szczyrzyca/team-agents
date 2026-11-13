@@ -135,6 +135,26 @@ async fn the_reason_of_each_kind_of_issue_names_what_it_is_about() {
     }
 }
 
+// Rule: a test file whose mode alone changed is told as such: its lines are the same, and only the human may allow it.
+#[tokio::test]
+async fn the_reason_of_a_test_file_whose_mode_changed_names_the_file_and_its_mode() {
+    let texts = texts().await;
+
+    let text = reason(
+        &texts,
+        &Issue::TestChanged {
+            path: path("tests/run.sh"),
+            how: TestChange::ModeChanged,
+        },
+    )
+    .unwrap();
+
+    for needle in ["`tests/run.sh`", "mode", "only the human"] {
+        assert!(text.contains(needle), "lacks {needle:?}: {text}");
+    }
+    assert!(!text.contains("not text"), "{text}");
+}
+
 #[tokio::test]
 async fn a_protected_file_is_told_as_added_modified_deleted_or_renamed() {
     let texts = texts().await;

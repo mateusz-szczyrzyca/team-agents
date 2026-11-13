@@ -260,6 +260,23 @@ fn a_deleted_renamed_or_replaced_test_file_is_an_issue() {
     }
 }
 
+// Rule: git lists a file whose mode alone changed (an executable bit) as modified with no line added or removed; for an
+// existing test that is a change other than added lines, which only the human may allow. A file that is not a test may.
+#[test]
+fn a_test_file_git_lists_as_modified_with_no_line_changed_is_an_issue_only_the_human_may_allow() {
+    let issues = found(&round(vec![modified("tests/unit/a.bats", 0, 0)]));
+
+    assert_eq!(
+        issues,
+        [Issue::TestChanged {
+            path: path("tests/unit/a.bats"),
+            how: TestChange::ModeChanged,
+        }]
+    );
+    assert_eq!(issues[0].judge(), Judge::Human);
+    assert_eq!(found(&round(vec![modified("README.md", 0, 0)])), []);
+}
+
 #[test]
 fn a_file_that_is_not_a_test_may_lose_lines() {
     assert_eq!(found(&round(vec![modified("docs/notes.md", 0, 8)])), []);

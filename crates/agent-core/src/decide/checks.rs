@@ -190,6 +190,8 @@ pub enum TestChange {
     },
     /// A binary file was replaced.
     EditedBinary,
+    /// Its lines are the same, but git lists it as modified: its mode (an executable bit) changed.
+    ModeChanged,
 }
 
 /// What was done to a protected file.
