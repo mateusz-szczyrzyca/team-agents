@@ -4,11 +4,21 @@
 //! `waiting`, so that the same investigator can review the next pull request and the same one again after a fix pass.
 //! Everything here decides from the state and the text of a report; the owner carries it out (`owner/rounds.rs`).
 
+use agent_core::kinds::UnknownKeyword;
 use agent_core::status::ReviewVerdict;
 
 /// The longest report the harness keeps, posts and hands on, in characters: far above any real report, and under the
 /// limit of a comment on GitHub.
 pub(super) const MAX_REPORT_CHARS: usize = 20_000;
+
+/// How many characters of an unreadable verdict a [`VerdictProblem`] keeps.
+const MAX_FOUND_CHARS: usize = 80;
+
+/// What a verdict line starts with, whatever the case.
+const VERDICT_KEY: &str = "VERDICT:";
+
+/// What a status line starts with.
+const STATUS_KEY: &str = "STATUS:";
 
 /// Why a reviewer's final message gives no verdict.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,15 +38,38 @@ pub(super) enum VerdictProblem {
 /// # Errors
 /// [`VerdictProblem`].
 pub(super) fn parse_verdict(message: &str) -> Result<ReviewVerdict, VerdictProblem> {
-    let _ = message;
-    Err(VerdictProblem::Missing)
+    let Some(value) = message.lines().find_map(|line| after_key(line, VERDICT_KEY)) else {
+        return Err(VerdictProblem::Missing);
+    };
+    match value.to_ascii_uppercase().parse::<ReviewVerdict>() {
+        Ok(verdict) => Ok(verdict),
+        // Anything else on the line is not a verdict: the report is asked for again, and the line is told.
+        Err(UnknownKeyword { .. }) => Err(VerdictProblem::Unreadable {
+            found: value.chars().take(MAX_FOUND_CHARS).collect(),
+        }),
+    }
+}
+
+/// What follows `key` on `line` when the line starts with it, once the markup characters (`*` and `` ` ``), the
+/// indentation and the marks of a heading, a quotation or a list item are dropped; the key is read in any case.
+fn after_key(line: &str, key: &str) -> Option<String> {
+    let plain: String = line.chars().filter(|c| !matches!(c, '*' | '`')).collect();
+    let start = plain.trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '#' | '>' | '-'));
+    let (head, rest) = (start.get(..key.len())?, start.get(key.len()..)?);
+    head.eq_ignore_ascii_case(key).then(|| rest.trim().to_owned())
 }
 
 /// The report in a reviewer's final message, as it is posted and kept: without the `STATUS:` line, at most
 /// [`MAX_REPORT_CHARS`] characters.
 pub(super) fn report_text(message: &str) -> String {
-    let _ = message;
-    String::new()
+    let mut lines: Vec<&str> = message.lines().collect();
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+    if lines.last().is_some_and(|line| after_key(line, STATUS_KEY).is_some()) {
+        lines.pop();
+    }
+    lines.join("\n").trim().chars().take(MAX_REPORT_CHARS).collect()
 }
 
 #[cfg(test)]
