@@ -4,7 +4,7 @@
 //! never wakes it. An editor saves by writing in place or by renaming a new file over the old one; both are seen. What
 //! is told is only *that* `questions-<round>.md` of a task was written: the owner reads the file and decides.
 
-use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -51,30 +51,132 @@ const FILE_PREFIX: &str = "questions-";
 /// See [`FILE_PREFIX`].
 const FILE_SUFFIX: &str = ".md";
 
-/// The saves not yet taken by the owner: a save of a file that is waiting is not queued again, so that a flood of saves of
-/// one file neither grows the queue nor crowds out the save of another.
-type Pending = Arc<Mutex<HashSet<Saved>>>;
+/// What the watch tells the owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::daemon) enum Report {
+    /// The human saved this questions file.
+    Saved(Saved),
+    /// Saves may have been missed: the owner reads every open questions file again.
+    Rescan,
+}
 
-/// The saves the watch reports, one for each file until the owner takes it.
+/// The saves and the wish for a rescan that the owner has not taken yet.
+#[derive(Debug, Default)]
+struct Queue {
+    /// The saved files in the order they were saved, each once.
+    saves: VecDeque<Saved>,
+    /// Whether a rescan is wanted.
+    rescan: bool,
+}
+
+impl Queue {
+    /// Notes a save of `file`, unless a save of it waits already.
+    fn push(&mut self, file: Saved) {
+        if !self.saves.contains(&file) {
+            self.saves.push_back(file);
+        }
+    }
+
+    /// The next thing to tell: the saves first, in order, then the rescan.
+    fn take(&mut self) -> Option<Report> {
+        if let Some(saved) = self.saves.pop_front() {
+            return Some(Report::Saved(saved));
+        }
+        std::mem::take(&mut self.rescan).then_some(Report::Rescan)
+    }
+}
+
+/// The queue and the signal that it has something, shared between the watch and the owner.
+#[derive(Debug, Clone)]
+struct Shared {
+    /// What was reported and not taken.
+    queue: Arc<Mutex<Queue>>,
+    /// Wakes the owner; a wake that is waiting already says all that another would.
+    wake: mpsc::Sender<()>,
+}
+
+/// The side of the watch that fills the queue.
+#[derive(Debug, Clone)]
+struct Reporter {
+    /// The queue and the wake.
+    shared: Shared,
+}
+
+impl Reporter {
+    /// Takes what the system said: queues each questions file written.
+    fn event(&self, result: notify::Result<notify::Event>) {
+        match result {
+            Ok(event) => self.written(&event),
+            Err(error) => tracing::warn!(%error, "the watch on the questions files reported an error"),
+        }
+    }
+
+    /// Queues each questions file `event` says was written.
+    fn written(&self, event: &notify::Event) {
+        if !writes(event.kind) {
+            return;
+        }
+        let mut queue = self.shared.queue.lock().unwrap_or_else(PoisonError::into_inner);
+        for path in &event.paths {
+            if let Some(file) = saved_file(path) {
+                queue.push(file);
+            }
+        }
+        drop(queue);
+        self.wake();
+    }
+
+    /// Wakes the owner.
+    fn wake(&self) {
+        match self.shared.wake.try_send(()) {
+            // A wake is waiting already: the owner reads the whole queue when it comes.
+            Ok(()) | Err(mpsc::error::TrySendError::Full(())) => {}
+            // The owner is gone when the daemon shuts down.
+            Err(mpsc::error::TrySendError::Closed(())) => {
+                tracing::debug!("a questions file was saved after the owner ended");
+            }
+        }
+    }
+}
+
+/// The reports of the watch, in the order the saves came.
 #[derive(Debug)]
 pub(in crate::daemon) struct Saves {
-    /// The queue; it holds at most one entry for each questions file that was saved and not yet taken.
-    queue: mpsc::UnboundedReceiver<Saved>,
-    /// The entries of the queue, shared with the watch that fills it.
-    pending: Pending,
+    /// What the watch reported and the owner has not taken.
+    queue: Arc<Mutex<Queue>>,
+    /// Tells that the queue may have something; ends when the watch is gone.
+    wake: mpsc::Receiver<()>,
 }
 
 impl Saves {
-    /// The next save, `None` when the watch is gone. A save that comes after this returns is queued again, so the file
-    /// is read as it is at least once after its last save.
-    pub(in crate::daemon) async fn recv(&mut self) -> Option<Saved> {
-        let saved = self.queue.recv().await?;
-        self.pending
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&saved);
-        Some(saved)
+    /// The next report, `None` when the watch is gone. A save that comes after this returns is reported again, so the
+    /// file is read as it is at least once after its last save.
+    pub(in crate::daemon) async fn recv(&mut self) -> Option<Report> {
+        loop {
+            if let Some(report) = self.take() {
+                return Some(report);
+            }
+            if self.wake.recv().await.is_none() {
+                return self.take();
+            }
+        }
     }
+
+    /// The next report that waits.
+    fn take(&self) -> Option<Report> {
+        self.queue.lock().unwrap_or_else(PoisonError::into_inner).take()
+    }
+}
+
+/// A queue and its two ends.
+fn channel() -> (Reporter, Saves) {
+    let queue = Arc::new(Mutex::new(Queue::default()));
+    let (wake, woken) = mpsc::channel(1);
+    let shared = Shared {
+        queue: Arc::clone(&queue),
+        wake,
+    };
+    (Reporter { shared }, Saves { queue, wake: woken })
 }
 
 /// The watch.
@@ -95,17 +197,9 @@ impl Watcher {
     /// # Errors
     /// [`WatchError::Start`].
     pub(in crate::daemon) fn new() -> Result<(Self, Saves), WatchError> {
-        let (sender, queue) = mpsc::unbounded_channel();
-        let pending = Pending::default();
-        let shared = Arc::clone(&pending);
-        let inner = notify::recommended_watcher(move |result: notify::Result<notify::Event>| match result {
-            Ok(event) => report(&sender, &shared, &event),
-            // The system lost track of something: a save may have been missed. The owner looks at the open questions
-            // again when the daemon starts, and the human can always run `agent answer`.
-            Err(error) => tracing::warn!(%error, "the watch on the questions files reported an error"),
-        })
-        .map_err(WatchError::Start)?;
-        Ok((Self { inner }, Saves { queue, pending }))
+        let (reporter, saves) = channel();
+        let inner = notify::recommended_watcher(move |result| reporter.event(result)).map_err(WatchError::Start)?;
+        Ok((Self { inner }, saves))
     }
 
     /// Starts watching the directory `dir` of a task.
@@ -130,30 +224,6 @@ impl Watcher {
             path: dir.to_path_buf(),
             source,
         })
-    }
-}
-
-/// Queues each questions file `event` says was written, unless a save of it is queued already.
-fn report(queue: &mpsc::UnboundedSender<Saved>, pending: &Pending, event: &notify::Event) {
-    if !writes(event.kind) {
-        return;
-    }
-    for path in &event.paths {
-        let Some(file) = saved_file(path) else {
-            continue;
-        };
-        let new = pending
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(file.clone());
-        // The file is read as it is when the queued save is handled, so a repeat adds nothing.
-        if !new {
-            continue;
-        }
-        // The owner is gone when the daemon shuts down.
-        if queue.send(file).is_err() {
-            tracing::debug!("a save of a questions file came after the owner ended");
-        }
     }
 }
 

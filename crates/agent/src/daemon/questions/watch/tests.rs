@@ -17,10 +17,14 @@ fn watching() -> (tempfile::TempDir, PathBuf, Watcher, Saves) {
 }
 
 async fn next(events: &mut Saves) -> Saved {
-    tokio::time::timeout(PATIENCE, events.recv())
+    let report = tokio::time::timeout(PATIENCE, events.recv())
         .await
         .expect("no questions file was reported")
-        .expect("the watch ended")
+        .expect("the watch ended");
+    match report {
+        Report::Saved(saved) => saved,
+        Report::Rescan => panic!("a save was expected, not a rescan"),
+    }
 }
 
 fn saved(n: u32, round: u32) -> Saved {
@@ -109,7 +113,7 @@ async fn letting_go_a_directory_that_was_never_watched_is_an_error_that_names_it
 /// Everything `events` reports until it has been quiet for a moment.
 async fn quiet(events: &mut Saves) -> Vec<Saved> {
     let mut all = Vec::new();
-    while let Ok(Some(saved)) = tokio::time::timeout(Duration::from_secs(1), events.recv()).await {
+    while let Ok(Some(Report::Saved(saved))) = tokio::time::timeout(Duration::from_secs(1), events.recv()).await {
         all.push(saved);
     }
     all
@@ -139,7 +143,7 @@ async fn the_save_of_another_task_is_reported_though_the_owner_is_busy_with_save
 
 #[tokio::test]
 async fn many_saves_of_one_file_wait_as_one_until_the_owner_takes_it() {
-    let (home, first, mut watcher, mut events) = watching();
+    let (home, first, mut watcher, events) = watching();
     let second = home.path().join(task(2).as_str());
     std::fs::create_dir_all(&second).unwrap();
     watcher.watch(&second).unwrap();
@@ -150,15 +154,12 @@ async fn many_saves_of_one_file_wait_as_one_until_the_owner_takes_it() {
     std::fs::write(second.join("questions-1.md"), "text").unwrap();
     // The events come in the order of the writes: when the last file is queued, every repeat before it was seen.
     let deadline = std::time::Instant::now() + PATIENCE;
-    while !events.pending.lock().unwrap().contains(&saved(2, 1)) {
+    while !events.queue.lock().unwrap().saves.contains(&saved(2, 1)) {
         assert!(std::time::Instant::now() < deadline, "the last save was never queued");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
-    let mut queued = Vec::new();
-    while let Ok(entry) = events.queue.try_recv() {
-        queued.push(entry);
-    }
+    let queued: Vec<Saved> = events.queue.lock().unwrap().saves.iter().cloned().collect();
     assert_eq!(queued, [saved(1, 1), saved(2, 1)]);
 }
 
@@ -171,4 +172,90 @@ async fn a_file_saved_again_after_the_owner_took_it_is_queued_again() {
     std::fs::write(dir.join("questions-1.md"), "two").unwrap();
 
     assert_eq!(next(&mut events).await, saved(1, 1));
+}
+
+// ---- the queue is bounded, and what it cannot hold is read again -------------------------------------------------
+
+/// What the system says when `round` of the questions file of task `n` was written.
+fn written(n: u32, round: u32) -> notify::Result<notify::Event> {
+    let path = PathBuf::from("/home")
+        .join(task(n).as_str())
+        .join(format!("questions-{round}.md"));
+    Ok(notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::File)).add_path(path))
+}
+
+/// The next report of `saves`, which has to be there: a report that never comes is a failure, not a hang.
+async fn report(saves: &mut Saves) -> Option<Report> {
+    tokio::time::timeout(Duration::from_secs(3600), saves.recv())
+        .await
+        .expect("no report came")
+}
+
+/// Nothing is reported within a long wait; the clock of the test is paused, so the wait costs nothing.
+async fn nothing_more(saves: &mut Saves) {
+    let report = tokio::time::timeout(Duration::from_secs(3600), saves.recv()).await;
+    assert!(report.is_err(), "{report:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_flood_of_saves_of_different_files_does_not_fill_the_queue_without_end() {
+    let (reporter, mut saves) = channel();
+    let flood = 1_000;
+    for round in 1..=flood {
+        reporter.event(written(1, round));
+    }
+    drop(reporter);
+
+    let mut kept = Vec::new();
+    while let Some(Report::Saved(saved)) = saves.recv().await {
+        kept.push(saved);
+    }
+
+    assert!(
+        kept.len() < usize::try_from(flood).unwrap(),
+        "{} saves were kept",
+        kept.len()
+    );
+    assert_eq!(
+        kept.first(),
+        Some(&saved(1, 1)),
+        "the saves kept are the first ones, in order"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn what_the_queue_could_not_hold_is_told_as_a_rescan_after_the_saves() {
+    let (reporter, mut saves) = channel();
+    for round in 1..=1_000 {
+        reporter.event(written(1, round));
+    }
+
+    let mut last = None;
+    while let Ok(Some(report)) = tokio::time::timeout(Duration::from_secs(1), saves.recv()).await {
+        last = Some(report);
+    }
+
+    assert_eq!(last, Some(Report::Rescan));
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_error_of_the_watch_asks_for_a_rescan_once_however_often_it_comes() {
+    let (reporter, mut saves) = channel();
+    reporter.event(written(1, 1));
+    reporter.event(Err(notify::Error::generic("the system lost track")));
+    reporter.event(Err(notify::Error::generic("again")));
+
+    assert_eq!(report(&mut saves).await, Some(Report::Saved(saved(1, 1))));
+    assert_eq!(report(&mut saves).await, Some(Report::Rescan));
+    nothing_more(&mut saves).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_report_that_waits_when_the_watch_ends_is_still_given() {
+    let (reporter, mut saves) = channel();
+    reporter.event(written(1, 1));
+    drop(reporter);
+
+    assert_eq!(report(&mut saves).await, Some(Report::Saved(saved(1, 1))));
+    assert_eq!(report(&mut saves).await, None);
 }

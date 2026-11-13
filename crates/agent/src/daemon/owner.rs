@@ -47,7 +47,7 @@ use super::control::{Halt, Steer, after_halt, halted_status};
 use super::notice::Notice;
 use super::notifier::Delivery;
 use super::questions;
-use super::questions::watch::{Saved, Saves, Watcher};
+use super::questions::watch::{Report, Saves, Watcher};
 use super::recovery::{RecoveryError, recover};
 use super::settle::{Settled, settle};
 use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
@@ -310,8 +310,8 @@ pub(super) struct Owner {
     shutdown: CancellationToken,
 }
 
-/// The next questions file the human saved; never, when the files are not watched.
-async fn next_saved(saves: &mut Option<Saves>) -> Option<Saved> {
+/// The next report of the watch on the questions files; never, when the files are not watched.
+async fn next_report(saves: &mut Option<Saves>) -> Option<Report> {
     match saves {
         Some(saves) => saves.recv().await,
         None => std::future::pending().await,
@@ -370,7 +370,7 @@ impl Owner {
                     None => break,
                 },
                 Some(joined) = self.runs.join_next_with_id() => self.settle_joined(joined).await?,
-                Some(saved) = next_saved(&mut self.saved) => self.file_saved(saved).await?,
+                Some(report) = next_report(&mut self.saved) => self.reported(report).await?,
                 _ = tick.tick() => {
                     self.wake_due().await?;
                     self.look_at_every_team();

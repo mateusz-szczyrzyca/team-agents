@@ -8,6 +8,7 @@ use agent_core::status::TaskStatus;
 
 use super::super::fixture::{Daemon, answer, n};
 use crate::client::ClientError;
+use crate::daemon::questions::watch::Report;
 use crate::fixtures::{solo_state, task};
 
 /// A daemon whose task 1 asked its question and waits for the answers; its next run ends with `DONE`.
@@ -399,4 +400,29 @@ async fn a_window_that_cannot_be_reached_does_not_keep_the_human_from_being_told
     // No window is connected: the notification is the way the human hears of it.
     daemon.notification_with("questions-1.md").await;
     daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_rescan_reads_the_open_files_whose_save_was_not_reported() {
+    let mut daemon = waiting_for_answers().await;
+    daemon.stop().await.unwrap();
+    let path = daemon.questions_file(1, 1);
+    let mut file = QuestionsFile::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    file.set_verdict(
+        n(1),
+        Some(agent_core::questions::Verdict::from_text("ok").unwrap().unwrap()),
+    )
+    .unwrap();
+    file.mark_answered();
+    std::fs::write(&path, file.render()).unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    owner.reported(Report::Rescan).await.unwrap();
+
+    let member = owner.parts.state.find_task(&task(1)).unwrap().member;
+    assert_ne!(
+        member.status(),
+        TaskStatus::Questions,
+        "the answers in the file were not read"
+    );
 }

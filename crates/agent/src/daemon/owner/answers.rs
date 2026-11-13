@@ -17,7 +17,7 @@ use agent_runtime::process::error_chain;
 use agent_runtime::text_file::replace_text_file;
 
 use super::{Located, Notice, Owner, OwnerError};
-use crate::daemon::questions::watch::Saved;
+use crate::daemon::questions::watch::{Report, Saved};
 use crate::daemon::questions::{self, Judgement, Loaded};
 
 /// The round of questions a task waits for answers to.
@@ -206,6 +206,17 @@ impl Owner {
             round: question.round(),
             path: question.file().as_path().to_path_buf(),
         })
+    }
+
+    /// Acts on what the watch on the questions files reported.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the state cannot be saved.
+    pub(super) async fn reported(&mut self, report: Report) -> Result<(), OwnerError> {
+        match report {
+            Report::Saved(saved) => self.file_saved(saved).await,
+            Report::Rescan => Ok(()),
+        }
     }
 
     /// The human saved the questions file `saved`: when it is marked answered and complete, the task goes on with its
