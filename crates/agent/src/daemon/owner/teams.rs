@@ -65,11 +65,11 @@ struct Workers {
 
 /// What one look at a team changed in the state.
 #[derive(Debug, Default)]
-struct Round {
+pub(super) struct Round {
     /// What happened, for the subscribers.
-    events: Vec<EventKind>,
+    pub(super) events: Vec<EventKind>,
     /// Whether the state changed and is to be saved.
-    changed: bool,
+    pub(super) changed: bool,
 }
 
 impl Owner {
@@ -264,6 +264,7 @@ impl Owner {
         }
         let mut round = Round::default();
         self.reconcile_bus(team, &mut round).await?;
+        self.pull_requests(team, &mut round).await?;
         self.assign_items(team, &mut round).await?;
         self.serve_requests(team, &mut round).await?;
         self.close_if_finished(team, &mut round)?;

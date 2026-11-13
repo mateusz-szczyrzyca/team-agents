@@ -10,6 +10,7 @@ mod controls;
 #[cfg(test)]
 mod fixture;
 mod gate;
+mod rounds;
 mod start;
 mod teams;
 
@@ -42,6 +43,7 @@ use tokio::task::{Id as JoinId, JoinError, JoinSet};
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
+pub(crate) use self::rounds::{Pulls, PullsError};
 use self::start::{Context, Plan, next_round, plan};
 use self::teams::{Outbound, Served};
 use super::control::{Halt, Steer, after_halt, halted_status};
@@ -315,6 +317,8 @@ pub(super) struct Owner {
     gate_stops: HashMap<TaskId, CancellationToken>,
     /// The queue of the gate service; `None` for an owner that runs without one, which refuses every gate.
     gate: Option<GateQueue>,
+    /// The autopilot; `None` for an owner that runs without one: no pull request is opened.
+    pulls: Option<Pulls>,
     /// Cancelled when the daemon is to stop: the runs it starts stop with it.
     shutdown: CancellationToken,
 }
@@ -359,6 +363,7 @@ impl Owner {
             holds: HashMap::new(),
             gate_stops: HashMap::new(),
             gate: None,
+            pulls: None,
             shutdown,
         }
     }
@@ -366,6 +371,12 @@ impl Owner {
     /// The same, with the gates it is asked for going to `queue`.
     pub(super) fn with_gate(mut self, queue: GateQueue) -> Self {
         self.gate = Some(queue);
+        self
+    }
+
+    /// The same, with the pull requests it is asked for opened and reviewed as `pulls` says.
+    pub(super) fn with_pulls(mut self, pulls: Pulls) -> Self {
+        self.pulls = Some(pulls);
         self
     }
 

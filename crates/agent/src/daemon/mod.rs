@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use agent_core::config::OpenQuestions;
 use agent_runtime::agentbus::AgentBus;
+use agent_runtime::autopilot_prompts::{AutopilotPrompts, AutopilotPromptsError};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::editor::{SocketDirs, VscodeOpener};
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
@@ -36,7 +37,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::sync::CancellationToken;
 
-use self::owner::{EVENT_BACKLOG, INBOX, MAX_RUNS, Owner, OwnerError, OwnerParts};
+use self::owner::{EVENT_BACKLOG, INBOX, MAX_RUNS, Owner, OwnerError, OwnerParts, Pulls, PullsError};
 use self::server::ServerError;
 
 mod control;
@@ -110,6 +111,12 @@ pub(crate) enum DaemonError {
     /// The texts of the questions cannot be loaded.
     #[error("cannot load the texts of the questions")]
     QuestionsPrompts(#[from] QuestionsPromptsError),
+    /// The texts of the pull requests and the reviews cannot be loaded.
+    #[error("cannot load the texts of the pull requests and the reviews")]
+    AutopilotPrompts(#[from] AutopilotPromptsError),
+    /// The autopilot cannot be set up from the settings.
+    #[error("cannot set up the pull requests of the autopilot")]
+    Pulls(#[from] PullsError),
     /// The rules cannot be loaded.
     #[error("cannot load the rules")]
     Prompts(#[from] PromptLoadError),
@@ -183,6 +190,8 @@ pub(crate) async fn run_in(
     let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);
     let team_texts = Arc::new(TeamPrompts::load(&setup.prompts_dir, &language).await?);
     let question_texts = Arc::new(QuestionsPrompts::load(&setup.prompts_dir, &language).await?);
+    let autopilot_texts = Arc::new(AutopilotPrompts::load(&setup.prompts_dir, &language).await?);
+    let pulls = Pulls::new(autopilot_texts, &settings)?;
     let rules = Arc::new(PromptLoader::load(&setup.prompts_dir, &language).await?);
     let bus = make_bus(&setup.home, &settings);
     let state = store.load().await?;
@@ -244,6 +253,13 @@ pub(crate) async fn run_in(
         shutdown.clone(),
     )
     .with_gate(gates);
+    let owner = match pulls {
+        Some(pulls) => owner.with_pulls(pulls),
+        None => {
+            tracing::info!("the home has no GitHub token (github_token in secrets.toml): no pull request is opened");
+            owner
+        }
+    };
     let owned_end = owner.run(requests).await;
     // Whatever ended the owner, the rest of the daemon ends with it.
     shutdown.cancel();
