@@ -268,3 +268,15 @@ RED and GREEN in pairs; the failing and passing output is in each message.
 | [`18f6913a`](https://github.com/mateusz-szczyrzyca/team-agents/commit/18f6913a7d9c1bab1814830d5acb6ad172bb317e) | Steering: split the long functions, no bool parameters, a test for reviewers |
 | [`7d3f4d75`](https://github.com/mateusz-szczyrzyca/team-agents/commit/7d3f4d758732d7c971f184745465edb17f88db87) | Controls: a task that waits for answers is not stopped (RED) |
 | [`e3e0c54d`](https://github.com/mateusz-szczyrzyca/team-agents/commit/e3e0c54d975d45a2f8f45a5a1d6aadeb883f11bc) | Controls: a task that waits for answers is not stopped (GREEN) |
+
+## Review of PR #95, pass 1 — what was done
+
+All six findings were right and are fixed; the gate (`make gate`) passes.
+
+- **Major 1, answers and the team's reason:** `team::shape_with_answers` (in `crates/agent/src/daemon/team/prompts.rs`) puts the answers after everything a session that starts is told, and before the reason (wake-up, item) a resumed session gets. RED/GREEN commits; `5` new tests.
+- **Major 2, a halt that meets a run ending by itself:** `Owner::finished` records `RunEnd::Stopped` and drops the wake-up, the strike and the pause notice when the human's stop or pause meets a hang or a limit pause. `finished` is split (`settled_status`). RED/GREEN commits; `2` new tests, driven by a new `hang-slow-stop` scenario of the fake CLI (it takes two seconds to end when told to stop, which opens the window for the control).
+- **Major 3, `bool` parameters:** `with_answers` is gone (the answers are a value, `answers_text`); `commands::answer::send` takes a `Delivery` with an `Origin` enum. Refactor, no new test.
+- **Major 4, adjacent `PathBuf`s:** `VscodeOpener::new` takes `SocketDirs { runtime, fallback }`. Refactor.
+- **Major 5, untested branches:** `7` new tests for the newest command, a command that is not executable, `OpenError::List`, `OpenError::Start` and `ReplaceError::NoDirectory`; each fails when the code is broken (checked by mutation). They pass at once: the code existed.
+- **Minor 6, stale reason of a stopped task:** `Owner::move_task` drops it on `stop`. **No test:** the task has to be queued with a reason while the control arrives, which needs `MAX_RUNS` (16) runs going at once; there is no way to set that up through the daemon.
+- **Not done by me:** nothing of the review was left; `Owner::after_halt` was removed as unused.
