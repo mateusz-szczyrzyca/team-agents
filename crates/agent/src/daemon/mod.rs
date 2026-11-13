@@ -21,6 +21,7 @@ use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
 use agent_runtime::notify::Notifier;
 use agent_runtime::process::Supervisor;
 use agent_runtime::prompts::{PromptLoadError, PromptLoader};
+use agent_runtime::questions_prompts::{QuestionsPrompts, QuestionsPromptsError};
 use agent_runtime::run::{EngineParts, RunEngine, RunTimings};
 use agent_runtime::settings::{Settings, SettingsError};
 use agent_runtime::store::{Home, StateStore, StoreError};
@@ -96,6 +97,9 @@ pub(crate) enum DaemonError {
     /// The texts of the teams cannot be loaded.
     #[error("cannot load the texts of the teams")]
     TeamPrompts(#[from] TeamPromptsError),
+    /// The texts of the questions cannot be loaded.
+    #[error("cannot load the texts of the questions")]
+    QuestionsPrompts(#[from] QuestionsPromptsError),
     /// The rules cannot be loaded.
     #[error("cannot load the rules")]
     Prompts(#[from] PromptLoadError),
@@ -130,6 +134,7 @@ pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Resu
     let language = settings.config.language().clone();
     let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);
     let team_texts = Arc::new(TeamPrompts::load(&setup.prompts_dir, &language).await?);
+    let question_texts = Arc::new(QuestionsPrompts::load(&setup.prompts_dir, &language).await?);
     let rules = Arc::new(PromptLoader::load(&setup.prompts_dir, &language).await?);
     let bus = make_bus(&setup.home, &settings);
     let state = store.load().await?;
@@ -167,6 +172,7 @@ pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Resu
             settings,
             texts,
             team_texts,
+            question_texts,
             rules,
             bus,
             engine,

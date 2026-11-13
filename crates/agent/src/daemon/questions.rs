@@ -52,11 +52,23 @@ pub(super) enum QuestionsProblem {
     },
 }
 
+/// A questions file as it is on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Loaded {
+    /// The questions and what the human wrote.
+    pub(super) file: QuestionsFile,
+    /// The permission bits of the file, to give the file that replaces it.
+    pub(super) mode: u32,
+}
+
+/// The permission bits of a mode: what `chmod` takes, without the type of the file.
+const PERMISSION_BITS: u32 = 0o7777;
+
 /// Reads and parses the questions file at `path`.
 ///
 /// # Errors
 /// [`QuestionsProblem`].
-pub(super) async fn read(path: &Path) -> Result<QuestionsFile, QuestionsProblem> {
+pub(super) async fn read(path: &Path) -> Result<Loaded, QuestionsProblem> {
     let owned = || path.to_path_buf();
     let file = read_text_file(path, MAX_QUESTIONS_BYTES)
         .await
@@ -70,7 +82,12 @@ pub(super) async fn read(path: &Path) -> Result<QuestionsFile, QuestionsProblem>
             path: owned(),
             source: io::Error::from(io::ErrorKind::NotFound),
         })?;
-    QuestionsFile::parse(&file.text).map_err(|source| QuestionsProblem::Format { path: owned(), source })
+    let parsed =
+        QuestionsFile::parse(&file.text).map_err(|source| QuestionsProblem::Format { path: owned(), source })?;
+    Ok(Loaded {
+        file: parsed,
+        mode: file.mode & PERMISSION_BITS,
+    })
 }
 
 /// Why answers cannot be put into a questions file.

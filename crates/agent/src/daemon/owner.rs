@@ -17,18 +17,19 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::cli::SessionId as CliSessionId;
+use agent_core::cli::{ActivityEvent, SessionId as CliSessionId};
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::outcome::{AfterHang, after_hang};
 use agent_core::ids::{InvalidName, TaskId, TeamId};
 use agent_core::kinds::Role;
-use agent_core::protocol::{Command, Event, EventKind, Failure, FailureKind, Reply, Target, TeamSummary};
+use agent_core::protocol::{Client, Command, Event, EventKind, Failure, FailureKind, Reply, Target, TeamSummary};
 use agent_core::state::{InvalidTimestamp, Question, QuestionError, RunEnd, RunError, SessionId, State, Timestamp};
 use agent_core::status::{InvalidTransition, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::prompts::PromptLoader;
+use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict};
 use agent_runtime::settings::Settings;
 use agent_runtime::store::{StateStore, StoreError};
@@ -44,6 +45,7 @@ use self::teams::{Outbound, Served};
 use super::notice::Notice;
 use super::notifier::Delivery;
 use super::questions;
+use super::questions::watch::{Saved, Watcher};
 use super::recovery::{RecoveryError, recover};
 use super::settle::{Settled, settle};
 use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
@@ -66,6 +68,8 @@ const SECS_PER_MINUTE: u64 = 60;
 pub(super) enum Message {
     /// A request, to answer.
     Request {
+        /// Who asks.
+        client: Client,
         /// What it asks.
         command: Command,
         /// Where the answer goes.
@@ -200,6 +204,8 @@ pub(super) struct OwnerParts {
     pub(super) texts: Arc<HarnessPrompts>,
     /// The texts of the teams.
     pub(super) team_texts: Arc<TeamPrompts>,
+    /// The texts of the questions and their answers.
+    pub(super) question_texts: Arc<QuestionsPrompts>,
     /// The rules.
     pub(super) rules: Arc<PromptLoader>,
     /// The bus of the home: the teams' members, their messages and their requests for workers.
@@ -268,13 +274,35 @@ pub(super) struct Owner {
     closed: HashSet<TeamId>,
     /// The teams to look at at the next turn of the loop, in the order of their IDs.
     looks: BTreeSet<TeamId>,
+    /// The watch on the questions files; `None` when the system would not make one: the answers then arrive only
+    /// through `agent answer` and the dashboard.
+    watcher: Option<Watcher>,
+    /// The questions files the human saved, as the watch reports them.
+    saved: mpsc::Receiver<Saved>,
+    /// The tasks whose directory is watched.
+    watched: HashSet<TaskId>,
+    /// For each task that waits for answers, the problems of the last save the human was told about, so that the same
+    /// save is not told twice.
+    incomplete: HashMap<TaskId, String>,
     /// Cancelled when the daemon is to stop: the runs it starts stop with it.
     shutdown: CancellationToken,
 }
 
+/// How many saves of questions files may wait for the owner.
+const SAVED_BACKLOG: usize = 64;
+
 impl Owner {
     /// An owner made of `parts`.
     pub(super) fn new(parts: OwnerParts, shutdown: CancellationToken) -> Self {
+        let (saves, saved) = mpsc::channel(SAVED_BACKLOG);
+        let watcher = match Watcher::new(saves) {
+            Ok(watcher) => Some(watcher),
+            Err(error) => {
+                // The daemon is useful without it: the answers still come through `agent answer` and the dashboard.
+                tracing::warn!(error = %error_chain(&error), "the questions files are not watched: a saved answer is not noticed");
+                None
+            }
+        };
         Self {
             parts,
             runs: JoinSet::new(),
@@ -287,6 +315,10 @@ impl Owner {
             serving: HashMap::new(),
             closed: HashSet::new(),
             looks: BTreeSet::new(),
+            watcher,
+            saved,
+            watched: HashSet::new(),
+            incomplete: HashMap::new(),
             shutdown,
         }
     }
@@ -297,6 +329,7 @@ impl Owner {
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
     pub(super) async fn run(mut self, mut inbox: mpsc::Receiver<Message>) -> Result<(), OwnerError> {
         self.recover().await?;
+        self.adopt_open_questions().await?;
         let mut tick = tokio::time::interval(self.parts.tick.max(Duration::from_millis(1)));
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
@@ -309,6 +342,7 @@ impl Owner {
                     None => break,
                 },
                 Some(joined) = self.runs.join_next_with_id() => self.settle_joined(joined).await?,
+                Some(saved) = self.saved.recv() => self.file_saved(saved).await?,
                 _ = tick.tick() => {
                     self.wake_due().await?;
                     self.look_at_every_team();
@@ -374,6 +408,7 @@ impl Owner {
                 settings: &self.parts.settings,
                 texts: &self.parts.texts,
                 team_texts: &self.parts.team_texts,
+                question_texts: &self.parts.question_texts,
                 rules: &self.parts.rules,
                 home: self.parts.store.home(),
                 clock: &self.parts.clock,
@@ -590,9 +625,10 @@ impl Owner {
                 reason,
             })
         };
-        if let Err(problem) = questions::read(&path).await {
-            return Ok(unusable(error_chain(&problem)));
-        }
+        let loaded = match questions::read(&path).await {
+            Ok(loaded) => loaded,
+            Err(problem) => return Ok(unusable(error_chain(&problem))),
+        };
         let file = match path.to_str().map(AbsolutePath::from_str) {
             Some(Ok(file)) => file,
             Some(Err(problem)) => return Ok(unusable(error_chain(&problem))),
@@ -610,6 +646,7 @@ impl Owner {
             task: task.clone(),
             round,
         });
+        self.prepare_questions(task, &path, &loaded).await;
         Ok(Asked::Recorded(Notice::Questions { round, file: path }))
     }
 
@@ -659,9 +696,10 @@ impl Owner {
     /// [`OwnerError`] when a request changes the state and it cannot be saved.
     async fn handle(&mut self, message: Message) -> Result<(), OwnerError> {
         match message {
-            Message::Request { command, reply, .. } => {
+            Message::Request { client, command, reply } => {
                 let answer = match command {
                     Command::Run(request) => self.run_request(request).await?,
+                    Command::Answer(request) => self.answer_request(&client, request).await?,
                     other => self.answer(&other),
                 };
                 if reply.send(answer).is_err() {
@@ -701,7 +739,10 @@ impl Owner {
                 kind: FailureKind::Internal,
                 message: "a run is started by the owner, not answered from the state".to_owned(),
             }),
-            Command::Answer(_) => Err(not_served("answer")),
+            Command::Answer(_) => Err(Failure {
+                kind: FailureKind::Internal,
+                message: "answers are taken by the owner, not answered from the state".to_owned(),
+            }),
             Command::Stop(_) => Err(not_served("stop")),
             Command::Pause(_) => Err(not_served("pause")),
             Command::Unpause(_) => Err(not_served("unpause")),
@@ -882,6 +923,15 @@ impl Owner {
             self.notify(at, located, task, notice);
         }
         Ok(())
+    }
+
+    /// Appends `event` to the activity log of `task`.
+    async fn log_activity(&self, task: &TaskId, at: Timestamp, event: ActivityEvent) {
+        if let Err(error) = self.parts.store.append_activity(task, at, &event).await {
+            // The log explains to a person what happened; the state does not depend on it. A log that cannot be written
+            // is told, and the work goes on.
+            tracing::warn!(task = %task, error = %error_chain(&error), "the activity log cannot be written");
+        }
     }
 
     /// Saves the state.

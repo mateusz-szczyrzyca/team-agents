@@ -164,7 +164,27 @@ impl Daemon {
     }
 
     /// Starts the daemon and waits until its socket is there.
+    ///
+    /// A daemon that finds the home locked is started again after a moment: a process that another test forks at the very
+    /// time the previous daemon ended keeps the lock a little longer than that daemon.
     pub(super) async fn start(&mut self) {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            match self.try_start(deadline).await {
+                Ok(daemon) => {
+                    self.daemon = Some(daemon);
+                    return;
+                }
+                Err(DaemonError::AlreadyRunning { .. }) if Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(error) => panic!("the daemon ended at its start: {error:?}"),
+            }
+        }
+    }
+
+    /// Starts the daemon once; it is returned when its socket is there, and its error when it ends before.
+    async fn try_start(&mut self, deadline: Instant) -> Result<JoinHandle<Result<(), DaemonError>>, DaemonError> {
         self.shutdown = CancellationToken::new();
         let setup = DaemonSetup {
             home: self.home.clone(),
@@ -182,20 +202,20 @@ impl Daemon {
         };
         let daemon = tokio::spawn(run(setup, self.shutdown.clone()));
         let socket = self.home.socket_file();
-        let deadline = Instant::now() + PATIENCE;
         while !socket.exists() {
-            assert!(
-                !daemon.is_finished(),
-                "the daemon ended at its start: {:?}",
-                daemon.await
-            );
+            if daemon.is_finished() {
+                return Err(daemon
+                    .await
+                    .unwrap()
+                    .expect_err("a daemon that is not asked to stop does not end well"));
+            }
             assert!(
                 Instant::now() < deadline,
                 "timed out waiting for the socket of the daemon"
             );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        self.daemon = Some(daemon);
+        Ok(daemon)
     }
 
     /// Stops the daemon and returns how it ended.
