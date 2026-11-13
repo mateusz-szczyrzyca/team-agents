@@ -1093,3 +1093,34 @@ async fn a_pull_request_waits_for_two_free_investigators_while_other_reviews_kee
     }
     assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 2);
 }
+
+#[tokio::test]
+async fn a_branch_that_moved_after_the_gate_passed_is_not_published_with_that_gate() {
+    let mut rig = Rig::new(
+        &[
+            // The second run, the fix pass, commits and records no gate: the record is of the commit before.
+            normal("claude-1", "work,commit"),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.prompt(&tasks[0], 2).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
+    rig.wait_for("the fix to be committed", || {
+        git(&rig.repo, &["rev-parse", &branch]) != rig.remote_tip(&branch)
+    })
+    .await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(rig.github.comments(1), Vec::<String>::new());
+    assert!(matches!(phase_of(&rig.state(), "1.1"), ItemPhase::Fixing { .. }));
+    assert_ne!(git(&rig.repo, &["rev-parse", &branch]), rig.remote_tip(&branch));
+}

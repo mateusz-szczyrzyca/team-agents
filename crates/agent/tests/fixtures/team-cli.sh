@@ -13,6 +13,8 @@
 #   slowfail        waits a second, then ends with STATUS: FAILED
 #   work            commits a file in the worktree, records that the repository's gate passed at the new head (the file
 #                   `gate.json` in the task's directory in the home the configuration names) and ends with STATUS: DONE
+#   commit          commits a file in the worktree, records no gate and ends with STATUS: DONE: the gate that was recorded
+#                   is of an older commit
 #   ask             writes a questions file to the path the prompt names (the first `.../questions-N.md` in it) and ends
 #                   with STATUS: QUESTIONS
 #   integrate       merges every other local branch of the form agents/*/task-*-N.N into the worktree's branch, records
@@ -115,6 +117,10 @@ case $action in
     commit_work
     record_gate
     result 'Finished the item.\nSTATUS: DONE'
+    ;;
+  commit)
+    commit_work
+    result 'Changed something.\nSTATUS: DONE'
     ;;
   ask)
     file=$(grep -o '/[^`[:space:]]*questions-[0-9]*\.md' <<< "$prompt" | head -n 1)
