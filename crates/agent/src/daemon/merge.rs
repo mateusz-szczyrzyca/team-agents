@@ -191,8 +191,14 @@ pub(super) fn after_verdict(
 /// # Errors
 /// [`VerdictError`].
 pub(super) fn after_answer(progress: &ItemProgress, policy: RoundPolicy) -> Result<Next, VerdictError> {
-    let _ = (progress, policy);
-    Ok(Next::Wait)
+    let phase = progress.phase().kind();
+    let state = round_state(progress)
+        .filter(|_| phase == PhaseKind::InReview)
+        .ok_or(VerdictError::NotInReview {
+            item: progress.id(),
+            phase,
+        })?;
+    Ok(next_of(&state.transition(&RoundEvent::HumanAnswered, policy)?)?)
 }
 
 /// A pull request whose reviewers still ask for changes when the fix passes are used up.
