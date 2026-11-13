@@ -404,9 +404,11 @@ with `STATUS: QUESTIONS` and change nothing. The human answers like any other qu
 question the round waits on, what the lead is to be told. Nothing of the checks lives in memory only; the count of reviews and
 fix passes of the state is not touched.
 
-**Known limits.** The description is read from GitHub when the check runs: the harness writes the description of the pull
-request it opens, so a section such as `## Tests changed after RED` or the name of a file with a suppression comes from the
-team or the human editing it afterwards — the first check of such a round sends it back and the next reads the edit. A path with a
+**Known limits.** The description is read from GitHub when the check runs, without the lines the harness itself wrote for the
+items (their text names files in passing): the harness writes the description of the pull request it opens, so a section such as
+`## Tests changed after RED` or the name of a file with a suppression comes from the team or the human editing it afterwards —
+the first check of such a round sends it back and the next reads the edit. A lead has one question at a time: while one waits, no
+other round of the same lead is checked. A path with a
 control character, or a range of more than 500 commits, cannot be checked and the branch is not published (the human is told once,
 as for any publication that fails). Lines that are not UTF-8 text have their bad bytes replaced for the markers. Two items that share
 a pull request move together: their passes are the larger of the two and what was allowed for either applies to both.
