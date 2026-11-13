@@ -1,10 +1,10 @@
-//! Identifiers: names of agents and investigators, IDs of teams, tasks and runs, task-list item IDs and git branch
-//! names.
+//! Identifiers: names of agents and investigators, IDs of teams, rounds, tasks and runs, task-list item IDs and git
+//! branch names.
 //!
 //! Each is a newtype that can hold only a valid value (TYP-1, TYP-2). A value is made by parsing — [`FromStr`],
 //! [`TryFrom<String>`] and serde all run the same check — or, for the IDs the harness creates, by `generate`
-//! ([`TeamId::generate`], [`TaskId::generate`], [`RunId::generate`]), which takes the clock and the random source as
-//! arguments. The text form ([`Display`](fmt::Display), serde) parses back to an equal value.
+//! ([`TeamId::generate`], [`RoundId::generate`], [`TaskId::generate`], [`RunId::generate`]), which takes the clock and
+//! the random source as arguments. The text form ([`Display`](fmt::Display), serde) parses back to an equal value.
 
 use std::fmt;
 use std::num::{NonZeroU16, ParseIntError};
@@ -269,6 +269,27 @@ pub struct TeamId(String);
 
 generated_id!(TeamId, IdKind::Team);
 
+/// ID of a round — the work of a team on one item of its task list — such as `round-20261111-153601-k3x9`: the rules
+/// of [`TeamId`] with the prefix `round-`.
+///
+/// ```compile_fail,E0603
+/// let id = agent_core::ids::RoundId(String::from("x"));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct RoundId(String);
+
+generated_id!(RoundId, IdKind::Round);
+
+impl RoundId {
+    /// The ID of the round at `position` (counted from 0) of the team `team`, for a state that was written before
+    /// rounds had IDs: the same team and position always give the same ID.
+    #[must_use]
+    pub fn derive(_team: &TeamId, _position: u32) -> Self {
+        Self(String::new())
+    }
+}
+
 /// ID of a task — one agent's work, solo or in a team — such as `task-20261111-153601-k3x9`: the rules of
 /// [`TeamId`] with the prefix `task-`.
 ///
@@ -302,6 +323,8 @@ pub enum IdKind {
     Task,
     /// A [`RunId`].
     Run,
+    /// A [`RoundId`].
+    Round,
 }
 
 impl IdKind {
@@ -312,6 +335,7 @@ impl IdKind {
             Self::Team => "team",
             Self::Task => "task",
             Self::Run => "run",
+            Self::Round => "",
         }
     }
 }
@@ -322,7 +346,7 @@ impl fmt::Display for IdKind {
     }
 }
 
-/// Why a text is not a [`TeamId`], [`TaskId`] or [`RunId`].
+/// Why a text is not a [`TeamId`], [`RoundId`], [`TaskId`] or [`RunId`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum InvalidId {
     /// The text does not start with the kind's prefix and `-`; it may be an ID of another kind.
@@ -896,6 +920,7 @@ mod tests {
             IdKind::Team => text.parse::<TeamId>().map(String::from),
             IdKind::Task => text.parse::<TaskId>().map(String::from),
             IdKind::Run => text.parse::<RunId>().map(String::from),
+            IdKind::Round => text.parse::<RoundId>().map(String::from),
         }
     }
 
@@ -905,6 +930,7 @@ mod tests {
             IdKind::Team => TeamId::generate(clock, rng).map(String::from),
             IdKind::Task => TaskId::generate(clock, rng).map(String::from),
             IdKind::Run => RunId::generate(clock, rng).map(String::from),
+            IdKind::Round => RoundId::generate(clock, rng).map(String::from),
         }
     }
 
@@ -1084,8 +1110,149 @@ mod tests {
                     IdKind::Team => assert_serde_refuses::<TeamId>(&text),
                     IdKind::Task => assert_serde_refuses::<TaskId>(&text),
                     IdKind::Run => assert_serde_refuses::<RunId>(&text),
+                    IdKind::Round => assert_serde_refuses::<RoundId>(&text),
                 }
             }
+        }
+    }
+
+    #[test]
+    fn round_ids_round_trip() {
+        for stamp in [
+            "20261111-153601-k3x9",
+            "20240229-000000-0000",
+            "00000101-000000-zzzz",
+            "99991231-235959-a1b2",
+        ] {
+            assert_round_trip::<RoundId>(&format!("round-{stamp}"));
+        }
+    }
+
+    #[test]
+    fn a_round_id_is_generated_with_the_prefix_round_the_clock_time_and_a_random_suffix() {
+        let clock = FixedClock(at(2026, Month::November, 11, (15, 36, 1)));
+
+        let id = RoundId::generate(&clock, &mut rng(20)).unwrap();
+
+        let suffix = id.as_str().strip_prefix("round-20261111-153601-").unwrap();
+        assert_eq!(suffix.len(), SUFFIX_LEN, "{id}");
+        assert_eq!(id.as_str().parse::<RoundId>(), Ok(id.clone()));
+        assert_eq!(IdKind::Round.prefix(), "round");
+        assert_eq!(IdKind::Round.to_string(), "round ID");
+    }
+
+    #[test]
+    fn a_round_id_refuses_the_ids_of_other_kinds_and_every_malformed_form() {
+        let kind = IdKind::Round;
+        let prefix = |text: &str| {
+            Err(InvalidId::Prefix {
+                kind,
+                value: text.to_owned(),
+            })
+        };
+        let shape = |text: &str| {
+            Err(InvalidId::Shape {
+                kind,
+                value: text.to_owned(),
+            })
+        };
+        for text in [
+            "",
+            "20261111-153601-k3x9",
+            "team-20261111-153601-k3x9",
+            "task-20261111-153601-k3x9",
+            "run-20261111-153601-k3x9",
+            "Round-20261111-153601-k3x9",
+            "rounds-20261111-153601-k3x9",
+            "round20261111-153601-k3x9",
+            " round-20261111-153601-k3x9",
+        ] {
+            assert_eq!(parse_id(kind, text), prefix(text), "{text:?}");
+            assert_serde_refuses::<RoundId>(text);
+        }
+        for text in [
+            "round-",
+            "round-20261111-153601",
+            "round-2026111-153601-k3x9",
+            "round-20261111-153601-K3X9",
+            "round-20261111-153601-k3x9a",
+            "round-20261111-153601-k3x9 ",
+            "round-20261111_153601-k3x9",
+        ] {
+            assert_eq!(parse_id(kind, text), shape(text), "{text:?}");
+            assert_serde_refuses::<RoundId>(text);
+        }
+        for (text, component) in [
+            ("round-20261311-153601-k3x9", "month"),
+            ("round-20260230-153601-k3x9", "day"),
+            ("round-20261111-240000-k3x9", "hour"),
+            ("round-20261111-236000-k3x9", "minute"),
+            ("round-20261111-235960-k3x9", "second"),
+        ] {
+            let Err(InvalidId::Timestamp {
+                kind: found,
+                value,
+                source,
+            }) = parse_id(kind, text)
+            else {
+                panic!("{text:?} was not refused for its time");
+            };
+            assert_eq!((found, value.as_str(), source.name()), (kind, text, component));
+            assert_serde_refuses::<RoundId>(text);
+        }
+    }
+
+    #[test]
+    fn a_round_id_made_by_derive_is_the_time_of_the_team_and_a_suffix_that_follows_the_position() {
+        let team: TeamId = "team-20261111-153601-k3x9".parse().unwrap();
+
+        let ids: Vec<String> = (0..3).map(|position| RoundId::derive(&team, position).into()).collect();
+
+        assert_eq!(
+            ids,
+            [
+                "round-20261111-153601-k3xa",
+                "round-20261111-153601-k3xb",
+                "round-20261111-153601-k3xc",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_suffix_of_a_derived_round_id_carries_over_and_wraps_around() {
+        let carry: TeamId = "team-20261111-153601-00zz".parse().unwrap();
+        let wrap: TeamId = "team-20261111-153601-zzzz".parse().unwrap();
+
+        assert_eq!(RoundId::derive(&carry, 0).as_str(), "round-20261111-153601-0100");
+        assert_eq!(RoundId::derive(&wrap, 0).as_str(), "round-20261111-153601-0000");
+        assert_eq!(RoundId::derive(&wrap, 1).as_str(), "round-20261111-153601-0001");
+    }
+
+    #[test]
+    fn deriving_the_id_of_the_same_round_twice_gives_the_same_id_and_other_teams_and_positions_other_ids() {
+        let team: TeamId = "team-20261111-153601-k3x9".parse().unwrap();
+        let other: TeamId = "team-20261111-153601-k3xa".parse().unwrap();
+
+        assert_eq!(RoundId::derive(&team, 4), RoundId::derive(&team, 4));
+        assert_ne!(RoundId::derive(&team, 4), RoundId::derive(&team, 5));
+        assert_ne!(RoundId::derive(&team, 4), RoundId::derive(&other, 4));
+    }
+
+    #[test]
+    fn derived_round_ids_of_random_teams_parse_and_differ_by_position() {
+        for seed in 0..200 {
+            let mut rng = rng(seed);
+            let clock = FixedClock(UtcDateTime::from_unix_timestamp(rng.random_range(0..=253_402_300_799)).unwrap());
+            let team = TeamId::generate(&clock, &mut rng).unwrap();
+            let ids: Vec<RoundId> = (0..50).map(|position| RoundId::derive(&team, position)).collect();
+
+            for id in &ids {
+                assert_eq!(id.as_str().parse::<RoundId>().as_ref(), Ok(id), "seed {seed}: {id}");
+                let stamp = |text: &str| text.split('-').skip(1).take(2).collect::<Vec<_>>().join("-");
+                assert_eq!(stamp(id.as_str()), stamp(team.as_str()), "seed {seed}");
+            }
+            let distinct: BTreeSet<&RoundId> = ids.iter().collect();
+            assert_eq!(distinct.len(), ids.len(), "seed {seed}: {team}");
         }
     }
 
