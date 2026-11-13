@@ -193,6 +193,13 @@ Each is derived or lives elsewhere, so that there is one place for it:
   whether the tree was clean at the start and at the end of the command (a changed or untracked file, a moved `HEAD`, or a
   merge waiting to be committed, is not). Only a `passed` on
   a `clean` tree is a pass of `head`.
+- **The checks before a review** — `tasks/<lead>/checks.json`, the **checks record** of a team's lead, written by the daemon only:
+  `{"items": {"<item id>": {"passes": N, "allowed": [<subject>, ...]}}, "asked": {...}, "sent": {...}}`. For each item the passes the
+  checks sent its round back and what the human allowed (a subject is `{"path": "tests/a.rs"}` or `"no_tests"`); `asked` is the
+  question the round waits on (the round of the lead's questions, when it was written, the items, what each question is about, how
+  often the lead was woken to put it); `sent` is what the lead is to be told on its next run. Empty parts are left out and an empty
+  record is `{}`. A task the checks have not seen has no file. See "Round checks before the review" in
+  [`architecture.md`](architecture.md).
 - **Worktree and branch paths, the unit names** — derived from the IDs and the layout of `AGENTS_HOME`.
 - **A team's overall status** — derived from its members and items (`TeamSummary`).
 - **Tokens and cost** — out of scope of the plan.
