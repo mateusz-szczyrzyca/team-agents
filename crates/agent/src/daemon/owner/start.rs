@@ -243,19 +243,39 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     })
 }
 
-/// The round of questions the human answered and the last run, which asked them, has not been told of: the last round is
-/// answered and the last run ended asking. It is worked out from the state, so that it holds after a restart.
+/// The round of questions the human answered and no run has read since: the last round is answered, and the latest run
+/// that read its prompt ended asking. A run that did not read it (it crashed, was stopped, hung, hit a limit) leaves the
+/// answers to the next one. It is worked out from the state, so that it holds after a restart.
 fn answered_round(member: &Member) -> Option<&Question> {
     let question = member.questions().last().filter(|question| !question.is_open())?;
-    match member.runs().last()?.state() {
-        RunState::Ended {
-            end: RunEnd::Reported {
-                outcome: RunOutcome::Questions,
-            },
-            ..
-        } => Some(question),
-        RunState::Ended { .. } | RunState::Running => None,
+    for run in member.runs().iter().rev() {
+        match run.state() {
+            RunState::Ended {
+                end: RunEnd::Reported {
+                    outcome: RunOutcome::Questions,
+                },
+                ..
+            } => return Some(question),
+            // The agent said something to the end: it had the answers, if it was given them.
+            RunState::Ended {
+                end: RunEnd::Reported { .. } | RunEnd::NoStatus { exit_code: Some(0) },
+                ..
+            } => return None,
+            RunState::Ended {
+                end:
+                    RunEnd::NoStatus {
+                        exit_code: None | Some(_),
+                    }
+                    | RunEnd::QuotaExhausted { .. }
+                    | RunEnd::RateLimited
+                    | RunEnd::Hung
+                    | RunEnd::Stopped,
+                ..
+            }
+            | RunState::Running => {}
+        }
     }
+    None
 }
 
 /// What the human answered to the round the last run asked, the way the run is told; `None` when there is no such
