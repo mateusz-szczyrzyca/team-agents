@@ -52,6 +52,7 @@ mod questions;
 mod recovery;
 mod review;
 #[cfg(test)]
+#[path = "tests/round_fixture.rs"]
 mod round_fixture;
 mod server;
 mod settle;

@@ -1971,8 +1971,10 @@ fn notification(
 }
 
 #[cfg(test)]
+#[path = "rounds/tests/fake_github.rs"]
 mod fake_github;
 #[cfg(test)]
+#[path = "rounds/tests/rig.rs"]
 mod rig;
 #[cfg(test)]
 mod tests;
