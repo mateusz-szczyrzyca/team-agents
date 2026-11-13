@@ -362,7 +362,7 @@ fn parse_log(operation: GitOperation, bytes: &[u8]) -> Result<Vec<CommitFacts>, 
     let mut commits = Vec::new();
     for record in fields.chunks(LOG_FIELDS) {
         let &[id, parents, subject, body] = record else {
-            return Err(unexpected(operation, record.first().copied().unwrap_or_default()));
+            return Err(unexpected(operation, &record.concat()));
         };
         commits.push(CommitFacts {
             id: commit_id(operation, &utf8(operation, id)?)?,
@@ -387,7 +387,10 @@ fn parse_tree_diff(operation: GitOperation, bytes: &[u8]) -> Result<Vec<FileChan
         .peekable();
     let mut named = Vec::new();
     while let Some(raw) = tokens.next_if(|token| token.starts_with(b":")) {
-        let status = raw.rsplit(|byte| *byte == b' ').next().unwrap_or_default();
+        let status = raw
+            .rsplit(|byte| *byte == b' ')
+            .next()
+            .ok_or_else(|| unexpected(operation, raw))?;
         let path = repo_path(operation, tokens.next().ok_or_else(|| unexpected(operation, raw))?)?;
         let change = match status {
             b"A" => Change::Added,
