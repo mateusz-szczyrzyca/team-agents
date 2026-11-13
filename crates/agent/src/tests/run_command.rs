@@ -129,6 +129,16 @@ fn the_help_lists_the_run_command() {
     assert!(out.contains("run"), "{out}");
 }
 
+#[test]
+fn agent_without_a_command_shows_the_same_help_with_the_run_command() {
+    let (code, bare, _) = agent(&Environment::new(None), &[]);
+    let (_, help, _) = agent(&Environment::new(None), &["--help"]);
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(bare, help);
+    assert!(bare.contains(RUN_ABOUT), "{bare}");
+}
+
 // ---- before the daemon is asked ----------------------------------------------------------------------------------
 
 #[test]
