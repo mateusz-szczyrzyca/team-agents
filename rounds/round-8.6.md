@@ -40,8 +40,8 @@ Ground rules
   declared once, in a `#[strum(...)]` attribute. No hand-written text tables, no macro of our own for it.
 - New code is developed and tested against a separate `AGENTS_HOME`; nothing here may touch the live `~/agents` of
   the running Bash harness until feature 10.
-- The items of rounds and of the history (8.3 to 8.7, 11.1) are tested harder than the developer rules ask: a log
-  that is wrong is worse than no log.
+- The items of rounds, of the history and of checkpoints (8.3 to 8.8, 11.1, 12.1 to 12.4) are tested harder than
+  the developer rules ask: a log that is wrong is worse than no log, and a takeover that is wrong loses work.
   - End to end: every record and every query is proved by a run of the daemon with fake CLIs and a fake GitHub
     server, read back through the reading API or `agent log`. Rows a test inserts by hand prove a query, never the
     recording.
@@ -98,6 +98,11 @@ Behaviour in short
   start to its merge. What happens — who was chosen and how, every prompt, every step and change of every run, the
   pull request and its reviews, the daemon's own log — is recorded under those two IDs in the history, an SQLite
   database, and read with `agent log`. The state file stays the one place for what is; the history is what happened.
+- Work that is interrupted is taken up where it stands. A run that used up its turns is resumed, not failed. A
+  round outlives its team: `agent run --continue <round>` gives it to a new team, in the same worktrees. Every task
+  keeps a plan in its worktree — to do, in hand, done — that the harness reads and enforces; a task whose agent is
+  gone is taken over by a free agent of the right tier on another account, who gets a briefing made from the
+  history and the plan. `agent status <round>` shows each task's checkpoint as `OPEN`, `BUSY` or `CLOSED`.
 
 Checkpoints for the human, between features (the agents do not run these):
 
@@ -114,11 +119,16 @@ Checkpoints for the human, between features (the agents do not run these):
   reviews — and `agent log --level warn` shows nothing unexplained. The cutover starts only after it passes.
 - After feature 9: the dashboard opened through `tailscale serve` from another device: the teams listed, a question
   answered, a team paused and resumed.
+- After item 12.1: stop a real solo task in the middle of its work and continue its round with another agent: it
+  works in the same worktree and its first message shows that it knows what was done.
+- After item 12.3: read the `provider` and `account` of every agent in the live `agents.toml`; they decide who may
+  stand in for whom.
 
 Out of scope for this plan: remote nodes and the lead, investigation teams with phases and standalone investigation
-requests, `agent live`, archiving, the cost of tokens in money, moving the state file into the database, automatic
-PR size limits (reviewers check PR-1), a proof by the harness that a RED commit fails (a reviewer runs one, TDD-1),
-an `agentbus` socket API (it is called as a process).
+requests, `agent live`, archiving, the cost of tokens in money, moving the state file into the database, choosing
+agents by the quota their accounts have left (load balancing), automatic PR size limits (reviewers check PR-1), a
+proof by the harness that a RED commit fails (a reviewer runs one, TDD-1), an `agentbus` socket API (it is called
+as a process).
 
 This round's item
 
@@ -195,6 +205,7 @@ Plan overview (context only)
    8.5 The history of a pull request, and the story of a round
    8.6 The daemon's own log   <- this round
    8.7 `agent log`: questions to the history, search, following and what is kept
+   8.8 A run that reaches its turn limit goes on
 9. Dashboard
    9.1 The dashboard
 10. Cutover
@@ -202,3 +213,8 @@ Plan overview (context only)
    10.2 Remove the old implementation
 11. Usage
    11.1 The tokens of every run
+12. Checkpoints
+   12.1 A round outlives its team: continuing a round
+   12.2 The plan of every task
+   12.3 Accounts, providers and taking work over
+   12.4 Checkpoints of reviewers and workers

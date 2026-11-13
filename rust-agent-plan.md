@@ -39,8 +39,8 @@ Ground rules
   declared once, in a `#[strum(...)]` attribute. No hand-written text tables, no macro of our own for it.
 - New code is developed and tested against a separate `AGENTS_HOME`; nothing here may touch the live `~/agents` of
   the running Bash harness until feature 10.
-- The items of rounds and of the history (8.3 to 8.7, 11.1) are tested harder than the developer rules ask: a log
-  that is wrong is worse than no log.
+- The items of rounds, of the history and of checkpoints (8.3 to 8.8, 11.1, 12.1 to 12.4) are tested harder than
+  the developer rules ask: a log that is wrong is worse than no log, and a takeover that is wrong loses work.
   - End to end: every record and every query is proved by a run of the daemon with fake CLIs and a fake GitHub
     server, read back through the reading API or `agent log`. Rows a test inserts by hand prove a query, never the
     recording.
@@ -97,6 +97,11 @@ Behaviour in short
   start to its merge. What happens — who was chosen and how, every prompt, every step and change of every run, the
   pull request and its reviews, the daemon's own log — is recorded under those two IDs in the history, an SQLite
   database, and read with `agent log`. The state file stays the one place for what is; the history is what happened.
+- Work that is interrupted is taken up where it stands. A run that used up its turns is resumed, not failed. A
+  round outlives its team: `agent run --continue <round>` gives it to a new team, in the same worktrees. Every task
+  keeps a plan in its worktree — to do, in hand, done — that the harness reads and enforces; a task whose agent is
+  gone is taken over by a free agent of the right tier on another account, who gets a briefing made from the
+  history and the plan. `agent status <round>` shows each task's checkpoint as `OPEN`, `BUSY` or `CLOSED`.
 
 Checkpoints for the human, between features (the agents do not run these):
 
@@ -113,11 +118,16 @@ Checkpoints for the human, between features (the agents do not run these):
   reviews — and `agent log --level warn` shows nothing unexplained. The cutover starts only after it passes.
 - After feature 9: the dashboard opened through `tailscale serve` from another device: the teams listed, a question
   answered, a team paused and resumed.
+- After item 12.1: stop a real solo task in the middle of its work and continue its round with another agent: it
+  works in the same worktree and its first message shows that it knows what was done.
+- After item 12.3: read the `provider` and `account` of every agent in the live `agents.toml`; they decide who may
+  stand in for whom.
 
 Out of scope for this plan: remote nodes and the lead, investigation teams with phases and standalone investigation
-requests, `agent live`, archiving, the cost of tokens in money, moving the state file into the database, automatic
-PR size limits (reviewers check PR-1), a proof by the harness that a RED commit fails (a reviewer runs one, TDD-1),
-an `agentbus` socket API (it is called as a process).
+requests, `agent live`, archiving, the cost of tokens in money, moving the state file into the database, choosing
+agents by the quota their accounts have left (load balancing), automatic PR size limits (reviewers check PR-1), a
+proof by the harness that a RED commit fails (a reviewer runs one, TDD-1), an `agentbus` socket API (it is called
+as a process).
 
 1. Workspace and core vocabulary
 Depends on: none
@@ -751,6 +761,39 @@ Depends on: 7
       while it is watched.
     - With `keep_days = 1` and the clock moved two days on, a closed round is gone from `agent log --stats` and an
       open one is still there.
+[ ] 8.8 A run that reaches its turn limit goes on
+    A model CLI may end a run because a budget of its own ran out, not because the work failed: Claude Code ends
+    with `error_max_turns` when a run has used its `--max-turns`. Until now such a run has no `STATUS:` line, so its
+    task is `failed` and the work stays in the worktree with nobody to go on with it — also when the agent had
+    finished and only its last message was missing. It becomes an end of its own, `turn_limit` (a `RunEnd`, in the
+    state, the protocol and the history): the task is queued and resumed in its session with a short text that says
+    what happened and asks it to go on from where it was. That happens at most `[limits] turn_limit_resumes` times
+    in a row (default 3; a run that ends in any other way starts the count again); then the task is `failed` and
+    the human is told, with the count. The limit is no longer a constant of the adapter: `[limits] max_turns`
+    (default 300) is given to every CLI that has such a limit; an adapter whose CLI has none never reports this
+    end. The versions of the state and of the protocol follow the rules of `docs/state.md`.
+    Expected result:
+    - Files: `crates/agent-runtime/src/cli/claude.rs`, the stream's outcome in `crates/agent-core/src/cli.rs`,
+      `crates/agent-core/src/decide/outcome.rs`, `crates/agent-core/src/state/run.rs`, the settling of a run in
+      `crates/agent/src/daemon/`, `[limits]` in `crates/agent-core/src/config.rs`, `config/agents.example.toml`,
+      the text in `prompts/harness/run/`, `docs/architecture.md`, `docs/configuration.md`, `docs/state.md`.
+    - Adds: the end `turn_limit`; its place in the table of what a run's end does; the count and its limit;
+      `max_turns` and `turn_limit_resumes`; the text of the resumed run.
+    - Tests: the ground rule on testing these items applies. The adapter: recorded output of Claude Code that ends
+      with `error_max_turns` is this end; one that ends with `error_during_execution` is not; a `success` whose
+      message has a `STATUS:` line is unchanged. The decision: a table — the first, the last allowed and the first
+      refused resume, the count starting again after another end, a quota that runs out in the same run (the quota
+      wins). The daemon with a fake CLI that ends at its turn limit: the task is queued and its next run resumes the
+      same session with the text; a fake CLI that finishes on the resumed run ends the task as it would have; with
+      `turn_limit_resumes = 1` the second such end fails the task and notifies the human once; the command line of
+      the fake CLI carries `max_turns` of the configuration; a daemon restarted between the end and the resume
+      resumes once. The history holds the end and the resumed run with why it started.
+    - Why: a run that used up its turns is not a failure; treated as one it loses finished work, as happened with the
+      old harness on item 8.3.
+    Checks:
+    - With a fake CLI that prints a `result` of `error_max_turns` on its first run and `STATUS: DONE` on its second:
+      the task ends `done` after two runs and `agent status` never shows it `failed`.
+    - With `[limits] max_turns = 50` the fake CLI is started with `--max-turns 50`.
 
 9. Dashboard
 Depends on: 8
@@ -828,3 +871,198 @@ Depends on: 10
     - After a round with fake CLIs that report usage: `agent log --round <id> --show usage` lists every agent with
       its role and tokens; the total equals the sum of the rows.
     - A run of a fake CLI that reports no usage is shown as "not reported".
+
+12. Checkpoints
+Depends on: 10
+[ ] 12.1 A round outlives its team: continuing a round
+    Work that was interrupted is taken up where it stands, by the same agents or by others. A team may break — its
+    coordinator gone, its agents out of quota, a stop — while the round's work is in its worktrees. Until now such a
+    round is closed as `abandoned` and a new `agent run` starts from nothing and cannot be pointed at the worktree.
+    State version 3: a round belongs to the state, beside the teams, and names the teams that worked for it, oldest
+    first; a round whose team is over stays open, without a team, until it is continued or the human ends it
+    (`agent abandon <round>`). A task is a place of work: its ID, its worktree and its branch never change; who
+    holds it may. A task records its holders, oldest first, and may have none (vacant). Invariants, checked by the
+    API and when read: a round has at most one team that is not over; a task belongs to one team at a time; an
+    agent holds at most one task of a team.
+    `agent run --continue <round> <agents...> ["addition"]` forms a team as `agent run` does and gives it the
+    round: every task that worked for the round moves to the new team and gets its holder there by role — the
+    lead's task to the new coordinator (or the solo agent), the item's task to the member that gets the item, a
+    task nobody fits stays vacant and is shown. The round goes on from the phase its item is in: its branch, its
+    pull request, its review passes and its fix passes are kept; a review asked of an investigator that is now in
+    the team is asked again of another. A new holder starts a new session in the task's worktree. Before its first
+    run the daemon takes a snapshot: a commit of everything in the worktree, uncommitted and untracked files
+    included, made without touching the index or the files, kept under `refs/agents/snapshots/<round>/<task>/<n>`
+    and recorded in the history. The first prompt of a new holder is a briefing made from the history: the item;
+    who worked here before and how each run ended; the commits made; what is uncommitted (from the snapshot); the
+    last final message; the questions answered so far; and the rule: find out the real state first — run the tests
+    — and trust commits and tests, not what was said.
+    `agent run` of a list with an item that has an open round in the same repository (the same item ID and title)
+    is refused: it names the round and the two ways on, `--continue <round>` or `--new` (the old round is closed as
+    `abandoned`, a new one opens). `agent status <round>` shows a checkpoint for every task of the round — the key
+    is the round and the task: its state, worked out and not stored (`OPEN`: it has work and no holder that can do
+    it; `BUSY`: its holder is at work or waits for something; `CLOSED`: the round is closed), its holder and the
+    holders before, its worktree, branch and head, its last snapshot.
+    Expected result:
+    - Files: the round and the task's holders in `crates/agent-core/src/state/`, version 3 and its migration in
+      `crates/agent-core/src/state.rs`, the continuation in `crates/agent-core/src/decide/`, `--continue`, `--new`
+      and `abandon` in `crates/agent-core/src/cli.rs`, `crates/agent-core/src/protocol/` and
+      `crates/agent/src/commands/`, the snapshot in `crates/agent-runtime/src/git.rs`, the daemon in
+      `crates/agent/src/daemon/owner/`, the briefing in `prompts/harness/continue/`, the fixtures of version 3,
+      `docs/state.md`, `docs/architecture.md`, `docs/history.md`.
+    - Adds: rounds beside the teams; holders and vacant tasks; state version 3 with its migration; `agent run
+      --continue` and `--new`; `agent abandon`; the snapshot; the briefing; the checkpoints in `agent status`.
+    - Tests: the ground rule on testing these items applies. State: each invariant refused by the API and when
+      read; a state of version 2 loads as the pinned state of version 3, twice the same; generated sequences
+      (seeded) of opening, moving, continuing and abandoning save and load to the same text. The continuation as a
+      decision: a table — a solo round, a team round in each phase of its item (`in_progress`, `in_review`,
+      `fixing`, `approved`), a new team smaller and larger than the old, no agent for a task, a reviewer now in
+      the team. The snapshot, in a real repository: modified, staged, deleted, untracked and ignored files; the
+      index and the files are byte for byte what they were; two snapshots of an unchanged worktree are one tree.
+      End to end with fake CLIs and the fake GitHub server: a solo run killed in the middle of its work with
+      uncommitted files is continued by another agent, whose fake CLI gets the briefing (golden text, IDs and times
+      normalised) in the same worktree, finishes, and the round merges; a team stopped while its item is `fixing`
+      is continued by a new team on the same pull request and the fix pass count goes on; a continued round keeps
+      its ID and names both teams; `agent run` of the same item is refused with both ways named; `--new` abandons
+      and opens; a daemon restarted in the middle of a continuation continues once.
+    - Why: the incident behind this feature — the worktree was there and nobody could be pointed at it.
+    Checks:
+    - With fake CLIs: a solo task is stopped after its fake CLI changed two files without committing; `agent run
+      --continue <round> <another agent>` starts in the same worktree, and its prompt names both files.
+    - `git show refs/agents/snapshots/<round>/<task>/1 --stat` lists the two files; `git status` in the worktree is
+      what it was.
+    - `agent status <round>` shows the task `OPEN` after the stop and `BUSY` after the continuation, with both
+      holders.
+[ ] 12.2 The plan of every task
+    A task that works for a round keeps a plan the harness can read: what it means to do, what is done, what it is
+    doing. Only the agent knows this, and after an interruption it is what the next holder needs most. The plan is
+    a file in the worktree, `.agent/plan.md`, kept out of git by the harness, in the task-list format
+    (`docs/task-list.md`) read in a plan mode: the features are stages, the items are steps, and a step is `[ ]` to
+    do, `[>]` in hand (at most one in the file), `[x]` done or `[-]` given up — then its text says why. A step is
+    known by its ID: an ID never disappears and is never used again.
+    The agent's side, in the texts of `prompts/harness/plan/` (the same for every repository): write the plan
+    before the first change; mark a step in hand before starting it and done when its commits are made; add steps
+    whenever the work shows them; give a step up with its reason instead of deleting it; end the run when a stage
+    is complete, with `STATUS: NEXT`. `[plan] roles` lists the roles that must keep a plan; this item knows `solo`,
+    `member` and `coordinator`, and all three are the default.
+    The harness's side: the daemon reads the plan whenever the file changes and at the end of every run, and puts
+    every new version into the history with its run. A run of such a task is sent back, with the reason, when it
+    ends with `DONE` while steps are to do or in hand, ends without a plan, ends with a plan that does not parse
+    (the parser's error and line), or lost a step that the version before had. That happens at most `[plan]
+    bounces` times in a row (default 3); then the human is asked. A run that has made `[plan] warn_steps` steps
+    (default 30) with no plan is a warning in the log. `STATUS: NEXT` queues the task again; with `[plan]
+    new_session_per_stage` (default on) the next run starts a new session whose prompt is the briefing of 12.1 with
+    the plan in it, so a long piece of work is not one conversation that every turn reads again. A new holder's
+    briefing carries the plan too.
+    Expected result:
+    - Files: the plan in `crates/agent-core/src/plan.rs` (on the task-list parser), the outcome `NEXT` in
+      `crates/agent-core/src/status.rs` and its transitions, the decision in `crates/agent-core/src/decide/`, the
+      watching and the sending back in `crates/agent/src/daemon/`, the plan's versions in
+      `crates/agent-runtime/src/history/`, `[plan]` in `crates/agent-core/src/config.rs`, `prompts/harness/plan/`,
+      `docs/task-list.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/history.md`.
+    - Adds: the plan format and its parser; the versions in the history; the four reasons to send a run back and
+      their limit; `STATUS: NEXT` and the new session per stage; the plan in the briefing; `agent log --show plan`.
+    - Tests: the ground rule on testing these items applies. The parser: every mark; two steps in hand; a step
+      given up without a reason; an unknown mark; an ID used twice; a file of stages only; each with its line in
+      the error. Versions: a step removed, an ID used again, a done step turned back are found; an added step, a
+      new stage and a reworded title are not. The decision: a table of every reason, the count, its start again
+      after a clean run, and the human asked after the limit. End to end with fake CLIs that write the file: a run
+      that ends `DONE` with a step to do is sent back with that step named and finishes on its second run; three
+      runs without a plan ask the human; `STATUS: NEXT` after a complete stage starts a new session (another
+      session ID) whose prompt holds the plan and the commits, and with the option off resumes the same session; a
+      `NEXT` with the stage not complete is sent back; every version is in the history once, identical ones not
+      twice; a role left out of `[plan] roles` is not sent back; a daemon restarted between the end of a run and
+      its sending back sends it back once.
+    - Why: a plan outside the conversation is what makes work resumable by anybody — and lets a long task run as
+      several short conversations instead of one that costs more with every turn.
+    Checks:
+    - With a fake CLI that ends `DONE` leaving `[ ] 1.2` in its plan: `agent status` shows the run sent back, and
+      `agent log --round <id> --show plan` shows the versions of the plan with their times.
+    - With a fake CLI that completes stage 1 and ends `NEXT`: the next run has another session ID and its prompt
+      shows stage 1 done.
+[ ] 12.3 Accounts, providers and taking work over
+    The daemon gives the work of an agent that is gone to one that is free, without the human. The configuration
+    says what the names cannot: every agent, investigator and worker has a `provider` and an `account` (required;
+    two agents with the same pair share their limits). A quota that runs out marks the whole account exhausted
+    until its reset: no run starts on any agent of it, and every task those agents hold is paused with it.
+    An agent is gone from its task when the task is `failed`, when its agent left (`EXCLUDED`) or is no longer in
+    the configuration, or when its account is exhausted and the reset is further away than `[takeover]
+    wait_minutes` (default 15; with no reset time given, the pause of `[limits]` counts). A stop or a pause by the
+    human is never such a reason. An agent is free when it holds no task, or its task waits with no item under way
+    and nothing queued, and its account is not exhausted; with `[takeover] waiting_for_review_is_free` (default
+    off) a member whose item is in review is free too. Who may take the task, in this item for the crew:
+    - a normal agent's: another normal agent of the team, or an investigator of the team; never a worker;
+    - an investigator's: another investigator — a free one of the team first, else one of the configuration from
+      outside it, who joins the team, and only while two investigators stay outside it for the reviews;
+    - the coordinator's: by the rule that chooses a coordinator, among the free.
+    Among several the choice is random. The decision is a pure function and the daemon's alone; the coordinator is
+    told by a message and may ask for another holder within the same rules. The new holder takes the task as in
+    12.1 — the same worktree and branch, a snapshot, a new session, the briefing with the plan — and the task it
+    held before becomes vacant. The agent that was gone, once it is back, is free: it does not get its old task
+    back, and may be given a vacant one or another's work by the same rules. With nobody free the existing course
+    stays: an exhausted account is waited for and its agent woken at the reset; a failed task stays failed, the
+    human is told, and the round shows it `OPEN`.
+    Expected result:
+    - Files: `provider` and `account` in `crates/agent-core/src/config.rs`, the exhausted accounts in the state,
+      the decision in `crates/agent-core/src/decide/takeover.rs`, the daemon in `crates/agent/src/daemon/owner/`,
+      the texts in `prompts/harness/takeover/`, `[takeover]`, `config/agents.example.toml`,
+      `docs/configuration.md`, `docs/architecture.md`, `docs/state.md`.
+    - Adds: providers and accounts; an account's exhaustion; when an agent is gone and when one is free; the
+      takeover decision for the crew; the change of holder with what 12.1 gives it; the message to the coordinator
+      and its request; the records in the history.
+    - Tests: the ground rule on testing these items applies. Configuration: an agent without `provider` or
+      `account` is refused with its name. Accounts: one agent's quota pauses every task of its account and none
+      of another; the reset wakes them all once. The decision: a table of every tier, every reason for being gone
+      and every reason that is not one (a stop, a pause, a reset nearer than the limit), free and not free with
+      the option on and off, the guard of two outside investigators at its edge (three configured, two, one), no
+      candidate, several candidates with a seeded draw. End to end with fake CLIs, one of which reports an
+      exhausted quota with a reset in two hours: a free member on another account takes the task in the same
+      worktree with a briefing that names the uncommitted files, and the round merges; with the reset in five
+      minutes nobody takes over and the same agent is woken; an agent of the same account is never chosen; the
+      agent that returns holds no task and takes the next work; a member whose own item comes back from review
+      while it holds another's task: that item's task is taken by a free agent by the same rules; the
+      coordinator's request for another holder is followed within the rules and refused outside them; a daemon
+      restarted in the middle of a takeover ends with one holder.
+    - Why: several subscriptions exist so that work goes on when one of them is used up.
+    Checks:
+    - With fake CLIs on two accounts and a fake quota error with a reset two hours away: `agent status <round>`
+      shows the task `OPEN`, then `BUSY` with the second agent as holder and the first before it.
+    - The same with both agents on one account: nobody takes over, and the task is woken at the reset.
+    - `agent log --round <id>` shows the takeover: who was gone and why, who took the task, the snapshot.
+[ ] 12.4 Checkpoints of reviewers and workers
+    The two roles outside the crew's own work get the same safety, each in its own way.
+    A reviewer keeps a plan like any task (12.2) — its stages are review passes, its steps the steps of its review
+    rules — and writes what it finds as it goes into `.agent/findings.md`, in the form of its report's findings. A
+    reviewer that is gone (12.3) is replaced by another investigator of the configuration that is free, outside
+    the team, not the other reviewer of the pull request and not on an exhausted account; with none, the review
+    waits as it does today. The new reviewer takes the task and its worktree and gets the findings so far as leads:
+    it checks each one itself and reads the whole diff again — the steps the reviewer before marked done are shown
+    and are not taken as done, because a review is one mind over the whole change. Its plan starts anew.
+    `reviewer` and `worker` join `[plan] roles` and its default.
+    A worker's request that was being served when its worker went (a failed run, a provider that refuses, a
+    daemon that stopped) goes back to the queue with its checkpoint: the task with its worktree, the snapshot, the
+    plan. It is taken by a free worker drawn at random among those of another provider, and among those of the same
+    provider only when there is no other; the new worker takes the task as in 12.1. The request is answered once,
+    by whoever finishes it, and the requester is told who that was.
+    Expected result:
+    - Files: the reviewer's plan and findings in `crates/agent-core/src/plan.rs` and `prompts/harness/plan/`, the
+      decisions for reviewers and workers in `crates/agent-core/src/decide/takeover.rs`, the requests in
+      `crates/agent/src/daemon/team/`, the reviews in `crates/agent/src/daemon/owner/rounds/`, the texts in
+      `prompts/harness/takeover/`, `docs/architecture.md`.
+    - Adds: the reviewer's plan and findings file; the takeover of a review with findings as leads; the return of
+      a worker's request to the queue with its checkpoint; the draw of a worker by provider.
+    - Tests: the ground rule on testing these items applies. The decisions: tables — a reviewer replaced, the
+      other reviewer never chosen, an investigator of the team never chosen, an exhausted account never chosen,
+      none free; a worker of another provider drawn (seeded), the same provider only without another, none free.
+      End to end with fake CLIs and the fake GitHub server: a reviewer whose fake CLI wrote two findings and
+      failed is replaced; the new reviewer's prompt holds both findings as leads and the instruction to read the
+      whole diff, its plan has no step done, and its verdict closes the review pass; the review pass keeps its
+      number and names both reviewers; a worker killed in the middle of a request: the request is served by a
+      worker of the other provider in the same worktree, answered once, and the requester's message names it; a
+      daemon stopped while a request is served returns the request at its start (the known limit of 7.1 is gone).
+    - Why: a review or a request cut off in the middle costs its whole time again, and until now a request in
+      hand was lost with the daemon.
+    Checks:
+    - With fake CLIs: a reviewer that fails after writing a finding is replaced and the second reviewer's prompt
+      shows that finding under leads; the pull request still gets two verdicts.
+    - A worker's request whose worker is killed is finished by a worker of another provider; `agent log --round
+      <id>` shows both runs and one answer.
