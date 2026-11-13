@@ -11,6 +11,8 @@ publish.workspace = true
 agent-core.workspace = true
 agent-runtime.workspace = true
 clap.workspace = true
+# The daemon watches the questions files for the human's saves: inotify only, without the default features.
+notify.workspace = true
 # The daemon draws its IDs from the operating system's entropy: `sys_rng` and `std_rng` give `StdRng::try_from_rng`.
 rand = { workspace = true, features = ["std", "std_rng", "sys_rng"] }
 serde_json.workspace = true

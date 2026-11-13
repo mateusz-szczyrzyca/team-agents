@@ -215,5 +215,7 @@ pub(super) fn answers_prompt(
     Ok(texts.render(QuestionsPrompt::Answered, &values)?)
 }
 
+pub(super) mod watch;
+
 #[cfg(test)]
 mod tests;
