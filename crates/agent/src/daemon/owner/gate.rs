@@ -39,7 +39,7 @@ impl Owner {
             Ok(planned) => planned,
             Err(failure) => return answer(reply, failure),
         };
-        let Some(queue) = &self.gate else {
+        let Some(queue) = self.gate.clone() else {
             return answer(
                 reply,
                 Failure {
@@ -113,12 +113,23 @@ impl Owner {
         })
     }
 
-    /// What stops the gate of `task`: the stop of its run, or else the shutdown of the daemon.
-    fn gate_cancel(&self, task: &TaskId) -> CancellationToken {
-        self.cancels
-            .get(task)
-            .cloned()
-            .unwrap_or_else(|| self.shutdown.child_token())
+    /// What stops the gate of `task`: the stop of its run; a task with no run has a token of its own, which the human's
+    /// stop or pause cancels (`stop_gates`), and the shutdown of the daemon cancels both.
+    fn gate_cancel(&mut self, task: &TaskId) -> CancellationToken {
+        if let Some(cancel) = self.cancels.get(task) {
+            return cancel.clone();
+        }
+        self.gate_stops
+            .entry(task.clone())
+            .or_insert_with(|| self.shutdown.child_token())
+            .clone()
+    }
+
+    /// Stops the gates of `task` that were asked for while it had no run going.
+    pub(super) fn stop_gates(&mut self, task: &TaskId) {
+        if let Some(cancel) = self.gate_stops.remove(task) {
+            cancel.cancel();
+        }
     }
 }
 
