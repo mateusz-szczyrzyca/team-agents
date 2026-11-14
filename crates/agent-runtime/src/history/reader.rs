@@ -433,7 +433,15 @@ fn read_plan(snapshot: &Transaction<'_>, team: &TeamId) -> Result<Vec<PlanEntry>
         let role: String = row.get(2).map_err(query("plan"))?;
         let how: String = row.get(3).map_err(query("plan"))?;
         let among: Option<String> = row.get(4).map_err(query("plan"))?;
-        let how = match here.value("how", agent_core::history::HowKind::from_str(&how))? {
+        let kind = here.value("how", agent_core::history::HowKind::from_str(&how))?;
+        if kind != agent_core::history::HowKind::Drawn {
+            here.absent("drawn_among", among.as_ref())?;
+        }
+        let role = here.value("role", Role::from_str(&role))?;
+        if role == Role::Reviewer {
+            return Err(here.rule("role", "a reviewer is not a team participant"));
+        }
+        let how = match kind {
             agent_core::history::HowKind::Named => HowChosen::Named,
             agent_core::history::HowKind::NamedByFlag => HowChosen::NamedByFlag,
             agent_core::history::HowKind::NamedByLine => HowChosen::NamedByLine,
@@ -445,7 +453,7 @@ fn read_plan(snapshot: &Transaction<'_>, team: &TeamId) -> Result<Vec<PlanEntry>
         plan.push(PlanEntry {
             agent: here.value("agent", AgentName::from_str(&agent))?,
             position: position(&here, number)?,
-            role: here.value("role", Role::from_str(&role))?,
+            role,
             how,
         });
     }
@@ -544,29 +552,22 @@ fn read_why(
 ) -> Result<RunWhy, ReadError> {
     let pass_number = pass.map(|value| count(here, "why_pass", value)).transpose()?;
     let kind = here.value("why", WhyKind::from_str(why))?;
-    let item = item.map(ItemId::from_str);
-    let item = |here: &Row_| -> Result<ItemId, ReadError> {
-        let value = item.ok_or_else(|| here.rule("why_item", "this reason names an item"))?;
-        here.value("why_item", value)
-    };
-    let none_extra = |here: &Row_| -> Result<(), ReadError> {
-        if asked_by.is_some() {
-            return Err(here.rule("why_asked_by", "this reason has no run that asked"));
-        }
-        if pass.is_some() {
-            return Err(here.rule("why_pass", "this reason has no pass"));
-        }
-        if pr.is_some() {
-            return Err(here.rule("why_pr", "this reason has no pull request"));
-        }
-        Ok(())
-    };
+    if kind != WhyKind::Item {
+        here.absent("why_item", item.as_ref())?;
+    }
+    if kind != WhyKind::Request {
+        here.absent("why_asked_by", asked_by.as_ref())?;
+    }
+    if !matches!(kind, WhyKind::FixPass | WhyKind::Review) {
+        here.absent("why_pass", pass.as_ref())?;
+    }
+    if kind != WhyKind::Review {
+        here.absent("why_pr", pr.as_ref())?;
+    }
     match kind {
-        WhyKind::Item => {
-            let named = item(here)?;
-            none_extra(here)?;
-            Ok(RunWhy::Item { item: named })
-        }
+        WhyKind::Item => Ok(RunWhy::Item {
+            item: here.value("why_item", ItemId::from_str(here.needed("why_item", item)?))?,
+        }),
         WhyKind::Request => Ok(RunWhy::Request {
             asked_by: asked_by
                 .map(|id| here.value("why_asked_by", RunId::from_str(id)))
@@ -590,28 +591,14 @@ fn read_why(
                 pass,
             })
         }
-        WhyKind::FirstRun
-        | WhyKind::WakeUp
-        | WhyKind::AskHuman
-        | WhyKind::VerdictMissing
-        | WhyKind::Checks
-        | WhyKind::Answers
-        | WhyKind::ResumedByHuman
-        | WhyKind::Continuation => {
-            none_extra(here)?;
-            Ok(match kind {
-                WhyKind::FirstRun => RunWhy::FirstRun,
-                WhyKind::WakeUp => RunWhy::WakeUp,
-                WhyKind::AskHuman => RunWhy::AskHuman,
-                WhyKind::VerdictMissing => RunWhy::VerdictMissing,
-                WhyKind::Checks => RunWhy::Checks,
-                WhyKind::Answers => RunWhy::Answers,
-                WhyKind::ResumedByHuman => RunWhy::ResumedByHuman,
-                WhyKind::Continuation | WhyKind::Item | WhyKind::Request | WhyKind::FixPass | WhyKind::Review => {
-                    RunWhy::Continuation
-                }
-            })
-        }
+        WhyKind::FirstRun => Ok(RunWhy::FirstRun),
+        WhyKind::WakeUp => Ok(RunWhy::WakeUp),
+        WhyKind::AskHuman => Ok(RunWhy::AskHuman),
+        WhyKind::VerdictMissing => Ok(RunWhy::VerdictMissing),
+        WhyKind::Checks => Ok(RunWhy::Checks),
+        WhyKind::Answers => Ok(RunWhy::Answers),
+        WhyKind::ResumedByHuman => Ok(RunWhy::ResumedByHuman),
+        WhyKind::Continuation => Ok(RunWhy::Continuation),
     }
 }
 

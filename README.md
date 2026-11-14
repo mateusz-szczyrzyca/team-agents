@@ -1025,6 +1025,10 @@ running installation, until the cutover. Build it with `cargo build` and run `ta
 `AGENTS_HOME=/tmp/trial-home`. Its files and settings are different from the Bash version's
 ([`docs/configuration.md`](docs/configuration.md), [`docs/state.md`](docs/state.md)).
 
+The daemon records teams, rounds, runs and their steps and changes in `history.db`. See
+[`docs/history.md`](docs/history.md) for `[history]` settings, read-only queries and lost-record reporting in
+`agent status`. Readers reject invalid variant fields even when SQLite constraints were bypassed.
+
 How the human answers the agents and steers a task or a team, through the daemon (`agent daemon`) that owns the state:
 
 | Command | What it does |
