@@ -25,7 +25,7 @@ use std::time::Duration;
 use agent_core::cli::{ActivityEvent, SessionId as CliSessionId};
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::outcome::{AfterHang, after_hang};
-use agent_core::history::RunWhy;
+use agent_core::history::{HistoryEvent, RunWhy};
 use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::protocol::{
@@ -884,6 +884,18 @@ impl Owner {
             number,
         });
         self.prepare_questions(task, &path, &loaded).await;
+        // What the human sees is the file with the daemon's instructions in it.
+        if let Some(text) = self.questions_text(task, &path).await {
+            self.record_event(
+                &located.team,
+                self.rounds_of_tasks(std::slice::from_ref(task)),
+                HistoryEvent::QuestionAsked {
+                    task: task.clone(),
+                    number,
+                    text,
+                },
+            );
+        }
         Ok(Asked::Recorded(Notice::Questions { number, file: path }))
     }
 
@@ -1274,6 +1286,8 @@ impl Owner {
     fn notify(&self, at: Timestamp, located: &Located, task: &TaskId, notice: Notice) {
         let delivery = Delivery {
             at,
+            team: located.team.clone(),
+            rounds: self.rounds_of_tasks(std::slice::from_ref(task)),
             agent: located.agent.clone(),
             task: task.clone(),
             notice,

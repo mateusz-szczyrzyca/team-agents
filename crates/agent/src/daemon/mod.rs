@@ -244,7 +244,7 @@ pub(crate) async fn run_with_rng(
     let serving = shutdown.clone();
     sides.spawn(server::serve(listener, inbox, serving));
     let delivering = Arc::clone(&texts);
-    sides.spawn(notifier::run(deliveries, delivering, notifier));
+    sides.spawn(notifier::run(deliveries, delivering, notifier, opened.history.clone()));
     let opens = start_opener(&mut sides, &settings, &surroundings);
     let gate_parts = gate::GateParts {
         store: Arc::clone(&store),

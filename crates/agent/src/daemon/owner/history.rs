@@ -52,6 +52,37 @@ impl Owner {
         rounds
     }
 
+    /// The rounds the latest runs of `tasks` work for, each once, oldest first.
+    pub(super) fn rounds_of_tasks(&self, tasks: &[TaskId]) -> Vec<RoundId> {
+        let mut rounds: Vec<RoundId> = Vec::new();
+        for task in tasks {
+            let Some(found) = self.parts.state.find_task(task) else {
+                continue;
+            };
+            for round in found.member.runs().last().map_or(&[][..], |run| run.rounds()) {
+                if !rounds.contains(round) {
+                    rounds.push(round.clone());
+                }
+            }
+        }
+        rounds
+    }
+
+    /// The text of the questions file `path` of `task`: what the human sees. A file that cannot be read is a record lost.
+    pub(super) async fn questions_text(&self, task: &TaskId, path: &std::path::Path) -> Option<String> {
+        if self.history.is_disabled() {
+            return None;
+        }
+        match tokio::fs::read_to_string(path).await {
+            Ok(text) => Some(text),
+            Err(error) => {
+                tracing::warn!(task = %task, error = %error_chain(&error), "the questions file cannot be read: the history has no record of it");
+                self.history.record_lost();
+                None
+            }
+        }
+    }
+
     /// Records the start of the team `team` that `request` asked for, and the rounds it opened with.
     pub(super) fn record_team_start(&self, request: &RunRequest, team: &TeamId) {
         if self.history.is_disabled() {
