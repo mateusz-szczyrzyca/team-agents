@@ -40,7 +40,7 @@ CREATE TABLE rounds (
         OR (item IS NULL AND title IS NULL AND description IS NULL AND expected_result IS NULL
             AND checks IS NULL AND brief IS NOT NULL)
     )
-) STRICT, WITHOUT ROWID;
+) STRICT;
 
 CREATE INDEX rounds_by_team ON rounds (team, at);
 
@@ -76,7 +76,7 @@ CREATE TABLE runs (
         AND (why_pass IS NULL OR why_pass >= 0)
         AND (why_pr IS NULL OR why_pr >= 1)
     )
-) STRICT, WITHOUT ROWID;
+) STRICT;
 
 CREATE INDEX runs_by_team ON runs (team, at);
 
