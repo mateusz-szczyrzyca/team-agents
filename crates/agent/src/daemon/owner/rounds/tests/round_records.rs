@@ -62,6 +62,22 @@ async fn team_rig() -> Rig {
     .await
 }
 
+/// [`team_rig`] with a second member, so both items of a parallel list start together.
+async fn parallel_team_rig() -> Rig {
+    Rig::new(
+        &[
+            investigator("inv-lead", "sleep,integrate"),
+            normal("claude-1", "work"),
+            normal("claude-2", "sleep"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await
+}
+
 /// The rounds of the only team of `state`: their IDs, items and ends, oldest first.
 fn rounds_of_team(state: &State) -> Vec<(RoundId, Option<String>, Option<RoundEnd>)> {
     state.teams()[0]
@@ -463,7 +479,7 @@ async fn a_daemon_stopped_in_the_middle_of_a_round_goes_on_with_the_same_round_i
 
 #[tokio::test]
 async fn agent_run_prints_the_round_of_each_item_and_agent_status_of_a_round_shows_its_item_tasks_and_pull_request() {
-    let mut rig = team_rig().await;
+    let mut rig = parallel_team_rig().await;
     rig.start().await;
     let request = agent_core::protocol::RunRequest {
         repo: "example".parse().unwrap(),
@@ -471,6 +487,7 @@ async fn agent_run_prints_the_round_of_each_item_and_agent_status_of_a_round_sho
         agents: agent_core::protocol::AgentList::try_from(vec![
             "inv-lead".parse().unwrap(),
             "claude-1".parse().unwrap(),
+            "claude-2".parse().unwrap(),
         ])
         .unwrap(),
         task_list: agent_core::state::TaskListText::new(PARALLEL.to_owned()).unwrap(),
@@ -509,8 +526,10 @@ async fn agent_run_prints_the_round_of_each_item_and_agent_status_of_a_round_sho
         .filter_map(|line| line.split_whitespace().find(|word| word.starts_with("round-")))
         .map(str::to_owned)
         .collect();
-    assert_eq!(ids.len(), 1, "one member takes one item at the start: {printed}");
-    assert!(printed.contains(&format!("{}  item 1.1  open", ids[0])), "{printed}");
+    assert_eq!(ids.len(), 2, "two members take two items at the start: {printed}");
+    assert!(printed.contains(&format!("{round}  item 1.1  open")), "{printed}");
+    let second = state.teams()[0].round_of("2.1".parse().unwrap()).unwrap().id();
+    assert!(printed.contains(&format!("{second}  item 2.1  open")), "{printed}");
     let shown = String::from_utf8(shown).unwrap();
     assert!(shown.starts_with(&format!("{round}  item 1.1  open  team ")), "{shown}");
     assert!(shown.contains("item 1.1: One (in_review)"), "{shown}");
