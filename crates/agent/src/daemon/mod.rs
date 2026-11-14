@@ -25,6 +25,7 @@ use agent_runtime::editor::{SocketDirs, VscodeOpener};
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
 use agent_runtime::notify::Notifier;
 use agent_runtime::process::Supervisor;
+use agent_runtime::process::error_chain;
 use agent_runtime::prompts::{PromptLoadError, PromptLoader};
 use agent_runtime::questions_prompts::{QuestionsPrompts, QuestionsPromptsError};
 use agent_runtime::run::{EngineParts, RunEngine, RunTimings};
@@ -44,6 +45,7 @@ use self::server::ServerError;
 mod checks;
 mod control;
 mod gate;
+mod history;
 mod merge;
 mod notice;
 mod notifier;
@@ -207,6 +209,7 @@ pub(crate) async fn run_in(
         run: RunTimings::from_config(settings.config.watchdog()),
     });
     let rng = StdRng::try_from_rng(&mut SysRng).map_err(DaemonError::Entropy)?;
+    let opened = history::open(&settings, &setup.home).await;
     let engine = RunEngine::new(EngineParts {
         store: Arc::clone(&store),
         texts: Arc::clone(&texts),
@@ -216,7 +219,8 @@ pub(crate) async fn run_in(
         clock: setup.clock.clone(),
         local_offset: setup.local_offset,
         timings: timings.run,
-    });
+    })
+    .with_history(opened.history.clone());
     let notifier = Notifier::from_config(settings.config.notifications(), store.home(), &settings.secrets);
     let listener = server::bind(&setup.home).await?;
 
@@ -259,7 +263,8 @@ pub(crate) async fn run_in(
         },
         shutdown.clone(),
     )
-    .with_gate(gates);
+    .with_gate(gates)
+    .with_history(opened.history.clone());
     let owner = if let Some(pulls) = pulls {
         owner.with_pulls(pulls)
     } else {
@@ -277,6 +282,19 @@ pub(crate) async fn run_in(
         }
     }
     server::remove(&setup.home).await.map_err(DaemonError::RemoveSocket)?;
+    // Everything that records has ended: what is queued is written, and the thread of the writer is joined.
+    if let Some(writer) = opened.writer {
+        let closed = tokio::task::spawn_blocking(move || writer.close()).await;
+        match closed {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::error!(error = %error_chain(&error), "the history writer did not close cleanly: records may be missing")
+            }
+            Err(error) => {
+                tracing::error!(error = %error_chain(&error), "the task that closes the history writer failed: records may be missing")
+            }
+        }
+    }
     owned_end?;
     failure.map_or(Ok(()), Err)
 }

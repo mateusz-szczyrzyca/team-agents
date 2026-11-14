@@ -20,6 +20,8 @@
 #   script:NAME     runs the bash script `fake-scripts/NAME.sh` of the home the configuration names, in the worktree, then
 #                   records the gate as `work` does and ends with STATUS: DONE: a test writes the script, which commits
 #                   whatever the run is to have done
+#   stream:NAME     prints the lines of the file `fake-scripts/NAME.jsonl` of the home the configuration names — events of Claude
+#                   Code's stream JSON, which a test writes — and ends with STATUS: DONE: the steps the history is to record
 #   integrate       merges every other local branch of the form agents/*/task-*-N.N into the worktree's branch, records
 #                   the gate as `work` does and ends with STATUS: DONE
 #
@@ -129,6 +131,10 @@ case $action in
     bash "$home/fake-scripts/${action#script:}.sh"
     record_gate
     result 'Did the scripted work.\nSTATUS: DONE'
+    ;;
+  stream:*)
+    cat "$home/fake-scripts/${action#stream:}.jsonl"
+    result 'Streamed.\nSTATUS: DONE'
     ;;
   ask)
     file=$(grep -o '/[^`[:space:]]*questions-[0-9]*\.md' <<< "$prompt" | head -n 1)

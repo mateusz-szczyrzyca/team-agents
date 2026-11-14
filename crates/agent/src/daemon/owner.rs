@@ -37,6 +37,7 @@ use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
+use agent_runtime::history::History;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict, WatchdogHold};
@@ -385,6 +386,8 @@ pub(super) struct Owner {
     github: HashMap<agent_core::config::RepoName, agent_runtime::github::GitHub>,
     /// What the autopilot remembers between two looks.
     watch: rounds::PullWatch,
+    /// Where what happens is recorded for good; off for an owner that runs without one.
+    history: History,
     /// Cancelled when the daemon is to stop: the runs it starts stop with it.
     shutdown: CancellationToken,
 }
@@ -432,8 +435,15 @@ impl Owner {
             pulls: None,
             github: HashMap::new(),
             watch: rounds::PullWatch::default(),
+            history: History::disabled(),
             shutdown,
         }
+    }
+
+    /// The same, recording what happens in `history`.
+    pub(super) fn with_history(mut self, history: History) -> Self {
+        self.history = history;
+        self
     }
 
     /// The same, with the gates it is asked for going to `queue`.
