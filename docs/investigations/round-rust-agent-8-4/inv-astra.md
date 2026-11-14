@@ -1,6 +1,6 @@
 # Investigation — Rust item 8.4 — `inv-astra`
 
-Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-agents/pull/100) on `agents/inv-astra/20261114-094819`. The human-authorized fixes are committed. The latest Rust gate passes `2,326` tests, with `0` failures and `0` ignored, but its preceding run exposed a frozen fixture race. Question `7` requests approval for that separate correction; reliable completion is not claimed while it remains unresolved. The round-6 timer-fixture correction is isolated in its authorized `TEST-FIX:` commit; the bounded capture implementation is GREEN. The acceptance map and remaining verification limits below are the handoff for independent review, not a substitute for the human's schema checkpoint.
+Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-agents/pull/100) on `agents/inv-astra/20261114-094819`. The investigation and human-authorized fixes are complete. The final Rust gate passes `2,328` tests, with `0` failures and `0` ignored. The fake-CLI counter race found during verification is corrected in the dedicated round-7 `TEST-FIX:`, with a deterministic regression committed first. The round-6 timer-fixture correction is isolated in its authorized `TEST-FIX:` commit; the bounded capture implementation is GREEN. The acceptance map and remaining verification limits below are the handoff for independent review, not a substitute for the human's schema checkpoint.
 
 ## Completed fixes
 
@@ -21,6 +21,8 @@ Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-
 - **Acceptance audit:** new daemon tests prove coordinator-line selection and flag precedence, the brief and run timestamps, and all `10` documented SQL queries against a merged round. Git independently verifies the recorded commit hash, subject and author time. Additional daemon tests provoke SQLite’s actual `SQLITE_FULL` code without filling a filesystem and an actual Git capture timeout with an injected clock. Both rounds merge; the process test reports the disk-full cause once on stderr. Existing tests and shared fixture behavior are unchanged.
 
 ## Commits
+
+- Counter publication regression $\color{red}{\textbf{RED}}$: [`0d5064d1`](https://github.com/mateusz-szczyrzyca/team-agents/commit/0d5064d1e92bf3181ede2b916fe32c9139b6a8ba).
 
 - Reader $\color{red}{\textbf{RED}}$: [`20b096ea`](https://github.com/mateusz-szczyrzyca/team-agents/commit/20b096eaf8cdd962525231e647d343899a9f1be1).
 - Reader $\color{green}{\textbf{GREEN}}$: [`4963b7e2`](https://github.com/mateusz-szczyrzyca/team-agents/commit/4963b7e2f219cd59ccae50e91dd91e9dfbd2689b).
@@ -51,6 +53,8 @@ Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-
 
 ## Tests changed after RED
 
+- Human-authorized `TEST-FIX:` [`842ea262`](https://github.com/mateusz-szczyrzyca/team-agents/commit/842ea262948dd46d90b5059016e6c263c4ed2090) changes only `Rig::runs` in [`crates/agent/src/daemon/owner/rounds/tests/rig.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/842ea262948dd46d90b5059016e6c263c4ed2090/crates/agent/src/daemon/owner/rounds/tests/rig.rs#L391). Empty counter text means the fake CLI has not published its number yet; malformed nonempty numbers still panic. The separately committed regression and every existing assertion remain unchanged.
+
 - Human-authorized `TEST-FIX:` [`88dc7138`](https://github.com/mateusz-szczyrzyca/team-agents/commit/88dc71381c20c0b7e6320916c00c375df15a5dfd) updates [`docs/history.schema.sql`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/docs/history.schema.sql) and the table inventory in [`crates/agent-runtime/tests/history/schema.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/crates/agent-runtime/tests/history/schema.rs) for session migration `2`.
 - Human-authorized `TEST-FIX:` [`abc029dd`](https://github.com/mateusz-szczyrzyca/team-agents/commit/abc029ddbcb7858205bf6266fb2621f49c8f9c23) advances the unsupported-version fixture in [`crates/agent/src/daemon/owner/rounds/tests/history_records.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/crates/agent/src/daemon/owner/rounds/tests/history_records.rs) to one beyond the latest migration. It preserves byte preservation, merged-round and unavailable-status assertions.
 - Human-authorized `TEST-FIX:` [`ffaab8fc`](https://github.com/mateusz-szczyrzyca/team-agents/commit/ffaab8fc84c7fb8fd21b7466734ee869cf8bc9df) disables history only in the four round-3 fixtures. Its diff adds configuration writes inside those tests; shared fixture defaults and every assertion remain unchanged.
@@ -65,6 +69,7 @@ This maps the behavioral clauses of item `8.4` to automated evidence. Recording 
 
 | Behaviour | Test or proof |
 |---|---|
+| Counter publication window is tolerated; published values are exact; malformed nonempty values still fail | `an_empty_run_counter_waits_for_publication_and_then_reports_the_count`; `a_malformed_nonempty_run_counter_still_panics` |
 | Fresh schema equals the pinned schema; all tables STRICT | `a_fresh_database_has_the_schema_the_pinned_file_has`; `the_pinned_file_is_the_version_of_the_last_migration_and_every_table_of_it_is_strict` |
 | WAL; forward migration; failed migration rollback; future version byte preservation | `the_database_is_in_write_ahead_log_mode`; `a_database_of_an_older_version_is_migrated_forward_and_keeps_its_rows`; `a_migration_that_fails_leaves_the_database_at_the_version_before_it`; `a_database_of_a_newer_version_is_refused_and_left_byte_for_byte_as_it_was` |
 | Typed records round-trip with generated inputs and varying batches | `any_world_of_records_is_read_back_equal_whatever_the_size_of_the_batches` |
@@ -107,6 +112,9 @@ This maps the behavioral clauses of item `8.4` to automated evidence. Recording 
 
 ## Checks
 
+- Final implementation gate at [`842ea262`](https://github.com/mateusz-szczyrzyca/team-agents/commit/842ea262948dd46d90b5059016e6c263c4ed2090): `make rust` passes formatting, clippy, `2,328` tests and documentation; `0` failures, `0` ignored.
+- Counter regression RED gate: formatting and clippy passed; `670` daemon tests passed and only the new empty-counter regression failed with `ParseIntError { kind: Empty }`, caught by its explicit unpublished-counter assertion. The malformed-counter test passed. The first uncommitted module declaration needed an explicit path before formatting could resolve the new test file.
+
 - Earlier code gate at [`a038882c`](https://github.com/mateusz-szczyrzyca/team-agents/commit/a038882cc801f156c01da6ad665d8793be359be8): `make rust` passes formatting, clippy, `2,313` test executions and documentation; `0` failed, `0` ignored.
 - Secret-redaction GREEN gate at [`6c402ada`](https://github.com/mateusz-szczyrzyca/team-agents/commit/6c402ada70d26cf453e429cb4bfecee18cc945e4): `make rust` passes formatting, clippy, `2,317` tests and documentation, with `0` failures and `0` ignored.
 - Secret RED gate: `663` daemon tests passed; the new merged-round test failed because the persisted prompt retained the marker. The focused runtime suite failed all `3` new tests on raw text or an uncounted identity omission.
@@ -114,7 +122,7 @@ This maps the behavioral clauses of item `8.4` to automated evidence. Recording 
 - Deadline GREEN gate at [`89e632f6`](https://github.com/mateusz-szczyrzyca/team-agents/commit/89e632f62a869e84442109edaf06f15349ad7c40): `make rust` passes `2,320` tests, formatting, clippy and documentation; `0` failures, `0` ignored.
 - Acceptance gate at [`7dc71527`](https://github.com/mateusz-szczyrzyca/team-agents/commit/7dc715271c58e1bb57d0035fcedf7b98fdd1ba31): `make rust` passes `2,323` tests, formatting, clippy and documentation; `0` failures, `0` ignored. This includes the `3` added daemon acceptance tests. Initial drafts had fixture/formatting and function-length lint errors; they were corrected before committing, with no production change or lint suppression.
 
-- Latest code gate at [`92bde1a9`](https://github.com/mateusz-szczyrzyca/team-agents/commit/92bde1a9b448ea3cd71334621653bbbf0f8643a5): `make rust` passes `2,326` tests, formatting, clippy and documentation; `0` failures, `0` ignored. The preceding attempt passed formatting and clippy but failed the existing stop/resume test with an empty counter (`668/669` daemon tests passed). The confirming pass does not resolve that race; see question `7`. The first draft of the new process test also needed a lint-only assertion spelling correction before commit.
+- Earlier acceptance gate at [`92bde1a9`](https://github.com/mateusz-szczyrzyca/team-agents/commit/92bde1a9b448ea3cd71334621653bbbf0f8643a5): `make rust` passes `2,326` tests, formatting, clippy and documentation; `0` failures, `0` ignored. The preceding attempt passed formatting and clippy but failed the existing stop/resume test with an empty counter (`668/669` daemon tests passed). The confirming pass did not resolve that race; the subsequently approved correction is listed above. The first draft of the new process test also needed a lint-only assertion spelling correction before commit.
 - The fixture/capture gate passed `2,309` test executions after round-4 permission; the merged-queue gate passed `2,310`; the seeded gate passed `2,311`.
 - Capture-loss $\color{red}{\textbf{RED}}$: new process test observed completed tasks without a loss count; runtime assertions observed `0` instead of `2` and `5` instead of `6` losses. The exact socket regression received `Teams` instead of `Overview`.
 - Seeded-selection $\color{red}{\textbf{RED}}$: `662` daemon tests passed; only the new test failed, at seed `2`, with `inv-a` instead of `inv-b`. The incorrect injection stub was isolated from the normal entry point before committing RED; its first version also caused a duplicate run ID during restart and was not committed.
@@ -122,11 +130,11 @@ This maps the behavioral clauses of item `8.4` to automated evidence. Recording 
 - `git diff --check` passes.
 - `git grep -l 'CREATE TABLE' -- crates` finds one production Rust schema module plus two test-only SQL fixtures: the preserved version-1 migration and the exhausted-row-ID fault. The fixtures are not additional production schema modules.
 - The secret-echo experiment used only a temporary home and fake CLIs. A merged round produced `persisted_steps=1`, `in_wal=true`, `in_database=true`. The temporary diagnostic test asserted the reproduction, was removed afterwards, and is not presented as a security regression test or a fix. The final committed tests were not changed by the probe.
-- Serena was used for symbol discovery. `sqlite3` is installed. No tool installation was needed.
+- Serena was used for symbol discovery while available. It was absent from the tools of the round-7 continuation, so targeted shell reads were used then. `sqlite3` is installed. No tool installation was needed.
 
 ## Scope and deviations
 
-- The human approved a larger item instead of splitting it. Before this continuation's implementation, the planned ceiling was recorded as `7,500` counted lines. The current PR-1 count including this report is `5,876` lines against actual PR target [`150e2203`](https://github.com/mateusz-szczyrzyca/team-agents/commit/150e2203fe0ebd458c7f6f67c5676ab736378b5d), excluding tests, the lockfile and schema snapshot.
+- The human approved a larger item instead of splitting it. Before this continuation's implementation, the planned ceiling was recorded as `7,500` counted lines. The current PR-1 count including this report is `5,882` lines against actual PR target [`150e2203`](https://github.com/mateusz-szczyrzyca/team-agents/commit/150e2203fe0ebd458c7f6f67c5676ab736378b5d), excluding tests, the lockfile and schema snapshot.
 - [`crates/agent/src/main.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/crates/agent/src/main.rs) is outside the item's named recording locations but its stream-lock fix is necessary for writer failure reporting and progress.
 - The agent crate adds the already-approved bundled `rusqlite` workspace dependency for tests that provoke actual SQLite insert failures. Cargo regenerated the lockfile. No new library version or final lint suppression was introduced. The seeded RED commit carried a temporary dead-code expectation for its compiling stub; GREEN removed it.
 - Session schema compatibility, session queries and raw snapshot semantics are documented in [`docs/history.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/docs/history.md); the reader fix adds the history reference to [`README.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/README.md).
@@ -139,11 +147,9 @@ This maps the behavioral clauses of item `8.4` to automated evidence. Recording 
 - Go suites were not run, as explicitly instructed.
 - Bats suites were not run, as explicitly instructed.
 - `make gate` was replaced by `make rust` to obey those exclusions.
-- No Rust test was newly ignored or removed. The latest gate passes every Rust stage; the preceding intermittent fixture failure remains unresolved.
+- No Rust test was newly ignored or removed. The final gate passes every Rust stage; the observed counter fixture race is fixed and deterministically tested.
 
 ## Not done
-
-- **Frozen counter race:** `Rig::runs` parses a temporarily empty fake-CLI counter with `unwrap()`. The complete gate observed `ParseIntError { kind: Empty }` in the existing stop/resume test. No frozen helper or assertion was changed. Question `7` requests permission for the precise fixture correction described below.
 
 - **Inherited process-test precision:** `a_history_in_the_way_is_said_once_on_stderr_the_task_runs_to_its_end_and_status_shows_the_lost_records` and `a_daemon_killed_in_the_middle_of_a_run_leaves_a_history_the_next_daemon_goes_on_with` look for `solo` and `done` anywhere in status; the summary header can contain `0 done`. Their frozen predicates remain unchanged. New process tests require an actual solo task line ending in `done`, and daemon tests independently require a merged round.
 - **Physical disk exhaustion:** no host filesystem was filled. The added daemon tests exhaust the row IDs of a fault table to make SQLite return its actual `SQLITE_FULL` code, then prove merged-round progress, loss counting and once-per-cause stderr reporting. This tests the SQLite failure path without claiming a physical disk-capacity experiment.
@@ -233,9 +239,9 @@ b) Keep this test frozen — leaves the bounded-capture fix unfinished because t
 
 **Verdict:** a) — human approved the recommendation; the dedicated fixture correction and GREEN implementation are committed.
 
-## Pending question — round 7
+## Answered question — round 7
 
-The external question file for task `20261114-094819-inv-astra` contains the following request. Repository rule `1`, “Never modify existing tests,” requires approval before changing this frozen helper. The round-4 exception covers a different failure cause.
+The external question file for task `20261114-094819-inv-astra` contained the following request. The human approved recommendation `a`; the separate regression and fixture correction are committed. Repository rule `1`, “Never modify existing tests,” required approval before changing this frozen helper. The round-4 exception covered a different failure cause.
 
 ## 1. May the fake-CLI counter reader tolerate its writer's empty-file window?
 The authorized timer-fixture correction and bounded-capture implementation are committed and passed the complete Rust gate. Additional acceptance tests prove the documented SQL queries, actual SQLite `SQLITE_FULL` handling and a merged round after a Git capture timeout.
@@ -251,4 +257,4 @@ b) Keep the helper frozen — leaves the intermittent stop/resume gate failure u
 
 **Recommended:** a) — handles the stub's existing publication window at the polling boundary without changing production timing or weakening the history assertions. (investigator)
 
-**Verdict:**
+**Verdict:** a) — human approved the recommendation; the dedicated `TEST-FIX:` and regression are committed, and the complete Rust gate passes.
