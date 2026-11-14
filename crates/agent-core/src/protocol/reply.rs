@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::ProtocolVersion;
 use super::request::RequestId;
 use crate::config::{AbsolutePath, RepoName};
+use crate::history::HistoryHealth;
 use crate::ids::{BranchName, ItemId, TaskId, TeamId};
 use crate::kinds::Role;
 use crate::state::{
@@ -58,6 +59,14 @@ pub enum Reply {
     Teams {
         /// One summary for each team asked for.
         teams: Vec<TeamSummary>,
+    },
+    /// `status`: the teams in short, when the history that records what happens to them is not whole — it could not be
+    /// opened, or it lost records. A history that is written and whole is not mentioned: the answer is [`Reply::Teams`].
+    Overview {
+        /// One summary for each team asked for.
+        teams: Vec<TeamSummary>,
+        /// What the history is doing and how many records it lost.
+        history: HistoryHealth,
     },
     /// `show` of a team: the whole record.
     Team {

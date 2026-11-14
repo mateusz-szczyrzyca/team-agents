@@ -67,6 +67,12 @@ impl Owner {
                     reached.push(task.clone());
                 }
                 Step::Halt(halt) => {
+                    // The run that is going is stopped by this control: it is a step of that run, and the last one.
+                    let event = ActivityEvent::Control {
+                        action: steer.into(),
+                        by: client.clone(),
+                    };
+                    self.record_control_step(task, now, &event);
                     self.halt(task, halt);
                     halted.push(task.clone());
                     reached.push(task.clone());
@@ -269,6 +275,7 @@ impl Owner {
                 action,
                 by: client.clone(),
             };
+            self.record_control_step(task, now, &event);
             self.log_activity(task, now, event).await;
         }
         tracing::info!(action = ?action, tasks = reached.len(), "the human used a control");

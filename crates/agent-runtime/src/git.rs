@@ -23,9 +23,14 @@ use agent_core::repo_path::InvalidRepoPath;
 use agent_core::state::{CommitId, InvalidCommitId};
 use tokio::process::Command;
 
-use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture};
+use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture, capture_until};
 
+mod changes;
+#[cfg(test)]
+mod deadline_tests;
 mod range;
+
+pub use changes::WorkChanges;
 
 /// How long a local git command may run before its group is killed.
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -191,6 +196,34 @@ pub enum GitOperation {
     /// `git diff-tree`, to list the files one commit changed.
     #[strum(serialize = "diff-tree")]
     DiffTree,
+    /// `git read-tree`, to fill the scratch index of a read of the uncommitted changes.
+    #[strum(serialize = "read-tree")]
+    ReadTree,
+    /// `git add`, to put the files of the worktree in the scratch index.
+    #[strum(serialize = "add")]
+    Add,
+    /// `git config`, to discover extension commands that history must disable.
+    #[strum(serialize = "config")]
+    Config,
+}
+
+/// Why the scratch area of a read of the uncommitted changes cannot be made.
+#[derive(Debug, thiserror::Error)]
+pub enum ScratchError {
+    /// A directory of it cannot be made.
+    #[error("cannot make the scratch directory")]
+    Make(#[source] std::io::Error),
+    /// The name of an environment variable it sets is not valid.
+    #[error("{name:?} is not a valid name of an environment variable")]
+    Name {
+        /// The name.
+        name: &'static str,
+        /// What is wrong with it.
+        source: InvalidValue,
+    },
+    /// A path of it is not text, which an environment variable needs.
+    #[error("the path {0:?} is not text")]
+    NotText(PathBuf),
 }
 
 /// Why a git operation failed.
@@ -292,6 +325,12 @@ pub enum GitError {
         /// Why the text is not a path.
         source: InvalidRepoPath,
     },
+    /// The scratch area of a read of the uncommitted changes cannot be made.
+    #[error("cannot make the scratch area of a read of the uncommitted changes")]
+    Scratch {
+        /// What went wrong.
+        source: ScratchError,
+    },
     /// The message of a merge is empty.
     #[error("the message of a merge must not be empty")]
     EmptyMessage,
@@ -386,6 +425,8 @@ pub struct Git {
     env: BTreeMap<EnvName, String>,
     /// The bounds of a command.
     limits: GitLimits,
+    /// Absolute end of a best-effort snapshot, shared by clones and scratch handles.
+    deadline: Option<tokio::time::Instant>,
 }
 
 impl Git {
@@ -397,6 +438,7 @@ impl Git {
             identity,
             env: BTreeMap::new(),
             limits: GitLimits::default(),
+            deadline: None,
         }
     }
 
@@ -412,6 +454,13 @@ impl Git {
     #[must_use]
     pub fn with_limits(mut self, limits: GitLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Bounds all commands through this handle by one absolute snapshot deadline.
+    #[must_use]
+    pub fn with_deadline(mut self, deadline: tokio::time::Instant) -> Self {
+        self.deadline = Some(deadline);
         self
     }
 
@@ -840,12 +889,16 @@ impl Git {
             Reach::Network => self.limits.network_timeout,
         };
         let limits = CaptureLimits {
-            timeout,
+            timeout: self.deadline.map_or(timeout, |deadline| {
+                timeout.min(deadline.saturating_duration_since(tokio::time::Instant::now()))
+            }),
             max_bytes: self.limits.max_output_bytes,
         };
-        capture(self.command(args), limits)
-            .await
-            .map_err(|source| GitError::Run { operation, source })
+        let captured = match self.deadline {
+            Some(deadline) => capture_until(self.command(args), limits, deadline).await,
+            None => capture(self.command(args), limits).await,
+        };
+        captured.map_err(|source| GitError::Run { operation, source })
     }
 
     /// Runs git with `args`; a command that ends with a failure is an error.

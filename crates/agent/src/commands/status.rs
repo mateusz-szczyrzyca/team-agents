@@ -3,6 +3,7 @@
 
 use std::io::{self, Write};
 
+use agent_core::history::HistoryHealth;
 use agent_core::ids::RoundId;
 use agent_core::protocol::{Client, Command, Reply, RoundDetail, ShowRequest, StatusRequest, Target, TeamSummary};
 use agent_core::state::{Round, RoundLife, RunState};
@@ -41,10 +42,14 @@ pub(crate) async fn status(
     let reply = connection
         .request(Client::Cli, Command::Status(StatusRequest { target }))
         .await?;
-    let Reply::Teams { teams } = reply else {
-        return Err(StatusError::UnexpectedReply { kind: kind_of(&reply) });
+    let (teams, history) = match reply {
+        Reply::Teams { teams } => (teams, None),
+        Reply::Overview { teams, history } => (teams, Some(history)),
+        other => return Err(StatusError::UnexpectedReply { kind: kind_of(&other) }),
     };
     out.write_all(render(&teams).as_bytes()).map_err(StatusError::Output)?;
+    out.write_all(render_history(history.as_ref()).as_bytes())
+        .map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
 }
 
@@ -71,6 +76,7 @@ pub(super) const fn kind_of(reply: &Reply) -> &'static str {
     match reply {
         Reply::Started { .. } => "started",
         Reply::Teams { .. } => "teams",
+        Reply::Overview { .. } => "overview",
         Reply::Team { .. } => "team",
         Reply::Round { .. } => "round",
         Reply::Task { .. } => "task",
@@ -120,6 +126,11 @@ pub(crate) fn render(teams: &[TeamSummary]) -> String {
     let mut text = lines.join("\n");
     text.push('\n');
     text
+}
+
+/// The line `agent status` shows about the history when it is not whole: what it is doing and how many records it lost.
+pub(crate) fn render_history(history: Option<&HistoryHealth>) -> String {
+    history.map_or_else(String::new, |health| format!("{health}\n"))
 }
 
 /// A round as one line: its ID, its item and whether it is open or how it ended.
@@ -190,5 +201,8 @@ pub(crate) fn render_round(detail: &RoundDetail) -> String {
 /// What is written when the daemon knows no team.
 const NO_TEAMS: &str = "no teams\n";
 
+#[cfg(test)]
+#[path = "status/history/tests.rs"]
+mod history_tests;
 #[cfg(test)]
 mod tests;

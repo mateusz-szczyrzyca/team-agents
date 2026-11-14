@@ -290,6 +290,10 @@ impl CodexParser {
 }
 
 impl OutputParser for CodexParser {
+    fn session(&self) -> Option<&agent_core::cli::SessionId> {
+        self.progress.session_id.as_ref()
+    }
+
     fn push_line(&mut self, line: &str) -> Result<Vec<ActivityEvent>, OutputError> {
         let Some(event) = read_event::<Event>(line)? else {
             return Ok(Vec::new());

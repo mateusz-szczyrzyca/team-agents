@@ -389,7 +389,11 @@ impl Rig {
 
     /// How many runs the task has had.
     pub(super) fn runs(&self, task: &TaskId) -> u32 {
-        std::fs::read_to_string(self.worktree(task).join(".fake-runs")).map_or(0, |text| text.trim().parse().unwrap())
+        std::fs::read_to_string(self.worktree(task).join(".fake-runs")).map_or(0, |text| {
+            let text = text.trim();
+            // Shell redirection creates or truncates the counter before the fake CLI writes its number.
+            if text.is_empty() { 0 } else { text.parse().unwrap() }
+        })
     }
 
     /// The prompt the task's `n`-th run was given, once it has been.
@@ -474,3 +478,26 @@ fn config(agents: &[Agent], github: &str, fix_passes: u32, home: &Home, bus: boo
     .unwrap();
     text
 }
+
+impl Rig {
+    /// Starts the real daemon with a reproducible random source for selection-history proofs.
+    pub(super) async fn start_with_rng(&mut self, rng: rand::rngs::StdRng) {
+        self.shutdown = CancellationToken::new();
+        let daemon = tokio::spawn(crate::daemon::run_with_rng(
+            self.setup(),
+            crate::daemon::Surroundings::from_process(),
+            rng,
+            self.shutdown.clone(),
+        ));
+        self.wait_for("seeded daemon socket", || {
+            self.home.socket_file().exists() || daemon.is_finished()
+        })
+        .await;
+        assert!(!daemon.is_finished(), "seeded daemon exited before serving");
+        self.daemon = Some(daemon);
+    }
+}
+
+#[cfg(test)]
+#[path = "rig/tests.rs"]
+mod tests;

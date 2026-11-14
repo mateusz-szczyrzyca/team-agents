@@ -8,9 +8,14 @@ use std::str::FromStr;
 
 use agent_core::cli::{McpServerKind, RunMode, SessionId};
 use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValue, ModelName};
+use agent_core::history::RunWhy;
 use agent_core::ids::{BranchName, GenerateIdError, InvalidBranchName, InvalidName, RunId, TaskId};
+use agent_core::kinds::Role;
 use agent_core::kinds::{CliKind, Tier};
-use agent_core::state::{ItemPhase, Member, Participant, Question, RunEnd, RunState, State, TaskRef, Team};
+use agent_core::state::{
+    ItemPhase, ItemProgress, Member, Participant, PrNumber, Question, ReviewOutcome, Run, RunEnd, RunState, State,
+    TaskRef, Team,
+};
 use agent_core::status::RunOutcome;
 use agent_core::task_list::Item;
 use agent_runtime::agentbus::{AgentBus, BusTier};
@@ -526,3 +531,82 @@ fn mcp_servers(
 
 #[cfg(test)]
 mod tests;
+
+/// The pull request of the review `task` has pending and how many fix passes its item had when it was asked: the pass of
+/// that review, `0` for the first.
+fn pending_review(team: &Team, task: &TaskId) -> Option<(PrNumber, u32)> {
+    team.items().iter().find_map(|progress| {
+        let ItemPhase::InReview { pr, reviews } = progress.phase() else {
+            return None;
+        };
+        reviews
+            .iter()
+            .any(|review| review.task == *task && matches!(review.outcome, ReviewOutcome::Pending))
+            .then(|| (pr.number, fix_passes(progress)))
+    })
+}
+
+/// How many fix passes `progress` has had; a count that does not fit a `u32` is the largest one.
+fn fix_passes(progress: &ItemProgress) -> u32 {
+    u32::try_from(progress.fix_passes().len()).unwrap_or(u32::MAX)
+}
+
+/// The number of the fix pass the lead of `team` is given: the most fix passes any item that is being fixed has had.
+fn fix_pass_number(team: &Team) -> Option<NonZeroU32> {
+    team.items()
+        .iter()
+        .filter(|progress| matches!(progress.phase(), ItemPhase::Fixing { .. }))
+        .map(fix_passes)
+        .max()
+        .and_then(NonZeroU32::new)
+}
+
+/// Why the run of `task` starts, as the history says it: what the team told the owner (`why`), or — for a plain
+/// continuation of the task — what the state says of the runs it had.
+pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy {
+    let Some(found) = state.find_task(task) else {
+        tracing::warn!(task = %task, "the task of a new run is not in the state: recording its reason as continuation");
+        return RunWhy::Continuation;
+    };
+    let (team, member) = (found.team, found.member);
+    match why {
+        Some(Why::Woken) => RunWhy::WakeUp,
+        Some(Why::Assigned(item)) => RunWhy::Item { item: *item },
+        Some(Why::Delegated(request)) => RunWhy::Request {
+            asked_by: state
+                .find_task(&request.from_task)
+                .and_then(|asking| asking.member.runs().last().map(|run| run.id().clone())),
+        },
+        Some(Why::Review) => review_why(team, task),
+        Some(Why::VerdictMissing) => RunWhy::VerdictMissing,
+        Some(Why::FixPass) => fix_pass_number(team).map_or_else(
+            || {
+                tracing::warn!(team = %team.id(), task = %task, "no item of the team is in a fix pass: recording the run's reason as continuation");
+                RunWhy::Continuation
+            },
+            |number| RunWhy::FixPass { number },
+        ),
+        Some(Why::AskHuman) => RunWhy::AskHuman,
+        Some(Why::Checks) => RunWhy::Checks,
+        None if found.role == Role::Reviewer => review_why(team, task),
+        None if answered_questions(member).is_some() => RunWhy::Answers,
+        None => match member.runs().last().map(Run::state) {
+            None => RunWhy::FirstRun,
+            Some(RunState::Ended {
+                end: RunEnd::Stopped, ..
+            }) => RunWhy::ResumedByHuman,
+            Some(RunState::Ended { .. } | RunState::Running) => RunWhy::Continuation,
+        },
+    }
+}
+
+/// The reason of a reviewer's run: the review of the pull request it has pending.
+fn review_why(team: &Team, task: &TaskId) -> RunWhy {
+    pending_review(team, task).map_or_else(
+        || {
+            tracing::warn!(team = %team.id(), task = %task, "the reviewer has no pending review in the state: recording the run's reason as continuation");
+            RunWhy::Continuation
+        },
+        |(pr, pass)| RunWhy::Review { pr, pass },
+    )
+}

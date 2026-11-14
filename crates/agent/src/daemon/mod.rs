@@ -44,6 +44,7 @@ use self::server::ServerError;
 mod checks;
 mod control;
 mod gate;
+mod history;
 mod merge;
 mod notice;
 mod notifier;
@@ -186,6 +187,20 @@ pub(crate) async fn run_in(
     surroundings: Surroundings,
     shutdown: CancellationToken,
 ) -> Result<(), DaemonError> {
+    let rng = StdRng::try_from_rng(&mut SysRng).map_err(DaemonError::Entropy)?;
+    run_with_rng(setup, surroundings, rng, shutdown).await
+}
+
+/// Runs the daemon with the caller's random source for team selection and identifiers.
+///
+/// # Errors
+/// [`DaemonError`].
+pub(crate) async fn run_with_rng(
+    setup: DaemonSetup,
+    surroundings: Surroundings,
+    rng: StdRng,
+    shutdown: CancellationToken,
+) -> Result<(), DaemonError> {
     let store = match StateStore::open(setup.home.clone()).await {
         Ok(store) => Arc::new(store),
         Err(StoreError::HomeLocked { path }) => return Err(DaemonError::AlreadyRunning { path }),
@@ -206,7 +221,7 @@ pub(crate) async fn run_in(
         tick: TICK,
         run: RunTimings::from_config(settings.config.watchdog()),
     });
-    let rng = StdRng::try_from_rng(&mut SysRng).map_err(DaemonError::Entropy)?;
+    let opened = history::open(&settings, &setup.home).await;
     let engine = RunEngine::new(EngineParts {
         store: Arc::clone(&store),
         texts: Arc::clone(&texts),
@@ -216,7 +231,8 @@ pub(crate) async fn run_in(
         clock: setup.clock.clone(),
         local_offset: setup.local_offset,
         timings: timings.run,
-    });
+    })
+    .with_history(opened.history.clone());
     let notifier = Notifier::from_config(settings.config.notifications(), store.home(), &settings.secrets);
     let listener = server::bind(&setup.home).await?;
 
@@ -259,7 +275,8 @@ pub(crate) async fn run_in(
         },
         shutdown.clone(),
     )
-    .with_gate(gates);
+    .with_gate(gates)
+    .with_history(opened.history.clone());
     let owner = if let Some(pulls) = pulls {
         owner.with_pulls(pulls)
     } else {
@@ -276,6 +293,8 @@ pub(crate) async fn run_in(
             failure.get_or_insert(DaemonError::Join(source));
         }
     }
+    // Everything that records has ended.
+    history::close(opened.writer).await;
     server::remove(&setup.home).await.map_err(DaemonError::RemoveSocket)?;
     owned_end?;
     failure.map_or(Ok(()), Err)

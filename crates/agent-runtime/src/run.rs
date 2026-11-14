@@ -21,22 +21,27 @@ use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValu
 use agent_core::decide::outcome::{
     Classified, ClassifyError, ExitStatus, LimitContext, RunFinish, StoppedBy, classify_outcome,
 };
+use agent_core::history::{Launch, Record, RunChanges};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::kinds::CliKind;
 use agent_core::prompt::VariablesError;
-use agent_core::state::{InvalidTimestamp, Timestamp};
+use agent_core::state::{CommitId, InvalidTimestamp, Timestamp};
 use time::UtcOffset;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
 use crate::clock::SharedClock;
-use crate::git::GitError;
+use crate::git::{GitError, Revision};
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
+use crate::history::{CaptureKind, History};
 use crate::process::{ExitReport, ProcessError, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
 
 use crate::store::{StateStore, StoreError};
 pub use hold::{HoldGuard, WatchdogHold};
+
+/// One best-effort history boundary may spend two seconds collecting Git data, plus bounded child cleanup.
+const HISTORY_CAPTURE_BUDGET: Duration = Duration::from_secs(2);
 
 /// How long a prompt may be to travel as one argument of a command line; longer ones go through a file. Linux refuses
 /// an argument over 128 KiB, and a CLI adds its own flags around it.
@@ -289,13 +294,26 @@ pub enum ExcludeCause {
 pub struct RunEngine {
     /// What the engine is made of.
     parts: EngineParts,
+    /// Where the launch, the steps and the changes of every run are recorded; off unless [`RunEngine::with_history`].
+    history: History,
 }
 
 impl RunEngine {
     /// An engine made of `parts`.
     #[must_use]
-    pub const fn new(parts: EngineParts) -> Self {
-        Self { parts }
+    pub fn new(parts: EngineParts) -> Self {
+        Self {
+            parts,
+            history: History::disabled(),
+        }
+    }
+
+    /// The same engine, recording what its runs do in `history`: how each process was started, every step, and what the
+    /// run changed.
+    #[must_use]
+    pub fn with_history(mut self, history: History) -> Self {
+        self.history = history;
+        self
     }
 
     /// Carries out `job` and returns how it ended.
@@ -323,6 +341,7 @@ impl RunEngine {
         let launch = launch::prepare(&self.parts, &job).await?;
         let stdout = launch.process.stdout_file.clone();
         let stderr = launch.process.stderr_file.clone();
+        let head_before = self.head_of_worktree(&job).await;
         let mut process = self
             .parts
             .supervisor
@@ -333,11 +352,18 @@ impl RunEngine {
                 cli: job.cli,
                 source,
             })?;
+        self.record_launch(&job, &launch, head_before.clone());
         let mut follow = Follow {
             engine: self,
             task: &job.task,
+            run: &job.run,
             tail: OutputTail::new(stdout),
             parser: launch.parser,
+            known_session: match &job.mode {
+                RunMode::Resume { session_id } => Some(session_id.clone()),
+                RunMode::New { session_id } if job.cli == CliKind::Claude => Some(session_id.clone()),
+                RunMode::New { .. } => None,
+            },
             progress: Progress::Nothing,
             unreadable: Unreadable::default(),
         };
@@ -378,6 +404,7 @@ impl RunEngine {
             }
         };
         follow.drain().await?;
+        self.record_changes(&job, head_before).await;
         let stderr = read_end(&stderr).await?;
         follow.unreadable.report(&job);
         let output = follow.parser.finish(&stderr, self.parts.config.limits().tail_lines);
@@ -412,6 +439,77 @@ impl RunEngine {
             final_message: output.final_message,
             progress: follow.progress,
         })))
+    }
+
+    /// The commit the worktree of `job` is at, for the history; `None` when it is off or git cannot say.
+    async fn head_of_worktree(&self, job: &RunJob) -> Option<CommitId> {
+        if !self.history.is_writing() {
+            return None;
+        }
+        match launch::lookup_git(&job.working_dir)
+            .with_deadline(tokio::time::Instant::now() + HISTORY_CAPTURE_BUDGET)
+            .rev_parse(&Revision::Head)
+            .await
+        {
+            Ok(head) => Some(head),
+            Err(error) => {
+                self.history.capture_failed(CaptureKind::Head, &error);
+                None
+            }
+        }
+    }
+
+    /// Records how the process of `job` was started: the command line the CLI saw and the names — never the values — of the
+    /// environment it was given.
+    fn record_launch(&self, job: &RunJob, launch: &launch::Launch, head: Option<CommitId>) {
+        if self.history.is_disabled() {
+            return;
+        }
+        let process = &launch.process;
+        let at = match Timestamp::now(&self.parts.clock) {
+            Ok(at) => at,
+            Err(error) => {
+                tracing::warn!(task = %job.task, run = %job.run, error = %error_chain(&error), "the launch of a run cannot be stamped: the history has none for it");
+                self.history.record_lost();
+                return;
+            }
+        };
+        let Some(program) = process.program.as_path().to_str() else {
+            tracing::warn!(task = %job.task, run = %job.run, "the program of a run is not text: the history has no launch for it");
+            self.history.record_lost();
+            return;
+        };
+        self.history.record(Record::Launch(Box::new(Launch {
+            run: job.run.clone(),
+            at,
+            program: program.to_owned(),
+            args: process.args.clone(),
+            working_dir: process.working_dir.clone(),
+            head,
+            env_names: process.env.keys().cloned().collect(),
+            prompt_in_file: launch.prompt_in_file,
+        })));
+    }
+
+    /// Records what the run changed in its worktree, now that its process is gone: the commits and files between the commit
+    /// it started at and the one it ended at, and what it left uncommitted. A worktree git cannot read has none.
+    async fn record_changes(&self, job: &RunJob, head_before: Option<CommitId>) {
+        self.history
+            .record_captured(CaptureKind::Changes, async {
+                let changes = launch::lookup_git(&job.working_dir)
+                    .with_deadline(tokio::time::Instant::now() + HISTORY_CAPTURE_BUDGET)
+                    .work_changes(head_before.as_ref())
+                    .await?;
+                Ok::<_, crate::git::GitError>(Record::Changes(Box::new(RunChanges {
+                    run: job.run.clone(),
+                    head_before,
+                    head_after: Some(changes.head_after),
+                    commits: changes.commits,
+                    files: changes.files,
+                    uncommitted: changes.uncommitted,
+                })))
+            })
+            .await;
     }
 
     /// Whether a process that last showed life at `last` has been silent for the hang limit.
@@ -478,10 +576,14 @@ struct Follow<'a> {
     engine: &'a RunEngine,
     /// The task.
     task: &'a TaskId,
+    /// The run, which its steps are recorded for.
+    run: &'a RunId,
     /// The standard output file.
     tail: OutputTail,
     /// The adapter's parser.
     parser: Box<dyn OutputParser>,
+    /// The session supplied at launch or most recently observed; echoes are not new observations.
+    known_session: Option<SessionId>,
     /// Whether an event that is more than the start or an error was seen.
     progress: Progress,
     /// What the parser refused.
@@ -525,6 +627,14 @@ impl Follow<'_> {
                     continue;
                 }
             };
+            if let Some(session) = self
+                .parser
+                .session()
+                .filter(|session| Some(*session) != self.known_session.as_ref())
+            {
+                self.engine.history.session(self.run, session, &self.engine.parts.clock);
+                self.known_session = Some(session.clone());
+            }
             for event in events {
                 if !matches!(event, ActivityEvent::Info(_) | ActivityEvent::Error(_)) {
                     self.progress = Progress::Made;
@@ -539,6 +649,7 @@ impl Follow<'_> {
                         task: self.task.clone(),
                         source,
                     })?;
+                self.engine.history.step(self.run, at, event);
             }
         }
         Ok(())

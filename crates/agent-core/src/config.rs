@@ -13,6 +13,7 @@ use std::num::NonZeroU32;
 
 use serde::Deserialize;
 
+use crate::history::MaxTextBytes;
 use crate::ids::{AgentName, BranchName, InvestigatorName};
 use crate::kinds::{CliKind, Keyword, Tier, UnknownKeyword};
 use crate::repo_path::PathPatterns;
@@ -371,6 +372,25 @@ pub struct Questions {
     pub editor: Option<CommandLine>,
 }
 
+/// `[history]`: whether the daemon records what happened, and the longest text it keeps in one field.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct History {
+    /// Whether the daemon writes the history (`history.db` in the home).
+    pub enabled: bool,
+    /// The longest text of one field, in bytes: a longer one is cut at a character boundary and marked cut.
+    pub max_text_bytes: MaxTextBytes,
+}
+
+impl Default for History {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_text_bytes: MaxTextBytes::default(),
+        }
+    }
+}
+
 /// `[web]`: the dashboard's listening address and who may open it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -429,6 +449,8 @@ pub struct Config {
     notifications: Notifications,
     /// The questions.
     questions: Questions,
+    /// The history.
+    history: History,
     /// The dashboard.
     web: Web,
     /// The repositories, by name.
@@ -486,6 +508,9 @@ struct RawConfig {
     /// See [`Config::questions`].
     #[serde(default)]
     questions: Questions,
+    /// See [`Config::history`].
+    #[serde(default)]
+    history: History,
     /// See [`Config::web`].
     #[serde(default)]
     web: Web,
@@ -512,6 +537,7 @@ impl RawConfig {
             github,
             notifications,
             questions,
+            history,
             web,
             repos,
         } = self;
@@ -532,6 +558,7 @@ impl RawConfig {
             github,
             notifications,
             questions,
+            history,
             web,
             repos,
         })
@@ -704,6 +731,12 @@ impl Config {
     #[must_use]
     pub fn questions(&self) -> &Questions {
         &self.questions
+    }
+
+    /// Whether the history is written and how long a text it keeps.
+    #[must_use]
+    pub fn history(&self) -> &History {
+        &self.history
     }
 
     /// The dashboard's address and logins.

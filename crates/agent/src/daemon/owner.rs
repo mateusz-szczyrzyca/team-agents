@@ -10,6 +10,7 @@ mod controls;
 #[cfg(test)]
 mod fixture;
 mod gate;
+mod history;
 mod round_state;
 mod rounds;
 mod start;
@@ -24,6 +25,7 @@ use std::time::Duration;
 use agent_core::cli::{ActivityEvent, SessionId as CliSessionId};
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::outcome::{AfterHang, after_hang};
+use agent_core::history::RunWhy;
 use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::protocol::{
@@ -37,6 +39,7 @@ use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
+use agent_runtime::history::History;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict, WatchdogHold};
@@ -50,10 +53,11 @@ use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) use self::rounds::{Pulls, PullsError};
-use self::start::{Context, Plan, next_number, plan};
+use self::start::{Context, Plan, next_number, plan, run_why};
 use self::teams::{Outbound, Served};
 use super::control::{Halt, Steer, after_halt, halted_status};
 use super::gate::GateQueue;
+use super::history::health_to_tell;
 use super::notice::Notice;
 use super::notifier::Delivery;
 use super::questions;
@@ -385,6 +389,8 @@ pub(super) struct Owner {
     github: HashMap<agent_core::config::RepoName, agent_runtime::github::GitHub>,
     /// What the autopilot remembers between two looks.
     watch: rounds::PullWatch,
+    /// Where what happens is recorded for good; off for an owner that runs without one.
+    history: History,
     /// Cancelled when the daemon is to stop: the runs it starts stop with it.
     shutdown: CancellationToken,
 }
@@ -432,8 +438,15 @@ impl Owner {
             pulls: None,
             github: HashMap::new(),
             watch: rounds::PullWatch::default(),
+            history: History::disabled(),
             shutdown,
         }
+    }
+
+    /// The same, recording what happens in `history`.
+    pub(super) fn with_history(mut self, history: History) -> Self {
+        self.history = history;
+        self
     }
 
     /// The same, with the gates it is asked for going to `queue`.
@@ -487,6 +500,7 @@ impl Owner {
             self.wakes.insert(task, at);
         }
         self.hangs.extend(recovery.hangs);
+        self.record_recovered_ends(&recovery.interrupted);
         self.remember_closed_teams();
         self.look_at_every_team();
         if !recovery.interrupted.is_empty() {
@@ -548,11 +562,18 @@ impl Owner {
             Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
         };
         let rounds = round_state::rounds_for(&self.parts.state, &task, why.as_ref())?;
-        self.begin(&task, plan, rounds).await
+        let reason = run_why(&self.parts.state, &task, why.as_ref());
+        self.begin(&task, plan, rounds, reason).await
     }
 
     /// Records the start of the run of `plan`, which works for `rounds`, and hands it to the engine.
-    async fn begin(&mut self, task: &TaskId, plan: Plan, rounds: Vec<RoundId>) -> Result<(), OwnerError> {
+    async fn begin(
+        &mut self,
+        task: &TaskId,
+        plan: Plan,
+        rounds: Vec<RoundId>,
+        reason: RunWhy,
+    ) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
@@ -563,7 +584,7 @@ impl Owner {
                 NewRun {
                     id: plan.run.clone(),
                     at: now,
-                    session: plan.recorded_session,
+                    session: plan.recorded_session.clone(),
                     rounds: rounds.clone(),
                 },
             )
@@ -575,10 +596,12 @@ impl Owner {
             team: located.team.clone(),
             task: task.clone(),
             run: plan.run.clone(),
-            rounds,
+            rounds: rounds.clone(),
         });
         self.move_to(task, &located.team, TaskStatus::Running, &mut events)?;
         self.commit(task, &located, now, events, None).await?;
+        // The run is in the state: the history is told before the engine can say anything about it.
+        self.record_run_start(task, &plan, &rounds, reason, now);
         tracing::info!(task = %task, run = %plan.run, agent = %located.agent, "run started");
         let engine = self.parts.engine.clone();
         let cancel = self.shutdown.child_token();
@@ -649,6 +672,7 @@ impl Owner {
             &located.team,
             now,
             RunEnd::NoStatus { exit_code: None },
+            None,
             &mut events,
         )?;
         self.move_to(task, &located.team, TaskStatus::Failed, &mut events)?;
@@ -671,12 +695,13 @@ impl Owner {
                 &located.team,
                 now,
                 RunEnd::NoStatus { exit_code: None },
+                None,
                 &mut events,
             )?;
             self.move_to(task, &located.team, TaskStatus::Queued, &mut events)?;
             return self.commit(task, &located, now, events, None).await;
         };
-        self.end_run(task, &located.team, now, RunEnd::Stopped, &mut events)?;
+        self.end_run(task, &located.team, now, RunEnd::Stopped, None, &mut events)?;
         self.move_to(task, &located.team, halted_status(halt), &mut events)?;
         self.hangs.remove(task);
         self.commit(task, &located, now, events, None).await?;
@@ -708,7 +733,14 @@ impl Owner {
         } else {
             run.classified.end.clone()
         };
-        self.end_run(task, &located.team, now, end.clone(), &mut events)?;
+        self.end_run(
+            task,
+            &located.team,
+            now,
+            end.clone(),
+            run.final_message.as_deref(),
+            &mut events,
+        )?;
         let (status, notice) = if let Some(halt) = overruled {
             self.hangs.remove(task);
             self.wakes.remove(task);
@@ -1008,7 +1040,10 @@ impl Owner {
                 vec![found]
             }
         };
-        Ok(Reply::Teams { teams })
+        Ok(match health_to_tell(&self.history) {
+            Some(history) => Reply::Overview { teams, history },
+            None => Reply::Teams { teams },
+        })
     }
 
     /// A whole team, or one task with its role, or one round with the tasks that worked for it.
@@ -1136,6 +1171,7 @@ impl Owner {
         team: &TeamId,
         at: Timestamp,
         end: RunEnd,
+        final_message: Option<&str>,
         events: &mut Vec<EventKind>,
     ) -> Result<(), OwnerError> {
         let (_, mut member) = self.member_mut(task)?;
@@ -1153,6 +1189,8 @@ impl Owner {
                 task: task.clone(),
                 source,
             })?;
+        // A clock that was set back must not end the run before it started in the history either.
+        self.record_run_end(&run, at.max(started_at), &end, final_message);
         events.push(EventKind::RunEnded {
             team: team.clone(),
             task: task.clone(),

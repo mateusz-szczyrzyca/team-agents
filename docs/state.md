@@ -355,6 +355,7 @@ read) and the connection goes on; a request over the limit is answered with `inv
 |---|---|
 | `started` | `team`, `tasks` |
 | `teams` | `teams`: summaries — `id`, `repo`, `created_at`, `merge`, `items` (counts by status), `rounds` (the team's rounds, as in the state; absent = none), `members` (task, agent, role, status, `open_question?`: the number of the questions that wait) |
+| `overview` | what `status` answers instead of `teams` when the history ([`history.md`](history.md)) lost records or cannot be written: `teams`, as above, and `history` — `state` (`{"kind":"writing"}`, `{"kind":"disabled"}` or `{"kind":"unavailable","reason":"…"}`) and `lost`, the number of records handed to the history that are not in it. A history that is written and whole, or off, is not mentioned: the answer is `teams` |
 | `team` | `team`: the whole team record, as in the state |
 | `round` | `round`: `team`, `round` (as in the state), `item?` (`id`, `title`, `status`), `tasks` (`task`, `role`, `agent`, `worktree`, `branch`, `runs`: the runs that name the round), `pr?` and `review_passes` (each fix pass, then the pass that is going: `reviews`; the reviews of the pass that was approved are not kept once the item is done) |
 | `task` | `team`, `role`, `member` |

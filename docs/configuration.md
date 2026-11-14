@@ -138,6 +138,20 @@ Neither text may contain `<`, `>` or control characters.
 | `web.listen` | `127.0.0.1:8787` | a **loopback** `address:port`, port not `0`: `0.0.0.0`, `::` and LAN or Tailscale addresses are refused. Remote access goes through `tailscale serve` |
 | `web.allowed_logins` | `[]` | Tailscale logins (`you@example.com`, kept in lowercase) let in through `tailscale serve`; with none, nobody is |
 
+### `[history]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `history.enabled` | `true` | whether the daemon writes `history.db` in `AGENTS_HOME` ([`history.md`](history.md)); `false` records nothing and loses nothing |
+| `history.max_text_bytes` | `1048576` (1 MiB) | the longest text one field of the history keeps, in bytes, `1` to `268435456`: a longer text (a prompt, a final message) is cut at a character boundary and the record says which field was cut |
+
+A history that cannot be written — the file is a directory, the disk is full, the database is of a newer version — never stops
+or waits for storage: the daemon says so once on its standard error for each cause, counts the records it could not keep, and
+`agent status` shows the count.
+
+Git history capture has a fixed overall `2`-second budget at each run boundary, with at most `1` additional second for
+process cleanup. The capture exception and configured-secret redaction are documented in [`history.md`](history.md).
+
 ### `[repos.NAME]`
 
 The name is the repository's name as GitHub names it (`team-agents`; letters, digits, `-`, `_`, `.`).

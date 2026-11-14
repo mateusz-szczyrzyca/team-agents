@@ -580,7 +580,8 @@ fn write_text(to: &mut impl Write, text: &str) -> Result<(), OutputError> {
 }
 
 fn main() -> Result<ExitCode, OutputError> {
-    run(std::env::args_os(), &mut io::stdout().lock(), &mut io::stderr().lock())
+    // The daemon's history thread also writes diagnostics: lock streams only for each write, not for its lifetime.
+    run(std::env::args_os(), &mut io::stdout(), &mut io::stderr())
 }
 
 #[cfg(test)]

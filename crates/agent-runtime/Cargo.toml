@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 agent-core.workspace = true
 reqwest.workspace = true
+rusqlite.workspace = true
 rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -25,5 +26,7 @@ tracing.workspace = true
 workspace = true
 
 [dev-dependencies]
+# Seeded values for the property tests of the history.
+rand.workspace = true
 # `net` for the local fake servers of the tests, `test-util` for the paused clock of the retry and timeout tests.
 tokio = { workspace = true, features = ["net", "test-util"] }

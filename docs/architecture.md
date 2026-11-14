@@ -27,7 +27,7 @@ prompts/investigator/rust-developer.md
 prompts/investigator/code-review.md
 prompts/harness/<module>/<name>.md     texts the harness composes (run prompts, a team's life, questions files, notifications)
 config/agents.example.toml, config/systemd/agent-daemon.service
-docs/architecture.md, docs/configuration.md, docs/state.md, docs/task-list.md
+docs/architecture.md, docs/configuration.md, docs/state.md, docs/task-list.md, docs/history.md, docs/history.schema.sql
 ```
 
 The workspace exists with its four crates; the other files of this list arrive with the items that need them
@@ -159,6 +159,7 @@ the network. The order of the checks and the rules each follows are in the docum
 | `agent_runtime::run` | `RunEngine::run`: one run of a model CLI, from its files to its classified end; touches no state (`run_held`: the same with a `WatchdogHold`, see "The gate"). The run's environment has `AGENTS_HOME`. `run::compose` makes its prompt: context, role, the rules of the tier, brief, item, checkpoint — or, for a resumed session, what interrupted it |
 | `agent_runtime::{settings, harness_prompts, autopilot_prompts, checks_prompts, text_file, clock}` | `agents.toml` and `secrets.toml` read from the home; the second prompt catalog (`HarnessPrompt`, `prompts/harness/run/`: the run prompts and the notifications) and the fourth and fifth (`AutopilotPrompts`, `ChecksPrompts`); a bounded text file; the system clock |
 | `agent::daemon` | `owner` (the state), `server` (the socket), `notifier`, `opener`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions), `owner/teams` (what carries them out), `questions` (the questions file) and `control` (what a control does to a task), with `owner/answers` and `owner/controls`, and the autopilot: `pr`, `review`, `merge` and `checks` (its decisions) with `owner/rounds` (what carries them out) |
+| `agent_runtime::history`, `agent_core::history`, `agent::daemon::{history, owner/history}` | the history: a database of what happened and what every run did; see "The history" |
 | `agent::{client, commands}` | the socket client, `agent status`, `agent daemon`, `agent run`, `agent answer`, `stop`, `pause`, `unpause`, `resume`, `say` |
 
 **Tasks** (CON-3, CON-4): the *owner* alone reads and changes the state; the *server* passes requests to it through a
@@ -211,7 +212,7 @@ or a second CLI resumes the same session.
 [`state.md`](state.md), and `gate` (below). At most 64 connections and 16 runs go at once; a line over 2 MiB ends its
 connection; a subscriber that falls 1024 events behind is let go (it subscribes again and starts from the state).
 
-**The home**: `agents.toml`, `secrets.toml` and `prompts/` (put there by the human); `state.json`, `daemon.lock`,
+**The home**: `agents.toml`, `secrets.toml` and `prompts/` (put there by the human); `state.json`, `history.db` (the history), `daemon.lock`,
 `agent.sock`; `tasks/<task>/activity.jsonl`, `tasks/<task>/runs/<run>/` (the output of a run and the files its CLI is
 configured with, `prompt.md` for a prompt too long for a command line) and `tasks/<task>/questions-<number>.md`;
 `tasks/<task>/gate-<n>.log` and `tasks/<task>/gate.json` (below); `tasks/<reviewer task>/review-pr<N>-pass<K>.md` (the reports of the reviews, below); `worktrees/<repo>/<task>/`; `notifications/`.
@@ -348,6 +349,38 @@ minutes): a call that hangs leaves the socket unanswered that long. The merge is
 else pushed after the reviews is merged as well. A review that cannot be posted counts and is only logged. A reviewer whose run
 fails or is stopped is not replaced: the human resumes it. A solo agent that takes the next item while its first is in review
 switches to its fix pass's branch by what the prompt says, not by the daemon. The reports are cut at 20,000 characters.
+
+### The history
+
+The state file says what is; the history says what happened. It is one SQLite database, `history.db` in the home, written
+by the daemon and read by anyone: a team with its task list and its plan (who got which role, and how: named, by the flag,
+by the `Coordinator:` line, drawn among whom, the configured order), a round with its item in full, a run with its agent, its
+reason, the whole prompt, its worktree, the command line its CLI saw, every step, what it changed in git (commits, files,
+what it left uncommitted) and how it ended. [`history.md`](history.md) documents every table and column, the pragmas and the
+queries to ask it with `sqlite3`; [`history.schema.sql`](history.schema.sql) pins the schema and a test compares it with a
+fresh database.
+
+The records are the types of `agent_core::history` (with the limit of a text and `explain_plan`, which says how each participant
+of a team got its role), the database, the writer and the reader are `agent_runtime::history`, the commits and files of a run
+come from `agent_runtime::git` (`work_changes`, read without changing the repository), and the daemon opens the history at its
+start and closes the writer at its end: the owner records teams, rounds, runs and their ends, the run engine the launch, the
+steps and the changes.
+
+**One writer, never in the way.** The daemon is the only writer, on a thread of its own behind a queue of 4,096 records; a record
+or a batch of up to 256 per transaction. Storage never delays the work: a record that cannot be kept — the queue is
+full, the disk, the file, a database of a newer version — is counted as lost and its cause is told once on the standard error;
+`agent status` shows the count (`Reply::Overview`, only when the history is not whole). A daemon killed with `SIGKILL` leaves a
+file that opens and holds whole records; the next one ends the runs it finds going. Accurate Git attribution uses the
+human-authorized capture exception: a `2`-second overall budget at each run boundary, plus at most `1` second to reap a
+killed Git process. Captures that exceed it are abandoned and counted before the next run starts.
+
+**Readers need no daemon.** `Reader::open` opens the file read-only; `agent log` (8.5, 8.7) will use it. The schema has a
+version (`PRAGMA user_version`) and forward-only migrations in code; a database of a newer version is never written.
+
+**Known secrets are redacted.** The launch records environment variable names, never values. The writer replaces configured
+credential values in free text with `[REDACTED]` before SQLite receives them. Credentials in structured identities cause
+counted omissions; the warning contains no credential. A merged fake-CLI round echoes a credential and searches both the
+database and live WAL bytes. See [`history.md`](history.md#what-is-never-in-it) for scope and the exact-recording exception.
 
 ### Rounds
 
@@ -641,7 +674,7 @@ the developer rules also come in a variant for workers (a delegated task instead
   `agentbus`, the repository's own gate command, the configured notification command and the configured editor.
   Everything the Bash version did with `sed`, `awk`, `jq`, `grep`, `flock`, `gh` or `tailscale` is done natively.
 - **Approved dependencies:** `tokio`, `tokio-util`, `clap`, `serde`, `serde_json`, `toml`, `thiserror`, `tracing`,
-  `tracing-subscriber`, `tempfile`, `rustix`, `reqwest` (rustls), `axum`, `notify`, `rand`, `time`, `strum` (`derive`). Any other needs
+  `tracing-subscriber`, `tempfile`, `rustix`, `reqwest` (rustls), `axum`, `notify`, `rand`, `time`, `strum` (`derive`), `rusqlite` (`bundled`; the history, from item 8.4). Any other needs
   a DEP-1 justification. Each is declared once, in `[workspace.dependencies]`, with its minimal features.
 - **A separate `AGENTS_HOME`.** New code is developed and tested against its own `AGENTS_HOME`; nothing touches the
   live `~/agents` of the running Bash harness until feature 10.

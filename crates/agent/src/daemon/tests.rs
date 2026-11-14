@@ -685,6 +685,11 @@ async fn the_socket_is_for_its_owner_alone() {
 #[tokio::test]
 async fn a_socket_file_left_by_a_dead_daemon_is_replaced() {
     let mut f = Fixture::new(&solo_state(), 3, "hang");
+    std::fs::write(
+        f.home.config_file(),
+        format!("{}\n[history]\nenabled = false\n", config(3)),
+    )
+    .unwrap();
     drop(tokio::net::UnixListener::bind(f.home.socket_file()).unwrap());
     assert!(f.home.socket_file().exists());
 
@@ -711,6 +716,11 @@ async fn a_socket_file_left_by_a_dead_daemon_is_replaced() {
 #[tokio::test]
 async fn status_over_the_socket_lists_the_teams_with_their_tasks() {
     let mut f = Fixture::new(&solo_state(), 3, "hang");
+    std::fs::write(
+        f.home.config_file(),
+        format!("{}\n[history]\nenabled = false\n", config(3)),
+    )
+    .unwrap();
     f.start().await;
     f.status_is(TaskStatus::Running).await;
     let mut connection = f.connect().await;
@@ -733,6 +743,11 @@ async fn status_over_the_socket_lists_the_teams_with_their_tasks() {
 #[tokio::test]
 async fn status_of_a_team_or_a_task_names_only_its_team_and_an_unknown_one_is_not_found() {
     let mut f = Fixture::new(&solo_state(), 3, "hang");
+    std::fs::write(
+        f.home.config_file(),
+        format!("{}\n[history]\nenabled = false\n", config(3)),
+    )
+    .unwrap();
     f.start().await;
     let mut connection = f.connect().await;
     let team = f.state().teams()[0].id().clone();
@@ -1002,6 +1017,11 @@ async fn a_subscription_to_another_team_gets_no_events_of_this_one() {
 async fn a_line_that_is_not_a_request_is_answered_with_an_error_and_the_connection_goes_on() {
     use agent_core::protocol::{Frame, Outcome};
     let mut f = Fixture::new(&solo_state(), 3, "hang");
+    std::fs::write(
+        f.home.config_file(),
+        format!("{}\n[history]\nenabled = false\n", config(3)),
+    )
+    .unwrap();
     f.start().await;
     let mut connection = RawConnection::open(&f.home).await;
 
@@ -1063,6 +1083,11 @@ async fn a_request_of_a_subscriber_that_arrives_in_parts_around_an_event_is_answ
     use agent_core::protocol::{Frame, Outcome};
     use tokio::io::AsyncWriteExt;
     let mut f = Fixture::new(&rate_limited_state(), 3, "hang");
+    std::fs::write(
+        f.home.config_file(),
+        format!("{}\n[history]\nenabled = false\n", config(3)),
+    )
+    .unwrap();
     f.start().await;
     f.status_is(TaskStatus::Paused).await;
     let mut connection = RawConnection::open(&f.home).await;
@@ -1121,4 +1146,178 @@ async fn a_client_that_does_not_read_its_answers_does_not_hold_the_shutdown() {
     drop(connection);
 
     assert!(matches!(stopped, Ok(Ok(()))), "the daemon did not stop: {stopped:?}");
+}
+
+#[tokio::test]
+async fn status_of_a_run_outside_a_git_repository_reports_one_lost_capture() {
+    use agent_core::history::{HistoryHealth, HistoryState};
+
+    let mut f = Fixture::new(&solo_state(), 3, "hang");
+    f.start().await;
+    let worktree = f.home.worktree_dir(&repo(), &task(1));
+    // The CLI starts after the head lookup, so status cannot race that capture.
+    eventually("the fake CLI to start", || worktree.join(".fake-args").exists()).await;
+    let reply = f
+        .connect()
+        .await
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+    f.stop().await.unwrap();
+
+    let Reply::Overview { teams, history } = reply else {
+        panic!("expected degraded history in status: {reply:?}")
+    };
+    assert_eq!(
+        history,
+        HistoryHealth {
+            state: HistoryState::Writing,
+            lost: 1,
+        }
+    );
+    assert_eq!(teams.len(), 1);
+    assert_eq!(teams[0].members[0].task, task(1));
+    assert_eq!(teams[0].members[0].status, TaskStatus::Running);
+}
+
+#[tokio::test]
+async fn a_clock_set_back_during_a_run_records_its_clamped_end_without_losing_records() {
+    use agent_core::history::{HowChosen, MaxTextBytes, PlanEntry, Record, TeamStart};
+    use agent_runtime::history::{HistoryDb, Reader, Store as _};
+
+    let mut f = Fixture::new(&solo_state(), 1, "hang");
+    let worktree = f.home.worktree_dir(&repo(), &task(1));
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["commit", "-q", "--allow-empty", "-m", "init"],
+    ] {
+        let status = std::process::Command::new("git")
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "user.name=Fake",
+                "-c",
+                "user.email=fake@example.com",
+            ])
+            .args(args)
+            .current_dir(&worktree)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+    let mut db = HistoryDb::open(&f.home.history_file(), MaxTextBytes::default()).unwrap();
+    db.write(&[Record::Team(Box::new(TeamStart {
+        team: crate::fixtures::team_id(0),
+        at: at(0),
+        repo: repo().to_string(),
+        base_branch: "main".parse().unwrap(),
+        merge: agent_core::state::MergeMode::Autopilot,
+        task_list: crate::fixtures::LIST.to_owned(),
+        plan: vec![PlanEntry {
+            position: std::num::NonZeroU32::MIN,
+            agent: "claude-1".parse().unwrap(),
+            role: agent_core::kinds::Role::Solo,
+            how: HowChosen::Named,
+        }],
+    }))])
+    .unwrap();
+    drop(db);
+
+    f.start().await;
+    let state = f.status_is(TaskStatus::Running).await;
+    let started_at = member_one(&state).runs()[0].started_at();
+
+    f.clock.advance(time::Duration::hours(-1));
+    let state = f.status_is(TaskStatus::Failed).await;
+    let reply = loop {
+        let end_written = Reader::open(&f.home.history_file())
+            .ok()
+            .and_then(|reader| reader.runs_of_team(&crate::fixtures::team_id(0)).ok())
+            .is_some_and(|runs| runs.first().is_some_and(|run| run.end.is_some()));
+        let reply = f
+            .connect()
+            .await
+            .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+            .await
+            .unwrap();
+        if end_written || matches!(reply, Reply::Overview { .. }) {
+            break reply;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    f.stop().await.unwrap();
+
+    assert!(
+        matches!(reply, Reply::Teams { .. }),
+        "expected no lost history records: {reply:?}"
+    );
+    let reader = Reader::open(&f.home.history_file()).unwrap();
+    let runs = reader.runs_of_team(&crate::fixtures::team_id(0)).unwrap();
+    assert_eq!(runs.len(), 1);
+    let end = runs[0]
+        .end
+        .as_ref()
+        .expect("the clamped run end is stored")
+        .value
+        .clone();
+    assert_eq!(end.at, started_at);
+    assert_eq!(end.end, RunEnd::Hung);
+    assert_eq!(end.run, *member_one(&state).runs()[0].id());
+}
+
+#[tokio::test]
+async fn a_socket_that_cannot_be_removed_still_flushes_and_closes_the_history_writer() {
+    use agent_core::history::{HowChosen, MaxTextBytes, PlanEntry, Record, TeamStart};
+    use agent_runtime::history::{HistoryDb, Reader, Store as _};
+
+    let mut f = Fixture::new(&rate_limited_state(), 3, "done");
+    let mut db = HistoryDb::open(&f.home.history_file(), MaxTextBytes::default()).unwrap();
+    db.write(&[Record::Team(Box::new(TeamStart {
+        team: crate::fixtures::team_id(0),
+        at: at(0),
+        repo: repo().to_string(),
+        base_branch: "main".parse().unwrap(),
+        merge: agent_core::state::MergeMode::Autopilot,
+        task_list: crate::fixtures::LIST.to_owned(),
+        plan: vec![PlanEntry {
+            position: std::num::NonZeroU32::MIN,
+            agent: "claude-1".parse().unwrap(),
+            role: agent_core::kinds::Role::Solo,
+            how: HowChosen::Named,
+        }],
+    }))])
+    .unwrap();
+    drop(db);
+
+    f.start().await;
+    f.status_is(TaskStatus::Paused).await;
+
+    let lock_conn = rusqlite::Connection::open(f.home.history_file()).unwrap();
+    lock_conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+    f.clock.advance(time::Duration::minutes(10));
+    f.status_is(TaskStatus::Done).await;
+
+    let socket = f.home.socket_file();
+    std::fs::remove_file(&socket).unwrap();
+    std::fs::create_dir(&socket).unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        lock_conn.execute_batch("ROLLBACK").unwrap();
+    });
+
+    let err = f.stop().await.expect_err("directory at socket path refuses removal");
+    assert!(matches!(err, DaemonError::RemoveSocket(_)), "{err:?}");
+
+    let reader = Reader::open(&f.home.history_file()).unwrap();
+    let runs = reader.runs_of_team(&crate::fixtures::team_id(0)).unwrap();
+    release.join().unwrap();
+    assert_eq!(
+        runs.len(),
+        1,
+        "history writer must be flushed and joined before socket removal error returns"
+    );
+    assert!(runs[0].end.is_some());
 }
