@@ -1,0 +1,5 @@
+round-20261111-153002-q1w2  item 1.2  open  team team-20261111-153000-t5m8
+  opened 2026-11-11T19:15:20Z
+  item 1.2: The second item (in_progress)
+  task-20261111-153002-k3x9  member  claude-1  /srv/agents/worktrees/team-agents/task-20261111-153002-k3x9  agents/claude-1/task-20261111-153002-k3x9-1.2
+    run-20261111-153001-r7q2  started 2026-11-11T19:15:21Z  running

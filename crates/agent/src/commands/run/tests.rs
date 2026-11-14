@@ -145,12 +145,7 @@ fn what_started_is_the_team_and_a_line_for_each_task_with_its_worktree() {
 
     assert_eq!(
         text,
-        "\
-team team-20261111-153000-t5m8 started on team-agents, merge: autopilot
-  task-20261111-153001-k3x9  coordinator  inv-opus  /srv/agents/worktrees/team-agents/task-20261111-153001-k3x9
-  task-20261111-153002-k3x9  member       claude-1  /srv/agents/worktrees/team-agents/task-20261111-153002-k3x9
-  task-20261111-153003-k3x9  worker       glm-1     /srv/agents/worktrees/team-agents/task-20261111-153003-k3x9
-"
+        include_str!("../../../tests/fixtures/cli-outputs/run-started.txt")
     );
 }
 
@@ -494,13 +489,6 @@ fn the_rounds_a_team_starts_with_come_after_its_tasks_one_line_each() {
 
     assert_eq!(
         text,
-        "\
-team team-20261111-153000-t5m8 started on team-agents, merge: autopilot
-  task-20261111-153001-k3x9  coordinator  inv-opus  /srv/agents/worktrees/team-agents/task-20261111-153001-k3x9
-  task-20261111-153002-k3x9  member       claude-1  /srv/agents/worktrees/team-agents/task-20261111-153002-k3x9
-  task-20261111-153003-k3x9  worker       glm-1     /srv/agents/worktrees/team-agents/task-20261111-153003-k3x9
-  round-20261111-153001-q1w2  item 1.1  open
-  round-20261111-153002-q1w2  item 1.2  open
-"
+        include_str!("../../../tests/fixtures/cli-outputs/run-started-rounds.txt")
     );
 }

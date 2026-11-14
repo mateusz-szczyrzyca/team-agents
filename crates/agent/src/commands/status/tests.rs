@@ -19,13 +19,7 @@ fn no_teams_are_said_so() {
 fn a_team_is_a_line_and_each_of_its_tasks_a_line_under_it() {
     assert_eq!(
         render(&sample()),
-        "\
-team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 in review, 0 approved, 0 done
-  task-20261111-153001-k3x9  coordinator  inv-opus   queued
-  task-20261111-153002-k3x9  member       claude-1   queued
-  task-20261111-153003-k3x9  worker       glm-1      queued
-  task-20261111-153004-k3x9  reviewer     inv-codex  queued
-"
+        include_str!("../../../tests/fixtures/cli-outputs/status-team.txt")
     );
 }
 
@@ -270,15 +264,7 @@ fn a_team_lists_its_rounds_under_its_line_with_their_items_and_how_they_ended() 
 
     assert_eq!(
         text,
-        "\
-team-20261111-153000-t5m8  team-agents  autopilot  0 pending, 1 in progress, 0 in review, 0 approved, 1 done
-  round-20261111-153001-q1w2  item 1.1  closed, merged
-  round-20261111-153002-q1w2  item 1.2  open
-  task-20261111-153001-k3x9  coordinator  inv-opus   queued
-  task-20261111-153002-k3x9  member       claude-1   queued
-  task-20261111-153003-k3x9  worker       glm-1      queued
-  task-20261111-153004-k3x9  reviewer     inv-codex  queued
-"
+        include_str!("../../../tests/fixtures/cli-outputs/status-team-rounds.txt")
     );
 }
 
@@ -337,13 +323,7 @@ fn a_round_is_shown_with_its_item_its_tasks_with_where_they_work_and_their_runs(
 
     assert_eq!(
         text,
-        "\
-round-20261111-153002-q1w2  item 1.2  open  team team-20261111-153000-t5m8
-  opened 2026-11-11T19:15:20Z
-  item 1.2: The second item (in_progress)
-  task-20261111-153002-k3x9  member  claude-1  /srv/agents/worktrees/team-agents/task-20261111-153002-k3x9  agents/claude-1/task-20261111-153002-k3x9-1.2
-    run-20261111-153001-r7q2  started 2026-11-11T19:15:21Z  running
-"
+        include_str!("../../../tests/fixtures/cli-outputs/status-round.txt")
     );
 }
 

@@ -1,0 +1,5 @@
+team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 in review, 0 approved, 0 done
+  task-20261111-153001-k3x9  coordinator  inv-opus   queued
+  task-20261111-153002-k3x9  member       claude-1   queued
+  task-20261111-153003-k3x9  worker       glm-1      queued
+  task-20261111-153004-k3x9  reviewer     inv-codex  queued
