@@ -242,3 +242,93 @@ async fn records_the_daemon_cannot_build_are_counted_as_lost() {
 
     started.writer.close().unwrap();
 }
+
+#[tokio::test]
+async fn a_fix_pass_whose_event_cannot_be_built_is_counted_as_lost() {
+    use std::collections::BTreeMap;
+    use std::num::{NonZeroU32, NonZeroUsize};
+    use std::str::FromStr;
+    use std::sync::Arc;
+
+    use agent_core::cli::{RunMode, SessionId};
+    use agent_core::config::{AbsolutePath, CliArgs};
+    use agent_core::history::{Record, RunWhy};
+    use agent_core::ids::RunId;
+    use agent_core::kinds::CliKind;
+    use agent_runtime::history::{History, Problem, Reporter, Setup, Store, WriteError};
+    use agent_runtime::run::RunJob;
+
+    use crate::daemon::owner::fixture::Daemon;
+    use crate::daemon::owner::start::Plan;
+    use crate::fixtures::{at, solo_state, task};
+
+    /// Accepts every batch so only records the daemon could not build count as lost.
+    struct Accepting;
+    impl Store for Accepting {
+        fn write(&mut self, _records: &[Record]) -> Result<(), WriteError> {
+            Ok(())
+        }
+    }
+
+    /// Ignores reported problems.
+    #[derive(Debug)]
+    struct Silent;
+    impl Reporter for Silent {
+        fn report(&self, _problem: &Problem) {}
+    }
+
+    let state = solo_state();
+    let daemon = Daemon::new(&state, None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let started = History::start(
+        Accepting,
+        Setup {
+            reporter: Arc::new(Silent),
+            capacity: NonZeroUsize::new(16).unwrap(),
+        },
+    )
+    .unwrap();
+    let owner = owner.with_history(started.history.clone());
+    let make_plan = |run_id: &str, addition: Option<String>| Plan {
+        run: run_id.parse::<RunId>().unwrap(),
+        recorded_session: None,
+        addition,
+        job: RunJob {
+            task: task(1),
+            run: run_id.parse::<RunId>().unwrap(),
+            cli: CliKind::Claude,
+            model: None,
+            extra_args: CliArgs::default(),
+            mode: RunMode::New {
+                session_id: SessionId::try_from("s".to_owned()).unwrap(),
+            },
+            prompt: "Fix.".to_owned(),
+            working_dir: AbsolutePath::from_str("/work/example").unwrap(),
+            mcp_servers: BTreeMap::new(),
+        },
+    };
+
+    owner.record_run_start(
+        &task(1),
+        &make_plan("run-20261111-193001-f1x1", None),
+        &[],
+        RunWhy::FixPass {
+            number: NonZeroU32::MIN,
+        },
+        at(10),
+    );
+    assert_eq!(started.history.health().lost, 1);
+
+    owner.record_run_start(
+        &task(1),
+        &make_plan("run-20261111-193002-f1x2", Some("findings".to_owned())),
+        &[],
+        RunWhy::FixPass {
+            number: NonZeroU32::MIN,
+        },
+        at(20),
+    );
+    assert_eq!(started.history.health().lost, 2);
+
+    started.writer.close().unwrap();
+}
