@@ -493,3 +493,7 @@ impl Rig {
         self.daemon = Some(daemon);
     }
 }
+
+#[cfg(test)]
+#[path = "rig/tests.rs"]
+mod tests;
