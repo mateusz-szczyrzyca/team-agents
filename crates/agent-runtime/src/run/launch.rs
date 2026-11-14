@@ -144,6 +144,14 @@ fn agent_path(parts: &EngineParts) -> Result<String, RunError> {
         .map_err(|path| RunError::PathNotUtf8 { path: path.into() })
 }
 
+/// Git in `worktree`, to read from: no commit is made, but a handle has an identity.
+pub(super) fn lookup_git(worktree: &AbsolutePath) -> Git {
+    Git::new(
+        worktree.clone(),
+        CommitIdentity::new(LOOKUP_NAME.to_owned(), LOOKUP_EMAIL.to_owned(), None),
+    )
+}
+
 /// Adds the `patterns` to the file that keeps paths out of git for the worktree, those it does not have yet.
 async fn keep_out_of_git(worktree: &AbsolutePath, patterns: &[String]) -> Result<(), RunError> {
     if patterns.is_empty() {
@@ -153,10 +161,7 @@ async fn keep_out_of_git(worktree: &AbsolutePath, patterns: &[String]) -> Result
         worktree: worktree.as_path().to_path_buf(),
         source,
     };
-    let git = Git::new(
-        worktree.clone(),
-        CommitIdentity::new(LOOKUP_NAME.to_owned(), LOOKUP_EMAIL.to_owned(), None),
-    );
+    let git = lookup_git(worktree);
     let file = git
         .info_exclude_file()
         .await

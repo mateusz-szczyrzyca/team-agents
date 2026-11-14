@@ -21,19 +21,20 @@ use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValu
 use agent_core::decide::outcome::{
     Classified, ClassifyError, ExitStatus, LimitContext, RunFinish, StoppedBy, classify_outcome,
 };
+use agent_core::history::{Launch, Record, RunChanges};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::kinds::CliKind;
 use agent_core::prompt::VariablesError;
-use agent_core::state::{InvalidTimestamp, Timestamp};
+use agent_core::state::{CommitId, InvalidTimestamp, Timestamp};
 use time::UtcOffset;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
 use crate::clock::SharedClock;
-use crate::git::GitError;
+use crate::git::{GitError, Revision};
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
 use crate::history::History;
-use crate::process::{ExitReport, ProcessError, Supervisor, error_chain};
+use crate::process::{ExitReport, ProcessError, ProcessSpec, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
 
 use crate::store::{StateStore, StoreError};
@@ -337,6 +338,7 @@ impl RunEngine {
         let launch = launch::prepare(&self.parts, &job).await?;
         let stdout = launch.process.stdout_file.clone();
         let stderr = launch.process.stderr_file.clone();
+        let head_before = self.head_of_worktree(&job).await;
         let mut process = self
             .parts
             .supervisor
@@ -347,9 +349,11 @@ impl RunEngine {
                 cli: job.cli,
                 source,
             })?;
+        self.record_launch(&job, &launch.process, head_before.clone());
         let mut follow = Follow {
             engine: self,
             task: &job.task,
+            run: &job.run,
             tail: OutputTail::new(stdout),
             parser: launch.parser,
             progress: Progress::Nothing,
@@ -392,6 +396,7 @@ impl RunEngine {
             }
         };
         follow.drain().await?;
+        self.record_changes(&job, head_before).await;
         let stderr = read_end(&stderr).await?;
         follow.unreadable.report(&job);
         let output = follow.parser.finish(&stderr, self.parts.config.limits().tail_lines);
@@ -426,6 +431,73 @@ impl RunEngine {
             final_message: output.final_message,
             progress: follow.progress,
         })))
+    }
+
+    /// The commit the worktree of `job` is at, for the history; `None` when it is off or git cannot say.
+    async fn head_of_worktree(&self, job: &RunJob) -> Option<CommitId> {
+        if self.history.is_disabled() {
+            return None;
+        }
+        match launch::lookup_git(&job.working_dir).rev_parse(&Revision::Head).await {
+            Ok(head) => Some(head),
+            Err(error) => {
+                tracing::warn!(task = %job.task, run = %job.run, error = %error_chain(&error), "the commit a run starts at cannot be read: the history has no head for it");
+                None
+            }
+        }
+    }
+
+    /// Records how the process of `job` was started: the command line the CLI saw and the names — never the values — of the
+    /// environment it was given.
+    fn record_launch(&self, job: &RunJob, process: &ProcessSpec, head: Option<CommitId>) {
+        if self.history.is_disabled() {
+            return;
+        }
+        let at = match Timestamp::now(&self.parts.clock) {
+            Ok(at) => at,
+            Err(error) => {
+                tracing::warn!(task = %job.task, run = %job.run, error = %error_chain(&error), "the launch of a run cannot be stamped: the history has none for it");
+                return;
+            }
+        };
+        let Some(program) = process.program.as_path().to_str() else {
+            tracing::warn!(task = %job.task, run = %job.run, "the program of a run is not text: the history has no launch for it");
+            return;
+        };
+        self.history.record(Record::Launch(Box::new(Launch {
+            run: job.run.clone(),
+            at,
+            program: program.to_owned(),
+            args: process.args.clone(),
+            working_dir: process.working_dir.clone(),
+            head,
+            env_names: process.env.keys().cloned().collect(),
+            prompt_in_file: job.prompt.len() > MAX_PROMPT_ARGUMENT_BYTES,
+        })));
+    }
+
+    /// Records what the run changed in its worktree, now that its process is gone: the commits and files between the commit
+    /// it started at and the one it ended at, and what it left uncommitted. A worktree git cannot read has none.
+    async fn record_changes(&self, job: &RunJob, head_before: Option<CommitId>) {
+        if self.history.is_disabled() {
+            return;
+        }
+        match launch::lookup_git(&job.working_dir)
+            .work_changes(head_before.as_ref())
+            .await
+        {
+            Ok(changes) => self.history.record(Record::Changes(Box::new(RunChanges {
+                run: job.run.clone(),
+                head_before,
+                head_after: Some(changes.head_after),
+                commits: changes.commits,
+                files: changes.files,
+                uncommitted: changes.uncommitted,
+            }))),
+            Err(error) => {
+                tracing::warn!(task = %job.task, run = %job.run, error = %error_chain(&error), "what a run changed cannot be read: the history has no changes for it");
+            }
+        }
     }
 
     /// Whether a process that last showed life at `last` has been silent for the hang limit.
@@ -492,6 +564,8 @@ struct Follow<'a> {
     engine: &'a RunEngine,
     /// The task.
     task: &'a TaskId,
+    /// The run, which its steps are recorded for.
+    run: &'a RunId,
     /// The standard output file.
     tail: OutputTail,
     /// The adapter's parser.
@@ -553,6 +627,7 @@ impl Follow<'_> {
                         task: self.task.clone(),
                         source,
                     })?;
+                self.engine.history.step(self.run, at, event);
             }
         }
         Ok(())
