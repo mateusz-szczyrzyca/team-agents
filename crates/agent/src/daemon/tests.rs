@@ -685,6 +685,11 @@ async fn the_socket_is_for_its_owner_alone() {
 #[tokio::test]
 async fn a_socket_file_left_by_a_dead_daemon_is_replaced() {
     let mut f = Fixture::new(&solo_state(), 3, "hang");
+    std::fs::write(
+        f.home.config_file(),
+        format!("{}\n[history]\nenabled = false\n", config(3)),
+    )
+    .unwrap();
     drop(tokio::net::UnixListener::bind(f.home.socket_file()).unwrap());
     assert!(f.home.socket_file().exists());
 
