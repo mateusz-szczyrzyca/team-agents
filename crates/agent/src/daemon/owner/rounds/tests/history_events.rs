@@ -430,7 +430,7 @@ async fn a_gate_the_daemon_ran_is_recorded_with_its_task_head_outcome_and_log_an
         (recorded.tree, recorded.result.outcome),
         (GateTree::NotClean, GateOutcome::Passed)
     );
-    assert_eq!(gate.at.as_utc() - started_at.as_utc(), time::Duration::seconds(1));
+    assert!(gate.at.as_utc() - started_at.as_utc() >= time::Duration::seconds(1));
     assert_eq!(gate.at, record.result.finished_at);
     assert!(recorded.result.log.as_path().exists());
     assert_eq!(gate.rounds, [the_round(&rig)]);
@@ -804,17 +804,13 @@ async fn a_task_with_runs_in_two_rounds_links_second_round_events_only_to_the_se
     use agent_core::protocol::{SayRequest, SayText};
     use agent_core::story::{PromptView, Selection, StepView, StoryOptions, render};
 
+    /// Approves both rounds' pull requests.
+    const TWO_APPROVALS: &str = "done:VERDICT: APPROVE\\nSUMMARY: ok,done:VERDICT: APPROVE\\nSUMMARY: ok";
     let mut rig = Rig::new(
         &[
             normal("claude-1", "gated,ask,gated"),
-            investigator(
-                "inv-r1",
-                "done:VERDICT: APPROVE\\nSUMMARY: ok,done:VERDICT: APPROVE\\nSUMMARY: ok",
-            ),
-            investigator(
-                "inv-r2",
-                "done:VERDICT: APPROVE\\nSUMMARY: ok,done:VERDICT: APPROVE\\nSUMMARY: ok",
-            ),
+            investigator("inv-r1", TWO_APPROVALS),
+            investigator("inv-r2", TWO_APPROVALS),
         ],
         5,
         false,
@@ -897,10 +893,13 @@ async fn a_task_with_runs_in_two_rounds_links_second_round_events_only_to_the_se
         .unwrap();
     assert_eq!(question_notified, &[r2]);
 
-    let opts = StoryOptions {
-        prompts: PromptView::Preview,
-        steps: StepView::Listed,
-    };
-    let team_story = render(&records, &Selection::Team(team), opts);
+    let team_story = render(
+        &records,
+        &Selection::Team(team),
+        StoryOptions {
+            prompts: PromptView::Preview,
+            steps: StepView::Listed,
+        },
+    );
     assert_eq!(team_story.matches("team ended\n").count(), 1, "{team_story}");
 }

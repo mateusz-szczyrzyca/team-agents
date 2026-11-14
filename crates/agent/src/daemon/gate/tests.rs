@@ -840,7 +840,19 @@ async fn a_gate_whose_worktree_git_cannot_read_after_it_ran_counts_a_capture_los
 #[tokio::test]
 async fn a_gate_whose_state_record_cannot_be_saved_is_still_recorded_in_the_history() {
     use agent_core::history::{HistoryEvent, MaxTextBytes, Record};
+    use agent_core::ids::Clock;
     use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, Noting, Reader, Setup, TracingReporter};
+    use std::sync::atomic::{AtomicI64, Ordering};
+    use time::UtcDateTime;
+
+    /// Advances by 7 seconds on each reading so `Service::execute` records a 7-second gate duration.
+    struct SevenSecondClock(AtomicI64);
+    impl Clock for SevenSecondClock {
+        fn now(&self) -> UtcDateTime {
+            let secs = self.0.fetch_add(7, Ordering::SeqCst);
+            UtcDateTime::from_unix_timestamp(1_762_992_000 + secs).unwrap()
+        }
+    }
 
     let rig = Rig::new().await;
     rig.worktree(1);
@@ -856,7 +868,9 @@ async fn a_gate_whose_state_record_cannot_be_saved_is_still_recorded_in_the_hist
     )
     .unwrap();
     let (job, _answer) = rig.job(1, "true", LONG);
-    let mut service = Service::new(rig.parts()).with_history(started.history.clone());
+    let mut parts = rig.parts();
+    parts.clock = SharedClock::new(SevenSecondClock(AtomicI64::new(0)));
+    let mut service = Service::new(parts).with_history(started.history.clone());
 
     let error = service.execute(&job).await.unwrap_err();
     started.writer.close().unwrap();
@@ -870,8 +884,10 @@ async fn a_gate_whose_state_record_cannot_be_saved_is_still_recorded_in_the_hist
             Record::Event(event)
                 if matches!(
                     &event.event,
-                    HistoryEvent::Gate { task: recorded_task, record, .. }
-                        if *recorded_task == task(1) && record.result.outcome == GateOutcome::Passed
+                    HistoryEvent::Gate { task: recorded_task, started_at, record }
+                        if *recorded_task == task(1)
+                            && record.result.outcome == GateOutcome::Passed
+                            && event.at.as_utc() - started_at.as_utc() == time::Duration::seconds(7)
                 )
         )),
         "{read:?}"
