@@ -247,7 +247,7 @@ fn event_entry(tx: &Transaction<'_>, record: &EventRecord, limit: MaxTextBytes) 
     // A gate runs where no state of rounds is at hand: it belongs to the rounds of the run of its task that waits for it.
     let rounds = match &event {
         HistoryEvent::Gate { task, .. } if record.rounds.is_empty() => rounds_of_task(tx, task.as_str(), kind)?,
-        HistoryEvent::Lost { what, .. } if what == "gate" && record.rounds.is_empty() => {
+        HistoryEvent::Lost { what, .. } if what.as_str() == "gate" && record.rounds.is_empty() => {
             rounds_of_team(tx, record.team.as_str(), kind)?
         }
         _ => record.rounds.iter().map(ToString::to_string).collect(),

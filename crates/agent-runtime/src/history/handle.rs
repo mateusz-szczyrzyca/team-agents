@@ -62,6 +62,12 @@ pub enum CaptureKind {
     /// The gate record could not be built after the command ran.
     #[strum(serialize = "gate")]
     Gate,
+    /// A questions file could not be read.
+    #[strum(serialize = "questions")]
+    Questions,
+    /// The clock could not give a valid timestamp for an event.
+    #[strum(serialize = "clock")]
+    Clock,
 }
 
 /// A problem of the history, for the reporter.

@@ -4,7 +4,9 @@
 //! An [`EventRecord`] is one such happening with its time, team and rounds. Its payload, a [`HistoryEvent`], is kept as
 //! JSON in the ledger of the history (`docs/history.md`, "Events"), so a variant is a format that old data must read.
 
+use std::fmt;
 use std::num::NonZeroU32;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +16,163 @@ use crate::kinds::{Keyword, UnknownKeyword};
 use crate::protocol::{Client, ControlAction, Target};
 use crate::state::{AnsweredVia, CommitId, GateRecord, PrNumber, RoundEnd, Timestamp};
 use crate::status::ReviewVerdict;
+
+/// Which record a write was about, for the message of an error; for the records of a run and a team also the `kind` the
+/// ledger keeps them under.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantNames,
+)]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<RecordKind>)]
+pub enum RecordKind {
+    /// A team starting.
+    Team,
+    /// A round opening.
+    Round,
+    /// A run starting.
+    Run,
+    /// The process of a run starting.
+    Launch,
+    /// A session observed in a running CLI.
+    Session,
+    /// A step of a run.
+    Step,
+    /// A run ending.
+    RunEnd,
+    /// What a run changed.
+    Changes,
+    /// An event of a round: a gate, a pull request, a question and the like.
+    Event,
+}
+
+impl Keyword for RecordKind {
+    const WHAT: &'static str = "kind of record";
+}
+
+/// Which record is missing in [`HistoryEvent::Lost`], as the ledger names kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "&'static str")]
+pub enum LostKind {
+    /// A record with tables of its own (`team`, `round`, `run`, `launch`, `session`, `step`, `run_end`, `changes`).
+    Record(RecordKind),
+    /// An event (`gate`, `checked`, `pull_opened`, ...).
+    Event(EventKind),
+}
+
+impl LostKind {
+    /// The keyword as a static string slice.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Record(kind) => kind.into(),
+            Self::Event(kind) => kind.into(),
+        }
+    }
+}
+
+impl fmt::Display for LostKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<LostKind> for &'static str {
+    fn from(kind: LostKind) -> Self {
+        kind.as_str()
+    }
+}
+
+impl FromStr for LostKind {
+    type Err = UnknownKeyword;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if let Ok(kind) = RecordKind::from_str(text) {
+            return Ok(Self::Record(kind));
+        }
+        EventKind::from_str(text).map(Self::Event)
+    }
+}
+
+impl TryFrom<String> for LostKind {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        Self::from_str(&text)
+    }
+}
+
+/// Why a record is missing in [`HistoryEvent::Lost`], as the writer or capture path reports the cause.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<LostCause>)]
+pub enum LostCause {
+    /// The writer queue was full.
+    QueueFull,
+    /// The history database or writer was unavailable.
+    Unavailable,
+    /// The disk was full.
+    WriteDiskFull,
+    /// The database was locked past the busy timeout.
+    WriteBusy,
+    /// The database or directory was read-only.
+    WriteReadOnly,
+    /// A filesystem I/O error occurred.
+    WriteIo,
+    /// The database was corrupt.
+    WriteCorrupt,
+    /// The database refused the record.
+    WriteRefused,
+    /// The record could not be encoded.
+    WriteEncoding,
+    /// Another SQLite error occurred.
+    WriteOther,
+    /// The launch head could not be read from git.
+    CaptureHead,
+    /// The run changes could not be read from git.
+    CaptureChanges,
+    /// The gate post-command state could not be captured.
+    CaptureGate,
+    /// A questions file could not be read.
+    CaptureQuestions,
+    /// The clock could not give a valid timestamp.
+    CaptureClock,
+    /// A configured secret occurred in a structured identity.
+    SecretIdentity,
+}
+
+impl Keyword for LostCause {
+    const WHAT: &'static str = "cause of a lost record";
+}
+
+impl LostCause {
+    /// The keyword as a static string slice.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
 
 /// The keyword of a [`HistoryEvent`], as the ledger keeps it in its `kind` column.
 #[derive(
@@ -158,6 +317,9 @@ pub enum HistoryEvent {
         reviewer: InvestigatorName,
         /// The reviewer's task.
         task: TaskId,
+        /// The free investigators outside the team that the reviewer was drawn among, in configuration order.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        among: Vec<InvestigatorName>,
     },
     /// A reviewer submitted a review.
     ReviewSubmitted {
@@ -258,10 +420,13 @@ pub enum HistoryEvent {
     TeamEnded {},
     /// A record the history could not write: the writer notes what is missing and why, when it can write again.
     Lost {
+        /// The task the missing record was for, when its rounds are resolved from the task's latest run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<TaskId>,
         /// The kind of the missing record, as the ledger names kinds (`step`, `run_end`, `pull_merged`, ...).
-        what: String,
+        what: LostKind,
         /// Why it is missing, as the writer reports the cause (`write_disk_full`, `write_refused`, ...).
-        cause: String,
+        cause: LostCause,
         /// What went wrong, in a line, with its causes.
         detail: String,
     },

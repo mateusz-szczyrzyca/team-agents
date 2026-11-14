@@ -85,6 +85,7 @@ impl Owner {
         now: Timestamp,
     ) -> Result<bool, PublishError> {
         let free = free_reviewers(&self.parts.state, &self.parts.settings.config, team_id);
+        let among: Vec<_> = free.iter().map(|r| r.name.clone()).collect();
         let Some(chosen) = choose_reviewers(free, &mut self.parts.rng) else {
             return Ok(false);
         };
@@ -118,6 +119,7 @@ impl Owner {
                     head: head.clone(),
                     reviewer: review.reviewer.clone(),
                     task: review.task.clone(),
+                    among: among.clone(),
                 },
             );
         }

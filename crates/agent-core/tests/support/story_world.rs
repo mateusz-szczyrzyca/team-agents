@@ -265,6 +265,7 @@ impl Written {
                 head: head('2'),
                 reviewer: reviewer("inv-c"),
                 task: task(20),
+                among: vec![reviewer("inv-c"), reviewer("inv-d")],
             },
             HistoryEvent::ReviewSubmitted {
                 pr: pr(7),
@@ -290,6 +291,7 @@ impl Written {
                 head: head('3'),
                 reviewer: reviewer("inv-c"),
                 task: task(21),
+                among: vec![reviewer("inv-c"), reviewer("inv-d")],
             },
             HistoryEvent::ReviewSubmitted {
                 pr: pr(7),

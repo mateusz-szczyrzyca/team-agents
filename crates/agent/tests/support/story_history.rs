@@ -206,6 +206,7 @@ fn records() -> (Written, Vec<Record>) {
                 head: head('2'),
                 reviewer: "inv-c".parse().unwrap(),
                 task: task.clone(),
+                among: vec!["inv-c".parse().unwrap(), "inv-d".parse().unwrap()],
             },
         ),
         (

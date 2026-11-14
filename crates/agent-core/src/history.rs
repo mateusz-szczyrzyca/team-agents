@@ -25,7 +25,7 @@ use crate::state::{CommitId, MergeMode, PrNumber, RunEnd, SessionId, Timestamp};
 
 mod event;
 
-pub use event::{CheckOutcome, EventKind, EventRecord, HistoryEvent};
+pub use event::{CheckOutcome, EventKind, EventRecord, HistoryEvent, LostCause, LostKind, RecordKind};
 
 /// The longest text of one field the history keeps, in bytes, unless `[history] max_text_bytes` says otherwise: a prompt
 /// of a long task list fits.

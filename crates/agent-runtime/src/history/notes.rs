@@ -8,13 +8,12 @@
 
 use std::collections::HashMap;
 
-use agent_core::history::{EventRecord, HistoryEvent, Record};
+use agent_core::history::{EventRecord, HistoryEvent, LostKind, Record};
 use agent_core::ids::{RoundId, RunId, TaskId, TeamId};
 use agent_core::state::Timestamp;
 
 use super::db::Store;
 use super::error::{RecordKind, WriteError};
-use super::handle::Cause;
 use crate::process::error_chain;
 
 /// How many runs the store remembers the team and rounds of.
@@ -104,19 +103,20 @@ impl<S: Store> Noting<S> {
             team,
             rounds,
             event: HistoryEvent::Lost {
+                task: None,
                 what,
-                cause: Cause::Write(error.kind()).to_string(),
+                cause: error.kind().lost_cause(),
                 detail: error_chain(error),
             },
         });
     }
 
     /// What `record` is, and the team, rounds and time it belongs to; `None` when that cannot be told.
-    fn placed(&self, record: &Record) -> Option<(String, TeamId, Vec<RoundId>, Timestamp)> {
+    fn placed(&self, record: &Record) -> Option<(LostKind, TeamId, Vec<RoundId>, Timestamp)> {
         let of_run = |run: &RunId, at: Option<Timestamp>, kind: RecordKind| {
             self.scopes.get(run).map(|scope| {
                 (
-                    kind.to_string(),
+                    LostKind::Record(kind),
                     scope.team.clone(),
                     scope.rounds.clone(),
                     at.unwrap_or(scope.at),
@@ -124,15 +124,20 @@ impl<S: Store> Noting<S> {
             })
         };
         match record {
-            Record::Team(team) => Some((RecordKind::Team.to_string(), team.team.clone(), Vec::new(), team.at)),
+            Record::Team(team) => Some((
+                LostKind::Record(RecordKind::Team),
+                team.team.clone(),
+                Vec::new(),
+                team.at,
+            )),
             Record::Round(round) => Some((
-                RecordKind::Round.to_string(),
+                LostKind::Record(RecordKind::Round),
                 round.team.clone(),
                 vec![round.round.clone()],
                 round.at,
             )),
             Record::Run(run) => Some((
-                RecordKind::Run.to_string(),
+                LostKind::Record(RecordKind::Run),
                 run.team.clone(),
                 once_each(&run.rounds),
                 run.at,
@@ -146,13 +151,13 @@ impl<S: Store> Noting<S> {
             Record::Event(event) => match &event.event {
                 HistoryEvent::Lost { .. } => None,
                 HistoryEvent::Gate { task, .. } if event.rounds.is_empty() => Some((
-                    event.event.kind().to_string(),
+                    LostKind::Event(event.event.kind()),
                     event.team.clone(),
                     self.rounds_of_task(&event.team, task),
                     event.at,
                 )),
                 _ => Some((
-                    event.event.kind().to_string(),
+                    LostKind::Event(event.event.kind()),
                     event.team.clone(),
                     once_each(&event.rounds),
                     event.at,

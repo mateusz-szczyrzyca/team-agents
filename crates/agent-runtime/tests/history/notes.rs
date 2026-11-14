@@ -54,8 +54,8 @@ fn lost(batches: &Arc<Mutex<Vec<Vec<Record>>>>) -> Vec<(String, String, String, 
         .filter_map(|record| match record {
             Record::Event(event) => match &event.event {
                 HistoryEvent::Lost { what, cause, .. } => Some((
-                    what.clone(),
-                    cause.clone(),
+                    what.to_string(),
+                    cause.to_string(),
                     event.team.to_string(),
                     event.rounds.iter().map(ToString::to_string).collect(),
                 )),
@@ -184,7 +184,10 @@ fn a_run_the_database_refused_is_noted_in_a_real_history_and_read_back_in_the_st
         })
         .collect();
     assert_eq!(notes.len(), 1, "{read:?}");
-    let HistoryEvent::Lost { what, cause, detail } = &notes[0].0.event else {
+    let HistoryEvent::Lost {
+        what, cause, detail, ..
+    } = &notes[0].0.event
+    else {
         panic!("not a note")
     };
     assert_eq!((what.as_str(), cause.as_str()), ("run", "write_refused"));

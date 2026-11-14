@@ -15,13 +15,13 @@ use std::time::Duration;
 
 use agent_core::cli::ActivityEvent;
 use agent_core::config::{AbsolutePath, CommandLine, EnvName, InvalidValue};
-use agent_core::history::{EventRecord, HistoryEvent, Record};
+use agent_core::history::{EventRecord, HistoryEvent, LostCause, LostKind, Record};
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::protocol::{Event, EventKind, Failure, FailureKind, Reply};
 use agent_core::state::{CommitId, GateOutcome, GateRecord, GateResult, GateTree, InvalidTimestamp, Timestamp};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::git::{CommitIdentity, Git, GitError, MergeState, Revision, TreeState};
-use agent_runtime::history::{CaptureKind, Cause, History};
+use agent_runtime::history::{CaptureKind, History};
 use agent_runtime::process::{ExitReport, ProcessError, ProcessSpec, Supervisor, error_chain};
 use agent_runtime::run::HoldGuard;
 use agent_runtime::store::{StateStore, StoreError};
@@ -475,8 +475,9 @@ impl Service {
                 team: job.team.clone(),
                 rounds: Vec::new(),
                 event: HistoryEvent::Lost {
-                    what: agent_core::history::EventKind::Gate.to_string(),
-                    cause: Cause::Capture(CaptureKind::Gate).to_string(),
+                    task: None,
+                    what: LostKind::Event(agent_core::history::EventKind::Gate),
+                    cause: LostCause::CaptureGate,
                     detail: error_chain(error),
                 },
             })));

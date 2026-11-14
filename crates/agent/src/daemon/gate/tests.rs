@@ -823,9 +823,9 @@ async fn a_gate_whose_worktree_git_cannot_read_after_it_ran_counts_a_capture_los
         .iter()
         .filter_map(|stored| match &stored.record {
             Record::Event(event) => match &event.event {
-                HistoryEvent::Lost { what, cause, detail } => {
-                    Some((what.as_str(), cause.as_str(), detail.as_str(), &stored.rounds))
-                }
+                HistoryEvent::Lost {
+                    what, cause, detail, ..
+                } => Some((what.as_str(), cause.as_str(), detail.as_str(), &stored.rounds)),
                 _ => None,
             },
             _ => None,

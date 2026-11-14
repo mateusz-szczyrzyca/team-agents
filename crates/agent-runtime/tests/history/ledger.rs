@@ -4,7 +4,9 @@
 
 use std::num::NonZeroU32;
 
-use agent_core::history::{CheckOutcome, EventRecord, HistoryEvent, Record, SequencedRecord};
+use agent_core::history::{
+    CheckOutcome, EventRecord, HistoryEvent, LostCause, LostKind, Record, RecordKind, SequencedRecord,
+};
 use agent_core::ids::RoundId;
 use agent_core::state::{CommitId, PrNumber};
 use agent_runtime::history::schema::MIGRATIONS;
@@ -288,8 +290,9 @@ fn a_lost_event_whose_detail_is_over_the_limit_is_cut_and_read_back_through_its_
     db.write(&world.records()).unwrap();
     let round = world.rounds[0].round.clone();
     let lost = HistoryEvent::Lost {
-        what: "step".to_owned(),
-        cause: "write_disk_full".to_owned(),
+        task: None,
+        what: LostKind::Record(RecordKind::Step),
+        cause: LostCause::WriteDiskFull,
         detail: "日本語日本語".to_owned(),
     };
     db.write(&[record(&world, 30, std::slice::from_ref(&round), lost)])
@@ -304,7 +307,10 @@ fn a_lost_event_whose_detail_is_over_the_limit_is_cut_and_read_back_through_its_
         let Record::Event(event) = &stored.record else {
             panic!("not an event: {stored:?}");
         };
-        let HistoryEvent::Lost { what, cause, detail } = &event.event else {
+        let HistoryEvent::Lost {
+            what, cause, detail, ..
+        } = &event.event
+        else {
             panic!("not a lost event: {event:?}");
         };
         assert_eq!(

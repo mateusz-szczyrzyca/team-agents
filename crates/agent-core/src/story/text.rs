@@ -710,7 +710,9 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         }
         HistoryEvent::RoundClosed { round, end } => entry(page, at, &format!("round {round} closed: {end}")),
         HistoryEvent::TeamEnded {} => entry(page, at, "team ended"),
-        HistoryEvent::Lost { what, cause, detail } => {
+        HistoryEvent::Lost {
+            what, cause, detail, ..
+        } => {
             entry(page, at, &format!("a {what} record is missing ({cause}): {detail}"));
         }
         HistoryEvent::PullOpened { .. }
@@ -794,6 +796,7 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             head,
             reviewer,
             task,
+            ..
         } => {
             let pass = pass.saturating_add(1);
             let reviewer = reviewer.as_str();
