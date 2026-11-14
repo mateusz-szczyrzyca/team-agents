@@ -426,4 +426,41 @@ mod git_changes {
         assert_eq!(changes.commits, []);
         assert_eq!(changes.files, [change("b.txt", Change::Deleted, text(0, 1))]);
     }
+    #[tokio::test]
+    async fn history_reads_raw_worktree_bytes_without_running_configured_filters() {
+        for driver in ["clean", "process"] {
+            let (tmp, repo) = repository();
+            write(&repo, ".gitattributes", b"*.txt filter=fixture\n");
+            commit_at(&repo, "attributes", 1_700_000_000);
+            let marker = tmp.path().join("filter-called");
+            let command = format!("printf called > '{}'; cat", marker.display());
+            raw(&repo, &["config", &format!("filter.fixture.{driver}"), &command]);
+            raw(&repo, &["config", "filter.fixture.required", "true"]);
+            write(&repo, "new.txt", b"raw\nbytes\n");
+
+            let result = handle(&repo).uncommitted_changes().await;
+
+            assert!(!marker.exists(), "history invoked the configured {driver} filter");
+            assert_eq!(result.unwrap(), [change("new.txt", Change::Added, text(2, 0))]);
+        }
+    }
+
+    #[tokio::test]
+    async fn history_reads_do_not_invoke_a_configured_filesystem_monitor() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let (tmp, repo) = repository();
+        commit_at(&repo, "start", 1_700_000_000);
+        let marker = tmp.path().join("monitor-called");
+        let monitor = tmp.path().join("monitor.sh");
+        std::fs::write(&monitor, format!("#!/bin/sh\nprintf called > '{}'\n", marker.display())).unwrap();
+        std::fs::set_permissions(&monitor, std::fs::Permissions::from_mode(0o700)).unwrap();
+        raw(&repo, &["config", "core.fsmonitor", monitor.to_str().unwrap()]);
+        write(&repo, "new.txt", b"raw\n");
+
+        let changes = handle(&repo).uncommitted_changes().await.unwrap();
+
+        assert!(!marker.exists(), "history invoked the configured filesystem monitor");
+        assert_eq!(changes, [change("new.txt", Change::Added, text(1, 0))]);
+    }
 }
