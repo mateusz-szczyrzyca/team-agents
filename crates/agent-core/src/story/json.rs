@@ -9,46 +9,24 @@ use crate::cli::ActivityEvent;
 use crate::config::{EnvName, ModelName};
 use crate::decide::checks::{Change, FileChange, Lines};
 use crate::history::{
-    EndKind, HistoryEvent, HowChosen, Launch, PlanEntry, Record, RoundOpening, RoundSubject, RunChanges, RunEndRecord,
-    RunSession, RunStart, RunWhy, SequencedRecord, Step, StepKind, TeamStart,
+    EndKind, HistoryEvent, HowChosen, Launch, PlanEntry, Record, RecordKind, RoundOpening, RoundSubject, RunChanges,
+    RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, Step, StepKind, TeamStart,
 };
 use crate::ids::{AgentName, RoundId, RunId};
 use crate::protocol::Client;
 use crate::state::{CommitId, RunEnd, SessionId};
 
-/// The keywords of the records that have tables of their own, as the ledger keeps them.
-#[derive(Debug, Clone, Copy, strum::Display)]
-#[strum(serialize_all = "snake_case")]
-enum PlainKind {
-    /// A team starting.
-    Team,
-    /// A round opening.
-    Round,
-    /// A run starting.
-    Run,
-    /// The process of a run.
-    Launch,
-    /// A step.
-    Step,
-    /// A run ending.
-    RunEnd,
-    /// What a run changed.
-    Changes,
-    /// A session observed.
-    Session,
-}
-
 /// The record as one JSON object.
 pub(super) fn record_json(stored: &SequencedRecord) -> Value {
     let (kind, record) = match &stored.record {
-        Record::Team(team) => (PlainKind::Team.to_string(), team_json(team)),
-        Record::Round(round) => (PlainKind::Round.to_string(), round_json(round)),
-        Record::Run(run) => (PlainKind::Run.to_string(), run_json(run)),
-        Record::Launch(launch) => (PlainKind::Launch.to_string(), launch_json(launch)),
-        Record::Step(step) => (PlainKind::Step.to_string(), step_json(step)),
-        Record::RunEnd(end) => (PlainKind::RunEnd.to_string(), end_json(end)),
-        Record::Changes(changes) => (PlainKind::Changes.to_string(), changes_json(changes)),
-        Record::Session(session) => (PlainKind::Session.to_string(), session_json(session)),
+        Record::Team(team) => (RecordKind::Team.to_string(), team_json(team)),
+        Record::Round(round) => (RecordKind::Round.to_string(), round_json(round)),
+        Record::Run(run) => (RecordKind::Run.to_string(), run_json(run)),
+        Record::Launch(launch) => (RecordKind::Launch.to_string(), launch_json(launch)),
+        Record::Step(step) => (RecordKind::Step.to_string(), step_json(step)),
+        Record::RunEnd(end) => (RecordKind::RunEnd.to_string(), end_json(end)),
+        Record::Changes(changes) => (RecordKind::Changes.to_string(), changes_json(changes)),
+        Record::Session(session) => (RecordKind::Session.to_string(), session_json(session)),
         Record::Event(event) => (event.event.kind().to_string(), event_json(&event.event)),
     };
     json!({

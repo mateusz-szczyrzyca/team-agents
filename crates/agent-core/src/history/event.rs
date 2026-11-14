@@ -94,10 +94,15 @@ impl FromStr for LostKind {
     type Err = UnknownKeyword;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        if let Ok(kind) = RecordKind::from_str(text) {
-            return Ok(Self::Record(kind));
+        match RecordKind::from_str(text) {
+            Ok(RecordKind::Event) => return Err(UnknownKeyword::of::<RecordKind>(text)),
+            Ok(kind) => return Ok(Self::Record(kind)),
+            Err(_) => {}
         }
-        EventKind::from_str(text).map(Self::Event)
+        match EventKind::from_str(text)? {
+            EventKind::Lost => Err(UnknownKeyword::of::<EventKind>(text)),
+            kind => Ok(Self::Event(kind)),
+        }
     }
 }
 
@@ -535,12 +540,24 @@ impl HistoryEvent {
     #[must_use]
     pub fn identities(&self) -> Vec<&str> {
         match self {
-            Self::Gate { task, record, .. } => vec![task.as_str(), record.result.head.as_str()],
+            Self::Gate { task, record, .. } => {
+                let mut found = vec![task.as_str(), record.result.head.as_str()];
+                found.extend(record.result.log.as_path().to_str());
+                found
+            }
             Self::Checked { head, .. } | Self::PullPushed { head, .. } => vec![head.as_str()],
             Self::PullOpened { branch, head, .. } => vec![branch.as_str(), head.as_str()],
             Self::ReviewAsked {
-                head, reviewer, task, ..
-            } => vec![head.as_str(), reviewer.as_str(), task.as_str()],
+                head,
+                reviewer,
+                task,
+                among,
+                ..
+            } => {
+                let mut found = vec![head.as_str(), reviewer.as_str(), task.as_str()];
+                found.extend(among.iter().map(InvestigatorName::as_str));
+                found
+            }
             Self::ReviewSubmitted { reviewer, task, .. } => vec![reviewer.as_str(), task.as_str()],
             Self::PullMerged { commit, .. } => commit.iter().map(CommitId::as_str).collect(),
             Self::QuestionAsked { task, .. } | Self::QuestionAnswered { task, .. } => vec![task.as_str()],
@@ -556,14 +573,13 @@ impl HistoryEvent {
                 found.extend(tasks.iter().map(TaskId::as_str));
                 found
             }
-            Self::Notified { task, .. } => task.iter().map(TaskId::as_str).collect(),
+            Self::Notified { task, .. } | Self::Lost { task, .. } => task.iter().map(TaskId::as_str).collect(),
             Self::RoundClosed { round, .. } => vec![round.as_str()],
             Self::PullReady { .. }
             | Self::FixPassStarted { .. }
             | Self::PullApproved { .. }
             | Self::PullHandedOver { .. }
             | Self::PullClosed { .. }
-            | Self::Lost { .. }
             | Self::TeamEnded {} => Vec::new(),
         }
     }

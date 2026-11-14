@@ -14,7 +14,7 @@ use crate::history::{
     CheckOutcome, EventRecord, HistoryEvent, HowChosen, Launch, Record, RoundOpening, RoundSubject, RunChanges,
     RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, Step, TeamStart,
 };
-use crate::ids::{AgentName, RoundId, RunId, TaskId, TeamId};
+use crate::ids::{AgentName, InvestigatorName, RoundId, RunId, TaskId, TeamId};
 use crate::protocol::{Client, ControlAction, Target};
 use crate::state::{AnsweredVia, CommitId, RunEnd, Timestamp};
 
@@ -75,29 +75,32 @@ pub(super) fn render(chosen: &[&SequencedRecord], selection: &Selection, options
     });
     match (selection, team) {
         (Selection::Round(round), Some(team)) => {
-            round_part(&mut page, chosen, round, &team, options);
-            team_part(&mut page, start, false);
+            round_part(&mut page, chosen, round, &team);
+            team_part(&mut page, start, chosen, false);
             page.line(0, "Story");
             page.blank();
-            blocks(&mut page, &in_round(chosen, round), options);
-            no_pull_request(&mut page, &in_round(chosen, round));
+            let own = in_round(chosen, round, true);
+            blocks(&mut page, &own, options);
+            no_pull_request(&mut page, &own);
         }
         (Selection::Team(team), _) => {
             page.line(0, &format!("Team {team}"));
-            team_part(&mut page, start, true);
+            team_part(&mut page, start, chosen, true);
             for round in rounds_of(chosen) {
                 page.blank();
-                round_part(&mut page, chosen, &round, team, options);
+                round_part(&mut page, chosen, &round, team);
                 page.line(0, "Story");
                 page.blank();
-                let own = in_round(chosen, &round);
+                let own = in_round(chosen, &round, false);
                 blocks(&mut page, &own, options);
                 no_pull_request(&mut page, &own);
             }
             let alone: Vec<&SequencedRecord> = chosen
                 .iter()
                 .copied()
-                .filter(|record| record.rounds.is_empty() && !matches!(record.record, Record::Team(_)))
+                .filter(|record| {
+                    (record.rounds.is_empty() && !matches!(record.record, Record::Team(_))) || is_team_ended(record)
+                })
                 .collect();
             if !alone.is_empty() {
                 page.blank();
@@ -111,12 +114,24 @@ pub(super) fn render(chosen: &[&SequencedRecord], selection: &Selection, options
     page.text
 }
 
-/// The records that belong to `round` and tell what happened in it, not its opening.
-fn in_round<'a>(chosen: &[&'a SequencedRecord], round: &RoundId) -> Vec<&'a SequencedRecord> {
+/// Whether `record` is the end of the team.
+const fn is_team_ended(record: &SequencedRecord) -> bool {
+    matches!(
+        &record.record,
+        Record::Event(event) if matches!(event.event, HistoryEvent::TeamEnded {})
+    )
+}
+
+/// The records that belong to `round` and tell what happened in it, not its opening; `with_team_end` keeps the team end.
+fn in_round<'a>(chosen: &[&'a SequencedRecord], round: &RoundId, with_team_end: bool) -> Vec<&'a SequencedRecord> {
     chosen
         .iter()
         .copied()
-        .filter(|record| record.rounds.contains(round) && !matches!(record.record, Record::Round(_)))
+        .filter(|record| {
+            record.rounds.contains(round)
+                && !matches!(record.record, Record::Round(_))
+                && (with_team_end || !is_team_ended(record))
+        })
         .collect()
 }
 
@@ -141,7 +156,7 @@ fn rounds_of(chosen: &[&SequencedRecord]) -> Vec<RoundId> {
 }
 
 /// The heading of a round and its item in full.
-fn round_part(page: &mut Page, chosen: &[&SequencedRecord], round: &RoundId, team: &TeamId, _options: StoryOptions) {
+fn round_part(page: &mut Page, chosen: &[&SequencedRecord], round: &RoundId, team: &TeamId) {
     page.line(0, &format!("Round {round} of team {team}"));
     let opening = chosen.iter().find_map(|record| match &record.record {
         Record::Round(opening) if &opening.round == round => Some((*record, opening.as_ref())),
@@ -183,7 +198,12 @@ fn subject(page: &mut Page, opening: &RoundOpening) {
 }
 
 /// The start of the team and its agents; `with_list` adds the size of its task list.
-fn team_part(page: &mut Page, start: Option<(&SequencedRecord, &TeamStart)>, with_list: bool) {
+fn team_part(
+    page: &mut Page,
+    start: Option<(&SequencedRecord, &TeamStart)>,
+    chosen: &[&SequencedRecord],
+    with_list: bool,
+) {
     let Some((stored, start)) = start else {
         page.line(0, "(the start of the team was not recorded)");
         page.blank();
@@ -223,6 +243,27 @@ fn team_part(page: &mut Page, start: Option<(&SequencedRecord, &TeamStart)>, wit
                 how(&entry.how)
             ),
         );
+    }
+    let mut next: u32 = start
+        .plan
+        .last()
+        .map_or(1, |entry| entry.position.get().saturating_add(1));
+    let mut seen_reviewers: Vec<&str> = Vec::new();
+    for record in chosen {
+        if let Record::Event(event) = &record.record
+            && let HistoryEvent::ReviewAsked { reviewer, among, .. } = &event.event
+            && !seen_reviewers.contains(&reviewer.as_str())
+        {
+            seen_reviewers.push(reviewer.as_str());
+            let how = if among.is_empty() {
+                "drawn at random".to_owned()
+            } else {
+                let names: Vec<&str> = among.iter().map(InvestigatorName::as_str).collect();
+                format!("drawn at random among {}", names.join(", "))
+            };
+            page.line(0, &format!("{next}. {} — reviewer — {how}", reviewer.as_str()));
+            next = next.saturating_add(1);
+        }
     }
     page.blank();
 }
@@ -704,7 +745,10 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
             page.raw(2, "answered questions", text);
         }
         HistoryEvent::Notified { task, title, body } => {
-            let about = task.as_ref().map_or_else(String::new, |task| format!(" (task {task})"));
+            let about = match task {
+                Some(task) if !title.contains(task.as_str()) => format!(" (task {task})"),
+                _ => String::new(),
+            };
             entry(page, at, &format!("notification sent: {title}{about}"));
             page.raw(2, "notification", body);
         }
