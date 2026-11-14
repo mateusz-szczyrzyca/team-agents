@@ -423,3 +423,7 @@ mod rig;
 mod round_records_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/history_failures.rs"]
+mod history_failures_tests;

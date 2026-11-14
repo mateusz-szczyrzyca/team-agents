@@ -283,4 +283,93 @@ mod history_process {
         );
         assert!(rows[1..].iter().all(|row| row.end.is_some()));
     }
+    /// The CLI health line carries a numeric count even when only some records fail.
+    fn lost_records(status: &str) -> u64 {
+        let line = status
+            .lines()
+            .find(|line| line.starts_with("history:"))
+            .unwrap_or_else(|| panic!("missing history status: {status}"));
+        line.rsplit("; ")
+            .next()
+            .unwrap()
+            .split(' ')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+
+    /// Reap a deliberately broken daemon even when its graceful shutdown is the failing behavior.
+    struct FailureWorld(World);
+
+    impl Drop for FailureWorld {
+        fn drop(&mut self) {
+            if let Some(mut daemon) = self.0.daemon.take() {
+                if let Err(error) = daemon.kill() {
+                    eprintln!("cannot kill fixture daemon: {error}");
+                }
+                if let Err(error) = daemon.wait() {
+                    eprintln!("cannot reap fixture daemon: {error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_failing_insert_is_reported_once_on_stderr_and_the_task_finishes_with_visible_losses() {
+        let mut guarded = FailureWorld(World::new("done"));
+        let world = &mut guarded.0;
+        world.start();
+        let db = rusqlite::Connection::open(world.home.join("history.db")).unwrap();
+        db.execute_batch("CREATE TRIGGER reject_steps BEFORE INSERT ON steps BEGIN SELECT RAISE(FAIL, 'injected step failure'); END;").unwrap();
+        let output = world.agent(&["run", "claude-1", "Finish the fixture task."]);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let status = world.status_where("finished despite refused inserts", |status| {
+            status
+                .lines()
+                .any(|line| line.contains("solo") && line.ends_with("done"))
+                && lost_records(status) >= 2
+        });
+        assert!(lost_records(&status) >= 2, "{status}");
+        world.end(Signal::TERM);
+        let log = std::fs::read_to_string(world.log()).unwrap();
+        assert_eq!(log.matches("the history cannot keep some records").count(), 1, "{log}");
+        assert!(log.contains("write_refused"), "{log}");
+        let reader = Reader::open(&world.home.join("history.db")).unwrap();
+        let runs = reader.runs_of_team(world.state().teams()[0].id()).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert!(runs[0].end.is_some());
+    }
+
+    #[test]
+    fn a_full_history_queue_does_not_hold_the_task_and_reports_overflow_once() {
+        let mut world = World::new("stream:burst");
+        let scripts = world.home.join("fake-scripts");
+        std::fs::create_dir(&scripts).unwrap();
+        let event = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"one step\"}]}}\n";
+        std::fs::write(scripts.join("burst.jsonl"), event.repeat(12_000)).unwrap();
+        world.start();
+        let db = rusqlite::Connection::open(world.home.join("history.db")).unwrap();
+        db.execute_batch("BEGIN IMMEDIATE;").unwrap();
+        let output = world.agent(&["run", "claude-1", "Finish the fixture task."]);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        // The writer remains blocked until after the task is done: no timing assumption releases it.
+        let status = world.status_where("finished while the history writer is blocked", |status| {
+            status
+                .lines()
+                .any(|line| line.contains("solo") && line.ends_with("done"))
+        });
+        assert!(lost_records(&status) >= 1, "{status}");
+        let log = std::fs::read_to_string(world.log()).unwrap();
+        assert_eq!(log.matches("queue_full").count(), 1, "{log}");
+        db.execute_batch("ROLLBACK;").unwrap();
+        world.end(Signal::TERM);
+        let log = std::fs::read_to_string(world.log()).unwrap();
+        assert_eq!(log.matches("queue_full").count(), 1, "{log}");
+        assert_eq!(
+            db.query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
+    }
 }
