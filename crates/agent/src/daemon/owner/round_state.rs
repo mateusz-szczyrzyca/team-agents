@@ -6,6 +6,7 @@
 //! the state and in the events, so that a daemon that restarts goes on with the same rounds.
 
 use agent_core::decide::round::{RunStart, TaskRounds, rounds_of_run};
+use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::protocol::EventKind;
@@ -218,6 +219,15 @@ impl Owner {
                 round: round.clone(),
                 source,
             })?;
+        self.record_event_at(
+            now,
+            team,
+            vec![round.clone()],
+            HistoryEvent::RoundClosed {
+                round: round.clone(),
+                end: how,
+            },
+        );
         look.events.push(EventKind::RoundClosed {
             team: team.clone(),
             round: round.clone(),

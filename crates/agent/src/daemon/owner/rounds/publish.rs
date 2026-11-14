@@ -2,6 +2,7 @@
 
 use agent_core::config::RepoName;
 use agent_core::decide::round::{RoundEvent, RoundPolicy, RoundState, Stage};
+use agent_core::history::HistoryEvent;
 use std::num::NonZeroU32;
 
 use agent_core::ids::{BranchName, ItemId, TeamId};
@@ -181,19 +182,31 @@ impl Owner {
         ready.git.push(head_branch).await?;
         let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record)?;
         let base = self.base_branch(&lead.repo)?;
-        let remote = match github.find_open_pull_request(head_branch).await? {
-            Some(found) => found,
-            None => {
-                github
-                    .create_pull_request(&NewPullRequest {
-                        title: text.title,
-                        body: text.body,
-                        head: head_branch.clone(),
-                        base,
-                        readiness: Readiness::Draft,
-                    })
-                    .await?
-            }
+        let remote = if let Some(found) = github.find_open_pull_request(head_branch).await? {
+            found
+        } else {
+            let created = github
+                .create_pull_request(&NewPullRequest {
+                    title: text.title,
+                    body: text.body,
+                    head: head_branch.clone(),
+                    base,
+                    readiness: Readiness::Draft,
+                })
+                .await?;
+            // The opening is what GitHub made of it: its number, its head, its title and its body whole.
+            self.record_event(
+                team,
+                self.rounds_of_items(team, &ids),
+                HistoryEvent::PullOpened {
+                    number: created.number,
+                    branch: head_branch.clone(),
+                    head: created.head.clone(),
+                    title: created.title.clone(),
+                    body: created.body.clone(),
+                },
+            );
+            created
         };
         // The round goes to the reviewers only when the checks let it: until then the pull request stays a draft.
         let reviewing = Reviewing {
@@ -206,6 +219,11 @@ impl Owner {
             return Ok(Attempt::Held(held));
         }
         github.mark_ready(remote.number).await?;
+        self.record_event(
+            team,
+            self.rounds_of_items(team, &ids),
+            HistoryEvent::PullReady { pr: remote.number },
+        );
         Ok(Attempt::Published(Published {
             pr: PullRequest {
                 number: remote.number,
@@ -249,6 +267,14 @@ impl Owner {
             return Ok(Attempt::Held(held));
         }
         ready.git.push(&pr.branch).await?;
+        self.record_event(
+            team,
+            self.rounds_of_items(team, &ids),
+            HistoryEvent::PullPushed {
+                pr: pr.number,
+                head: ready.tip.clone(),
+            },
+        );
         if !joined.is_empty() {
             let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record)?;
             let update = PullRequestUpdate {

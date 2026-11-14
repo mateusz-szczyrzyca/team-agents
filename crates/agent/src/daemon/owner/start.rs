@@ -149,6 +149,9 @@ pub(super) struct Plan {
     pub(super) run: RunId,
     /// The session to record when the run begins.
     pub(super) recorded_session: Option<agent_core::state::SessionId>,
+    /// What the autopilot added to the prompt of the run, when it added anything: the findings of a fix pass, the request
+    /// for a review. The history keeps the findings a team was sent from it.
+    pub(super) addition: Option<String>,
     /// What the engine runs.
     pub(super) job: RunJob,
 }
@@ -227,13 +230,13 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     let prompt = compose(&texts, &input)?;
     let answers = answers_text(ctx, member).await?;
     let prompt = team_prompt(ctx, &texts, &found, prompt, answers.as_deref())?;
-    let prompt = match ctx.autopilot {
+    let (prompt, addition) = match ctx.autopilot {
         Some(autopilot) => match sections_for(ctx, autopilot, &found, &working, ctx.why).await? {
-            Some(Addition::Append(sections)) => format!("{}\n\n{sections}", prompt.trim_end()),
-            Some(Addition::Replace(text)) => format!("{text}\n"),
-            None => prompt,
+            Some(Addition::Append(sections)) => (format!("{}\n\n{sections}", prompt.trim_end()), Some(sections)),
+            Some(Addition::Replace(text)) => (format!("{text}\n"), Some(text)),
+            None => (prompt, None),
         },
-        None => prompt,
+        None => (prompt, None),
     };
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
@@ -252,6 +255,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     Ok(Plan {
         run: run.clone(),
         recorded_session,
+        addition,
         job: RunJob {
             task: task.clone(),
             run,

@@ -4,13 +4,14 @@
 use std::str::FromStr;
 
 use agent_core::config::AbsolutePath;
+use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
 use agent_core::state::{CommitId, ItemPhase, Member, Participant, PullRequest, Review, ReviewOutcome, Timestamp};
 use agent_runtime::git::{Git, Revision, WorktreeBranch};
 use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
-use crate::daemon::merge::review_deliveries;
+use crate::daemon::merge::{count, review_deliveries};
 use crate::daemon::review::{Reviewer, Slot, choose_reviewers, free_reviewers};
 use crate::daemon::team::{Why, task_branch};
 
@@ -104,6 +105,21 @@ impl Owner {
         if let Err(error) = self.record_reviews(team_id, items, &prepared) {
             self.undo(&git, &prepared.made).await;
             return Err(error);
+        }
+        let pass = count(self.fix_passes_of(team_id, items));
+        let rounds = self.rounds_of_items(team_id, items);
+        for review in &prepared.reviews {
+            self.record_event(
+                team_id,
+                rounds.clone(),
+                HistoryEvent::ReviewAsked {
+                    pr: pr.number,
+                    pass,
+                    head: head.clone(),
+                    reviewer: review.reviewer.clone(),
+                    task: review.task.clone(),
+                },
+            );
         }
         tracing::info!(team = %team_id, pr = %pr.number, reviewers = prepared.reviews.len(), "reviews are asked for");
         Ok(true)
