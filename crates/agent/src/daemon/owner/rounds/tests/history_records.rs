@@ -801,11 +801,11 @@ async fn a_history_of_a_newer_version_is_left_as_it_is_and_the_round_goes_on() {
     let migrations = [
         Migration {
             version: 1,
-            sql: "CREATE TABLE from_the_past (x TEXT);",
+            sql: "create table from_the_past (x TEXT);",
         },
         Migration {
             version: 2,
-            sql: "CREATE TABLE from_the_future (x TEXT);",
+            sql: "create table from_the_future (x TEXT);",
         },
     ];
     drop(HistoryDb::open_with(&rig.home.history_file(), &migrations, MaxTextBytes::default()).unwrap());

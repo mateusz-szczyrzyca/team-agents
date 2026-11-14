@@ -89,7 +89,7 @@ fn opening_a_database_again_changes_nothing() {
 /// The first migration of the tests: a table with a row.
 const FIRST: Migration = Migration {
     version: 1,
-    sql: "CREATE TABLE kept (x TEXT NOT NULL) STRICT; INSERT INTO kept VALUES ('before');",
+    sql: "create table kept (x TEXT NOT NULL) STRICT; INSERT INTO kept VALUES ('before');",
 };
 
 /// The second: a column that is filled.
@@ -205,7 +205,7 @@ fn a_database_of_a_newer_version_is_refused_and_left_byte_for_byte_as_it_was() {
     let path = dir.path().join("newer.db");
     {
         let raw = Connection::open(&path).unwrap();
-        raw.execute_batch("CREATE TABLE from_the_future (x TEXT); PRAGMA user_version = 7;")
+        raw.execute_batch("create table from_the_future (x TEXT); PRAGMA user_version = 7;")
             .unwrap();
     }
     let before = std::fs::read(&path).unwrap();
@@ -240,7 +240,7 @@ fn a_reader_refuses_a_newer_database_and_one_no_daemon_has_written_to() {
     let empty = dir.path().join("empty.db");
     Connection::open(&empty)
         .unwrap()
-        .execute_batch("CREATE TABLE t (x TEXT);")
+        .execute_batch("create table t (x TEXT);")
         .unwrap();
 
     let refused_newer = Reader::open(&newer).unwrap_err();
