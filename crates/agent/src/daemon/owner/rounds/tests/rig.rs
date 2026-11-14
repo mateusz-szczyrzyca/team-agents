@@ -389,7 +389,11 @@ impl Rig {
 
     /// How many runs the task has had.
     pub(super) fn runs(&self, task: &TaskId) -> u32 {
-        std::fs::read_to_string(self.worktree(task).join(".fake-runs")).map_or(0, |text| text.trim().parse().unwrap())
+        std::fs::read_to_string(self.worktree(task).join(".fake-runs")).map_or(0, |text| {
+            let text = text.trim();
+            // Shell redirection creates or truncates the counter before the fake CLI writes its number.
+            if text.is_empty() { 0 } else { text.parse().unwrap() }
+        })
     }
 
     /// The prompt the task's `n`-th run was given, once it has been.
