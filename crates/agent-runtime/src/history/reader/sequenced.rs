@@ -234,6 +234,9 @@ fn event_of(here: &Row_, raw: &Raw, kind: EventKind) -> Result<HistoryEvent, Rea
     if event.kind() != kind {
         return Err(here.rule("payload", "the payload is of another kind than the row"));
     }
+    if raw.key != event.key() {
+        return Err(here.rule("key", "the key of the row does not match the event"));
+    }
     Ok(event)
 }
 

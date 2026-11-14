@@ -14,6 +14,7 @@ use agent_core::state::Timestamp;
 
 use super::db::Store;
 use super::error::{RecordKind, WriteError};
+use super::redact::Redactor;
 use crate::process::error_chain;
 
 /// How many runs the store remembers the team and rounds of.
@@ -42,6 +43,8 @@ struct Scope {
 pub struct Noting<S> {
     /// The store the records go to.
     inner: S,
+    /// Configured credentials to redact from error details in loss notes.
+    redactor: Redactor,
     /// The team and rounds of the runs this store has seen start, to place the records of a run.
     scopes: HashMap<RunId, Scope>,
     /// How many runs this store has learned, to order runs of the same task.
@@ -54,23 +57,29 @@ impl<S: Store> Noting<S> {
     /// Wraps `inner`.
     #[must_use]
     pub fn new(inner: S) -> Self {
+        Self::with_secrets(inner, agent_core::config::Secrets::default())
+    }
+
+    /// Wraps `inner` and redacts `secrets` from loss notes.
+    #[must_use]
+    pub fn with_secrets(inner: S, secrets: agent_core::config::Secrets) -> Self {
         Self {
             inner,
+            redactor: Redactor::new(secrets),
             scopes: HashMap::new(),
             learned: 0,
             pending: Vec::new(),
         }
     }
 
-    /// Wraps `inner` and redacts `secrets` from loss notes.
-    #[must_use]
-    pub fn with_secrets(inner: S, _secrets: agent_core::config::Secrets) -> Self {
-        Self::new(inner)
-    }
-
     /// Remembers where the records of `run` belong.
     fn learn(&mut self, run: &agent_core::history::RunStart) {
         if self.scopes.len() >= MAX_SCOPES {
+            tracing::warn!(
+                dropped = self.scopes.len(),
+                limit = MAX_SCOPES,
+                "the history note writer reached its run-scope limit and cleared remembered run scopes"
+            );
             self.scopes.clear();
         }
         self.learned = self.learned.saturating_add(1);
@@ -102,7 +111,12 @@ impl<S: Store> Noting<S> {
             return;
         };
         if self.pending.len() >= MAX_PENDING {
-            self.pending.remove(0);
+            let dropped = self.pending.remove(0);
+            tracing::warn!(
+                team = %dropped.team,
+                limit = MAX_PENDING,
+                "the history note writer reached its pending-note limit and evicted the oldest loss note"
+            );
         }
         self.pending.push(EventRecord {
             at,
@@ -112,7 +126,7 @@ impl<S: Store> Noting<S> {
                 task: None,
                 what,
                 cause: error.kind().lost_cause(),
-                detail: error_chain(error),
+                detail: self.redactor.text(&error_chain(error)),
             },
         });
     }
