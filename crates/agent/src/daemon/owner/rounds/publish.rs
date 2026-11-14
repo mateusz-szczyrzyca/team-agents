@@ -179,10 +179,22 @@ impl Owner {
             return Ok(Attempt::Nothing);
         }
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
+        let existing = github.find_open_pull_request(head_branch).await?;
         ready.git.push(head_branch).await?;
         let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record)?;
         let base = self.base_branch(&lead.repo)?;
-        let remote = if let Some(found) = github.find_open_pull_request(head_branch).await? {
+        let remote = if let Some(mut found) = existing {
+            if found.head != ready.tip {
+                found.head = ready.tip.clone();
+                self.record_event(
+                    team,
+                    self.rounds_of_items(team, &ids),
+                    HistoryEvent::PullPushed {
+                        pr: found.number,
+                        head: ready.tip.clone(),
+                    },
+                );
+            }
             found
         } else {
             let created = github
