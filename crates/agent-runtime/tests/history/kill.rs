@@ -123,3 +123,111 @@ fn a_writer_killed_in_the_middle_of_a_batch_leaves_a_database_that_opens_and_hol
     let mut db = HistoryDb::open(&path, roomy()).unwrap();
     db.write(&world(1_000_000).records()).unwrap();
 }
+
+/// Selects the child process that is interrupted after SQLite has spilled uncommitted WAL frames.
+const SPILL_CHILD: &str = "HISTORY_SPILL_CHILD_DIR";
+
+#[test]
+fn the_spilling_writer_child() {
+    use std::io::{Read, Write};
+
+    let temporary = tempfile::tempdir().unwrap();
+    let directory = std::env::var_os(SPILL_CHILD);
+    let path = directory
+        .as_ref()
+        .map_or_else(|| temporary.path().to_path_buf(), std::path::PathBuf::from);
+    let mut db = HistoryDb::open(&path.join("history.db"), super::support::limit(8 << 20)).unwrap();
+    db.write(&world(1).records()).unwrap();
+    if directory.is_some() {
+        let records: Vec<_> = (2..10)
+            .flat_map(|seed| {
+                let mut data = world(seed);
+                data.team.task_list = "x".repeat(8 << 20);
+                data.records()
+            })
+            .collect();
+        println!("ready to spill");
+        std::io::stdout().flush().unwrap();
+        let mut begin = [0];
+        std::io::stdin().read_exact(&mut begin).unwrap();
+        db.write(&records).unwrap();
+        panic!("the parent must kill this writer before the batch commits");
+    }
+    assert_eq!(
+        Reader::open(&path.join("history.db"))
+            .unwrap()
+            .team(&world(1).team.team)
+            .unwrap()
+            .unwrap()
+            .value,
+        world(1).team
+    );
+}
+
+#[test]
+fn killing_after_uncommitted_wal_frames_appear_rolls_back_the_entire_batch() {
+    use std::io::Write;
+    use std::os::unix::process::ExitStatusExt;
+    use std::time::{Duration, Instant};
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["kill::the_spilling_writer_child", "--exact", "--nocapture"])
+        .env(SPILL_CHILD, dir.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let mut ready = false;
+    for line in BufReader::new(child.stdout.take().unwrap()).lines() {
+        if line.unwrap() == "ready to spill" {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready, "child did not prepare its batch");
+    let wal = dir.path().join("history.db-wal");
+    let committed_bytes = std::fs::metadata(&wal).unwrap().len();
+    child.stdin.take().unwrap().write_all(b"1").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut spilled = false;
+    while Instant::now() < deadline {
+        if std::fs::metadata(&wal).unwrap().len() > committed_bytes {
+            spilled = true;
+            break;
+        }
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    child.kill().unwrap();
+    let killed = child.wait().unwrap();
+    assert_eq!(killed.signal(), Some(9));
+    assert!(spilled, "no uncommitted WAL frames appeared");
+    let path = dir.path().join("history.db");
+    let db = Connection::open(&path).unwrap();
+    let integrity: String = db
+        .pragma_query_value(None, "integrity_check", |row| row.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+    let teams: i64 = db
+        .query_row("SELECT count(*) FROM teams", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        teams, 1,
+        "the active batch must have rolled back, not committed before SIGKILL"
+    );
+    let reader = Reader::open(&path).unwrap();
+    assert_eq!(reader.team(&world(1).team.team).unwrap().unwrap().value, world(1).team);
+    for seed in 2..10 {
+        assert_eq!(reader.team(&world(seed).team.team).unwrap(), None, "seed={seed}");
+    }
+    let mut reopened = HistoryDb::open(&path, roomy()).unwrap();
+    reopened.write(&world(10).records()).unwrap();
+    assert_eq!(
+        reader.team(&world(10).team.team).unwrap().unwrap().value,
+        world(10).team
+    );
+}
