@@ -437,4 +437,14 @@ mod run_history {
         assert_eq!(rig.history.health().lost, 6);
         assert!(rig.recorded("work.txt").contains("the work"));
     }
+    #[tokio::test]
+    async fn echoing_the_session_supplied_to_the_cli_is_not_a_new_session() {
+        let rig = rig(Tree::Repository, Kind::Database).await;
+        assert_eq!(rig.run("done", "Do the item.").await, done());
+        let reader = rig.reader();
+        assert_eq!(
+            reader.sessions(&rig.run).unwrap(),
+            Vec::<agent_core::history::RunSession>::new()
+        );
+    }
 }
