@@ -20,9 +20,11 @@ Ground rules
   the PR description.
 - Each round is started with its own file, `rounds/round-N.M.md`: its `Round:` line, this round's item in full, these
   rules, and an overview of the other items, which are context only.
-- Every item compiles and passes the whole gate on `main` without the other items of its feature. An item uses only
-  code from the features named in its feature's "Depends on" line, all of them merged. Items of one feature are taken
-  in order; features whose dependencies are merged run in parallel.
+- Every item compiles and passes the gate on `main` without the other items of its feature. The gate is the
+  repository's gate command and nothing more: here the Rust workspace's checks. The suites of the old
+  implementation (its Bats and Go tests) are never run by a round, and a failure in them is not the round's
+  business. An item uses only code from the features named in its feature's "Depends on" line, all of them merged.
+  Items of one feature are taken in order; features whose dependencies are merged run in parallel.
 - The old implementation — `bin/agent` (Bash), `agent/` (unfinished Go), `live/` (old dashboard) — is a reference
   for "how it worked" only. Nothing is ported line by line, linked, called or kept compatible: no shared files, no
   shared state format, no shared commands. `agentbus/` (Go) stays and is used as it is.

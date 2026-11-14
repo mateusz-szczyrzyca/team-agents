@@ -1,9 +1,11 @@
-# Developer tasks. Before every commit: `make lint test` (see AGENTS.md).
+# Developer tasks. The gate of a change: `make gate` (see AGENTS.md).
+#   make gate       the gate: the steps of GATE_STEPS with short output — the Rust workspace's checks (make rust)
+#   make gate-full  every step, the Bash and Go suites of the old implementation included: for the human
 #   make tools   installs the pinned linters (golangci-lint, staticcheck, shellcheck) into ~/.local/bin
 #   make lint    every static check and the Rust gate (also the CI entry point); fails when a tool is missing
 #   make test    unit tests: Go (agent, agentbus, agentlive), bats (the agent script) and the Rust workspace
 #   make rust    the Rust workspace's checks: fmt, clippy -D warnings, tests, docs (docs/architecture.md)
-.PHONY: gate test unit-go unit-bats harness lint lint-go lint-shell lint-docs tools integration build generate check-generated build-agent unit-agent-bats check-agent-parity rust
+.PHONY: gate gate-full test unit-go unit-bats harness lint lint-go lint-shell lint-docs tools integration build generate check-generated build-agent unit-agent-bats check-agent-parity rust
 
 # Go modules of this repository (each has its own go.mod).
 GO_MODULES := agentbus live agent tools/doccheck tools/errgen
@@ -102,7 +104,16 @@ tools:
 
 # The same checks with short output — one line per step, the failures condensed, full logs in build/gate/
 # (tools/gate.sh). Agents use this: long tool output stays in their context and is read again at every later step.
+# The gate — what a change must pass, and what `agent gate` runs: the steps of GATE_STEPS. While the Rust workspace
+# replaces the Bash and Go implementations (rust-agent-plan.md) that is the Rust step alone: the other suites check
+# code no round changes, take minutes of every run, and a failure of theirs is not the round's to fix.
+# `make gate-full` runs every step, as `make gate` did: for a change of bin/agent, agentbus or the tools.
+GATE_STEPS ?= rust
+
 gate:
+	@$(TEST_LOCK) tools/gate.sh $(GATE_STEPS)
+
+gate-full:
 	@$(TEST_LOCK) tools/gate.sh
 
 # CI already runs this target; include the complete Rust gate in that same entry point.

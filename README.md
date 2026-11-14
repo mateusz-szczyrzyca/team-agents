@@ -1718,7 +1718,7 @@ make integration        # real agent CLIs and accounts (costs usage)
   (`agent-core`, `agent-runtime`, `agent`, `agent-web`); [`docs/architecture.md`](docs/architecture.md) has its layout,
   process model and rules. Nothing of it is installed or used by the installation yet: `cargo run -p agent --
   --version` and `cargo run -p agent-web -- --version` are all it does so far. It needs `rustup`; the toolchain of
-  `rust-toolchain.toml` installs itself on the first cargo command. `make gate` runs `make rust` as its `rust` step.
+  `rust-toolchain.toml` installs itself on the first cargo command. `make gate` runs `make rust` alone (`GATE_STEPS`); `make gate-full` runs every step, the Bash and Go suites included.
   `make lint` also runs the full Rust gate, so the existing CI lint step checks Rust formatting, clippy, tests and
   documentation. `make test` includes it too.
   `agent-core` already holds the public contracts of the new `agent`, all of them pure, with no file or socket access

@@ -656,8 +656,8 @@ as a process).
 ## The gate
 
 ```sh
-make rust     # the workspace alone
-make gate     # the whole repository; its rust step is make rust
+make rust     # the workspace's checks, with their full output
+make gate     # the gate: the same checks with short output (GATE_STEPS, by default the rust step alone)
 ```
 
 `make rust` runs, all `--locked`:
@@ -669,7 +669,8 @@ cargo test --workspace --all-features --locked          # doctests included, und
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
 ```
 
-It is a step of `make gate`, `make test` and `make lint`. The existing CI workflow
+`make gate` runs it alone: the Bash and Go suites of the old implementation are steps of `make gate-full`, which
+only the human runs. It is also a step of `make test` and `make lint`. The existing CI workflow
 ([`.github/workflows/test.yml`](../.github/workflows/test.yml)) runs `make lint`, so it also runs the complete Rust
 gate. The Ubuntu runner supplies rustup; the first cargo command installs the pinned toolchain and its components.
 No workflow edit is needed. This also avoids requiring the investigation token to have the `workflow` scope.

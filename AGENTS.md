@@ -92,37 +92,43 @@ file and why; a skipped test belongs in the PR's `## Skipped tests` section, wit
 
 ## Workflow and checks
 
-Before **every** commit:
+The gate, run **once**, on the commit you hand over (and again on the last commit of every fix):
 
 ```sh
 make gate
 ```
 
-`make gate` runs the checks of `make lint test` with short output: one line per step, for a failed step only the
-lines that tell what failed, the full logs in `build/gate/`. When you need more, read the log with `grep -n` or
-`tail` — never print a whole log: everything a command prints stays in your context and is read again at every
-later step. (`make lint test` runs the same checks with their full output.)
+`make gate` runs the Rust workspace's checks (`make rust`: fmt, clippy, the tests, the docs) with short output: one
+line per step, for a failed step only the lines that tell what failed, the full logs in `build/gate/`. When you
+need more, read the log with `grep -n` or `tail` — never print a whole log: everything a command prints stays in
+your context and is read again at every later step. While you work, run single tests and clippy on the crate you
+change, not the gate: a RED commit fails it by design.
 
-One test run at a time on the machine: every target that runs tests (`gate`, `test`, `unit-go`, `unit-bats`,
-`harness`, `unit-agent-bats`, `rust`) holds a lock (`tools/test-lock.sh`, `/tmp/.make.command.lck`). A busy lock refuses with
+**The suites of the old implementation are not yours to run.** The Rust workspace replaces `bin/agent` (Bash) and
+`agent/` (Go), and no round changes them any more. Never run `make gate-full`, `make test`, `make lint`,
+`make unit-bats`, `make harness`, `make unit-agent-bats` or `bats`: they take minutes of every run and check code
+you do not touch. A failure in them is not a finding, not a blocker and not yours to fix, look into or report.
+Only the human runs them (`make gate-full`), for a change of `bin/agent`, `agentbus/` or the tools.
+
+One test run at a time on the machine: every target that runs tests (`gate`, `gate-full`, `test`, `unit-go`,
+`unit-bats`, `harness`, `unit-agent-bats`, `rust`) holds a lock (`tools/test-lock.sh`, `/tmp/.make.command.lck`). A busy lock refuses with
 `another tests are running now - please wait before you try again` (exit 75) and names who holds it; wait and try
 again, or run `GATE_WAIT=1 make gate` to wait in line. Never run the tests around it. A run that died frees the lock at
 once; one alive past `TEST_LOCK_STALE_MIN` (10) minutes is taken for hung and stopped.
 
-- `make lint` — `shellcheck -S warning` on every Bash script, `gofmt`, `golangci-lint` (configuration:
-  `.golangci.yml`) and `staticcheck` on every Go module, `doccheck`, and a check that `errors_gen.go` matches
-  `errors.json`.
-- `make test` — `go vet` and `go test` for `agentbus` and `live`, and the bats suite (`tests/unit`, stub CLIs,
-  no network, no real accounts).
-- A single Go test: `cd agentbus && go test -run TestQuizStartCauses ./...`; a single bats test:
-  `bats -f "watchdog" tests/unit`.
-- After changing `agentbus/errors.json`: `make generate`.
+- A single Rust test: `cargo test -p agent-core <name>`; one crate's lints:
+  `cargo clippy -p agent-core --all-targets --all-features --locked -- -D warnings`.
+- For the human, on a change of the old implementation (`make gate-full` runs all of it): `make lint` —
+  `shellcheck -S warning` on every Bash script, `gofmt`, `golangci-lint` (configuration: `.golangci.yml`) and
+  `staticcheck` on every Go module, `doccheck`, and a check that `errors_gen.go` matches `errors.json`; `make test`
+  — `go vet` and `go test` for the Go modules, and the bats suite (`tests/unit`, stub CLIs, no network, no real
+  accounts); after changing `agentbus/errors.json`: `make generate`.
 - All checks must pass with **zero** findings. Fix the cause; do not add `//nolint` or `# shellcheck disable`
   without a comment on the same line explaining why the finding does not apply, and mention every such
   suppression in the PR description.
 
-Do not push code that fails `make lint test`. If a check fails for a reason outside your change (a broken tool,
-a flaky test), do not work around it: describe it in your report and ask.
+Do not push code that fails `make gate`. If the gate fails for a reason outside your change (a broken tool, a
+flaky test), do not work around it: describe it in your report and ask.
 
 ## Go
 
@@ -228,7 +234,7 @@ model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows
   it. For these PRs this limit replaces the 3000 lines of "Rounds". An item that would exceed it is split before
   coding, and the split is recorded in the PR.
 - **Check:** `make rust` — `cargo fmt --check`, clippy with `-D warnings`, the tests and `cargo doc` with warnings
-  denied, all `--locked`. It is a step of `make gate`, `make test` and `make lint`; the existing CI workflow runs
+  denied, all `--locked`. `make gate` runs it, and nothing else; the existing CI workflow runs
   `make lint`, including the Rust gate. The lint baseline is `[workspace.lints]` in `Cargo.toml`; a lint is suppressed only with `#[expect(..., reason = "...")]` on the smallest
   item, listed in the PR.
 - **Tests first** as in [`docs/tdd.md`](docs/tdd.md) and the developer rules (TDD-1, TDD-14): the RED commit's bodies
@@ -283,7 +289,7 @@ model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows
 
 A PR changes at most 3000 lines (added + deleted, tests included, generated and vendored files not counted; aim for
 2000). A bigger task is planned as rounds — see the "Rounds" part of your prompt and README "Rounds". After every
-round `main` builds and passes `make lint test`; unfinished work is dead code or a stub returning a typed "not
+round `main` builds and passes `make gate`; unfinished work is dead code or a stub returning a typed "not
 implemented" error; no test is written ahead of its round, and a skip is an exception
 with a reason outside the code, listed in the PR's `## Skipped tests` section (`docs/tdd.md`, "Skipped tests").
 Check the size with `agent round-size <task>`. A PR of the Rust plan counts and limits its size as PR-1 does, with the
@@ -291,7 +297,7 @@ relaxed limit of "Rust".
 
 ## Definition of done
 
-- [ ] `make lint test` passes with zero findings.
+- [ ] `make gate` passes with zero findings, on the commit handed over.
 - [ ] New behaviour has tests, written first (or a `Test-First: not possible` reason); no existing test was changed.
 - [ ] The PR is within the round limit (`agent round-size <task>`); every skip it adds is listed with its reason
       in the PR's `## Skipped tests` section.
