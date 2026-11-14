@@ -896,3 +896,82 @@ fn every_kind_of_event_reads_back_equal_from_the_database_and_cuts_every_over_li
         assert_eq!(&stored.record, expected);
     }
 }
+
+#[test]
+fn a_table_backed_ledger_row_whose_time_team_or_rounds_disagree_with_its_table_is_refused_as_corrupt() {
+    let (_dir, path, mut db) = database();
+    let world = complete(18);
+    let round = world.rounds[0].round.clone();
+    let run = world.runs[0].start.run.clone();
+    db.write(&world.records()).unwrap();
+
+    let raw = Connection::open(&path).unwrap();
+    let orig_at: String = raw
+        .query_row(
+            "SELECT at FROM history_records WHERE kind = 'run' AND key = ?1",
+            rusqlite::params![run.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    raw.execute(
+        "UPDATE history_records SET at = '2030-01-01T00:00:00.000000000Z' WHERE kind = 'run' AND key = ?1",
+        rusqlite::params![run.as_str()],
+    )
+    .unwrap();
+    let bad_at = Reader::open(&path).unwrap().round_records(&round);
+    assert!(
+        matches!(
+            bad_at,
+            Err(ReadError::Value {
+                table: "history_records",
+                column: "at",
+                ..
+            })
+        ),
+        "{bad_at:?}"
+    );
+    raw.execute(
+        "UPDATE history_records SET at = ?1 WHERE kind = 'run' AND key = ?2",
+        rusqlite::params![orig_at, run.as_str()],
+    )
+    .unwrap();
+
+    let orig_team = world.team.team.as_str().to_owned();
+    raw.execute(
+        "UPDATE runs SET team = 'team-20300101-000000-z9z9' WHERE run = ?1",
+        rusqlite::params![run.as_str()],
+    )
+    .unwrap();
+    let bad_team = Reader::open(&path).unwrap().round_records(&round);
+    assert!(
+        matches!(
+            bad_team,
+            Err(ReadError::Value {
+                table: "history_records",
+                column: "team",
+                ..
+            })
+        ),
+        "{bad_team:?}"
+    );
+    raw.execute(
+        "UPDATE runs SET team = ?1 WHERE run = ?2",
+        rusqlite::params![orig_team, run.as_str()],
+    )
+    .unwrap();
+
+    raw.execute("DELETE FROM run_rounds WHERE run = ?1", rusqlite::params![run.as_str()])
+        .unwrap();
+    let bad_rounds = Reader::open(&path).unwrap().round_records(&round);
+    assert!(
+        matches!(
+            bad_rounds,
+            Err(ReadError::Value {
+                table: "history_records",
+                column: "round",
+                ..
+            })
+        ),
+        "{bad_rounds:?}"
+    );
+}

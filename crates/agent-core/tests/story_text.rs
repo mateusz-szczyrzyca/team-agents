@@ -465,4 +465,55 @@ mod story_text {
         );
         assert!(!text.contains(&format!("(task {id}) (task {id})")), "{text}");
     }
+
+    #[test]
+    fn a_run_whose_head_and_changes_could_not_be_captured_tells_why_in_their_places() {
+        let mut written = Written::default();
+        written.team(&team(1), 0);
+        written.round(&team(1), &round(1), 1);
+        written.run(&team(1), &[round(1)], 1, 2, "work", 0);
+        written
+            .records
+            .retain(|r| !matches!(r.record, agent_core::history::Record::Changes(_)));
+        for record in &mut written.records {
+            if let agent_core::history::Record::Launch(launch) = &mut record.record {
+                launch.head = None;
+            }
+        }
+        written.event(
+            &team(1),
+            3,
+            &[round(1)],
+            HistoryEvent::Lost {
+                task: Some(task(1)),
+                what: LostKind::Record(RecordKind::Launch),
+                cause: LostCause::CaptureHead,
+                detail: "git rev-parse failed".to_owned(),
+            },
+        );
+        written.event(
+            &team(1),
+            12,
+            &[round(1)],
+            HistoryEvent::Lost {
+                task: Some(task(1)),
+                what: LostKind::Record(RecordKind::Changes),
+                cause: LostCause::CaptureChanges,
+                detail: "git status failed".to_owned(),
+            },
+        );
+
+        let text = story(&written.records, PREVIEW);
+
+        assert!(
+            text.contains("at commit unknown (capture_head: git rev-parse failed)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("changes: not recorded (capture_changes: git status failed)\n"),
+            "{text}"
+        );
+        assert!(!text.contains("a launch record is missing"), "{text}");
+        assert!(!text.contains("a changes record is missing"), "{text}");
+    }
 }

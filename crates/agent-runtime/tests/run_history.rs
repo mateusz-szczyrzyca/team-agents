@@ -520,4 +520,90 @@ mod run_history {
         assert_eq!(reader.run(&rig.run).unwrap().unwrap().launch, None);
         assert_eq!(rig.history.health().lost, 1);
     }
+
+    #[tokio::test]
+    async fn failed_head_and_change_capture_write_round_linked_loss_notes_when_history_is_writable() {
+        use agent_core::history::{
+            HistoryEvent, ItemText, LostCause, LostKind, RecordKind, RoundOpening, RoundSubject, TeamStart,
+        };
+        use agent_core::ids::{ItemId, RoundId};
+        use agent_core::state::MergeMode;
+
+        let rig = rig(Tree::Plain, Kind::Database).await;
+        let round: RoundId = "round-20261112-100000-r0r0".parse().unwrap();
+        rig.history.record(Record::Team(Box::new(TeamStart {
+            team: rig.team.clone(),
+            at: now(),
+            repo: "demo".to_owned(),
+            base_branch: BranchName::from_str("main").unwrap(),
+            merge: MergeMode::Autopilot,
+            task_list: "# 1 — Feature\n## 1.1 — Item\nDo it.\n".to_owned(),
+            plan: Vec::new(),
+        })));
+        rig.history.record(Record::Round(Box::new(RoundOpening {
+            round: round.clone(),
+            team: rig.team.clone(),
+            at: now(),
+            subject: RoundSubject::Item(ItemText {
+                item: "1.1".parse::<ItemId>().unwrap(),
+                title: "Item".to_owned(),
+                description: "Do it.".to_owned(),
+                expected_result: None,
+                checks: None,
+            }),
+        })));
+        rig.history.record(Record::Run(Box::new(RunStart {
+            run: rig.run.clone(),
+            team: rig.team.clone(),
+            task: rig.task.clone(),
+            at: now(),
+            agent: AgentIdentity {
+                name: "claude-1".to_owned(),
+                tier: Tier::Normal,
+                cli: CliKind::Claude,
+                model: None,
+            },
+            role: Role::Solo,
+            rounds: vec![round.clone()],
+            why: RunWhy::FirstRun,
+            prompt: "Do the item.".to_owned(),
+            worktree: abs(rig.worktree.path()),
+            branch: BranchName::from_str("main").unwrap(),
+            session: None,
+        })));
+
+        let verdict = rig
+            .engine
+            .run(rig.job("done", "Do the item."), &CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(matches!(verdict, RunVerdict::Finished(_)));
+
+        let records = rig.reader().round_records(&round).unwrap();
+        let notes: Vec<_> = records
+            .iter()
+            .filter_map(|stored| match &stored.record {
+                Record::Event(e) => match &e.event {
+                    HistoryEvent::Lost {
+                        what, cause, detail, ..
+                    } => Some((*what, *cause, detail.as_str(), &stored.rounds)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(notes.len(), 2, "{records:?}");
+        assert_eq!(
+            (notes[0].0, notes[0].1),
+            (LostKind::Record(RecordKind::Launch), LostCause::CaptureHead)
+        );
+        assert_ne!(notes[0].2, "");
+        assert_eq!(notes[0].3, std::slice::from_ref(&round));
+        assert_eq!(
+            (notes[1].0, notes[1].1),
+            (LostKind::Record(RecordKind::Changes), LostCause::CaptureChanges)
+        );
+        assert_ne!(notes[1].2, "");
+        assert_eq!(notes[1].3, std::slice::from_ref(&round));
+    }
 }

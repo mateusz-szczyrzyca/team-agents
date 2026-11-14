@@ -1041,3 +1041,100 @@ async fn a_gate_whose_log_path_contains_a_configured_secret_is_omitted_from_the_
         );
     }
 }
+
+#[tokio::test]
+async fn a_gate_whose_worktree_git_cannot_read_before_it_ran_counts_a_capture_loss_and_notes_it_in_its_round() {
+    use agent_core::history::{
+        AgentIdentity, HistoryEvent, ItemText, MaxTextBytes, Record, RoundOpening, RoundSubject, RunStart, RunWhy,
+        TeamStart,
+    };
+    use agent_core::ids::{BranchName, ItemId, RoundId, RunId};
+    use agent_core::kinds::{CliKind, Role, Tier};
+    use agent_core::state::MergeMode;
+    use agent_runtime::history::{CaptureKind, Cause, DEFAULT_QUEUE, History, HistoryDb, Noting, Reader, Setup};
+
+    let rig = Rig::new().await;
+    let tree = rig.worktree(1);
+    let db_path = rig.home.history_file();
+    let db = HistoryDb::open(&db_path, MaxTextBytes::default()).unwrap();
+    let seen = Arc::new(SeenProblems::default());
+    let started = History::start(
+        Noting::new(db),
+        Setup {
+            reporter: Arc::clone(&seen) as Arc<dyn agent_runtime::history::Reporter>,
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let round: RoundId = "round-20261118-110640-pre1".parse().unwrap();
+    let run_id: RunId = "run-20261118-110640-pre1".parse().unwrap();
+    started.history.record(Record::Team(Box::new(TeamStart {
+        team: team_id(1),
+        at: crate::fixtures::at(0),
+        repo: repo().as_str().to_owned(),
+        base_branch: "main".parse::<BranchName>().unwrap(),
+        merge: MergeMode::Autopilot,
+        task_list: "# 1 — Feature\n## 1.1 — Item\nWork.\n".to_owned(),
+        plan: Vec::new(),
+    })));
+    started.history.record(Record::Round(Box::new(RoundOpening {
+        round: round.clone(),
+        team: team_id(1),
+        at: crate::fixtures::at(0),
+        subject: RoundSubject::Item(ItemText {
+            item: "1.1".parse::<ItemId>().unwrap(),
+            title: "Item".to_owned(),
+            description: "Work.".to_owned(),
+            expected_result: None,
+            checks: None,
+        }),
+    })));
+    started.history.record(Record::Run(Box::new(RunStart {
+        run: run_id,
+        team: team_id(1),
+        task: task(1),
+        at: crate::fixtures::at(0),
+        agent: AgentIdentity {
+            name: "claude-1".to_owned(),
+            tier: Tier::Normal,
+            cli: CliKind::Claude,
+            model: None,
+        },
+        role: Role::Solo,
+        rounds: vec![round.clone()],
+        why: RunWhy::FirstRun,
+        prompt: "Work.".to_owned(),
+        worktree: abs(&tree),
+        branch: "main".parse::<BranchName>().unwrap(),
+        session: None,
+    })));
+    std::fs::remove_dir_all(tree.join(".git")).unwrap();
+    let (job, _answer) = rig.job(1, "true", LONG);
+    let mut service = Service::new(rig.parts()).with_history(started.history.clone());
+
+    let error = service.execute(&job).await.unwrap_err();
+    started.writer.close().unwrap();
+
+    assert!(matches!(error, GateError::Git { .. }), "{error:?}");
+    assert_eq!(started.history.health().lost, 1);
+    let problems = seen.0.lock().unwrap().clone();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].cause, Cause::Capture(CaptureKind::Gate));
+    let read = Reader::open(&db_path).unwrap().round_records(&round).unwrap();
+    let notes: Vec<_> = read
+        .iter()
+        .filter_map(|stored| match &stored.record {
+            Record::Event(event) => match &event.event {
+                HistoryEvent::Lost {
+                    what, cause, detail, ..
+                } => Some((what.as_str(), cause.as_str(), detail.as_str(), &stored.rounds)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notes.len(), 1, "{read:?}");
+    assert_eq!((notes[0].0, notes[0].1), ("gate", "capture_gate"));
+    assert_ne!(notes[0].2, "");
+    assert_eq!(notes[0].3, &[round]);
+}
