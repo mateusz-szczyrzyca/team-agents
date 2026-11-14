@@ -163,3 +163,6 @@ pub(super) fn health_to_tell(history: &History) -> Option<HistoryHealth> {
         (HistoryState::Writing | HistoryState::Unavailable { .. }, _) => Some(health),
     }
 }
+
+#[cfg(test)]
+mod tests;

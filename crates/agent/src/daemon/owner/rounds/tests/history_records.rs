@@ -872,3 +872,95 @@ async fn a_whole_history_is_not_mentioned_by_status() {
 
     assert!(matches!(reply, Reply::Teams { .. }), "{reply:?}");
 }
+
+#[tokio::test]
+async fn the_next_item_of_a_solo_agent_and_the_wake_up_of_a_coordinator_have_their_reasons() {
+    let mut rig = solo_rig().await;
+    rig.start().await;
+    let (team, _) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    rig.item_where("1.2", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let solo: Vec<RunWhy> = rows(&reader(&rig), &team)
+        .into_iter()
+        .filter(|row| row.start.value.role == Role::Solo)
+        .map(|row| row.start.value.why)
+        .collect();
+    assert_eq!(solo[0], RunWhy::FirstRun);
+    assert!(
+        solo.contains(&RunWhy::Item {
+            item: "1.2".parse().unwrap()
+        }),
+        "{solo:?}"
+    );
+
+    let mut rig = team_rig().await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let lead: Vec<RunWhy> = rows(&reader(&rig), &team)
+        .into_iter()
+        .filter(|row| row.start.value.role == Role::Coordinator)
+        .map(|row| row.start.value.why)
+        .collect();
+    assert_eq!(lead[0], RunWhy::FirstRun);
+    assert_eq!(lead[1], RunWhy::WakeUp);
+}
+
+#[tokio::test]
+async fn the_answers_of_the_human_are_the_reason_of_the_run_that_goes_on() {
+    use agent_core::protocol::{AnswerInput, AnswerList, AnswerRequest};
+    use agent_core::questions::Verdict;
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "ask,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let answers = AnswerList::try_from(vec![AnswerInput {
+        question: std::num::NonZeroU32::MIN,
+        verdict: Verdict::from_text("ok").unwrap().unwrap(),
+    }])
+    .unwrap();
+    crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: std::num::NonZeroU32::MIN,
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let solo: Vec<RunRow> = rows(&reader(&rig), &team)
+        .into_iter()
+        .filter(|row| row.start.value.role == Role::Solo)
+        .collect();
+    assert_eq!(
+        solo[0].end.as_ref().unwrap().value.end,
+        RunEnd::Reported {
+            outcome: RunOutcome::Questions
+        }
+    );
+    assert_eq!(solo[1].start.value.why, RunWhy::Answers);
+}
