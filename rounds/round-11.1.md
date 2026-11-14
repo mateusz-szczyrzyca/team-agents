@@ -144,15 +144,21 @@ Depends on: 10 (merged before this round)
     nothing leaves the run "not reported", never zero. `agent log --round <id> --show usage` and `--team <id>
     --show usage` print the tokens by agent and role, by model, and in total; a coordinator's run that worked for
     two rounds is shown in both, marked, and counted once in the team's total. No money: prices are out of scope.
+    With the tokens known, the size of a conversation can end it: `[limits] fresh_session_tokens` (default 0: off)
+    — when the last run of a task read more input than that a step on average, its next run, whatever starts it,
+    is a new session with the briefing of 8.9 and the plan, as after a turn limit (8.10).
     Expected result:
     - Files: `crates/agent-runtime/src/cli/{claude,codex,agy,opencode}.rs`, the usage in
       `crates/agent-core/src/cli.rs` and `crates/agent-core/src/history.rs`, the table and its migration in
       `crates/agent-runtime/src/history/`, `crates/agent/src/commands/log.rs`, recorded output of each CLI under
       the tests' fixtures with the CLI's version, `docs/history.md`, `docs/state.md`.
-    - Adds: the usage of a run in each adapter's output; the usage table (a schema migration); `--show usage`.
+    - Adds: the usage of a run in each adapter's output; the usage table (a schema migration); `--show usage`;
+      `fresh_session_tokens`.
     - Tests: the ground rule on testing these items applies. Per CLI, from its recorded output: one usage report,
       several (a running total, additions), two models in one run, none, a run killed after its first report, a
-      resumed session. The sums: for generated runs (seeded) a round's total is the sum of its runs and a team's
+      resumed session. The threshold: a run just under `fresh_session_tokens` a step is resumed in its session,
+      one just over starts a new one with the briefing, `0` never does, and a run that reported no usage never
+      does. The sums: for generated runs (seeded) a round's total is the sum of its runs and a team's
       total counts every run once. The migration: a database of the schema before this item gains the table and
       loses nothing. End to end with fake CLIs that report usage: `--show usage` of a round and of a team as golden
       text.
