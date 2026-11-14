@@ -148,6 +148,7 @@ impl Owner {
                 team: team.clone(),
                 source,
             })?;
+        self.record_round(team, &round);
         look.events.push(EventKind::RoundOpened {
             team: team.clone(),
             round: round.clone(),

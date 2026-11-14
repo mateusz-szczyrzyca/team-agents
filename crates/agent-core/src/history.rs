@@ -793,7 +793,7 @@ pub struct HistoryHealth {
 
 /// Whether the history is being written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HistoryState {
     /// The database is open and records are written to it.
     Writing,

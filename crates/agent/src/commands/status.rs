@@ -129,8 +129,8 @@ pub(crate) fn render(teams: &[TeamSummary]) -> String {
 }
 
 /// The line `agent status` shows about the history when it is not whole: what it is doing and how many records it lost.
-pub(crate) fn render_history(_history: Option<&HistoryHealth>) -> String {
-    String::new()
+pub(crate) fn render_history(history: Option<&HistoryHealth>) -> String {
+    history.map_or_else(String::new, |health| format!("{health}\n"))
 }
 
 /// A round as one line: its ID, its item and whether it is open or how it ended.

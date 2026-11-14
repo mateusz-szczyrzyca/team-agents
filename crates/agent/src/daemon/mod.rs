@@ -25,7 +25,6 @@ use agent_runtime::editor::{SocketDirs, VscodeOpener};
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
 use agent_runtime::notify::Notifier;
 use agent_runtime::process::Supervisor;
-use agent_runtime::process::error_chain;
 use agent_runtime::prompts::{PromptLoadError, PromptLoader};
 use agent_runtime::questions_prompts::{QuestionsPrompts, QuestionsPromptsError};
 use agent_runtime::run::{EngineParts, RunEngine, RunTimings};
@@ -282,19 +281,8 @@ pub(crate) async fn run_in(
         }
     }
     server::remove(&setup.home).await.map_err(DaemonError::RemoveSocket)?;
-    // Everything that records has ended: what is queued is written, and the thread of the writer is joined.
-    if let Some(writer) = opened.writer {
-        let closed = tokio::task::spawn_blocking(move || writer.close()).await;
-        match closed {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                tracing::error!(error = %error_chain(&error), "the history writer did not close cleanly: records may be missing")
-            }
-            Err(error) => {
-                tracing::error!(error = %error_chain(&error), "the task that closes the history writer failed: records may be missing")
-            }
-        }
-    }
+    // Everything that records has ended.
+    history::close(opened.writer).await;
     owned_end?;
     failure.map_or(Ok(()), Err)
 }

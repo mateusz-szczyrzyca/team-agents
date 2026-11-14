@@ -832,3 +832,43 @@ async fn a_history_of_a_newer_version_is_left_as_it_is_and_the_round_goes_on() {
         "{history:?}"
     );
 }
+#[tokio::test]
+async fn a_history_that_is_off_makes_no_file_and_status_does_not_mention_it() {
+    let mut rig = solo_rig().await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(rig.home.config_file(), format!("{config}[history]\nenabled = false\n")).unwrap();
+    rig.start().await;
+
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+    rig.stop().await.unwrap();
+
+    assert!(!rig.home.history_file().exists());
+    assert!(matches!(reply, Reply::Teams { .. }), "{reply:?}");
+}
+
+#[tokio::test]
+async fn a_whole_history_is_not_mentioned_by_status() {
+    let mut rig = solo_rig().await;
+    rig.start().await;
+
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+    rig.stop().await.unwrap();
+
+    assert!(matches!(reply, Reply::Teams { .. }), "{reply:?}");
+}

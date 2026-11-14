@@ -68,3 +68,9 @@ async fn a_history_that_lost_records_but_is_written_says_how_many() {
 
     assert_eq!(text, format!("{}history: written; 1 record lost\n", render(&teams())));
 }
+#[tokio::test]
+async fn a_reply_of_teams_has_no_line_about_the_history() {
+    let text = printed(Reply::Teams { teams: teams() }).await;
+
+    assert_eq!(text, render(&teams()));
+}

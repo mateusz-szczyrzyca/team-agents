@@ -141,6 +141,7 @@ impl Owner {
             ))));
         }
         self.parts.state = next;
+        self.record_team_start(&request, &id);
         let now = Timestamp::now(&self.parts.clock)?;
         self.publish(now, EventKind::TeamStarted { team: id.clone() });
         for event in started {
