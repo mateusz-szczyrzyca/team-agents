@@ -879,6 +879,12 @@ Depends on: 7
     new_session_per_stage` (default on) the next run starts a new session whose prompt is the briefing of 8.9 with
     the plan in it, so a long piece of work is not one conversation that every turn reads again. A new holder's
     briefing carries the plan too.
+    A conversation also ends when the agent does not end it. From this item on, with `[plan]
+    new_session_on_turn_limit` (default on), a run that reached its turn limit (8.8) is not resumed in its session:
+    the next run starts a new session with the same briefing, so `[limits] max_turns` is also the longest a
+    conversation gets. And a run that ends because its context window is full — until now a failure — is handled
+    the same way, counted with the turn-limit resumes against `turn_limit_resumes`. Both keep the worktree, the
+    branch and the plan; the briefing says why the session is new.
     Expected result:
     - Files: the plan in `crates/agent-core/src/plan.rs` (on the task-list parser), the outcome `NEXT` in
       `crates/agent-core/src/status.rs` and its transitions, the decision in `crates/agent-core/src/decide/`, the
@@ -886,7 +892,8 @@ Depends on: 7
       `crates/agent-runtime/src/history/`, `[plan]` in `crates/agent-core/src/config.rs`, `prompts/harness/plan/`,
       `docs/task-list.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/history.md`.
     - Adds: the plan format and its parser; the versions in the history; the four reasons to send a run back and
-      their limit; `STATUS: NEXT` and the new session per stage; the plan in the briefing; `agent log --show plan`.
+      their limit; `STATUS: NEXT` and the new session per stage; the new session after a turn limit and after a
+      full context window; the plan in the briefing; `agent log --show plan`.
     - Tests: the ground rule on testing these items applies. The parser: every mark; two steps in hand; a step
       given up without a reason; an unknown mark; an ID used twice; a file of stages only; each with its line in
       the error. Versions: a step removed, an ID used again, a done step turned back are found; an added step, a
@@ -895,7 +902,11 @@ Depends on: 7
       that ends `DONE` with a step to do is sent back with that step named and finishes on its second run; three
       runs without a plan ask the human; `STATUS: NEXT` after a complete stage starts a new session (another
       session ID) whose prompt holds the plan and the commits, and with the option off resumes the same session; a
-      `NEXT` with the stage not complete is sent back; every version is in the history once, identical ones not
+      `NEXT` with the stage not complete is sent back; a fake CLI that ends at its turn limit is followed by a run
+      with another session ID whose prompt holds the plan, the commits and the reason, and with the option off by a
+      run that resumes the same session (8.8); a fake CLI that reports a full context window is followed by a new
+      session and the task does not fail, and after `turn_limit_resumes` such ends in a row it fails and the human
+      is told once; every version is in the history once, identical ones not
       twice; a role left out of `[plan] roles` is not sent back; a daemon restarted between the end of a run and
       its sending back sends it back once.
     - Why: a plan outside the conversation is what makes work resumable by anybody — and lets a long task run as
@@ -905,6 +916,8 @@ Depends on: 7
       `agent log --round <id> --show plan` shows the versions of the plan with their times.
     - With a fake CLI that completes stage 1 and ends `NEXT`: the next run has another session ID and its prompt
       shows stage 1 done.
+    - With a fake CLI that ends at its turn limit: the next run has another session ID, works in the same worktree,
+      and its prompt says the session is new because the turns ran out.
 
 9. Dashboard
 Depends on: 8
@@ -965,15 +978,21 @@ Depends on: 10
     nothing leaves the run "not reported", never zero. `agent log --round <id> --show usage` and `--team <id>
     --show usage` print the tokens by agent and role, by model, and in total; a coordinator's run that worked for
     two rounds is shown in both, marked, and counted once in the team's total. No money: prices are out of scope.
+    With the tokens known, the size of a conversation can end it: `[limits] fresh_session_tokens` (default 0: off)
+    — when the last run of a task read more input than that a step on average, its next run, whatever starts it,
+    is a new session with the briefing of 8.9 and the plan, as after a turn limit (8.10).
     Expected result:
     - Files: `crates/agent-runtime/src/cli/{claude,codex,agy,opencode}.rs`, the usage in
       `crates/agent-core/src/cli.rs` and `crates/agent-core/src/history.rs`, the table and its migration in
       `crates/agent-runtime/src/history/`, `crates/agent/src/commands/log.rs`, recorded output of each CLI under
       the tests' fixtures with the CLI's version, `docs/history.md`, `docs/state.md`.
-    - Adds: the usage of a run in each adapter's output; the usage table (a schema migration); `--show usage`.
+    - Adds: the usage of a run in each adapter's output; the usage table (a schema migration); `--show usage`;
+      `fresh_session_tokens`.
     - Tests: the ground rule on testing these items applies. Per CLI, from its recorded output: one usage report,
       several (a running total, additions), two models in one run, none, a run killed after its first report, a
-      resumed session. The sums: for generated runs (seeded) a round's total is the sum of its runs and a team's
+      resumed session. The threshold: a run just under `fresh_session_tokens` a step is resumed in its session,
+      one just over starts a new one with the briefing, `0` never does, and a run that reported no usage never
+      does. The sums: for generated runs (seeded) a round's total is the sum of its runs and a team's
       total counts every run once. The migration: a database of the schema before this item gains the table and
       loses nothing. End to end with fake CLIs that report usage: `--show usage` of a round and of a team as golden
       text.

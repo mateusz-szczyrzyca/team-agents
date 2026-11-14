@@ -582,6 +582,9 @@ GIT_SIGNING_KEY="${GIT_SIGNING_KEY:-}"
 ENV_NOTES_FILE="${ENV_NOTES_FILE:-$AGENTS_HOME/hardware.md}"
 BRANCH_PREFIX="${BRANCH_PREFIX:-agents}"
 CLAUDE_MAX_TURNS="${CLAUDE_MAX_TURNS:-300}"
+# an independent investigation's run that used up its CLI's turns is resumed, at most this many times in a row; then
+# it fails as before
+AGENT_TURN_LIMIT_RESUMES="${AGENT_TURN_LIMIT_RESUMES:-3}"
 # Claude Code's tool search (its ENABLE_TOOL_SEARCH): false = every tool, the agentbus tools included, is given to the
 # model up front. Deferred behind ToolSearch, they were loaded and then run in the shell by claude-haiku, which then
 # worked without its team. Another value is passed on (true, auto, auto:N); "default" leaves it to Claude Code
@@ -3971,6 +3974,14 @@ limit_keep() {
   { grep -iE "$1" || (($? == 1)); } | { grep -viE "$LOCAL_ERROR_PATTERN" || (($? == 1)); }   # 1: none matches
 }
 
+# turn_limit_hit dir run — the run's CLI ended because it used up its turns (Claude Code: a result of
+# error_max_turns): the work is not finished and has not failed
+turn_limit_hit() {
+  local f=$1/out-$2.jsonl
+  [[ -f $f ]] || return 1
+  tail -n 5 "$f" | grep -qE '"subtype": ?"error_max_turns"'
+}
+
 limit_lines() {
   local dir=$1 run=$2 final=$3 pat=$4 f
   # every grep below exits 1 when nothing matches — that is the expected "no limit"
@@ -4482,6 +4493,12 @@ build_prompt() { # id mode qfile next_round
   if [[ -n ${NSBOUNCE_PENDING:-} ]]; then
     ((any)) && printf '\n---\n\n'
     render "$PROMPTS/nostatus-bounce.md"
+    printf '\n'
+    any=1
+  fi
+  if [[ -n ${TLBOUNCE_PENDING:-} ]]; then
+    ((any)) && printf '\n---\n\n'
+    render "$PROMPTS/turn-limit-resume.md"
     printf '\n'
     any=1
   fi
@@ -6810,6 +6827,7 @@ cmd__runner() {
   meta_set "$id" SBOUNCE_PENDING ""
   meta_set "$id" UBOUNCE_PENDING ""
   meta_set "$id" NSBOUNCE_PENDING ""
+  meta_set "$id" TLBOUNCE_PENDING ""
   meta_set "$id" DBOUNCE_PENDING ""
   meta_set "$id" UNPAUSE_PENDING ""
   meta_set "$id" PAUSE_RELEASED ""
@@ -6912,6 +6930,9 @@ cmd__runner() {
     elif [[ $fst == QUESTIONS && $RC == 0 && $HUNG == 0 && -s $qfile ]]; then
       status=waiting; note="the investigator needs clarification"
       meta_set "$id" ROUND "$next_round"
+    elif ((HUNG == 0)) && turn_limit_hit "$dir" "$nrun" \
+        && (($(task_field "$id" TURN_LIMIT_RESUMES | grep -E '^[0-9]+$' || echo 0) < AGENT_TURN_LIMIT_RESUMES)); then
+      status=tlbounce   # out of turns, not failed: the same task goes on (below)
     elif { ((RC != 0)) || [[ -z $fst ]]; } && [[ $(limit_kind "$dir" "$nrun" "$FINAL") == quota ]] \
         && pause_secs=$(quota_reset_seconds "$dir" "$nrun" "$FINAL"); then
       # End this independent attempt, but retain the provider's reset time for capacity admission.
@@ -7117,6 +7138,21 @@ Result: THE WORKER HUNG — there was no activity for $AGENT_HANG_MIN min, so it
       return 0
     fi
   fi
+  # a run that used up its CLI's turns goes on in the same task, AGENT_TURN_LIMIT_RESUMES times in a row at most; its
+  # status never shows failed meanwhile, so whoever watches the task (an investigation's parent) does not replace it
+  if [[ $status == tlbounce ]]; then
+    local tl_count
+    tl_count=$(task_field "$id" TURN_LIMIT_RESUMES | grep -E '^[0-9]+$' || echo 0)
+    meta_set "$id" TURN_LIMIT_RESUMES "$((tl_count + 1))"
+    meta_set "$id" TLBOUNCE_PENDING 1
+    RUNNER_DONE=1
+    act "$id" info "↩ the run used up its CLI's turns — resumed to go on with its work ($((tl_count + 1))/$AGENT_TURN_LIMIT_RESUMES)"
+    log_info turn_limit_resumed "task=$id" "agent=$AGENT" "count=$((tl_count + 1))"
+    start_runner "$id" resume || log_error resume_failed "task=$id" "reason=the CLI's turn limit"
+    dispatch; dispatch_helpers
+    return 0
+  fi
+  [[ -z $(task_field "$id" TURN_LIMIT_RESUMES) ]] || meta_set "$id" TURN_LIMIT_RESUMES ""   # another end: not in a row
   # --autopilot: a turn without STATUS goes back to the agent — continue as planned; a second in a row asks the human
   if [[ $status == nsbounce ]]; then
     meta_set "$id" NOSTATUS_BOUNCED 1
