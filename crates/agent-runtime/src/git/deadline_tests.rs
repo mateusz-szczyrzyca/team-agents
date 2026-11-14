@@ -91,7 +91,8 @@ async fn a_snapshot_deadline_kills_git_and_its_descendant_then_returns() {
         tokio::task::yield_now().await;
     }
     let pids = std::fs::read_to_string(ready).unwrap();
-    advance(Duration::from_secs(2)).await;
+    // Tokio rounds timer deadlines up to milliseconds; let the paused clock deliver the timer.
+    advance(Duration::from_millis(2001)).await;
     for _ in 0..100_000 {
         if running.is_finished() {
             break;
