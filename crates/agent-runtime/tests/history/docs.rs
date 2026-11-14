@@ -2,6 +2,7 @@
 //! the page run against a round and give what the reading API gives.
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::path::Path;
 
 use agent_core::ids::{RoundId, RunId, TeamId};
@@ -230,7 +231,7 @@ fn what_the_queries_of_the_page_print_for_a_round_is_pinned() {
 
     let mut printed = String::new();
     for (name, sql) in queries(&page()) {
-        printed.push_str(&format!("-- {name}\n"));
+        writeln!(printed, "-- {name}").unwrap();
         for row in run_query(&raw, &sql, &names) {
             printed.push_str(&row.join(" | "));
             printed.push('\n');
