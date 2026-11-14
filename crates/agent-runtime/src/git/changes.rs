@@ -1,16 +1,18 @@
 //! What a run changed, as git says it: the commits between two heads with their author time, and the files the worktree
 //! holds that no commit does. The history records it at the end of every run.
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use crate::process::{Captured, ExitReport};
 use agent_core::config::EnvName;
 use agent_core::decide::checks::FileChange;
 use agent_core::history::CommitRecord;
 use agent_core::state::{CommitId, Timestamp};
 
 use super::range::{join_changes, parse_name_status, parse_numstat};
-use super::{Git, GitError, GitOperation, Reach, Revision, ScratchError, arg, text, whole};
+use super::{Git, GitError, GitOperation, Reach, Revision, ScratchError, arg, failed, text, whole};
 
 /// What a run changed in its worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,9 +155,10 @@ impl Git {
     /// With an index of its own that nothing else sees: the head's tree read in, every file of the worktree added, and
     /// the difference between that and the head.
     async fn read_tree_changes(&self) -> Result<Vec<FileChange>, GitError> {
-        self.run_ok(GitOperation::ReadTree, Reach::Local, &[arg("read-tree"), arg("HEAD")])
+        let overrides = self.capture_overrides().await?;
+        self.run_scratch(GitOperation::ReadTree, &overrides, &[arg("read-tree"), arg("HEAD")])
             .await?;
-        self.run_ok(GitOperation::Add, Reach::Local, &[arg("add"), arg("-A"), arg("--")])
+        self.run_scratch(GitOperation::Add, &overrides, &[arg("add"), arg("-A"), arg("--")])
             .await?;
         let operation = GitOperation::Diff;
         let mut listed = Vec::new();
@@ -171,7 +174,7 @@ impl Git {
                 arg("HEAD"),
                 arg("--"),
             ];
-            let captured = self.run_ok(operation, Reach::Local, &args).await?;
+            let captured = self.run_scratch(operation, &overrides, &args).await?;
             listed.push(whole(operation, &captured.stdout, self.limits)?.to_vec());
         }
         match listed.as_slice() {
@@ -185,6 +188,55 @@ impl Git {
                 output: String::new(),
             }),
         }
+    }
+
+    /// Disable every configured filter and the filesystem monitor for this scratch snapshot. The snapshot records
+    /// worktree bytes, not the output of arbitrary programs from repository or user configuration.
+    async fn capture_overrides(&self) -> Result<Vec<OsString>, GitError> {
+        let operation = GitOperation::Config;
+        let captured = self
+            .run(
+                operation,
+                Reach::Local,
+                &[
+                    arg("config"),
+                    arg("--null"),
+                    arg("--name-only"),
+                    arg("--get-regexp"),
+                    arg(r"^filter\..*\.(clean|process|required)$"),
+                ],
+            )
+            .await?;
+        let mut overrides = vec![OsString::from("-c"), OsString::from("core.fsmonitor=false")];
+        // `--get-regexp` returns 1 when there are no matching keys, an ordinary repository without filters.
+        if captured.exit == (ExitReport::Exited { code: 1 }) {
+            return Ok(overrides);
+        }
+        if !captured.exit.succeeded() {
+            return Err(failed(operation, &captured));
+        }
+        whole(operation, &captured.stdout, self.limits)?;
+        for key in text(operation, &captured.stdout)?.split_terminator('\0') {
+            let value = if key.ends_with(".required") { "false" } else { "" };
+            overrides.push(OsString::from("-c"));
+            overrides.push(OsString::from(format!("{key}={value}")));
+        }
+        Ok(overrides)
+    }
+
+    /// Run a scratch-index command with the same extension overrides on every operation.
+    async fn run_scratch(
+        &self,
+        operation: GitOperation,
+        overrides: &[OsString],
+        args: &[&OsStr],
+    ) -> Result<Captured, GitError> {
+        let args: Vec<&OsStr> = overrides
+            .iter()
+            .map(OsString::as_os_str)
+            .chain(args.iter().copied())
+            .collect();
+        self.run_ok(operation, Reach::Local, &args).await
     }
 }
 

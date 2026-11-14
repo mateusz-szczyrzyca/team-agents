@@ -24,6 +24,7 @@ Each record has its time. Everything is keyed by its team and, where it has one,
 | a **run** starting | the owner makes the run ready: its task, agent (name, tier, CLI, model), role and rounds; why it starts; the whole prompt; the worktree, the branch; the session | `runs`, `run_rounds` |
 | the **launch** of its process | the engine starts the CLI: the command line the CLI saw, the directory, the commit the worktree was at, the *names* — never the values — of the environment variables the daemon set | `launches` |
 | a **step** | every event of the CLI's output, as the activity log gets it: a message, a command, a file edit, a bus call, another tool call, an error, information about the run, and a control of the human used while the run goes — numbered in the run | `steps` |
+| a **session** observed | a CLI announces a session that differs from the one already known; the original launch session remains in `runs.session` | `run_sessions` |
 | the **end** of a run | how it ended, the agent's final message whole | `run_ends` |
 | what a run **changed** | the process is gone: from git, the commits between the two heads (hash, subject, author time), the files that differ (added, deleted, modified, renamed from where; lines added and removed; binary or not), and what it left uncommitted in the worktree | `run_changes`, `commits`, `changed_files` |
 
@@ -273,7 +274,9 @@ between the heads, and both are empty.
 | `lines_added`, `lines_removed` | INTEGER | the lines it added and took away (a replaced line counts once in each); `NULL` for a binary file |
 
 The files are read through an index of a scratch directory, so reading them changes nothing in the repository: the files of
-`uncommitted` are what `git status` shows as changed or untracked, with the lines counted by `git diff -M`.
+`uncommitted` are changed or untracked files, with the lines counted by `git diff -M`. The snapshot disables configured
+clean/process filters and filesystem monitors: it observes worktree bytes without running those external commands. A
+repository whose clean filter transforms content can therefore show differences that its normal filtered `git diff` hides.
 
 ## Indexes
 

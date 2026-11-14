@@ -200,6 +200,9 @@ pub enum GitOperation {
     /// `git add`, to put the files of the worktree in the scratch index.
     #[strum(serialize = "add")]
     Add,
+    /// `git config`, to discover extension commands that history must disable.
+    #[strum(serialize = "config")]
+    Config,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.
