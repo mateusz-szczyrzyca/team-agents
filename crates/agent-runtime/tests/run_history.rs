@@ -447,4 +447,23 @@ mod run_history {
             Vec::<agent_core::history::RunSession>::new()
         );
     }
+    #[tokio::test]
+    async fn failed_head_and_change_capture_are_visible_as_losses_without_changing_the_run() {
+        let rig = rig(Tree::Plain, Kind::Database).await;
+
+        assert_eq!(rig.run("done", "Do the item.").await, done());
+
+        assert_eq!(rig.history.health().lost, 2);
+        assert_eq!(rig.reader().changes(&rig.run).unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn unavailable_history_counts_the_skipped_capture_without_trying_the_invalid_repository() {
+        let rig = rig(Tree::Plain, Kind::Broken).await;
+
+        assert_eq!(rig.run("done", "Do the item.").await, done());
+
+        // Start, launch, three steps and one skipped changes record. There is no extra head-capture failure.
+        assert_eq!(rig.history.health().lost, 6);
+    }
 }

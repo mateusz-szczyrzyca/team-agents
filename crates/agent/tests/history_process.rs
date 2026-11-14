@@ -372,4 +372,69 @@ mod history_process {
             "ok"
         );
     }
+    /// Restore fixture permissions before its temporary home is removed.
+    struct ReadOnlyScratch(PathBuf);
+
+    impl Drop for ReadOnlyScratch {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt as _;
+            if let Err(error) = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700)) {
+                eprintln!("cannot restore scratch directory permissions: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn failed_git_snapshots_report_once_and_status_counts_each_missing_record() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let mut guarded = FailureWorld(World::new("done"));
+        let world = &mut guarded.0;
+        let scratch = world.home.join("readonly-scratch");
+        std::fs::create_dir(&scratch).unwrap();
+        std::fs::set_permissions(&scratch, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let _restore = ReadOnlyScratch(scratch.clone());
+        assert_eq!(
+            std::fs::File::create(scratch.join("probe")).unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        let log = std::fs::File::create(world.log()).unwrap();
+        world.daemon = Some(
+            agent()
+                .args(["daemon", "--prompts-dir"])
+                .arg(prompts())
+                .env("AGENTS_HOME", &world.home)
+                .env("TMPDIR", &scratch)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(log)
+                .spawn()
+                .unwrap(),
+        );
+        eventually("the socket", || world.home.join("agent.sock").exists());
+        for _ in 0..2 {
+            let output = world.agent(&["run", "claude-1", "Finish the fixture task."]);
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        }
+        let status = world.status_where("both tasks done and missing snapshots counted", |status| {
+            status
+                .lines()
+                .filter(|line| line.contains("solo") && line.ends_with("done"))
+                .count()
+                == 2
+                && status.contains("history:")
+                && lost_records(status) == 2
+        });
+        assert_eq!(lost_records(&status), 2);
+        world.end(Signal::TERM);
+        let log = std::fs::read_to_string(world.log()).unwrap();
+        assert_eq!(log.matches("capture_changes").count(), 1, "{log}");
+        let reader = Reader::open(&world.home.join("history.db")).unwrap();
+        for team in world.state().teams() {
+            let runs = reader.runs_of_team(team.id()).unwrap();
+            assert_eq!(runs.len(), 1);
+            assert!(runs[0].end.is_some());
+            assert_eq!(reader.changes(&runs[0].start.value.run).unwrap(), None);
+        }
+    }
 }
