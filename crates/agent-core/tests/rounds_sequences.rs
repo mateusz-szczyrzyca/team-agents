@@ -9,7 +9,7 @@ mod world;
 #[cfg(test)]
 mod rounds_sequences {
     use agent_core::state::{ItemPhase, NewRun, ReviewOutcome, RoundEnd, RunEnd, State};
-    use agent_core::status::ReviewVerdict;
+    use agent_core::status::{ReviewVerdict, TaskStatus};
     use rand::rngs::Xoshiro256PlusPlus;
     use rand::{Rng, RngExt, SeedableRng};
 
@@ -99,6 +99,10 @@ mod rounds_sequences {
             } => state
                 .open_round(&team_id(*team), round(*id), for_item.map(item), at(step))
                 .is_ok(),
+            Operation::Close {
+                round: id,
+                how: RoundEnd::Abandoned,
+            } => close_abandoned(state, *id, step),
             Operation::Close { round: id, how } => state.close_round(&round(*id), at(step + 100), *how).is_ok(),
             Operation::Advance { team, item: id } => advance(state, *team, id, step),
             Operation::Begin {
@@ -120,6 +124,42 @@ mod rounds_sequences {
                 .find_task_mut(&task(*owner))
                 .is_some_and(|(_, mut member)| member.end_run(at(step + 100), RunEnd::Stopped).is_ok()),
         }
+    }
+
+    /// Stops the crew before abandoning its round `id`; a refusal leaves `state` untouched.
+    fn close_abandoned(state: &mut State, id: u32, step: u32) -> bool {
+        let mut next = state.clone();
+        let Some(team) = next.teams().iter().find(|team| team.round(&round(id)).is_some()) else {
+            return false;
+        };
+        let tasks: Vec<_> = team
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member.task().clone())
+            .collect();
+        for task in tasks {
+            let Some((_, mut member)) = next.find_task_mut(&task) else {
+                return false;
+            };
+            if matches!(
+                member.status(),
+                TaskStatus::Stopped | TaskStatus::Failed | TaskStatus::Done
+            ) {
+                continue;
+            }
+            if member.transition(TaskStatus::Stopped).is_err() {
+                return false;
+            }
+        }
+        if next
+            .close_round(&round(id), at(step + 100), RoundEnd::Abandoned)
+            .is_err()
+        {
+            return false;
+        }
+        *state = next;
+        true
     }
 
     /// Moves item `id` of team `team` one phase on, along the phases an item takes to be merged.
