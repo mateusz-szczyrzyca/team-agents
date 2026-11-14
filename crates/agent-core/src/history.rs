@@ -64,9 +64,12 @@ impl MaxTextBytes {
     }
 }
 
+/// [`DEFAULT_MAX_TEXT_BYTES`] as the value the limit holds; a zero would not compile.
+const DEFAULT_LIMIT: NonZeroU32 = NonZeroU32::new(DEFAULT_MAX_TEXT_BYTES).unwrap();
+
 impl Default for MaxTextBytes {
     fn default() -> Self {
-        Self(NonZeroU32::new(DEFAULT_MAX_TEXT_BYTES).unwrap_or(NonZeroU32::MIN))
+        Self(DEFAULT_LIMIT)
     }
 }
 
