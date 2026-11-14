@@ -318,6 +318,29 @@ mod rounds {
         }
     }
 
+    #[test]
+    fn an_unfinished_round_cannot_be_abandoned_while_its_team_can_work() {
+        for phase in [PhaseKind::InProgress, PhaseKind::InReview] {
+            let mut state = state();
+            state
+                .open_round(&team_id(1), round(1), Some(item("1.2")), at(1))
+                .unwrap();
+            drive(&mut state, 1, "1.2", phase);
+
+            let err = state.close_round(&round(1), at(60), RoundEnd::Abandoned).unwrap_err();
+
+            assert_eq!(
+                err,
+                CloseRoundError::EndDoesNotFit {
+                    round: round(1),
+                    how: RoundEnd::Abandoned,
+                    item: Some(phase),
+                }
+            );
+            assert!(team(&state, 1).round(&round(1)).unwrap().is_open());
+        }
+    }
+
     // ---- the items of a round -----------------------------------------------------------------------------------
 
     #[test]
@@ -468,6 +491,17 @@ mod rounds {
 
         assert_eq!(as_json(&state), value);
         assert_eq!(team(&state, 1).rounds().len(), 2);
+    }
+
+    #[test]
+    fn an_abandoned_round_of_an_unfinished_item_whose_team_can_work_is_refused_when_read() {
+        let mut value = full();
+        value["teams"][0]["rounds"][1]["state"] =
+            json!({"status": "closed", "at": "2026-11-11T19:31:00Z", "how": "abandoned"});
+
+        let err = read(&value);
+
+        assert!(matches!(err, StateError::Malformed { .. }), "{err:?}");
     }
 
     #[test]

@@ -375,6 +375,24 @@ fn the_round_of_a_whole_list_cannot_end_as_merged_or_approved_but_is_abandoned_w
     assert_eq!(team.round(&round_id(1)).unwrap().ended(), Some(RoundEnd::Abandoned));
 }
 
+#[test]
+fn the_round_of_a_whole_list_cannot_be_abandoned_while_its_team_can_work() {
+    let mut team = team_without_items();
+    team.open_round(round_id(1), None, at(1)).unwrap();
+
+    let err = team.close_round(&round_id(1), at(2), RoundEnd::Abandoned).unwrap_err();
+
+    assert_eq!(
+        err,
+        CloseRoundError::EndDoesNotFit {
+            round: round_id(1),
+            how: RoundEnd::Abandoned,
+            item: None,
+        }
+    );
+    assert!(team.round(&round_id(1)).unwrap().is_open());
+}
+
 // ---- moving an item on --------------------------------------------------------------------------------------------
 
 #[test]

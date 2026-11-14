@@ -1799,6 +1799,68 @@ async fn a_stop_that_leaves_the_team_nobody_to_work_abandons_its_open_rounds_and
 }
 
 #[tokio::test]
+async fn resume_is_refused_after_a_full_stop_abandoned_the_teams_rounds() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+    ]);
+    f.start().await;
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "claude-2"], PARALLEL).await;
+    for task in &tasks {
+        f.status_is(task, TaskStatus::Waiting).await;
+    }
+    f.connect()
+        .await
+        .request(
+            Client::Cli,
+            Command::Stop(agent_core::protocol::ControlRequest {
+                target: Target::Team(team.clone()),
+            }),
+        )
+        .await
+        .unwrap();
+    let stopped = f
+        .state_where("the rounds to be abandoned", |state| {
+            ends_of(state) == [Some(agent_core::state::RoundEnd::Abandoned); 2]
+        })
+        .await;
+
+    let resumed = f
+        .connect()
+        .await
+        .request(
+            Client::Cli,
+            Command::Resume(agent_core::protocol::ControlRequest {
+                target: Target::Team(team),
+            }),
+        )
+        .await;
+
+    let failure = match resumed {
+        Err(ClientError::Refused(failure)) => failure,
+        other => panic!("a refusal was expected: {other:?}"),
+    };
+    assert_eq!(failure.kind, FailureKind::Invalid);
+    assert!(
+        failure.message.contains("was stopped; start a new team"),
+        "{}",
+        failure.message
+    );
+    let after = f.state();
+    for task in &tasks {
+        assert_eq!(task_status(&after, task), TaskStatus::Stopped);
+        assert_eq!(
+            after.find_task(task).unwrap().member.runs().len(),
+            stopped.find_task(task).unwrap().member.runs().len()
+        );
+    }
+    f.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn two_teams_started_at_once_never_share_a_round() {
     let mut f = Fixture::new(&[
         investigator("inv-opus", "sleep"),
