@@ -86,8 +86,8 @@ fn the_flag_names_the_coordinator_and_wins_over_the_line() {
     assert_eq!(
         plan,
         [
-            entry("a2", 2, Role::Coordinator, HowChosen::NamedByFlag),
             entry("a1", 1, Role::Member, HowChosen::Named),
+            entry("a2", 2, Role::Coordinator, HowChosen::NamedByFlag),
         ]
     );
 }
