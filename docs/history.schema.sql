@@ -148,7 +148,6 @@ CREATE TABLE run_ends (
 
 CREATE TABLE run_changes (
     run TEXT NOT NULL PRIMARY KEY REFERENCES runs (run),
-    at TEXT NOT NULL,
     head_before TEXT,
     head_after TEXT
 ) STRICT, WITHOUT ROWID;
