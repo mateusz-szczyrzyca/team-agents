@@ -868,6 +868,32 @@ fn read_end(snapshot: &Transaction<'_>, run: &RunId) -> Result<Option<Stored<Run
     }))
 }
 
+fn all_absent(here: &Row_, fields: &[(&'static str, &Option<String>)]) -> Result<(), ReadError> {
+    for (column, value) in fields {
+        here.absent(column, value.as_ref())?;
+    }
+    Ok(())
+}
+
+fn decode_control(
+    here: &Row_,
+    action: Option<&str>,
+    client: Option<&str>,
+    login: Option<&str>,
+) -> Result<ActivityEvent, ReadError> {
+    let action = here.value("action", ControlAction::from_str(here.needed("action", action)?))?;
+    let by = match here.value("client", ClientKind::from_str(here.needed("client", client)?))? {
+        ClientKind::Cli => {
+            here.absent("login", login.as_ref())?;
+            Client::Cli
+        }
+        ClientKind::Dashboard => Client::Dashboard {
+            login: here.value("login", TailscaleLogin::from_str(here.needed("login", login)?))?,
+        },
+    };
+    Ok(ActivityEvent::Control { action, by })
+}
+
 fn decode_step(run: &RunId, row: &Row<'_>) -> Result<Stored<Step>, ReadError> {
     let table = query("steps");
     let number: i64 = row.get(0).map_err(&table)?;
@@ -886,14 +912,17 @@ fn decode_step(run: &RunId, row: &Row<'_>) -> Result<Stored<Step>, ReadError> {
     let event = match kind {
         StepKind::Message | StepKind::Command | StepKind::Error | StepKind::Info => {
             let own = here.needed("text", text.as_deref())?.to_owned();
-            for (column, value) in [
-                ("path", &path),
-                ("tool", &tool),
-                ("detail", &detail),
-                ("action", &action),
-            ] {
-                here.absent(column, value.as_ref())?;
-            }
+            all_absent(
+                &here,
+                &[
+                    ("path", &path),
+                    ("tool", &tool),
+                    ("detail", &detail),
+                    ("action", &action),
+                    ("client", &client),
+                    ("login", &login),
+                ],
+            )?;
             match kind {
                 StepKind::Message => ActivityEvent::Text(own),
                 StepKind::Command => ActivityEvent::Command(own),
@@ -904,13 +933,32 @@ fn decode_step(run: &RunId, row: &Row<'_>) -> Result<Stored<Step>, ReadError> {
             }
         }
         StepKind::FileEdit => {
-            here.absent("text", text.as_ref())?;
+            all_absent(
+                &here,
+                &[
+                    ("text", &text),
+                    ("tool", &tool),
+                    ("detail", &detail),
+                    ("action", &action),
+                    ("client", &client),
+                    ("login", &login),
+                ],
+            )?;
             ActivityEvent::FileEdit {
                 path: here.needed("path", path.as_deref())?.to_owned(),
             }
         }
         StepKind::BusCall | StepKind::ToolCall => {
-            here.absent("text", text.as_ref())?;
+            all_absent(
+                &here,
+                &[
+                    ("text", &text),
+                    ("path", &path),
+                    ("action", &action),
+                    ("client", &client),
+                    ("login", &login),
+                ],
+            )?;
             let name = here.needed("tool", tool.as_deref())?.to_owned();
             let detail = here.needed("detail", detail.as_deref())?.to_owned();
             if matches!(kind, StepKind::BusCall) {
@@ -923,27 +971,11 @@ fn decode_step(run: &RunId, row: &Row<'_>) -> Result<Stored<Step>, ReadError> {
             }
         }
         StepKind::Control => {
-            here.absent("text", text.as_ref())?;
-            let action = here.value(
-                "action",
-                ControlAction::from_str(here.needed("action", action.as_deref())?),
+            all_absent(
+                &here,
+                &[("text", &text), ("path", &path), ("tool", &tool), ("detail", &detail)],
             )?;
-            let by = match here.value(
-                "client",
-                ClientKind::from_str(here.needed("client", client.as_deref())?),
-            )? {
-                ClientKind::Cli => {
-                    here.absent("login", login.as_ref())?;
-                    Client::Cli
-                }
-                ClientKind::Dashboard => Client::Dashboard {
-                    login: here.value(
-                        "login",
-                        TailscaleLogin::from_str(here.needed("login", login.as_deref())?),
-                    )?,
-                },
-            };
-            ActivityEvent::Control { action, by }
+            decode_control(&here, action.as_deref(), client.as_deref(), login.as_deref())?
         }
     };
     let number = here.value("n", u32::try_from(number))?;
