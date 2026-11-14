@@ -81,7 +81,7 @@ Both `Config` and `TaskList` take text, not paths: reading `agents.toml`, `secre
 
 | Module | Types |
 |---|---|
-| `state` | `State` (with its schema version), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `ChecksRecord` (the checks' record of a lead, a file of its task directory), `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
+| `state` | `State` (with its schema version, version 1 migrated as it is read), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `Round`, `RoundLife`, `RoundEnd`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `ChecksRecord` (the checks' record of a lead, a file of its task directory), `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
 | `protocol` | `Request`, `Command`, `Response`, `Reply`, `Failure`, `Event`, `EventKind`, `Frame`, with the protocol version and `ProtocolError`. JSON lines over the daemon's socket. See [`state.md`](state.md) |
 | `questions` | `QuestionsFile`, `Entry`, `Verdict`: parsing and rendering of the questions file, the `ok` verdict, the `**ANSWERED**` marker. See [`state.md`](state.md) |
 
@@ -144,6 +144,7 @@ engine relies on:
 | `decide::assign` | `next_assignments`: which item goes to which member next — one item per member, the items of a feature in order (the next starts when the previous is merged, with `--no-merge` approved), features in parallel once the features they depend on are merged; `first_free_worker` for `delegate` |
 | `decide::checks` | `assess`: from the facts of a round's diff (its files, the files whose mode changed, its commits with their parents, the lines it added, the description of its pull request) and the repository's `checks` lists, the `Issue`s — an existing test file that loses lines or is removed or renamed and a protected file that changes (only the human may allow them); a test of a `RED:` commit edited by a later commit unless a named `TEST-FIX:`; production code with no added test line and no `Test-First: not possible — <reason>`; an added line that skips a test, suppresses a lint or asks whether the code runs under test, in a file the description does not name (the built-in `markers` table per extension). See "Round checks before the review" |
 | `decide::round` | `RoundState`, `RoundEvent` and `RoundState::transition`: member work, integration, gate green at the head, pull request published for that head, two reviews, merge or hand-over to the human, item done; "changes requested" starts a fix pass until `[review] fix_passes`, then the human is asked, and the answer grants one more pass. Each transition says what the daemon does next (`RoundAction`); `Checking` is the phase before the reviews are asked: what the issues of the checks come to — the reviews start, the round goes back to the team (at most `[review] check_passes` times) or the human is asked |
+| `decide::round::rounds_of_run` | `rounds_of_run`: from the role of a task, why its run starts (`RunStart`: its own work, a request for a worker, a review, a continuation) and what the state says of its team's rounds (`TaskRounds`), the rounds the run works for. See "Rounds" |
 | `decide::outcome` | `classify_outcome`: from the final message, the exit status, the error tail and who ended the run, the `RunEnd` to record — reported status, no status, quota exhausted (with the reset time when the CLI gives one), rate limited, hung, stopped — and the `Pause` it implies; `after_hang` for the watchdog's strikes. The CLIs' outputs are fixtures in `crates/agent-core/tests/fixtures/cli-outputs/` |
 
 The daemon feeds these functions what it observed and carries out what they return; none of them touches a file, a process or
@@ -189,7 +190,7 @@ end does (`settle.rs`):
 | The run ended | The task goes to | And |
 |---|---|---|
 | `STATUS: DONE` | `done` for a solo task and a review, `waiting` for a coordinator, member or worker | |
-| `STATUS: QUESTIONS` | `questions`, when `tasks/<task>/questions-<round>.md` is there and parses | the round is recorded and the human told; a missing or unreadable file fails the task and says why |
+| `STATUS: QUESTIONS` | `questions`, when `tasks/<task>/questions-<number>.md` is there and parses | the questions are recorded and the human told; a missing or unreadable file fails the task and says why |
 | `STATUS: FAILED`, no `STATUS:` line | `failed` | the human is told |
 | `STATUS: SLEEPING` / `EXCLUDED` | `waiting` / `done` | |
 | quota exhausted, rate limited | `paused` | woken at the time the CLI gave (plus a minute), else after the `[limits]` minutes; the human is told |
@@ -212,7 +213,7 @@ connection; a subscriber that falls 1024 events behind is let go (it subscribes 
 
 **The home**: `agents.toml`, `secrets.toml` and `prompts/` (put there by the human); `state.json`, `daemon.lock`,
 `agent.sock`; `tasks/<task>/activity.jsonl`, `tasks/<task>/runs/<run>/` (the output of a run and the files its CLI is
-configured with, `prompt.md` for a prompt too long for a command line) and `tasks/<task>/questions-<round>.md`;
+configured with, `prompt.md` for a prompt too long for a command line) and `tasks/<task>/questions-<number>.md`;
 `tasks/<task>/gate-<n>.log` and `tasks/<task>/gate.json` (below); `tasks/<reviewer task>/review-pr<N>-pass<K>.md` (the reports of the reviews, below); `worktrees/<repo>/<task>/`; `notifications/`.
 
 ### Teams (`agent run` and the team's life)
@@ -292,10 +293,11 @@ request, two investigators from outside the team review it, and their verdicts l
 fix pass, or to a question for the human. Without `github_token` in `secrets.toml` the autopilot is off (the daemon says so
 at its start) and the items stay where they are; `[github] api_base` points it at another API ([`configuration.md`](configuration.md)).
 
-**Nothing of a round lives in memory only.** Where a round is, is worked out at every look at a team from the items' phases
-and reviews, the runs and questions of the tasks and two files of the task directories (`daemon/merge.rs`), so a daemon that
-restarts goes on. What is in memory is only when to try again, what the human was told once, how often a report was sent back
-and when an approved pull request was last read.
+**Nothing of a round lives in memory only.** A round is a thing of the state, with an ID (see "Rounds" below). Where it is
+in its life is worked out at every look at a team from the items' phases and reviews, the runs and questions of the tasks and
+two files of the task directories (`daemon/merge.rs`), so a daemon that restarts goes on with the same round. What is in memory
+is only when to try again, what the human was told once, how often a report was sent back and when an approved pull request was
+last read.
 
 **Publishing** (`daemon/pr.rs`, `plan_publications`). A pull request is made of the branch of the lead: the coordinator's, which
 integrates the members' branches and gets the gate green on it, or a solo agent's item branch. A branch is published when the lead
@@ -308,7 +310,7 @@ time: items integrated into the same head share it and move together; a finished
 same branch (a solo agent's items each have a branch). A branch that cannot be published is tried again after a minute, and the
 human is told once.
 
-**Reviewers** (`daemon/review.rs`). The round of an item in review starts empty and is filled once (`ItemMut::ask_reviews`) with
+**Reviewers** (`daemon/review.rs`). The review pass of an item in review starts empty and is filled once (`ItemMut::ask_reviews`) with
 two investigators drawn at random among the free ones: configured, not in the crew, with no task that is going, asking or paused,
 no review to give and no team to lead that is not finished; the pull request waits for them. A reviewer is a task of the team
 with a worktree at the head (a new branch of its own), one per investigator: it ends `waiting`, not `done`, is given the next
@@ -319,8 +321,8 @@ the pull request with its expected result and checks. Its final message is the r
 report is kept in `tasks/<reviewer>/review-pr<N>-pass<K>.md` (`K` fix passes the pull request had), posted on the pull request
 as a **comment review** with the verdict in its body (the harness opens the pull request and posts with one account, which
 GitHub does not let approve it) and recorded in every item of the pull request (`review_submitted`). A report is matched with
-the review it answers by the time its run started, so one that comes after the round was decided is kept and posted, not taken
-for the next round.
+the review it answers by the time its run started, so one that comes after the review pass was decided is kept and posted, not
+taken for the next review pass.
 
 **What a verdict leads to** (`daemon/merge.rs`, the round machine). The first approval waits for the second; two approvals mean
 `approved`; a request for changes starts the next fix pass, until `[review] fix_passes`, and then asks the human.
@@ -346,6 +348,52 @@ minutes): a call that hangs leaves the socket unanswered that long. The merge is
 else pushed after the reviews is merged as well. A review that cannot be posted counts and is only logged. A reviewer whose run
 fails or is stopped is not replaced: the human resumes it. A solo agent that takes the next item while its first is in review
 switches to its fix pass's branch by what the prompt says, not by the daemon. The reports are cut at 20,000 characters.
+
+### Rounds
+
+A **round** is the work of one team on one item of its task list, from the item's start to its merge (with `--no-merge`: to its
+approval) — or the whole work of a team whose list has no items. One round, one branch of the lead, one pull request. It has an ID
+(`round-YYYYMMDD-HHMMSS-xxxx`, `RoundId`) and is a record of the state: `{id, item?, opened_at, state}`, the state `open`, or
+`closed` with a time and how it ended — `merged`, `approved` (`--no-merge`) or `abandoned`. A team's ID and a round's ID are the two
+keys that everything else (logs, tasks, agents, worktrees, prompts) is found by. The word "round" means this and nothing else; the
+questions of a task are numbered (`questions-<number>.md`) and the reviews asked for one head of a pull request are a review pass.
+
+| When | What the owner does (`owner/round_state.rs`) | Event |
+|---|---|---|
+| a team starts | opens the round of every item given to a member at the start; for a list without items, the one round of the whole work | `round_opened` |
+| an item is given to a member for the first time (`assign_items`) | opens its round, then moves the item on | `round_opened`, then `item_status` |
+| an item is given again (its member left) | nothing: an item has one round, which stays | |
+| the pull request of an item is merged — by the daemon or by the human | closes the round `merged`, after the item is `done` as merged | `round_closed` |
+| both reviews approve and the team does not merge by itself (`--no-merge`) | closes the round `approved`; the human's merge later completes the item and leaves the round as it is | `round_closed` |
+| a `stop` leaves every task of a team stopped, failed or done | closes the team's open rounds `abandoned` | `round_closed` |
+| a team ends (all its items done; for a list without items, its lead said `DONE`) | closes the rounds still open `abandoned`: nothing merged the round of a whole list | `round_closed` |
+
+A closed round is never opened again. A task that is resumed after a stop goes on with the item it had, in the round it had, which is
+closed (`abandoned`): the runs that go on name it. A round is kept for ever, so the state shows what happened.
+
+**The rounds of a run** are decided when the run starts, by a pure function of the task's role and of why the run starts
+(`decide::round::rounds_of_run`), and recorded with the run (`Run::rounds`, `Team::begin_run`):
+
+| The task | The run works for |
+|---|---|
+| a member, or a solo agent | the round of its item; none while it has no item. A solo agent on a list without items: the one round of the list |
+| the coordinator | every round of its team that is open |
+| a reviewer | the round of the pull request it reviews |
+| a worker | the rounds of the run that asked for it |
+| any task, for a fix pass, the answers of the human, or a resume | the rounds its last run worked for |
+
+A run names only rounds of its own team, none twice. The daemon that restarts reads them from the state and goes on with the same rounds.
+
+**What the state checks**, by its operations and again when it is read: an item has at most one round and has one as soon as it
+leaves `pending` (`Team::advance_item`; an item the list marks `[x]` has none); a round belongs to an item of its team, or is the one
+round of a list without items; a round closed as `merged` belongs to an item done as merged, one closed as `approved` to an item that is
+approved or done as merged; a round is not closed before it was opened; a run names only the rounds of its own team. The full list is
+in [`state.md`](state.md).
+
+**The CLI.** `agent run` prints the round of each item it started, after the tasks; `agent status` lists the rounds of every team under
+its line; `agent status <round>` (the protocol's `show` of a round) shows its item, its state, the tasks that worked for it with their
+role, agent, worktree and branch and their runs, its pull request and its review passes (the reviews of the pass that was approved are
+not kept once the item is done: the history of a later item has them).
 
 ### Round checks before the review
 
@@ -479,12 +527,12 @@ stopped are lost; the last record of each task is kept.
 The human's two ways into a running team: answering and steering. Both go through the daemon's socket; the daemon
 alone changes the state.
 
-**A round of questions.** A run that ends with `STATUS: QUESTIONS` and has written `questions-<round>.md` (the owner
+**Questions.** A run that ends with `STATUS: QUESTIONS` and has written `questions-<number>.md` (the owner
 reads it first: a missing or unreadable file fails the task, as in the table above) gets:
 
 1. the instructions of `prompts/harness/questions/instructions.md` under the title of its file (rewritten in place,
    through a temporary file and a rename, with the file's mode), so the human reads what to do where the questions are;
-2. a watch (`notify`, inotify, one non-recursive watch on the task's directory while a round is open) on the file;
+2. a watch (`notify`, inotify, one non-recursive watch on the task's directory while questions are open) on the file;
 3. the notification of `harness/run/notice-questions.md` (a file in `notifications/` and the configured command);
 4. when `[questions] open = "vscode"`, the file opened in the VS Code window connected to the host: the remote command of
    the newest VS Code server with the socket of the newest window of the session (`agent_runtime::editor`); a window
@@ -493,18 +541,18 @@ reads it first: a missing or unreadable file fails the task, as in the table abo
 
 **Three ways to answer**, all ending in the same code (`owner/answers.rs`): the answers are checked against the file
 (`questions::apply`: a question the file does not have, a question left without a verdict, `ok` where there is no
-recommendation — every problem listed at once, `invalid`), put into the file, the round is recorded as answered with its
+recommendation — every problem listed at once, `invalid`), put into the file, the questions are recorded as answered with their
 channel (`command`, `saved_file`, `dashboard`), the task goes `questions` → `queued` and a `question_answered` event
 is published.
 
 | Channel | How the answers arrive |
 |---|---|
-| `agent answer <task> [--file FILE]` | the command asks `show` which round is open and where its file is, takes the verdicts of `FILE` — or of the questions file after the editor (`[questions] editor`, else `$VISUAL`, else `$EDITOR`) ends — and sends `answer`. A file saved with the marker while the editor was open is taken by the daemon first: the command says so and sends nothing |
+| `agent answer <task> [--file FILE]` | the command asks `show` which questions are open and where their file is, takes the verdicts of `FILE` — or of the questions file after the editor (`[questions] editor`, else `$VISUAL`, else `$EDITOR`) ends — and sends `answer`. A file saved with the marker while the editor was open is taken by the daemon first: the command says so and sends nothing |
 | the file saved with `**ANSWERED**` | the watch tells the owner the file was written; it reads it. Not marked: nothing. Marked and complete: answered. Marked and not complete: the human gets the notification `harness/questions/notice-incomplete.md` listing the problems, once for the same problems. A file saved while the daemon was down is looked at on the start |
 | the dashboard | `answer` with the client `dashboard`: the same as the command |
 
 **What the task is told.** The prompt of the next run is made when the run is made ready, from the state and the file, so
-it survives a restart: when the last round is answered and no run since the one that asked has said anything to the end
+it survives a restart: when the last questions are answered and no run since the one that asked has said anything to the end
 (a reported `STATUS:`, or an exit with status `0`), the run gets the answered file (`harness/questions/answered.md`:
 without the instructions and the marker, an `ok` replaced by the words of `accepted.md` and the recommendation) — instead
 of the whole task for a session that resumes, after it for one that starts. The answers are given again to every run
@@ -526,7 +574,7 @@ refusal (`conflict`) says why for each task.
 A task with a run going has the run's process group stopped (the engine's `SIGTERM`, then `SIGKILL`), the run is recorded
 as ended `stopped`, and the owner answers only when that is done, so a client that has its answer sees the status it
 asked for. A run that ends by itself while the stop is being asked leaves the task stopped (or paused) where the status
-table allows; a task that asks, failed or is done keeps what the run made of it. A task that waits for answers is not stopped, paused or resumed: it runs nothing, and its open round has to be answered before it can ask another. A pause of the human has no wake-up time:
+table allows; a task that asks, failed or is done keeps what the run made of it. A task that waits for answers is not stopped, paused or resumed: it runs nothing, and its open questions have to be answered before it can ask more. A pause of the human has no wake-up time:
 it lasts until `unpause`, and survives a restart. `resume` and `unpause` start the task again in its session; the prompt is
 the one the end of its last run gives (a stop gets the whole task again, as before). A team's control also reaches its
 reviewers. Each control is published (`controlled`, with the task, or none for a team, and the client) and written to the

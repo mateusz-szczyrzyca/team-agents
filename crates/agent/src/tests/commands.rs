@@ -137,3 +137,21 @@ fn the_daemon_without_agents_home_fails_and_says_what_to_set() {
         "{err}"
     );
 }
+
+#[test]
+fn the_status_of_a_round_is_asked_by_its_id_and_the_other_commands_do_not_take_one() {
+    let round = "round-20261111-153001-q1w2";
+
+    let status = Cli::try_parse_from(["agent", "status", round]).unwrap();
+    let stop = crate::parse_invocation(["agent", "stop", round]).unwrap_err();
+    let malformed = Cli::try_parse_from(["agent", "status", "round-20261311-153001-q1w2"]).unwrap_err();
+
+    let target = match status.command {
+        Some(Command::Status(args)) => args.target,
+        Some(Command::Daemon(_)) | None => panic!("not the status command"),
+    };
+    assert_eq!(target, Some(Target::Round(round.parse().unwrap())));
+    assert_eq!(stop.kind(), clap::error::ErrorKind::ValueValidation);
+    assert_eq!(malformed.kind(), clap::error::ErrorKind::ValueValidation);
+    assert!(malformed.to_string().contains("round ID"), "{malformed}");
+}

@@ -12,7 +12,9 @@ pub(crate) mod fixtures;
 mod gate;
 mod item;
 mod member;
+mod migrate;
 mod question;
+mod round;
 mod run;
 mod strict;
 mod team;
@@ -27,9 +29,11 @@ pub use item::{
 };
 pub use member::{Member, MemberError, MemberMut, Participant, QuestionError};
 pub use question::{AnswerBeforeQuestion, AnsweredVia, Question, QuestionState};
+pub use round::{ClosedBeforeOpened, Round, RoundEnd, RoundLife};
 pub use run::{Run, RunEnd, RunError, RunState};
 pub use team::{
-    Crew, CrewError, CrewMut, MergeMode, ReviewerProblem, TaskListText, Team, TeamError, TeamMembers, TeamMut,
+    AdvanceItemError, BeginRunError, CloseRoundError, Crew, CrewError, CrewMut, MergeMode, NewRun, OpenRoundError,
+    ReviewerProblem, RoundsError, TaskListText, Team, TeamError, TeamMembers, TeamMut,
 };
 pub use values::{CommitId, InvalidCommitId, InvalidTimestamp, PrNumber, SessionId, Timestamp};
 
@@ -37,16 +41,18 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::ids::{TaskId, TeamId};
+use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
 
-/// The schema version of the state that this build reads and writes.
-pub const SCHEMA_VERSION: u32 = 1;
+/// The schema version of the state that this build writes. It reads this version and migrates the one before it
+/// (version 1, which had no rounds).
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Largest state text accepted, in bytes: a bound on untrusted input, far above any real state.
 pub const MAX_STATE_BYTES: usize = 64 << 20;
 
-/// The schema version of a state file: written as the number [`SCHEMA_VERSION`], and only that number is read.
+/// The schema version of a state file: written as the number [`SCHEMA_VERSION`], and only that number is read. A state
+/// of version 1 is read by [`State::from_json`] through its migration, not as this type.
 ///
 /// A type with one value, so that a state of another version cannot be mistaken for this one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +62,7 @@ version_type!(SchemaVersion, SCHEMA_VERSION, UnsupportedSchema);
 
 /// A state of a schema version this build does not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("the state has schema version {found}; this build reads version {SCHEMA_VERSION}")]
+#[error("the state has schema version {found}; this build reads versions 1 and {SCHEMA_VERSION}")]
 pub struct UnsupportedSchema {
     /// The version the state declares.
     pub found: u64,
@@ -136,6 +142,44 @@ pub enum InvalidState {
         /// The team that has it again; the same team when it has it twice.
         second: TeamId,
     },
+    /// Two rounds of different teams have one ID.
+    #[error("the team {team} has a round {round} that another team has too")]
+    DuplicateRound {
+        /// The repeated ID.
+        round: RoundId,
+        /// The team that has it again, the later one.
+        team: TeamId,
+    },
+    /// A state of version 1 gave every ID that can be derived for a round to other rounds.
+    #[error("no free ID for the round of item {item} of the team {team}")]
+    NoFreeRoundId {
+        /// The team.
+        team: TeamId,
+        /// The item.
+        item: ItemId,
+    },
+}
+
+/// Why a round could not be opened in a state.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum StateOpenRoundError {
+    /// The state has no such team.
+    #[error("the state has no team {team}")]
+    UnknownTeam {
+        /// The team asked for.
+        team: TeamId,
+    },
+    /// Another team has a round with this ID.
+    #[error("the round {round} is a round of the team {team}")]
+    DuplicateRound {
+        /// The repeated ID.
+        round: RoundId,
+        /// The team that has it.
+        team: TeamId,
+    },
+    /// The round does not fit the team.
+    #[error(transparent)]
+    Team(#[from] OpenRoundError),
 }
 
 /// Why a reviewer could not be added to a team.
@@ -218,10 +262,72 @@ impl State {
         self.teams.iter_mut().find_map(|team| team.find_mut(task))
     }
 
+    /// The round `round` with its team.
+    #[must_use]
+    pub fn find_round(&self, round: &RoundId) -> Option<(&Team, &Round)> {
+        self.teams
+            .iter()
+            .find_map(|team| team.round(round).map(|found| (team, found)))
+    }
+
+    /// Opens the round `id` of team `team`, for `item` — or for the whole work of a team whose task list has no items —
+    /// at `at`.
+    ///
+    /// # Errors
+    /// [`StateOpenRoundError`]: the state has no such team, another team has a round with this ID, or the round does
+    /// not fit the team ([`Team::open_round`]).
+    pub fn open_round(
+        &mut self,
+        team: &TeamId,
+        id: RoundId,
+        item: Option<ItemId>,
+        at: Timestamp,
+    ) -> Result<(), StateOpenRoundError> {
+        if let Some((owner, _)) = self.find_round(&id) {
+            return Err(StateOpenRoundError::DuplicateRound {
+                round: id,
+                team: owner.id().clone(),
+            });
+        }
+        let found = self
+            .teams
+            .iter_mut()
+            .find(|found| found.id() == team)
+            .ok_or_else(|| StateOpenRoundError::UnknownTeam { team: team.clone() })?;
+        found.open_round(id, item, at)?;
+        Ok(())
+    }
+
+    /// Closes the round `round` at `at`, ended as `how`.
+    ///
+    /// # Errors
+    /// [`CloseRoundError`], as for [`Team::close_round`]; [`CloseRoundError::NoSuchRound`] when no team has the round.
+    pub fn close_round(&mut self, round: &RoundId, at: Timestamp, how: RoundEnd) -> Result<(), CloseRoundError> {
+        self.teams
+            .iter_mut()
+            .find(|team| team.round(round).is_some())
+            .ok_or_else(|| CloseRoundError::NoSuchRound { round: round.clone() })?
+            .close_round(round, at, how)
+    }
+
+    /// Records that a run of task `task` has started, working for the rounds of `run`.
+    ///
+    /// # Errors
+    /// [`BeginRunError`], as for [`Team::begin_run`]; [`BeginRunError::UnknownTask`] when no team has the task. The
+    /// rounds must be the task's own team's: another team's are unknown to it.
+    pub fn begin_run(&mut self, task: &TaskId, run: NewRun) -> Result<(), BeginRunError> {
+        self.teams
+            .iter_mut()
+            .find(|team| team.find(task).is_some())
+            .ok_or_else(|| BeginRunError::UnknownTask { task: task.clone() })?
+            .begin_run(task, run)
+    }
+
     /// Adds a team.
     ///
     /// # Errors
-    /// [`InvalidState`] when the state has a team with this ID or a task with one of the team's task IDs.
+    /// [`InvalidState`] when the state has a team with this ID, a task with one of the team's task IDs or a round with
+    /// one of its round IDs.
     pub fn insert_team(&mut self, team: Team) -> Result<(), InvalidState> {
         if self.team(team.id()).is_some() {
             return Err(InvalidState::DuplicateTeam {
@@ -234,6 +340,14 @@ impl State {
                     task: member.task().clone(),
                     first: owner.team.id().clone(),
                     second: team.id().clone(),
+                });
+            }
+        }
+        for round in team.rounds() {
+            if self.find_round(round.id()).is_some() {
+                return Err(InvalidState::DuplicateRound {
+                    round: round.id().clone(),
+                    team: team.id().clone(),
                 });
             }
         }
@@ -265,8 +379,12 @@ impl State {
     /// Reads a state from JSON text.
     ///
     /// # Errors
-    /// [`StateError`]: the text is too large, declares another schema version (checked first, so that a state of a
-    /// newer version is refused as such and not as malformed), is not a valid state, or has clashing teams or tasks.
+    /// [`StateError`]: the text is too large, declares a schema version other than 1 and 2 (checked first, so that a
+    /// state of a newer version is refused as such and not as malformed), is not a valid state, or has clashing teams,
+    /// tasks or rounds.
+    ///
+    /// A state of version 1 is migrated as it is read: it comes out as the state of version 2 that stands for it, and
+    /// the same text always gives the same state.
     pub fn from_json(text: &str) -> Result<Self, StateError> {
         if text.len() > MAX_STATE_BYTES {
             return Err(StateError::TooLarge {
@@ -275,6 +393,9 @@ impl State {
             });
         }
         let probe: SchemaProbe = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
+        if probe.schema_version == u64::from(migrate::LEGACY_VERSION) {
+            return migrate::from_v1(text);
+        }
         if probe.schema_version != u64::from(SCHEMA_VERSION) {
             return Err(UnsupportedSchema {
                 found: probe.schema_version,
@@ -317,11 +438,20 @@ impl TryFrom<StateWire> for State {
     fn try_from(wire: StateWire) -> Result<Self, Self::Error> {
         let mut teams = HashSet::new();
         let mut owners: HashMap<&TaskId, &TeamId> = HashMap::new();
+        let mut round_owners: HashMap<&RoundId, &TeamId> = HashMap::new();
         for team in &wire.teams {
             if !teams.insert(team.id()) {
                 return Err(InvalidState::DuplicateTeam {
                     team: team.id().clone(),
                 });
+            }
+            for round in team.rounds() {
+                if round_owners.insert(round.id(), team.id()).is_some() {
+                    return Err(InvalidState::DuplicateRound {
+                        round: round.id().clone(),
+                        team: team.id().clone(),
+                    });
+                }
             }
             for member in team_members(team) {
                 if let Some(first) = owners.insert(member.task(), team.id()) {
@@ -508,19 +638,19 @@ mod tests {
 
     #[test]
     fn the_schema_version_is_one() {
-        assert_eq!(SCHEMA_VERSION, 1);
-        assert_eq!(serde_json::to_value(SchemaVersion).unwrap(), json!(1));
+        assert_eq!(SCHEMA_VERSION, 2);
+        assert_eq!(serde_json::to_value(SchemaVersion).unwrap(), json!(2));
     }
 
     #[test]
     fn only_the_schema_version_of_this_build_is_read() {
-        serde_json::from_value::<SchemaVersion>(json!(1)).unwrap();
+        serde_json::from_value::<SchemaVersion>(json!(2)).unwrap();
         for bad in [
             json!(0),
-            json!(2),
+            json!(1),
             json!(u64::MAX),
             json!(-1),
-            json!("1"),
+            json!("2"),
             json!(1.5),
             json!(null),
         ] {
@@ -550,7 +680,7 @@ mod tests {
     fn an_empty_state_is_written_with_its_schema_version_first() {
         let text = State::new().to_json().unwrap();
 
-        assert_eq!(text, "{\n  \"schema_version\": 1,\n  \"teams\": []\n}\n");
+        assert_eq!(text, "{\n  \"schema_version\": 2,\n  \"teams\": []\n}\n");
         assert_eq!(State::from_json(&text).unwrap(), State::new());
     }
 
@@ -558,14 +688,14 @@ mod tests {
     fn a_state_is_written_indented_and_ends_with_a_newline_and_the_schema_version_comes_first() {
         let text = two_teams().to_json().unwrap();
 
-        assert!(text.starts_with("{\n  \"schema_version\": 1,\n  \"teams\": [\n    {\n      \"id\": \"team-"));
+        assert!(text.starts_with("{\n  \"schema_version\": 2,\n  \"teams\": [\n    {\n      \"id\": \"team-"));
         assert!(text.ends_with("}\n"));
         assert!(!text.ends_with("\n\n"));
     }
 
     #[test]
     fn a_state_of_another_schema_version_is_refused_with_that_version() {
-        for found in [0_u64, 2, 99, u64::MAX] {
+        for found in [0_u64, 3, 99, u64::MAX] {
             let text = format!("{{\"schema_version\": {found}, \"teams\": []}}");
 
             let err = State::from_json(&text).unwrap_err();
@@ -580,9 +710,9 @@ mod tests {
     #[test]
     fn the_version_is_checked_before_the_rest_so_a_newer_state_is_not_called_malformed() {
         for text in [
-            "{\"schema_version\": 2, \"teams\": {\"by_id\": 5}}",
-            "{\"teams\": [], \"schema_version\": 3, \"future\": true}",
-            "{\"schema_version\": 2}",
+            "{\"schema_version\": 3, \"teams\": {\"by_id\": 5}}",
+            "{\"teams\": [], \"schema_version\": 4, \"future\": true}",
+            "{\"schema_version\": 3}",
         ] {
             let err = State::from_json(text).unwrap_err();
 
@@ -677,7 +807,7 @@ mod tests {
     #[test]
     fn serde_reads_a_state_through_the_same_checks() {
         let good = State::new().to_json().unwrap();
-        let other_version = "{\"schema_version\": 2, \"teams\": []}";
+        let other_version = "{\"schema_version\": 3, \"teams\": []}";
         let one = serde_json::to_value(team_of(1, 1)).unwrap();
         let duplicate = json!({"schema_version": 1, "teams": [one, one]}).to_string();
 

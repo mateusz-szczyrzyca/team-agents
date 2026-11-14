@@ -2,7 +2,7 @@
 //! from the protocol (`agent answer`, the dashboard) and from the file saved with the marker — each of which queues the
 //! task again with them.
 //!
-//! The questions and the answers are in the file; the state keeps that a round was asked and answered, when, and
+//! The questions and the answers are in the file; the state keeps that questions were asked and answered, when, and
 //! through which channel. What the next run is told is made from the file when that run is made ready (`start.rs`), so
 //! it survives a restart of the daemon.
 
@@ -20,22 +20,22 @@ use super::{Located, Notice, Owner, OwnerError};
 use crate::daemon::questions::watch::{Report, Saved};
 use crate::daemon::questions::{self, Judgement, Loaded};
 
-/// The round of questions a task waits for answers to.
-struct OpenRound {
+/// The questions a task waits for answers to.
+struct WaitingQuestions {
     /// The task's team, role and agent.
     located: Located,
-    /// The round.
-    round: std::num::NonZeroU32,
-    /// The questions file of the round.
+    /// The number of the questions.
+    number: std::num::NonZeroU32,
+    /// The questions file.
     path: std::path::PathBuf,
 }
 
 impl Owner {
-    // ---- the file of a new round ----------------------------------------------------------------------------
+    // ---- the file of new questions --------------------------------------------------------------------------
 
-    /// Gives the file of the round that was just asked its instructions and starts watching for the human's save.
+    /// Gives the file of the questions that were just asked its instructions and starts watching for the human's save.
     ///
-    /// What cannot be done is told in the log and does not stop the round: the questions are recorded and the human is
+    /// What cannot be done is told in the log and does not stop the questions: they are recorded and the human is
     /// notified, and can answer with `agent answer` whatever the file looks like.
     pub(super) async fn prepare_questions(&mut self, task: &TaskId, path: &Path, loaded: &Loaded) {
         match questions::with_instructions(&loaded.file, &self.parts.question_texts, task) {
@@ -114,7 +114,7 @@ impl Owner {
                     .filter_map(|member| {
                         member.open_question().map(|question| Saved {
                             task: member.task().clone(),
-                            round: question.round(),
+                            number: question.number(),
                         })
                     })
                     .collect::<Vec<_>>()
@@ -139,17 +139,17 @@ impl Owner {
         client: &Client,
         request: AnswerRequest,
     ) -> Result<Result<Reply, Failure>, OwnerError> {
-        let AnswerRequest { task, round, answers } = request;
-        let open = match self.open_round(&task) {
+        let AnswerRequest { task, number, answers } = request;
+        let open = match self.waiting_questions(&task) {
             Ok(open) => open,
             Err(failure) => return Ok(Err(failure)),
         };
-        if open.round != round {
+        if open.number != number {
             return Ok(Err(Failure {
                 kind: FailureKind::Conflict,
                 message: format!(
-                    "round {round} of task {task} is not the one that waits for answers: it is round {}",
-                    open.round
+                    "questions number {number} of task {task} are not the ones that wait for answers: those are number {}",
+                    open.number
                 ),
             }));
         }
@@ -184,8 +184,8 @@ impl Owner {
         Ok(Ok(Reply::Applied { tasks: vec![task] }))
     }
 
-    /// The round `task` waits for answers to, or why there is none.
-    fn open_round(&self, task: &TaskId) -> Result<OpenRound, Failure> {
+    /// The questions `task` waits for answers to, or why there are none.
+    fn waiting_questions(&self, task: &TaskId) -> Result<WaitingQuestions, Failure> {
         let found = self.parts.state.find_task(task).ok_or_else(|| Failure {
             kind: FailureKind::NotFound,
             message: format!("there is no task {task}"),
@@ -197,13 +197,13 @@ impl Owner {
                 message: format!("task {task} is {}, not waiting for answers", found.member.status()),
             });
         };
-        Ok(OpenRound {
+        Ok(WaitingQuestions {
             located: Located {
                 team: found.team.id().clone(),
                 role: found.role,
                 agent: found.member.agent().name().to_owned(),
             },
-            round: question.round(),
+            number: question.number(),
             path: question.file().as_path().to_path_buf(),
         })
     }
@@ -225,11 +225,11 @@ impl Owner {
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved.
     pub(super) async fn file_saved(&mut self, saved: Saved) -> Result<(), OwnerError> {
-        let Ok(open) = self.open_round(&saved.task) else {
+        let Ok(open) = self.waiting_questions(&saved.task) else {
             // A task that does not wait for answers: the save is the file's own change or a late one.
             return Ok(());
         };
-        if open.round != saved.round {
+        if open.number != saved.number {
             return Ok(());
         }
         let loaded = match questions::read(&open.path).await {
@@ -252,7 +252,7 @@ impl Owner {
     }
 
     /// Tells the human that the answers saved for `task` are not complete, unless the last save said the same.
-    fn tell_incomplete(&mut self, task: &TaskId, open: &OpenRound, problems: String) {
+    fn tell_incomplete(&mut self, task: &TaskId, open: &WaitingQuestions, problems: String) {
         if self.incomplete.get(task) == Some(&problems) {
             return;
         }
@@ -276,13 +276,18 @@ impl Owner {
     }
 
     /// Records that the human answered `open` through `via` and queues the task, which goes on with the answers.
-    async fn record_answer(&mut self, task: &TaskId, open: &OpenRound, via: AnsweredVia) -> Result<(), OwnerError> {
+    async fn record_answer(
+        &mut self,
+        task: &TaskId,
+        open: &WaitingQuestions,
+        via: AnsweredVia,
+    ) -> Result<(), OwnerError> {
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
         {
             let (_, mut member) = self.member_mut(task)?;
             member
-                .answer_question(open.round, now, via)
+                .answer_question(open.number, now, via)
                 .map_err(|source| OwnerError::Question {
                     task: task.clone(),
                     source,
@@ -291,7 +296,7 @@ impl Owner {
         events.push(EventKind::QuestionAnswered {
             team: open.located.team.clone(),
             task: task.clone(),
-            round: open.round,
+            number: open.number,
             via,
         });
         self.move_to(task, &open.located.team, TaskStatus::Queued, &mut events)?;
@@ -306,12 +311,12 @@ impl Owner {
             task,
             now,
             ActivityEvent::Info(format!(
-                "the questions of round {} were answered through {channel}",
-                open.round
+                "questions number {} were answered through {channel}",
+                open.number
             )),
         )
         .await;
-        tracing::info!(task = %task, round = %open.round, channel, "the questions are answered");
+        tracing::info!(task = %task, number = %open.number, channel, "the questions are answered");
         self.look_at(&open.located.team);
         Ok(())
     }

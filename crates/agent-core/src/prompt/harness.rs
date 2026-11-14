@@ -96,7 +96,7 @@ impl HarnessPrompt {
             Self::Context => PromptSpec::new(
                 "harness/run/context.md",
                 Audience::Model,
-                &["agent", "task", "repo", "worktree", "questions_file", "round"],
+                &["agent", "task", "repo", "worktree", "questions_file", "number"],
             ),
             Self::RoleSolo => PromptSpec::new("harness/run/role-solo.md", Audience::Model, &[]),
             Self::RoleCoordinator => PromptSpec::new("harness/run/role-coordinator.md", Audience::Model, &[]),
@@ -119,7 +119,7 @@ impl HarnessPrompt {
             Self::NoticeQuestions => PromptSpec::new(
                 "harness/run/notice-questions.md",
                 Audience::Human,
-                &["agent", "task", "round", "file"],
+                &["agent", "task", "number", "file"],
             ),
             Self::NoticeQuestionsMissing => PromptSpec::new(
                 "harness/run/notice-questions-missing.md",

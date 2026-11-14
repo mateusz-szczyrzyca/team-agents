@@ -251,14 +251,14 @@ pub(super) fn with_instructions(
     Ok(prepared)
 }
 
-/// What a task is told when its questions of `round` were answered: the answered `file`, without the instructions and
+/// What a task is told when its questions number `number` were answered: the answered `file`, without the instructions and
 /// the marker, in the words of the template.
 ///
 /// # Errors
 /// [`TextError::Expand`] when the file is not answered properly; [`TextError`] when a text cannot be rendered.
 pub(super) fn answers_prompt(
     file: &QuestionsFile,
-    round: NonZeroU32,
+    number: NonZeroU32,
     texts: &QuestionsPrompts,
 ) -> Result<String, TextError> {
     // `expand` takes words that cannot fail; a rendering that does is kept and reported after it.
@@ -281,7 +281,7 @@ pub(super) fn answers_prompt(
         return Err(error);
     }
     let values = Variables::new()
-        .with("round", round.to_string())?
+        .with("number", number.to_string())?
         .with("answers", expanded.trim_end())?;
     Ok(texts.render(QuestionsPrompt::Answered, &values)?)
 }

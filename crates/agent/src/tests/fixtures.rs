@@ -2,7 +2,10 @@
 
 use agent_core::config::RepoName;
 use agent_core::ids::{AgentName, InvestigatorName, RunId, TaskId, TeamId};
-use agent_core::state::{Crew, Member, MergeMode, Participant, State, TaskListText, Team, TeamMembers, Timestamp};
+use agent_core::state::{
+    Crew, Member, MergeMode, Participant, PrNumber, PullRequest, Review, ReviewOutcome, State, TaskListText, Team,
+    TeamMembers, Timestamp,
+};
 
 /// The task list of the sample teams: one feature of two items.
 pub(crate) const LIST: &str = "\
@@ -105,4 +108,23 @@ pub(crate) fn team_state() -> State {
         .add_reviewer(&team_id(0), member(4, investigator("inv-codex")))
         .unwrap();
     state
+}
+
+/// A pull request numbered `number`, opened at 10 seconds on the branch of `codex-1`'s item 1.2.
+pub(crate) fn pr(number: u32) -> PullRequest {
+    PullRequest {
+        number: PrNumber::new(std::num::NonZeroU32::new(number).unwrap()),
+        branch: "agents/codex-1/item-1-2".parse().unwrap(),
+        opened_at: at(10),
+    }
+}
+
+/// A pending review by `reviewer`, whose task is `n`, asked at 20 seconds.
+pub(crate) fn review(reviewer: &str, n: u32) -> Review {
+    Review {
+        reviewer: reviewer.parse().unwrap(),
+        task: task(n),
+        requested_at: at(20),
+        outcome: ReviewOutcome::Pending,
+    }
 }

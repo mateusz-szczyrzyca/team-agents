@@ -7,12 +7,19 @@ use serde::{Deserialize, Serialize};
 use super::checked::CheckedMut;
 use super::item::{Completion, ItemMut, ItemPhase, ItemProgress};
 use super::member::{Member, MemberMut, Participant};
+use super::round::{Round, RoundEnd};
 use super::strict::checked;
 use super::values::Timestamp;
 use crate::config::RepoName;
-use crate::ids::{ItemId, TaskId, TeamId};
+use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::{Keyword, Role, Tier, UnknownKeyword};
 use crate::task_list::{ItemMark, TaskList, TaskListError};
+
+mod legacy;
+mod rounds;
+
+pub(super) use self::legacy::{LegacyError, TeamV1};
+pub use self::rounds::{AdvanceItemError, BeginRunError, CloseRoundError, NewRun, OpenRoundError, RoundsError};
 
 /// What happens to a pull request that both reviewers approve.
 #[derive(
@@ -335,6 +342,10 @@ pub struct Team {
     task_list: TaskListText,
     /// The progress of each item, in the order of the task list.
     items: Vec<ItemProgress>,
+    /// The rounds of the team, oldest first: the work of the team on each item that has started, or on the whole list
+    /// when it has no items.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    rounds: Vec<Round>,
     /// The people of the team.
     crew: Crew,
     /// The investigators that review the team's pull requests, with their tasks.
@@ -357,6 +368,9 @@ struct TeamWire {
     task_list: TaskListText,
     /// See [`Team`].
     items: Vec<ItemProgress>,
+    /// See [`Team`]; a team written without rounds has none.
+    #[serde(default)]
+    rounds: Vec<Round>,
     /// See [`Team`].
     crew: Crew,
     /// See [`Team`]; a team written without reviewers has none.
@@ -390,6 +404,14 @@ pub enum TeamError {
         item: ItemId,
         /// What the list says.
         listed: ItemMark,
+    },
+    /// The rounds do not fit the items and the runs.
+    #[error("team {team}: {source}")]
+    Rounds {
+        /// The team.
+        team: TeamId,
+        /// What is wrong.
+        source: RoundsError,
     },
     /// A reviewer is not an investigator, or is in the crew, or two reviewers share a name or a task.
     #[error("team {team}: {reason}")]
@@ -447,6 +469,7 @@ impl Team {
             created_at,
             merge,
             items: initial_items(&task_list),
+            rounds: Vec::new(),
             task_list,
             crew,
             reviewers: Vec::new(),
@@ -532,6 +555,38 @@ impl CheckedMut<'_, Team> {
     /// See [`Team::item_mut`].
     pub fn item_mut(&mut self, id: ItemId) -> Option<ItemMut<'_>> {
         self.value.item_mut(id)
+    }
+
+    /// See [`Team::open_round`].
+    ///
+    /// # Errors
+    /// [`OpenRoundError`].
+    pub fn open_round(&mut self, id: RoundId, item: Option<ItemId>, at: Timestamp) -> Result<(), OpenRoundError> {
+        self.value.open_round(id, item, at)
+    }
+
+    /// See [`Team::close_round`].
+    ///
+    /// # Errors
+    /// [`CloseRoundError`].
+    pub fn close_round(&mut self, id: &RoundId, at: Timestamp, how: RoundEnd) -> Result<(), CloseRoundError> {
+        self.value.close_round(id, at, how)
+    }
+
+    /// See [`Team::advance_item`].
+    ///
+    /// # Errors
+    /// [`AdvanceItemError`].
+    pub fn advance_item(&mut self, id: ItemId, next: ItemPhase) -> Result<(), AdvanceItemError> {
+        self.value.advance_item(id, next)
+    }
+
+    /// See [`Team::begin_run`].
+    ///
+    /// # Errors
+    /// [`BeginRunError`].
+    pub fn begin_run(&mut self, task: &TaskId, run: NewRun) -> Result<(), BeginRunError> {
+        self.value.begin_run(task, run)
     }
 
     /// See [`Team::crew_mut`].
@@ -622,9 +677,10 @@ fn check_reviewer(crew: &Crew, reviewers: &[Member], member: &Member) -> Result<
     Ok(())
 }
 
-/// Checks that a team's items and reviewers fit its task list, crew and one another.
+/// Checks that a team's items, rounds and reviewers fit its task list, crew and one another.
 fn check_team(team: &Team) -> Result<(), TeamError> {
     check_items(&team.id, &team.task_list, &team.items)?;
+    rounds::check_rounds(team)?;
     for (index, reviewer) in team.reviewers.iter().enumerate() {
         let previous = team.reviewers.get(..index).unwrap_or_default();
         check_reviewer(&team.crew, previous, reviewer).map_err(|reason| TeamError::Reviewer {
@@ -695,6 +751,7 @@ mod tests {
                 merge: wire.merge,
                 task_list: wire.task_list,
                 items: wire.items,
+                rounds: Vec::new(),
                 crew: wire.crew,
                 reviewers: wire.reviewers,
             };
@@ -1195,6 +1252,8 @@ mod tests {
     fn a_team_round_trips_through_json_with_its_parts_in_their_places() {
         let mut team = team(1);
         team.add_reviewer(member(7, inv("inv-codex"))).unwrap();
+        team.open_round("round-20261111-153001-k3x9".parse().unwrap(), Some(item("1.2")), at(1))
+            .unwrap();
         team.item_mut(item("1.2"))
             .unwrap()
             .advance(crate::state::ItemPhase::InProgress {

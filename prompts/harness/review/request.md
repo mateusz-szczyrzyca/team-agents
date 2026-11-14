@@ -1,6 +1,6 @@
 # A PULL REQUEST TO REVIEW (team {{team}})
 
-You review pull request #{{pr}} of a team you do not belong to, as the review rules above say. This is review {{round}}
+You review pull request #{{pr}} of a team you do not belong to, as the review rules above say. This is review pass {{pass}}
 of it. Its head is the commit `{{head}}` of the branch `{{branch}}`, and your worktree has exactly that commit out. It
 merges into `{{base}}`. The item it is for, with its expected result and its checks, follows below: judge the pull
 request against it, and check that nothing the item does not ask for is in it.

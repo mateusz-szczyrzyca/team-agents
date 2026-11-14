@@ -101,8 +101,8 @@ pub(super) const fn decide(steer: Steer, status: TaskStatus) -> Step {
         (Steer::Unpause, Paused) | (Steer::Resume, Waiting | Stopped | Failed) => Step::Move(Queued),
         (Steer::Resume, Queued | Running) => Step::Skip(Skipped::Going),
         (Steer::Resume, Paused) => Step::Skip(Skipped::Paused),
-        // A task that asks runs nothing, and its open round must be answered before it asks another: a stop would leave
-        // the round open under a task that could run and ask again.
+        // A task that asks runs nothing, and its open questions must be answered before it asks more: a stop would leave
+        // the questions open under a task that could run and ask again.
         (Steer::Stop | Steer::Pause | Steer::Resume, Questions) => Step::Skip(Skipped::Questions),
     }
 }

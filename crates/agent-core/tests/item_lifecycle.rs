@@ -47,8 +47,8 @@ mod item_lifecycle {
         assert_eq!(State::from_json(&saved).unwrap(), state);
     }
 
-    /// The reviews of the round that item 1.2 is in.
-    fn round(item: &ItemMut<'_>) -> Vec<Review> {
+    /// The reviews of the review pass that item 1.2 is in.
+    fn review_pass(item: &ItemMut<'_>) -> Vec<Review> {
         let ItemPhase::InReview { reviews, .. } = item.phase() else {
             panic!("item 1.2 is not in review");
         };
@@ -85,7 +85,7 @@ mod item_lifecycle {
     fn a_pending_review_receives_its_rejection_and_the_item_goes_back_for_a_fix_pass() {
         with_item(|item| {
             let passes_before = item.fix_passes().len();
-            let reviews_before = round(item);
+            let reviews_before = review_pass(item);
 
             item.submit_review(&pending_task(), ReviewVerdict::RequestChanges, later())
                 .unwrap();
@@ -104,7 +104,7 @@ mod item_lifecycle {
     #[test]
     fn a_submitted_outcome_is_kept_in_the_round_beside_the_other_review() {
         with_item(|item| {
-            let reviews_before = round(item);
+            let reviews_before = review_pass(item);
             assert_eq!(
                 reviews_before
                     .iter()
@@ -117,7 +117,7 @@ mod item_lifecycle {
                 .unwrap();
 
             assert_eq!(
-                round(item),
+                review_pass(item),
                 with_outcome(&reviews_before, &pending_task(), ReviewVerdict::Approve)
             );
         });
@@ -141,7 +141,7 @@ mod item_lifecycle {
     #[test]
     fn an_outcome_cannot_be_recorded_twice_for_one_review() {
         with_item(|item| {
-            let before = round(item);
+            let before = review_pass(item);
 
             let again = item.submit_review(&approving_task(), ReviewVerdict::RequestChanges, later());
 
@@ -152,7 +152,7 @@ mod item_lifecycle {
                     task: approving_task()
                 })
             );
-            assert_eq!(round(item), before);
+            assert_eq!(review_pass(item), before);
         });
     }
 
@@ -160,7 +160,7 @@ mod item_lifecycle {
     fn an_outcome_of_a_task_that_was_not_asked_for_a_review_is_refused() {
         with_item(|item| {
             let stranger: TaskId = "task-20261111-193059-k3x9".parse().unwrap();
-            let before = round(item);
+            let before = review_pass(item);
 
             let refused = item.submit_review(&stranger, ReviewVerdict::Approve, later());
 
@@ -171,7 +171,7 @@ mod item_lifecycle {
                     task: stranger
                 })
             );
-            assert_eq!(round(item), before);
+            assert_eq!(review_pass(item), before);
         });
     }
 

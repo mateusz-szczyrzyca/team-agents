@@ -55,8 +55,8 @@ fn in_review() -> Team {
 /// `team`'s item 1.1, which is in review, goes back for a fix pass at 150 seconds and returns to review with new
 /// reviews, as many times as `passes` says.
 fn after_passes(mut team: Team, passes: u32) -> Team {
-    for round in 0..passes {
-        let at_second = 150 + round * 100;
+    for pass in 0..passes {
+        let at_second = 150 + pass * 100;
         submit(&mut team, "1.1", 20, ReviewVerdict::RequestChanges, at_second);
         fix(&mut team, "1.1", "inv-opus", &lead_branch(), 7, &lead_branch());
         open(&mut team, "1.1", 7, &lead_branch());
@@ -403,7 +403,7 @@ fn a_pull_request_whose_reviews_are_pending_or_approving_or_being_fixed_waits_fo
 
 // ---- what the human said --------------------------------------------------------------------------------------
 
-/// The lead of a team with the question of round 1 asked at `asked` seconds, answered at `answered` when it is given.
+/// The lead of a team with the question of questions number 1 asked at `asked` seconds, answered at `answered` when it is given.
 fn lead_with_question(asked: u32, answered: Option<u32>) -> Team {
     let mut team = led(LIST);
     let (_, mut lead) = team.find_mut(&task(1)).unwrap();

@@ -157,7 +157,7 @@ pub enum ReviewOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixPass {
-    /// The reviews of the round that asked for changes.
+    /// The reviews of the review pass that asked for changes.
     pub requested_by: Vec<Review>,
 }
 
@@ -197,7 +197,7 @@ pub enum ItemPhase {
     InReview {
         /// The pull request.
         pr: PullRequest,
-        /// The reviews of this round, in the order asked.
+        /// The reviews of this review pass, in the order asked.
         reviews: Vec<Review>,
     },
     /// The team fixes what the reviewers asked for.
@@ -319,16 +319,16 @@ impl ItemPhase {
         }
     }
 
-    /// Checks the reviews this phase carries: a round names no reviewer and no task twice, and an approved item
+    /// Checks the reviews this phase carries: a review pass names no reviewer and no task twice, and an approved item
     /// carries at least one review, each an approval.
     ///
     /// # Errors
     /// [`InvalidReviews`] for the first review that does not fit.
     pub fn check_reviews(&self) -> Result<(), InvalidReviews> {
         match self {
-            Self::InReview { reviews, .. } => check_round(reviews),
+            Self::InReview { reviews, .. } => check_review_pass(reviews),
             Self::Approved { reviews, .. } => {
-                check_round(reviews)?;
+                check_review_pass(reviews)?;
                 check_approving(reviews)
             }
             Self::Pending | Self::InProgress { .. } | Self::Fixing { .. } | Self::Done { .. } => Ok(()),
@@ -347,11 +347,11 @@ const fn approves(review: &Review) -> bool {
     )
 }
 
-/// Checks that `round` names no reviewer and no task twice.
-fn check_round(round: &[Review]) -> Result<(), InvalidReviews> {
+/// Checks that `pass` names no reviewer and no task twice.
+fn check_review_pass(pass: &[Review]) -> Result<(), InvalidReviews> {
     let mut reviewers = HashSet::new();
     let mut tasks = HashSet::new();
-    for review in round {
+    for review in pass {
         if !reviewers.insert(&review.reviewer) {
             return Err(InvalidReviews::DuplicateReviewer {
                 reviewer: review.reviewer.clone(),
@@ -366,12 +366,12 @@ fn check_round(round: &[Review]) -> Result<(), InvalidReviews> {
     Ok(())
 }
 
-/// Checks that `round` is the reviews of an approved item: some, and every one an approval.
-fn check_approving(round: &[Review]) -> Result<(), InvalidReviews> {
-    if round.is_empty() {
+/// Checks that `pass` is the reviews of an approved item: some, and every one an approval.
+fn check_approving(pass: &[Review]) -> Result<(), InvalidReviews> {
+    if pass.is_empty() {
         return Err(InvalidReviews::ApprovedWithoutReviews);
     }
-    match round.iter().find(|review| !approves(review)) {
+    match pass.iter().find(|review| !approves(review)) {
         Some(review) => Err(InvalidReviews::ApprovedNotByAll {
             reviewer: review.reviewer.clone(),
         }),
@@ -379,17 +379,17 @@ fn check_approving(round: &[Review]) -> Result<(), InvalidReviews> {
     }
 }
 
-/// Checks that `round` can be the reviews of a fix pass: a valid, non-empty round that is not wholly approving and
+/// Checks that `pass` can be the reviews of a fix pass: a valid, non-empty review pass that is not wholly approving and
 /// contains a submitted request for changes.
-fn check_fix_pass(round: &[Review]) -> Result<(), InvalidReviews> {
-    check_round(round)?;
-    if round.is_empty() {
+fn check_fix_pass(pass: &[Review]) -> Result<(), InvalidReviews> {
+    check_review_pass(pass)?;
+    if pass.is_empty() {
         return Err(InvalidReviews::FixPassWithoutReviews);
     }
-    if round.iter().all(approves) {
+    if pass.iter().all(approves) {
         return Err(InvalidReviews::FixPassApproved);
     }
-    if !round.iter().any(|review| {
+    if !pass.iter().any(|review| {
         matches!(
             review.outcome,
             ReviewOutcome::Submitted {
@@ -454,11 +454,11 @@ impl CheckedMut<'_, ItemProgress> {
     /// that was reviewed is also the one the item is fixed on and merged with.
     ///
     /// # Errors
-    /// [`AdvanceError`], as for [`ItemProgress::advance`]; [`AdvanceError::RoundNotKept`] when an approval carries
+    /// [`AdvanceError`], as for [`ItemProgress::advance`]; [`AdvanceError::ReviewPassNotKept`] when an approval carries
     /// another pull request, other reviews, or an outcome that was not submitted, or when a fix pass or a merge
     /// carries another pull request than the reviewed one.
     pub fn advance(&mut self, next: ItemPhase) -> Result<(), AdvanceError> {
-        self.value.check_round_kept(&next)?;
+        self.value.check_review_pass_kept(&next)?;
         self.value.advance(next)
     }
 
@@ -553,14 +553,14 @@ pub enum InvalidReviews {
         /// The reviewer whose review is pending or asks for changes.
         reviewer: InvestigatorName,
     },
-    /// One reviewer has two reviews in one round.
-    #[error("the reviewer {reviewer} has two reviews in one round")]
+    /// One reviewer has two reviews in one review pass.
+    #[error("the reviewer {reviewer} has two reviews in one review pass")]
     DuplicateReviewer {
         /// The repeated reviewer.
         reviewer: InvestigatorName,
     },
-    /// One reviewer task has two reviews in one round.
-    #[error("the task {task} has two reviews in one round")]
+    /// One reviewer task has two reviews in one review pass.
+    #[error("the task {task} has two reviews in one review pass")]
     DuplicateTask {
         /// The repeated task.
         task: TaskId,
@@ -568,8 +568,8 @@ pub enum InvalidReviews {
     /// A fix pass records no review: nothing sent the item back.
     #[error("a fix pass must record the reviews that sent the item back, and has none")]
     FixPassWithoutReviews,
-    /// Every review of the round approved: the item is approved, not sent back.
-    #[error("every review of the round approved: the item cannot go back for a fix pass")]
+    /// Every review of the review pass approved: the item is approved, not sent back.
+    #[error("every review of the review pass approved: the item cannot go back for a fix pass")]
     FixPassApproved,
     /// No reviewer submitted `REQUEST_CHANGES`: the item was not sent back.
     #[error("a fix pass must record at least one submitted REQUEST_CHANGES review")]
@@ -582,7 +582,7 @@ pub enum AdvanceError {
     /// [`PhaseKind::successors`] does not allow the change.
     #[error(transparent)]
     Transition(#[from] InvalidAdvance),
-    /// The reviews of the round do not fit the phase.
+    /// The reviews of the review pass do not fit the phase.
     #[error("item {item}: {source}")]
     Reviews {
         /// The item.
@@ -591,12 +591,12 @@ pub enum AdvanceError {
         #[source]
         source: InvalidReviews,
     },
-    /// The change does not carry the round the item is in: an approval is not made of the pull request and the reviews
+    /// The change does not carry the review pass the item is in: an approval is not made of the pull request and the reviews
     /// as recorded, or a fix pass or a merge is not on the reviewed pull request.
     #[error(
         "item {item}: an approval carries the item's own pull request and reviews, and a fix pass or a merge its reviewed pull request, as recorded"
     )]
-    RoundNotKept {
+    ReviewPassNotKept {
         /// The item.
         item: ItemId,
     },
@@ -619,12 +619,12 @@ pub enum SubmitReviewError {
         /// Its phase.
         phase: PhaseKind,
     },
-    /// The round asked no review of this task.
-    #[error("item {item}: no review of the round was asked of task {task}")]
+    /// The review pass asked no review of this task.
+    #[error("item {item}: no review of the review pass was asked of task {task}")]
     UnknownReview {
         /// The item.
         item: ItemId,
-        /// The task that is not a reviewer of the round.
+        /// The task that is not a reviewer of the review pass.
         task: TaskId,
     },
     /// The review has its outcome already.
@@ -640,7 +640,7 @@ pub enum SubmitReviewError {
 /// Why the reviews of a pull request could not be asked for.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AskReviewsError {
-    /// Only an item in review has a round of reviews to fill.
+    /// Only an item in review has reviews to fill.
     #[error("item {item} is {phase}: only an item in review is asked for reviews")]
     NotInReview {
         /// The item.
@@ -648,8 +648,8 @@ pub enum AskReviewsError {
         /// Its phase.
         phase: PhaseKind,
     },
-    /// The round has its reviews already.
-    #[error("item {item}: the reviews of this round are asked for already")]
+    /// The review pass has its reviews already.
+    #[error("item {item}: the reviews of this review pass are asked for already")]
     AlreadyAsked {
         /// The item.
         item: ItemId,
@@ -668,7 +668,7 @@ pub enum AskReviewsError {
         /// The reviewer whose review is not pending.
         reviewer: InvestigatorName,
     },
-    /// The reviews do not fit one round.
+    /// The reviews do not fit one review pass.
     #[error("item {item}: {source}")]
     Reviews {
         /// The item.
@@ -743,7 +743,7 @@ impl ItemProgress {
 
     getter!("The fix passes so far, oldest first.", pub fn fix_passes(&self) -> &[FixPass] = &self.fix_passes);
 
-    /// Moves the item to `next`. Leaving `in_review` for `fixing` records the round's reviews as a fix pass.
+    /// Moves the item to `next`. Leaving `in_review` for `fixing` records the review pass's reviews as a fix pass.
     ///
     /// # Errors
     /// [`AdvanceError::Transition`] when [`PhaseKind::successors`] does not allow the change;
@@ -780,13 +780,13 @@ impl ItemProgress {
         Ok(())
     }
 
-    /// Checks that the round an item has is kept: an approval carries exactly its pull request and reviews, and the
+    /// Checks that the review pass an item has is kept: an approval carries exactly its pull request and reviews, and the
     /// pull request that was reviewed is the one the item goes back to be fixed on and is merged with. Any other
     /// change is left to [`ItemProgress::advance`].
     ///
     /// # Errors
-    /// [`AdvanceError::RoundNotKept`] when `next` carries another round than the one recorded.
-    fn check_round_kept(&self, next: &ItemPhase) -> Result<(), AdvanceError> {
+    /// [`AdvanceError::ReviewPassNotKept`] when `next` carries another review pass than the one recorded.
+    fn check_review_pass_kept(&self, next: &ItemPhase) -> Result<(), AdvanceError> {
         let kept = match (&self.phase, next) {
             (
                 ItemPhase::InReview {
@@ -807,13 +807,13 @@ impl ItemProgress {
         if kept {
             return Ok(());
         }
-        Err(AdvanceError::RoundNotKept { item: self.id })
+        Err(AdvanceError::ReviewPassNotKept { item: self.id })
     }
 
     /// Records the verdict that the reviewer task `task` reported for the item's pull request.
     ///
     /// # Errors
-    /// [`SubmitReviewError`]: the item is not in review, no review of the round was asked of `task`, or that review
+    /// [`SubmitReviewError`]: the item is not in review, no review of the review pass was asked of `task`, or that review
     /// already has its outcome.
     pub fn submit_review(
         &mut self,
@@ -844,22 +844,22 @@ impl ItemProgress {
         }
     }
 
-    /// Fills the round of an item in review with the reviews asked of its reviewers. The round starts empty when the
+    /// Fills the review pass of an item in review with the reviews asked of its reviewers. The review pass starts empty when the
     /// pull request is opened and is filled once, when reviewers are free to take it.
     ///
     /// # Errors
     /// [`AskReviewsError::NotInReview`] when the item is in another phase; [`AskReviewsError::AlreadyAsked`] when its
-    /// round has reviews; [`AskReviewsError::NoReviews`] for an empty request; [`AskReviewsError::NotPending`] for a
+    /// pass has reviews; [`AskReviewsError::NoReviews`] for an empty request; [`AskReviewsError::NotPending`] for a
     /// review that has its outcome; [`AskReviewsError::Reviews`] when a reviewer or a task is named twice.
     pub fn ask_reviews(&mut self, reviews: Vec<Review>) -> Result<(), AskReviewsError> {
         let item = self.id;
-        let ItemPhase::InReview { reviews: round, .. } = &mut self.phase else {
+        let ItemPhase::InReview { reviews: pass, .. } = &mut self.phase else {
             return Err(AskReviewsError::NotInReview {
                 item,
                 phase: self.phase.kind(),
             });
         };
-        if !round.is_empty() {
+        if !pass.is_empty() {
             return Err(AskReviewsError::AlreadyAsked { item });
         }
         if reviews.is_empty() {
@@ -874,8 +874,8 @@ impl ItemProgress {
                 reviewer: answered.reviewer.clone(),
             });
         }
-        check_round(&reviews).map_err(|source| AskReviewsError::Reviews { item, source })?;
-        *round = reviews;
+        check_review_pass(&reviews).map_err(|source| AskReviewsError::Reviews { item, source })?;
+        *pass = reviews;
         Ok(())
     }
 
@@ -963,7 +963,7 @@ mod tests {
         "1.2".parse().unwrap()
     }
 
-    /// The two reviews of a round, both asked for.
+    /// The two reviews of a review pass, both asked for.
     fn reviews(outcome: ReviewOutcome) -> Vec<Review> {
         vec![review("inv-opus", 5, outcome), review("inv-codex", 6, outcome)]
     }
@@ -1399,31 +1399,31 @@ mod tests {
         }
     }
 
-    // ---- the reviews of a round ---------------------------------------------------------------------------------
+    // ---- the reviews of a review pass ---------------------------------------------------------------------------------
 
     /// A submitted review of `reviewer` (task `n`) with `verdict`.
     fn submitted(reviewer: &str, n: u32, verdict: ReviewVerdict) -> Review {
         review(reviewer, n, ReviewOutcome::Submitted { verdict, at: at(40) })
     }
 
-    /// An item in review with `round`.
-    fn in_review_with(round: Vec<Review>) -> ItemProgress {
+    /// An item in review with `pass`.
+    fn in_review_with(pass: Vec<Review>) -> ItemProgress {
         let mut item = progress_in(PhaseKind::InProgress);
         item.advance(ItemPhase::InReview {
             pr: pr(7),
-            reviews: round,
+            reviews: pass,
         })
         .unwrap();
         item
     }
 
-    /// What `advance` says to the item in review `from` moving to approval with `round`, and the item after it.
-    fn approve_with(round: Vec<Review>) -> (Result<(), AdvanceError>, ItemProgress, ItemProgress) {
+    /// What `advance` says to the item in review `from` moving to approval with `pass`, and the item after it.
+    fn approve_with(pass: Vec<Review>) -> (Result<(), AdvanceError>, ItemProgress, ItemProgress) {
         let mut item = progress_in(PhaseKind::InReview);
         let before = item.clone();
         let result = item.advance(ItemPhase::Approved {
             pr: pr(7),
-            reviews: round,
+            reviews: pass,
         });
         (result, before, item)
     }
@@ -1448,8 +1448,8 @@ mod tests {
                 },
             ),
         ];
-        for (round, cause) in cases {
-            let (result, before, after) = approve_with(round);
+        for (pass, cause) in cases {
+            let (result, before, after) = approve_with(pass);
 
             assert_eq!(
                 result,
@@ -1495,13 +1495,13 @@ mod tests {
                 },
             ),
         ];
-        for (round, cause) in cases {
+        for (pass, cause) in cases {
             let mut item = progress_in(PhaseKind::InProgress);
             let before = item.clone();
 
             let result = item.advance(ItemPhase::InReview {
                 pr: pr(7),
-                reviews: round,
+                reviews: pass,
             });
 
             assert_eq!(
@@ -1517,7 +1517,7 @@ mod tests {
 
     #[test]
     fn a_round_that_asked_for_changes_or_is_not_complete_sends_the_item_back() {
-        for round in [
+        for pass in [
             vec![
                 submitted("inv-opus", 5, ReviewVerdict::Approve),
                 submitted("inv-codex", 6, ReviewVerdict::RequestChanges),
@@ -1527,7 +1527,7 @@ mod tests {
                 review("inv-codex", 6, ReviewOutcome::Pending),
             ],
         ] {
-            let mut item = in_review_with(round);
+            let mut item = in_review_with(pass);
 
             assert_eq!(item.advance(phase_of(PhaseKind::Fixing)), Ok(()));
             assert_eq!(item.fix_passes().len(), 1);
@@ -1554,8 +1554,8 @@ mod tests {
                 InvalidReviews::FixPassNotRequested,
             ),
         ];
-        for (round, cause) in cases {
-            let mut item = in_review_with(round);
+        for (pass, cause) in cases {
+            let mut item = in_review_with(pass);
             let before = item.clone();
 
             let result = item.advance(phase_of(PhaseKind::Fixing));

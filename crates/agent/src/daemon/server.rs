@@ -206,6 +206,8 @@ const fn team_of(kind: &EventKind) -> &TeamId {
         EventKind::TeamUpdated { summary } => &summary.id,
         EventKind::TeamStarted { team }
         | EventKind::TaskStatus { team, .. }
+        | EventKind::RoundOpened { team, .. }
+        | EventKind::RoundClosed { team, .. }
         | EventKind::ItemStatus { team, .. }
         | EventKind::RunStarted { team, .. }
         | EventKind::RunEnded { team, .. }

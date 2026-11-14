@@ -7,11 +7,12 @@ use serde::de::DeserializeOwned;
 use serde_json::error::Category;
 
 use super::{
-    Crew, Member, MergeMode, Participant, PrNumber, PullRequest, Review, ReviewOutcome, TaskListText, Team,
-    TeamMembers, Timestamp,
+    Completion, Crew, ItemPhase, Member, MergeMode, Participant, PhaseKind, PrNumber, PullRequest, Review,
+    ReviewOutcome, TaskListText, Team, TeamMembers, Timestamp,
 };
 use crate::config::{AbsolutePath, RepoName};
-use crate::ids::{AgentName, BranchName, InvestigatorName, RunId, TaskId, TeamId};
+use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, RoundId, RunId, TaskId, TeamId};
+use crate::status::ReviewVerdict;
 
 /// The task list of the sample team: one feature with an item done already and one open, a second that waits for it.
 pub(crate) const LIST: &str = "\
@@ -149,4 +150,63 @@ pub(crate) fn team_of(n: u32, first_task: u32) -> Team {
 pub(crate) fn assert_refused<T: DeserializeOwned + Debug>(value: &serde_json::Value) {
     let err = serde_json::from_value::<T>(value.clone()).unwrap_err();
     assert_eq!(err.classify(), Category::Data, "{value}: {err}");
+}
+
+/// The ID of round number `n` (0 to 59).
+pub(crate) fn round_id(n: u32) -> RoundId {
+    format!("round-20261111-1530{n:02}-q1w2").parse().unwrap()
+}
+
+/// Moves item `item` of `team` along the phases to `to`, with the pull request [`pr`]`(7)` and two reviewers: the tasks
+/// 21 and 22 of `inv-codex` and `inv-gemini`. The item must be pending; `to` is one of `in_progress`, `in_review`,
+/// `approved` and `done` (merged).
+pub(crate) fn drive(team: &mut Team, item: &str, to: PhaseKind) {
+    let item: ItemId = item.parse().unwrap();
+    let mut handle = team.item_mut(item).unwrap();
+    handle
+        .advance(ItemPhase::InProgress {
+            assignee: agent("codex-1"),
+            branch: branch("agents/codex-1/item-1-2"),
+        })
+        .unwrap();
+    if to == PhaseKind::InProgress {
+        return;
+    }
+    handle
+        .advance(ItemPhase::InReview {
+            pr: pr(7),
+            reviews: Vec::new(),
+        })
+        .unwrap();
+    if to == PhaseKind::InReview {
+        return;
+    }
+    handle
+        .ask_reviews(vec![
+            review("inv-codex", 21, ReviewOutcome::Pending),
+            review("inv-gemini", 22, ReviewOutcome::Pending),
+        ])
+        .unwrap();
+    for task_number in [21, 22] {
+        handle
+            .submit_review(&task(task_number), ReviewVerdict::Approve, at(40))
+            .unwrap();
+    }
+    let ItemPhase::InReview { pr: opened, reviews } = handle.phase().clone() else {
+        panic!("the item is in review");
+    };
+    handle
+        .advance(ItemPhase::Approved {
+            pr: opened.clone(),
+            reviews,
+        })
+        .unwrap();
+    if to == PhaseKind::Approved {
+        return;
+    }
+    handle
+        .advance(ItemPhase::Done {
+            completion: Completion::Merged { pr: opened, at: at(50) },
+        })
+        .unwrap();
 }

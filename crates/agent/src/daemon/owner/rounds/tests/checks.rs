@@ -112,8 +112,8 @@ fn scripts(rig: &Rig) {
     );
 }
 
-/// Answers round `round` of `task` with the verdict `text`.
-async fn answer(rig: &Rig, task: &TaskId, round: u32, text: &str) {
+/// Answers questions number `number` of `task` with the verdict `text`.
+async fn answer(rig: &Rig, task: &TaskId, number: u32, text: &str) {
     let answers = AnswerList::try_from(vec![AnswerInput {
         question: NonZeroU32::MIN,
         verdict: Verdict::from_text(text).unwrap().unwrap(),
@@ -126,7 +126,7 @@ async fn answer(rig: &Rig, task: &TaskId, round: u32, text: &str) {
             Client::Cli,
             Command::Answer(AnswerRequest {
                 task: task.clone(),
-                round: NonZeroU32::new(round).unwrap(),
+                number: NonZeroU32::new(number).unwrap(),
                 answers,
             }),
         )
@@ -176,9 +176,9 @@ async fn reviews_asked(rig: &Rig) {
     .await;
 }
 
-/// The questions file of round `round` of `task`, read.
-fn questions_of(rig: &Rig, task: &TaskId, round: u32) -> QuestionsFile {
-    let path = rig.home.questions_file(task, NonZeroU32::new(round).unwrap());
+/// The questions file number `number` of `task`, read.
+fn questions_of(rig: &Rig, task: &TaskId, number: u32) -> QuestionsFile {
+    let path = rig.home.questions_file(task, NonZeroU32::new(number).unwrap());
     QuestionsFile::parse(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
 
@@ -425,7 +425,7 @@ async fn the_checks_run_again_on_the_head_of_a_fix_pass_and_a_head_they_hold_bac
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    // The first round is clean and is reviewed; the fix pass then edits an existing test.
+    // The first review pass is clean and is reviewed; the fix pass then edits an existing test.
     rig.status_is(&tasks[0], TaskStatus::Questions).await;
     let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
     let file = questions_of(&rig, &tasks[0], 1);
@@ -606,7 +606,7 @@ async fn each_question_is_answered_for_its_own_file_and_only_what_was_refused_go
             Client::Cli,
             Command::Answer(AnswerRequest {
                 task: tasks[0].clone(),
-                round: NonZeroU32::MIN,
+                number: NonZeroU32::MIN,
                 answers,
             }),
         )

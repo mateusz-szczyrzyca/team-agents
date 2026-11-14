@@ -140,7 +140,7 @@ mod steering_process {
         let daemon = start_daemon(&home);
 
         eventually("the questions to be asked", || {
-            status(&home).contains("round 1 of questions waits for answers")
+            status(&home).contains("questions number 1 wait for answers")
         });
 
         let file = std::fs::read_to_string(questions_file(&home)).unwrap();
@@ -163,7 +163,7 @@ mod steering_process {
         scenario(&home, "done");
         let answered = run(&home, &["answer", TASK, "--file", answers.to_str().unwrap()]);
         assert!(answered.status.success(), "{answered:?}");
-        assert!(text(answered.stdout).contains("Answered round 1"));
+        assert!(text(answered.stdout).contains("Answered questions number 1"));
         eventually("the task to be done", || task_line(&home).ends_with("  done"));
 
         let args = std::fs::read_to_string(home.worktree_dir(&repo(), &task()).join(".fake-args")).unwrap();

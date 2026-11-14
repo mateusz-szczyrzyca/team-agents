@@ -13,7 +13,8 @@ use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{Outgoing, Recipient};
 use agent_runtime::process::error_chain;
 
-use super::{Owner, OwnerError};
+use super::teams::Look;
+use super::{Owner, OwnerError, round_state};
 use crate::daemon::control::{Halt, Skipped, Steer, Step, decide};
 
 /// The name the human's messages carry on the bus.
@@ -89,9 +90,35 @@ impl Owner {
                 self.after_move(task, team, steer)?;
             }
         }
+        if steer == Steer::Stop {
+            self.abandon_stopped_teams(&aimed).await?;
+        }
         self.record_control(client, steer.into(), target, &aimed, &reached)
             .await?;
         Ok(Ok(Reply::Applied { tasks: reached }))
+    }
+
+    /// Abandons the open rounds of the teams that a stop left with nobody to work: no task of their crew is left to run,
+    /// ask, wait or be resumed by itself. A team that has a task going keeps its rounds.
+    async fn abandon_stopped_teams(&mut self, aimed: &[Aimed]) -> Result<(), OwnerError> {
+        let mut teams: Vec<&TeamId> = aimed.iter().map(|aimed| &aimed.team).collect();
+        teams.dedup();
+        let now = Timestamp::now(&self.parts.clock)?;
+        for team in teams {
+            if !self.parts.state.team(team).is_some_and(round_state::is_stopped) {
+                continue;
+            }
+            let mut look = Look::default();
+            self.abandon_open_rounds(team, now, &mut look)?;
+            if look.changed {
+                self.save().await?;
+                for event in look.events {
+                    self.publish(now, event);
+                }
+                self.publish_summary(now, team);
+            }
+        }
+        Ok(())
     }
 
     /// The tasks of `target`: a task, or the tasks `reach` says of a team.
@@ -128,6 +155,10 @@ impl Owner {
                     })
                     .collect())
             }
+            Target::Round(round) => Err(Failure {
+                kind: FailureKind::Invalid,
+                message: format!("{round} is a round, which is not controlled: use its team or one of its tasks"),
+            }),
         }
     }
 
@@ -219,9 +250,10 @@ impl Owner {
         let Some(first) = aimed.first() else {
             return Ok(());
         };
+        // A round is refused before a control is recorded: `aim` has no task for it.
         let task = match target {
             Target::Task(task) => Some(task.clone()),
-            Target::Team(_) => None,
+            Target::Team(_) | Target::Round(_) => None,
         };
         self.publish(
             now,
@@ -298,6 +330,8 @@ impl Owner {
     fn recipients(&self, target: &Target, hearing: &[TaskId]) -> Result<Vec<Recipient>, OwnerError> {
         match target {
             Target::Task(task) => Ok(vec![Recipient::Agent(self.agent_of(task)?)]),
+            // Nobody hears a round: `aim` refused it before.
+            Target::Round(_) => Ok(Vec::new()),
             Target::Team(team) => {
                 let on_bus = self
                     .parts
@@ -331,6 +365,7 @@ fn describe(target: &Target) -> String {
     match target {
         Target::Task(task) => format!("task {task}"),
         Target::Team(team) => format!("every task of team {team}"),
+        Target::Round(round) => format!("round {round}"),
     }
 }
 
@@ -338,7 +373,7 @@ fn describe(target: &Target) -> String {
 fn nothing_done(steer: Steer, target: &Target, skipped: &[(TaskId, TaskStatus, Skipped)]) -> Failure {
     let message = match (target, skipped) {
         (Target::Task(task), [(_, status, why)]) => format!("task {task} is {status}: {}", why.because(steer)),
-        (Target::Task(_) | Target::Team(_), _) => {
+        (Target::Task(_) | Target::Team(_) | Target::Round(_), _) => {
             let lines: Vec<String> = skipped
                 .iter()
                 .map(|(task, status, why)| format!("- task {task} is {status}: {}", why.because(steer)))

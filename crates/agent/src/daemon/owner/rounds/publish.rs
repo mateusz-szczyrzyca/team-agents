@@ -12,7 +12,7 @@ use agent_runtime::git::{Git, Revision};
 use agent_runtime::github::{NewPullRequest, PullRequestUpdate, Readiness};
 use agent_runtime::process::error_chain;
 
-use super::super::teams::Round;
+use super::super::teams::Look;
 use crate::daemon::pr::{Joining, Publication, Publish, plan_publications, pull_text};
 
 use super::super::{Owner, OwnerError};
@@ -91,7 +91,7 @@ impl Owner {
         &mut self,
         pulls: &Pulls,
         team_id: &TeamId,
-        round: &mut Round,
+        look: &mut Look,
     ) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
@@ -119,11 +119,11 @@ impl Owner {
                 Ok(Attempt::Nothing) => {}
                 Ok(Attempt::Published(published)) => {
                     self.watch.retry_at.remove(&key);
-                    self.record_publication(team_id, &publication, &published, round)?;
+                    self.record_publication(team_id, &publication, &published, look)?;
                 }
                 Ok(Attempt::Held(held)) => {
                     self.watch.retry_at.remove(&key);
-                    self.hold_round(pulls, team_id, &lead, held, round)?;
+                    self.hold_round(pulls, team_id, &lead, held, look)?;
                 }
                 Err(error) => self.publish_failed(pulls, team_id, &lead, &publication, &error, now)?,
             }
@@ -363,7 +363,7 @@ impl Owner {
         team_id: &TeamId,
         publication: &Publication,
         published: &Published,
-        round: &mut Round,
+        look: &mut Look,
     ) -> Result<(), OwnerError> {
         for id in self.confirmed(team_id, publication, published) {
             let mut team_mut = self
@@ -386,19 +386,22 @@ impl Owner {
             })?;
             // An item that was being fixed has its pull request already; the others have it opened for them now.
             let opened = !matches!(&publication.publish, Publish::Update { fixing, .. } if fixing.contains(&id));
+            let round = self.round_of_item(team_id, id)?;
             if opened {
-                round.events.push(EventKind::PullRequestOpened {
+                look.events.push(EventKind::PullRequestOpened {
                     team: team_id.clone(),
                     item: id,
+                    round: round.clone(),
                     pr: published.pr.number,
                 });
             }
-            round.events.push(EventKind::ItemStatus {
+            look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: id,
+                round,
                 status: agent_core::status::ItemStatus::InReview,
             });
-            round.changed = true;
+            look.changed = true;
             tracing::info!(team = %team_id, item = %id, pr = %published.pr.number, "an item is in review");
         }
         Ok(())

@@ -65,7 +65,7 @@ struct Workers {
 
 /// What one look at a team changed in the state.
 #[derive(Debug, Default)]
-pub(super) struct Round {
+pub(super) struct Look {
     /// What happened, for the subscribers.
     pub(super) events: Vec<EventKind>,
     /// Whether the state changed and is to be saved.
@@ -121,7 +121,17 @@ impl Owner {
             .into_iter()
             .map(|(_, member)| member.task().clone())
             .collect();
-        let started = started_items(team);
+        let started = match started_events(team) {
+            Ok(started) => started,
+            Err(error) => {
+                tracing::error!(team = %id, error = %error_chain(&error), "the events of the new team cannot be made: the team is not started");
+                self.undo_start(&request, &formed).await;
+                return Ok(Err(internal(&format!(
+                    "the new team has no round for an item it started: {}",
+                    error_chain(&error)
+                ))));
+            }
+        };
         if let Err(error) = self.parts.store.save(&next).await {
             tracing::error!(team = %id, error = %error_chain(&error), "the state with the new team cannot be saved: the team is not started");
             self.undo_start(&request, &formed).await;
@@ -262,16 +272,16 @@ impl Owner {
         if self.closed.contains(team) || self.parts.state.team(team).is_none() {
             return Ok(());
         }
-        let mut round = Round::default();
-        self.reconcile_bus(team, &mut round).await?;
-        self.pull_requests(team, &mut round).await?;
-        self.assign_items(team, &mut round).await?;
-        self.serve_requests(team, &mut round).await?;
-        self.close_if_finished(team, &mut round)?;
-        if round.changed {
+        let mut look = Look::default();
+        self.reconcile_bus(team, &mut look).await?;
+        self.pull_requests(team, &mut look).await?;
+        self.assign_items(team, &mut look).await?;
+        self.serve_requests(team, &mut look).await?;
+        self.close_if_finished(team, &mut look)?;
+        if look.changed {
             self.save().await?;
             let now = Timestamp::now(&self.parts.clock)?;
-            for event in round.events {
+            for event in look.events {
                 self.publish(now, event);
             }
             self.publish_summary(now, team);
@@ -329,7 +339,7 @@ impl Owner {
     }
 
     /// Makes the members' states on the bus those their tasks have, and starts the tasks of the members the bus woke.
-    async fn reconcile_bus(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+    async fn reconcile_bus(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
@@ -345,14 +355,14 @@ impl Owner {
         };
         let plan = reconcile(team, &on_bus)?;
         for task in plan.wake {
-            self.release(&task, Why::Woken, round)?;
+            self.release(&task, Why::Woken, look)?;
         }
         for (member, state) in plan.set {
             match self.parts.bus.team_set(team_id, &member, state).await {
                 // A member that went to sleep while something waits for it is woken at once.
                 Ok(Woken::Message | Woken::Board) if state == MemberState::Sleeping => {
                     if let Some(task) = self.task_of(team_id, &member) {
-                        self.release(&task, Why::Woken, round)?;
+                        self.release(&task, Why::Woken, look)?;
                     }
                 }
                 Ok(Woken::Message | Woken::Board | Woken::No) => {}
@@ -379,7 +389,7 @@ impl Owner {
 
     /// Queues the task `task` to start with `why`: a waiting task is queued, a task that is about to start
     /// starts with it; a task that is at work is left alone.
-    pub(super) fn release(&mut self, task: &TaskId, why: Why, round: &mut Round) -> Result<(), OwnerError> {
+    pub(super) fn release(&mut self, task: &TaskId, why: Why, look: &mut Look) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         let status = self
             .parts
@@ -389,8 +399,8 @@ impl Owner {
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
         match status {
             TaskStatus::Waiting => {
-                self.move_to(task, &located.team, TaskStatus::Queued, &mut round.events)?;
-                round.changed = true;
+                self.move_to(task, &located.team, TaskStatus::Queued, &mut look.events)?;
+                look.changed = true;
             }
             // About to start: it starts with its reason.
             TaskStatus::Queued => {}
@@ -408,7 +418,7 @@ impl Owner {
     // ---- items and requests ---------------------------------------------------------------------------------
 
     /// Gives the pending items to the members that are free.
-    async fn assign_items(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+    async fn assign_items(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
@@ -432,15 +442,19 @@ impl Owner {
                 tracing::warn!(team = %team_id, item = %assigned.item, member = %assigned.agent, error = %error_chain(&error), "the worktree of a member cannot take the branch of its next item: the item waits and is tried again at the next look");
                 continue;
             }
+            let now = Timestamp::now(&self.parts.clock)?;
+            self.open_item_round(team_id, assigned.item, now, look)?;
             self.record_assignment(team_id, &assigned)?;
-            round.events.push(EventKind::ItemStatus {
+            let round = self.round_of_item(team_id, assigned.item)?;
+            look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: assigned.item,
+                round,
                 status: ItemStatus::InProgress,
             });
-            round.changed = true;
+            look.changed = true;
             tracing::info!(team = %team_id, item = %assigned.item, member = %assigned.agent, "an item is given to a member");
-            self.release(&assigned.task, Why::Assigned(assigned.item), round)?;
+            self.release(&assigned.task, Why::Assigned(assigned.item), look)?;
         }
         Ok(())
     }
@@ -493,7 +507,7 @@ impl Owner {
     /// The bus hands out the oldest queued request of every team. A request of another team is held while the queue is
     /// read on, and put back before the next team is looked at: each team's workers serve its own requests, and a team
     /// with a free worker does not keep another team's request from it.
-    async fn serve_requests(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+    async fn serve_requests(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(Workers {
             in_order: workers,
             mut busy,
@@ -519,7 +533,7 @@ impl Owner {
                 held.push(request.id);
                 continue;
             }
-            self.release(&task, Why::Delegated(Box::new(request.clone())), round)?;
+            self.release(&task, Why::Delegated(Box::new(request.clone())), look)?;
             self.serving.insert(
                 task.clone(),
                 Served {
@@ -676,7 +690,7 @@ impl Owner {
     // ---- the end of a team ----------------------------------------------------------------------------------
 
     /// Closes `team` when its work is over: its waiting tasks end, the bus is told, and so is the human, once.
-    fn close_if_finished(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+    fn close_if_finished(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
@@ -693,9 +707,12 @@ impl Owner {
             .map(|(_, member)| member.task().clone())
             .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
         for (task, status) in transitions {
-            self.move_to(&task, team_id, status, &mut round.events)?;
-            round.changed = true;
+            self.move_to(&task, team_id, status, &mut look.events)?;
+            look.changed = true;
         }
+        // The round of the whole work of a list without items, which nothing merges, ends with the team.
+        let now = Timestamp::now(&self.parts.clock)?;
+        self.abandon_open_rounds(team_id, now, look)?;
         let waiting_reviewers: Vec<TaskId> = self
             .parts
             .state
@@ -710,8 +727,8 @@ impl Owner {
             })
             .unwrap_or_default();
         for task in waiting_reviewers {
-            self.move_to(&task, team_id, TaskStatus::Done, &mut round.events)?;
-            round.changed = true;
+            self.move_to(&task, team_id, TaskStatus::Done, &mut look.events)?;
+            look.changed = true;
         }
         if has_bus {
             self.outbox.push_back(Outbound {
@@ -804,17 +821,42 @@ fn is_transient(error: &AgentBusError) -> bool {
     )
 }
 
-/// The events of the items a new team starts with: those that have a member already.
-fn started_items(team: &agent_core::state::Team) -> Vec<EventKind> {
-    team.items()
+/// The events of a new team: its rounds, which were opened with it, and the items it starts with — those that have a
+/// member already.
+///
+/// # Errors
+/// [`OwnerError::LostRound`] for an item that has started and has no round: a mistake of the daemon.
+fn started_events(team: &agent_core::state::Team) -> Result<Vec<EventKind>, OwnerError> {
+    let mut events: Vec<EventKind> = team
+        .rounds()
+        .iter()
+        .map(|round| EventKind::RoundOpened {
+            team: team.id().clone(),
+            round: round.id().clone(),
+            item: round.item(),
+        })
+        .collect();
+    for progress in team
+        .items()
         .iter()
         .filter(|progress| progress.status() != ItemStatus::Pending && progress.status() != ItemStatus::Done)
-        .map(|progress| EventKind::ItemStatus {
+    {
+        let round = team
+            .round_of(progress.id())
+            .ok_or_else(|| OwnerError::LostRound {
+                team: team.id().clone(),
+                item: progress.id(),
+            })?
+            .id()
+            .clone();
+        events.push(EventKind::ItemStatus {
             team: team.id().clone(),
             item: progress.id(),
+            round,
             status: progress.status(),
-        })
-        .collect()
+        });
+    }
+    Ok(events)
 }
 
 /// The change of the request `request` to `status`, for the bus, with the task of the worker that serves it.

@@ -78,7 +78,7 @@ mod pull_request_kept {
 
             let refused = handle.advance(fixing_on(other));
 
-            assert_eq!(refused, Err(AdvanceError::RoundNotKept { item: item() }));
+            assert_eq!(refused, Err(AdvanceError::ReviewPassNotKept { item: item() }));
             assert_eq!(handle.phase(), &before);
         });
     }
@@ -97,7 +97,7 @@ mod pull_request_kept {
         });
     }
 
-    /// Approves item 1.2 with the round it has.
+    /// Approves item 1.2 with the review pass it has.
     fn approve(handle: &mut ItemMut<'_>) {
         handle
             .submit_review(&pending_task(), ReviewVerdict::Approve, later())
@@ -119,7 +119,7 @@ mod pull_request_kept {
                 completion: Completion::Merged { pr: other, at: later() },
             });
 
-            assert_eq!(refused, Err(AdvanceError::RoundNotKept { item: item() }));
+            assert_eq!(refused, Err(AdvanceError::ReviewPassNotKept { item: item() }));
             assert_eq!(handle.phase(), &before);
             assert_eq!(handle.phase().kind(), PhaseKind::Approved);
         });

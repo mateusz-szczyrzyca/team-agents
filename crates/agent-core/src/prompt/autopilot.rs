@@ -112,7 +112,7 @@ impl AutopilotPrompt {
             Self::ReviewRequest => PromptSpec::new(
                 "harness/review/request.md",
                 Audience::Model,
-                &["team", "pr", "branch", "base", "head", "round"],
+                &["team", "pr", "branch", "base", "head", "pass"],
             ),
             Self::ReviewComment => PromptSpec::new(
                 "harness/review/comment.md",
@@ -130,7 +130,7 @@ impl AutopilotPrompt {
             Self::ReviewAskHuman => PromptSpec::new(
                 "harness/review/ask-human.md",
                 Audience::Model,
-                &["pr", "passes", "findings", "questions_file", "round", "task"],
+                &["pr", "passes", "findings", "questions_file", "number", "task"],
             ),
             Self::ReviewVerdictMissing => PromptSpec::new("harness/review/verdict-missing.md", Audience::Model, &[]),
             Self::NoticeNoVerdict => PromptSpec::new(

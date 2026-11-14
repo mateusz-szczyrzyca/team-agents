@@ -9,7 +9,7 @@ use agent_core::state::{CommitId, ItemPhase, Member, Participant, PullRequest, R
 use agent_runtime::git::{Git, Revision, WorktreeBranch};
 use agent_runtime::process::error_chain;
 
-use super::super::teams::Round;
+use super::super::teams::Look;
 use crate::daemon::merge::review_deliveries;
 use crate::daemon::review::{Reviewer, Slot, choose_reviewers, free_reviewers};
 use crate::daemon::team::{Why, task_branch};
@@ -29,7 +29,7 @@ pub(super) fn pending_review(reviewer: &agent_core::ids::InvestigatorName, task:
 
 impl Owner {
     /// Asks two free investigators from outside the team for the reviews of each pull request that has none asked.
-    pub(super) async fn ask_for_reviews(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+    pub(super) async fn ask_for_reviews(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let waiting = self.pull_requests_without_reviews(team_id);
         if waiting.is_empty() {
             return Ok(());
@@ -38,7 +38,7 @@ impl Owner {
         for (pr, items) in waiting {
             let now = Timestamp::now(&self.parts.clock)?;
             match self.try_ask(team_id, &lead, &pr, &items, now).await {
-                Ok(true) => round.changed = true,
+                Ok(true) => look.changed = true,
                 // Fewer than two investigators are free: the pull request waits for them.
                 Ok(false) => {}
                 Err(error) => {
@@ -204,12 +204,12 @@ impl Owner {
 
     /// Hands the reviews that were asked of reviewers that wait to the reviewers: the task is queued, and its prompt tells
     /// what it is to review.
-    pub(super) fn deliver_reviews(&mut self, team_id: &TeamId, round: &mut Round) -> Result<(), OwnerError> {
+    pub(super) fn deliver_reviews(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
         for task in review_deliveries(team) {
-            self.release(&task, Why::Review, round)?;
+            self.release(&task, Why::Review, look)?;
         }
         Ok(())
     }

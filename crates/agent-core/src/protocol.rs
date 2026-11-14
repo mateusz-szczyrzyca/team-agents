@@ -2,7 +2,7 @@
 //! its Unix socket (see `docs/state.md`).
 //!
 //! A client sends one [`Request`] per line; the daemon answers each with a [`Response`] and, to a client that
-//! subscribed, sends [`Event`]s as the state changes — a [`Frame`] is either. Every line carries `"protocol": 1`
+//! subscribed, sends [`Event`]s as the state changes — a [`Frame`] is either. Every line carries `"protocol": 2`
 //! ([`PROTOCOL_VERSION`]); a line of another version is refused with [`ProtocolError::UnsupportedVersion`] before
 //! anything else of it is read, so a client and a daemon of different versions say so and do not misread each other.
 //! The types here only describe lines and read and write them; the socket is the daemon's.
@@ -17,7 +17,10 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub use event::{ControlAction, Event, EventKind};
-pub use reply::{Failure, FailureKind, ItemCounts, MemberSummary, Outcome, Reply, Response, TeamSummary};
+pub use reply::{
+    Failure, FailureKind, ItemCounts, MemberSummary, Outcome, Reply, Response, ReviewPass, RoundDetail, RoundItem,
+    RoundTask, TeamSummary,
+};
 pub use request::{
     AgentList, AgentListError, AnswerInput, AnswerList, AnswerListError, AnswerRequest, Client, Command,
     ControlRequest, GateRequest, MAX_ANSWERS, MAX_RUN_AGENTS, MAX_SAY_BYTES, Request, RequestId, RunRequest, SayError,
@@ -25,7 +28,7 @@ pub use request::{
 };
 
 /// The protocol version that this build speaks.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Longest line a client may send, in bytes: a task list (1 MiB at most) with room for the rest of the request.
 pub const MAX_REQUEST_BYTES: usize = 2 << 20;
@@ -151,22 +154,22 @@ mod tests {
 
     /// A request line with the given body after the version, id and client.
     fn request_line(body: &str) -> String {
-        format!("{{\"protocol\":1,\"id\":7,\"client\":{{\"kind\":\"cli\"}},\"request\":{body}}}")
+        format!("{{\"protocol\":2,\"id\":7,\"client\":{{\"kind\":\"cli\"}},\"request\":{body}}}")
     }
 
     /// The protocol version of every message of this build.
     #[test]
     fn the_protocol_version_is_one_and_is_written_as_a_number() {
-        assert_eq!(PROTOCOL_VERSION, 1);
-        assert_eq!(serde_json::to_value(ProtocolVersion).unwrap(), json!(1));
-        assert_eq!(ProtocolVersion.to_string(), "1");
-        serde_json::from_value::<ProtocolVersion>(json!(1)).unwrap();
+        assert_eq!(PROTOCOL_VERSION, 2);
+        assert_eq!(serde_json::to_value(ProtocolVersion).unwrap(), json!(2));
+        assert_eq!(ProtocolVersion.to_string(), "2");
+        serde_json::from_value::<ProtocolVersion>(json!(2)).unwrap();
         for bad in [
             json!(0),
-            json!(2),
+            json!(1),
             json!(u64::MAX),
             json!(-1),
-            json!("1"),
+            json!("2"),
             json!(1.5),
             json!(null),
         ] {
@@ -222,13 +225,13 @@ mod tests {
     fn a_line_of_another_protocol_version_is_refused_with_that_version_whatever_else_it_says() {
         for (line, found) in [
             (
-                "{\"protocol\":2,\"id\":1,\"client\":{\"kind\":\"cli\"},\"request\":{\"command\":\"status\"}}",
-                2,
+                "{\"protocol\":1,\"id\":1,\"client\":{\"kind\":\"cli\"},\"request\":{\"command\":\"status\"}}",
+                1,
             ),
             ("{\"protocol\":0}", 0),
             ("{\"protocol\":18446744073709551615}", u64::MAX),
             ("{\"protocol\":3,\"request\":{\"command\":\"warp\",\"speed\":9}}", 3),
-            ("{\"id\":1,\"protocol\":2,\"anything\":[1,2,3]}", 2),
+            ("{\"id\":1,\"protocol\":4,\"anything\":[1,2,3]}", 4),
         ] {
             let request = Request::from_line(line).unwrap_err();
             let frame = Frame::from_line(line).unwrap_err();
@@ -254,12 +257,12 @@ mod tests {
             "null",
             "{}",
             "{\"id\":1}",
-            "{\"protocol\":\"1\"}",
+            "{\"protocol\":\"2\"}",
             "{\"protocol\":-1}",
-            "{\"protocol\":1.0}",
+            "{\"protocol\":2.0}",
             "{\"protocol\":null}",
-            "{\"protocol\":1}",
-            "{\"protocol\":1,\"id\":1,\"client\":{\"kind\":\"cli\"},\"request\":{\"command\":\"status\"}} trailing",
+            "{\"protocol\":2}",
+            "{\"protocol\":2,\"id\":1,\"client\":{\"kind\":\"cli\"},\"request\":{\"command\":\"status\"}} trailing",
         ] {
             let request = Request::from_line(line).unwrap_err();
             let frame = Frame::from_line(line).unwrap_err();
@@ -290,12 +293,12 @@ mod tests {
             assert!(matches!(err, ProtocolError::Malformed { .. }), "{body}: {err:?}");
         }
         for line in [
-            "{\"protocol\":1,\"client\":{\"kind\":\"cli\"},\"request\":{\"command\":\"status\"}}",
-            "{\"protocol\":1,\"id\":1,\"request\":{\"command\":\"status\"}}",
-            "{\"protocol\":1,\"id\":1,\"client\":{\"kind\":\"cli\"}}",
-            "{\"protocol\":1,\"id\":1,\"client\":{\"kind\":\"robot\"},\"request\":{\"command\":\"status\"}}",
-            "{\"protocol\":1,\"id\":-1,\"client\":{\"kind\":\"cli\"},\"request\":{\"command\":\"status\"}}",
-            "{\"protocol\":1,\"id\":1,\"client\":{\"kind\":\"cli\"},\"request\":{\"command\":\"status\"},\"extra\":1}",
+            "{\"protocol\":2,\"client\":{\"kind\":\"cli\"},\"request\":{\"command\":\"status\"}}",
+            "{\"protocol\":2,\"id\":1,\"request\":{\"command\":\"status\"}}",
+            "{\"protocol\":2,\"id\":1,\"client\":{\"kind\":\"cli\"}}",
+            "{\"protocol\":2,\"id\":1,\"client\":{\"kind\":\"robot\"},\"request\":{\"command\":\"status\"}}",
+            "{\"protocol\":2,\"id\":-1,\"client\":{\"kind\":\"cli\"},\"request\":{\"command\":\"status\"}}",
+            "{\"protocol\":2,\"id\":1,\"client\":{\"kind\":\"cli\"},\"request\":{\"command\":\"status\"},\"extra\":1}",
         ] {
             let err = Request::from_line(line).unwrap_err();
 
@@ -305,7 +308,7 @@ mod tests {
 
     #[test]
     fn a_malformed_line_keeps_the_parsers_reason_as_its_source() {
-        let err = Request::from_line("{\"protocol\":1}").unwrap_err();
+        let err = Request::from_line("{\"protocol\":2}").unwrap_err();
 
         let source = std::error::Error::source(&err).expect("a source");
 
@@ -383,11 +386,11 @@ mod tests {
 
         assert_eq!(
             response_line,
-            "{\"type\":\"response\",\"protocol\":1,\"id\":3,\"result\":{\"status\":\"ok\",\"reply\":{\"kind\":\"subscribed\",\"teams\":[]}}}\n"
+            "{\"type\":\"response\",\"protocol\":2,\"id\":3,\"result\":{\"status\":\"ok\",\"reply\":{\"kind\":\"subscribed\",\"teams\":[]}}}\n"
         );
         assert_eq!(
             event_line,
-            "{\"type\":\"event\",\"protocol\":1,\"at\":\"2026-11-11T19:15:00Z\",\"event\":{\"kind\":\"team_started\",\"team\":\"team-20261111-153001-t5m8\"}}\n"
+            "{\"type\":\"event\",\"protocol\":2,\"at\":\"2026-11-11T19:15:00Z\",\"event\":{\"kind\":\"team_started\",\"team\":\"team-20261111-153001-t5m8\"}}\n"
         );
         assert_eq!(Frame::from_line(&response_line).unwrap(), response);
         assert_eq!(Frame::from_line(&event_line).unwrap(), event);
@@ -396,9 +399,9 @@ mod tests {
     #[test]
     fn a_frame_of_an_unknown_type_is_malformed() {
         for line in [
-            "{\"type\":\"request\",\"protocol\":1}",
-            "{\"protocol\":1,\"id\":3,\"result\":{\"status\":\"ok\",\"reply\":{\"kind\":\"subscribed\"}}}",
-            "{\"type\":\"response\",\"protocol\":1,\"id\":3}",
+            "{\"type\":\"request\",\"protocol\":2}",
+            "{\"protocol\":2,\"id\":3,\"result\":{\"status\":\"ok\",\"reply\":{\"kind\":\"subscribed\"}}}",
+            "{\"type\":\"response\",\"protocol\":2,\"id\":3}",
         ] {
             let err = Frame::from_line(line).unwrap_err();
 

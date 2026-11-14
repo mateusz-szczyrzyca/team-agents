@@ -75,8 +75,8 @@ pub(super) enum StartProblem {
         source: Option<InvalidValue>,
     },
     /// The question rounds of the task are used up.
-    #[error("the task has no round of questions left")]
-    RoundsExhausted,
+    #[error("the task has no number of questions left")]
+    NumbersExhausted,
     /// The prompt cannot be composed.
     #[error("cannot compose the prompt")]
     Prompt(#[from] ComposeError),
@@ -192,8 +192,8 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     let working = ctx.home.worktree_dir(team.repo(), task);
     check_directory(&working).await?;
     let working_dir = absolute(&working)?;
-    let round = next_round(member).ok_or(StartProblem::RoundsExhausted)?;
-    let questions_file = ctx.home.questions_file(task, round);
+    let number = next_number(member).ok_or(StartProblem::NumbersExhausted)?;
+    let questions_file = ctx.home.questions_file(task, number);
     let session = member
         .last_session()
         .map(|session| SessionId::from_str(session.as_str()))
@@ -209,7 +209,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         repo: team.repo(),
         worktree: &working,
         questions_file: &questions_file,
-        round,
+        number,
         brief: team.task_list().list().brief(),
         item,
         // Checkpoints live on the agentbus, which a team's life (the next item) creates: none yet.
@@ -261,10 +261,10 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     })
 }
 
-/// The round of questions the human answered and no run has read since: the last round is answered, and the latest run
+/// The questions the human answered and no run has read since: the last questions are answered, and the latest run
 /// that read its prompt ended asking. A run that did not read it (it crashed, was stopped, hung, hit a limit) leaves the
 /// answers to the next one. It is worked out from the state, so that it holds after a restart.
-fn answered_round(member: &Member) -> Option<&Question> {
+fn answered_questions(member: &Member) -> Option<&Question> {
     let question = member.questions().last().filter(|question| !question.is_open())?;
     for run in member.runs().iter().rev() {
         match run.state() {
@@ -296,14 +296,14 @@ fn answered_round(member: &Member) -> Option<&Question> {
     None
 }
 
-/// What the human answered to the round the last run asked, the way the run is told; `None` when there is no such
-/// round.
+/// What the human answered to the questions the last run asked, the way the run is told; `None` when there are no
+/// such questions.
 async fn answers_text(ctx: &Context<'_>, member: &Member) -> Result<Option<String>, StartProblem> {
-    let Some(question) = answered_round(member) else {
+    let Some(question) = answered_questions(member) else {
         return Ok(None);
     };
     let loaded = questions::read(question.file().as_path()).await?;
-    let answers = questions::answers_prompt(&loaded.file, question.round(), ctx.question_texts)?;
+    let answers = questions::answers_prompt(&loaded.file, question.number(), ctx.question_texts)?;
     Ok(Some(answers))
 }
 
@@ -368,8 +368,8 @@ fn absolute(path: &std::path::Path) -> Result<AbsolutePath, StartProblem> {
     })
 }
 
-/// The number of the round of questions the task would ask next.
-pub(super) fn next_round(member: &Member) -> Option<NonZeroU32> {
+/// The number of the questions the task would ask next.
+pub(super) fn next_number(member: &Member) -> Option<NonZeroU32> {
     u32::try_from(member.questions().len())
         .ok()
         .and_then(|asked| asked.checked_add(1))
@@ -399,7 +399,7 @@ fn prompt_kind(member: &Member, session: Option<&SessionId>, config: &Config) ->
 }
 
 /// The item of the team that `participant` is working on, if it has one.
-fn assigned_item<'a>(team: &'a Team, participant: &Participant) -> Option<&'a Item> {
+pub(super) fn assigned_item<'a>(team: &'a Team, participant: &Participant) -> Option<&'a Item> {
     team.items().iter().find_map(|progress| match progress.phase() {
         ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }
             if assignee.as_str() == participant.name() =>
@@ -416,7 +416,7 @@ fn assigned_item<'a>(team: &'a Team, participant: &Participant) -> Option<&'a It
 }
 
 /// The branch `member` works on: the branch of its item, or the branch its task started on.
-fn work_branch(team: &Team, member: &Member) -> Result<BranchName, StartProblem> {
+pub(super) fn work_branch(team: &Team, member: &Member) -> Result<BranchName, StartProblem> {
     let item_branch = team.items().iter().find_map(|progress| match progress.phase() {
         ItemPhase::InProgress { assignee, branch } | ItemPhase::Fixing { assignee, branch, .. }
             if assignee.as_str() == member.agent().name() =>

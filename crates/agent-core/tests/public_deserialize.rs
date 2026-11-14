@@ -12,7 +12,7 @@ mod public_deserialize {
     use serde_json::{Value, json};
 
     /// The state, as shipped with the tests.
-    const FIXTURE: &str = include_str!("fixtures/state-v1.json");
+    const FIXTURE: &str = include_str!("fixtures/state-v1-as-v2.json");
 
     /// The fixture, as a JSON value.
     fn fixture() -> Value {
@@ -89,7 +89,7 @@ mod public_deserialize {
     #[test]
     fn a_direct_deserialize_of_a_question_checks_that_it_is_not_answered_before_it_was_asked() {
         let question = json!({
-            "round": 1,
+            "number": 1,
             "file": "/home/dev/agents-test/tasks/task-20261111-193002-k3x9/questions-1.md",
             "asked_at": "2026-11-11T19:36:00Z",
             "state": {"status": "answered", "at": "2026-11-11T19:30:00Z", "via": "dashboard"}

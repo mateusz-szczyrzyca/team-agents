@@ -252,7 +252,7 @@ async fn the_first_prompt_has_the_context_the_role_and_the_rules() {
                 .to_str()
                 .unwrap()
         ),
-        "the questions file of the first round: {args}"
+        "the first questions file: {args}"
     );
 }
 
@@ -279,7 +279,7 @@ async fn a_run_that_asks_questions_records_the_round_and_tells_the_human() {
     f.stop().await.unwrap();
 
     let question = member_one(&state).open_question().unwrap();
-    assert_eq!(question.round().get(), 1);
+    assert_eq!(question.number().get(), 1);
     assert_eq!(question.file().as_path(), file);
     assert!(file.is_file());
     let notes = f.notifications();

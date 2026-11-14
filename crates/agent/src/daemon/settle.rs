@@ -20,7 +20,7 @@ pub(super) enum Settled {
     Status(TaskStatus),
     /// The task failed: it goes to `failed` and the human is told.
     Failed(Notice),
-    /// The agent asked questions: the file of the round decides what follows.
+    /// The agent asked questions: the questions file decides what follows.
     Questions,
     /// The provider's limit pauses the task.
     Paused(Pause),

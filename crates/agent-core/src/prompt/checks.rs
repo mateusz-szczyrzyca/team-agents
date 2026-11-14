@@ -141,7 +141,7 @@ impl ChecksPrompt {
             Self::AskRelay => PromptSpec::new(
                 "harness/checks/ask-relay.md",
                 Audience::Model,
-                &["questions_file", "round", "task"],
+                &["questions_file", "number", "task"],
             ),
             Self::Answered => PromptSpec::new("harness/checks/answered.md", Audience::Model, &[]),
             Self::QuestionsTitle => {

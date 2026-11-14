@@ -73,7 +73,7 @@ async fn answers_from_the_protocol_resume_the_task_with_the_answers_in_its_next_
         prompt.contains("the human accepts the recommendation: a) — simpler (fake)"),
         "{prompt}"
     );
-    assert!(prompt.contains("round 1"), "{prompt}");
+    assert!(prompt.contains("questions number 1"), "{prompt}");
     let on_disk = QuestionsFile::parse(&std::fs::read_to_string(daemon.questions_file(1, 1)).unwrap()).unwrap();
     assert!(on_disk.is_answered(), "the file keeps the answers that were given");
     daemon.stop().await.unwrap();
@@ -122,7 +122,7 @@ async fn the_event_of_an_answer_names_the_channel() {
 
     let via = events
         .until("the answer", |event| match &event.event {
-            agent_core::protocol::EventKind::QuestionAnswered { via, round, .. } if *round == n(1) => Some(*via),
+            agent_core::protocol::EventKind::QuestionAnswered { via, number, .. } if *number == n(1) => Some(*via),
             _ => None,
         })
         .await;
@@ -220,7 +220,7 @@ async fn answers_for_a_round_that_is_not_open_are_refused() {
     let (kind, message) = refusal(daemon.ask(answer(1, 2, &[(1, "ok")])).await);
 
     assert_eq!(kind, FailureKind::Conflict);
-    assert!(message.contains("round 1"), "{message}");
+    assert!(message.contains("number 1"), "{message}");
     daemon.stop().await.unwrap();
 }
 
@@ -255,7 +255,7 @@ async fn a_task_that_asks_again_gets_its_next_round_in_the_next_file() {
     daemon.ask(answer(1, 1, &[(1, "ok")])).await.unwrap();
 
     daemon
-        .state_where("the second round", |state| {
+        .state_where("the second questions", |state| {
             state.find_task(&task(1)).unwrap().member.questions().len() == 2
         })
         .await;
@@ -265,7 +265,7 @@ async fn a_task_that_asks_again_gets_its_next_round_in_the_next_file() {
     assert_eq!(
         kind,
         FailureKind::Conflict,
-        "round 1 is answered; round 2 is the open one"
+        "questions number 1 are answered; number 2 are the open ones"
     );
     let reply = daemon.ask(answer(1, 2, &[(1, "ok")])).await.unwrap();
     assert_eq!(reply, Reply::Applied { tasks: vec![task(1)] });

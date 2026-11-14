@@ -133,14 +133,14 @@ async fn an_answer_that_is_not_a_message_is_a_protocol_error() {
 async fn an_answer_of_another_protocol_version_is_said_so() {
     let dir = tempfile::tempdir().unwrap();
     let daemon = FakeDaemon::serve(&socket(&dir), |_| {
-        Answer::Lines(vec!["{\"type\":\"response\",\"protocol\":2,\"id\":1}\n".to_owned()])
+        Answer::Lines(vec!["{\"type\":\"response\",\"protocol\":3,\"id\":1}\n".to_owned()])
     });
     let mut connection = Connection::connect(daemon.socket()).await.unwrap();
 
     let error = connection.request(Client::Cli, status()).await.unwrap_err();
 
     assert!(
-        matches!(&error, ClientError::Protocol(ProtocolError::UnsupportedVersion(version)) if version.found == 2),
+        matches!(&error, ClientError::Protocol(ProtocolError::UnsupportedVersion(version)) if version.found == 3),
         "{error:?}"
     );
 }

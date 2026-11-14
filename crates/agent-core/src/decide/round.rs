@@ -22,6 +22,10 @@ use crate::ids::InvestigatorName;
 use crate::state::{CommitId, MergeMode, PhaseKind, PrNumber};
 use crate::status::ReviewVerdict;
 
+mod runs;
+
+pub use self::runs::{RunStart, TaskRounds, rounds_of_run};
+
 /// What a round needs to know besides its state: the rules of the team.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoundPolicy {
@@ -888,7 +892,7 @@ mod tests {
     }
 
     // Rule: one reviewer asking for changes decides, even after the other approved; the approval is dropped with
-    // the round and the next review round starts from none.
+    // the round and the next review pass starts from none.
     #[test]
     fn changes_requested_after_an_approval_start_a_fix_pass() {
         assert_eq!(

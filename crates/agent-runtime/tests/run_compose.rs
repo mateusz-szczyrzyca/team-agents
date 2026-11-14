@@ -72,7 +72,7 @@ mod run_compose {
                 repo: &self.repo,
                 worktree: Path::new("/w/team-agents/task-1"),
                 questions_file: Path::new("/h/tasks/task-1/questions-2.md"),
-                round: NonZeroU32::new(2).unwrap(),
+                number: NonZeroU32::new(2).unwrap(),
                 brief: "",
                 item: None,
                 checkpoint: None,
@@ -91,7 +91,7 @@ mod run_compose {
         }
     }
 
-    const CONTEXT: &str = "[harness/run/context.md] agent=claude-1 task=task-20261111-153601-k3x9 repo=team-agents worktree=/w/team-agents/task-1 questions_file=/h/tasks/task-1/questions-2.md round=2";
+    const CONTEXT: &str = "[harness/run/context.md] agent=claude-1 task=task-20261111-153601-k3x9 repo=team-agents worktree=/w/team-agents/task-1 questions_file=/h/tasks/task-1/questions-2.md number=2";
 
     fn item(expected: Option<&str>, checks: Option<&str>) -> Item {
         Item {

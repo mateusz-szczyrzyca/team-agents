@@ -25,7 +25,7 @@ async fn rendered(notice: &Notice) -> (String, String) {
 async fn every_notice_has_a_title_that_names_the_agent_and_the_task() {
     let notices = [
         Notice::Questions {
-            round: NonZeroU32::new(2).unwrap(),
+            number: NonZeroU32::new(2).unwrap(),
             file: PathBuf::from("/h/tasks/t/questions-2.md"),
         },
         Notice::QuestionsMissing {
@@ -62,7 +62,7 @@ async fn every_notice_has_a_title_that_names_the_agent_and_the_task() {
 #[tokio::test]
 async fn the_body_of_a_notice_has_the_facts_of_it() {
     let (_, questions) = rendered(&Notice::Questions {
-        round: NonZeroU32::new(2).unwrap(),
+        number: NonZeroU32::new(2).unwrap(),
         file: PathBuf::from("/h/tasks/t/questions-2.md"),
     })
     .await;
@@ -81,7 +81,7 @@ async fn the_body_of_a_notice_has_the_facts_of_it() {
     let (_, code) = rendered(&Notice::NoStatus { exit: Some(3) }).await;
 
     assert!(
-        questions.contains("Round 2") && questions.contains("/h/tasks/t/questions-2.md"),
+        questions.contains("Questions number 2") && questions.contains("/h/tasks/t/questions-2.md"),
         "{questions}"
     );
     assert!(hung.contains("30 minutes") && hung.contains("3 times"), "{hung}");

@@ -132,6 +132,7 @@ mod subscription {
             EventKind::ItemStatus {
                 team: team_a(),
                 item,
+                round: "round-20261111-193000-a1b4".parse().unwrap(),
                 status: ItemStatus::Approved,
             },
         ] {

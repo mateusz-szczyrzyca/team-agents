@@ -506,7 +506,7 @@ async fn a_fixed_branch_updates_the_pull_request_and_is_reviewed_again_until_it_
     assert_eq!(merges[0].json()["sha"], rig.remote_tip(&branch));
     let progress = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap();
     assert_eq!(progress.fix_passes().len(), 1);
-    // The reports of the second round are kept apart from those of the first.
+    // The reports of the second review pass are kept apart from those of the first.
     for member in state.team(&team).unwrap().reviewers() {
         let number = agent_core::state::PrNumber::new(std::num::NonZeroU32::MIN);
         assert!(rig.home.review_report_file(member.task(), number, 0).exists());
@@ -545,8 +545,8 @@ async fn a_fix_pass_whose_gate_has_not_passed_does_not_update_the_pull_request()
 use agent_core::protocol::{AnswerInput, AnswerList, AnswerRequest};
 use agent_core::questions::Verdict;
 
-/// Answers round `round` of `task` with `ok`, as the human does.
-async fn accept(rig: &Rig, task: &agent_core::ids::TaskId, round: u32) {
+/// Answers questions number `number` of `task` with `ok`, as the human does.
+async fn accept(rig: &Rig, task: &agent_core::ids::TaskId, number: u32) {
     let answers = AnswerList::try_from(vec![AnswerInput {
         question: std::num::NonZeroU32::MIN,
         verdict: Verdict::from_text("ok").unwrap().unwrap(),
@@ -559,7 +559,7 @@ async fn accept(rig: &Rig, task: &agent_core::ids::TaskId, round: u32) {
             Client::Cli,
             Command::Answer(AnswerRequest {
                 task: task.clone(),
-                round: std::num::NonZeroU32::new(round).unwrap(),
+                number: std::num::NonZeroU32::new(number).unwrap(),
                 answers,
             }),
         )
