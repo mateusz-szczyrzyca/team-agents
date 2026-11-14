@@ -187,7 +187,8 @@ async fn resume_starts_a_stopped_task_again() {
     assert_eq!(reply, Reply::Applied { tasks: vec![task(1)] });
     let state = daemon
         .state_where("task 1 to have run again", |state| {
-            state.find_task(&task(1)).unwrap().member.runs().len() == 2
+            let runs = state.find_task(&task(1)).unwrap().member.runs();
+            runs.len() == 2 && matches!(runs.last().map(|run| run.state()), Some(RunState::Ended { .. }))
         })
         .await;
     assert_eq!(
