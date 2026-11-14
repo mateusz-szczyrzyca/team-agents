@@ -188,7 +188,10 @@ async fn resume_starts_a_stopped_task_again() {
     let state = daemon
         .state_where("task 1 to have run again", |state| {
             let runs = state.find_task(&task(1)).unwrap().member.runs();
-            runs.len() == 2 && matches!(runs.last().map(|run| run.state()), Some(RunState::Ended { .. }))
+            runs.len() == 2
+                && runs
+                    .last()
+                    .is_some_and(|run| matches!(run.state(), RunState::Ended { .. }))
         })
         .await;
     assert_eq!(
