@@ -856,3 +856,41 @@ async fn what_the_human_refuses_is_recorded_as_a_round_sent_back_with_the_refuse
         "{issues:?}"
     );
 }
+
+// ---- the story of a round the checks held back --------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_round_the_checks_send_back_once_and_then_ask_the_human_about_is_told_with_both_and_the_allowance() {
+    use super::history_stories_tests::{Normalized, check_story, golden};
+
+    let mut rig = checking_rig("script:code-only,done,questions,done", 1, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start_with_rng(rand::SeedableRng::seed_from_u64(7)).await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.state_where("both reviewers to have run", |state| {
+        let reviewers = state.team(&team).unwrap().reviewers();
+        reviewers.len() == 2
+            && reviewers.iter().all(|member| {
+                !member.runs().is_empty()
+                    && member
+                        .runs()
+                        .iter()
+                        .all(|run| matches!(run.state(), agent_core::state::RunState::Ended { .. }))
+            })
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let (text, json) = check_story(&rig, &team);
+
+    let sent_back = text.find("→ sent back to the team (pass 1 of 1)").expect(&text);
+    let asked = text.find("→ the human is asked in questions 1").expect(&text);
+    let allowed = text.find("→ allowed by the human: the reviews go on").expect(&text);
+    let reviews = text.find("review pass 1 of #1 asked of").expect(&text);
+    assert!(sent_back < asked && asked < allowed && allowed < reviews, "{text}");
+    golden("story-checks.txt", &Normalized::of(&rig, &text, &json));
+}

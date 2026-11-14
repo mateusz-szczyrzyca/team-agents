@@ -1,0 +1,130 @@
+Round <round-1> of team <team-2>
+Item 1.1: Pierwsza pozycja: zażółć gęślą jaźń
+
+Opis: żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć 
+
+Expected result:
+- działa — très bien
+
+Checks:
+- uruchom to
+
+Team started <time>: repo example, base branch main, merge autopilot
+
+Agents
+1. claude-1 — solo — named on the command line
+
+Story
+
+<time>  run <run-3>: claude-1 (normal, claude) as solo, because it is the first run of the task
+    task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/claude-1/<task-4>-1.1
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # Working context
+      
+      You are agent **claude-1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      The human does not answer live: you reach them only through a questions file (below).
+      
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-3>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-3>/claude-settings.json --session-id <uuid> --scenario gated --as claude-1 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-4>, at commit <commit-2>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported DONE
+    ----- final message (41 bytes) -----
+Committed, and the gate ran.
+STATUS: DONE
+    ----- end of final message -----
+    changes: head <commit-2> → <commit-1>
+      commit <commit-1> Work of run 1 of claude-1
+      added work-1.txt (+1 -0)
+<time>  gate for task <task-4>: passed at <commit-1> (took <duration>); output <home>/tasks/<task-4>/gate-1.log
+<time>  pull request #1 opened: branch agents/claude-1/<task-4>-1.1 at <commit-1>
+  title: Item 1.1: Pierwsza pozycja: zażółć gęślą jaźń
+  ----- pull request body (5809 bytes) -----
+Work of the team `<team-2>` on `example`, opened by the harness after the repository's gate passed on this branch
+(passed at <commit-1>).
+
+## 1.1 — Pierwsza pozycja: zażółć gęślą jaźń
+
+Opis: żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć żółć
+
+### Expected result
+
+- działa — très bien
+
+### Checks
+
+- uruchom to
+
+## Reviews
+
+Two investigators from outside the team review this pull request. Their reports are posted here as reviews.
+  ----- end of pull request body -----
+<time>  pull request #1 marked ready for review
+<time>  review pass 1 of #1 asked of inv-r1 (task <task-5>) at <commit-1>
+<time>  review pass 1 of #1 asked of inv-r2 (task <task-6>) at <commit-1>
+<time>  run <run-7>: inv-r1 (investigator, claude) as reviewer, because a review of pull request #1, pass 1
+    task <task-5>; worktree <home>/worktrees/example/<task-5>, branch agents/inv-r1/<task-5>
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # Working context
+      
+      You are agent **inv-r1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      The human does not answer live: you reach them only through a questions file (below).
+      
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-5>/runs/<run-7>/mcp.json --max-turns 300 --settings <home>/tasks/<task-5>/runs/<run-7>/claude-settings.json --session-id <uuid> --scenario 'done:VERDICT: APPROVE\nSUMMARY: très bien — 日本語' --as inv-r1 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-5>, at commit <commit-1>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported DONE
+    ----- final message (63 bytes) -----
+VERDICT: APPROVE
+SUMMARY: très bien — 日本語
+STATUS: DONE
+    ----- end of final message -----
+    changes: head <commit-1> → <commit-1>
+<time>  run <run-8>: inv-r2 (investigator, claude) as reviewer, because a review of pull request #1, pass 1
+    task <task-6>; worktree <home>/worktrees/example/<task-6>, branch agents/inv-r2/<task-6>
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # Working context
+      
+      You are agent **inv-r2**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      The human does not answer live: you reach them only through a questions file (below).
+      
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-8>/mcp.json --max-turns 300 --settings <home>/tasks/<task-6>/runs/<run-8>/claude-settings.json --session-id <uuid> --scenario 'late:VERDICT: APPROVE\nSUMMARY: zażółć gęślą jaźń' --as inv-r2 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-6>, at commit <commit-1>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported DONE
+    ----- final message (65 bytes) -----
+VERDICT: APPROVE
+SUMMARY: zażółć gęślą jaźń
+STATUS: DONE
+    ----- end of final message -----
+    changes: head <commit-1> → <commit-1>
+<time>  review pass 1 of #1 by inv-r1: APPROVE
+  ----- review report (50 bytes) -----
+VERDICT: APPROVE
+SUMMARY: très bien — 日本語
+  ----- end of review report -----
+<time>  review pass 1 of #1 by inv-r2: APPROVE
+  ----- review report (52 bytes) -----
+VERDICT: APPROVE
+SUMMARY: zażółć gęślą jaźń
+  ----- end of review report -----
+<time>  pull request #1 approved by both reviews
+<time>  pull request #1 merged as <commit-1>
+<time>  round <round-1> closed: merged
+<time>  team ended
+<time>  notification sent: Team <team-2> is finished (task <task-4>)
+  ----- notification (190 bytes) -----
+The team <team-2> on example has finished its work: 1 items done. Its tasks are closed. The worktrees stay where
+they are, in the home of the harness, until you remove them.
+  ----- end of notification -----

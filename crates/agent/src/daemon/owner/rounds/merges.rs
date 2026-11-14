@@ -96,7 +96,8 @@ impl Owner {
             match self.try_merge(site, &pr, now).await {
                 Ok(Merge::Merged(commit)) => {
                     self.watch.polled.remove(&(team_id.clone(), pr.number));
-                    self.record_event(
+                    self.record_event_at(
+                        now,
                         team_id,
                         self.rounds_of_items(team_id, &items),
                         HistoryEvent::PullMerged { pr: pr.number, commit },

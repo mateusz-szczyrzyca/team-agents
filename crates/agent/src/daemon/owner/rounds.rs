@@ -419,6 +419,9 @@ mod history_records_tests;
 #[path = "rounds/tests/history_sessions.rs"]
 mod history_sessions_tests;
 #[cfg(test)]
+#[path = "rounds/tests/history_stories.rs"]
+mod history_stories_tests;
+#[cfg(test)]
 #[path = "rounds/tests/rig.rs"]
 mod rig;
 #[cfg(test)]

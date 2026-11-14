@@ -11,6 +11,12 @@
 #   questions       ends with STATUS: QUESTIONS and writes no questions file
 #   slowdone        waits a second, then ends with STATUS: DONE
 #   slowfail        waits a second, then ends with STATUS: FAILED
+#   gated           commits a file in the worktree, excludes its own `.fake-*` files from git, creates `.fake-committed-N` and waits
+#                   for `.fake-gate-done-N` (N is the number of the run; the test creates it once the daemon ran the gate), then
+#                   ends with STATUS: DONE: the gate that gates the commit is the daemon's own
+#   integrate-gated  integrates like `integrate` and waits for the daemon's gate like `gated`
+#   lead-gated      integrates like `integrate`, or commits a fix when the prompt is a fix pass; waits for the daemon's gate
+#   late:TEXT       waits three seconds, then ends with TEXT, a line break and STATUS: DONE
 #   work            commits a file in the worktree, records that the repository's gate passed at the new head (the file
 #                   `gate.json` in the task's directory in the home the configuration names) and ends with STATUS: DONE
 #   commit          commits a file in the worktree, records no gate and ends with STATUS: DONE: the gate that was recorded
@@ -107,6 +113,17 @@ record_gate() {
     "$head" "$dir" > "$dir/gate.json"
 }
 
+# Keeps the stand-in's own files out of git's sight, says that the run has committed and waits for the test to say that the
+# daemon ran the gate (`.fake-committed-N`, then `.fake-gate-done-N`).
+wait_for_gate() {
+  printf '%s\n' '.fake-*' >> "$(git rev-parse --git-path info/exclude)"
+  : > ".fake-committed-$n"
+  for _ in $(seq 1 600); do
+    [[ -e ".fake-gate-done-$n" ]] && break
+    sleep 0.1
+  done
+}
+
 init
 read_messages
 case $action in
@@ -126,6 +143,42 @@ case $action in
   commit)
     commit_work
     result 'Changed something.\nSTATUS: DONE'
+    ;;
+  gated)
+    # Commits like `work`, keeps its own files out of git's sight so that a gate sees a clean tree, says it has committed
+    # (`.fake-committed-N`, N the number of the run) and waits for the test to ask the daemon for the gate and to say it ran
+    # (`.fake-gate-done-N`).
+    commit_work
+    wait_for_gate
+    result 'Committed, and the gate ran.\nSTATUS: DONE'
+    ;;
+  integrate-gated)
+    # Integrates like `integrate`, and waits for the gate of the daemon like `gated`.
+    current=$(git rev-parse --abbrev-ref HEAD)
+    for other in $(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-*.*'); do
+      [[ $other == "$current" ]] || git "${GIT_FIXTURE[@]}" merge --no-edit "$other" > /dev/null
+    done
+    wait_for_gate
+    result 'Integrated, and the gate ran.\nSTATUS: DONE'
+    ;;
+  lead-gated)
+    # What a coordinator does: integrates what its members did, or, when the prompt is a fix pass of the reviewers, commits a
+    # fix; then waits for the daemon's gate like `gated`.
+    if grep -q 'THE REVIEWERS ASKED FOR CHANGES' <<< "$prompt"; then
+      commit_work
+    else
+      current=$(git rev-parse --abbrev-ref HEAD)
+      for other in $(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-*.*'); do
+        [[ $other == "$current" ]] || git "${GIT_FIXTURE[@]}" merge --no-edit "$other" > /dev/null
+      done
+    fi
+    wait_for_gate
+    result 'Led the round, and the gate ran.\nSTATUS: DONE'
+    ;;
+  late:*)
+    # Ends later than the other agents of a test that start with it: three seconds of waiting, then the text and STATUS: DONE.
+    sleep 3
+    result "${action#late:}"'\nSTATUS: DONE'
     ;;
   script:*)
     bash "$home/fake-scripts/${action#script:}.sh"

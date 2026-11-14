@@ -1,0 +1,257 @@
+Round <round-1> of team <team-2>
+Item 1.1: The first item
+
+Do the first thing in the repository.
+
+Expected result:
+- the first thing works
+
+Checks:
+- run the first thing
+
+Team started <time>: repo example, base branch main, merge autopilot
+
+Agents
+1. claude-1 — solo — named on the command line
+
+Story
+
+<time>  run <run-3>: claude-1 (normal, claude) as solo, because it is the first run of the task
+    task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/claude-1/<task-4>-1.1
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # Working context
+      
+      You are agent **claude-1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      The human does not answer live: you reach them only through a questions file (below).
+      
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-3>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-3>/claude-settings.json --session-id <uuid> --scenario script:code-only,done,questions,done --as claude-1 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-4>, at commit <commit-2>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported DONE
+    ----- final message (35 bytes) -----
+Did the scripted work.
+STATUS: DONE
+    ----- end of final message -----
+    changes: head <commit-2> → <commit-1>
+      commit <commit-1> Add code
+      added src/a.txt (+1 -0)
+      uncommitted: added .fake-args-1 (+<n> -<n>)
+      uncommitted: added .fake-log (+<n> -<n>)
+      uncommitted: added .fake-prompt-1 (+<n> -<n>)
+      uncommitted: added .fake-runs (+<n> -<n>)
+<time>  pull request #1 opened: branch agents/claude-1/<task-4>-1.1 at <commit-1>
+  title: Item 1.1: The first item
+  ----- pull request body (419 bytes) -----
+Work of the team `<team-2>` on `example`, opened by the harness after the repository's gate passed on this branch
+(passed at <commit-1>).
+
+## 1.1 — The first item
+
+Do the first thing in the repository.
+
+### Expected result
+
+- the first thing works
+
+### Checks
+
+- run the first thing
+
+## Reviews
+
+Two investigators from outside the team review this pull request. Their reports are posted here as reviews.
+  ----- end of pull request body -----
+<time>  checks before a review found 1 issue at <commit-1>:
+  - The round changes production code and adds no line to a test file. Every change of behaviour comes with its test, written first and committed before the code. A change that cannot have its test first (layout, prompt wording, a line of configuration) says so in a commit message: `Test-First: not possible — <reason>`.
+  → sent back to the team (pass 1 of 1)
+<time>  run <run-5>: claude-1 (normal, claude) as solo, because the checks before a review sent the round back
+    task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/claude-1/<task-4>-1.1
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # Working context
+      
+      You are agent **claude-1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      The human does not answer live: you reach them only through a questions file (below).
+      
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-5>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-5>/claude-settings.json --resume <uuid> --scenario script:code-only,done,questions,done --as claude-1 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-4>, at commit <commit-1>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported DONE
+    ----- final message (31 bytes) -----
+Finished the work.
+STATUS: DONE
+    ----- end of final message -----
+    changes: head <commit-1> → <commit-1>
+      uncommitted: added .fake-args-1 (+<n> -<n>)
+      uncommitted: added .fake-args-2 (+<n> -<n>)
+      uncommitted: added .fake-log (+<n> -<n>)
+      uncommitted: added .fake-prompt-1 (+<n> -<n>)
+      uncommitted: added .fake-prompt-2 (+<n> -<n>)
+      uncommitted: added .fake-runs (+<n> -<n>)
+<time>  checks before a review found 1 issue at <commit-1>:
+  - The round changes production code and adds no line to a test file. Every change of behaviour comes with its test, written first and committed before the code. A change that cannot have its test first (layout, prompt wording, a line of configuration) says so in a commit message: `Test-First: not possible — <reason>`.
+  → the human is asked in questions 1 (the team fixed nothing in the passes the checks allow)
+<time>  run <run-6>: claude-1 (normal, claude) as solo, because the checks before a review sent the round back
+    task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/claude-1/<task-4>-1.1
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # Working context
+      
+      You are agent **claude-1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      The human does not answer live: you reach them only through a questions file (below).
+      
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-6>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-6>/claude-settings.json --resume <uuid> --scenario script:code-only,done,questions,done --as claude-1 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-4>, at commit <commit-1>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported QUESTIONS
+    ----- final message (32 bytes) -----
+I have to ask.
+STATUS: QUESTIONS
+    ----- end of final message -----
+    changes: head <commit-1> → <commit-1>
+      uncommitted: added .fake-args-1 (+<n> -<n>)
+      uncommitted: added .fake-args-2 (+<n> -<n>)
+      uncommitted: added .fake-args-3 (+<n> -<n>)
+      uncommitted: added .fake-log (+<n> -<n>)
+      uncommitted: added .fake-prompt-1 (+<n> -<n>)
+      uncommitted: added .fake-prompt-2 (+<n> -<n>)
+      uncommitted: added .fake-prompt-3 (+<n> -<n>)
+      uncommitted: added .fake-runs (+<n> -<n>)
+<time>  notification sent: claude-1 has questions (<task-4>) (task <task-4>)
+  ----- notification (259 bytes) -----
+Questions number 1 of task <task-4> wait for your answers in <home>/tasks/<task-4>/questions-1.md.
+Answer in the file (put **ANSWERED** on its last line and save) or run `agent answer <task-4>`.
+  ----- end of notification -----
+<time>  task <task-4> asked the human (questions 1)
+  ----- questions (1149 bytes) -----
+# Checks before the review — team <team-2>, task <task-4>
+
+> Answer every question after **Verdict:** — `ok` accepts the recommendation. When you are done, put **ANSWERED** on the last line and save: the answers are sent at once (or run `agent answer <task-4>`).
+
+## 1. Allow the round to change production code without a test of its own?
+The team went back to work 1 time(s) on what the checks found, and the round still has these findings. You decide: allow them, or send the round back once more.
+
+- The round changes production code and adds no line to a test file. Every change of behaviour comes with its test, written first and committed before the code. A change that cannot have its test first (layout, prompt wording, a line of configuration) says so in a commit message: `Test-First: not possible — <reason>`.
+
+Write `allow` to let the round go to its review as it is; the harness records it for the item and does not ask again. Write `refuse`, or `ok`, to send the round back to the team.
+
+**Recommended:** `refuse` — send the round back to the team to settle it.
+
+**Verdict:**
+  ----- end of questions -----
+<time>  task <task-4>: the human answered questions 1 (command)
+  ----- answered questions (1169 bytes) -----
+# Checks before the review — team <team-2>, task <task-4>
+
+> Answer every question after **Verdict:** — `ok` accepts the recommendation. When you are done, put **ANSWERED** on the last line and save: the answers are sent at once (or run `agent answer <task-4>`).
+
+## 1. Allow the round to change production code without a test of its own?
+The team went back to work 1 time(s) on what the checks found, and the round still has these findings. You decide: allow them, or send the round back once more.
+
+- The round changes production code and adds no line to a test file. Every change of behaviour comes with its test, written first and committed before the code. A change that cannot have its test first (layout, prompt wording, a line of configuration) says so in a commit message: `Test-First: not possible — <reason>`.
+
+Write `allow` to let the round go to its review as it is; the harness records it for the item and does not ask again. Write `refuse`, or `ok`, to send the round back to the team.
+
+**Recommended:** `refuse` — send the round back to the team to settle it.
+
+**Verdict:** allow
+
+**ANSWERED**
+  ----- end of answered questions -----
+<time>  run <run-7>: claude-1 (normal, claude) as solo, because the human answered the questions of the task
+    task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/claude-1/<task-4>-1.1
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # THE HUMAN ANSWERED YOUR QUESTIONS (questions number 1)
+      
+      The human answered the questions you asked when you ended a run with `STATUS: QUESTIONS`. If you were started again
+      after that without these answers reaching you, they are given again now. Everything of this session still holds, the
+      rules of your first message included. Below is the file with their answers: each question has its verdict. A verdict
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-7>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-7>/claude-settings.json --resume <uuid> --scenario script:code-only,done,questions,done --as claude-1 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-4>, at commit <commit-1>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported DONE
+    ----- final message (31 bytes) -----
+Finished the work.
+STATUS: DONE
+    ----- end of final message -----
+    changes: head <commit-1> → <commit-1>
+      uncommitted: added .fake-args-1 (+<n> -<n>)
+      uncommitted: added .fake-args-2 (+<n> -<n>)
+      uncommitted: added .fake-args-3 (+<n> -<n>)
+      uncommitted: added .fake-args-4 (+<n> -<n>)
+      uncommitted: added .fake-log (+<n> -<n>)
+      uncommitted: added .fake-prompt-1 (+<n> -<n>)
+      uncommitted: added .fake-prompt-2 (+<n> -<n>)
+      uncommitted: added .fake-prompt-3 (+<n> -<n>)
+      uncommitted: added .fake-prompt-4 (+<n> -<n>)
+      uncommitted: added .fake-runs (+<n> -<n>)
+<time>  checks before a review found 1 issue at <commit-1>:
+  - Allow the round to change production code without a test of its own?
+  → allowed by the human: the reviews go on
+<time>  pull request #1 marked ready for review
+<time>  review pass 1 of #1 asked of inv-r1 (task <task-8>) at <commit-1>
+<time>  review pass 1 of #1 asked of inv-r2 (task <task-9>) at <commit-1>
+<time>  run <run-10>: inv-r1 (investigator, claude) as reviewer, because a review of pull request #1, pass 1
+    task <task-8>; worktree <home>/worktrees/example/<task-8>, branch agents/inv-r1/<task-8>
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # Working context
+      
+      You are agent **inv-r1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      The human does not answer live: you reach them only through a questions file (below).
+      
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-8>/runs/<run-10>/mcp.json --max-turns 300 --settings <home>/tasks/<task-8>/runs/<run-10>/claude-settings.json --session-id <uuid> --scenario sleep --as inv-r1 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-8>, at commit <commit-1>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported SLEEPING
+    ----- final message (35 bytes) -----
+Nothing to do now.
+STATUS: SLEEPING
+    ----- end of final message -----
+    changes: head <commit-1> → <commit-1>
+      uncommitted: added .fake-args-1 (+<n> -<n>)
+      uncommitted: added .fake-log (+<n> -<n>)
+      uncommitted: added .fake-prompt-1 (+<n> -<n>)
+      uncommitted: added .fake-runs (+<n> -<n>)
+<time>  run <run-11>: inv-r2 (investigator, claude) as reviewer, because a review of pull request #1, pass 1
+    task <task-9>; worktree <home>/worktrees/example/<task-9>, branch agents/inv-r2/<task-9>
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # Working context
+      
+      You are agent **inv-r2**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      The human does not answer live: you reach them only through a questions file (below).
+      
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-9>/runs/<run-11>/mcp.json --max-turns 300 --settings <home>/tasks/<task-9>/runs/<run-11>/claude-settings.json --session-id <uuid> --scenario sleep --as inv-r2 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-9>, at commit <commit-1>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported SLEEPING
+    ----- final message (35 bytes) -----
+Nothing to do now.
+STATUS: SLEEPING
+    ----- end of final message -----
+    changes: head <commit-1> → <commit-1>
+      uncommitted: added .fake-args-1 (+<n> -<n>)
+      uncommitted: added .fake-log (+<n> -<n>)
+      uncommitted: added .fake-prompt-1 (+<n> -<n>)
+      uncommitted: added .fake-runs (+<n> -<n>)
