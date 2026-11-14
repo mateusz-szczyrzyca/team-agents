@@ -144,6 +144,14 @@ fn count(row: &Row_, column: &'static str, value: i64) -> Result<u32, ReadError>
 }
 
 impl Reader {
+    /// Sessions reported by `run`, in observation order; version 1 histories have none.
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or database cannot be read.
+    pub fn sessions(&self, _run: &RunId) -> Result<Vec<agent_core::history::RunSession>, ReadError> {
+        Ok(Vec::new())
+    }
+
     /// Opens the history at `path` for reading.
     ///
     /// # Errors

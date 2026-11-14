@@ -33,6 +33,7 @@ pub(super) fn insert(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes)
         Record::Step(step) => insert_step(tx, step, limit),
         Record::RunEnd(end) => insert_end(tx, end, limit),
         Record::Changes(changes) => insert_changes(tx, changes, limit),
+        Record::Session(_) => Ok(()),
     }
 }
 

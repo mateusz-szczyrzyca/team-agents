@@ -13,6 +13,8 @@ mod records;
 #[cfg(test)]
 mod schema;
 #[cfg(test)]
+mod sessions;
+#[cfg(test)]
 mod states;
 #[cfg(test)]
 mod support;

@@ -724,6 +724,19 @@ pub struct RunEndRecord {
     pub final_message: Option<String>,
 }
 
+/// A session observed in the CLI stream, including changes within one run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunSession {
+    /// The run that observed this session.
+    pub run: RunId,
+    /// The observation's number within the run, starting at one.
+    pub number: NonZeroU32,
+    /// When the CLI reported the session.
+    pub at: Timestamp,
+    /// The session to use for a later resume.
+    pub session: SessionId,
+}
+
 /// One step of a run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
@@ -782,6 +795,8 @@ pub enum Record {
     RunEnd(Box<RunEndRecord>),
     /// What a run changed.
     Changes(Box<RunChanges>),
+    /// A session reported after the CLI started.
+    Session(Box<RunSession>),
 }
 
 /// Whether the history is being written, and what it lost.

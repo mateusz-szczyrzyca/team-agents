@@ -363,6 +363,12 @@ pub struct RunOutput {
 
 /// Reads the output of one run. Made by [`CliAdapter::parser`], one per run: it may keep what it has seen.
 pub trait OutputParser: Send {
+    /// The latest session observed in the stream, available before the run ends.
+    /// Parsers without session notifications return none.
+    fn session(&self) -> Option<&SessionId> {
+        None
+    }
+
     /// Reads one line of the CLI's stdout and returns the steps it shows, none for a line that shows no step.
     ///
     /// # Errors
