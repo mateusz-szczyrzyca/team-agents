@@ -179,13 +179,13 @@ mod story_records {
                 break;
             }
         }
+        let owner = records.iter().find(|record| record.rounds.len() == 2).unwrap();
         let shared: Vec<u64> = records
             .iter()
-            .filter(|record| record.rounds.len() == 2)
+            .filter(|record| record.rounds.len() == 2 && record.team == owner.team)
             .map(|record| record.sequence)
             .collect();
         assert_ne!(shared.len(), 0);
-        let owner = records.iter().find(|record| record.rounds.len() == 2).unwrap();
         let [first, second] = [owner.rounds[0].clone(), owner.rounds[1].clone()];
 
         let in_first = sequences(&json_lines(&records, &Selection::Round(first)));
