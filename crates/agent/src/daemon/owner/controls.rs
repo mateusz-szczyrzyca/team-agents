@@ -103,7 +103,7 @@ impl Owner {
             self.abandon_stopped_teams(&aimed).await?;
         }
         self.record_control(client, steer.into(), target, &aimed, &reached)
-            .await?;
+            .await;
         Ok(Ok(Reply::Applied { tasks: reached }))
     }
 
@@ -280,10 +280,13 @@ impl Owner {
         target: &Target,
         aimed: &[Aimed],
         reached: &[TaskId],
-    ) -> Result<(), OwnerError> {
-        let now = Timestamp::now(&self.parts.clock)?;
+    ) {
+        let Ok(now) = Timestamp::now(&self.parts.clock) else {
+            tracing::warn!(action = ?action, "the clock gives a time that cannot be used: the control is not published or written to the activity log");
+            return;
+        };
         let Some(first) = aimed.first() else {
-            return Ok(());
+            return;
         };
         // A round is refused before a control is recorded: `aim` has no task for it.
         let task = match target {
@@ -308,7 +311,6 @@ impl Owner {
             self.log_activity(task, now, event).await;
         }
         tracing::info!(action = ?action, tasks = reached.len(), "the human used a control");
-        Ok(())
     }
 
     // ---- say ------------------------------------------------------------------------------------------------
@@ -352,10 +354,20 @@ impl Owner {
                 }));
             }
         }
-        let said = Timestamp::now(&self.parts.clock)?;
-        self.record_controlled(said, client, ControlAction::Say, &target, &aimed, &hearing);
+        if let Some(first) = aimed.first() {
+            self.record_event(
+                &first.team,
+                self.rounds_of_tasks(&hearing),
+                HistoryEvent::Controlled {
+                    action: ControlAction::Say,
+                    target: target.clone(),
+                    by: client.clone(),
+                    tasks: hearing.clone(),
+                },
+            );
+        }
         self.record_control(client, ControlAction::Say, &target, &aimed, &hearing)
-            .await?;
+            .await;
         for Aimed { team, .. } in &aimed {
             // A member asleep is woken by the message, which the look at its team finds.
             self.look_at(team);

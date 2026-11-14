@@ -895,7 +895,8 @@ impl Owner {
             )
             .await
         {
-            self.record_event(
+            self.record_event_at(
+                now,
                 &located.team,
                 self.rounds_of_tasks(std::slice::from_ref(task)),
                 HistoryEvent::QuestionAsked {

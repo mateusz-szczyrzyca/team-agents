@@ -303,7 +303,7 @@ impl Service {
         if job.cancel.is_cancelled() {
             return Err(GateError::Cancelled);
         }
-        let started_at = Timestamp::now(&self.parts.clock)?;
+        let started_at = Timestamp::now(&self.parts.clock);
         let before = inspect(&job.worktree).await.map_err(|source| GateError::Git {
             worktree: job.worktree.as_path().to_path_buf(),
             source,
@@ -311,7 +311,11 @@ impl Service {
         let (log, log_text) = self.open_log(&job.task).await?;
         let outcome = self.run_command(job, &log).await?;
         let finished_at = Timestamp::now(&self.parts.clock).inspect_err(|error| {
-            self.record_capture_loss(job, started_at, error);
+            if let Ok(at) = started_at {
+                self.record_capture_loss(job, at, error);
+            } else {
+                self.history.capture_failed(CaptureKind::Gate, error);
+            }
         })?;
         // The command has ended with its whole group: what it left in the worktree is final. A gate that changed the
         // tree or moved `HEAD` did not gate what the commit holds.
@@ -335,7 +339,10 @@ impl Service {
                 log: log_text,
             },
         };
-        self.record(job, started_at, &record);
+        match started_at {
+            Ok(started_at) => self.record(job, started_at, &record),
+            Err(ref error) => self.record_capture_loss(job, finished_at, error),
+        }
         self.parts
             .store
             .save_gate_record(&job.task, &record)
@@ -475,7 +482,7 @@ impl Service {
                 team: job.team.clone(),
                 rounds: Vec::new(),
                 event: HistoryEvent::Lost {
-                    task: None,
+                    task: Some(job.task.clone()),
                     what: LostKind::Event(agent_core::history::EventKind::Gate),
                     cause: LostCause::CaptureGate,
                     detail: error_chain(error),
