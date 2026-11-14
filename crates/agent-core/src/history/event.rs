@@ -67,6 +67,8 @@ pub enum EventKind {
     RoundClosed,
     /// [`HistoryEvent::TeamEnded`].
     TeamEnded,
+    /// [`HistoryEvent::Lost`].
+    Lost,
 }
 
 impl Keyword for EventKind {
@@ -254,6 +256,15 @@ pub enum HistoryEvent {
     },
     /// A team ended.
     TeamEnded {},
+    /// A record the history could not write: the writer notes what is missing and why, when it can write again.
+    Lost {
+        /// The kind of the missing record, as the ledger names kinds (`step`, `run_end`, `pull_merged`, ...).
+        what: String,
+        /// Why it is missing, as the writer reports the cause (`write_disk_full`, `write_refused`, ...).
+        cause: String,
+        /// What went wrong, in a line, with its causes.
+        detail: String,
+    },
 }
 
 /// An event with when it happened and whom it belongs to.
@@ -292,6 +303,7 @@ impl HistoryEvent {
             Self::Notified { .. } => EventKind::Notified,
             Self::RoundClosed { .. } => EventKind::RoundClosed,
             Self::TeamEnded {} => EventKind::TeamEnded,
+            Self::Lost { .. } => EventKind::Lost,
         }
     }
 
@@ -301,7 +313,11 @@ impl HistoryEvent {
     #[must_use]
     pub fn key(&self) -> Option<String> {
         match self {
-            Self::Gate { .. } | Self::Checked { .. } | Self::Controlled { .. } | Self::Notified { .. } => None,
+            Self::Gate { .. }
+            | Self::Checked { .. }
+            | Self::Controlled { .. }
+            | Self::Notified { .. }
+            | Self::Lost { .. } => None,
             Self::PullOpened { number: pr, .. }
             | Self::PullReady { pr }
             | Self::PullApproved { pr }
@@ -332,6 +348,7 @@ impl HistoryEvent {
                 vec![("title", title), ("body", body)]
             }
             Self::ReviewSubmitted { report, .. } => vec![("report", report)],
+            Self::Lost { detail, .. } => vec![("detail", detail)],
             Self::FixPassStarted { findings, .. } => vec![("findings", findings)],
             Self::QuestionAsked { text, .. } | Self::QuestionAnswered { text, .. } => vec![("text", text)],
             Self::Gate { .. }
@@ -381,6 +398,7 @@ impl HistoryEvent {
             | Self::PullApproved { .. }
             | Self::PullHandedOver { .. }
             | Self::PullClosed { .. }
+            | Self::Lost { .. }
             | Self::TeamEnded {} => Vec::new(),
         }
     }

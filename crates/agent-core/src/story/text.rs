@@ -273,6 +273,7 @@ const fn is_pull_request(event: &HistoryEvent) -> bool {
         | HistoryEvent::Controlled { .. }
         | HistoryEvent::Notified { .. }
         | HistoryEvent::RoundClosed { .. }
+        | HistoryEvent::Lost { .. }
         | HistoryEvent::TeamEnded {} => false,
     }
 }
@@ -706,6 +707,7 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         }
         HistoryEvent::RoundClosed { round, end } => entry(page, at, &format!("round {round} closed: {end}")),
         HistoryEvent::TeamEnded {} => entry(page, at, "team ended"),
+        HistoryEvent::Lost { .. } => entry(page, at, "a record is missing"),
         HistoryEvent::PullOpened { .. }
         | HistoryEvent::PullPushed { .. }
         | HistoryEvent::PullReady { .. }
@@ -844,6 +846,7 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         | HistoryEvent::Controlled { .. }
         | HistoryEvent::Notified { .. }
         | HistoryEvent::RoundClosed { .. }
+        | HistoryEvent::Lost { .. }
         | HistoryEvent::TeamEnded {} => {}
     }
 }
