@@ -273,14 +273,52 @@ impl HistoryEvent {
     /// The keyword of the event.
     #[must_use]
     pub const fn kind(&self) -> EventKind {
-        EventKind::Gate
+        match self {
+            Self::Gate { .. } => EventKind::Gate,
+            Self::Checked { .. } => EventKind::Checked,
+            Self::PullOpened { .. } => EventKind::PullOpened,
+            Self::PullPushed { .. } => EventKind::PullPushed,
+            Self::PullReady { .. } => EventKind::PullReady,
+            Self::ReviewAsked { .. } => EventKind::ReviewAsked,
+            Self::ReviewSubmitted { .. } => EventKind::ReviewSubmitted,
+            Self::FixPassStarted { .. } => EventKind::FixPassStarted,
+            Self::PullApproved { .. } => EventKind::PullApproved,
+            Self::PullMerged { .. } => EventKind::PullMerged,
+            Self::PullHandedOver { .. } => EventKind::PullHandedOver,
+            Self::PullClosed { .. } => EventKind::PullClosed,
+            Self::QuestionAsked { .. } => EventKind::QuestionAsked,
+            Self::QuestionAnswered { .. } => EventKind::QuestionAnswered,
+            Self::Controlled { .. } => EventKind::Controlled,
+            Self::Notified { .. } => EventKind::Notified,
+            Self::RoundClosed { .. } => EventKind::RoundClosed,
+            Self::TeamEnded {} => EventKind::TeamEnded,
+        }
     }
 
-    /// What makes the event the same event when it is recorded twice: a pull request opened, a head pushed, a review
-    /// asked. `None` for what can happen again as often as it likes (a gate, a control, a notification).
+    /// What makes the event the same event when it is recorded twice, within its kind and team: a pull request opened,
+    /// a head pushed, a review asked. `None` for what can happen again as often as it likes (a gate, a control, a
+    /// notification).
     #[must_use]
     pub fn key(&self) -> Option<String> {
-        None
+        match self {
+            Self::Gate { .. } | Self::Checked { .. } | Self::Controlled { .. } | Self::Notified { .. } => None,
+            Self::PullOpened { number: pr, .. }
+            | Self::PullReady { pr }
+            | Self::PullApproved { pr }
+            | Self::PullMerged { pr, .. }
+            | Self::PullHandedOver { pr }
+            | Self::PullClosed { pr } => Some(format!("pr {pr}")),
+            Self::PullPushed { pr, head } => Some(format!("pr {pr} head {}", head.as_str())),
+            Self::ReviewAsked { pr, pass, reviewer, .. } | Self::ReviewSubmitted { pr, pass, reviewer, .. } => {
+                Some(format!("pr {pr} pass {pass} reviewer {}", reviewer.as_str()))
+            }
+            Self::FixPassStarted { pr, pass, .. } => Some(format!("pr {pr} fix pass {pass}")),
+            Self::QuestionAsked { task, number, .. } | Self::QuestionAnswered { task, number, .. } => {
+                Some(format!("task {} questions {number}", task.as_str()))
+            }
+            Self::RoundClosed { round, .. } => Some(format!("round {}", round.as_str())),
+            Self::TeamEnded {} => Some("team".to_owned()),
+        }
     }
 
     /// Every free text of the event, with the name of its field, to redact and to cut. The name is what a [`Cut`]
@@ -288,13 +326,62 @@ impl HistoryEvent {
     ///
     /// [`Cut`]: super::Cut
     pub fn texts_mut(&mut self) -> Vec<(&'static str, &mut String)> {
-        Vec::new()
+        match self {
+            Self::Checked { issues, .. } => issues.iter_mut().map(|issue| ("issues", issue)).collect(),
+            Self::PullOpened { title, body, .. } | Self::Notified { title, body, .. } => {
+                vec![("title", title), ("body", body)]
+            }
+            Self::ReviewSubmitted { report, .. } => vec![("report", report)],
+            Self::FixPassStarted { findings, .. } => vec![("findings", findings)],
+            Self::QuestionAsked { text, .. } | Self::QuestionAnswered { text, .. } => vec![("text", text)],
+            Self::Gate { .. }
+            | Self::PullPushed { .. }
+            | Self::PullReady { .. }
+            | Self::ReviewAsked { .. }
+            | Self::PullApproved { .. }
+            | Self::PullMerged { .. }
+            | Self::PullHandedOver { .. }
+            | Self::PullClosed { .. }
+            | Self::Controlled { .. }
+            | Self::RoundClosed { .. }
+            | Self::TeamEnded {} => Vec::new(),
+        }
     }
 
     /// The identities in the event — the strings a reader must find as they were written — which a credential must not
     /// occur in: a record that has one is not written.
     #[must_use]
     pub fn identities(&self) -> Vec<&str> {
-        Vec::new()
+        match self {
+            Self::Gate { task, record, .. } => vec![task.as_str(), record.result.head.as_str()],
+            Self::Checked { head, .. } | Self::PullPushed { head, .. } => vec![head.as_str()],
+            Self::PullOpened { branch, head, .. } => vec![branch.as_str(), head.as_str()],
+            Self::ReviewAsked {
+                head, reviewer, task, ..
+            } => vec![head.as_str(), reviewer.as_str(), task.as_str()],
+            Self::ReviewSubmitted { reviewer, task, .. } => vec![reviewer.as_str(), task.as_str()],
+            Self::PullMerged { commit, .. } => commit.iter().map(CommitId::as_str).collect(),
+            Self::QuestionAsked { task, .. } | Self::QuestionAnswered { task, .. } => vec![task.as_str()],
+            Self::Controlled { target, by, tasks, .. } => {
+                let mut found = vec![match target {
+                    Target::Team(id) => id.as_str(),
+                    Target::Task(id) => id.as_str(),
+                    Target::Round(id) => id.as_str(),
+                }];
+                if let Client::Dashboard { login } = by {
+                    found.push(login.as_str());
+                }
+                found.extend(tasks.iter().map(TaskId::as_str));
+                found
+            }
+            Self::Notified { task, .. } => task.iter().map(TaskId::as_str).collect(),
+            Self::RoundClosed { round, .. } => vec![round.as_str()],
+            Self::PullReady { .. }
+            | Self::FixPassStarted { .. }
+            | Self::PullApproved { .. }
+            | Self::PullHandedOver { .. }
+            | Self::PullClosed { .. }
+            | Self::TeamEnded {} => Vec::new(),
+        }
     }
 }
