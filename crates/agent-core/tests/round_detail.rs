@@ -139,7 +139,7 @@ mod round_detail {
     }
 
     #[test]
-    fn a_merged_item_keeps_its_pull_request_and_its_fix_passes_and_not_the_reviews_of_the_pass_that_was_approved() {
+    fn a_merged_item_keeps_its_pull_request_its_fix_passes_and_its_approving_reviews_after_a_reload() {
         let mut state = in_review();
         {
             let mut found = state.team_mut(&team_id(1)).unwrap();
@@ -165,14 +165,29 @@ mod round_detail {
                 .unwrap();
         }
         state.close_round(&round(1), at(51), RoundEnd::Merged).unwrap();
+        let text = state.to_json().unwrap();
+        let restored = State::from_json(&text).unwrap();
 
-        let shown = detail(&state);
+        let shown = detail(&restored);
 
         assert_eq!(shown.pr, Some(pr(7)));
-        assert_eq!(shown.review_passes.len(), 1);
+        assert_eq!(shown.review_passes.len(), 2);
         assert_eq!(shown.item.unwrap().status.to_string(), "done");
+        assert_eq!(shown.review_passes[1].reviews.len(), 2);
+        assert!(
+            shown.review_passes[1]
+                .reviews
+                .iter()
+                .all(|review| matches!(
+                    review.outcome,
+                    ReviewOutcome::Submitted {
+                        verdict: ReviewVerdict::Approve,
+                        ..
+                    }
+                ))
+        );
         assert_eq!(
-            state
+            restored
                 .team(&team_id(1))
                 .unwrap()
                 .item(item("1.2"))
