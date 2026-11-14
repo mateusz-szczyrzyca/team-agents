@@ -29,12 +29,14 @@ impl Owner {
             .map(|repo| &repo.base_branch)
         else {
             tracing::warn!(team = %team, "the repository of a new team is not in the configuration: the history has no record of the team");
+            self.history.record_lost();
             return;
         };
         match team_start(request, found, base, &self.parts.settings.config) {
             Ok(record) => self.history.record(Record::Team(Box::new(record))),
             Err(error) => {
                 tracing::warn!(team = %team, error = %error_chain(&error), "the plan of a new team cannot be explained: the history has no record of the team");
+                self.history.record_lost();
             }
         }
         for round in found.rounds() {
@@ -44,11 +46,15 @@ impl Owner {
 
     /// Records the opening of `round` of `team`.
     pub(super) fn record_round(&self, team: &TeamId, round: &RoundId) {
+        if self.history.is_disabled() {
+            return;
+        }
         let Some(found) = self.parts.state.team(team) else {
             return;
         };
         let Some(opening) = found.round(round).and_then(|round| round_opening(found, round)) else {
             tracing::warn!(team = %team, round = %round, "the item of a round is not in the task list: the history has no record of the round");
+            self.history.record_lost();
             return;
         };
         self.history.record(Record::Round(Box::new(opening)));
@@ -67,6 +73,7 @@ impl Owner {
             Ok(branch) => branch,
             Err(error) => {
                 tracing::warn!(task = %task, error = %error_chain(&error), "the branch of a run cannot be told: the history has no record of the run");
+                self.history.record_lost();
                 return;
             }
         };

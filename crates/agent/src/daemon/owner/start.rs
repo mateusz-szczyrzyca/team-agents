@@ -565,6 +565,7 @@ fn fix_pass_number(team: &Team) -> Option<NonZeroU32> {
 /// continuation of the task — what the state says of the runs it had.
 pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy {
     let Some(found) = state.find_task(task) else {
+        tracing::warn!(task = %task, "the task of a new run is not in the state: recording its reason as continuation");
         return RunWhy::Continuation;
     };
     let (team, member) = (found.team, found.member);
@@ -578,7 +579,13 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
         },
         Some(Why::Review) => review_why(team, task),
         Some(Why::VerdictMissing) => RunWhy::VerdictMissing,
-        Some(Why::FixPass) => fix_pass_number(team).map_or(RunWhy::Continuation, |number| RunWhy::FixPass { number }),
+        Some(Why::FixPass) => fix_pass_number(team).map_or_else(
+            || {
+                tracing::warn!(team = %team.id(), task = %task, "no item of the team is in a fix pass: recording the run's reason as continuation");
+                RunWhy::Continuation
+            },
+            |number| RunWhy::FixPass { number },
+        ),
         Some(Why::AskHuman) => RunWhy::AskHuman,
         Some(Why::Checks) => RunWhy::Checks,
         None if found.role == Role::Reviewer => review_why(team, task),
@@ -595,5 +602,11 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
 
 /// The reason of a reviewer's run: the review of the pull request it has pending.
 fn review_why(team: &Team, task: &TaskId) -> RunWhy {
-    pending_review(team, task).map_or(RunWhy::Continuation, |(pr, pass)| RunWhy::Review { pr, pass })
+    pending_review(team, task).map_or_else(
+        || {
+            tracing::warn!(team = %team.id(), task = %task, "the reviewer has no pending review in the state: recording the run's reason as continuation");
+            RunWhy::Continuation
+        },
+        |(pr, pass)| RunWhy::Review { pr, pass },
+    )
 }

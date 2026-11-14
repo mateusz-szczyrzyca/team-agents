@@ -469,11 +469,13 @@ impl RunEngine {
             Ok(at) => at,
             Err(error) => {
                 tracing::warn!(task = %job.task, run = %job.run, error = %error_chain(&error), "the launch of a run cannot be stamped: the history has none for it");
+                self.history.record_lost();
                 return;
             }
         };
         let Some(program) = process.program.as_path().to_str() else {
             tracing::warn!(task = %job.task, run = %job.run, "the program of a run is not text: the history has no launch for it");
+            self.history.record_lost();
             return;
         };
         self.history.record(Record::Launch(Box::new(Launch {

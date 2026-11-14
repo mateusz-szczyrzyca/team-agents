@@ -293,9 +293,9 @@ pub(crate) async fn run_with_rng(
             failure.get_or_insert(DaemonError::Join(source));
         }
     }
-    server::remove(&setup.home).await.map_err(DaemonError::RemoveSocket)?;
     // Everything that records has ended.
     history::close(opened.writer).await;
+    server::remove(&setup.home).await.map_err(DaemonError::RemoveSocket)?;
     owned_end?;
     failure.map_or(Ok(()), Err)
 }

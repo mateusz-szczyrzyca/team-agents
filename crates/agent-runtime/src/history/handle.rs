@@ -328,6 +328,13 @@ impl History {
         }
     }
 
+    /// Counts one record that could not be built before reaching the queue, unless the history is disabled.
+    pub fn record_lost(&self) {
+        if !self.is_disabled() {
+            self.shared.lose(1);
+        }
+    }
+
     /// Whether snapshot work has a writer to receive it. An unavailable history must not run Git just to discard it.
     #[must_use]
     pub fn is_writing(&self) -> bool {
