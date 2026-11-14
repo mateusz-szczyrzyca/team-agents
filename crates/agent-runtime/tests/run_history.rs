@@ -466,4 +466,58 @@ mod run_history {
         // Start, launch, three steps and one skipped changes record. There is no extra head-capture failure.
         assert_eq!(rig.history.health().lost, 6);
     }
+
+    #[tokio::test]
+    async fn a_launch_whose_clock_cannot_stamp_it_is_counted_as_lost_while_the_run_finishes() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct BadFirstClock(AtomicBool);
+
+        impl Clock for BadFirstClock {
+            fn now(&self) -> UtcDateTime {
+                if self.0.swap(true, Ordering::SeqCst) {
+                    now().as_utc()
+                } else {
+                    UtcDateTime::MIN
+                }
+            }
+        }
+
+        let mut rig = rig(Tree::Repository, Kind::Database).await;
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = Home::new(&abs(home_dir.path()));
+        let store = Arc::new(StateStore::open(home.clone()).await.unwrap());
+        let config = Config::from_toml_str(&format!(
+            "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{}\"\n",
+            fake_cli()
+        ))
+        .unwrap();
+        let texts = HarnessPrompts::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+            &Language::default(),
+        )
+        .await
+        .unwrap();
+        rig.engine = RunEngine::new(EngineParts {
+            store,
+            texts: Arc::new(texts),
+            config: Arc::new(config),
+            secrets: Arc::new(Secrets::default()),
+            supervisor: Supervisor::new(NonZeroUsize::new(4).unwrap()),
+            clock: SharedClock::new(BadFirstClock(AtomicBool::new(false))),
+            local_offset: time::UtcOffset::UTC,
+            timings: RunTimings {
+                poll: Duration::from_millis(20),
+                hang: Duration::from_secs(5),
+                stop_grace: Duration::from_secs(5),
+            },
+        })
+        .with_history(rig.history.clone());
+
+        assert_eq!(rig.run("done", "Do the item.").await, done());
+
+        let reader = rig.reader();
+        assert_eq!(reader.run(&rig.run).unwrap().unwrap().launch, None);
+        assert_eq!(rig.history.health().lost, 1);
+    }
 }

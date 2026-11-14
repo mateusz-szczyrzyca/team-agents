@@ -171,3 +171,74 @@ async fn sqlite_full_does_not_prevent_merging_or_the_other_records_surviving() {
     let integrity: String = db.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap();
     assert_eq!(integrity, "ok");
 }
+
+#[tokio::test]
+async fn records_the_daemon_cannot_build_are_counted_as_lost() {
+    use std::num::NonZeroUsize;
+    use std::str::FromStr;
+    use std::sync::Arc;
+
+    use agent_core::config::AbsolutePath;
+    use agent_core::history::Record;
+    use agent_core::ids::AgentName;
+    use agent_core::protocol::{AgentList, RunRequest};
+    use agent_core::state::{Crew, TaskListText, Team};
+    use agent_runtime::history::{History, Problem, Reporter, Setup, Store, WriteError};
+
+    use crate::daemon::owner::fixture::Daemon;
+    use crate::fixtures::{at, member, normal, solo_state, team_id};
+
+    struct Accepting;
+    impl Store for Accepting {
+        fn write(&mut self, _records: &[Record]) -> Result<(), WriteError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct Silent;
+    impl Reporter for Silent {
+        fn report(&self, _problem: &Problem) {}
+    }
+
+    let mut state = solo_state();
+    let unconfigured = Team::new(
+        team_id(1),
+        "unconfigured".parse().unwrap(),
+        at(0),
+        MergeMode::Autopilot,
+        TaskListText::new(ONE.to_owned()).unwrap(),
+        Crew::solo(member(2, normal("claude-1"))).unwrap(),
+    );
+    state.insert_team(unconfigured).unwrap();
+    let daemon = Daemon::new(&state, None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let started = History::start(
+        Accepting,
+        Setup {
+            reporter: Arc::new(Silent),
+            capacity: NonZeroUsize::new(16).unwrap(),
+        },
+    )
+    .unwrap();
+    let owner = owner.with_history(started.history.clone());
+    let wrong_agents = RunRequest {
+        repo: "team-agents".parse().unwrap(),
+        checkout: AbsolutePath::from_str("/work/example").unwrap(),
+        agents: AgentList::try_from(vec!["claude-2".parse::<AgentName>().unwrap()]).unwrap(),
+        task_list: TaskListText::new(ONE.to_owned()).unwrap(),
+        coordinator: None,
+        merge: MergeMode::Autopilot,
+    };
+
+    owner.record_team_start(&wrong_agents, &team_id(1));
+    assert_eq!(started.history.health().lost, 1);
+
+    owner.record_team_start(&wrong_agents, &team_id(0));
+    assert_eq!(started.history.health().lost, 2);
+
+    owner.record_round(&team_id(0), &"round-20261111-191500-miss".parse().unwrap());
+    assert_eq!(started.history.health().lost, 3);
+
+    started.writer.close().unwrap();
+}

@@ -40,3 +40,57 @@ fn two_session_ids_differ() {
 
     assert_ne!(first, second);
 }
+
+#[derive(Clone, Default)]
+struct LogBuffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuffer {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn capture_warnings(run: impl FnOnce()) -> String {
+    let buffer = LogBuffer::default();
+    let writer = buffer.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_max_level(tracing::Level::WARN)
+        .without_time()
+        .with_ansi(false)
+        .finish();
+    tracing::subscriber::with_default(subscriber, run);
+    String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap()
+}
+
+#[test]
+fn inconsistent_state_falls_back_to_continuation_and_logs_a_warning() {
+    use crate::fixtures::{task, team_state};
+
+    let state = team_state();
+    let missing_log = capture_warnings(|| {
+        assert_eq!(run_why(&state, &task(9), None), RunWhy::Continuation);
+    });
+    assert!(
+        missing_log.contains("the task of a new run is not in the state"),
+        "{missing_log}"
+    );
+
+    let fix_log = capture_warnings(|| {
+        assert_eq!(run_why(&state, &task(1), Some(&Why::FixPass)), RunWhy::Continuation);
+    });
+    assert!(fix_log.contains("no item of the team is in a fix pass"), "{fix_log}");
+
+    let review_log = capture_warnings(|| {
+        assert_eq!(run_why(&state, &task(4), Some(&Why::Review)), RunWhy::Continuation);
+    });
+    assert!(
+        review_log.contains("the reviewer has no pending review in the state"),
+        "{review_log}"
+    );
+}

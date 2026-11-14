@@ -1267,3 +1267,57 @@ async fn a_clock_set_back_during_a_run_records_its_clamped_end_without_losing_re
     assert_eq!(end.end, RunEnd::Hung);
     assert_eq!(end.run, *member_one(&state).runs()[0].id());
 }
+
+#[tokio::test]
+async fn a_socket_that_cannot_be_removed_still_flushes_and_closes_the_history_writer() {
+    use agent_core::history::{HowChosen, MaxTextBytes, PlanEntry, Record, TeamStart};
+    use agent_runtime::history::{HistoryDb, Reader, Store as _};
+
+    let mut f = Fixture::new(&rate_limited_state(), 3, "done");
+    let mut db = HistoryDb::open(&f.home.history_file(), MaxTextBytes::default()).unwrap();
+    db.write(&[Record::Team(Box::new(TeamStart {
+        team: crate::fixtures::team_id(0),
+        at: at(0),
+        repo: repo().to_string(),
+        base_branch: "main".parse().unwrap(),
+        merge: agent_core::state::MergeMode::Autopilot,
+        task_list: crate::fixtures::LIST.to_owned(),
+        plan: vec![PlanEntry {
+            position: std::num::NonZeroU32::MIN,
+            agent: "claude-1".parse().unwrap(),
+            role: agent_core::kinds::Role::Solo,
+            how: HowChosen::Named,
+        }],
+    }))])
+    .unwrap();
+    drop(db);
+
+    f.start().await;
+    f.status_is(TaskStatus::Paused).await;
+
+    let lock_conn = rusqlite::Connection::open(f.home.history_file()).unwrap();
+    lock_conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+    f.clock.advance(time::Duration::minutes(10));
+    f.status_is(TaskStatus::Done).await;
+
+    let socket = f.home.socket_file();
+    std::fs::remove_file(&socket).unwrap();
+    std::fs::create_dir(&socket).unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        lock_conn.execute_batch("ROLLBACK").unwrap();
+    });
+
+    let err = f.stop().await.expect_err("directory at socket path refuses removal");
+    assert!(matches!(err, DaemonError::RemoveSocket(_)), "{err:?}");
+
+    let reader = Reader::open(&f.home.history_file()).unwrap();
+    let runs = reader.runs_of_team(&crate::fixtures::team_id(0)).unwrap();
+    release.join().unwrap();
+    assert_eq!(
+        runs.len(),
+        1,
+        "history writer must be flushed and joined before socket removal error returns"
+    );
+    assert!(runs[0].end.is_some());
+}
