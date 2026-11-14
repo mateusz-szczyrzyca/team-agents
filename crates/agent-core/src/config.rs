@@ -537,7 +537,7 @@ impl RawConfig {
             github,
             notifications,
             questions,
-            history: _history,
+            history,
             web,
             repos,
         } = self;
@@ -558,7 +558,7 @@ impl RawConfig {
             github,
             notifications,
             questions,
-            history: History::default(),
+            history,
             web,
             repos,
         })

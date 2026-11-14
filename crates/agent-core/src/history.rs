@@ -95,10 +95,23 @@ pub struct Kept {
 /// Keeps at most `limit` bytes of `text`: all of it when it fits, else the longest prefix that ends at a character
 /// boundary within the limit.
 #[must_use]
-pub fn cut_text(_text: &str, _limit: MaxTextBytes) -> Kept {
+pub fn cut_text(text: &str, limit: MaxTextBytes) -> Kept {
+    // A limit that does not fit `usize` (a 16-bit target) is one no text exceeds: it is the specified fallback.
+    let max = usize::try_from(limit.get()).unwrap_or(usize::MAX);
+    if text.len() <= max {
+        return Kept {
+            text: text.to_owned(),
+            was_cut: false,
+        };
+    }
+    let kept: String = text
+        .char_indices()
+        .take_while(|(start, character)| start.saturating_add(character.len_utf8()) <= max)
+        .map(|(_, character)| character)
+        .collect();
     Kept {
-        text: String::new(),
-        was_cut: false,
+        text: kept,
+        was_cut: true,
     }
 }
 
@@ -540,8 +553,17 @@ pub enum HistoryState {
 }
 
 impl fmt::Display for HistoryHealth {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Ok(())
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.state {
+            HistoryState::Writing => write!(f, "history: written")?,
+            HistoryState::Disabled => write!(f, "history: off ([history] enabled = false)")?,
+            HistoryState::Unavailable { reason } => write!(f, "history: not written: {reason}")?,
+        }
+        match self.lost {
+            0 => Ok(()),
+            1 => write!(f, "; 1 record lost"),
+            lost => write!(f, "; {lost} records lost"),
+        }
     }
 }
 
@@ -562,6 +584,14 @@ pub enum ExplainError {
         /// Its role.
         role: Role,
     },
+    /// The coordinator is not the one the request asked for.
+    #[error("{agent} coordinates, but the request asked for {asked}")]
+    NotTheCoordinatorAsked {
+        /// The agent that coordinates.
+        agent: String,
+        /// The agent the request named.
+        asked: AgentName,
+    },
 }
 
 /// How each participant of `crew` — the people of a team in their roles, as the team was formed — got its role, given
@@ -570,9 +600,88 @@ pub enum ExplainError {
 /// # Errors
 /// [`ExplainError`] when the crew has someone the request did not name, or a reviewer.
 pub fn explain_plan(
-    _request: &TeamRequest<'_>,
-    _config: &Config,
-    _crew: &[(Role, String)],
+    request: &TeamRequest<'_>,
+    config: &Config,
+    crew: &[(Role, String)],
 ) -> Result<Vec<PlanEntry>, ExplainError> {
-    Ok(Vec::new())
+    let mut entries = Vec::with_capacity(crew.len());
+    for (role, agent) in crew {
+        let (position, named) = request
+            .agents
+            .as_slice()
+            .iter()
+            .zip(1_u32..)
+            .find(|(name, _)| name.as_str() == agent)
+            .and_then(|(name, position)| Some((NonZeroU32::new(position)?, name)))
+            .ok_or_else(|| ExplainError::NotNamed { agent: agent.clone() })?;
+        let how = match role {
+            Role::Solo | Role::Member => HowChosen::Named,
+            Role::Worker => HowChosen::ConfiguredOrder,
+            Role::Coordinator => coordinator_how(request, config, named)?,
+            Role::Reviewer => {
+                return Err(ExplainError::NotFormed {
+                    agent: agent.clone(),
+                    role: *role,
+                });
+            }
+        };
+        entries.push(PlanEntry {
+            agent: named.clone(),
+            position,
+            role: *role,
+            how,
+        });
+    }
+    entries.sort_by_key(|entry| entry.position);
+    Ok(entries)
+}
+
+/// How `coordinator` came to coordinate: asked for by the flag or the line, or drawn.
+fn coordinator_how(
+    request: &TeamRequest<'_>,
+    config: &Config,
+    coordinator: &AgentName,
+) -> Result<HowChosen, ExplainError> {
+    let asked = request
+        .flag_coordinator
+        .map(|name| (name, HowChosen::NamedByFlag))
+        .or_else(|| request.listed_coordinator.map(|name| (name, HowChosen::NamedByLine)));
+    match asked {
+        Some((name, how)) if name == coordinator => Ok(how),
+        Some((name, _)) => Err(ExplainError::NotTheCoordinatorAsked {
+            agent: coordinator.to_string(),
+            asked: name.clone(),
+        }),
+        None => Ok(HowChosen::Drawn {
+            among: coordinator_candidates(request, config),
+        }),
+    }
+}
+
+/// The agents a coordinator nobody named is drawn among: the investigators named, or when there are none, every agent
+/// named that takes items (all but the workers), in the order named. The rule of [`plan_team`](crate::decide::team::plan_team).
+#[must_use]
+pub fn coordinator_candidates(request: &TeamRequest<'_>, config: &Config) -> Vec<AgentName> {
+    let takers: Vec<&AgentName> = request
+        .agents
+        .as_slice()
+        .iter()
+        .filter(|name| !config.worker_agents().contains(name))
+        .collect();
+    let investigators: Vec<&AgentName> = takers
+        .iter()
+        .copied()
+        .filter(|name| {
+            config
+                .investigators()
+                .keys()
+                .any(|investigator| investigator.as_str() == name.as_str())
+        })
+        .collect();
+    let chosen = if investigators.is_empty() {
+        takers
+    } else {
+        investigators
+    };
+    chosen.into_iter().cloned().collect()
 }

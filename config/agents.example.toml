@@ -124,6 +124,16 @@ open = "off"
 # vscode_server_dirs = ["/home/you/.vscode-server"]
 # editor = ["nano"]
 
+# --- History -------------------------------------------------------------------------------------------------------
+# The daemon records what happens — every team and round, every prompt, every step and change of every run — in
+# `history.db` in $AGENTS_HOME (docs/history.md). `max_text_bytes` is the longest text one field keeps: a longer one is
+# cut at a character boundary and marked cut. A history that cannot be written never stops the work; `agent status`
+# shows how many records were lost.
+
+[history]
+enabled = true
+max_text_bytes = 1048576
+
 # --- Dashboard -----------------------------------------------------------------------------------------------------
 # It listens on a loopback address only; remote access goes through `tailscale serve`, and only the Tailscale
 # logins listed here get in.
