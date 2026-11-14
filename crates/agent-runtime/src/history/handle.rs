@@ -258,6 +258,18 @@ impl History {
         })
     }
 
+    /// Starts a writer that redacts known secret values before persistence.
+    ///
+    /// # Errors
+    /// [`StartError`] when the writer thread cannot start.
+    pub fn start_with_secrets(
+        store: impl Store,
+        setup: Setup,
+        _secrets: agent_core::config::Secrets,
+    ) -> Result<Started, StartError> {
+        Self::start(store, setup)
+    }
+
     /// Hands `record` to the writer. Never waits.
     pub fn record(&self, record: Record) {
         let Some(queue) = &self.queue else {

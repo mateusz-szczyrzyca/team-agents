@@ -22,3 +22,6 @@ mod support;
 mod tampered;
 #[cfg(test)]
 mod writer;
+
+#[cfg(test)]
+mod redaction;
