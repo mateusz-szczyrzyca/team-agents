@@ -457,8 +457,11 @@ fn run_rest(page: &mut Page, block: &RunBlock<'_>, start: Option<&RunStart>, opt
         }
         page.cut_note(4, stored);
     }
-    if let Some(changes) = block.changes {
-        changed(page, changes);
+    match (block.changes, block.end) {
+        (Some(changes), _) => changed(page, changes),
+        // A run that ended has a record of what it changed: the snapshot of it is what is missing.
+        (None, Some(_)) => page.line(4, "changes: not recorded"),
+        (None, None) => {}
     }
 }
 
@@ -707,7 +710,9 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         }
         HistoryEvent::RoundClosed { round, end } => entry(page, at, &format!("round {round} closed: {end}")),
         HistoryEvent::TeamEnded {} => entry(page, at, "team ended"),
-        HistoryEvent::Lost { .. } => entry(page, at, "a record is missing"),
+        HistoryEvent::Lost { what, cause, detail } => {
+            entry(page, at, &format!("a {what} record is missing ({cause}): {detail}"));
+        }
         HistoryEvent::PullOpened { .. }
         | HistoryEvent::PullPushed { .. }
         | HistoryEvent::PullReady { .. }

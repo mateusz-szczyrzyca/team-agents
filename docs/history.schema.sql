@@ -192,7 +192,7 @@ CREATE TABLE history_records (
         'team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session',
         'gate', 'checked', 'pull_opened', 'pull_pushed', 'pull_ready', 'review_asked', 'review_submitted',
         'fix_pass_started', 'pull_approved', 'pull_merged', 'pull_handed_over', 'pull_closed', 'question_asked',
-        'question_answered', 'controlled', 'notified', 'round_closed', 'team_ended'
+        'question_answered', 'controlled', 'notified', 'round_closed', 'team_ended', 'lost'
     )),
     key TEXT,
     at TEXT NOT NULL,

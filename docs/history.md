@@ -360,8 +360,9 @@ a team, which belongs to the team).
 | `notified` | a notification was sent | `task`, `title`, `body` | — |
 | `round_closed` | a round closed | `round`, `end` | `round R` |
 | `team_ended` | a team ended | — | `team` |
+| `lost` | the database refused a record and could be written to again | `what` (the `kind` of the missing record), `cause` (as the writer reports it, `write_disk_full`, ...), `detail` | — |
 
-Free texts (`issues`, `title`, `body`, `report`, `findings`, `text`) are cut at the limit and redacted like every text of
+Free texts (`issues`, `title`, `body`, `report`, `findings`, `text`, `detail`) are cut at the limit and redacted like every text of
 the history ([What is never in it](#what-is-never-in-it)); `cut` names the fields cut. The review `pass` of the payload
 counts from `0`; the human text of a story counts review passes from `1`.
 
@@ -399,6 +400,16 @@ history: not written: cannot open the history database "/home/you/agents/history
 | a write fails (disk full, I/O error) | counts the records of the batch; the next batch is tried |
 | a record the database refuses (a step of a run that has no row) | counts it; the others are written |
 | the daemon is killed (`SIGKILL`) | what was queued is lost; the file opens, passes `PRAGMA integrity_check`, holds whole records only (a record or batch is one transaction); the next daemon records the end of the runs it finds going |
+
+**Noting what is missing.** The count says how many records were lost, not where the gap is. A record the database refuses
+when it is written alone (the writer tries the records of a refused batch one by one) is noted: the next write that succeeds
+also writes a `lost` event for it, with the kind of the missing record, the cause, what went wrong, and the team and rounds it
+belonged to — those of its run, when the writer saw the run start. A story prints the note in the place of the record. The
+note is a best effort: a record of a run the writer never saw start has no place to be noted, a record dropped because the
+queue was full or held a credential is counted and not noted, a note that cannot be written waits (at most 256 of them), and
+what a history that cannot be written at all loses is not noted either — a story then says what it can see: a run that ended
+with no `changes: ...` says `changes: not recorded`, a launch whose commit could not be read says `unknown (git could not
+say)`, and a round with no pull request says so.
 
 A history that starts after its team (a deleted `history.db`) loses the records that hang on a row it does not have — the steps
 of a run that started before — and counts them.
