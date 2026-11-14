@@ -322,7 +322,7 @@ history: not written: cannot open the history database "/home/you/agents/history
 | the queue is full | drops the records that do not fit and counts them; goes on when there is room |
 | a write fails (disk full, I/O error) | counts the records of the batch; the next batch is tried |
 | a record the database refuses (a step of a run that has no row) | counts it; the others are written |
-| the daemon is killed (`SIGKILL`) | what was queued is lost; the file opens, passes `PRAGMA integrity_check`, holds whole records only (a record is one transaction); the next daemon records the end of the runs it finds going |
+| the daemon is killed (`SIGKILL`) | what was queued is lost; the file opens, passes `PRAGMA integrity_check`, holds whole records only (a record or batch is one transaction); the next daemon records the end of the runs it finds going |
 
 A history that starts after its team (a deleted `history.db`) loses the records that hang on a row it does not have — the steps
 of a run that started before — and counts them.
