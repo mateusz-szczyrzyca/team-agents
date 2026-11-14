@@ -1,6 +1,6 @@
 # Investigation — Rust item 8.4 — `inv-astra`
 
-Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-agents/pull/100) on `agents/inv-astra/20261114-094819`. Item `8.4` is **not complete**. The round-4 fixture permission is applied, the capture-loss fix is committed, and the final code gate passes `2,313` test executions. Further proofs cover a merged round under queue pressure, seeded daemon selection, and `SIGKILL` during an active transaction. Two specification decisions remain: the Git capture boundary and secret-bearing CLI output. The latter is a reproduced disclosure, not merely a hypothetical risk.
+Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-agents/pull/100) on `agents/inv-astra/20261114-094819`. Item `8.4` is **not complete**. The human approved both round-5 recommendations. Secret redaction is committed and its complete Rust gate passes `2,317` tests. Bounded Git capture is implemented in the worktree but remains uncommitted: one newly frozen test advances the paused clock to the exact deadline without allowing Tokio's millisecond timer rounding. Round-6 permission asks to correct that fixture, preserving its assertions. The last fully GREEN code commit is linked below; the latest committed code is the next RED cycle.
 
 ## Completed fixes
 
@@ -14,6 +14,9 @@ Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-
 - **Capture losses:** failed head lookup counts one incomplete launch; failed Git changes capture counts one missing changes record. Each cause is reported once. An unavailable history skips the capture future and counts the omitted record; disabled history does neither.
 - **Seeded selection:** production obtains OS entropy and passes the RNG into the daemon owner. A test supplies `8` seeds and compares the recorded coordinator, candidate order, member roles and state against the pure planning decision.
 - **Crash atomicity:** the added child-process test waits for WAL growth inside a large transaction, kills the writer, and requires complete rollback of that batch, retention of the previous data, successful integrity checking and a later successful write. It does not accept a batch committed before the kill.
+
+- **Known secrets:** the writer redacts configured GitHub, agent-environment and notification credentials before persistence and before text truncation. Overlapping Unicode values are removed together. Secret-bearing structured identities cause counted omissions and one safe warning. A merged fake-CLI round proves redacted prompts, arguments, steps, final messages and commit subjects, unchanged CLI input, and no marker bytes in the live WAL or checkpointed database.
+- **Capture deadline, pending:** a shared absolute deadline covers all Git commands of each snapshot, including scratch handles and executable-busy retries. Each run boundary has a `2`-second budget and at most `1` additional second for process reaping. Existing capture-loss paths handle the resulting typed timeout. This implementation awaits the round-6 fixture correction and a GREEN gate; it is not yet committed.
 
 ## Commits
 
@@ -35,6 +38,10 @@ Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-
 - Seeded selection $\color{red}{\textbf{RED}}$: [`81610900`](https://github.com/mateusz-szczyrzyca/team-agents/commit/8161090081b6dd282f41127ff83e8e191f7be656).
 - Seeded selection $\color{green}{\textbf{GREEN}}$: [`111cbc0a`](https://github.com/mateusz-szczyrzyca/team-agents/commit/111cbc0ad741a956eabdd6d5051ac225ad295bfc).
 - Active-batch kill proof: [`a038882c`](https://github.com/mateusz-szczyrzyca/team-agents/commit/a038882cc801f156c01da6ad665d8793be359be8).
+
+- Secret redaction $\color{red}{\textbf{RED}}$: [`ee79f5dd`](https://github.com/mateusz-szczyrzyca/team-agents/commit/ee79f5dd1a7dd1c5216bd93d211edf66428b54b4).
+- Secret redaction $\color{green}{\textbf{GREEN}}$: [`6c402ada`](https://github.com/mateusz-szczyrzyca/team-agents/commit/6c402ada70d26cf453e429cb4bfecee18cc945e4).
+- Capture deadline $\color{red}{\textbf{RED}}$: [`89561885`](https://github.com/mateusz-szczyrzyca/team-agents/commit/89561885b5f568a0f1168f01d602d82a9618d947).
 
 ## Tests changed after RED
 
@@ -63,7 +70,10 @@ This maps the principal implemented requirements and regression proofs. It is no
 | Ordered steps and Git changes from actual fake CLI execution | `the_steps_of_a_run_are_what_its_cli_printed_in_order`; `the_changes_of_a_run_are_what_its_cli_did_a_file_added_deleted_modified_renamed_binary_and_one_left_uncommitted` |
 | Restart uniqueness; resume/answer/item/wake-up reasons | `a_daemon_stopped_in_the_middle_of_a_run_leaves_one_row_for_each_run_and_the_next_run_goes_on`; `a_stop_and_a_resume_by_the_human_are_a_control_step_of_the_run_and_the_reason_of_the_next`; `the_answers_of_the_human_are_the_reason_of_the_run_that_goes_on`; `the_next_item_of_a_solo_agent_and_the_wake_up_of_a_coordinator_have_their_reasons` |
 | Supplied session is not duplicated | `echoing_the_session_supplied_to_the_cli_is_not_a_new_session` |
-| Secret values are not exported as environment fields; echoed values remain a finding | `no_value_of_a_secret_or_of_the_environment_of_the_clis_is_in_the_files_of_the_history` |
+| Secret values are not exported as environment fields | `no_value_of_a_secret_or_of_the_environment_of_the_clis_is_in_the_files_of_the_history` |
+| Echoed known credentials are redacted before SQLite; DB and live WAL contain no marker | `a_merged_round_redacts_echoed_secrets_in_prompts_arguments_steps_messages_and_commits` |
+| Seeded text, overlapping Unicode credentials, all activity payloads, safe identity omission/count/report | `seeded_free_text_is_redacted_before_any_store_sees_it`; `all_activity_text_fields_and_overlapping_unicode_values_are_redacted`; `secret_in_a_structured_identity_is_omitted_counted_and_reported_once` |
+| Shared absolute capture budget, pending GREEN | `an_expired_snapshot_deadline_refuses_to_spawn_git`; `a_second_command_uses_the_snapshots_remaining_budget` pass with pending code; process-group test requires the round-6 clock correction |
 | Directory and newer-schema failures permit merged rounds | `a_history_in_the_way_does_not_stop_a_round_and_status_shows_what_was_lost`; `a_history_of_a_newer_version_is_left_as_it_is_and_the_round_goes_on` |
 | Permission and SQL write failures permit merged rounds | `read_only_history_storage_leaves_state_writable_and_the_round_merges`; `failing_step_inserts_are_counted_while_other_records_survive_and_the_round_merges` |
 | History snapshots do not execute extensions | `history_reads_raw_worktree_bytes_without_running_configured_filters`; `history_reads_do_not_invoke_a_configured_filesystem_monitor` |
@@ -76,7 +86,12 @@ This maps the principal implemented requirements and regression proofs. It is no
 
 ## Checks
 
-- Final code gate at [`a038882c`](https://github.com/mateusz-szczyrzyca/team-agents/commit/a038882cc801f156c01da6ad665d8793be359be8): `make rust` passes formatting, clippy, `2,313` test executions and documentation; `0` failed, `0` ignored.
+- Earlier code gate at [`a038882c`](https://github.com/mateusz-szczyrzyca/team-agents/commit/a038882cc801f156c01da6ad665d8793be359be8): `make rust` passes formatting, clippy, `2,313` test executions and documentation; `0` failed, `0` ignored.
+- Last complete GREEN gate at [`6c402ada`](https://github.com/mateusz-szczyrzyca/team-agents/commit/6c402ada70d26cf453e429cb4bfecee18cc945e4): `make rust` passes formatting, clippy, `2,317` tests and documentation, with `0` failures and `0` ignored.
+- Secret RED gate: `663` daemon tests passed; the new merged-round test failed because the persisted prompt retained the marker. The focused runtime suite failed all `3` new tests on raw text or an uncounted identity omission.
+- Deadline RED gate: `664` daemon tests passed; `168` runtime library tests passed and all `3` new deadline tests failed against the forwarding stub.
+- Pending deadline gate: formatting and clippy pass; `664/664` daemon tests and `170/171` runtime library tests pass. Only the frozen exact-clock fixture fails. No existing test was changed, no assertion was removed, and temporary diagnostic prints were removed.
+
 - The fixture/capture gate passed `2,309` test executions after round-4 permission; the merged-queue gate passed `2,310`; the seeded gate passed `2,311`.
 - Capture-loss $\color{red}{\textbf{RED}}$: new process test observed completed tasks without a loss count; runtime assertions observed `0` instead of `2` and `5` instead of `6` losses. The exact socket regression received `Teams` instead of `Overview`.
 - Seeded-selection $\color{red}{\textbf{RED}}$: `662` daemon tests passed; only the new test failed, at seed `2`, with `inv-a` instead of `inv-b`. The incorrect injection stub was isolated from the normal entry point before committing RED; its first version also caused a duplicate run ID during restart and was not committed.
@@ -88,7 +103,7 @@ This maps the principal implemented requirements and regression proofs. It is no
 
 ## Scope and deviations
 
-- The human approved a larger item instead of splitting it. Before this continuation's implementation, the planned ceiling was recorded as `7,500` counted lines. Final PR-1 count including this report is `5,452` lines against actual PR target [`150e2203`](https://github.com/mateusz-szczyrzyca/team-agents/commit/150e2203fe0ebd458c7f6f67c5676ab736378b5d), excluding tests, the lockfile and schema snapshot.
+- The human approved a larger item instead of splitting it. Before this continuation's implementation, the planned ceiling was recorded as `7,500` counted lines. The previous PR-1 count including this report was `5,452` lines against actual PR target [`150e2203`](https://github.com/mateusz-szczyrzyca/team-agents/commit/150e2203fe0ebd458c7f6f67c5676ab736378b5d), excluding tests, the lockfile and schema snapshot.
 - [`crates/agent/src/main.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/crates/agent/src/main.rs) is outside the item's named recording locations but its stream-lock fix is necessary for writer failure reporting and progress.
 - The agent crate adds the already-approved bundled `rusqlite` workspace dependency for tests that provoke actual SQLite insert failures. Cargo regenerated the lockfile. No new library version or final lint suppression was introduced. The seeded RED commit carried a temporary dead-code expectation for its compiling stub; GREEN removed it.
 - Session schema compatibility, session queries and raw snapshot semantics are documented in [`docs/history.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/docs/history.md); the reader fix adds the history reference to [`README.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/README.md).
@@ -101,14 +116,13 @@ This maps the principal implemented requirements and regression proofs. It is no
 - Go suites were not run, as explicitly instructed.
 - Bats suites were not run, as explicitly instructed.
 - `make gate` was replaced by `make rust` to obey those exclusions.
-- No Rust test was newly ignored or removed. The final full Rust gate reached and passed all stages.
+- No Rust test was newly ignored or removed. The secret-redaction gate passed every stage; the next deadline cycle remains RED as described above.
 
 ## Not done
 
-- **Capture boundary:** healthy-history Git capture is still awaited before model launch and before run completion. Local Git commands have a `120`-second timeout each, rather than a short overall capture budget. Moving capture behind a queue without stabilizing the worktree can misattribute later changes. Round-5 question `1` asks which guarantee takes precedence.
-- **Echoed secrets:** the history does not redact a known secret value echoed by a CLI. Both the stored step and database bytes contain the synthetic marker in the reproduced merged round. Round-5 question `2` asks whether to redact text or omit the affected record; either choice needs an explicit exception to exact recording.
+- **Capture boundary:** the implementation and documentation are prepared in this worktree, but the process-group regression's frozen injected-clock fixture needs the round-6 correction before GREEN can be committed. Production currently committed at the RED head still has the forwarding deadline stub.
 - **Inherited process-test precision:** two older process tests look for `solo` and `done` anywhere in status; the summary header can contain `0 done`. New tests check an actual solo task line ending in `done`; the older frozen predicates remain unchanged.
-- The behaviour/test map above covers the principal requirements and this continuation's changes. It is not a complete per-sentence acceptance proof. The final checkpoint and item `8.4` acceptance remain outstanding; the branch is GREEN but must not be represented as a finished item.
+- The behaviour/test map above covers the principal requirements and this continuation's changes. A complete per-sentence acceptance audit and final checkpoint remain outstanding; this report does not represent item `8.4` as finished.
 
 ## Secret reproduction
 
@@ -125,7 +139,7 @@ SELECT count(*) FROM steps
 WHERE text LIKE '%history-echo-secret-marker-84%';
 ```
 
-The result is `1`. Searching the live WAL finds the marker; after closing all connections so SQLite checkpoints, searching the database finds it too. Only the explicitly synthetic marker was used; no real secret was read or printed.
+Before the fix the result was `1`, and both live WAL and checkpointed database contained the marker. The committed regression now requires redacted typed records and the absence of those marker bytes in both files. Only explicitly synthetic credentials were used; no real secret was read or printed.
 
 ## Answered questions — round 3
 
@@ -152,9 +166,9 @@ b) Keep these fixtures frozen — leaves the capture-loss fix blocked because it
 
 The human approved a fixture-only `TEST-FIX` for `a_socket_file_left_by_a_dead_daemon_is_replaced`, with every assertion preserved, and extended that permission to any other test failing solely because it starts in a non-Git directory and expects `Reply::Teams`. Applied in the commit listed above. No additional fixture changes were needed.
 
-## Questions — round 5
+## Answered questions — round 5
 
-The external question file for task `20261114-094819-inv-astra` is `questions-5.md`. The two questions are reproduced below. No secret-redaction policy or capture-delay exception has been assumed.
+The external question file for task `20261114-094819-inv-astra` is `questions-5.md`. The two questions are reproduced below. The human approved recommendation `a` for both, explicitly authorizing bounded capture delay and known-secret redaction.
 
 ## 1. May accurate Git history capture briefly delay a run at its boundaries?
 The committed fixes skip history-only Git work when history is unavailable and count capture failures. A saturated writer queue now has a passing merged-round proof. With healthy history, however, the engine still awaits the starting head before spawning the CLI and awaits the final Git snapshot before completing the run. The snapshot includes uncommitted files, which a following run can overwrite. Each local Git command currently has a `120`-second timeout. Taking these snapshots in the background without a boundary would risk attributing a later run's changes to the earlier run. Item `8.4` requires both accurate changes and history that “never stops or delays the work”; these imply different designs at this boundary.
@@ -163,7 +177,7 @@ b) Require no awaited history capture — allow changes to be absent when a stab
 
 **Recommended:** a) — preserves accurate before/after attribution and makes the delay bounded and explicit; it needs an explicit exception to the literal no-delay wording. (investigator)
 
-**Verdict:**
+**Verdict:** a) — human approved the recommendation.
 
 ## 2. How should history handle a known secret echoed by a CLI?
 An isolated fake-CLI round completed and merged after its script printed the value of an environment variable supplied through `secrets.toml`. The synthetic marker appeared in exactly `1` stored step, in the live WAL, and in `history.db` after checkpointing. The existing secret test passes because its CLI never echoes the injected value. Item `8.4` asks for whole prompts, command lines, final messages and exact steps, while its ground rule says no secret reaches history; secret-bearing output needs an explicit exception to exact recording.
@@ -171,5 +185,23 @@ a) Redact known secret values before persistence — replace occurrences with an
 b) Omit any record containing a known secret — preserve the exact bytes of retained records, count the omissions and report their cause without printing the secret; less context is available for diagnosis.
 
 **Recommended:** a) — retains useful history while preventing the reproduced disclosure; explicitly permits redacted text to differ from what the CLI received or emitted. (investigator)
+
+**Verdict:** a) — human approved the recommendation.
+
+## Questions — round 6
+
+The external question file is `questions-6.md` for task `20261114-094819-inv-astra`. The permission is required by repository rule `1`, “Never modify existing tests,” and the frozen-RED contract. The previous blanket fixture permission applies only to non-Git directories expecting `Reply::Teams`, so it does not cover this new timing test.
+
+## 1. May the new deadline test advance past Tokio's timer resolution?
+The approved secret-redaction fix is committed and passes the complete Rust gate: `2,317` tests, `0` failures, `0` ignored. The bounded-capture implementation is prepared: one absolute `2`-second budget per run boundary, shared by every Git command and startup retry, process-group cancellation on timeout, at most `1` further second for reaping, and existing counted-loss reporting.
+
+I made a mistake in the new RED test `a_snapshot_deadline_kills_git_and_its_descendant_then_returns` in [`crates/agent-runtime/src/git/deadline_tests.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/89561885b5f568a0f1168f01d602d82a9618d947/crates/agent-runtime/src/git/deadline_tests.rs): it advances the paused clock by exactly `2` seconds and then keeps the runtime runnable while waiting for the process to end. Tokio rounds timer deadlines up to the next millisecond. A diagnostic run confirmed that the timeout fires at `2.001` seconds, after the test has already decided it missed the deadline. The pinned Tokio source confirms that rounding. This is a test-clock fixture error, not a reason to alter production deadlines to fit the test.
+
+With the pending implementation, `make rust` passes formatting and clippy; all `664` daemon tests and `170/171` runtime library tests pass. Only this new frozen test fails. The other deadline tests prove that an expired budget starts no process and that later commands share the remaining budget. Repository rule 1 and TDD's frozen-RED rule require permission to correct the test I committed.
+
+a) Authorize a dedicated `TEST-FIX:` advancing this test's clock by `2,001` milliseconds instead of `2` seconds, with a comment explaining timer resolution — preserves every assertion, including the `2`-second configured limit, process completion and termination of both Git and its descendant; list it under “Tests changed after RED”.
+b) Keep this test frozen — leaves the bounded-capture fix unfinished because the test does not let the runtime deliver its timer.
+
+**Recommended:** a) — corrects only the injected-clock fixture and avoids changing production timing to satisfy an overprecise test. (investigator)
 
 **Verdict:**
