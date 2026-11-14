@@ -316,6 +316,33 @@ mod history_process {
     }
 
     #[test]
+    fn sqlite_full_is_reported_once_on_stderr_and_the_task_finishes_with_visible_losses() {
+        let mut guarded = FailureWorld(World::new("done"));
+        let world = &mut guarded.0;
+        world.start();
+        let db = rusqlite::Connection::open(world.home.join("history.db")).unwrap();
+        db.execute_batch(include_str!("fixtures/history-full.sql")).unwrap();
+        let output = world.agent(&["run", "claude-1", "Finish the fixture task."]);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let status = world.status_where("finished despite SQLite FULL", |status| {
+            status
+                .lines()
+                .any(|line| line.contains("solo") && line.ends_with("done"))
+                && lost_records(status) >= 2
+        });
+        assert!(lost_records(&status) >= 2, "{status}");
+        world.end(Signal::TERM);
+        let log = std::fs::read_to_string(world.log()).unwrap();
+        assert_eq!(log.matches("the history cannot keep some records").count(), 1, "{log}");
+        assert_eq!(log.matches("write_disk_full").count(), 1, "{log}");
+        let reader = Reader::open(&world.home.join("history.db")).unwrap();
+        let runs = reader.runs_of_team(world.state().teams()[0].id()).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert!(runs[0].end.is_some());
+        assert_eq!(reader.steps(&runs[0].start.value.run).unwrap(), Vec::new());
+    }
+
+    #[test]
     fn a_failing_insert_is_reported_once_on_stderr_and_the_task_finishes_with_visible_losses() {
         let mut guarded = FailureWorld(World::new("done"));
         let world = &mut guarded.0;

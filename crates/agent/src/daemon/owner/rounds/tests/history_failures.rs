@@ -141,3 +141,33 @@ git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false com
     let integrity: String = db.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap();
     assert_eq!(integrity, "ok");
 }
+
+#[tokio::test]
+async fn sqlite_full_does_not_prevent_merging_or_the_other_records_surviving() {
+    let mut rig = rig().await;
+    rig.start().await;
+    let db = rusqlite::Connection::open(rig.home.history_file()).unwrap();
+    db.execute_batch(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/history-full.sql"
+    )))
+    .unwrap();
+    // This is SQLite's actual FULL code, not a constraint error whose wording resembles disk exhaustion.
+    let failure = db
+        .execute("INSERT INTO history_fault_full(id) VALUES(NULL)", [])
+        .unwrap_err();
+    assert!(matches!(failure, rusqlite::Error::SqliteFailure(error, _) if error.code == rusqlite::ErrorCode::DiskFull));
+    let health = merge_and_status(&rig).await;
+    rig.stop().await.unwrap();
+    assert_eq!(health.state, HistoryState::Writing);
+    assert!(health.lost >= 3, "{health:?}");
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let runs = reader.runs_of_team(rig.state().teams()[0].id()).unwrap();
+    assert_eq!(runs.len(), 3);
+    for run in runs {
+        assert!(run.end.is_some(), "{run:?}");
+        assert_eq!(reader.steps(&run.start.value.run).unwrap(), Vec::new());
+    }
+    let integrity: String = db.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap();
+    assert_eq!(integrity, "ok");
+}

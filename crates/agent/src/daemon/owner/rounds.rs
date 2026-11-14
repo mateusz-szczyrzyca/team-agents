@@ -435,3 +435,7 @@ mod history_redaction_tests;
 #[cfg(test)]
 #[path = "rounds/tests/history_acceptance.rs"]
 mod history_acceptance_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/history_deadline.rs"]
+mod history_deadline_tests;
