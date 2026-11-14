@@ -215,3 +215,29 @@ fn the_queries_of_the_page_list_the_runs_of_a_round_print_a_prompt_whole_and_giv
         "two queries of the page have one name"
     );
 }
+
+#[test]
+fn what_the_queries_of_the_page_print_for_a_round_is_pinned() {
+    let (_dir, path, mut db) = database();
+    let world = complete(21);
+    db.write(&world.records()).unwrap();
+    let names = Names {
+        round: world.rounds[0].round.clone(),
+        run: world.runs[0].start.run.clone(),
+        team: world.team.team.clone(),
+    };
+    let raw = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+
+    let mut printed = String::new();
+    for (name, sql) in queries(&page()) {
+        printed.push_str(&format!("-- {name}\n"));
+        for row in run_query(&raw, &sql, &names) {
+            printed.push_str(&row.join(" | "));
+            printed.push('\n');
+        }
+        printed.push('\n');
+    }
+
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/history-queries.golden.txt");
+    assert_eq!(printed, std::fs::read_to_string(golden).unwrap());
+}
