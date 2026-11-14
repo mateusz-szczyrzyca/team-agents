@@ -1033,7 +1033,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent answer <task> --file answers.md` | sends the answers written after `**Verdict:**` in a questions file instead of opening the editor |
 | `agent stop <task\|team>` | ends the run; nothing of it starts until it is resumed |
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
-| `agent resume <task\|team>` | starts a stopped, failed or waiting task again |
+| `agent resume <task\|team>` | starts a stopped, failed or waiting task again; after a full team stop abandoned its rounds, refuses and asks you to start a new team |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus |
 
 A run that ends with questions leaves `questions-<round>.md` in the task's directory and a notification file; with

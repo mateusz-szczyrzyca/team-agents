@@ -8,7 +8,7 @@
 use agent_core::cli::ActivityEvent;
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::protocol::{Client, ControlAction, EventKind, Failure, FailureKind, Reply, SayRequest, Target};
-use agent_core::state::{RunEnd, Timestamp};
+use agent_core::state::{RoundEnd, RunEnd, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{Outgoing, Recipient};
 use agent_runtime::process::error_chain;
@@ -40,6 +40,19 @@ struct Aimed {
 impl Owner {
     // ---- stop, pause, unpause, resume -----------------------------------------------------------------------
 
+    /// The team of an aimed task whose full stop abandoned a round and whose work therefore cannot be resumed.
+    fn stopped_team_with_abandoned_round(&self, aimed: &[Aimed]) -> Option<TeamId> {
+        aimed.iter().find_map(|aimed| {
+            let team = self.parts.state.team(&aimed.team)?;
+            (round_state::is_stopped(team)
+                && team
+                    .rounds()
+                    .iter()
+                    .any(|round| round.ended() == Some(RoundEnd::Abandoned)))
+            .then(|| aimed.team.clone())
+        })
+    }
+
     /// Carries out `steer` on `target`; the answer names the tasks it reached, or is the refusal when it reached none.
     ///
     /// # Errors
@@ -54,6 +67,14 @@ impl Owner {
             Ok(aimed) => aimed,
             Err(failure) => return Ok(Err(failure)),
         };
+        if steer == Steer::Resume
+            && let Some(team) = self.stopped_team_with_abandoned_round(&aimed)
+        {
+            return Ok(Err(Failure {
+                kind: FailureKind::Invalid,
+                message: format!("team {team} was stopped; start a new team"),
+            }));
+        }
         let now = Timestamp::now(&self.parts.clock)?;
         let mut reached = Vec::new();
         let mut halted = Vec::new();

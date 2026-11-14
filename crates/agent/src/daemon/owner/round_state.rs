@@ -184,7 +184,7 @@ impl Owner {
     }
 
     /// Closes the round of `item` of `team` as `how` when it is open, and says so in `look`. A round that is closed
-    /// already — abandoned when its team was stopped, then resumed — stays as it is.
+    /// already stays as it is.
     ///
     /// # Errors
     /// [`OwnerError`] when the state refuses the ending.

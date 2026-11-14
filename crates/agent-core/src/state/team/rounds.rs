@@ -5,8 +5,9 @@
 //!
 //! - an item has at most one round, and has one as soon as it leaves `pending` (an item the list marks `[x]` has none,
 //!   as it never starts);
-//! - a closed round is never opened again; one closed as `merged` belongs to an item done as merged, and one closed as
-//!   `approved` to an item that is approved or done as merged;
+//! - a closed round is never opened again; one closed as `merged` belongs to an item done as merged, one closed as
+//!   `approved` to an item that is approved or done as merged, and one closed as `abandoned` to either of those or a
+//!   team with nobody left to work;
 //! - a round without an item is the whole work of a team whose list has no items, and there is one at most;
 //! - a run names only rounds of its own team, none twice.
 
@@ -20,6 +21,7 @@ use crate::state::member::Member;
 use crate::state::round::{ClosedBeforeOpened, Round, RoundEnd};
 use crate::state::run::RunError;
 use crate::state::values::{SessionId, Timestamp};
+use crate::status::TaskStatus;
 
 /// What a run that starts is given, besides the task it starts for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -305,7 +307,8 @@ impl Team {
     ///
     /// # Errors
     /// [`CloseRoundError`]: the team has no such round, it is closed already, `at` is before it was opened, or its item
-    /// is not where `how` needs it (`merged` needs it done as merged, `approved` approved or done as merged).
+    /// is not where `how` needs it (`merged` needs it done as merged, `approved` approved or done as merged, and
+    /// `abandoned` needs either of those or a crew with nobody left to work).
     pub fn close_round(&mut self, id: &RoundId, at: Timestamp, how: RoundEnd) -> Result<(), CloseRoundError> {
         let round = self
             .round(id)
@@ -314,7 +317,7 @@ impl Team {
             return Err(CloseRoundError::AlreadyClosed { round: id.clone() });
         }
         let phase = round.item().and_then(|item| self.item(item)).map(ItemProgress::phase);
-        if !end_fits(how, phase) {
+        if !end_fits(how, phase, nobody_to_work(self)) {
             return Err(CloseRoundError::EndDoesNotFit {
                 round: id.clone(),
                 how,
@@ -369,19 +372,30 @@ impl Team {
     }
 }
 
-/// Whether a round may end as `how` when its item is in `phase` (none: the round has no item).
-fn end_fits(how: RoundEnd, phase: Option<&ItemPhase>) -> bool {
+/// Whether `how` fits the phase `phase` of the round's item and whether its team can still work.
+fn end_fits(how: RoundEnd, phase: Option<&ItemPhase>, nobody_to_work: bool) -> bool {
     let merged = matches!(
         phase,
         Some(ItemPhase::Done {
             completion: Completion::Merged { .. }
         })
     );
+    let finished = merged || matches!(phase, Some(ItemPhase::Approved { .. }));
     match how {
         RoundEnd::Merged => merged,
-        RoundEnd::Approved => merged || matches!(phase, Some(ItemPhase::Approved { .. })),
-        RoundEnd::Abandoned => true,
+        RoundEnd::Approved => finished,
+        RoundEnd::Abandoned => finished || nobody_to_work,
     }
+}
+
+/// Whether every member of `team` is stopped, failed or done, leaving nobody to work on an open round.
+fn nobody_to_work(team: &Team) -> bool {
+    team.crew().roster().into_iter().all(|(_, member)| {
+        matches!(
+            member.status(),
+            TaskStatus::Stopped | TaskStatus::Failed | TaskStatus::Done
+        )
+    })
 }
 
 /// Checks the rounds of `team` against its items and its runs.
@@ -394,6 +408,7 @@ pub(super) fn check_rounds(team: &Team) -> Result<(), TeamError> {
 
 /// Checks the rounds of `team`, then its items for rounds, then its runs.
 fn check_round_list(team: &Team) -> Result<(), RoundsError> {
+    let nobody_to_work = nobody_to_work(team);
     let mut seen: HashSet<&RoundId> = HashSet::new();
     for round in &team.rounds {
         if !seen.insert(round.id()) {
@@ -401,7 +416,7 @@ fn check_round_list(team: &Team) -> Result<(), RoundsError> {
                 round: round.id().clone(),
             });
         }
-        check_round(team, round)?;
+        check_round(team, round, nobody_to_work)?;
     }
     for progress in &team.items {
         let item = progress.id();
@@ -431,7 +446,7 @@ fn check_round_list(team: &Team) -> Result<(), RoundsError> {
 }
 
 /// Checks one round of `team` on its own: its item, and how it ended.
-fn check_round(team: &Team, round: &Round) -> Result<(), RoundsError> {
+fn check_round(team: &Team, round: &Round, nobody_to_work: bool) -> Result<(), RoundsError> {
     let Some(item) = round.item() else {
         if !team.items.is_empty() {
             return Err(RoundsError::NoItemInTeamWithItems {
@@ -444,7 +459,7 @@ fn check_round(team: &Team, round: &Round) -> Result<(), RoundsError> {
                 second: round.id().clone(),
             });
         }
-        return check_end(round, None);
+        return check_end(round, None, nobody_to_work);
     };
     let Some(progress) = team.item(item) else {
         return Err(RoundsError::UnknownItem {
@@ -463,13 +478,13 @@ fn check_round(team: &Team, round: &Round) -> Result<(), RoundsError> {
             item,
         });
     }
-    check_end(round, Some(progress.phase()))
+    check_end(round, Some(progress.phase()), nobody_to_work)
 }
 
-/// Checks that the way `round` ended fits the phase of its item.
-fn check_end(round: &Round, phase: Option<&ItemPhase>) -> Result<(), RoundsError> {
+/// Checks that the way `round` ended fits the phase of its item and whether its team can still work.
+fn check_end(round: &Round, phase: Option<&ItemPhase>, nobody_to_work: bool) -> Result<(), RoundsError> {
     match round.ended() {
-        Some(how) if !end_fits(how, phase) => Err(RoundsError::EndDoesNotFit {
+        Some(how) if !end_fits(how, phase, nobody_to_work) => Err(RoundsError::EndDoesNotFit {
             round: round.id().clone(),
             how,
             item: phase.map(ItemPhase::kind),

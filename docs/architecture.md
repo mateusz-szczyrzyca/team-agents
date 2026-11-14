@@ -368,8 +368,10 @@ questions of a task are numbered (`questions-<number>.md`) and the reviews asked
 | a `stop` leaves every task of a team stopped, failed or done | closes the team's open rounds `abandoned` | `round_closed` |
 | a team ends (all its items done; for a list without items, its lead said `DONE`) | closes the rounds still open `abandoned`: nothing merged the round of a whole list | `round_closed` |
 
-A closed round is never opened again. A task that is resumed after a stop goes on with the item it had, in the round it had, which is
-closed (`abandoned`): the runs that go on name it. A round is kept for ever, so the state shows what happened.
+A closed round is never opened again. A round may be `abandoned` only when its item is approved or done as merged, or when its crew
+has nobody left to work. After a full stop has abandoned open rounds, `resume` of the team or one of its tasks is refused as
+`invalid`: the human starts a new team rather than letting an item merge in a round that says `abandoned`. A round is kept for ever,
+so the state shows what happened.
 
 **The rounds of a run** are decided when the run starts, by a pure function of the task's role and of why the run starts
 (`decide::round::rounds_of_run`), and recorded with the run (`Run::rounds`, `Team::begin_run`):
@@ -570,6 +572,10 @@ refusal (`conflict`) says why for each task.
 | `pause` | paused | run stopped, then paused | paused | — | — | — | — | — |
 | `unpause` | — | — | — | — | queued | — | — | — |
 | `resume` | — | — | queued | — | — | queued | queued | — |
+
+Before that per-task table is applied, `resume` is refused as `invalid` for the whole request if an aimed task's team has nobody
+left to work and has an `abandoned` round. Its closed rounds cannot be reopened or continued to a later merge; the human starts a
+new team. A stop of only some tasks leaves the rounds open and does not trigger this refusal.
 
 A task with a run going has the run's process group stopped (the engine's `SIGTERM`, then `SIGKILL`), the run is recorded
 as ended `stopped`, and the owner answers only when that is done, so a client that has its answer sees the status it

@@ -216,16 +216,18 @@ state is read:
 - a round ID is used once in the whole state;
 - a closed round is never opened again: closing it again is refused, and so is a second round for its item. A round closed as
   `merged` belongs to an item `done` as merged; one closed as `approved` to an item that is `approved` or `done` as merged;
-  `abandoned` fits any item (a round of a whole list can end in no other way, since nothing merges it); it is not closed before it
-  was opened;
+  `abandoned` needs either of those finished phases or a crew whose members are all `stopped`, `failed` or `done`. The round of a
+  whole list has no item to finish, so only the latter fits it. A round is not closed before it was opened;
 - a run names only rounds of its own team, none twice.
 
 `Team::advance_item` is the move of an item that checks the first rule; `ItemMut::advance` moves an item without knowing the
 rounds, and the state that is built with it alone is not read until the item has its round. A round that is still `open` when its
 item is `done` is allowed to be read: the daemon closes it in the same step as it completes the item.
 
-A task that is resumed after a stop goes on with its item in the round it had, which stays `abandoned`; the runs that go on name
-it. (The alternatives — a new round for the same item, or a round that opens again — break the invariants above.)
+A stop that leaves a team with nobody to work abandons its open rounds. Resuming that team, or one of its tasks, is then refused
+as `invalid` with "team … was stopped; start a new team": neither opening the closed round again nor giving its item a second round
+is allowed, and continuing would otherwise let a merge follow an `abandoned` ending. Stopping one task while the rest of its team
+can work abandons nothing and does not prevent its resume.
 
 **Version 1.** A state of schema version 1 has no rounds. It is migrated when it is read, by one rule, so that reading the same
 file twice gives the same state: each item past `pending` (not the ones the list marks `[x]`) gets a round, whose ID is derived
@@ -508,13 +510,12 @@ These choices are in the model and are expensive to change once state files exis
 16. **A round is a record of its team, found by the item.** It is `{id, item?, opened_at, state}`, an item has one, and a run
     names the rounds it works for (a list, because a coordinator works for every round that is open). The ID of a team and the ID
     of a round are the two keys the history of item 8.4 is found by.
-17. **A closed round is never opened again, also when its team is resumed.** A `stop` that leaves a team with nobody to work
-    abandons its open rounds; a `resume` goes on with the item in its round, which stays `abandoned`, and the runs that go on name
-    it. The other ways — a new round for the same item, or a round that opens again — break "an item has one round" and "a closed
-    round is closed". The cost: such an item is merged in a round that says `abandoned`. A human who wants a clean round starts a
-    new team.
-18. **The round of a list without items ends `abandoned`.** Nothing merges it and nothing approves it; `abandoned` is the only
-    ending that fits it, and it is what the team's end says.
+17. **A closed round is never opened again, and an abandoned team is not resumed.** A `stop` that leaves a team with nobody to
+    work abandons its open rounds. A later `resume` of the team or one of its tasks is refused as `invalid`: the human starts a new
+    team. A new round for the same item would break "an item has one round", reopening would break "a closed round is closed", and
+    continuing in the old round would let its item merge after an `abandoned` ending.
+18. **The round of a list without items ends `abandoned`, even when the work succeeds.** Nothing merges it and nothing approves it;
+    `abandoned` is the only applicable ending once the team is over, and it is what the team's end says.
 19. **The migration of version 1 is by one rule and opens its rounds when the team was started.** Version 1 did not record when
     an item was given out; the derived ID and the time of the team's start make reading the same file twice give the same state.
 20. **The item's own move does not know rounds; the team's does.** `ItemMut::advance` is unchanged; `Team::advance_item` refuses to
