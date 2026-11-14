@@ -3,6 +3,8 @@
 //! in the middle of a batch. Generated values come from a seeded source: a failure names its seed.
 
 #[cfg(test)]
+mod docs;
+#[cfg(test)]
 mod kill;
 #[cfg(test)]
 mod records;
