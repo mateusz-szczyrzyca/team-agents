@@ -188,28 +188,14 @@ pub(crate) async fn run_in(
     shutdown: CancellationToken,
 ) -> Result<(), DaemonError> {
     let rng = StdRng::try_from_rng(&mut SysRng).map_err(DaemonError::Entropy)?;
-    run_using_rng(setup, surroundings, rng, shutdown).await
+    run_with_rng(setup, surroundings, rng, shutdown).await
 }
 
 /// Runs the daemon with the caller's random source for team selection and identifiers.
 ///
 /// # Errors
 /// [`DaemonError`].
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "RED stub; production wiring follows in GREEN")
-)]
 pub(crate) async fn run_with_rng(
-    setup: DaemonSetup,
-    surroundings: Surroundings,
-    _rng: StdRng,
-    shutdown: CancellationToken,
-) -> Result<(), DaemonError> {
-    run_using_rng(setup, surroundings, StdRng::seed_from_u64(0), shutdown).await
-}
-
-/// Owns the daemon with an already initialized random source.
-async fn run_using_rng(
     setup: DaemonSetup,
     surroundings: Surroundings,
     rng: StdRng,
