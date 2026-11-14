@@ -443,6 +443,10 @@ mod history_redaction_tests;
 mod history_events_redaction_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/history_controls.rs"]
+mod history_controls_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/history_acceptance.rs"]
 mod history_acceptance_tests;
 
