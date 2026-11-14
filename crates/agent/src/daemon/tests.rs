@@ -1179,3 +1179,91 @@ async fn status_of_a_run_outside_a_git_repository_reports_one_lost_capture() {
     assert_eq!(teams[0].members[0].task, task(1));
     assert_eq!(teams[0].members[0].status, TaskStatus::Running);
 }
+
+#[tokio::test]
+async fn a_clock_set_back_during_a_run_records_its_clamped_end_without_losing_records() {
+    use agent_core::history::{HowChosen, MaxTextBytes, PlanEntry, Record, TeamStart};
+    use agent_runtime::history::{HistoryDb, Reader, Store as _};
+
+    let mut f = Fixture::new(&solo_state(), 1, "hang");
+    let worktree = f.home.worktree_dir(&repo(), &task(1));
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["commit", "-q", "--allow-empty", "-m", "init"],
+    ] {
+        let status = std::process::Command::new("git")
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "user.name=Fake",
+                "-c",
+                "user.email=fake@example.com",
+            ])
+            .args(args)
+            .current_dir(&worktree)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+    let mut db = HistoryDb::open(&f.home.history_file(), MaxTextBytes::default()).unwrap();
+    db.write(&[Record::Team(Box::new(TeamStart {
+        team: crate::fixtures::team_id(0),
+        at: at(0),
+        repo: repo().to_string(),
+        base_branch: "main".parse().unwrap(),
+        merge: agent_core::state::MergeMode::Autopilot,
+        task_list: crate::fixtures::LIST.to_owned(),
+        plan: vec![PlanEntry {
+            position: std::num::NonZeroU32::MIN,
+            agent: "claude-1".parse().unwrap(),
+            role: agent_core::kinds::Role::Solo,
+            how: HowChosen::Named,
+        }],
+    }))])
+    .unwrap();
+    drop(db);
+
+    f.start().await;
+    let state = f.status_is(TaskStatus::Running).await;
+    let started_at = member_one(&state).runs()[0].started_at();
+
+    f.clock.advance(time::Duration::hours(-1));
+    let state = f.status_is(TaskStatus::Failed).await;
+    let reply = loop {
+        let end_written = Reader::open(&f.home.history_file())
+            .ok()
+            .and_then(|reader| reader.runs_of_team(&crate::fixtures::team_id(0)).ok())
+            .is_some_and(|runs| runs.first().is_some_and(|run| run.end.is_some()));
+        let reply = f
+            .connect()
+            .await
+            .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+            .await
+            .unwrap();
+        if end_written || matches!(reply, Reply::Overview { .. }) {
+            break reply;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    f.stop().await.unwrap();
+
+    assert!(
+        matches!(reply, Reply::Teams { .. }),
+        "expected no lost history records: {reply:?}"
+    );
+    let reader = Reader::open(&f.home.history_file()).unwrap();
+    let runs = reader.runs_of_team(&crate::fixtures::team_id(0)).unwrap();
+    assert_eq!(runs.len(), 1);
+    let end = runs[0]
+        .end
+        .as_ref()
+        .expect("the clamped run end is stored")
+        .value
+        .clone();
+    assert_eq!(end.at, started_at);
+    assert_eq!(end.end, RunEnd::Hung);
+    assert_eq!(end.run, *member_one(&state).runs()[0].id());
+}

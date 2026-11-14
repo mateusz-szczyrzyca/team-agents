@@ -239,6 +239,48 @@ mod history_process {
     }
 
     #[test]
+    fn a_history_of_a_newer_version_is_said_once_on_stderr_at_start_and_left_untouched() {
+        use agent_core::history::MaxTextBytes;
+        use agent_runtime::history::{HistoryDb, Migration, schema::MIGRATIONS};
+
+        let mut world = World::new("done");
+        let mut migrations = MIGRATIONS.to_vec();
+        let future_version = migrations.last().unwrap().version.checked_add(1).unwrap();
+        migrations.push(Migration {
+            version: future_version,
+            sql: "create table from_the_future (x TEXT);",
+        });
+        let history = world.home.join("history.db");
+        drop(HistoryDb::open_with(&history, &migrations, MaxTextBytes::default()).unwrap());
+        let before = std::fs::read(&history).unwrap();
+        world.start();
+
+        let startup_log = std::fs::read_to_string(world.log()).unwrap();
+        assert_eq!(
+            startup_log.matches("the history cannot keep some records").count(),
+            1,
+            "{startup_log}"
+        );
+        assert!(
+            startup_log.contains(&format!("version {future_version}")),
+            "{startup_log}"
+        );
+
+        let output = world.agent(&["run", "claude-1", "Fix the typo in the README."]);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let status = world.status_where("the task to be done", |status| {
+            status.contains("solo") && status.contains("done")
+        });
+        assert!(status.contains(&format!("version {future_version}")), "{status}");
+        assert!(lost_records(&status) >= 3, "{status}");
+        world.end(Signal::TERM);
+
+        let log = std::fs::read_to_string(world.log()).unwrap();
+        assert_eq!(log.matches("the history cannot keep some records").count(), 1, "{log}");
+        assert_eq!(std::fs::read(&history).unwrap(), before);
+    }
+
+    #[test]
     fn a_daemon_killed_in_the_middle_of_a_run_leaves_a_history_the_next_daemon_goes_on_with() {
         let mut world = World::new("slowdone,done");
         world.start();
