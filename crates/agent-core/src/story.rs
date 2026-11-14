@@ -5,7 +5,10 @@
 //! belongs to a round. Records come in the order they were written in ([`SequencedRecord::sequence`]) and are told in the
 //! order of their time, a tie going to the one written first.
 
-use crate::history::SequencedRecord;
+mod json;
+mod text;
+
+use crate::history::{Record, SequencedRecord};
 use crate::ids::{RoundId, TeamId};
 
 /// How many lines of a prompt a story prints unless it is asked for the whole prompt.
@@ -50,20 +53,41 @@ pub struct StoryOptions {
 /// The records `selection` is about, each once, in the order of their time and, for the same time, of their writing.
 #[must_use]
 pub fn selected<'a>(records: &'a [SequencedRecord], selection: &Selection) -> Vec<&'a SequencedRecord> {
-    let _ = (records, selection);
-    Vec::new()
+    let mut chosen: Vec<&SequencedRecord> = match selection {
+        Selection::Team(team) => records.iter().filter(|record| &record.team == team).collect(),
+        Selection::Round(round) => {
+            let Some(owner) = records.iter().find(|record| record.rounds.contains(round)) else {
+                return Vec::new();
+            };
+            records
+                .iter()
+                .filter(|record| {
+                    record.rounds.contains(round)
+                        || (matches!(record.record, Record::Team(_)) && record.team == owner.team)
+                })
+                .collect()
+        }
+    };
+    chosen.sort_by_key(|record| (record.at, record.sequence));
+    chosen.dedup_by_key(|record| record.sequence);
+    chosen
 }
 
 /// The story of `selection` as text, ending with a newline; empty when no record belongs to it.
 #[must_use]
 pub fn render(records: &[SequencedRecord], selection: &Selection, options: StoryOptions) -> String {
-    let _ = (records, selection, options);
-    String::new()
+    let chosen = selected(records, selection);
+    if chosen.is_empty() {
+        return String::new();
+    }
+    text::render(&chosen, selection, options)
 }
 
 /// The records of `selection`, each as one line of JSON, in the order of the story.
 #[must_use]
 pub fn json_lines(records: &[SequencedRecord], selection: &Selection) -> Vec<String> {
-    let _ = (records, selection);
-    Vec::new()
+    selected(records, selection)
+        .into_iter()
+        .map(|record| json::record_json(record).to_string())
+        .collect()
 }
