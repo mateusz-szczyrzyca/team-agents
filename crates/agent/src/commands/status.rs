@@ -202,7 +202,7 @@ pub(crate) fn render_round(detail: &RoundDetail) -> String {
 const NO_TEAMS: &str = "no teams\n";
 
 #[cfg(test)]
-#[path = "status/history_tests.rs"]
+#[path = "status/history/tests.rs"]
 mod history_tests;
 #[cfg(test)]
 mod tests;
