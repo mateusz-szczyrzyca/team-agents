@@ -297,8 +297,10 @@ one by one, so a record that cannot be written loses only itself.
 
 When a record cannot be kept — the queue is full, the file or the disk cannot be written, the database cannot be opened —
 the work goes on, the failure goes to the standard error of the daemon (the journal of the unit) **once for each cause**
-(`queue_full`, `unavailable`, `write_disk_full`, `write_read_only`, `write_io`, `write_corrupt`, `write_refused`, …), the
-records lost are counted, and `agent status` shows the count:
+(`queue_full`, `unavailable`, `capture_head`, `capture_changes`, `write_disk_full`, `write_read_only`, `write_io`, `write_corrupt`, `write_refused`, …), the
+records lost are counted, and `agent status` shows the count. A failed starting-head lookup counts one incomplete launch; a failed change snapshot counts one missing changes record. When history is unavailable, the engine counts the skipped changes record without running Git for it. Disabled history neither captures nor counts records.
+
+For example:
 
 ```text
 history: not written: cannot open the history database "/home/you/agents/history.db": …; 12 records lost

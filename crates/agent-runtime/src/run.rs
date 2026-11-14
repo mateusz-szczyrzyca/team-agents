@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use crate::clock::SharedClock;
 use crate::git::{GitError, Revision};
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
-use crate::history::History;
+use crate::history::{CaptureKind, History};
 use crate::process::{ExitReport, ProcessError, ProcessSpec, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
 
@@ -440,13 +440,13 @@ impl RunEngine {
 
     /// The commit the worktree of `job` is at, for the history; `None` when it is off or git cannot say.
     async fn head_of_worktree(&self, job: &RunJob) -> Option<CommitId> {
-        if self.history.is_disabled() {
+        if !self.history.is_writing() {
             return None;
         }
         match launch::lookup_git(&job.working_dir).rev_parse(&Revision::Head).await {
             Ok(head) => Some(head),
             Err(error) => {
-                tracing::warn!(task = %job.task, run = %job.run, error = %error_chain(&error), "the commit a run starts at cannot be read: the history has no head for it");
+                self.history.capture_failed(CaptureKind::Head, &error);
                 None
             }
         }
@@ -484,25 +484,21 @@ impl RunEngine {
     /// Records what the run changed in its worktree, now that its process is gone: the commits and files between the commit
     /// it started at and the one it ended at, and what it left uncommitted. A worktree git cannot read has none.
     async fn record_changes(&self, job: &RunJob, head_before: Option<CommitId>) {
-        if self.history.is_disabled() {
-            return;
-        }
-        match launch::lookup_git(&job.working_dir)
-            .work_changes(head_before.as_ref())
-            .await
-        {
-            Ok(changes) => self.history.record(Record::Changes(Box::new(RunChanges {
-                run: job.run.clone(),
-                head_before,
-                head_after: Some(changes.head_after),
-                commits: changes.commits,
-                files: changes.files,
-                uncommitted: changes.uncommitted,
-            }))),
-            Err(error) => {
-                tracing::warn!(task = %job.task, run = %job.run, error = %error_chain(&error), "what a run changed cannot be read: the history has no changes for it");
-            }
-        }
+        self.history
+            .record_captured(CaptureKind::Changes, async {
+                let changes = launch::lookup_git(&job.working_dir)
+                    .work_changes(head_before.as_ref())
+                    .await?;
+                Ok::<_, crate::git::GitError>(Record::Changes(Box::new(RunChanges {
+                    run: job.run.clone(),
+                    head_before,
+                    head_after: Some(changes.head_after),
+                    commits: changes.commits,
+                    files: changes.files,
+                    uncommitted: changes.uncommitted,
+                })))
+            })
+            .await;
     }
 
     /// Whether a process that last showed life at `last` has been silent for the hang limit.

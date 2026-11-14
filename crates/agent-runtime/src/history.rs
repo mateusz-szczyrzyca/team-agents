@@ -15,6 +15,8 @@ mod write;
 
 pub use db::{HistoryDb, Store};
 pub use error::{CloseError, OpenError, ReadError, RecordKind, StartError, ValueProblem, WriteError, WriteKind};
-pub use handle::{Cause, DEFAULT_QUEUE, History, Problem, Reporter, Setup, Started, TracingReporter, Writer};
+pub use handle::{
+    CaptureKind, Cause, DEFAULT_QUEUE, History, Problem, Reporter, Setup, Started, TracingReporter, Writer,
+};
 pub use migrate::Migration;
 pub use reader::{Reader, RoundPrompt, RunRow, Stored};

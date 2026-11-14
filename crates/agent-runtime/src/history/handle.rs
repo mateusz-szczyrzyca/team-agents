@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+use std::future::Future;
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
@@ -29,24 +30,31 @@ pub const DEFAULT_QUEUE: NonZeroUsize = NonZeroUsize::new(4096).unwrap();
 const MAX_BATCH: usize = 256;
 
 /// What can go wrong with the history, as the reporter is told: one cause is reported once.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::Display)]
 pub enum Cause {
     /// The queue was full: the writer is slower than the work.
+    #[strum(serialize = "queue_full")]
     QueueFull,
     /// There is no database to write to: it could not be opened, is of a newer version, or the writer has stopped.
+    #[strum(serialize = "unavailable")]
     Unavailable,
     /// A write failed in this way.
+    #[strum(to_string = "write_{0}")]
     Write(WriteKind),
+    /// A record or its launch head could not be captured.
+    #[strum(to_string = "capture_{0}")]
+    Capture(CaptureKind),
 }
 
-impl fmt::Display for Cause {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::QueueFull => f.write_str("queue_full"),
-            Self::Unavailable => f.write_str("unavailable"),
-            Self::Write(kind) => write!(f, "write_{kind}"),
-        }
-    }
+/// The snapshot that failed before a record could reach the writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::Display)]
+pub enum CaptureKind {
+    /// The launch record lacks its starting commit.
+    #[strum(serialize = "head")]
+    Head,
+    /// The changes record could not be built.
+    #[strum(serialize = "changes")]
+    Changes,
 }
 
 /// A problem of the history, for the reporter.
@@ -270,6 +278,37 @@ impl History {
                 self.stopped();
             }
         }
+    }
+
+    /// Capture one record only while a writer is available. An unavailable history counts it as lost without polling
+    /// the capture future; a disabled history does neither. Capture failures do not fail the model's work.
+    pub async fn record_captured<E: std::error::Error>(
+        &self,
+        kind: CaptureKind,
+        capture: impl Future<Output = Result<Record, E>>,
+    ) {
+        if !self.is_writing() {
+            self.lose_without_writer();
+            return;
+        }
+        match capture.await {
+            Ok(record) => self.record(record),
+            Err(error) => self.capture_failed(kind, &error),
+        }
+    }
+
+    /// Count a failed snapshot (including an incomplete launch) and report its cause once.
+    pub fn capture_failed(&self, kind: CaptureKind, error: &impl std::error::Error) {
+        if !self.is_disabled() {
+            self.shared.lose(1);
+            self.shared.report(Cause::Capture(kind), || error_chain(error));
+        }
+    }
+
+    /// Whether snapshot work has a writer to receive it. An unavailable history must not run Git just to discard it.
+    #[must_use]
+    pub fn is_writing(&self) -> bool {
+        matches!(*locked(&self.shared.state), HistoryState::Writing)
     }
 
     /// Counts a record handed to a history that has no writer: lost when the history is broken, nothing when it is off.
