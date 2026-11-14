@@ -1,6 +1,6 @@
 # Investigation — Rust item 8.4 — `inv-astra`
 
-Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-agents/pull/100) on `agents/inv-astra/20261114-094819`. Item `8.4` is **not complete**. Sessions, startup loss accounting, a writer diagnostics deadlock and execution of Git extensions during snapshots are fixed and committed. The last complete Rust gate passed `2,305` test executions. A further fix for uncounted Git capture failures is implemented locally, but four frozen socket-test fixtures require human approval before it can become GREEN.
+Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-agents/pull/100) on `agents/inv-astra/20261114-094819`. Item `8.4` is **not complete**. Sessions, startup loss accounting, a writer diagnostics deadlock and execution of Git extensions during snapshots are fixed and committed. The last complete Rust gate before the capture-loss work passed `2,305` test executions. A further fix for uncounted Git capture failures is implemented locally. The four authorized socket fixtures are now isolated from history, and the requested new loss-status regression is committed. A fifth frozen socket fixture has exposed an intermittent conflicting assumption; round-4 approval is needed before the fix can become GREEN.
 
 ## Completed fixes
 
@@ -30,7 +30,9 @@ Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-
 
 - Human-authorized `TEST-FIX:` [`88dc7138`](https://github.com/mateusz-szczyrzyca/team-agents/commit/88dc71381c20c0b7e6320916c00c375df15a5dfd) updates [`docs/history.schema.sql`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/docs/history.schema.sql) and the table inventory in [`crates/agent-runtime/tests/history/schema.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/crates/agent-runtime/tests/history/schema.rs) for session migration `2`.
 - Human-authorized `TEST-FIX:` [`abc029dd`](https://github.com/mateusz-szczyrzyca/team-agents/commit/abc029ddbcb7858205bf6266fb2621f49c8f9c23) advances the unsupported-version fixture in [`crates/agent/src/daemon/owner/rounds/tests/history_records.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/crates/agent/src/daemon/owner/rounds/tests/history_records.rs) to one beyond the latest migration. It preserves byte preservation, merged-round and unavailable-status assertions.
-- No permission has yet been given to change the four socket fixtures listed in the question below. None has been changed.
+- Human-authorized `TEST-FIX:` [`ffaab8fc`](https://github.com/mateusz-szczyrzyca/team-agents/commit/ffaab8fc84c7fb8fd21b7466734ee869cf8bc9df) disables history only in the four round-3 fixtures. Its diff adds configuration writes inside those tests; shared fixture defaults and every assertion remain unchanged.
+- The requested regression is $\color{red}{\textbf{RED}}$ in [`90c76d79`](https://github.com/mateusz-szczyrzyca/team-agents/commit/90c76d791958b044398076ffd3921dd9cb792202). Without the fix it receives `Teams`; with the pending fix it passes, asserting `Overview` with `Writing` and exactly `lost: 1`.
+- The additional stale-socket fixture has not been changed. It is outside the explicit four-test approval.
 
 ## Tests
 
@@ -60,9 +62,11 @@ This maps the principal implemented requirements and regression proofs. It is no
 
 ## Checks
 
-- Last complete `make rust`, at [`7c9ca8ed`](https://github.com/mateusz-szczyrzyca/team-agents/commit/7c9ca8ed8882370c7454c817307a1ca866e792d7): `2,305` passing test executions, `0` failed, `0` ignored; formatting, clippy and documentation passed.
+- Last complete `make rust` before capture-loss work, at [`7c9ca8ed`](https://github.com/mateusz-szczyrzyca/team-agents/commit/7c9ca8ed8882370c7454c817307a1ca866e792d7): `2,305` passing test executions, `0` failed, `0` ignored; formatting, clippy and documentation passed.
 - Capture-loss RED: the new process test timed out with completed tasks but no loss count; the two new runtime assertions observed `0` instead of `2` and `5` instead of `6` losses. These failures are recorded in the RED commit.
-- With the pending capture implementation, `make rust` passes formatting and clippy, then stops at `656/660` daemon tests. The four failures are the frozen fixtures below, not ignored tests.
+- Before the round-3 approval, the pending capture implementation stopped at `656/660` daemon tests because of the four frozen fixtures.
+- After the four approved fixture changes, one complete `make rust` run passed `2,308` test executions, formatting, clippy and documentation. This does not establish a stable GREEN result: the later run below exposes a race in a fifth existing fixture.
+- With the new regression and pending capture implementation, `make rust` passes formatting and clippy, then stops at `660/661` daemon tests. Only `a_socket_file_left_by_a_dead_daemon_is_replaced` fails; the new exact-loss regression passes. The stale-socket test can request status before or after head-capture failure, so its prior passing run must not hide this failure (`LINT-8`).
 - With that implementation, `tools/test-lock.sh capture-focused cargo test --locked -p agent-runtime --test run_history -p agent --test history_process` passes `16/16` tests: `11` runtime and `5` process tests.
 - `git diff --check` passes.
 - `git grep -l 'CREATE TABLE' -- crates` finds one Rust schema module, [`crates/agent-runtime/src/history/schema.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/crates/agent-runtime/src/history/schema.rs), plus the preserved migration fixture [`crates/agent-runtime/tests/history/fixtures/schema-v1.sql`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/crates/agent-runtime/tests/history/fixtures/schema-v1.sql). The fixture deliberately retains the old schema for migration verification; it is not a second production schema module.
@@ -84,20 +88,20 @@ This maps the principal implemented requirements and regression proofs. It is no
 - Go suites were not run, as explicitly instructed.
 - Bats suites were not run, as explicitly instructed.
 - `make gate` was replaced by `make rust` to obey those exclusions.
-- No Rust test was newly ignored or removed. After the pending implementation's four daemon failures, the full gate did not reach subsequent test and documentation stages; focused suites were run separately under the test lock.
+- No Rust test was newly ignored or removed. After the pending implementation's latest daemon failure, the full gate did not reach subsequent test and documentation stages; focused suites were run separately under the test lock.
 
 ## Not done
 
-- **Frozen fixture approval:** the capture-loss implementation remains local in [`crates/agent-runtime/src/history.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/crates/agent-runtime/src/history.rs), [`crates/agent-runtime/src/history/handle.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/crates/agent-runtime/src/history/handle.rs) and [`crates/agent-runtime/src/run.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/crates/agent-runtime/src/run.rs). These links show the committed RED versions, not the pending implementation. That implementation counts capture failures once per missing record, reports once per cause, and avoids Git capture when history is unavailable. It must not be represented as committed or fully gated.
+- **Frozen fixture approval:** the capture-loss implementation remains local in [`crates/agent-runtime/src/history.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/crates/agent-runtime/src/history.rs), [`crates/agent-runtime/src/history/handle.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/crates/agent-runtime/src/history/handle.rs) and [`crates/agent-runtime/src/run.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/crates/agent-runtime/src/run.rs). These links show the committed RED versions, not the pending implementation. Its documentation update also remains uncommitted. That implementation counts capture failures once per missing record, reports once per cause, and avoids Git capture when history is unavailable. It must not be represented as committed or fully gated.
 - **Strict no-delay guarantee:** healthy-history Git captures remain awaited before model launch and run completion. Disabling extension commands removes the reproduced filter delay, but slow Git itself can still delay work; this requirement remains unresolved.
 - **Merged-round queue proof:** the new full-queue process test proves a brief finishes, not that the same full-queue round merges. That stronger proof is still required.
 - **Seeded selection proof:** the inherited coordinator-draw test checks the selected participant and candidate set against state, but does not inject a seeded RNG into the daemon. It does not satisfy the explicit seeded end-to-end draw requirement.
 - **Inherited process-test precision:** two older process tests look for `solo` and `done` anywhere in status; the summary header can contain `0 done`. New tests check an actual solo task line ending in `done`; the older frozen predicates remain unchanged.
 - The complete per-sentence behaviour/test audit and final checkpoint remain outstanding. The final branch includes a RED test commit and must not be merged as finished item `8.4`.
 
-## Questions — round 3
+## Answered questions — round 3
 
-The external question file is `questions-3.md` for task `20261114-094819-inv-astra`. The question is reproduced below for the pushed handoff. This pause is required by [`AGENTS.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/AGENTS.md), rule `1`: “Never modify existing tests.” The earlier approvals cover schema fixtures, not these socket tests.
+The external question file is `questions-3.md` for task `20261114-094819-inv-astra`. The question is retained below as the approval record. The human approved option `a` for exactly four tests, in one fixture-only `TEST-FIX`, and required the new exact-loss regression. The original pause was required by [`AGENTS.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/AGENTS.md), rule `1`: “Never modify existing tests.” The earlier approvals cover schema fixtures, not these socket tests.
 
 ## 1. May four socket-test fixtures disable history explicitly?
 The capture-loss fix counts a failed Git head lookup and exposes it through `agent status`, as item `8.4` requires. Four existing socket tests use directories that are not Git repositories and expect `Reply::Teams`. They now receive `Reply::Overview` with `HistoryHealth { state: Writing, lost: 1 }`. In [`crates/agent/src/daemon/tests.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/57656608077a461217928f262d081c8b22d360db/crates/agent/src/daemon/tests.rs), the affected tests are:
@@ -113,5 +117,23 @@ a) Authorize a dedicated `TEST-FIX:` adding `[history] enabled = false` to these
 b) Keep these fixtures frozen — leaves the capture-loss fix blocked because its required status behavior conflicts with their assumptions.
 
 **Recommended:** a) — isolates socket protocol tests from optional history recording without weakening their assertions or the history tests. (investigator)
+
+**Verdict:** a) — approved for exactly the four named fixtures, with a new exact-loss status regression.
+
+## Questions — round 4
+
+The current external question file is `questions-4.md` for task `20261114-094819-inv-astra`. No fifth fixture change has been made.
+
+## 1. May the stale-socket fixture also disable history explicitly?
+The four authorized fixture changes are committed separately, with no assertion changes. The requested new regression, `status_of_a_run_outside_a_git_repository_reports_one_lost_capture`, was committed RED after observing `Reply::Teams`; with the pending fix it passes and asserts `Reply::Overview` with exactly `lost: 1`.
+
+The next `make rust` run passes formatting and clippy and reports `660/661` daemon tests passing. Its sole failure is another existing test in [`crates/agent/src/daemon/tests.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/90c76d791958b044398076ffd3921dd9cb792202/crates/agent/src/daemon/tests.rs): `a_socket_file_left_by_a_dead_daemon_is_replaced`. This test also starts a run in a directory that is not a Git repository and asserts `Reply::Teams`. Its first status request races the head lookup: it passed in the preceding full gate, then failed once the missing head was counted before status. The new regression waits for the fake CLI to start and has no such ordering ambiguity.
+
+Your round-3 approval explicitly permits exactly four tests, so it excludes this fifth fixture. A search of the daemon's remaining `Reply::Teams` assertions found no other instance of this non-Git fixture conflict: the others use real Git repositories or explicitly disabled history. Repository rule 1 requires permission before modifying the fifth test.
+
+a) Authorize one dedicated `TEST-FIX:` adding `[history] enabled = false` only to the fixture of `a_socket_file_left_by_a_dead_daemon_is_replaced` — keeps its socket-replacement assertion unchanged and lets the new history regression cover the loss behavior.
+b) Keep this fixture frozen — leaves the capture-loss fix blocked by an intermittent conflicting status expectation.
+
+**Recommended:** a) — isolates the socket-replacement contract without changing shared fixture defaults or weakening any assertion. (investigator)
 
 **Verdict:**
