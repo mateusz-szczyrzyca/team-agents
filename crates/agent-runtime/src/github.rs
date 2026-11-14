@@ -627,6 +627,8 @@ pub struct RemotePullRequest {
     pub head: CommitId,
     /// The branch it merges into.
     pub base_branch: BranchName,
+    /// The commit on the base branch produced by merging it, when GitHub reports one.
+    pub merge_commit_sha: Option<CommitId>,
     /// Whether its head is in this repository or in a fork.
     pub origin: Origin,
 }
@@ -1786,6 +1788,7 @@ impl RawPull {
                 head_branch: self.head.branch,
                 head: self.head.sha,
                 base_branch: self.base.branch,
+                merge_commit_sha: None,
                 origin: if same_repository {
                     Origin::SameRepository
                 } else {

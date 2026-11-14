@@ -326,6 +326,41 @@ async fn with_no_merge_the_approval_and_the_hand_over_are_recorded_and_the_human
 }
 
 #[tokio::test]
+async fn an_autopilot_merge_reconciled_after_a_refusal_records_its_merge_commit() {
+    use super::fake_github::MergeAnswer;
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.notification_with("could not be merged").await;
+    rig.github.merged_by_a_human(1);
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let events = events(&rig, &team);
+    let HistoryEvent::PullMerged { pr, commit } = &events[place(&events, EventKind::PullMerged, 0)].1.event else {
+        panic!("not a merge")
+    };
+    assert_eq!(pr.get().get(), 1);
+    assert_eq!(
+        commit.as_ref().map(|commit| commit.as_str().to_owned()),
+        Some(rig.remote_tip("main"))
+    );
+}
+
+#[tokio::test]
 async fn a_pull_request_the_human_closed_is_recorded_once_however_often_it_is_looked_at() {
     let mut rig = Rig::new(
         &[
