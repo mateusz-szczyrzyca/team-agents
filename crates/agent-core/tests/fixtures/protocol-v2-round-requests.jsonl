@@ -1,0 +1,3 @@
+{"protocol":2,"id":1,"client":{"kind":"cli"},"request":{"command":"status","target":{"round":"round-20261111-193900-p7w3"}}}
+{"protocol":2,"id":2,"client":{"kind":"cli"},"request":{"command":"show","target":{"round":"round-20261111-193900-p7w3"}}}
+{"protocol":2,"id":3,"client":{"kind":"dashboard","login":"you@example.com"},"request":{"command":"show","target":{"round":"round-20261111-193005-m4k2"}}}

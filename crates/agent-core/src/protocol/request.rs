@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{EncodeError, MAX_REQUEST_BYTES, ProtocolError, ProtocolVersion, decode, encode};
 use crate::config::{AbsolutePath, RepoName, TailscaleLogin};
-use crate::ids::{AgentName, TaskId, TeamId};
+use crate::ids::{AgentName, RoundId, TaskId, TeamId};
 use crate::questions::Verdict;
 use crate::state::{MergeMode, TaskListText};
 
@@ -88,7 +88,7 @@ pub enum Command {
     Run(RunRequest),
     /// List the teams, or one team, in short.
     Status(StatusRequest),
-    /// Show a team or a task in full.
+    /// Show a team, a task or a round in full.
     Show(ShowRequest),
     /// Answer a task's questions.
     Answer(AnswerRequest),
@@ -108,7 +108,10 @@ pub enum Command {
     Subscribe(SubscribeRequest),
 }
 
-/// The task or the team a command is about.
+/// The task, the team or the round a command is about.
+///
+/// `status` and `show` take any of them; the other commands act on tasks, so they take a team or a task and refuse a
+/// round.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Target {
@@ -116,6 +119,8 @@ pub enum Target {
     Team(TeamId),
     /// One task.
     Task(TaskId),
+    /// One round: the work of a team on one item.
+    Round(RoundId),
 }
 
 /// `run`: start a task or a team on a repository.
@@ -160,8 +165,7 @@ pub struct ShowRequest {
 pub struct AnswerRequest {
     /// The task that asked.
     pub task: TaskId,
-    /// The number of the questions that are answered. Written as `round` in protocol version 1.
-    #[serde(rename = "round")]
+    /// The number of the questions that are answered.
     pub number: NonZeroU32,
     /// A verdict for each question, which the daemon checks against the questions file.
     pub answers: AnswerList,
@@ -611,7 +615,7 @@ mod tests {
                     number: nz(1),
                     answers: AnswerList::try_from(vec![answer(1, "ok"), answer(2, "mine")]).unwrap(),
                 }),
-                json!({"command": "answer", "task": TASK, "round": 1,
+                json!({"command": "answer", "task": TASK, "number": 1,
                     "answers": [{"question": 1, "verdict": "ok"}, {"question": 2, "verdict": "mine"}]}),
             ),
             (
@@ -714,9 +718,9 @@ mod tests {
     #[test]
     fn a_command_with_a_zero_round_a_missing_part_or_an_unknown_field_is_refused() {
         for value in [
-            json!({"command": "answer", "task": TASK, "round": 0, "answers": [{"question": 1, "verdict": "ok"}]}),
+            json!({"command": "answer", "task": TASK, "number": 0, "answers": [{"question": 1, "verdict": "ok"}]}),
             json!({"command": "answer", "task": TASK, "answers": [{"question": 1, "verdict": "ok"}]}),
-            json!({"command": "answer", "task": TASK, "round": 1}),
+            json!({"command": "answer", "task": TASK, "number": 1}),
             json!({"command": "say", "target": {"team": TEAM}, "text": " "}),
             json!({"command": "say", "target": {"team": TEAM}}),
             json!({"command": "gate"}),

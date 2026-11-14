@@ -474,3 +474,33 @@ async fn a_task_list_the_daemon_receives_parses_as_the_one_that_was_given() {
     assert_eq!(&TaskList::parse(sent.text()).unwrap(), sent.list());
     assert_eq!(Client::Cli, daemon.requests()[0].client);
 }
+
+#[test]
+fn the_rounds_a_team_starts_with_come_after_its_tasks_one_line_each() {
+    let mut state = team_state();
+    {
+        let mut team = state.team_mut(&team_id(0)).unwrap();
+        for (n, item) in [(1, "1.1"), (2, "1.2")] {
+            team.open_round(
+                format!("round-20261111-1530{n:02}-q1w2").parse().unwrap(),
+                Some(item.parse().unwrap()),
+                crate::fixtures::at(n),
+            )
+            .unwrap();
+        }
+    }
+
+    let text = render_started(&home(), &state.teams()[0]);
+
+    assert_eq!(
+        text,
+        "\
+team team-20261111-153000-t5m8 started on team-agents, merge: autopilot
+  task-20261111-153001-k3x9  coordinator  inv-opus  /srv/agents/worktrees/team-agents/task-20261111-153001-k3x9
+  task-20261111-153002-k3x9  member       claude-1  /srv/agents/worktrees/team-agents/task-20261111-153002-k3x9
+  task-20261111-153003-k3x9  worker       glm-1     /srv/agents/worktrees/team-agents/task-20261111-153003-k3x9
+  round-20261111-153001-q1w2  item 1.1  open
+  round-20261111-153002-q1w2  item 1.2  open
+"
+    );
+}

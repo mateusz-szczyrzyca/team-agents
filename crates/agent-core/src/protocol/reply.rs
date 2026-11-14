@@ -6,10 +6,13 @@ use serde::{Deserialize, Serialize};
 
 use super::ProtocolVersion;
 use super::request::RequestId;
-use crate::config::RepoName;
-use crate::ids::{TaskId, TeamId};
+use crate::config::{AbsolutePath, RepoName};
+use crate::ids::{BranchName, ItemId, TaskId, TeamId};
 use crate::kinds::Role;
-use crate::state::{GateRecord, GateResult, Member, MergeMode, Participant, Question, Team, Timestamp};
+use crate::state::{
+    GateRecord, GateResult, Member, MergeMode, Participant, PullRequest, Question, Review,
+    Round, Run, Team, Timestamp,
+};
 use crate::status::{ItemStatus, TaskStatus};
 
 /// The answer to one [`Request`](super::Request): the same [`RequestId`] and a result.
@@ -60,6 +63,11 @@ pub enum Reply {
     Team {
         /// The team.
         team: Box<Team>,
+    },
+    /// `show` of a round: its item, its state, the tasks that worked for it, its pull request and its review passes.
+    Round {
+        /// The round, in full.
+        round: Box<RoundDetail>,
     },
     /// `show` of a task: its record.
     Task {
@@ -137,8 +145,71 @@ pub struct TeamSummary {
     pub merge: MergeMode,
     /// How many items are in each status.
     pub items: ItemCounts,
+    /// The rounds of the team, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rounds: Vec<Round>,
     /// The crew and the reviewers.
     pub members: Vec<MemberSummary>,
+}
+
+/// A round in full: for `show` of a round.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoundDetail {
+    /// The team the round is of.
+    pub team: TeamId,
+    /// The round: its ID, its item, when it was opened and whether it is closed.
+    pub round: Round,
+    /// The round's item; none for the whole work of a team whose list has no items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<RoundItem>,
+    /// The tasks that worked for the round, in the order of the team (the crew, then the reviewers), each with the runs
+    /// that named the round.
+    pub tasks: Vec<RoundTask>,
+    /// The pull request of the round's item, once it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<PullRequest>,
+    /// The review passes of the pull request, oldest first: each fix pass, then the reviews of the pass that is going.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_passes: Vec<ReviewPass>,
+}
+
+/// The item of a round in short.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoundItem {
+    /// The item's ID.
+    pub id: ItemId,
+    /// Its title in the task list.
+    pub title: String,
+    /// Where it is now.
+    pub status: ItemStatus,
+}
+
+/// A task that worked for a round.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoundTask {
+    /// The task.
+    pub task: TaskId,
+    /// Its role in the team.
+    pub role: Role,
+    /// Who works in it.
+    pub agent: Participant,
+    /// The git worktree it works in.
+    pub worktree: AbsolutePath,
+    /// The branch it works on.
+    pub branch: BranchName,
+    /// The runs that named the round, oldest first.
+    pub runs: Vec<Run>,
+}
+
+/// The reviews asked for one head of a pull request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewPass {
+    /// The reviews, in the order asked.
+    pub reviews: Vec<Review>,
 }
 
 /// How many items of a task list are in each status.
@@ -215,6 +286,32 @@ impl MemberSummary {
     }
 }
 
+impl RoundDetail {
+    /// The round `round` of `team`, with the `tasks` that worked for it: its pull request and its review passes are
+    /// those of its item, which the state keeps (the reviews of the pass that was approved are not kept once the item
+    /// is done).
+    #[must_use]
+    pub fn new(team: &Team, round: &Round, tasks: Vec<RoundTask>) -> Self {
+        let progress = round.item().and_then(|item| team.item(item));
+        let item = progress.and_then(|progress| {
+            team.task_list().list().item(progress.id()).map(|listed| RoundItem {
+                id: progress.id(),
+                title: listed.title.clone(),
+                status: progress.status(),
+            })
+        });
+        let _ = tasks;
+        Self {
+            team: team.id().clone(),
+            round: round.clone(),
+            item,
+            tasks: Vec::new(),
+            pr: None,
+            review_passes: Vec::new(),
+        }
+    }
+}
+
 impl From<&Team> for TeamSummary {
     fn from(team: &Team) -> Self {
         let mut items = ItemCounts::default();
@@ -229,6 +326,7 @@ impl From<&Team> for TeamSummary {
             created_at: team.created_at(),
             merge: team.merge(),
             items,
+            rounds: team.rounds().to_vec(),
             members: crew
                 .chain(reviewers)
                 .map(|(role, member)| MemberSummary::of(role, member))
@@ -275,6 +373,12 @@ mod tests {
     fn state() -> State {
         let mut state = State::new();
         let mut team = team(1);
+        team.open_round(
+            "round-20261111-153001-k3x9".parse().unwrap(),
+            Some("1.2".parse().unwrap()),
+            at(1),
+        )
+        .unwrap();
         team.item_mut("1.2".parse().unwrap())
             .unwrap()
             .advance(ItemPhase::InProgress {
@@ -522,11 +626,11 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_value(&ok).unwrap(),
-            json!({"protocol": 1, "id": 3, "result": {"status": "ok", "reply": {"kind": "subscribed", "teams": []}}})
+            json!({"protocol": 2, "id": 3, "result": {"status": "ok", "reply": {"kind": "subscribed", "teams": []}}})
         );
         assert_eq!(
             serde_json::to_value(&failed).unwrap(),
-            json!({"protocol": 1, "id": 4, "result": {"status": "error", "error": {"kind": "not_found", "message": "no task task-x; see agent status"}}})
+            json!({"protocol": 2, "id": 4, "result": {"status": "error", "error": {"kind": "not_found", "message": "no task task-x; see agent status"}}})
         );
         for response in [ok, failed] {
             let value = serde_json::to_value(&response).unwrap();
@@ -547,9 +651,9 @@ mod tests {
             assert_eq!(serde_json::from_value::<FailureKind>(json!(text)).unwrap(), kind);
         }
         assert_refused::<FailureKind>(&json!("oops"));
-        assert_refused::<Response>(&json!({"protocol": 1, "id": 1, "result": {"status": "maybe"}}));
+        assert_refused::<Response>(&json!({"protocol": 2, "id": 1, "result": {"status": "maybe"}}));
         assert_refused::<Response>(
-            &json!({"protocol": 2, "id": 1, "result": {"status": "ok", "reply": {"kind": "subscribed", "teams": []}}}),
+            &json!({"protocol": 1, "id": 1, "result": {"status": "ok", "reply": {"kind": "subscribed", "teams": []}}}),
         );
         assert_refused::<Failure>(&json!({"kind": "invalid"}));
     }

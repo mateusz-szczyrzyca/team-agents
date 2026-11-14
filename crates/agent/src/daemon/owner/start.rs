@@ -399,7 +399,7 @@ fn prompt_kind(member: &Member, session: Option<&SessionId>, config: &Config) ->
 }
 
 /// The item of the team that `participant` is working on, if it has one.
-fn assigned_item<'a>(team: &'a Team, participant: &Participant) -> Option<&'a Item> {
+pub(super) fn assigned_item<'a>(team: &'a Team, participant: &Participant) -> Option<&'a Item> {
     team.items().iter().find_map(|progress| match progress.phase() {
         ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }
             if assignee.as_str() == participant.name() =>
@@ -416,7 +416,7 @@ fn assigned_item<'a>(team: &'a Team, participant: &Participant) -> Option<&'a It
 }
 
 /// The branch `member` works on: the branch of its item, or the branch its task started on.
-fn work_branch(team: &Team, member: &Member) -> Result<BranchName, StartProblem> {
+pub(super) fn work_branch(team: &Team, member: &Member) -> Result<BranchName, StartProblem> {
     let item_branch = team.items().iter().find_map(|progress| match progress.phase() {
         ItemPhase::InProgress { assignee, branch } | ItemPhase::Fixing { assignee, branch, .. }
             if assignee.as_str() == member.agent().name() =>

@@ -17,7 +17,7 @@ use agent_runtime::git::{CommitIdentity, Git, GitError};
 use agent_runtime::store::Home;
 use agent_runtime::text_file::{TextFileError, read_text_file};
 
-use super::status::kind_of;
+use super::status::{kind_of, round_line};
 use crate::client::{ClientError, Connection};
 
 /// What the command line of `agent run` says.
@@ -236,6 +236,8 @@ pub(crate) fn render_started(home: &Home, team: &Team) -> String {
             home.worktree_dir(team.repo(), member.task()).display(),
         ));
     }
+    // The rounds come after the tasks, whose lines are the first of the output.
+    lines.extend(team.rounds().iter().map(|round| format!("  {}\n", round_line(round))));
     lines.concat()
 }
 

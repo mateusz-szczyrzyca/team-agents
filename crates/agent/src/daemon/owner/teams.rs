@@ -121,7 +121,17 @@ impl Owner {
             .into_iter()
             .map(|(_, member)| member.task().clone())
             .collect();
-        let started = started_items(team);
+        let started = match started_events(team) {
+            Ok(started) => started,
+            Err(error) => {
+                tracing::error!(team = %id, error = %error_chain(&error), "the events of the new team cannot be made: the team is not started");
+                self.undo_start(&request, &formed).await;
+                return Ok(Err(internal(&format!(
+                    "the new team has no round for an item it started: {}",
+                    error_chain(&error)
+                ))));
+            }
+        };
         if let Err(error) = self.parts.store.save(&next).await {
             tracing::error!(team = %id, error = %error_chain(&error), "the state with the new team cannot be saved: the team is not started");
             self.undo_start(&request, &formed).await;
@@ -432,10 +442,14 @@ impl Owner {
                 tracing::warn!(team = %team_id, item = %assigned.item, member = %assigned.agent, error = %error_chain(&error), "the worktree of a member cannot take the branch of its next item: the item waits and is tried again at the next look");
                 continue;
             }
+            let now = Timestamp::now(&self.parts.clock)?;
+            self.open_item_round(team_id, assigned.item, now, look)?;
             self.record_assignment(team_id, &assigned)?;
+            let round = self.round_of_item(team_id, assigned.item)?;
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: assigned.item,
+                round,
                 status: ItemStatus::InProgress,
             });
             look.changed = true;
@@ -696,6 +710,9 @@ impl Owner {
             self.move_to(&task, team_id, status, &mut look.events)?;
             look.changed = true;
         }
+        // The round of the whole work of a list without items, which nothing merges, ends with the team.
+        let now = Timestamp::now(&self.parts.clock)?;
+        self.abandon_open_rounds(team_id, now, look)?;
         let waiting_reviewers: Vec<TaskId> = self
             .parts
             .state
@@ -804,17 +821,42 @@ fn is_transient(error: &AgentBusError) -> bool {
     )
 }
 
-/// The events of the items a new team starts with: those that have a member already.
-fn started_items(team: &agent_core::state::Team) -> Vec<EventKind> {
-    team.items()
+/// The events of a new team: its rounds, which were opened with it, and the items it starts with — those that have a
+/// member already.
+///
+/// # Errors
+/// [`OwnerError::LostRound`] for an item that has started and has no round: a mistake of the daemon.
+fn started_events(team: &agent_core::state::Team) -> Result<Vec<EventKind>, OwnerError> {
+    let mut events: Vec<EventKind> = team
+        .rounds()
+        .iter()
+        .map(|round| EventKind::RoundOpened {
+            team: team.id().clone(),
+            round: round.id().clone(),
+            item: round.item(),
+        })
+        .collect();
+    for progress in team
+        .items()
         .iter()
         .filter(|progress| progress.status() != ItemStatus::Pending && progress.status() != ItemStatus::Done)
-        .map(|progress| EventKind::ItemStatus {
+    {
+        let round = team
+            .round_of(progress.id())
+            .ok_or_else(|| OwnerError::LostRound {
+                team: team.id().clone(),
+                item: progress.id(),
+            })?
+            .id()
+            .clone();
+        events.push(EventKind::ItemStatus {
             team: team.id().clone(),
             item: progress.id(),
+            round,
             status: progress.status(),
-        })
-        .collect()
+        });
+    }
+    Ok(events)
 }
 
 /// The change of the request `request` to `status`, for the bus, with the task of the worker that serves it.

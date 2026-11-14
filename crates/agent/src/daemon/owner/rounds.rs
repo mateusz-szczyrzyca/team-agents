@@ -413,4 +413,7 @@ mod fake_github;
 #[path = "rounds/tests/rig.rs"]
 mod rig;
 #[cfg(test)]
+#[path = "rounds/tests/round_records.rs"]
+mod round_records_tests;
+#[cfg(test)]
 mod tests;

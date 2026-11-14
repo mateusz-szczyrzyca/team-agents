@@ -4,7 +4,7 @@
 use agent_core::ids::{ItemId, TeamId};
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
-use agent_core::state::{CommitId, Completion, ItemPhase, PullRequest, Timestamp};
+use agent_core::state::{CommitId, Completion, ItemPhase, PullRequest, RoundEnd, Timestamp};
 use agent_runtime::github::{GitHub, GitHubError, MergeMethod, MergeRequest, PullState, Rejection};
 use agent_runtime::process::error_chain;
 
@@ -260,12 +260,15 @@ impl Owner {
                 item: *id,
                 source,
             })?;
+            let round = self.round_of_item(team_id, *id)?;
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: *id,
+                round,
                 status: agent_core::status::ItemStatus::Done,
             });
             look.changed = true;
+            self.close_item_round(team_id, *id, RoundEnd::Merged, now, look)?;
             tracing::info!(team = %team_id, item = %id, pr = %pr.number, "an item is merged");
         }
         self.fetch_base(lead).await;

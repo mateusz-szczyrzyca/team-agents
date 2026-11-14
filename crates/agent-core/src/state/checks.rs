@@ -27,9 +27,9 @@ pub struct ItemChecks {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Asked {
-    /// The number of the lead's questions the question is: the number in the name of its file. Written as `round` until
-    /// the key was renamed.
-    #[serde(rename = "round")]
+    /// The number of the lead's questions the question is: the number in the name of its file. A record written with the
+    /// key `round`, as it was called before, is read all the same.
+    #[serde(alias = "round")]
     pub number: NonZeroU32,
     /// When it was written.
     pub at: Timestamp,

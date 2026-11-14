@@ -5,7 +5,7 @@ use agent_core::decide::round::{RoundError, RoundPolicy};
 use agent_core::ids::{AgentName, ItemId, TaskId, TeamId};
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
-use agent_core::state::{Completion, ItemPhase, PullRequest, Review, ReviewOutcome, Team, Timestamp};
+use agent_core::state::{Completion, ItemPhase, PullRequest, Review, ReviewOutcome, RoundEnd, Team, Timestamp};
 use agent_core::status::ReviewVerdict;
 use agent_runtime::git::Revision;
 use agent_runtime::github::CommentReview;
@@ -254,9 +254,11 @@ impl Owner {
                     item: *id,
                     source,
                 })?;
+            let round = self.round_of_item(team_id, *id)?;
             look.events.push(EventKind::ReviewSubmitted {
                 team: team_id.clone(),
                 item: *id,
+                round,
                 reviewer: asked.reviewer.clone(),
                 verdict,
             });
@@ -345,11 +347,19 @@ impl Owner {
                 item: *id,
                 source,
             })?;
+            let round = self.round_of_item(team_id, *id)?;
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: *id,
+                round,
                 status,
             });
+            // The pull request of a team that does not merge by itself is the human's from its approval on: the round
+            // ends there.
+            if matches!(next, Next::HandToHuman) {
+                let now = Timestamp::now(&self.parts.clock)?;
+                self.close_item_round(team_id, *id, RoundEnd::Approved, now, look)?;
+            }
         }
         Ok(())
     }

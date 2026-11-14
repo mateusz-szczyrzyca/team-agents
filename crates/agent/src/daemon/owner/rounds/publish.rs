@@ -386,16 +386,19 @@ impl Owner {
             })?;
             // An item that was being fixed has its pull request already; the others have it opened for them now.
             let opened = !matches!(&publication.publish, Publish::Update { fixing, .. } if fixing.contains(&id));
+            let round = self.round_of_item(team_id, id)?;
             if opened {
                 look.events.push(EventKind::PullRequestOpened {
                     team: team_id.clone(),
                     item: id,
+                    round: round.clone(),
                     pr: published.pr.number,
                 });
             }
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: id,
+                round,
                 status: agent_core::status::ItemStatus::InReview,
             });
             look.changed = true;

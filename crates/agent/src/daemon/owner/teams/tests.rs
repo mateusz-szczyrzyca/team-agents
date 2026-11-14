@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use agent_core::config::{AbsolutePath, Program};
 use agent_core::ids::{AgentName, TaskId, TeamId};
-use agent_core::protocol::{AgentList, Client, Command, FailureKind, Reply, RunRequest, StatusRequest};
+use agent_core::protocol::{AgentList, Client, Command, FailureKind, Reply, RunRequest, StatusRequest, Target};
 use agent_core::state::{ItemPhase, MergeMode, PrNumber, PullRequest, State, TaskListText, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{
@@ -1607,4 +1607,343 @@ async fn an_item_whose_branch_could_not_be_started_is_given_out_when_the_branch_
         git(&f.worktree(&tasks[1]), &["rev-parse", "--abbrev-ref", "HEAD"]),
         next_branch
     );
+}
+
+// ---- the rounds of a team ----------------------------------------------------------------------------------------
+
+/// The rounds the run number `n` (from 0) of `task` works for, as the state says.
+fn rounds_of(state: &State, task: &TaskId, n: usize) -> Vec<agent_core::ids::RoundId> {
+    state.find_task(task).unwrap().member.runs()[n].rounds().to_vec()
+}
+
+/// The ends of the rounds of the only team of `state`, oldest round first.
+fn ends_of(state: &State) -> Vec<Option<agent_core::state::RoundEnd>> {
+    state.teams()[0]
+        .rounds()
+        .iter()
+        .map(agent_core::state::Round::ended)
+        .collect()
+}
+
+#[tokio::test]
+async fn the_first_items_of_a_team_get_a_round_each_when_the_team_starts_and_every_run_names_the_rounds_of_its_role() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+    ]);
+    f.start().await;
+
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "claude-2"], PARALLEL).await;
+    let state = f
+        .state_where("every task to have run once", |state| {
+            tasks
+                .iter()
+                .all(|task| !state.find_task(task).unwrap().member.runs().is_empty())
+        })
+        .await;
+    f.stop().await.unwrap();
+
+    let found = state.team(&team).unwrap();
+    let first = found.round_of("1.1".parse().unwrap()).unwrap().id().clone();
+    let second = found.round_of("2.1".parse().unwrap()).unwrap().id().clone();
+    assert_eq!(
+        found
+            .rounds()
+            .iter()
+            .map(agent_core::state::Round::id)
+            .collect::<Vec<_>>(),
+        [&first, &second]
+    );
+    assert!(found.rounds().iter().all(agent_core::state::Round::is_open));
+    assert_eq!(
+        rounds_of(&state, &tasks[1], 0),
+        std::slice::from_ref(&first),
+        "a member: the round of its item"
+    );
+    assert_eq!(
+        rounds_of(&state, &tasks[2], 0),
+        std::slice::from_ref(&second),
+        "a member: the round of its item"
+    );
+    assert_eq!(
+        rounds_of(&state, &tasks[0], 0),
+        [first, second],
+        "the coordinator: every round that is open"
+    );
+}
+
+#[tokio::test]
+async fn a_list_without_items_is_one_round_that_its_solo_agent_works_for_and_that_ends_with_the_team() {
+    let mut f = Fixture::new(&[
+        normal("claude-1", "done"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+    ]);
+    f.start().await;
+
+    let (team, tasks) = f.start_team(&["claude-1"], PLAIN).await;
+    f.status_is(&tasks[0], TaskStatus::Done).await;
+    f.wait_for("the notification that the team is finished", || {
+        f.notifications().iter().any(|text| text.contains("is finished"))
+    })
+    .await;
+    let state = f
+        .state_where("the round to be closed", |state| {
+            ends_of(state) == [Some(agent_core::state::RoundEnd::Abandoned)]
+        })
+        .await;
+    f.stop().await.unwrap();
+
+    let found = state.team(&team).unwrap();
+    assert_eq!(found.rounds().len(), 1);
+    let round = &found.rounds()[0];
+    assert_eq!(round.item(), None);
+    assert_eq!(rounds_of(&state, &tasks[0], 0), [round.id().clone()]);
+    assert_eq!(task_status(&state, &tasks[0]), TaskStatus::Done);
+}
+
+#[tokio::test]
+async fn in_a_team_on_a_list_without_items_the_coordinator_works_for_the_round_and_a_worker_asked_by_a_member_does_not()
+{
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        worker("glm-1", "sleep,done:Result: one,done:Result: two"),
+    ]);
+    f.start().await;
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "glm-1"], PLAIN).await;
+    for task in &tasks {
+        f.status_is(task, TaskStatus::Waiting).await;
+    }
+    let asks = |requester: &str, task: &TaskId| Delegation {
+        team: team.clone(),
+        requester: agent(requester),
+        task: task.clone(),
+        repo: "example".parse().unwrap(),
+        branch: format!("agents/{requester}/{task}").parse().unwrap(),
+        worktree: abs(&f.worktree(task)),
+        dispatcher: Program::from_str("true").unwrap(),
+        request: "Look.".to_owned(),
+        context: "None.".to_owned(),
+    };
+
+    let by_member = f.bus().delegate(&asks("claude-1", &tasks[1])).await.unwrap();
+    f.request_with(by_member, DelegationStatus::Done).await;
+    let by_coordinator = f.bus().delegate(&asks("inv-opus", &tasks[0])).await.unwrap();
+    f.request_with(by_coordinator, DelegationStatus::Done).await;
+    let state = f
+        .state_where("the worker to have run twice", |state| {
+            state.find_task(&tasks[2]).unwrap().member.runs().len() >= 3
+        })
+        .await;
+    f.stop().await.unwrap();
+
+    let round = state.team(&team).unwrap().rounds()[0].id().clone();
+    assert_eq!(
+        rounds_of(&state, &tasks[0], 0),
+        std::slice::from_ref(&round),
+        "the coordinator"
+    );
+    assert_eq!(rounds_of(&state, &tasks[1], 0), [], "a member without an item");
+    // The first run of the worker was its start; then it served the member's request and the coordinator's.
+    assert_eq!(rounds_of(&state, &tasks[2], 1), [], "asked by a run without rounds");
+    assert_eq!(rounds_of(&state, &tasks[2], 2), [round], "asked by a run with a round");
+}
+
+#[tokio::test]
+async fn a_stop_that_leaves_the_team_nobody_to_work_abandons_its_open_rounds_and_a_stop_of_one_task_does_not() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+    ]);
+    f.start().await;
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "claude-2"], PARALLEL).await;
+    for task in &tasks {
+        f.status_is(task, TaskStatus::Waiting).await;
+    }
+
+    let stop = |target: Target| Command::Stop(agent_core::protocol::ControlRequest { target });
+    f.connect()
+        .await
+        .request(Client::Cli, stop(Target::Task(tasks[1].clone())))
+        .await
+        .unwrap();
+    let one_task = f
+        .state_where("the task to be stopped", |state| {
+            task_status(state, &tasks[1]) == TaskStatus::Stopped
+        })
+        .await;
+    f.connect()
+        .await
+        .request(Client::Cli, stop(Target::Team(team.clone())))
+        .await
+        .unwrap();
+    let whole = f
+        .state_where("the rounds to be abandoned", |state| {
+            ends_of(state) == [Some(agent_core::state::RoundEnd::Abandoned); 2]
+        })
+        .await;
+    f.stop().await.unwrap();
+
+    assert_eq!(ends_of(&one_task), [None, None], "one task stopped, the others wait");
+    assert!(whole.teams()[0].rounds().iter().all(|round| !round.is_open()));
+    assert!(whole.teams()[0].open_rounds().next().is_none());
+}
+
+#[tokio::test]
+async fn two_teams_started_at_once_never_share_a_round() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+        normal("claude-3", "sleep"),
+        normal("claude-4", "sleep"),
+    ]);
+    f.start().await;
+
+    let (first, first_tasks) = f.start_team(&["inv-opus", "claude-1", "claude-2"], PARALLEL).await;
+    let (second, second_tasks) = f.start_team(&["inv-codex", "claude-3", "claude-4"], PARALLEL).await;
+    let state = f
+        .state_where("every task to have run once", |state| {
+            first_tasks
+                .iter()
+                .chain(&second_tasks)
+                .all(|task| !state.find_task(task).unwrap().member.runs().is_empty())
+        })
+        .await;
+    f.stop().await.unwrap();
+
+    let ids = |team: &TeamId| -> Vec<agent_core::ids::RoundId> {
+        state
+            .team(team)
+            .unwrap()
+            .rounds()
+            .iter()
+            .map(|round| round.id().clone())
+            .collect()
+    };
+    let (mine, theirs) = (ids(&first), ids(&second));
+    assert_eq!((mine.len(), theirs.len()), (2, 2));
+    assert!(mine.iter().all(|round| !theirs.contains(round)), "{mine:?} {theirs:?}");
+    for (tasks, own) in [(&first_tasks, &mine), (&second_tasks, &theirs)] {
+        for task in tasks {
+            assert!(
+                rounds_of(&state, task, 0).iter().all(|round| own.contains(round)),
+                "{task}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_daemon_stopped_in_the_middle_of_a_round_goes_on_with_the_same_round() {
+    let mut f = Fixture::new(&[
+        normal("claude-1", "done"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+    ]);
+    f.start().await;
+    let (team, tasks) = f.start_team(&["claude-1"], CHAIN).await;
+    let before = f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+
+    f.start().await;
+    f.answered().await;
+    f.answered().await;
+    let after = f.state();
+    f.stop().await.unwrap();
+
+    let rounds = |state: &State| -> Vec<(agent_core::ids::RoundId, Option<agent_core::ids::ItemId>, bool)> {
+        state
+            .team(&team)
+            .unwrap()
+            .rounds()
+            .iter()
+            .map(|round| (round.id().clone(), round.item(), round.is_open()))
+            .collect()
+    };
+    assert_eq!(rounds(&before).len(), 1, "the second item waits for the first");
+    assert_eq!(rounds(&after), rounds(&before));
+    assert_eq!(rounds_of(&after, &tasks[0], 0), [rounds(&before)[0].0.clone()]);
+}
+
+#[tokio::test]
+async fn a_round_is_found_by_its_id_in_status_and_show_an_unknown_one_is_not_found_and_a_round_is_not_controlled() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1"], CHAIN).await;
+    let state = f
+        .state_where("the member to have run", |state| {
+            !state.find_task(&tasks[1]).unwrap().member.runs().is_empty()
+        })
+        .await;
+    let round = state.team(&team).unwrap().rounds()[0].id().clone();
+    let unknown: agent_core::ids::RoundId = "round-20201111-153001-q1w2".parse().unwrap();
+    let ask = |command: Command| async { f.connect().await.request(Client::Cli, command).await };
+
+    let status = ask(Command::Status(StatusRequest {
+        target: Some(Target::Round(round.clone())),
+    }))
+    .await
+    .unwrap();
+    let shown = ask(Command::Show(agent_core::protocol::ShowRequest {
+        target: Target::Round(round.clone()),
+    }))
+    .await
+    .unwrap();
+    let missing = ask(Command::Show(agent_core::protocol::ShowRequest {
+        target: Target::Round(unknown.clone()),
+    }))
+    .await;
+    let missing_status = ask(Command::Status(StatusRequest {
+        target: Some(Target::Round(unknown.clone())),
+    }))
+    .await;
+    let stopped = ask(Command::Stop(agent_core::protocol::ControlRequest {
+        target: Target::Round(round.clone()),
+    }))
+    .await;
+    f.stop().await.unwrap();
+
+    let Reply::Teams { teams } = status else {
+        panic!("not teams: {status:?}")
+    };
+    assert_eq!(teams.len(), 1);
+    assert_eq!(teams[0].id, team);
+    assert_eq!(teams[0].rounds.len(), 1);
+    let Reply::Round { round: detail } = shown else {
+        panic!("not a round: {shown:?}")
+    };
+    assert_eq!((detail.team.clone(), detail.round.id().clone()), (team, round));
+    assert_eq!(
+        detail
+            .item
+            .as_ref()
+            .map(|item| (item.id.to_string(), item.title.as_str())),
+        Some(("1.1".to_owned(), "One"))
+    );
+    // The member ran for the round; the coordinator did too, but only a task that has a run naming it is listed.
+    let listed: Vec<&TaskId> = detail.tasks.iter().map(|task| &task.task).collect();
+    assert!(listed.contains(&&tasks[1]), "{listed:?}");
+    let member = detail.tasks.iter().find(|task| task.task == tasks[1]).unwrap();
+    assert_eq!(member.worktree.as_path(), f.worktree(&tasks[1]));
+    assert_eq!(member.branch.as_str(), format!("agents/claude-1/{}-1.1", tasks[1]));
+    assert_eq!(refused(missing), FailureKind::NotFound);
+    assert_eq!(refused(missing_status), FailureKind::NotFound);
+    assert_eq!(refused(stopped), FailureKind::Invalid);
 }

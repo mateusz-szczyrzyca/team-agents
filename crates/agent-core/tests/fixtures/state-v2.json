@@ -1,0 +1,425 @@
+{
+  "schema_version": 2,
+  "teams": [
+    {
+      "id": "team-20261111-193000-a1b2",
+      "repo": "team-agents",
+      "created_at": "2026-11-11T19:30:00Z",
+      "merge": "autopilot",
+      "task_list": "Coordinator: inv-opus\n\nBuild the thing.\n\n1. First feature\n[x] 1.1 Done long ago\n    Nothing to do.\n[ ] 1.2 The next item\n    Do it.\n    Expected result:\n    - it works\n[ ] 1.3 The item after it\n    Do the third thing.\n\n2. Second feature\nDepends on: 1\n[ ] 2.1 Another item\n    Do that.\n",
+      "items": [
+        {
+          "id": "1.1",
+          "phase": {
+            "phase": "done",
+            "completion": {
+              "how": "listed"
+            }
+          }
+        },
+        {
+          "id": "1.2",
+          "phase": {
+            "phase": "done",
+            "completion": {
+              "how": "merged",
+              "pr": {
+                "number": 80,
+                "branch": "agents/codex-1/item-1-2",
+                "opened_at": "2026-11-11T19:32:00Z"
+              },
+              "at": "2026-11-11T19:38:00Z"
+            }
+          }
+        },
+        {
+          "id": "1.3",
+          "phase": {
+            "phase": "in_review",
+            "pr": {
+              "number": 82,
+              "branch": "agents/codex-1/item-1-3",
+              "opened_at": "2026-11-11T19:40:00Z"
+            },
+            "reviews": [
+              {
+                "reviewer": "inv-codex",
+                "task": "task-20261111-193007-k3x9",
+                "requested_at": "2026-11-11T19:41:00Z",
+                "outcome": {
+                  "status": "submitted",
+                  "verdict": "APPROVE",
+                  "at": "2026-11-11T19:50:00Z"
+                }
+              },
+              {
+                "reviewer": "inv-gemini",
+                "task": "task-20261111-193008-k3x9",
+                "requested_at": "2026-11-11T19:41:00Z",
+                "outcome": {
+                  "status": "pending"
+                }
+              }
+            ]
+          },
+          "fix_passes": [
+            {
+              "requested_by": [
+                {
+                  "reviewer": "inv-codex",
+                  "task": "task-20261111-193007-k3x9",
+                  "requested_at": "2026-11-11T19:41:00Z",
+                  "outcome": {
+                    "status": "submitted",
+                    "verdict": "REQUEST_CHANGES",
+                    "at": "2026-11-11T19:44:00Z"
+                  }
+                }
+              ]
+            }
+          ],
+          "gate": {
+            "head": "26b65de7e4076596768ca96b48a7f94799c93874",
+            "finished_at": "2026-11-11T19:46:00Z",
+            "outcome": {
+              "kind": "passed"
+            },
+            "log": "/home/dev/agents-test/tasks/task-20261111-193001-k3x9/gate.log"
+          }
+        },
+        {
+          "id": "2.1",
+          "phase": {
+            "phase": "pending"
+          }
+        }
+      ],
+      "rounds": [
+        {
+          "id": "round-20261111-193005-m4k2",
+          "item": "1.2",
+          "opened_at": "2026-11-11T19:30:05Z",
+          "state": {
+            "status": "closed",
+            "at": "2026-11-11T19:38:00Z",
+            "how": "merged"
+          }
+        },
+        {
+          "id": "round-20261111-193900-p7w3",
+          "item": "1.3",
+          "opened_at": "2026-11-11T19:38:10Z",
+          "state": {
+            "status": "open"
+          }
+        }
+      ],
+      "crew": {
+        "kind": "team",
+        "coordinator": {
+          "task": "task-20261111-193001-k3x9",
+          "agent": {
+            "tier": "investigator",
+            "name": "inv-opus"
+          },
+          "status": "waiting",
+          "runs": [
+            {
+              "id": "run-20261111-193001-r7q2",
+              "started_at": "2026-11-11T19:30:05Z",
+              "session": "5f3c9a3e-86f3-4b0e-9d2c-0a8f1c7d5b21",
+              "rounds": [
+                "round-20261111-193005-m4k2",
+                "round-20261111-193900-p7w3"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-11T19:47:00Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "SLEEPING"
+                }
+              }
+            }
+          ],
+          "questions": []
+        },
+        "members": [
+          {
+            "task": "task-20261111-193002-k3x9",
+            "agent": {
+              "tier": "normal",
+              "name": "codex-1"
+            },
+            "status": "running",
+            "runs": [
+              {
+                "id": "run-20261111-193002-r7q2",
+                "started_at": "2026-11-11T19:31:00Z",
+                "session": "ses_3c1f9a2b0ffe",
+                "rounds": [
+                  "round-20261111-193005-m4k2"
+                ],
+                "state": {
+                  "status": "ended",
+                  "at": "2026-11-11T19:36:00Z",
+                  "end": {
+                    "kind": "reported",
+                    "outcome": "QUESTIONS"
+                  }
+                }
+              },
+              {
+                "id": "run-20261111-193003-r7q2",
+                "started_at": "2026-11-11T19:38:00Z",
+                "session": "ses_3c1f9a2b0ffe",
+                "rounds": [
+                  "round-20261111-193900-p7w3"
+                ],
+                "state": {
+                  "status": "ended",
+                  "at": "2026-11-11T19:39:30Z",
+                  "end": {
+                    "kind": "quota_exhausted",
+                    "resets_at": "2026-11-11T21:00:00Z"
+                  }
+                }
+              },
+              {
+                "id": "run-20261111-193004-r7q2",
+                "started_at": "2026-11-11T21:00:10Z",
+                "rounds": [
+                  "round-20261111-193900-p7w3"
+                ],
+                "state": {
+                  "status": "running"
+                }
+              }
+            ],
+            "questions": [
+              {
+                "number": 1,
+                "file": "/home/dev/agents-test/tasks/task-20261111-193002-k3x9/questions-1.md",
+                "asked_at": "2026-11-11T19:36:00Z",
+                "state": {
+                  "status": "answered",
+                  "at": "2026-11-11T19:37:30Z",
+                  "via": "saved_file"
+                }
+              }
+            ]
+          }
+        ],
+        "workers": [
+          {
+            "task": "task-20261111-193003-k3x9",
+            "agent": {
+              "tier": "worker",
+              "name": "worker-1"
+            },
+            "status": "queued",
+            "runs": [],
+            "questions": []
+          }
+        ]
+      },
+      "reviewers": [
+        {
+          "task": "task-20261111-193007-k3x9",
+          "agent": {
+            "tier": "investigator",
+            "name": "inv-codex"
+          },
+          "status": "done",
+          "runs": [
+            {
+              "id": "run-20261111-193007-r7q2",
+              "started_at": "2026-11-11T19:41:10Z",
+              "rounds": [
+                "round-20261111-193900-p7w3"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-11T19:50:00Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            }
+          ],
+          "questions": []
+        },
+        {
+          "task": "task-20261111-193008-k3x9",
+          "agent": {
+            "tier": "investigator",
+            "name": "inv-gemini"
+          },
+          "status": "running",
+          "runs": [
+            {
+              "id": "run-20261111-193008-r7q2",
+              "started_at": "2026-11-11T19:41:20Z",
+              "rounds": [
+                "round-20261111-193900-p7w3"
+              ],
+              "state": {
+                "status": "running"
+              }
+            }
+          ],
+          "questions": []
+        }
+      ]
+    },
+    {
+      "id": "team-20261111-194500-c3d4",
+      "repo": "toy-repo",
+      "created_at": "2026-11-11T19:45:00Z",
+      "merge": "no_merge",
+      "task_list": "Fix the typo in the README.\n\n1. Typo\n[ ] 1.1 Fix it\n    Change \"teh\" to \"the\".\n[ ] 1.2 Check the rest\n    Read the README again.\n",
+      "items": [
+        {
+          "id": "1.1",
+          "phase": {
+            "phase": "approved",
+            "pr": {
+              "number": 5,
+              "branch": "agents/claude-1/item-1-1",
+              "opened_at": "2026-11-11T19:50:00Z"
+            },
+            "reviews": [
+              {
+                "reviewer": "inv-codex",
+                "task": "task-20261111-193021-k3x9",
+                "requested_at": "2026-11-11T19:51:00Z",
+                "outcome": {
+                  "status": "submitted",
+                  "verdict": "APPROVE",
+                  "at": "2026-11-11T19:55:00Z"
+                }
+              },
+              {
+                "reviewer": "inv-gemini",
+                "task": "task-20261111-193022-k3x9",
+                "requested_at": "2026-11-11T19:51:00Z",
+                "outcome": {
+                  "status": "submitted",
+                  "verdict": "APPROVE",
+                  "at": "2026-11-11T19:56:00Z"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "1.2",
+          "phase": {
+            "phase": "pending"
+          }
+        }
+      ],
+      "rounds": [
+        {
+          "id": "round-20261111-194500-c3d5",
+          "item": "1.1",
+          "opened_at": "2026-11-11T19:45:00Z",
+          "state": {
+            "status": "closed",
+            "at": "2026-11-11T19:56:00Z",
+            "how": "approved"
+          }
+        }
+      ],
+      "crew": {
+        "kind": "solo",
+        "member": {
+          "task": "task-20261111-193011-k3x9",
+          "agent": {
+            "tier": "normal",
+            "name": "claude-1"
+          },
+          "status": "questions",
+          "runs": [
+            {
+              "id": "run-20261111-193011-r7q2",
+              "started_at": "2026-11-11T19:45:05Z",
+              "session": "b1e2c3d4",
+              "rounds": [
+                "round-20261111-194500-c3d5"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-11T19:48:00Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "QUESTIONS"
+                }
+              }
+            }
+          ],
+          "questions": [
+            {
+              "number": 1,
+              "file": "/home/dev/agents-test/tasks/task-20261111-193011-k3x9/questions-1.md",
+              "asked_at": "2026-11-11T19:48:00Z",
+              "state": {
+                "status": "open"
+              }
+            }
+          ]
+        }
+      },
+      "reviewers": []
+    },
+    {
+      "id": "team-20261111-200000-e5f6",
+      "repo": "toy-repo",
+      "created_at": "2026-11-11T20:00:00Z",
+      "merge": "autopilot",
+      "task_list": "Tidy the notes directory.\n",
+      "items": [],
+      "rounds": [
+        {
+          "id": "round-20261111-200000-q9z1",
+          "opened_at": "2026-11-11T20:00:00Z",
+          "state": {
+            "status": "closed",
+            "at": "2026-11-11T20:30:00Z",
+            "how": "abandoned"
+          }
+        }
+      ],
+      "crew": {
+        "kind": "solo",
+        "member": {
+          "task": "task-20261111-193031-k3x9",
+          "agent": {
+            "tier": "normal",
+            "name": "codex-1"
+          },
+          "status": "stopped",
+          "runs": [
+            {
+              "id": "run-20261111-193031-r7q2",
+              "started_at": "2026-11-11T20:00:05Z",
+              "rounds": [
+                "round-20261111-200000-q9z1"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-11T20:30:00Z",
+                "end": {
+                  "kind": "stopped"
+                }
+              }
+            }
+          ],
+          "questions": []
+        }
+      },
+      "reviewers": []
+    }
+  ]
+}

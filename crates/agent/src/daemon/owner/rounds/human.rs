@@ -137,9 +137,11 @@ impl Owner {
                 item: id,
                 source,
             })?;
+            let round = self.round_of_item(team_id, id)?;
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: id,
+                round,
                 status,
             });
             look.changed = true;

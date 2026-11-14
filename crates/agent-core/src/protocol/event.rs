@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use super::ProtocolVersion;
 use super::reply::TeamSummary;
 use super::request::Client;
-use crate::ids::{InvestigatorName, ItemId, RunId, TaskId, TeamId};
-use crate::state::{AnsweredVia, GateOutcome, PrNumber, RunEnd, Timestamp};
+use crate::ids::{InvestigatorName, ItemId, RoundId, RunId, TaskId, TeamId};
+use crate::state::{AnsweredVia, GateOutcome, PrNumber, RoundEnd, RunEnd, Timestamp};
 use crate::status::{ItemStatus, ReviewVerdict, TaskStatus};
 
 /// A change of the state, when it happened.
@@ -67,12 +67,36 @@ pub enum EventKind {
         /// Its new status.
         status: TaskStatus,
     },
+    /// A round was opened: its item was given to a member, or the team started on a list without items.
+    RoundOpened {
+        /// The team.
+        team: TeamId,
+        /// The round.
+        round: RoundId,
+        /// The item the round is for; none for the whole work of a team whose list has no items.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<ItemId>,
+    },
+    /// A round was closed.
+    RoundClosed {
+        /// The team.
+        team: TeamId,
+        /// The round.
+        round: RoundId,
+        /// The item the round is for; none for the whole work of a team whose list has no items.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<ItemId>,
+        /// How it ended.
+        how: RoundEnd,
+    },
     /// An item changed its status.
     ItemStatus {
         /// The team.
         team: TeamId,
         /// The item.
         item: ItemId,
+        /// The item's round.
+        round: RoundId,
         /// Its new status.
         status: ItemStatus,
     },
@@ -84,6 +108,9 @@ pub enum EventKind {
         task: TaskId,
         /// The run.
         run: RunId,
+        /// The rounds the run works for; none for a run that works for no item.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        rounds: Vec<RoundId>,
     },
     /// A run ended.
     RunEnded {
@@ -93,6 +120,9 @@ pub enum EventKind {
         task: TaskId,
         /// The run.
         run: RunId,
+        /// The rounds the run worked for; none for a run that worked for no item.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        rounds: Vec<RoundId>,
         /// How it ended.
         end: RunEnd,
     },
@@ -102,8 +132,7 @@ pub enum EventKind {
         team: TeamId,
         /// The task.
         task: TaskId,
-        /// The number of the questions. Written as `round` in protocol version 1.
-        #[serde(rename = "round")]
+        /// The number of the questions.
         number: NonZeroU32,
     },
     /// The human answered questions.
@@ -112,8 +141,7 @@ pub enum EventKind {
         team: TeamId,
         /// The task.
         task: TaskId,
-        /// The number of the questions. Written as `round` in protocol version 1.
-        #[serde(rename = "round")]
+        /// The number of the questions.
         number: NonZeroU32,
         /// Through which channel the answers came.
         via: AnsweredVia,
@@ -124,6 +152,8 @@ pub enum EventKind {
         team: TeamId,
         /// The item.
         item: ItemId,
+        /// The item's round.
+        round: RoundId,
         /// The pull request.
         pr: PrNumber,
     },
@@ -133,6 +163,8 @@ pub enum EventKind {
         team: TeamId,
         /// The item.
         item: ItemId,
+        /// The item's round.
+        round: RoundId,
         /// The reviewer.
         reviewer: InvestigatorName,
         /// The verdict.
@@ -196,12 +228,13 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::state::fixtures::{assert_refused, at, task, team_id};
+    use crate::state::fixtures::{assert_refused, at, round_id, task, team_id};
 
     /// The sample task and team of these tests, as the text of their IDs.
     const TASK: &str = "task-20261111-153002-k3x9";
     const TEAM: &str = "team-20261111-153001-t5m8";
     const RUN: &str = "run-20261111-153003-r7q2";
+    const ROUND: &str = "round-20261111-153001-q1w2";
 
     /// The run of these tests.
     fn run() -> RunId {
@@ -238,23 +271,26 @@ mod tests {
                 EventKind::ItemStatus {
                     team: team_id(1),
                     item,
+                    round: round_id(1),
                     status: ItemStatus::InReview,
                 },
-                json!({"kind": "item_status", "team": TEAM, "item": "1.2", "status": "in_review"}),
+                json!({"kind": "item_status", "team": TEAM, "item": "1.2", "round": ROUND, "status": "in_review"}),
             ),
             (
                 EventKind::RunStarted {
                     team: team_id(1),
                     task: task(2),
                     run: run(),
+                    rounds: vec![round_id(1)],
                 },
-                json!({"kind": "run_started", "team": TEAM, "task": TASK, "run": RUN}),
+                json!({"kind": "run_started", "team": TEAM, "task": TASK, "run": RUN, "rounds": [ROUND]}),
             ),
             (
                 EventKind::RunEnded {
                     team: team_id(1),
                     task: task(2),
                     run: run(),
+                    rounds: Vec::new(),
                     end: RunEnd::Hung,
                 },
                 json!({"kind": "run_ended", "team": TEAM, "task": TASK, "run": RUN, "end": {"kind": "hung"}}),
@@ -273,7 +309,7 @@ mod tests {
                     task: task(2),
                     number: NonZeroU32::MIN,
                 },
-                json!({"kind": "question_asked", "team": TEAM, "task": TASK, "round": 1}),
+                json!({"kind": "question_asked", "team": TEAM, "task": TASK, "number": 1}),
             ),
             (
                 EventKind::QuestionAnswered {
@@ -282,24 +318,26 @@ mod tests {
                     number: NonZeroU32::MIN,
                     via: AnsweredVia::Dashboard,
                 },
-                json!({"kind": "question_answered", "team": TEAM, "task": TASK, "round": 1, "via": "dashboard"}),
+                json!({"kind": "question_answered", "team": TEAM, "task": TASK, "number": 1, "via": "dashboard"}),
             ),
             (
                 EventKind::PullRequestOpened {
                     team: team_id(1),
                     item,
+                    round: round_id(1),
                     pr: PrNumber::new(NonZeroU32::new(82).unwrap()),
                 },
-                json!({"kind": "pull_request_opened", "team": TEAM, "item": "1.2", "pr": 82}),
+                json!({"kind": "pull_request_opened", "team": TEAM, "item": "1.2", "round": ROUND, "pr": 82}),
             ),
             (
                 EventKind::ReviewSubmitted {
                     team: team_id(1),
                     item,
+                    round: round_id(1),
                     reviewer: "inv-codex".parse().unwrap(),
                     verdict: ReviewVerdict::RequestChanges,
                 },
-                json!({"kind": "review_submitted", "team": TEAM, "item": "1.2", "reviewer": "inv-codex", "verdict": "REQUEST_CHANGES"}),
+                json!({"kind": "review_submitted", "team": TEAM, "item": "1.2", "round": ROUND, "reviewer": "inv-codex", "verdict": "REQUEST_CHANGES"}),
             ),
             (
                 EventKind::GateFinished {
@@ -336,6 +374,48 @@ mod tests {
     }
 
     #[test]
+    fn the_events_of_a_round_opened_or_closed_have_their_json_and_read_back_equal() {
+        let item: ItemId = "1.2".parse().unwrap();
+        let cases: Vec<(EventKind, serde_json::Value)> = vec![
+            (
+                EventKind::RoundOpened {
+                    team: team_id(1),
+                    round: round_id(1),
+                    item: Some(item),
+                },
+                json!({"kind": "round_opened", "team": TEAM, "round": ROUND, "item": "1.2"}),
+            ),
+            (
+                EventKind::RoundOpened {
+                    team: team_id(1),
+                    round: round_id(1),
+                    item: None,
+                },
+                json!({"kind": "round_opened", "team": TEAM, "round": ROUND}),
+            ),
+            (
+                EventKind::RoundClosed {
+                    team: team_id(1),
+                    round: round_id(1),
+                    item: Some(item),
+                    how: RoundEnd::Merged,
+                },
+                json!({"kind": "round_closed", "team": TEAM, "round": ROUND, "item": "1.2", "how": "merged"}),
+            ),
+            (
+                EventKind::RoundClosed {
+                    team: team_id(1),
+                    round: round_id(1),
+                    item: None,
+                    how: RoundEnd::Abandoned,
+                },
+                json!({"kind": "round_closed", "team": TEAM, "round": ROUND, "how": "abandoned"}),
+            ),
+        ];
+        assert_json_round_trips(cases);
+    }
+
+    #[test]
     fn an_event_carries_its_time_and_the_version() {
         let event = Event::new(at(30), EventKind::TeamStarted { team: team_id(1) });
 
@@ -343,7 +423,7 @@ mod tests {
 
         assert_eq!(
             value,
-            json!({"protocol": 1, "at": "2026-11-11T19:15:30Z", "event": {"kind": "team_started", "team": TEAM}})
+            json!({"protocol": 2, "at": "2026-11-11T19:15:30Z", "event": {"kind": "team_started", "team": TEAM}})
         );
         assert_eq!(serde_json::from_value::<Event>(value).unwrap(), event);
         assert_eq!(
@@ -386,18 +466,22 @@ mod tests {
             json!({"kind": "team_started"}),
             json!({"kind": "team_started", "team": TASK}),
             json!({"kind": "task_status", "team": TEAM, "task": TASK, "status": "sleeping"}),
-            json!({"kind": "question_asked", "team": TEAM, "task": TASK, "round": 0}),
+            json!({"kind": "question_asked", "team": TEAM, "task": TASK, "number": 0}),
             json!({"kind": "controlled", "team": TEAM, "action": "pause"}),
             json!({"kind": "teleported", "team": TEAM}),
             json!({"kind": "team_started", "team": TEAM, "extra": 1}),
+            json!({"kind": "round_opened", "team": TEAM, "round": TEAM}),
+            json!({"kind": "round_closed", "team": TEAM, "round": ROUND}),
+            json!({"kind": "round_closed", "team": TEAM, "round": ROUND, "how": "lost"}),
+            json!({"kind": "item_status", "team": TEAM, "item": "1.2", "status": "in_review"}),
         ] {
             assert_refused::<EventKind>(&value);
         }
         assert_refused::<Event>(
-            &json!({"protocol": 2, "at": "2026-11-11T19:15:30Z", "event": {"kind": "team_started", "team": TEAM}}),
+            &json!({"protocol": 1, "at": "2026-11-11T19:15:30Z", "event": {"kind": "team_started", "team": TEAM}}),
         );
         assert_refused::<Event>(
-            &json!({"protocol": 1, "at": "yesterday", "event": {"kind": "team_started", "team": TEAM}}),
+            &json!({"protocol": 2, "at": "yesterday", "event": {"kind": "team_started", "team": TEAM}}),
         );
     }
 }

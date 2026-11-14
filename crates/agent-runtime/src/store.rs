@@ -863,6 +863,9 @@ mod tests {
     /// A state of schema version 1 with two teams: the fixture of the core, which must keep loading.
     const FIXTURE: &str = include_str!("../../agent-core/tests/fixtures/state-v1.json");
 
+    /// What the state of `FIXTURE` is saved as: the same state, migrated to schema version 2.
+    const SAVED: &str = include_str!("../../agent-core/tests/fixtures/state-v1-as-v2.json");
+
     /// The longest state file the core reads.
     const STATE_LIMIT: u64 = 64 << 20;
 
@@ -1012,8 +1015,8 @@ mod tests {
 
         store.save(&fixture_state()).await.unwrap();
 
-        assert_eq!(std::fs::read_to_string(home.state_file()).unwrap(), FIXTURE);
-        assert_eq!(store.load().await.unwrap().to_json().unwrap(), FIXTURE);
+        assert_eq!(std::fs::read_to_string(home.state_file()).unwrap(), SAVED);
+        assert_eq!(store.load().await.unwrap().to_json().unwrap(), SAVED);
     }
 
     // Rule: a save leaves no temporary file and replaces the old state whole.
@@ -1048,7 +1051,7 @@ mod tests {
         drop(staged);
 
         assert!(!temporary.exists());
-        assert_eq!(std::fs::read_to_string(home.state_file()).unwrap(), FIXTURE);
+        assert_eq!(std::fs::read_to_string(home.state_file()).unwrap(), SAVED);
         let expected: BTreeSet<String> = ["state.json", "daemon.lock", "tasks"].map(String::from).into();
         assert_eq!(names_in(home.root()), expected);
     }
@@ -1094,14 +1097,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = home_in(&dir);
         let store = StateStore::open(home.clone()).await.unwrap();
-        std::fs::write(home.state_file(), "{\"schema_version\": 2, \"teams\": 7}").unwrap();
+        std::fs::write(home.state_file(), "{\"schema_version\": 3, \"teams\": 7}").unwrap();
 
         let result = store.load().await;
 
         assert!(
             matches!(
                 &result,
-                Err(StoreError::Invalid { path, source: StateError::UnsupportedSchema(UnsupportedSchema { found: 2 }) })
+                Err(StoreError::Invalid { path, source: StateError::UnsupportedSchema(UnsupportedSchema { found: 3 }) })
                     if *path == home.state_file()
             ),
             "{result:?}"

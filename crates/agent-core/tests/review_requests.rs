@@ -75,6 +75,14 @@ mod review_requests {
     /// saved after it loads again.
     fn with_open_pull_request(check: impl FnOnce(&mut ItemMut<'_>)) {
         let mut state = state();
+        state
+            .open_round(
+                &team_id(),
+                "round-20261111-193030-r4n9".parse().unwrap(),
+                Some(item()),
+                at("2026-11-11T19:30:30Z"),
+            )
+            .unwrap();
         {
             let mut team = state.team_mut(&team_id()).unwrap();
             let mut item = team.item_mut(item()).unwrap();

@@ -18,9 +18,7 @@ use crate::config::AbsolutePath;
 /// reading a state checks that too.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Question {
-    /// The number of the questions, counted from 1 for each task: the number in the file's name. Written as `round` in a
-    /// state of version 1.
-    #[serde(rename = "round")]
+    /// The number of the questions, counted from 1 for each task: the number in the file's name.
     number: NonZeroU32,
     /// The questions file.
     file: AbsolutePath,
@@ -35,7 +33,6 @@ pub struct Question {
 #[serde(remote = "Question", deny_unknown_fields)]
 struct QuestionWire {
     /// See [`Question`].
-    #[serde(rename = "round")]
     number: NonZeroU32,
     /// See [`Question`].
     file: AbsolutePath,
@@ -248,7 +245,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&open).unwrap(),
             json!({
-                "round": 1,
+                "number": 1,
                 "file": "/home/u/agents/tasks/task-1/questions-1.md",
                 "asked_at": "2026-11-11T19:15:05Z",
                 "state": {"status": "open"}
@@ -267,7 +264,7 @@ mod tests {
     #[test]
     fn questions_answered_before_they_were_asked_are_refused_when_read() {
         let value = json!({
-            "round": 1,
+            "number": 1,
             "file": "/f/questions-1.md",
             "asked_at": "2026-11-11T19:15:05Z",
             "state": {"status": "answered", "at": "2026-11-11T19:15:04Z", "via": "command"}
@@ -279,11 +276,11 @@ mod tests {
     #[test]
     fn questions_with_round_zero_a_relative_file_or_an_unknown_field_are_refused() {
         let good =
-            json!({"round": 1, "file": "/f/q.md", "asked_at": "2026-11-11T19:15:05Z", "state": {"status": "open"}});
+            json!({"number": 1, "file": "/f/q.md", "asked_at": "2026-11-11T19:15:05Z", "state": {"status": "open"}});
         serde_json::from_value::<Question>(good.clone()).unwrap();
         for (key, bad) in [
-            ("round", json!(0)),
-            ("round", json!(-1)),
+            ("number", json!(0)),
+            ("number", json!(-1)),
             ("file", json!("questions-1.md")),
             ("file", json!("")),
             ("extra", json!(true)),
