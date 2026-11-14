@@ -117,25 +117,30 @@ record_gate() {
 # daemon ran the gate (`.fake-committed-N`, then `.fake-gate-done-N`).
 wait_for_gate() {
   printf '%s\n' '.fake-*' >> "$(git rev-parse --git-path info/exclude)"
+  mkfifo ".fake-gate-done-$n"
   : > ".fake-committed-$n"
-  for _ in $(seq 1 600); do
-    [[ -e ".fake-gate-done-$n" ]] && break
-    sleep 0.05
-  done
+  read -r -t 30 _ < ".fake-gate-done-$n"
+  rm -f ".fake-gate-done-$n"
 }
 
 # Waits until the other reviewer of this review pass (`n`-th run of the reviewer task, so `2 * n - 1` submitted verdicts in
 # `state.json`) has had its verdict recorded by the daemon.
 wait_for_peer_review() {
-  local submitted
-  for _ in $(seq 1 600); do
+  local submitted fifo pid
+  fifo="$home/.fake-peer-wait-$$"
+  mkfifo "$fifo"
+  tail -F -n +1 "$home/state.json" > "$fifo" 2>&1 &
+  pid=$!
+  while IFS= read -r _; do
     if [[ -f "$home/state.json" ]]; then
       # `grep -c` exits with 1 when no review is submitted yet.
       submitted=$(grep -c '"submitted"' "$home/state.json" || test $? -eq 1)
       (( submitted >= 2 * n - 1 )) && break
     fi
-    sleep 0.05
-  done
+  done < "$fifo"
+  kill "$pid" || test $? -eq 1
+  wait "$pid" || test $? -gt 128
+  rm -f "$fifo"
 }
 
 init

@@ -76,7 +76,7 @@ pub(super) async fn gate_when_committed(rig: &Rig, task: &agent_core::ids::TaskI
         .await
         .unwrap();
     assert!(matches!(reply, Reply::GateRecorded { .. }), "{reply:?}");
-    std::fs::write(worktree.join(format!(".fake-gate-done-{run}")), "").unwrap();
+    std::fs::write(worktree.join(format!(".fake-gate-done-{run}")), "done\n").unwrap();
 }
 
 /// Asks the daemon for the gate of every run of `task` that commits and waits for it, until `done` holds of the state.
@@ -104,7 +104,7 @@ pub(super) async fn gate_every_run(
                 .await
                 .unwrap();
             assert!(matches!(reply, Reply::GateRecorded { .. }), "{reply:?}");
-            std::fs::write(worktree.join(format!(".fake-gate-done-{next}")), "").unwrap();
+            std::fs::write(worktree.join(format!(".fake-gate-done-{next}")), "done\n").unwrap();
             gated = next;
         } else if worktree.join(".fake-runs").exists() && gated < 20 && next_is_over(&worktree, next) {
             // A run that did not commit has no gate to wait for: the next run is the one that may.

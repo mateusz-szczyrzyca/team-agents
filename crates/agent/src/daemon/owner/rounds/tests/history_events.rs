@@ -430,7 +430,7 @@ async fn a_gate_the_daemon_ran_is_recorded_with_its_task_head_outcome_and_log_an
         (recorded.tree, recorded.result.outcome),
         (GateTree::NotClean, GateOutcome::Passed)
     );
-    assert!(*started_at <= gate.at);
+    assert_eq!(gate.at.as_utc() - started_at.as_utc(), time::Duration::seconds(1));
     assert_eq!(gate.at, record.result.finished_at);
     assert!(recorded.result.log.as_path().exists());
     assert_eq!(gate.rounds, [the_round(&rig)]);
@@ -799,13 +799,14 @@ async fn an_unreadable_questions_file_or_out_of_range_event_clock_reports_its_ca
 #[tokio::test]
 async fn a_task_with_runs_in_two_rounds_links_second_round_events_only_to_the_second_round_and_renders_team_ended_once()
 {
+    use super::history_stories_tests::gate_when_committed;
     use super::rig::CHAIN;
     use agent_core::protocol::{SayRequest, SayText};
     use agent_core::story::{PromptView, Selection, StepView, StoryOptions, render};
 
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "gate_then_work,ask,gate_then_work"),
+            normal("claude-1", "gated,ask,gated"),
             investigator(
                 "inv-r1",
                 "done:VERDICT: APPROVE\\nSUMMARY: ok,done:VERDICT: APPROVE\\nSUMMARY: ok",
@@ -822,6 +823,7 @@ async fn a_task_with_runs_in_two_rounds_links_second_round_events_only_to_the_se
     rig.start().await;
 
     let (team, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    gate_when_committed(&rig, &tasks[0], 1).await;
     rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
         .await;
     rig.status_is(&tasks[0], TaskStatus::Questions).await;
@@ -837,6 +839,7 @@ async fn a_task_with_runs_in_two_rounds_links_second_round_events_only_to_the_se
         .await
         .unwrap();
     answer(&rig, &tasks[0], Client::Cli, 1, "a").await;
+    gate_when_committed(&rig, &tasks[0], 3).await;
     rig.item_where("1.2", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
         .await;
     rig.wait_for("the team to end", || {
