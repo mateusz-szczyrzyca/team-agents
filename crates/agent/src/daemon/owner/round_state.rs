@@ -33,7 +33,7 @@ pub(super) fn rounds_for(state: &State, task: &TaskId, why: Option<&Why>) -> Res
         .map(|run| run.rounds().to_vec())
         .unwrap_or_default();
     let asked_by: Vec<RoundId> = match why {
-        Some(Why::Delegated(request)) => requester_rounds(team, &request.from_task),
+        Some(Why::Delegated(request)) => requester_rounds(team, &request.from_task)?,
         _ => Vec::new(),
     };
     let reviewed = reviewed_round(team, task);
@@ -65,10 +65,19 @@ pub(super) fn rounds_for(state: &State, task: &TaskId, why: Option<&Why>) -> Res
 }
 
 /// The rounds the latest run of `requester`, a task of `team`, works for: the rounds a worker asked by it works for.
-fn requester_rounds(team: &Team, requester: &TaskId) -> Vec<RoundId> {
-    team.find(requester)
-        .and_then(|(_, member)| member.runs().last().map(|run| run.rounds().to_vec()))
-        .unwrap_or_default()
+/// A requester with no run has none; a requester that is not in the team is lost, not one without rounds.
+///
+/// # Errors
+/// [`OwnerError::LostTask`] when `requester` is not in `team`.
+fn requester_rounds(team: &Team, requester: &TaskId) -> Result<Vec<RoundId>, OwnerError> {
+    let (_, member) = team.find(requester).ok_or_else(|| OwnerError::LostTask {
+        task: requester.clone(),
+    })?;
+    Ok(member
+        .runs()
+        .last()
+        .map(|run| run.rounds().to_vec())
+        .unwrap_or_default())
 }
 
 /// The round of the pull request that the reviewer task `task` has a review pending of.
