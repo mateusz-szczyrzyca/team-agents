@@ -8,6 +8,7 @@ use super::ProtocolVersion;
 use super::reply::TeamSummary;
 use super::request::Client;
 use crate::ids::{InvestigatorName, ItemId, RoundId, RunId, TaskId, TeamId};
+use crate::kinds::{Keyword, UnknownKeyword};
 use crate::state::{AnsweredVia, GateOutcome, PrNumber, RoundEnd, RunEnd, Timestamp};
 use crate::status::{ItemStatus, ReviewVerdict, TaskStatus};
 
@@ -24,9 +25,22 @@ pub struct Event {
 }
 
 /// A control the human used on a task or a team.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::IntoStaticStr)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<ControlAction>)]
 pub enum ControlAction {
     /// `stop`.
     Stop,
@@ -38,6 +52,10 @@ pub enum ControlAction {
     Resume,
     /// `say`.
     Say,
+}
+
+impl Keyword for ControlAction {
+    const WHAT: &'static str = "control action";
 }
 
 /// What happened.

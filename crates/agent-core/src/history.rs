@@ -189,8 +189,17 @@ impl Keyword for StepKind {
 impl StepKind {
     /// The kind of the step `event` is.
     #[must_use]
-    pub const fn of(_event: &ActivityEvent) -> Self {
-        Self::Message
+    pub const fn of(event: &ActivityEvent) -> Self {
+        match event {
+            ActivityEvent::Text(_) => Self::Message,
+            ActivityEvent::Command(_) => Self::Command,
+            ActivityEvent::FileEdit { .. } => Self::FileEdit,
+            ActivityEvent::BusCall { .. } => Self::BusCall,
+            ActivityEvent::ToolCall { .. } => Self::ToolCall,
+            ActivityEvent::Error(_) => Self::Error,
+            ActivityEvent::Info(_) => Self::Info,
+            ActivityEvent::Control { .. } => Self::Control,
+        }
     }
 }
 
@@ -227,8 +236,13 @@ impl Keyword for ChangeKind {
 impl ChangeKind {
     /// The kind of `change`.
     #[must_use]
-    pub const fn of(_change: &Change) -> Self {
-        Self::Added
+    pub const fn of(change: &Change) -> Self {
+        match change {
+            Change::Added => Self::Added,
+            Change::Deleted => Self::Deleted,
+            Change::Modified => Self::Modified,
+            Change::Renamed { .. } => Self::Renamed,
+        }
     }
 }
 
@@ -269,8 +283,15 @@ impl Keyword for EndKind {
 impl EndKind {
     /// The kind of `end`.
     #[must_use]
-    pub const fn of(_end: &RunEnd) -> Self {
-        Self::Reported
+    pub const fn of(end: &RunEnd) -> Self {
+        match end {
+            RunEnd::Reported { .. } => Self::Reported,
+            RunEnd::NoStatus { .. } => Self::NoStatus,
+            RunEnd::QuotaExhausted { .. } => Self::QuotaExhausted,
+            RunEnd::RateLimited => Self::RateLimited,
+            RunEnd::Hung => Self::Hung,
+            RunEnd::Stopped => Self::Stopped,
+        }
     }
 }
 
@@ -303,8 +324,11 @@ impl Keyword for ClientKind {
 impl ClientKind {
     /// The kind of `client`.
     #[must_use]
-    pub const fn of(_client: &Client) -> Self {
-        Self::Cli
+    pub const fn of(client: &Client) -> Self {
+        match client {
+            Client::Cli => Self::Cli,
+            Client::Dashboard { .. } => Self::Dashboard,
+        }
     }
 }
 
@@ -413,7 +437,13 @@ pub struct PlanEntry {
 
 impl fmt::Display for Cut {
     /// The names of the fields, sorted and separated by commas: what the database keeps in its `cut` columns.
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, field) in self.fields().enumerate() {
+            if index > 0 {
+                f.write_str(",")?;
+            }
+            f.write_str(field)?;
+        }
         Ok(())
     }
 }
@@ -431,8 +461,20 @@ impl Cut {
     ///
     /// # Errors
     /// [`UnknownCutField`] for a name that is not in `known`.
-    pub fn parse(_text: &str, _known: &[&'static str]) -> Result<Self, UnknownCutField> {
-        Ok(Self::default())
+    pub fn parse(text: &str, known: &[&'static str]) -> Result<Self, UnknownCutField> {
+        let mut cut = Self::default();
+        if text.is_empty() {
+            return Ok(cut);
+        }
+        for name in text.split(',') {
+            let field = known
+                .iter()
+                .copied()
+                .find(|field| *field == name)
+                .ok_or_else(|| UnknownCutField { field: name.to_owned() })?;
+            cut.0.insert(field);
+        }
+        Ok(cut)
     }
 }
 
