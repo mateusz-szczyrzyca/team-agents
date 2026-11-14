@@ -42,7 +42,7 @@ Ground rules
   declared once, in a `#[strum(...)]` attribute. No hand-written text tables, no macro of our own for it.
 - New code is developed and tested against a separate `AGENTS_HOME`; nothing here may touch the live `~/agents` of
   the running Bash harness until feature 10.
-- The items of rounds, of the history and of checkpoints (8.3 to 8.8, 11.1, 12.1 to 12.4) are tested harder than
+- The items of rounds, of the history and of checkpoints (8.3 to 8.10, 11.1, 12.1 and 12.2) are tested harder than
   the developer rules ask: a log that is wrong is worse than no log, and a takeover that is wrong loses work.
   - End to end: every record and every query is proved by a run of the daemon with fake CLIs and a fake GitHub
     server, read back through the reading API or `agent log`. Rows a test inserts by hand prove a query, never the
@@ -115,15 +115,15 @@ Checkpoints for the human, between features (the agents do not run these):
 - After item 8.3: read `docs/state.md` again: version 2 of the state and of the protocol, and the round.
 - After item 8.4: read `docs/history.md` and ask the database of one round with `sqlite3`. The schema of the history
   is expensive to change later.
+- After item 8.9: stop a real solo task in the middle of its work and continue its round with another agent: it
+  works in the same worktree and its first message shows that it knows what was done.
 - After feature 8, before feature 10: a real run with cheap models on a toy repository and a separate
   `AGENTS_HOME`, in the default `--autopilot`: from a two-item list to two merged PRs. Then `agent log --round` of
   each: the story is whole — the task, who was chosen and how, every prompt, every step, every change, both
   reviews — and `agent log --level warn` shows nothing unexplained. The cutover starts only after it passes.
 - After feature 9: the dashboard opened through `tailscale serve` from another device: the teams listed, a question
   answered, a team paused and resumed.
-- After item 12.1: stop a real solo task in the middle of its work and continue its round with another agent: it
-  works in the same worktree and its first message shows that it knows what was done.
-- After item 12.3: read the `provider` and `account` of every agent in the live `agents.toml`; they decide who may
+- After item 12.1: read the `provider` and `account` of every agent in the live `agents.toml`; they decide who may
   stand in for whom.
 
 Out of scope for this plan: remote nodes and the lead, investigation teams with phases and standalone investigation
@@ -171,7 +171,7 @@ Plan overview (context only)
    7.1 Starting work and the team's life
    7.2 Questions, answers and controls
    7.3 Gate service
-8. Autopilot, rounds and the history
+8. Autopilot, rounds, the history and checkpoints
    8.1 Pull requests, reviews and the merge loop
    8.2 Round checks before review
    8.3 Rounds as an entity
@@ -180,6 +180,8 @@ Plan overview (context only)
    8.6 The daemon's own log
    8.7 `agent log`: questions to the history, search, following and what is kept
    8.8 A run that reaches its turn limit goes on
+   8.9 A round outlives its team: continuing a round
+   8.10 The plan of every task
 9. Dashboard
    9.1 The dashboard
 10. Cutover
@@ -187,8 +189,6 @@ Plan overview (context only)
    10.2 Remove the old implementation
 11. Usage
    11.1 The tokens of every run
-12. Checkpoints
-   12.1 A round outlives its team: continuing a round
-   12.2 The plan of every task
-   12.3 Accounts, providers and taking work over
-   12.4 Checkpoints of reviewers and workers
+12. Taking work over
+   12.1 Accounts, providers and taking work over
+   12.2 Checkpoints of reviewers and workers
