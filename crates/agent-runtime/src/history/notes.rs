@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use agent_core::history::{EventRecord, HistoryEvent, Record};
-use agent_core::ids::{RoundId, RunId, TeamId};
+use agent_core::ids::{RoundId, RunId, TaskId, TeamId};
 use agent_core::state::Timestamp;
 
 use super::db::Store;
@@ -28,10 +28,14 @@ const MAX_PENDING: usize = 256;
 struct Scope {
     /// The team of the run.
     team: TeamId,
+    /// The task of the run.
+    task: TaskId,
     /// The rounds the run works for, each once.
     rounds: Vec<RoundId>,
     /// When the run started.
     at: Timestamp,
+    /// The order in which this run was learned, to break ties when two runs of a task share a start time.
+    order: u64,
 }
 
 /// A store that notes what the store it wraps refused.
@@ -41,6 +45,8 @@ pub struct Noting<S> {
     inner: S,
     /// The team and rounds of the runs this store has seen start, to place the records of a run.
     scopes: HashMap<RunId, Scope>,
+    /// How many runs this store has learned, to order runs of the same task.
+    learned: u64,
     /// The notes that wait for a write that succeeds.
     pending: Vec<EventRecord>,
 }
@@ -52,6 +58,7 @@ impl<S: Store> Noting<S> {
         Self {
             inner,
             scopes: HashMap::new(),
+            learned: 0,
             pending: Vec::new(),
         }
     }
@@ -61,14 +68,27 @@ impl<S: Store> Noting<S> {
         if self.scopes.len() >= MAX_SCOPES {
             self.scopes.clear();
         }
+        self.learned = self.learned.saturating_add(1);
         self.scopes.insert(
             run.run.clone(),
             Scope {
                 team: run.team.clone(),
+                task: run.task.clone(),
                 rounds: once_each(&run.rounds),
                 at: run.at,
+                order: self.learned,
             },
         );
+    }
+
+    /// The rounds of the latest run of `task` in `team` that this store has seen start.
+    fn rounds_of_task(&self, team: &TeamId, task: &TaskId) -> Vec<RoundId> {
+        self.scopes
+            .values()
+            .filter(|scope| &scope.team == team && &scope.task == task)
+            .max_by_key(|scope| (scope.at, scope.order))
+            .map(|scope| scope.rounds.clone())
+            .unwrap_or_default()
     }
 
     /// Notes that `record` was refused because of `error`, when it can be placed.
@@ -123,8 +143,14 @@ impl<S: Store> Noting<S> {
             Record::Session(session) => of_run(&session.run, Some(session.at), RecordKind::Session),
             Record::Changes(changes) => of_run(&changes.run, None, RecordKind::Changes),
             // A note is not noted: that would never end.
-            Record::Event(event) => match event.event {
+            Record::Event(event) => match &event.event {
                 HistoryEvent::Lost { .. } => None,
+                HistoryEvent::Gate { task, .. } if event.rounds.is_empty() => Some((
+                    event.event.kind().to_string(),
+                    event.team.clone(),
+                    self.rounds_of_task(&event.team, task),
+                    event.at,
+                )),
                 _ => Some((
                     event.event.kind().to_string(),
                     event.team.clone(),
