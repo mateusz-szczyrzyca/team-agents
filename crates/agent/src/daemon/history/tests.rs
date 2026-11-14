@@ -234,3 +234,48 @@ fn whole_record() -> Record {
         event: agent_core::cli::ActivityEvent::Info("x".to_owned()),
     }))
 }
+
+/// Diagnostics emitted by a failed startup, retained to prove once-only reporting.
+#[derive(Debug, Default)]
+struct StartupReports(std::sync::Mutex<Vec<Problem>>);
+
+impl Reporter for StartupReports {
+    fn report(&self, problem: &Problem) {
+        self.0.lock().unwrap().push(problem.clone());
+    }
+}
+
+/// Both OS startup boundaries must keep an enabled history visibly unavailable.
+fn assert_startup_losses(error: &impl std::error::Error) {
+    let reports = Arc::new(StartupReports::default());
+    let opened = super::startup_failed(error, Arc::clone(&reports) as Arc<dyn Reporter>);
+    assert!(opened.writer.is_none());
+    opened.history.record(whole_record());
+    opened.history.record(whole_record());
+    let reason = agent_runtime::process::error_chain(error);
+    assert_eq!(
+        health_to_tell(&opened.history),
+        Some(HistoryHealth {
+            state: HistoryState::Unavailable { reason: reason.clone() },
+            lost: 2,
+        })
+    );
+    let reports = reports.0.lock().unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].cause, agent_runtime::history::Cause::Unavailable);
+    assert_eq!(reports[0].detail, reason);
+}
+
+#[test]
+fn a_writer_thread_start_failure_reports_unavailable_and_counts_every_lost_record() {
+    let error = agent_runtime::history::StartError(std::io::Error::from(std::io::ErrorKind::WouldBlock));
+    assert_startup_losses(&error);
+}
+
+#[tokio::test]
+async fn an_opener_task_failure_reports_unavailable_and_counts_every_lost_record() {
+    let error = tokio::spawn(async { panic!("injected opener task failure") })
+        .await
+        .unwrap_err();
+    assert_startup_losses(&error);
+}

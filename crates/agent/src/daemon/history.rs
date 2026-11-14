@@ -50,11 +50,7 @@ pub(super) async fn open(settings: &Settings, home: &Home) -> Opened {
             };
         }
         Err(error) => {
-            tracing::error!(error = %error_chain(&error), "the task that opens the history failed: the daemon runs without it");
-            return Opened {
-                history: History::disabled(),
-                writer: None,
-            };
+            return startup_failed(&error, reporter);
         }
     };
     let setup = Setup {
@@ -66,13 +62,17 @@ pub(super) async fn open(settings: &Settings, home: &Home) -> Opened {
             history: started.history,
             writer: Some(started.writer),
         },
-        Err(error) => {
-            tracing::error!(error = %error_chain(&error), "the writer of the history cannot be started: the daemon runs without it");
-            Opened {
-                history: History::disabled(),
-                writer: None,
-            }
-        }
+        Err(error) => startup_failed(&error, reporter),
+    }
+}
+
+/// Keeps work available when the opener task or writer thread cannot start.
+fn startup_failed(error: &impl std::error::Error, reporter: Arc<dyn Reporter>) -> Opened {
+    tracing::error!(error = %error_chain(error), "history startup failed: the daemon runs without it");
+    drop(reporter);
+    Opened {
+        history: History::disabled(),
+        writer: None,
     }
 }
 
