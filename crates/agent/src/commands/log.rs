@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 
 use agent_core::ids::{RoundId, TeamId};
-use agent_core::story::{PromptView, Selection, StepView, StoryOptions, json_lines, render};
+use agent_core::story::{Selection, StoryOptions, json_lines, render};
 use agent_runtime::history::{ReadError, Reader};
 
 /// The exit status of `agent log` when the round or team asked for is not in the history.
@@ -68,35 +68,18 @@ impl LogError {
 }
 
 impl LogRequest {
-    /// The request of a command line: one of `round` and `team`, and the flags.
+    /// The request of a command line: one of `round` and `team`, and how to format it.
     ///
     /// # Errors
     /// [`LogError::NoSubject`] or [`LogError::TwoSubjects`] unless exactly one is given.
-    pub(crate) fn new(
-        round: Option<RoundId>,
-        team: Option<TeamId>,
-        prompts: bool,
-        no_steps: bool,
-        json: bool,
-    ) -> Result<Self, LogError> {
+    pub(crate) fn new(round: Option<RoundId>, team: Option<TeamId>, format: Format) -> Result<Self, LogError> {
         let selection = match (round, team) {
             (Some(round), None) => Selection::Round(round),
             (None, Some(team)) => Selection::Team(team),
             (None, None) => return Err(LogError::NoSubject),
             (Some(_), Some(_)) => return Err(LogError::TwoSubjects),
         };
-        let options = StoryOptions {
-            prompts: if prompts {
-                PromptView::Whole
-            } else {
-                PromptView::Preview
-            },
-            steps: if no_steps { StepView::LeftOut } else { StepView::Listed },
-        };
-        Ok(Self {
-            selection,
-            format: if json { Format::Json } else { Format::Text(options) },
-        })
+        Ok(Self { selection, format })
     }
 }
 

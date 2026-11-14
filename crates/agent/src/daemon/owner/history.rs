@@ -2,10 +2,13 @@
 //! while a run is going. Each is handed to the history after the state holds it; the history never refuses or delays.
 
 use agent_core::cli::ActivityEvent;
-use agent_core::history::{AgentIdentity, EventRecord, HistoryEvent, Record, RunEndRecord, RunStart, RunWhy};
+use agent_core::history::{
+    AgentIdentity, EventKind, EventRecord, HistoryEvent, LostCause, LostKind, Record, RunEndRecord, RunStart, RunWhy,
+};
 use agent_core::ids::{ItemId, RoundId, RunId, TaskId, TeamId};
 use agent_core::protocol::RunRequest;
 use agent_core::state::{ItemPhase, RunState, Timestamp};
+use agent_runtime::history::CaptureKind;
 use agent_runtime::process::error_chain;
 
 use super::Owner;
@@ -69,7 +72,14 @@ impl Owner {
     }
 
     /// The text of the questions file `path` of `task`: what the human sees. A file that cannot be read is a record lost.
-    pub(super) async fn questions_text(&self, task: &TaskId, path: &std::path::Path) -> Option<String> {
+    pub(super) async fn questions_text(
+        &self,
+        at: Timestamp,
+        team: &TeamId,
+        task: &TaskId,
+        path: &std::path::Path,
+        kind: EventKind,
+    ) -> Option<String> {
         if self.history.is_disabled() {
             return None;
         }
@@ -77,6 +87,13 @@ impl Owner {
             Ok(text) => Some(text),
             Err(error) => {
                 tracing::warn!(task = %task, error = %error_chain(&error), "the questions file cannot be read: the history has no record of it");
+                let _ = (
+                    at,
+                    team,
+                    CaptureKind::Questions,
+                    LostKind::Event(kind),
+                    LostCause::CaptureQuestions,
+                );
                 self.history.record_lost();
                 None
             }

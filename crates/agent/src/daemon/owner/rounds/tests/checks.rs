@@ -941,3 +941,79 @@ async fn a_round_the_checks_send_back_once_and_then_ask_the_human_about_is_told_
     assert!(sent_back < asked && asked < allowed && allowed < reviews, "{text}");
     golden("story-checks.txt", &Normalized::of(&rig, &text, &json));
 }
+
+#[tokio::test]
+async fn a_mixed_allow_and_refuse_answer_does_not_record_all_issues_allowed() {
+    use agent_core::history::{CheckOutcome, HistoryEvent, Record};
+    use agent_runtime::history::Reader;
+
+    let mut rig = checking_rig("script:edit-two,questions,done,script:restore-other", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    script(
+        &rig,
+        "edit-two",
+        "sed -i 2d tests/existing.txt\nsed -i 2d tests/other.txt\ngit add tests/existing.txt tests/other.txt\ncommit -m 'Change two tests'\n",
+    );
+    script(
+        &rig,
+        "restore-other",
+        "git checkout main -- tests/other.txt\ngit add tests/other.txt\ncommit -m 'Restore the other test'\n",
+    );
+    std::fs::write(rig.repo.join("tests/other.txt"), "x\ny\nz\n").unwrap();
+    git(&rig.repo, &["add", "tests/other.txt"]);
+    git(&rig.repo, &["commit", "-q", "-m", "Seed another test"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let answers = AnswerList::try_from(vec![
+        AnswerInput {
+            question: NonZeroU32::MIN,
+            verdict: Verdict::from_text("allow").unwrap().unwrap(),
+        },
+        AnswerInput {
+            question: NonZeroU32::new(2).unwrap(),
+            verdict: Verdict::from_text("refuse").unwrap().unwrap(),
+        },
+    ])
+    .unwrap();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: NonZeroU32::MIN,
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    let records = Reader::open(&rig.home.history_file())
+        .unwrap()
+        .team_records(&team)
+        .unwrap();
+    let allowed_events: Vec<_> = records
+        .iter()
+        .filter(|stored| {
+            matches!(
+                &stored.record,
+                Record::Event(event)
+                    if matches!(
+                        &event.event,
+                        HistoryEvent::Checked {
+                            outcome: CheckOutcome::Allowed,
+                            ..
+                        }
+                    )
+            )
+        })
+        .collect();
+    assert!(allowed_events.is_empty(), "{allowed_events:?}");
+}

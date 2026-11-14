@@ -697,3 +697,207 @@ async fn a_team_whose_work_is_done_is_recorded_as_ended_once_after_its_rounds_wi
         [the_round(&rig)]
     );
 }
+
+#[tokio::test]
+async fn an_unreadable_questions_file_or_out_of_range_event_clock_reports_its_capture_cause_and_writes_a_loss_tombstone()
+ {
+    use crate::daemon::owner::fixture::Daemon;
+    use crate::fixtures::{at, solo_state, task, team_id};
+    use agent_core::history::{LostCause, LostKind, MaxTextBytes, RoundOpening, RoundSubject, TeamStart};
+    use agent_runtime::history::{
+        CaptureKind, Cause, DEFAULT_QUEUE, History, HistoryDb, Noting, Problem, Reporter, Setup,
+    };
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Default)]
+    struct Seen(Mutex<Vec<Problem>>);
+    impl Reporter for Seen {
+        fn report(&self, problem: &Problem) {
+            self.0.lock().unwrap().push(problem.clone());
+        }
+    }
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let db_path = daemon.home.history_file();
+    let db = HistoryDb::open(&db_path, MaxTextBytes::default()).unwrap();
+    let seen = Arc::new(Seen::default());
+    let started = History::start(
+        Noting::new(db),
+        Setup {
+            reporter: Arc::clone(&seen) as Arc<dyn Reporter>,
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let round: RoundId = "round-20261111-193001-q1w2".parse().unwrap();
+    started.history.record(Record::Team(Box::new(TeamStart {
+        team: team_id(0),
+        at: at(0),
+        repo: "repo".parse().unwrap(),
+        base_branch: "main".parse().unwrap(),
+        merge: MergeMode::Autopilot,
+        task_list: "Work.".to_owned(),
+        plan: Vec::new(),
+    })));
+    started.history.record(Record::Round(Box::new(RoundOpening {
+        round: round.clone(),
+        team: team_id(0),
+        at: at(0),
+        subject: RoundSubject::Brief("Work.".to_owned()),
+    })));
+
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let owner = owner.with_history(started.history.clone());
+
+    let missing = daemon.home.root().join("missing-questions.md");
+    assert!(
+        owner
+            .questions_text(at(5), &team_id(0), &task(1), &missing, EventKind::QuestionAsked)
+            .await
+            .is_none()
+    );
+
+    daemon.clock.advance(time::Duration::days(-1_000_000));
+    owner.record_event(
+        &team_id(0),
+        vec![round.clone()],
+        HistoryEvent::PullReady {
+            pr: PrNumber::new(NonZeroU32::MIN),
+        },
+    );
+    started.writer.close().unwrap();
+
+    assert_eq!(started.history.health().lost, 2);
+    let causes: Vec<Cause> = seen.0.lock().unwrap().iter().map(|p| p.cause).collect();
+    assert_eq!(
+        causes,
+        [
+            Cause::Capture(CaptureKind::Questions),
+            Cause::Capture(CaptureKind::Clock)
+        ]
+    );
+    let read = Reader::open(&db_path).unwrap().team_records(&team_id(0)).unwrap();
+    let lost: Vec<(LostKind, LostCause)> = read
+        .iter()
+        .filter_map(|stored| match &stored.record {
+            Record::Event(event) => match &event.event {
+                HistoryEvent::Lost { what, cause, .. } => Some((*what, *cause)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        lost,
+        [
+            (LostKind::Event(EventKind::QuestionAsked), LostCause::CaptureQuestions),
+            (LostKind::Event(EventKind::PullReady), LostCause::CaptureClock),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_task_with_runs_in_two_rounds_links_second_round_events_only_to_the_second_round_and_renders_team_ended_once()
+{
+    use super::rig::CHAIN;
+    use agent_core::protocol::{SayRequest, SayText};
+    use agent_core::story::{PromptView, Selection, StepView, StoryOptions, render};
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "gate_then_work,ask,gate_then_work"),
+            investigator(
+                "inv-r1",
+                "done:VERDICT: APPROVE\\nSUMMARY: ok,done:VERDICT: APPROVE\\nSUMMARY: ok",
+            ),
+            investigator(
+                "inv-r2",
+                "done:VERDICT: APPROVE\\nSUMMARY: ok,done:VERDICT: APPROVE\\nSUMMARY: ok",
+            ),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    assert_ne!(rig.notification_with("questions").await, "");
+    let say = SayRequest {
+        target: Target::Task(tasks[0].clone()),
+        text: SayText::try_from("proceed".to_owned()).unwrap(),
+    };
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(Client::Cli, Command::Say(say))
+        .await
+        .unwrap();
+    answer(&rig, &tasks[0], Client::Cli, 1, "a").await;
+    rig.item_where("1.2", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.wait_for("the team to end", || {
+        events(&rig, &team)
+            .iter()
+            .any(|(_, e)| e.event.kind() == EventKind::TeamEnded)
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let state = rig.state();
+    let [r1, r2] = state.team(&team).unwrap().rounds() else {
+        panic!("expected two rounds");
+    };
+    let (r1, r2) = (r1.id().clone(), r2.id().clone());
+    let records = Reader::open(&rig.home.history_file())
+        .unwrap()
+        .team_records(&team)
+        .unwrap();
+    for stored in &records {
+        if let Record::Changes(changes) = &stored.record {
+            let end_at = records
+                .iter()
+                .find_map(|other| match &other.record {
+                    Record::RunEnd(end) if end.run == changes.run => Some(end.at),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(stored.at, end_at);
+        }
+    }
+
+    let events = events(&rig, &team);
+    let gates: Vec<&EventRecord> = events
+        .iter()
+        .filter_map(|(_, e)| matches!(e.event, HistoryEvent::Gate { .. }).then_some(e))
+        .collect();
+    assert_eq!(gates.len(), 2);
+    assert_eq!(gates[0].rounds, [r1]);
+    assert_eq!(gates[1].rounds, std::slice::from_ref(&r2));
+    for kind in [
+        EventKind::QuestionAsked,
+        EventKind::QuestionAnswered,
+        EventKind::Controlled,
+    ] {
+        let found = &events[place(&events, kind, 0)].1;
+        assert_eq!(found.rounds, std::slice::from_ref(&r2), "{kind}: {found:?}");
+    }
+    let question_notified = events
+        .iter()
+        .find_map(|(_, e)| match &e.event {
+            HistoryEvent::Notified { title, .. } if title.contains("questions") => Some(&e.rounds),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(question_notified, &[r2]);
+
+    let opts = StoryOptions {
+        prompts: PromptView::Preview,
+        steps: StepView::Listed,
+    };
+    let team_story = render(&records, &Selection::Team(team), opts);
+    assert_eq!(team_story.matches("team ended\n").count(), 1, "{team_story}");
+}
