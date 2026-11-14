@@ -15,7 +15,7 @@ use agent_runtime::history::{HistoryDb, Reader, Store, WriteError, WriteKind};
 use rand::rngs::Xoshiro256PlusPlus;
 use rand::{RngExt, SeedableRng};
 
-use super::support::{World, at, commit, database, limit, world};
+use super::support::{World, at, commit, complete, database, limit, world};
 
 /// Writes `records` in chunks of random size and returns how many chunks there were.
 fn write_in_chunks(db: &mut HistoryDb, records: &[Record], seed: u64) -> usize {
@@ -153,7 +153,7 @@ fn text_in_every_script_and_with_awkward_characters_comes_back_as_it_went_in() {
     }];
     written.runs[0].end = Some(RunEndRecord {
         run: written.runs[0].start.run.clone(),
-        at: at(60, 999_999_999),
+        at: at(2000, 999_999_999),
         end: RunEnd::Hung,
         final_message: Some(nasty.to_owned()),
     });
@@ -218,7 +218,7 @@ fn a_text_at_the_limit_one_under_and_over_is_kept_or_cut_at_a_character_boundary
         written.runs[0].start.prompt = given.clone();
         written.runs[0].end = Some(RunEndRecord {
             run: written.runs[0].start.run.clone(),
-            at: at(70, 0),
+            at: at(2000, 0),
             end: RunEnd::Stopped,
             final_message: Some(given.clone()),
         });
@@ -361,12 +361,8 @@ fn refused(db: &mut HistoryDb, records: &[Record]) -> WriteError {
 #[test]
 fn a_record_that_belongs_to_a_run_the_history_never_saw_is_refused() {
     let (_dir, _path, mut db) = database();
-    let world = world(7);
-    let orphan = world
-        .runs
-        .iter()
-        .find(|run| !run.steps.is_empty() && run.launch.is_some() && run.end.is_some())
-        .unwrap();
+    let world = complete(7);
+    let orphan = &world.runs[0];
     let mut records = Vec::new();
     records.push(Record::Step(Box::new(orphan.steps[0].clone())));
     records.push(Record::Launch(Box::new(orphan.launch.clone().unwrap())));
