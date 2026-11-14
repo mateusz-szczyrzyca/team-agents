@@ -12,7 +12,7 @@ mod rounds {
         AdvanceItemError, BeginRunError, CloseRoundError, Completion, InvalidState, ItemPhase, NewRun, OpenRoundError,
         PhaseKind, ReviewOutcome, Round, RoundEnd, RoundLife, RunError, State, StateError, StateOpenRoundError, Team,
     };
-    use agent_core::status::ReviewVerdict;
+    use agent_core::status::{ReviewVerdict, TaskStatus};
     use serde_json::{Value, json};
 
     use super::world::{at, item, pr, review, round, run, state, task, team_id};
@@ -83,6 +83,27 @@ mod rounds {
     /// The team `n` of `state`.
     fn team(state: &State, n: u32) -> &Team {
         state.team(&team_id(n)).unwrap()
+    }
+
+    /// Stops every member of team `n`, leaving nobody to work on its rounds.
+    fn stop_crew(state: &mut State, n: u32) {
+        let tasks: Vec<_> = team(state, n)
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member.task().clone())
+            .collect();
+        for task in tasks {
+            state
+                .team_mut(&team_id(n))
+                .unwrap()
+                .crew_mut()
+                .find_mut(&task)
+                .unwrap()
+                .1
+                .transition(TaskStatus::Stopped)
+                .unwrap();
+        }
     }
 
     fn new_run(n: u32, rounds: &[u32]) -> NewRun {
@@ -243,6 +264,7 @@ mod rounds {
             .open_round(&team_id(1), round(1), Some(item("1.2")), at(1))
             .unwrap();
 
+        stop_crew(&mut state, 1);
         state.close_round(&round(1), at(9), RoundEnd::Abandoned).unwrap();
 
         let (_, closed) = state.find_round(&round(1)).unwrap();
@@ -281,6 +303,9 @@ mod rounds {
                     .open_round(&team_id(1), round(1), Some(item("1.2")), at(1))
                     .unwrap();
                 drive(&mut state, 1, "1.2", phase);
+                if matches!(phase, PhaseKind::InProgress | PhaseKind::InReview) {
+                    stop_crew(&mut state, 1);
+                }
 
                 let closed = state.close_round(&round(1), at(60), *how);
 
@@ -330,6 +355,21 @@ mod rounds {
         let mut handle = state.team_mut(&team_id(1)).unwrap();
 
         handle.open_round(round(1), Some(item("1.2")), at(1)).unwrap();
+        let tasks: Vec<_> = handle
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member.task().clone())
+            .collect();
+        for task in tasks {
+            handle
+                .crew_mut()
+                .find_mut(&task)
+                .unwrap()
+                .1
+                .transition(TaskStatus::Stopped)
+                .unwrap();
+        }
         handle.close_round(&round(1), at(2), RoundEnd::Abandoned).unwrap();
 
         assert_eq!(
@@ -413,6 +453,7 @@ mod rounds {
         drive(&mut state, 2, "1.1", PhaseKind::Approved);
         state.close_round(&round(1), at(60), RoundEnd::Merged).unwrap();
         state.close_round(&round(3), at(60), RoundEnd::Approved).unwrap();
+        stop_crew(&mut state, 3);
         state.close_round(&round(4), at(60), RoundEnd::Abandoned).unwrap();
         state.begin_run(&task(2), new_run(1, &[1, 2])).unwrap();
         State::from_json(&state.to_json().unwrap()).unwrap();

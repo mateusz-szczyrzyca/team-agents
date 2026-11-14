@@ -294,6 +294,13 @@ fn a_round_is_one_line_and_the_round_of_a_whole_task_list_has_no_item() {
         agent_core::state::Crew::solo(crate::fixtures::member(9, crate::fixtures::normal("claude-1"))).unwrap(),
     );
     whole.open_round(round_id(9), None, at(1)).unwrap();
+    whole
+        .crew_mut()
+        .find_mut(&task(9))
+        .unwrap()
+        .1
+        .transition(agent_core::status::TaskStatus::Stopped)
+        .unwrap();
     whole.close_round(&round_id(9), at(2), RoundEnd::Abandoned).unwrap();
 
     assert_eq!(
@@ -345,13 +352,29 @@ fn a_closed_round_says_when_and_how_it_ended_and_an_item_in_review_shows_its_pul
     let mut state = team_with_rounds();
     {
         let mut team = state.team_mut(&team_id(0)).unwrap();
-        let mut item = team.item_mut("1.2".parse().unwrap()).unwrap();
-        item.advance(ItemPhase::InReview {
-            pr: crate::fixtures::pr(7),
-            reviews: Vec::new(),
-        })
-        .unwrap();
-        item.ask_reviews(vec![crate::fixtures::review("inv-codex", 4)]).unwrap();
+        {
+            let mut item = team.item_mut("1.2".parse().unwrap()).unwrap();
+            item.advance(ItemPhase::InReview {
+                pr: crate::fixtures::pr(7),
+                reviews: Vec::new(),
+            })
+            .unwrap();
+            item.ask_reviews(vec![crate::fixtures::review("inv-codex", 4)]).unwrap();
+        }
+        let tasks: Vec<_> = team
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member.task().clone())
+            .collect();
+        for task in tasks {
+            team.crew_mut()
+                .find_mut(&task)
+                .unwrap()
+                .1
+                .transition(agent_core::status::TaskStatus::Stopped)
+                .unwrap();
+        }
         team.close_round(&round_id(2), at(50), RoundEnd::Abandoned).unwrap();
     }
 

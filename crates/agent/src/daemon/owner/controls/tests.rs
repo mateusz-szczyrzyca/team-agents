@@ -178,14 +178,24 @@ async fn pause_holds_the_task_and_unpause_resumes_its_session() {
 
 #[tokio::test]
 async fn resume_starts_a_stopped_task_again() {
-    let mut daemon = running().await;
+    let mut daemon = running_pair().await;
     daemon.ask(control(ControlAction::Stop, of_task(1))).await.unwrap();
     daemon.scenario(1, "done");
 
     let reply = daemon.ask(control(ControlAction::Resume, of_task(1))).await.unwrap();
 
     assert_eq!(reply, Reply::Applied { tasks: vec![task(1)] });
-    daemon.status_is(1, TaskStatus::Done).await;
+    let state = daemon
+        .state_where("task 1 to have run again", |state| {
+            state.find_task(&task(1)).unwrap().member.runs().len() == 2
+        })
+        .await;
+    assert_eq!(
+        last_end(&state, 1),
+        RunEnd::Reported {
+            outcome: agent_core::status::RunOutcome::Done,
+        }
+    );
     assert_eq!(
         controls(&daemon, 1)
             .iter()

@@ -24,6 +24,24 @@ fn team_with_round() -> Team {
     team
 }
 
+/// Stops every member of `team`, leaving nobody to work on its rounds.
+fn stop_crew(team: &mut Team) {
+    let tasks: Vec<TaskId> = team
+        .crew()
+        .roster()
+        .into_iter()
+        .map(|(_, member)| member.task().clone())
+        .collect();
+    for task in tasks {
+        team.crew_mut()
+            .find_mut(&task)
+            .unwrap()
+            .1
+            .transition(crate::status::TaskStatus::Stopped)
+            .unwrap();
+    }
+}
+
 /// The error of reading `team`: what is wrong with its rounds.
 fn read_error(team: &Team) -> RoundsError {
     match check_rounds(team) {
@@ -59,6 +77,7 @@ fn a_round_is_opened_open_for_an_item_and_found_by_its_id_and_by_its_item() {
 fn rounds_are_kept_in_the_order_they_were_opened_and_the_open_ones_are_listed_in_it() {
     let mut team = team_with_round();
     team.open_round(round_id(2), Some(item("2.1")), at(2)).unwrap();
+    stop_crew(&mut team);
     team.close_round(&round_id(1), at(3), RoundEnd::Abandoned).unwrap();
     team.open_round(round_id(3), None, at(4)).unwrap_err();
 
@@ -94,6 +113,7 @@ fn an_item_has_one_round_even_when_the_first_is_closed() {
     let mut team = team_with_round();
 
     let open = team.open_round(round_id(2), Some(item("1.2")), at(2)).unwrap_err();
+    stop_crew(&mut team);
     team.close_round(&round_id(1), at(3), RoundEnd::Abandoned).unwrap();
     let closed = team.open_round(round_id(2), Some(item("1.2")), at(4)).unwrap_err();
 
@@ -167,6 +187,7 @@ fn team_without_items() -> Team {
 fn a_round_is_closed_with_the_time_and_the_way_it_ended() {
     let mut team = team_with_round();
 
+    stop_crew(&mut team);
     team.close_round(&round_id(1), at(9), RoundEnd::Abandoned).unwrap();
 
     let round = team.round(&round_id(1)).unwrap();
@@ -195,6 +216,7 @@ fn closing_is_refused_for_a_round_that_is_not_there() {
 fn a_round_cannot_be_closed_before_it_was_opened_and_stays_open() {
     let mut team = team_with_round();
 
+    stop_crew(&mut team);
     let err = team.close_round(&round_id(1), at(0), RoundEnd::Abandoned).unwrap_err();
 
     assert_eq!(
@@ -212,6 +234,7 @@ fn a_round_cannot_be_closed_before_it_was_opened_and_stays_open() {
 fn a_round_closed_at_the_moment_it_was_opened_is_closed() {
     let mut team = team_with_round();
 
+    stop_crew(&mut team);
     team.close_round(&round_id(1), at(1), RoundEnd::Abandoned).unwrap();
 
     assert!(!team.round(&round_id(1)).unwrap().is_open());
@@ -220,6 +243,7 @@ fn a_round_closed_at_the_moment_it_was_opened_is_closed() {
 #[test]
 fn a_closed_round_is_never_opened_again() {
     let mut team = team_with_round();
+    stop_crew(&mut team);
     team.close_round(&round_id(1), at(2), RoundEnd::Abandoned).unwrap();
     let before = team.clone();
 
@@ -303,7 +327,7 @@ fn a_round_ends_as_approved_when_its_item_is_approved_or_done_as_merged_and_not_
 }
 
 #[test]
-fn a_round_is_abandoned_whatever_its_item_is_doing() {
+fn a_round_is_abandoned_for_every_item_phase_when_its_team_is_over() {
     for phase in [
         PhaseKind::Pending,
         PhaseKind::InProgress,
@@ -313,6 +337,7 @@ fn a_round_is_abandoned_whatever_its_item_is_doing() {
     ] {
         let mut team = team_at(phase);
 
+        stop_crew(&mut team);
         team.close_round(&round_id(1), at(60), RoundEnd::Abandoned).unwrap();
 
         assert_eq!(
@@ -344,6 +369,7 @@ fn the_round_of_a_whole_list_cannot_end_as_merged_or_approved_but_is_abandoned_w
     let mut team = team_without_items();
     team.open_round(round_id(1), None, at(1)).unwrap();
 
+    stop_crew(&mut team);
     team.close_round(&round_id(1), at(2), RoundEnd::Abandoned).unwrap();
 
     assert_eq!(team.round(&round_id(1)).unwrap().ended(), Some(RoundEnd::Abandoned));
@@ -370,6 +396,7 @@ fn an_item_leaves_pending_only_with_a_round() {
 #[test]
 fn an_item_with_a_closed_round_goes_on_and_an_unknown_item_is_refused() {
     let mut team = team_with_round();
+    stop_crew(&mut team);
     team.close_round(&round_id(1), at(2), RoundEnd::Abandoned).unwrap();
 
     team.advance_item(

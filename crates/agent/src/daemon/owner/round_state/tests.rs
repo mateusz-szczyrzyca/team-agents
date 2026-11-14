@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use agent_core::ids::{ItemId, RoundId};
 use agent_core::state::RoundEnd;
+use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{DelegationRequest, DelegationStatus, RequestId};
 
 use super::{OwnerError, open_rounds_of, rounds_for};
@@ -22,6 +23,15 @@ fn the_open_rounds_of_a_team_are_its_rounds_that_have_not_ended_oldest_first() {
     let second: ItemId = "1.2".parse().unwrap();
     state.open_round(&team, round(1), Some(first), at(1)).unwrap();
     state.open_round(&team, round(2), Some(second), at(2)).unwrap();
+    state
+        .team_mut(&team)
+        .unwrap()
+        .crew_mut()
+        .find_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Stopped)
+        .unwrap();
     state.close_round(&round(1), at(3), RoundEnd::Abandoned).unwrap();
 
     let open = open_rounds_of(&state, &team).unwrap();
