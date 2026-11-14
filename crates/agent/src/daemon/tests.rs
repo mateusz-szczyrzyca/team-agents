@@ -711,6 +711,11 @@ async fn a_socket_file_left_by_a_dead_daemon_is_replaced() {
 #[tokio::test]
 async fn status_over_the_socket_lists_the_teams_with_their_tasks() {
     let mut f = Fixture::new(&solo_state(), 3, "hang");
+    std::fs::write(
+        f.home.config_file(),
+        format!("{}\n[history]\nenabled = false\n", config(3)),
+    )
+    .unwrap();
     f.start().await;
     f.status_is(TaskStatus::Running).await;
     let mut connection = f.connect().await;
@@ -733,6 +738,11 @@ async fn status_over_the_socket_lists_the_teams_with_their_tasks() {
 #[tokio::test]
 async fn status_of_a_team_or_a_task_names_only_its_team_and_an_unknown_one_is_not_found() {
     let mut f = Fixture::new(&solo_state(), 3, "hang");
+    std::fs::write(
+        f.home.config_file(),
+        format!("{}\n[history]\nenabled = false\n", config(3)),
+    )
+    .unwrap();
     f.start().await;
     let mut connection = f.connect().await;
     let team = f.state().teams()[0].id().clone();
@@ -1002,6 +1012,11 @@ async fn a_subscription_to_another_team_gets_no_events_of_this_one() {
 async fn a_line_that_is_not_a_request_is_answered_with_an_error_and_the_connection_goes_on() {
     use agent_core::protocol::{Frame, Outcome};
     let mut f = Fixture::new(&solo_state(), 3, "hang");
+    std::fs::write(
+        f.home.config_file(),
+        format!("{}\n[history]\nenabled = false\n", config(3)),
+    )
+    .unwrap();
     f.start().await;
     let mut connection = RawConnection::open(&f.home).await;
 
@@ -1063,6 +1078,11 @@ async fn a_request_of_a_subscriber_that_arrives_in_parts_around_an_event_is_answ
     use agent_core::protocol::{Frame, Outcome};
     use tokio::io::AsyncWriteExt;
     let mut f = Fixture::new(&rate_limited_state(), 3, "hang");
+    std::fs::write(
+        f.home.config_file(),
+        format!("{}\n[history]\nenabled = false\n", config(3)),
+    )
+    .unwrap();
     f.start().await;
     f.status_is(TaskStatus::Paused).await;
     let mut connection = RawConnection::open(&f.home).await;
