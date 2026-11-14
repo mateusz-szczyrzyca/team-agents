@@ -2,8 +2,8 @@ use agent_core::state::RunEnd;
 use agent_core::status::{RunOutcome, TaskStatus};
 
 use super::*;
-use crate::daemon::team::support::{CHAIN, PLAIN, crew_of, ran, reported, solo, task_id};
-use crate::daemon::team::{assignable, start_item};
+use crate::daemon::team::assignable;
+use crate::daemon::team::support::{CHAIN, PLAIN, crew_of, ran, reported, solo, start, task_id};
 
 fn agent(name: &str) -> AgentName {
     name.parse().unwrap()
@@ -18,8 +18,7 @@ fn told(team: &Team, n: u32, end: &RunEnd, message: Option<&str>) -> Option<Told
 fn working() -> Team {
     let mut team = crew_of(CHAIN, 1, 1);
     for given in assignable(&team).unwrap() {
-        let mut progress = team.item_mut(given.item).unwrap();
-        start_item(&mut progress, &given).unwrap();
+        start(&mut team, &given);
     }
     team
 }

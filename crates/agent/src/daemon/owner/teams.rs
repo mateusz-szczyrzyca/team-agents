@@ -16,7 +16,7 @@ use agent_core::decide::assign::first_free_worker;
 use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::protocol::{EventKind, Failure, FailureKind, Reply, RunRequest, TeamSummary};
-use agent_core::state::{RunEnd, Timestamp};
+use agent_core::state::{AdvanceItemError, RunEnd, Timestamp};
 use agent_core::status::{ItemStatus, TaskStatus};
 use agent_runtime::agentbus::{
     AgentBusError, DelegationStatus, DelegationUpdate, FailureClass, MemberState, Recipient, RequestId, Woken,
@@ -466,14 +466,16 @@ impl Owner {
             .state
             .team_mut(team_id)
             .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
-        let mut item = team_mut.item_mut(assigned.item).ok_or_else(|| OwnerError::LostItem {
-            team: team_id.clone(),
-            item: assigned.item,
-        })?;
-        start_item(&mut item, assigned).map_err(|source| OwnerError::Item {
-            team: team_id.clone(),
-            item: assigned.item,
-            source,
+        start_item(&mut team_mut, assigned).map_err(|source| match source {
+            AdvanceItemError::NoSuchItem { item } => OwnerError::LostItem {
+                team: team_id.clone(),
+                item,
+            },
+            source => OwnerError::StartItem {
+                team: team_id.clone(),
+                item: assigned.item,
+                source,
+            },
         })
     }
 

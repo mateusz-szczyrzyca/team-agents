@@ -12,7 +12,8 @@ use agent_core::ids::{
 use agent_core::kinds::{CliKind, Role};
 use agent_core::protocol::{Failure, FailureKind, RunRequest};
 use agent_core::state::{
-    AdvanceError, Crew, CrewError, InvalidTimestamp, Member, OpenRoundError, Participant, Team, TeamMembers, Timestamp,
+    AdvanceItemError, Crew, CrewError, InvalidTimestamp, Member, OpenRoundError, Participant, Team, TeamMembers,
+    Timestamp,
 };
 use agent_core::task_list::Item;
 use agent_runtime::agentbus::{BusTier, MemberState, NewMember, NewTeam};
@@ -96,7 +97,7 @@ pub(in crate::daemon) enum FormError {
         /// The item.
         item: ItemId,
         /// What the state said.
-        source: AdvanceError,
+        source: AdvanceItemError,
     },
     /// A name of the team is not an agent name.
     #[error("the name of a member of the team is not an agent name")]
@@ -200,12 +201,12 @@ pub(in crate::daemon) fn form(
         let round = fresh_round(clock, rng, &rounds)?;
         rounds.push(round.clone());
         team.open_round(round, Some(assigned.item), created_at)?;
-        let mut item = team
-            .item_mut(assigned.item)
-            .ok_or(FormError::NoSuchItem { item: assigned.item })?;
-        start_item(&mut item, assigned).map_err(|source| FormError::Advance {
-            item: assigned.item,
-            source,
+        start_item(&mut team, assigned).map_err(|source| match source {
+            AdvanceItemError::NoSuchItem { item } => FormError::NoSuchItem { item },
+            source => FormError::Advance {
+                item: assigned.item,
+                source,
+            },
         })?;
     }
     if team.items().is_empty() {

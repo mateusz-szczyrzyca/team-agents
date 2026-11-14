@@ -3,7 +3,7 @@
 use agent_core::decide::assign::{AssignError, AssignmentRequest, next_assignments};
 use agent_core::ids::{AgentName, BranchName, InvalidBranchName, InvalidName, ItemId, TaskId};
 use agent_core::kinds::Role;
-use agent_core::state::{AdvanceError, ItemMut, ItemPhase, Participant, Team};
+use agent_core::state::{AdvanceItemError, ItemPhase, Participant, Team, TeamMut};
 use agent_core::status::TaskStatus;
 
 /// An item given to a member, with the branch the member works on it.
@@ -123,15 +123,43 @@ pub(in crate::daemon) fn task_branch(agent: &AgentName, task: &TaskId) -> Result
     format!("agents/{agent}/{task}").parse()
 }
 
+/// A whole-team handle through which an assigned item can change phase.
+pub(in crate::daemon) trait AssignedTeam {
+    /// Moves `item` to `next`, keeping the team's item and round invariants.
+    fn advance_assigned(&mut self, item: ItemId, next: ItemPhase) -> Result<(), AdvanceItemError>;
+}
+
+impl AssignedTeam for Team {
+    fn advance_assigned(&mut self, item: ItemId, next: ItemPhase) -> Result<(), AdvanceItemError> {
+        let mut progress = self.item_mut(item).ok_or(AdvanceItemError::NoSuchItem { item })?;
+        progress.advance(next)?;
+        Ok(())
+    }
+}
+
+impl AssignedTeam for TeamMut<'_> {
+    fn advance_assigned(&mut self, item: ItemId, next: ItemPhase) -> Result<(), AdvanceItemError> {
+        let mut progress = self.item_mut(item).ok_or(AdvanceItemError::NoSuchItem { item })?;
+        progress.advance(next)?;
+        Ok(())
+    }
+}
+
 /// Records that `assigned` works on its item.
 ///
 /// # Errors
-/// [`AdvanceError`] when the item is not pending.
-pub(in crate::daemon) fn start_item(item: &mut ItemMut<'_>, assigned: &Assigned) -> Result<(), AdvanceError> {
-    item.advance(ItemPhase::InProgress {
-        assignee: assigned.agent.clone(),
-        branch: assigned.branch.clone(),
-    })
+/// [`AdvanceItemError`] when the item is not pending, is not in the team, or has no round.
+pub(in crate::daemon) fn start_item<T: AssignedTeam>(
+    team: &mut T,
+    assigned: &Assigned,
+) -> Result<(), AdvanceItemError> {
+    team.advance_assigned(
+        assigned.item,
+        ItemPhase::InProgress {
+            assignee: assigned.agent.clone(),
+            branch: assigned.branch.clone(),
+        },
+    )
 }
 
 #[cfg(test)]

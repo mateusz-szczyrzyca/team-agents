@@ -1,10 +1,11 @@
 //! Builders of teams and configurations for the tests of the team's decisions.
 
 use agent_core::config::Config;
-use agent_core::ids::TaskId;
+use agent_core::ids::{RoundId, TaskId};
 use agent_core::state::{Crew, MergeMode, RunEnd, TaskListText, Team, TeamMembers};
 use agent_core::status::{RunOutcome, TaskStatus};
 
+use super::{Assigned, start_item};
 use crate::fixtures::{at, investigator, member, normal, run, task, team_id, worker};
 
 /// A configuration with three normal agents, two workers (`glm-1` first), three investigators and one repository.
@@ -113,6 +114,14 @@ fn team(list: &str, crew: Crew) -> Team {
 /// The repository of the sample teams.
 fn repo_name() -> agent_core::config::RepoName {
     "example".parse().unwrap()
+}
+
+/// Opens the round of the assigned item and starts it, as the daemon does.
+pub(super) fn start(team: &mut Team, given: &Assigned) {
+    let position = team.items().iter().position(|item| item.id() == given.item).unwrap();
+    let round = RoundId::derive(team.id(), u32::try_from(position).unwrap());
+    team.open_round(round, Some(given.item), at(0)).unwrap();
+    start_item(team, given).unwrap();
 }
 
 /// Moves the task `n` through `statuses`, one after the other.

@@ -2,14 +2,15 @@ use agent_core::state::ItemPhase;
 use agent_core::status::{RunOutcome, TaskStatus};
 
 use super::*;
-use crate::daemon::team::support::{ALL_DONE, CHAIN, PARALLEL, PLAIN, crew_of, go, ran, reported, solo, task_id};
-use crate::daemon::team::{assignable, start_item};
+use crate::daemon::team::assignable;
+use crate::daemon::team::support::{
+    ALL_DONE, CHAIN, PARALLEL, PLAIN, crew_of, go, ran, reported, solo, start, task_id,
+};
 
 /// Gives every item an assignee, as the daemon does.
 fn assign(team: &mut Team) {
     for given in assignable(team).unwrap() {
-        let mut progress = team.item_mut(given.item).unwrap();
-        start_item(&mut progress, &given).unwrap();
+        start(team, &given);
     }
 }
 

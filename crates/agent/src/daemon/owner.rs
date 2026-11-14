@@ -249,6 +249,16 @@ pub(crate) enum OwnerError {
         /// What the state said.
         source: agent_core::state::AdvanceError,
     },
+    /// An item cannot be given to a member with its round.
+    #[error("item {item} of team {team} cannot be given to a member")]
+    StartItem {
+        /// The team.
+        team: TeamId,
+        /// The item.
+        item: agent_core::ids::ItemId,
+        /// What the state said.
+        source: agent_core::state::AdvanceItemError,
+    },
     /// What a member's run ending tells the others cannot be made.
     #[error("what a run's end tells the team cannot be made")]
     Told(#[from] super::team::NoticeError),

@@ -1,9 +1,9 @@
 use agent_core::ids::{AgentName, ItemId, TaskId};
-use agent_core::state::{ItemPhase, Team};
+use agent_core::state::{AdvanceError, AdvanceItemError, ItemPhase, Team};
 use agent_core::status::TaskStatus;
 
 use super::*;
-use crate::daemon::team::support::{CHAIN, PARALLEL, crew_of, go, solo, task_id};
+use crate::daemon::team::support::{CHAIN, PARALLEL, crew_of, go, solo, start, task_id};
 
 fn agent(name: &str) -> AgentName {
     name.parse().unwrap()
@@ -24,8 +24,7 @@ fn assigned(team: &Team) -> Vec<(String, String)> {
 /// Applies the assignments of `team`, as the daemon does.
 fn apply(team: &mut Team) {
     for given in assignable(team).unwrap() {
-        let mut progress = team.item_mut(given.item).unwrap();
-        start_item(&mut progress, &given).unwrap();
+        start(team, &given);
     }
 }
 
@@ -143,8 +142,7 @@ fn starting_an_item_records_the_member_and_the_branch() {
     let mut team = crew_of(CHAIN, 1, 0);
     let given = assignable(&team).unwrap().remove(0);
 
-    let mut progress = team.item_mut(given.item).unwrap();
-    start_item(&mut progress, &given).unwrap();
+    start(&mut team, &given);
 
     let phase = team.item(item("1.1")).unwrap().phase();
     assert_eq!(
@@ -160,11 +158,25 @@ fn starting_an_item_records_the_member_and_the_branch() {
 fn an_item_that_is_not_pending_cannot_be_started_again() {
     let mut team = crew_of(CHAIN, 1, 0);
     let given = assignable(&team).unwrap().remove(0);
-    let mut progress = team.item_mut(given.item).unwrap();
-    start_item(&mut progress, &given).unwrap();
+    start(&mut team, &given);
 
-    let mut progress = team.item_mut(given.item).unwrap();
-    let again = start_item(&mut progress, &given);
+    let again = start_item(&mut team, &given);
 
-    assert!(matches!(again, Err(AdvanceError::Transition(_))), "{again:?}");
+    assert!(
+        matches!(again, Err(AdvanceItemError::Advance(AdvanceError::Transition(_)))),
+        "{again:?}"
+    );
+}
+
+#[test]
+fn an_item_cannot_start_without_its_round() {
+    let mut team = crew_of(CHAIN, 1, 0);
+    let given = assignable(&team).unwrap().remove(0);
+
+    let refused = start_item(&mut team, &given);
+
+    assert!(
+        matches!(refused, Err(AdvanceItemError::NoRound { item }) if item == given.item),
+        "{refused:?}"
+    );
 }

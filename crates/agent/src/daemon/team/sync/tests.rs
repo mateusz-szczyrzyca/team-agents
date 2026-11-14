@@ -3,8 +3,8 @@ use agent_core::status::{RunOutcome, TaskStatus};
 use serde_json::json;
 
 use super::*;
-use crate::daemon::team::support::{CHAIN, PLAIN, crew_of, go, ran, reported, task_id};
-use crate::daemon::team::{assignable, start_item};
+use crate::daemon::team::assignable;
+use crate::daemon::team::support::{CHAIN, PLAIN, crew_of, go, ran, reported, start, task_id};
 
 fn agent(name: &str) -> AgentName {
     name.parse().unwrap()
@@ -35,8 +35,7 @@ fn bus(coordinator: &str, member: &str, worker: &str) -> BusTeam {
 
 fn assign(team: &mut Team) {
     for given in assignable(team).unwrap() {
-        let mut progress = team.item_mut(given.item).unwrap();
-        start_item(&mut progress, &given).unwrap();
+        start(team, &given);
     }
 }
 
