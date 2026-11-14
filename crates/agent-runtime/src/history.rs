@@ -4,12 +4,14 @@
 //! read-only ([`Reader`]) and need no daemon. The schema ([`schema`]) is built by forward-only migrations ([`migrate`])
 //! and is documented, table by table, in `docs/history.md`. The records are the types of [`agent_core::history`].
 
+mod codec;
 mod db;
 mod error;
 mod handle;
 pub mod migrate;
 mod reader;
 pub mod schema;
+mod write;
 
 pub use db::{HistoryDb, Store};
 pub use error::{CloseError, OpenError, ReadError, RecordKind, StartError, ValueProblem, WriteError, WriteKind};

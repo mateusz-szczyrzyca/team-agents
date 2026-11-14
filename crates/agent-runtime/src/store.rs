@@ -29,6 +29,9 @@ use crate::text_file::{TextFileError, read_text_file};
 /// The state file in the home.
 const STATE_FILE: &str = "state.json";
 
+/// The database of the history in the home.
+const HISTORY_FILE: &str = "history.db";
+
 /// The file whose lock says that a daemon owns the home.
 const LOCK_FILE: &str = "daemon.lock";
 
@@ -114,6 +117,12 @@ impl Home {
     #[must_use]
     pub fn state_file(&self) -> PathBuf {
         self.root().join(STATE_FILE)
+    }
+
+    /// The database of the history, `history.db`.
+    #[must_use]
+    pub fn history_file(&self) -> PathBuf {
+        self.root().join(HISTORY_FILE)
     }
 
     /// The lock file of the daemon.

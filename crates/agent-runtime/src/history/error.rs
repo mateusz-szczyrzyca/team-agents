@@ -114,6 +114,28 @@ pub enum WriteError {
         /// What SQLite said.
         source: rusqlite::Error,
     },
+    /// The transaction of a batch cannot be begun or committed.
+    #[error("cannot begin or commit the transaction of a batch of history records")]
+    Transaction {
+        /// What SQLite said.
+        source: rusqlite::Error,
+    },
+    /// The record breaks a rule that the database cannot check by itself.
+    #[error("a {record} record of the history breaks a rule: {rule}")]
+    Rule {
+        /// The record.
+        record: RecordKind,
+        /// The rule, in words.
+        rule: &'static str,
+    },
+    /// A path of the record is not text.
+    #[error("a path of a {record} record is not text: {path:?}")]
+    PathNotText {
+        /// The record.
+        record: RecordKind,
+        /// The path.
+        path: PathBuf,
+    },
     /// A list of the record cannot be written as JSON.
     #[error("cannot write a list of a {record} record as JSON")]
     Json {
@@ -137,8 +159,9 @@ impl WriteError {
     #[must_use]
     pub fn kind(&self) -> WriteKind {
         match self {
-            Self::Sqlite { source, .. } => sqlite_kind(source),
-            Self::Json { .. } | Self::Number { .. } => WriteKind::Encoding,
+            Self::Sqlite { source, .. } | Self::Transaction { source } => sqlite_kind(source),
+            Self::Rule { .. } => WriteKind::Refused,
+            Self::Json { .. } | Self::Number { .. } | Self::PathNotText { .. } => WriteKind::Encoding,
         }
     }
 }
@@ -190,6 +213,9 @@ pub enum ValueProblem {
     /// A branch.
     #[error("not a branch")]
     Branch(#[from] agent_core::ids::InvalidBranchName),
+    /// The names of the fields that were cut.
+    #[error("not the name of a field that is cut")]
+    Cut(#[from] agent_core::history::UnknownCutField),
     /// A list kept as JSON.
     #[error("not a JSON list of texts")]
     Json(#[from] serde_json::Error),

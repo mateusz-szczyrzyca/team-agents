@@ -1,14 +1,20 @@
 //! The database of the history, opened for writing: its pragmas, its migrations and the transaction a batch of records
 //! is written in.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::time::Duration;
 
 use agent_core::history::{MaxTextBytes, Record};
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 use super::error::{OpenError, WriteError};
-use super::migrate::Migration;
+use super::migrate::{self, Migration};
 use super::schema::MIGRATIONS;
+use super::write;
+
+/// How long the writer waits for a lock another process holds (a reader that checkpoints, a person with `sqlite3`) before
+/// the batch fails and is counted as lost.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Where records are written: the database, or whatever stands in for it where a test needs the writer to stall or
 /// fail.
@@ -25,8 +31,6 @@ pub trait Store: Send + 'static {
 pub struct HistoryDb {
     /// The connection: the only one that writes.
     connection: Connection,
-    /// The file, for the messages of errors.
-    path: PathBuf,
     /// The longest text one field keeps.
     limit: MaxTextBytes,
 }
@@ -42,25 +46,47 @@ impl HistoryDb {
 
     /// Opens the database at `path` and migrates it with `migrations` instead of the schema of this build.
     ///
+    /// A database of a version newer than the last of `migrations` is left as it is: nothing is written to it.
+    ///
     /// # Errors
     /// [`OpenError`].
     pub fn open_with(path: &Path, migrations: &[Migration], limit: MaxTextBytes) -> Result<Self, OpenError> {
-        let _ = migrations;
-        let connection = Connection::open_in_memory().map_err(|source| OpenError::Database {
+        migrate::check_order(migrations)?;
+        let database = |source| OpenError::Database {
             path: path.to_path_buf(),
             source,
-        })?;
-        Ok(Self {
-            connection,
-            path: path.to_path_buf(),
-            limit,
-        })
-    }
-
-    /// The file the database is in.
-    #[must_use]
-    pub fn path(&self) -> &Path {
-        &self.path
+        };
+        let mut connection = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(database)?;
+        connection.busy_timeout(BUSY_TIMEOUT).map_err(database)?;
+        let found = migrate::version_of(&connection).map_err(database)?;
+        let supported = migrate::latest(migrations);
+        if found > supported {
+            return Err(OpenError::Newer {
+                path: path.to_path_buf(),
+                found,
+                supported,
+            });
+        }
+        let mode: String = connection
+            .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
+            .map_err(database)?;
+        if !mode.eq_ignore_ascii_case("wal") {
+            return Err(OpenError::NotWal {
+                path: path.to_path_buf(),
+                mode,
+            });
+        }
+        // The log is flushed at its checkpoints, not at every commit: a crash may lose the last commits, never corrupts.
+        connection
+            .pragma_update(None, "synchronous", "NORMAL")
+            .map_err(database)?;
+        connection.pragma_update(None, "foreign_keys", true).map_err(database)?;
+        migrate::apply(&mut connection, migrations, path)?;
+        Ok(Self { connection, limit })
     }
 
     /// The longest text one field keeps.
@@ -68,17 +94,19 @@ impl HistoryDb {
     pub const fn limit(&self) -> MaxTextBytes {
         self.limit
     }
-
-    /// The connection, for the tests of this module's siblings.
-    #[must_use]
-    pub(super) const fn connection(&self) -> &Connection {
-        &self.connection
-    }
 }
 
 impl Store for HistoryDb {
     fn write(&mut self, records: &[Record]) -> Result<(), WriteError> {
-        let _ = records;
-        Ok(())
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|source| WriteError::Transaction { source })?;
+        for record in records {
+            write::insert(&transaction, record, self.limit)?;
+        }
+        transaction
+            .commit()
+            .map_err(|source| WriteError::Transaction { source })
     }
 }
