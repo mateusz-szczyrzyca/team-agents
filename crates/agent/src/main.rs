@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use agent_core::ids::{AgentName, InvalidId, TaskId};
+use agent_core::ids::{AgentName, InvalidId, RoundId, TaskId, TeamId};
 use agent_core::protocol::{SayError, Target};
 use agent_core::state::MergeMode;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -31,6 +31,9 @@ mod fixtures;
 mod gate_command_tests;
 mod lines;
 #[cfg(test)]
+#[path = "tests/log_command.rs"]
+mod log_command_tests;
+#[cfg(test)]
 #[path = "tests/run_command.rs"]
 mod run_command_tests;
 #[cfg(test)]
@@ -45,6 +48,7 @@ use crate::commands::answer::{AnswerError, Source, answer};
 use crate::commands::control::ControlError;
 use crate::commands::daemon::{DaemonCommandError, daemon};
 use crate::commands::gate::{GateError, gate, task_in};
+use crate::commands::log::{LogError, LogRequest, log};
 use crate::commands::pause::pause;
 use crate::commands::resume::resume;
 use crate::commands::run::{RunError, RunInput, prepare, start};
@@ -86,6 +90,12 @@ const GATE: &str = "gate";
 const GATE_ABOUT: &str =
     "Runs the repository's gate for a task, one gate at a time on the machine, and says what it said";
 
+/// The name of the command that tells the story of a round or a team from the history.
+const LOG: &str = "log";
+
+/// What `agent log` is for, as the help says.
+const LOG_ABOUT: &str = "Tells the story of a round or a team from the history, with no daemon needed";
+
 /// What `agent run` is for, as the help says.
 const RUN_ABOUT: &str = "Starts a task or a team on the repository the current directory is in";
 
@@ -124,7 +134,8 @@ fn command() -> clap::Command {
     // The description is set after the arguments: `augment_args` gives the command the doc comment of `RunArgs`.
     let with_run = Cli::command()
         .subcommand(RunArgs::augment_args(clap::Command::new(RUN)).about(RUN_ABOUT))
-        .subcommand(GateArgs::augment_args(clap::Command::new(GATE)).about(GATE_ABOUT));
+        .subcommand(GateArgs::augment_args(clap::Command::new(GATE)).about(GATE_ABOUT))
+        .subcommand(LogArgs::augment_args(clap::Command::new(LOG)).about(LOG_ABOUT));
     // `augment_subcommands` gives the command the doc comment of `Steer` as its description: the description is kept.
     let about = with_run.get_about().cloned();
     let steering = Steer::augment_subcommands(with_run);
@@ -146,6 +157,8 @@ enum Invocation {
     Steer(Steer),
     /// `gate`.
     Gate(GateArgs),
+    /// `log`.
+    Log(LogArgs),
 }
 
 /// Parses `args` (the program name first) as `agent` takes them, the commands that steer included.
@@ -166,6 +179,9 @@ where
     if let Some((GATE, gate)) = matches.subcommand() {
         return Ok(Invocation::Gate(GateArgs::from_arg_matches(gate)?));
     }
+    if let Some((LOG, log)) = matches.subcommand() {
+        return Ok(Invocation::Log(LogArgs::from_arg_matches(log)?));
+    }
     parse(args).map(Invocation::Parsed)
 }
 
@@ -184,6 +200,65 @@ struct RunArgs {
     /// Stop before the merge of an approved pull request and hand it to you.
     #[arg(long)]
     no_merge: bool,
+}
+
+/// The arguments of `agent log`.
+#[derive(Debug, Args)]
+#[command(group = clap::ArgGroup::new("what").required(true).multiple(false).args(["round", "team"]))]
+struct LogArgs {
+    /// The round to tell (`round-…`): its item, its agents, every run, the pull request and the reviews, to its end.
+    #[arg(long, value_parser = parse_round, value_name = "ROUND")]
+    round: Option<RoundId>,
+    /// The team to tell (`team-…`): the stories of its rounds, in order.
+    #[arg(long, value_parser = parse_team, value_name = "TEAM")]
+    team: Option<TeamId>,
+    /// Print every prompt whole, not its first lines.
+    #[arg(long)]
+    prompts: bool,
+    /// Leave the steps of the runs out of the text.
+    #[arg(long)]
+    no_steps: bool,
+    /// Print the records as JSON lines, each exactly once, whole: `--prompts` and `--no-steps` do not change them.
+    #[arg(long)]
+    json: bool,
+}
+
+/// Why a text is not a round.
+#[derive(Debug, thiserror::Error)]
+#[error("{text:?} is not a round ID (round-YYYYMMDD-HHMMSS-xxxx)")]
+struct RoundArgError {
+    /// What was given.
+    text: String,
+    /// What is wrong with it.
+    #[source]
+    source: InvalidId,
+}
+
+/// Reads a round ID from the command line.
+fn parse_round(text: &str) -> Result<RoundId, RoundArgError> {
+    text.parse().map_err(|source| RoundArgError {
+        text: text.to_owned(),
+        source,
+    })
+}
+
+/// Why a text is not a team.
+#[derive(Debug, thiserror::Error)]
+#[error("{text:?} is not a team ID (team-YYYYMMDD-HHMMSS-xxxx)")]
+struct TeamArgError {
+    /// What was given.
+    text: String,
+    /// What is wrong with it.
+    #[source]
+    source: InvalidId,
+}
+
+/// Reads a team ID from the command line.
+fn parse_team(text: &str) -> Result<TeamId, TeamArgError> {
+    text.parse().map_err(|source| TeamArgError {
+        text: text.to_owned(),
+        source,
+    })
 }
 
 /// The arguments of `agent gate`.
@@ -366,6 +441,9 @@ enum CommandError {
     /// `agent gate` failed.
     #[error(transparent)]
     Gate(#[from] GateError),
+    /// `agent log` failed.
+    #[error(transparent)]
+    Log(#[from] LogError),
     /// The editor for `agent answer` cannot be found.
     #[error(transparent)]
     Editor(#[from] EditorError),
@@ -412,6 +490,8 @@ where
         Ok(Invocation::Parsed(Parsed::Run(args))) => finish(execute_blocking(environment, Work::Run(args), out), err)?,
         Ok(Invocation::Steer(steer)) => finish(execute_blocking(environment, Work::Steer(steer), out), err)?,
         Ok(Invocation::Gate(args)) => finish(execute_blocking(environment, Work::Gate(args), out), err)?,
+        // `log` reads a file and needs no runtime: it runs on the thread of the command.
+        Ok(Invocation::Log(args)) => finish(execute_log(environment, args, out), err)?,
         // `--version` and `--help` arrive here too, as "errors" meant for stdout.
         Err(answer) if !answer.use_stderr() => {
             write_text(out, &answer.render().to_string())?;
@@ -434,7 +514,20 @@ fn finish(result: Result<(), CommandError>, err: &mut impl Write) -> Result<Exit
         Ok(()) => Ok(ExitCode::SUCCESS),
         Err(error) => {
             write_text(err, &format!("agent: {}\n", error_chain(&error)))?;
-            Ok(ExitCode::FAILURE)
+            Ok(match &error {
+                CommandError::Log(error) => ExitCode::from(error.exit_code()),
+                CommandError::Environment(_)
+                | CommandError::Client(_)
+                | CommandError::Status(_)
+                | CommandError::Run(_)
+                | CommandError::Daemon(_)
+                | CommandError::Control(_)
+                | CommandError::Words(_)
+                | CommandError::Answer(_)
+                | CommandError::Gate(_)
+                | CommandError::Editor(_)
+                | CommandError::Runtime(_) => ExitCode::FAILURE,
+            })
         }
     }
 }
@@ -510,6 +603,17 @@ async fn execute_steer(environment: &Environment, steer: Steer, out: &mut impl W
             say(&mut Connection::connect(&socket).await?, args.target, text, out).await?;
         }
     }
+    Ok(())
+}
+
+/// Carries out `agent log`: reads the history in the home and prints the story; the daemon is not asked.
+///
+/// # Errors
+/// [`CommandError`].
+fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -> Result<(), CommandError> {
+    let home = environment.home()?;
+    let request = LogRequest::new(args.round, args.team, args.prompts, args.no_steps, args.json)?;
+    log(&home.history_file(), &request, out)?;
     Ok(())
 }
 
