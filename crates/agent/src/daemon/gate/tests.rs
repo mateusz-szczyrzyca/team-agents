@@ -833,7 +833,7 @@ async fn a_gate_whose_worktree_git_cannot_read_after_it_ran_counts_a_capture_los
         .collect();
     assert_eq!(notes.len(), 1, "{read:?}");
     assert_eq!((notes[0].0, notes[0].1), ("gate", "capture_gate"));
-    assert!(!notes[0].2.is_empty());
+    assert_ne!(notes[0].2, "");
     assert_eq!(notes[0].3, &[round]);
 }
 
