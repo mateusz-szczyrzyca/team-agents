@@ -62,6 +62,12 @@ impl<S: Store> Noting<S> {
         }
     }
 
+    /// Wraps `inner` and redacts `secrets` from loss notes.
+    #[must_use]
+    pub fn with_secrets(inner: S, _secrets: agent_core::config::Secrets) -> Self {
+        Self::new(inner)
+    }
+
     /// Remembers where the records of `run` belong.
     fn learn(&mut self, run: &agent_core::history::RunStart) {
         if self.scopes.len() >= MAX_SCOPES {

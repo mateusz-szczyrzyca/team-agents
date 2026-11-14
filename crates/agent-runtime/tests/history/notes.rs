@@ -302,3 +302,56 @@ fn a_gate_event_without_rounds_that_fails_to_write_is_noted_in_the_rounds_of_its
     assert_eq!((what.as_str(), cause.as_str()), ("gate", "write_disk_full"));
     assert_eq!(notes[0].1, &[second_round]);
 }
+
+#[test]
+fn a_loss_note_redacts_configured_secrets_from_its_error_detail() {
+    struct SecretErrorStore {
+        written: Arc<Mutex<Vec<Vec<Record>>>>,
+        calls: usize,
+    }
+    impl Store for SecretErrorStore {
+        fn write(&mut self, records: &[Record]) -> Result<(), WriteError> {
+            let call = self.calls;
+            self.calls += 1;
+            if call == 1 {
+                return Err(WriteError::Rule {
+                    record: RecordKind::Step,
+                    rule: "failed while writing ghp_secret_marker_999 to disk",
+                });
+            }
+            self.written.lock().unwrap().push(records.to_vec());
+            Ok(())
+        }
+    }
+
+    let (run, first, second) = run_and_step(7);
+    let written = Arc::new(Mutex::new(Vec::new()));
+    let secrets = agent_core::config::Secrets::parse("github_token = \"ghp_secret_marker_999\"\n", 0o600).unwrap();
+    let mut store = Noting::with_secrets(
+        SecretErrorStore {
+            written: Arc::clone(&written),
+            calls: 0,
+        },
+        secrets,
+    );
+    store.write(&[Record::Run(Box::new(run))]).unwrap();
+    store.write(std::slice::from_ref(&first)).unwrap_err();
+    store.write(std::slice::from_ref(&second)).unwrap();
+
+    let details: Vec<String> = written
+        .lock()
+        .unwrap()
+        .iter()
+        .flatten()
+        .filter_map(|record| match record {
+            Record::Event(event) => match &event.event {
+                HistoryEvent::Lost { detail, .. } => Some(detail.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(details.len(), 1);
+    assert!(details[0].contains("[REDACTED]"), "{details:?}");
+    assert!(!details[0].contains("ghp_secret_marker_999"), "{details:?}");
+}
