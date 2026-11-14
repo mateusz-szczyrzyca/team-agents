@@ -494,7 +494,8 @@ impl ChecksPolicy {
 }
 
 /// Why the human is asked about the issues of a round.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AskReason {
     /// Every issue is one that only the human may allow.
     OnlyTheHumanMayAllow,

@@ -23,6 +23,10 @@ use crate::kinds::{CliKind, Keyword, Role, Tier, UnknownKeyword};
 use crate::protocol::Client;
 use crate::state::{CommitId, MergeMode, PrNumber, RunEnd, SessionId, Timestamp};
 
+mod event;
+
+pub use event::{CheckOutcome, EventKind, EventRecord, HistoryEvent};
+
 /// The longest text of one field the history keeps, in bytes, unless `[history] max_text_bytes` says otherwise: a prompt
 /// of a long task list fits.
 pub const DEFAULT_MAX_TEXT_BYTES: u32 = 1 << 20;
@@ -797,6 +801,8 @@ pub enum Record {
     Changes(Box<RunChanges>),
     /// A session reported after the CLI started.
     Session(Box<RunSession>),
+    /// A gate, a pull request, a review, a question, a control, a notification or an end.
+    Event(Box<EventRecord>),
 }
 
 /// Whether the history is being written, and what it lost.

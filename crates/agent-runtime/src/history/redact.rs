@@ -131,6 +131,7 @@ impl Redactor {
             Record::Session(session) => {
                 !self.contains(session.run.as_str()) && !self.contains(session.session.as_str())
             }
+            Record::Event(_) => true,
         }
     }
 
