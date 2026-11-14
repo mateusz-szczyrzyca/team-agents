@@ -798,16 +798,12 @@ async fn a_history_in_the_way_does_not_stop_a_round_and_status_shows_what_was_lo
 async fn a_history_of_a_newer_version_is_left_as_it_is_and_the_round_goes_on() {
     let mut rig = solo_rig().await;
     // A database of the version after the one this build writes: made with a list of migrations that is one longer.
-    let migrations = [
-        Migration {
-            version: 1,
-            sql: "create table from_the_past (x TEXT);",
-        },
-        Migration {
-            version: 2,
-            sql: "create table from_the_future (x TEXT);",
-        },
-    ];
+    let mut migrations = agent_runtime::history::schema::MIGRATIONS.to_vec();
+    let future_version = migrations.last().unwrap().version.checked_add(1).unwrap();
+    migrations.push(Migration {
+        version: future_version,
+        sql: "create table from_the_future (x TEXT);",
+    });
     drop(HistoryDb::open_with(&rig.home.history_file(), &migrations, MaxTextBytes::default()).unwrap());
     let before = std::fs::read(rig.home.history_file()).unwrap();
     rig.start().await;
@@ -828,7 +824,7 @@ async fn a_history_of_a_newer_version_is_left_as_it_is_and_the_round_goes_on() {
         panic!("{reply:?}")
     };
     assert!(
-        matches!(&history.state, agent_core::history::HistoryState::Unavailable { reason } if reason.contains("version 2")),
+        matches!(&history.state, agent_core::history::HistoryState::Unavailable { reason } if reason.contains(&format!("version {future_version}"))),
         "{history:?}"
     );
 }
