@@ -16,7 +16,7 @@
 #                   ends with STATUS: DONE: the gate that gates the commit is the daemon's own
 #   integrate-gated  integrates like `integrate` and waits for the daemon's gate like `gated`
 #   lead-gated      integrates like `integrate`, or commits a fix when the prompt is a fix pass; waits for the daemon's gate
-#   late:TEXT       waits three seconds, then ends with TEXT, a line break and STATUS: DONE
+#   late:TEXT       waits until the other reviewer of the pass has its verdict in `state.json`, then ends with TEXT and STATUS: DONE
 #   work            commits a file in the worktree, records that the repository's gate passed at the new head (the file
 #                   `gate.json` in the task's directory in the home the configuration names) and ends with STATUS: DONE
 #   commit          commits a file in the worktree, records no gate and ends with STATUS: DONE: the gate that was recorded
@@ -120,7 +120,21 @@ wait_for_gate() {
   : > ".fake-committed-$n"
   for _ in $(seq 1 600); do
     [[ -e ".fake-gate-done-$n" ]] && break
-    sleep 0.1
+    sleep 0.05
+  done
+}
+
+# Waits until the other reviewer of this review pass (`n`-th run of the reviewer task, so `2 * n - 1` submitted verdicts in
+# `state.json`) has had its verdict recorded by the daemon.
+wait_for_peer_review() {
+  local submitted
+  for _ in $(seq 1 600); do
+    if [[ -f "$home/state.json" ]]; then
+      # `grep -c` exits with 1 when no review is submitted yet.
+      submitted=$(grep -c '"submitted"' "$home/state.json" || test $? -eq 1)
+      (( submitted >= 2 * n - 1 )) && break
+    fi
+    sleep 0.05
   done
 }
 
@@ -176,8 +190,8 @@ case $action in
     result 'Led the round, and the gate ran.\nSTATUS: DONE'
     ;;
   late:*)
-    # Ends later than the other agents of a test that start with it: three seconds of waiting, then the text and STATUS: DONE.
-    sleep 3
+    # Ends after the other reviewer of the pass has had its verdict recorded in `state.json`, then prints the text and STATUS: DONE.
+    wait_for_peer_review
     result "${action#late:}"'\nSTATUS: DONE'
     ;;
   script:*)
