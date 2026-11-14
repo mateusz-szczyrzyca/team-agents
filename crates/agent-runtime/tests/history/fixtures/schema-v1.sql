@@ -3,7 +3,7 @@
 
 PRAGMA user_version = 1;
 
-CREATE TABLE teams (
+create table teams (
     team TEXT NOT NULL PRIMARY KEY,
     at TEXT NOT NULL,
     repo TEXT NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE teams (
     cut TEXT NOT NULL
 ) STRICT;
 
-CREATE TABLE plan (
+create table plan (
     team TEXT NOT NULL REFERENCES teams (team),
     position INTEGER NOT NULL CHECK (position >= 1),
     agent TEXT NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE plan (
     PRIMARY KEY (team, position)
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE rounds (
+create table rounds (
     round TEXT NOT NULL PRIMARY KEY,
     team TEXT NOT NULL,
     at TEXT NOT NULL,
@@ -44,7 +44,7 @@ CREATE TABLE rounds (
 
 CREATE INDEX rounds_by_team ON rounds (team, at);
 
-CREATE TABLE runs (
+create table runs (
     run TEXT NOT NULL PRIMARY KEY,
     team TEXT NOT NULL,
     task TEXT NOT NULL,
@@ -82,7 +82,7 @@ CREATE INDEX runs_by_team ON runs (team, at);
 
 CREATE INDEX runs_by_task ON runs (task, at);
 
-CREATE TABLE run_rounds (
+create table run_rounds (
     run TEXT NOT NULL REFERENCES runs (run),
     position INTEGER NOT NULL CHECK (position >= 1),
     round TEXT NOT NULL,
@@ -92,7 +92,7 @@ CREATE TABLE run_rounds (
 
 CREATE INDEX run_rounds_by_round ON run_rounds (round, run);
 
-CREATE TABLE launches (
+create table launches (
     run TEXT NOT NULL PRIMARY KEY REFERENCES runs (run),
     at TEXT NOT NULL,
     program TEXT NOT NULL,
@@ -104,7 +104,7 @@ CREATE TABLE launches (
     cut TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE steps (
+create table steps (
     run TEXT NOT NULL REFERENCES runs (run),
     n INTEGER NOT NULL CHECK (n >= 1),
     at TEXT NOT NULL,
@@ -132,7 +132,7 @@ CREATE TABLE steps (
     PRIMARY KEY (run, n)
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE run_ends (
+create table run_ends (
     run TEXT NOT NULL PRIMARY KEY REFERENCES runs (run),
     at TEXT NOT NULL,
     how TEXT NOT NULL CHECK (how IN ('reported', 'no_status', 'quota_exhausted', 'rate_limited', 'hung', 'stopped')),
@@ -146,13 +146,13 @@ CREATE TABLE run_ends (
     CHECK (resets_at IS NULL OR how = 'quota_exhausted')
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE run_changes (
+create table run_changes (
     run TEXT NOT NULL PRIMARY KEY REFERENCES runs (run),
     head_before TEXT,
     head_after TEXT
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE commits (
+create table commits (
     run TEXT NOT NULL REFERENCES run_changes (run),
     n INTEGER NOT NULL CHECK (n >= 1),
     hash TEXT NOT NULL,
@@ -162,7 +162,7 @@ CREATE TABLE commits (
     PRIMARY KEY (run, n)
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE changed_files (
+create table changed_files (
     run TEXT NOT NULL REFERENCES run_changes (run),
     scope TEXT NOT NULL CHECK (scope IN ('committed', 'uncommitted')),
     path TEXT NOT NULL,
