@@ -46,7 +46,7 @@ struct About<'a> {
 
 /// What was found of an approved pull request.
 pub(super) enum Merge {
-    /// It is merged, by the harness or by someone else; the merge commit when the merge request of the harness said it.
+    /// It is merged, by the harness or by someone else; the merge commit when GitHub reports it.
     Merged(Option<CommitId>),
     /// It is not merged and is left as it is for now.
     Waits,
@@ -165,8 +165,7 @@ impl Owner {
             now,
         };
         match remote.state {
-            // A merge somebody else made: GitHub's answer for the pull request does not say its commit.
-            PullState::Merged => Ok(Merge::Merged(None)),
+            PullState::Merged => Ok(Merge::Merged(remote.merge_commit_sha)),
             PullState::Closed => {
                 let team = site.team;
                 let items = self
