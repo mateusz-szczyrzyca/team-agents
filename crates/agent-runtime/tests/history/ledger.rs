@@ -476,3 +476,68 @@ fn a_ledger_row_that_was_changed_by_hand_is_refused_when_it_is_read() {
         })
     ));
 }
+
+#[test]
+fn an_event_linked_to_a_round_of_another_team_is_refused_on_write_and_on_read() {
+    use agent_runtime::history::{RecordKind, WriteError};
+
+    let (_dir, path, mut db) = database();
+    let first = complete(11);
+    let second = complete(12);
+    db.write(&first.records()).unwrap();
+    db.write(&second.records()).unwrap();
+    let foreign_round = second.rounds[0].round.clone();
+    let cross_event = record(
+        &first,
+        50,
+        std::slice::from_ref(&foreign_round),
+        HistoryEvent::PullReady { pr: pr(7) },
+    );
+
+    let err = db.write(&[cross_event]).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            WriteError::Rule {
+                record: RecordKind::Event,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    let reader = Reader::open(&path).unwrap();
+    assert!(
+        reader
+            .round_records(&foreign_round)
+            .unwrap()
+            .iter()
+            .all(|stored| stored.team == second.team.team)
+    );
+
+    db.write(&[record(&first, 51, &[], HistoryEvent::PullReady { pr: pr(8) })])
+        .unwrap();
+    let raw = Connection::open(&path).unwrap();
+    raw.execute(
+        "INSERT INTO history_record_rounds (sequence, position, round) \
+         SELECT sequence, 1, ?1 FROM history_records WHERE team = ?2 AND kind = 'pull_ready'",
+        rusqlite::params![foreign_round.as_str(), first.team.team.as_str()],
+    )
+    .unwrap();
+
+    for read in [
+        reader.round_records(&foreign_round),
+        reader.team_records(&first.team.team),
+    ] {
+        assert!(
+            matches!(
+                read,
+                Err(ReadError::Value {
+                    table: "history_records",
+                    column: "round",
+                    ..
+                })
+            ),
+            "{read:?}"
+        );
+    }
+}
