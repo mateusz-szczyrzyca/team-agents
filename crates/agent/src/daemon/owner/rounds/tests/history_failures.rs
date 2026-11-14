@@ -101,3 +101,43 @@ async fn failing_step_inserts_are_counted_while_other_records_survive_and_the_ro
         assert_eq!(reader.steps(&run.start.value.run).unwrap(), Vec::new());
     }
 }
+
+#[tokio::test]
+async fn a_full_history_queue_does_not_prevent_a_round_from_merging() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:burst"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    let event =
+        "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"queue pressure\"}]}}\n";
+    std::fs::write(scripts.join("burst.jsonl"), event.repeat(12_000)).unwrap();
+    std::fs::write(
+        scripts.join("burst.sh"),
+        r#"set -eu
+cat "$AGENTS_HOME/fake-scripts/burst.jsonl"
+printf 'queue pressure work\n' > work.txt
+git add work.txt
+git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -qm 'Complete work during history saturation'
+"#,
+    )
+    .unwrap();
+    rig.start().await;
+    let db = rusqlite::Connection::open(rig.home.history_file()).unwrap();
+    db.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let health = merge_and_status(&rig).await;
+    // Release the external writer only after the merge, so draining history cannot be required for progress.
+    db.execute_batch("ROLLBACK").unwrap();
+    rig.stop().await.unwrap();
+    assert_eq!(health.state, HistoryState::Writing);
+    assert!(health.lost > 0, "{health:?}");
+    let integrity: String = db.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap();
+    assert_eq!(integrity, "ok");
+}
