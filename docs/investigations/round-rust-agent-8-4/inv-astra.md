@@ -1,6 +1,6 @@
 # Investigation — Rust item 8.4 — `inv-astra`
 
-Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-agents/pull/100) on `agents/inv-astra/20261114-094819`. Item `8.4` is **not complete**. The human approved both round-5 recommendations. Secret redaction is committed and its complete Rust gate passes `2,317` tests. Bounded Git capture is implemented in the worktree but remains uncommitted: one newly frozen test advances the paused clock to the exact deadline without allowing Tokio's millisecond timer rounding. Round-6 permission asks to correct that fixture, preserving its assertions. The last fully GREEN code commit is linked below; the latest committed code is the next RED cycle.
+Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-agents/pull/100) on `agents/inv-astra/20261114-094819`. The human-authorized fixes are committed. The latest Rust gate passes `2,326` tests, with `0` failures and `0` ignored, but its preceding run exposed a frozen fixture race. Question `7` requests approval for that separate correction; reliable completion is not claimed while it remains unresolved. The round-6 timer-fixture correction is isolated in its authorized `TEST-FIX:` commit; the bounded capture implementation is GREEN. The acceptance map and remaining verification limits below are the handoff for independent review, not a substitute for the human's schema checkpoint.
 
 ## Completed fixes
 
@@ -16,7 +16,9 @@ Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-
 - **Crash atomicity:** the added child-process test waits for WAL growth inside a large transaction, kills the writer, and requires complete rollback of that batch, retention of the previous data, successful integrity checking and a later successful write. It does not accept a batch committed before the kill.
 
 - **Known secrets:** the writer redacts configured GitHub, agent-environment and notification credentials before persistence and before text truncation. Overlapping Unicode values are removed together. Secret-bearing structured identities cause counted omissions and one safe warning. A merged fake-CLI round proves redacted prompts, arguments, steps, final messages and commit subjects, unchanged CLI input, and no marker bytes in the live WAL or checkpointed database.
-- **Capture deadline, pending:** a shared absolute deadline covers all Git commands of each snapshot, including scratch handles and executable-busy retries. Each run boundary has a `2`-second budget and at most `1` additional second for process reaping. Existing capture-loss paths handle the resulting typed timeout. This implementation awaits the round-6 fixture correction and a GREEN gate; it is not yet committed.
+- **Capture deadline:** a shared absolute deadline covers all Git commands of each snapshot, including scratch handles and executable-busy retries. Each run boundary has a `2`-second budget and at most `1` additional second for process reaping. Existing capture-loss paths handle the resulting typed timeout. Paused-clock tests prove refusal after expiry, a shared budget across commands, and cancellation of Git together with its descendant. The corrected timer fixture advances `1` millisecond beyond the deadline so Tokio can deliver the timeout.
+
+- **Acceptance audit:** new daemon tests prove coordinator-line selection and flag precedence, the brief and run timestamps, and all `10` documented SQL queries against a merged round. Git independently verifies the recorded commit hash, subject and author time. Additional daemon tests provoke SQLite’s actual `SQLITE_FULL` code without filling a filesystem and an actual Git capture timeout with an injected clock. Both rounds merge; the process test reports the disk-full cause once on stderr. Existing tests and shared fixture behavior are unchanged.
 
 ## Commits
 
@@ -43,6 +45,10 @@ Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-
 - Secret redaction $\color{green}{\textbf{GREEN}}$: [`6c402ada`](https://github.com/mateusz-szczyrzyca/team-agents/commit/6c402ada70d26cf453e429cb4bfecee18cc945e4).
 - Capture deadline $\color{red}{\textbf{RED}}$: [`89561885`](https://github.com/mateusz-szczyrzyca/team-agents/commit/89561885b5f568a0f1168f01d602d82a9618d947).
 
+- Capture deadline $\color{green}{\textbf{GREEN}}$: [`89e632f6`](https://github.com/mateusz-szczyrzyca/team-agents/commit/89e632f62a869e84442109edaf06f15349ad7c40).
+- SQLite-full and merged-round capture-timeout proofs: [`92bde1a9`](https://github.com/mateusz-szczyrzyca/team-agents/commit/92bde1a9b448ea3cd71334621653bbbf0f8643a5).
+- Daemon acceptance proofs and documentation clarification: [`7dc71527`](https://github.com/mateusz-szczyrzyca/team-agents/commit/7dc715271c58e1bb57d0035fcedf7b98fdd1ba31).
+
 ## Tests changed after RED
 
 - Human-authorized `TEST-FIX:` [`88dc7138`](https://github.com/mateusz-szczyrzyca/team-agents/commit/88dc71381c20c0b7e6320916c00c375df15a5dfd) updates [`docs/history.schema.sql`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/docs/history.schema.sql) and the table inventory in [`crates/agent-runtime/tests/history/schema.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/crates/agent-runtime/tests/history/schema.rs) for session migration `2`.
@@ -51,9 +57,11 @@ Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-
 - The requested regression is $\color{red}{\textbf{RED}}$ in [`90c76d79`](https://github.com/mateusz-szczyrzyca/team-agents/commit/90c76d791958b044398076ffd3921dd9cb792202). Without the fix it receives `Teams`; with the committed fix it passes, asserting `Overview` with `Writing` and exactly `lost: 1`.
 - Human-authorized `TEST-FIX:` [`2800a04d`](https://github.com/mateusz-szczyrzyca/team-agents/commit/2800a04def0efc54a6b67c4b55f9bad23d1fdea5) disables history only inside `a_socket_file_left_by_a_dead_daemon_is_replaced`. It adds `5` fixture lines and changes no assertion. Round-4 permission covers any future fixture with exactly the same non-Git-directory/`Reply::Teams` conflict; no further fixture required this exception.
 
+- Human-authorized `TEST-FIX:` [`bf1a8246`](https://github.com/mateusz-szczyrzyca/team-agents/commit/bf1a8246b4309a0b168321a1367ceba96f8fc1f6) changes only the paused-clock fixture of `a_snapshot_deadline_kills_git_and_its_descendant_then_returns` in [`crates/agent-runtime/src/git/deadline_tests.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/7dc715271c58e1bb57d0035fcedf7b98fdd1ba31/crates/agent-runtime/src/git/deadline_tests.rs). It advances `2,001` milliseconds instead of exactly `2` seconds, with an explanatory comment; every assertion is preserved.
+
 ## Tests
 
-This maps the principal implemented requirements and regression proofs. It is not a claim that every sentence of item `8.4` has sufficient coverage; the remaining gaps are explicit below.
+This maps the behavioral clauses of item `8.4` to automated evidence. Recording proofs use a daemon, fake CLIs and a fake GitHub service; generated storage tests supplement them. Limits of composed proofs and unperformed checks are stated under **Not done**.
 
 | Behaviour | Test or proof |
 |---|---|
@@ -64,16 +72,19 @@ This maps the principal implemented requirements and regression proofs. It is no
 | Idempotence, rejected references and transaction atomicity | `the_same_record_written_twice_is_one_row_and_the_first_write_wins`; `a_record_that_belongs_to_a_run_the_history_never_saw_is_refused`; `a_batch_with_one_refused_record_writes_none_of_its_records` |
 | Concurrent run order and whole-record reads | `the_steps_of_several_runs_recorded_at_once_keep_the_order_of_each_run`; `a_reader_that_reads_while_the_writer_writes_sees_whole_records_only` |
 | Reader independently rejects invalid variants and selection metadata | `every_run_reason_rejects_fields_of_other_variants_in_sql_and_when_read`; `each_nonrandom_selection_rejects_draw_candidates_in_sql_and_when_read`; `reviewer_is_a_run_role_but_not_a_team_plan_role_in_sql_or_when_read` |
-| Team plans, roles, round and run recording | `the_plan_of_a_team_says_how_each_participant_got_its_role`; `a_solo_round_is_in_the_history_from_its_team_to_its_reviews_with_every_run_once` |
+| Original task list, repository, base branch, merge mode, plan, roles, item fields and one row per run | `the_plan_of_a_team_says_how_each_participant_got_its_role`; `a_solo_round_is_in_the_history_from_its_team_to_its_reviews_with_every_run_once` |
 | Coordinator/member/worker prompts and actual command lines | `the_prompt_and_the_command_line_of_every_run_equal_what_its_cli_got_byte_for_byte` |
 | Worker requester linkage | `a_worker_that_serves_a_request_has_a_run_that_names_the_run_that_asked` |
 | Ordered steps and Git changes from actual fake CLI execution | `the_steps_of_a_run_are_what_its_cli_printed_in_order`; `the_changes_of_a_run_are_what_its_cli_did_a_file_added_deleted_modified_renamed_binary_and_one_left_uncommitted` |
 | Restart uniqueness; resume/answer/item/wake-up reasons | `a_daemon_stopped_in_the_middle_of_a_run_leaves_one_row_for_each_run_and_the_next_run_goes_on`; `a_stop_and_a_resume_by_the_human_are_a_control_step_of_the_run_and_the_reason_of_the_next`; `the_answers_of_the_human_are_the_reason_of_the_run_that_goes_on`; `the_next_item_of_a_solo_agent_and_the_wake_up_of_a_coordinator_have_their_reasons` |
-| Supplied session is not duplicated | `echoing_the_session_supplied_to_the_cli_is_not_a_new_session` |
+| Supplied session is not duplicated; changed sessions are recorded once with ordered times | `echoing_the_session_supplied_to_the_cli_is_not_a_new_session`; `a_merged_opencode_round_records_session_changes_once_in_observation_order` |
+| Version-1 migration preserves rows; generated session values, duplicate delivery, orphan and malformed observations | `version_one_fixture_remains_readable_and_migrates_without_losing_records`; `seeded_session_observations_round_trip_in_order_and_duplicate_delivery_is_idempotent`; `session_order_numbers_are_checked_in_sql_and_again_when_read`; `malformed_session_ids_are_refused_when_read_and_orphans_are_refused_when_written` |
 | Secret values are not exported as environment fields | `no_value_of_a_secret_or_of_the_environment_of_the_clis_is_in_the_files_of_the_history` |
 | Echoed known credentials are redacted before SQLite; DB and live WAL contain no marker | `a_merged_round_redacts_echoed_secrets_in_prompts_arguments_steps_messages_and_commits` |
 | Seeded text, overlapping Unicode credentials, all activity payloads, safe identity omission/count/report | `seeded_free_text_is_redacted_before_any_store_sees_it`; `all_activity_text_fields_and_overlapping_unicode_values_are_redacted`; `secret_in_a_structured_identity_is_omitted_counted_and_reported_once` |
-| Shared absolute capture budget, pending GREEN | `an_expired_snapshot_deadline_refuses_to_spawn_git`; `a_second_command_uses_the_snapshots_remaining_budget` pass with pending code; process-group test requires the round-6 clock correction |
+| Shared absolute capture budget and process-group cancellation | `an_expired_snapshot_deadline_refuses_to_spawn_git`; `a_second_command_uses_the_snapshots_remaining_budget`; `a_snapshot_deadline_kills_git_and_its_descendant_then_returns` |
+| A capture timeout releases the run, counts exactly one loss and permits review and merge | `a_capture_timeout_is_counted_and_the_round_still_merges` |
+| Actual SQLite `SQLITE_FULL` permits merged rounds, counts losses, retains other records and reports once on stderr | `sqlite_full_does_not_prevent_merging_or_the_other_records_surviving`; `sqlite_full_is_reported_once_on_stderr_and_the_task_finishes_with_visible_losses` |
 | Directory and newer-schema failures permit merged rounds | `a_history_in_the_way_does_not_stop_a_round_and_status_shows_what_was_lost`; `a_history_of_a_newer_version_is_left_as_it_is_and_the_round_goes_on` |
 | Permission and SQL write failures permit merged rounds | `read_only_history_storage_leaves_state_writable_and_the_round_merges`; `failing_step_inserts_are_counted_while_other_records_survive_and_the_round_merges` |
 | History snapshots do not execute extensions | `history_reads_raw_worktree_bytes_without_running_configured_filters`; `history_reads_do_not_invoke_a_configured_filesystem_monitor` |
@@ -82,28 +93,40 @@ This maps the principal implemented requirements and regression proofs. It is no
 | Exact degraded status for a non-Git run directory | `status_of_a_run_outside_a_git_repository_reports_one_lost_capture` |
 | Seeded daemon coordinator selection and recorded plan | `a_seeded_daemon_records_the_actual_coordinator_draw_and_candidates` |
 | Killing a transaction after it has written uncommitted WAL frames | `killing_after_uncommitted_wal_frames_appear_rolls_back_the_entire_batch` |
+| Coordinator chosen by task-list line; flag precedence; command-line participant order | `a_coordinator_line_is_recorded_unless_the_command_line_overrides_it` |
+| Brief, team/round/run times, identity, final message and outcome; reading after daemon stop | `a_brief_and_its_timestamps_survive_without_a_task_list_or_a_live_daemon` |
+| All documented SQL queries on a daemon-produced merged round; Git commit hash, subject and author time | `every_documented_sql_query_reads_a_merged_round_recorded_by_the_daemon` |
+| One bounded writer, transactional batches and per-record recovery from a refused batch | `records_are_written_in_the_order_they_were_handed_in_and_flush_waits_for_them`; `what_waits_in_the_queue_is_written_as_one_batch`; `a_batch_that_fails_is_tried_again_record_by_record_so_one_bad_record_loses_only_itself` |
+| Failure reported once per cause, loss count exposed, unrelated records still persist | `a_write_that_fails_loses_its_record_goes_on_and_each_cause_is_reported_once`; `a_failing_insert_is_reported_once_on_stderr_and_the_task_finishes_with_visible_losses`; `a_full_history_queue_does_not_hold_the_task_and_reports_overflow_once` |
+| History disabled means no database and no losses; healthy status keeps its normal shape | `a_history_that_is_off_makes_no_file_and_status_does_not_mention_it`; `a_whole_history_is_not_mentioned_by_status`; `only_a_history_that_is_switched_off_is_disabled` |
+| Append-only delivery, team/round/run references, duplicated path and plan rejection | `the_same_record_written_twice_is_one_row_and_the_first_write_wins`; `a_record_that_belongs_to_a_run_the_history_never_saw_is_refused`; `a_list_of_files_with_a_path_twice_is_refused_and_leaves_nothing_of_its_record`; `a_run_that_names_a_round_twice_is_refused_and_leaves_no_row`; `a_team_is_written_with_its_plan_and_a_plan_that_names_a_position_twice_is_refused` |
+| Invalid end time is rejected when written and read; equal start/end time remains valid | `a_run_that_ended_before_it_started_is_refused_when_read_and_when_written`; `a_run_that_ends_before_it_started_is_refused_by_the_writer_and_one_that_ends_when_it_started_is_not` |
+| Reader opens read-only, creates no missing database, rejects unsupported schemas | `a_reader_of_a_file_that_is_not_there_is_an_error_and_makes_no_file`; `a_reader_refuses_a_newer_database_and_one_no_daemon_has_written_to`; daemon acceptance tests read after shutdown |
+| Run fix and review reasons include PR/pass numbers | `the_review_passes_and_the_fix_passes_of_a_pull_request_are_numbered` |
 | Documented inventory, runnable SQLite queries and normalized output | `every_table_column_and_index_of_the_schema_is_documented`; `the_queries_of_the_page_list_the_runs_of_a_round_print_a_prompt_whole_and_give_the_steps_and_files_of_a_run`; `what_the_queries_of_the_page_print_for_a_round_is_pinned` |
 
 ## Checks
 
 - Earlier code gate at [`a038882c`](https://github.com/mateusz-szczyrzyca/team-agents/commit/a038882cc801f156c01da6ad665d8793be359be8): `make rust` passes formatting, clippy, `2,313` test executions and documentation; `0` failed, `0` ignored.
-- Last complete GREEN gate at [`6c402ada`](https://github.com/mateusz-szczyrzyca/team-agents/commit/6c402ada70d26cf453e429cb4bfecee18cc945e4): `make rust` passes formatting, clippy, `2,317` tests and documentation, with `0` failures and `0` ignored.
+- Secret-redaction GREEN gate at [`6c402ada`](https://github.com/mateusz-szczyrzyca/team-agents/commit/6c402ada70d26cf453e429cb4bfecee18cc945e4): `make rust` passes formatting, clippy, `2,317` tests and documentation, with `0` failures and `0` ignored.
 - Secret RED gate: `663` daemon tests passed; the new merged-round test failed because the persisted prompt retained the marker. The focused runtime suite failed all `3` new tests on raw text or an uncounted identity omission.
 - Deadline RED gate: `664` daemon tests passed; `168` runtime library tests passed and all `3` new deadline tests failed against the forwarding stub.
-- Pending deadline gate: formatting and clippy pass; `664/664` daemon tests and `170/171` runtime library tests pass. Only the frozen exact-clock fixture fails. No existing test was changed, no assertion was removed, and temporary diagnostic prints were removed.
+- Deadline GREEN gate at [`89e632f6`](https://github.com/mateusz-szczyrzyca/team-agents/commit/89e632f62a869e84442109edaf06f15349ad7c40): `make rust` passes `2,320` tests, formatting, clippy and documentation; `0` failures, `0` ignored.
+- Acceptance gate at [`7dc71527`](https://github.com/mateusz-szczyrzyca/team-agents/commit/7dc715271c58e1bb57d0035fcedf7b98fdd1ba31): `make rust` passes `2,323` tests, formatting, clippy and documentation; `0` failures, `0` ignored. This includes the `3` added daemon acceptance tests. Initial drafts had fixture/formatting and function-length lint errors; they were corrected before committing, with no production change or lint suppression.
 
+- Latest code gate at [`92bde1a9`](https://github.com/mateusz-szczyrzyca/team-agents/commit/92bde1a9b448ea3cd71334621653bbbf0f8643a5): `make rust` passes `2,326` tests, formatting, clippy and documentation; `0` failures, `0` ignored. The preceding attempt passed formatting and clippy but failed the existing stop/resume test with an empty counter (`668/669` daemon tests passed). The confirming pass does not resolve that race; see question `7`. The first draft of the new process test also needed a lint-only assertion spelling correction before commit.
 - The fixture/capture gate passed `2,309` test executions after round-4 permission; the merged-queue gate passed `2,310`; the seeded gate passed `2,311`.
 - Capture-loss $\color{red}{\textbf{RED}}$: new process test observed completed tasks without a loss count; runtime assertions observed `0` instead of `2` and `5` instead of `6` losses. The exact socket regression received `Teams` instead of `Overview`.
 - Seeded-selection $\color{red}{\textbf{RED}}$: `662` daemon tests passed; only the new test failed, at seed `2`, with `inv-a` instead of `inv-b`. The incorrect injection stub was isolated from the normal entry point before committing RED; its first version also caused a duplicate run ID during restart and was not committed.
 - Focused queue-merge, active-batch kill, runtime capture and daemon process suites passed under the repository test lock.
 - `git diff --check` passes.
-- `git grep -l 'CREATE TABLE' -- crates` finds one production Rust schema module plus the preserved version-1 migration SQL fixture. The fixture is deliberately a second path, not a second production schema module.
+- `git grep -l 'CREATE TABLE' -- crates` finds one production Rust schema module plus two test-only SQL fixtures: the preserved version-1 migration and the exhausted-row-ID fault. The fixtures are not additional production schema modules.
 - The secret-echo experiment used only a temporary home and fake CLIs. A merged round produced `persisted_steps=1`, `in_wal=true`, `in_database=true`. The temporary diagnostic test asserted the reproduction, was removed afterwards, and is not presented as a security regression test or a fix. The final committed tests were not changed by the probe.
 - Serena was used for symbol discovery. `sqlite3` is installed. No tool installation was needed.
 
 ## Scope and deviations
 
-- The human approved a larger item instead of splitting it. Before this continuation's implementation, the planned ceiling was recorded as `7,500` counted lines. The previous PR-1 count including this report was `5,452` lines against actual PR target [`150e2203`](https://github.com/mateusz-szczyrzyca/team-agents/commit/150e2203fe0ebd458c7f6f67c5676ab736378b5d), excluding tests, the lockfile and schema snapshot.
+- The human approved a larger item instead of splitting it. Before this continuation's implementation, the planned ceiling was recorded as `7,500` counted lines. The current PR-1 count including this report is `5,876` lines against actual PR target [`150e2203`](https://github.com/mateusz-szczyrzyca/team-agents/commit/150e2203fe0ebd458c7f6f67c5676ab736378b5d), excluding tests, the lockfile and schema snapshot.
 - [`crates/agent/src/main.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/crates/agent/src/main.rs) is outside the item's named recording locations but its stream-lock fix is necessary for writer failure reporting and progress.
 - The agent crate adds the already-approved bundled `rusqlite` workspace dependency for tests that provoke actual SQLite insert failures. Cargo regenerated the lockfile. No new library version or final lint suppression was introduced. The seeded RED commit carried a temporary dead-code expectation for its compiling stub; GREEN removed it.
 - Session schema compatibility, session queries and raw snapshot semantics are documented in [`docs/history.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/docs/history.md); the reader fix adds the history reference to [`README.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/a038882cc801f156c01da6ad665d8793be359be8/README.md).
@@ -116,13 +139,17 @@ This maps the principal implemented requirements and regression proofs. It is no
 - Go suites were not run, as explicitly instructed.
 - Bats suites were not run, as explicitly instructed.
 - `make gate` was replaced by `make rust` to obey those exclusions.
-- No Rust test was newly ignored or removed. The secret-redaction gate passed every stage; the next deadline cycle remains RED as described above.
+- No Rust test was newly ignored or removed. The latest gate passes every Rust stage; the preceding intermittent fixture failure remains unresolved.
 
 ## Not done
 
-- **Capture boundary:** the implementation and documentation are prepared in this worktree, but the process-group regression's frozen injected-clock fixture needs the round-6 correction before GREEN can be committed. Production currently committed at the RED head still has the forwarding deadline stub.
-- **Inherited process-test precision:** two older process tests look for `solo` and `done` anywhere in status; the summary header can contain `0 done`. New tests check an actual solo task line ending in `done`; the older frozen predicates remain unchanged.
-- The behaviour/test map above covers the principal requirements and this continuation's changes. A complete per-sentence acceptance audit and final checkpoint remain outstanding; this report does not represent item `8.4` as finished.
+- **Frozen counter race:** `Rig::runs` parses a temporarily empty fake-CLI counter with `unwrap()`. The complete gate observed `ParseIntError { kind: Empty }` in the existing stop/resume test. No frozen helper or assertion was changed. Question `7` requests permission for the precise fixture correction described below.
+
+- **Inherited process-test precision:** `a_history_in_the_way_is_said_once_on_stderr_the_task_runs_to_its_end_and_status_shows_the_lost_records` and `a_daemon_killed_in_the_middle_of_a_run_leaves_a_history_the_next_daemon_goes_on_with` look for `solo` and `done` anywhere in status; the summary header can contain `0 done`. Their frozen predicates remain unchanged. New process tests require an actual solo task line ending in `done`, and daemon tests independently require a merged round.
+- **Physical disk exhaustion:** no host filesystem was filled. The added daemon tests exhaust the row IDs of a fault table to make SQLite return its actual `SQLITE_FULL` code, then prove merged-round progress, loss counting and once-per-cause stderr reporting. This tests the SQLite failure path without claiming a physical disk-capacity experiment.
+- **Future continuation:** `RunWhy::Continuation` round-trips in generated record tests; a daemon continuation is feature `12.1` and is deliberately not started here.
+- **Human checkpoint:** reading the schema with the human and an interactive `sqlite3` session remains the plan's post-`8.4` human checkpoint. Automated checks execute the same `10` documented SQL queries through bundled SQLite after a daemon-produced round merges. No interactive human review is claimed.
+- The merger should transfer this report's behavior/test map, authorized `TEST-FIX:` list, deviations and verification limits to [#100](https://github.com/mateusz-szczyrzyca/team-agents/pull/100), together with the full task text from [`rounds/round-8.4.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/7dc715271c58e1bb57d0035fcedf7b98fdd1ba31/rounds/round-8.4.md). No PR was opened or edited by this investigator.
 
 ## Secret reproduction
 
@@ -188,9 +215,9 @@ b) Omit any record containing a known secret — preserve the exact bytes of ret
 
 **Verdict:** a) — human approved the recommendation.
 
-## Questions — round 6
+## Answered questions — round 6
 
-The external question file is `questions-6.md` for task `20261114-094819-inv-astra`. The permission is required by repository rule `1`, “Never modify existing tests,” and the frozen-RED contract. The previous blanket fixture permission applies only to non-Git directories expecting `Reply::Teams`, so it does not cover this new timing test.
+The external question file is `questions-6.md` for task `20261114-094819-inv-astra`. The human approved recommendation `a`; it was applied in the dedicated `TEST-FIX:` listed above. Permission was required by repository rule `1`, “Never modify existing tests,” and the frozen-RED contract. The previous blanket fixture permission applies only to non-Git directories expecting `Reply::Teams`, so it does not cover this new timing test.
 
 ## 1. May the new deadline test advance past Tokio's timer resolution?
 The approved secret-redaction fix is committed and passes the complete Rust gate: `2,317` tests, `0` failures, `0` ignored. The bounded-capture implementation is prepared: one absolute `2`-second budget per run boundary, shared by every Git command and startup retry, process-group cancellation on timeout, at most `1` further second for reaping, and existing counted-loss reporting.
@@ -203,5 +230,25 @@ a) Authorize a dedicated `TEST-FIX:` advancing this test's clock by `2,001` mill
 b) Keep this test frozen — leaves the bounded-capture fix unfinished because the test does not let the runtime deliver its timer.
 
 **Recommended:** a) — corrects only the injected-clock fixture and avoids changing production timing to satisfy an overprecise test. (investigator)
+
+**Verdict:** a) — human approved the recommendation; the dedicated fixture correction and GREEN implementation are committed.
+
+## Pending question — round 7
+
+The external question file for task `20261114-094819-inv-astra` contains the following request. Repository rule `1`, “Never modify existing tests,” requires approval before changing this frozen helper. The round-4 exception covers a different failure cause.
+
+## 1. May the fake-CLI counter reader tolerate its writer's empty-file window?
+The authorized timer-fixture correction and bounded-capture implementation are committed and passed the complete Rust gate. Additional acceptance tests prove the documented SQL queries, actual SQLite `SQLITE_FULL` handling and a merged round after a Git capture timeout.
+
+A subsequent `make rust` passed formatting and clippy, then reported `668/669` daemon tests passing. The existing `a_stop_and_a_resume_by_the_human_are_a_control_step_of_the_run_and_the_reason_of_the_next` failed in `Rig::runs` ([`crates/agent/src/daemon/owner/rounds/tests/rig.rs:392`](https://github.com/mateusz-szczyrzyca/team-agents/blob/92bde1a9b448ea3cd71334621653bbbf0f8643a5/crates/agent/src/daemon/owner/rounds/tests/rig.rs#L392)) with `ParseIntError { kind: Empty }`. The fake CLI publishes its counter using `echo "$n" > .fake-runs`; shell redirection creates or truncates the file before `echo` writes the number. The polling helper treats a missing file as `0`, but parses an existing empty file with `unwrap()`. Reading during that window therefore panics before the test exercises stop/resume.
+
+A confirming full gate passed `2,326` tests, formatting, clippy and documentation with no failures or ignored tests. That confirms intermittency; it does not repair the fixture.
+
+The proposed change makes only `Rig::runs` treat empty counter text as not yet published (`0`), continuing to reject malformed nonempty numbers. It changes no scenario, production behavior or assertion. A new deterministic regression will write an empty counter, then a complete number, and verify that the helper first waits and then observes the number; a malformed nonempty counter must still fail. The human's previous fixture exception covers only non-Git directories asserting `Reply::Teams`, so it does not authorize this shared helper correction. Repository rule `1` requires permission.
+
+a) Authorize a dedicated `TEST-FIX:` changing only `Rig::runs` to return `0` for empty counter text, with the new regression committed separately and the correction listed under “Tests changed after RED” — removes the observed fixture race while preserving every existing assertion and malformed-number rejection.
+b) Keep the helper frozen — leaves the intermittent stop/resume gate failure unresolved and prevents claiming reliable completion.
+
+**Recommended:** a) — handles the stub's existing publication window at the polling boundary without changing production timing or weakening the history assertions. (investigator)
 
 **Verdict:**
