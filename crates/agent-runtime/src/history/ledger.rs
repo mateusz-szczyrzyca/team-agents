@@ -158,6 +158,21 @@ fn rounds_of_task(tx: &Transaction<'_>, task: &str, kind: RecordKind) -> Result<
         .map_err(sql(kind))
 }
 
+/// The rounds of the latest run of `team`; none when the team has no run recorded.
+fn rounds_of_team(tx: &Transaction<'_>, team: &str, kind: RecordKind) -> Result<Vec<String>, WriteError> {
+    let mut statement = tx
+        .prepare(
+            "SELECT round FROM run_rounds WHERE run = \
+             (SELECT run FROM runs WHERE team = ?1 ORDER BY at DESC, rowid DESC LIMIT 1) ORDER BY position",
+        )
+        .map_err(sql(kind))?;
+    statement
+        .query_map(params![team], |row| row.get(0))
+        .map_err(sql(kind))?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(sql(kind))
+}
+
 /// When the changes of `run` count as having happened: when it ended, or when it started if no end is recorded.
 fn changed_at(tx: &Transaction<'_>, run: &str, kind: RecordKind) -> Result<String, WriteError> {
     tx.query_row(
@@ -205,6 +220,9 @@ fn event_entry(tx: &Transaction<'_>, record: &EventRecord, limit: MaxTextBytes) 
     // A gate runs where no state of rounds is at hand: it belongs to the rounds of the run of its task that waits for it.
     let rounds = match &event {
         HistoryEvent::Gate { task, .. } if record.rounds.is_empty() => rounds_of_task(tx, task.as_str(), kind)?,
+        HistoryEvent::Lost { what, .. } if what == "gate" && record.rounds.is_empty() => {
+            rounds_of_team(tx, record.team.as_str(), kind)?
+        }
         _ => record.rounds.iter().map(ToString::to_string).collect(),
     };
     Ok(Entry {

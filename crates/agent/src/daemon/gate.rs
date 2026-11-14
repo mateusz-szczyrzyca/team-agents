@@ -21,7 +21,7 @@ use agent_core::protocol::{Event, EventKind, Failure, FailureKind, Reply};
 use agent_core::state::{CommitId, GateOutcome, GateRecord, GateResult, GateTree, InvalidTimestamp, Timestamp};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::git::{CommitIdentity, Git, GitError, MergeState, Revision, TreeState};
-use agent_runtime::history::History;
+use agent_runtime::history::{CaptureKind, Cause, History};
 use agent_runtime::process::{ExitReport, ProcessError, ProcessSpec, Supervisor, error_chain};
 use agent_runtime::run::HoldGuard;
 use agent_runtime::store::{StateStore, StoreError};
@@ -310,23 +310,32 @@ impl Service {
         })?;
         let (log, log_text) = self.open_log(&job.task).await?;
         let outcome = self.run_command(job, &log).await?;
+        let finished_at = Timestamp::now(&self.parts.clock).inspect_err(|error| {
+            self.record_capture_loss(job, started_at, error);
+        })?;
         // The command has ended with its whole group: what it left in the worktree is final. A gate that changed the
         // tree or moved `HEAD` did not gate what the commit holds.
-        let after = inspect(&job.worktree).await.map_err(|source| GateError::GitAfter {
-            worktree: job.worktree.as_path().to_path_buf(),
-            log: log.clone(),
-            source,
-        })?;
+        let after = inspect(&job.worktree)
+            .await
+            .map_err(|source| GateError::GitAfter {
+                worktree: job.worktree.as_path().to_path_buf(),
+                log: log.clone(),
+                source,
+            })
+            .inspect_err(|error| {
+                self.record_capture_loss(job, finished_at, error);
+            })?;
         let head = before.head.clone();
         let record = GateRecord {
             tree: before.merged_with(&after),
             result: GateResult {
                 head,
-                finished_at: Timestamp::now(&self.parts.clock)?,
+                finished_at,
                 outcome,
                 log: log_text,
             },
         };
+        self.record(job, started_at, &record);
         self.parts
             .store
             .save_gate_record(&job.task, &record)
@@ -335,7 +344,6 @@ impl Service {
                 task: job.task.clone(),
                 source,
             })?;
-        self.record(job, started_at, &record);
         self.announce(job, &record).await;
         Ok(record)
     }
@@ -455,6 +463,24 @@ impl Service {
                 record: record.clone(),
             },
         })));
+    }
+
+    /// Counts a gate that ran but whose post-command state could not be captured, and notes the loss for its round when the
+    /// history is writing.
+    fn record_capture_loss(&self, job: &GateJob, at: Timestamp, error: &impl std::error::Error) {
+        self.history.capture_failed(CaptureKind::Gate, error);
+        if self.history.is_writing() {
+            self.history.record(Record::Event(Box::new(EventRecord {
+                at,
+                team: job.team.clone(),
+                rounds: Vec::new(),
+                event: HistoryEvent::Lost {
+                    what: agent_core::history::EventKind::Gate.to_string(),
+                    cause: Cause::Capture(CaptureKind::Gate).to_string(),
+                    detail: error_chain(error),
+                },
+            })));
+        }
     }
 
     /// Tells the subscribers and the activity log of the task that the gate ended.
