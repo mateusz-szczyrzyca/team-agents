@@ -388,6 +388,10 @@ impl OpencodeParser {
 }
 
 impl OutputParser for OpencodeParser {
+    fn session(&self) -> Option<&agent_core::cli::SessionId> {
+        self.progress.session_id.as_ref()
+    }
+
     fn push_line(&mut self, line: &str) -> Result<Vec<ActivityEvent>, OutputError> {
         let Some(Line { session_id, event }) = read_event::<Line>(line)? else {
             return Ok(Vec::new());

@@ -73,6 +73,8 @@ pub enum RecordKind {
     Run,
     /// The process of a run starting.
     Launch,
+    /// A session observed in a running CLI.
+    Session,
     /// A step of a run.
     Step,
     /// A run ending.

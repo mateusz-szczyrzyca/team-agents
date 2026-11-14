@@ -67,7 +67,7 @@ inserts and never updates or deletes a row (item 8.7 decides what is deleted, an
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `1` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `2` | forward-only migrations (below) |
 
 Every table is `STRICT`: a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
@@ -157,6 +157,21 @@ One row for each run: what the owner decided when it made the run ready. Its pro
 | `branch` | TEXT | the branch the worktree is on |
 | `session` | TEXT | the session the run begins with, when it is known before the CLI starts (a resumed one; a Claude Code session the harness names) |
 | `cut` | TEXT | the fields that were cut |
+
+### `run_sessions`
+
+Sessions learned from CLI output are appended immediately, including notifications that have no activity event.
+Repeated notifications of the same session are recorded once; a changed session gets the next number.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `run` | TEXT | the run; foreign key to `runs.run` |
+| `n` | INTEGER | positive observation number within the run |
+| `at` | TEXT | time of observation from the injected clock |
+| `session` | TEXT | validated CLI session identifier |
+
+The primary key is `(run, n)`; the table is `STRICT, WITHOUT ROWID`. Query a run's observations with
+`SELECT n, at, session FROM run_sessions WHERE run = :run ORDER BY n;`. The initial session remains in `runs.session`; an echo of the session supplied at launch is not a new observation.
 
 ### `run_rounds`
 
@@ -307,7 +322,9 @@ edited once it has shipped; a change of the schema is a new migration, forward o
 together with the update of `user_version`: one that fails leaves the database at the version before it.
 
 A daemon that opens a database of a version newer than its own does not write to it (above); `Reader::open` refuses it
-too. A database of version `0` holds no history yet.
+too. A database of version `0` holds no history yet. Migration `2` adds `run_sessions` without changing existing rows.
+The read-only API accepts version `1` histories and returns an empty session-observation list for them; opening one
+for writing applies migration `2`. A preserved version `1` fixture verifies that the upgrade retains existing runs.
 
 ## Asking with `sqlite3`
 
@@ -408,6 +425,8 @@ ORDER BY r.at, r.rowid;
 A run with no row in `run_ends` is going — or the daemon was killed before it recorded the end.
 
 ## The reading API
+
+`Reader::sessions(run)` returns validated session observations in sequence order.
 
 `agent_runtime::history::Reader` opens the file read-only (`Reader::open(path)`) and gives typed answers, each read in one
 snapshot — never a record the writer is in the middle of:

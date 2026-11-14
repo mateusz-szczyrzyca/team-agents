@@ -13,9 +13,10 @@ use super::migrate::Migration;
 /// join the rows of one record (a run and its steps); `team`, `task` and `round` in `runs` and `rounds` are plain
 /// columns, so a history that starts after its team did (a deleted database, a daemon upgraded in the middle of a team)
 /// records what happens from then on instead of refusing it.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: "\
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: "\
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
     at TEXT NOT NULL,
@@ -191,4 +192,17 @@ CREATE TABLE changed_files (
     PRIMARY KEY (run, scope, path)
 ) STRICT, WITHOUT ROWID;
 ",
-}];
+    },
+    Migration {
+        version: 2,
+        sql: "\
+CREATE TABLE run_sessions (
+    run TEXT NOT NULL REFERENCES runs (run),
+    n INTEGER NOT NULL CHECK (n >= 1),
+    at TEXT NOT NULL,
+    session TEXT NOT NULL,
+    PRIMARY KEY (run, n)
+) STRICT, WITHOUT ROWID;
+",
+    },
+];

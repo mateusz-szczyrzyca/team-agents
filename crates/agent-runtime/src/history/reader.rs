@@ -15,7 +15,8 @@ use agent_core::config::{AbsolutePath, EnvName, ModelName, TailscaleLogin};
 use agent_core::decide::checks::{Change, FileChange, Lines};
 use agent_core::history::{
     AgentIdentity, ChangeKind, ClientKind, CommitRecord, Cut, EndKind, HowChosen, ItemText, Launch, PlanEntry,
-    RoundOpening, RoundSubject, RunChanges, RunEndRecord, RunStart, RunWhy, Step, StepKind, TeamStart, WhyKind,
+    RoundOpening, RoundSubject, RunChanges, RunEndRecord, RunSession, RunStart, RunWhy, Step, StepKind, TeamStart,
+    WhyKind,
 };
 use agent_core::ids::{AgentName, BranchName, ItemId, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{CliKind, Role, Tier};
@@ -148,8 +149,33 @@ impl Reader {
     ///
     /// # Errors
     /// [`ReadError`] if a row or database cannot be read.
-    pub fn sessions(&self, _run: &RunId) -> Result<Vec<agent_core::history::RunSession>, ReadError> {
-        Ok(Vec::new())
+    pub fn sessions(&self, run: &RunId) -> Result<Vec<RunSession>, ReadError> {
+        let table = "run_sessions";
+        let snapshot = self.snapshot(table)?;
+        if version_of(&snapshot).map_err(query(table))? < 2 {
+            return Ok(Vec::new());
+        }
+        let mut statement = snapshot
+            .prepare("SELECT n, at, session FROM run_sessions WHERE run = ?1 ORDER BY n")
+            .map_err(query(table))?;
+        let mut rows = statement.query(params![run.as_str()]).map_err(query(table))?;
+        let mut sessions = Vec::new();
+        while let Some(row) = rows.next().map_err(query(table))? {
+            let n: i64 = row.get(0).map_err(query(table))?;
+            let here = Row_::of(table, format!("{run}/{n}"));
+            let number = NonZeroU32::new(count(&here, "n", n)?)
+                .ok_or_else(|| here.rule("n", "a session number starts at one"))?;
+            sessions.push(RunSession {
+                run: run.clone(),
+                number,
+                at: here.value("at", parse_time(&row.get::<_, String>(1).map_err(query(table))?))?,
+                session: here.value(
+                    "session",
+                    SessionId::from_str(&row.get::<_, String>(2).map_err(query(table))?),
+                )?,
+            });
+        }
+        Ok(sessions)
     }
 
     /// Opens the history at `path` for reading.

@@ -12,9 +12,9 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_cha
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 
-use agent_core::cli::ActivityEvent;
-use agent_core::history::{HistoryHealth, HistoryState, Record, Step};
-use agent_core::ids::RunId;
+use agent_core::cli::{ActivityEvent, SessionId};
+use agent_core::history::{HistoryHealth, HistoryState, Record, RunSession, Step};
+use agent_core::ids::{Clock, RunId};
 use agent_core::state::Timestamp;
 
 use super::db::Store;
@@ -109,6 +109,8 @@ struct Shared {
     steps: Mutex<HashMap<RunId, u32>>,
     /// Where problems are told.
     reporter: Arc<dyn Reporter>,
+    /// Latest observed session and sequence number of each active run.
+    sessions: Mutex<HashMap<RunId, (SessionId, u32)>>,
 }
 
 /// The data behind `mutex`. A thread that panicked while it held the lock did at most one insert, one removal or one
@@ -125,6 +127,7 @@ impl Shared {
             state: Mutex::new(state),
             reported: Mutex::new(BTreeSet::new()),
             steps: Mutex::new(HashMap::new()),
+            sessions: Mutex::new(HashMap::new()),
             reporter,
         })
     }
@@ -307,9 +310,60 @@ impl History {
         })));
     }
 
-    /// Forgets the numbering of the steps of `run`, which has ended.
+    /// Records a changed session immediately, even when its notification has no activity event.
+    pub(crate) fn session(&self, run: &RunId, session: &SessionId, clock: &impl Clock) {
+        if self.is_disabled() {
+            return;
+        }
+        let number = {
+            let mut sessions = locked(&self.shared.sessions);
+            let previous = sessions.get(run);
+            if previous.is_some_and(|(known, _)| known == session) {
+                return;
+            }
+            let next = previous.map_or(Some(1), |(_, n)| n.checked_add(1));
+            // Remember an observation even if its record is lost; duplicate notifications are not new records.
+            sessions.insert(run.clone(), (session.clone(), next.unwrap_or(u32::MAX)));
+            next.and_then(NonZeroU32::new)
+        };
+        let Some(number) = number else {
+            self.shared.lose(1);
+            self.shared.report(Cause::Write(WriteKind::Encoding), || {
+                "the run has exhausted its session sequence numbers".to_owned()
+            });
+            return;
+        };
+        let at = match Timestamp::now(clock) {
+            Ok(at) => at,
+            Err(error) => {
+                // History failure must not fail the run; retain the loss and report its cause.
+                self.shared.lose(1);
+                self.shared
+                    .report(Cause::Write(WriteKind::Encoding), || error_chain(&error));
+                return;
+            }
+        };
+        let stored_session = match session.as_str().parse() {
+            Ok(session) => session,
+            Err(error) => {
+                self.shared.lose(1);
+                self.shared
+                    .report(Cause::Write(WriteKind::Encoding), || error_chain(&error));
+                return;
+            }
+        };
+        self.record(Record::Session(Box::new(RunSession {
+            run: run.clone(),
+            number,
+            at,
+            session: stored_session,
+        })));
+    }
+
+    /// Forgets the numbering of the steps and sessions of `run`, which has ended.
     pub fn finish_run(&self, run: &RunId) {
         locked(&self.shared.steps).remove(run);
+        locked(&self.shared.sessions).remove(run);
     }
 
     /// Waits until everything handed in before is written or lost.

@@ -356,6 +356,11 @@ impl RunEngine {
             run: &job.run,
             tail: OutputTail::new(stdout),
             parser: launch.parser,
+            known_session: match &job.mode {
+                RunMode::Resume { session_id } => Some(session_id.clone()),
+                RunMode::New { session_id } if job.cli == CliKind::Claude => Some(session_id.clone()),
+                RunMode::New { .. } => None,
+            },
             progress: Progress::Nothing,
             unreadable: Unreadable::default(),
         };
@@ -570,6 +575,8 @@ struct Follow<'a> {
     tail: OutputTail,
     /// The adapter's parser.
     parser: Box<dyn OutputParser>,
+    /// The session supplied at launch or most recently observed; echoes are not new observations.
+    known_session: Option<SessionId>,
     /// Whether an event that is more than the start or an error was seen.
     progress: Progress,
     /// What the parser refused.
@@ -613,6 +620,14 @@ impl Follow<'_> {
                     continue;
                 }
             };
+            if let Some(session) = self
+                .parser
+                .session()
+                .filter(|session| Some(*session) != self.known_session.as_ref())
+            {
+                self.engine.history.session(self.run, session, &self.engine.parts.clock);
+                self.known_session = Some(session.clone());
+            }
             for event in events {
                 if !matches!(event, ActivityEvent::Info(_) | ActivityEvent::Error(_)) {
                     self.progress = Progress::Made;

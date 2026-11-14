@@ -33,7 +33,20 @@ pub(super) fn insert(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes)
         Record::Step(step) => insert_step(tx, step, limit),
         Record::RunEnd(end) => insert_end(tx, end, limit),
         Record::Changes(changes) => insert_changes(tx, changes, limit),
-        Record::Session(_) => Ok(()),
+        Record::Session(session) => {
+            tx.execute(
+                "INSERT INTO run_sessions (run, n, at, session) VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT (run, n) DO NOTHING",
+                params![
+                    session.run.as_str(),
+                    session.number.get(),
+                    time_text(session.at),
+                    session.session.as_str()
+                ],
+            )
+            .map_err(sql(RecordKind::Session))?;
+            Ok(())
+        }
     }
 }
 
