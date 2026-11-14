@@ -805,6 +805,27 @@ pub enum Record {
     Event(Box<EventRecord>),
 }
 
+/// A record as the ledger of the history keeps it: the record with its place in the order everything was written in.
+///
+/// The `sequence` is the order of the writes, whichever kind of record they were; the story orders by `at` and breaks a
+/// tie by it, so records of the same time keep the order they were written in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SequencedRecord {
+    /// The place in the order of writes, counted from 1 over the whole history. A history made by a version before the
+    /// ledger has the sequence the migration gave its records: by time, then by kind.
+    pub sequence: u64,
+    /// When the record happened.
+    pub at: Timestamp,
+    /// The team the record belongs to.
+    pub team: TeamId,
+    /// The rounds it belongs to, oldest first; none for the start of a team.
+    pub rounds: Vec<RoundId>,
+    /// The record.
+    pub record: Record,
+    /// The fields of the record whose text was cut.
+    pub cut: Cut,
+}
+
 /// Whether the history is being written, and what it lost.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryHealth {
