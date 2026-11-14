@@ -279,6 +279,42 @@ fn a_text_of_an_event_over_the_limit_is_cut_at_a_character_and_its_field_is_name
     assert_eq!(stored.cut.fields().collect::<Vec<_>>(), ["title"]);
 }
 
+#[test]
+fn a_lost_event_whose_detail_is_over_the_limit_is_cut_and_read_back_through_its_round_and_team() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let mut db = HistoryDb::open(&path, limit(10)).unwrap();
+    let world = complete(8);
+    db.write(&world.records()).unwrap();
+    let round = world.rounds[0].round.clone();
+    let lost = HistoryEvent::Lost {
+        what: "step".to_owned(),
+        cause: "write_disk_full".to_owned(),
+        detail: "日本語日本語".to_owned(),
+    };
+    db.write(&[record(&world, 30, std::slice::from_ref(&round), lost)])
+        .unwrap();
+    let reader = Reader::open(&path).unwrap();
+
+    for read in [
+        reader.round_records(&round).unwrap(),
+        reader.team_records(&world.team.team).unwrap(),
+    ] {
+        let stored = read.last().unwrap();
+        let Record::Event(event) = &stored.record else {
+            panic!("not an event: {stored:?}");
+        };
+        let HistoryEvent::Lost { what, cause, detail } = &event.event else {
+            panic!("not a lost event: {event:?}");
+        };
+        assert_eq!(
+            (what.as_str(), cause.as_str(), detail.as_str()),
+            ("step", "write_disk_full", "日本語")
+        );
+        assert_eq!(stored.cut.fields().collect::<Vec<_>>(), ["detail"]);
+    }
+}
+
 /// A file of version two with `world` written to it, and its path.
 fn version_two(world: &World) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
