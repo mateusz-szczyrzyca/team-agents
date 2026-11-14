@@ -252,8 +252,13 @@ impl Owner {
 /// # Errors
 /// [`OwnerError::LostTeam`] when the team is not in the state.
 fn open_rounds_of(state: &State, team: &TeamId) -> Result<Vec<(RoundId, Option<ItemId>)>, OwnerError> {
-    let _ = (state, team);
-    Ok(Vec::new())
+    let found = state
+        .team(team)
+        .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?;
+    Ok(found
+        .open_rounds()
+        .map(|round| (round.id().clone(), round.item()))
+        .collect())
 }
 
 /// How many round IDs are drawn before the owner gives up: two IDs of one second differ in four characters drawn at
