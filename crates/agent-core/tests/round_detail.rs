@@ -174,18 +174,13 @@ mod round_detail {
         assert_eq!(shown.review_passes.len(), 2);
         assert_eq!(shown.item.unwrap().status.to_string(), "done");
         assert_eq!(shown.review_passes[1].reviews.len(), 2);
-        assert!(
-            shown.review_passes[1]
-                .reviews
-                .iter()
-                .all(|review| matches!(
-                    review.outcome,
-                    ReviewOutcome::Submitted {
-                        verdict: ReviewVerdict::Approve,
-                        ..
-                    }
-                ))
-        );
+        assert!(shown.review_passes[1].reviews.iter().all(|review| matches!(
+            review.outcome,
+            ReviewOutcome::Submitted {
+                verdict: ReviewVerdict::Approve,
+                ..
+            }
+        )));
         assert_eq!(
             restored
                 .team(&team_id(1))
