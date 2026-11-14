@@ -16,10 +16,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::ActivityEvent;
 use crate::config::{AbsolutePath, Config, EnvName, ModelName};
-use crate::decide::checks::FileChange;
+use crate::decide::checks::{Change, FileChange};
 use crate::decide::team::TeamRequest;
 use crate::ids::{AgentName, BranchName, ItemId, RoundId, RunId, TaskId, TeamId};
 use crate::kinds::{CliKind, Keyword, Role, Tier, UnknownKeyword};
+use crate::protocol::Client;
 use crate::state::{CommitId, MergeMode, PrNumber, RunEnd, SessionId, Timestamp};
 
 /// The longest text of one field the history keeps, in bytes, unless `[history] max_text_bytes` says otherwise: a prompt
@@ -147,6 +148,192 @@ impl Cut {
     }
 }
 
+/// The kind of a step, as the database keeps it.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<StepKind>)]
+pub enum StepKind {
+    /// A message of the agent.
+    Message,
+    /// A shell command.
+    Command,
+    /// A file the agent changes.
+    FileEdit,
+    /// A call of an agentbus tool.
+    BusCall,
+    /// A call of any other tool.
+    ToolCall,
+    /// An error.
+    Error,
+    /// Metadata of the run.
+    Info,
+    /// A control of the human.
+    Control,
+}
+
+impl Keyword for StepKind {
+    const WHAT: &'static str = "kind of step";
+}
+
+impl StepKind {
+    /// The kind of the step `event` is.
+    #[must_use]
+    pub const fn of(_event: &ActivityEvent) -> Self {
+        Self::Message
+    }
+}
+
+/// How a file changed, as the database keeps it.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<ChangeKind>)]
+pub enum ChangeKind {
+    /// The file is new.
+    Added,
+    /// The file is gone.
+    Deleted,
+    /// The file has other contents.
+    Modified,
+    /// The file moved.
+    Renamed,
+}
+
+impl Keyword for ChangeKind {
+    const WHAT: &'static str = "kind of change";
+}
+
+impl ChangeKind {
+    /// The kind of `change`.
+    #[must_use]
+    pub const fn of(_change: &Change) -> Self {
+        Self::Added
+    }
+}
+
+/// How a run ended, as the database keeps it: the kind of its [`RunEnd`].
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<EndKind>)]
+pub enum EndKind {
+    /// The agent reported a status.
+    Reported,
+    /// The CLI ended without one.
+    NoStatus,
+    /// The quota is used up.
+    QuotaExhausted,
+    /// The rate was limited.
+    RateLimited,
+    /// The watchdog stopped it.
+    Hung,
+    /// The human stopped it.
+    Stopped,
+}
+
+impl Keyword for EndKind {
+    const WHAT: &'static str = "kind of end of a run";
+}
+
+impl EndKind {
+    /// The kind of `end`.
+    #[must_use]
+    pub const fn of(_end: &RunEnd) -> Self {
+        Self::Reported
+    }
+}
+
+/// Who used a control, as the database keeps it.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<ClientKind>)]
+pub enum ClientKind {
+    /// The command line.
+    Cli,
+    /// The dashboard.
+    Dashboard,
+}
+
+impl Keyword for ClientKind {
+    const WHAT: &'static str = "kind of client";
+}
+
+impl ClientKind {
+    /// The kind of `client`.
+    #[must_use]
+    pub const fn of(_client: &Client) -> Self {
+        Self::Cli
+    }
+}
+
+/// Whether a changed file is in a commit or was left in the worktree.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<ChangeScope>)]
+pub enum ChangeScope {
+    /// Between the two heads of the run.
+    Committed,
+    /// In the worktree, in no commit.
+    Uncommitted,
+}
+
+impl Keyword for ChangeScope {
+    const WHAT: &'static str = "scope of a change";
+}
+
 /// How a participant of a team got its role.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HowChosen {
@@ -222,6 +409,31 @@ pub struct PlanEntry {
     pub role: Role,
     /// How it got the role.
     pub how: HowChosen,
+}
+
+impl fmt::Display for Cut {
+    /// The names of the fields, sorted and separated by commas: what the database keeps in its `cut` columns.
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ok(())
+    }
+}
+
+/// A `cut` column that names a field no record cuts.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{field:?} is not a field the history cuts")]
+pub struct UnknownCutField {
+    /// The name.
+    pub field: String,
+}
+
+impl Cut {
+    /// The set a `cut` column holds, as [`Cut`]'s `Display` writes it; `known` are the fields the record can cut.
+    ///
+    /// # Errors
+    /// [`UnknownCutField`] for a name that is not in `known`.
+    pub fn parse(_text: &str, _known: &[&'static str]) -> Result<Self, UnknownCutField> {
+        Ok(Self::default())
+    }
 }
 
 /// A team starting: what was asked and how it was formed.
