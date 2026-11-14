@@ -431,3 +431,7 @@ mod history_failures_tests;
 #[cfg(test)]
 #[path = "rounds/tests/history_redaction.rs"]
 mod history_redaction_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/history_acceptance.rs"]
+mod history_acceptance_tests;

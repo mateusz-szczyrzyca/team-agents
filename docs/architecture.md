@@ -372,7 +372,7 @@ full, the disk, the file, a database of a newer version — is counted as lost a
 `agent status` shows the count (`Reply::Overview`, only when the history is not whole). A daemon killed with `SIGKILL` leaves a
 file that opens and holds whole records; the next one ends the runs it finds going. Accurate Git attribution uses the
 human-authorized capture exception: a `2`-second overall budget at each run boundary, plus at most `1` second to reap a
-killed Git process. Captures that exceed it are omitted and counted; subsequent runs never inherit their changes.
+killed Git process. Captures that exceed it are abandoned and counted before the next run starts.
 
 **Readers need no daemon.** `Reader::open` opens the file read-only; `agent log` (8.5, 8.7) will use it. The schema has a
 version (`PRAGMA user_version`) and forward-only migrations in code; a database of a newer version is never written.

@@ -308,7 +308,6 @@ counts an incomplete launch or missing changes record and the run continues. Suc
 These are cooperative runtime deadlines, not hard real-time guarantees for kernel scheduling or filesystem operations.
 SQLite writes remain asynchronous and cannot hold up the run.
 
-
 For example:
 
 ```text
