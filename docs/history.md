@@ -291,7 +291,7 @@ The key of each table is an index too: `WITHOUT ROWID` tables are stored in the 
 
 ## What happens when the history cannot be written
 
-The history never stops or delays the work. The daemon is its one writer, on a thread of its own behind a queue of 4,096
+History storage never waits in the work path. The daemon is its one writer, on a thread of its own behind a queue of 4,096
 records; it writes what is queued, up to 256 records in one transaction, and when a batch is refused it tries its records
 one by one, so a record that cannot be written loses only itself.
 
@@ -299,6 +299,15 @@ When a record cannot be kept — the queue is full, the file or the disk cannot 
 the work goes on, the failure goes to the standard error of the daemon (the journal of the unit) **once for each cause**
 (`queue_full`, `unavailable`, `capture_head`, `capture_changes`, `write_disk_full`, `write_read_only`, `write_io`, `write_corrupt`, `write_refused`, `secret_identity`, …), the
 records lost are counted, and `agent status` shows the count. A failed starting-head lookup counts one incomplete launch; a failed change snapshot counts one missing changes record. When history is unavailable, the engine counts the skipped changes record without running Git for it. Disabled history neither captures nor counts records.
+
+The human authorized a bounded capture exception for item `8.4`: before launching a CLI and after it exits, the engine
+awaits a best-effort Git snapshot so a subsequent run cannot overwrite uncommitted changes before attribution. Each
+boundary has one absolute `2`-second budget shared by all Git commands, including scratch-index commands and executable
+startup retries. On timeout the process group is killed; reaping the leader has a separate `1`-second bound. A timeout
+counts an incomplete launch or missing changes record and the run continues. Successful captures retain exact attribution.
+These are cooperative runtime deadlines, not hard real-time guarantees for kernel scheduling or filesystem operations.
+SQLite writes remain asynchronous and cannot hold up the run.
+
 
 For example:
 

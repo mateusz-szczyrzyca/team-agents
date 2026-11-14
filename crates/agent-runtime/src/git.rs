@@ -23,7 +23,7 @@ use agent_core::repo_path::InvalidRepoPath;
 use agent_core::state::{CommitId, InvalidCommitId};
 use tokio::process::Command;
 
-use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture};
+use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture, capture_until};
 
 mod changes;
 #[cfg(test)]
@@ -425,6 +425,8 @@ pub struct Git {
     env: BTreeMap<EnvName, String>,
     /// The bounds of a command.
     limits: GitLimits,
+    /// Absolute end of a best-effort snapshot, shared by clones and scratch handles.
+    deadline: Option<tokio::time::Instant>,
 }
 
 impl Git {
@@ -436,6 +438,7 @@ impl Git {
             identity,
             env: BTreeMap::new(),
             limits: GitLimits::default(),
+            deadline: None,
         }
     }
 
@@ -456,7 +459,8 @@ impl Git {
 
     /// Bounds all commands through this handle by one absolute snapshot deadline.
     #[must_use]
-    pub fn with_deadline(self, _deadline: tokio::time::Instant) -> Self {
+    pub fn with_deadline(mut self, deadline: tokio::time::Instant) -> Self {
+        self.deadline = Some(deadline);
         self
     }
 
@@ -885,12 +889,16 @@ impl Git {
             Reach::Network => self.limits.network_timeout,
         };
         let limits = CaptureLimits {
-            timeout,
+            timeout: self.deadline.map_or(timeout, |deadline| {
+                timeout.min(deadline.saturating_duration_since(tokio::time::Instant::now()))
+            }),
             max_bytes: self.limits.max_output_bytes,
         };
-        capture(self.command(args), limits)
-            .await
-            .map_err(|source| GitError::Run { operation, source })
+        let captured = match self.deadline {
+            Some(deadline) => capture_until(self.command(args), limits, deadline).await,
+            None => capture(self.command(args), limits).await,
+        };
+        captured.map_err(|source| GitError::Run { operation, source })
     }
 
     /// Runs git with `args`; a command that ends with a failure is an error.

@@ -1030,6 +1030,8 @@ The daemon records teams, rounds, runs and their steps and changes in `history.d
 `agent status`. Readers reject invalid variant fields even when SQLite constraints were bypassed.
 Known values from `secrets.toml` are replaced with `[REDACTED]` before history persistence, including echoed CLI output;
 secret-bearing structured identities cause counted omissions. Raw CLI/activity files are separate from this protection.
+Git attribution may briefly hold a run at its boundaries: each snapshot has a `2`-second budget plus bounded process cleanup;
+timeouts are counted and the work continues.
 
 How the human answers the agents and steers a task or a team, through the daemon (`agent daemon`) that owns the state:
 

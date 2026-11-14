@@ -146,7 +146,7 @@ Neither text may contain `<`, `>` or control characters.
 | `history.max_text_bytes` | `1048576` (1 MiB) | the longest text one field of the history keeps, in bytes, `1` to `268435456`: a longer text (a prompt, a final message) is cut at a character boundary and the record says which field was cut |
 
 A history that cannot be written — the file is a directory, the disk is full, the database is of a newer version — never stops
-or delays the work: the daemon says so once on its standard error for each cause, counts the records it could not keep, and
+or waits for storage: the daemon says so once on its standard error for each cause, counts the records it could not keep, and
 `agent status` shows the count.
 
 ### `[repos.NAME]`
@@ -188,6 +188,9 @@ A pattern is not empty, not absolute, has no `..` segment, no control character 
 only as a whole segment. A file that matches `test_paths` is a test even when `code_paths` matches it too; a test module
 inside a source file is not a test file (the reviewers look at those). How the rules use the lists is in
 [`architecture.md`](architecture.md#round-checks-before-the-review).
+
+Git history capture has a fixed overall `2`-second budget at each run boundary, with at most `1` additional second for
+process cleanup. The capture exception and configured-secret redaction are documented in [`history.md`](history.md).
 
 ## `secrets.toml`
 

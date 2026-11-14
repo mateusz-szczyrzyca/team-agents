@@ -608,7 +608,20 @@ async fn read_bounded<R: AsyncRead + Unpin>(mut reader: R, max_bytes: u64) -> io
 /// [`CaptureError`]: the program cannot be started, its output cannot be read, it ran over its time or its group
 /// cannot be signalled.
 pub(crate) async fn capture(command: Command, limits: CaptureLimits) -> Result<Captured, CaptureError> {
-    capture_feeding(command, limits, None).await
+    capture_feeding(command, limits, None, None).await
+}
+
+/// Captures a snapshot command within an absolute deadline, including executable-busy retries.
+/// Timeout kills the process group and allows at most one further second to reap its leader.
+///
+/// # Errors
+/// The errors of [`capture`], including timeout before the process could start.
+pub(crate) async fn capture_until(
+    command: Command,
+    limits: CaptureLimits,
+    deadline: tokio::time::Instant,
+) -> Result<Captured, CaptureError> {
+    capture_feeding(command, limits, None, Some(deadline)).await
 }
 
 /// Writes `input` to the standard input of a child and closes it, when there is an input and a pipe.
@@ -631,16 +644,24 @@ async fn capture_feeding(
     mut command: Command,
     limits: CaptureLimits,
     input: Option<&[u8]>,
+    deadline: Option<tokio::time::Instant>,
 ) -> Result<Captured, CaptureError> {
+    if deadline.is_some_and(|deadline| deadline <= tokio::time::Instant::now()) {
+        return Err(CaptureError::Timeout { limit: limits.timeout });
+    }
     command
         .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0)
         .kill_on_drop(true);
-    let mut child = spawn_when_free(&mut command)
-        .await
-        .map_err(|source| CaptureError::Spawn { source })?;
+    let started = match deadline {
+        Some(deadline) => tokio::time::timeout_at(deadline, spawn_when_free(&mut command))
+            .await
+            .map_err(|_elapsed| CaptureError::Timeout { limit: limits.timeout })?,
+        None => spawn_when_free(&mut command).await,
+    };
+    let mut child = started.map_err(|source| CaptureError::Spawn { source })?;
     let (_, group) = leader_of(&child)?;
     let stdin = child.stdin.take();
     let stdout = child
@@ -666,7 +687,12 @@ async fn capture_feeding(
             status.map_err(io_error)?,
         ))
     };
-    let outcome = timeout(limits.timeout, run).await;
+    let outcome = match deadline {
+        Some(deadline) => {
+            tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + limits.timeout), run).await
+        }
+        None => timeout(limits.timeout, run).await,
+    };
     match outcome {
         Ok(result) => {
             let (stdout, stderr, status) = result?;
@@ -679,7 +705,12 @@ async fn capture_feeding(
         Err(_time_over) => {
             signal_group(group, GroupSignal::Kill)?;
             // The error being returned is the timeout; the reaping of the killed leader is cleanup, logged if it fails.
-            match timeout(KILL_WAIT, child.wait()).await {
+            let reap_for = if deadline.is_some() {
+                Duration::from_secs(1)
+            } else {
+                KILL_WAIT
+            };
+            match timeout(reap_for, child.wait()).await {
                 Ok(Ok(_status)) => {}
                 Ok(Err(error)) => tracing::warn!(error = %error, "cannot reap a captured process that was killed"),
                 Err(_wait_over) => tracing::warn!("a captured process that was killed did not end"),
@@ -698,7 +729,7 @@ pub(crate) async fn capture_with_input(
     limits: CaptureLimits,
     input: &[u8],
 ) -> Result<Captured, CaptureError> {
-    capture_feeding(command, limits, Some(input)).await
+    capture_feeding(command, limits, Some(input), None).await
 }
 
 #[cfg(test)]

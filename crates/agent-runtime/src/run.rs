@@ -40,6 +40,9 @@ use crate::run::output::{OutputTail, read_end};
 use crate::store::{StateStore, StoreError};
 pub use hold::{HoldGuard, WatchdogHold};
 
+/// One best-effort history boundary may spend two seconds collecting Git data, plus bounded child cleanup.
+const HISTORY_CAPTURE_BUDGET: Duration = Duration::from_secs(2);
+
 /// How long a prompt may be to travel as one argument of a command line; longer ones go through a file. Linux refuses
 /// an argument over 128 KiB, and a CLI adds its own flags around it.
 pub const MAX_PROMPT_ARGUMENT_BYTES: usize = 100_000;
@@ -443,7 +446,11 @@ impl RunEngine {
         if !self.history.is_writing() {
             return None;
         }
-        match launch::lookup_git(&job.working_dir).rev_parse(&Revision::Head).await {
+        match launch::lookup_git(&job.working_dir)
+            .with_deadline(tokio::time::Instant::now() + HISTORY_CAPTURE_BUDGET)
+            .rev_parse(&Revision::Head)
+            .await
+        {
             Ok(head) => Some(head),
             Err(error) => {
                 self.history.capture_failed(CaptureKind::Head, &error);
@@ -487,6 +494,7 @@ impl RunEngine {
         self.history
             .record_captured(CaptureKind::Changes, async {
                 let changes = launch::lookup_git(&job.working_dir)
+                    .with_deadline(tokio::time::Instant::now() + HISTORY_CAPTURE_BUDGET)
                     .work_changes(head_before.as_ref())
                     .await?;
                 Ok::<_, crate::git::GitError>(Record::Changes(Box::new(RunChanges {
