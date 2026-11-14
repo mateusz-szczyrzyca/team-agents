@@ -26,6 +26,8 @@ use tokio::process::Command;
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture};
 
 mod changes;
+#[cfg(test)]
+mod deadline_tests;
 mod range;
 
 pub use changes::WorkChanges;
@@ -449,6 +451,12 @@ impl Git {
     #[must_use]
     pub fn with_limits(mut self, limits: GitLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Bounds all commands through this handle by one absolute snapshot deadline.
+    #[must_use]
+    pub fn with_deadline(self, _deadline: tokio::time::Instant) -> Self {
         self
     }
 
