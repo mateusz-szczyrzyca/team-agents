@@ -1142,3 +1142,35 @@ async fn a_client_that_does_not_read_its_answers_does_not_hold_the_shutdown() {
 
     assert!(matches!(stopped, Ok(Ok(()))), "the daemon did not stop: {stopped:?}");
 }
+
+#[tokio::test]
+async fn status_of_a_run_outside_a_git_repository_reports_one_lost_capture() {
+    use agent_core::history::{HistoryHealth, HistoryState};
+
+    let mut f = Fixture::new(&solo_state(), 3, "hang");
+    f.start().await;
+    let worktree = f.home.worktree_dir(&repo(), &task(1));
+    // The CLI starts after the head lookup, so status cannot race that capture.
+    eventually("the fake CLI to start", || worktree.join(".fake-args").exists()).await;
+    let reply = f
+        .connect()
+        .await
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+    f.stop().await.unwrap();
+
+    let Reply::Overview { teams, history } = reply else {
+        panic!("expected degraded history in status: {reply:?}")
+    };
+    assert_eq!(
+        history,
+        HistoryHealth {
+            state: HistoryState::Writing,
+            lost: 1,
+        }
+    );
+    assert_eq!(teams.len(), 1);
+    assert_eq!(teams[0].members[0].task, task(1));
+    assert_eq!(teams[0].members[0].status, TaskStatus::Running);
+}
