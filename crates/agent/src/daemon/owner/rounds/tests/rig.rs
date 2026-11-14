@@ -474,3 +474,22 @@ fn config(agents: &[Agent], github: &str, fix_passes: u32, home: &Home, bus: boo
     .unwrap();
     text
 }
+
+impl Rig {
+    /// Starts the real daemon with a reproducible random source for selection-history proofs.
+    pub(super) async fn start_with_rng(&mut self, rng: rand::rngs::StdRng) {
+        self.shutdown = CancellationToken::new();
+        let daemon = tokio::spawn(crate::daemon::run_with_rng(
+            self.setup(),
+            crate::daemon::Surroundings::from_process(),
+            rng,
+            self.shutdown.clone(),
+        ));
+        self.wait_for("seeded daemon socket", || {
+            self.home.socket_file().exists() || daemon.is_finished()
+        })
+        .await;
+        assert!(!daemon.is_finished(), "seeded daemon exited before serving");
+        self.daemon = Some(daemon);
+    }
+}

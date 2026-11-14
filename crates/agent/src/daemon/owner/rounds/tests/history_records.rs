@@ -960,3 +960,86 @@ async fn the_answers_of_the_human_are_the_reason_of_the_run_that_goes_on() {
     );
     assert_eq!(solo[1].start.value.why, RunWhy::Answers);
 }
+
+#[tokio::test]
+async fn a_seeded_daemon_records_the_actual_coordinator_draw_and_candidates() {
+    use agent_core::decide::team::{TeamPlan, TeamRequest, plan_team};
+    use agent_core::protocol::AgentList;
+    use agent_runtime::settings::Settings;
+    use rand::{SeedableRng, rngs::StdRng};
+
+    let mut selected = BTreeSet::new();
+    for seed in 0..8 {
+        let mut rig = Rig::new(
+            &[
+                investigator("inv-a", "sleep"),
+                investigator("inv-b", "sleep"),
+                normal("claude-1", "sleep"),
+                investigator("inv-r1", APPROVING),
+                investigator("inv-r2", APPROVING),
+            ],
+            5,
+            true,
+        )
+        .await;
+        let names = ["claude-1", "inv-a", "inv-b"];
+        let agents = AgentList::try_from(names.iter().map(|name| name.parse().unwrap()).collect::<Vec<_>>()).unwrap();
+        let settings = Settings::load(&rig.home).await.unwrap();
+        let TeamPlan::Team(expected) = plan_team(
+            &TeamRequest {
+                agents: &agents,
+                flag_coordinator: None,
+                listed_coordinator: None,
+            },
+            &settings.config,
+            &mut StdRng::seed_from_u64(seed),
+        )
+        .unwrap() else {
+            panic!("expected a team, seed={seed}")
+        };
+        rig.start_with_rng(StdRng::seed_from_u64(seed)).await;
+        let (team, _) = rig.run(&names, ONE, MergeMode::NoMerge, None).await;
+        let state = rig.state();
+        rig.stop().await.unwrap();
+        let history = reader(&rig).team(&team).unwrap().unwrap().value;
+        let coordinator = history
+            .plan
+            .iter()
+            .find(|entry| entry.role == Role::Coordinator)
+            .unwrap();
+        assert_eq!(coordinator.agent.as_str(), expected.coordinator.name(), "seed={seed}");
+        assert_eq!(
+            state.team(&team).unwrap().crew().roster()[0].1.agent(),
+            &expected.coordinator,
+            "seed={seed}"
+        );
+        assert_eq!(
+            coordinator.how,
+            HowChosen::Drawn {
+                among: ["inv-a", "inv-b"].map(|name| name.parse().unwrap()).to_vec()
+            },
+            "seed={seed}"
+        );
+        let members: Vec<_> = history
+            .plan
+            .iter()
+            .filter(|entry| entry.role == Role::Member)
+            .map(|entry| (&entry.agent, &entry.how))
+            .collect();
+        let expected_members: Vec<_> = expected
+            .members
+            .iter()
+            .map(|member| (member.name().parse().unwrap(), HowChosen::Named))
+            .collect();
+        assert_eq!(
+            members,
+            expected_members
+                .iter()
+                .map(|(name, how)| (name, how))
+                .collect::<Vec<_>>(),
+            "seed={seed}"
+        );
+        selected.insert(coordinator.agent.clone());
+    }
+    assert_eq!(selected, ["inv-a", "inv-b"].map(|name| name.parse().unwrap()).into());
+}
