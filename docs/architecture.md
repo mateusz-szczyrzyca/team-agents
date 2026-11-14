@@ -360,12 +360,11 @@ what it left uncommitted) and how it ended. [`history.md`](history.md) documents
 queries to ask it with `sqlite3`; [`history.schema.sql`](history.schema.sql) pins the schema and a test compares it with a
 fresh database.
 
-| Part | What it does |
-|---|---|
-| `agent_core::history` | the records as typed values (`Record`, `TeamStart`, `RoundOpening`, `RunStart`, `Launch`, `Step`, `RunEndRecord`, `RunChanges`), the limit of a text (`MaxTextBytes`, `cut_text`: a longer text is cut at a character boundary and the record says which field), `explain_plan` (how each participant got its role) and `HistoryHealth` |
-| `agent_runtime::history` | `HistoryDb` (opens, migrates forward, writes a batch in one transaction), `History` (the handle every part records through: a bounded queue, one writer thread, the count of what was lost, each cause reported once), `Reader` (read-only, typed answers, each in one snapshot), the schema and its migrations |
-| `agent_runtime::git` | `range_log`, `uncommitted_changes` and `work_changes`: a run's commits with their author time, the files that differ between its two heads and the files it left in the tree, read without changing the repository |
-| `agent::daemon` | opens the history at its start from `[history]` and closes the writer at its end; the owner records teams, rounds, runs and their ends, the run engine its launch, steps and changes |
+The records are the types of `agent_core::history` (with the limit of a text and `explain_plan`, which says how each participant
+of a team got its role), the database, the writer and the reader are `agent_runtime::history`, the commits and files of a run
+come from `agent_runtime::git` (`work_changes`, read without changing the repository), and the daemon opens the history at its
+start and closes the writer at its end: the owner records teams, rounds, runs and their ends, the run engine the launch, the
+steps and the changes.
 
 **One writer, never in the way.** The daemon is the only writer, on a thread of its own behind a queue of 4,096 records; a record
 or a batch of up to 256 per transaction. The history never stops or delays the work: a record that cannot be kept — the queue is

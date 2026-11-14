@@ -9,12 +9,9 @@ This page is the reference of the schema — the checkpoint after item 8.4 of th
 one round with `sqlite3` (the queries are below). The schema is expensive to change once an installation has a history.
 The pinned text of the schema is [`history.schema.sql`](history.schema.sql); a test compares it with a fresh database.
 
-| What | Where |
-|---|---|
-| the records, as typed values | [`agent_core::history`](../crates/agent-core/src/history.rs) |
-| the schema and its migrations | [`schema.rs`](../crates/agent-runtime/src/history/schema.rs) — the one module with `CREATE TABLE` |
-| the writer, the database, the reader | [`agent_runtime::history`](../crates/agent-runtime/src/history.rs) |
-| what the daemon records | [`daemon/history.rs`](../crates/agent/src/daemon/history.rs) and [`owner/history.rs`](../crates/agent/src/daemon/owner/history.rs); the run engine records its own part |
+The records are the types of [`agent_core::history`](../crates/agent-core/src/history.rs), the schema and its migrations are in
+[`schema.rs`](../crates/agent-runtime/src/history/schema.rs) (the one module with `CREATE TABLE`), the writer, the database and
+the reader in [`agent_runtime::history`](../crates/agent-runtime/src/history.rs); the daemon and the run engine record.
 
 ## What is recorded
 
@@ -415,15 +412,8 @@ A run with no row in `run_ends` is going — or the daemon was killed before it 
 `agent_runtime::history::Reader` opens the file read-only (`Reader::open(path)`) and gives typed answers, each read in one
 snapshot — never a record the writer is in the middle of:
 
-| Method | Gives |
-|---|---|
-| `team(&TeamId)` | the team as it started, with its plan |
-| `rounds_of_team(&TeamId)`, `round(&RoundId)` | the rounds, oldest first; one round |
-| `runs_of_team(&TeamId)`, `runs_of_round(&RoundId)`, `run(&RunId)` | runs, oldest first, each with its start, its launch and its end |
-| `steps(&RunId)` | the steps of a run, in order |
-| `changes(&RunId)` | what the run changed |
-| `prompts_of_round(&RoundId)` | the prompts of a round, oldest run first |
-| `schema()` | what `docs/history.schema.sql` pins |
+`team`, `rounds_of_team`, `round`, `runs_of_team`, `runs_of_round`, `run` (each with its start, launch and end), `steps`,
+`changes`, `prompts_of_round` and `schema` (what `docs/history.schema.sql` pins).
 
 Every answer is a `Stored<T>`: the record and the set of its fields that were cut. Every row is read through the checks of
 its types and the rules of its record — an ID that is not an ID, a step of a kind that lacks its text, a run that ends before
