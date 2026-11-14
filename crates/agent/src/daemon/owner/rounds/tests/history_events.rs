@@ -377,9 +377,10 @@ async fn a_gate_the_daemon_ran_is_recorded_with_its_task_head_outcome_and_log_an
     };
     assert_eq!(task, &tasks[0]);
     assert_eq!(recorded, &record);
+    // The stand-in CLI leaves its own files in the worktree, so the tree is not clean; the event holds what the gate said.
     assert_eq!(
         (recorded.tree, recorded.result.outcome),
-        (GateTree::Clean, GateOutcome::Passed)
+        (GateTree::NotClean, GateOutcome::Passed)
     );
     assert!(*started_at <= gate.at);
     assert_eq!(gate.at, record.result.finished_at);
