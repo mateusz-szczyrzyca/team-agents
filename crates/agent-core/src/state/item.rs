@@ -750,7 +750,13 @@ impl ItemProgress {
 
     getter!("The fix passes so far, oldest first.", pub fn fix_passes(&self) -> &[FixPass] = &self.fix_passes);
 
-    /// Moves the item to `next`. Leaving `in_review` for `fixing` records the review pass's reviews as a fix pass.
+    /// The reviews of the pass that approved a merged item; none before the merge or in a state written without them.
+    pub(crate) fn approving_reviews(&self) -> &[Review] {
+        &self.approving_reviews
+    }
+
+    /// Moves the item to `next`. Leaving `in_review` for `fixing` records the review pass's reviews as a fix pass;
+    /// leaving `approved` for `done` keeps the reviews that approved the merge.
     ///
     /// # Errors
     /// [`AdvanceError::Transition`] when [`PhaseKind::successors`] does not allow the change;
@@ -781,8 +787,14 @@ impl ItemProgress {
             check_fix_pass(reviews).map_err(|source| AdvanceError::Reviews { item: self.id, source })?;
         }
         let left = std::mem::replace(&mut self.phase, next);
-        if let (ItemPhase::InReview { reviews, .. }, PhaseKind::Fixing) = (left, to) {
-            self.fix_passes.push(FixPass { requested_by: reviews });
+        match (left, to) {
+            (ItemPhase::InReview { reviews, .. }, PhaseKind::Fixing) => {
+                self.fix_passes.push(FixPass { requested_by: reviews });
+            }
+            (ItemPhase::Approved { reviews, .. }, PhaseKind::Done) => {
+                self.approving_reviews = reviews;
+            }
+            _ => {}
         }
         Ok(())
     }

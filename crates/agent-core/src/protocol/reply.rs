@@ -10,8 +10,8 @@ use crate::config::{AbsolutePath, RepoName};
 use crate::ids::{BranchName, ItemId, TaskId, TeamId};
 use crate::kinds::Role;
 use crate::state::{
-    GateRecord, GateResult, ItemPhase, ItemProgress, Member, MergeMode, Participant, PullRequest, Question, Review,
-    Round, Run, Team, Timestamp,
+    GateRecord, GateResult, ItemPhase, Member, MergeMode, Participant, PullRequest, Question, Review, Round, Run, Team,
+    Timestamp,
 };
 use crate::status::{ItemStatus, TaskStatus};
 
@@ -288,8 +288,7 @@ impl MemberSummary {
 
 impl RoundDetail {
     /// The round `round` of `team`, with the `tasks` that worked for it: its pull request and its review passes are
-    /// those of its item, which the state keeps (the reviews of the pass that was approved are not kept once the item
-    /// is done).
+    /// those of its item, including the pass whose approvals merged it.
     #[must_use]
     pub fn new(team: &Team, round: &Round, tasks: Vec<RoundTask>) -> Self {
         let progress = round.item().and_then(|item| team.item(item));
@@ -317,12 +316,22 @@ impl RoundDetail {
                     .collect()
             })
             .unwrap_or_default();
-        if let Some(ItemPhase::InReview { reviews, .. } | ItemPhase::Approved { reviews, .. }) =
-            progress.map(ItemProgress::phase)
-        {
-            review_passes.push(ReviewPass {
-                reviews: reviews.clone(),
-            });
+        if let Some(progress) = progress {
+            match progress.phase() {
+                ItemPhase::InReview { reviews, .. } | ItemPhase::Approved { reviews, .. } => {
+                    review_passes.push(ReviewPass {
+                        reviews: reviews.clone(),
+                    });
+                }
+                ItemPhase::Done {
+                    completion: crate::state::Completion::Merged { .. },
+                } if !progress.approving_reviews().is_empty() => {
+                    review_passes.push(ReviewPass {
+                        reviews: progress.approving_reviews().to_vec(),
+                    });
+                }
+                _ => {}
+            }
         }
         let item = progress.and_then(|progress| {
             team.task_list().list().item(progress.id()).map(|listed| RoundItem {
