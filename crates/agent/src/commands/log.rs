@@ -120,9 +120,12 @@ pub(crate) fn log(history: &Path, request: &LogRequest, out: &mut impl Write) ->
     let text = match request.format {
         Format::Text(options) => render(&records, &request.selection, options),
         Format::Json => json_lines(&records, &request.selection)
-            .iter()
-            .map(|line| format!("{line}\n"))
-            .collect(),
+            .into_iter()
+            .fold(String::new(), |mut text, line| {
+                text.push_str(&line);
+                text.push('\n');
+                text
+            }),
     };
     out.write_all(text.as_bytes()).map_err(LogError::Output)?;
     out.flush().map_err(LogError::Output)
