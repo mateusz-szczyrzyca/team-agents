@@ -13,6 +13,7 @@ pub mod editor;
 pub mod git;
 pub mod github;
 pub mod harness_prompts;
+pub mod history;
 pub mod notify;
 pub mod process;
 pub mod prompts;
