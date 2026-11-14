@@ -11,7 +11,7 @@ use agent_core::history::{Cut, EventKind, EventRecord, HistoryEvent, Record, Run
 use agent_core::ids::{RoundId, RunId, TeamId};
 use agent_core::kinds::UnknownKeyword;
 use agent_core::state::SessionId;
-use rusqlite::{Connection, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{
     ReadError, Row_, Stored, count, query, read_changes, read_end, read_launch, read_round, read_run_start, read_steps,
@@ -174,6 +174,7 @@ fn decode(snapshot: &Transaction<'_>, raw: &Raw, steps: &mut StepCache) -> Resul
         .iter()
         .map(|round| here.value("round", RoundId::from_str(round)))
         .collect::<Result<Vec<_>, _>>()?;
+    check_round_owners(snapshot, &here, &raw.team, &raw.rounds)?;
     let sequence = here.value("sequence", u64::try_from(raw.sequence))?;
     let kind = here.value("kind", LedgerKind::from_str(&raw.kind))?;
     let (record, cut) = match kind {
@@ -201,6 +202,29 @@ fn decode(snapshot: &Transaction<'_>, raw: &Raw, steps: &mut StepCache) -> Resul
         record,
         cut,
     })
+}
+
+/// Checks that none of `rounds` belongs to a team other than `team` in `rounds` or in the ledger.
+fn check_round_owners(snapshot: &Transaction<'_>, here: &Row_, team: &str, rounds: &[String]) -> Result<(), ReadError> {
+    for round in rounds {
+        let foreign: Option<i64> = snapshot
+            .query_row(
+                "SELECT 1 FROM rounds WHERE round = ?1 AND team <> ?2 \
+                 UNION ALL \
+                 SELECT 1 FROM history_record_rounds AS l \
+                 JOIN history_records AS r ON r.sequence = l.sequence \
+                 WHERE l.round = ?1 AND r.team <> ?2 \
+                 LIMIT 1",
+                params![round, team],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(query("history_record_rounds"))?;
+        if foreign.is_some() {
+            return Err(here.rule("round", "a record is linked to a round of another team"));
+        }
+    }
+    Ok(())
 }
 
 /// The event in the payload of a row of `kind`.

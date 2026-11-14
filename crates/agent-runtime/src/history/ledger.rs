@@ -67,6 +67,7 @@ fn sql(record: RecordKind) -> impl Fn(rusqlite::Error) -> WriteError {
 pub(super) fn append(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes) -> Result<(), WriteError> {
     let kind = kind_of(record);
     let entry = entry_of(tx, record, limit)?;
+    check_rounds(tx, &entry.team, &entry.rounds, kind)?;
     let added = tx
         .execute(
             "INSERT INTO history_records (kind, key, at, team, payload, cut) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
@@ -85,6 +86,32 @@ pub(super) fn append(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes)
             params![sequence, position, round],
         )
         .map_err(sql(kind))?;
+    }
+    Ok(())
+}
+
+/// Checks that none of `rounds` is recorded as belonging to a team other than `team`.
+fn check_rounds(tx: &Transaction<'_>, team: &str, rounds: &[String], kind: RecordKind) -> Result<(), WriteError> {
+    for round in rounds {
+        let foreign: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM rounds WHERE round = ?1 AND team <> ?2 \
+                 UNION ALL \
+                 SELECT 1 FROM history_record_rounds AS l \
+                 JOIN history_records AS r ON r.sequence = l.sequence \
+                 WHERE l.round = ?1 AND r.team <> ?2 \
+                 LIMIT 1",
+                params![round, team],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sql(kind))?;
+        if foreign.is_some() {
+            return Err(WriteError::Rule {
+                record: kind,
+                rule: "a record cannot belong to a round of another team",
+            });
+        }
     }
     Ok(())
 }
