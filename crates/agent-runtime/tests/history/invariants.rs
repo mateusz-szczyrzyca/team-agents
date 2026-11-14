@@ -132,3 +132,94 @@ fn reviewer_is_a_run_role_but_not_a_team_plan_role_in_sql_or_when_read() {
     );
     rejected(&reader.team(&team.team).unwrap_err(), "plan", "role");
 }
+
+#[test]
+fn every_step_kind_rejects_fields_of_other_variants_in_sql_and_when_read() {
+    use agent_core::cli::ActivityEvent;
+    use agent_core::config::TailscaleLogin;
+    use agent_core::history::Step;
+    use agent_core::protocol::{Client, ControlAction};
+
+    let events = [
+        ActivityEvent::Text("message".to_owned()),
+        ActivityEvent::Command("cargo test".to_owned()),
+        ActivityEvent::Error("failed".to_owned()),
+        ActivityEvent::Info("info".to_owned()),
+        ActivityEvent::FileEdit {
+            path: "src/lib.rs".to_owned(),
+        },
+        ActivityEvent::BusCall {
+            tool: "send_message".to_owned(),
+            arguments: "{}".to_owned(),
+        },
+        ActivityEvent::ToolCall {
+            name: "read_file".to_owned(),
+            summary: "src/lib.rs".to_owned(),
+        },
+        ActivityEvent::Control {
+            action: ControlAction::Stop,
+            by: Client::Cli,
+        },
+        ActivityEvent::Control {
+            action: ControlAction::Pause,
+            by: Client::Dashboard {
+                login: TailscaleLogin::from_str("alice@example.com").unwrap(),
+            },
+        },
+    ];
+    for event in events {
+        let (_dir, path, mut db) = database();
+        let start = complete(1).runs.remove(0).start;
+        let step = Step {
+            run: start.run.clone(),
+            number: NonZeroU32::new(1).unwrap(),
+            at: start.at,
+            event,
+        };
+        db.write(&[
+            Record::Run(Box::new(start.clone())),
+            Record::Step(Box::new(step.clone())),
+        ])
+        .unwrap();
+        let reader = Reader::open(&path).unwrap();
+        assert_eq!(reader.steps(&start.run).unwrap()[0].value, step);
+        let raw = Connection::open(&path).unwrap();
+        let is_text = matches!(
+            step.event,
+            ActivityEvent::Text(_) | ActivityEvent::Command(_) | ActivityEvent::Error(_) | ActivityEvent::Info(_)
+        );
+        let is_edit = matches!(step.event, ActivityEvent::FileEdit { .. });
+        let is_tool = matches!(
+            step.event,
+            ActivityEvent::BusCall { .. } | ActivityEvent::ToolCall { .. }
+        );
+        let is_control = matches!(step.event, ActivityEvent::Control { .. });
+        let is_dashboard = matches!(
+            step.event,
+            ActivityEvent::Control {
+                by: Client::Dashboard { .. },
+                ..
+            }
+        );
+        let fields = [
+            ("text", "extra", is_text),
+            ("path", "src/other.rs", is_edit),
+            ("tool", "other_tool", is_tool),
+            ("detail", "{}", is_tool),
+            ("action", "stop", is_control),
+            ("client", "cli", is_control),
+            ("login", "bob@example.com", is_dashboard),
+        ];
+        for (column, value, allowed) in fields {
+            if allowed {
+                continue;
+            }
+            corrupt(&raw, &format!("UPDATE steps SET {column} = ?1"), value);
+            rejected(&reader.steps(&start.run).unwrap_err(), "steps", column);
+            raw.execute_batch(&format!(
+                "UPDATE steps SET {column} = NULL; PRAGMA ignore_check_constraints = OFF"
+            ))
+            .unwrap();
+        }
+    }
+}
