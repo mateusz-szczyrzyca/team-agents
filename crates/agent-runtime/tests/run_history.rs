@@ -294,14 +294,10 @@ mod run_history {
 
         let launch = rig.reader().run(&rig.run).unwrap().unwrap().launch.unwrap().value;
         assert!(launch.prompt_in_file);
-        assert_eq!(
-            launch.args,
-            rig.recorded(".fake-args")
-                .lines()
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        );
+        // The stand-in writes each argument and a line break; the pointer to the file has line breaks of its own.
+        assert_eq!(format!("{}\n", launch.args.join("\n")), rig.recorded(".fake-args"));
         assert_ne!(launch.args.last(), Some(&prompt));
+        assert!(launch.args.last().is_some_and(|last| last.contains("prompt.md")));
     }
 
     // Rule: no value of a secret is in the history, in the database or in its log.
