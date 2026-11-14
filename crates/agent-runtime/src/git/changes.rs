@@ -78,15 +78,12 @@ impl Git {
     /// [`GitError::Unexpected`], [`GitError::NotUtf8`], [`GitError::NotARepoPath`] and [`GitError::Scratch`].
     pub async fn uncommitted_changes(&self) -> Result<Vec<FileChange>, GitError> {
         let objects = self.objects_dir().await?;
-        let scratch = tempfile::tempdir().map_err(|source| GitError::Scratch {
-            source: ScratchError::Make(source),
-        })?;
-        let read = self.scratch_handle(scratch.path(), &objects)?.read_tree_changes().await;
-        if let Err(source) = scratch.close() {
-            // The scratch directory is in the temporary directory of the machine and holds nothing that matters: a
-            // failure to remove it must not lose what was read.
-            tracing::warn!(error = %source, "cannot remove the scratch directory of a read of the uncommitted changes");
-        }
+        let scratch = make_scratch().await?;
+        let read = match self.scratch_handle(scratch.path(), &objects) {
+            Ok((handle, hooks)) => handle.read_tree_changes(&hooks).await,
+            Err(error) => Err(error),
+        };
+        close_scratch(scratch).await;
         read
     }
 
@@ -128,9 +125,9 @@ impl Git {
         Ok(self.dir.as_path().join(printed.trim_end()))
     }
 
-    /// This handle with an index and an object directory in `scratch`, and the repository's own objects readable
-    /// through it: what it adds to the index and writes as objects stays in `scratch`.
-    fn scratch_handle(&self, scratch: &Path, objects: &Path) -> Result<Self, GitError> {
+    /// This handle with an index, an object directory and an empty hooks directory in `scratch`, and the repository's
+    /// own objects readable through it: what it adds to the index and writes as objects stays in `scratch`.
+    fn scratch_handle(&self, scratch: &Path, objects: &Path) -> Result<(Self, String), GitError> {
         let name = |name: &'static str| {
             EnvName::from_str(name).map_err(|source| GitError::Scratch {
                 source: ScratchError::Name { name, source },
@@ -142,20 +139,20 @@ impl Git {
             })
         };
         let new_objects = scratch.join("objects");
-        std::fs::create_dir(&new_objects).map_err(|source| GitError::Scratch {
-            source: ScratchError::Make(source),
-        })?;
-        Ok(self
-            .clone()
-            .with_env(name("GIT_INDEX_FILE")?, text(&scratch.join("index"))?)
-            .with_env(name("GIT_OBJECT_DIRECTORY")?, text(&new_objects)?)
-            .with_env(name("GIT_ALTERNATE_OBJECT_DIRECTORIES")?, text(objects)?))
+        let hooks = text(&scratch.join("hooks"))?;
+        Ok((
+            self.clone()
+                .with_env(name("GIT_INDEX_FILE")?, text(&scratch.join("index"))?)
+                .with_env(name("GIT_OBJECT_DIRECTORY")?, text(&new_objects)?)
+                .with_env(name("GIT_ALTERNATE_OBJECT_DIRECTORIES")?, text(objects)?),
+            hooks,
+        ))
     }
 
     /// With an index of its own that nothing else sees: the head's tree read in, every file of the worktree added, and
     /// the difference between that and the head.
-    async fn read_tree_changes(&self) -> Result<Vec<FileChange>, GitError> {
-        let overrides = self.capture_overrides().await?;
+    async fn read_tree_changes(&self, hooks: &str) -> Result<Vec<FileChange>, GitError> {
+        let overrides = self.capture_overrides(hooks).await?;
         self.run_scratch(GitOperation::ReadTree, &overrides, &[arg("read-tree"), arg("HEAD")])
             .await?;
         self.run_scratch(GitOperation::Add, &overrides, &[arg("add"), arg("-A"), arg("--")])
@@ -190,9 +187,9 @@ impl Git {
         }
     }
 
-    /// Disable every configured filter and the filesystem monitor for this scratch snapshot. The snapshot records
-    /// worktree bytes, not the output of arbitrary programs from repository or user configuration.
-    async fn capture_overrides(&self) -> Result<Vec<OsString>, GitError> {
+    /// Disable every configured filter, the filesystem monitor and repository hooks for this scratch snapshot. The
+    /// snapshot records worktree bytes, not the output of arbitrary programs from repository or user configuration.
+    async fn capture_overrides(&self, hooks: &str) -> Result<Vec<OsString>, GitError> {
         let operation = GitOperation::Config;
         let captured = self
             .run(
@@ -207,7 +204,12 @@ impl Git {
                 ],
             )
             .await?;
-        let mut overrides = vec![OsString::from("-c"), OsString::from("core.fsmonitor=false")];
+        let mut overrides = vec![
+            OsString::from("-c"),
+            OsString::from("core.fsmonitor=false"),
+            OsString::from("-c"),
+            OsString::from(format!("core.hooksPath={hooks}")),
+        ];
         // `--get-regexp` returns 1 when there are no matching keys, an ordinary repository without filters.
         if captured.exit == (ExitReport::Exited { code: 1 }) {
             return Ok(overrides);
@@ -237,6 +239,39 @@ impl Git {
             .chain(args.iter().copied())
             .collect();
         self.run_ok(operation, Reach::Local, &args).await
+    }
+}
+
+/// Creates the temporary scratch directory with its empty object store and hooks directory on the blocking pool.
+async fn make_scratch() -> Result<tempfile::TempDir, GitError> {
+    tokio::task::spawn_blocking(|| {
+        let scratch = tempfile::tempdir()?;
+        std::fs::create_dir(scratch.path().join("objects"))?;
+        std::fs::create_dir(scratch.path().join("hooks"))?;
+        Ok(scratch)
+    })
+    .await
+    .unwrap_or_else(|source| Err(std::io::Error::other(source)))
+    .map_err(|source| GitError::Scratch {
+        source: ScratchError::Make(source),
+    })
+}
+
+/// Removes the temporary scratch directory on the blocking pool so recursive cleanup never blocks a runtime worker.
+async fn close_scratch(scratch: tempfile::TempDir) {
+    // The scratch directory is in the temporary directory of the machine and holds nothing that matters: a
+    // failure to remove it must not lose what was read.
+    match tokio::task::spawn_blocking(move || scratch.close()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(source)) => {
+            tracing::warn!(error = %source, "cannot remove the scratch directory of a read of the uncommitted changes");
+        }
+        Err(source) => {
+            tracing::warn!(
+                error = %source,
+                "the task that removes the scratch directory of a read of the uncommitted changes failed"
+            );
+        }
     }
 }
 
