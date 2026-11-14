@@ -1,8 +1,13 @@
+use std::num::NonZeroU64;
+use std::path::PathBuf;
+
 use agent_core::ids::{ItemId, RoundId};
 use agent_core::state::RoundEnd;
+use agent_runtime::agentbus::{DelegationRequest, DelegationStatus, RequestId};
 
-use super::{OwnerError, open_rounds_of};
-use crate::fixtures::{at, solo_state, team_id};
+use super::{OwnerError, open_rounds_of, rounds_for};
+use crate::daemon::team::Why;
+use crate::fixtures::{at, solo_state, task, team_id};
 
 /// The ID of the sample round number `n`.
 fn round(n: u32) -> RoundId {
@@ -40,4 +45,29 @@ fn a_team_that_is_not_in_the_state_is_lost_and_not_a_team_without_rounds() {
     let err = open_rounds_of(&state, &team_id(7)).unwrap_err();
 
     assert!(matches!(err, OwnerError::LostTeam { team } if team == team_id(7)));
+}
+
+#[test]
+fn a_delegation_whose_requester_is_not_in_the_team_is_lost_and_not_a_requester_without_rounds() {
+    let state = solo_state();
+    let missing = task(7);
+    let request = DelegationRequest {
+        id: RequestId::new(NonZeroU64::new(7).unwrap()),
+        from: "claude-1".parse().unwrap(),
+        from_task: missing.clone(),
+        repo: "example".parse().unwrap(),
+        branch: "agents/claude-1/task-7".parse().unwrap(),
+        worktree: PathBuf::from("/srv/agents/worktrees/example/task-7"),
+        request: "List the files under src/.".to_owned(),
+        context: String::new(),
+        status: DelegationStatus::Starting,
+        worker: None,
+        helper_task: None,
+        summary: String::new(),
+    };
+    let why = Why::Delegated(Box::new(request));
+
+    let err = rounds_for(&state, &task(1), Some(&why)).unwrap_err();
+
+    assert!(matches!(err, OwnerError::LostTask { task } if task == missing));
 }
