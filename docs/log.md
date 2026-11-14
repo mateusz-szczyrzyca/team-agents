@@ -17,7 +17,8 @@ Exactly one of `--round` and `--team` is given. `--prompts` and `--no-steps` cha
 | Exit | Meaning |
 |---|---|
 | `0` | the story was printed |
-| `1` | the history cannot be read (no file, a newer version, a row that breaks its rules), the arguments are wrong, or the output cannot be written |
+| `1` | the history cannot be read (no file, a newer version, a row that breaks its rules), or the output cannot be written |
+| `2` | command-line parsing fails, for example a missing or conflicting subject, an invalid ID or an unrecognised option |
 | `3` | the history has no such round or team |
 
 ## The text
@@ -38,12 +39,14 @@ else is read. Its parts, in the order of time (records with the same time keep t
 
 A team's story is the stories of its rounds, in the order of their records.
 
-A record that could not be kept is not silently missing: where it would stand, the story says that it was lost, what
-it was and why (the cause the writer gave). A text that was cut at the limit of the history says so after it.
+A record the database refused has a best-effort loss note: where it would stand, the story says that it was lost, what
+it was and why (the cause the writer gave). The note needs a subsequent successful write; permanent storage failure
+cannot leave a durable explanation. Queue and capture losses are counted by `agent status`; a run without its end or
+changes also has a missing-record notice in its story. A text cut at the history limit says so after it.
 
 ## `--json`
 
-One JSON object a line, each record of the round exactly once, in the order it was written:
+One JSON object a line, each record of the round exactly once, ordered by its time and then by its write sequence:
 
 ```json
 {"sequence":41,"at":"2026-11-14T16:45:20Z","team":"team-…","rounds":["round-…"],"kind":"review_submitted","cut":[],"record":{"…":"…"}}

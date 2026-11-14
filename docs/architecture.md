@@ -386,7 +386,9 @@ database and live WAL bytes. See [`history.md`](history.md#what-is-never-in-it) 
 a gate, the checks and what followed, a pull request opened, pushed, ready, reviewed, approved, merged, handed over or closed, a fix
 pass, a question asked or answered, a control, a notification, the end of a round or a team). Every record of every kind has a place
 in one ledger (`history_records`), which orders records of the same time by the order they were written. A record that cannot be
-written or captured is counted as lost under its cause, like every record of 8.4, and the story says in its place that it was lost.
+written or captured is counted as lost under its cause, like every record of 8.4. Database refusals receive best-effort loss
+notes when writing recovers; stories also identify missing run changes. See [`history.md`](history.md#what-happens-when-the-history-cannot-be-written) for the limits
+of durable loss reporting.
 `agent log --round` and `--team` ([`log.md`](log.md)) read the ledger directly and give it to `agent_core::story`, a pure function
 from records to lines (or JSON lines); there is no socket call in it, so it works without the daemon.
 

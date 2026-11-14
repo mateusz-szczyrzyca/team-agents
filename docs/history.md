@@ -73,7 +73,7 @@ inserts and never updates or deletes a row (item 8.7 decides what is deleted, an
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `2` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `3` | forward-only migrations (below) |
 
 Every table is `STRICT`: a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
