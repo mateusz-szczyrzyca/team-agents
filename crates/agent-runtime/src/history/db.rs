@@ -9,8 +9,8 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 use super::error::{OpenError, WriteError};
 use super::migrate::{self, Migration};
-use super::schema::MIGRATIONS;
-use super::write;
+use super::schema::{LEDGER_VERSION, MIGRATIONS};
+use super::write::{self, Ledger};
 
 /// How long the writer waits for a lock another process holds (a reader that checkpoints, a person with `sqlite3`) before
 /// the batch fails and is counted as lost.
@@ -33,6 +33,8 @@ pub struct HistoryDb {
     connection: Connection,
     /// The longest text one field keeps.
     limit: MaxTextBytes,
+    /// Whether the database has the ledger.
+    ledger: Ledger,
 }
 
 impl HistoryDb {
@@ -86,7 +88,17 @@ impl HistoryDb {
             .map_err(database)?;
         connection.pragma_update(None, "foreign_keys", true).map_err(database)?;
         migrate::apply(&mut connection, migrations, path)?;
-        Ok(Self { connection, limit })
+        let version = migrate::version_of(&connection).map_err(database)?;
+        let ledger = if version >= LEDGER_VERSION {
+            Ledger::Kept
+        } else {
+            Ledger::Absent
+        };
+        Ok(Self {
+            connection,
+            limit,
+            ledger,
+        })
     }
 
     /// The longest text one field keeps.
@@ -103,7 +115,7 @@ impl Store for HistoryDb {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|source| WriteError::Transaction { source })?;
         for record in records {
-            write::insert(&transaction, record, self.limit)?;
+            write::insert(&transaction, record, self.limit, self.ledger)?;
         }
         transaction
             .commit()

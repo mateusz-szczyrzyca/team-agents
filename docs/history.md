@@ -27,9 +27,14 @@ Each record has its time. Everything is keyed by its team and, where it has one,
 | a **session** observed | a CLI announces a session that differs from the one already known; the original launch session remains in `runs.session` | `run_sessions` |
 | the **end** of a run | how it ended, the agent's final message whole | `run_ends` |
 | what a run **changed** | the process is gone: from git, the commits between the two heads (hash, subject, author time), the files that differ (added, deleted, modified, renamed from where; lines added and removed; binary or not), and what it left uncommitted in the worktree | `run_changes`, `commits`, `changed_files` |
+| an **event** of a round | a gate, the checks before a review, a pull request opened, pushed, marked ready, reviewed, approved, merged, handed to the human or closed, a fix pass, a question asked or answered, a control of the human, a notification, the end of a round or of a team — each with its time, team and rounds, see [Events](#events) | `history_records` |
 
-**Not here** (later items of the plan): gates, checks, pull requests, reviews, questions (8.5); the daemon's own log (8.6);
-`agent log` (8.5, 8.7); what is deleted and when (8.7); tokens (11.1).
+Every record above, whatever its kind, also has a row in the **ledger** (`history_records`, with `history_record_rounds`):
+its place in the order everything was written in, its time, its team and the rounds it belongs to. The story of a round
+is made from the ledger ([`log.md`](log.md)).
+
+**Not here** (later items of the plan): the daemon's own log (8.6); questions to the history, search and what is deleted
+and when (8.7); tokens (11.1).
 
 ### Why a run starts
 
@@ -174,6 +179,42 @@ Repeated notifications of the same session are recorded once; a changed session 
 The primary key is `(run, n)`; the table is `STRICT, WITHOUT ROWID`. Query a run's observations with
 `SELECT n, at, session FROM run_sessions WHERE run = :run ORDER BY n;`. The initial session remains in `runs.session`; an echo of the session supplied at launch is not a new observation.
 
+### `history_records` and `history_record_rounds`
+
+The ledger, added by migration `3`: one row for every record, in the order it was written. The row of a record that has
+tables of its own (everything above) says which record it is, and its tables hold the values; the row of an event holds
+the event, as JSON.
+
+#### `history_records`
+
+| Column | Type | Meaning |
+|---|---|---|
+| `sequence` | INTEGER, the rowid | the place in the order of writes, counted from 1 over the whole history; what orders records of the same time |
+| `kind` | TEXT | the keyword of the record: `team`, `round`, `run`, `launch`, `step`, `run_end`, `changes`, `session`, or of an event ([Events](#events)) |
+| `key` | TEXT | what makes the record the same record when it is written twice (a run's ID, `run/n` for a step or a session, `pr 7` for a pull request); `NULL` for an event that can happen again |
+| `at` | TEXT | when the record happened, as the other columns of time; for `changes`, when the run ended |
+| `team` | TEXT | the team the record belongs to |
+| `payload` | TEXT | the JSON of an event; `NULL` for the records that have tables of their own |
+| `cut` | TEXT | the fields of the payload whose text was cut; empty when there is no payload |
+
+`kind` is one of the keywords; a `payload` is present exactly for the kinds of events, is a JSON object, and its `event`
+member is the `kind`; a record is the same record when `(kind, team, key)` is: the unique index `history_records_by_key`
+refuses the second one and the writer does not write it. The table is `STRICT`.
+
+#### `history_record_rounds`
+
+The rounds a record belongs to, oldest first. Key `(sequence, position)`; `UNIQUE (sequence, round)`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `sequence` | INTEGER | the record (foreign key to `history_records`) |
+| `position` | INTEGER ≥ 1 | its place in the list |
+| `round` | TEXT | the round |
+
+A round opening belongs to its round; the records of a run — its start, launch, steps, sessions, end and changes — to the
+rounds the run works for; an event to the rounds it names. The start of a team belongs to no round: the story of a round
+prints it as the round's team.
+
 ### `run_rounds`
 
 The rounds a run works for, oldest first. Key `(run, position)`; `UNIQUE (run, round)`: a run names a round once.
@@ -286,8 +327,43 @@ repository whose clean filter transforms content can therefore show differences 
 | `runs_by_team` | `runs (team, at)` | the runs of a team |
 | `runs_by_task` | `runs (task, at)` | the runs of a task |
 | `run_rounds_by_round` | `run_rounds (round, run)` | the runs of a round, and the prompts of a round |
+| `history_records_by_key` | `history_records (kind, team, key)`, where `key` is not `NULL` | a record that is written twice is one record |
+| `history_records_by_team` | `history_records (team, sequence)` | the records of a team, in the order of writes |
+| `history_record_rounds_by_round` | `history_record_rounds (round, sequence)` | the records of a round |
 
 The key of each table is an index too: `WITHOUT ROWID` tables are stored in the order of their key.
+
+## Events
+
+An event is the payload of a row of the ledger: a JSON object whose `event` member is the `kind` of the row. The payload
+is a format that old data must read: a name or a field of one is never changed, only added. The time of the record is
+the time of the happening, the team is the team, and the rounds are the rounds the event is about (none for the end of
+a team, which belongs to the team).
+
+| `kind` | When | Fields of the payload | `key` |
+|---|---|---|---|
+| `gate` | a gate ran for a task; `at` is when it ended | `task`, `started_at`, `record` (`tree`, `result`: `head`, `finished_at`, `outcome`, `log`) | — |
+| `checked` | the checks before a review found issues | `pr`, `head`, `issues` (a line each), `outcome`: `sent_back` (`pass`, `of`), `asked_human` (`reason`, `question`) or `allowed` | — |
+| `pull_opened` | a pull request was opened | `number`, `branch`, `head`, `title`, `body` whole | `pr N` |
+| `pull_pushed` | the branch was pushed | `pr`, `head` | `pr N head H` |
+| `pull_ready` | the pull request was marked ready | `pr` | `pr N` |
+| `review_asked` | a reviewer was asked | `pr`, `pass` (`0` is the first review), `head`, `reviewer`, `task` | `pr N pass P reviewer R` |
+| `review_submitted` | a reviewer submitted | `pr`, `pass`, `reviewer`, `task`, `verdict`, `report` whole | `pr N pass P reviewer R` |
+| `fix_pass_started` | the reviews asked for changes | `pr`, `pass` (from 1), `of`, `findings` whole | `pr N fix pass P` |
+| `pull_approved` | both reviews approved | `pr` | `pr N` |
+| `pull_merged` | the pull request was merged | `pr`, `commit` (`null` when the remote did not say) | `pr N` |
+| `pull_handed_over` | an approved pull request was left to the human (`--no-merge`) | `pr` | `pr N` |
+| `pull_closed` | the pull request was closed without a merge | `pr` | `pr N` |
+| `question_asked` | a task asked the human | `task`, `number`, `text` whole | `task T questions N` |
+| `question_answered` | the human answered | `task`, `number`, `text` whole (every verdict), `via` | `task T questions N` |
+| `controlled` | the human controlled a task or a team | `action`, `target`, `by`, `tasks` reached | — |
+| `notified` | a notification was sent | `task`, `title`, `body` | — |
+| `round_closed` | a round closed | `round`, `end` | `round R` |
+| `team_ended` | a team ended | — | `team` |
+
+Free texts (`issues`, `title`, `body`, `report`, `findings`, `text`) are cut at the limit and redacted like every text of
+the history ([What is never in it](#what-is-never-in-it)); `cut` names the fields cut. The review `pass` of the payload
+counts from `0`; the human text of a story counts review passes from `1`.
 
 ## What happens when the history cannot be written
 
@@ -335,9 +411,14 @@ edited once it has shipped; a change of the schema is a new migration, forward o
 together with the update of `user_version`: one that fails leaves the database at the version before it.
 
 A daemon that opens a database of a version newer than its own does not write to it (above); `Reader::open` refuses it
-too. A database of version `0` holds no history yet. Migration `2` adds `run_sessions` without changing existing rows.
-The read-only API accepts version `1` histories and returns an empty session-observation list for them; opening one
-for writing applies migration `2`. A preserved version `1` fixture verifies that the upgrade retains existing runs.
+too. A database of version `0` holds no history yet. Migration `2` adds `run_sessions` without changing existing rows. Migration
+`3` adds the ledger and gives every record the database already has a row in it, ordered by time, and for a time that two
+records share by kind (team, round, run, launch, step, end, changes, session) and key: the order the records were written
+in at the same time was not kept before the ledger, and the migration does not claim to know it. Only records written after
+migration `3` have their true order.
+The read-only API accepts version `1` and `2` histories: it returns an empty session-observation list for version `1`, and
+it gives a file without a ledger the same records the migration would, through two temporary views of the connection that
+change nothing in the file; opening one for writing applies the migrations. A preserved version `1` fixture verifies that the upgrade retains existing runs.
 
 ## Asking with `sqlite3`
 
@@ -445,7 +526,9 @@ A run with no row in `run_ends` is going — or the daemon was killed before it 
 snapshot — never a record the writer is in the middle of:
 
 `team`, `rounds_of_team`, `round`, `runs_of_team`, `runs_of_round`, `run` (each with its start, launch and end), `steps`,
-`changes`, `prompts_of_round` and `schema` (what `docs/history.schema.sql` pins).
+`changes`, `prompts_of_round` and `schema` (what `docs/history.schema.sql` pins), and `team_records` and `round_records`: every
+record of a team, or of a round with the start of its team, as a `SequencedRecord` in the order it was written — what a story
+is made of. A round no record is linked to has none.
 
 Every answer is a `Stored<T>`: the record and the set of its fields that were cut. Every row is read through the checks of
 its types and the rules of its record — an ID that is not an ID, a step of a kind that lacks its text, a run that ends before

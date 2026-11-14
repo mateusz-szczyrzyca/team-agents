@@ -8,6 +8,7 @@ mod codec;
 mod db;
 mod error;
 mod handle;
+mod ledger;
 pub mod migrate;
 mod reader;
 mod redact;

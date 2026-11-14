@@ -19,21 +19,38 @@ use rusqlite::{Transaction, params};
 
 use super::codec::time_text;
 use super::error::{RecordKind, WriteError};
+use super::ledger;
+
+/// Whether a database has the ledger. A daemon always migrates the database it opens, so only a test that opens an older
+/// version on purpose writes to one that has not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Ledger {
+    /// The ledger is there: every record is entered in it.
+    Kept,
+    /// The database is of a version before the ledger: the records have their tables and nothing else.
+    Absent,
+}
 
 /// Writes `record` in `tx`.
 ///
 /// # Errors
 /// [`WriteError`]: the record is refused, or cannot be turned into rows.
-pub(super) fn insert(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes) -> Result<(), WriteError> {
+pub(super) fn insert(
+    tx: &Transaction<'_>,
+    record: &Record,
+    limit: MaxTextBytes,
+    ledger: Ledger,
+) -> Result<(), WriteError> {
     match record {
-        Record::Team(team) => insert_team(tx, team, limit),
-        Record::Round(round) => insert_round(tx, round, limit),
-        Record::Run(run) => insert_run(tx, run, limit),
-        Record::Launch(launch) => insert_launch(tx, launch, limit),
-        Record::Step(step) => insert_step(tx, step, limit),
-        Record::RunEnd(end) => insert_end(tx, end, limit),
-        Record::Changes(changes) => insert_changes(tx, changes, limit),
-        Record::Event(_) => Ok(()),
+        Record::Team(team) => insert_team(tx, team, limit)?,
+        Record::Round(round) => insert_round(tx, round, limit)?,
+        Record::Run(run) => insert_run(tx, run, limit)?,
+        Record::Launch(launch) => insert_launch(tx, launch, limit)?,
+        Record::Step(step) => insert_step(tx, step, limit)?,
+        Record::RunEnd(end) => insert_end(tx, end, limit)?,
+        Record::Changes(changes) => insert_changes(tx, changes, limit)?,
+        // An event has no table of its own: the ledger holds it.
+        Record::Event(_) => {}
         Record::Session(session) => {
             tx.execute(
                 "INSERT INTO run_sessions (run, n, at, session) VALUES (?1, ?2, ?3, ?4) \
@@ -46,8 +63,24 @@ pub(super) fn insert(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes)
                 ],
             )
             .map_err(sql(RecordKind::Session))?;
-            Ok(())
         }
+    }
+    match ledger {
+        Ledger::Kept => ledger::append(tx, record, limit),
+        Ledger::Absent => match record {
+            Record::Event(_) => Err(WriteError::Rule {
+                record: RecordKind::Event,
+                rule: "the database was made before the ledger, which keeps events: it is migrated when it is opened",
+            }),
+            Record::Team(_)
+            | Record::Round(_)
+            | Record::Run(_)
+            | Record::Launch(_)
+            | Record::Step(_)
+            | Record::RunEnd(_)
+            | Record::Changes(_)
+            | Record::Session(_) => Ok(()),
+        },
     }
 }
 

@@ -26,6 +26,8 @@ use agent_core::state::{CommitId, MergeMode, PrNumber, RunEnd, SessionId, Timest
 use agent_core::status::RunOutcome;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, Transaction, params};
 
+mod sequenced;
+
 use super::codec::parse_time;
 use super::error::{ReadError, ValueProblem};
 use super::migrate::{latest, version_of};
@@ -206,6 +208,7 @@ impl Reader {
                 supported,
             });
         }
+        sequenced::prepare(&connection, found).map_err(query("history_records"))?;
         Ok(Self { connection })
     }
 
@@ -323,17 +326,7 @@ impl Reader {
     /// [`ReadError`].
     pub fn steps(&self, run: &RunId) -> Result<Vec<Stored<Step>>, ReadError> {
         let snapshot = self.snapshot("steps")?;
-        let mut statement = snapshot
-            .prepare(
-                "SELECT n, at, kind, text, path, tool, detail, action, client, login, cut FROM steps WHERE run = ?1 ORDER BY n",
-            )
-            .map_err(query("steps"))?;
-        let mut rows = statement.query(params![run.as_str()]).map_err(query("steps"))?;
-        let mut steps = Vec::new();
-        while let Some(row) = rows.next().map_err(query("steps"))? {
-            steps.push(decode_step(run, row)?);
-        }
-        Ok(steps)
+        read_steps(&snapshot, run)
     }
 
     /// What `run` changed; `None` when nothing was recorded about it.
@@ -349,8 +342,9 @@ impl Reader {
     ///
     /// # Errors
     /// [`ReadError`].
-    pub fn team_records(&self, _team: &TeamId) -> Result<Vec<SequencedRecord>, ReadError> {
-        Ok(Vec::new())
+    pub fn team_records(&self, team: &TeamId) -> Result<Vec<SequencedRecord>, ReadError> {
+        let snapshot = self.snapshot("history_records")?;
+        sequenced::team_records(&snapshot, team)
     }
 
     /// Every record of `round` and the start of its team, in the order they were written; none when the history knows no
@@ -358,8 +352,9 @@ impl Reader {
     ///
     /// # Errors
     /// [`ReadError`].
-    pub fn round_records(&self, _round: &RoundId) -> Result<Vec<SequencedRecord>, ReadError> {
-        Ok(Vec::new())
+    pub fn round_records(&self, round: &RoundId) -> Result<Vec<SequencedRecord>, ReadError> {
+        let snapshot = self.snapshot("history_records")?;
+        sequenced::round_records(&snapshot, round)
     }
 
     /// The prompts of the runs of `round`, oldest first.
@@ -431,6 +426,21 @@ fn names(row: &Row_, column: &'static str, text: &str) -> Result<Vec<AgentName>,
 fn position(row: &Row_, value: i64) -> Result<NonZeroU32, ReadError> {
     let number = count(row, "position", value)?;
     NonZeroU32::new(number).ok_or_else(|| row.rule("position", "a position counts from 1"))
+}
+
+/// The steps of `run`, in their order.
+fn read_steps(snapshot: &Transaction<'_>, run: &RunId) -> Result<Vec<Stored<Step>>, ReadError> {
+    let mut statement = snapshot
+        .prepare(
+            "SELECT n, at, kind, text, path, tool, detail, action, client, login, cut FROM steps WHERE run = ?1 ORDER BY n",
+        )
+        .map_err(query("steps"))?;
+    let mut rows = statement.query(params![run.as_str()]).map_err(query("steps"))?;
+    let mut steps = Vec::new();
+    while let Some(row) = rows.next().map_err(query("steps"))? {
+        steps.push(decode_step(run, row)?);
+    }
+    Ok(steps)
 }
 
 fn read_team(snapshot: &Transaction<'_>, team: &TeamId) -> Result<Option<Stored<TeamStart>>, ReadError> {
