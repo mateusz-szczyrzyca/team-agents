@@ -2,7 +2,7 @@
 //! to, and what follows — the team is sent back with the reasons, the human is asked, or the review goes on.
 //!
 //! The round of a publication is checked when its branch is ready — the lead waits and its gate passed at the tip — and
-//! before the pull request goes to the reviewers: for a first round after the draft is opened and before it is marked
+//! before the pull request goes to the reviewers: for the first review pass after the draft is opened and before it is marked
 //! ready, for a fix pass before the branch is pushed. What the checks hold for each item — passes, what the human allowed,
 //! the question they wait on, what the lead is still to be told — is the record in the lead's task directory
 //! (`checks.json`), so that a daemon that restarts goes on. Without a `checks` table for the repository nothing is checked.

@@ -184,7 +184,7 @@ impl Round {
         }
     }
 
-    /// Closes the round. A round that is closed already stays as it is: whoever calls this checks that.
+    /// Closes the round; the caller refuses a round that is closed already.
     pub(super) fn close(&mut self, at: Timestamp, how: RoundEnd) -> Result<(), ClosedBeforeOpened> {
         check_close(&self.id, self.opened_at, at)?;
         self.state = RoundLife::Closed { at, how };
