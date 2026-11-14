@@ -10,6 +10,7 @@ mod error;
 mod handle;
 mod ledger;
 pub mod migrate;
+mod notes;
 mod reader;
 mod redact;
 pub mod schema;
@@ -21,4 +22,5 @@ pub use handle::{
     CaptureKind, Cause, DEFAULT_QUEUE, History, Problem, Reporter, Setup, Started, TracingReporter, Writer,
 };
 pub use migrate::Migration;
+pub use notes::Noting;
 pub use reader::{Reader, RoundPrompt, RunRow, Stored};

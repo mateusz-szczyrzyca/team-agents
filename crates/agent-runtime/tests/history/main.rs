@@ -28,4 +28,7 @@ mod tampered;
 mod writer;
 
 #[cfg(test)]
+mod notes;
+
+#[cfg(test)]
 mod redaction;

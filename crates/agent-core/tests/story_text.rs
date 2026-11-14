@@ -360,4 +360,48 @@ mod story_text {
         assert_eq!(render(&solo(), &Selection::Round(round(9)), PREVIEW), "");
         assert_eq!(render(&solo(), &Selection::Team(team(9)), PREVIEW), "");
     }
+
+    #[test]
+    fn a_record_the_history_lost_is_told_in_its_place_with_what_and_why() {
+        let mut written = Written::default();
+        written.team(&team(1), 0);
+        written.round(&team(1), &round(1), 1);
+        written.event(
+            &team(1),
+            10,
+            &[round(1)],
+            HistoryEvent::Lost {
+                what: "step".to_owned(),
+                cause: "write_disk_full".to_owned(),
+                detail: "the disk is full — zażółć".to_owned(),
+            },
+        );
+        written.event(
+            &team(1),
+            20,
+            &[round(1)],
+            HistoryEvent::PullReady {
+                pr: super::story_world::pr(7),
+            },
+        );
+
+        let text = story(&written.records, PREVIEW);
+
+        let lost = place(
+            &text,
+            "a step record is missing (write_disk_full): the disk is full — zażółć\n",
+        );
+        assert!(lost < place(&text, "pull request #7 marked ready for review"), "{text}");
+    }
+
+    #[test]
+    fn a_run_that_ended_with_no_changes_recorded_says_so() {
+        let mut records = solo();
+        records.retain(|record| !matches!(record.record, agent_core::history::Record::Changes(_)));
+
+        let text = story(&records, PREVIEW);
+
+        assert!(text.contains("changes: not recorded\n"), "{text}");
+        assert!(!text.contains("changes: head"), "{text}");
+    }
 }
