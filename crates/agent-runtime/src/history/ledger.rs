@@ -237,7 +237,25 @@ fn event_entry(tx: &Transaction<'_>, record: &EventRecord, limit: MaxTextBytes) 
         HistoryEvent::Gate { task, .. } | HistoryEvent::Lost { task: Some(task), .. } if record.rounds.is_empty() => {
             rounds_of_task(tx, task.as_str(), kind)?
         }
-        _ => record.rounds.iter().map(ToString::to_string).collect(),
+        HistoryEvent::Gate { .. }
+        | HistoryEvent::Checked { .. }
+        | HistoryEvent::PullOpened { .. }
+        | HistoryEvent::PullPushed { .. }
+        | HistoryEvent::PullReady { .. }
+        | HistoryEvent::ReviewAsked { .. }
+        | HistoryEvent::ReviewSubmitted { .. }
+        | HistoryEvent::FixPassStarted { .. }
+        | HistoryEvent::PullApproved { .. }
+        | HistoryEvent::PullMerged { .. }
+        | HistoryEvent::PullHandedOver { .. }
+        | HistoryEvent::PullClosed { .. }
+        | HistoryEvent::QuestionAsked { .. }
+        | HistoryEvent::QuestionAnswered { .. }
+        | HistoryEvent::Controlled { .. }
+        | HistoryEvent::Notified { .. }
+        | HistoryEvent::RoundClosed { .. }
+        | HistoryEvent::TeamEnded {}
+        | HistoryEvent::Lost { .. } => record.rounds.iter().map(ToString::to_string).collect(),
     };
     Ok(Entry {
         kind: event.kind().to_string(),

@@ -192,28 +192,38 @@ impl Owner {
             | RunWhy::Continuation => None,
         };
         // The findings a fix pass sends the team are what the autopilot added to the lead's prompt.
-        if let (Some(number), Some(findings)) = (fix_pass, &plan.addition) {
-            let pr = team.items().iter().find_map(|progress| match progress.phase() {
-                ItemPhase::Fixing { assignee, pr, .. } if assignee.as_str() == participant.name() => Some(pr.number),
-                ItemPhase::Fixing { .. }
-                | ItemPhase::Pending
-                | ItemPhase::InProgress { .. }
-                | ItemPhase::InReview { .. }
-                | ItemPhase::Approved { .. }
-                | ItemPhase::Done { .. } => None,
-            });
-            if let Some(pr) = pr {
-                self.record_event_at(
-                    at,
-                    team.id(),
-                    rounds.to_vec(),
-                    HistoryEvent::FixPassStarted {
-                        pr,
-                        pass: number,
-                        of: self.parts.settings.config.review().fix_passes,
-                        findings: findings.clone(),
-                    },
-                );
+        if let Some(number) = fix_pass {
+            if let Some(findings) = &plan.addition {
+                let pr = team.items().iter().find_map(|progress| match progress.phase() {
+                    ItemPhase::Fixing { assignee, pr, .. } if assignee.as_str() == participant.name() => {
+                        Some(pr.number)
+                    }
+                    ItemPhase::Fixing { .. }
+                    | ItemPhase::Pending
+                    | ItemPhase::InProgress { .. }
+                    | ItemPhase::InReview { .. }
+                    | ItemPhase::Approved { .. }
+                    | ItemPhase::Done { .. } => None,
+                });
+                if let Some(pr) = pr {
+                    self.record_event_at(
+                        at,
+                        team.id(),
+                        rounds.to_vec(),
+                        HistoryEvent::FixPassStarted {
+                            pr,
+                            pass: number,
+                            of: self.parts.settings.config.review().fix_passes,
+                            findings: findings.clone(),
+                        },
+                    );
+                } else {
+                    tracing::warn!(task = %task, pass = number.get(), "no item is in a fix pass for the run's agent: the history has no record of the fix pass");
+                    self.history.record_lost();
+                }
+            } else {
+                tracing::warn!(task = %task, pass = number.get(), "a fix pass has no findings in its plan: the history has no record of the fix pass");
+                self.history.record_lost();
             }
         }
         self.history.record(Record::Run(Box::new(RunStart {

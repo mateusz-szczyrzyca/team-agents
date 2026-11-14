@@ -422,7 +422,7 @@ pub struct EventRecord {
     pub at: Timestamp,
     /// The team.
     pub team: TeamId,
-    /// The rounds it belongs to, oldest first: empty for what is not about a round (a team ending).
+    /// The rounds it belongs to, oldest first: the daemon records `TeamEnded` with all the rounds of the team; empty when no round applies.
     pub rounds: Vec<RoundId>,
     /// What happened.
     pub event: HistoryEvent,

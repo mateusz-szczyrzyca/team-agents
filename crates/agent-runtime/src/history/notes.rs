@@ -166,7 +166,24 @@ impl<S: Store> Noting<S> {
                     self.rounds_of_task(&e.team, task),
                     e.at,
                 )),
-                _ => Some((
+                HistoryEvent::Gate { .. }
+                | HistoryEvent::Checked { .. }
+                | HistoryEvent::PullOpened { .. }
+                | HistoryEvent::PullPushed { .. }
+                | HistoryEvent::PullReady { .. }
+                | HistoryEvent::ReviewAsked { .. }
+                | HistoryEvent::ReviewSubmitted { .. }
+                | HistoryEvent::FixPassStarted { .. }
+                | HistoryEvent::PullApproved { .. }
+                | HistoryEvent::PullMerged { .. }
+                | HistoryEvent::PullHandedOver { .. }
+                | HistoryEvent::PullClosed { .. }
+                | HistoryEvent::QuestionAsked { .. }
+                | HistoryEvent::QuestionAnswered { .. }
+                | HistoryEvent::Controlled { .. }
+                | HistoryEvent::Notified { .. }
+                | HistoryEvent::RoundClosed { .. }
+                | HistoryEvent::TeamEnded {} => Some((
                     LostKind::Event(e.event.kind()),
                     e.team.clone(),
                     once_each(&e.rounds),

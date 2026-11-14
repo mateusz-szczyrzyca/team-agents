@@ -337,8 +337,8 @@ The key of each table is an index too: `WITHOUT ROWID` tables are stored in the 
 
 An event is the payload of a row of the ledger: a JSON object whose `event` member is the `kind` of the row. The payload
 is a format that old data must read: a name or a field of one is never changed, only added. The time of the record is
-the time of the happening, the team is the team, and the rounds are the rounds the event is about (none for the end of
-a team, which belongs to the team).
+the time of the happening, the team is the team, and the rounds are the rounds the event is about (`team_ended` is
+linked to every round of its team; a team-wide control or loss note when no round applies has none).
 
 | `kind` | When | Fields of the payload | `key` |
 |---|---|---|---|
@@ -353,7 +353,7 @@ a team, which belongs to the team).
 | `pull_approved` | both reviews approved | `pr` | `pr N` |
 | `pull_merged` | the pull request was merged | `pr`, `commit` (`null` when the remote did not say) | `pr N` |
 | `pull_handed_over` | an approved pull request was left to the human (`--no-merge`) | `pr` | `pr N` |
-| `pull_closed` | an approved pull request was seen closed without a merge while merging or watching `--no-merge`, or the daemon closed the pull request when abandoning a round | `pr` | `pr N` |
+| `pull_closed` | an approved pull request was seen closed without a merge while merging or watching `--no-merge` | `pr` | `pr N` |
 | `question_asked` | a task asked the human | `task`, `number`, `text` whole | `task T questions N` |
 | `question_answered` | the human answered | `task`, `number`, `text` whole (every verdict), `via` | `task T questions N` |
 | `controlled` | the human controlled a task or a team | `action`, `target`, `by`, `tasks` reached | — |

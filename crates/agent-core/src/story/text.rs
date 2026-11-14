@@ -393,14 +393,12 @@ fn run_block(page: &mut Page, block: &RunBlock<'_>, options: StoryOptions) {
         .model
         .as_ref()
         .map_or_else(String::new, |m| format!(", {m}"));
-    let (id, agent, role, reason) = (&start.run, &start.agent, start.role, why(&start.why));
+    let (id, a, role, reason) = (&start.run, &start.agent, start.role, why(&start.why));
+    let (name, tier, cli) = (&a.name, a.tier, a.cli);
     entry(
         page,
         start.at,
-        &format!(
-            "run {id}: {} ({}, {}{model}) as {role}, because {reason}",
-            agent.name, agent.tier, agent.cli
-        ),
+        &format!("run {id}: {name} ({tier}, {cli}{model}) as {role}, because {reason}"),
     );
     let (task, wt, branch) = (&start.task, start.worktree.as_path().display(), start.branch.as_str());
     page.line(4, &format!("task {task}; worktree {wt}, branch {branch}"));
@@ -432,10 +430,10 @@ fn run_rest(page: &mut Page, block: &RunBlock<'_>, start: Option<&RunStart>, opt
     match (start, block.end) {
         (Some(start), Some((_, end))) => page.line(4, &took(start.at, end.at)),
         (None, Some(_)) => {}
-        (_, None) => page.line(
-            4,
-            "no end recorded (the run is going, or the daemon did not see it end)",
-        ),
+        (_, None) => {
+            let msg = "no end recorded (the run is going, or the daemon did not see it end)";
+            page.line(4, msg);
+        }
     }
     if let Some(start) = start {
         prompt(page, start, block, options);
@@ -444,11 +442,8 @@ fn run_rest(page: &mut Page, block: &RunBlock<'_>, start: Option<&RunStart>, opt
         command(page, stored, launch, start);
     }
     steps(page, block, options);
-    for session in &block.sessions {
-        page.line(
-            4,
-            &format!("session {} observed at {}", session.session.as_str(), session.at),
-        );
+    for s in &block.sessions {
+        page.line(4, &format!("session {} observed at {}", s.session.as_str(), s.at));
     }
     if let Some((stored, end)) = block.end {
         page.line(4, &format!("ended: {}", run_end(&end.end)));
@@ -555,17 +550,15 @@ fn steps(page: &mut Page, block: &RunBlock<'_>, options: StoryOptions) {
             page.line(4, &format!("steps ({}):", block.steps.len()));
             let mut listed: Vec<&(&SequencedRecord, &Step)> = block.steps.iter().collect();
             listed.sort_by_key(|(_, step)| step.number);
-            for (stored, step) in listed {
+            for (stored, s) in listed {
                 let cut: Vec<&str> = stored.cut.fields().collect();
                 let note = if cut.is_empty() {
                     String::new()
                 } else {
                     format!(" (cut: {})", cut.join(", "))
                 };
-                page.line(
-                    6,
-                    &format!("{}. {} {}{note}", step.number, step.at, step_text(&step.event)),
-                );
+                let (n, at, text) = (s.number, s.at, step_text(&s.event));
+                page.line(6, &format!("{n}. {at} {text}{note}"));
             }
         }
     }
@@ -651,18 +644,14 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         HistoryEvent::Gate {
             task,
             started_at,
-            record: gate,
+            record: g,
         } => {
-            let (log, how, summary) = (
-                gate.result.log.as_path().display(),
-                took(*started_at, gate.result.finished_at),
-                gate.summary(),
+            let (log, how, sum) = (
+                g.result.log.as_path().display(),
+                took(*started_at, g.result.finished_at),
+                g.summary(),
             );
-            entry(
-                page,
-                at,
-                &format!("gate for task {task}: {summary} ({how}); output {log}"),
-            );
+            entry(page, at, &format!("gate for task {task}: {sum} ({how}); output {log}"));
         }
         HistoryEvent::Checked {
             head, issues, outcome, ..
@@ -683,10 +672,11 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
             text,
             via,
         } => {
+            let via = channel(*via);
             entry(
                 page,
                 at,
-                &format!("task {task}: the human answered questions {number} ({})", channel(*via)),
+                &format!("task {task}: the human answered questions {number} ({via})"),
             );
             page.raw(2, "answered questions", text);
         }
@@ -712,16 +702,9 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
 
 /// The checks before a review found issues.
 fn checked(page: &mut Page, at: Timestamp, head: &CommitId, issues: &[String], outcome: &CheckOutcome) {
-    let (n, plural, head) = (
-        issues.len(),
-        if issues.len() == 1 { "issue" } else { "issues" },
-        short(head),
-    );
-    entry(
-        page,
-        at,
-        &format!("checks before a review found {n} {plural} at {head}:"),
-    );
+    let plural = if issues.len() == 1 { "issue" } else { "issues" };
+    let (n, h) = (issues.len(), short(head));
+    entry(page, at, &format!("checks before a review found {n} {plural} at {h}:"));
     for issue in issues {
         page.line(2, &format!("- {issue}"));
     }
@@ -736,12 +719,8 @@ fn controlled(page: &mut Page, at: Timestamp, action: ControlAction, target: &Ta
     } else {
         list.join(", ")
     };
-    let (verb, target, who) = (control_verb(action), target_text(target), client(by));
-    entry(
-        page,
-        at,
-        &format!("the human {verb} {target} ({who}); reached {reached}"),
-    );
+    let (v, t, w) = (control_verb(action), target_text(target), client(by));
+    entry(page, at, &format!("the human {v} {t} ({w}); reached {reached}"));
 }
 
 /// An event of a pull request, from its opening to its end; any other event is not told here.
@@ -754,15 +733,8 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             title,
             body,
         } => {
-            entry(
-                page,
-                at,
-                &format!(
-                    "pull request #{number} opened: branch {} at {}",
-                    branch.as_str(),
-                    short(head)
-                ),
-            );
+            let (b, h) = (branch.as_str(), short(head));
+            entry(page, at, &format!("pull request #{number} opened: branch {b} at {h}"));
             page.line(2, &format!("title: {title}"));
             page.raw(2, "pull request body", body);
         }
@@ -778,11 +750,11 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             task,
             ..
         } => {
-            let (pass, reviewer, head) = (pass.saturating_add(1), reviewer.as_str(), short(head));
+            let (p, r, h) = (pass.saturating_add(1), reviewer.as_str(), short(head));
             entry(
                 page,
                 at,
-                &format!("review pass {pass} of #{pr} asked of {reviewer} (task {task}) at {head}"),
+                &format!("review pass {p} of #{pr} asked of {r} (task {task}) at {h}"),
             );
         }
         HistoryEvent::ReviewSubmitted {
@@ -793,12 +765,8 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             report,
             ..
         } => {
-            let (pass, reviewer) = (pass.saturating_add(1), reviewer.as_str());
-            entry(
-                page,
-                at,
-                &format!("review pass {pass} of #{pr} by {reviewer}: {verdict}"),
-            );
+            let (p, r) = (pass.saturating_add(1), reviewer.as_str());
+            entry(page, at, &format!("review pass {p} of #{pr} by {r}: {verdict}"));
             page.raw(2, "review report", report);
         }
         HistoryEvent::FixPassStarted { pr, pass, of, findings } => {
@@ -810,18 +778,12 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             entry(page, at, &format!("pull request #{pr} merged as {}", short(c)));
         }
         HistoryEvent::PullMerged { pr, commit: None } => {
-            entry(
-                page,
-                at,
-                &format!("pull request #{pr} merged (the merge commit was not recorded)"),
-            );
+            let msg = format!("pull request #{pr} merged (the merge commit was not recorded)");
+            entry(page, at, &msg);
         }
         HistoryEvent::PullHandedOver { pr } => {
-            entry(
-                page,
-                at,
-                &format!("pull request #{pr} approved and handed to the human (--no-merge)"),
-            );
+            let msg = format!("pull request #{pr} approved and handed to the human (--no-merge)");
+            entry(page, at, &msg);
         }
         HistoryEvent::PullClosed { pr } => entry(page, at, &format!("pull request #{pr} closed without a merge")),
         HistoryEvent::Gate { .. }
