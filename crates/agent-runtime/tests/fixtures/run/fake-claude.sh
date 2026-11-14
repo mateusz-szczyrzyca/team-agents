@@ -21,6 +21,8 @@
 #   ratelimit             the provider answers HTTP 429
 #   env                   ends like `done` after writing PATH and FAKE_SECRET to .fake-env
 #   env-home              ends like `done` after writing AGENTS_HOME to .fake-home
+#   commit                commits work.txt in the repository it runs in, leaves left.txt uncommitted, ends like `done`
+#   commit-busy           commits work.txt, leaves left.txt, then says something every 0.2 s until it is stopped
 #
 # Every run records its arguments, one a line, in `.fake-args`.
 set -eu
@@ -55,6 +57,14 @@ finish_done() {
   init
   say "working"
   result false 'Finished the item.\nSTATUS: DONE'
+}
+
+# Commits a file and leaves another in the tree: what a run that did some work leaves.
+leave_work() {
+  echo "the work" > work.txt
+  git add work.txt
+  git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q -m "Work of the run"
+  printf 'left over\nin two lines\n' > left.txt
 }
 
 case $scenario in
@@ -137,6 +147,20 @@ case $scenario in
   env)
     printf 'PATH=%s\nFAKE_SECRET=%s\n' "$PATH" "${FAKE_SECRET:-}" > .fake-env
     finish_done
+    ;;
+  commit)
+    init
+    leave_work
+    say "committed"
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  commit-busy)
+    init
+    leave_work
+    while true; do
+      say "working"
+      sleep 0.2
+    done
     ;;
   env-home)
     printf '%s\n' "${AGENTS_HOME:-unset}" > .fake-home

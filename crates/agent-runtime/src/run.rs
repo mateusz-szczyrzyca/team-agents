@@ -32,6 +32,7 @@ use tokio_util::sync::CancellationToken;
 use crate::clock::SharedClock;
 use crate::git::GitError;
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
+use crate::history::History;
 use crate::process::{ExitReport, ProcessError, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
 
@@ -289,13 +290,26 @@ pub enum ExcludeCause {
 pub struct RunEngine {
     /// What the engine is made of.
     parts: EngineParts,
+    /// Where the launch, the steps and the changes of every run are recorded; off unless [`RunEngine::with_history`].
+    history: History,
 }
 
 impl RunEngine {
     /// An engine made of `parts`.
     #[must_use]
-    pub const fn new(parts: EngineParts) -> Self {
-        Self { parts }
+    pub fn new(parts: EngineParts) -> Self {
+        Self {
+            parts,
+            history: History::disabled(),
+        }
+    }
+
+    /// The same engine, recording what its runs do in `history`: how each process was started, every step, and what the
+    /// run changed.
+    #[must_use]
+    pub fn with_history(mut self, history: History) -> Self {
+        self.history = history;
+        self
     }
 
     /// Carries out `job` and returns how it ended.

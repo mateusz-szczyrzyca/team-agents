@@ -328,6 +328,12 @@ impl History {
         }
     }
 
+    /// Whether the history is off: nothing is recorded, so nothing is worth working out for it.
+    #[must_use]
+    pub fn is_disabled(&self) -> bool {
+        matches!(*locked(&self.shared.state), HistoryState::Disabled)
+    }
+
     /// Whether the history is being written, and how many records it lost.
     #[must_use]
     pub fn health(&self) -> HistoryHealth {
